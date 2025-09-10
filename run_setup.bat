@@ -566,7 +566,7 @@ exit /b 0
 %PSH% "$in='%~1'; $out='%~2'; " ^
   "$lines=Get-Content $in | Where-Object { $_ -and $_ -notmatch '^\s*#' -and $_ -notmatch '^\s*-' }; " ^
   "$conv = foreach($l in $lines){ " ^
-  "  $m=$l -replace '\s*;.*$','' -replace '$begin:math:display$.*?$end:math:display$',''; " ^
+  "  $m=$l -replace '\s*;.*$','' -replace '\[.*?\]',''; " ^
   "  if($m -match '^\s*([A-Za-z0-9_.\-]+)\s*~=\s*([0-9]+)\.([0-9]+)(?:\.([0-9]+))?'){ " ^
   "    $pkg=$matches[1]; $maj=[int]$matches[2]; $min=[int]$matches[3]; $patch=$matches[4]; " ^
   "    $low= if($patch){\"$maj.$min.$patch\"} else {\"$maj.$min\"}; $up=\"$maj.\"+($min+1); " ^
