@@ -9,7 +9,7 @@ the batch must bootstrap everything to run the Python app with all imports insta
 
 ## Platform & Locations
 - **Platform**: Windows 10 (1809+) only; rely on built-in `curl` and PowerShell.
-- **Locations (non-admin, writeable installs in Public Documents):**
+- **Locations (non-admin, writable installs in Public Documents):**
   - Miniconda root: `%PUBLIC%\Documents\Miniconda3`
   - Conda envs: `%PUBLIC%\Documents\CondaEnvs`
   - App workspace: current working folder (where the batch runs)

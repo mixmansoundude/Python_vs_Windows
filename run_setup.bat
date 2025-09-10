@@ -397,8 +397,8 @@ if exist "requirements.txt" (
       call "%CONDABAT%" install --yes --override-channels -c conda-forge --prefix "%ENV_PREFIX%" %%L >>"%LOG_FILE%" 2>&1
     )
   )
-  call :log INFO "Finalizing deps with pip install r requirements.txt"
-  call :log DEBUG "Running pip r"
+  call :log INFO "Finalizing deps with pip install -r requirements.txt"
+  call :log DEBUG "Running pip install -r requirements.txt"
   "%PY_EXE%" -m pip install -r requirements.txt >>"%LOG_FILE%" 2>&1
 )
 
@@ -566,7 +566,9 @@ exit /b 0
 %PSH% "$in='%~1'; $out='%~2'; " ^
   "$lines=Get-Content $in | Where-Object { $_ -and $_ -notmatch '^\s*#' -and $_ -notmatch '^\s*-' }; " ^
   "$conv = foreach($l in $lines){ " ^
-  "  $m=$l -replace '\s*;.*$','' -replace '\[.*?\]',''; " ^
+  "  $m=$l" ^
+  "    -replace '\s*;.*$',''" ^
+  "    -replace '\[.*?\]',''; " ^
   "  if($m -match '^\s*([A-Za-z0-9_.\-]+)\s*~=\s*([0-9]+)\.([0-9]+)(?:\.([0-9]+))?'){ " ^
   "    $pkg=$matches[1]; $maj=[int]$matches[2]; $min=[int]$matches[3]; $patch=$matches[4]; " ^
   "    $low= if($patch){\"$maj.$min.$patch\"} else {\"$maj.$min\"}; $up=\"$maj.\"+($min+1); " ^
@@ -583,25 +585,53 @@ if not exist "%ROOT%" mkdir "%ROOT%" >nul 2>&1
 set "C1=%ROOT%\t1_no_reqs"
 if not exist "%C1%" mkdir "%C1%" >nul 2>&1
 >%C1%\main.py echo import requests^&^&print("ok-requests")
-pushd "%C1%" & call "%~dp0%~nx0" VERBOSE=1 NOEXE=1 NOINPUT=1 VISAINSTALL=no & popd
+pushd "%C1%"
+call "%~dp0%~nx0" VERBOSE=1 NOEXE=1 NOINPUT=1 VISAINSTALL=no
+set "RC=%ERRORLEVEL%"
+popd
+if not "%RC%"=="0" (
+  call :log ERROR "[TEST] t1_no_reqs failed with %RC%"
+  exit /b %RC%
+)
 
 set "C2=%ROOT%\t2_compat"
 if not exist "%C2%" mkdir "%C2%" >nul 2>&1
 >%C2%\main.py echo import colorama^&^&print("ok-colorama")
 >%C2%\requirements.txt echo colorama~=0.4
-pushd "%C2%" & call "%~dp0%~nx0" VERBOSE=1 NOEXE=1 NOINPUT=1 VISAINSTALL=no & popd
+pushd "%C2%"
+call "%~dp0%~nx0" VERBOSE=1 NOEXE=1 NOINPUT=1 VISAINSTALL=no
+set "RC=%ERRORLEVEL%"
+popd
+if not "%RC%"=="0" (
+  call :log ERROR "[TEST] t2_compat failed with %RC%"
+  exit /b %RC%
+)
 
 set "C3=%ROOT%\t3_pandas_openpyxl"
 if not exist "%C3%" mkdir "%C3%" >nul 2>&1
 >%C3%\main.py echo import pandas as pd^&^&print("ok-pandas")
 >%C3%\requirements.txt echo pandas~=2.2
-pushd "%C3%" & call "%~dp0%~nx0" VERBOSE=1 NOEXE=1 NOINPUT=1 VISAINSTALL=no & popd
+pushd "%C3%"
+call "%~dp0%~nx0" VERBOSE=1 NOEXE=1 NOINPUT=1 VISAINSTALL=no
+set "RC=%ERRORLEVEL%"
+popd
+if not "%RC%"=="0" (
+  call :log ERROR "[TEST] t3_pandas_openpyxl failed with %RC%"
+  exit /b %RC%
+)
 
 set "C4=%ROOT%\t4_select_default"
 if not exist "%C4%" mkdir "%C4%" >nul 2>&1
 >%C4%\a_alpha.py echo print("alpha")
 >%C4%\z_omega.py echo print("omega")
-pushd "%C4%" & call "%~dp0%~nx0" VERBOSE=1 NOEXE=1 NOINPUT=1 VISAINSTALL=no & popd
+pushd "%C4%"
+call "%~dp0%~nx0" VERBOSE=1 NOEXE=1 NOINPUT=1 VISAINSTALL=no
+set "RC=%ERRORLEVEL%"
+popd
+if not "%RC%"=="0" (
+  call :log ERROR "[TEST] t4_select_default failed with %RC%"
+  exit /b %RC%
+)
 
 call :log INFO "[TEST] suite finished see %ROOT%"
 exit /b 0
