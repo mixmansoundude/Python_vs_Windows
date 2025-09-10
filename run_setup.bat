@@ -116,11 +116,11 @@ set "REBUILD_OCCURRED=0"
 REM Parse key=value args quickly
 :__parse_args
 if "%~1"=="" goto :__parse_done
-echo.%~1| findstr "=" >nul && set "%~1"
+echo(%~1| findstr "=" >nul && set "%~1"
 shift
 goto :__parse_args
 :__parse_done
-echo %* | findstr /I "VERBOSE=1" >nul && set "VERBOSE=1"
+echo(%*| findstr /I "VERBOSE=1" >nul && set "VERBOSE=1"
 REM Robust arg parsing for known keys (no delayed expansion)
 :__parse_known
 if "%~1"=="" goto :__parse_known_done
@@ -243,7 +243,8 @@ if exist "runtime.txt" (
   call :log INFO "runtime.txt specifies Python %PY_VER%"
 ) else (
   if exist "pyproject.toml" (
-    %PSH% "$raw=Get-Content 'pyproject.toml' -Raw; $m=[regex]::Match($raw,'(?im)^\s*requires-python\s*=\s*\"?([^\"''\r\n]+)'); if($m.Success){$m.Groups[1].Value}" > "~pyreq_spec.txt"
+# PowerShell extracts requires-python floor; escape quotes carefully
+%PSH% "$raw=Get-Content 'pyproject.toml' -Raw; $m=[regex]::Match($raw,'(?im)^\s*requires-python\s*=\s*\"?([^\"''\r\n]+)'); if($m.Success){$m.Groups[1].Value}" > "~pyreq_spec.txt"
     for /f "usebackq delims=" %%s in ("~pyreq_spec.txt") do set "PY_SPEC=%%s"
     del /q "~pyreq_spec.txt" 2>nul
     if not "%PY_SPEC%"=="" (
@@ -306,7 +307,7 @@ if "%JUST_INSTALLED%"=="1" (
     call :log INFO "Updating conda base conda forge channel"
     call "%CONDABAT%" update -n base -c conda-forge --override-channels conda -y >>"%LOG_FILE%" 2>&1
     for /f "usebackq delims=" %%d in (`%PSH% "(Get-Date).ToString('yyyyMMdd')"`) do set "TODAY=%%d"
-    > "~conda_update.timestamp" echo %TODAY%
+> "~conda_update.timestamp" echo(%TODAY%
   ) else (
     call :log INFO "Conda base update not needed age less than 30 days"
   )
@@ -407,7 +408,7 @@ call "%CONDABAT%" list --prefix "%ENV_PREFIX%" --json > conda_env.json 2>>"%LOG_
 if not exist "runtime.txt" (
   for /f "delims=" %%v in ('"%PY_EXE%" -c "import sys;print(f\"python-{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}\")"') do set "RES_PY=%%v"
   if not "%RES_PY%"=="" (
-    > "runtime.txt" echo %RES_PY%
+> "runtime.txt" echo(%RES_PY%
     call :log INFO "Recorded %RES_PY% to runtime.txt"
   )
 )
@@ -461,7 +462,7 @@ if "%RC%"=="0" (
       for /f "usebackq tokens=5 delims=' " %%m in ("~missing.mod") do set "MISS=%%m"
       if not "%MISS%"=="" (
         call :log INFO "Adding missing package %MISS% to requirements.txt and merging auto list"
-        echo %MISS%>>requirements.txt
+        echo(%MISS%>>requirements.txt
         if exist ~requirements.auto.txt type ~requirements.auto.txt>>requirements.txt
       )
       call :log INFO "Recreating env and reinstalling due to missing package"
@@ -542,11 +543,11 @@ REM Fast ASCII logger. Writes all lines to file. Prints DEBUG to console only wh
 set "LVL=%~1"
 set "MSG=%~2"
 set "TS=%date% %time%"
->>"%LOG_FILE%" echo [%TS%] [%LVL%] %MSG%
+>>"%LOG_FILE%" echo([%TS%] [%LVL%] %MSG%
 if /I "%LVL%"=="DEBUG" (
-  if "%VERBOSE%"=="1" echo [%TS%] [%LVL%] %MSG%
+    if "%VERBOSE%"=="1" echo([%TS%] [%LVL%] %MSG%
 ) else (
-  echo [%TS%] [%LVL%] %MSG%
+  echo([%TS%] [%LVL%] %MSG%
 )
 exit /b 0
 
