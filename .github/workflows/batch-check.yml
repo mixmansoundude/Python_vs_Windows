@@ -66,3 +66,28 @@ jobs:
             tests/**/*.ndjson
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Publish failure summary
+        if: failure()
+        shell: pwsh
+        run: |
+          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "# ❌ CI failure: Batch syntax/run check"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Run: $runUrl`n"
+          $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
+          $files = @()
+          foreach ($p in $patterns) {
+            $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue
+          }
+          $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
+          $files = $files | Sort-Object LastWriteTime -Descending -Unique
+          if ($files -and $files.Count -gt 0) {
+            $files | Select-Object -First 4 | ForEach-Object {
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Log: $($_.FullName)"
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```text'
+              Get-Content -Path $_.FullName -Tail 120 | ForEach-Object { Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $_ }
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
+            }
+          } else {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No logs found_"
+          }
