@@ -1,0 +1,26 @@
+name: Batch syntax/run check
+on:
+  workflow_dispatch: {}   # lets you tap "Run workflow" from the Actions tab
+  push:
+    branches: [ main ]
+jobs:
+  check:
+    # Pin to the new Windows image explicitly; swap to "windows-latest" if you prefer
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      # Optional: print OS/version so you know exactly what parsed your script
+      - name: Show environment
+        shell: cmd
+        run: ver & echo %COMSPEC%
+
+      # Run under the real parser with useful options enabled
+      - name: Trace + run your batch
+        shell: cmd
+        run: |
+          setlocal EnableExtensions EnableDelayedExpansion
+          set DRY_RUN=1
+          echo === BEGIN %CD%\your_script.bat ===
+          echo on
+          call run_setup.bat
