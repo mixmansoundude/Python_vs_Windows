@@ -1,26 +1,64 @@
 name: Batch syntax/run check
 on:
-  workflow_dispatch: {}   # lets you tap "Run workflow" from the Actions tab
+  workflow_dispatch: {}
   push:
     branches: [ main ]
+
 jobs:
   check:
-    # Pin to the new Windows image explicitly; swap to "windows-latest" if you prefer
-    runs-on: windows-2025
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      # Optional: print OS/version so you know exactly what parsed your script
       - name: Show environment
         shell: cmd
-        run: ver & echo %COMSPEC%
+        run: ver & echo %COMSPEC% & echo Workspace: %CD% & dir /b /s
 
-      # Run under the real parser with useful options enabled
-      - name: Trace + run your batch
+      - name: Run tests
         shell: cmd
+        env:
+          SCRIPT: run_tests.bat
         run: |
           setlocal EnableExtensions EnableDelayedExpansion
-          set DRY_RUN=1
-          echo === BEGIN %CD%\your_script.bat ===
+          echo === BEGIN %CD%\%SCRIPT% ===
           echo on
-          call run_tests.bat
+          call "%SCRIPT%"
+          set RC=%errorlevel%
+          @echo off
+          exit /b %RC%
+
+      # Always print the most recent chunks of any logs we can find
+      - name: Find & print test logs (tail)
+        if: always()
+        shell: pwsh
+        run: |
+          $patterns = @('*.log','*install_log*.txt','~*.txt','*.out')
+          $files = @()
+          foreach($p in $patterns){
+            $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue
+          }
+          # Also sweep the tests tree explicitly
+          $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log -File -ErrorAction SilentlyContinue
+          $files = $files | Sort-Object LastWriteTime -Descending -Unique
+          if(-not $files){ Write-Host "No log files found."; exit 0 }
+          foreach($f in $files){
+            Write-Host "::group::LOG $($f.FullName)"
+            Get-Content -Path $f.FullName -Tail 400
+            Write-Host "::endgroup::"
+          }
+
+      # Persist full logs for download even if the run failed
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: |
+            **/*.log
+            **/*install_log*.txt
+            **/~*.txt
+            **/*.out
+            tests/**/*.txt
+            tests/**/*.log
+          if-no-files-found: warn
+          retention-days: 14
