@@ -12,7 +12,11 @@ jobs:
 
       - name: Show environment
         shell: cmd
-        run: ver & echo %COMSPEC% & echo Workspace: %CD% & dir /b /s
+        run: |
+          ver
+          echo %COMSPEC%
+          echo Workspace: %CD%
+          dir /b /s
 
       - name: Run tests
         shell: cmd
@@ -27,7 +31,6 @@ jobs:
           @echo off
           exit /b %RC%
 
-      # Always print the most recent chunks of any logs we can find
       - name: Find & print test logs (tail)
         if: always()
         shell: pwsh
@@ -47,7 +50,6 @@ jobs:
             Write-Host "::endgroup::"
           }
 
-      # Persist full logs for download even if the run failed
       - name: Upload test logs
         if: always()
         uses: actions/upload-artifact@v4
