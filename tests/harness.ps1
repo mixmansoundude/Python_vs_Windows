@@ -41,8 +41,14 @@ Write-Result "batch.delayed.off" "DisableDelayedExpansion present" $hasDisable @
 $hasEnable = ($Lines | Select-String -SimpleMatch "EnableDelayedExpansion").Count -gt 0
 Write-Result "batch.delayed.enable_absent" "EnableDelayedExpansion not present" (-not $hasEnable) @{}
 $bangHits = @()
+$inHere = $false
 for ($i=0; $i -lt $Lines.Count; $i++) {
   $ln = $Lines[$i]
+  if (-not $inHere -and $ln -match "@'") { $inHere = $true; continue }
+  if ($inHere) {
+    if ($ln -match "'@") { $inHere = $false }
+    continue
+  }
   if ($ln -match '^\s*(rem|echo)\b') { continue }
   if ($ln -like "*!*") { $bangHits += ("line {0}: {1}" -f ($i+1), $ln.Trim()) }
 }
