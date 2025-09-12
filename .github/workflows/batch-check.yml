@@ -35,13 +35,13 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $patterns = @('*.log','*install_log*.txt','~*.txt','*.out')
+          $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
           $files = @()
           foreach($p in $patterns){
             $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue
           }
           # Also sweep the tests tree explicitly
-          $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log -File -ErrorAction SilentlyContinue
+          $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
           $files = $files | Sort-Object LastWriteTime -Descending -Unique
           if(-not $files){ Write-Host "No log files found."; exit 0 }
           foreach($f in $files){
@@ -60,7 +60,9 @@ jobs:
             **/*install_log*.txt
             **/~*.txt
             **/*.out
+            **/*.ndjson
             tests/**/*.txt
             tests/**/*.log
+            tests/**/*.ndjson
           if-no-files-found: warn
           retention-days: 14
