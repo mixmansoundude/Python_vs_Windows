@@ -1,4 +1,6 @@
 # Python_vs_Windows
+[![CI](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml/badge.svg)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml) [![CodeQL](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml/badge.svg)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml)
+
 # Software Requirements Directive
 
 ## Prime Directive
