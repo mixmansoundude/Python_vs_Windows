@@ -56,7 +56,7 @@ Write-Result "batch.bang.scan" "No '!' in live batch code lines" ($bangHits.Coun
 $badConda = @()
 for ($i=0; $i -lt $Lines.Count; $i++) {
   $ln = $Lines[$i]
-  if ($ln -match "\bconda\.bat\b" -and $ln -match "\b(create|install)\b") {
+  if ($ln -match "^\s*call\s+\"%CONDA_BAT%\"\s+(create|install)\b") {
     $window = ($ln + " " + ($(if ($i+1 -lt $Lines.Count) { $Lines[$i+1] } else { "" })) + " " + ($(if ($i+2 -lt $Lines.Count) { $Lines[$i+2] } else { "" })))
     if ($window -notmatch "--override-channels" -or $window -notmatch "-c\s+conda-forge") {
       $badConda += ("line {0}: {1}" -f ($i+1), $ln.Trim())
