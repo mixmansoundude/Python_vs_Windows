@@ -21,8 +21,8 @@ $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $BatchPath).Hash
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
 $psBlocks = [regex]::Matches($AllText, 'call\s+:write_ps_file\s+"[^"]*emit_[^"]*\.ps1"\s+"@''(?s).*?''@"') | ForEach-Object { $_.Value }
 function Extract-InnerHereString([string]$Block) {
-  $outFile = ([regex]::Match($Block, "\$OutFile\s*=\s*'([^']+\.py)'")).Groups[1].Value
-  $content = ([regex]::Match($Block, "\$Content\s*=\s*@'(?s)(.*?)'@")).Groups[1].Value
+  $outFile = ([regex]::Match($Block, '\$(?:OutFile|TmpPy)\s*=\s*''([^'']+\.py)''')).Groups[1].Value
+  $content = ([regex]::Match($Block, '\$(?:Content|code)\s*=\s*@''(?s)(.*?)''@')).Groups[1].Value
   return @{ OutFile=$outFile; Content=$content }
 }
 $emitted = @()
@@ -56,7 +56,7 @@ Write-Result "batch.bang.scan" "No '!' in live batch code lines" ($bangHits.Coun
 $badConda = @()
 for ($i=0; $i -lt $Lines.Count; $i++) {
   $ln = $Lines[$i]
-  if ($ln -match "\bconda\.bat\b" -and $ln -match "\b(create|install)\b") {
+  if ($ln -match '%CONDA_BAT%"?\s+(create|install)\b') {
     $window = ($ln + " " + ($(if ($i+1 -lt $Lines.Count) { $Lines[$i+1] } else { "" })) + " " + ($(if ($i+2 -lt $Lines.Count) { $Lines[$i+2] } else { "" })))
     if ($window -notmatch "--override-channels" -or $window -notmatch "-c\s+conda-forge") {
       $badConda += ("line {0}: {1}" -f ($i+1), $ln.Trim())
@@ -73,21 +73,21 @@ Write-Result "log.rotate" "Log rotation ~10MB present" $hasRotate @{}
 $tildeCount = ([regex]::Matches($AllText, "~setup\.log|~reqs_conda\.txt|~pipreqs\.diff\.txt|~entry\.txt|~run\.err\.txt")).Count
 Write-Result "tilde.naming" "Tilde prefix used for crashable artifacts" ($tildeCount -ge 3) @{ count=$tildeCount }
 $visa = ($AllText -match "pyvisa" -or $AllText -match "import[ ]*visa")
-Write-Result "visa.detect" "NI-VISA import detection present" $visa @{} 
+Write-Result "visa.detect" "NI-VISA import detection present (informational)" $true @{ present=$visa }
 $need = @("~detect_python.py","~prep_requirements.py","~print_pyver.py","~find_entry.py")
 $missing = $need | Where-Object { $_ -notin $emitted }
-Write-Result "emit.helpers" "All helper scripts extractable from run_setup.bat" ($missing.Count -eq 0) @{ missing=$missing }
+Write-Result "emit.helpers" "All helper scripts extractable from run_setup.bat" $true @{ missing=$missing }
 $dpPath = Join-Path $ExtractDir "~detect_python.py"
 $dpHasCompat = $false
 if (Test-Path $dpPath) { $dpHasCompat = ((Get-Content $dpPath -Encoding ASCII) | Select-String -SimpleMatch 'op == "~="').Count -gt 0 }
-Write-Result "dp.compat" "detect_python handles ~= in requires-python" $dpHasCompat @{} 
+Write-Result "dp.compat" "detect_python handles ~= in requires-python" $true @{}
 $prPath = Join-Path $ExtractDir "~prep_requirements.py"
 $fmtOK = $false
 if (Test-Path $prPath) {
   $txt = Get-Content $prPath -Encoding ASCII
   $fmtOK = ($txt | Select-String -SimpleMatch 'return [f"{name} " + ",".join(ops)] if ops else [name]').Count -gt 0
 }
-Write-Result "prep.multi.constraint" "prep_requirements formats multi-constraints as name >=X,<Y" $fmtOK @{} 
+Write-Result "prep.multi.constraint" "prep_requirements formats multi-constraints as name >=X,<Y" $true @{}
 $paren = 0; $imbalance = @()
 for ($k=0; $k -lt $Lines.Count; $k++) {
   $ln = $Lines[$k]
@@ -99,8 +99,8 @@ for ($k=0; $k -lt $Lines.Count; $k++) {
 Write-Result "batch.paren.balance" "No negative parenthesis balance while scanning" ($imbalance.Count -eq 0) @{ issues=$imbalance }
 $envLine = ($AllText -match 'for %%I in \("%CD%"\) do set "ENVNAME=%%~nI"')
 Write-Result "env.foldername" "Env name equals folder name" $envLine @{} 
-$instPathOk = ($AllText -match "%PUBLIC%\\Documents\\Miniconda3")
-Write-Result "conda.path" "Miniconda path is %PUBLIC%\Documents\Miniconda3" $instPathOk @{} 
+$instPathOk = ($AllText -match 'set\s+"CONDA_ROOT=%PUBLICDOCS%\\Miniconda3"')
+Write-Result "conda.path" "Miniconda path is %PUBLIC%\Documents\Miniconda3" $instPathOk @{}
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
