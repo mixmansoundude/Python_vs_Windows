@@ -162,34 +162,53 @@ jobs:
           $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
           $files = $files | Sort-Object LastWriteTime -Descending -Unique
 
-          $firstFail = $null
-          $isFail = {
-            param($o)
+          function FirstNonEmpty {
+            param([object]$o,[string[]]$names)
+            foreach ($n in $names) {
+              if ($o.PSObject.Properties.Match($n)) {
+                $v = $o.$n
+                if ($null -ne $v -and "$v" -ne "") { return $v }
+              }
+            }
+            return ""
+          }
+
+          function IsFail {
+            param([object]$o)
             if (-not $o) { return $false }
-            # boolean shapes
-            if ($o.ok -is [bool] -and -not $o.ok) { return $true }
-            if ($o.pass -is [bool] -and -not $o.pass) { return $true }
-            if ($o.passed -is [bool] -and -not $o.passed) { return $true }
-            if ($o.success -is [bool] -and -not $o.success) { return $true }
-            # string shapes
-            $v = ($o.result,$o.status,$o.outcome,$o.level) -ne $null | Where-Object { $_ } | Select-Object -First 1
-            if ($v -and ($v -match '^(fail|error)$')) { return $true }
+            # Boolean styles
+            if ($o.ok -is [bool]       -and -not $o.ok)       { return $true }
+            if ($o.pass -is [bool]     -and -not $o.pass)     { return $true }
+            if ($o.passed -is [bool]   -and -not $o.passed)   { return $true }
+            if ($o.success -is [bool]  -and -not $o.success)  { return $true }
+            # String styles
+            $candidates = @($o.result,$o.status,$o.outcome,$o.level,$o.severity) | Where-Object { $_ }
+            foreach ($v in $candidates) {
+              if ($v -match '^(fail|error|fatal)$') { return $true }
+            }
             return $false
           }
 
-          # Prefer NDJSON (structured)
-          $nd = $files | Where-Object { $_.Extension -eq '.ndjson' } | Select-Object -First 5
+          $firstFail = $null
+
+          # Prefer NDJSON (structured). Examine a few freshest files first.
+          $nd = $files | Where-Object { $_.Extension -eq '.ndjson' } | Select-Object -First 8
           foreach ($f in $nd) {
-            Get-Content $f.FullName | ForEach-Object {
-              try { $o = $_ | ConvertFrom-Json -ErrorAction Stop } catch { $o = $null }
-              if (& $isFail $o) {
+            $lineNo = 0
+            Get-Content -Path $f.FullName | ForEach-Object {
+              $lineNo++
+              $raw = $_
+              try { $o = $raw | ConvertFrom-Json -ErrorAction Stop } catch { $o = $null }
+              if (IsFail $o) {
                 $firstFail = [pscustomobject]@{
-                  check   = $o.check   ? $o.check   : ($o.name   ? $o.name   : "")
-                  file    = $o.file    ? $o.file    : ($o.path   ? $o.path   : "")
-                  line    = $o.line    ? $o.line    : ($o.lineno ? $o.lineno : "")
-                  message = $o.message ? $o.message : ($o.error  ? $o.error  : ($o.reason ? $o.reason : ""))
                   source  = $f.FullName
+                  line    = FirstNonEmpty $o @('line','lineno','row')
+                  file    = FirstNonEmpty $o @('file','path','target')
+                  check   = FirstNonEmpty $o @('check','id','name','rule','test','key')
+                  message = FirstNonEmpty $o @('message','msg','error','reason','note','details')
                 }
+                if (-not $firstFail.message) { $firstFail.message = $raw }
+                if (-not $firstFail.line)    { $firstFail.line    = $lineNo }
                 break
               }
             }
@@ -203,11 +222,11 @@ jobs:
               $m = $lines | Select-String -Pattern '^(ERROR|FAIL|Failed|Exception|Traceback|ModuleNotFoundError).*' | Select-Object -First 1
               if ($m) {
                 $firstFail = [pscustomobject]@{
-                  check   = ""
-                  file    = $f.FullName
-                  line    = ""
-                  message = $m.Line
                   source  = $f.FullName
+                  line    = ""
+                  file    = ""
+                  check   = ""
+                  message = $m.Line
                 }
                 break
               }
@@ -220,6 +239,7 @@ jobs:
           } else {
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No failure fingerprint found_"
           }
+
 
       - name: Comment failure summary on PR
         if: failure()
