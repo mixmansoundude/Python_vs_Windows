@@ -36,7 +36,7 @@ jobs:
           dir /b /s
 
       # ===== New diagnostics: show harness with line numbers =====
-      - name: Debug: show harness with line numbers
+      - name: Debug to show harness with line numbers
         if: always()
         shell: pwsh
         run: |
