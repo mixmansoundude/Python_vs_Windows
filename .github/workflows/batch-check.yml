@@ -7,7 +7,7 @@ on:
   pull_request:
     branches: ['**']      # run for PRs targeting any branch
 
-# Minimum perms so the job can read Actions data and comment on PRs
+# Tight, least-privileged perms for the workflow GITHUB_TOKEN
 permissions:
   contents: read
   actions: read
@@ -18,7 +18,7 @@ jobs:
   check:
     runs-on: windows-latest
 
-    # Optional noise reducer: cancel older runs for the same branch/ref
+    # Optional noise reducer: cancel older runs for the same ref
     concurrency:
       group: batch-check-${{ github.ref }}
       cancel-in-progress: true
@@ -32,7 +32,49 @@ jobs:
           ver
           echo %COMSPEC%
           echo Workspace: %CD%
+          git rev-parse HEAD
           dir /b /s
+
+      # ===== New diagnostics: show harness with line numbers =====
+      - name: Debug: show harness with line numbers
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "HEAD: $env:GITHUB_SHA  Branch: $env:GITHUB_REF"
+          if (Test-Path .\tests\harness.ps1) {
+            $i = 0
+            Get-Content .\tests\harness.ps1 | ForEach-Object { $i++; '{0,5}: {1}' -f $i, $_ }
+            # Quick non-ASCII sniff (gremlins cause parse weirdness)
+            $bytes = [System.IO.File]::ReadAllBytes('.\tests\harness.ps1')
+            $hi = $bytes | Where-Object { $_ -gt 127 } | Select-Object -First 10
+            if ($hi) { Write-Host "Non-ASCII bytes present: $($hi -join ', ')" } else { Write-Host "ASCII-only file." }
+          } else {
+            Write-Error "tests\\harness.ps1 not found in workspace"
+          }
+
+      # ===== New diagnostics: static parse via PowerShell AST =====
+      - name: Static-parse harness (AST)
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path .\tests\harness.ps1) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile('.\tests\harness.ps1',[ref]$tokens,[ref]$errors)
+            if ($errors) {
+              Write-Host "::group::AST parse errors"
+              foreach ($e in $errors) {
+                "{0} at line {1}, col {2}" -f $e.Message, $e.Extent.StartLineNumber, $e.Extent.StartColumnNumber
+                $ctx = Get-Content .\tests\harness.ps1
+                $start = [Math]::Max($e.Extent.StartLineNumber-2,1)
+                $end   = [Math]::Min($e.Extent.StartLineNumber+2,$ctx.Count)
+                for ($n=$start; $n -le $end; $n++) { '{0,5}: {1}' -f $n, $ctx[$n-1] }
+                ""
+              }
+              Write-Host "::endgroup::"
+            } else {
+              Write-Host "No AST parse errors in tests\\harness.ps1"
+            }
+          }
 
       - name: Run tests
         shell: cmd
@@ -106,6 +148,7 @@ jobs:
             }
           } else {
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No logs found_"
+          }
 
       - name: Extract first failure (machine-readable)
         if: failure()
