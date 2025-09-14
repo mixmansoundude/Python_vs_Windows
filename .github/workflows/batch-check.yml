@@ -17,6 +17,12 @@ permissions:
 jobs:
   check:
     runs-on: windows-latest
+
+    # Optional noise reducer: cancel older runs for the same branch/ref
+    concurrency:
+      group: batch-check-${{ github.ref }}
+      cancel-in-progress: true
+
     steps:
       - uses: actions/checkout@v4
 
@@ -100,6 +106,61 @@ jobs:
             }
           } else {
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No logs found_"
+
+      - name: Extract first failure (machine-readable)
+        if: failure()
+        shell: pwsh
+        run: |
+          $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
+          $files = @()
+          foreach ($p in $patterns) {
+            $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue
+          }
+          $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
+          $files = $files | Sort-Object LastWriteTime -Descending -Unique
+
+          $firstFail = $null
+
+          # Prefer NDJSON (structured)
+          $nd = $files | Where-Object { $_.Extension -eq '.ndjson' } | Select-Object -First 5
+          foreach ($f in $nd) {
+            Get-Content $f.FullName | ForEach-Object {
+              try { $o = $_ | ConvertFrom-Json -ErrorAction Stop } catch { $o = $null }
+              if ($o -and (($o.result -eq 'fail') -or ($o.status -eq 'fail') -or ($o.outcome -eq 'fail') -or ($o.level -eq 'error'))) {
+                $firstFail = [pscustomobject]@{
+                  file    = $o.file   ? $o.file   : ($o.path   ? $o.path   : ($o.test ? $o.test : ""))
+                  line    = $o.line   ? $o.line   : ($o.lineno ? $o.lineno : "")
+                  message = $o.message? $o.message: ($o.error  ? $o.error  : ($o.reason? $o.reason: ($_)))
+                  source  = $f.FullName
+                }
+                break
+              }
+            }
+            if ($firstFail) { break }
+          }
+
+          # Fallback: scan text tails for obvious error tokens
+          if (-not $firstFail) {
+            foreach ($f in $files) {
+              $lines = Get-Content -Path $f.FullName -Tail 400
+              $m = $lines | Select-String -Pattern '^(ERROR|FAIL|Failed|Exception|Traceback|ModuleNotFoundError).*' | Select-Object -First 1
+              if ($m) {
+                $firstFail = [pscustomobject]@{
+                  file    = $f.FullName
+                  line    = ""
+                  message = $m.Line
+                  source  = $f.FullName
+                }
+                break
+              }
+            }
+          }
+
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (machine-readable)"
+          if ($firstFail) {
+            ($firstFail | ConvertTo-Json -Compress) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          } else {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No failure fingerprint found_"
           }
 
       - name: Comment failure summary on PR
