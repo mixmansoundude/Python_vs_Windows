@@ -19,10 +19,18 @@ $Lines = Get-Content -LiteralPath $BatchPath -Encoding ASCII
 $AllText = [string]::Join("`n", $Lines)
 $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $BatchPath).Hash
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
-$psBlocks = [regex]::Matches($AllText, 'call\s+:write_ps_file\s+"[^"]*emit_[^"]*\.ps1"\s+"@''(?s).*?''@"') | ForEach-Object { $_.Value }
+$psBlocks = [regex]::Matches(
+  $AllText,
+  'call\s+:write_ps_file\s+"[^"]*emit_[^"]*\.ps1"\s+"@''.*?''@"',
+  [Text.RegularExpressions.RegexOptions]::Singleline
+) | ForEach-Object { $_.Value }
 function Extract-InnerHereString([string]$Block) {
-  $outFile = ([regex]::Match($Block, "\$(?:OutFile|TmpPy)\s*=\s*'([^']+\.py)'")).Groups[1].Value
-  $content = ([regex]::Match($Block, "\$(?:Content|code)\s*=\s*@'(?s)(.*?)'@")).Groups[1].Value
+  $outFile = ([regex]::Match($Block, '\$(?:OutFile|TmpPy)\s*=\s*''([^'']+\.py)''')).Groups[1].Value
+  $content = ([regex]::Match(
+    $Block,
+    '\$(?:Content|code)\s*=\s*@''(.*?)''@',
+    [Text.RegularExpressions.RegexOptions]::Singleline
+  )).Groups[1].Value
   return @{ OutFile=$outFile; Content=$content }
 }
 $emitted = @()
