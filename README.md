@@ -3,7 +3,7 @@
 [![Batch syntax/run check](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml)
 [![CodeQL](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml)
 
-Prime Directive: from only one or more `.py` files on a clean Windows 10+ machine with internet, a **single batch file** (double-clicked) must bootstrap everything to run the Python app **with all imports installed**.
+Prime Directive: With only one or more Python files on a clean Windows 10+ machine with internet, get at least one to run all imports installed.
 
 ---
 
@@ -20,9 +20,9 @@ Prime Directive: from only one or more `.py` files on a clean Windows 10+ machin
 
 # Software Requirements Directive
 
-## Prime Directive
+## Prime Directive Expanded
 
-From only one or more `.py` files on a clean Windows 10+ machine with internet, a single batch file—when double-clicked—must bootstrap everything to run the Python app with all imports installed.
+- From only one or more `.py` files on a clean Windows 10+ machine with internet, a **single batch file** (double-clicked) must bootstrap everything to run the Python app **with all imports installed**.
 
 ---
 
@@ -83,7 +83,7 @@ to fill remaining gaps quickly.
 ## NI-VISA (optional external)
 
 - If the app imports `pyvisa` or `visa`, attempt **NI-VISA** Windows driver install if not present (system install, not just a Python package).
-- Can be disabled with `VISAINSTALL=no`.
+- Leave option to disable for debugging purposes.
 - May require admin rights.
 
 ---
@@ -96,22 +96,26 @@ to fill remaining gaps quickly.
 
 ---
 
-## Maintenance & Logging
+## Maintenance, Logging, and Lessons Learned
 
 - Update conda base periodically (~30 days), but **skip on first Miniconda install**. Ensure base is configured to conda-forge before updating to avoid prompts.
-- Single rolling log `~setup.log` capped near **10 MB** total. Trim or rotate at start. Use debug-level detail when `VERBOSE=1`.
+- Single rolling log `~setup.log` capped near **10 MB** total, don't spin out extra log files. Trim at start. Use debug-level detail when `VERBOSE=1`.
 - Tilde-prefix any files not meant to persist (or may remain after a crash) so they are easy to ignore in VCS.
-- Batch robustness:
+- Batch robustness for some approaches:
 - Avoid `EnableDelayedExpansion`. If unavoidable, enable only around the exact lines, then disable. Force disable at script start.
 - Be robust against parent shells started with `CMD /V:ON` and 3rd-party wrappers.
 - Treat special characters (`&`, `~`, etc.) carefully in batch.
 - ASCII only: no emojis, curly quotes, em-dashes, or ellipses.
+- Always call the batch (call "%CONDA_BAT%" ...) so the parent script continues.
+- Quote batch variables carefully to survive if there are spaces in their contents.
+- After the silent install, recompute the %CONDA_BAT% path (condabin first; Scripts as fallback).
 
 ---
 
 ## Agent Guardrails (Codex / Copilot / other agents)
 
-Enforce and obey this readme document and see See **[AGENTS.md](./AGENTS.md)**. 
+- Enforce and obey this readme document and see See **[AGENTS.md](./AGENTS.md)**.
+  
 ---
 
 ## Repository Map
