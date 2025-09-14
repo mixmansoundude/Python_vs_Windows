@@ -1,86 +1,137 @@
 # Python_vs_Windows
-[![CI](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml/badge.svg)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml) [![CodeQL](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml/badge.svg)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml)
+
+[![Batch syntax/run check](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml)
+[![CodeQL](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml)
+
+Prime Directive: from only one or more `.py` files on a clean Windows 10+ machine with internet, a **single batch file** (double-clicked) must bootstrap everything to run the Python app **with all imports installed**.
+
+---
+
+## TL;DR (Quickstart)
+
+1. Windows 10 (1809+) or newer.
+2. Put your `.py` app files in a folder.
+3. Put `run_setup.bat` in the same folder.
+4. Double-click `run_setup.bat`.
+   - Core flow targets **non-admin** install under `%PUBLIC%\Documents` using Miniconda.
+   - **NI-VISA** (optional) may require admin rights. If non-admin is blocked by policy, use an elevated shell.
+
+---
 
 # Software Requirements Directive
 
 ## Prime Directive
-From only one or more `.py` files on a clean Windows 10+ machine with internet,  
-the batch must bootstrap everything to run the Python app with all imports installed—without requiring any other project files.
+
+From only one or more `.py` files on a clean Windows 10+ machine with internet, a single batch file—when double-clicked—must bootstrap everything to run the Python app with all imports installed.
 
 ---
 
 ## Platform & Locations
-- **Platform**: Windows 10 (1809+) only; rely on built-in `curl` and PowerShell.
-- **Locations (non-admin, writable installs in Public Documents):**
+
+- Platform: Windows 10 (1809+) or newer to leverage built-in `curl` and PowerShell.
+- Conda environments: use **Miniconda** (non-admin).
+- Writable, non-admin locations under Public Documents:
   - Miniconda root: `%PUBLIC%\Documents\Miniconda3`
-  - Conda envs: `%PUBLIC%\Documents\CondaEnvs`
-  - App workspace: current working folder (where the batch runs)
+  - App workspace: current folder (where the batch runs)
 
 ---
 
 ## Python & Environment
-- **Python version detection precedence:**
+
+- Python version detection precedence:
   1. `runtime.txt` (`python-3.x.y` or `3.x[.y]`)
-  2. `pyproject.toml` → `requires-python`
-  3. Otherwise: let conda pick latest (no hard-coded fallback), then write back `runtime.txt`.
+  2. `pyproject.toml` `requires-python`
+  3. Otherwise let **conda pick latest** (no hard-coded fallback); then **write back `runtime.txt`**.
 
-- **Conda env name**: equals the current folder name.  
-  Env is created under `%PUBLIC%\Documents\CondaEnvs\<envname>`.
+- Environment naming: env name equals the **current folder name**.
 
-- **Channels policy** (determinism & legal friction avoidance):
-  - Before any updates/installs, force `conda-forge` only:
-    ```bash
-    conda config --env --add channels conda-forge
-    conda config --env --remove channels defaults  # ok if absent
+- Channels policy (determinism and legal-friction avoidance):
+  - Before any updates or installs, force **community conda-forge only**:
     ```
+    conda config --env --add channels conda-forge
+    conda config --env --remove channels defaults
+    ```
+    (Removal is OK if `defaults` is already absent.)
   - Always install with `--override-channels -c conda-forge`.
 
 ---
 
 ## Dependencies
-- **requirements.txt handling:**
-  - If present and non-empty:
-    - First: `conda install --file requirements.txt --override-channels`
-    - If that fails: retry per-package with conda.  
-      For `~=` version specifier, convert to `>=X.Y,<X.(Y+1)` (PEP 440 compatible).
-  - Always run:
-    ```bash
-    pipreqs . --force --mode compat --savepath requirements.auto.txt
-    ```
-    and log a diff vs `requirements.txt`.
-  - If no usable `requirements.txt`, adopt `requirements.auto.txt` as canonical.
-  - After conda attempts, always run `pip install -r requirements.txt`.
 
-- **Heuristic extras:**
-  - If `pandas` is present, ensure `openpyxl` is included.
-  - On `ModuleNotFoundError`, extract missing module, append to `requirements.txt`, merge with `requirements.auto.txt`, then one-time rebuild env (guard loop).
+- If `requirements.txt` exists and is non-empty:
+  - First try bulk install:  
+    `conda install --file requirements.txt --override-channels -c conda-forge`
+  - If bulk fails, fall back per-package via conda. For `~=` (compatible release), convert to `>=X.Y,<X.(Y+1)` (PEP 440) before feeding conda. Handle this carefully.
+
+- Always run:
+pipreqs . --force --mode compat --savepath requirements.auto.txt
+and log a **diff vs `requirements.txt`**.
+
+- If there is no usable `requirements.txt`, adopt `requirements.auto.txt` as canonical.
+
+- After conda attempts, run:
+pip install -r requirements.txt
+
+to fill remaining gaps quickly.
+
+- Heuristic extras:
+- If `pandas` is present, ensure `openpyxl` is included.
+- On `ModuleNotFoundError`, extract the missing module, append to `requirements.txt`, merge with `requirements.auto.txt`, then perform a **one-time env rebuild** (guard loop).
 
 ---
 
-## NI-VISA (Optional External)
-- If app code imports `pyvisa` or `visa`, attempt Windows driver install (NI-VISA) if not present.  
-- Can be disabled via `VISAINSTALL=no`.  
-- Note: This is a system install, not just a Python package.
+## NI-VISA (optional external)
+
+- If the app imports `pyvisa` or `visa`, attempt **NI-VISA** Windows driver install if not present (system install, not just a Python package).
+- Can be disabled with `VISAINSTALL=no`.
+- May require admin rights.
 
 ---
 
 ## Executable
-- Always ensure a PyInstaller one-file exe is present after setup.
-- Name the exe exactly the env name (equals folder name).
-- If sources unchanged since last exe build, detect early and just run the exe (fast path).
+
+- Attempt to produce a **PyInstaller one-file EXE** after setup.
+- Name the EXE exactly the env name (equals the folder name).
+- Fast path: if sources are unchanged since the last EXE build, detect early and run the existing EXE.
 
 ---
 
 ## Maintenance & Logging
-- Update conda base periodically (~30 days), but skip on first Miniconda install.  
-  Always ensure base uses `conda-forge` before updating to avoid prompts.
-- Maintain a single rolling log `~setup.log` capped at ~10MB with rotation.  
-  `VERBOSE=1` enables debug-level detail.
-- Tilde-prefixed helper files are VCS-ignorable.
-- Avoid `EnableDelayedExpansion`. If unavoidable, enable only around exact lines then disable.  
-  - Force disable at the start to be safe.  
-  - Be robust against parent shells launched with `CMD /V:ON` or 3rd-party wrappers.
-- Handle batch-file quirks with `&`, `~`, and other special characters carefully.
-- Use **ASCII basic text only**: no emojis, curly quotes, em-dash, or ellipsis.
+
+- Update conda base periodically (~30 days), but **skip on first Miniconda install**. Ensure base is configured to conda-forge before updating to avoid prompts.
+- Single rolling log `~setup.log` capped near **10 MB** total. Trim or rotate at start. Use debug-level detail when `VERBOSE=1`.
+- Tilde-prefix any files not meant to persist (or may remain after a crash) so they are easy to ignore in VCS.
+- Batch robustness:
+- Avoid `EnableDelayedExpansion`. If unavoidable, enable only around the exact lines, then disable. Force disable at script start.
+- Be robust against parent shells started with `CMD /V:ON` and 3rd-party wrappers.
+- Treat special characters (`&`, `~`, etc.) carefully in batch.
+- ASCII only: no emojis, curly quotes, em-dashes, or ellipses.
 
 ---
+
+## Agent Guardrails (Codex / Copilot / other agents)
+
+Enforce and obey this readme document and see See **[AGENTS.md](./AGENTS.md)**. 
+---
+
+## Repository Map
+
+- `run_setup.bat` — bootstrap installer (Miniconda + env + deps + optional EXE)
+- `run_tests.bat` — CI/static checks and harness
+- `tests/` — PowerShell/batch harness, log helpers, and ndjson summaries
+- `.github/workflows/` — CI workflows (batch check + CodeQL)
+- `reference_helpers/` — reference snippets and utilities
+
+---
+
+## Contributing
+
+See `CONTRIBUTING.md`. PRs are welcome. Keep CI green.
+
+## Security
+
+See `SECURITY.md`. Do not include secrets in issues or PRs.
+
+## License
+
+MIT — see `LICENSE`.
