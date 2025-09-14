@@ -163,17 +163,31 @@ jobs:
           $files = $files | Sort-Object LastWriteTime -Descending -Unique
 
           $firstFail = $null
+          $isFail = {
+            param($o)
+            if (-not $o) { return $false }
+            # boolean shapes
+            if ($o.ok -is [bool] -and -not $o.ok) { return $true }
+            if ($o.pass -is [bool] -and -not $o.pass) { return $true }
+            if ($o.passed -is [bool] -and -not $o.passed) { return $true }
+            if ($o.success -is [bool] -and -not $o.success) { return $true }
+            # string shapes
+            $v = ($o.result,$o.status,$o.outcome,$o.level) -ne $null | Where-Object { $_ } | Select-Object -First 1
+            if ($v -and ($v -match '^(fail|error)$')) { return $true }
+            return $false
+          }
 
           # Prefer NDJSON (structured)
           $nd = $files | Where-Object { $_.Extension -eq '.ndjson' } | Select-Object -First 5
           foreach ($f in $nd) {
             Get-Content $f.FullName | ForEach-Object {
               try { $o = $_ | ConvertFrom-Json -ErrorAction Stop } catch { $o = $null }
-              if ($o -and (($o.result -eq 'fail') -or ($o.status -eq 'fail') -or ($o.outcome -eq 'fail') -or ($o.level -eq 'error'))) {
+              if (& $isFail $o) {
                 $firstFail = [pscustomobject]@{
-                  file    = $o.file   ? $o.file   : ($o.path   ? $o.path   : ($o.test ? $o.test : ""))
-                  line    = $o.line   ? $o.line   : ($o.lineno ? $o.lineno : "")
-                  message = $o.message? $o.message: ($o.error  ? $o.error  : ($o.reason? $o.reason: ($_)))
+                  check   = $o.check   ? $o.check   : ($o.name   ? $o.name   : "")
+                  file    = $o.file    ? $o.file    : ($o.path   ? $o.path   : "")
+                  line    = $o.line    ? $o.line    : ($o.lineno ? $o.lineno : "")
+                  message = $o.message ? $o.message : ($o.error  ? $o.error  : ($o.reason ? $o.reason : ""))
                   source  = $f.FullName
                 }
                 break
@@ -189,6 +203,7 @@ jobs:
               $m = $lines | Select-String -Pattern '^(ERROR|FAIL|Failed|Exception|Traceback|ModuleNotFoundError).*' | Select-Object -First 1
               if ($m) {
                 $firstFail = [pscustomobject]@{
+                  check   = ""
                   file    = $f.FullName
                   line    = ""
                   message = $m.Line
