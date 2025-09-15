@@ -4,29 +4,41 @@ rem Boot strap renamed to run_setup.bat
 cd /d "%~dp0"
 set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
-set "PUBLICDOCS=%PUBLIC%\Documents"
-set "CONDA_ROOT=%PUBLICDOCS%\Miniconda3"
-set "CONDA_BAT=%CONDA_ROOT%\condabin\conda.bat"
-set "CONDA_BASE_PY=%CONDA_ROOT%\python.exe"
 if not exist "%LOG%" (type nul > "%LOG%")
 call :rotate_log
 for %%I in ("%CD%") do set "ENVNAME=%%~nI"
-set "ENV_PATH=%CONDA_ROOT%\envs\%ENVNAME%"
+
+rem === Miniconda location (non-admin) =========================================
+set "MINICONDA_ROOT=%PUBLIC%\Documents\Miniconda3"
+set "CONDA_BAT=%MINICONDA_ROOT%\condabin\conda.bat"
+if not exist "%CONDA_BAT%" set "CONDA_BAT=%MINICONDA_ROOT%\Scripts\conda.bat"
+set "CONDA_BASE_PY=%MINICONDA_ROOT%\python.exe"
+
+rem Install Miniconda if conda.bat is missing
+if not exist "%CONDA_BAT%" (
+  echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "iwr https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe -OutFile $env:TEMP\miniconda.exe"
+  start /wait "" "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
+  set "CONDA_BAT=%MINICONDA_ROOT%\condabin\conda.bat"
+  if not exist "%CONDA_BAT%" set "CONDA_BAT=%MINICONDA_ROOT%\Scripts\conda.bat"
+)
+
+if not exist "%CONDA_BAT%" (
+  call :die "[ERROR] conda.bat not found after install."
+)
+
+rem === Channel policy (determinism & legal) ===================================
+call "%CONDA_BAT%" config --env --add channels conda-forge
+call "%CONDA_BAT%" config --env --remove channels defaults
+
+rem NOTE: every 'conda create' or 'conda install' call below MUST include:
+rem       --override-channels -c conda-forge
+
+set "ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%"
 call :log "[INFO] Workspace: %CD%"
 call :log "[INFO] Env name: %ENVNAME%"
 call :log "[INFO] Log: %LOG%"
-if exist "%CONDA_BAT%" goto have_conda
-set "MINI=~Miniconda3-latest-Windows-x86_64.exe"
-set "MINIURL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
-curl --version >nul 2>&1
-if errorlevel 1 call :die "[ERROR] curl not available (needs Windows 10 1809+)."
-if not exist "%MINI%" ( curl -L -# -o "%MINI%" "%MINIURL%" >> "%LOG%" 2>&1 & if errorlevel 1 call :die "[ERROR] Download failed." )
-if not exist "%PUBLICDOCS%" mkdir "%PUBLICDOCS%" >> "%LOG%" 2>&1
-if not exist "%CONDA_ROOT%" mkdir "%CONDA_ROOT%" >> "%LOG%" 2>&1
-"%MINI%" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%CONDA_ROOT% >> "%LOG%" 2>&1
-if errorlevel 1 call :die "[ERROR] Miniconda installer failed."
-:have_conda
-if not exist "%CONDA_BAT%" call :die "[ERROR] conda.bat not found after install."
 call :write_ps_file "~emit_detect_python.ps1" "@'
 $OutFile='~detect_python.py'
 $Content=@'
@@ -227,7 +239,7 @@ print(find_entry())
 '@
 $TmpPy='~find_entry.py'
 [IO.File]::WriteAllText($TmpPy, $code, [Text.Encoding]::ASCII)
-& '%CONDA_ROOT%\python.exe' $TmpPy | Out-File -Encoding ASCII -NoNewline $OutTxt
+& '%MINICONDA_ROOT%\python.exe' $TmpPy | Out-File -Encoding ASCII -NoNewline $OutTxt
 '@"
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_entry_finder.ps1" >> "%LOG%" 2>&1
 for /f "usebackq delims=" %%M in ("~entry.txt") do set "ENTRY=%%M"
