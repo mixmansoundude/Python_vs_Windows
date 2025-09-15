@@ -25,12 +25,14 @@ if not exist "%CONDA_BAT%" (
 )
 
 if not exist "%CONDA_BAT%" (
-  call :die "[ERROR] conda.bat not found after install."
+  call :die "[ERROR] conda.bat not found after setup."
 )
 
 rem === Channel policy (determinism & legal) ===================================
+set "CONDA_PREFIX=%MINICONDA_ROOT%"
 call "%CONDA_BAT%" config --env --add channels conda-forge
 call "%CONDA_BAT%" config --env --remove channels defaults
+set "CONDA_PREFIX="
 
 rem NOTE: every 'conda create' or 'conda install' call below MUST include:
 rem       --override-channels -c conda-forge
