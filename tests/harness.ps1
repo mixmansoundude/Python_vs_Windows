@@ -19,22 +19,12 @@ $Lines = Get-Content -LiteralPath $BatchPath -Encoding ASCII
 $AllText = [string]::Join("`n", $Lines)
 $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $BatchPath).Hash
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
-$psBlocks = [regex]::Matches($AllText, 'call\s+:write_ps_file\s+"[^"]*emit_[^"]*\.ps1"[\s\S]*?''@"') | ForEach-Object { $_.Value }
-function Extract-InnerHereString([string]$Block) {
-  $outFile = ([regex]::Match($Block, "\$OutFile\s*=\s*'([^']+\.py)'")).Groups[1].Value
-  $content = ([regex]::Match($Block, "\$Content\s*=\s*@'(?s)(.*?)'@")).Groups[1].Value
-  return @{ OutFile=$outFile; Content=$content }
-}
-$emitted = @()
-foreach ($b in $psBlocks) {
-  $rec = Extract-InnerHereString $b
-  if ($rec.Content -and $rec.OutFile) {
-    $dest = Join-Path $ExtractDir $rec.OutFile
-    $text = $rec.Content -replace "`r?`n","`r`n"
-    [IO.File]::WriteAllText($dest, $text, [Text.Encoding]::ASCII)
-    $emitted += $rec.OutFile
-    Write-Result "emit.extract" "Extracted $($rec.OutFile) from run_setup.bat here-strings" $true @{ file=$rec.OutFile }
-  }
+# Run the python extractor script and capture the list of emitted files
+$emitted = python (Join-Path $OutDir "~extractor.py") $BatchPath
+foreach ($file in $emitted) {
+    if ($file) {
+        Write-Result "emit.extract" "Extracted $($file) from run_setup.bat here-strings" $true @{ file=$file }
+    }
 }
 $hasDisable = ($Lines | Select-String -SimpleMatch "setlocal DisableDelayedExpansion").Count -gt 0
 Write-Result "batch.delayed.off" "DisableDelayedExpansion present" $hasDisable @{}
