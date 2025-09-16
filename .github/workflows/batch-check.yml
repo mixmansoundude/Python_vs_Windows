@@ -7,7 +7,7 @@ on:
   pull_request:
     branches: ['**']      # run for PRs targeting any branch
 
-# Minimum perms so the job can read Actions data and comment on PRs
+# Tight, least-privileged perms for the workflow GITHUB_TOKEN
 permissions:
   contents: read
   actions: read
@@ -18,7 +18,7 @@ jobs:
   check:
     runs-on: windows-latest
 
-    # Optional noise reducer: cancel older runs for the same branch/ref
+    # Optional noise reducer: cancel older runs for the same ref
     concurrency:
       group: batch-check-${{ github.ref }}
       cancel-in-progress: true
@@ -32,7 +32,49 @@ jobs:
           ver
           echo %COMSPEC%
           echo Workspace: %CD%
+          git rev-parse HEAD
           dir /b /s
+
+      # ===== New diagnostics: show harness with line numbers =====
+      - name: Debug to show harness with line numbers
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "HEAD: $env:GITHUB_SHA  Branch: $env:GITHUB_REF"
+          if (Test-Path .\tests\harness.ps1) {
+            $i = 0
+            Get-Content .\tests\harness.ps1 | ForEach-Object { $i++; '{0,5}: {1}' -f $i, $_ }
+            # Quick non-ASCII sniff (gremlins cause parse weirdness)
+            $bytes = [System.IO.File]::ReadAllBytes('.\tests\harness.ps1')
+            $hi = $bytes | Where-Object { $_ -gt 127 } | Select-Object -First 10
+            if ($hi) { Write-Host "Non-ASCII bytes present: $($hi -join ', ')" } else { Write-Host "ASCII-only file." }
+          } else {
+            Write-Error "tests\\harness.ps1 not found in workspace"
+          }
+
+      # ===== New diagnostics: static parse via PowerShell AST =====
+      - name: Static-parse harness (AST)
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path .\tests\harness.ps1) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile('.\tests\harness.ps1',[ref]$tokens,[ref]$errors)
+            if ($errors) {
+              Write-Host "::group::AST parse errors"
+              foreach ($e in $errors) {
+                "{0} at line {1}, col {2}" -f $e.Message, $e.Extent.StartLineNumber, $e.Extent.StartColumnNumber
+                $ctx = Get-Content .\tests\harness.ps1
+                $start = [Math]::Max($e.Extent.StartLineNumber-2,1)
+                $end   = [Math]::Min($e.Extent.StartLineNumber+2,$ctx.Count)
+                for ($n=$start; $n -le $end; $n++) { '{0,5}: {1}' -f $n, $ctx[$n-1] }
+                ""
+              }
+              Write-Host "::endgroup::"
+            } else {
+              Write-Host "No AST parse errors in tests\\harness.ps1"
+            }
+          }
 
       - name: Run tests
         shell: cmd
@@ -106,6 +148,7 @@ jobs:
             }
           } else {
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No logs found_"
+          }
 
       - name: Extract first failure (machine-readable)
         if: failure()
@@ -119,20 +162,53 @@ jobs:
           $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
           $files = $files | Sort-Object LastWriteTime -Descending -Unique
 
+          function FirstNonEmpty {
+            param([object]$o,[string[]]$names)
+            foreach ($n in $names) {
+              if ($o.PSObject.Properties.Match($n)) {
+                $v = $o.$n
+                if ($null -ne $v -and "$v" -ne "") { return $v }
+              }
+            }
+            return ""
+          }
+
+          function IsFail {
+            param([object]$o)
+            if (-not $o) { return $false }
+            # Boolean styles
+            if ($o.ok -is [bool]       -and -not $o.ok)       { return $true }
+            if ($o.pass -is [bool]     -and -not $o.pass)     { return $true }
+            if ($o.passed -is [bool]   -and -not $o.passed)   { return $true }
+            if ($o.success -is [bool]  -and -not $o.success)  { return $true }
+            # String styles
+            $candidates = @($o.result,$o.status,$o.outcome,$o.level,$o.severity) | Where-Object { $_ }
+            foreach ($v in $candidates) {
+              if ($v -match '^(fail|error|fatal)$') { return $true }
+            }
+            return $false
+          }
+
           $firstFail = $null
 
-          # Prefer NDJSON (structured)
-          $nd = $files | Where-Object { $_.Extension -eq '.ndjson' } | Select-Object -First 5
+          # Prefer NDJSON (structured). Examine a few freshest files first.
+          $nd = $files | Where-Object { $_.Extension -eq '.ndjson' } | Select-Object -First 8
           foreach ($f in $nd) {
-            Get-Content $f.FullName | ForEach-Object {
-              try { $o = $_ | ConvertFrom-Json -ErrorAction Stop } catch { $o = $null }
-              if ($o -and (($o.result -eq 'fail') -or ($o.status -eq 'fail') -or ($o.outcome -eq 'fail') -or ($o.level -eq 'error'))) {
+            $lineNo = 0
+            Get-Content -Path $f.FullName | ForEach-Object {
+              $lineNo++
+              $raw = $_
+              try { $o = $raw | ConvertFrom-Json -ErrorAction Stop } catch { $o = $null }
+              if (IsFail $o) {
                 $firstFail = [pscustomobject]@{
-                  file    = $o.file   ? $o.file   : ($o.path   ? $o.path   : ($o.test ? $o.test : ""))
-                  line    = $o.line   ? $o.line   : ($o.lineno ? $o.lineno : "")
-                  message = $o.message? $o.message: ($o.error  ? $o.error  : ($o.reason? $o.reason: ($_)))
                   source  = $f.FullName
+                  line    = FirstNonEmpty $o @('line','lineno','row')
+                  file    = FirstNonEmpty $o @('file','path','target')
+                  check   = FirstNonEmpty $o @('check','id','name','rule','test','key')
+                  message = FirstNonEmpty $o @('message','msg','error','reason','note','details')
                 }
+                if (-not $firstFail.message) { $firstFail.message = $raw }
+                if (-not $firstFail.line)    { $firstFail.line    = $lineNo }
                 break
               }
             }
@@ -146,10 +222,11 @@ jobs:
               $m = $lines | Select-String -Pattern '^(ERROR|FAIL|Failed|Exception|Traceback|ModuleNotFoundError).*' | Select-Object -First 1
               if ($m) {
                 $firstFail = [pscustomobject]@{
-                  file    = $f.FullName
-                  line    = ""
-                  message = $m.Line
                   source  = $f.FullName
+                  line    = ""
+                  file    = ""
+                  check   = ""
+                  message = $m.Line
                 }
                 break
               }
@@ -162,6 +239,7 @@ jobs:
           } else {
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No failure fingerprint found_"
           }
+
 
       - name: Comment failure summary on PR
         if: failure()
