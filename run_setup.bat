@@ -220,9 +220,54 @@ if exist "requirements.txt" (
   )
   call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -r requirements.txt >> "%LOG%" 2>&1
 )
+rem Detect pyvisa/visa usage so harness sees NI-VISA requirements
+call :write_ps_file "~emit_detect_visa.ps1" "@'
+$OutFile='~detect_visa.py'
+$Content=@'
+import os, re, sys
+ROOT = os.getcwd()
+PATTERNS = [
+    r"(?m)^\s*(?:from\s+pyvisa\b|import\s+pyvisa\b)",
+    r"(?m)^\s*import\s+visa\b",
+]
+def needs_visa():
+    for cur, dirs, files in os.walk(ROOT):
+        dirs[:] = [d for d in dirs if not d.startswith(('~', '.'))]
+        for name in files:
+            if not name.endswith('.py') or name.startswith('~'):
+                continue
+            path = os.path.join(cur, name)
+            try:
+                with open(path, 'r', encoding='utf-8', errors='ignore') as handle:
+                    text = handle.read()
+            except OSError:
+                continue
+            for pat in PATTERNS:
+                if re.search(pat, text):
+                    return True
+    return False
+def main():
+    sys.stdout.write('1' if needs_visa() else '0')
+if __name__ == '__main__':
+    main()
+'@
+[IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
+'@"
+powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_detect_visa.ps1" >> "%LOG%" 2>&1
+set "NEED_VISA=0"
+if exist "~visa.flag" del "~visa.flag"
+call "%CONDA_BAT%" run -n "%ENVNAME%" python "~detect_visa.py" > "~visa.flag" 2>> "%LOG%"
+for /f "usebackq delims=" %%V in ("~visa.flag") do set "NEED_VISA=%%V"
+if "%NEED_VISA%"=="1" (
+  call :log "[INFO] Detected pyvisa/visa import; NI-VISA install may be required."
+) else (
+  call :log "[INFO] No pyvisa/visa imports detected."
+)
+if exist "~visa.flag" del "~visa.flag"
 call :write_ps_file "~emit_entry_finder.ps1" "@'
 $OutTxt='~entry.txt'
-$code = @'
+$OutFile='~find_entry.py'
+$Content=@'
 import os
 def find_entry():
     files = [f for f in os.listdir('.') if f.endswith('.py') and not f.startswith('~')]
@@ -237,16 +282,20 @@ def find_entry():
     return files[0] if files else \"\"
 print(find_entry())
 '@
-$TmpPy='~find_entry.py'
-[IO.File]::WriteAllText($TmpPy, $code, [Text.Encoding]::ASCII)
-& '%MINICONDA_ROOT%\python.exe' $TmpPy | Out-File -Encoding ASCII -NoNewline $OutTxt
+[IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
+$pyExe = '%CONDA_BASE_PY%'
+if (Test-Path $pyExe) {
+  & $pyExe $OutFile | Out-File -Encoding ASCII -NoNewline $OutTxt
+} else {
+  & '%CONDA_BAT%' run -n '%ENVNAME%' python $OutFile | Out-File -Encoding ASCII -NoNewline $OutTxt
+}
 '@"
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_entry_finder.ps1" >> "%LOG%" 2>&1
 for /f "usebackq delims=" %%M in ("~entry.txt") do set "ENTRY=%%M"
 if "%ENTRY%"=="" ( call :die "[ERROR] Could not find an entry script." )
 call "%CONDA_BAT%" run -n "%ENVNAME%" python "%ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
 call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q pyinstaller >> "%LOG%" 2>&1
-call "%CONDA_BAT%" run -n "%ENVNAME%" pyinstaller -y --onefile --name "%ENVNAME%" "%ENTRY%" >> "%LOG%" 2>&1
+call "%CONDA_BAT%" run -n "%ENVNAME%" pyinstaller -y --onefile --name ""%ENVNAME%"" "%ENTRY%" >> "%LOG%" 2>&1
 if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
 start "" "dist\%ENVNAME%.exe"
 goto :eof
