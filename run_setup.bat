@@ -1,10 +1,12 @@
 @echo off
 setlocal DisableDelayedExpansion
+rem NI-VISA is optional; pyvisa is not installed by default.
 rem Boot strap renamed to run_setup.bat
 cd /d "%~dp0"
 set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
 set "PUBLICDOCS=%PUBLIC%\Documents"
+rem Miniconda path is %PUBLIC%\Documents\Miniconda3
 set "CONDA_ROOT=%PUBLICDOCS%\Miniconda3"
 set "CONDA_BAT=%CONDA_ROOT%\condabin\conda.bat"
 set "CONDA_BASE_PY=%CONDA_ROOT%\python.exe"
@@ -26,7 +28,7 @@ if not exist "%CONDA_ROOT%" mkdir "%CONDA_ROOT%" >> "%LOG%" 2>&1
 "%MINI%" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%CONDA_ROOT% >> "%LOG%" 2>&1
 if errorlevel 1 call :die "[ERROR] Miniconda installer failed."
 :have_conda
-if not exist "%CONDA_BAT%" call :die "[ERROR] conda.bat not found after install."
+if not exist "%CONDA_BAT%" call :die "[ERROR] conda.bat not found after setup."
 call :write_ps_file "~emit_detect_python.ps1" "@'
 $OutFile='~detect_python.py'
 $Content=@'
