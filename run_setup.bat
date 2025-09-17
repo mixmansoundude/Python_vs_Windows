@@ -295,7 +295,7 @@ for /f "usebackq delims=" %%M in ("~entry.txt") do set "ENTRY=%%M"
 if "%ENTRY%"=="" ( call :die "[ERROR] Could not find an entry script." )
 call "%CONDA_BAT%" run -n "%ENVNAME%" python "%ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
 call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q pyinstaller >> "%LOG%" 2>&1
-call "%CONDA_BAT%" run -n "%ENVNAME%" pyinstaller -y --onefile --name ""%ENVNAME%"" "%ENTRY%" >> "%LOG%" 2>&1
+call "%CONDA_BAT%" run -n "%ENVNAME%" pyinstaller -y --onefile --name "%ENVNAME%" "%ENTRY%" >> "%LOG%" 2>&1
 if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
 start "" "dist\%ENVNAME%.exe"
 goto :eof
