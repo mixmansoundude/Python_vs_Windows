@@ -91,7 +91,7 @@ if __name__ == "__main__":
     main()
 '@
 [IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"
+'@"'
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_detect_python.ps1" >> "%LOG%" 2>&1
 if exist "%CONDA_BASE_PY%" (
   "%CONDA_BASE_PY%" "~detect_python.py" > "~py_spec.txt" 2>> "%LOG%"
@@ -113,7 +113,7 @@ import sys
 print(f"python-{sys.version_info[0]}.{sys.version_info[1]}")
 '@
 [IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"
+'@"'
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_pyver.ps1" >> "%LOG%" 2>&1
 call "%CONDA_BAT%" run -n "%ENVNAME%" python "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
 for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
@@ -128,7 +128,7 @@ show_channel_urls: true
 '@
 New-Item -ItemType Directory -Force -Path (Split-Path $OutFile) | Out-Null
 [IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"
+'@"'
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_env_condarc.ps1" >> "%LOG%" 2>&1
 call :write_ps_file "~emit_prep_requirements.ps1" "@'
 $OutFile='~prep_requirements.py'
@@ -201,7 +201,7 @@ if __name__=="__main__":
     main()
 '@
 [IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"
+'@"'
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_prep_requirements.ps1" >> "%LOG%" 2>&1
 set "REQ=requirements.txt"
 if exist "%REQ%" ( for %%S in ("%REQ%") do if %%~zS EQU 0 del "%REQ%" )
@@ -252,7 +252,7 @@ if __name__ == '__main__':
     main()
 '@
 [IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"
+'@"'
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_detect_visa.ps1" >> "%LOG%" 2>&1
 set "NEED_VISA=0"
 if exist "~visa.flag" del "~visa.flag"
@@ -289,7 +289,7 @@ if (Test-Path $pyExe) {
 } else {
   & '%CONDA_BAT%' run -n '%ENVNAME%' python $OutFile | Out-File -Encoding ASCII -NoNewline $OutTxt
 }
-'@"
+'@"'
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_entry_finder.ps1" >> "%LOG%" 2>&1
 for /f "usebackq delims=" %%M in ("~entry.txt") do set "ENTRY=%%M"
 if "%ENTRY%"=="" ( call :die "[ERROR] Could not find an entry script." )
