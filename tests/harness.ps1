@@ -20,10 +20,23 @@ $AllText = [string]::Join("`n", $Lines)
 $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $BatchPath).Hash
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
 # Run the python extractor script and capture the list of emitted files
-$emitted = python (Join-Path $OutDir "~extractor.py") $BatchPath
-foreach ($file in $emitted) {
-    if ($file) {
-        Write-Result "emit.extract" "Extracted $($file) from run_setup.bat here-strings" $true @{ file=$file }
+$emitted = @()
+$ErrorLog = Join-Path $OutDir "~extractor.error.log"
+if (Test-Path $ErrorLog) { Remove-Item -Force $ErrorLog } # Clean up old logs
+
+$emitted = py -3 (Join-Path $OutDir "~extractor.py") $BatchPath
+if ($LASTEXITCODE -ne 0) {
+    if (Test-Path $ErrorLog) {
+        $ErrorContent = Get-Content $ErrorLog | Out-String
+        Write-Result "emit.helpers" "Python extractor script failed" $false @{ error = $ErrorContent }
+    } else {
+        Write-Result "emit.helpers" "Python extractor script failed with no log" $false @{ exitcode = $LASTEXITCODE }
+    }
+} else {
+    foreach ($file in $emitted) {
+        if ($file) {
+            Write-Result "emit.extract" "Extracted $($file) from run_setup.bat here-strings" $true @{ file=$file }
+        }
     }
 }
 $hasDisable = ($Lines | Select-String -SimpleMatch "setlocal DisableDelayedExpansion").Count -gt 0

@@ -1,0 +1,659 @@
+﻿2025-09-16T19:48:05.5200734Z Current runner version: '2.328.0'
+2025-09-16T19:48:05.5223934Z ##[group]Runner Image Provisioner
+2025-09-16T19:48:05.5224689Z Hosted Compute Agent
+2025-09-16T19:48:05.5225225Z Version: 20250829.383
+2025-09-16T19:48:05.5225768Z Commit: 27cb235aab5b0e52e153a26cd86b4742e89dac5d
+2025-09-16T19:48:05.5226435Z Build Date: 2025-08-29T13:48:48Z
+2025-09-16T19:48:05.5226936Z ##[endgroup]
+2025-09-16T19:48:05.5227483Z ##[group]Operating System
+2025-09-16T19:48:05.5227987Z Microsoft Windows Server 2025
+2025-09-16T19:48:05.5228522Z 10.0.26100
+2025-09-16T19:48:05.5228966Z Datacenter
+2025-09-16T19:48:05.5229445Z ##[endgroup]
+2025-09-16T19:48:05.5229863Z ##[group]Runner Image
+2025-09-16T19:48:05.5230354Z Image: windows-2025
+2025-09-16T19:48:05.5230984Z Version: 20250907.19.1
+2025-09-16T19:48:05.5232397Z Included Software: https://github.com/actions/runner-images/blob/win25/20250907.19/images/windows/Windows2025-Readme.md
+2025-09-16T19:48:05.5234634Z Image Release: https://github.com/actions/runner-images/releases/tag/win25%2F20250907.19
+2025-09-16T19:48:05.5235540Z ##[endgroup]
+2025-09-16T19:48:05.5236767Z ##[group]GITHUB_TOKEN Permissions
+2025-09-16T19:48:05.5238499Z Actions: read
+2025-09-16T19:48:05.5238984Z Contents: read
+2025-09-16T19:48:05.5239466Z Issues: write
+2025-09-16T19:48:05.5239872Z Metadata: read
+2025-09-16T19:48:05.5240319Z PullRequests: write
+2025-09-16T19:48:05.5240804Z ##[endgroup]
+2025-09-16T19:48:05.5242696Z Secret source: Actions
+2025-09-16T19:48:05.5243344Z Prepare workflow directory
+2025-09-16T19:48:05.5566180Z Prepare all required actions
+2025-09-16T19:48:05.5603803Z Getting action download info
+2025-09-16T19:48:06.0031772Z Download action repository 'actions/checkout@v4' (SHA:08eba0b27e820071cde6df949e0beb9ba4906955)
+2025-09-16T19:48:06.1411316Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2025-09-16T19:48:06.3676772Z Download action repository 'actions/github-script@v7' (SHA:f28e40c7f34bde8b3046d885e986cb6290c5673b)
+2025-09-16T19:48:07.1027011Z Complete job name: check
+2025-09-16T19:48:07.2869255Z ##[group]Run actions/checkout@v4
+2025-09-16T19:48:07.2870588Z with:
+2025-09-16T19:48:07.2871371Z   repository: mixmansoundude/Python_vs_Windows
+2025-09-16T19:48:07.2872633Z   token: ***
+2025-09-16T19:48:07.2873310Z   ssh-strict: true
+2025-09-16T19:48:07.2874020Z   ssh-user: git
+2025-09-16T19:48:07.2874743Z   persist-credentials: true
+2025-09-16T19:48:07.2875547Z   clean: true
+2025-09-16T19:48:07.2876279Z   sparse-checkout-cone-mode: true
+2025-09-16T19:48:07.2877149Z   fetch-depth: 1
+2025-09-16T19:48:07.2877854Z   fetch-tags: false
+2025-09-16T19:48:07.2878595Z   show-progress: true
+2025-09-16T19:48:07.2879317Z   lfs: false
+2025-09-16T19:48:07.2879980Z   submodules: false
+2025-09-16T19:48:07.2880710Z   set-safe-directory: true
+2025-09-16T19:48:07.2881711Z ##[endgroup]
+2025-09-16T19:48:07.4686789Z Syncing repository: mixmansoundude/Python_vs_Windows
+2025-09-16T19:48:07.4689648Z ##[group]Getting Git version info
+2025-09-16T19:48:07.4691271Z Working directory is 'D:\a\Python_vs_Windows\Python_vs_Windows'
+2025-09-16T19:48:07.5883733Z [command]"C:\Program Files\Git\bin\git.exe" version
+2025-09-16T19:48:08.1001461Z git version 2.51.0.windows.1
+2025-09-16T19:48:08.1056162Z ##[endgroup]
+2025-09-16T19:48:08.1078288Z Temporarily overriding HOME='D:\a\_temp\46765d19-47fe-4e1a-b0ea-afb8bf950672' before making global git config changes
+2025-09-16T19:48:08.1080506Z Adding repository directory to the temporary git global config as a safe directory
+2025-09-16T19:48:08.1089333Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\Python_vs_Windows\Python_vs_Windows
+2025-09-16T19:48:08.1806728Z Deleting the contents of 'D:\a\Python_vs_Windows\Python_vs_Windows'
+2025-09-16T19:48:08.1813965Z ##[group]Initializing the repository
+2025-09-16T19:48:08.1823668Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\Python_vs_Windows\Python_vs_Windows
+2025-09-16T19:48:08.3101214Z Initialized empty Git repository in D:/a/Python_vs_Windows/Python_vs_Windows/.git/
+2025-09-16T19:48:08.3149332Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/mixmansoundude/Python_vs_Windows
+2025-09-16T19:48:08.3732359Z ##[endgroup]
+2025-09-16T19:48:08.3733658Z ##[group]Disabling automatic garbage collection
+2025-09-16T19:48:08.3735035Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+2025-09-16T19:48:08.4018852Z ##[endgroup]
+2025-09-16T19:48:08.4020717Z ##[group]Setting up auth
+2025-09-16T19:48:08.4032588Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2025-09-16T19:48:08.4354503Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2025-09-16T19:48:10.3173205Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2025-09-16T19:48:10.3465106Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2025-09-16T19:48:10.8988498Z [command]"C:\Program Files\Git\bin\git.exe" config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+2025-09-16T19:48:10.9289191Z ##[endgroup]
+2025-09-16T19:48:10.9289987Z ##[group]Fetching the repository
+2025-09-16T19:48:10.9304597Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +ecd7b74e68a74755c10c98f1dd1112d8c103c7c2:refs/remotes/pull/14/merge
+2025-09-16T19:48:12.3205532Z From https://github.com/mixmansoundude/Python_vs_Windows
+2025-09-16T19:48:12.3206496Z  * [new ref]         ecd7b74e68a74755c10c98f1dd1112d8c103c7c2 -> pull/14/merge
+2025-09-16T19:48:12.3587207Z ##[endgroup]
+2025-09-16T19:48:12.3590255Z ##[group]Determining the checkout info
+2025-09-16T19:48:12.3591098Z ##[endgroup]
+2025-09-16T19:48:12.3601980Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+2025-09-16T19:48:12.4109194Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+2025-09-16T19:48:12.4389469Z ##[group]Checking out the ref
+2025-09-16T19:48:12.4399301Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force refs/remotes/pull/14/merge
+2025-09-16T19:48:12.5264965Z Note: switching to 'refs/remotes/pull/14/merge'.
+2025-09-16T19:48:12.5265536Z
+2025-09-16T19:48:12.5265893Z You are in 'detached HEAD' state. You can look around, make experimental
+2025-09-16T19:48:12.5266637Z changes and commit them, and you can discard any commits you make in this
+2025-09-16T19:48:12.5267395Z state without impacting any branches by switching back to a branch.
+2025-09-16T19:48:12.5267833Z
+2025-09-16T19:48:12.5268152Z If you want to create a new branch to retain commits you create, you may
+2025-09-16T19:48:12.5268854Z do so (now or later) by using -c with the switch command. Example:
+2025-09-16T19:48:12.5269274Z
+2025-09-16T19:48:12.5269505Z   git switch -c <new-branch-name>
+2025-09-16T19:48:12.5269831Z
+2025-09-16T19:48:12.5269979Z Or undo this operation with:
+2025-09-16T19:48:12.5270227Z
+2025-09-16T19:48:12.5270352Z   git switch -
+2025-09-16T19:48:12.5270580Z
+2025-09-16T19:48:12.5270922Z Turn off this advice by setting config variable advice.detachedHead to false
+2025-09-16T19:48:12.5271403Z
+2025-09-16T19:48:12.5271936Z HEAD is now at ecd7b74 Merge 14a951d240daace9fbbbe185bb6cd9501c4b29f8 into ca0f7673e34f80b6555253974a33383422ba8163
+2025-09-16T19:48:12.5302939Z ##[endgroup]
+2025-09-16T19:48:12.5789637Z [command]"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+2025-09-16T19:48:12.6094978Z ecd7b74e68a74755c10c98f1dd1112d8c103c7c2
+2025-09-16T19:48:12.6477970Z ##[group]Run ver
+2025-09-16T19:48:12.6478291Z [36;1mver[0m
+2025-09-16T19:48:12.6479135Z [36;1mecho %COMSPEC%[0m
+2025-09-16T19:48:12.6479338Z [36;1mecho Workspace: %CD%[0m
+2025-09-16T19:48:12.6479552Z [36;1mgit rev-parse HEAD[0m
+2025-09-16T19:48:12.6479758Z [36;1mdir /b /s[0m
+2025-09-16T19:48:12.6514838Z shell: C:\Windows\system32\cmd.EXE /D /E:ON /V:OFF /S /C "CALL "{0}""
+2025-09-16T19:48:12.6515173Z ##[endgroup]
+2025-09-16T19:48:12.6673833Z
+2025-09-16T19:48:12.6674935Z Microsoft Windows [Version 10.0.26100.4946]
+2025-09-16T19:48:12.6678972Z C:\Windows\system32\cmd.exe
+2025-09-16T19:48:12.6683726Z Workspace: D:\a\Python_vs_Windows\Python_vs_Windows
+2025-09-16T19:48:12.6980758Z ecd7b74e68a74755c10c98f1dd1112d8c103c7c2
+2025-09-16T19:48:12.7019684Z D:\a\Python_vs_Windows\Python_vs_Windows\.github
+2025-09-16T19:48:12.7020247Z D:\a\Python_vs_Windows\Python_vs_Windows\AGENTS.md
+2025-09-16T19:48:12.7020918Z D:\a\Python_vs_Windows\Python_vs_Windows\CONTRIBUTING.md
+2025-09-16T19:48:12.7021454Z D:\a\Python_vs_Windows\Python_vs_Windows\LICENSE
+2025-09-16T19:48:12.7021970Z D:\a\Python_vs_Windows\Python_vs_Windows\README.md
+2025-09-16T19:48:12.7022508Z D:\a\Python_vs_Windows\Python_vs_Windows\reference_helpers
+2025-09-16T19:48:12.7023081Z D:\a\Python_vs_Windows\Python_vs_Windows\run_setup.bat
+2025-09-16T19:48:12.7023619Z D:\a\Python_vs_Windows\Python_vs_Windows\run_tests.bat
+2025-09-16T19:48:12.7024122Z D:\a\Python_vs_Windows\Python_vs_Windows\SECURITY.md
+2025-09-16T19:48:12.7024622Z D:\a\Python_vs_Windows\Python_vs_Windows\tests
+2025-09-16T19:48:12.7025136Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\config
+2025-09-16T19:48:12.7025689Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\config.worktree
+2025-09-16T19:48:12.7026263Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\description
+2025-09-16T19:48:12.7026801Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\FETCH_HEAD
+2025-09-16T19:48:12.7027300Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\HEAD
+2025-09-16T19:48:12.7027790Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks
+2025-09-16T19:48:12.7028287Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\index
+2025-09-16T19:48:12.7028748Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\info
+2025-09-16T19:48:12.7029222Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\logs
+2025-09-16T19:48:12.7029689Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects
+2025-09-16T19:48:12.7030303Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\refs
+2025-09-16T19:48:12.7030833Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\shallow
+2025-09-16T19:48:12.7031473Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\applypatch-msg.sample
+2025-09-16T19:48:12.7032188Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\commit-msg.sample
+2025-09-16T19:48:12.7032840Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\fsmonitor-watchman.sample
+2025-09-16T19:48:12.7033558Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\post-update.sample
+2025-09-16T19:48:12.7034274Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\pre-applypatch.sample
+2025-09-16T19:48:12.7034983Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\pre-commit.sample
+2025-09-16T19:48:12.7035708Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\pre-merge-commit.sample
+2025-09-16T19:48:12.7036839Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\pre-push.sample
+2025-09-16T19:48:12.7037608Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\pre-rebase.sample
+2025-09-16T19:48:12.7038341Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\pre-receive.sample
+2025-09-16T19:48:12.7039083Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\prepare-commit-msg.sample
+2025-09-16T19:48:12.7039858Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\push-to-checkout.sample
+2025-09-16T19:48:12.7040622Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\sendemail-validate.sample
+2025-09-16T19:48:12.7041352Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\hooks\update.sample
+2025-09-16T19:48:12.7044608Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\info\exclude
+2025-09-16T19:48:12.7045261Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\logs\HEAD
+2025-09-16T19:48:12.7046070Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\logs\refs
+2025-09-16T19:48:12.7046666Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\logs\refs\remotes
+2025-09-16T19:48:12.7047315Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\logs\refs\remotes\pull
+2025-09-16T19:48:12.7048012Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\logs\refs\remotes\pull\14
+2025-09-16T19:48:12.7050799Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\logs\refs\remotes\pull\14\merge
+2025-09-16T19:48:12.7052773Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\02
+2025-09-16T19:48:12.7053361Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\03
+2025-09-16T19:48:12.7053858Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\0d
+2025-09-16T19:48:12.7054159Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\14
+2025-09-16T19:48:12.7054483Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\27
+2025-09-16T19:48:12.7054857Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\2d
+2025-09-16T19:48:12.7055546Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\32
+2025-09-16T19:48:12.7055861Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\3a
+2025-09-16T19:48:12.7056157Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\42
+2025-09-16T19:48:12.7056460Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\4e
+2025-09-16T19:48:12.7056936Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\8e
+2025-09-16T19:48:12.7057254Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\94
+2025-09-16T19:48:12.7057540Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\98
+2025-09-16T19:48:12.7057837Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\a5
+2025-09-16T19:48:12.7058130Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\b7
+2025-09-16T19:48:12.7058419Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\e3
+2025-09-16T19:48:12.7058720Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\ea
+2025-09-16T19:48:12.7059073Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\ec
+2025-09-16T19:48:12.7059511Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\ee
+2025-09-16T19:48:12.7059799Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\fc
+2025-09-16T19:48:12.7060105Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\info
+2025-09-16T19:48:12.7060444Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\pack
+2025-09-16T19:48:12.7060883Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\02\6858ee4d94ac7d663b688771638dc1647c7a6a
+2025-09-16T19:48:12.7061594Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\03\cd7eea6847742b4ecfa94920125aac8cd301bc
+2025-09-16T19:48:12.7062133Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\0d\4aad0245aa296555b0e1d150c4e87df7d75134
+2025-09-16T19:48:12.7063158Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\14\79f4f1a2fb5697542edec46d3551054418edc5
+2025-09-16T19:48:12.7065151Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\27\0b83c51a056a6070dc52c63952a15e60d72e93
+2025-09-16T19:48:12.7066877Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\2d\43ec2712ca01c726df55855da05887e6b22b53
+2025-09-16T19:48:12.7068615Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\32\966ce4752d0521604ca0f8d370934857cc8e88
+2025-09-16T19:48:12.7070408Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\3a\9b712aae28f7983cb1d52b5da39e5ac0f306a7
+2025-09-16T19:48:12.7072116Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\42\9cb4ebd0faea9d9eadaf0ff5ed372f7fd2d106
+2025-09-16T19:48:12.7073874Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\4e\a0e8f7d258bb0ce03ae13f56b6b6e4efa68d7e
+2025-09-16T19:48:12.7075990Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\8e\66d4b18e8e6fc6508ae3eabf202f86df545c09
+2025-09-16T19:48:12.7077795Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\94\5f7f692e7abea8c599bf93a840837169b6f88b
+2025-09-16T19:48:12.7080164Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\98\f196fa56cf47acd32c4ce22dd1d5d39396d4f1
+2025-09-16T19:48:12.7081347Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\a5\0992de19d04a0ad405afdcf49ff1d5daf4c338
+2025-09-16T19:48:12.7081950Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\a5\7dee9f10cb9fdeee111b05d6604349b11e7489
+2025-09-16T19:48:12.7083380Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\b7\6541e0214069488dec205105596986839970a1
+2025-09-16T19:48:12.7085239Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\e3\6c69e984c4c6e6ba032b2b0a7f95403d1ff783
+2025-09-16T19:48:12.7087017Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\ea\5cd3366e96ce6c5c3916a1dd32897ea850188c
+2025-09-16T19:48:12.7088826Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\ec\d7b74e68a74755c10c98f1dd1112d8c103c7c2
+2025-09-16T19:48:12.7090607Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\ee\02f34e9ef8502e3aa1373f8fd232992bfb8d05
+2025-09-16T19:48:12.7092441Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\objects\fc\ca8f8f817ecbba295877d2bc3bf24af4d0cd3b
+2025-09-16T19:48:12.7096312Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\refs\heads
+2025-09-16T19:48:12.7096657Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\refs\remotes
+2025-09-16T19:48:12.7096968Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\refs\tags
+2025-09-16T19:48:12.7100014Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\refs\remotes\pull
+2025-09-16T19:48:12.7102488Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\refs\remotes\pull\14
+2025-09-16T19:48:12.7105043Z D:\a\Python_vs_Windows\Python_vs_Windows\.git\refs\remotes\pull\14\merge
+2025-09-16T19:48:12.7109073Z D:\a\Python_vs_Windows\Python_vs_Windows\.github\workflows
+2025-09-16T19:48:12.7111005Z D:\a\Python_vs_Windows\Python_vs_Windows\.github\workflows\batch-check.yml
+2025-09-16T19:48:12.7111434Z D:\a\Python_vs_Windows\Python_vs_Windows\.github\workflows\codeql.yml
+2025-09-16T19:48:12.7113863Z D:\a\Python_vs_Windows\Python_vs_Windows\reference_helpers\.gitkeep
+2025-09-16T19:48:12.7116744Z D:\a\Python_vs_Windows\Python_vs_Windows\tests\.gitkeep
+2025-09-16T19:48:12.7117277Z D:\a\Python_vs_Windows\Python_vs_Windows\tests\dynamic_tests.bat
+2025-09-16T19:48:12.7117643Z D:\a\Python_vs_Windows\Python_vs_Windows\tests\dynamic_tests.py
+2025-09-16T19:48:12.7117975Z D:\a\Python_vs_Windows\Python_vs_Windows\tests\harness.ps1
+2025-09-16T19:48:12.7118307Z D:\a\Python_vs_Windows\Python_vs_Windows\tests\README_TESTS.txt
+2025-09-16T19:48:12.7118643Z D:\a\Python_vs_Windows\Python_vs_Windows\tests\~extractor.py
+2025-09-16T19:48:12.7385383Z ##[group]Run Write-Host "HEAD: $env:GITHUB_SHA  Branch: $env:GITHUB_REF"
+2025-09-16T19:48:12.7385983Z [36;1mWrite-Host "HEAD: $env:GITHUB_SHA  Branch: $env:GITHUB_REF"[0m
+2025-09-16T19:48:12.7386335Z [36;1mif (Test-Path .\tests\harness.ps1) {[0m
+2025-09-16T19:48:12.7386583Z [36;1m  $i = 0[0m
+2025-09-16T19:48:12.7386898Z [36;1m  Get-Content .\tests\harness.ps1 | ForEach-Object { $i++; '{0,5}: {1}' -f $i, $_ }[0m
+2025-09-16T19:48:12.7387345Z [36;1m  # Quick non-ASCII sniff (gremlins cause parse weirdness)[0m
+2025-09-16T19:48:12.7387759Z [36;1m  $bytes = [System.IO.File]::ReadAllBytes('.\tests\harness.ps1')[0m
+2025-09-16T19:48:12.7388142Z [36;1m  $hi = $bytes | Where-Object { $_ -gt 127 } | Select-Object -First 10[0m
+2025-09-16T19:48:12.7388623Z [36;1m  if ($hi) { Write-Host "Non-ASCII bytes present: $($hi -join ', ')" } else { Write-Host "ASCII-only file." }[0m
+2025-09-16T19:48:12.7388998Z [36;1m} else {[0m
+2025-09-16T19:48:12.7389280Z [36;1m  Write-Error "tests\\harness.ps1 not found in workspace"[0m
+2025-09-16T19:48:12.7389559Z [36;1m}[0m
+2025-09-16T19:48:12.8641444Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2025-09-16T19:48:12.8641798Z ##[endgroup]
+2025-09-16T19:48:22.4573034Z HEAD: ecd7b74e68a74755c10c98f1dd1112d8c103c7c2  Branch: refs/pull/14/merge
+2025-09-16T19:48:22.7139636Z     1: # ASCII only
+2025-09-16T19:48:22.7241030Z     2: param()
+2025-09-16T19:48:22.7243895Z     3: $ErrorActionPreference = "Stop"
+2025-09-16T19:48:22.7246587Z     4: $OutDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+2025-09-16T19:48:22.7248931Z     5: $ProjDir = Split-Path -Parent $OutDir
+2025-09-16T19:48:22.7252324Z     6: $BatchPath = Join-Path $ProjDir "run_setup.bat"
+2025-09-16T19:48:22.7254828Z     7: $ResultsPath = Join-Path $OutDir "~test-results.ndjson"
+2025-09-16T19:48:22.7257517Z     8: $SummaryPath = Join-Path $OutDir "~test-summary.txt"
+2025-09-16T19:48:22.7259876Z     9: $ExtractDir = Join-Path $OutDir "extracted"
+2025-09-16T19:48:22.7262567Z    10: if (Test-Path $ResultsPath) { Remove-Item -Force $ResultsPath }
+2025-09-16T19:48:22.7265218Z    11: if (!(Test-Path $BatchPath)) { Write-Host "run_setup.bat not found next to run_tests.bat." -ForegroundColor Red; exit 2 }
+2025-09-16T19:48:22.7267567Z    12: New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
+2025-09-16T19:48:22.7269954Z    13: function Write-Result { param($Id,$Desc,[bool]$Pass,$Details)
+2025-09-16T19:48:22.7272812Z    14:   $rec = [ordered]@{ id=$Id; pass=$Pass; desc=$Desc; details=$Details }
+2025-09-16T19:48:22.7275013Z    15:   $json = $rec | ConvertTo-Json -Compress
+2025-09-16T19:48:22.7277619Z    16:   Add-Content -Path $ResultsPath -Value $json -Encoding Ascii
+2025-09-16T19:48:22.7280154Z    17: }
+2025-09-16T19:48:22.7282714Z    18: $Lines = Get-Content -LiteralPath $BatchPath -Encoding ASCII
+2025-09-16T19:48:22.7289299Z    19: $AllText = [string]::Join("`n", $Lines)
+2025-09-16T19:48:22.7289935Z    20: $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $BatchPath).Hash
+2025-09-16T19:48:22.7290988Z    21: Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
+2025-09-16T19:48:22.7293233Z    22: # Run the python extractor script and capture the list of emitted files
+2025-09-16T19:48:22.7295558Z    23: $emitted = python (Join-Path $OutDir "~extractor.py") $BatchPath
+2025-09-16T19:48:22.7297518Z    24: foreach ($file in $emitted) {
+2025-09-16T19:48:22.7299733Z    25:     if ($file) {
+2025-09-16T19:48:22.7302137Z    26:         Write-Result "emit.extract" "Extracted $($file) from run_setup.bat here-strings" $true @{ file=$file }
+2025-09-16T19:48:22.7304195Z    27:     }
+2025-09-16T19:48:22.7306413Z    28: }
+2025-09-16T19:48:22.7308848Z    29: $hasDisable = ($Lines | Select-String -SimpleMatch "setlocal DisableDelayedExpansion").Count -gt 0
+2025-09-16T19:48:22.7311528Z    30: Write-Result "batch.delayed.off" "DisableDelayedExpansion present" $hasDisable @{}
+2025-09-16T19:48:22.7315856Z    31: $hasEnable = ($Lines | Select-String -SimpleMatch "EnableDelayedExpansion").Count -gt 0
+2025-09-16T19:48:22.7316652Z    32: Write-Result "batch.delayed.enable_absent" "EnableDelayedExpansion not present" (-not $hasEnable) @{}
+2025-09-16T19:48:22.7319597Z    33: $bangHits = @()
+2025-09-16T19:48:22.7322313Z    34: $inHere = $false
+2025-09-16T19:48:22.7324728Z    35: for ($i=0; $i -lt $Lines.Count; $i++) {
+2025-09-16T19:48:22.7327094Z    36:   $ln = $Lines[$i]
+2025-09-16T19:48:22.7329490Z    37:   if (-not $inHere -and $ln -match "@'") { $inHere = $true; continue }
+2025-09-16T19:48:22.7332058Z    38:   if ($inHere) {
+2025-09-16T19:48:22.7334839Z    39:     if ($ln -match "'@") { $inHere = $false }
+2025-09-16T19:48:22.7337450Z    40:     continue
+2025-09-16T19:48:22.7339758Z    41:   }
+2025-09-16T19:48:22.7342369Z    42:   if ($ln -match '^\s*(rem|echo)\b') { continue }
+2025-09-16T19:48:22.7344964Z    43:   if ($ln -like "*!*") { $bangHits += ("line {0}: {1}" -f ($i+1), $ln.Trim()) }
+2025-09-16T19:48:22.7347109Z    44: }
+2025-09-16T19:48:22.7350449Z    45: Write-Result "batch.bang.scan" "No '!' in live batch code lines" ($bangHits.Count -eq 0) @{ hits=$bangHits }
+2025-09-16T19:48:22.7352436Z    46: $badConda = @()
+2025-09-16T19:48:22.7355047Z    47: for ($i=0; $i -lt $Lines.Count; $i++) {
+2025-09-16T19:48:22.7357381Z    48:   $ln = $Lines[$i]
+2025-09-16T19:48:22.7359904Z    49:   if ($ln -match "\bconda\.bat\b" -and $ln -match "\b(create|install)\b") {
+2025-09-16T19:48:22.7362212Z    50:     $window = ($ln + " " + ($(if ($i+1 -lt $Lines.Count) { $Lines[$i+1] } else { "" })) + " " + ($(if ($i+2 -lt $Lines.Count) { $Lines[$i+2] } else { "" })))
+2025-09-16T19:48:22.7364590Z    51:     if ($window -notmatch "--override-channels" -or $window -notmatch "-c\s+conda-forge") {
+2025-09-16T19:48:22.7366592Z    52:       $badConda += ("line {0}: {1}" -f ($i+1), $ln.Trim())
+2025-09-16T19:48:22.7368559Z    53:     }
+2025-09-16T19:48:22.7370897Z    54:   }
+2025-09-16T19:48:22.7373023Z    55: }
+2025-09-16T19:48:22.7375632Z    56: Write-Result "conda.channels" "All conda create/install use --override-channels -c conda-forge" ($badConda.Count -eq 0) @{ misses=$badConda }
+2025-09-16T19:48:22.7377819Z    57: $hasPipreqs = ($AllText -match "pipreqs\s+\.\s+--force.*--mode\s+compat.*--savepath\s+requirements\.auto\.txt")
+2025-09-16T19:48:22.7380095Z    58: Write-Result "pipreqs.flags" "pipreqs flags OK" $hasPipreqs @{}
+2025-09-16T19:48:22.7382195Z    59: $hasPyInst = ($AllText -match "pyinstaller\s+-y\s+--onefile\s+--name\s+""%ENVNAME%""")
+2025-09-16T19:48:22.7384255Z    60: Write-Result "pyi.onefile" "PyInstaller one-file named %ENVNAME%" $hasPyInst @{}
+2025-09-16T19:48:22.7386184Z    61: $hasRotate = ($AllText -match "Length -gt 10485760")
+2025-09-16T19:48:22.7388889Z    62: Write-Result "log.rotate" "Log rotation ~10MB present" $hasRotate @{}
+2025-09-16T19:48:22.7391128Z    63: $tildeCount = ([regex]::Matches($AllText, "~setup\.log|~reqs_conda\.txt|~pipreqs\.diff\.txt|~entry\.txt|~run\.err\.txt")).Count
+2025-09-16T19:48:22.7393385Z    64: Write-Result "tilde.naming" "Tilde prefix used for crashable artifacts" ($tildeCount -ge 3) @{ count=$tildeCount }
+2025-09-16T19:48:22.7395577Z    65: $visa = ($AllText -match "pyvisa" -or $AllText -match "import[ ]*visa")
+2025-09-16T19:48:22.7397677Z    66: Write-Result "visa.detect" "NI-VISA import detection present" $visa @{}
+2025-09-16T19:48:22.7399763Z    67: $need = @("~detect_python.py","~prep_requirements.py","~print_pyver.py","~find_entry.py")
+2025-09-16T19:48:22.7401696Z    68: $missing = $need | Where-Object { $_ -notin $emitted }
+2025-09-16T19:48:22.7403946Z    69: Write-Result "emit.helpers" "All helper scripts extractable from run_setup.bat" ($missing.Count -eq 0) @{ missing=$missing }
+2025-09-16T19:48:22.7406087Z    70: $dpPath = Join-Path $ExtractDir "~detect_python.py"
+2025-09-16T19:48:22.7408119Z    71: $dpHasCompat = $false
+2025-09-16T19:48:22.7411391Z    72: if (Test-Path $dpPath) { $dpHasCompat = ((Get-Content $dpPath -Encoding ASCII) | Select-String -SimpleMatch 'op == "~="').Count -gt 0 }
+2025-09-16T19:48:22.7412671Z    73: Write-Result "dp.compat" "detect_python handles ~= in requires-python" $dpHasCompat @{}
+2025-09-16T19:48:22.7414646Z    74: $prPath = Join-Path $ExtractDir "~prep_requirements.py"
+2025-09-16T19:48:22.7416586Z    75: $fmtOK = $false
+2025-09-16T19:48:22.7418626Z    76: if (Test-Path $prPath) {
+2025-09-16T19:48:22.7420773Z    77:   $txt = Get-Content $prPath -Encoding ASCII
+2025-09-16T19:48:22.7423055Z    78:   $fmtOK = ($txt | Select-String -SimpleMatch 'return [f"{name} " + ",".join(ops)] if ops else [name]').Count -gt 0
+2025-09-16T19:48:22.7425040Z    79: }
+2025-09-16T19:48:22.7427513Z    80: Write-Result "prep.multi.constraint" "prep_requirements formats multi-constraints as name >=X,<Y" $fmtOK @{}
+2025-09-16T19:48:22.7429853Z    81: $paren = 0; $imbalance = @()
+2025-09-16T19:48:22.7431797Z    82: for ($k=0; $k -lt $Lines.Count; $k++) {
+2025-09-16T19:48:22.7433807Z    83:   $ln = $Lines[$k]
+2025-09-16T19:48:22.7435864Z    84:   $open = ([regex]::Matches($ln, "\(")).Count
+2025-09-16T19:48:22.7437889Z    85:   $close = ([regex]::Matches($ln, "\)")).Count
+2025-09-16T19:48:22.7439853Z    86:   $paren += ($open - $close)
+2025-09-16T19:48:22.7442036Z    87:   if ($paren -lt 0) { $imbalance += ("line {0}: {1} (paren={2})" -f ($k+1), $ln.Trim(), $paren) }
+2025-09-16T19:48:22.7443892Z    88: }
+2025-09-16T19:48:22.7446310Z    89: Write-Result "batch.paren.balance" "No negative parenthesis balance while scanning" ($imbalance.Count -eq 0) @{ issues=$imbalance }
+2025-09-16T19:48:22.7449179Z    90: $envLine = ($AllText -match 'for %%I in \("%CD%"\) do set "ENVNAME=%%~nI"')
+2025-09-16T19:48:22.7451433Z    91: Write-Result "env.foldername" "Env name equals folder name" $envLine @{}
+2025-09-16T19:48:22.7453486Z    92: $instPathOk = ($AllText -match "%PUBLIC%\\Documents\\Miniconda3")
+2025-09-16T19:48:22.7455613Z    93: Write-Result "conda.path" "Miniconda path is %PUBLIC%\Documents\Miniconda3" $instPathOk @{}
+2025-09-16T19:48:22.7457746Z    94: $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
+2025-09-16T19:48:22.7459820Z    95: $fail = @($results | Where-Object { -not $_.pass })
+2025-09-16T19:48:22.7461844Z    96: $pass = @($results | Where-Object { $_.pass })
+2025-09-16T19:48:22.7463873Z    97: $sb = New-Object System.Text.StringBuilder
+2025-09-16T19:48:22.7465928Z    98: $null = $sb.AppendLine("=== Static Test Summary ===")
+2025-09-16T19:48:22.7468002Z    99: $null = $sb.AppendLine("run_setup.bat sha256: " + $sha.ToLower())
+2025-09-16T19:48:22.7470154Z   100: $null = $sb.AppendLine("PASS: " + $pass.Count + "    FAIL: " + $fail.Count)
+2025-09-16T19:48:22.7472619Z   101: if ($fail.Count -gt 0) { $null = $sb.AppendLine("---- Failures ----"); foreach ($f in $fail) { $null = $sb.AppendLine(("* " + $f.id + " :: " + $f.desc)) } }
+2025-09-16T19:48:22.7474597Z   102: $null = $sb.AppendLine("Artifacts:")
+2025-09-16T19:48:22.7476897Z   103: $null = $sb.AppendLine("  tests\~test-results.ndjson")
+2025-09-16T19:48:22.7478936Z   104: $null = $sb.AppendLine("  tests\extracted\ (helper sources)")
+2025-09-16T19:48:22.7481041Z   105: [IO.File]::WriteAllText($SummaryPath, $sb.ToString(), [Text.Encoding]::ASCII)
+2025-09-16T19:48:22.7483623Z   106: if ($fail.Count -gt 0) { exit 1 } else { exit 0 }
+2025-09-16T19:48:22.9333561Z ASCII-only file.
+2025-09-16T19:48:23.2984808Z ##[group]Run if (Test-Path .\tests\harness.ps1) {
+2025-09-16T19:48:23.2985227Z [36;1mif (Test-Path .\tests\harness.ps1) {[0m
+2025-09-16T19:48:23.2985513Z [36;1m  $tokens = $null; $errors = $null[0m
+2025-09-16T19:48:23.2986038Z [36;1m  [void][System.Management.Automation.Language.Parser]::ParseFile('.\tests\harness.ps1',[ref]$tokens,[ref]$errors)[0m
+2025-09-16T19:48:23.2986511Z [36;1m  if ($errors) {[0m
+2025-09-16T19:48:23.2986745Z [36;1m    Write-Host "::group::AST parse errors"[0m
+2025-09-16T19:48:23.2987005Z [36;1m    foreach ($e in $errors) {[0m
+2025-09-16T19:48:23.2987386Z [36;1m      "{0} at line {1}, col {2}" -f $e.Message, $e.Extent.StartLineNumber, $e.Extent.StartColumnNumber[0m
+2025-09-16T19:48:23.2987786Z [36;1m      $ctx = Get-Content .\tests\harness.ps1[0m
+2025-09-16T19:48:23.2988091Z [36;1m      $start = [Math]::Max($e.Extent.StartLineNumber-2,1)[0m
+2025-09-16T19:48:23.2988472Z [36;1m      $end   = [Math]::Min($e.Extent.StartLineNumber+2,$ctx.Count)[0m
+2025-09-16T19:48:23.2988820Z [36;1m      for ($n=$start; $n -le $end; $n++) { '{0,5}: {1}' -f $n, $ctx[$n-1] }[0m
+2025-09-16T19:48:23.2989090Z [36;1m      ""[0m
+2025-09-16T19:48:23.2989248Z [36;1m    }[0m
+2025-09-16T19:48:23.2989428Z [36;1m    Write-Host "::endgroup::"[0m
+2025-09-16T19:48:23.2989647Z [36;1m  } else {[0m
+2025-09-16T19:48:23.2989894Z [36;1m    Write-Host "No AST parse errors in tests\\harness.ps1"[0m
+2025-09-16T19:48:23.2990169Z [36;1m  }[0m
+2025-09-16T19:48:23.2990310Z [36;1m}[0m
+2025-09-16T19:48:23.3050330Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2025-09-16T19:48:23.3050654Z ##[endgroup]
+2025-09-16T19:48:23.7634422Z No AST parse errors in tests\\harness.ps1
+2025-09-16T19:48:23.8282272Z ##[group]Run setlocal EnableExtensions EnableDelayedExpansion
+2025-09-16T19:48:23.8282744Z [36;1msetlocal EnableExtensions EnableDelayedExpansion[0m
+2025-09-16T19:48:23.8283047Z [36;1mecho === BEGIN %CD%\%SCRIPT% ===[0m
+2025-09-16T19:48:23.8283272Z [36;1mecho on[0m
+2025-09-16T19:48:23.8283445Z [36;1mcall "%SCRIPT%"[0m
+2025-09-16T19:48:23.8283637Z [36;1mset RC=%errorlevel%[0m
+2025-09-16T19:48:23.8283833Z [36;1m@echo off[0m
+2025-09-16T19:48:23.8284197Z [36;1mexit /b %RC%[0m
+2025-09-16T19:48:23.8309149Z shell: C:\Windows\system32\cmd.EXE /D /E:ON /V:OFF /S /C "CALL "{0}""
+2025-09-16T19:48:23.8309454Z env:
+2025-09-16T19:48:23.8309614Z   SCRIPT: run_tests.bat
+2025-09-16T19:48:23.8309794Z ##[endgroup]
+2025-09-16T19:48:23.8446751Z === BEGIN D:\a\Python_vs_Windows\Python_vs_Windows\run_tests.bat ===
+2025-09-16T19:48:23.8453481Z
+2025-09-16T19:48:23.8453976Z D:\a\Python_vs_Windows\Python_vs_Windows>call "run_tests.bat"
+2025-09-16T19:48:23.8485355Z [Tue 09/16/2025 19:48:23.84] Running static harness...
+2025-09-16T19:48:25.5160823Z
+2025-09-16T19:48:25.5168813Z === Static Test Summary ===
+2025-09-16T19:48:25.5169556Z run_setup.bat sha256: 6876ddfdf68b23f101b8e72db90086a1dfb41713f4cb2cbbebd8935dc9d06cc2
+2025-09-16T19:48:25.5170192Z PASS: 13    FAIL: 3
+2025-09-16T19:48:25.5170448Z ---- Failures ----
+2025-09-16T19:48:25.5171155Z * emit.helpers :: All helper scripts extractable from run_setup.bat
+2025-09-16T19:48:25.5171829Z * dp.compat :: detect_python handles ~= in requires-python
+2025-09-16T19:48:25.5172576Z * prep.multi.constraint :: prep_requirements formats multi-constraints as name >=X,<Y
+2025-09-16T19:48:25.5173196Z Artifacts:
+2025-09-16T19:48:25.5173471Z   tests\~test-results.ndjson
+2025-09-16T19:48:25.5173841Z   tests\extracted\ (helper sources)
+2025-09-16T19:48:25.5197317Z
+2025-09-16T19:48:25.5201803Z Static test exit code: 1
+2025-09-16T19:48:25.5227026Z
+2025-09-16T19:48:25.5231578Z Optional dynamic tests (needs any Python): tests\dynamic_tests.bat
+2025-09-16T19:48:25.5234991Z To bootstrap the app, double-click: run_setup.bat
+2025-09-16T19:48:25.5289313Z ##[error]Process completed with exit code 1.
+2025-09-16T19:48:25.5439514Z ##[group]Run $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
+2025-09-16T19:48:25.5440057Z [36;1m$patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')[0m
+2025-09-16T19:48:25.5440376Z [36;1m$files = @()[0m
+2025-09-16T19:48:25.5440577Z [36;1mforeach($p in $patterns){[0m
+2025-09-16T19:48:25.5441000Z [36;1m  $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue[0m
+2025-09-16T19:48:25.5441380Z [36;1m}[0m
+2025-09-16T19:48:25.5441564Z [36;1m# Also sweep the tests tree explicitly[0m
+2025-09-16T19:48:25.5442032Z [36;1m$files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue[0m
+2025-09-16T19:48:25.5442552Z [36;1m$files = $files | Sort-Object LastWriteTime -Descending -Unique[0m
+2025-09-16T19:48:25.5442923Z [36;1mif(-not $files){ Write-Host "No log files found."; exit 0 }[0m
+2025-09-16T19:48:25.5443262Z [36;1mforeach($f in $files){[0m
+2025-09-16T19:48:25.5443505Z [36;1m  Write-Host "::group::LOG $($f.FullName)"[0m
+2025-09-16T19:48:25.5443791Z [36;1m  Get-Content -Path $f.FullName -Tail 400[0m
+2025-09-16T19:48:25.5444066Z [36;1m  Write-Host "::endgroup::"[0m
+2025-09-16T19:48:25.5444282Z [36;1m}[0m
+2025-09-16T19:48:25.5502294Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2025-09-16T19:48:25.5502631Z ##[endgroup]
+2025-09-16T19:48:25.9372114Z ##[group]LOG D:\a\Python_vs_Windows\Python_vs_Windows\tests\~test-summary.txt
+2025-09-16T19:48:25.9441596Z === Static Test Summary ===
+2025-09-16T19:48:25.9444513Z run_setup.bat sha256: 6876ddfdf68b23f101b8e72db90086a1dfb41713f4cb2cbbebd8935dc9d06cc2
+2025-09-16T19:48:25.9445878Z PASS: 13    FAIL: 3
+2025-09-16T19:48:25.9447530Z ---- Failures ----
+2025-09-16T19:48:25.9449655Z * emit.helpers :: All helper scripts extractable from run_setup.bat
+2025-09-16T19:48:25.9450681Z * dp.compat :: detect_python handles ~= in requires-python
+2025-09-16T19:48:25.9453055Z * prep.multi.constraint :: prep_requirements formats multi-constraints as name >=X,<Y
+2025-09-16T19:48:25.9453765Z Artifacts:
+2025-09-16T19:48:25.9455408Z   tests\~test-results.ndjson
+2025-09-16T19:48:25.9457525Z   tests\extracted\ (helper sources)
+2025-09-16T19:48:25.9464953Z ##[endgroup]
+2025-09-16T19:48:25.9473541Z ##[group]LOG D:\a\Python_vs_Windows\Python_vs_Windows\tests\~test-results.ndjson
+2025-09-16T19:48:25.9488431Z {"id":"file.hash","pass":true,"desc":"SHA256 of run_setup.bat","details":{"sha256":"6876DDFDF68B23F101B8E72DB90086A1DFB41713F4CB2CBBEBD8935DC9D06CC2"}}
+2025-09-16T19:48:25.9489950Z {"id":"batch.delayed.off","pass":true,"desc":"DisableDelayedExpansion present","details":{}}
+2025-09-16T19:48:25.9490939Z {"id":"batch.delayed.enable_absent","pass":true,"desc":"EnableDelayedExpansion not present","details":{}}
+2025-09-16T19:48:25.9492065Z {"id":"batch.bang.scan","pass":true,"desc":"No \u0027!\u0027 in live batch code lines","details":{"hits":[]}}
+2025-09-16T19:48:25.9494554Z {"id":"conda.channels","pass":true,"desc":"All conda create/install use --override-channels -c conda-forge","details":{"misses":[]}}
+2025-09-16T19:48:25.9495569Z {"id":"pipreqs.flags","pass":true,"desc":"pipreqs flags OK","details":{}}
+2025-09-16T19:48:25.9496572Z {"id":"pyi.onefile","pass":true,"desc":"PyInstaller one-file named %ENVNAME%","details":{}}
+2025-09-16T19:48:25.9498705Z {"id":"log.rotate","pass":true,"desc":"Log rotation ~10MB present","details":{}}
+2025-09-16T19:48:25.9500377Z {"id":"tilde.naming","pass":true,"desc":"Tilde prefix used for crashable artifacts","details":{"count":10}}
+2025-09-16T19:48:25.9501981Z {"id":"visa.detect","pass":true,"desc":"NI-VISA import detection present","details":{}}
+2025-09-16T19:48:25.9504188Z {"id":"emit.helpers","pass":false,"desc":"All helper scripts extractable from run_setup.bat","details":{"missing":["~detect_python.py","~prep_requirements.py","~print_pyver.py","~find_entry.py"]}}
+2025-09-16T19:48:25.9508151Z {"id":"dp.compat","pass":false,"desc":"detect_python handles ~= in requires-python","details":{}}
+2025-09-16T19:48:25.9510023Z {"id":"prep.multi.constraint","pass":false,"desc":"prep_requirements formats multi-constraints as name \u003e=X,\u003cY","details":{}}
+2025-09-16T19:48:25.9511386Z {"id":"batch.paren.balance","pass":true,"desc":"No negative parenthesis balance while scanning","details":{"issues":[]}}
+2025-09-16T19:48:25.9512418Z {"id":"env.foldername","pass":true,"desc":"Env name equals folder name","details":{}}
+2025-09-16T19:48:25.9513321Z {"id":"conda.path","pass":true,"desc":"Miniconda path is %PUBLIC%\\Documents\\Miniconda3","details":{}}
+2025-09-16T19:48:25.9517632Z ##[endgroup]
+2025-09-16T19:48:25.9523912Z ##[group]LOG D:\a\Python_vs_Windows\Python_vs_Windows\tests\README_TESTS.txt
+2025-09-16T19:48:25.9532871Z Test Harness (fast cycle)
+2025-09-16T19:48:25.9534190Z
+2025-09-16T19:48:25.9535823Z Place these files in your app folder:
+2025-09-16T19:48:25.9537278Z   run_setup.bat            (bootstrapper)
+2025-09-16T19:48:25.9538932Z   run_tests.bat            (static checks)
+2025-09-16T19:48:25.9540505Z   tests\*                  (harness + optional dynamic tests)
+2025-09-16T19:48:25.9541839Z
+2025-09-16T19:48:25.9543431Z Quick static pass (no Python needed):
+2025-09-16T19:48:25.9545066Z   1) Double-click run_tests.bat
+2025-09-16T19:48:25.9546588Z   2) Send me:
+2025-09-16T19:48:25.9548424Z      - tests\~test-summary.txt
+2025-09-16T19:48:25.9550132Z      - tests\~test-results.ndjson
+2025-09-16T19:48:25.9551848Z   3) If you've run run_setup.bat, also include ~setup.log
+2025-09-16T19:48:25.9553256Z
+2025-09-16T19:48:25.9555016Z Optional dynamic pass (needs any Python: Miniconda base, py.exe, or system python):
+2025-09-16T19:48:25.9556420Z   1) Double-click tests\dynamic_tests.bat
+2025-09-16T19:48:25.9557860Z   2) Send me: tests\~dynamic-results.ndjson
+2025-09-16T19:48:25.9559266Z
+2025-09-16T19:48:25.9560911Z Artifacts written:
+2025-09-16T19:48:25.9562374Z   tests\extracted\~*.py   (helpers extracted from run_setup.bat)
+2025-09-16T19:48:25.9563980Z   tests\~dynamic-run.log  (if dynamic tests run)
+2025-09-16T19:48:25.9568654Z ##[endgroup]
+2025-09-16T19:48:26.0250720Z ##[group]Run actions/upload-artifact@v4
+2025-09-16T19:48:26.0251047Z with:
+2025-09-16T19:48:26.0251254Z   name: test-logs
+2025-09-16T19:48:26.0251641Z   path: **/*.log
+**/*install_log*.txt
+**/~*.txt
+**/*.out
+**/*.ndjson
+tests/**/*.txt
+tests/**/*.log
+tests/**/*.ndjson
+
+2025-09-16T19:48:26.0252294Z   if-no-files-found: warn
+2025-09-16T19:48:26.0252490Z   retention-days: 14
+2025-09-16T19:48:26.0252675Z   compression-level: 6
+2025-09-16T19:48:26.0252863Z   overwrite: false
+2025-09-16T19:48:26.0253046Z   include-hidden-files: false
+2025-09-16T19:48:26.0253250Z ##[endgroup]
+2025-09-16T19:48:26.3210762Z With the provided path, there will be 3 files uploaded
+2025-09-16T19:48:26.3218312Z Artifact name is valid!
+2025-09-16T19:48:26.3221311Z Root directory input is valid!
+2025-09-16T19:48:26.6248069Z Beginning upload of artifact content to blob storage
+2025-09-16T19:48:26.9594712Z Uploaded bytes 1853
+2025-09-16T19:48:27.0437611Z Finished uploading artifact content to blob storage!
+2025-09-16T19:48:27.0441620Z SHA256 digest of uploaded artifact zip is 5632dc17e4e0c6e20d729201d917d6231b7308919f185c67f64b55e780d4671c
+2025-09-16T19:48:27.0443786Z Finalizing artifact upload
+2025-09-16T19:48:27.2138217Z Artifact test-logs.zip successfully finalized. Artifact ID 4027674754
+2025-09-16T19:48:27.2139028Z Artifact test-logs has been successfully uploaded! Final size is 1853 bytes. Artifact ID is 4027674754
+2025-09-16T19:48:27.2151930Z Artifact download URL: https://github.com/mixmansoundude/Python_vs_Windows/actions/runs/17777234949/artifacts/4027674754
+2025-09-16T19:48:27.2397291Z ##[group]Run $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+2025-09-16T19:48:27.2397959Z [36;1m$runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"[0m
+2025-09-16T19:48:27.2398533Z [36;1mAdd-Content -Path $env:GITHUB_STEP_SUMMARY -Value "# ❌ CI failure: Batch syntax/run check"[0m
+2025-09-16T19:48:27.2399051Z [36;1mAdd-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Run: $runUrl`n"[0m
+2025-09-16T19:48:27.2399465Z [36;1m$patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')[0m
+2025-09-16T19:48:27.2399779Z [36;1m$files = @()[0m
+2025-09-16T19:48:27.2400008Z [36;1mforeach ($p in $patterns) {[0m
+2025-09-16T19:48:27.2400433Z [36;1m  $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue[0m
+2025-09-16T19:48:27.2401196Z [36;1m}[0m
+2025-09-16T19:48:27.2401625Z [36;1m$files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue[0m
+2025-09-16T19:48:27.2402155Z [36;1m$files = $files | Sort-Object LastWriteTime -Descending -Unique[0m
+2025-09-16T19:48:27.2402481Z [36;1mif ($files -and $files.Count -gt 0) {[0m
+2025-09-16T19:48:27.2402787Z [36;1m  $files | Select-Object -First 4 | ForEach-Object {[0m
+2025-09-16T19:48:27.2403191Z [36;1m    Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Log: $($_.FullName)"[0m
+2025-09-16T19:48:27.2403610Z [36;1m    Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```text'[0m
+2025-09-16T19:48:27.2404149Z [36;1m    Get-Content -Path $_.FullName -Tail 120 | ForEach-Object { Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $_ }[0m
+2025-09-16T19:48:27.2404675Z [36;1m    Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'[0m
+2025-09-16T19:48:27.2404969Z [36;1m  }[0m
+2025-09-16T19:48:27.2405123Z [36;1m} else {[0m
+2025-09-16T19:48:27.2405397Z [36;1m  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No logs found_"[0m
+2025-09-16T19:48:27.2405718Z [36;1m}[0m
+2025-09-16T19:48:27.2465443Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2025-09-16T19:48:27.2465778Z ##[endgroup]
+2025-09-16T19:48:27.7422415Z ##[group]Run $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
+2025-09-16T19:48:27.7423003Z [36;1m$patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')[0m
+2025-09-16T19:48:27.7423323Z [36;1m$files = @()[0m
+2025-09-16T19:48:27.7423534Z [36;1mforeach ($p in $patterns) {[0m
+2025-09-16T19:48:27.7423950Z [36;1m  $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue[0m
+2025-09-16T19:48:27.7424914Z [36;1m}[0m
+2025-09-16T19:48:27.7425299Z [36;1m$files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue[0m
+2025-09-16T19:48:27.7425824Z [36;1m$files = $files | Sort-Object LastWriteTime -Descending -Unique[0m
+2025-09-16T19:48:27.7426121Z [36;1m[0m
+2025-09-16T19:48:27.7426283Z [36;1mfunction FirstNonEmpty {[0m
+2025-09-16T19:48:27.7426531Z [36;1m  param([object]$o,[string[]]$names)[0m
+2025-09-16T19:48:27.7426840Z [36;1m  foreach ($n in $names) {[0m
+2025-09-16T19:48:27.7427104Z [36;1m    if ($o.PSObject.Properties.Match($n)) {[0m
+2025-09-16T19:48:27.7427360Z [36;1m      $v = $o.$n[0m
+2025-09-16T19:48:27.7427602Z [36;1m      if ($null -ne $v -and "$v" -ne "") { return $v }[0m
+2025-09-16T19:48:27.7427850Z [36;1m    }[0m
+2025-09-16T19:48:27.7428012Z [36;1m  }[0m
+2025-09-16T19:48:27.7428177Z [36;1m  return ""[0m
+2025-09-16T19:48:27.7428341Z [36;1m}[0m
+2025-09-16T19:48:27.7428489Z [36;1m[0m
+2025-09-16T19:48:27.7428659Z [36;1mfunction IsFail {[0m
+2025-09-16T19:48:27.7428868Z [36;1m  param([object]$o)[0m
+2025-09-16T19:48:27.7429086Z [36;1m  if (-not $o) { return $false }[0m
+2025-09-16T19:48:27.7429327Z [36;1m  # Boolean styles[0m
+2025-09-16T19:48:27.7429607Z [36;1m  if ($o.ok -is [bool]       -and -not $o.ok)       { return $true }[0m
+2025-09-16T19:48:27.7429970Z [36;1m  if ($o.pass -is [bool]     -and -not $o.pass)     { return $true }[0m
+2025-09-16T19:48:27.7430337Z [36;1m  if ($o.passed -is [bool]   -and -not $o.passed)   { return $true }[0m
+2025-09-16T19:48:27.7430700Z [36;1m  if ($o.success -is [bool]  -and -not $o.success)  { return $true }[0m
+2025-09-16T19:48:27.7430996Z [36;1m  # String styles[0m
+2025-09-16T19:48:27.7431343Z [36;1m  $candidates = @($o.result,$o.status,$o.outcome,$o.level,$o.severity) | Where-Object { $_ }[0m
+2025-09-16T19:48:27.7431733Z [36;1m  foreach ($v in $candidates) {[0m
+2025-09-16T19:48:27.7432015Z [36;1m    if ($v -match '^(fail|error|fatal)$') { return $true }[0m
+2025-09-16T19:48:27.7432277Z [36;1m  }[0m
+2025-09-16T19:48:27.7432441Z [36;1m  return $false[0m
+2025-09-16T19:48:27.7432621Z [36;1m}[0m
+2025-09-16T19:48:27.7432761Z [36;1m[0m
+2025-09-16T19:48:27.7432915Z [36;1m$firstFail = $null[0m
+2025-09-16T19:48:27.7433105Z [36;1m[0m
+2025-09-16T19:48:27.7433361Z [36;1m# Prefer NDJSON (structured). Examine a few freshest files first.[0m
+2025-09-16T19:48:27.7433806Z [36;1m$nd = $files | Where-Object { $_.Extension -eq '.ndjson' } | Select-Object -First 8[0m
+2025-09-16T19:48:27.7434160Z [36;1mforeach ($f in $nd) {[0m
+2025-09-16T19:48:27.7434611Z [36;1m  $lineNo = 0[0m
+2025-09-16T19:48:27.7434908Z [36;1m  Get-Content -Path $f.FullName | ForEach-Object {[0m
+2025-09-16T19:48:27.7435190Z [36;1m    $lineNo++[0m
+2025-09-16T19:48:27.7435370Z [36;1m    $raw = $_[0m
+2025-09-16T19:48:27.7435655Z [36;1m    try { $o = $raw | ConvertFrom-Json -ErrorAction Stop } catch { $o = $null }[0m
+2025-09-16T19:48:27.7435987Z [36;1m    if (IsFail $o) {[0m
+2025-09-16T19:48:27.7436214Z [36;1m      $firstFail = [pscustomobject]@{[0m
+2025-09-16T19:48:27.7436469Z [36;1m        source  = $f.FullName[0m
+2025-09-16T19:48:27.7436751Z [36;1m        line    = FirstNonEmpty $o @('line','lineno','row')[0m
+2025-09-16T19:48:27.7437626Z [36;1m        file    = FirstNonEmpty $o @('file','path','target')[0m
+2025-09-16T19:48:27.7438046Z [36;1m        check   = FirstNonEmpty $o @('check','id','name','rule','test','key')[0m
+2025-09-16T19:48:27.7440328Z [36;1m        message = FirstNonEmpty $o @('message','msg','error','reason','note','details')[0m
+2025-09-16T19:48:27.7440756Z [36;1m      }[0m
+2025-09-16T19:48:27.7441017Z [36;1m      if (-not $firstFail.message) { $firstFail.message = $raw }[0m
+2025-09-16T19:48:27.7441396Z [36;1m      if (-not $firstFail.line)    { $firstFail.line    = $lineNo }[0m
+2025-09-16T19:48:27.7441682Z [36;1m      break[0m
+2025-09-16T19:48:27.7441853Z [36;1m    }[0m
+2025-09-16T19:48:27.7442156Z [36;1m  }[0m
+2025-09-16T19:48:27.7442330Z [36;1m  if ($firstFail) { break }[0m
+2025-09-16T19:48:27.7442541Z [36;1m}[0m
+2025-09-16T19:48:27.7442697Z [36;1m[0m
+2025-09-16T19:48:27.7442916Z [36;1m# Fallback: scan text tails for obvious error tokens[0m
+2025-09-16T19:48:27.7443203Z [36;1mif (-not $firstFail) {[0m
+2025-09-16T19:48:27.7443428Z [36;1m  foreach ($f in $files) {[0m
+2025-09-16T19:48:27.7443706Z [36;1m    $lines = Get-Content -Path $f.FullName -Tail 400[0m
+2025-09-16T19:48:27.7444256Z [36;1m    $m = $lines | Select-String -Pattern '^(ERROR|FAIL|Failed|Exception|Traceback|ModuleNotFoundError).*' | Select-Object -First 1[0m
+2025-09-16T19:48:27.7444746Z [36;1m    if ($m) {[0m
+2025-09-16T19:48:27.7444961Z [36;1m      $firstFail = [pscustomobject]@{[0m
+2025-09-16T19:48:27.7445216Z [36;1m        source  = $f.FullName[0m
+2025-09-16T19:48:27.7445438Z [36;1m        line    = ""[0m
+2025-09-16T19:48:27.7445632Z [36;1m        file    = ""[0m
+2025-09-16T19:48:27.7445829Z [36;1m        check   = ""[0m
+2025-09-16T19:48:27.7446024Z [36;1m        message = $m.Line[0m
+2025-09-16T19:48:27.7446224Z [36;1m      }[0m
+2025-09-16T19:48:27.7446386Z [36;1m      break[0m
+2025-09-16T19:48:27.7446557Z [36;1m    }[0m
+2025-09-16T19:48:27.7446715Z [36;1m  }[0m
+2025-09-16T19:48:27.7446864Z [36;1m}[0m
+2025-09-16T19:48:27.7447013Z [36;1m[0m
+2025-09-16T19:48:27.7447339Z [36;1mAdd-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (machine-readable)"[0m
+2025-09-16T19:48:27.7447732Z [36;1mif ($firstFail) {[0m
+2025-09-16T19:48:27.7448085Z [36;1m  ($firstFail | ConvertTo-Json -Compress) | Add-Content -Path $env:GITHUB_STEP_SUMMARY[0m
+2025-09-16T19:48:27.7448454Z [36;1m} else {[0m
+2025-09-16T19:48:27.7448768Z [36;1m  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No failure fingerprint found_"[0m
+2025-09-16T19:48:27.7449115Z [36;1m}[0m
+2025-09-16T19:48:27.7507124Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2025-09-16T19:48:27.7507454Z ##[endgroup]
+2025-09-16T19:48:28.3825264Z ##[group]Run actions/github-script@v7
+2025-09-16T19:48:28.3825584Z with:
+2025-09-16T19:48:28.3826135Z   github-token: ***
+2025-09-16T19:48:28.3828702Z   script: const fs = require('fs');
+const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+let body = fs.readFileSync(process.env.GITHUB_STEP_SUMMARY, 'utf8');
+body = `### ❌ CI failure: Batch syntax/run check\nRun: ${runUrl}\n\n` + body;
+
+// Find PR number (works for PR and push events)
+let prNumber = context.payload.pull_request?.number;
+if (!prNumber) {
+  const branch = context.ref.replace('refs/heads/', '');
+  const { data: prs } = await github.rest.pulls.list({
+    owner: context.repo.owner,
+    repo: context.repo.repo,
+    head: `${context.repo.owner}:${branch}`,
+    state: 'open'
+  });
+  if (prs.length) prNumber = prs[0].number;
+}
+
+if (prNumber) {
+  await github.rest.issues.createComment({
+    owner: context.repo.owner,
+    repo: context.repo.repo,
+    issue_number: prNumber,
+    body
+  });
+} else {
+  console.log('No open PR for this branch; skipping PR comment.');
+}
+
+2025-09-16T19:48:28.3831229Z   debug: false
+2025-09-16T19:48:28.3831418Z   user-agent: actions/github-script
+2025-09-16T19:48:28.3831656Z   result-encoding: json
+2025-09-16T19:48:28.3831847Z   retries: 0
+2025-09-16T19:48:28.3832049Z   retry-exempt-status-codes: 400,401,403,404,422
+2025-09-16T19:48:28.3832317Z ##[endgroup]
+2025-09-16T19:48:29.3554967Z Post job cleanup.
+2025-09-16T19:48:29.5807872Z [command]"C:\Program Files\Git\bin\git.exe" version
+2025-09-16T19:48:29.6071918Z git version 2.51.0.windows.1
+2025-09-16T19:48:29.6146057Z Temporarily overriding HOME='D:\a\_temp\0d515e5c-2db7-42f2-96b0-ad5d03c6d729' before making global git config changes
+2025-09-16T19:48:29.6146784Z Adding repository directory to the temporary git global config as a safe directory
+2025-09-16T19:48:29.6158121Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\Python_vs_Windows\Python_vs_Windows
+2025-09-16T19:48:29.6452098Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2025-09-16T19:48:29.6759987Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2025-09-16T19:48:30.1732502Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2025-09-16T19:48:30.1986327Z http.https://github.com/.extraheader
+2025-09-16T19:48:30.2030018Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+2025-09-16T19:48:30.2321204Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2025-09-16T19:48:30.7719443Z Cleaning up orphan processes
