@@ -1,0 +1,48 @@
+name: Codex PR syphon
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]   # PRs aimed at main
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  siphon:
+    if: |
+      contains(github.event.pull_request.user.login, 'codex') ||
+      contains(github.event.pull_request.title, 'Codex')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/ci-batch-tests
+          fetch-depth: 0
+
+      - name: Fetch PR head
+        run: |
+          git fetch origin pull/${{ github.event.pull_request.number }}/head:codex_tmp
+
+      - name: Merge or cherry-pick Codex commits
+        run: |
+          set -e
+          git config user.name  "codex-syphon-bot"
+          git config user.email "noreply@github.com"
+          # Try a no-ff merge first; fall back to cherry-pick on fast-forward refusal
+          if git merge --no-ff codex_tmp -m "syphon: merge Codex PR #${{ github.event.pull_request.number }} into fix/ci-batch-tests"; then
+            echo "Merged"
+          else
+            echo "Merge conflict, trying cherry-pick newest commit only"
+            git reset --hard HEAD
+            git cherry-pick --strategy=recursive -X theirs codex_tmp || (echo "Conflict—labeling PR and exiting"; exit 2)
+          fi
+          git push origin HEAD:fix/ci-batch-tests
+
+      - name: Close stray PR with note
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body "Syphoned commits into \`fix/ci-batch-tests\` (PR #11). Please continue pushing to that branch. This PR closed automatically."
+          gh pr close ${{ github.event.pull_request.number }}
