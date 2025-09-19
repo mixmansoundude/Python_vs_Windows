@@ -1,0 +1,98 @@
+name: Codex nudger (post-failure comment)
+
+on:
+  workflow_run:
+    workflows: ["Batch syntax/run check"]  # name of your CI workflow
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write   # needed to comment on PRs (timeline comments)
+  issues: write          # PR comments use Issues API
+
+jobs:
+  nudge:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.pull_requests[0].number }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install GH CLI (usually preinstalled)
+        run: gh --version
+
+      - name: Figure out context
+        id: ctx
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          echo "RUN_ID=$RUN_ID" >> $GITHUB_OUTPUT
+          echo "PR_NUMBER=${{ github.event.workflow_run.pull_requests[0].number }}" >> $GITHUB_OUTPUT
+          echo "BRANCH=${{ github.event.workflow_run.pull_requests[0].head.ref }}" >> $GITHUB_OUTPUT
+          echo "REPO=${{ github.repository }}" >> $GITHUB_OUTPUT
+
+      - name: Download/run log and compute snippet
+        id: logs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ steps.ctx.outputs.REPO }}
+          RUN_ID: ${{ steps.ctx.outputs.RUN_ID }}
+        run: |
+          # Get a human link for the run
+          RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          echo "RUN_URL=$RUN_URL" >> $GITHUB_OUTPUT
+
+          # Pull full logs to stdout
+          # (gh will handle zip + per-job fallback) 
+          set -e
+          gh run view "$RUN_ID" -R "$REPO" --log > run.log || true
+
+          # Find a crisp first-failure snippet
+          awk 'BEGIN{IGNORECASE=1}
+               /First failure \(machine-readable\):|AssertionError|^\s*ERROR\b|^##\[error\]|failed|exit code[[:space:]]+1/ { 
+                 start=NR-2; if(start<1) start=1; end=NR+8; 
+                 for(i=start;i<=end;i++) print lines[i]; 
+                 found=1; exit 
+               } 
+               { lines[NR]=$0 } 
+               END{ if(!found) print "Could not auto-fingerprint; see run link." }' run.log > snippet.txt
+
+          echo 'SNIPPET<<EOF' >> $GITHUB_OUTPUT
+          cat snippet.txt >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Comment to PR, tagging Codex
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ steps.ctx.outputs.REPO }}
+          PR: ${{ steps.ctx.outputs.PR_NUMBER }}
+          BRANCH: ${{ steps.ctx.outputs.BRANCH }}
+          RUN_URL: ${{ steps.logs.outputs.RUN_URL }}
+          SNIPPET: ${{ steps.logs.outputs.SNIPPET }}
+        run: |
+          cat > body.md <<'MD'
+@codex
+
+Source of truth: the latest PR run (Job Summary + failing step logs). Use CI only.
+
+First failure (snippet):
+SNIP
+Do the smallest possible change to fix exactly that failure:
+- file: <PATH/TO/FILE>
+- change: <one-line patch or tiny diff>
+
+Commit to branch `__BRANCH__` with message:
+fix(ci): address (#)
+
+Trigger CI by push, WAIT for the run to finish, then repeat this loop.
+Stop when green or when the same top error repeats twice.
+
+Links:
+- Latest run: __RUN__
+- All runs for __BRANCH__: https://github.com/__REPO__/actions?query=branch%3A__BRANCH_ESC__
+MD
+          sed -i "s|__SNIP__|$(printf '%s\n' "$SNIPPET" | sed 's/[&/\]/\\&/g')|" body.md
+          sed -i "s|__RUN__|$RUN_URL|g" body.md
+          sed -i "s|__BRANCH__|$BRANCH|g" body.md
+          sed -i "s|__REPO__|$REPO|g" body.md
+          sed -i "s|__BRANCH_ESC__|$(echo "$BRANCH" | sed 's|/|%2F|g')|g" body.md
+
+          gh pr comment "$PR" -R "$REPO" --body-file body.md
