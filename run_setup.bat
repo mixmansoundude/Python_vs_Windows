@@ -25,7 +25,7 @@ if not exist "%CONDA_BAT%" (
 )
 
 if not exist "%CONDA_BAT%" (
-  call :die "[ERROR] conda.bat not found after setup."
+  call :die "[ERROR] conda.bat not found after bootstrap."
 )
 
 rem === Channel policy (determinism & legal) ===================================
