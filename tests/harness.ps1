@@ -21,8 +21,14 @@ $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $BatchPath).Hash
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
 $psBlocks = [regex]::Matches($AllText, 'call\s+:write_ps_file\s+"[^"]*emit_[^"]*\.ps1"\s+"@''(?s).*?''@"') | ForEach-Object { $_.Value }
 function Extract-InnerHereString([string]$Block) {
-  $outFile = ([regex]::Match($Block, "\$OutFile\s*=\s*'([^']+\.py)'")).Groups[1].Value
-  $content = ([regex]::Match($Block, "\$Content\s*=\s*@'(?s)(.*?)'@")).Groups[1].Value
+  $outFile = ''
+  $content = ''
+  if ($Block -match '(?m)^\s*\$OutFile\s*=\s*''([^'']+\.py)''') {
+    $outFile = $Matches[1]
+  }
+  if ($Block -match '(?s)\$Content\s*=\s*@''(.*?)''@') {
+    $content = $Matches[1]
+  }
   return @{ OutFile=$outFile; Content=$content }
 }
 $emitted = @()
