@@ -130,7 +130,7 @@ jobs:
         shell: pwsh
         run: |
           $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "# ❌ CI failure: Batch syntax/run check"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "# â CI failure: Batch syntax/run check"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Run: $runUrl`n"
           $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
           $files = @()
@@ -150,7 +150,7 @@ jobs:
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No logs found_"
           }
 
-      - name: Extract first failure (machine-readable)
+      - name: Extract first failure (machine-readable + snippet)
         if: failure()
         shell: pwsh
         run: |
@@ -190,6 +190,7 @@ jobs:
           }
 
           $firstFail = $null
+          $snippet = ""
 
           # Prefer NDJSON (structured). Examine a few freshest files first.
           $nd = $files | Where-Object { $_.Extension -eq '.ndjson' } | Select-Object -First 8
@@ -209,6 +210,7 @@ jobs:
                 }
                 if (-not $firstFail.message) { $firstFail.message = $raw }
                 if (-not $firstFail.line)    { $firstFail.line    = $lineNo }
+                $snippet = (Get-Content -Path $f.FullName | Select-Object -Skip ([Math]::Max(0,$lineNo-3)) | Select-Object -First 10) -join "`n"
                 break
               }
             }
@@ -228,29 +230,46 @@ jobs:
                   check   = ""
                   message = $m.Line
                 }
+                $idx = ($lines | ForEach-Object { $_ }) .IndexOf($m.Line)
+                $start = [Math]::Max(0,$idx-2); $count = 10
+                $snippet = ($lines | Select-Object -Skip $start -First $count) -join "`n"
                 break
               }
             }
           }
 
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (machine-readable)"
-          if ($firstFail) {
-            ($firstFail | ConvertTo-Json -Compress) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-          } else {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No failure fingerprint found_"
+          if (-not $firstFail) {
+            $firstFail = [pscustomobject]@{ source=""; line=""; file=""; check=""; message="(No failure fingerprint found. See run link.)" }
+            $snippet = "Could not auto-fingerprint; inspect the run page."
           }
 
+          # Write machine-readable JSON and snippet to files for the next step
+          ($firstFail | ConvertTo-Json -Compress) | Out-File -FilePath first_failure.json -Encoding utf8 -NoNewline
+          $snippet | Out-File -FilePath snippet.txt -Encoding utf8 -NoNewline
 
-      - name: Comment failure summary on PR
+          # Also mirror into the Step Summary for human eyeballs
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (machine-readable)"
+          ($firstFail | ConvertTo-Json -Compress) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (snippet)"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```text'
+          Get-Content -Path snippet.txt | ForEach-Object { Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $_ }
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
+
+      - name: Comment failure summary on PR (with @codex)
         if: failure()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
+            const path = require('path');
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-            let body = fs.readFileSync(process.env.GITHUB_STEP_SUMMARY, 'utf8');
-            body = `### ❌ CI failure: Batch syntax/run check\nRun: ${runUrl}\n\n` + body;
+            const repoUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}`;
+
+            // Read summary + synthesized files
+            let summary = fs.existsSync(process.env.GITHUB_STEP_SUMMARY) ? fs.readFileSync(process.env.GITHUB_STEP_SUMMARY, 'utf8') : '';
+            let snippet = fs.existsSync('snippet.txt') ? fs.readFileSync('snippet.txt','utf8') : 'Could not auto-fingerprint; see run link.';
+            let jf = fs.existsSync('first_failure.json') ? fs.readFileSync('first_failure.json','utf8') : '{"id":"first_failure","pass":false,"desc":"No fingerprint"}';
 
             // Find PR number (works for PR and push events)
             let prNumber = context.payload.pull_request?.number;
@@ -265,13 +284,45 @@ jobs:
               if (prs.length) prNumber = prs[0].number;
             }
 
-            if (prNumber) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body
-              });
-            } else {
+            if (!prNumber) {
               console.log('No open PR for this branch; skipping PR comment.');
+              return;
             }
+
+            const branch = context.payload.pull_request?.head?.ref ?? context.ref.replace('refs/heads/','');
+            const runsUrl = `${repoUrl}/actions?query=branch%3A${encodeURIComponent(branch)}`;
+
+            const body = [
+              '### â CI failure: Batch syntax/run check',
+              `Run: ${runUrl}`,
+              '',
+              '@codex',
+              '',
+              '**Top failure from the latest CI on this PR** (source of truth: Job Summary + failing step logs). Fix **only the first failing item** with the smallest possible change (file path + exact diff/one-line replacement).',
+              '',
+              'First failure (snippet):',
+              '```',
+              snippet,
+              '```',
+              '',
+              'Machine-readable:',
+              '```json',
+              jf,
+              '```',
+              '',
+              'Please commit directly to branch `' + branch + '` with:',
+              '```\nfix(ci): address (#)\n```',
+              '',
+              'WAIT for CI to finish; if it still fails, repeat on the new top failure. **Stop** if the same top error repeats twice.',
+              '',
+              'Links:',
+              `â¢ Run: ${runUrl}`,
+              `â¢ All runs for this branch: ${runsUrl}`
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body
+            });
