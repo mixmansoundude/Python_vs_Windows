@@ -130,7 +130,7 @@ jobs:
         shell: pwsh
         run: |
           $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "# â CI failure: Batch syntax/run check"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "#  ❌ CI failure: Batch syntax/run check"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Run: $runUrl`n"
           $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
           $files = @()
@@ -293,7 +293,7 @@ jobs:
             const runsUrl = `${repoUrl}/actions?query=branch%3A${encodeURIComponent(branch)}`;
 
             const body = [
-              '### â CI failure: Batch syntax/run check',
+              '### ❌ CI failure: Batch syntax/run check',
               `Run: ${runUrl}`,
               '',
               '@codex',
@@ -316,8 +316,8 @@ jobs:
               'WAIT for CI to finish; if it still fails, repeat on the new top failure. **Stop** if the same top error repeats twice.',
               '',
               'Links:',
-              `â¢ Run: ${runUrl}`,
-              `â¢ All runs for this branch: ${runsUrl}`
+              `- Run: ${runUrl}`,
+              `- All runs for this branch: ${runsUrl}`
             ].join('\n');
 
             await github.rest.issues.createComment({
