@@ -9,6 +9,9 @@ $SummaryPath = Join-Path $OutDir "~test-summary.txt"
 $ExtractDir = Join-Path $OutDir "extracted"
 if (Test-Path $ResultsPath) { Remove-Item -Force $ResultsPath }
 if (!(Test-Path $BatchPath)) { Write-Host "run_setup.bat not found next to run_tests.bat." -ForegroundColor Red; exit 2 }
+if (-not (Test-Path ".\.ci_bootstrap_marker")) {
+  throw "CI bootstrap marker not found. Did run_setup.bat run?"
+}
 New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
 function Write-Result { param($Id,$Desc,[bool]$Pass,$Details)
   $rec = [ordered]@{ id=$Id; pass=$Pass; desc=$Desc; details=$Details }
