@@ -21,9 +21,6 @@ jobs:
       group: batch-check-${{ github.ref }}
       cancel-in-progress: true
 
-    env:
-      CODEX_TRIGGER_PAT: ${{ secrets.CODEX_TRIGGER_PAT }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -94,7 +91,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          Write-Host "PWD:"
+          Get-Location
+          Write-Host "DIR (tests):"
+          if (Test-Path .\tests) { Get-ChildItem .\tests -Force -Name } else { Write-Host "tests folder not found" }
+
           $ran = $false
+
           if (Test-Path .\tests\dynamic_tests.bat) {
             Write-Host "Running tests\dynamic_tests.bat"
             cmd /c tests\dynamic_tests.bat *>&1 | Tee-Object -FilePath dynamic_tests.log
@@ -102,12 +105,24 @@ jobs:
             $ran = $true
           }
           elseif (Test-Path .\tests\dynamic_tests.py) {
-            Write-Host "Running tests\dynamic_tests.py"
-            python -u tests\dynamic_tests.py *>&1 | Tee-Object -FilePath dynamic_tests.log
-            if ($LASTEXITCODE -ne 0) { throw "dynamic_tests.py failed with exit code $LASTEXITCODE" }
-            $ran = $true
+            # Resolve Python
+            $pyCmd = $null
+            if (Get-Command python -ErrorAction SilentlyContinue) { $pyCmd = 'python' }
+            elseif (Get-Command py -ErrorAction SilentlyContinue) { $pyCmd = 'py -3' }
+
+            if (-not $pyCmd) {
+              Write-Host "Python not found on PATH; cannot run dynamic_tests.py"
+            } else {
+              Write-Host "Running tests\dynamic_tests.py via: $pyCmd"
+              cmd /c $pyCmd + ' -u tests\dynamic_tests.py' *>&1 | Tee-Object -FilePath dynamic_tests.log
+              if ($LASTEXITCODE -ne 0) { throw "dynamic_tests.py failed with exit code $LASTEXITCODE" }
+              $ran = $true
+            }
           }
-          if (-not $ran) { Write-Host "No dynamic tests found; skipping." }
+
+          if (-not $ran) {
+            Write-Host "No dynamic tests found; skipping."
+          }
 
       - name: Run tests
         shell: cmd
@@ -383,7 +398,7 @@ jobs:
           [System.IO.File]::WriteAllText('codex_body.txt', ($commentLines -join "`n"), [System.Text.Encoding]::ASCII)
 
       - name: Distribute codex failure summary (gh with PAT)
-        if: failure() && env.CODEX_TRIGGER_PAT != ''
+        if: failure() && secrets.CODEX_TRIGGER_PAT != ''
         id: codex_via_gh
         shell: pwsh
         env:
@@ -438,7 +453,7 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=true'
 
       - name: Distribute codex failure summary (GITHUB_TOKEN fallback)
-        if: failure() && env.CODEX_TRIGGER_PAT == ''
+        if: failure() && secrets.CODEX_TRIGGER_PAT == ''
         id: codex_fallback
         uses: actions/github-script@v7
         with:
