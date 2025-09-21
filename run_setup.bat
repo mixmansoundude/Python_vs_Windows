@@ -39,16 +39,15 @@ set "ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%"
 call :log "[INFO] Workspace: %CD%"
 call :log "[INFO] Env name: %ENVNAME%"
 call :log "[INFO] Log: %LOG%"
-call :write_ps_file "~emit_detect_python.ps1" "@'
-$OutFile='~detect_python.py'
-$Content=@'
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Set-Content -Path '~detect_python.py' -Encoding ASCII -Value @'
 import os, re, sys
 CD = os.getcwd()
 rt_path = os.path.join(CD, "runtime.txt")
 pp_path = os.path.join(CD, "pyproject.toml")
 def rt_spec(text):
     m = re.search(r'(?:python[-=])?\s*([0-9]+(?:\.[0-9]+){0,2})', text)
-    if not m: 
+    if not m:
         return ""
     v = m.group(1)
     parts = v.split(".")
@@ -57,7 +56,7 @@ def rt_spec(text):
 def pep440_to_conda(specs):
     out = []
     for raw in re.split(r"\s*,\s*", specs.strip()):
-        if not raw: 
+        if not raw:
             continue
         m = re.match(r"(>=|>|<=|<|==|~=)\s*([0-9]+(?:\.[0-9]+){0,2})\s*$", raw)
         if not m:
@@ -89,10 +88,8 @@ def main():
     print("")
 if __name__ == "__main__":
     main()
-'@
-[IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"'
-powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_detect_python.ps1" >> "%LOG%" 2>&1
+'@" >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] Could not write ~detect_python.py"
 if exist "%CONDA_BASE_PY%" (
   "%CONDA_BASE_PY%" "~detect_python.py" > "~py_spec.txt" 2>> "%LOG%"
 ) else (
@@ -106,33 +103,25 @@ if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% --override-channels -c conda-forge >> "%LOG%" 2>&1
 )
 if errorlevel 1 call :die "[ERROR] conda env create failed."
-call :write_ps_file "~emit_pyver.ps1" "@'
-$OutFile='~print_pyver.py'
-$Content=@'
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Set-Content -Path '~print_pyver.py' -Encoding ASCII -Value @'
 import sys
 print(f"python-{sys.version_info[0]}.{sys.version_info[1]}")
-'@
-[IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"'
-powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_pyver.ps1" >> "%LOG%" 2>&1
+'@" >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] Could not write ~print_pyver.py"
 call "%CONDA_BAT%" run -n "%ENVNAME%" python "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
 for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
 if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
-call :write_ps_file "~emit_env_condarc.ps1" "@'
-$OutFile = '%ENV_PATH%\.condarc'
-$Content = @'
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "New-Item -ItemType Directory -Force -Path (Split-Path '%ENV_PATH%\.condarc') | Out-Null; Set-Content -Path '%ENV_PATH%\.condarc' -Encoding ASCII -Value @'
 channels:
   - conda-forge
 channel_priority: strict
 show_channel_urls: true
-'@
-New-Item -ItemType Directory -Force -Path (Split-Path $OutFile) | Out-Null
-[IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"'
-powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_env_condarc.ps1" >> "%LOG%" 2>&1
-call :write_ps_file "~emit_prep_requirements.ps1" "@'
-$OutFile='~prep_requirements.py'
-$Content=@'
+'@" >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] Could not write %ENV_PATH%\.condarc"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Set-Content -Path '~prep_requirements.py' -Encoding ASCII -Value @'
 import os, re, sys
 INP = sys.argv[1] if len(sys.argv)>1 else "requirements.txt"
 OUT_CONDA = "~reqs_conda.txt"
@@ -199,10 +188,8 @@ def main():
     sys.stdout.write("OK\n")
 if __name__=="__main__":
     main()
-'@
-[IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"'
-powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_prep_requirements.ps1" >> "%LOG%" 2>&1
+'@" >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] Could not write ~prep_requirements.py"
 set "REQ=requirements.txt"
 if exist "%REQ%" ( for %%S in ("%REQ%") do if %%~zS EQU 0 del "%REQ%" )
 call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q -U pip pipreqs >> "%LOG%" 2>&1
@@ -221,9 +208,8 @@ if exist "requirements.txt" (
   call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -r requirements.txt >> "%LOG%" 2>&1
 )
 rem Detect pyvisa/visa usage so harness sees NI-VISA requirements
-call :write_ps_file "~emit_detect_visa.ps1" "@'
-$OutFile='~detect_visa.py'
-$Content=@'
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Set-Content -Path '~detect_visa.py' -Encoding ASCII -Value @'
 import os, re, sys
 ROOT = os.getcwd()
 PATTERNS = [
@@ -250,10 +236,8 @@ def main():
     sys.stdout.write('1' if needs_visa() else '0')
 if __name__ == '__main__':
     main()
-'@
-[IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"'
-powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_detect_visa.ps1" >> "%LOG%" 2>&1
+'@" >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] Could not write ~detect_visa.py"
 set "NEED_VISA=0"
 if exist "~visa.flag" del "~visa.flag"
 call "%CONDA_BAT%" run -n "%ENVNAME%" python "~detect_visa.py" > "~visa.flag" 2>> "%LOG%"
@@ -264,10 +248,8 @@ if "%NEED_VISA%"=="1" (
   call :log "[INFO] No pyvisa/visa imports detected."
 )
 if exist "~visa.flag" del "~visa.flag"
-call :write_ps_file "~emit_entry_finder.ps1" "@'
-$OutTxt='~entry.txt'
-$OutFile='~find_entry.py'
-$Content=@'
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Set-Content -Path '~find_entry.py' -Encoding ASCII -Value @'
 import os
 def find_entry():
     files = [f for f in os.listdir('.') if f.endswith('.py') and not f.startswith('~')]
@@ -275,22 +257,17 @@ def find_entry():
         try:
             with open(f,'r',encoding='utf-8',errors='ignore') as h:
                 t = h.read()
-            if \"if __name__ == '__main__'\" in t:
+            if "if __name__ == '__main__'" in t:
                 return f
         except Exception:
             pass
-    return files[0] if files else \"\"
+    return files[0] if files else ""
 print(find_entry())
-'@
-[IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-$pyExe = '%CONDA_BASE_PY%'
-if (Test-Path $pyExe) {
-  & $pyExe $OutFile | Out-File -Encoding ASCII -NoNewline $OutTxt
-} else {
-  & '%CONDA_BAT%' run -n '%ENVNAME%' python $OutFile | Out-File -Encoding ASCII -NoNewline $OutTxt
-}
-'@"'
-powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_entry_finder.ps1" >> "%LOG%" 2>&1
+'@" >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] Could not write ~find_entry.py"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$pyExe = '%CONDA_BASE_PY%'; if (Test-Path $pyExe) { $out = & $pyExe '~find_entry.py' } else { $out = & '%CONDA_BAT%' run -n '%ENVNAME%' python '~find_entry.py' } if ($out) { Set-Content -Path '~entry.txt' -Value $out -Encoding ASCII -NoNewline } else { Set-Content -Path '~entry.txt' -Value '' -Encoding ASCII }" >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] Could not determine entry point"
 for /f "usebackq delims=" %%M in ("~entry.txt") do set "ENTRY=%%M"
 if "%ENTRY%"=="" ( call :die "[ERROR] Could not find an entry script." )
 call "%CONDA_BAT%" run -n "%ENVNAME%" python "%ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
@@ -311,12 +288,5 @@ echo %date% %time% %MSG%
 exit /b 1
 :rotate_log
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-"if(Test-Path '%LOG%'){if((Get-Item '%LOG%').Length -gt 10485760){Move-Item -Force '%LOG%' '%LOGPREV%'}}" >nul 2>&1
-exit /b 0
-:write_ps_file
-set "PSFILE=%~1"
-set "PAYLOAD=%~2"
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-"$c=%PAYLOAD%; [IO.File]::WriteAllText('%PSFILE%',$c,[Text.Encoding]::ASCII)" >nul 2>&1
-if errorlevel 1 ( call :die "[ERROR] Could not write %PSFILE%" )
+"if (Test-Path '%LOG%') { if ((Get-Item '%LOG%').Length -gt 10485760) { Move-Item -Force '%LOG%' '%LOGPREV%' } }" | Out-Null
 exit /b 0
