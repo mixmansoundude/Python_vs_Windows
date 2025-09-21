@@ -3,11 +3,10 @@ name: Batch syntax/run check
 on:
   workflow_dispatch: {}
   push:
-    branches: ['**']      # run on every branch
+    branches: ['**']
   pull_request:
-    branches: ['**']      # run for PRs targeting any branch
+    branches: ['**']
 
-# Tight, least-privileged perms for the workflow GITHUB_TOKEN
 permissions:
   contents: read
   actions: read
@@ -18,7 +17,6 @@ jobs:
   check:
     runs-on: windows-latest
 
-    # Optional noise reducer: cancel older runs for the same ref
     concurrency:
       group: batch-check-${{ github.ref }}
       cancel-in-progress: true
@@ -35,7 +33,6 @@ jobs:
           git rev-parse HEAD
           dir /b /s
 
-      # ===== New diagnostics: show harness with line numbers =====
       - name: Debug to show harness with line numbers
         if: always()
         shell: pwsh
@@ -44,15 +41,13 @@ jobs:
           if (Test-Path .\tests\harness.ps1) {
             $i = 0
             Get-Content .\tests\harness.ps1 | ForEach-Object { $i++; '{0,5}: {1}' -f $i, $_ }
-            # Quick non-ASCII sniff (gremlins cause parse weirdness)
             $bytes = [System.IO.File]::ReadAllBytes('.\tests\harness.ps1')
             $hi = $bytes | Where-Object { $_ -gt 127 } | Select-Object -First 10
             if ($hi) { Write-Host "Non-ASCII bytes present: $($hi -join ', ')" } else { Write-Host "ASCII-only file." }
           } else {
-            Write-Error "tests\\harness.ps1 not found in workspace"
+            Write-Error "tests\harness.ps1 not found in workspace"
           }
 
-      # ===== New diagnostics: static parse via PowerShell AST =====
       - name: Static-parse harness (AST)
         if: always()
         shell: pwsh
@@ -72,7 +67,7 @@ jobs:
               }
               Write-Host "::endgroup::"
             } else {
-              Write-Host "No AST parse errors in tests\\harness.ps1"
+              Write-Host "No AST parse errors in tests\harness.ps1"
             }
           }
 
@@ -89,7 +84,7 @@ jobs:
           @echo off
           exit /b %RC%
 
-      - name: Find & print test logs (tail)
+      - name: Find and print test logs (tail)
         if: always()
         shell: pwsh
         run: |
@@ -98,7 +93,6 @@ jobs:
           foreach($p in $patterns){
             $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue
           }
-          # Also sweep the tests tree explicitly
           $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
           $files = $files | Sort-Object LastWriteTime -Descending -Unique
           if(-not $files){ Write-Host "No log files found."; exit 0 }
@@ -130,7 +124,7 @@ jobs:
         shell: pwsh
         run: |
           $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "# ❌ CI failure: Batch syntax/run check"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "# CI failure: Batch syntax/run check"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Run: $runUrl`n"
           $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
           $files = @()
@@ -150,7 +144,7 @@ jobs:
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No logs found_"
           }
 
-      - name: Extract first failure (machine-readable)
+      - name: Extract first failure (machine-readable and snippet)
         if: failure()
         shell: pwsh
         run: |
@@ -176,12 +170,10 @@ jobs:
           function IsFail {
             param([object]$o)
             if (-not $o) { return $false }
-            # Boolean styles
             if ($o.ok -is [bool]       -and -not $o.ok)       { return $true }
             if ($o.pass -is [bool]     -and -not $o.pass)     { return $true }
             if ($o.passed -is [bool]   -and -not $o.passed)   { return $true }
             if ($o.success -is [bool]  -and -not $o.success)  { return $true }
-            # String styles
             $candidates = @($o.result,$o.status,$o.outcome,$o.level,$o.severity) | Where-Object { $_ }
             foreach ($v in $candidates) {
               if ($v -match '^(fail|error|fatal)$') { return $true }
@@ -190,8 +182,8 @@ jobs:
           }
 
           $firstFail = $null
+          $snippet = ""
 
-          # Prefer NDJSON (structured). Examine a few freshest files first.
           $nd = $files | Where-Object { $_.Extension -eq '.ndjson' } | Select-Object -First 8
           foreach ($f in $nd) {
             $lineNo = 0
@@ -209,13 +201,13 @@ jobs:
                 }
                 if (-not $firstFail.message) { $firstFail.message = $raw }
                 if (-not $firstFail.line)    { $firstFail.line    = $lineNo }
+                $snippet = (Get-Content -Path $f.FullName | Select-Object -Skip ([Math]::Max(0,$lineNo-3)) | Select-Object -First 10) -join "`n"
                 break
               }
             }
             if ($firstFail) { break }
           }
 
-          # Fallback: scan text tails for obvious error tokens
           if (-not $firstFail) {
             foreach ($f in $files) {
               $lines = Get-Content -Path $f.FullName -Tail 400
@@ -228,20 +220,30 @@ jobs:
                   check   = ""
                   message = $m.Line
                 }
+                $idx = ($lines | ForEach-Object { $_ }) .IndexOf($m.Line)
+                $start = [Math]::Max(0,$idx-2); $count = 10
+                $snippet = ($lines | Select-Object -Skip $start -First $count) -join "`n"
                 break
               }
             }
           }
 
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (machine-readable)"
-          if ($firstFail) {
-            ($firstFail | ConvertTo-Json -Compress) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-          } else {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No failure fingerprint found_"
+          if (-not $firstFail) {
+            $firstFail = [pscustomobject]@{ source=""; line=""; file=""; check=""; message="(No failure fingerprint found. See run link.)" }
+            $snippet = "Could not auto-fingerprint; inspect the run page."
           }
 
+          ($firstFail | ConvertTo-Json -Compress) | Out-File -FilePath first_failure.json -Encoding utf8 -NoNewline
+          $snippet | Out-File -FilePath snippet.txt -Encoding utf8 -NoNewline
 
-      - name: Comment failure summary on PR
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (machine-readable)"
+          ($firstFail | ConvertTo-Json -Compress) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (snippet)"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```text'
+          Get-Content -Path snippet.txt | ForEach-Object { Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $_ }
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
+
+      - name: Comment failure summary on PR (with @codex)
         if: failure()
         uses: actions/github-script@v7
         with:
@@ -249,10 +251,11 @@ jobs:
           script: |
             const fs = require('fs');
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-            let body = fs.readFileSync(process.env.GITHUB_STEP_SUMMARY, 'utf8');
-            body = `### ❌ CI failure: Batch syntax/run check\nRun: ${runUrl}\n\n` + body;
+            const repoUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}`;
 
-            // Find PR number (works for PR and push events)
+            let snippet = fs.existsSync('snippet.txt') ? fs.readFileSync('snippet.txt','utf8') : 'Could not auto-fingerprint; see run link.';
+            let jf = fs.existsSync('first_failure.json') ? fs.readFileSync('first_failure.json','utf8') : '{"id":"first_failure","pass":false,"desc":"No fingerprint"}';
+
             let prNumber = context.payload.pull_request?.number;
             if (!prNumber) {
               const branch = context.ref.replace('refs/heads/', '');
@@ -265,13 +268,47 @@ jobs:
               if (prs.length) prNumber = prs[0].number;
             }
 
-            if (prNumber) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body
-              });
-            } else {
+            if (!prNumber) {
               console.log('No open PR for this branch; skipping PR comment.');
+              return;
             }
+
+            const branch = context.payload.pull_request?.head?.ref ?? context.ref.replace('refs/heads/','');
+            const runsUrl = `${repoUrl}/actions?query=branch%3A${encodeURIComponent(branch)}`;
+
+            const body = [
+              '### CI failure: Batch syntax/run check',
+              `Run: ${runUrl}`,
+              '',
+              '@codex',
+              '',
+              '**Top failure from the latest CI on this PR** (source of truth: Job Summary + failing step logs). Fix only the first failing item with the smallest possible change (file path + exact diff or one-line replacement).',
+              '',
+              'First failure (snippet):',
+              '```',
+              snippet,
+              '```',
+              '',
+              'Machine-readable:',
+              '```json',
+              jf,
+              '```',
+              '',
+              'Please commit directly to branch ' + branch + ' with:',
+              '```',
+              'fix(ci): address (#)',
+              '```',
+              '',
+              'WAIT for CI to finish; if it still fails, repeat on the new top failure. Stop if the same top error repeats twice.',
+              '',
+              'Links:',
+              '- Run: ' + runUrl,
+              '- All runs for this branch: ' + runsUrl
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body
+            });

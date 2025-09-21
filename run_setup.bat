@@ -4,29 +4,41 @@ rem Boot strap renamed to run_setup.bat
 cd /d "%~dp0"
 set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
-set "PUBLICDOCS=%PUBLIC%\Documents"
-set "CONDA_ROOT=%PUBLICDOCS%\Miniconda3"
-set "CONDA_BAT=%CONDA_ROOT%\condabin\conda.bat"
-set "CONDA_BASE_PY=%CONDA_ROOT%\python.exe"
 if not exist "%LOG%" (type nul > "%LOG%")
 call :rotate_log
 for %%I in ("%CD%") do set "ENVNAME=%%~nI"
-set "ENV_PATH=%CONDA_ROOT%\envs\%ENVNAME%"
+
+rem === Miniconda location (non-admin) =========================================
+set "MINICONDA_ROOT=%PUBLIC%\Documents\Miniconda3"
+set "CONDA_BAT=%MINICONDA_ROOT%\condabin\conda.bat"
+if not exist "%CONDA_BAT%" set "CONDA_BAT=%MINICONDA_ROOT%\Scripts\conda.bat"
+set "CONDA_BASE_PY=%MINICONDA_ROOT%\python.exe"
+
+rem Install Miniconda if conda.bat is missing
+if not exist "%CONDA_BAT%" (
+  echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "iwr https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe -OutFile $env:TEMP\miniconda.exe"
+  start /wait "" "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
+  set "CONDA_BAT=%MINICONDA_ROOT%\condabin\conda.bat"
+  if not exist "%CONDA_BAT%" set "CONDA_BAT=%MINICONDA_ROOT%\Scripts\conda.bat"
+)
+
+if not exist "%CONDA_BAT%" (
+  call :die "[ERROR] conda.bat not found after bootstrap."
+)
+
+rem === Channel policy (determinism & legal) ===================================
+call "%CONDA_BAT%" config --name base --add channels conda-forge
+call "%CONDA_BAT%" config --name base --remove channels defaults
+
+rem NOTE: every 'conda create' or 'conda install' call below MUST include:
+rem       --override-channels -c conda-forge
+
+set "ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%"
 call :log "[INFO] Workspace: %CD%"
 call :log "[INFO] Env name: %ENVNAME%"
 call :log "[INFO] Log: %LOG%"
-if exist "%CONDA_BAT%" goto have_conda
-set "MINI=~Miniconda3-latest-Windows-x86_64.exe"
-set "MINIURL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
-curl --version >nul 2>&1
-if errorlevel 1 call :die "[ERROR] curl not available (needs Windows 10 1809+)."
-if not exist "%MINI%" ( curl -L -# -o "%MINI%" "%MINIURL%" >> "%LOG%" 2>&1 & if errorlevel 1 call :die "[ERROR] Download failed." )
-if not exist "%PUBLICDOCS%" mkdir "%PUBLICDOCS%" >> "%LOG%" 2>&1
-if not exist "%CONDA_ROOT%" mkdir "%CONDA_ROOT%" >> "%LOG%" 2>&1
-"%MINI%" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%CONDA_ROOT% >> "%LOG%" 2>&1
-if errorlevel 1 call :die "[ERROR] Miniconda installer failed."
-:have_conda
-if not exist "%CONDA_BAT%" call :die "[ERROR] conda.bat not found after install."
 call :write_ps_file "~emit_detect_python.ps1" "@'
 $OutFile='~detect_python.py'
 $Content=@'
@@ -79,7 +91,7 @@ if __name__ == "__main__":
     main()
 '@
 [IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"
+'@"'
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_detect_python.ps1" >> "%LOG%" 2>&1
 if exist "%CONDA_BASE_PY%" (
   "%CONDA_BASE_PY%" "~detect_python.py" > "~py_spec.txt" 2>> "%LOG%"
@@ -101,7 +113,7 @@ import sys
 print(f"python-{sys.version_info[0]}.{sys.version_info[1]}")
 '@
 [IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"
+'@"'
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_pyver.ps1" >> "%LOG%" 2>&1
 call "%CONDA_BAT%" run -n "%ENVNAME%" python "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
 for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
@@ -116,7 +128,7 @@ show_channel_urls: true
 '@
 New-Item -ItemType Directory -Force -Path (Split-Path $OutFile) | Out-Null
 [IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"
+'@"'
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_env_condarc.ps1" >> "%LOG%" 2>&1
 call :write_ps_file "~emit_prep_requirements.ps1" "@'
 $OutFile='~prep_requirements.py'
@@ -189,7 +201,7 @@ if __name__=="__main__":
     main()
 '@
 [IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
-'@"
+'@"'
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_prep_requirements.ps1" >> "%LOG%" 2>&1
 set "REQ=requirements.txt"
 if exist "%REQ%" ( for %%S in ("%REQ%") do if %%~zS EQU 0 del "%REQ%" )
@@ -208,9 +220,54 @@ if exist "requirements.txt" (
   )
   call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -r requirements.txt >> "%LOG%" 2>&1
 )
+rem Detect pyvisa/visa usage so harness sees NI-VISA requirements
+call :write_ps_file "~emit_detect_visa.ps1" "@'
+$OutFile='~detect_visa.py'
+$Content=@'
+import os, re, sys
+ROOT = os.getcwd()
+PATTERNS = [
+    r"(?m)^\s*(?:from\s+pyvisa\b|import\s+pyvisa\b)",
+    r"(?m)^\s*import\s+visa\b",
+]
+def needs_visa():
+    for cur, dirs, files in os.walk(ROOT):
+        dirs[:] = [d for d in dirs if not d.startswith(('~', '.'))]
+        for name in files:
+            if not name.endswith('.py') or name.startswith('~'):
+                continue
+            path = os.path.join(cur, name)
+            try:
+                with open(path, 'r', encoding='utf-8', errors='ignore') as handle:
+                    text = handle.read()
+            except OSError:
+                continue
+            for pat in PATTERNS:
+                if re.search(pat, text):
+                    return True
+    return False
+def main():
+    sys.stdout.write('1' if needs_visa() else '0')
+if __name__ == '__main__':
+    main()
+'@
+[IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
+'@"'
+powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_detect_visa.ps1" >> "%LOG%" 2>&1
+set "NEED_VISA=0"
+if exist "~visa.flag" del "~visa.flag"
+call "%CONDA_BAT%" run -n "%ENVNAME%" python "~detect_visa.py" > "~visa.flag" 2>> "%LOG%"
+for /f "usebackq delims=" %%V in ("~visa.flag") do set "NEED_VISA=%%V"
+if "%NEED_VISA%"=="1" (
+  call :log "[INFO] Detected pyvisa/visa import; NI-VISA install may be required."
+) else (
+  call :log "[INFO] No pyvisa/visa imports detected."
+)
+if exist "~visa.flag" del "~visa.flag"
 call :write_ps_file "~emit_entry_finder.ps1" "@'
 $OutTxt='~entry.txt'
-$code = @'
+$OutFile='~find_entry.py'
+$Content=@'
 import os
 def find_entry():
     files = [f for f in os.listdir('.') if f.endswith('.py') and not f.startswith('~')]
@@ -225,10 +282,14 @@ def find_entry():
     return files[0] if files else \"\"
 print(find_entry())
 '@
-$TmpPy='~find_entry.py'
-[IO.File]::WriteAllText($TmpPy, $code, [Text.Encoding]::ASCII)
-& '%CONDA_ROOT%\python.exe' $TmpPy | Out-File -Encoding ASCII -NoNewline $OutTxt
-'@"
+[IO.File]::WriteAllText($OutFile, $Content, [Text.Encoding]::ASCII)
+$pyExe = '%CONDA_BASE_PY%'
+if (Test-Path $pyExe) {
+  & $pyExe $OutFile | Out-File -Encoding ASCII -NoNewline $OutTxt
+} else {
+  & '%CONDA_BAT%' run -n '%ENVNAME%' python $OutFile | Out-File -Encoding ASCII -NoNewline $OutTxt
+}
+'@"'
 powershell -NoProfile -ExecutionPolicy Bypass -File "~emit_entry_finder.ps1" >> "%LOG%" 2>&1
 for /f "usebackq delims=" %%M in ("~entry.txt") do set "ENTRY=%%M"
 if "%ENTRY%"=="" ( call :die "[ERROR] Could not find an entry script." )
