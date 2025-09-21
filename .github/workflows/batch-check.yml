@@ -91,10 +91,28 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $pwd = Get-Location
           Write-Host "PWD:"
-          Get-Location
+          $pwd
           Write-Host "DIR (tests):"
           if (Test-Path .\tests) { Get-ChildItem .\tests -Force -Name } else { Write-Host "tests folder not found" }
+
+          $extractDir = Join-Path (Join-Path $pwd.Path 'tests') 'extracted'
+          if (-not (Test-Path $extractDir)) {
+            Write-Host "Creating tests\\extracted at $extractDir"
+            New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+          }
+          $helpers = @('~detect_python.py','~prep_requirements.py')
+          foreach ($helper in $helpers) {
+            $src = Join-Path $pwd.Path $helper
+            $dest = Join-Path $extractDir $helper
+            if (Test-Path $src) {
+              Copy-Item -Path $src -Destination $dest -Force
+              Write-Host "Copied helper $helper to tests\\extracted"
+            } else {
+              Write-Host "Helper $helper not found at $src"
+            }
+          }
 
           $ran = $false
 
@@ -106,15 +124,22 @@ jobs:
           }
           elseif (Test-Path .\tests\dynamic_tests.py) {
             # Resolve Python
-            $pyCmd = $null
-            if (Get-Command python -ErrorAction SilentlyContinue) { $pyCmd = 'python' }
-            elseif (Get-Command py -ErrorAction SilentlyContinue) { $pyCmd = 'py -3' }
+            $pyExe = $null
+            $pyArgs = @()
+            if (Get-Command python -ErrorAction SilentlyContinue) {
+              $pyExe = 'python'
+            }
+            elseif (Get-Command py -ErrorAction SilentlyContinue) {
+              $pyExe = 'py'
+              $pyArgs += '-3'
+            }
 
-            if (-not $pyCmd) {
+            if (-not $pyExe) {
               Write-Host "Python not found on PATH; cannot run dynamic_tests.py"
             } else {
-              Write-Host "Running tests\dynamic_tests.py via: $pyCmd"
-              cmd /c $pyCmd + ' -u tests\dynamic_tests.py' *>&1 | Tee-Object -FilePath dynamic_tests.log
+              $cmdArgs = $pyArgs + @('-u','tests\dynamic_tests.py')
+              Write-Host ("Running tests\dynamic_tests.py via: {0} {1}" -f $pyExe, ($cmdArgs -join ' '))
+              & $pyExe @cmdArgs *>&1 | Tee-Object -FilePath dynamic_tests.log
               if ($LASTEXITCODE -ne 0) { throw "dynamic_tests.py failed with exit code $LASTEXITCODE" }
               $ran = $true
             }
