@@ -398,7 +398,7 @@ jobs:
           [System.IO.File]::WriteAllText('codex_body.txt', ($commentLines -join "`n"), [System.Text.Encoding]::ASCII)
 
       - name: Distribute codex failure summary (gh with PAT)
-        if: ${{ failure() && secrets.CODEX_TRIGGER_PAT != '' }}
+        if: failure()
         id: codex_via_gh
         shell: pwsh
         env:
@@ -409,6 +409,14 @@ jobs:
             Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=false'
             exit 0
           }
+
+          if (-not $env:CODEX_TRIGGER_PAT -or $env:CODEX_TRIGGER_PAT.Trim() -eq '') {
+            Write-Host "CODEX_TRIGGER_PAT not set; skipping gh commenter."
+            Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=true'
+            exit 0
+          }
+
+          $needsFallback = $true
 
           if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
             Write-Warning "GitHub CLI not available; writing nudge artifact instead."
@@ -446,14 +454,19 @@ jobs:
             Write-Warning "gh pr comment failed with exit code $LASTEXITCODE; falling back to artifact."
           } else {
             Write-Host "No open PR detected for branch $branch; writing artifact instead."
+            $needsFallback = $false
           }
 
           [System.IO.File]::WriteAllText('codex_nudge.txt', $body, [System.Text.Encoding]::ASCII)
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $body
-          Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=true'
+          if ($needsFallback) {
+            Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=true'
+          } else {
+            Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=false'
+          }
 
       - name: Distribute codex failure summary (GITHUB_TOKEN fallback)
-        if: ${{ failure() && secrets.CODEX_TRIGGER_PAT == '' }}
+        if: ${{ failure() && steps.codex_via_gh.outputs.nudge == 'true' }}
         id: codex_fallback
         uses: actions/github-script@v7
         with:
