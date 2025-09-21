@@ -473,7 +473,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const core = require('@actions/core');
             const path = 'codex_body.txt';
             if (!fs.existsSync(path)) {
               core.info('codex_body.txt not found; skipping commenter.');
