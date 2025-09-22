@@ -126,6 +126,20 @@ to fill remaining gaps quickly.
 - `.github/workflows/` — CI workflows (batch check + CodeQL)
 - Helper scripts are emitted on demand by `run_setup.bat`; no committed helper directory is required.
 
+### Rebuilding embedded helper payloads
+
+`run_setup.bat` stores its helper scripts and `.condarc` template as base64 strings so the bootstrapper stays self-contained. To refresh one of the payloads, run a short Python snippet and paste the output back into the batch file (see also https://docs.python.org/3/library/base64.html).
+
+```batch
+python - <<'PY'
+import base64, pathlib
+payload = pathlib.Path('path/to/helper.py').read_bytes()
+print(base64.b64encode(payload).decode('ascii'))
+PY
+```
+
+Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` with the new base64 text. The batch file comments point back to this section when further guidance is needed.
+
 ---
 
 ## Contributing
