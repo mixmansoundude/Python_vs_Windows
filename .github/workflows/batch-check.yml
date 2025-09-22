@@ -4,8 +4,6 @@ on:
   workflow_dispatch: {}
   push:
     branches: ['**']
-  pull_request:
-    branches: ['**']
 
 permissions:
   contents: read
@@ -114,11 +112,16 @@ jobs:
             }
           }
 
+          $logPath = Join-Path $pwd.Path 'dynamic_tests.log'
+          $mirrorPath = Join-Path (Join-Path $pwd.Path 'tests') '~dynamic-run.log'
           $ran = $false
 
           if (Test-Path .\tests\dynamic_tests.bat) {
             Write-Host "Running tests\dynamic_tests.bat"
-            cmd /c tests\dynamic_tests.bat *>&1 | Tee-Object -FilePath dynamic_tests.log
+            cmd /c tests\dynamic_tests.bat *>&1 | Tee-Object -FilePath $logPath
+            if (Test-Path $logPath) {
+              Copy-Item -Path $logPath -Destination $mirrorPath -Force
+            }
             if ($LASTEXITCODE -ne 0) { throw "dynamic_tests.bat failed with exit code $LASTEXITCODE" }
             $ran = $true
           }
@@ -139,7 +142,10 @@ jobs:
             } else {
               $cmdArgs = $pyArgs + @('-u','tests\dynamic_tests.py')
               Write-Host ("Running tests\dynamic_tests.py via: {0} {1}" -f $pyExe, ($cmdArgs -join ' '))
-              & $pyExe @cmdArgs *>&1 | Tee-Object -FilePath dynamic_tests.log
+              & $pyExe @cmdArgs *>&1 | Tee-Object -FilePath $logPath
+              if (Test-Path $logPath) {
+                Copy-Item -Path $logPath -Destination $mirrorPath -Force
+              }
               if ($LASTEXITCODE -ne 0) { throw "dynamic_tests.py failed with exit code $LASTEXITCODE" }
               $ran = $true
             }
@@ -147,6 +153,7 @@ jobs:
 
           if (-not $ran) {
             Write-Host "No dynamic tests found; skipping."
+            "No dynamic tests discovered in workspace." | Set-Content -Path $mirrorPath -Encoding Ascii
           }
 
       - name: Run tests
@@ -204,6 +211,21 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          $statusPath = '.\~bootstrap.status.json'
+          if (Test-Path $statusPath) {
+            try {
+              $status = Get-Content $statusPath -Raw | ConvertFrom-Json
+              $line = "Bootstrap status: state={0}, exitCode={1}, pyFiles={2}" -f $status.state, $status.exitCode, $status.pyFiles
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value $line
+              if ($status.state -eq 'no_python_files') {
+                Add-Content $env:GITHUB_STEP_SUMMARY -Value '_Bootstrap reported no Python files; environment bootstrap skipped._'
+              }
+            } catch {
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value 'Bootstrap status: <invalid JSON>'
+            }
+          } else {
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value '_~bootstrap.status.json not found_'
+          }
           if (Test-Path .\bootstrap.log) {
             Add-Content $env:GITHUB_STEP_SUMMARY -Value "### Bootstrap (tail)"
             Add-Content $env:GITHUB_STEP_SUMMARY -Value '```text'
@@ -224,6 +246,24 @@ jobs:
             Add-Content $env:GITHUB_STEP_SUMMARY -Value '```'
           } else {
             Add-Content $env:GITHUB_STEP_SUMMARY -Value "_No dynamic_tests.log found_"
+          }
+
+      - name: Summarize bootstrap self-tests
+        if: always()
+        shell: pwsh
+        run: |
+          $items = @(
+            @{ Title = 'Self-test (empty folder bootstrap)'; Path = 'tests\~selftest_empty\~empty_bootstrap.log' },
+            @{ Title = 'Self-test (stub bootstrap)'; Path = 'tests\~selftest_stub\~stub_bootstrap.log' },
+            @{ Title = 'Self-test (stub run)'; Path = 'tests\~selftest_stub\~stub_run.log' }
+          )
+          foreach ($item in $items) {
+            if (Test-Path $item.Path) {
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value ("### {0} (tail)" -f $item.Title)
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value '```text'
+              Get-Content $item.Path -Tail 120 | ForEach-Object { Add-Content $env:GITHUB_STEP_SUMMARY -Value $_ }
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value '```'
+            }
           }
 
       - name: Warn if zero tests executed
@@ -425,77 +465,9 @@ jobs:
           )
           [System.IO.File]::WriteAllText('codex_body.txt', ($commentLines -join "`n"), [System.Text.Encoding]::ASCII)
 
-      - name: Distribute codex failure summary (gh with PAT)
+      - name: Distribute codex failure summary
         if: failure()
-        id: codex_via_gh
-        shell: pwsh
-        env:
-          CODEX_TRIGGER_PAT: ${{ secrets.CODEX_TRIGGER_PAT }}
-        run: |
-          if (-not (Test-Path .\codex_body.txt)) {
-            Write-Host "codex_body.txt not found; skipping gh commenter."
-            Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=false'
-            exit 0
-          }
-
-          if (-not $env:CODEX_TRIGGER_PAT -or $env:CODEX_TRIGGER_PAT.Trim() -eq '') {
-            Write-Host "CODEX_TRIGGER_PAT not set; skipping gh commenter."
-            Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=true'
-            exit 0
-          }
-
-          $needsFallback = $true
-
-          if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-            Write-Warning "GitHub CLI not available; writing nudge artifact instead."
-            $body = Get-Content -Path .\codex_body.txt -Raw
-            [System.IO.File]::WriteAllText('codex_nudge.txt', $body, [System.Text.Encoding]::ASCII)
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $body
-            Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=true'
-            exit 0
-          }
-
-          $body = Get-Content -Path .\codex_body.txt -Raw
-          $event = Get-Content -Path $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
-          $branch = if ($env:GITHUB_HEAD_REF -and $env:GITHUB_HEAD_REF -ne '') { $env:GITHUB_HEAD_REF } else { $env:GITHUB_REF -replace '^refs/heads/','' }
-          $prNumber = $null
-          if ($event.pull_request) { $prNumber = $event.pull_request.number }
-
-          $env:GH_TOKEN = $env:CODEX_TRIGGER_PAT
-
-          if (-not $prNumber -and $branch) {
-            $prsJson = gh pr list --state open --json number,headRefName --limit 50
-            if ($LASTEXITCODE -eq 0 -and $prsJson) {
-              $prs = $prsJson | ConvertFrom-Json
-              foreach ($pr in $prs) {
-                if ($pr.headRefName -eq $branch) { $prNumber = $pr.number; break }
-              }
-            }
-          }
-
-          if ($prNumber) {
-            gh pr comment $prNumber --body $body
-            if ($LASTEXITCODE -eq 0) {
-              Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=false'
-              exit 0
-            }
-            Write-Warning "gh pr comment failed with exit code $LASTEXITCODE; falling back to artifact."
-          } else {
-            Write-Host "No open PR detected for branch $branch; writing artifact instead."
-            $needsFallback = $false
-          }
-
-          [System.IO.File]::WriteAllText('codex_nudge.txt', $body, [System.Text.Encoding]::ASCII)
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $body
-          if ($needsFallback) {
-            Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=true'
-          } else {
-            Add-Content -Path $env:GITHUB_OUTPUT -Value 'nudge=false'
-          }
-
-      - name: Distribute codex failure summary (GITHUB_TOKEN fallback)
-        if: ${{ failure() && steps.codex_via_gh.outputs.nudge == 'true' }}
-        id: codex_fallback
+        id: codex_notify
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -504,14 +476,13 @@ jobs:
             const path = 'codex_body.txt';
             if (!fs.existsSync(path)) {
               core.info('codex_body.txt not found; skipping commenter.');
-              core.setOutput('nudge', 'false');
               return;
             }
 
             const body = fs.readFileSync(path, { encoding: 'ascii' });
             const event = require(process.env.GITHUB_EVENT_PATH);
-            let prNumber = event.pull_request?.number;
             const branch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF.replace(/^refs\/heads\//, '');
+            let prNumber = event.pull_request?.number;
 
             if (!prNumber && branch) {
               const { data: prs } = await github.rest.pulls.list({
@@ -532,13 +503,13 @@ jobs:
                 issue_number: prNumber,
                 body
               });
-              core.setOutput('nudge', 'false');
+              core.setOutput('target', 'comment');
               return;
             }
 
             fs.writeFileSync('codex_nudge.txt', body, { encoding: 'ascii' });
             fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, body + '\n', { encoding: 'ascii' });
-            core.setOutput('nudge', 'true');
+            core.setOutput('target', 'artifact');
 
       - name: Upload codex nudge artifact
         if: failure()

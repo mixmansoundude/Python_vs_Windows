@@ -126,6 +126,20 @@ to fill remaining gaps quickly.
 - `.github/workflows/` — CI workflows (batch check + CodeQL)
 - Helper scripts are emitted on demand by `run_setup.bat`; no committed helper directory is required.
 
+### Bootstrap status contract
+
+`run_setup.bat` writes `~bootstrap.status.json` alongside its logs with ASCII JSON describing the bootstrap result:
+
+```json
+{"state":"ok|no_python_files|error","exitCode":0,"pyFiles":0}
+```
+
+- `state` is `ok` when at least one Python file bootstrapped successfully, `no_python_files` when none were discovered, and `error` if the bootstrapper halted.
+- `exitCode` mirrors the batch exit code so harnesses can fail fast on real bootstrap errors.
+- `pyFiles` records how many `.py` files were counted before the environment build began.
+
+The CI harness and `tests/selftest.ps1` read this file to validate both the empty-folder (`no_python_files`) flow and the stub bootstrap path with a simple `hello_stub.py` runner.
+
 ### Rebuilding embedded helper payloads
 
 `run_setup.bat` stores its helper scripts and `.condarc` template as base64 strings so the bootstrapper stays self-contained. To refresh one of the payloads, run a short Python snippet and paste the output back into the batch file (see also https://docs.python.org/3/library/base64.html).

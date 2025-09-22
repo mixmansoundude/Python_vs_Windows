@@ -4,10 +4,23 @@ rem Boot strap renamed to run_setup.bat
 cd /d "%~dp0"
 set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
+set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
+if exist "%STATUS_FILE%" del "%STATUS_FILE%"
 call :rotate_log
 call :define_helper_payloads
 for %%I in ("%CD%") do set "ENVNAME=%%~nI"
+
+set "PYCOUNT=0"
+for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul') do call :count_python "%%F"
+if "%PYCOUNT%"=="" set "PYCOUNT=0"
+call :log "[INFO] Python file count: %PYCOUNT%"
+
+if "%PYCOUNT%"=="0" (
+  call :log "[INFO] No Python files detected; skipping environment bootstrap."
+  call :write_status "no_python_files" 0 0
+  goto :success
+)
 
 rem === Miniconda location (non-admin) =========================================
 set "MINICONDA_ROOT=%PUBLIC%\Documents\Miniconda3"
@@ -28,6 +41,11 @@ if not exist "%CONDA_BAT%" (
 if not exist "%CONDA_BAT%" (
   call :die "[ERROR] conda.bat not found after bootstrap."
 )
+
+set "PATH=%MINICONDA_ROOT%\condabin;%MINICONDA_ROOT%\Scripts;%MINICONDA_ROOT%\Library\bin;%MINICONDA_ROOT%;%PATH%"
+where conda >> "%LOG%" 2>&1 || call :die "[ERROR] 'conda' not found on PATH after bootstrap."
+where python >> "%LOG%" 2>&1 || call :die "[ERROR] 'python' not found on PATH after bootstrap."
+python -V >> "%LOG%" 2>&1 || call :die "[ERROR] 'python -V' failed after bootstrap."
 
 rem === Channel policy (determinism & legal) ===================================
 call "%CONDA_BAT%" config --name base --add channels conda-forge
@@ -109,17 +127,43 @@ if exist "~visa.flag" del "~visa.flag"
 
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 call :die "[ERROR] Could not write ~find_entry.py"
-  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$pyExe = '%CONDA_BASE_PY%'; if (Test-Path $pyExe) { $out = & $pyExe '~find_entry.py' } else { $out = & '%CONDA_BAT%' run -n '%ENVNAME%' python '~find_entry.py' } if ($out) { Set-Content -Path '~entry.txt' -Value $out -Encoding ASCII -NoNewline } else { Set-Content -Path '~entry.txt' -Value '' -Encoding ASCII }" >> "%LOG%" 2>&1
-  if errorlevel 1 call :die "[ERROR] Could not determine entry point"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$pyExe = '%CONDA_BASE_PY%'; if (Test-Path $pyExe) { $out = & $pyExe '~find_entry.py' } else { $out = & '%CONDA_BAT%' run -n '%ENVNAME%' python '~find_entry.py' } if ($out) { Set-Content -Path '~entry.txt' -Value $out -Encoding ASCII -NoNewline } else { Set-Content -Path '~entry.txt' -Value '' -Encoding ASCII }" >> "%LOG%" 2>&1
+if errorlevel 1 call :die "[ERROR] Could not determine entry point"
+set "ENTRY="
 for /f "usebackq delims=" %%M in ("~entry.txt") do set "ENTRY=%%M"
-if "%ENTRY%"=="" ( call :die "[ERROR] Could not find an entry script." )
-call "%CONDA_BAT%" run -n "%ENVNAME%" python "%ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
-call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q pyinstaller >> "%LOG%" 2>&1
-call "%CONDA_BAT%" run -n "%ENVNAME%" pyinstaller -y --onefile --name "%ENVNAME%" "%ENTRY%" >> "%LOG%" 2>&1
-if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
-  start "" "dist\%ENVNAME%.exe"
-  goto :eof
+if "%ENTRY%"=="" (
+  call :log "[INFO] No entry script detected; skipping PyInstaller packaging."
+) else (
+  call :log "[INFO] Running entry script smoke test via conda run."
+  call "%CONDA_BAT%" run -n "%ENVNAME%" python "%ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
+  if errorlevel 1 call :die "[ERROR] Entry script execution failed."
+  call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q pyinstaller >> "%LOG%" 2>&1
+  call "%CONDA_BAT%" run -n "%ENVNAME%" pyinstaller -y --onefile --name "%ENVNAME%" "%ENTRY%" >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
+  if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
+  call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+)
+
+call :write_status "ok" 0 %PYCOUNT%
+
+:success
+exit /b 0
+:count_python
+set "NAME=%~1"
+if "%NAME%"=="" exit /b 0
+if "%NAME:~0,1%"=="~" exit /b 0
+set /a PYCOUNT+=1 >nul
+exit /b 0
+:write_status
+set "STATE=%~1"
+set "RC=%~2"
+set "COUNT=%~3"
+if "%STATE%"=="" set "STATE=error"
+if "%RC%"=="" set "RC=0"
+if "%COUNT%"=="" set "COUNT=%PYCOUNT%"
+> "%STATUS_FILE%" echo {"state":"%STATE%","exitCode":%RC%,"pyFiles":%COUNT%}
+exit /b 0
 :emit_from_base64
 rem Decode helper payloads with PowerShell Convert.FromBase64String (see https://learn.microsoft.com/dotnet/api/system.convert.frombase64string).
 rem Keep these helpers in sync with README.md regeneration notes.
@@ -147,9 +191,12 @@ echo %date% %time% %MSG%
 exit /b 0
 :die
 set "MSG=%~1"
+set "RC=%~2"
+if "%RC%"=="" set "RC=1"
 echo %date% %time% %MSG%
 >> "%LOG%" echo [%date% %time%] %MSG%
-exit /b 1
+call :write_status "error" %RC% %PYCOUNT%
+exit /b %RC%
 :rotate_log
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 "if (Test-Path '%LOG%') { if ((Get-Item '%LOG%').Length -gt 10485760) { Move-Item -Force '%LOG%' '%LOGPREV%' } }"

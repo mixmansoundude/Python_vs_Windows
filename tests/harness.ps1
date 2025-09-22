@@ -12,6 +12,15 @@ if (!(Test-Path $BatchPath)) { Write-Host "run_setup.bat not found next to run_t
 if (-not (Test-Path ".\.ci_bootstrap_marker")) {
   throw "CI bootstrap marker not found. Did run_setup.bat run?"
 }
+$StatusFile = Join-Path $ProjDir "~bootstrap.status.json"
+if (-not (Test-Path $StatusFile)) {
+  throw "Bootstrap status file ~bootstrap.status.json missing. Did run_setup.bat emit status?"
+}
+try {
+  $BootstrapStatus = Get-Content -LiteralPath $StatusFile -Encoding ASCII -Raw | ConvertFrom-Json
+} catch {
+  throw "Bootstrap status JSON invalid: $($_.Exception.Message)"
+}
 New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
 function Write-Result { param($Id,$Desc,[bool]$Pass,$Details)
   $rec = [ordered]@{ id=$Id; pass=$Pass; desc=$Desc; details=$Details }
@@ -22,6 +31,9 @@ $Lines = Get-Content -LiteralPath $BatchPath -Encoding ASCII
 $AllText = [string]::Join("`n", $Lines)
 $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $BatchPath).Hash
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
+$stateOk = ($BootstrapStatus.state -eq 'ok' -or $BootstrapStatus.state -eq 'no_python_files')
+Write-Result "bootstrap.state" "Bootstrap status state is ok or no_python_files" $stateOk @{ state=$BootstrapStatus.state; exitCode=$BootstrapStatus.exitCode; pyFiles=$BootstrapStatus.pyFiles }
+Write-Result "bootstrap.exit" "Bootstrap exitCode is 0" ($BootstrapStatus.exitCode -eq 0) @{ exitCode=$BootstrapStatus.exitCode }
 $payloads = @{}
 foreach ($line in $Lines) {
   if ($line -match '^set "([A-Za-z0-9_]+)=([^\"]+)"$') {
@@ -123,6 +135,9 @@ $sb = New-Object System.Text.StringBuilder
 $null = $sb.AppendLine("=== Static Test Summary ===")
 $null = $sb.AppendLine("run_setup.bat sha256: " + $sha.ToLower())
 $null = $sb.AppendLine("PASS: " + $pass.Count + "    FAIL: " + $fail.Count)
+if ($BootstrapStatus.state -eq 'no_python_files') {
+  $null = $sb.AppendLine("Bootstrap reported no Python files; environment bootstrap skipped.")
+}
 if ($fail.Count -gt 0) { $null = $sb.AppendLine("---- Failures ----"); foreach ($f in $fail) { $null = $sb.AppendLine(("* " + $f.id + " :: " + $f.desc)) } }
 $null = $sb.AppendLine("Artifacts:")
 $null = $sb.AppendLine("  tests\~test-results.ndjson")

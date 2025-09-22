@@ -25,7 +25,6 @@ Operating policy for automated agents (Codex, Copilot, others).
 
 ## How to work here
 - Read and enforce the **README.md** and follow the “Software Requirements Directive”.
-- Work on a branch with your name in it and keep a single PR open to `main`.
 - Make minimal, surgical patches in failing areas:
   - `run_tests.bat`, `tests/harness.ps1`, files under `tests/**`.
 - If you cannot call Actions APIs:
