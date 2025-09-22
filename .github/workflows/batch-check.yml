@@ -173,6 +173,7 @@ jobs:
           }
           $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
           $files = $files | Sort-Object LastWriteTime -Descending -Unique
+          $files = $files | Where-Object { $_.Name -ne 'README_TESTS.txt' }
           if(-not $files){ Write-Host "No log files found."; exit 0 }
           foreach($f in $files){
             Write-Host "::group::LOG $($f.FullName)"
@@ -249,6 +250,7 @@ jobs:
           }
           $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
           $files = $files | Sort-Object LastWriteTime -Descending -Unique
+          $files = $files | Where-Object { $_.Name -ne 'README_TESTS.txt' }
           if ($files -and $files.Count -gt 0) {
             $files | Select-Object -First 4 | ForEach-Object {
               Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Log: $($_.FullName)"
@@ -272,6 +274,7 @@ jobs:
           }
           $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
           $files = $files | Sort-Object LastWriteTime -Descending -Unique
+          $files = $files | Where-Object { $_.Name -ne 'README_TESTS.txt' }
 
           function FirstNonEmpty {
             param([object]$o,[string[]]$names)
