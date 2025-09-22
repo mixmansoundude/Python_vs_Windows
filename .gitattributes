@@ -1,0 +1,26 @@
+# Normalize all text to LF in the repository
+*               text=auto eol=lf
+
+# Windows scripts: check out as CRLF
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+*.ps1           text eol=crlf
+*.psm1          text eol=crlf
+*.psd1          text eol=crlf
+
+# Cross-platform text: keep LF in repo and on checkout
+*.sh            text eol=lf
+*.py            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.json          text eol=lf
+*.md            text eol=lf
+*.txt           text eol=lf
+
+# Binary files: never modify line endings
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.zip           binary
+*.exe           binary

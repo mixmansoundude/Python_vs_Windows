@@ -38,5 +38,9 @@ Operating policy for automated agents (Codex, Copilot, others).
 - Keep ASCII plain text; avoid non-ASCII punctuation.
 - Prefer quoting/escaping and logic fixes over silencing errors.
 - Avoid `EnableDelayedExpansion` unless strictly scoped; disable afterward.
-- Batch file syntax has been a critical source of failures. Especially for escaping special characters. 
-  - Since batch file syntax is tricky, and there is not an easy checker, if you cannot run it on a windows environment then utilize the CI workflow actions that run on every push so wait for the results to appear and recheck after the push. 
+- Batch file syntax has been a critical source of failures. Especially for escaping special characters.
+  - Since batch file syntax is tricky, and there is not an easy checker, if you cannot run it on a windows environment then utilize the CI workflow actions that run on every push so wait for the results to appear and recheck after the push.
+- Use LF endings in the repository.
+- Only Windows scripts (.bat .cmd .ps1 .psm1 .psd1) should check out as CRLF.
+- Do not change line endings manually; follow .gitattributes.
+- Keep core.autocrlf=false and let .gitattributes control endings.
