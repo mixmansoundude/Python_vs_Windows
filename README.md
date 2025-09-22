@@ -124,7 +124,7 @@ to fill remaining gaps quickly.
 - `run_tests.bat` — CI/static checks and harness
 - `tests/` — PowerShell/batch harness, log helpers, and ndjson summaries
 - `.github/workflows/` — CI workflows (batch check + CodeQL)
-- `reference_helpers/` — reference snippets and utilities
+- Helper scripts are emitted on demand by `run_setup.bat`; no committed helper directory is required.
 
 ---
 

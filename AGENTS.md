@@ -8,6 +8,8 @@ Operating policy for automated agents (Codex, Copilot, others).
   - Grouped log tails printed by the workflow.
   - PR failure comment posted by the workflow.
 - Local or sandbox runs are advisory only. Windows runner behavior is authoritative.
+- Enforce the single-bootstrapper Prime Directive: `run_setup.bat` must work when dropped next to the app with no committed helper files.
+- The CI harness may use additional scripts or assets under `tests/` to inspect the bootstrapper, but those files cannot be required for the real bootstrap flow.
 
 ## Do not
 - Do not weaken tests or remove logging/artifacts.

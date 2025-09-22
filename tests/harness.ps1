@@ -22,27 +22,33 @@ $Lines = Get-Content -LiteralPath $BatchPath -Encoding ASCII
 $AllText = [string]::Join("`n", $Lines)
 $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $BatchPath).Hash
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
-$psBlocks = [regex]::Matches($AllText, 'call\s+:write_ps_file\s+"[^"]*emit_[^"]*\.ps1"\s+"@''(?s).*?''@"') | ForEach-Object { $_.Value }
-function Extract-InnerHereString([string]$Block) {
-  $outFile = ''
-  $content = ''
-  if ($Block -match '(?m)^\s*\$OutFile\s*=\s*''([^'']+\.py)''') {
-    $outFile = $Matches[1]
+$payloads = @{}
+foreach ($line in $Lines) {
+  if ($line -match '^set "([A-Za-z0-9_]+)=([^\"]+)"$') {
+    $name = $Matches[1]
+    $value = $Matches[2]
+    if ($name -like 'HP_*') {
+      $payloads[$name] = $value
+    }
   }
-  if ($Block -match '(?s)\$Content\s*=\s*@''(.*?)''@') {
-    $content = $Matches[1]
-  }
-  return @{ OutFile=$outFile; Content=$content }
 }
+$emitMatches = [regex]::Matches($AllText, 'call\s+:emit_from_base64\s+"([^"]+)"\s+([A-Za-z0-9_]+)')
 $emitted = @()
-foreach ($b in $psBlocks) {
-  $rec = Extract-InnerHereString $b
-  if ($rec.Content -and $rec.OutFile) {
-    $dest = Join-Path $ExtractDir $rec.OutFile
-    $text = $rec.Content -replace "`r?`n","`r`n"
-    [IO.File]::WriteAllText($dest, $text, [Text.Encoding]::ASCII)
-    $emitted += $rec.OutFile
-    Write-Result "emit.extract" "Extracted $($rec.OutFile) from run_setup.bat here-strings" $true @{ file=$rec.OutFile }
+foreach ($match in $emitMatches) {
+  $outFile = $match.Groups[1].Value
+  $varName = $match.Groups[2].Value
+  $dest = Join-Path $ExtractDir $outFile
+  if ($payloads.ContainsKey($varName)) {
+    try {
+      $bytes = [Convert]::FromBase64String($payloads[$varName])
+      [IO.File]::WriteAllBytes($dest, $bytes)
+      $emitted += $outFile
+      Write-Result "emit.extract" "Extracted $outFile from run_setup.bat payloads" $true @{ file=$outFile; var=$varName }
+    } catch {
+      Write-Result "emit.extract" "Failed to decode payload for $outFile ($varName)" $false @{ error=$_.Exception.Message }
+    }
+  } else {
+    Write-Result "emit.extract" "Missing payload for $outFile ($varName)" $false @{ var=$varName }
   }
 }
 $hasDisable = ($Lines | Select-String -SimpleMatch "setlocal DisableDelayedExpansion").Count -gt 0
