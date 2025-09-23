@@ -95,7 +95,59 @@ jobs:
           Write-Host "DIR (tests):"
           if (Test-Path .\tests) { Get-ChildItem .\tests -Force -Name } else { Write-Host "tests folder not found" }
 
-          $extractDir = Join-Path (Join-Path $pwd.Path 'tests') 'extracted'
+          $statusPath = Join-Path $pwd.Path '~bootstrap.status.json'
+          $testsDir = Join-Path $pwd.Path 'tests'
+          $extractDir = Join-Path $testsDir 'extracted'
+          $logPath = Join-Path $pwd.Path 'dynamic_tests.log'
+          $mirrorPath = Join-Path $testsDir '~dynamic-run.log'
+          $notePath = Join-Path $pwd.Path 'dynamic_summary_note.txt'
+          $resultsNdjson = Join-Path $testsDir '~dynamic-results.ndjson'
+
+          if (Test-Path $logPath) { Remove-Item -Force $logPath }
+          if (Test-Path $mirrorPath) { Remove-Item -Force $mirrorPath }
+          if (Test-Path $notePath) { Remove-Item -Force $notePath }
+          if (-not (Test-Path $testsDir)) { New-Item -ItemType Directory -Force -Path $testsDir | Out-Null }
+
+          function Show-LogTail {
+            param([string]$Path,[string]$Title)
+            if (Test-Path $Path) {
+              Write-Host "::group::$Title"
+              Get-Content -Path $Path -Tail 120
+              Write-Host "::endgroup::"
+            }
+          }
+
+          if (-not (Test-Path $statusPath)) {
+            Show-LogTail '.\bootstrap.log' 'bootstrap.log (tail)'
+            Show-LogTail '.\~setup.log' '~setup.log (tail)'
+            throw "~bootstrap.status.json not found; bootstrapper did not record status."
+          }
+
+          try {
+            $status = Get-Content $statusPath -Raw -Encoding Ascii | ConvertFrom-Json
+          } catch {
+            Show-LogTail '.\bootstrap.log' 'bootstrap.log (tail)'
+            Show-LogTail '.\~setup.log' '~setup.log (tail)'
+            throw "Failed to parse ~bootstrap.status.json: $($_.Exception.Message)"
+          }
+
+          $state = if ($null -ne $status.state) { [string]$status.state } else { '' }
+
+          if ($state -eq 'no_python_files') {
+            $msg = 'Dynamic tests skipped: bootstrap reported no Python files.'
+            Set-Content -Path $notePath -Value $msg -Encoding Ascii
+            'SKIPPED: no_python_files' | Set-Content -Path $logPath -Encoding Ascii
+            'SKIPPED: no_python_files' | Set-Content -Path $mirrorPath -Encoding Ascii
+            if (Test-Path $resultsNdjson) { Remove-Item -Force $resultsNdjson }
+            return
+          }
+
+          if ($state -ne 'ok') {
+            Show-LogTail '.\bootstrap.log' 'bootstrap.log (tail)'
+            Show-LogTail '.\~setup.log' '~setup.log (tail)'
+            throw ("Bootstrap state '{0}' blocks dynamic tests execution." -f $state)
+          }
+
           if (-not (Test-Path $extractDir)) {
             Write-Host "Creating tests\\extracted at $extractDir"
             New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
@@ -112,8 +164,6 @@ jobs:
             }
           }
 
-          $logPath = Join-Path $pwd.Path 'dynamic_tests.log'
-          $mirrorPath = Join-Path (Join-Path $pwd.Path 'tests') '~dynamic-run.log'
           $ran = $false
 
           if (Test-Path .\tests\dynamic_tests.bat) {
@@ -126,7 +176,6 @@ jobs:
             $ran = $true
           }
           elseif (Test-Path .\tests\dynamic_tests.py) {
-            # Resolve Python
             $pyExe = $null
             $pyArgs = @()
             if (Get-Command python -ErrorAction SilentlyContinue) {
@@ -152,8 +201,11 @@ jobs:
           }
 
           if (-not $ran) {
-            Write-Host "No dynamic tests found; skipping."
-            "No dynamic tests discovered in workspace." | Set-Content -Path $mirrorPath -Encoding Ascii
+            $msg = 'Dynamic tests not found; skipping (ok).'
+            Set-Content -Path $notePath -Value $msg -Encoding Ascii
+            'SKIPPED: no_dynamic_tests' | Set-Content -Path $logPath -Encoding Ascii
+            'SKIPPED: no_dynamic_tests' | Set-Content -Path $mirrorPath -Encoding Ascii
+            if (Test-Path $resultsNdjson) { Remove-Item -Force $resultsNdjson }
           }
 
       - name: Run tests
@@ -239,6 +291,12 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          $notePath = '.\dynamic_summary_note.txt'
+          if (Test-Path $notePath) {
+            foreach ($line in Get-Content $notePath -Encoding Ascii) {
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value $line
+            }
+          }
           if (Test-Path .\dynamic_tests.log) {
             Add-Content $env:GITHUB_STEP_SUMMARY -Value "### Dynamic tests (tail)"
             Add-Content $env:GITHUB_STEP_SUMMARY -Value '```text'
@@ -246,24 +304,6 @@ jobs:
             Add-Content $env:GITHUB_STEP_SUMMARY -Value '```'
           } else {
             Add-Content $env:GITHUB_STEP_SUMMARY -Value "_No dynamic_tests.log found_"
-          }
-
-      - name: Summarize bootstrap self-tests
-        if: always()
-        shell: pwsh
-        run: |
-          $items = @(
-            @{ Title = 'Self-test (empty folder bootstrap)'; Path = 'tests\~selftest_empty\~empty_bootstrap.log' },
-            @{ Title = 'Self-test (stub bootstrap)'; Path = 'tests\~selftest_stub\~stub_bootstrap.log' },
-            @{ Title = 'Self-test (stub run)'; Path = 'tests\~selftest_stub\~stub_run.log' }
-          )
-          foreach ($item in $items) {
-            if (Test-Path $item.Path) {
-              Add-Content $env:GITHUB_STEP_SUMMARY -Value ("### {0} (tail)" -f $item.Title)
-              Add-Content $env:GITHUB_STEP_SUMMARY -Value '```text'
-              Get-Content $item.Path -Tail 120 | ForEach-Object { Add-Content $env:GITHUB_STEP_SUMMARY -Value $_ }
-              Add-Content $env:GITHUB_STEP_SUMMARY -Value '```'
-            }
           }
 
       - name: Warn if zero tests executed
@@ -276,34 +316,8 @@ jobs:
             Write-Host "WARNING: Detected 0 tests executed - investigate harness/test discovery."
           }
 
-      - name: Publish failure summary
-        if: failure()
-        shell: pwsh
-        run: |
-          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "# CI failure: Batch syntax/run check"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Run: $runUrl`n"
-          $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
-          $files = @()
-          foreach ($p in $patterns) {
-            $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue
-          }
-          $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
-          $files = $files | Sort-Object LastWriteTime -Descending -Unique
-          $files = $files | Where-Object { $_.Name -ne 'README_TESTS.txt' }
-          if ($files -and $files.Count -gt 0) {
-            $files | Select-Object -First 4 | ForEach-Object {
-              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Log: $($_.FullName)"
-              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```text'
-              Get-Content -Path $_.FullName -Tail 120 | ForEach-Object { Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $_ }
-              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
-            }
-          } else {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No logs found_"
-          }
-
       - name: Extract first failure (machine-readable and snippet)
-        if: failure()
+        if: always()
         id: extract_failure
         shell: pwsh
         run: |
@@ -397,8 +411,8 @@ jobs:
           }
 
           if (-not $firstFail) {
-            $firstFail = [pscustomobject]@{ source=""; line=""; file=""; check=""; message="(No failure fingerprint found. See run link.)" }
-            $snippet = "Could not auto-fingerprint; inspect the run page."
+            $firstFail = [pscustomobject]@{ source='dynamic-tests'; line=''; file=''; check=''; message='SKIPPED or SUCCESS (no fingerprint)' }
+            $snippet = 'SKIPPED or SUCCESS (no fingerprint)'
           }
 
           $firstFail.source  = TruncateText $firstFail.source 150
@@ -464,6 +478,50 @@ jobs:
             'Branch runs: ' + $runsUrl
           )
           [System.IO.File]::WriteAllText('codex_body.txt', ($commentLines -join "`n"), [System.Text.Encoding]::ASCII)
+
+      - name: Summarize bootstrap self-tests
+        if: always()
+        shell: pwsh
+        run: |
+          $items = @(
+            @{ Title = 'Self-test (empty folder bootstrap)'; Path = 'tests\~selftest_empty\~empty_bootstrap.log' },
+            @{ Title = 'Self-test (stub bootstrap)'; Path = 'tests\~selftest_stub\~stub_bootstrap.log' },
+            @{ Title = 'Self-test (stub run)'; Path = 'tests\~selftest_stub\~stub_run.log' }
+          )
+          foreach ($item in $items) {
+            if (Test-Path $item.Path) {
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value ("### {0} (tail)" -f $item.Title)
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value '```text'
+              Get-Content $item.Path -Tail 120 | ForEach-Object { Add-Content $env:GITHUB_STEP_SUMMARY -Value $_ }
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value '```'
+            }
+          }
+
+      - name: Publish failure summary
+        if: failure()
+        shell: pwsh
+        run: |
+          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "# CI failure: Batch syntax/run check"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Run: $runUrl`n"
+          $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
+          $files = @()
+          foreach ($p in $patterns) {
+            $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue
+          }
+          $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
+          $files = $files | Sort-Object LastWriteTime -Descending -Unique
+          $files = $files | Where-Object { $_.Name -ne 'README_TESTS.txt' }
+          if ($files -and $files.Count -gt 0) {
+            $files | Select-Object -First 4 | ForEach-Object {
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Log: $($_.FullName)"
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```text'
+              Get-Content -Path $_.FullName -Tail 120 | ForEach-Object { Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $_ }
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
+            }
+          } else {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No logs found_"
+          }
 
       - name: Distribute codex failure summary
         if: failure()
