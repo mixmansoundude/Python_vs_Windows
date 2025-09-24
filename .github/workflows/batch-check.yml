@@ -16,7 +16,7 @@ jobs:
     runs-on: windows-latest
 
     concurrency:
-      group: batch-check-${{ github.ref }}
+      group: batch-check-${{ github.head_ref || github.ref_name }}
       cancel-in-progress: true
 
     steps:
@@ -247,15 +247,11 @@ jobs:
           name: test-logs
           path: |
             bootstrap.log
-            dynamic_tests.log
-            **/*.log
-            **/*install_log*.txt
-            **/~*.txt
-            **/*.out
-            **/*.ndjson
-            tests/**/*.txt
-            tests/**/*.log
-            tests/**/*.ndjson
+            ~setup.log
+            tests/~dynamic-run.log
+            tests/~test-summary.txt
+            tests/~test-results.ndjson
+            tests/extracted/**
           if-no-files-found: warn
           retention-days: 14
 
@@ -306,6 +302,25 @@ jobs:
             Add-Content $env:GITHUB_STEP_SUMMARY -Value "_No dynamic_tests.log found_"
           }
 
+      - name: Summarize static tests result
+        if: always()
+        shell: pwsh
+        run: |
+          $summaryPath = '.\tests\~test-summary.txt'
+          if (Test-Path $summaryPath) {
+            $lines = Get-Content $summaryPath -Encoding Ascii
+            $pfLine = $lines | Where-Object { $_ -match '^PASS:' } | Select-Object -First 1
+            if ($pfLine) {
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value $pfLine
+            }
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value "### Static tests (tail)"
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value '```text'
+            $lines | Select-Object -Last 120 | ForEach-Object { Add-Content $env:GITHUB_STEP_SUMMARY -Value $_ }
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value '```'
+          } else {
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value "_tests\\~test-summary.txt not found_"
+          }
+
       - name: Summarize prep_requirements helper
         if: always()
         shell: pwsh
@@ -332,6 +347,34 @@ jobs:
             Add-Content $env:GITHUB_STEP_SUMMARY -Value '```'
           } else {
             Add-Content $env:GITHUB_STEP_SUMMARY -Value "_tests\\extracted\\~prep_requirements.py not found_"
+          }
+
+      - name: Summarize detect_python helper
+        if: always()
+        shell: pwsh
+        run: |
+          $helper = '.\tests\extracted\~detect_python.py'
+          if (Test-Path $helper) {
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value "### ~detect_python.py (first 3 non-comment lines)"
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value '```python'
+            $lines = Get-Content $helper -Encoding UTF8
+            $emit = @()
+            foreach ($line in $lines) {
+              $trim = $line.Trim()
+              if ($trim -and -not $trim.StartsWith('#')) {
+                $emit += $line
+              }
+              if ($emit.Count -ge 3) { break }
+            }
+            if ($emit.Count -eq 0) {
+              $emit = @('<no non-comment lines found>')
+            }
+            foreach ($line in $emit) {
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value $line
+            }
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value '```'
+          } else {
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value "_tests\\extracted\\~detect_python.py not found_"
           }
 
       - name: Warn if zero tests executed
@@ -489,8 +532,32 @@ jobs:
           }
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
 
+          $summaryPath = '.\tests\~test-summary.txt'
+          $passFailLine = 'PASS/FAIL: unavailable'
+          if (Test-Path $summaryPath) {
+            $pf = Get-Content $summaryPath -Encoding Ascii | Where-Object { $_ -match '^PASS:' } | Select-Object -First 1
+            if ($pf) { $passFailLine = $pf.Trim() }
+          }
+
+          $statusPath = '.\~bootstrap.status.json'
+          $bootstrapLine = 'Bootstrap status: <missing>'
+          if (Test-Path $statusPath) {
+            try {
+              $status = Get-Content $statusPath -Raw -Encoding Ascii | ConvertFrom-Json
+              $bootstrapLine = "Bootstrap status: state={0}, exitCode={1}, pyFiles={2}" -f $status.state, $status.exitCode, $status.pyFiles
+            } catch {
+              $bootstrapLine = "Bootstrap status: <invalid JSON>"
+            }
+          }
+
+          $artifactLink = $runUrl + '#artifacts'
+
           $commentLines = @(
             '@codex',
+            '',
+            'Summary:',
+            $passFailLine,
+            $bootstrapLine,
             '',
             'Snippet:',
             '```text',
@@ -503,6 +570,7 @@ jobs:
             '```',
             '',
             'Run: ' + $runUrl,
+            'tests/~test-results.ndjson: ' + $artifactLink,
             'Branch runs: ' + $runsUrl
           )
           [System.IO.File]::WriteAllText('codex_body.txt', ($commentLines -join "`n"), [System.Text.Encoding]::ASCII)
@@ -551,9 +619,8 @@ jobs:
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No logs found_"
           }
 
-      - name: Distribute codex failure summary
-        if: failure()
-        id: codex_notify
+      - name: Distribute codex failure summary (PR comment)
+        if: failure() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -564,41 +631,35 @@ jobs:
               core.info('codex_body.txt not found; skipping commenter.');
               return;
             }
-
             const body = fs.readFileSync(path, { encoding: 'ascii' });
-            const event = require(process.env.GITHUB_EVENT_PATH);
-            const branch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF.replace(/^refs\/heads\//, '');
-            let prNumber = event.pull_request?.number;
+            const number = context.payload.pull_request.number;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              body
+            });
 
-            if (!prNumber && branch) {
-              const { data: prs } = await github.rest.pulls.list({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                head: `${context.repo.owner}:${branch}`,
-                state: 'open'
-              });
-              if (prs.length) {
-                prNumber = prs[0].number;
+      - name: Archive codex failure summary (no PR)
+        if: failure() && github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          if (Test-Path 'codex_body.txt') {
+            $body = Get-Content 'codex_body.txt' -Raw -Encoding Ascii
+            Set-Content -Path 'codex_nudge.txt' -Value $body -Encoding Ascii
+            foreach ($line in $body -split "`r?`n") {
+              if ($line -ne '') {
+                Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $line
+              } else {
+                Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ''
               }
             }
-
-            if (prNumber) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body
-              });
-              core.setOutput('target', 'comment');
-              return;
-            }
-
-            fs.writeFileSync('codex_nudge.txt', body, { encoding: 'ascii' });
-            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, body + '\n', { encoding: 'ascii' });
-            core.setOutput('target', 'artifact');
+          } else {
+            Write-Host 'codex_body.txt not found; nothing to archive.'
+          }
 
       - name: Upload codex nudge artifact
-        if: failure()
+        if: failure() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: codex_nudge.txt

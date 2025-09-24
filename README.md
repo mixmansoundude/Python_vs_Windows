@@ -154,6 +154,10 @@ PY
 
 Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` with the new base64 text. The batch file comments point back to this section when further guidance is needed.
 
+## How CI decides pass/fail
+
+See [docs/ci_contract.md](docs/ci_contract.md) for the GitHub Actions contract covering the bootstrap status JSON, dynamic test skip rules, summary layout, and archived artifacts.
+
 ---
 
 ## Contributing
