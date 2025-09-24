@@ -94,7 +94,8 @@ def main():
     pr = import_from(os.path.join(EXTRACT, "~prep_requirements.py"), "pr")
 
     for s, exp in [
-        ("~=3.10", "python>=3.10,<3.11"),
+        ("~=3.10", "python>=3.10,<4.0"),
+        ("~=3.8.1", "python>=3.8.1,<3.9"),
         (">=3.9,<3.11", "python>=3.9,<3.11"),
         ("==3.11", "python==3.11"),
         (">=3.8,<=3.12", "python>=3.8,<=3.12"),
@@ -104,7 +105,7 @@ def main():
         record({"id":"dp.pep440","spec":s,"expected":exp,"actual":got,"pass": got==exp})
 
     for s, exp in [
-        ("pyvisa~=1.14", ["pyvisa >=1.14,<1.15"]),
+        ("pyvisa~=1.14", ["pyvisa >=1.14,<2.0"]),
         ("pyserial>=3.5", ["pyserial >=3.5"]),
         ("pandas==2.2.2", ["pandas ==2.2.2"]),
         ("numpy>=1.26,<2.0", ["numpy >=1.26,<2.0"]),
