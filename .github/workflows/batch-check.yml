@@ -208,18 +208,29 @@ jobs:
             if (Test-Path $resultsNdjson) { Remove-Item -Force $resultsNdjson }
           }
 
-      - name: Run tests
-        shell: cmd
+      - name: Run tests (map empty repo to success)
+        shell: pwsh
         env:
           SCRIPT: run_tests.bat
         run: |
-          setlocal EnableExtensions EnableDelayedExpansion
-          echo === BEGIN %CD%\%SCRIPT% ===
-          echo on
-          call "%SCRIPT%"
-          set RC=%errorlevel%
-          @echo off
-          exit /b %RC%
+          $ErrorActionPreference = 'Continue'
+          Write-Host "=== BEGIN $pwd\$env:SCRIPT ==="
+          & cmd /c $env:SCRIPT *>&1
+          $rc = $LASTEXITCODE
+          if (Test-Path '~bootstrap.status.json') {
+            try {
+              $status = Get-Content '~bootstrap.status.json' -Raw | ConvertFrom-Json
+              if ($status.state -eq 'no_python_files') {
+                Write-Host "Runner rc=$rc on empty repo; mapping to SUCCESS by CI contract."
+                exit 0
+              }
+            } catch {
+              Write-Warning "Could not parse ~bootstrap.status.json; keeping rc=$rc"
+            }
+          } else {
+            Write-Warning "~bootstrap.status.json missing; keeping rc=$rc"
+          }
+          exit $rc
 
       - name: Find and print test logs (tail)
         if: always()
