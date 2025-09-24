@@ -306,6 +306,34 @@ jobs:
             Add-Content $env:GITHUB_STEP_SUMMARY -Value "_No dynamic_tests.log found_"
           }
 
+      - name: Summarize prep_requirements helper
+        if: always()
+        shell: pwsh
+        run: |
+          $helper = '.\tests\extracted\~prep_requirements.py'
+          if (Test-Path $helper) {
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value "### ~prep_requirements.py (first 3 non-comment lines)"
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value '```python'
+            $lines = Get-Content $helper -Encoding UTF8
+            $emit = @()
+            foreach ($line in $lines) {
+              $trim = $line.Trim()
+              if ($trim -and -not $trim.StartsWith('#')) {
+                $emit += $line
+              }
+              if ($emit.Count -ge 3) { break }
+            }
+            if ($emit.Count -eq 0) {
+              $emit = @('<no non-comment lines found>')
+            }
+            foreach ($line in $emit) {
+              Add-Content $env:GITHUB_STEP_SUMMARY -Value $line
+            }
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value '```'
+          } else {
+            Add-Content $env:GITHUB_STEP_SUMMARY -Value "_tests\\extracted\\~prep_requirements.py not found_"
+          }
+
       - name: Warn if zero tests executed
         if: always()
         shell: pwsh
