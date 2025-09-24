@@ -9,6 +9,18 @@ $SummaryPath = Join-Path $OutDir "~test-summary.txt"
 $ExtractDir = Join-Path $OutDir "extracted"
 if (Test-Path $ResultsPath) { Remove-Item -Force $ResultsPath }
 if (!(Test-Path $BatchPath)) { Write-Host "run_setup.bat not found next to run_tests.bat." -ForegroundColor Red; exit 2 }
+if (-not (Test-Path ".\.ci_bootstrap_marker")) {
+  throw "CI bootstrap marker not found. Did run_setup.bat run?"
+}
+$StatusFile = Join-Path $ProjDir "~bootstrap.status.json"
+if (-not (Test-Path $StatusFile)) {
+  throw "Bootstrap status file ~bootstrap.status.json missing. Did run_setup.bat emit status?"
+}
+try {
+  $BootstrapStatus = Get-Content -LiteralPath $StatusFile -Encoding ASCII -Raw | ConvertFrom-Json
+} catch {
+  throw "Bootstrap status JSON invalid: $($_.Exception.Message)"
+}
 New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
 function Write-Result { param($Id,$Desc,[bool]$Pass,$Details)
   $rec = [ordered]@{ id=$Id; pass=$Pass; desc=$Desc; details=$Details }
@@ -19,27 +31,36 @@ $Lines = Get-Content -LiteralPath $BatchPath -Encoding ASCII
 $AllText = [string]::Join("`n", $Lines)
 $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $BatchPath).Hash
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
-$psBlocks = [regex]::Matches($AllText, 'call\s+:write_ps_file\s+"[^"]*emit_[^"]*\.ps1"\s+"@''(?s).*?''@"') | ForEach-Object { $_.Value }
-function Extract-InnerHereString([string]$Block) {
-  $outFile = ''
-  $content = ''
-  if ($Block -match '(?m)^\s*\$OutFile\s*=\s*''([^'']+\.py)''') {
-    $outFile = $Matches[1]
+$stateOk = ($BootstrapStatus.state -eq 'ok' -or $BootstrapStatus.state -eq 'no_python_files')
+Write-Result "bootstrap.state" "Bootstrap status state is ok or no_python_files" $stateOk @{ state=$BootstrapStatus.state; exitCode=$BootstrapStatus.exitCode; pyFiles=$BootstrapStatus.pyFiles }
+Write-Result "bootstrap.exit" "Bootstrap exitCode is 0" ($BootstrapStatus.exitCode -eq 0) @{ exitCode=$BootstrapStatus.exitCode }
+$payloads = @{}
+foreach ($line in $Lines) {
+  if ($line -match '^set "([A-Za-z0-9_]+)=([^\"]+)"$') {
+    $name = $Matches[1]
+    $value = $Matches[2]
+    if ($name -like 'HP_*') {
+      $payloads[$name] = $value
+    }
   }
-  if ($Block -match '(?s)\$Content\s*=\s*@''(.*?)''@') {
-    $content = $Matches[1]
-  }
-  return @{ OutFile=$outFile; Content=$content }
 }
+$emitMatches = [regex]::Matches($AllText, 'call\s+:emit_from_base64\s+"([^"]+)"\s+([A-Za-z0-9_]+)')
 $emitted = @()
-foreach ($b in $psBlocks) {
-  $rec = Extract-InnerHereString $b
-  if ($rec.Content -and $rec.OutFile) {
-    $dest = Join-Path $ExtractDir $rec.OutFile
-    $text = $rec.Content -replace "`r?`n","`r`n"
-    [IO.File]::WriteAllText($dest, $text, [Text.Encoding]::ASCII)
-    $emitted += $rec.OutFile
-    Write-Result "emit.extract" "Extracted $($rec.OutFile) from run_setup.bat here-strings" $true @{ file=$rec.OutFile }
+foreach ($match in $emitMatches) {
+  $outFile = $match.Groups[1].Value
+  $varName = $match.Groups[2].Value
+  $dest = Join-Path $ExtractDir $outFile
+  if ($payloads.ContainsKey($varName)) {
+    try {
+      $bytes = [Convert]::FromBase64String($payloads[$varName])
+      [IO.File]::WriteAllBytes($dest, $bytes)
+      $emitted += $outFile
+      Write-Result "emit.extract" "Extracted $outFile from run_setup.bat payloads" $true @{ file=$outFile; var=$varName }
+    } catch {
+      Write-Result "emit.extract" "Failed to decode payload for $outFile ($varName)" $false @{ error=$_.Exception.Message }
+    }
+  } else {
+    Write-Result "emit.extract" "Missing payload for $outFile ($varName)" $false @{ var=$varName }
   }
 }
 $hasDisable = ($Lines | Select-String -SimpleMatch "setlocal DisableDelayedExpansion").Count -gt 0
@@ -114,6 +135,9 @@ $sb = New-Object System.Text.StringBuilder
 $null = $sb.AppendLine("=== Static Test Summary ===")
 $null = $sb.AppendLine("run_setup.bat sha256: " + $sha.ToLower())
 $null = $sb.AppendLine("PASS: " + $pass.Count + "    FAIL: " + $fail.Count)
+if ($BootstrapStatus.state -eq 'no_python_files') {
+  $null = $sb.AppendLine("Bootstrap reported no Python files; environment bootstrap skipped.")
+}
 if ($fail.Count -gt 0) { $null = $sb.AppendLine("---- Failures ----"); foreach ($f in $fail) { $null = $sb.AppendLine(("* " + $f.id + " :: " + $f.desc)) } }
 $null = $sb.AppendLine("Artifacts:")
 $null = $sb.AppendLine("  tests\~test-results.ndjson")

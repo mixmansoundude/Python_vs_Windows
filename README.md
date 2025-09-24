@@ -124,7 +124,39 @@ to fill remaining gaps quickly.
 - `run_tests.bat` — CI/static checks and harness
 - `tests/` — PowerShell/batch harness, log helpers, and ndjson summaries
 - `.github/workflows/` — CI workflows (batch check + CodeQL)
-- `reference_helpers/` — reference snippets and utilities
+- Helper scripts are emitted on demand by `run_setup.bat`; no committed helper directory is required.
+
+### Bootstrap status contract
+
+`run_setup.bat` writes `~bootstrap.status.json` alongside its logs with ASCII JSON describing the bootstrap result:
+
+```json
+{"state":"ok|no_python_files|error","exitCode":0,"pyFiles":0}
+```
+
+- `state` is `ok` when at least one Python file bootstrapped successfully, `no_python_files` when none were discovered, and `error` if the bootstrapper halted.
+- `exitCode` mirrors the batch exit code so harnesses can fail fast on real bootstrap errors.
+- `pyFiles` records how many `.py` files were counted before the environment build began.
+
+The CI harness and `tests/selftest.ps1` read this file to validate both the empty-folder (`no_python_files`) flow and the stub bootstrap path with a simple `hello_stub.py` runner.
+
+### Rebuilding embedded helper payloads
+
+`run_setup.bat` stores its helper scripts and `.condarc` template as base64 strings so the bootstrapper stays self-contained. To refresh one of the payloads, run a short Python snippet and paste the output back into the batch file (see also https://docs.python.org/3/library/base64.html).
+
+```batch
+python - <<'PY'
+import base64, pathlib
+payload = pathlib.Path('path/to/helper.py').read_bytes()
+print(base64.b64encode(payload).decode('ascii'))
+PY
+```
+
+Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` with the new base64 text. The batch file comments point back to this section when further guidance is needed.
+
+## How CI decides pass/fail
+
+See [docs/ci_contract.md](docs/ci_contract.md) for the GitHub Actions contract covering the bootstrap status JSON, dynamic test skip rules, summary layout, and archived artifacts.
 
 ---
 

@@ -16,6 +16,14 @@ Optional dynamic pass (needs any Python: Miniconda base, py.exe, or system pytho
   1) Double-click tests\dynamic_tests.bat
   2) Send me: tests\~dynamic-results.ndjson
 
+Bootstrap self-tests:
+  * `tests\selftest.ps1` creates throwaway folders (`~selftest_empty`, `~selftest_stub`), runs `run_setup.bat`,
+    and verifies both the no-Python and stub bootstrap paths while capturing logs for CI summaries.
+
 Artifacts written:
   tests\extracted\~*.py   (helpers extracted from run_setup.bat)
   tests\~dynamic-run.log  (if dynamic tests run)
+  tests\~selftest-summary.txt (results from bootstrap self-tests)
+  tests\~selftest_empty\~empty_bootstrap.log (empty-folder bootstrap log)
+  tests\~selftest_stub\~stub_bootstrap.log (stub bootstrap log)
+  tests\~selftest_stub\~stub_run.log (hello_stub.py execution log)
