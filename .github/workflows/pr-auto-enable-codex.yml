@@ -56,7 +56,11 @@ jobs:
             `;
 
             for (const number of nums) {
-              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+              const { data: pr } = await github.request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
+                owner,
+                repo,
+                pull_number: number,
+              });
 
               // Must be open, not draft
               if (pr.state !== 'open' || pr.draft) { core.info(`#${number}: skip (closed/draft)`); continue; }
