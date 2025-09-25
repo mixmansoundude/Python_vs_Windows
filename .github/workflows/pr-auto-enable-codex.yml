@@ -49,18 +49,17 @@ jobs:
             const repo  = context.repo.repo;
             const nums = JSON.parse(process.env.numbers || '[]');
 
+            // Inline SQUASH to avoid Octokit 'method' variable conflict.
             const mutation = `
-              mutation($id:ID!,$method:PullRequestMergeMethod!) {
-                enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: $method }) { clientMutationId }
+              mutation($id:ID!) {
+                enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH }) {
+                  clientMutationId
+                }
               }
             `;
 
             for (const number of nums) {
-              const { data: pr } = await github.request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
-                owner,
-                repo,
-                pull_number: number,
-              });
+              const { data: pr } = await github.pulls.get({ owner, repo, pull_number: number });
 
               // Must be open, not draft
               if (pr.state !== 'open' || pr.draft) { core.info(`#${number}: skip (closed/draft)`); continue; }
@@ -69,17 +68,22 @@ jobs:
               const isSameRepo = pr.head.repo?.full_name === pr.base.repo?.full_name;
               if (!isSameRepo) { core.info(`#${number}: skip (fork PR)`); continue; }
 
-              // Requires label "codex"; allow opt-out via "no-automerge"
+              // Require label "codex"; allow opt-out via "no-automerge"
               const labels = (pr.labels || []).map(l => (l.name || '').toLowerCase());
               if (!labels.includes('codex')) { core.info(`#${number}: skip (missing 'codex' label)`); continue; }
               if (labels.includes('no-automerge')) { core.info(`#${number}: skip (has 'no-automerge')`); continue; }
 
               try {
-                // Use node_id to enable native Auto-merge
-                await github.graphql(mutation, { id: pr.node_id, method: "SQUASH" });
+                await github.graphql(mutation, { id: pr.node_id });
                 core.info(`#${number}: Auto-merge enabled (Squash). GitHub will merge when required checks pass.`);
               } catch (e) {
-                core.info(`#${number}: enable failed (${String(e.message).split('\n')[0]}). Will retry on next event.`);
+                const msg = String(e.message || '').split('\n')[0];
+                // Treat "already enabled" as a benign no-op
+                if (/already.*auto-merge/i.test(msg) || /already.*enabled/i.test(msg)) {
+                  core.info(`#${number}: Auto-merge already enabled (noop).`);
+                } else {
+                  core.info(`#${number}: enable failed (${msg}). Will retry on next event.`);
+                }
               }
             }
         env:
