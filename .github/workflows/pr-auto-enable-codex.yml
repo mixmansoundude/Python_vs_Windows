@@ -47,7 +47,7 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
-            const nums = JSON.parse(core.getInput('numbers'));
+            const nums = JSON.parse(process.env.numbers || '[]');
 
             const mutation = `
               mutation($id:ID!,$method:PullRequestMergeMethod!) {
