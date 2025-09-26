@@ -1,10 +1,12 @@
 name: PR Auto-Enable Auto-merge (codex label)
+
 on:
   pull_request:
     types: [opened, labeled, unlabeled, synchronize, reopened, ready_for_review]
   check_suite:
     types: [completed]
   status: {}
+
 permissions:
   pull-requests: write
   contents: read
@@ -26,7 +28,7 @@ jobs:
               if (context.eventName === 'pull_request') {
                 return [context.payload.pull_request.number];
               }
-              // status/check_suite → map SHA to PRs
+              // Map status/check_suite SHA → PRs
               const sha = context.eventName === 'status'
                 ? context.payload.sha
                 : context.payload.check_suite?.head_sha;
@@ -51,7 +53,7 @@ jobs:
             const repo  = context.repo.repo;
             const nums = JSON.parse(process.env.numbers || '[]');
 
-            // Inline SQUASH to avoid Octokit 'method' variable conflict.
+            // Inline SQUASH to avoid Octokit variable name conflicts
             const mutation = `
               mutation($id:ID!) {
                 enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH }) {
@@ -70,7 +72,7 @@ jobs:
               const isSameRepo = pr.head.repo?.full_name === pr.base.repo?.full_name;
               if (!isSameRepo) { core.info(`#${number}: skip (fork PR)`); continue; }
 
-              // Require label "codex"; allow opt-out via "no-automerge"
+              // Requires label "codex"; allow opt-out via "no-automerge"
               const labels = (pr.labels || []).map(l => (l.name || '').toLowerCase());
               if (!labels.includes('codex')) { core.info(`#${number}: skip (missing 'codex' label)`); continue; }
               if (labels.includes('no-automerge')) { core.info(`#${number}: skip (has 'no-automerge')`); continue; }
@@ -80,8 +82,7 @@ jobs:
                 core.info(`#${number}: Auto-merge enabled (Squash). GitHub will merge when required checks pass.`);
               } catch (e) {
                 const msg = String(e.message || '').split('\n')[0];
-                // Treat "already enabled" as a benign no-op
-                if (/already.*auto-merge/i.test(msg) || /already.*enabled/i.test(msg)) {
+                if (/already.*(auto-merge|enabled)/i.test(msg)) {
                   core.info(`#${number}: Auto-merge already enabled (noop).`);
                 } else {
                   core.info(`#${number}: enable failed (${msg}). Will retry on next event.`);
