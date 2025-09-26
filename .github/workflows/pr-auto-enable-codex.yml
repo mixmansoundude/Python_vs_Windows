@@ -54,103 +54,155 @@ jobs:
             const repo  = context.repo.repo;
             const nums = JSON.parse(process.env.numbers || '[]');
 
-            // Inline SQUASH to avoid Octokit variable name conflicts
-            const mutation = `
-              mutation($id:ID!) {
-                enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: SQUASH }) {
-                  clientMutationId
+            // Repo-level capability
+            const repoQl = `
+              query($owner:String!,$repo:String!){
+                repository(owner:$owner,name:$repo){
+                  id
+                  autoMergeAllowed
+                  squashMergeAllowed
                 }
+              }
+            `;
+            const repoData = await github.graphql(repoQl, { owner, repo });
+            const repoAuto = repoData.repository.autoMergeAllowed ?? true; // older servers may not expose; assume true
+
+            // PR-level capability + state
+            const prQl = `
+              query($owner:String!,$repo:String!,$num:Int!){
+                repository(owner:$owner,name:$repo){
+                  pullRequest(number:$num){
+                    id
+                    number
+                    isDraft
+                    mergeable
+                    reviewDecision
+                    viewerCanEnableAutoMerge
+                    autoMergeRequest { enabledAt }
+                    headRepository { nameWithOwner }
+                    baseRepository { nameWithOwner }
+                  }
+                }
+              }
+            `;
+            const enableMutation = `
+              mutation($id:ID!){
+                enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH}){ clientMutationId }
               }
             `;
 
             for (const number of nums) {
-              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+              const { data: prRest } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+              const labels = (prRest.labels || []).map(l => (l.name||'').toLowerCase());
+              const isSameRepo = prRest.head?.repo?.full_name === prRest.base?.repo?.full_name;
 
-              // Must be open, not draft
-              if (pr.state !== 'open' || pr.draft) { core.info(`#${number}: skip (closed/draft)`); continue; }
-
-              // Same-repo only (skip forks)
-              const isSameRepo = pr.head.repo?.full_name === pr.base.repo?.full_name;
+              // Maintain existing gates
+              if (prRest.state !== 'open' || prRest.draft) { core.info(`#${number}: skip (closed/draft)`); continue; }
               if (!isSameRepo) { core.info(`#${number}: skip (fork PR)`); continue; }
-
-              // Require label "codex"; allow opt-out via "no-automerge"
-              const labels = (pr.labels || []).map(l => (l.name || '').toLowerCase());
               if (!labels.includes('codex')) { core.info(`#${number}: skip (missing 'codex' label)`); continue; }
               if (labels.includes('no-automerge')) { core.info(`#${number}: skip (has 'no-automerge')`); continue; }
 
+              const data = await github.graphql(prQl, { owner, repo, num: number });
+              const pr = data.repository.pullRequest;
+
+              if (pr.autoMergeRequest?.enabledAt) {
+                core.info(`#${number}: Auto-merge already enabled (noop).`);
+                continue;
+              }
+
+              if (!repoAuto) {
+                core.info(`#${number}: enable failed (repository.autoMergeAllowed=false). Check repo Settings -> Pull Requests -> Allow auto-merge.`);
+                continue;
+              }
+
+              if (pr.isDraft) { core.info(`#${number}: skip (draft)`); continue; }
+
+              if (!pr.viewerCanEnableAutoMerge) {
+                core.info(`#${number}: enable failed (viewer cannot enable auto-merge). Check Actions -> Workflow permissions = Read & write; token must have write permission to pull requests.`);
+                continue;
+              }
+
               try {
-                await github.graphql(mutation, { id: pr.node_id });
+                await github.graphql(enableMutation, { id: pr.id });
                 core.info(`#${number}: Auto-merge enabled (Squash). GitHub will merge when required checks pass.`);
               } catch (e) {
-                const msg = String(e.message || '').split('\n')[0];
-                if (/already.*(auto-merge|enabled)/i.test(msg)) {
-                  core.info(`#${number}: Auto-merge already enabled (noop).`);
-                } else if (/Resource not accessible by integration/i.test(msg)) {
-                  core.info(`#${number}: skip (fork or insufficient perms: ${msg})`);
-                } else {
-                  core.info(`#${number}: enable failed (${msg}). Will retry on next event.`);
-                }
+                const raw = (e && e.errors) ? JSON.stringify(e.errors[0]) : String(e.message||e);
+                core.info(`#${number}: enable failed (GraphQL): ${raw}`);
+                core.info(`#${number}: Will retry on next event.`);
               }
             }
         env:
           numbers: ${{ steps.prs.outputs.numbers }}
 
       - name: Auto-merge diagnostics (state + reason)
-        if: steps.prs.outputs.numbers != '[]'
+        if: always()
         uses: actions/github-script@v7
         with:
           github-token: ${{ github.token }}
           script: |
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
-            const nums = JSON.parse(process.env.numbers || '[]');
 
-            const ql = `
-              query($owner:String!, $repo:String!, $num:Int!) {
-                repository(owner:$owner, name:$repo) {
-                  pullRequest(number:$num) {
-                    id
-                    number
-                    isDraft
-                    mergeable
-                    reviewDecision
+            async function resolvePRNumbers(){
+              if (context.eventName === 'pull_request') return [context.payload.pull_request.number];
+              const sha = context.eventName === 'status' ? context.payload.sha : context.payload.check_suite?.head_sha;
+              if (!sha) return [];
+              const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: sha });
+              return prs.filter(pr => pr.state === 'open').map(pr => pr.number);
+            }
+
+            const repoQl = `
+              query($owner:String!,$repo:String!){
+                repository(owner:$owner,name:$repo){
+                  autoMergeAllowed
+                }
+              }
+            `;
+            const prQl = `
+              query($owner:String!,$repo:String!,$num:Int!){
+                repository(owner:$owner,name:$repo){
+                  pullRequest(number:$num){
+                    id number isDraft mergeable reviewDecision
+                    viewerCanEnableAutoMerge
                     autoMergeRequest { enabledAt }
-                    baseRefName
-                    headRefName
                   }
                 }
               }
             `;
 
-            let lines = [];
+            const nums = await resolvePRNumbers();
+            const lines = [];
+            const repoData = await github.graphql(repoQl, { owner, repo });
+            const repoAuto = repoData.repository.autoMergeAllowed;
+
+            if (!nums.length) {
+              const msg = `Auto-merge diagnostics: no open PRs found for event=${context.eventName}; repo.autoMergeAllowed=${repoAuto}`;
+              core.info(msg); await core.summary.addRaw(msg).write(); return;
+            }
+
             for (const number of nums) {
-              // REST: check if auto-merge is armed
               const { data: prRest } = await github.rest.pulls.get({ owner, repo, pull_number: number });
               const armed = !!prRest.auto_merge;
-
-              // GraphQL: mergeability signals
-              const data = await github.graphql(ql, { owner, repo, num: number });
+              const data = await github.graphql(prQl, { owner, repo, num: number });
               const pr = data.repository.pullRequest;
 
-              // Derive a human reason if not armed
               let reason = '';
-              if (pr.isDraft) reason ||= 'draft';
-              if (pr.mergeable === 'CONFLICTING') reason ||= 'merge conflicts';
-              if (pr.reviewDecision === 'REVIEW_REQUIRED') reason ||= 'required review not approved';
-              if (!armed && !reason) reason = 'auto-merge not enabled by API (check repo setting and branch protection)';
+              if (!armed) {
+                if (!repoAuto) reason ||= 'repo auto-merge disabled';
+                if (pr.isDraft) reason ||= 'draft';
+                if (pr.mergeable === 'CONFLICTING') reason ||= 'merge conflicts';
+                if (pr.reviewDecision === 'REVIEW_REQUIRED') reason ||= 'required review not approved';
+                if (!pr.viewerCanEnableAutoMerge) reason ||= 'actor cannot enable auto-merge (permissions)';
+                if (!reason) reason = 'not enabled by API (see logs above)';
+              }
 
               const state = armed ? 'armed' : 'not armed';
-              const msg = `PR #${number}: Auto-merge is ${state}; mergeable=${pr.mergeable}; draft=${pr.isDraft}; reviewDecision=${pr.reviewDecision || 'n/a'}; ${reason || 'ok'}`;
+              const msg = `PR #${number}: Auto-merge is ${state}; repo.autoMergeAllowed=${repoAuto}; viewerCanEnable=${pr.viewerCanEnableAutoMerge}; mergeable=${pr.mergeable}; draft=${pr.isDraft}; reviewDecision=${pr.reviewDecision || 'n/a'}; ${reason || 'ok'}`;
               core.info(msg);
               lines.push(msg);
             }
 
-            await core.summary
-              .addHeading('Auto-merge diagnostics', 3)
-              .addList(lines)
-              .write();
-        env:
-          numbers: ${{ steps.prs.outputs.numbers }}
+            await core.summary.addHeading('Auto-merge diagnostics', 3).addList(lines).write();
 
       - name: Note auto-merge state in Summary
         if: always() && github.event_name == 'pull_request'
