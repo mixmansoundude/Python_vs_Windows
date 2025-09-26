@@ -19,7 +19,7 @@ jobs:
         id: prs
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           script: |
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
@@ -28,16 +28,17 @@ jobs:
               if (context.eventName === 'pull_request') {
                 return [context.payload.pull_request.number];
               }
-              // Map status/check_suite SHA → PRs
-              const sha = context.eventName === 'status'
-                ? context.payload.sha
-                : context.payload.check_suite?.head_sha;
+              // Map status/check_suite SHA → PRs using stable REST API
+              const sha =
+                context.eventName === 'status'
+                  ? context.payload.sha
+                  : context.payload.check_suite?.head_sha;
+
               if (!sha) return [];
-              const prs = await github.request('GET /repos/{owner}/{repo}/commits/{ref}/pulls', {
-                owner, repo, ref: sha,
-                headers: { accept: 'application/vnd.github.groot-preview+json' }
+              const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner, repo, commit_sha: sha
               });
-              return prs.data.filter(pr => pr.state === 'open').map(pr => pr.number);
+              return prs.filter(pr => pr.state === 'open').map(pr => pr.number);
             }
 
             const nums = await numbersFromEvent();
@@ -47,7 +48,7 @@ jobs:
         if: steps.prs.outputs.numbers != '[]'
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           script: |
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
@@ -63,7 +64,7 @@ jobs:
             `;
 
             for (const number of nums) {
-              const { data: pr } = await github.pulls.get({ owner, repo, pull_number: number });
+              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
 
               // Must be open, not draft
               if (pr.state !== 'open' || pr.draft) { core.info(`#${number}: skip (closed/draft)`); continue; }
@@ -72,7 +73,7 @@ jobs:
               const isSameRepo = pr.head.repo?.full_name === pr.base.repo?.full_name;
               if (!isSameRepo) { core.info(`#${number}: skip (fork PR)`); continue; }
 
-              // Requires label "codex"; allow opt-out via "no-automerge"
+              // Require label "codex"; allow opt-out via "no-automerge"
               const labels = (pr.labels || []).map(l => (l.name || '').toLowerCase());
               if (!labels.includes('codex')) { core.info(`#${number}: skip (missing 'codex' label)`); continue; }
               if (labels.includes('no-automerge')) { core.info(`#${number}: skip (has 'no-automerge')`); continue; }
@@ -84,6 +85,8 @@ jobs:
                 const msg = String(e.message || '').split('\n')[0];
                 if (/already.*(auto-merge|enabled)/i.test(msg)) {
                   core.info(`#${number}: Auto-merge already enabled (noop).`);
+                } else if (/Resource not accessible by integration/i.test(msg)) {
+                  core.info(`#${number}: skip (fork or insufficient perms: ${msg})`);
                 } else {
                   core.info(`#${number}: enable failed (${msg}). Will retry on next event.`);
                 }
