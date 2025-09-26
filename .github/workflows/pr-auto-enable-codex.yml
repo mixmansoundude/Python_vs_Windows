@@ -95,6 +95,63 @@ jobs:
         env:
           numbers: ${{ steps.prs.outputs.numbers }}
 
+      - name: Auto-merge diagnostics (state + reason)
+        if: steps.prs.outputs.numbers != '[]'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const nums = JSON.parse(process.env.numbers || '[]');
+
+            const ql = `
+              query($owner:String!, $repo:String!, $num:Int!) {
+                repository(owner:$owner, name:$repo) {
+                  pullRequest(number:$num) {
+                    id
+                    number
+                    isDraft
+                    mergeable
+                    reviewDecision
+                    autoMergeRequest { enabledAt }
+                    baseRefName
+                    headRefName
+                  }
+                }
+              }
+            `;
+
+            let lines = [];
+            for (const number of nums) {
+              // REST: check if auto-merge is armed
+              const { data: prRest } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+              const armed = !!prRest.auto_merge;
+
+              // GraphQL: mergeability signals
+              const data = await github.graphql(ql, { owner, repo, num: number });
+              const pr = data.repository.pullRequest;
+
+              // Derive a human reason if not armed
+              let reason = '';
+              if (pr.isDraft) reason ||= 'draft';
+              if (pr.mergeable === 'CONFLICTING') reason ||= 'merge conflicts';
+              if (pr.reviewDecision === 'REVIEW_REQUIRED') reason ||= 'required review not approved';
+              if (!armed && !reason) reason = 'auto-merge not enabled by API (check repo setting and branch protection)';
+
+              const state = armed ? 'armed' : 'not armed';
+              const msg = `PR #${number}: Auto-merge is ${state}; mergeable=${pr.mergeable}; draft=${pr.isDraft}; reviewDecision=${pr.reviewDecision || 'n/a'}; ${reason || 'ok'}`;
+              core.info(msg);
+              lines.push(msg);
+            }
+
+            await core.summary
+              .addHeading('Auto-merge diagnostics', 3)
+              .addList(lines)
+              .write();
+        env:
+          numbers: ${{ steps.prs.outputs.numbers }}
+
       - name: Note auto-merge state in Summary
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
