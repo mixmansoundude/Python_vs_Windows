@@ -94,3 +94,15 @@ jobs:
             }
         env:
           numbers: ${{ steps.prs.outputs.numbers }}
+
+      - name: Note auto-merge state in Summary
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const pr = context.payload.pull_request;
+            const labels = (pr.labels || []).map(l => (l.name||'').toLowerCase());
+            const armed = labels.includes('codex') && !labels.includes('no-automerge') && !pr.draft && pr.head.repo?.full_name === pr.base.repo?.full_name;
+            const line = armed ? `Auto-merge: **armed** for #${pr.number} (Squash)` : `Auto-merge: **not armed** for #${pr.number}`;
+            await core.summary.addRaw(line).write()
