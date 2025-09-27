@@ -345,7 +345,6 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
-            const core = require('@actions/core');
             const path = 'tests\\~test-results.ndjson';
             let rows = [];
             if (fs.existsSync(path)) {
