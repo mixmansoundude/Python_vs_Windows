@@ -637,10 +637,10 @@ jobs:
           }
 
       - name: Distribute codex failure summary (PR comment)
-        if: failure() && github.event_name == 'pull_request'
+        if: failure() && github.event_name == 'pull_request' && secrets.AUTOMERGE_TOKEN
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.AUTOMERGE_TOKEN }}
           script: |
             const fs = require('fs');
             const path = 'codex_body.txt';
