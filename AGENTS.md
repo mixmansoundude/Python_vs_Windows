@@ -47,3 +47,10 @@ Operating policy for automated agents (Codex, Copilot, others).
 - If you change the bootstrapper’s console text or these entry rules in a future PR, update the self-test and any entry-selection tests accordingly.
 - The bootstrapper’s exit code when no Python files are present is not a release contract; guard on the console text instead.
 - Keep core.autocrlf=false and let .gitattributes control endings.
+## Headless Codex Iteration (CI)
+- Trigger: Workflow_run completion of **Batch syntax/run check**.
+- Requires repository secret **OPENAI_API_KEY** (used by the Codex CLI).
+- Model pin: `gpt-4o-mini` via `codex exec` headless mode.
+- Attempt cap: 20 commits per source branch (tracked by commit prefix).
+- Branch naming: `codex/ci-fix-<failing head branch>` for automated fixes.
+- Disable by commenting out the workflow job or forcing an always-false condition in `.github/workflows/codex-auto-iterate.yml`.
