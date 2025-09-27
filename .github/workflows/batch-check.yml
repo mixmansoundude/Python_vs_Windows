@@ -91,6 +91,11 @@ jobs:
           & .\tests\selftests.ps1
           Get-Content -LiteralPath tests\~selftest_empty\~empty_bootstrap.log -Tail 60 -ErrorAction SilentlyContinue
 
+      - name: "Self-test: single .py entry (CI-only)"
+        shell: pwsh
+        run: |
+          & tests\selfapps_single.ps1
+
       - name: Run dynamic tests (if present)
         shell: pwsh
         run: |
