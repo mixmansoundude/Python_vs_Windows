@@ -24,6 +24,16 @@ Prime Directive: With only one or more Python files on a clean Windows 10+ machi
 
 - From only one or more `.py` files on a clean Windows 10+ machine with internet, a **single batch file** (double-clicked) must bootstrap everything to run the Python app **with all imports installed**.
 
+### Entry selection (current behavior)
+- **0 Python files**: the bootstrapper reports no Python files and skips environment bootstrap. It prints:
+  - `Python file count: 0`
+  - `No Python files detected; skipping environment bootstrap.`
+- **Exactly 1 Python file**: run that file directly.
+- **2 or more Python files**: prefer a clear entry by:
+  1) Common names in order: `main.py` > `app.py` > `run.py` > `cli.py`
+  2) Otherwise, any file containing `if __name__ == "__main__":`
+  - If no clear entry is found after those checks, the bootstrapper chooses deterministically and logs the choice.
+
 ---
 
 ## Platform & Locations
