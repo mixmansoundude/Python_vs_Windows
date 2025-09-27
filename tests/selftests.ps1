@@ -5,7 +5,7 @@ $record = [ordered]@{
     id = 'self.empty_repo.msg'
     pass = $false
     desc = "Empty repo emits 'No Python files detected'"
-    details = @{}
+    details = [ordered]@{}
 }
 
 try {
@@ -25,6 +25,7 @@ try {
 
         cmd.exe /c "run_setup.bat *> ~empty_bootstrap.log" | Out-Null
 
+        $record.details.exitCode = $LASTEXITCODE
         if ($LASTEXITCODE -ne 0) {
             Write-Host "run_setup.bat exited with code $LASTEXITCODE"
         }
@@ -34,8 +35,12 @@ try {
         }
 
         $logContent = Get-Content -Path $logPath -Raw -Encoding Ascii
+        $record.details.logTail = ($logContent -split "`r?`n") | Select-Object -Last 20 -join "`n"
+
         if ($logContent -match 'Python file count: 0' -or $logContent -match 'No Python files detected; skipping environment bootstrap.') {
             $record.pass = $true
+        } else {
+            throw "Expected bootstrap message was not found in log."
         }
     }
     finally {
@@ -43,9 +48,16 @@ try {
     }
 }
 catch {
+    $record.details.error = $_.Exception.Message
     $record.pass = $false
 }
 finally {
     $json = $record | ConvertTo-Json -Compress
     Add-Content -Path $resultsPath -Value $json -Encoding Ascii
+}
+
+if (-not $record.pass) {
+    $message = if ($record.details.Contains('error')) { $record.details.error } else { 'Expected bootstrap message missing.' }
+    Write-Error "Empty repo self-test failed: $message"
+    exit 1
 }

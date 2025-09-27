@@ -45,4 +45,5 @@ Operating policy for automated agents (Codex, Copilot, others).
 - Only Windows scripts (.bat .cmd .ps1 .psm1 .psd1) should check out as CRLF.
 - Do not change line endings manually; follow .gitattributes.
 - If you change the bootstrapper’s console text or these entry rules in a future PR, update the self-test and any entry-selection tests accordingly.
+- The bootstrapper’s exit code when no Python files are present is not a release contract; guard on the console text instead.
 - Keep core.autocrlf=false and let .gitattributes control endings.
