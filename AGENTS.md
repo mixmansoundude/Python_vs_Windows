@@ -44,4 +44,5 @@ Operating policy for automated agents (Codex, Copilot, others).
 - Use LF endings in the repository.
 - Only Windows scripts (.bat .cmd .ps1 .psm1 .psd1) should check out as CRLF.
 - Do not change line endings manually; follow .gitattributes.
+- If you change the bootstrapper’s console text or these entry rules in a future PR, update the self-test and any entry-selection tests accordingly.
 - Keep core.autocrlf=false and let .gitattributes control endings.
