@@ -130,14 +130,9 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Commit (if changes)
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'true'
-        run: |
-          git checkout -B "$BRANCH"
-          git add -A
-          git commit -m "codex: iterate on CI failure (attempt ${{ steps.guard.outputs.next }}/20) for ${{ github.event.workflow_run.head_branch }}"
-
-      - name: Create/Update PR
+      # Let the action stage/commit/push the working tree itself.
+      # This avoids the "no changes" early exit when the tree is clean.
+      - name: Create/Update PR (commit & push inside action)
         if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
@@ -147,3 +142,4 @@ jobs:
           title:  "Codex: iterate on CI failure – ${{ github.event.workflow_run.head_branch }}"
           body:   "Automated Codex iteration after CI failure. Preserved CRLF/ASCII; minimal edits."
           labels: codex,ci-fix,automerge-candidate
+          commit-message: "codex: iterate on CI failure (attempt ${{ steps.guard.outputs.next }}/20) for ${{ github.event.workflow_run.head_branch }}"
