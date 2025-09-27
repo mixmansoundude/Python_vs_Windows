@@ -89,6 +89,7 @@ jobs:
         shell: pwsh
         run: |
           & .\tests\selftests.ps1
+          Get-Content -LiteralPath tests\~selftest_empty\~empty_bootstrap.log -Tail 60 -ErrorAction SilentlyContinue
 
       - name: Run dynamic tests (if present)
         shell: pwsh
