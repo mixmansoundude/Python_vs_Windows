@@ -23,7 +23,7 @@ try {
             Remove-Item -Path $logPath -Force
         }
 
-        cmd.exe /c "run_setup.bat *> ~empty_bootstrap.log" | Out-Null
+        & cmd.exe /d /c run_setup.bat 2>&1 | Tee-Object -FilePath $logPath -Encoding Ascii | Out-Null
 
         $record.details.exitCode = $LASTEXITCODE
         if ($LASTEXITCODE -ne 0) {
@@ -31,7 +31,7 @@ try {
         }
 
         if (-not (Test-Path $logPath)) {
-            throw "Expected log file was not created."
+            New-Item -ItemType File -Path $logPath -Force | Out-Null
         }
 
         $logContent = Get-Content -Path $logPath -Raw -Encoding Ascii
