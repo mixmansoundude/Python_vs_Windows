@@ -29,7 +29,23 @@ function Write-Result { param($Id,$Desc,[bool]$Pass,$Details)
 }
 $Lines = Get-Content -LiteralPath $BatchPath -Encoding ASCII
 $AllText = [string]::Join("`n", $Lines)
-$sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $BatchPath).Hash
+if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+  $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath $BatchPath).Hash
+} else {
+  $stream = [IO.File]::Open($BatchPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+  try {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $hashBytes = $sha256.ComputeHash($stream)
+  } finally {
+    $stream.Dispose()
+  }
+  $builder = New-Object System.Text.StringBuilder
+  foreach ($b in $hashBytes) {
+    [void]$builder.AppendFormat("{0:X2}", $b)
+  }
+  $sha = $builder.ToString()
+  Write-Host ("SHA256 (fallback): {0}" -f $sha)
+}
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
 $stateOk = ($BootstrapStatus.state -eq 'ok' -or $BootstrapStatus.state -eq 'no_python_files')
 Write-Result "bootstrap.state" "Bootstrap status state is ok or no_python_files" $stateOk @{ state=$BootstrapStatus.state; exitCode=$BootstrapStatus.exitCode; pyFiles=$BootstrapStatus.pyFiles }
