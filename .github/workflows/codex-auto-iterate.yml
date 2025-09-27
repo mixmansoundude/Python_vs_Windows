@@ -1,0 +1,145 @@
+on:
+  workflow_run:
+    workflows: ["Batch syntax/run check"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: codex-iterate-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  iterate:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout failing branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      # Preflight: detect the API key (do not echo it)
+      - name: Check for OPENAI_API_KEY
+        id: apikey
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.OPENAI_API_KEY }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Keep CRLF stable (harmless even if we no-op)
+      - name: Normalize CRLF
+        run: |
+          git config core.autocrlf true
+          git config core.eol crlf
+
+      # Try to pull the failure hint artifact produced by the Windows job.
+      # Note: For PR-triggered failures, there may be NO artifact (that job posts a PR comment instead).
+      - name: Download codex_nudge.txt (if present)
+        uses: dawidd6/action-download-artifact@v3
+        continue-on-error: true
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: codex_nudge.txt
+          path: .
+
+      # If the key is missing, loudly but cleanly skip (logs + summary + tiny artifact)
+      - name: Skip (no OPENAI_API_KEY configured)
+        if: steps.apikey.outputs.present != 'true'
+        run: |
+          echo "::notice title=Codex auto-iterate is disabled::Reason: OPENAI_API_KEY not set. Skipping headless iteration and leaving existing flow unchanged."
+          {
+            echo "# Codex auto-iterate skipped"
+            echo ""
+            echo "- **Reason:** `OPENAI_API_KEY` is not configured in repo **Settings → Secrets and variables → Actions**."
+            echo "- **Effect:** No headless Codex run; existing behavior (manual Push / nudger / automerge) remains unchanged."
+            echo ""
+            echo "To enable: add a repository secret named **OPENAI_API_KEY** with your OpenAI API key."
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf "Codex auto-iterate skipped: missing OPENAI_API_KEY\n" > codex_skip_reason.txt
+
+      - name: Upload skip reason (artifact)
+        if: steps.apikey.outputs.present != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-skip-reason
+          path: codex_skip_reason.txt
+          retention-days: 7
+
+      # Only proceed with Codex path when the key exists
+      - name: Install Codex CLI
+        if: steps.apikey.outputs.present == 'true'
+        run: npm i -g @openai/codex@latest
+
+      - name: Git author
+        if: steps.apikey.outputs.present == 'true'
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+
+      # 20-attempt guard based on our standard commit prefix
+      - name: Loop guard
+        if: steps.apikey.outputs.present == 'true'
+        id: guard
+        shell: bash
+        run: |
+          BRANCH="codex/ci-fix-${{ github.event.workflow_run.head_branch }}"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          COUNT=$(git rev-list --all --grep='^codex: iterate on CI failure' | wc -l || true)
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          if [ "$COUNT" -ge 20 ]; then
+            echo "stop=true" >> $GITHUB_OUTPUT
+            echo "Reached 20 attempts; exiting without changes."
+          else
+            echo "stop=false" >> $GITHUB_OUTPUT
+            echo "next=$((COUNT+1))" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build prompt for Codex
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
+        run: |
+          if [ -f codex_nudge.txt ]; then
+            BASE="$(cat codex_nudge.txt)"
+          else
+            BASE="Analyze the last CI failure and apply the smallest safe change set to make our Windows CI pass."
+          fi
+          printf "%s\n\nPreserve CRLF; ASCII where practical; keep run_setup.bat robust; avoid sweeping refactors; add only minimal diagnostics if truly required; write changes to files." "$BASE" > prompt.txt
+
+      # Cheap model, headless mode. If Codex errors or makes no changes, gracefully no-op.
+      - name: Run Codex headlessly (gpt-4o-mini)
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
+        continue-on-error: true
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          codex exec --model gpt-4o-mini "$(cat prompt.txt)"
+
+      - name: Detect changes
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
+        id: diffcheck
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      # Let the action stage/commit/push the working tree itself.
+      # This avoids the "no changes" early exit when the tree is clean.
+      - name: Create/Update PR (commit & push inside action)
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token:  ${{ secrets.GITHUB_TOKEN }}
+          base:   ${{ github.event.workflow_run.head_branch }}
+          branch: ${{ env.BRANCH }}
+          title:  "Codex: iterate on CI failure – ${{ github.event.workflow_run.head_branch }}"
+          body:   "Automated Codex iteration after CI failure. Preserved CRLF/ASCII; minimal edits."
+          labels: codex,ci-fix,automerge-candidate
+          commit-message: "codex: iterate on CI failure (attempt ${{ steps.guard.outputs.next }}/20) for ${{ github.event.workflow_run.head_branch }}"
