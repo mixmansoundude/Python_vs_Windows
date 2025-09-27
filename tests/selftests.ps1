@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
-$resultsPath = Join-Path 'tests' '~test-results.ndjson'
+$resultsPath = Join-Path $PSScriptRoot '~test-results.ndjson'
+$repoRoot = Split-Path -Parent $PSScriptRoot
 $record = [ordered]@{
     id = 'self.empty_repo.msg'
     pass = $false
@@ -9,12 +10,12 @@ $record = [ordered]@{
 }
 
 try {
-    $selfTestDir = Join-Path 'tests' '~selftest_empty'
+    $selfTestDir = Join-Path $PSScriptRoot '~selftest_empty'
     if (-not (Test-Path $selfTestDir)) {
         New-Item -ItemType Directory -Force -Path $selfTestDir | Out-Null
     }
 
-    Copy-Item -Path 'run_setup.bat' -Destination $selfTestDir -Force
+    Copy-Item -Path (Join-Path $repoRoot 'run_setup.bat') -Destination $selfTestDir -Force
 
     Push-Location $selfTestDir
     try {
