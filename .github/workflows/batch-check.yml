@@ -85,7 +85,7 @@ jobs:
           )
           echo bootstrapped> .ci_bootstrap_marker
 
-      - name: Self-test: empty repo behavior
+      - name: "Self-test: empty repo behavior"
         shell: pwsh
         run: |
           & .\tests\selftests.ps1
