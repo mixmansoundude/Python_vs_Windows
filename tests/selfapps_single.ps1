@@ -9,6 +9,10 @@ $resultsPath = Join-Path -Path $here -ChildPath '~test-results.ndjson'
 $entryRoot = Join-Path -Path $here -ChildPath '~entry1'
 $logName = '~entry1_bootstrap.log'
 $token = 'from-single'
+$repoRoot = Split-Path -Parent $here
+$bootstrapperName = 'run_setup.bat'
+$bootstrapperSrc = Join-Path -Path $repoRoot -ChildPath $bootstrapperName
+$bootstrapperDest = Join-Path -Path $entryRoot -ChildPath $bootstrapperName
 
 $record = [ordered]@{
     id = 'entry.single.direct'
@@ -32,6 +36,13 @@ try {
     ) -join "`n"
     Set-Content -LiteralPath $pyPath -Value $pySource -Encoding Ascii
 
+    if (Test-Path -LiteralPath $bootstrapperDest) {
+        Remove-Item -LiteralPath $bootstrapperDest -Force
+    }
+    if (Test-Path -LiteralPath $bootstrapperSrc) {
+        Copy-Item -LiteralPath $bootstrapperSrc -Destination $bootstrapperDest -Force
+    }
+
     $logPath = Join-Path -Path $entryRoot -ChildPath $logName
     if (Test-Path -LiteralPath $logPath) {
         Remove-Item -LiteralPath $logPath -Force
@@ -39,7 +50,7 @@ try {
 
     Push-Location -Path $entryRoot
     try {
-        cmd.exe /d /c "..\..\run_setup.bat *> $logName" | Out-Null
+        cmd.exe /d /c "run_setup.bat *> $logName" | Out-Null
     }
     finally {
         Pop-Location
