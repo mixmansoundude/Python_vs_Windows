@@ -90,8 +90,7 @@ jobs:
 
             const identifier = '<!-- precheck-report -->';
             const body = fs.readFileSync(reportPath, 'utf8');
-            const finalBody = `${identifier}
-${body}`;
+            const finalBody = `${identifier}\n${body}`;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
