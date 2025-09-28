@@ -1,0 +1,3 @@
+Analyze the last CI failure and apply the smallest safe change set to make our Windows CI pass.
+
+Preserve CRLF; ASCII where practical; keep run_setup.bat robust; avoid sweeping refactors; add only minimal diagnostics if truly required; write changes to files.
