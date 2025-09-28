@@ -1,9 +1,12 @@
+# yamllint disable rule:line-length rule:truthy
+---
 name: Batch syntax/run check
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch: null
   push:
-    branches: ['**']
+    branches:
+      - '**'
 
 permissions:
   contents: read
