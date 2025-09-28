@@ -252,14 +252,44 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
-          $files = @()
-          foreach($p in $patterns){
-            $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue
+          $focus = @(
+            'tests\~entry1\~entry1_bootstrap.log',
+            'tests\~entryA\~entryA_bootstrap.log',
+            'tests\~entryB\~entryB_bootstrap.log',
+            'tests\~setup.log'
+          )
+
+          $focusItems = @()
+          foreach ($path in $focus) {
+            if (Test-Path -LiteralPath $path) {
+              $focusItems += Get-Item -LiteralPath $path
+            }
           }
-          $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
-          $files = $files | Sort-Object LastWriteTime -Descending -Unique
-          $files = $files | Where-Object { $_.Name -ne 'README_TESTS.txt' }
+
+          $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
+          $otherItems = @()
+          foreach($p in $patterns){
+            $otherItems += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue
+          }
+          $otherItems += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
+          $otherItems = $otherItems | Sort-Object LastWriteTime -Descending
+          $otherItems = $otherItems | Where-Object { $_.Name -ne 'README_TESTS.txt' }
+
+          $files = @()
+          $seen = @{}
+          foreach ($item in $focusItems) {
+            if (-not $seen.ContainsKey($item.FullName)) {
+              $files += $item
+              $seen[$item.FullName] = $true
+            }
+          }
+          foreach ($item in $otherItems) {
+            if (-not $seen.ContainsKey($item.FullName)) {
+              $files += $item
+              $seen[$item.FullName] = $true
+            }
+          }
+
           if(-not $files){ Write-Host "No log files found."; exit 0 }
           foreach($f in $files){
             Write-Host "::group::LOG $($f.FullName)"
@@ -277,9 +307,13 @@ jobs:
             ~setup.log
             tests/~dynamic-run.log
             tests/~entry1/~entry1_bootstrap.log
+            tests\~entry1\~entry1_bootstrap.log
             tests/~entryA/~entryA_bootstrap.log
+            tests\~entryA\~entryA_bootstrap.log
             tests/~entryB/~entryB_bootstrap.log
+            tests\~entryB\~entryB_bootstrap.log
             tests/~setup.log
+            tests\~setup.log
             tests/~test-summary.txt
             tests/~test-results.ndjson
             tests/extracted/**
@@ -398,11 +432,11 @@ jobs:
             }
 
             const tails = [
-              ['~setup.log',                           'tests\\~setup.log'],
-              ['~empty_bootstrap.log',                 'tests\\~selftest_empty\\~empty_bootstrap.log'],
-              ['~entry1_bootstrap.log',                'tests\\~entry1\\~entry1_bootstrap.log'],
-              ['~entryA_bootstrap.log',                'tests\\~entryA\\~entryA_bootstrap.log'],
-              ['~entryB_bootstrap.log',                'tests\\~entryB\\~entryB_bootstrap.log'],
+              ['tests\\~setup.log',                   'tests\\~setup.log'],
+              ['tests\\~selftest_empty\\~empty_bootstrap.log', 'tests\\~selftest_empty\\~empty_bootstrap.log'],
+              ['tests\\~entry1\\~entry1_bootstrap.log',      'tests\\~entry1\\~entry1_bootstrap.log'],
+              ['tests\\~entryA\\~entryA_bootstrap.log',      'tests\\~entryA\\~entryA_bootstrap.log'],
+              ['tests\\~entryB\\~entryB_bootstrap.log',      'tests\\~entryB\\~entryB_bootstrap.log'],
             ].map(([label,p]) => [label, tail(p)]).filter(([,t]) => t);
 
             if (tails.length){

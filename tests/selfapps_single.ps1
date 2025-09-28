@@ -5,12 +5,16 @@ if (-not $here) {
     $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 
-$resultsPath = Join-Path -Path $here -ChildPath '~test-results.ndjson'
-$entryRoot = Join-Path -Path $here -ChildPath '~entry1'
 $repoRoot = Split-Path -Path $here -Parent
+$nd = Join-Path -Path $here -ChildPath '~test-results.ndjson'
+
+if (-not (Test-Path -LiteralPath $nd)) {
+    New-Item -ItemType File -Path $nd -Force | Out-Null
+}
+
+$app = Join-Path -Path $here -ChildPath '~entry1'
 $logName = '~entry1_bootstrap.log'
-$logPath = Join-Path -Path $entryRoot -ChildPath $logName
-$token = 'from-single'
+$logPath = Join-Path -Path $app -ChildPath $logName
 
 $record = [ordered]@{
     id = 'entry.single.direct'
@@ -19,41 +23,42 @@ $record = [ordered]@{
     details = [ordered]@{}
 }
 
-try {
-    if (-not (Test-Path -LiteralPath $entryRoot)) {
-        New-Item -ItemType Directory -Force -Path $entryRoot | Out-Null
-    }
+$exitCode = $null
 
-    $pyPath = Join-Path -Path $entryRoot -ChildPath 'solo.py'
-    $pySource = @(
-        'if __name__ == "__main__":'
-        '    print("from-single")'
-    ) -join "`n"
-    Set-Content -LiteralPath $pyPath -Value $pySource -Encoding Ascii
+try {
+    New-Item -ItemType Directory -Force -Path $app | Out-Null
+
+    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $app -Force
+
+    $solo = Join-Path -Path $app -ChildPath 'solo.py'
+    $source = @'
+if __name__ == "__main__":
+    print("from-single")
+'@
+    Set-Content -LiteralPath $solo -Value $source -Encoding Ascii -NoNewline
 
     if (Test-Path -LiteralPath $logPath) {
         Remove-Item -LiteralPath $logPath -Force
     }
 
-    $hasToken = $false
-
-    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryRoot -Force
-
-    Push-Location -LiteralPath $entryRoot
+    Push-Location -LiteralPath $app
     try {
-        cmd.exe /c '.\run_setup.bat *> "~entry1_bootstrap.log"' | Out-Null
+        cmd /c .\run_setup.bat *> '~entry1_bootstrap.log'
         $exitCode = $LASTEXITCODE
     }
     finally {
         Pop-Location
     }
 
+    $log = $null
     if (Test-Path -LiteralPath $logPath) {
-        $logContent = Get-Content -LiteralPath $logPath -Raw -Encoding Ascii
-        if ($null -ne $logContent -and $logContent.Contains($token)) {
-            $hasToken = $true
-        }
-        else {
+        $log = Get-Content -LiteralPath $logPath -Raw -Encoding Ascii
+    }
+
+    $token = $false
+    if ($log) {
+        $token = ($log -match 'from-single')
+        if (-not $token) {
             $record.details.missingToken = $true
         }
     }
@@ -61,19 +66,21 @@ try {
         $record.details.logMissing = $true
     }
 
-    if ($null -ne $exitCode -and $exitCode -ne 0) {
-        $record.details.exitCode = $exitCode
-    }
-
-    if ($hasToken -and -not $record.details.Contains('exitCode')) {
-        $record.pass = $true
-    }
+    $pass = ($exitCode -eq 0) -and $token
+    $record.pass = $pass
+    $record.details.exitCode = $exitCode
 }
 catch {
     $record.pass = $false
-    $record.details.error = ($_ | Out-String).Trim()
+    $record.details.exitCode = $exitCode
+    $record.details.error = $_.Exception.Message
 }
 finally {
-    $json = $record | ConvertTo-Json -Compress
-    Add-Content -LiteralPath $resultsPath -Value $json -Encoding Ascii
+    try {
+        $row = $record | ConvertTo-Json -Compress
+        Add-Content -LiteralPath $nd -Value $row -Encoding Ascii
+    }
+    catch {
+        # Swallow serialization issues; logging best-effort only.
+    }
 }
