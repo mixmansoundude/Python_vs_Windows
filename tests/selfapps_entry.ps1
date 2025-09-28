@@ -8,6 +8,8 @@ if (-not $here) {
 $resultsPath = Join-Path -Path $here -ChildPath '~test-results.ndjson'
 $sharedLogPath = Join-Path -Path $here -ChildPath '~setup.log'
 
+$repoRoot = Split-Path -Path $here -Parent
+
 function Write-NdjsonRecord {
     param([hashtable]$Record)
     try {
@@ -38,10 +40,9 @@ function Invoke-RunSetup {
         [string]$BootstrapLog
     )
 
-    $command = '..\..\run_setup.bat *> "' + $BootstrapLog + '"'
     Push-Location -LiteralPath $WorkingRoot
     try {
-        cmd.exe /d /c $command | Out-Null
+        cmd.exe /c ('.\run_setup.bat *> "' + $BootstrapLog + '"') | Out-Null
         return $LASTEXITCODE
     }
     finally {
@@ -84,6 +85,7 @@ try {
     }
 
     $before = Get-BreadcrumbLines -Path $sharedLogPath
+    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryARoot -Force
     $exitCode = Invoke-RunSetup -WorkingRoot $entryARoot -BootstrapLog $entryALogName
 
     $after = Get-BreadcrumbLines -Path $sharedLogPath
@@ -155,6 +157,7 @@ try {
     }
 
     $beforeB = Get-BreadcrumbLines -Path $sharedLogPath
+    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryBRoot -Force
     $exitCodeB = Invoke-RunSetup -WorkingRoot $entryBRoot -BootstrapLog $entryBLogName
 
     $afterB = Get-BreadcrumbLines -Path $sharedLogPath
