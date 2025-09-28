@@ -48,11 +48,11 @@ Operating policy for automated agents (Codex, Copilot, others).
 - The bootstrapper’s exit code when no Python files are present is not a release contract; guard on the console text instead.
 - Keep core.autocrlf=false and let .gitattributes control endings.
 - Be sure to sanity check anything touched before submitting code. Here are some methods:
-  1) Python syntax errors and name errors: use `python -m compileall -q .` and `python -m pyflakes .` (or `pip install pyflakes`).
-  2) PowerShell lint: run PSScriptAnalyzer (`Install-Module PSScriptAnalyzer -Force -Scope CurrentUser` then `Invoke-ScriptAnalyzer -Path . -Recurse -EnableExit`).
-  3) YAML lint: use `pip install yamllint` (or `actionshub/yamllint@v1`) and run over `*.yml`/`*.yaml`.
-  4) JSON lint: use `jq -e .` over `*.json`.
-  5) Generic **paired-delimiter** scanner for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
+  - Python syntax errors and name errors: use `python -m compileall -q .` and `python -m pyflakes .` (or `pip install pyflakes`).
+  - PowerShell lint: run PSScriptAnalyzer (`Install-Module PSScriptAnalyzer -Force -Scope CurrentUser` then `Invoke-ScriptAnalyzer -Path . -Recurse -EnableExit`).
+  - YAML lint: use `pip install yamllint` (or `actionshub/yamllint@v1`) and run over `*.yml`/`*.yaml`.
+  - JSON lint: use `jq -e .` over `*.json`.
+  - Generic **paired-delimiter** scanner for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
      - Implement a kind of `tools/check_delimiters.py` that reads text files and validates balanced/ordered pairs: (), {}, [], and quotes " ' (handle escapes and ignore inside comments where feasible).
      - For `.bat/.cmd`, be conservative: treat `^` (escape) and `REM`/`::` as comment starts; don’t over-parse redirection `<` `>`; just count (), quotes, and braces/brackets. For `.ps1`, respect `#` comments and here-strings (@'…'@, @"…"@).
 
