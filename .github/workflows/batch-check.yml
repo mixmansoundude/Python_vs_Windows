@@ -96,6 +96,11 @@ jobs:
         run: |
           & tests\selfapps_single.ps1
 
+      - name: "Self-test: entry selection (CI-only)"
+        shell: pwsh
+        run: |
+          & tests\selfapps_entry.ps1
+
       - name: Run dynamic tests (if present)
         shell: pwsh
         run: |
@@ -272,6 +277,9 @@ jobs:
             ~setup.log
             tests/~dynamic-run.log
             tests/~entry1/~entry1_bootstrap.log
+            tests/~entryA/~entryA_bootstrap.log
+            tests/~entryB/~entryB_bootstrap.log
+            tests/~setup.log
             tests/~test-summary.txt
             tests/~test-results.ndjson
             tests/extracted/**
