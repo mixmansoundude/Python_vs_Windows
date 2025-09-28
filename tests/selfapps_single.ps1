@@ -7,6 +7,7 @@ if (-not $here) {
 
 $resultsPath = Join-Path -Path $here -ChildPath '~test-results.ndjson'
 $entryRoot = Join-Path -Path $here -ChildPath '~entry1'
+$repoRoot = Split-Path -Path $here -Parent
 $logName = '~entry1_bootstrap.log'
 $logPath = Join-Path -Path $entryRoot -ChildPath $logName
 $token = 'from-single'
@@ -36,9 +37,11 @@ try {
 
     $hasToken = $false
 
+    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryRoot -Force
+
     Push-Location -LiteralPath $entryRoot
     try {
-        cmd.exe /d /c '..\..\run_setup.bat *> "~entry1_bootstrap.log"' | Out-Null
+        cmd.exe /c '.\run_setup.bat *> "~entry1_bootstrap.log"' | Out-Null
         $exitCode = $LASTEXITCODE
     }
     finally {

@@ -8,6 +8,12 @@ if (-not $here) {
 $resultsPath = Join-Path -Path $here -ChildPath '~test-results.ndjson'
 $sharedLogPath = Join-Path -Path $here -ChildPath '~setup.log'
 
+if (Test-Path -LiteralPath $sharedLogPath) {
+    Remove-Item -LiteralPath $sharedLogPath -Force
+}
+
+$repoRoot = Split-Path -Path $here -Parent
+
 function Write-NdjsonRecord {
     param([hashtable]$Record)
     try {
@@ -38,10 +44,9 @@ function Invoke-RunSetup {
         [string]$BootstrapLog
     )
 
-    $command = '..\..\run_setup.bat *> "' + $BootstrapLog + '"'
     Push-Location -LiteralPath $WorkingRoot
     try {
-        cmd.exe /d /c $command | Out-Null
+        cmd.exe /c ('.\run_setup.bat *> "' + $BootstrapLog + '"') | Out-Null
         return $LASTEXITCODE
     }
     finally {
@@ -53,6 +58,7 @@ function Invoke-RunSetup {
 $entryARoot = Join-Path -Path $here -ChildPath '~entryA'
 $entryALogName = '~entryA_bootstrap.log'
 $entryALogPath = Join-Path -Path $entryARoot -ChildPath $entryALogName
+$entryALocalLogPath = Join-Path -Path $entryARoot -ChildPath '~setup.log'
 
 $recordA = [ordered]@{
     id = 'entry.choose.commonname'
@@ -83,29 +89,41 @@ try {
         Remove-Item -LiteralPath $entryALogPath -Force
     }
 
-    $before = Get-BreadcrumbLines -Path $sharedLogPath
+    if (Test-Path -LiteralPath $entryALocalLogPath) {
+        Remove-Item -LiteralPath $entryALocalLogPath -Force
+    }
+
+    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryARoot -Force
     $exitCode = Invoke-RunSetup -WorkingRoot $entryARoot -BootstrapLog $entryALogName
 
-    $after = Get-BreadcrumbLines -Path $sharedLogPath
-    $newLines = $after.Count - $before.Count
+    $breadcrumbs = Get-BreadcrumbLines -Path $entryALocalLogPath
 
     if ($exitCode -ne $null -and $exitCode -ne 0) {
         $recordA.details.exitCode = $exitCode
     }
 
-    if ($newLines -ne 1) {
-        $recordA.details.breadcrumbCount = [ordered]@{ before = $before.Count; after = $after.Count }
+    if ($breadcrumbs.Count -ne 1) {
+        $recordA.details.breadcrumbCount = $breadcrumbs.Count
     }
 
-    if ($after.Count -gt 0) {
-        $lastLine = $after[$after.Count - 1]
+    if ($breadcrumbs.Count -gt 0) {
+        $lastLine = $breadcrumbs[$breadcrumbs.Count - 1]
+
         if ($lastLine -like '*\main.py') {
-            if ($newLines -eq 1 -and -not $recordA.details.Contains('exitCode')) {
+            if ($breadcrumbs.Count -eq 1 -and -not $recordA.details.Contains('exitCode')) {
                 $recordA.pass = $true
             }
         }
         else {
             $recordA.details.lastLine = $lastLine
+        }
+
+        try {
+            # Mirror the detected breadcrumb so tests\~setup.log still exposes the chosen entry in CI summaries.
+            Add-Content -LiteralPath $sharedLogPath -Value $lastLine -Encoding Ascii
+        }
+        catch {
+            $recordA.details.sharedLogCopyError = ($_ | Out-String).Trim()
         }
     }
     else {
@@ -124,6 +142,7 @@ finally {
 $entryBRoot = Join-Path -Path $here -ChildPath '~entryB'
 $entryBLogName = '~entryB_bootstrap.log'
 $entryBLogPath = Join-Path -Path $entryBRoot -ChildPath $entryBLogName
+$entryBLocalLogPath = Join-Path -Path $entryBRoot -ChildPath '~setup.log'
 
 $recordB = [ordered]@{
     id = 'entry.choose.guard_or_name'
@@ -154,30 +173,41 @@ try {
         Remove-Item -LiteralPath $entryBLogPath -Force
     }
 
-    $beforeB = Get-BreadcrumbLines -Path $sharedLogPath
+    if (Test-Path -LiteralPath $entryBLocalLogPath) {
+        Remove-Item -LiteralPath $entryBLocalLogPath -Force
+    }
+
+    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryBRoot -Force
     $exitCodeB = Invoke-RunSetup -WorkingRoot $entryBRoot -BootstrapLog $entryBLogName
 
-    $afterB = Get-BreadcrumbLines -Path $sharedLogPath
-    $newLinesB = $afterB.Count - $beforeB.Count
+    $breadcrumbsB = Get-BreadcrumbLines -Path $entryBLocalLogPath
 
     if ($exitCodeB -ne $null -and $exitCodeB -ne 0) {
         $recordB.details.exitCode = $exitCodeB
     }
 
-    if ($newLinesB -ne 1) {
-        $recordB.details.breadcrumbCount = [ordered]@{ before = $beforeB.Count; after = $afterB.Count }
+    if ($breadcrumbsB.Count -ne 1) {
+        $recordB.details.breadcrumbCount = $breadcrumbsB.Count
     }
 
-    if ($afterB.Count -gt 0) {
-        $lastLineB = $afterB[$afterB.Count - 1]
+    if ($breadcrumbsB.Count -gt 0) {
+        $lastLineB = $breadcrumbsB[$breadcrumbsB.Count - 1]
         if ($lastLineB -like '*\app.py' -or $lastLineB -like '*\foo.py') {
             $recordB.details.chosen = $lastLineB
-            if ($newLinesB -eq 1 -and -not $recordB.details.Contains('exitCode')) {
+            if ($breadcrumbsB.Count -eq 1 -and -not $recordB.details.Contains('exitCode')) {
                 $recordB.pass = $true
             }
         }
         else {
             $recordB.details.chosen = $lastLineB
+        }
+
+        try {
+            # Keep the shared log aligned with the CI artifact expectations after running in the entry folder.
+            Add-Content -LiteralPath $sharedLogPath -Value $lastLineB -Encoding Ascii
+        }
+        catch {
+            $recordB.details.sharedLogCopyError = ($_ | Out-String).Trim()
         }
     }
     else {
