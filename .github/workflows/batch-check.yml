@@ -15,7 +15,152 @@ permissions:
   issues: write
 
 jobs:
+  precheck:
+    runs-on: windows-latest
+
+    concurrency:
+      group: precheck-${{ github.head_ref || github.ref_name }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install precheck dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --upgrade pip
+          python -m pip install pyflakes yamllint
+          choco install jq --no-progress -y
+          try {
+            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+          } catch {
+            Write-Warning $_.Exception.Message
+          }
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -Confirm:$false
+
+      - name: Run precheck suite
+        id: precheck
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          & tools/run_prechecks.ps1 -ReportPath precheck_report.md -JsonPath precheck_results.json
+
+          $rawExit = 0
+          if ($null -ne $LASTEXITCODE) {
+            try {
+              $rawExit = [int]$LASTEXITCODE
+            } catch {
+              $rawExit = 1
+            }
+          }
+
+          if (-not (Test-Path precheck_results.json)) {
+            throw 'precheck_results.json not found; run_prechecks.ps1 did not produce results.'
+          }
+
+          $summary = Get-Content precheck_results.json -Raw | ConvertFrom-Json
+
+          $hasFindings = [bool]$summary.hasFindings
+          $hasFailures = [bool]$summary.hasFailures
+          $hasWarnings = [bool]$summary.hasWarnings
+
+          $normalizedExit = if ($rawExit -ne 0) { 1 } else { 0 }
+          if ($hasFailures) { $normalizedExit = 1 }
+
+          "has_findings=$($hasFindings.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "has_failures=$($hasFailures.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "has_warnings=$($hasWarnings.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "report_path=$($summary.reportPath)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "raw_exit_code=$rawExit" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "normalized_exit_code=$normalizedExit" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Publish precheck results
+        if: ${{ always() }}
+        id: publish_precheck_results
+        uses: actions/github-script@v7
+        env:
+          HAS_FINDINGS: ${{ steps.precheck.outputs.has_findings }}
+          REPORT_PATH: ${{ steps.precheck.outputs.report_path }}
+        with:
+          script: |
+            const core = require('@actions/core');
+            core.setOutput('check-name', 'Precheck');
+            const fs = require('fs');
+            const hasFindings = process.env.HAS_FINDINGS === 'true';
+            if (!hasFindings) {
+              core.info('No findings detected; skipping comment.');
+              return;
+            }
+            const reportPath = process.env.REPORT_PATH;
+            if (!reportPath) {
+              core.warning('Report path not provided; cannot post comment.');
+              return;
+            }
+            let issueNumber = null;
+            if (context.eventName === 'pull_request' || context.eventName === 'pull_request_target') {
+              issueNumber = context.issue.number;
+            } else {
+              const pulls = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              });
+              if (!pulls.data.length) {
+                core.info('No associated pull request found; skipping comment.');
+                return;
+              }
+              issueNumber = pulls.data[0].number;
+            }
+
+            const identifier = '<!-- precheck-report -->';
+            const body = fs.readFileSync(reportPath, 'utf8');
+            const finalBody = `${identifier}\n${body}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+
+            const existing = comments.find(comment => comment.body && comment.body.startsWith(identifier));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: finalBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: finalBody,
+              });
+            }
+
+      - name: Fail for precheck issues
+        if: ${{ steps.precheck.outputs.has_failures == 'true' }}
+        shell: pwsh
+        env:
+          PRECHECK_EXIT_CODE: ${{ steps.precheck.outputs.normalized_exit_code }}
+        run: |
+          $exitCode = 1
+          if ($env:PRECHECK_EXIT_CODE) {
+            $parsed = 1
+            if ([int]::TryParse($env:PRECHECK_EXIT_CODE, [ref]$parsed)) {
+              if ($parsed -le 0) { $parsed = 1 }
+              $exitCode = $parsed
+            }
+          }
+          Write-Error ("Precheck failures detected (exit {0})." -f $exitCode)
+          exit $exitCode
+
   check:
+    needs: precheck
     runs-on: windows-latest
 
     concurrency:
