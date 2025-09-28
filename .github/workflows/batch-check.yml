@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   precheck:
+    outputs:
+      check_name: ${{ steps.publish_precheck.outputs.check_name }}
     runs-on: windows-latest
 
     concurrency:
@@ -44,6 +46,14 @@ jobs:
         shell: pwsh
         run: |
           & tools/run_prechecks.ps1 -ReportPath precheck_report.md -JsonPath precheck_results.json
+          $rawExitCode = if ($LASTEXITCODE -is [int]) { [int]$LASTEXITCODE } else { 0 }
+          $normalizedExitCode = if ($rawExitCode -ne 0) { 1 } else { 0 }
+          if ($rawExitCode -ne 0) {
+            Write-Warning "run_prechecks.ps1 exited with $rawExitCode; normalizing to $normalizedExitCode."
+          }
+          if (-not (Test-Path precheck_results.json)) {
+            throw 'Precheck results file not found.'
+          }
           $summary = Get-Content precheck_results.json -Raw | ConvertFrom-Json
           $hasFindings = if ($summary.hasFindings) { 'true' } else { 'false' }
           $hasFailures = if ($summary.hasFailures) { 'true' } else { 'false' }
@@ -52,8 +62,11 @@ jobs:
           "has_failures=$hasFailures" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "has_warnings=$hasWarnings" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "report_path=$($summary.reportPath)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "raw_exit_code=$rawExitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "normalized_exit_code=$normalizedExitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Publish precheck results
+        id: publish_precheck
         if: ${{ always() }}
         uses: actions/github-script@v7
         env:
@@ -61,6 +74,7 @@ jobs:
           REPORT_PATH: ${{ steps.precheck.outputs.report_path }}
         with:
           script: |
+            core.setOutput('check_name', 'Precheck');
             const fs = require('fs');
             const hasFindings = process.env.HAS_FINDINGS === 'true';
             if (!hasFindings) {
@@ -121,6 +135,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Error 'Precheck failures detected.'
+          exit 1
 
   check:
     needs: precheck
