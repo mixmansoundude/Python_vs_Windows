@@ -271,6 +271,7 @@ jobs:
             bootstrap.log
             ~setup.log
             tests/~dynamic-run.log
+            tests/~entry1/~entry1_bootstrap.log
             tests/~test-summary.txt
             tests/~test-results.ndjson
             tests/extracted/**
@@ -391,6 +392,7 @@ jobs:
             const tails = [
               ['~setup.log',                           'tests\\~setup.log'],
               ['~empty_bootstrap.log',                 'tests\\~selftest_empty\\~empty_bootstrap.log'],
+              ['~entry1_bootstrap.log',                'tests\\~entry1\\~entry1_bootstrap.log'],
               ['~entryA_bootstrap.log',                'tests\\~entryA\\~entryA_bootstrap.log'],
               ['~entryB_bootstrap.log',                'tests\\~entryB\\~entryB_bootstrap.log'],
             ].map(([label,p]) => [label, tail(p)]).filter(([,t]) => t);

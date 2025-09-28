@@ -8,11 +8,8 @@ if (-not $here) {
 $resultsPath = Join-Path -Path $here -ChildPath '~test-results.ndjson'
 $entryRoot = Join-Path -Path $here -ChildPath '~entry1'
 $logName = '~entry1_bootstrap.log'
+$logPath = Join-Path -Path $entryRoot -ChildPath $logName
 $token = 'from-single'
-$repoRoot = Split-Path -Parent $here
-$bootstrapperName = 'run_setup.bat'
-$bootstrapperSrc = Join-Path -Path $repoRoot -ChildPath $bootstrapperName
-$bootstrapperDest = Join-Path -Path $entryRoot -ChildPath $bootstrapperName
 
 $record = [ordered]@{
     id = 'entry.single.direct'
@@ -28,29 +25,21 @@ try {
 
     $pyPath = Join-Path -Path $entryRoot -ChildPath 'solo.py'
     $pySource = @(
-        'def main():'
-        "    print('$token')"
-        ''
-        "if __name__ == '__main__':"
-        '    main()'
+        'if __name__ == "__main__":'
+        '    print("from-single")'
     ) -join "`n"
     Set-Content -LiteralPath $pyPath -Value $pySource -Encoding Ascii
 
-    if (Test-Path -LiteralPath $bootstrapperDest) {
-        Remove-Item -LiteralPath $bootstrapperDest -Force
-    }
-    if (Test-Path -LiteralPath $bootstrapperSrc) {
-        Copy-Item -LiteralPath $bootstrapperSrc -Destination $bootstrapperDest -Force
-    }
-
-    $logPath = Join-Path -Path $entryRoot -ChildPath $logName
     if (Test-Path -LiteralPath $logPath) {
         Remove-Item -LiteralPath $logPath -Force
     }
 
-    Push-Location -Path $entryRoot
+    $hasToken = $false
+
+    Push-Location -LiteralPath $entryRoot
     try {
-        cmd.exe /d /c "run_setup.bat *> $logName" | Out-Null
+        cmd.exe /d /c '..\..\run_setup.bat *> "~entry1_bootstrap.log"' | Out-Null
+        $exitCode = $LASTEXITCODE
     }
     finally {
         Pop-Location
@@ -59,12 +48,27 @@ try {
     if (Test-Path -LiteralPath $logPath) {
         $logContent = Get-Content -LiteralPath $logPath -Raw -Encoding Ascii
         if ($null -ne $logContent -and $logContent.Contains($token)) {
-            $record.pass = $true
+            $hasToken = $true
         }
+        else {
+            $record.details.missingToken = $true
+        }
+    }
+    else {
+        $record.details.logMissing = $true
+    }
+
+    if ($null -ne $exitCode -and $exitCode -ne 0) {
+        $record.details.exitCode = $exitCode
+    }
+
+    if ($hasToken -and -not $record.details.Contains('exitCode')) {
+        $record.pass = $true
     }
 }
 catch {
     $record.pass = $false
+    $record.details.error = ($_ | Out-String).Trim()
 }
 finally {
     $json = $record | ConvertTo-Json -Compress
