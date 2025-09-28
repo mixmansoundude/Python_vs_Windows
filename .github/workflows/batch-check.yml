@@ -878,29 +878,21 @@ jobs:
               body
             });
 
-      - name: Archive codex failure summary (no PR)
-        if: failure() && github.event_name != 'pull_request'
+      - name: Build Codex nudge (on failure)
+        if: ${{ failure() }}
         shell: pwsh
         run: |
-          if (Test-Path 'codex_body.txt') {
-            $body = Get-Content 'codex_body.txt' -Raw -Encoding Ascii
-            Set-Content -Path 'codex_nudge.txt' -Value $body -Encoding Ascii
-            foreach ($line in $body -split "`r?`n") {
-              if ($line -ne '') {
-                Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $line
-              } else {
-                Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ''
-              }
-            }
-          } else {
-            Write-Host 'codex_body.txt not found; nothing to archive.'
-          }
+          $content = @"
+          CI failed on $env:GITHUB_REF_NAME at run $env:GITHUB_RUN_ID.
+          Summarize the failure and apply the smallest safe change set to make our Windows CI pass.
+          Preserve CRLF; ASCII where practical; keep run_setup.bat robust; no sweeping refactors; minimal diagnostics only if required.
+          "@
+          Set-Content -LiteralPath "$env:RUNNER_TEMP\codex_nudge.txt" -Value $content -Encoding Ascii
 
-      - name: Upload codex nudge artifact
-        if: failure() && github.event_name != 'pull_request'
+      - name: Upload Codex nudge artifact
+        if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
           name: codex_nudge.txt
-          path: codex_nudge.txt
-          if-no-files-found: ignore
-          retention-days: 14
+          path: ${{ runner.temp }}/codex_nudge.txt
+          retention-days: 3
