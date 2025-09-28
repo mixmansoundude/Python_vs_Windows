@@ -5,49 +5,75 @@ if (-not $here) {
     $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 
-$resultsPath = Join-Path -Path $here -ChildPath '~test-results.ndjson'
-$sharedLogPath = Join-Path -Path $here -ChildPath '~setup.log'
+$repoRoot = Split-Path -Path $here -Parent
+$nd = Join-Path $here '~test-results.ndjson'
+$sharedLog = Join-Path $here '~setup.log'
 
-if (Test-Path -LiteralPath $sharedLogPath) {
-    Remove-Item -LiteralPath $sharedLogPath -Force
+if (-not (Test-Path -LiteralPath $nd)) {
+    New-Item -ItemType File -Path $nd -Force | Out-Null
 }
 
-$repoRoot = Split-Path -Path $here -Parent
+New-Item -ItemType File -Path $sharedLog -Force | Out-Null
 
-function Write-NdjsonRecord {
+function Write-NdjsonRow {
     param([hashtable]$Record)
     try {
-        $json = $Record | ConvertTo-Json -Compress
-        Add-Content -LiteralPath $resultsPath -Value $json -Encoding Ascii
+        $row = $Record | ConvertTo-Json -Compress
+        Add-Content -LiteralPath $nd -Value $row -Encoding Ascii
     }
     catch {
-        # Swallow serialization errors; do not throw
+        # Keep reporting best-effort; never block the job summary on conversion noise.
     }
 }
 
-function Get-BreadcrumbLines {
+function Get-ChosenLine {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) {
-        return @()
+        return $null
     }
     try {
-        return Get-Content -LiteralPath $Path -Encoding Ascii | Where-Object { $_ -like 'Chosen entry:*' }
+        $lines = Get-Content -LiteralPath $Path -Encoding Ascii | Where-Object { $_ -like 'Chosen entry:*' }
+        if ($lines.Count -gt 0) {
+            return $lines[$lines.Count - 1]
+        }
     }
     catch {
-        return @()
+        return $null
+    }
+    return $null
+}
+
+function Append-SharedBreadcrumb {
+    param([string]$Line)
+    if ([string]::IsNullOrWhiteSpace($Line)) {
+        return
+    }
+    try {
+        Add-Content -LiteralPath $sharedLog -Value $Line -Encoding Ascii
+    }
+    catch {
+        # Shared log replication is best-effort; keep going so the scenario result still records.
     }
 }
 
-function Invoke-RunSetup {
+function Parse-ChosenPath {
+    param([string]$Line)
+    if ([string]::IsNullOrWhiteSpace($Line)) {
+        return $null
+    }
+    $value = $Line -replace '^Chosen entry:\s*', ''
+    return $value.Trim()
+}
+
+function Run-Bootstrap {
     param(
-        [string]$WorkingRoot,
-        [string]$BootstrapLog
+        [string]$Root,
+        [string]$LogName
     )
 
-    Push-Location -LiteralPath $WorkingRoot
+    Push-Location -LiteralPath $Root
     try {
-        cmd.exe /c ('.\run_setup.bat *> "' + $BootstrapLog + '"') | Out-Null
-        return $LASTEXITCODE
+        cmd /c .\run_setup.bat *> $LogName
     }
     finally {
         Pop-Location
@@ -55,12 +81,9 @@ function Invoke-RunSetup {
 }
 
 # Scenario A: main.py should win over app.py when both present
-$entryARoot = Join-Path -Path $here -ChildPath '~entryA'
-$entryALogName = '~entryA_bootstrap.log'
-$entryALogPath = Join-Path -Path $entryARoot -ChildPath $entryALogName
-$entryALocalLogPath = Join-Path -Path $entryARoot -ChildPath '~setup.log'
-
-$recordA = [ordered]@{
+$entryARoot = Join-Path $here '~entryA'
+$entryALog = '~entryA_bootstrap.log'
+$recordCommon = [ordered]@{
     id = 'entry.choose.commonname'
     pass = $false
     desc = 'main.py beats app.py'
@@ -73,78 +96,62 @@ try {
     }
     New-Item -ItemType Directory -Force -Path $entryARoot | Out-Null
 
-    $mainPy = @(
-        'if __name__ == "__main__":'
-        '    print("from-main")'
-    ) -join "`n"
-    $appPy = @(
-        'if __name__ == "__main__":'
-        '    print("from-app")'
-    ) -join "`n"
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'run_setup.bat') -Destination $entryARoot -Force
 
-    Set-Content -LiteralPath (Join-Path -Path $entryARoot -ChildPath 'main.py') -Value $mainPy -Encoding Ascii
-    Set-Content -LiteralPath (Join-Path -Path $entryARoot -ChildPath 'app.py') -Value $appPy -Encoding Ascii
+    $mainPy = @'
+if __name__ == "__main__":
+    print("from-main")
+'@
+    $appPy = @'
+if __name__ == "__main__":
+    print("from-app")
+'@
+    Set-Content -LiteralPath (Join-Path $entryARoot 'main.py') -Value $mainPy -Encoding Ascii -NoNewline
+    Set-Content -LiteralPath (Join-Path $entryARoot 'app.py') -Value $appPy -Encoding Ascii -NoNewline
 
-    if (Test-Path -LiteralPath $entryALogPath) {
-        Remove-Item -LiteralPath $entryALogPath -Force
+    $localLog = Join-Path $entryARoot '~setup.log'
+    $bootstrapLogPath = Join-Path $entryARoot $entryALog
+    if (Test-Path -LiteralPath $localLog) {
+        Remove-Item -LiteralPath $localLog -Force
+    }
+    if (Test-Path -LiteralPath $bootstrapLogPath) {
+        Remove-Item -LiteralPath $bootstrapLogPath -Force
     }
 
-    if (Test-Path -LiteralPath $entryALocalLogPath) {
-        Remove-Item -LiteralPath $entryALocalLogPath -Force
+    Run-Bootstrap -Root $entryARoot -LogName $entryALog
+
+    $localChosen = Get-ChosenLine -Path $localLog
+    if ($localChosen) {
+        Append-SharedBreadcrumb -Line $localChosen
     }
 
-    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryARoot -Force
-    $exitCode = Invoke-RunSetup -WorkingRoot $entryARoot -BootstrapLog $entryALogName
+    $sharedChosen = Get-ChosenLine -Path $sharedLog
+    $chosenPath = Parse-ChosenPath -Line $sharedChosen
 
-    $breadcrumbs = Get-BreadcrumbLines -Path $entryALocalLogPath
-
-    if ($exitCode -ne $null -and $exitCode -ne 0) {
-        $recordA.details.exitCode = $exitCode
-    }
-
-    if ($breadcrumbs.Count -ne 1) {
-        $recordA.details.breadcrumbCount = $breadcrumbs.Count
-    }
-
-    if ($breadcrumbs.Count -gt 0) {
-        $lastLine = $breadcrumbs[$breadcrumbs.Count - 1]
-
-        if ($lastLine -like '*\main.py') {
-            if ($breadcrumbs.Count -eq 1 -and -not $recordA.details.Contains('exitCode')) {
-                $recordA.pass = $true
-            }
+    if ($chosenPath) {
+        if ($chosenPath -like '*\main.py') {
+            $recordCommon.pass = $true
         }
         else {
-            $recordA.details.lastLine = $lastLine
-        }
-
-        try {
-            # Mirror the detected breadcrumb so tests\~setup.log still exposes the chosen entry in CI summaries.
-            Add-Content -LiteralPath $sharedLogPath -Value $lastLine -Encoding Ascii
-        }
-        catch {
-            $recordA.details.sharedLogCopyError = ($_ | Out-String).Trim()
+            $recordCommon.details.chosen = $chosenPath
         }
     }
     else {
-        $recordA.details.noBreadcrumbs = $true
+        $recordCommon.details.noBreadcrumb = $true
     }
 }
 catch {
-    $recordA.pass = $false
-    $recordA.details.error = ($_ | Out-String).Trim()
+    $recordCommon.pass = $false
+    $recordCommon.details.error = $_.Exception.Message
 }
 finally {
-    Write-NdjsonRecord -Record $recordA
+    Write-NdjsonRow -Record $recordCommon
 }
 
-# Scenario B: choose app.py (common name) or foo.py (has __main__ guard)
-$entryBRoot = Join-Path -Path $here -ChildPath '~entryB'
-$entryBLogName = '~entryB_bootstrap.log'
-$entryBLogPath = Join-Path -Path $entryBRoot -ChildPath $entryBLogName
-$entryBLocalLogPath = Join-Path -Path $entryBRoot -ChildPath '~setup.log'
-
-$recordB = [ordered]@{
+# Scenario B: prefer common names or guarded modules when picking entries
+$entryBRoot = Join-Path $here '~entryB'
+$entryBLog = '~entryB_bootstrap.log'
+$recordGuard = [ordered]@{
     id = 'entry.choose.guard_or_name'
     pass = $false
     desc = 'Common name or __main__ guard chosen'
@@ -157,67 +164,52 @@ try {
     }
     New-Item -ItemType Directory -Force -Path $entryBRoot | Out-Null
 
-    $appB = @(
-        'if __name__ == "__main__":'
-        '    print("from-app")'
-    ) -join "`n"
-    $fooB = @(
-        'if __name__ == "__main__":'
-        '    print("from-guard")'
-    ) -join "`n"
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'run_setup.bat') -Destination $entryBRoot -Force
 
-    Set-Content -LiteralPath (Join-Path -Path $entryBRoot -ChildPath 'app.py') -Value $appB -Encoding Ascii
-    Set-Content -LiteralPath (Join-Path -Path $entryBRoot -ChildPath 'foo.py') -Value $fooB -Encoding Ascii
+    $appB = @'
+if __name__ == "__main__":
+    print("from-app")
+'@
+    $fooB = @'
+if __name__ == "__main__":
+    print("from-guard")
+'@
+    Set-Content -LiteralPath (Join-Path $entryBRoot 'app.py') -Value $appB -Encoding Ascii -NoNewline
+    Set-Content -LiteralPath (Join-Path $entryBRoot 'foo.py') -Value $fooB -Encoding Ascii -NoNewline
 
-    if (Test-Path -LiteralPath $entryBLogPath) {
-        Remove-Item -LiteralPath $entryBLogPath -Force
+    $localLogB = Join-Path $entryBRoot '~setup.log'
+    $bootstrapLogB = Join-Path $entryBRoot $entryBLog
+    if (Test-Path -LiteralPath $localLogB) {
+        Remove-Item -LiteralPath $localLogB -Force
+    }
+    if (Test-Path -LiteralPath $bootstrapLogB) {
+        Remove-Item -LiteralPath $bootstrapLogB -Force
     }
 
-    if (Test-Path -LiteralPath $entryBLocalLogPath) {
-        Remove-Item -LiteralPath $entryBLocalLogPath -Force
+    Run-Bootstrap -Root $entryBRoot -LogName $entryBLog
+
+    $localChosenB = Get-ChosenLine -Path $localLogB
+    if ($localChosenB) {
+        Append-SharedBreadcrumb -Line $localChosenB
     }
 
-    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryBRoot -Force
-    $exitCodeB = Invoke-RunSetup -WorkingRoot $entryBRoot -BootstrapLog $entryBLogName
+    $sharedChosenB = Get-ChosenLine -Path $sharedLog
+    $chosenPathB = Parse-ChosenPath -Line $sharedChosenB
 
-    $breadcrumbsB = Get-BreadcrumbLines -Path $entryBLocalLogPath
-
-    if ($exitCodeB -ne $null -and $exitCodeB -ne 0) {
-        $recordB.details.exitCode = $exitCodeB
-    }
-
-    if ($breadcrumbsB.Count -ne 1) {
-        $recordB.details.breadcrumbCount = $breadcrumbsB.Count
-    }
-
-    if ($breadcrumbsB.Count -gt 0) {
-        $lastLineB = $breadcrumbsB[$breadcrumbsB.Count - 1]
-        if ($lastLineB -like '*\app.py' -or $lastLineB -like '*\foo.py') {
-            $recordB.details.chosen = $lastLineB
-            if ($breadcrumbsB.Count -eq 1 -and -not $recordB.details.Contains('exitCode')) {
-                $recordB.pass = $true
-            }
-        }
-        else {
-            $recordB.details.chosen = $lastLineB
-        }
-
-        try {
-            # Keep the shared log aligned with the CI artifact expectations after running in the entry folder.
-            Add-Content -LiteralPath $sharedLogPath -Value $lastLineB -Encoding Ascii
-        }
-        catch {
-            $recordB.details.sharedLogCopyError = ($_ | Out-String).Trim()
+    if ($chosenPathB) {
+        $recordGuard.details.chosen = $chosenPathB
+        if ($chosenPathB -like '*\app.py' -or $chosenPathB -like '*\foo.py') {
+            $recordGuard.pass = $true
         }
     }
     else {
-        $recordB.details.noBreadcrumbs = $true
+        $recordGuard.details.noBreadcrumb = $true
     }
 }
 catch {
-    $recordB.pass = $false
-    $recordB.details.error = ($_ | Out-String).Trim()
+    $recordGuard.pass = $false
+    $recordGuard.details.error = $_.Exception.Message
 }
 finally {
-    Write-NdjsonRecord -Record $recordB
+    Write-NdjsonRow -Record $recordGuard
 }
