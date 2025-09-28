@@ -896,3 +896,26 @@ jobs:
           name: codex_nudge.txt
           path: ${{ runner.temp }}/codex_nudge.txt
           retention-days: 3
+
+  emit-nudge:
+    name: Emit Codex nudge (on failure)
+    needs: [precheck, check]
+    runs-on: windows-latest
+    if: ${{ always() && (needs.precheck.result == 'failure' || needs.check.result == 'failure') }}
+    steps:
+      - name: Build Codex nudge
+        shell: pwsh
+        run: |
+          $body = @"
+          CI failed on $env:GITHUB_REF_NAME (run $env:GITHUB_RUN_ID).
+          Summarize the failure and apply the smallest safe change set to make our Windows CI pass.
+          Preserve CRLF; ASCII where practical; keep run_setup.bat robust; avoid sweeping refactors; minimal diagnostics only if required.
+          "@
+          Set-Content -LiteralPath "$env:RUNNER_TEMP\codex_nudge.txt" -Value $body -Encoding Ascii
+
+      - name: Upload Codex nudge artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex_nudge.txt
+          path: ${{ runner.temp }}/codex_nudge.txt
+          retention-days: 3
