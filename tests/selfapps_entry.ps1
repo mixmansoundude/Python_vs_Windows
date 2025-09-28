@@ -6,8 +6,8 @@ if (-not $here) {
 }
 
 $repoRoot = Split-Path -Path $here -Parent
-$nd = Join-Path $here '~test-results.ndjson'
-$sharedLog = Join-Path $here '~setup.log'
+$nd = Join-Path -Path $here -ChildPath '~test-results.ndjson'
+$sharedLog = Join-Path -Path $here -ChildPath '~setup.log'
 
 if (-not (Test-Path -LiteralPath $nd)) {
     New-Item -ItemType File -Path $nd -Force | Out-Null
@@ -26,23 +26,6 @@ function Write-NdjsonRow {
     }
 }
 
-function Get-ChosenLine {
-    param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) {
-        return $null
-    }
-    try {
-        $lines = Get-Content -LiteralPath $Path -Encoding Ascii | Where-Object { $_ -like 'Chosen entry:*' }
-        if ($lines.Count -gt 0) {
-            return $lines[$lines.Count - 1]
-        }
-    }
-    catch {
-        return $null
-    }
-    return $null
-}
-
 function Append-SharedBreadcrumb {
     param([string]$Line)
     if ([string]::IsNullOrWhiteSpace($Line)) {
@@ -56,16 +39,27 @@ function Append-SharedBreadcrumb {
     }
 }
 
-function Parse-ChosenPath {
-    param([string]$Line)
-    if ([string]::IsNullOrWhiteSpace($Line)) {
-        return $null
+function Get-LastChosenValue {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return ''
     }
-    $value = $Line -replace '^Chosen entry:\s*', ''
-    return $value.Trim()
+    try {
+        $match = Select-String -LiteralPath $Path -Pattern '^Chosen entry: (.+)$' -ErrorAction SilentlyContinue
+        if ($match) {
+            $last = $match | Select-Object -Last 1
+            if ($last -and $last.Matches.Count -gt 0) {
+                return $last.Matches[0].Groups[1].Value
+            }
+        }
+    }
+    catch {
+        return ''
+    }
+    return ''
 }
 
-function Run-Bootstrap {
+function Invoke-Bootstrap {
     param(
         [string]$Root,
         [string]$LogName
@@ -74,14 +68,17 @@ function Run-Bootstrap {
     Push-Location -LiteralPath $Root
     try {
         cmd /c .\run_setup.bat *> $LogName
+        $exitCode = $LASTEXITCODE
     }
     finally {
         Pop-Location
     }
+
+    return $exitCode
 }
 
 # Scenario A: main.py should win over app.py when both present
-$entryARoot = Join-Path $here '~entryA'
+$entryARoot = Join-Path -Path $here -ChildPath '~entryA'
 $entryALog = '~entryA_bootstrap.log'
 $recordCommon = [ordered]@{
     id = 'entry.choose.commonname'
@@ -90,13 +87,15 @@ $recordCommon = [ordered]@{
     details = [ordered]@{}
 }
 
+$exitCodeA = $null
+
 try {
     if (Test-Path -LiteralPath $entryARoot) {
         Remove-Item -LiteralPath $entryARoot -Recurse -Force
     }
     New-Item -ItemType Directory -Force -Path $entryARoot | Out-Null
 
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'run_setup.bat') -Destination $entryARoot -Force
+    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryARoot -Force
 
     $mainPy = @'
 if __name__ == "__main__":
@@ -106,11 +105,12 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     print("from-app")
 '@
-    Set-Content -LiteralPath (Join-Path $entryARoot 'main.py') -Value $mainPy -Encoding Ascii -NoNewline
-    Set-Content -LiteralPath (Join-Path $entryARoot 'app.py') -Value $appPy -Encoding Ascii -NoNewline
+    Set-Content -LiteralPath (Join-Path -Path $entryARoot -ChildPath 'main.py') -Value $mainPy -Encoding Ascii -NoNewline
+    Set-Content -LiteralPath (Join-Path -Path $entryARoot -ChildPath 'app.py') -Value $appPy -Encoding Ascii -NoNewline
 
-    $localLog = Join-Path $entryARoot '~setup.log'
-    $bootstrapLogPath = Join-Path $entryARoot $entryALog
+    $localLog = Join-Path -Path $entryARoot -ChildPath '~setup.log'
+    $bootstrapLogPath = Join-Path -Path $entryARoot -ChildPath $entryALog
+
     if (Test-Path -LiteralPath $localLog) {
         Remove-Item -LiteralPath $localLog -Force
     }
@@ -118,30 +118,29 @@ if __name__ == "__main__":
         Remove-Item -LiteralPath $bootstrapLogPath -Force
     }
 
-    Run-Bootstrap -Root $entryARoot -LogName $entryALog
+    $exitCodeA = Invoke-Bootstrap -Root $entryARoot -LogName $entryALog
 
-    $localChosen = Get-ChosenLine -Path $localLog
+    $localChosen = Get-LastChosenValue -Path $localLog
     if ($localChosen) {
-        Append-SharedBreadcrumb -Line $localChosen
+        Append-SharedBreadcrumb -Line "Chosen entry: $localChosen"
     }
 
-    $sharedChosen = Get-ChosenLine -Path $sharedLog
-    $chosenPath = Parse-ChosenPath -Line $sharedChosen
+    $hasMain = [bool](Select-String -LiteralPath $sharedLog -Pattern 'Chosen entry: .*\\main\.py' -SimpleMatch -ErrorAction SilentlyContinue)
+    $chosenPath = Get-LastChosenValue -Path $sharedLog
 
+    $recordCommon.details.exitCode = $exitCodeA
     if ($chosenPath) {
-        if ($chosenPath -like '*\main.py') {
-            $recordCommon.pass = $true
-        }
-        else {
-            $recordCommon.details.chosen = $chosenPath
-        }
+        $recordCommon.details.chosen = $chosenPath
     }
-    else {
+
+    $recordCommon.pass = (($exitCodeA -eq 0) -and $hasMain)
+    if (-not $recordCommon.pass -and -not $chosenPath) {
         $recordCommon.details.noBreadcrumb = $true
     }
 }
 catch {
     $recordCommon.pass = $false
+    $recordCommon.details.exitCode = $exitCodeA
     $recordCommon.details.error = $_.Exception.Message
 }
 finally {
@@ -149,7 +148,7 @@ finally {
 }
 
 # Scenario B: prefer common names or guarded modules when picking entries
-$entryBRoot = Join-Path $here '~entryB'
+$entryBRoot = Join-Path -Path $here -ChildPath '~entryB'
 $entryBLog = '~entryB_bootstrap.log'
 $recordGuard = [ordered]@{
     id = 'entry.choose.guard_or_name'
@@ -158,13 +157,15 @@ $recordGuard = [ordered]@{
     details = [ordered]@{}
 }
 
+$exitCodeB = $null
+
 try {
     if (Test-Path -LiteralPath $entryBRoot) {
         Remove-Item -LiteralPath $entryBRoot -Recurse -Force
     }
     New-Item -ItemType Directory -Force -Path $entryBRoot | Out-Null
 
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'run_setup.bat') -Destination $entryBRoot -Force
+    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryBRoot -Force
 
     $appB = @'
 if __name__ == "__main__":
@@ -174,11 +175,12 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     print("from-guard")
 '@
-    Set-Content -LiteralPath (Join-Path $entryBRoot 'app.py') -Value $appB -Encoding Ascii -NoNewline
-    Set-Content -LiteralPath (Join-Path $entryBRoot 'foo.py') -Value $fooB -Encoding Ascii -NoNewline
+    Set-Content -LiteralPath (Join-Path -Path $entryBRoot -ChildPath 'app.py') -Value $appB -Encoding Ascii -NoNewline
+    Set-Content -LiteralPath (Join-Path -Path $entryBRoot -ChildPath 'foo.py') -Value $fooB -Encoding Ascii -NoNewline
 
-    $localLogB = Join-Path $entryBRoot '~setup.log'
-    $bootstrapLogB = Join-Path $entryBRoot $entryBLog
+    $localLogB = Join-Path -Path $entryBRoot -ChildPath '~setup.log'
+    $bootstrapLogB = Join-Path -Path $entryBRoot -ChildPath $entryBLog
+
     if (Test-Path -LiteralPath $localLogB) {
         Remove-Item -LiteralPath $localLogB -Force
     }
@@ -186,28 +188,34 @@ if __name__ == "__main__":
         Remove-Item -LiteralPath $bootstrapLogB -Force
     }
 
-    Run-Bootstrap -Root $entryBRoot -LogName $entryBLog
+    $exitCodeB = Invoke-Bootstrap -Root $entryBRoot -LogName $entryBLog
 
-    $localChosenB = Get-ChosenLine -Path $localLogB
+    $localChosenB = Get-LastChosenValue -Path $localLogB
     if ($localChosenB) {
-        Append-SharedBreadcrumb -Line $localChosenB
+        Append-SharedBreadcrumb -Line "Chosen entry: $localChosenB"
     }
 
-    $sharedChosenB = Get-ChosenLine -Path $sharedLog
-    $chosenPathB = Parse-ChosenPath -Line $sharedChosenB
-
-    if ($chosenPathB) {
-        $recordGuard.details.chosen = $chosenPathB
-        if ($chosenPathB -like '*\app.py' -or $chosenPathB -like '*\foo.py') {
-            $recordGuard.pass = $true
-        }
+    $chosenLine = Select-String -LiteralPath $sharedLog -Pattern '^Chosen entry: (.+)$' -ErrorAction SilentlyContinue | Select-Object -Last 1
+    $chosenRel = ''
+    if ($chosenLine -and $chosenLine.Matches.Count -gt 0) {
+        $chosenRel = $chosenLine.Matches[0].Groups[1].Value
     }
-    else {
+
+    $okNameOrGuard = ($chosenRel -match '\\app\.py$') -or ($chosenRel -match '\\foo\.py$')
+
+    $recordGuard.details.exitCode = $exitCodeB
+    if ($chosenRel) {
+        $recordGuard.details.chosen = $chosenRel
+    }
+
+    $recordGuard.pass = (($exitCodeB -eq 0) -and $okNameOrGuard)
+    if (-not $recordGuard.pass -and -not $chosenRel) {
         $recordGuard.details.noBreadcrumb = $true
     }
 }
 catch {
     $recordGuard.pass = $false
+    $recordGuard.details.exitCode = $exitCodeB
     $recordGuard.details.error = $_.Exception.Message
 }
 finally {

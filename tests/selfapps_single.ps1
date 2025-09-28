@@ -6,15 +6,15 @@ if (-not $here) {
 }
 
 $repoRoot = Split-Path -Path $here -Parent
-$nd = Join-Path $here '~test-results.ndjson'
+$nd = Join-Path -Path $here -ChildPath '~test-results.ndjson'
 
 if (-not (Test-Path -LiteralPath $nd)) {
     New-Item -ItemType File -Path $nd -Force | Out-Null
 }
 
-$app = Join-Path $here '~entry1'
+$app = Join-Path -Path $here -ChildPath '~entry1'
 $logName = '~entry1_bootstrap.log'
-$logPath = Join-Path $app $logName
+$logPath = Join-Path -Path $app -ChildPath $logName
 
 $record = [ordered]@{
     id = 'entry.single.direct'
@@ -23,12 +23,14 @@ $record = [ordered]@{
     details = [ordered]@{}
 }
 
+$exitCode = $null
+
 try {
     New-Item -ItemType Directory -Force -Path $app | Out-Null
 
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'run_setup.bat') -Destination $app -Force
+    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $app -Force
 
-    $solo = Join-Path $app 'solo.py'
+    $solo = Join-Path -Path $app -ChildPath 'solo.py'
     $source = @'
 if __name__ == "__main__":
     print("from-single")
@@ -42,18 +44,21 @@ if __name__ == "__main__":
     Push-Location -LiteralPath $app
     try {
         cmd /c .\run_setup.bat *> '~entry1_bootstrap.log'
+        $exitCode = $LASTEXITCODE
     }
     finally {
         Pop-Location
     }
 
-    $ok = $false
+    $log = $null
     if (Test-Path -LiteralPath $logPath) {
-        $content = Get-Content -LiteralPath $logPath -Raw -Encoding Ascii
-        if ($content -match 'from-single') {
-            $ok = $true
-        }
-        else {
+        $log = Get-Content -LiteralPath $logPath -Raw -Encoding Ascii
+    }
+
+    $token = $false
+    if ($log) {
+        $token = ($log -match 'from-single')
+        if (-not $token) {
             $record.details.missingToken = $true
         }
     }
@@ -61,10 +66,13 @@ if __name__ == "__main__":
         $record.details.logMissing = $true
     }
 
-    $record.pass = $ok
+    $pass = ($exitCode -eq 0) -and $token
+    $record.pass = $pass
+    $record.details.exitCode = $exitCode
 }
 catch {
     $record.pass = $false
+    $record.details.exitCode = $exitCode
     $record.details.error = $_.Exception.Message
 }
 finally {
