@@ -207,8 +207,16 @@ class DelimiterChecker:
                 if lower_suffix == ".ps1" and not self.in_block_comment:
                     segment = cursor.remaining()
                     if segment.startswith("<#"):
-                        self.in_block_comment = True
-                        cursor.advance(2)
+                        end = line.find("#>", cursor.index + 2)
+                        if end == -1:
+                            # Multiline comment: skip the remainder of this line
+                            # and mark the parser as inside a block comment so
+                            # subsequent lines get ignored until the terminator.
+                            self.in_block_comment = True
+                            break
+                        # Comment closes on the same line; advance past the
+                        # terminator so the rest of the line can be parsed.
+                        cursor.advance(end - cursor.index + 2)
                         continue
 
                 if lower_suffix == ".ps1":
