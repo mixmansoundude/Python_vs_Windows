@@ -35,7 +35,7 @@ Add-Content -LiteralPath $nd -Value (@{
     details=@{ exitCode=$exit }
 } | ConvertTo-Json -Compress)
 
-$passRun = ($exit -eq 0) -and ( ($outxt -match 'smoke-ok') -or ($bltxt -match 'smoke-ok') )
+$passRun = ($exit -eq 0) -and ($outxt -match 'smoke-ok')
 Add-Content -LiteralPath $nd -Value (@{
     id='env.smoke.run'
     pass=$passRun

@@ -464,6 +464,26 @@ jobs:
               }
             }
 
+      - name: Gate on NDJSON results
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            const path = 'tests\\~test-results.ndjson';
+            let rows = [];
+            if (fs.existsSync(path)) {
+              for (const line of fs.readFileSync(path,'utf8').split(/\r?\n/)) {
+                if (!line.trim()) continue;
+                try { rows.push(JSON.parse(line)); } catch {}
+              }
+            }
+            const failing = rows.filter(r => r && r.pass === false).map(r => r.id);
+            if (failing.length) {
+              core.setFailed('NDJSON failures: ' + failing.join(', '));
+            }
+
       - name: Summarize prep_requirements helper
         if: always()
         shell: pwsh

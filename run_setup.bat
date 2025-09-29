@@ -9,6 +9,7 @@ if not exist "%LOG%" (type nul > "%LOG%")
 if exist "%STATUS_FILE%" del "%STATUS_FILE%"
 rem --- CI fast path (entry tests only) ---
 call :rotate_log
+rem HP_* variables represent "Helper Payload" assets emitted on demand.
 call :define_helper_payloads
 for %%I in ("%CD%") do set "ENVNAME=%%~nI"
 
@@ -224,13 +225,17 @@ if not defined HP_ENTRY set "HP_ENTRY="
 exit /b 0
 
 :record_chosen_entry
+rem %~1 is the RELATIVE crumb (what we want to show users and tests)
 set "HP_CRUMB=%~1"
 if "%HP_CRUMB%"=="" exit /b 0
-setlocal EnableDelayedExpansion
-set "HP_CRUMB=!HP_CRUMB!"
-echo Chosen entry: !HP_CRUMB!
->> "%LOG%" echo Chosen entry: !HP_CRUMB!
-endlocal
+
+rem Echo to console (no punctuation at end)
+echo Chosen entry: %HP_CRUMB%
+rem Append same line to setup log
+>> "%LOG%" echo Chosen entry: %HP_CRUMB%
+
+rem If we also need an absolute path for execution, set HP_ENTRY elsewhere
+rem and keep the echo outside any ( ... ) block.
 exit /b 0
 :write_status
 set "STATE=%~1"
