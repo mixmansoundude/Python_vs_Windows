@@ -326,6 +326,8 @@ jobs:
             tests\~entryB\~entryB_bootstrap.log
             tests/~envsmoke/~envsmoke_bootstrap.log
             tests\~envsmoke\~envsmoke_bootstrap.log
+            tests/~envsmoke/~run.out.txt
+            tests\~envsmoke\~run.out.txt
             tests/~setup.log
             tests\~setup.log
             tests/~test-summary.txt
@@ -452,6 +454,7 @@ jobs:
               ['tests\\~entryA\\~entryA_bootstrap.log',      'tests\\~entryA\\~entryA_bootstrap.log'],
               ['tests\\~entryB\\~entryB_bootstrap.log',      'tests\\~entryB\\~entryB_bootstrap.log'],
               ['~envsmoke_bootstrap.log',              'tests\\~envsmoke\\~envsmoke_bootstrap.log'],
+              ['~run.out.txt',                         'tests\\~envsmoke\\~run.out.txt'],
             ].map(([label,p]) => [label, tail(p)]).filter(([,t]) => t);
 
             if (tails.length){

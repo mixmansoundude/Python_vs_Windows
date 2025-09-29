@@ -22,9 +22,10 @@ try {
     Pop-Location
 }
 
-$log = if (Test-Path (Join-Path $app '~envsmoke_bootstrap.log')) {
-    Get-Content -LiteralPath (Join-Path $app '~envsmoke_bootstrap.log') -Raw
-} else { '' }
+$blog   = Join-Path $app '~envsmoke_bootstrap.log'
+$runout = Join-Path $app '~run.out.txt'
+$bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw) : ''
+$outxt  = (Test-Path $runout) ? (Get-Content -LiteralPath $runout -Raw) : ''
 
 # Record two rows: env setup + app run
 Add-Content -LiteralPath $nd -Value (@{
@@ -34,7 +35,7 @@ Add-Content -LiteralPath $nd -Value (@{
     details=@{ exitCode=$exit }
 } | ConvertTo-Json -Compress)
 
-$passRun = ($exit -eq 0) -and ($log -match 'smoke-ok')
+$passRun = ($exit -eq 0) -and ( ($outxt -match 'smoke-ok') -or ($bltxt -match 'smoke-ok') )
 Add-Content -LiteralPath $nd -Value (@{
     id='env.smoke.run'
     pass=$passRun
