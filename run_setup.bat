@@ -226,11 +226,8 @@ exit /b 0
 :record_chosen_entry
 set "HP_CRUMB=%~1"
 if "%HP_CRUMB%"=="" exit /b 0
-setlocal EnableDelayedExpansion
-set "HP_CRUMB=!HP_CRUMB!"
-echo Chosen entry: !HP_CRUMB!
->> "%LOG%" echo Chosen entry: !HP_CRUMB!
-endlocal
+echo Chosen entry: %HP_CRUMB%.
+>> "%LOG%" echo Chosen entry: %HP_CRUMB%.
 exit /b 0
 :write_status
 set "STATE=%~1"
