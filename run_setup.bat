@@ -7,6 +7,11 @@ set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
 if exist "%STATUS_FILE%" del "%STATUS_FILE%"
+rem --- CI fast path (entry tests only) ---
+if defined HP_CI_SKIP_ENV (
+  echo [INFO] CI self-test: skipping environment bootstrap
+  goto :after_env_bootstrap
+)
 call :rotate_log
 call :define_helper_payloads
 for %%I in ("%CD%") do set "ENVNAME=%%~nI"
@@ -125,24 +130,46 @@ if "%NEED_VISA%"=="1" (
 )
 if exist "~visa.flag" del "~visa.flag"
 
+:after_env_bootstrap
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 call :die "[ERROR] Could not write ~find_entry.py"
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$pyExe = '%CONDA_BASE_PY%'; if (Test-Path $pyExe) { $out = & $pyExe '~find_entry.py' } else { $out = & '%CONDA_BAT%' run -n '%ENVNAME%' python '~find_entry.py' } if ($out) { Set-Content -Path '~entry.txt' -Value $out -Encoding ASCII -NoNewline } else { Set-Content -Path '~entry.txt' -Value '' -Encoding ASCII }" >> "%LOG%" 2>&1
+  "$skip = [bool][Environment]::GetEnvironmentVariable('HP_CI_SKIP_ENV');"
+  "if ($skip) {"
+  "  if (Get-Command python -ErrorAction SilentlyContinue) {"
+  "    $out = & python '~find_entry.py'"
+  "  } elseif (Get-Command py -ErrorAction SilentlyContinue) {"
+  "    $out = & py '~find_entry.py'"
+  "  } else {"
+  "    $out = ''"
+  "  }"
+  "} else {"
+  "  $pyExe = '%CONDA_BASE_PY%';"
+  "  if (Test-Path $pyExe) {"
+  "    $out = & $pyExe '~find_entry.py'"
+  "  } else {"
+  "    $out = & '%CONDA_BAT%' run -n '%ENVNAME%' python '~find_entry.py'"
+  "  }"
+  "}" ^
+  "; if ($out) { Set-Content -Path '~entry.txt' -Value $out -Encoding ASCII -NoNewline } else { Set-Content -Path '~entry.txt' -Value '' -Encoding ASCII }" >> "%LOG%" 2>&1
 if errorlevel 1 call :die "[ERROR] Could not determine entry point"
 set "ENTRY="
 for /f "usebackq delims=" %%M in ("~entry.txt") do set "ENTRY=%%M"
 if "%ENTRY%"=="" (
   call :log "[INFO] No entry script detected; skipping PyInstaller packaging."
 ) else (
-  call :log "[INFO] Running entry script smoke test via conda run."
-  call "%CONDA_BAT%" run -n "%ENVNAME%" python "%ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
-  if errorlevel 1 call :die "[ERROR] Entry script execution failed."
-  call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q pyinstaller >> "%LOG%" 2>&1
-  call "%CONDA_BAT%" run -n "%ENVNAME%" pyinstaller -y --onefile --name "%ENVNAME%" "%ENTRY%" >> "%LOG%" 2>&1
-  if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
-  if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
-  call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+  if defined HP_CI_SKIP_ENV (
+    call :log "[INFO] CI self-test: skipping entry execution and packaging."
+  ) else (
+    call :log "[INFO] Running entry script smoke test via conda run."
+    call "%CONDA_BAT%" run -n "%ENVNAME%" python "%ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
+    if errorlevel 1 call :die "[ERROR] Entry script execution failed."
+    call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q pyinstaller >> "%LOG%" 2>&1
+    call "%CONDA_BAT%" run -n "%ENVNAME%" pyinstaller -y --onefile --name "%ENVNAME%" "%ENTRY%" >> "%LOG%" 2>&1
+    if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
+    if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
+    call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+  )
 )
 
 call :write_status "ok" 0 %PYCOUNT%
