@@ -1,4 +1,4 @@
-# yamllint disable rule:line-length rule:truthy rule:colons
+# yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
 name: Codex – Auto Iterate on CI Failure
 on:
   workflow_run:
@@ -144,6 +144,16 @@ jobs:
           else
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
+
+      - name: Summarize no-op Codex run
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'false'
+        run: |
+          echo "::notice title=Codex iteration::Codex made no edits; see codex-exec-log artifact for details."
+          {
+            echo "## Codex iteration"
+            echo ""
+            echo "Codex made no edits; see codex-exec-log artifact for details."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clean up repo temp files
         if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'

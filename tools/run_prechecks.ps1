@@ -79,10 +79,9 @@ Run-Command -Name 'Pyflakes' -Block { python -m pyflakes . }
 $yamlFiles = @(Get-ChildItem -Path . -Recurse -File -Include *.yml, *.yaml | Where-Object { $_.FullName -notmatch '\\.git\\' })
 if ($yamlFiles.Count -gt 0) {
     Run-Command -Name 'Yamllint' -Block {
-        param($files)
-        $paths = $files | ForEach-Object { $_.FullName }
+        $paths = $yamlFiles | ForEach-Object { $_.FullName }
         python -m yamllint @paths
-    } -Arguments ,$yamlFiles
+    }
 } else {
     Add-Result -Name 'Yamllint' -Status 'skipped' -Output 'No YAML files found.'
 }
