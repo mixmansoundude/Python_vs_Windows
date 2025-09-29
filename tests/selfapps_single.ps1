@@ -55,20 +55,26 @@ if __name__ == "__main__":
         $log = Get-Content -LiteralPath $logPath -Raw -Encoding Ascii
     }
 
-    $token = $false
+    $hasToken = $false
+    $hasCrumb = $false
     if ($log) {
-        $token = ($log -match 'from-single')
-        if (-not $token) {
+        $hasToken = ($log -match 'from-single')
+        $hasCrumb = ($log -match 'Chosen entry: .*\\solo\.py')
+        if (-not $hasToken) {
             $record.details.missingToken = $true
         }
-    }
-    else {
+        if (-not $hasCrumb) {
+            $record.details.missingBreadcrumb = $true
+        }
+    } else {
         $record.details.logMissing = $true
     }
 
-    $pass = ($exitCode -eq 0) -and $token
+    $mode = if ($hasToken) { 'token' } else { 'breadcrumb' }
+    $pass = (($exitCode -eq 0) -and ($hasToken -or $hasCrumb))
     $record.pass = $pass
     $record.details.exitCode = $exitCode
+    $record.details.mode = $mode
 }
 catch {
     $record.pass = $false

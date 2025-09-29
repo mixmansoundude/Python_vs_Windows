@@ -95,14 +95,23 @@ jobs:
           Get-Content -LiteralPath tests\~selftest_empty\~empty_bootstrap.log -Tail 60 -ErrorAction SilentlyContinue
 
       - name: "Self-test: single .py entry (CI-only)"
+        env:
+          HP_CI_SKIP_ENV: '1'
         shell: pwsh
         run: |
           & tests\selfapps_single.ps1
 
       - name: "Self-test: entry selection (CI-only)"
+        env:
+          HP_CI_SKIP_ENV: '1'
         shell: pwsh
         run: |
           & tests\selfapps_entry.ps1
+
+      - name: "Self-test: real env smoke (CI-only)"
+        shell: pwsh
+        run: |
+          & tests\selfapps_envsmoke.ps1
 
       - name: Run dynamic tests (if present)
         shell: pwsh
@@ -315,6 +324,10 @@ jobs:
             tests\~entryA\~entryA_bootstrap.log
             tests/~entryB/~entryB_bootstrap.log
             tests\~entryB\~entryB_bootstrap.log
+            tests/~envsmoke/~envsmoke_bootstrap.log
+            tests\~envsmoke\~envsmoke_bootstrap.log
+            tests/~envsmoke/~run.out.txt
+            tests\~envsmoke\~run.out.txt
             tests/~setup.log
             tests\~setup.log
             tests/~test-summary.txt
@@ -440,6 +453,8 @@ jobs:
               ['tests\\~entry1\\~entry1_bootstrap.log',      'tests\\~entry1\\~entry1_bootstrap.log'],
               ['tests\\~entryA\\~entryA_bootstrap.log',      'tests\\~entryA\\~entryA_bootstrap.log'],
               ['tests\\~entryB\\~entryB_bootstrap.log',      'tests\\~entryB\\~entryB_bootstrap.log'],
+              ['~envsmoke_bootstrap.log',              'tests\\~envsmoke\\~envsmoke_bootstrap.log'],
+              ['~run.out.txt',                         'tests\\~envsmoke\\~run.out.txt'],
             ].map(([label,p]) => [label, tail(p)]).filter(([,t]) => t);
 
             if (tails.length){

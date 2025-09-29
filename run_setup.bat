@@ -7,6 +7,7 @@ set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
 if exist "%STATUS_FILE%" del "%STATUS_FILE%"
+rem --- CI fast path (entry tests only) ---
 call :rotate_log
 call :define_helper_payloads
 for %%I in ("%CD%") do set "ENVNAME=%%~nI"
@@ -21,6 +22,8 @@ if "%PYCOUNT%"=="0" (
   call :write_status "no_python_files" 0 0
   goto :success
 )
+
+if defined HP_CI_SKIP_ENV goto :ci_skip_entry
 
 rem === Miniconda location (non-admin) =========================================
 set "MINICONDA_ROOT=%PUBLIC%\Documents\Miniconda3"
@@ -125,21 +128,54 @@ if "%NEED_VISA%"=="1" (
 )
 if exist "~visa.flag" del "~visa.flag"
 
-call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
-if errorlevel 1 call :die "[ERROR] Could not write ~find_entry.py"
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$pyExe = '%CONDA_BASE_PY%'; if (Test-Path $pyExe) { $out = & $pyExe '~find_entry.py' } else { $out = & '%CONDA_BAT%' run -n '%ENVNAME%' python '~find_entry.py' } if ($out) { Set-Content -Path '~entry.txt' -Value $out -Encoding ASCII -NoNewline } else { Set-Content -Path '~entry.txt' -Value '' -Encoding ASCII }" >> "%LOG%" 2>&1
+goto :after_env_bootstrap
+
+:ci_skip_entry
+call :log "[INFO] CI self-test: skipping environment bootstrap"
+call :determine_entry
+if errorlevel 1 call :die "[ERROR] CI skip: entry selection failed"
+if "%HP_ENTRY%"=="" (
+  call :log "[INFO] CI skip: no entry script detected."
+  call :write_status "ok" 0 %PYCOUNT%
+  goto :success
+)
+call :record_chosen_entry "%HP_ENTRY%"
+set "HP_SYS_PY="
+set "HP_SYS_PY_ARGS="
+where python >nul 2>&1 && set "HP_SYS_PY=python"
+if not defined HP_SYS_PY (
+  where py >nul 2>&1 && (
+    set "HP_SYS_PY=py"
+    set "HP_SYS_PY_ARGS=-3"
+  )
+)
+if defined HP_SYS_PY (
+  if defined HP_SYS_PY_ARGS (
+    call :log "[INFO] CI skip: running entry with %HP_SYS_PY% %HP_SYS_PY_ARGS%"
+    %HP_SYS_PY% %HP_SYS_PY_ARGS% "%HP_ENTRY%" >> "%LOG%" 2>&1
+  ) else (
+    call :log "[INFO] CI skip: running entry with %HP_SYS_PY%"
+    %HP_SYS_PY% "%HP_ENTRY%" >> "%LOG%" 2>&1
+  )
+  if errorlevel 1 call :log "[WARN] CI skip: system Python run returned non-zero"
+) else (
+  call :log "[WARN] CI skip: no system Python found; not executing entry"
+)
+call :write_status "ok" 0 %PYCOUNT%
+goto :success
+
+:after_env_bootstrap
+call :determine_entry
 if errorlevel 1 call :die "[ERROR] Could not determine entry point"
-set "ENTRY="
-for /f "usebackq delims=" %%M in ("~entry.txt") do set "ENTRY=%%M"
-if "%ENTRY%"=="" (
+if "%HP_ENTRY%"=="" (
   call :log "[INFO] No entry script detected; skipping PyInstaller packaging."
 ) else (
+  call :record_chosen_entry "%HP_ENTRY%"
   call :log "[INFO] Running entry script smoke test via conda run."
-  call "%CONDA_BAT%" run -n "%ENVNAME%" python "%ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
+  call "%CONDA_BAT%" run -n "%ENVNAME%" python "%HP_ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
   if errorlevel 1 call :die "[ERROR] Entry script execution failed."
   call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q pyinstaller >> "%LOG%" 2>&1
-  call "%CONDA_BAT%" run -n "%ENVNAME%" pyinstaller -y --onefile --name "%ENVNAME%" "%ENTRY%" >> "%LOG%" 2>&1
+  call "%CONDA_BAT%" run -n "%ENVNAME%" pyinstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
   if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
   if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
   call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
@@ -154,6 +190,47 @@ set "NAME=%~1"
 if "%NAME%"=="" exit /b 0
 if "%NAME:~0,1%"=="~" exit /b 0
 set /a PYCOUNT+=1 >nul
+exit /b 0
+
+:determine_entry
+set "HP_ENTRY="
+call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
+if errorlevel 1 exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$skip = [bool][Environment]::GetEnvironmentVariable('HP_CI_SKIP_ENV');" ^
+  "if ($skip) {" ^
+  "  if (Get-Command python -ErrorAction SilentlyContinue) {" ^
+  "    $out = & python '~find_entry.py'" ^
+  "  } elseif (Get-Command py -ErrorAction SilentlyContinue) {" ^
+  "    $out = & py '~find_entry.py'" ^
+  "  } else {" ^
+  "    Write-Host '[WARN] find_entry: no system Python found'" ^
+  "    $out = ''" ^
+  "  }" ^
+  "} else {" ^
+  "  $pyExe = '%CONDA_BASE_PY%';" ^
+  "  if ($pyExe -and (Test-Path $pyExe)) {" ^
+  "    $out = & $pyExe '~find_entry.py'" ^
+  "  } else {" ^
+  "    $out = & '%CONDA_BAT%' run -n '%ENVNAME%' python '~find_entry.py'" ^
+  "  }" ^
+  "}" ^
+  "; if ($out) { Set-Content -Path '~entry.txt' -Value $out -Encoding ASCII -NoNewline } else { Set-Content -Path '~entry.txt' -Value '' -Encoding ASCII }" >> "%LOG%" 2>&1
+if errorlevel 1 exit /b 1
+if exist "~entry.txt" (
+  for /f "usebackq delims=" %%M in ("~entry.txt") do set "HP_ENTRY=%%M"
+)
+if not defined HP_ENTRY set "HP_ENTRY="
+exit /b 0
+
+:record_chosen_entry
+set "HP_CRUMB=%~1"
+if "%HP_CRUMB%"=="" exit /b 0
+setlocal EnableDelayedExpansion
+set "HP_CRUMB=!HP_CRUMB!"
+echo Chosen entry: !HP_CRUMB!
+>> "%LOG%" echo Chosen entry: !HP_CRUMB!
+endlocal
 exit /b 0
 :write_status
 set "STATE=%~1"
