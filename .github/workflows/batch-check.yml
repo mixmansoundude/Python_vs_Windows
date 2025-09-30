@@ -472,14 +472,46 @@ jobs:
           script: |
             const fs = require('fs');
             const path = 'tests\\~test-results.ndjson';
-            let rows = [];
-            if (fs.existsSync(path)) {
-              for (const line of fs.readFileSync(path,'utf8').split(/\r?\n/)) {
-                if (!line.trim()) continue;
-                try { rows.push(JSON.parse(line)); } catch {}
+
+            if (!fs.existsSync(path)) {
+              core.setFailed(`NDJSON results not found at ${path}`);
+              return;
+            }
+
+            const raw = fs.readFileSync(path, 'utf8');
+            const lines = raw.split(/\r?\n/).filter(line => line.trim().length > 0);
+
+            if (lines.length === 0) {
+              core.setFailed(`NDJSON results empty at ${path}`);
+              return;
+            }
+
+            const failing = [];
+            let parseError = false;
+
+            for (const line of lines) {
+              try {
+                const row = JSON.parse(line);
+                if (!row || row.pass !== true) {
+                  const id = row && row.id ? row.id : '<missing id>';
+                  if (row && row.pass === false) {
+                    failing.push(id);
+                  } else if (!row || typeof row.pass === 'undefined') {
+                    core.error(`NDJSON row missing pass property: ${line}`);
+                    failing.push(id);
+                  }
+                }
+              } catch (error) {
+                parseError = true;
+                core.error(`Failed to parse NDJSON row: ${line}`);
               }
             }
-            const failing = rows.filter(r => r && r.pass === false).map(r => r.id);
+
+            if (parseError) {
+              core.setFailed('One or more NDJSON rows could not be parsed.');
+              return;
+            }
+
             if (failing.length) {
               core.setFailed('NDJSON failures: ' + failing.join(', '));
             }
@@ -804,25 +836,6 @@ jobs:
               issue_number: number,
               body
             });
-
-      - name: Build Codex nudge (on failure)
-        if: ${{ failure() }}
-        shell: pwsh
-        run: |
-          $content = @"
-          CI failed on $env:GITHUB_REF_NAME at run $env:GITHUB_RUN_ID.
-          Summarize the failure and apply the smallest safe change set to make our Windows CI pass.
-          Preserve CRLF; ASCII where practical; keep run_setup.bat robust; no sweeping refactors; minimal diagnostics only if required.
-          "@
-          Set-Content -LiteralPath "$env:RUNNER_TEMP\codex_nudge.txt" -Value $content -Encoding Ascii
-
-      - name: Upload Codex nudge artifact
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex_nudge.txt
-          path: ${{ runner.temp }}/codex_nudge.txt
-          retention-days: 3
 
   emit-nudge:
     name: Emit Codex nudge (on failure)
