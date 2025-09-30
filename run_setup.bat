@@ -139,22 +139,7 @@ set "HP_CRUMB="
 if exist "~entry.abs" del "~entry.abs"
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 call :die "[ERROR] CI skip: entry helper staging failed"
-set "HP_PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
-for /f "usebackq delims=" %%L in (`"%HP_PS%" -NoProfile -ExecutionPolicy Bypass -File "~find_entry.py"`) do if not defined HP_CRUMB set "HP_CRUMB=%%L"
-set "HP_PS="
-if not defined HP_CRUMB (
-  echo [INFO] CI skip: no entry script detected.
-  >> "%LOG%" echo [INFO] CI skip: no entry script detected.
-  call :write_status "ok" 0 %PYCOUNT%
-  goto :success
-)
-set "HP_ENTRY=%HP_CRUMB%"
-if exist "~entry.abs" (
-  set /p HP_ENTRY=<"~entry.abs"
-  if not defined HP_ENTRY set "HP_ENTRY=%HP_CRUMB%"
-)
-call :record_chosen_entry "%HP_CRUMB%"
-if exist "~run.out.txt" del "~run.out.txt"
+rem --- find a Python to run the helper ---
 set "HP_SYS_PY="
 set "HP_SYS_PY_ARGS="
 where python >nul 2>&1 && set "HP_SYS_PY=python"
@@ -164,17 +149,53 @@ if not defined HP_SYS_PY (
     set "HP_SYS_PY_ARGS=-3"
   )
 )
+if not defined HP_SYS_PY (
+  if exist "%PUBLIC%\Documents\Miniconda3\python.exe" set "HP_SYS_PY=%PUBLIC%\Documents\Miniconda3\python.exe"
+)
+
+rem --- run ~find_entry.py and capture RELATIVE crumb into HP_CRUMB ---
+set "HP_CRUMB="
 if defined HP_SYS_PY (
   if defined HP_SYS_PY_ARGS (
-    call :log "[INFO] CI skip: running entry with %HP_SYS_PY% %HP_SYS_PY_ARGS%"
-    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_ENTRY%" > "~run.out.txt" 2>&1
+    for /f "usebackq delims=" %%L in (`"%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"`) do set "HP_CRUMB=%%L"
   ) else (
-    call :log "[INFO] CI skip: running entry with %HP_SYS_PY%"
-    "%HP_SYS_PY%" "%HP_ENTRY%" > "~run.out.txt" 2>&1
+    for /f "usebackq delims=" %%L in (`"%HP_SYS_PY%" "~find_entry.py"`) do set "HP_CRUMB=%%L"
   )
-  if errorlevel 1 call :log "[WARN] CI skip: system Python returned non-zero"
+)
+
+rem As a last resort, try py -3 explicitly
+if not defined HP_CRUMB (
+  where py >nul 2>&1 && for /f "usebackq delims=" %%L in (`py -3 "~find_entry.py" 2^>nul`) do set "HP_CRUMB=%%L"
+)
+
+rem --- write breadcrumb EXACTLY (no trailing punctuation), bang-free ---
+if defined HP_CRUMB (
+  echo Chosen entry: %HP_CRUMB%
+  >> "%LOG%" echo Chosen entry: %HP_CRUMB%
 ) else (
-  call :log "[WARN] CI skip: no system Python found; not executing entry"
+  echo [INFO] CI skip: no entry script detected.
+  >> "%LOG%" echo [INFO] CI skip: no entry script detected.
+  call :write_status "ok" 0 %PYCOUNT%
+  goto :success
+)
+
+rem If ~find_entry.py emits an absolute path file (e.g., ~entry.abs), set HP_ENTRY for optional run:
+if exist "~entry.abs" set /p HP_ENTRY=<"~entry.abs"
+
+rem Optionally run with system Python (best effort), but do not install anything here:
+if exist "~run.out.txt" del "~run.out.txt"
+if defined HP_ENTRY (
+  if defined HP_SYS_PY (
+    if defined HP_SYS_PY_ARGS (
+      call :log "[INFO] CI skip: running entry with %HP_SYS_PY% %HP_SYS_PY_ARGS%"
+      "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_ENTRY%" > "~run.out.txt" 2>&1 || call :log "[WARN] CI skip: system Python returned non-zero"
+    ) else (
+      call :log "[INFO] CI skip: running entry with %HP_SYS_PY%"
+      "%HP_SYS_PY%" "%HP_ENTRY%" > "~run.out.txt" 2>&1 || call :log "[WARN] CI skip: system Python returned non-zero"
+    )
+  ) else (
+    call :log "[WARN] CI skip: no system Python found; not executing entry"
+  )
 )
 call :write_status "ok" 0 %PYCOUNT%
 goto :success
