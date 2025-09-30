@@ -2,14 +2,21 @@ $ErrorActionPreference = 'Continue'
 
 $here = $PSScriptRoot
 $resultsPath = Join-Path -Path $here -ChildPath '~test-results.ndjson'
+$summaryPath = Join-Path -Path $here -ChildPath '~selftests-summary.txt'
+$summary = New-Object System.Collections.Generic.List[string]
+$summary.Add('=== Console Self-test ===')
+if (Test-Path -LiteralPath $summaryPath) {
+    Remove-Item -LiteralPath $summaryPath -Force
+}
 $repoRoot = Split-Path -Parent $here
 
 $record = [ordered]@{
     id = 'self.empty_repo.msg'
     pass = $false
-    desc = "Empty repo emits 'No Python files detected'"
+    desc = "Empty repo emits the no-python console lines"
     details = [ordered]@{
         logExists = $false
+        missing = @()
     }
 }
 
@@ -35,14 +42,23 @@ try {
         if ($record.details.logExists) {
             $logContent = Get-Content -LiteralPath $logPath -Raw -Encoding Ascii
             $lines = $logContent -split "`r?`n"
-            $found = $false
+            $messages = @{ count = $false; skip = $false }
             foreach ($line in $lines) {
-                if ($line -match 'Python file count: 0' -or $line -match 'No Python files detected; skipping environment bootstrap\.') {
-                    $found = $true
+                if (-not $messages.count -and $line -match 'Python file count: 0') {
+                    $messages.count = $true
+                }
+                if (-not $messages.skip -and $line -match 'No Python files detected; skipping environment bootstrap\.') {
+                    $messages.skip = $true
+                }
+                if ($messages.count -and $messages.skip) {
                     break
                 }
             }
-            if ($found) {
+            $missing = @()
+            if (-not $messages.count) { $missing += 'Python file count: 0' }
+            if (-not $messages.skip) { $missing += 'No Python files detected; skipping environment bootstrap.' }
+            $record.details.missing = $missing
+            if ($missing.Count -eq 0) {
                 $record.pass = $true
             }
         }
@@ -58,4 +74,25 @@ catch {
 finally {
     $json = $record | ConvertTo-Json -Compress
     Add-Content -LiteralPath $resultsPath -Value $json -Encoding Ascii
+}
+if ($record.pass) {
+    $summary.Add('Empty repo bootstrap message: PASS')
+} else {
+    $summary.Add('Empty repo bootstrap message: FAIL')
+    $hasErrorProp = ($record.PSObject.Properties.Match('error').Count -gt 0)
+    if ($hasErrorProp -and $record.error) {
+        $summary.Add('Error: ' + $record.error)
+    } elseif (-not $record.details.logExists) {
+        $summary.Add('Error: ~empty_bootstrap.log was not produced')
+    } elseif ($record.details.missing.Count -gt 0) {
+        $summary.Add('Missing lines: ' + ($record.details.missing -join '; '))
+    } else {
+        $summary.Add("Error: Expected console lines weren't found")
+    }
+}
+$summary | Set-Content -LiteralPath $summaryPath -Encoding Ascii
+if ($record.pass) {
+    exit 0
+} else {
+    exit 1
 }

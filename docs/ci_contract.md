@@ -42,4 +42,7 @@ A branch with zero Python files is considered healthy when:
 - `~bootstrap.status.json` reports `state=no_python_files`, `exitCode=0`, and `pyFiles=0`.
 - Dynamic tests log `SKIPPED: no_python_files` and exit 0.
 - Static checks succeed (PASS count equals total checks, FAIL 0).
+- `tests/selftests.ps1` confirms the bootstrap log still prints `Python file count: 0` and
+  `No Python files detected; skipping environment bootstrap.` so CI never relies on
+  exit-code remapping to spot regressions.
 The workflow summary calls this out explicitly so maintainers know the bootstrapper handled the empty-folder scenario correctly.

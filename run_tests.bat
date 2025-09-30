@@ -17,6 +17,14 @@ if %ERR%==0 (
     type "tests\~selftest-summary.txt"
   )
   echo.
+  echo [%date% %time%] Verifying empty-repo console self-test...
+  powershell -NoProfile -ExecutionPolicy Bypass -File "tests\selftests.ps1"
+  if errorlevel 1 set ERR=1
+  if exist "tests\~selftests-summary.txt" (
+    echo.
+    type "tests\~selftests-summary.txt"
+  )
+  echo.
 )
 echo Static test exit code: %ERR%
 echo.
