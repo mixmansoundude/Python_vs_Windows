@@ -101,7 +101,23 @@ if errorlevel 1 call :die "[ERROR] Could not write ~prep_requirements.py"
 set "REQ=requirements.txt"
 if exist "%REQ%" ( for %%S in ("%REQ%") do if %%~zS EQU 0 del "%REQ%" )
 call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q -U pip pipreqs >> "%LOG%" 2>&1
-call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath requirements.auto.txt >> "%LOG%" 2>&1
+set "HP_PIPIGNORE=.pipreqsignore"
+set "HP_PIPIGNORE_BAK=~pipreqsignore.bak"
+if exist "%HP_PIPIGNORE%" (
+  copy /y "%HP_PIPIGNORE%" "%HP_PIPIGNORE_BAK%" >nul 2>&1
+)
+rem Exclude helper artefacts so pipreqs scans only user sources.
+(
+  echo ~*.py
+  echo tests\
+) > "%HP_PIPIGNORE%"
+call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath requirements.auto.txt --ignore-file %HP_PIPIGNORE% >> "%LOG%" 2>&1
+if exist "%HP_PIPIGNORE_BAK%" (
+  del "%HP_PIPIGNORE%"
+  move /y "%HP_PIPIGNORE_BAK%" "%HP_PIPIGNORE%" >nul 2>&1
+) else (
+  del "%HP_PIPIGNORE%"
+)
 if not exist "%REQ%" if exist "requirements.auto.txt" ( copy /y "requirements.auto.txt" "requirements.txt" >> "%LOG%" 2>&1 )
 if exist "requirements.txt" if exist "requirements.auto.txt" ( fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1 )
 if exist "requirements.txt" (
@@ -139,21 +155,18 @@ set "HP_CRUMB="
 if exist "~entry.abs" del "~entry.abs"
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 call :die "[ERROR] CI skip: entry helper staging failed"
-rem --- find a Python to run the helper ---
+rem find a python
 set "HP_SYS_PY="
 set "HP_SYS_PY_ARGS="
 where python >nul 2>&1 && set "HP_SYS_PY=python"
 if not defined HP_SYS_PY (
-  where py >nul 2>&1 && (
-    set "HP_SYS_PY=py"
-    set "HP_SYS_PY_ARGS=-3"
-  )
+  where py >nul 2>&1 && (set "HP_SYS_PY=py" & set "HP_SYS_PY_ARGS=-3")
 )
 if not defined HP_SYS_PY (
   if exist "%PUBLIC%\Documents\Miniconda3\python.exe" set "HP_SYS_PY=%PUBLIC%\Documents\Miniconda3\python.exe"
 )
 
-rem --- run ~find_entry.py and capture RELATIVE crumb into HP_CRUMB ---
+rem run ~find_entry.py and capture RELATIVE crumb into HP_CRUMB
 set "HP_CRUMB="
 if defined HP_SYS_PY (
   if defined HP_SYS_PY_ARGS (
@@ -163,40 +176,27 @@ if defined HP_SYS_PY (
   )
 )
 
-rem As a last resort, try py -3 explicitly
 if not defined HP_CRUMB (
-  where py >nul 2>&1 && for /f "usebackq delims=" %%L in (`py -3 "~find_entry.py" 2^>nul`) do set "HP_CRUMB=%%L"
-)
-
-rem --- write breadcrumb EXACTLY (no trailing punctuation), bang-free ---
-if defined HP_CRUMB (
-  echo Chosen entry: %HP_CRUMB%
-  >> "%LOG%" echo Chosen entry: %HP_CRUMB%
-) else (
   echo [INFO] CI skip: no entry script detected.
-  >> "%LOG%" echo [INFO] CI skip: no entry script detected.
-  call :write_status "ok" 0 %PYCOUNT%
-  goto :success
+  goto :done
 )
 
-rem If ~find_entry.py emits an absolute path file (e.g., ~entry.abs), set HP_ENTRY for optional run:
-if exist "~entry.abs" set /p HP_ENTRY=<"~entry.abs"
+rem write breadcrumb EXACTLY (no trailing punctuation)
+echo Chosen entry: %HP_CRUMB%
+>> "%LOG%" echo Chosen entry: %HP_CRUMB%
 
-rem Optionally run with system Python (best effort), but do not install anything here:
-if exist "~run.out.txt" del "~run.out.txt"
-if defined HP_ENTRY (
-  if defined HP_SYS_PY (
-    if defined HP_SYS_PY_ARGS (
-      call :log "[INFO] CI skip: running entry with %HP_SYS_PY% %HP_SYS_PY_ARGS%"
-      "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_ENTRY%" > "~run.out.txt" 2>&1 || call :log "[WARN] CI skip: system Python returned non-zero"
-    ) else (
-      call :log "[INFO] CI skip: running entry with %HP_SYS_PY%"
-      "%HP_SYS_PY%" "%HP_ENTRY%" > "~run.out.txt" 2>&1 || call :log "[WARN] CI skip: system Python returned non-zero"
-    )
+rem optional best-effort run with system python; do not install anything here
+if exist "~entry.abs" set /p HP_ENTRY=<"~entry.abs"
+if defined HP_ENTRY if defined HP_SYS_PY (
+  if defined HP_SYS_PY_ARGS (
+    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_ENTRY%" > "~run.out.txt" 2>&1 || echo [WARN] CI skip: system Python non-zero
   ) else (
-    call :log "[WARN] CI skip: no system Python found; not executing entry"
+    "%HP_SYS_PY%" "%HP_ENTRY%" > "~run.out.txt" 2>&1 || echo [WARN] CI skip: system Python non-zero
   )
 )
+goto :done
+
+:done
 call :write_status "ok" 0 %PYCOUNT%
 goto :success
 
