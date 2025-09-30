@@ -471,7 +471,7 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
-            const path = 'tests\~test-results.ndjson';
+            const path = 'tests\\~test-results.ndjson';
 
             if (!fs.existsSync(path)) {
               core.setFailed(`NDJSON results not found at ${path}`);
@@ -836,25 +836,6 @@ jobs:
               issue_number: number,
               body
             });
-
-      - name: Build Codex nudge (on failure)
-        if: ${{ failure() }}
-        shell: pwsh
-        run: |
-          $content = @"
-          CI failed on $env:GITHUB_REF_NAME at run $env:GITHUB_RUN_ID.
-          Summarize the failure and apply the smallest safe change set to make our Windows CI pass.
-          Preserve CRLF; ASCII where practical; keep run_setup.bat robust; no sweeping refactors; minimal diagnostics only if required.
-          "@
-          Set-Content -LiteralPath "$env:RUNNER_TEMP\codex_nudge.txt" -Value $content -Encoding Ascii
-
-      - name: Upload Codex nudge artifact
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex_nudge.txt
-          path: ${{ runner.temp }}/codex_nudge.txt
-          retention-days: 3
 
   emit-nudge:
     name: Emit Codex nudge (on failure)
