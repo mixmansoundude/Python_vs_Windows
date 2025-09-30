@@ -57,7 +57,7 @@ if (Test-Path $stubDir) { Remove-Item -Recurse -Force $stubDir }
 New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
 Copy-Item -Path $BatchPath -Destination $stubDir -Force
 $stubScriptPath = Join-Path $stubDir 'hello_stub.py'
-"print(\"hello-from-stub\")" | Set-Content -Path $stubScriptPath -Encoding ASCII
+Set-Content -Path $stubScriptPath -Value 'print("hello-from-stub")' -Encoding ASCII
 Push-Location $stubDir
 try {
   cmd /c "call run_setup.bat > ~stub_bootstrap.log 2>&1"

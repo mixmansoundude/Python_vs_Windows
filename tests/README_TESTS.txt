@@ -19,11 +19,14 @@ Optional dynamic pass (needs any Python: Miniconda base, py.exe, or system pytho
 Bootstrap self-tests:
   * `tests\selftest.ps1` creates throwaway folders (`~selftest_empty`, `~selftest_stub`), runs `run_setup.bat`,
     and verifies both the no-Python and stub bootstrap paths while capturing logs for CI summaries.
+  * `tests\selftests.ps1` replays the empty-repo bootstrap log to confirm the console prints `Python file count: 0`
+    and `No Python files detected; skipping environment bootstrap.`; CI fails if these lines disappear.
 
 Artifacts written:
   tests\extracted\~*.py   (helpers extracted from run_setup.bat)
   tests\~dynamic-run.log  (if dynamic tests run)
   tests\~selftest-summary.txt (results from bootstrap self-tests)
+  tests\~selftests-summary.txt (results from console self-tests)
   tests\~selftest_empty\~empty_bootstrap.log (empty-folder bootstrap log)
   tests\~selftest_stub\~stub_bootstrap.log (stub bootstrap log)
   tests\~selftest_stub\~stub_run.log (hello_stub.py execution log)
