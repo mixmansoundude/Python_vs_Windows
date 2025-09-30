@@ -7,217 +7,128 @@ if (-not $here) {
 
 $repoRoot = Split-Path -Path $here -Parent
 $nd = Join-Path -Path $here -ChildPath '~test-results.ndjson'
-$sharedLog = Join-Path -Path $here -ChildPath '~setup.log'
 
 if (-not (Test-Path -LiteralPath $nd)) {
     New-Item -ItemType File -Path $nd -Force | Out-Null
 }
 
-New-Item -ItemType File -Path $sharedLog -Force | Out-Null
+function Invoke-EntryScenario {
+    param(
+        [string]$Root,
+        [string]$LogName,
+        [hashtable]$Files
+    )
 
-function Write-NdjsonRow {
-    param([hashtable]$Record)
-    try {
-        $row = $Record | ConvertTo-Json -Compress
-        Add-Content -LiteralPath $nd -Value $row -Encoding Ascii
+    $result = [ordered]@{
+        exitCode = $null
+        log = ''
+        crumb = ''
+        error = $null
     }
-    catch {
-        # Keep reporting best-effort; never block the job summary on conversion noise.
-    }
-}
 
-function Append-SharedBreadcrumb {
-    param([string]$Line)
-    if ([string]::IsNullOrWhiteSpace($Line)) {
-        return
-    }
     try {
-        Add-Content -LiteralPath $sharedLog -Value $Line -Encoding Ascii
-    }
-    catch {
-        # Shared log replication is best-effort; keep going so the scenario result still records.
-    }
-}
+        if (Test-Path -LiteralPath $Root) {
+            Remove-Item -LiteralPath $Root -Recurse -Force
+        }
+        New-Item -ItemType Directory -Force -Path $Root | Out-Null
 
-function Get-LastChosenValue {
-    param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) {
-        return ''
-    }
-    try {
-        $match = Select-String -LiteralPath $Path -Pattern '^Chosen entry: (.+)$' -ErrorAction SilentlyContinue
-        if ($match) {
-            $last = $match | Select-Object -Last 1
-            if ($last -and $last.Matches.Count -gt 0) {
-                return $last.Matches[0].Groups[1].Value
+        Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $Root -Force
+
+        foreach ($name in $Files.Keys) {
+            $content = $Files[$name]
+            Set-Content -LiteralPath (Join-Path -Path $Root -ChildPath $name) -Value $content -Encoding Ascii -NoNewline
+        }
+
+        $setupLog = Join-Path -Path $Root -ChildPath '~setup.log'
+        if (Test-Path -LiteralPath $setupLog) {
+            Remove-Item -LiteralPath $setupLog -Force
+        }
+
+        $bootstrapLog = Join-Path -Path $Root -ChildPath $LogName
+        if (Test-Path -LiteralPath $bootstrapLog) {
+            Remove-Item -LiteralPath $bootstrapLog -Force
+        }
+
+        Push-Location -LiteralPath $Root
+        try {
+            cmd /c .\run_setup.bat *> $LogName
+            $result.exitCode = $LASTEXITCODE
+        }
+        finally {
+            Pop-Location
+        }
+
+        if (Test-Path -LiteralPath $setupLog) {
+            $result.log = Get-Content -LiteralPath $setupLog -Raw -Encoding Ascii
+            $match = [regex]::Match($result.log, '^Chosen entry: (.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+            if ($match.Success) {
+                $result.crumb = $match.Groups[1].Value
             }
         }
     }
     catch {
-        return ''
-    }
-    return ''
-}
-
-function Invoke-Bootstrap {
-    param(
-        [string]$Root,
-        [string]$LogName
-    )
-
-    Push-Location -LiteralPath $Root
-    try {
-        cmd /c .\run_setup.bat *> $LogName
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        Pop-Location
+        $result.error = $_.Exception.Message
     }
 
-    return $exitCode
+    return $result
 }
 
 # Scenario A: main.py should win over app.py when both present
-$entryARoot = Join-Path -Path $here -ChildPath '~entryA'
-$entryALog = '~entryA_bootstrap.log'
-$recordCommon = [ordered]@{
-    id = 'entry.choose.commonname'
-    pass = $false
-    desc = 'main.py beats app.py'
-    details = [ordered]@{}
-}
-
-$exitCodeA = $null
-
-try {
-    if (Test-Path -LiteralPath $entryARoot) {
-        Remove-Item -LiteralPath $entryARoot -Recurse -Force
-    }
-    New-Item -ItemType Directory -Force -Path $entryARoot | Out-Null
-
-    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryARoot -Force
-
-    $mainPy = @'
+$scenarioA = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entryA') -LogName '~entryA_bootstrap.log' -Files ([ordered]@{
+    'main.py' = @'
 if __name__ == "__main__":
     print("from-main")
 '@
-    $appPy = @'
+    'app.py' = @'
 if __name__ == "__main__":
     print("from-app")
 '@
-    Set-Content -LiteralPath (Join-Path -Path $entryARoot -ChildPath 'main.py') -Value $mainPy -Encoding Ascii -NoNewline
-    Set-Content -LiteralPath (Join-Path -Path $entryARoot -ChildPath 'app.py') -Value $appPy -Encoding Ascii -NoNewline
+})
 
-    $localLog = Join-Path -Path $entryARoot -ChildPath '~setup.log'
-    $bootstrapLogPath = Join-Path -Path $entryARoot -ChildPath $entryALog
-
-    if (Test-Path -LiteralPath $localLog) {
-        Remove-Item -LiteralPath $localLog -Force
-    }
-    if (Test-Path -LiteralPath $bootstrapLogPath) {
-        Remove-Item -LiteralPath $bootstrapLogPath -Force
-    }
-
-    $exitCodeA = Invoke-Bootstrap -Root $entryARoot -LogName $entryALog
-
-    $localChosen = Get-LastChosenValue -Path $localLog
-    if ($localChosen) {
-        Append-SharedBreadcrumb -Line "Chosen entry: $localChosen"
-    }
-
-    $hasMain = [bool](Select-String -LiteralPath $sharedLog -Pattern 'Chosen entry: .*\\main\.py' -SimpleMatch -ErrorAction SilentlyContinue)
-    $chosenPath = Get-LastChosenValue -Path $sharedLog
-
-    $recordCommon.details.exitCode = $exitCodeA
-    if ($chosenPath) {
-        $recordCommon.details.chosen = $chosenPath
-    }
-
-    $recordCommon.pass = (($exitCodeA -eq 0) -and $hasMain)
-    if (-not $recordCommon.pass -and -not $chosenPath) {
-        $recordCommon.details.noBreadcrumb = $true
-    }
+$detailsA = [ordered]@{
+    exitCode = $scenarioA.exitCode
 }
-catch {
-    $recordCommon.pass = $false
-    $recordCommon.details.exitCode = $exitCodeA
-    $recordCommon.details.error = $_.Exception.Message
-}
-finally {
-    Write-NdjsonRow -Record $recordCommon
-}
+if ($scenarioA.crumb) { $detailsA.breadcrumb = $scenarioA.crumb }
+if (-not $scenarioA.log) { $detailsA.logMissing = $true }
+if ($scenarioA.log -and -not $scenarioA.crumb) { $detailsA.breadcrumbMissing = $true }
+if ($scenarioA.error) { $detailsA.error = $scenarioA.error }
+
+$passA = ([string]::IsNullOrEmpty($scenarioA.error)) -and ($scenarioA.exitCode -eq 0) -and ($scenarioA.log -match 'Chosen entry: .*\\main\.py')
+
+Add-Content -LiteralPath $nd -Value (@{
+    id='entry.choose.commonname'
+    pass=$passA
+    desc='main.py beats app.py'
+    details=$detailsA
+} | ConvertTo-Json -Compress) -Encoding Ascii
 
 # Scenario B: prefer common names or guarded modules when picking entries
-$entryBRoot = Join-Path -Path $here -ChildPath '~entryB'
-$entryBLog = '~entryB_bootstrap.log'
-$recordGuard = [ordered]@{
-    id = 'entry.choose.guard_or_name'
-    pass = $false
-    desc = 'Common name or __main__ guard chosen'
-    details = [ordered]@{}
-}
-
-$exitCodeB = $null
-
-try {
-    if (Test-Path -LiteralPath $entryBRoot) {
-        Remove-Item -LiteralPath $entryBRoot -Recurse -Force
-    }
-    New-Item -ItemType Directory -Force -Path $entryBRoot | Out-Null
-
-    Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $entryBRoot -Force
-
-    $appB = @'
+$scenarioB = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entryB') -LogName '~entryB_bootstrap.log' -Files ([ordered]@{
+    'app.py' = @'
 if __name__ == "__main__":
     print("from-app")
 '@
-    $fooB = @'
+    'foo.py' = @'
 if __name__ == "__main__":
     print("from-guard")
 '@
-    Set-Content -LiteralPath (Join-Path -Path $entryBRoot -ChildPath 'app.py') -Value $appB -Encoding Ascii -NoNewline
-    Set-Content -LiteralPath (Join-Path -Path $entryBRoot -ChildPath 'foo.py') -Value $fooB -Encoding Ascii -NoNewline
+})
 
-    $localLogB = Join-Path -Path $entryBRoot -ChildPath '~setup.log'
-    $bootstrapLogB = Join-Path -Path $entryBRoot -ChildPath $entryBLog
-
-    if (Test-Path -LiteralPath $localLogB) {
-        Remove-Item -LiteralPath $localLogB -Force
-    }
-    if (Test-Path -LiteralPath $bootstrapLogB) {
-        Remove-Item -LiteralPath $bootstrapLogB -Force
-    }
-
-    $exitCodeB = Invoke-Bootstrap -Root $entryBRoot -LogName $entryBLog
-
-    $localChosenB = Get-LastChosenValue -Path $localLogB
-    if ($localChosenB) {
-        Append-SharedBreadcrumb -Line "Chosen entry: $localChosenB"
-    }
-
-    $chosenLine = Select-String -LiteralPath $sharedLog -Pattern '^Chosen entry: (.+)$' -ErrorAction SilentlyContinue | Select-Object -Last 1
-    $chosenRel = ''
-    if ($chosenLine -and $chosenLine.Matches.Count -gt 0) {
-        $chosenRel = $chosenLine.Matches[0].Groups[1].Value
-    }
-
-    $okNameOrGuard = ($chosenRel -match '\\app\.py$') -or ($chosenRel -match '\\foo\.py$')
-
-    $recordGuard.details.exitCode = $exitCodeB
-    if ($chosenRel) {
-        $recordGuard.details.chosen = $chosenRel
-    }
-
-    $recordGuard.pass = (($exitCodeB -eq 0) -and $okNameOrGuard)
-    if (-not $recordGuard.pass -and -not $chosenRel) {
-        $recordGuard.details.noBreadcrumb = $true
-    }
+$detailsB = [ordered]@{
+    exitCode = $scenarioB.exitCode
 }
-catch {
-    $recordGuard.pass = $false
-    $recordGuard.details.exitCode = $exitCodeB
-    $recordGuard.details.error = $_.Exception.Message
-}
-finally {
-    Write-NdjsonRow -Record $recordGuard
-}
+if ($scenarioB.crumb) { $detailsB.breadcrumb = $scenarioB.crumb }
+if (-not $scenarioB.log) { $detailsB.logMissing = $true }
+if ($scenarioB.log -and -not $scenarioB.crumb) { $detailsB.breadcrumbMissing = $true }
+if ($scenarioB.error) { $detailsB.error = $scenarioB.error }
+
+$hasApp = $scenarioB.log -match 'Chosen entry: .*\\app\.py'
+$hasFoo = $scenarioB.log -match 'Chosen entry: .*\\foo\.py'
+$passB = ([string]::IsNullOrEmpty($scenarioB.error)) -and ($scenarioB.exitCode -eq 0) -and ($hasApp -or $hasFoo)
+
+Add-Content -LiteralPath $nd -Value (@{
+    id='entry.choose.guard_or_name'
+    pass=$passB
+    desc='Choose __main__ guard or common name'
+    details=$detailsB
+} | ConvertTo-Json -Compress) -Encoding Ascii

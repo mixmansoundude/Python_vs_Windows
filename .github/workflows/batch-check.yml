@@ -471,15 +471,47 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
-            const path = 'tests\\~test-results.ndjson';
-            let rows = [];
-            if (fs.existsSync(path)) {
-              for (const line of fs.readFileSync(path,'utf8').split(/\r?\n/)) {
-                if (!line.trim()) continue;
-                try { rows.push(JSON.parse(line)); } catch {}
+            const path = 'tests\~test-results.ndjson';
+
+            if (!fs.existsSync(path)) {
+              core.setFailed(`NDJSON results not found at ${path}`);
+              return;
+            }
+
+            const raw = fs.readFileSync(path, 'utf8');
+            const lines = raw.split(/\r?\n/).filter(line => line.trim().length > 0);
+
+            if (lines.length === 0) {
+              core.setFailed(`NDJSON results empty at ${path}`);
+              return;
+            }
+
+            const failing = [];
+            let parseError = false;
+
+            for (const line of lines) {
+              try {
+                const row = JSON.parse(line);
+                if (!row || row.pass !== true) {
+                  const id = row && row.id ? row.id : '<missing id>';
+                  if (row && row.pass === false) {
+                    failing.push(id);
+                  } else if (!row || typeof row.pass === 'undefined') {
+                    core.error(`NDJSON row missing pass property: ${line}`);
+                    failing.push(id);
+                  }
+                }
+              } catch (error) {
+                parseError = true;
+                core.error(`Failed to parse NDJSON row: ${line}`);
               }
             }
-            const failing = rows.filter(r => r && r.pass === false).map(r => r.id);
+
+            if (parseError) {
+              core.setFailed('One or more NDJSON rows could not be parsed.');
+              return;
+            }
+
             if (failing.length) {
               core.setFailed('NDJSON failures: ' + failing.join(', '));
             }

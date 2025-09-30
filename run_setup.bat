@@ -27,22 +27,24 @@ if "%PYCOUNT%"=="0" (
 if defined HP_CI_SKIP_ENV goto :ci_skip_entry
 
 rem === Miniconda location (non-admin) =========================================
-set "MINICONDA_ROOT=%PUBLIC%\Documents\Miniconda3"
-set "CONDA_BAT=%MINICONDA_ROOT%\condabin\conda.bat"
-if not exist "%CONDA_BAT%" set "CONDA_BAT=%MINICONDA_ROOT%\Scripts\conda.bat"
+set "MC=%PUBLIC%\Documents\Miniconda3"
+set "CONDA_MAIN=%MC%\condabin\conda.bat"
+set "CONDA_ALT=%MC%\Scripts\conda.bat"
+set "MINICONDA_ROOT=%MC%"
 set "CONDA_BASE_PY=%MINICONDA_ROOT%\python.exe"
 
+call :select_conda_bat
+
 rem Install Miniconda if conda.bat is missing
-if not exist "%CONDA_BAT%" (
+if not defined CONDA_BAT (
   echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "iwr https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe -OutFile $env:TEMP\miniconda.exe"
   start /wait "" "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
-  set "CONDA_BAT=%MINICONDA_ROOT%\condabin\conda.bat"
-  if not exist "%CONDA_BAT%" set "CONDA_BAT=%MINICONDA_ROOT%\Scripts\conda.bat"
+  call :select_conda_bat
 )
 
-if not exist "%CONDA_BAT%" (
+if not defined CONDA_BAT (
   call :die "[ERROR] conda.bat not found after bootstrap."
 )
 
@@ -133,14 +135,11 @@ goto :after_env_bootstrap
 
 :ci_skip_entry
 call :log "[INFO] CI self-test: skipping environment bootstrap"
-call :determine_entry
-if errorlevel 1 call :die "[ERROR] CI skip: entry selection failed"
-if "%HP_ENTRY%"=="" (
-  call :log "[INFO] CI skip: no entry script detected."
-  call :write_status "ok" 0 %PYCOUNT%
-  goto :success
-)
-call :record_chosen_entry "%HP_ENTRY%"
+set "HP_ENTRY="
+set "HP_CRUMB="
+if exist "~entry.abs" del "~entry.abs"
+call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
+if errorlevel 1 call :die "[ERROR] CI skip: entry helper staging failed"
 set "HP_SYS_PY="
 set "HP_SYS_PY_ARGS="
 where python >nul 2>&1 && set "HP_SYS_PY=python"
@@ -152,13 +151,33 @@ if not defined HP_SYS_PY (
 )
 if defined HP_SYS_PY (
   if defined HP_SYS_PY_ARGS (
+    for /f "delims=" %%L in ('"%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"') do set "HP_CRUMB=%%L"
+  ) else (
+    for /f "delims=" %%L in ('"%HP_SYS_PY%" "~find_entry.py"') do set "HP_CRUMB=%%L"
+  )
+)
+if not defined HP_CRUMB (
+  echo [INFO] CI skip: no entry script detected.
+  >> "%LOG%" echo [INFO] CI skip: no entry script detected.
+  call :write_status "ok" 0 %PYCOUNT%
+  goto :success
+)
+set "HP_ENTRY=%HP_CRUMB%"
+if exist "~entry.abs" (
+  set /p HP_ENTRY=<"~entry.abs"
+  if not defined HP_ENTRY set "HP_ENTRY=%HP_CRUMB%"
+)
+call :record_chosen_entry "%HP_CRUMB%"
+if exist "~run.out.txt" del "~run.out.txt"
+if defined HP_SYS_PY (
+  if defined HP_SYS_PY_ARGS (
     call :log "[INFO] CI skip: running entry with %HP_SYS_PY% %HP_SYS_PY_ARGS%"
-    %HP_SYS_PY% %HP_SYS_PY_ARGS% "%HP_ENTRY%" >> "%LOG%" 2>&1
+    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_ENTRY%" > "~run.out.txt" 2>&1
   ) else (
     call :log "[INFO] CI skip: running entry with %HP_SYS_PY%"
-    %HP_SYS_PY% "%HP_ENTRY%" >> "%LOG%" 2>&1
+    "%HP_SYS_PY%" "%HP_ENTRY%" > "~run.out.txt" 2>&1
   )
-  if errorlevel 1 call :log "[WARN] CI skip: system Python run returned non-zero"
+  if errorlevel 1 call :log "[WARN] CI skip: system Python returned non-zero"
 ) else (
   call :log "[WARN] CI skip: no system Python found; not executing entry"
 )
@@ -191,6 +210,13 @@ set "NAME=%~1"
 if "%NAME%"=="" exit /b 0
 if "%NAME:~0,1%"=="~" exit /b 0
 set /a PYCOUNT+=1 >nul
+exit /b 0
+
+:select_conda_bat
+set "CONDA_BAT="
+if exist "%CONDA_MAIN%" set "CONDA_BAT=%CONDA_MAIN%"
+if not defined CONDA_BAT if exist "%CONDA_ALT%" set "CONDA_BAT=%CONDA_ALT%"
+if defined CONDA_BAT if not exist "%CONDA_BAT%" set "CONDA_BAT="
 exit /b 0
 
 :determine_entry

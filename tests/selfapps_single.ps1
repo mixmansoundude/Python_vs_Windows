@@ -16,16 +16,15 @@ $app = Join-Path -Path $here -ChildPath '~entry1'
 $logName = '~entry1_bootstrap.log'
 $logPath = Join-Path -Path $app -ChildPath $logName
 
-$record = [ordered]@{
-    id = 'entry.single.direct'
-    pass = $false
-    desc = 'Exactly one .py is executed directly'
-    details = [ordered]@{}
-}
-
 $exitCode = $null
+$log = ''
+$crumb = ''
+$errorMessage = $null
 
 try {
+    if (Test-Path -LiteralPath $app) {
+        Remove-Item -LiteralPath $app -Recurse -Force
+    }
     New-Item -ItemType Directory -Force -Path $app | Out-Null
 
     Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $app -Force
@@ -43,50 +42,39 @@ if __name__ == "__main__":
 
     Push-Location -LiteralPath $app
     try {
-        cmd /c .\run_setup.bat *> '~entry1_bootstrap.log'
+        cmd /c .\run_setup.bat *> $logName
         $exitCode = $LASTEXITCODE
     }
     finally {
         Pop-Location
     }
 
-    $log = $null
     if (Test-Path -LiteralPath $logPath) {
         $log = Get-Content -LiteralPath $logPath -Raw -Encoding Ascii
-    }
-
-    $hasToken = $false
-    $hasCrumb = $false
-    if ($log) {
-        $hasToken = ($log -match 'from-single')
-        $hasCrumb = ($log -match 'Chosen entry: .*\\solo\.py')
-        if (-not $hasToken) {
-            $record.details.missingToken = $true
+        $match = [regex]::Match($log, '^Chosen entry: (.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        if ($match.Success) {
+            $crumb = $match.Groups[1].Value
         }
-        if (-not $hasCrumb) {
-            $record.details.missingBreadcrumb = $true
-        }
-    } else {
-        $record.details.logMissing = $true
     }
-
-    $mode = if ($hasToken) { 'token' } else { 'breadcrumb' }
-    $pass = (($exitCode -eq 0) -and ($hasToken -or $hasCrumb))
-    $record.pass = $pass
-    $record.details.exitCode = $exitCode
-    $record.details.mode = $mode
 }
 catch {
-    $record.pass = $false
-    $record.details.exitCode = $exitCode
-    $record.details.error = $_.Exception.Message
+    $errorMessage = $_.Exception.Message
 }
 finally {
-    try {
-        $row = $record | ConvertTo-Json -Compress
-        Add-Content -LiteralPath $nd -Value $row -Encoding Ascii
+    $details = [ordered]@{
+        exitCode = $exitCode
     }
-    catch {
-        # Swallow serialization issues; logging best-effort only.
-    }
+    if ($crumb) { $details.breadcrumb = $crumb }
+    if (-not $log) { $details.logMissing = $true }
+    if ($log -and -not $crumb) { $details.breadcrumbMissing = $true }
+    if ($errorMessage) { $details.error = $errorMessage }
+
+    $pass = ([string]::IsNullOrEmpty($errorMessage)) -and ($exitCode -eq 0) -and ($log -match 'Chosen entry: .*\\solo\.py')
+
+    Add-Content -LiteralPath $nd -Value (@{
+        id='entry.single.direct'
+        pass=$pass
+        desc='Exactly one .py chosen and run'
+        details=$details
+    } | ConvertTo-Json -Compress) -Encoding Ascii
 }
