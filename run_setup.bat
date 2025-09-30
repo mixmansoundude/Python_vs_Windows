@@ -55,7 +55,6 @@ python -V >> "%LOG%" 2>&1 || call :die "[ERROR] 'python -V' failed after bootstr
 
 rem === Channel policy (determinism & legal) ===================================
 call "%CONDA_BAT%" config --name base --add channels conda-forge
-call "%CONDA_BAT%" config --name base --remove channels defaults
 
 rem NOTE: every 'conda create' or 'conda install' call below MUST include:
 rem       --override-channels -c conda-forge
@@ -102,7 +101,7 @@ if errorlevel 1 call :die "[ERROR] Could not write ~prep_requirements.py"
 set "REQ=requirements.txt"
 if exist "%REQ%" ( for %%S in ("%REQ%") do if %%~zS EQU 0 del "%REQ%" )
 call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q -U pip pipreqs >> "%LOG%" 2>&1
-call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pipreqs . --force --mode compat --savepath requirements.auto.txt >> "%LOG%" 2>&1
+call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath requirements.auto.txt >> "%LOG%" 2>&1
 if not exist "%REQ%" if exist "requirements.auto.txt" ( copy /y "requirements.auto.txt" "requirements.txt" >> "%LOG%" 2>&1 )
 if exist "requirements.txt" if exist "requirements.auto.txt" ( fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1 )
 if exist "requirements.txt" (
@@ -140,22 +139,9 @@ set "HP_CRUMB="
 if exist "~entry.abs" del "~entry.abs"
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 call :die "[ERROR] CI skip: entry helper staging failed"
-set "HP_SYS_PY="
-set "HP_SYS_PY_ARGS="
-where python >nul 2>&1 && set "HP_SYS_PY=python"
-if not defined HP_SYS_PY (
-  where py >nul 2>&1 && (
-    set "HP_SYS_PY=py"
-    set "HP_SYS_PY_ARGS=-3"
-  )
-)
-if defined HP_SYS_PY (
-  if defined HP_SYS_PY_ARGS (
-    for /f "delims=" %%L in ('"%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"') do set "HP_CRUMB=%%L"
-  ) else (
-    for /f "delims=" %%L in ('"%HP_SYS_PY%" "~find_entry.py"') do set "HP_CRUMB=%%L"
-  )
-)
+set "HP_PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+for /f "usebackq delims=" %%L in (`"%HP_PS%" -NoProfile -ExecutionPolicy Bypass -File "~find_entry.py"`) do if not defined HP_CRUMB set "HP_CRUMB=%%L"
+set "HP_PS="
 if not defined HP_CRUMB (
   echo [INFO] CI skip: no entry script detected.
   >> "%LOG%" echo [INFO] CI skip: no entry script detected.
@@ -169,6 +155,15 @@ if exist "~entry.abs" (
 )
 call :record_chosen_entry "%HP_CRUMB%"
 if exist "~run.out.txt" del "~run.out.txt"
+set "HP_SYS_PY="
+set "HP_SYS_PY_ARGS="
+where python >nul 2>&1 && set "HP_SYS_PY=python"
+if not defined HP_SYS_PY (
+  where py >nul 2>&1 && (
+    set "HP_SYS_PY=py"
+    set "HP_SYS_PY_ARGS=-3"
+  )
+)
 if defined HP_SYS_PY (
   if defined HP_SYS_PY_ARGS (
     call :log "[INFO] CI skip: running entry with %HP_SYS_PY% %HP_SYS_PY_ARGS%"
