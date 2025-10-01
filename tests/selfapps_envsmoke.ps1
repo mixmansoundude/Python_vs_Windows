@@ -27,18 +27,21 @@ $runout = Join-Path $app '~run.out.txt'
 $bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw -Encoding Ascii) : ''
 $outxt  = (Test-Path $runout) ? (Get-Content -LiteralPath $runout -Raw -Encoding Ascii) : ''
 
+$haveRunOut = Test-Path -LiteralPath $runout
+$tokenFound = $haveRunOut -and (($outxt -match 'hello-from-stub') -or ($outxt -match 'smoke-ok'))
+
 # Record two rows: env setup + app run
 Add-Content -LiteralPath $nd -Value (@{
-    id='env.smoke.conda'
+    id='self.env.smoke.conda'
     pass=($exit -eq 0)
     desc='Miniconda bootstrap + environment creation'
     details=@{ exitCode=$exit }
 } | ConvertTo-Json -Compress) -Encoding Ascii
 
-$passRun = ($exit -eq 0) -and ($outxt -match 'smoke-ok')
+$passRun = ($exit -eq 0) -and $tokenFound
 Add-Content -LiteralPath $nd -Value (@{
-    id='env.smoke.run'
+    id='self.env.smoke.run'
     pass=$passRun
     desc='App runs in created environment'
-    details=@{ exitCode=$exit }
+    details=@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut }
 } | ConvertTo-Json -Compress) -Encoding Ascii

@@ -73,6 +73,47 @@ function Invoke-EntryScenario {
     return $result
 }
 
+function Write-EntryRow {
+    param(
+        [string]$Id,
+        [string]$Expected,
+        [hashtable]$Scenario,
+        [string]$Description
+    )
+
+    $chosen = $Scenario.crumb
+    if ($null -eq $chosen) { $chosen = '' }
+
+    $details = [ordered]@{
+        exitCode = $Scenario.exitCode
+        expected = $Expected
+        chosen   = $chosen
+    }
+
+    if ($Scenario.error) {
+        $details.error = $Scenario.error
+    }
+
+    $pass = ($Scenario.exitCode -eq 0) -and ($chosen -eq $Expected)
+
+    Add-Content -LiteralPath $nd -Value (@{
+        id      = $Id
+        pass    = $pass
+        desc    = $Description
+        details = $details
+    } | ConvertTo-Json -Compress) -Encoding Ascii
+}
+
+# Scenario 1: single entry file should breadcrumb correctly
+$scenario1 = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry1') -LogName '~entry1_bootstrap.log' -Files ([ordered]@{
+    'entry1.py' = @'
+if __name__ == "__main__":
+    print("from-entry1")
+'@
+})
+$expected1 = Join-Path '.' 'entry1.py'
+Write-EntryRow -Id 'self.entry.entry1' -Expected $expected1 -Scenario $scenario1 -Description 'Single entry file detected'
+
 # Scenario A: main.py should win over app.py when both present
 $scenarioA = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entryA') -LogName '~entryA_bootstrap.log' -Files ([ordered]@{
     'main.py' = @'
@@ -84,25 +125,10 @@ if __name__ == "__main__":
     print("from-app")
 '@
 })
+$expectedA = Join-Path '.' 'main.py'
+Write-EntryRow -Id 'self.entry.entryA' -Expected $expectedA -Scenario $scenarioA -Description 'main.py beats app.py'
 
-$detailsA = [ordered]@{
-    exitCode = $scenarioA.exitCode
-}
-if ($scenarioA.crumb) { $detailsA.breadcrumb = $scenarioA.crumb }
-if (-not $scenarioA.log) { $detailsA.logMissing = $true }
-if ($scenarioA.log -and -not $scenarioA.crumb) { $detailsA.breadcrumbMissing = $true }
-if ($scenarioA.error) { $detailsA.error = $scenarioA.error }
-
-$passA = ([string]::IsNullOrEmpty($scenarioA.error)) -and ($scenarioA.exitCode -eq 0) -and ($scenarioA.log -match 'Chosen entry: .*\\main\.py')
-
-Add-Content -LiteralPath $nd -Value (@{
-    id='entry.choose.commonname'
-    pass=$passA
-    desc='main.py beats app.py'
-    details=$detailsA
-} | ConvertTo-Json -Compress) -Encoding Ascii
-
-# Scenario B: prefer common names or guarded modules when picking entries
+# Scenario B: prefer common names over generic modules when picking entries
 $scenarioB = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entryB') -LogName '~entryB_bootstrap.log' -Files ([ordered]@{
     'app.py' = @'
 if __name__ == "__main__":
@@ -113,22 +139,5 @@ if __name__ == "__main__":
     print("from-guard")
 '@
 })
-
-$detailsB = [ordered]@{
-    exitCode = $scenarioB.exitCode
-}
-if ($scenarioB.crumb) { $detailsB.breadcrumb = $scenarioB.crumb }
-if (-not $scenarioB.log) { $detailsB.logMissing = $true }
-if ($scenarioB.log -and -not $scenarioB.crumb) { $detailsB.breadcrumbMissing = $true }
-if ($scenarioB.error) { $detailsB.error = $scenarioB.error }
-
-$hasApp = $scenarioB.log -match 'Chosen entry: .*\\app\.py'
-$hasFoo = $scenarioB.log -match 'Chosen entry: .*\\foo\.py'
-$passB = ([string]::IsNullOrEmpty($scenarioB.error)) -and ($scenarioB.exitCode -eq 0) -and ($hasApp -or $hasFoo)
-
-Add-Content -LiteralPath $nd -Value (@{
-    id='entry.choose.guard_or_name'
-    pass=$passB
-    desc='Choose __main__ guard or common name'
-    details=$detailsB
-} | ConvertTo-Json -Compress) -Encoding Ascii
+$expectedB = Join-Path '.' 'app.py'
+Write-EntryRow -Id 'self.entry.entryB' -Expected $expectedB -Scenario $scenarioB -Description 'app.py preferred over generic modules'
