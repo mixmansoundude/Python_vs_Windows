@@ -53,6 +53,24 @@ jobs:
           name: codex_nudge.txt
           path: ${{ runner.temp }}
 
+      - name: Download CI summary (if present)
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: ci_test_summary.txt
+          path: ${{ runner.temp }}
+
+      - name: Download CI NDJSON (if present)
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: ci_test_results.ndjson
+          path: ${{ runner.temp }}
+
       # If the key is missing, loudly but cleanly skip (logs + summary + tiny artifact)
       - name: Skip (no OPENAI_API_KEY configured)
         if: steps.apikey.outputs.present != 'true'
@@ -109,12 +127,32 @@ jobs:
         if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
         run: |
           PROMPT="$RUNNER_TEMP/prompt.txt"
+          # Seed with the existing nudge or fallback
           if [ -f "$RUNNER_TEMP/codex_nudge.txt" ]; then
             BASE="$(cat "$RUNNER_TEMP/codex_nudge.txt")"
           else
             BASE="Analyze the last CI failure and apply the smallest safe change set to make our Windows CI pass."
           fi
-          printf "%s\n\nPreserve CRLF; ASCII where practical; keep run_setup.bat robust; avoid sweeping refactors; add only minimal diagnostics if truly required; write changes to files." "$BASE" > "$PROMPT"
+          printf "%s\n\nPreserve CRLF; ASCII where practical; keep run_setup.bat robust; avoid sweeping refactors; minimal diagnostics only if required; write changes to files.\n" "$BASE" > "$PROMPT"
+
+          # If we have the human-readable summary, include it verbatim
+          if [ -f "$RUNNER_TEMP/ci_test_summary.txt/ci_test_summary.txt" ]; then
+            {
+              echo ""
+              echo "----- CI Summary -----"
+              head -n 300 "$RUNNER_TEMP/ci_test_summary.txt/ci_test_summary.txt"
+            } >> "$PROMPT"
+          fi
+
+          # If we have the NDJSON, include the first ~40 lines for structured hints
+          if [ -f "$RUNNER_TEMP/ci_test_results.ndjson/ci_test-results.ndjson" ]; then
+            {
+              echo ""
+              echo "----- CI NDJSON (first lines) -----"
+              head -n 40 "$RUNNER_TEMP/ci_test_results.ndjson/ci_test-results.ndjson"
+            } >> "$PROMPT"
+          fi
+
           echo "PROMPT=$PROMPT" >> $GITHUB_ENV
 
       # Cheap model, headless mode. If Codex errors or makes no changes, gracefully no-op.

@@ -113,6 +113,22 @@ jobs:
         run: |
           & tests\selfapps_envsmoke.ps1
 
+      - name: Upload CI summary (on failure)
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci_test_summary.txt
+          path: tests/~test-summary.txt
+          retention-days: 7
+
+      - name: Upload CI NDJSON (on failure)
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci_test_results.ndjson
+          path: tests/~test-results.ndjson
+          retention-days: 7
+
       - name: Run dynamic tests (if present)
         shell: pwsh
         run: |
