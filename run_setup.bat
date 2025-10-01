@@ -55,7 +55,6 @@ python -V >> "%LOG%" 2>&1 || call :die "[ERROR] 'python -V' failed after bootstr
 
 rem === Channel policy (determinism & legal) ===================================
 call "%CONDA_BAT%" config --name base --add channels conda-forge
-call "%CONDA_BAT%" config --name base --remove channels defaults
 
 rem NOTE: every 'conda create' or 'conda install' call below MUST include:
 rem       --override-channels -c conda-forge
@@ -102,7 +101,33 @@ if errorlevel 1 call :die "[ERROR] Could not write ~prep_requirements.py"
 set "REQ=requirements.txt"
 if exist "%REQ%" ( for %%S in ("%REQ%") do if %%~zS EQU 0 del "%REQ%" )
 call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q -U pip pipreqs >> "%LOG%" 2>&1
-call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pipreqs . --force --mode compat --savepath requirements.auto.txt >> "%LOG%" 2>&1
+set "HP_PIPIGNORE=.pipreqsignore"
+set "HP_PIPIGNORE_BAK=~pipreqsignore.bak"
+set "HP_PIPREQS_OK=0"
+if exist "%HP_PIPIGNORE%" (
+  copy /y "%HP_PIPIGNORE%" "%HP_PIPIGNORE_BAK%" >nul 2>&1
+)
+rem Exclude helper artefacts so pipreqs scans only user sources.
+(
+  echo ~*.py
+  echo tests\
+) > "%HP_PIPIGNORE%"
+call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath requirements.auto.txt --ignore-file %HP_PIPIGNORE% >> "%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "[WARN] pipreqs --ignore-file unsupported; retrying with filtered source tree."
+  call :pipreqs_filtered
+) else (
+  set "HP_PIPREQS_OK=1"
+)
+if exist "%HP_PIPIGNORE_BAK%" (
+  del "%HP_PIPIGNORE%"
+  move /y "%HP_PIPIGNORE_BAK%" "%HP_PIPIGNORE%" >nul 2>&1
+) else (
+  del "%HP_PIPIGNORE%"
+)
+if not "%HP_PIPREQS_OK%"=="1" (
+  call :die "[ERROR] pipreqs failed to generate requirements.auto.txt"
+)
 if not exist "%REQ%" if exist "requirements.auto.txt" ( copy /y "requirements.auto.txt" "requirements.txt" >> "%LOG%" 2>&1 )
 if exist "requirements.txt" if exist "requirements.auto.txt" ( fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1 )
 if exist "requirements.txt" (
@@ -140,47 +165,56 @@ set "HP_CRUMB="
 if exist "~entry.abs" del "~entry.abs"
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 call :die "[ERROR] CI skip: entry helper staging failed"
+rem find a python
 set "HP_SYS_PY="
 set "HP_SYS_PY_ARGS="
 where python >nul 2>&1 && set "HP_SYS_PY=python"
 if not defined HP_SYS_PY (
-  where py >nul 2>&1 && (
+  where py >nul 2>&1 && (set "HP_SYS_PY=py" & set "HP_SYS_PY_ARGS=-3")
+)
+if not defined HP_SYS_PY (
+  if exist "%PUBLIC%\Documents\Miniconda3\python.exe" set "HP_SYS_PY=%PUBLIC%\Documents\Miniconda3\python.exe"
+)
+
+rem run ~find_entry.py and capture RELATIVE crumb into HP_CRUMB
+set "HP_CRUMB="
+if defined HP_SYS_PY (
+  if defined HP_SYS_PY_ARGS (
+    for /f "usebackq delims=" %%L in (`"%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"`) do set "HP_CRUMB=%%L"
+  ) else (
+    for /f "usebackq delims=" %%L in (`"%HP_SYS_PY%" "~find_entry.py"`) do set "HP_CRUMB=%%L"
+  )
+)
+
+if not defined HP_CRUMB (
+  for /f "usebackq delims=" %%L in (`py -3 "~find_entry.py" 2^>nul`) do (
+    if not defined HP_CRUMB set "HP_CRUMB=%%L"
     set "HP_SYS_PY=py"
     set "HP_SYS_PY_ARGS=-3"
   )
 )
-if defined HP_SYS_PY (
-  if defined HP_SYS_PY_ARGS (
-    for /f "delims=" %%L in ('"%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"') do set "HP_CRUMB=%%L"
-  ) else (
-    for /f "delims=" %%L in ('"%HP_SYS_PY%" "~find_entry.py"') do set "HP_CRUMB=%%L"
-  )
-)
+
 if not defined HP_CRUMB (
   echo [INFO] CI skip: no entry script detected.
-  >> "%LOG%" echo [INFO] CI skip: no entry script detected.
-  call :write_status "ok" 0 %PYCOUNT%
-  goto :success
+  goto :done
 )
-set "HP_ENTRY=%HP_CRUMB%"
-if exist "~entry.abs" (
-  set /p HP_ENTRY=<"~entry.abs"
-  if not defined HP_ENTRY set "HP_ENTRY=%HP_CRUMB%"
-)
-call :record_chosen_entry "%HP_CRUMB%"
-if exist "~run.out.txt" del "~run.out.txt"
-if defined HP_SYS_PY (
+
+rem write breadcrumb EXACTLY (no trailing punctuation)
+echo Chosen entry: %HP_CRUMB%
+>> "%LOG%" echo Chosen entry: %HP_CRUMB%
+
+rem optional best-effort run with system python; do not install anything here
+if exist "~entry.abs" set /p HP_ENTRY=<"~entry.abs"
+if defined HP_ENTRY if defined HP_SYS_PY (
   if defined HP_SYS_PY_ARGS (
-    call :log "[INFO] CI skip: running entry with %HP_SYS_PY% %HP_SYS_PY_ARGS%"
-    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_ENTRY%" > "~run.out.txt" 2>&1
+    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_ENTRY%" > "~run.out.txt" 2>&1 || echo [WARN] CI skip: system Python non-zero
   ) else (
-    call :log "[INFO] CI skip: running entry with %HP_SYS_PY%"
-    "%HP_SYS_PY%" "%HP_ENTRY%" > "~run.out.txt" 2>&1
+    "%HP_SYS_PY%" "%HP_ENTRY%" > "~run.out.txt" 2>&1 || echo [WARN] CI skip: system Python non-zero
   )
-  if errorlevel 1 call :log "[WARN] CI skip: system Python returned non-zero"
-) else (
-  call :log "[WARN] CI skip: no system Python found; not executing entry"
 )
+goto :done
+
+:done
 call :write_status "ok" 0 %PYCOUNT%
 goto :success
 
@@ -204,6 +238,33 @@ if "%HP_ENTRY%"=="" (
 call :write_status "ok" 0 %PYCOUNT%
 
 :success
+exit /b 0
+
+:pipreqs_filtered
+set "HP_PIPREQS_OK=0"
+set "HP_PIPREQS_TMP=%CD%\~pipreqs.src"
+if exist "%HP_PIPREQS_TMP%" rd /s /q "%HP_PIPREQS_TMP%"
+mkdir "%HP_PIPREQS_TMP%"
+if errorlevel 1 (
+  call :log "[ERROR] pipreqs fallback: could not create %HP_PIPREQS_TMP%."
+  exit /b 1
+)
+robocopy . "%HP_PIPREQS_TMP%" *.py /S /XF ~*.py /XD tests >nul
+set "HP_ROBOCOPY_RC=%errorlevel%"
+if %HP_ROBOCOPY_RC% GEQ 8 (
+  call :log "[ERROR] pipreqs fallback: robocopy failed with code %HP_ROBOCOPY_RC%."
+  if exist "%HP_PIPREQS_TMP%" rd /s /q "%HP_PIPREQS_TMP%"
+  exit /b 1
+)
+set "HP_PIPREQS_DEST=%CD%\requirements.auto.txt"
+call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs "%HP_PIPREQS_TMP%" --force --mode compat --savepath "%HP_PIPREQS_DEST%" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "[ERROR] pipreqs fallback: pipreqs failed on filtered tree."
+  if exist "%HP_PIPREQS_TMP%" rd /s /q "%HP_PIPREQS_TMP%"
+  exit /b 1
+)
+set "HP_PIPREQS_OK=1"
+if exist "%HP_PIPREQS_TMP%" rd /s /q "%HP_PIPREQS_TMP%"
 exit /b 0
 :count_python
 set "NAME=%~1"
