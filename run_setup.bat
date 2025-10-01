@@ -186,7 +186,11 @@ echo Chosen entry: %HP_CRUMB%
 >> "%LOG%" echo Chosen entry: %HP_CRUMB%
 
 rem optional best-effort run with system python; do not install anything here
-if exist "~entry.abs" set /p HP_ENTRY=<"~entry.abs"
+if exist "~entry.abs" (
+  set /p HP_ENTRY=<"~entry.abs"
+) else if defined HP_CRUMB (
+  for %%F in ("%HP_CRUMB%") do set "HP_ENTRY=%%~fF"
+)
 if defined HP_ENTRY if defined HP_SYS_PY (
   if defined HP_SYS_PY_ARGS (
     "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_ENTRY%" > "~run.out.txt" 2>&1 || echo [WARN] CI skip: system Python non-zero
