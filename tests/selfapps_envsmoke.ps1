@@ -24,8 +24,8 @@ try {
 
 $blog   = Join-Path $app '~envsmoke_bootstrap.log'
 $runout = Join-Path $app '~run.out.txt'
-$bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw) : ''
-$outxt  = (Test-Path $runout) ? (Get-Content -LiteralPath $runout -Raw) : ''
+$bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw -Encoding Ascii) : ''
+$outxt  = (Test-Path $runout) ? (Get-Content -LiteralPath $runout -Raw -Encoding Ascii) : ''
 
 # Record two rows: env setup + app run
 Add-Content -LiteralPath $nd -Value (@{
@@ -33,7 +33,7 @@ Add-Content -LiteralPath $nd -Value (@{
     pass=($exit -eq 0)
     desc='Miniconda bootstrap + environment creation'
     details=@{ exitCode=$exit }
-} | ConvertTo-Json -Compress)
+} | ConvertTo-Json -Compress) -Encoding Ascii
 
 $passRun = ($exit -eq 0) -and ($outxt -match 'smoke-ok')
 Add-Content -LiteralPath $nd -Value (@{
@@ -41,4 +41,4 @@ Add-Content -LiteralPath $nd -Value (@{
     pass=$passRun
     desc='App runs in created environment'
     details=@{ exitCode=$exit }
-} | ConvertTo-Json -Compress)
+} | ConvertTo-Json -Compress) -Encoding Ascii
