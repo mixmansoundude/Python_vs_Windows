@@ -410,42 +410,71 @@ jobs:
           script: |
             const fs = require('fs');
             const path = 'tests\\~test-results.ndjson';
+            /** load & parse **/
             let rows = [];
             if (fs.existsSync(path)) {
-              for (const line of fs.readFileSync(path, 'utf8').split(/\r?\n/)) {
+              const lines = fs.readFileSync(path, 'utf8').split(/\r?\n/);
+              for (const line of lines) {
                 if (!line.trim()) continue;
                 try { rows.push(JSON.parse(line)); } catch {}
               }
             }
 
-            const passCt = rows.filter(r => r.pass === true).length;
-            const failCt = rows.filter(r => r.pass === false).length;
+            const isSelf = (id) => typeof id === 'string' && (id.startsWith('self.') || id.startsWith('entry.') || id.startsWith('env.smoke'));
+            const selfRows = rows.filter(r => isSelf(r.id));
+            const passRows = selfRows.filter(r => r.pass === true);
+            const failRows = selfRows.filter(r => r.pass === false);
 
-            // Prefer self.* and entry.* at the top
-            const rank = r => (r.id||'').startsWith('self.') || (r.id||'').startsWith('entry.') ? 0 : 1;
-            rows.sort((a,b) => rank(a) - rank(b) || String(a.id||'').localeCompare(String(b.id||'')));
+            /** format helpers **/
+            const esc = (s) => String(s ?? '').replace(/[`\\*_{}\[\]()#+\-.!|]/g, '\\$&');
+            const lineOf = (r) => `${r.pass ? '✅' : r.pass === false ? '❌' : '•'} \`${esc(r.id || '(no id)')}\` — ${esc(r.desc || '')}`.replace(/ — $/, '');
+            const firstHint = (r) => {
+              const d = r.details || {};
+              if (typeof d === 'string') return d;
+              if ('reason' in d) return String(d.reason);
+              if ('exitCode' in d) return `exitCode=${d.exitCode}`;
+              if ('chosen' in d || 'expected' in d) return `chosen=${d.chosen ?? '?'} expected=${d.expected ?? '?'}`;
+              if ('tokenFound' in d) return `tokenFound=${d.tokenFound}`;
+              return Object.keys(d).length ? JSON.stringify(d).slice(0, 160) : '';
+            };
 
-            const bullets = rows.map(r => {
-              const icon = r.pass === true ? '✅' : r.pass === false ? '❌' : '•';
-              const desc = r.desc ? ` — ${r.desc}` : '';
-              return `${icon} ${r.id || '(no id)'}${desc}`;
-            });
+            /** build markdown **/
+            let md = [];
+            md.push(`**Self-tests:** ✅ ${passRows.length} · ❌ ${failRows.length} (${selfRows.length} total)`);
+            if (selfRows.length) {
+              md.push('');
+              for (const r of selfRows) {
+                md.push(`- ${lineOf(r)}`);
+              }
+            } else {
+              md.push('');
+              md.push('_No self-test rows found in NDJSON._');
+            }
+            if (failRows.length) {
+              md.push('');
+              md.push('**First failures**');
+              for (const r of failRows.slice(0, 5)) {
+                const hint = firstHint(r);
+                md.push(`- \`${esc(r.id || '(no id)')}\`: ${esc(hint || 'no details recorded')}`);
+              }
+            }
 
             const summary = core.summary;
             await summary
               .addHeading('Self-test results', 2)
-              .addList(bullets)
-              .addRaw(`\n**Totals:** PASS ${passCt} · FAIL ${failCt}\n`)
+              .addRaw(md.join('\n'), true)
               .write();
 
-            // Optional tails (non-fatal if missing)
-            function tail(p, n=80){
-              try{
+            /** Optional tails (non-fatal if missing) **/
+            const tail = (p, n = 80) => {
+              try {
                 if (!fs.existsSync(p)) return null;
-                const L = fs.readFileSync(p, 'utf8').split(/\r?\n/);
-                return L.slice(Math.max(0, L.length - n)).join('\n');
-              }catch{return null;}
-            }
+                const lines = fs.readFileSync(p, 'utf8').split(/\r?\n/);
+                return lines.slice(Math.max(0, lines.length - n)).join('\n');
+              } catch {
+                return null;
+              }
+            };
 
             const tails = [
               ['tests\\~setup.log',                   'tests\\~setup.log'],
@@ -455,12 +484,16 @@ jobs:
               ['tests\\~entryB\\~entryB_bootstrap.log',      'tests\\~entryB\\~entryB_bootstrap.log'],
               ['~envsmoke_bootstrap.log',              'tests\\~envsmoke\\~envsmoke_bootstrap.log'],
               ['~run.out.txt',                         'tests\\~envsmoke\\~run.out.txt'],
-            ].map(([label,p]) => [label, tail(p)]).filter(([,t]) => t);
+            ].map(([label, p]) => [label, tail(p)]).filter(([, text]) => text);
 
-            if (tails.length){
+            if (tails.length) {
               await summary.addHeading('Self-test logs (tail)', 3).write();
-              for (const [label,text] of tails){
-                await summary.addRaw(`<details><summary>${label}</summary>\n\n`).addCodeBlock(text,'text').addRaw(`</details>\n`).write();
+              for (const [label, text] of tails) {
+                await summary
+                  .addRaw(`<details><summary>${label}</summary>\n\n`, false)
+                  .addCodeBlock(text, 'text')
+                  .addRaw(`</details>\n`, false)
+                  .write();
               }
             }
 

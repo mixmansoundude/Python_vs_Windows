@@ -59,9 +59,7 @@ Prime Directive: With only one or more Python files on a clean Windows 10+ machi
   - Before any updates or installs, force **community conda-forge only**:
     ```
     conda config --env --add channels conda-forge
-    conda config --env --remove channels defaults
     ```
-    (Removal is OK if `defaults` is already absent.)
   - Always install with `--override-channels -c conda-forge`.
 
 ---
