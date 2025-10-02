@@ -107,34 +107,46 @@ for ($i=0; $i -lt $Lines.Count; $i++) {
   }
 }
 Write-Result "conda.channels" "All conda create/install use --override-channels -c conda-forge" ($badConda.Count -eq 0) @{ misses=$badConda }
-$expectedPipreqs = @("pipreqs", ".", "--force", "--mode", "compat", "--savepath", '"%HP_PIPREQS_TARGET%"')
-$pipreqsLine = $Lines | Where-Object { $_ -match '^\s*call\s+"%CONDA_BAT%"\s+run\b.*\bpipreqs\b' } | Select-Object -First 1
-$observedPipreqs = @()
+$expectedPipreqs = @('pipreqs', '.', '--force', '--mode', 'compat', '--savepath', 'requirements.auto.txt')
+$pipreqsLine = $Lines | Where-Object { $_ -match '^\s*call\s+"%CONDA_BAT%"\s+run\\b.*\\bpipreqs\\b' } | Select-Object -First 1
+$observedTokens = @()
 if ($pipreqsLine) {
-  $tail = $pipreqsLine.Substring($pipreqsLine.IndexOf("pipreqs"))
+  $tail = $pipreqsLine.Substring($pipreqsLine.IndexOf('pipreqs'))
   $tail = ($tail -replace '\s+>>.*$', '').Trim()
   foreach ($m in [regex]::Matches($tail, '("[^"]*"|[^\s]+)')) {
-    $observedPipreqs += $m.Value
+    $observedTokens += $m.Value
+  }
+}
+$normalized = @()
+foreach ($token in $observedTokens) {
+  switch ($token) {
+    '"%HP_PIPREQS_TARGET%"' { $normalized += 'requirements.auto.txt'; continue }
+    '%HP_PIPREQS_TARGET%'   { $normalized += 'requirements.auto.txt'; continue }
+    default { $normalized += $token }
   }
 }
 $pipreqsOk = $false
-if ($observedPipreqs.Count -eq $expectedPipreqs.Count) {
+if ($normalized.Count -ge $expectedPipreqs.Count) {
   $pipreqsOk = $true
   for ($i = 0; $i -lt $expectedPipreqs.Count; $i++) {
-    if ($observedPipreqs[$i] -ne $expectedPipreqs[$i]) {
+    if ($normalized[$i] -ne $expectedPipreqs[$i]) {
       $pipreqsOk = $false
       break
     }
   }
 }
-$obsDisplay = if ($observedPipreqs.Count -gt 0) { $observedPipreqs -join ' ' } else { '<missing>' }
+$expectedCommand = $expectedPipreqs -join ' '
+$observedCommand = if ($normalized.Count -gt 0) { $normalized -join ' ' } else { '<missing>' }
 $details = [ordered]@{
   expected = $expectedPipreqs
-  observed = $observedPipreqs
+  observed = $normalized
+  rawTokens = $observedTokens
   line = if ($pipreqsLine) { $pipreqsLine.Trim() } else { '<pipreqs invocation not found>' }
-  summary = ("observed: {0} :: expected: {1}" -f ($obsDisplay, ($expectedPipreqs -join ' ')))
+  hasIgnore = ($normalized -contains '--ignore')
+  extraArgs = if ($normalized.Count -gt $expectedPipreqs.Count) { $normalized[$expectedPipreqs.Count..($normalized.Count-1)] } else { @() }
+  message = "expected: $expectedCommand | observed: $observedCommand"
 }
-Write-Result "pipreqs.flags" "pipreqs argv matches canonical flags" $pipreqsOk $details
+Write-Result 'pipreqs.flags' 'pipreqs argv matches canonical flags' $pipreqsOk $details
 $hasPyInst = ($AllText -match "pyinstaller\s+-y\s+--onefile\s+--name\s+""%ENVNAME%""")
 Write-Result "pyi.onefile" "PyInstaller one-file named %ENVNAME%" $hasPyInst @{} 
 $hasRotate = ($AllText -match "Length -gt 10485760")

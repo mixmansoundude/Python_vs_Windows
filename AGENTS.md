@@ -35,7 +35,7 @@ Operating policy for automated agents (Codex, Copilot, others).
 
   `pipreqs . --force --mode compat --savepath requirements.auto.txt`
 
-  compat mode = cross-runner determinism; --force = overwrite; --savepath = keep generated file out of source-of-truth requirements.
+  compat mode ensures cross-runner determinism; --force overwrites stale output; --savepath keeps the generated file separate from the source-of-truth requirements.
 
 ## Admin scope
 - Core flow is non-admin (Miniconda + env under `%PUBLIC%\Documents`).

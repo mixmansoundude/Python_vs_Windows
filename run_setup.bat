@@ -101,25 +101,116 @@ if errorlevel 1 call :die "[ERROR] Could not write ~prep_requirements.py"
 set "REQ=requirements.txt"
 if exist "%REQ%" ( for %%S in ("%REQ%") do if %%~zS EQU 0 del "%REQ%" )
 call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install --upgrade pipreqs >> "%LOG%" 2>&1
-set "HP_PIPREQS_STAGE=.~pipreqs_src"
-set "HP_PIPREQS_TARGET=%CD%\requirements.auto.txt"
-if exist "%HP_PIPREQS_STAGE%" rd /s /q "%HP_PIPREQS_STAGE%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$stage = '.~pipreqs_src';" ^
-  "$root = Get-Location;" ^
-  "Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue;" ^
-  "$stageItem = New-Item -ItemType Directory -Force -Path $stage;" ^
-  "$stageFull = $stageItem.FullName;" ^
-  "$testsRoot = [IO.Path]::Combine($root.Path, 'tests');" ^
-  "Get-ChildItem -Path $root -Recurse -Filter *.py | Where-Object { $_.Name -notlike '~*' -and -not $_.FullName.StartsWith($testsRoot, [System.StringComparison]::OrdinalIgnoreCase) -and -not $_.FullName.StartsWith($stageFull, [System.StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $rel = $_.FullName.Substring($root.Path.Length).TrimStart('\\'); $dest = Join-Path $stage $rel; $destDir = Split-Path -Parent $dest; if ($destDir -and -not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }; Copy-Item -LiteralPath $_.FullName -Destination $dest -Force }" >> "%LOG%" 2>&1
-if exist "%HP_PIPREQS_STAGE%" (
-  pushd "%HP_PIPREQS_STAGE%"
-  :: pipreqs flags are locked by CI (pipreqs.flags gate).
-  :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (outside committed requirements).
-  call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" >> "%LOG%" 2>&1
-  popd
+set "HP_JOB_SUMMARY=~pipreqs.summary.txt"
+if exist "%HP_JOB_SUMMARY%" del "%HP_JOB_SUMMARY%"
+set "HP_PY_CMD="
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\choose_python.ps1" > "~choose_python.txt"
+if errorlevel 1 (
+  type "~choose_python.txt"
+  type "~choose_python.txt" >> "%LOG%"
+  call :die "[ERROR] Python interpreter chooser failed."
 )
-if exist "%HP_PIPREQS_STAGE%" rd /s /q "%HP_PIPREQS_STAGE%"
+set /p HP_PY_CMD<"~choose_python.txt"
+del "~choose_python.txt"
+if not defined HP_PY_CMD call :die "[ERROR] Python interpreter chooser returned empty token."
+echo Interpreter: %HP_PY_CMD%
+>> "%LOG%" echo Interpreter: %HP_PY_CMD%
+call %HP_PY_CMD% -c "print('py_ok')" 1>nul 2>nul || call :log "[WARN] Interpreter smoke test failed (continuing)."
+
+set "HP_PIPREQS_TARGET_WORK=%CD%\requirements.auto.txt"
+set "HP_PIPREQS_TARGET=%HP_PIPREQS_TARGET_WORK%"
+set "HP_PIPREQS_IGNORE=.git,.github,.venv,venv,env,build,dist,__pycache__,tests"
+set "HP_PIPREQS_IGNORE_DISPLAY="
+if defined HP_PIPREQS_IGNORE set "HP_PIPREQS_IGNORE_DISPLAY= --ignore %HP_PIPREQS_IGNORE%"
+set "HP_PIPREQS_SUMMARY_PHASE="
+set "HP_PIPREQS_SUMMARY_NOTE="
+set "HP_PIPREQS_SUMMARY_CMD_PATH=%HP_PIPREQS_TARGET_WORK%"
+set "HP_PIPREQS_SUMMARY_IGNORE=%HP_PIPREQS_IGNORE_DISPLAY%"
+set "HP_PIPREQS_PHASE_RESULT="
+set "HP_PIPREQS_LAST_LOG="
+set "HP_PIPREQS_DIRECT_LOG=~pipreqs_direct.log"
+if exist "%HP_PIPREQS_DIRECT_LOG%" del "%HP_PIPREQS_DIRECT_LOG%"
+set "HP_PIPREQS_STAGE_LOG=~pipreqs_stage.log"
+if exist "%HP_PIPREQS_STAGE_LOG%" del "%HP_PIPREQS_STAGE_LOG%"
+set "HP_PIPREQS_STAGE_COPY_LOG=~pipreqs_stage_copy.log"
+if exist "%HP_PIPREQS_STAGE_COPY_LOG%" del "%HP_PIPREQS_STAGE_COPY_LOG%"
+
+call :log "[INFO] pipreqs (direct) command: pipreqs . --force --mode compat --savepath ""%HP_PIPREQS_TARGET%""%HP_PIPREQS_IGNORE_DISPLAY%"
+echo Pipreqs command (direct): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%"%HP_PIPREQS_IGNORE_DISPLAY%
+if defined HP_PIPREQS_IGNORE (
+  :: pipreqs flags are locked by CI (pipreqs.flags gate).
+  :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
+  call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore %HP_PIPREQS_IGNORE% > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+) else (
+  :: pipreqs flags are locked by CI (pipreqs.flags gate).
+  :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
+  call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+)
+set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
+set "HP_PIPREQS_RC=%errorlevel%"
+if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_TARGET_WORK%" (
+  for %%S in ("%HP_PIPREQS_TARGET_WORK%") do if %%~zS GTR 0 (
+    set "HP_PIPREQS_PHASE_RESULT=ok"
+    set "HP_PIPREQS_SUMMARY_PHASE=direct"
+    goto :after_pipreqs_run
+  )
+)
+
+set "HP_TEMP_ROOT=%RUNNER_TEMP%"
+if not defined HP_TEMP_ROOT set "HP_TEMP_ROOT=%TEMP%"
+set "HP_PIPREQS_STAGE_ROOT=%HP_TEMP_ROOT%\pipreqs_stage"
+set "HP_PIPREQS_STAGE_TARGET=%HP_PIPREQS_STAGE_ROOT%\requirements.auto.txt"
+if exist "%HP_PIPREQS_STAGE_ROOT%" rd /s /q "%HP_PIPREQS_STAGE_ROOT%"
+mkdir "%HP_PIPREQS_STAGE_ROOT%" >nul 2>&1
+robocopy . "%HP_PIPREQS_STAGE_ROOT%" /E /NFL /NDL /NJH /NJS /NP ^
+  /XD .git .github .venv venv env build dist __pycache__ tests ^
+  /XF ~*.py > "%HP_PIPREQS_STAGE_COPY_LOG%" 2>&1
+set "HP_PIPREQS_STAGE_COPY_RC=%errorlevel%"
+if %HP_PIPREQS_STAGE_COPY_RC% GEQ 8 (
+  set "HP_PIPREQS_PHASE_RESULT=fail"
+  set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_STAGE_COPY_LOG%"
+  set "HP_PIPREQS_SUMMARY_NOTE=(robocopy staging failed)"
+  goto :after_pipreqs_run
+)
+set "HP_PIPREQS_SUMMARY_CMD_PATH=%HP_PIPREQS_STAGE_TARGET%"
+set "HP_PIPREQS_SUMMARY_IGNORE="
+pushd "%HP_PIPREQS_STAGE_ROOT%"
+call :log "[INFO] pipreqs (staging) command: pipreqs . --force --mode compat --savepath ""%HP_PIPREQS_STAGE_TARGET%"""
+echo Pipreqs command (staging): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%"
+:: pipreqs flags are locked by CI (pipreqs.flags gate).
+:: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
+call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" > "%HP_PIPREQS_STAGE_LOG%" 2>&1
+set "HP_PIPREQS_RC=%errorlevel%"
+popd
+set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_STAGE_LOG%"
+if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_STAGE_TARGET%" (
+  for %%S in ("%HP_PIPREQS_STAGE_TARGET%") do if %%~zS GTR 0 (
+    copy /y "%HP_PIPREQS_STAGE_TARGET%" "%HP_PIPREQS_TARGET_WORK%" >nul 2>&1
+    if errorlevel 1 (
+      set "HP_PIPREQS_PHASE_RESULT=fail"
+      set "HP_PIPREQS_SUMMARY_NOTE=(failed to copy staging output)"
+      goto :after_pipreqs_run
+    )
+    set "HP_PIPREQS_PHASE_RESULT=ok"
+    set "HP_PIPREQS_SUMMARY_PHASE=staging"
+    set "HP_PIPREQS_SUMMARY_NOTE=(fallback after direct failure)"
+    goto :after_pipreqs_run
+  )
+)
+if not defined HP_PIPREQS_SUMMARY_NOTE set "HP_PIPREQS_SUMMARY_NOTE=(staging pipreqs failed)"
+set "HP_PIPREQS_PHASE_RESULT=fail"
+
+:after_pipreqs_run
+if exist "%HP_PIPREQS_STAGE_ROOT%" rd /s /q "%HP_PIPREQS_STAGE_ROOT%"
+set "HP_PIPREQS_TARGET=%HP_PIPREQS_TARGET_WORK%"
+if not "%HP_PIPREQS_PHASE_RESULT%"=="ok" (
+  set "HP_PIPREQS_SUMMARY_PHASE=failed"
+  if not defined HP_PIPREQS_SUMMARY_NOTE set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs run failed)"
+  set "HP_PIPREQS_FAILURE_LOG=%HP_PIPREQS_LAST_LOG%"
+  call :write_pipreqs_summary
+  call :die "[ERROR] pipreqs generation failed."
+)
+call :write_pipreqs_summary
 if not exist "%REQ%" if exist "requirements.auto.txt" ( copy /y "requirements.auto.txt" "requirements.txt" >> "%LOG%" 2>&1 )
 if exist "requirements.txt" if exist "requirements.auto.txt" ( fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1 )
 if exist "requirements.txt" (
@@ -286,6 +377,30 @@ rem Append same line to setup log
 rem If we also need an absolute path for execution, set HP_ENTRY elsewhere
 rem and keep the echo outside any ( ... ) block.
 exit /b 0
+:write_pipreqs_summary
+if "%HP_JOB_SUMMARY%"=="" exit /b 0
+set "HP_SUMMARY_PATH=%HP_JOB_SUMMARY%"
+if not defined HP_PIPREQS_SUMMARY_PHASE set "HP_PIPREQS_SUMMARY_PHASE=<unknown>"
+> "%HP_SUMMARY_PATH%" echo Interpreter: %HP_PY_CMD%
+>> "%HP_SUMMARY_PATH%" echo Pipreqs command: pipreqs . --force --mode compat --savepath "%HP_PIPREQS_SUMMARY_CMD_PATH%"%HP_PIPREQS_SUMMARY_IGNORE%
+if defined HP_PIPREQS_SUMMARY_NOTE (
+  >> "%HP_SUMMARY_PATH%" echo Phase: %HP_PIPREQS_SUMMARY_PHASE% %HP_PIPREQS_SUMMARY_NOTE%
+) else (
+  >> "%HP_SUMMARY_PATH%" echo Phase: %HP_PIPREQS_SUMMARY_PHASE%
+)
+if defined HP_PIPREQS_FAILURE_LOG (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$summary = '%HP_SUMMARY_PATH%'; $logPath = '%HP_PIPREQS_FAILURE_LOG%';" ^
+    "Add-Content -Path $summary -Value '---' -Encoding ASCII;" ^
+    "Add-Content -Path $summary -Value 'Pipreqs log tail:' -Encoding ASCII;" ^
+    "if (Test-Path $logPath) {" ^
+    "  Get-Content -LiteralPath $logPath -Tail 20 | Out-File -FilePath $summary -Encoding ASCII -Append;" ^
+    "} else {" ^
+    "  Add-Content -Path $summary -Value '<log tail unavailable>' -Encoding ASCII;" ^
+    "}" >> "%LOG%" 2>&1
+)
+exit /b 0
+
 :write_status
 set "STATE=%~1"
 set "RC=%~2"

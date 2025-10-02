@@ -87,6 +87,16 @@ jobs:
             exit /b %RC%
           )
           echo bootstrapped> .ci_bootstrap_marker
+      - name: Append pipreqs summary
+        if: always()
+        shell: pwsh
+        run: |
+          $summary = Join-Path $PWD '~pipreqs.summary.txt'
+          if (Test-Path $summary) {
+            Get-Content -LiteralPath $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          } else {
+            'pipreqs summary not generated.' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
 
       - name: "Self-test: empty repo behavior"
         shell: pwsh
