@@ -31,6 +31,12 @@ Operating policy for automated agents (Codex, Copilot, others).
   - Trigger CI by push (or an empty commit) and wait for completion.
 - Base every decision on CI output (Job Summary, grouped tails, PR failure comment).
 
+- Canonical pipreqs invocation (locked by CI gates):
+
+  `pipreqs . --force --mode compat --savepath requirements.auto.txt`
+
+  compat mode = cross-runner determinism; --force = overwrite; --savepath = keep generated file out of source-of-truth requirements.
+
 ## Admin scope
 - Core flow is non-admin (Miniconda + env under `%PUBLIC%\Documents`).
 - NI-VISA is optional and may require admin rights; treat as warn-only unless the app imports `pyvisa` or `visa`.

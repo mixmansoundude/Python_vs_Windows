@@ -72,8 +72,12 @@ Prime Directive: With only one or more Python files on a clean Windows 10+ machi
   - If bulk fails, fall back per-package via conda. For `~=` (compatible release), convert to `>=X.Y,<X.(Y+1)` (PEP 440) before feeding conda. Handle this carefully.
 
 - Always run:
-pipreqs . --force --mode compat --savepath requirements.auto.txt
-and log a **diff vs `requirements.txt`**.
+
+  `pipreqs . --force --mode compat --savepath requirements.auto.txt`
+
+  compat mode = cross-runner determinism; --force = overwrite; --savepath = keep generated file out of source-of-truth requirements.
+
+  and log a **diff vs `requirements.txt`**.
 
 - If there is no usable `requirements.txt`, adopt `requirements.auto.txt` as canonical.
 

@@ -107,8 +107,34 @@ for ($i=0; $i -lt $Lines.Count; $i++) {
   }
 }
 Write-Result "conda.channels" "All conda create/install use --override-channels -c conda-forge" ($badConda.Count -eq 0) @{ misses=$badConda }
-$hasPipreqs = ($AllText -match "pipreqs\s+\.\s+--force.*--mode\s+compat.*--savepath\s+requirements\.auto\.txt")
-Write-Result "pipreqs.flags" "pipreqs flags OK" $hasPipreqs @{} 
+$expectedPipreqs = @("pipreqs", ".", "--force", "--mode", "compat", "--savepath", '"%HP_PIPREQS_TARGET%"')
+$pipreqsLine = $Lines | Where-Object { $_ -match '^\s*call\s+"%CONDA_BAT%"\s+run\b.*\bpipreqs\b' } | Select-Object -First 1
+$observedPipreqs = @()
+if ($pipreqsLine) {
+  $tail = $pipreqsLine.Substring($pipreqsLine.IndexOf("pipreqs"))
+  $tail = ($tail -replace '\s+>>.*$', '').Trim()
+  foreach ($m in [regex]::Matches($tail, '("[^"]*"|[^\s]+)')) {
+    $observedPipreqs += $m.Value
+  }
+}
+$pipreqsOk = $false
+if ($observedPipreqs.Count -eq $expectedPipreqs.Count) {
+  $pipreqsOk = $true
+  for ($i = 0; $i -lt $expectedPipreqs.Count; $i++) {
+    if ($observedPipreqs[$i] -ne $expectedPipreqs[$i]) {
+      $pipreqsOk = $false
+      break
+    }
+  }
+}
+$obsDisplay = if ($observedPipreqs.Count -gt 0) { $observedPipreqs -join ' ' } else { '<missing>' }
+$details = [ordered]@{
+  expected = $expectedPipreqs
+  observed = $observedPipreqs
+  line = if ($pipreqsLine) { $pipreqsLine.Trim() } else { '<pipreqs invocation not found>' }
+  summary = ("observed: {0} :: expected: {1}" -f ($obsDisplay, ($expectedPipreqs -join ' ')))
+}
+Write-Result "pipreqs.flags" "pipreqs argv matches canonical flags" $pipreqsOk $details
 $hasPyInst = ($AllText -match "pyinstaller\s+-y\s+--onefile\s+--name\s+""%ENVNAME%""")
 Write-Result "pyi.onefile" "PyInstaller one-file named %ENVNAME%" $hasPyInst @{} 
 $hasRotate = ($AllText -match "Length -gt 10485760")

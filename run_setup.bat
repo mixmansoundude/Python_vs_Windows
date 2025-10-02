@@ -114,6 +114,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "Get-ChildItem -Path $root -Recurse -Filter *.py | Where-Object { $_.Name -notlike '~*' -and -not $_.FullName.StartsWith($testsRoot, [System.StringComparison]::OrdinalIgnoreCase) -and -not $_.FullName.StartsWith($stageFull, [System.StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $rel = $_.FullName.Substring($root.Path.Length).TrimStart('\\'); $dest = Join-Path $stage $rel; $destDir = Split-Path -Parent $dest; if ($destDir -and -not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }; Copy-Item -LiteralPath $_.FullName -Destination $dest -Force }" >> "%LOG%" 2>&1
 if exist "%HP_PIPREQS_STAGE%" (
   pushd "%HP_PIPREQS_STAGE%"
+  :: pipreqs flags are locked by CI (pipreqs.flags gate).
+  :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (outside committed requirements).
   call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" >> "%LOG%" 2>&1
   popd
 )
