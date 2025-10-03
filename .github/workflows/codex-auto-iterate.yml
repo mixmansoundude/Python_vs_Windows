@@ -71,6 +71,46 @@ jobs:
           name: ci_test_results.ndjson
           path: ${{ runner.temp }}
 
+      - name: Download diagnostics URL (if present)
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: codex_nudge_url.txt
+          path: ${{ runner.temp }}
+
+      - name: Determine NDJSON verdict
+        id: verdict
+        shell: pwsh
+        run: |
+          $paths = @(
+            Join-Path $env:RUNNER_TEMP 'ci_test_results.ndjson/ci_test_results.ndjson'),
+            'tests\~test-results.ndjson'
+          )
+          $target = $null
+          foreach ($p in $paths) {
+            if (Test-Path -LiteralPath $p) { $target = $p; break }
+          }
+          if (-not $target) {
+            'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+            return
+          }
+          $has = $false
+          foreach ($line in Get-Content -LiteralPath $target -Encoding ASCII) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try {
+              $row = $line | ConvertFrom-Json
+            } catch {
+              $has = $true
+              break
+            }
+            if ($row.pass -eq $false) { $has = $true; break }
+            if ($row.id -eq 'bootstrap.state' -and $row.details.state -notin @('ok','no_python_files')) { $has = $true; break }
+          }
+          $value = $has.ToString().ToLowerInvariant()
+          "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
       # If the key is missing, loudly but cleanly skip (logs + summary + tiny artifact)
       - name: Skip (no OPENAI_API_KEY configured)
         if: steps.apikey.outputs.present != 'true'
@@ -96,18 +136,18 @@ jobs:
 
       # Only proceed with Codex path when the key exists
       - name: Install Codex CLI
-        if: steps.apikey.outputs.present == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.verdict.outputs.has_failures == 'true'
         run: npm i -g @openai/codex@latest
 
       - name: Git author
-        if: steps.apikey.outputs.present == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.verdict.outputs.has_failures == 'true'
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name  "github-actions[bot]"
 
       # 20-attempt guard based on our standard commit prefix
       - name: Loop guard
-        if: steps.apikey.outputs.present == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.verdict.outputs.has_failures == 'true'
         id: guard
         shell: bash
         run: |
@@ -123,8 +163,15 @@ jobs:
             echo "next=$((COUNT+1))" >> $GITHUB_OUTPUT
           fi
 
+      - name: Iterate gate debug
+        if: steps.apikey.outputs.present == 'true'
+        run: |
+          echo "has_failures=${{ steps.verdict.outputs.has_failures }}"
+          echo "apikey_present=${{ steps.apikey.outputs.present }}"
+          echo "guard_stop=${{ steps.guard.outputs.stop }}"
+
       - name: Build prompt for Codex
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         run: |
           PROMPT="$RUNNER_TEMP/prompt.txt"
           # Seed with the existing nudge or fallback
@@ -153,10 +200,17 @@ jobs:
             } >> "$PROMPT"
           fi
 
+          if [ -f "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt" ]; then
+            {
+              echo ""
+              echo "Diagnostics site: $(cat "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt")"
+            } >> "$PROMPT"
+          fi
+
           echo "PROMPT=$PROMPT" >> $GITHUB_ENV
 
       - name: Run Codex headlessly (gpt-4o-mini, write-enabled)
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         timeout-minutes: 10
         continue-on-error: true
         env:
@@ -166,7 +220,7 @@ jobs:
           codex -a never --sandbox workspace-write exec --model gpt-4o-mini "$(cat "$PROMPT")" 2>&1 | tee "$RUNNER_TEMP/codex_exec.log" || true
 
       - name: Upload Codex exec log
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: codex-exec-log
@@ -174,7 +228,7 @@ jobs:
           retention-days: 7
 
       - name: Summarize Codex outcome
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         run: |
           echo "## Codex iterate summary" >> "$GITHUB_STEP_SUMMARY"
           if [ -f "$RUNNER_TEMP/codex_exec.log" ]; then
@@ -187,7 +241,7 @@ jobs:
           fi
 
       - name: Detect changes
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         id: diffcheck
         run: |
           if [ -z "$(git status --porcelain)" ]; then
@@ -197,7 +251,7 @@ jobs:
           fi
 
       - name: Summarize no-op Codex run
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'false'
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'false' && steps.verdict.outputs.has_failures == 'true'
         run: |
           echo "::notice title=Codex iteration::Codex made no edits; see codex-exec-log artifact for details."
           {
@@ -207,14 +261,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clean up repo temp files
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         run: |
           rm -f prompt.txt codex_nudge.txt codex_exec.log || true
 
       # Let the action stage/commit/push the working tree itself.
       # This avoids the "no changes" early exit when the tree is clean.
       - name: Create/Update PR (commit & push inside action)
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'true' && steps.verdict.outputs.has_failures == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token:  ${{ secrets.GITHUB_TOKEN }}
