@@ -30,6 +30,7 @@ set "PYCOUNT=0"
 for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul') do call :count_python "%%F"
 if "%PYCOUNT%"=="" set "PYCOUNT=0"
 call :log "[INFO] Python file count: %PYCOUNT%"
+call :write_status "%HP_BOOTSTRAP_STATE%" 0 %PYCOUNT%
 
 if "%HP_CI_TEST_CONDA_DL%"=="1" (
   if defined HP_CI_SKIP_ENV goto :after_probe_block
@@ -585,36 +586,23 @@ exit /b 1
 
 :determine_entry
 set "HP_ENTRY="
+set "HP_ENTRY_CMD="
+set "HP_ENTRY_ARGS="
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 exit /b 1
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$skip = [bool][Environment]::GetEnvironmentVariable('HP_CI_SKIP_ENV');" ^
-  "$hpPy = [Environment]::GetEnvironmentVariable('HP_PY');" ^
-  "if ($skip) {" ^
-  "  if (Get-Command python -ErrorAction SilentlyContinue) {" ^
-  "    $out = & python '~find_entry.py'" ^
-  "  } elseif (Get-Command py -ErrorAction SilentlyContinue) {" ^
-  "    $out = & py '~find_entry.py'" ^
-  "  } else {" ^
-  "    Write-Host '[WARN] find_entry: no system Python found'" ^
-  "    $out = ''" ^
-  "  }" ^
-  "} else {" ^
-  "  if ($hpPy -and (Test-Path $hpPy)) {" ^
-  "    $out = & $hpPy '~find_entry.py'" ^
-  "  } else {" ^
-  "    $pyExe = '%CONDA_BASE_PY%';" ^
-  "    if ($pyExe -and (Test-Path $pyExe)) {" ^
-  "      $out = & $pyExe '~find_entry.py'" ^
-  "    } else {" ^
-  "      $out = ''" ^
-  "    }" ^
-  "  }" ^
-  "}" ^
-  "; if ($out) { Set-Content -Path '~entry.txt' -Value $out -Encoding ASCII -NoNewline } else { Set-Content -Path '~entry.txt' -Value '' -Encoding ASCII }" >> "%LOG%" 2>&1
-if errorlevel 1 exit /b 1
-if exist "~entry.txt" (
-  for /f "usebackq delims=" %%M in ("~entry.txt") do set "HP_ENTRY=%%M"
+if defined HP_PY if exist "%HP_PY%" set "HP_ENTRY_CMD=%HP_PY%"
+if not defined HP_ENTRY_CMD if defined CONDA_BASE_PY if exist "%CONDA_BASE_PY%" set "HP_ENTRY_CMD=%CONDA_BASE_PY%"
+if not defined HP_ENTRY_CMD (
+  where python >nul 2>&1 && set "HP_ENTRY_CMD=python"
+)
+if not defined HP_ENTRY_CMD (
+  where py >nul 2>&1 && (set "HP_ENTRY_CMD=py" & set "HP_ENTRY_ARGS=-3")
+)
+if not defined HP_ENTRY_CMD exit /b 0
+if defined HP_ENTRY_ARGS (
+  for /f "usebackq delims=" %%M in (`"%HP_ENTRY_CMD%" %HP_ENTRY_ARGS% "~find_entry.py"`) do set "HP_ENTRY=%%M"
+) else (
+  for /f "usebackq delims=" %%M in (`"%HP_ENTRY_CMD%" "~find_entry.py"`) do set "HP_ENTRY=%%M"
 )
 if not defined HP_ENTRY set "HP_ENTRY="
 exit /b 0
@@ -666,7 +654,35 @@ set "COUNT=%~3"
 if "%STATE%"=="" set "STATE=error"
 if "%RC%"=="" set "RC=0"
 if "%COUNT%"=="" set "COUNT=%PYCOUNT%"
-> "%STATUS_FILE%" echo {"state":"%STATE%","exitCode":%RC%,"pyFiles":%COUNT%}
+set "HP_STATUS_STATE=%STATE%"
+set "HP_STATUS_RC=%RC%"
+set "HP_STATUS_COUNT=%COUNT%"
+set "HP_PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+rem Use PowerShell for JSON serialization so parentheses/quotes stay intact in CMD logs.
+"%HP_PS%" -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$state = [Environment]::GetEnvironmentVariable('HP_STATUS_STATE');" ^
+  "$rcRaw = [Environment]::GetEnvironmentVariable('HP_STATUS_RC');" ^
+  "$countRaw = [Environment]::GetEnvironmentVariable('HP_STATUS_COUNT');" ^
+  "$rcVal = 0; [void][int]::TryParse($rcRaw, [ref]$rcVal);" ^
+  "$countVal = 0; [void][int]::TryParse($countRaw, [ref]$countVal);" ^
+  "$obj = @{ state=$state; exitCode=$rcVal; pyFiles=$countVal };" ^
+  "$json = $obj | ConvertTo-Json -Compress;" ^
+  "Set-Content -LiteralPath '%STATUS_FILE%' -Value $json -Encoding ASCII" >> "%LOG%" 2>&1
+set "HP_WRITE_RC=%errorlevel%"
+set "HP_STATUS_STATE="
+set "HP_STATUS_RC="
+set "HP_STATUS_COUNT="
+set "HP_PS="
+if "%HP_WRITE_RC%"=="0" (
+  if exist "~bootstrap.status.txt" del "~bootstrap.status.txt" >nul 2>&1
+  set "HP_WRITE_RC="
+  exit /b 0
+)
+if exist "%STATUS_FILE%" del "%STATUS_FILE%" >nul 2>&1
+rem On failure, surface the same console hints so the workflow can scrape the empty-repo case.
+> "~bootstrap.status.txt" echo [INFO] Python file count: %COUNT%
+>> "~bootstrap.status.txt" echo [INFO] No Python files detected; skipping environment bootstrap.
+set "HP_WRITE_RC="
 exit /b 0
 :emit_from_base64
 rem Decode helper payloads with PowerShell Convert.FromBase64String (see https://learn.microsoft.com/dotnet/api/system.convert.frombase64string).
