@@ -354,9 +354,6 @@ where python >nul 2>&1 && set "HP_SYS_PY=python"
 if not defined HP_SYS_PY (
   where py >nul 2>&1 && (set "HP_SYS_PY=py" & set "HP_SYS_PY_ARGS=-3")
 )
-if not defined HP_SYS_PY (
-  if exist "%PUBLIC%\Documents\Miniconda3\python.exe" set "HP_SYS_PY=%PUBLIC%\Documents\Miniconda3\python.exe"
-)
 
 rem --- run helper and capture RELATIVE crumb ---
 set "HP_CRUMB="
