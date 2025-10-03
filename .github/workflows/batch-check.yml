@@ -571,50 +571,93 @@ jobs:
         if: ${{ always() }}
         shell: pwsh
         run: |
-          function Add-Block($title, $path, $max=6000) {
-            if (Test-Path -LiteralPath $path) {
-              $text = Get-Content -Raw -LiteralPath $path
-              if ($null -eq $text) { $text = "" }
-              if ($text.Length -gt $max) { $text = $text.Substring(0, $max) + "`n... [truncated]" }
-              "### $title"              | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-              '```text'                 | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-              $text                     | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-              '```'                     | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-            } else {
-              "### $title (missing)"    | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          function Read-Optional($title, $paths, $max=6000) {
+            $found = $null
+            foreach ($p in $paths) {
+              if (Test-Path -LiteralPath $p) { $found = $p; break }
             }
+            if (-not $found) {
+              "### $title (missing)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+              return
+            }
+            $text = Get-Content -Raw -LiteralPath $found
+            if ($null -eq $text) { $text = "" }
+            if ($text.Length -eq 0) {
+              "### $title ($found - empty)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+              return
+            }
+            if ($text.Length -gt $max) { $text = $text.Substring(0,$max) + "`n... [truncated]" }
+            "### $title ($found)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```text'              | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            $text                  | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```'                  | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
-          # NDJSON head and tail
-          Add-Block 'NDJSON (head)' 'tests\~test-results.ndjson' 6000
-          Add-Block 'NDJSON (tail)' 'tests\~test-results.ndjson' 6000
-          # Self-test text summary, if produced
-          Add-Block 'Self-test summary.txt' 'tests\~test-summary.txt' 6000
-          # Bootstrap logs (tails) for common scenarios (ignore if absent)
-          Add-Block 'Empty bootstrap (tail)' 'tests\~selftest_empty\~empty_bootstrap.log' 4000
-          Add-Block 'Single-entry bootstrap (tail)' 'tests\~entry1\~entry1_bootstrap.log' 4000
-          Add-Block 'Env smoke bootstrap (tail)' 'tests\~envsmoke\~envsmoke_bootstrap.log' 4000
-          # Stub harness log tail
-          Add-Block 'Selftest stub (~setup.log tail)' 'tests\~selftest_stub\~setup.log' 4000
+          Read-Optional 'NDJSON (head/tail)' @('tests\~test-results.ndjson','ci_test_results.ndjson') 8000
+          Read-Optional 'Self-test summary.txt' @('tests\~test-summary.txt') 6000
+          Read-Optional 'Empty bootstrap (tail)' @('tests\~selftest_empty\~empty_bootstrap.log') 4000
+          Read-Optional 'Single-entry bootstrap (tail)' @('tests\~entry1\~entry1_bootstrap.log') 4000
+          Read-Optional 'Env smoke bootstrap (tail)' @('tests\~envsmoke\~envsmoke_bootstrap.log') 4000
 
       - name: Build diagnostics site
         if: ${{ always() }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path site | Out-Null
-          function ReadFile($p, $limit=50000) {
-            if (Test-Path -LiteralPath $p) {
-              $t = Get-Content -Raw -LiteralPath $p
-              if ($null -eq $t) { return "" }
-              if ($t.Length -gt $limit) { $t = $t.Substring(0, $limit) + "`n... [truncated]" }
-              return $t
+          function Read-Multi($paths, $limit=50000) {
+            foreach ($p in $paths) {
+              if (Test-Path -LiteralPath $p) {
+                $t = Get-Content -Raw -LiteralPath $p
+                if ($null -eq $t) { $t = "" }
+                if ($t.Length -eq 0) { return "(empty) $p" }
+                if ($t.Length -gt $limit) { $t = $t.Substring(0,$limit) + "`n... [truncated]" }
+                return $t
+              }
             }
-            return ""
+            return "(missing) " + ($paths -join ', ')
           }
-          $nd  = ReadFile 'tests\~test-results.ndjson' 50000
-          $sum = ReadFile 'tests\~test-summary.txt' 20000
-          $b0  = ReadFile 'tests\~selftest_empty\~empty_bootstrap.log' 12000
-          $b1  = ReadFile 'tests\~entry1\~entry1_bootstrap.log' 12000
-          $bS  = ReadFile 'tests\~envsmoke\~envsmoke_bootstrap.log' 12000
+
+          $nd  = Read-Multi @('tests\~test-results.ndjson','ci_test_results.ndjson') 50000
+          $sum = Read-Multi @('tests\~test-summary.txt') 20000
+          $b0  = Read-Multi @('tests\~selftest_empty\~empty_bootstrap.log') 12000
+          $b1  = Read-Multi @('tests\~entry1\~entry1_bootstrap.log') 12000
+          $bS  = Read-Multi @('tests\~envsmoke\~envsmoke_bootstrap.log') 12000
+
+          New-Item -ItemType Directory -Force -Path site/workflows,site/src/tests,site/repo | Out-Null
+          if (Test-Path '.github/workflows') { Copy-Item '.github/workflows\*.yml' 'site/workflows' -Force -ErrorAction SilentlyContinue }
+          if (Test-Path 'run_setup.bat') { Copy-Item 'run_setup.bat' 'site/src/run_setup.bat' -Force }
+          if (Test-Path 'run_tests.bat') { Copy-Item 'run_tests.bat' 'site/src/run_tests.bat' -Force }
+          if (Test-Path 'tests\selftests.ps1') { Copy-Item 'tests\selftests.ps1' 'site/src/tests/selftests.ps1' -Force }
+          if (Test-Path 'tests\harness.ps1') { Copy-Item 'tests\harness.ps1' 'site/src/tests/harness.ps1' -Force }
+          if (Test-Path 'tests') { Copy-Item 'tests\selfapps_*.ps1' 'site/src/tests' -Force -ErrorAction SilentlyContinue }
+          Get-ChildItem -LiteralPath . -Force | Where-Object { $_.Name -notin @('.', '..', '.git', 'site') } | ForEach-Object {
+            Copy-Item $_.FullName "site/repo/$($_.Name)" -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          $workflowLinks = '  <li>(none)</li>'
+          if (Test-Path 'site/workflows') {
+            $items = Get-ChildItem 'site/workflows' -File -Filter *.yml -ErrorAction SilentlyContinue
+            if ($items) {
+              $workflowLinks = ($items | ForEach-Object { "  <li><a href='workflows/$($_.Name)'>$($_.Name)</a></li>" }) -join "`n"
+            }
+          }
+
+          $keyScripts = @('site/src/run_setup.bat','site/src/run_tests.bat','site/src/tests/selftests.ps1','site/src/tests/harness.ps1')
+          $scriptLinks = ($keyScripts | ForEach-Object {
+              if (Test-Path $_) { "  <li><a href='$(($_.Substring(5)))'>$(($_.Substring(5)))</a></li>" }
+              else { "  <li>$(($_.Substring(5))) (missing)</li>" }
+            }) -join "`n"
+
+          $repoFiles = Get-ChildItem 'site/repo' -Recurse -File -ErrorAction SilentlyContinue
+          if ($repoFiles) {
+            $sitePath = (Get-Item 'site').FullName
+            $repoLinks = ($repoFiles | ForEach-Object {
+                $rel = $_.FullName.Substring($sitePath.Length + 1)
+                $rel = $rel -replace '\\','/'
+                "  <li><a href='$rel'>$rel</a></li>"
+              }) -join "`n"
+          } else {
+            $repoLinks = '  <li>(repo snapshot empty)</li>'
+          }
 
           $enc = [System.Net.WebUtility]::HtmlEncode
           $sha = '${{ github.sha }}'
@@ -624,20 +667,42 @@ jobs:
           $html = @"
           <!doctype html>
           <meta charset="utf-8">
-          <title>CI Diagnostics — run $run</title>
+          <title>CI Diagnostics - run $run</title>
           <style>
             body{font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;margin:24px}
             h1,h2{font-family:ui-sans-serif,system-ui}
             code,pre{white-space:pre-wrap}
             .muted{color:#666}
+            a{color:#0366d6}
+            .grid{display:grid;gap:16px}
+            .two{grid-template-columns:1fr 1fr}
           </style>
           <h1>CI Diagnostics</h1>
           <p class="muted"><b>Repo:</b> $repo<br><b>Commit:</b> $sha<br><b>Run:</b> $run</p>
+
           <h2>NDJSON</h2><pre>$($enc.Invoke($nd))</pre>
           <h2>Self-test summary.txt</h2><pre>$($enc.Invoke($sum))</pre>
-          <h2>Empty bootstrap (tail)</h2><pre>$($enc.Invoke($b0))</pre>
-          <h2>Single-entry bootstrap (tail)</h2><pre>$($enc.Invoke($b1))</pre>
+          <div class="grid two">
+            <div><h2>Empty bootstrap (tail)</h2><pre>$($enc.Invoke($b0))</pre></div>
+            <div><h2>Single-entry bootstrap (tail)</h2><pre>$($enc.Invoke($b1))</pre></div>
+          </div>
           <h2>Env smoke bootstrap (tail)</h2><pre>$($enc.Invoke($bS))</pre>
+
+          <h2>Workflows</h2>
+          <ul>
+          $workflowLinks
+          </ul>
+
+          <h2>Key scripts</h2>
+          <ul>
+          $scriptLinks
+          </ul>
+
+          <h2>Repository snapshot</h2>
+          <p>Browse the workspace snapshot below (excludes .git):</p>
+          <ul>
+          $repoLinks
+          </ul>
           "@
           Set-Content -LiteralPath site/index.html -Value $html -Encoding UTF8
 
@@ -834,10 +899,17 @@ jobs:
 
   emit-nudge:
     name: Emit Codex nudge (on failure)
-    needs: check
+    needs: [check, deploy-pages]
     runs-on: windows-latest
     if: ${{ always() && needs.check.result == 'failure' }}
     steps:
+      - name: Download diagnostics URL (optional)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: codex_nudge_url.txt
+          path: ${{ runner.temp }}
+
       - name: Build Codex nudge
         shell: pwsh
         run: |
@@ -847,6 +919,19 @@ jobs:
           Preserve CRLF; ASCII where practical; keep run_setup.bat robust; avoid sweeping refactors; minimal diagnostics only if required.
           "@
           Set-Content -LiteralPath "$env:RUNNER_TEMP\codex_nudge.txt" -Value $body -Encoding Ascii
+
+      - name: Combine nudges
+        shell: pwsh
+        run: |
+          $target = "$env:RUNNER_TEMP\codex_nudge.txt"
+          if (-not (Test-Path $target)) { return }
+          $urlFile = Join-Path $env:RUNNER_TEMP 'codex_nudge_url.txt'
+          if (Test-Path $urlFile) {
+            $url = Get-Content -Raw -LiteralPath $urlFile
+            if ($url) {
+              Add-Content -Path $target -Value "`nDiagnostics: $url`n"
+            }
+          }
 
       - name: Upload Codex nudge artifact
         uses: actions/upload-artifact@v4
@@ -866,4 +951,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Show deployed URL in Summary and nudge
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $u='${{ steps.deployment.outputs.page_url }}'
+          if ($u) {
+            "### Diagnostics site`n[$u]($u)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            $u | Out-File -Encoding UTF8 -FilePath codex_nudge_url.txt
+          } else {
+            "### Diagnostics site (no URL from deploy step)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload diagnostics URL artifact
+        if: ${{ always() && steps.deployment.outputs.page_url != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex_nudge_url.txt
+          path: codex_nudge_url.txt
+          retention-days: 3

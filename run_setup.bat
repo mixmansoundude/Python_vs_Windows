@@ -33,10 +33,10 @@ for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul') do call :count_python "%%F"
 if "%PYCOUNT%"=="" set "PYCOUNT=0"
 call :log "[INFO] Python file count: %PYCOUNT%"
 if "%HP_CI_TEST_CONDA_DL%"=="1" (
-  if defined HP_CI_SKIP_ENV goto :after_probe_block
-  call :probe_conda_url
-  if errorlevel 1 goto :conda_probe_failed
-:after_probe_block
+  if not defined HP_CI_SKIP_ENV (
+    call :probe_conda_url
+    if errorlevel 1 goto :conda_probe_failed
+  )
 )
 
 if "%PYCOUNT%"=="0" (
