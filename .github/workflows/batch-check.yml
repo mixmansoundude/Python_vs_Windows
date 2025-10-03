@@ -16,7 +16,14 @@ permissions:
 
 jobs:
   check:
+    name: Batch syntax/run check (${{ matrix.mode }})
+    strategy:
+      matrix:
+        mode: [cache, real]
     runs-on: windows-latest
+
+    env:
+      HP_PIPREQS_VERSION: 0.5.0
 
     concurrency:
       group: batch-check-${{ github.head_ref || github.ref_name }}
@@ -25,10 +32,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Restore Miniconda cache
+        if: ${{ matrix.mode == 'cache' }}
+        uses: actions/cache@v4
+        with:
+          path: C:\Users\Public\Documents\Miniconda3
+          key: win-${{ runner.os }}-py311-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
+          restore-keys: |
+            win-${{ runner.os }}-py311-conda-
+
+      - name: Enable Miniconda probe (real mode)
+        if: ${{ matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          'HP_CI_TEST_CONDA_DL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
       - name: Show environment
         shell: cmd
         run: |
           ver
+          echo Mode: ${{ matrix.mode }}
           echo %COMSPEC%
           echo Workspace: %CD%
           git rev-parse HEAD

@@ -47,8 +47,9 @@ if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
   Write-Host ("SHA256 (fallback): {0}" -f $sha)
 }
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
-$stateOk = ($BootstrapStatus.state -eq 'ok' -or $BootstrapStatus.state -eq 'no_python_files')
-Write-Result "bootstrap.state" "Bootstrap status state is ok or no_python_files" $stateOk @{ state=$BootstrapStatus.state; exitCode=$BootstrapStatus.exitCode; pyFiles=$BootstrapStatus.pyFiles }
+$allowedStates = @('ok','no_python_files','venv_env','degraded_env')
+$stateOk = $allowedStates -contains $BootstrapStatus.state
+Write-Result "bootstrap.state" "Bootstrap status state is ok/no_python_files/venv_env/degraded_env" $stateOk @{ state=$BootstrapStatus.state; exitCode=$BootstrapStatus.exitCode; pyFiles=$BootstrapStatus.pyFiles; allowed=$allowedStates }
 Write-Result "bootstrap.exit" "Bootstrap exitCode is 0" ($BootstrapStatus.exitCode -eq 0) @{ exitCode=$BootstrapStatus.exitCode }
 $payloads = @{}
 foreach ($line in $Lines) {
@@ -108,7 +109,7 @@ for ($i=0; $i -lt $Lines.Count; $i++) {
 }
 Write-Result "conda.channels" "All conda create/install use --override-channels -c conda-forge" ($badConda.Count -eq 0) @{ misses=$badConda }
 $expectedPipreqs = @('pipreqs', '.', '--force', '--mode', 'compat', '--savepath', 'requirements.auto.txt')
-$pipreqsLine = $Lines | Where-Object { $_ -match '^\s*call\s+"%CONDA_BAT%"\s+run\\b.*\\bpipreqs\\b' } | Select-Object -First 1
+$pipreqsLine = $Lines | Where-Object { $_ -match '\-m\s+pipreqs\b' } | Select-Object -First 1
 $observedTokens = @()
 if ($pipreqsLine) {
   $tail = $pipreqsLine.Substring($pipreqsLine.IndexOf('pipreqs'))

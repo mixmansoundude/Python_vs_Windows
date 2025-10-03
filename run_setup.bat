@@ -7,6 +7,19 @@ set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
 if exist "%STATUS_FILE%" del "%STATUS_FILE%"
+set "HP_BOOTSTRAP_STATE=ok"
+set "HP_ENV_MODE=conda"
+set "HP_ENV_READY="
+set "HP_SKIP_PIPREQS="
+set "HP_PY="
+set "HP_PIPREQS_VERSION=%HP_PIPREQS_VERSION%"
+if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
+set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
+if not defined HP_MINICONDA_MIN_BYTES set "HP_MINICONDA_MIN_BYTES=5000000"
+set "HP_MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
+set "HP_NDJSON="
+if exist "%CD%\tests" set "HP_NDJSON=%CD%\tests\~test-results.ndjson"
+if defined HP_NDJSON if not exist "%HP_NDJSON%" ( type nul > "%HP_NDJSON%" )
 rem --- CI fast path (entry tests only) ---
 call :rotate_log
 rem HP_* variables represent "Helper Payload" assets emitted on demand.
@@ -17,6 +30,13 @@ set "PYCOUNT=0"
 for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul') do call :count_python "%%F"
 if "%PYCOUNT%"=="" set "PYCOUNT=0"
 call :log "[INFO] Python file count: %PYCOUNT%"
+
+if "%HP_CI_TEST_CONDA_DL%"=="1" (
+  if defined HP_CI_SKIP_ENV goto :after_probe_block
+  call :probe_conda_url
+  if errorlevel 1 goto :conda_probe_failed
+:after_probe_block
+)
 
 if "%PYCOUNT%"=="0" (
   call :log "[INFO] No Python files detected; skipping environment bootstrap."
@@ -38,20 +58,53 @@ call :select_conda_bat
 rem Install Miniconda if conda.bat is missing
 if not defined CONDA_BAT (
   echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
+  set "HP_CONDA_DL_RC=0"
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "iwr https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe -OutFile $env:TEMP\miniconda.exe"
-  start /wait "" "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
+    "try {"
+  "  $uri = [Environment]::GetEnvironmentVariable('HP_MINICONDA_URL');"
+  "  if (-not $uri) { throw 'HP_MINICONDA_URL not set' }"
+  "  Invoke-WebRequest -Uri $uri -OutFile $env:TEMP\miniconda.exe -UseBasicParsing"
+  "} catch {"
+  "  Write-Host ('[WARN] Miniconda download failed: {0}' -f $_.Exception.Message)"
+  "  exit 1"
+  "}"
+    >> "%LOG%" 2>&1
+  if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
+  if not exist "%TEMP%\miniconda.exe" set "HP_CONDA_DL_RC=1"
+  if "%HP_CONDA_DL_RC%"=="0" (
+    start /wait "" "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
+    if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
+  )
+  if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
   call :select_conda_bat
 )
 
 if not defined CONDA_BAT (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "conda.bat not found after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
   call :die "[ERROR] conda.bat not found after bootstrap."
 )
 
 set "PATH=%MINICONDA_ROOT%\condabin;%MINICONDA_ROOT%\Scripts;%MINICONDA_ROOT%\Library\bin;%MINICONDA_ROOT%;%PATH%"
-where conda >> "%LOG%" 2>&1 || call :die "[ERROR] 'conda' not found on PATH after bootstrap."
-where python >> "%LOG%" 2>&1 || call :die "[ERROR] 'python' not found on PATH after bootstrap."
-python -V >> "%LOG%" 2>&1 || call :die "[ERROR] 'python -V' failed after bootstrap."
+where conda >> "%LOG%" 2>&1 || (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "[ERROR] 'conda' not found on PATH after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] 'conda' not found on PATH after bootstrap."
+)
+where python >> "%LOG%" 2>&1 || (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "[ERROR] 'python' not found on PATH after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] 'python' not found on PATH after bootstrap."
+)
+python -V >> "%LOG%" 2>&1 || (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "[ERROR] 'python -V' failed after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] 'python -V' failed after bootstrap."
+)
 
 rem === Channel policy (determinism & legal) ===================================
 call "%CONDA_BAT%" config --name base --add channels conda-forge
@@ -78,11 +131,25 @@ if "%PYSPEC%"=="" (
 ) else (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% --override-channels -c conda-forge >> "%LOG%" 2>&1
 )
-if errorlevel 1 call :die "[ERROR] conda env create failed."
+if errorlevel 1 (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "[ERROR] conda env create failed."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] conda env create failed."
+)
+
+set "CONDA_PREFIX=%ENV_PATH%"
+set "HP_PY=%CONDA_PREFIX%\python.exe"
+if not exist "%HP_PY%" (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "[ERROR] python.exe missing from conda environment."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] python.exe missing from conda environment."
+)
 
 call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
 if errorlevel 1 call :die "[ERROR] Could not write ~print_pyver.py"
-call "%CONDA_BAT%" run -n "%ENVNAME%" python "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
+"%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
 for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
 if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
 
@@ -96,26 +163,26 @@ if errorlevel 1 call :die "[ERROR] Could not write %ENV_PATH%\.condarc"
 
 
 
+:after_env_mode_selection
 call :emit_from_base64 "~prep_requirements.py" HP_PREP_REQUIREMENTS
 if errorlevel 1 call :die "[ERROR] Could not write ~prep_requirements.py"
 set "REQ=requirements.txt"
 if exist "%REQ%" ( for %%S in ("%REQ%") do if %%~zS EQU 0 del "%REQ%" )
-call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install --upgrade pipreqs >> "%LOG%" 2>&1
 set "HP_JOB_SUMMARY=~pipreqs.summary.txt"
 if exist "%HP_JOB_SUMMARY%" del "%HP_JOB_SUMMARY%"
-set "HP_PY_CMD="
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\choose_python.ps1" > "~choose_python.txt"
-if errorlevel 1 (
-  type "~choose_python.txt"
-  type "~choose_python.txt" >> "%LOG%"
-  call :die "[ERROR] Python interpreter chooser failed."
+if not defined HP_PY (
+  call :die "[ERROR] Active Python interpreter not resolved."
 )
-set /p HP_PY_CMD<"~choose_python.txt"
-del "~choose_python.txt"
-if not defined HP_PY_CMD call :die "[ERROR] Python interpreter chooser returned empty token."
-echo Interpreter: %HP_PY_CMD%
->> "%LOG%" echo Interpreter: %HP_PY_CMD%
-call %HP_PY_CMD% -c "print('py_ok')" 1>nul 2>nul || call :log "[WARN] Interpreter smoke test failed (continuing)."
+
+echo Interpreter: %HP_PY%
+>> "%LOG%" echo Interpreter: %HP_PY%
+call :append_env_mode_row
+"%HP_PY%" -c "print('py_ok')" 1>nul 2>nul || call :log "[WARN] Interpreter smoke test failed (continuing)."
+
+if not defined HP_SKIP_PIPREQS (
+  "%HP_PY%" -m pip install -q --disable-pip-version-check pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] pipreqs install failed."
+)
 
 set "HP_PIPREQS_TARGET_WORK=%CD%\requirements.auto.txt"
 set "HP_PIPREQS_TARGET=%HP_PIPREQS_TARGET_WORK%"
@@ -135,16 +202,27 @@ if exist "%HP_PIPREQS_STAGE_LOG%" del "%HP_PIPREQS_STAGE_LOG%"
 set "HP_PIPREQS_STAGE_COPY_LOG=~pipreqs_stage_copy.log"
 if exist "%HP_PIPREQS_STAGE_COPY_LOG%" del "%HP_PIPREQS_STAGE_COPY_LOG%"
 
-call :log "[INFO] pipreqs (direct) command: pipreqs . --force --mode compat --savepath ""%HP_PIPREQS_TARGET%""%HP_PIPREQS_IGNORE_DISPLAY%"
-echo Pipreqs command (direct): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%"%HP_PIPREQS_IGNORE_DISPLAY%
+set "HP_PIPREQS_CANON=pipreqs . --force --mode compat --savepath requirements.auto.txt"
+set "HP_PIPREQS_CMD_LOG=pipreqs . --force --mode compat --savepath \"%HP_PIPREQS_TARGET%\"%HP_PIPREQS_IGNORE_DISPLAY%"
+call :log "[INFO] pipreqs (direct) command: %HP_PIPREQS_CMD_LOG%"
+echo Pipreqs command (direct): %HP_PIPREQS_CMD_LOG%
+
+if defined HP_SKIP_PIPREQS (
+  set "HP_PIPREQS_PHASE_RESULT=skipped"
+  set "HP_PIPREQS_SUMMARY_PHASE=skipped"
+  set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs skipped for %HP_ENV_MODE% mode)"
+  set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
+  goto :after_pipreqs_run
+)
+
 if defined HP_PIPREQS_IGNORE (
   :: pipreqs flags are locked by CI (pipreqs.flags gate).
   :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-  call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore %HP_PIPREQS_IGNORE% > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+  "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore %HP_PIPREQS_IGNORE% > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
 ) else (
   :: pipreqs flags are locked by CI (pipreqs.flags gate).
   :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-  call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+  "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
 )
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
 set "HP_PIPREQS_RC=%errorlevel%"
@@ -179,7 +257,7 @@ call :log "[INFO] pipreqs (staging) command: pipreqs . --force --mode compat --s
 echo Pipreqs command (staging): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%"
 :: pipreqs flags are locked by CI (pipreqs.flags gate).
 :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-call "%CONDA_BAT%" run -n "%ENVNAME%" pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" > "%HP_PIPREQS_STAGE_LOG%" 2>&1
+"%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" > "%HP_PIPREQS_STAGE_LOG%" 2>&1
 set "HP_PIPREQS_RC=%errorlevel%"
 popd
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_STAGE_LOG%"
@@ -203,26 +281,43 @@ set "HP_PIPREQS_PHASE_RESULT=fail"
 :after_pipreqs_run
 if exist "%HP_PIPREQS_STAGE_ROOT%" rd /s /q "%HP_PIPREQS_STAGE_ROOT%"
 set "HP_PIPREQS_TARGET=%HP_PIPREQS_TARGET_WORK%"
-if not "%HP_PIPREQS_PHASE_RESULT%"=="ok" (
-  set "HP_PIPREQS_SUMMARY_PHASE=failed"
-  if not defined HP_PIPREQS_SUMMARY_NOTE set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs run failed)"
-  set "HP_PIPREQS_FAILURE_LOG=%HP_PIPREQS_LAST_LOG%"
+if "%HP_PIPREQS_PHASE_RESULT%"=="ok" (
   call :write_pipreqs_summary
-  call :die "[ERROR] pipreqs generation failed."
+) else (
+  if /I "%HP_PIPREQS_PHASE_RESULT%"=="skipped" (
+    if not defined HP_PIPREQS_SUMMARY_PHASE set "HP_PIPREQS_SUMMARY_PHASE=skipped"
+    if not defined HP_PIPREQS_SUMMARY_NOTE set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs skipped)"
+    call :write_pipreqs_summary
+  ) else (
+    set "HP_PIPREQS_SUMMARY_PHASE=failed"
+    if not defined HP_PIPREQS_SUMMARY_NOTE set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs run failed)"
+    set "HP_PIPREQS_FAILURE_LOG=%HP_PIPREQS_LAST_LOG%"
+    call :write_pipreqs_summary
+    call :die "[ERROR] pipreqs generation failed."
+  )
 )
-call :write_pipreqs_summary
 if not exist "%REQ%" if exist "requirements.auto.txt" ( copy /y "requirements.auto.txt" "requirements.txt" >> "%LOG%" 2>&1 )
 if exist "requirements.txt" if exist "requirements.auto.txt" ( fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1 )
 if exist "requirements.txt" (
   if exist "~reqs_conda.txt" del "~reqs_conda.txt"
-  "%CONDA_BASE_PY%" "~prep_requirements.py" "requirements.txt" >nul 2>> "%LOG%"
-  call "%CONDA_BAT%" install -y -n "%ENVNAME%" --file "~reqs_conda.txt" --override-channels -c conda-forge >> "%LOG%" 2>&1
-  if errorlevel 1 (
-    for /f "usebackq delims=" %%P in ("~reqs_conda.txt") do (
-      call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%P >> "%LOG%" 2>&1
-    )
+  if "%HP_ENV_MODE%"=="conda" (
+    "%CONDA_BASE_PY%" "~prep_requirements.py" "requirements.txt" >nul 2>> "%LOG%"
+  ) else (
+    "%HP_PY%" "~prep_requirements.py" "requirements.txt" >nul 2>> "%LOG%"
   )
-  call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -r requirements.txt >> "%LOG%" 2>&1
+  if "%HP_ENV_MODE%"=="conda" (
+    call "%CONDA_BAT%" install -y -n "%ENVNAME%" --file "~reqs_conda.txt" --override-channels -c conda-forge >> "%LOG%" 2>&1
+    if errorlevel 1 (
+      for /f "usebackq delims=" %%P in ("~reqs_conda.txt") do (
+        call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%P >> "%LOG%" 2>&1
+      )
+    )
+    "%HP_PY%" -m pip install -r requirements.txt >> "%LOG%" 2>&1
+  ) else if "%HP_ENV_MODE%"=="venv" (
+    "%HP_PY%" -m pip install -r requirements.txt >> "%LOG%" 2>&1
+  ) else (
+    call :log "[WARN] System fallback: skipping requirement installation."
+  )
 )
 rem Detect pyvisa/visa usage so harness sees NI-VISA requirements
 
@@ -230,7 +325,7 @@ call :emit_from_base64 "~detect_visa.py" HP_DETECT_VISA
 if errorlevel 1 call :die "[ERROR] Could not write ~detect_visa.py"
 set "NEED_VISA=0"
 if exist "~visa.flag" del "~visa.flag"
-call "%CONDA_BAT%" run -n "%ENVNAME%" python "~detect_visa.py" > "~visa.flag" 2>> "%LOG%"
+"%HP_PY%" "~detect_visa.py" > "~visa.flag" 2>> "%LOG%"
 for /f "usebackq delims=" %%V in ("~visa.flag") do set "NEED_VISA=%%V"
 if "%NEED_VISA%"=="1" (
   call :log "[INFO] Detected pyvisa/visa import; NI-VISA install may be required."
@@ -300,17 +395,21 @@ if "%HP_ENTRY%"=="" (
   call :log "[INFO] No entry script detected; skipping PyInstaller packaging."
 ) else (
   call :record_chosen_entry "%HP_ENTRY%"
-  call :log "[INFO] Running entry script smoke test via conda run."
-  call "%CONDA_BAT%" run -n "%ENVNAME%" python "%HP_ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
+  call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
+  "%HP_PY%" "%HP_ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
   if errorlevel 1 call :die "[ERROR] Entry script execution failed."
-  call "%CONDA_BAT%" run -n "%ENVNAME%" python -m pip install -q pyinstaller >> "%LOG%" 2>&1
-  call "%CONDA_BAT%" run -n "%ENVNAME%" pyinstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
-  if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
-  if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
-  call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+  if "%HP_ENV_MODE%"=="system" (
+    call :log "[INFO] System fallback: skipping PyInstaller packaging."
+  ) else (
+    "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
+    "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+    if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
+    if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
+    call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+  )
 )
 
-call :write_status "ok" 0 %PYCOUNT%
+call :write_status "%HP_BOOTSTRAP_STATE%" 0 %PYCOUNT%
 goto :success
 
 :after_env_skip
@@ -333,12 +432,164 @@ if not defined CONDA_BAT if exist "%CONDA_ALT%" set "CONDA_BAT=%CONDA_ALT%"
 if defined CONDA_BAT if not exist "%CONDA_BAT%" set "CONDA_BAT="
 exit /b 0
 
+:handle_conda_failure
+set "HP_FAIL_MSG=%~1"
+if not "%HP_FAIL_MSG%"=="" call :log "%HP_FAIL_MSG%"
+if "%HP_ALLOW_VENV_FALLBACK%"=="1" (
+  call :try_venv_fallback
+  if not errorlevel 1 (
+    set "HP_ENV_READY=1"
+    exit /b 0
+  )
+)
+if "%HP_ALLOW_SYSTEM_FALLBACK%"=="1" (
+  call :try_system_fallback
+  if not errorlevel 1 (
+    set "HP_ENV_READY=1"
+    exit /b 0
+  )
+)
+exit /b 0
+
+:try_venv_fallback
+call :log "[WARN] Attempting venv fallback..."
+call :resolve_system_python
+if errorlevel 1 (
+  call :log "[WARN] venv fallback: system Python not found."
+  exit /b 1
+)
+if exist ".\.venv" rd /s /q ".\.venv" >nul 2>&1
+if defined HP_SYS_ARGS (
+  "%HP_SYS_CMD%" %HP_SYS_ARGS% -m venv .\.venv >> "%LOG%" 2>&1
+) else (
+  "%HP_SYS_CMD%" -m venv .\.venv >> "%LOG%" 2>&1
+)
+if errorlevel 1 (
+  call :log "[WARN] venv fallback: python -m venv failed."
+  exit /b 1
+)
+set "HP_PY=%CD%\.venv\Scripts\python.exe"
+if not exist "%HP_PY%" (
+  call :log "[WARN] venv fallback: interpreter missing after creation."
+  exit /b 1
+)
+set "HP_ENV_MODE=venv"
+set "HP_BOOTSTRAP_STATE=venv_env"
+set "HP_SKIP_PIPREQS="
+call :log "[INFO] venv fallback ready: %HP_PY%"
+exit /b 0
+
+:try_system_fallback
+call :log "[WARN] Attempting system Python fallback (degraded)..."
+call :resolve_system_python
+if errorlevel 1 (
+  call :log "[WARN] system fallback: interpreter not available."
+  exit /b 1
+)
+set "HP_PY=%HP_SYS_EXE%"
+if not exist "%HP_PY%" (
+  call :log "[WARN] system fallback: resolved interpreter path missing."
+  exit /b 1
+)
+set "HP_ENV_MODE=system"
+set "HP_BOOTSTRAP_STATE=degraded_env"
+set "HP_SKIP_PIPREQS=1"
+call :log "[INFO] System fallback using %HP_PY%"
+exit /b 0
+
+:resolve_system_python
+set "HP_SYS_CMD="
+set "HP_SYS_ARGS="
+set "HP_SYS_EXE="
+where python >nul 2>&1 && set "HP_SYS_CMD=python"
+if not defined HP_SYS_CMD (
+  where py >nul 2>&1 && (set "HP_SYS_CMD=py" & set "HP_SYS_ARGS=-3")
+)
+if not defined HP_SYS_CMD exit /b 1
+if defined HP_SYS_ARGS (
+  for /f "usebackq delims=" %%I in (`"%HP_SYS_CMD%" %HP_SYS_ARGS% -c "import sys;print(sys.executable)"`) do set "HP_SYS_EXE=%%I"
+) else (
+  for /f "usebackq delims=" %%I in (`"%HP_SYS_CMD%" -c "import sys;print(sys.executable)"`) do set "HP_SYS_EXE=%%I"
+)
+if not defined HP_SYS_EXE exit /b 1
+exit /b 0
+
+:append_env_mode_row
+if not defined HP_NDJSON exit /b 0
+if not defined HP_PY exit /b 0
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$mode = [Environment]::GetEnvironmentVariable('HP_ENV_MODE');" ^
+  "$py = [Environment]::GetEnvironmentVariable('HP_PY');" ^
+  "if (-not $mode) { $mode = 'unknown' }" ^
+  "$row = @{ id='env.mode'; pass=$true; details=@{ mode=$mode; py=$py } } | ConvertTo-Json -Compress;" ^
+  "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+exit /b 0
+
+:probe_conda_url
+set "HP_DL_PATH=~miniconda.exe"
+if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$uri = [Environment]::GetEnvironmentVariable('HP_MINICONDA_URL');" ^
+  "if (-not $uri) { Write-Host '[ERROR] HP_MINICONDA_URL not set'; exit 1 }" ^
+  "$out = Join-Path (Get-Location) '%HP_DL_PATH%';" ^
+  "$max = 3; $ok = $false;" ^
+  "for ($i = 1; $i -le $max; $i++) {" ^
+  "  try {" ^
+  "    Invoke-WebRequest -Uri $uri -OutFile $out -UseBasicParsing" ^
+  "    $ok = $true; break" ^
+  "  } catch {" ^
+  "    Write-Host ('[WARN] Download attempt {0} failed: {1}' -f $i, $_.Exception.Message)" ^
+  "    Start-Sleep -Seconds (3 * $i)" ^
+  "  }" ^
+  "}" ^
+  "if (-not $ok) { exit 1 }" >> "%LOG%" 2>&1
+if errorlevel 1 goto :probe_conda_url_fail
+set "HP_DL_BYTES=0"
+if exist "%HP_DL_PATH%" for %%S in ("%HP_DL_PATH%") do set "HP_DL_BYTES=%%~zS"
+set "HP_DL_PASS=1"
+if not defined HP_DL_BYTES set "HP_DL_BYTES=0"
+for /f "tokens=*" %%B in ("%HP_DL_BYTES%") do set "HP_DL_BYTES=%%B"
+for /f "tokens=*" %%B in ("%HP_MINICONDA_MIN_BYTES%") do set "HP_MIN_BYTES_SAFE=%%B"
+if not defined HP_MIN_BYTES_SAFE set "HP_MIN_BYTES_SAFE=0"
+set /a HP_BYTES_CHECK=%HP_DL_BYTES%
+set /a HP_MIN_CHECK=%HP_MIN_BYTES_SAFE%
+if %HP_BYTES_CHECK% LSS %HP_MIN_CHECK% set "HP_DL_PASS=0"
+if "%HP_DL_PASS%"=="0" goto :probe_conda_url_fail_with_bytes
+call :log "[INFO] Miniconda probe downloaded %HP_DL_BYTES% bytes."
+if defined HP_NDJSON (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$row = @{ id='conda.url'; pass=$true; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress;" ^
+    "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+)
+if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
+exit /b 0
+
+:probe_conda_url_fail_with_bytes
+if defined HP_NDJSON (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress;" ^
+    "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+)
+if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
+exit /b 1
+
+:probe_conda_url_fail
+set "HP_DL_BYTES=0"
+if defined HP_NDJSON (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=0 } } | ConvertTo-Json -Compress;" ^
+    "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+)
+if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
+exit /b 1
+
 :determine_entry
 set "HP_ENTRY="
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 exit /b 1
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$skip = [bool][Environment]::GetEnvironmentVariable('HP_CI_SKIP_ENV');" ^
+  "$hpPy = [Environment]::GetEnvironmentVariable('HP_PY');" ^
   "if ($skip) {" ^
   "  if (Get-Command python -ErrorAction SilentlyContinue) {" ^
   "    $out = & python '~find_entry.py'" ^
@@ -349,11 +600,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "    $out = ''" ^
   "  }" ^
   "} else {" ^
-  "  $pyExe = '%CONDA_BASE_PY%';" ^
-  "  if ($pyExe -and (Test-Path $pyExe)) {" ^
-  "    $out = & $pyExe '~find_entry.py'" ^
+  "  if ($hpPy -and (Test-Path $hpPy)) {" ^
+  "    $out = & $hpPy '~find_entry.py'" ^
   "  } else {" ^
-  "    $out = & '%CONDA_BAT%' run -n '%ENVNAME%' python '~find_entry.py'" ^
+  "    $pyExe = '%CONDA_BASE_PY%';" ^
+  "    if ($pyExe -and (Test-Path $pyExe)) {" ^
+  "      $out = & $pyExe '~find_entry.py'" ^
+  "    } else {" ^
+  "      $out = ''" ^
+  "    }" ^
   "  }" ^
   "}" ^
   "; if ($out) { Set-Content -Path '~entry.txt' -Value $out -Encoding ASCII -NoNewline } else { Set-Content -Path '~entry.txt' -Value '' -Encoding ASCII }" >> "%LOG%" 2>&1
@@ -363,6 +618,9 @@ if exist "~entry.txt" (
 )
 if not defined HP_ENTRY set "HP_ENTRY="
 exit /b 0
+
+:conda_probe_failed
+call :die "[ERROR] Miniconda download probe failed."
 
 :record_chosen_entry
 rem %~1 is the RELATIVE crumb (what we want to show users and tests)
@@ -381,7 +639,7 @@ exit /b 0
 if "%HP_JOB_SUMMARY%"=="" exit /b 0
 set "HP_SUMMARY_PATH=%HP_JOB_SUMMARY%"
 if not defined HP_PIPREQS_SUMMARY_PHASE set "HP_PIPREQS_SUMMARY_PHASE=<unknown>"
-> "%HP_SUMMARY_PATH%" echo Interpreter: %HP_PY_CMD%
+> "%HP_SUMMARY_PATH%" echo Interpreter: %HP_PY%
 >> "%HP_SUMMARY_PATH%" echo Pipreqs command: pipreqs . --force --mode compat --savepath "%HP_PIPREQS_SUMMARY_CMD_PATH%"%HP_PIPREQS_SUMMARY_IGNORE%
 if defined HP_PIPREQS_SUMMARY_NOTE (
   >> "%HP_SUMMARY_PATH%" echo Phase: %HP_PIPREQS_SUMMARY_PHASE% %HP_PIPREQS_SUMMARY_NOTE%
