@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
   actions: read
   pull-requests: write
   issues: write
@@ -565,6 +567,86 @@ jobs:
                 .write();
             }
 
+      - name: Append diagnostics to Summary (public)
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          function Add-Block($title, $path, $max=6000) {
+            if (Test-Path -LiteralPath $path) {
+              $text = Get-Content -Raw -LiteralPath $path
+              if ($null -eq $text) { $text = "" }
+              if ($text.Length -gt $max) { $text = $text.Substring(0, $max) + "`n... [truncated]" }
+              "### $title"              | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              '```text'                 | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              $text                     | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              '```'                     | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            } else {
+              "### $title (missing)"    | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            }
+          }
+          # NDJSON head and tail
+          Add-Block 'NDJSON (head)' 'tests\~test-results.ndjson' 6000
+          Add-Block 'NDJSON (tail)' 'tests\~test-results.ndjson' 6000
+          # Self-test text summary, if produced
+          Add-Block 'Self-test summary.txt' 'tests\~test-summary.txt' 6000
+          # Bootstrap logs (tails) for common scenarios (ignore if absent)
+          Add-Block 'Empty bootstrap (tail)' 'tests\~selftest_empty\~empty_bootstrap.log' 4000
+          Add-Block 'Single-entry bootstrap (tail)' 'tests\~entry1\~entry1_bootstrap.log' 4000
+          Add-Block 'Env smoke bootstrap (tail)' 'tests\~envsmoke\~envsmoke_bootstrap.log' 4000
+          # Stub harness log tail
+          Add-Block 'Selftest stub (~setup.log tail)' 'tests\~selftest_stub\~setup.log' 4000
+
+      - name: Build diagnostics site
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path site | Out-Null
+          function ReadFile($p, $limit=50000) {
+            if (Test-Path -LiteralPath $p) {
+              $t = Get-Content -Raw -LiteralPath $p
+              if ($null -eq $t) { return "" }
+              if ($t.Length -gt $limit) { $t = $t.Substring(0, $limit) + "`n... [truncated]" }
+              return $t
+            }
+            return ""
+          }
+          $nd  = ReadFile 'tests\~test-results.ndjson' 50000
+          $sum = ReadFile 'tests\~test-summary.txt' 20000
+          $b0  = ReadFile 'tests\~selftest_empty\~empty_bootstrap.log' 12000
+          $b1  = ReadFile 'tests\~entry1\~entry1_bootstrap.log' 12000
+          $bS  = ReadFile 'tests\~envsmoke\~envsmoke_bootstrap.log' 12000
+
+          $enc = [System.Net.WebUtility]::HtmlEncode
+          $sha = '${{ github.sha }}'
+          $run = '${{ github.run_id }}'
+          $repo= '${{ github.repository }}'
+
+          $html = @"
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>CI Diagnostics — run $run</title>
+          <style>
+            body{font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;margin:24px}
+            h1,h2{font-family:ui-sans-serif,system-ui}
+            code,pre{white-space:pre-wrap}
+            .muted{color:#666}
+          </style>
+          <h1>CI Diagnostics</h1>
+          <p class="muted"><b>Repo:</b> $repo<br><b>Commit:</b> $sha<br><b>Run:</b> $run</p>
+          <h2>NDJSON</h2><pre>$($enc.Invoke($nd))</pre>
+          <h2>Self-test summary.txt</h2><pre>$($enc.Invoke($sum))</pre>
+          <h2>Empty bootstrap (tail)</h2><pre>$($enc.Invoke($b0))</pre>
+          <h2>Single-entry bootstrap (tail)</h2><pre>$($enc.Invoke($b1))</pre>
+          <h2>Env smoke bootstrap (tail)</h2><pre>$($enc.Invoke($bS))</pre>
+          "@
+          Set-Content -LiteralPath site/index.html -Value $html -Encoding UTF8
+
+      - name: Upload Pages artifact
+        if: ${{ always() }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
       - name: Gate on NDJSON results
         if: ${{ always() }}
         uses: actions/github-script@v7
@@ -772,3 +854,16 @@ jobs:
           name: codex_nudge.txt
           path: ${{ runner.temp }}/codex_nudge.txt
           retention-days: 3
+
+  deploy-pages:
+    if: ${{ always() && github.event_name != 'pull_request' }}
+    needs: [check]
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
