@@ -47,6 +47,12 @@ jobs:
         run: |
           'HP_CI_TEST_CONDA_DL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
+      - name: Ensure CI fallbacks are off
+        shell: pwsh
+        run: |
+          echo "HP_ALLOW_VENV_FALLBACK=" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          echo "HP_ALLOW_SYSTEM_FALLBACK=" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
       - name: Show environment
         shell: cmd
         run: |

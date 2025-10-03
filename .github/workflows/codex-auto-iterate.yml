@@ -155,7 +155,7 @@ jobs:
 
           echo "PROMPT=$PROMPT" >> $GITHUB_ENV
 
-      - name: Run Codex headlessly (gpt-4o-mini, write-enabled, resilient)
+      - name: Run Codex headlessly (gpt-4o-mini, write-enabled)
         if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
         timeout-minutes: 10
         continue-on-error: true
@@ -163,32 +163,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -o pipefail
-          LOG="$RUNNER_TEMP/codex_exec.log"
-          PROMPT_PATH="${PROMPT:?missing PROMPT env}"
-          # CI posture: write inside workspace; never prompt.
-          # Retry a couple of times on transient "stream error" failures.
-          tries=0
-          max=3
-          until [ $tries -ge $max ]; do
-            tries=$((tries+1))
-            echo "=== Codex attempt $tries/$max ===" | tee -a "$LOG"
-            codex -a never --sandbox workspace-write exec --model gpt-4o-mini "$(cat "$PROMPT_PATH")" 2>&1 | tee -a "$LOG"
-            rc=${PIPESTATUS[0]}
-            # If the run succeeded or produced edits, stop retrying.
-            if [ $rc -eq 0 ]; then
-              echo "codex exec exit code 0" | tee -a "$LOG"
-              break
-            fi
-            # If we saw a stream error, back off and try again.
-            if grep -qi 'stream error' "$LOG"; then
-              echo "Detected stream error. Sleeping briefly before retry..." | tee -a "$LOG"
-              sleep 6
-              continue
-            fi
-            # Non-stream failure: no point retrying.
-            echo "Non-stream failure (rc=$rc). Not retrying." | tee -a "$LOG"
-            break
-          done
+          codex -a never --sandbox workspace-write exec --model gpt-4o-mini "$(cat "$PROMPT")" 2>&1 | tee "$RUNNER_TEMP/codex_exec.log" || true
 
       - name: Upload Codex exec log
         if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'

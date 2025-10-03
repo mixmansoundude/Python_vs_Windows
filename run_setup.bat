@@ -30,8 +30,6 @@ set "PYCOUNT=0"
 for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul') do call :count_python "%%F"
 if "%PYCOUNT%"=="" set "PYCOUNT=0"
 call :log "[INFO] Python file count: %PYCOUNT%"
-call :write_status "%HP_BOOTSTRAP_STATE%" 0 %PYCOUNT%
-
 if "%HP_CI_TEST_CONDA_DL%"=="1" (
   if defined HP_CI_SKIP_ENV goto :after_probe_block
   call :probe_conda_url
@@ -41,7 +39,7 @@ if "%HP_CI_TEST_CONDA_DL%"=="1" (
 
 if "%PYCOUNT%"=="0" (
   call :log "[INFO] No Python files detected; skipping environment bootstrap."
-  call :write_status "no_python_files" 0 0
+  call :write_status no_python_files 0 %PYCOUNT%
   goto :success
 )
 
@@ -410,11 +408,15 @@ if "%HP_ENTRY%"=="" (
   )
 )
 
-call :write_status "%HP_BOOTSTRAP_STATE%" 0 %PYCOUNT%
+if /i "%HP_BOOTSTRAP_STATE%"=="ok" (
+  call :write_status ok 0 %PYCOUNT%
+) else (
+  call :write_status "%HP_BOOTSTRAP_STATE%" 0 %PYCOUNT%
+)
 goto :success
 
 :after_env_skip
-call :write_status "ok" 0 %PYCOUNT%
+call :write_status ok 0 %PYCOUNT%
 goto :success
 
 :success
@@ -648,41 +650,22 @@ if defined HP_PIPREQS_FAILURE_LOG (
 exit /b 0
 
 :write_status
-set "STATE=%~1"
-set "RC=%~2"
-set "COUNT=%~3"
-if "%STATE%"=="" set "STATE=error"
-if "%RC%"=="" set "RC=0"
-if "%COUNT%"=="" set "COUNT=%PYCOUNT%"
-set "HP_STATUS_STATE=%STATE%"
-set "HP_STATUS_RC=%RC%"
-set "HP_STATUS_COUNT=%COUNT%"
-set "HP_PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
-rem Use PowerShell for JSON serialization so parentheses/quotes stay intact in CMD logs.
-"%HP_PS%" -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$state = [Environment]::GetEnvironmentVariable('HP_STATUS_STATE');" ^
-  "$rcRaw = [Environment]::GetEnvironmentVariable('HP_STATUS_RC');" ^
-  "$countRaw = [Environment]::GetEnvironmentVariable('HP_STATUS_COUNT');" ^
-  "$rcVal = 0; [void][int]::TryParse($rcRaw, [ref]$rcVal);" ^
-  "$countVal = 0; [void][int]::TryParse($countRaw, [ref]$countVal);" ^
-  "$obj = @{ state=$state; exitCode=$rcVal; pyFiles=$countVal };" ^
-  "$json = $obj | ConvertTo-Json -Compress;" ^
-  "Set-Content -LiteralPath '%STATUS_FILE%' -Value $json -Encoding ASCII" >> "%LOG%" 2>&1
-set "HP_WRITE_RC=%errorlevel%"
-set "HP_STATUS_STATE="
-set "HP_STATUS_RC="
-set "HP_STATUS_COUNT="
-set "HP_PS="
-if "%HP_WRITE_RC%"=="0" (
+set "HP_STATE=%~1"
+set "HP_EXIT=%~2"
+set "HP_PYFILES=%~3"
+if "%HP_STATE%"=="" set "HP_STATE=error"
+if "%HP_EXIT%"=="" set "HP_EXIT=0"
+if "%HP_PYFILES%"=="" set "HP_PYFILES=%PYCOUNT%"
+echo {"state":"%HP_STATE%","exitCode":%HP_EXIT%,"pyFiles":%HP_PYFILES%}> "%STATUS_FILE%"
+if exist "%STATUS_FILE%" (
   if exist "~bootstrap.status.txt" del "~bootstrap.status.txt" >nul 2>&1
-  set "HP_WRITE_RC="
-  exit /b 0
+) else if /i "%HP_STATE%"=="no_python_files" (
+  > "~bootstrap.status.txt" echo [INFO] Python file count: %HP_PYFILES%
+  >> "~bootstrap.status.txt" echo [INFO] No Python files detected; skipping environment bootstrap.
 )
-if exist "%STATUS_FILE%" del "%STATUS_FILE%" >nul 2>&1
-rem On failure, surface the same console hints so the workflow can scrape the empty-repo case.
-> "~bootstrap.status.txt" echo [INFO] Python file count: %COUNT%
->> "~bootstrap.status.txt" echo [INFO] No Python files detected; skipping environment bootstrap.
-set "HP_WRITE_RC="
+set "HP_STATE="
+set "HP_EXIT="
+set "HP_PYFILES="
 exit /b 0
 :emit_from_base64
 rem Decode helper payloads with PowerShell Convert.FromBase64String (see https://learn.microsoft.com/dotnet/api/system.convert.frombase64string).
