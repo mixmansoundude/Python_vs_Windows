@@ -1,3 +1,7 @@
+# yamllint disable rule:line-length
+# yamllint disable rule:truthy
+# Rationale: GitHub requires `status: {}` to subscribe broadly, and the embedded GraphQL/script blocks exceed 80 columns.
+---
 name: PR Auto-Enable Auto-merge (codex label)
 
 on:
