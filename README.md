@@ -55,6 +55,11 @@ Prime Directive: With only one or more Python files on a clean Windows 10+ machi
 
 - Environment naming: env name equals the **current folder name**.
 
+- Miniconda is the primary environment provider and the CI contract expects it. When conda is unavailable (for example,
+  local networks blocking downloads) you may opt into the scripted fallbacks: first a local `python -m venv`
+  (`HP_ALLOW_VENV_FALLBACK=1`) and, as a last resort, a system Python run-only mode (`HP_ALLOW_SYSTEM_FALLBACK=1`). These
+  keep the Prime Directive intact by doing whatever it takes to run your `.py` entry point, and `env.mode` rows in the
+  NDJSON log record which path executed.
 - Channels policy (determinism and legal-friction avoidance):
   - Before any updates or installs, force **community conda-forge only**:
     ```

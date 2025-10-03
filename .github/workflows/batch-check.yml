@@ -519,6 +519,52 @@ jobs:
               }
             }
 
+      - name: First failure (machine-readable + snippet)
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            const core = require('@actions/core');
+            const path = 'tests\\~test-results.ndjson';
+            let first = null;
+            if (fs.existsSync(path)) {
+              const lines = fs.readFileSync(path, 'utf8').split(/\r?\n/);
+              for (const line of lines) {
+                const s = line.trim();
+                if (!s) continue;
+                try {
+                  const row = JSON.parse(s);
+                  if (row && row.pass === false) { first = row; break; }
+                } catch {}
+              }
+            }
+            const asJson = obj => JSON.stringify(obj);
+            if (first) {
+              const j = {
+                source: first.source || (first.details && first.details.source) || 'ndjson',
+                line: first.line || '',
+                file: first.file || '',
+                check: first.id || first.check || '',
+                message: asJson({ id: first.id, pass: first.pass, desc: first.desc, details: first.details || {} })
+              };
+              await core.summary
+                .addHeading('First failure (machine-readable)', 3)
+                .addCodeBlock(JSON.stringify(j), 'json')
+                .addHeading('First failure (snippet)', 3)
+                .addCodeBlock(first.message || first.desc || 'See run link.', 'text')
+                .write();
+            } else {
+              const j = { source: 'dynamic-tests', line: '', file: '', check: '', message: 'SKIPPED or SUCCESS (no fingerprint)' };
+              await core.summary
+                .addHeading('First failure (machine-readable)', 3)
+                .addCodeBlock(JSON.stringify(j), 'json')
+                .addHeading('First failure (snippet)', 3)
+                .addCodeBlock('SKIPPED or SUCCESS (no fingerprint)', 'text')
+                .write();
+            }
+
       - name: Gate on NDJSON results
         if: ${{ always() }}
         uses: actions/github-script@v7
@@ -636,194 +682,6 @@ jobs:
           if ($text -match '(?i)\b0\s+tests?\b') {
             Write-Host "WARNING: Detected 0 tests executed - investigate harness/test discovery."
           }
-
-      - name: Extract first failure (machine-readable and snippet)
-        if: always()
-        id: extract_failure
-        shell: pwsh
-        run: |
-          $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
-          $files = @()
-          foreach ($p in $patterns) {
-            $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue
-          }
-          $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
-          $files = $files | Sort-Object LastWriteTime -Descending -Unique
-          $files = $files | Where-Object { $_.Name -ne 'README_TESTS.txt' }
-
-          function FirstNonEmpty {
-            param([object]$o,[string[]]$names)
-            foreach ($n in $names) {
-              if ($o.PSObject.Properties.Match($n)) {
-                $v = $o.$n
-                if ($null -ne $v -and "$v" -ne "") { return $v }
-              }
-            }
-            return ""
-          }
-
-          function IsFail {
-            param([object]$o)
-            if (-not $o) { return $false }
-            if ($o.ok -is [bool]       -and -not $o.ok)       { return $true }
-            if ($o.pass -is [bool]     -and -not $o.pass)     { return $true }
-            if ($o.passed -is [bool]   -and -not $o.passed)   { return $true }
-            if ($o.success -is [bool]  -and -not $o.success)  { return $true }
-            $candidates = @($o.result,$o.status,$o.outcome,$o.level,$o.severity) | Where-Object { $_ }
-            foreach ($v in $candidates) {
-              if ($v -match '^(fail|error|fatal)$') { return $true }
-            }
-            return $false
-          }
-
-          function TruncateText {
-            param([string]$text,[int]$limit)
-            if ($null -eq $text) { return "" }
-            $s = [string]$text
-            if ($s.Length -le $limit) { return $s }
-            return $s.Substring(0,$limit)
-          }
-
-          $firstFail = $null
-          $snippet = ""
-
-          $nd = $files | Where-Object { $_.Extension -eq '.ndjson' } | Select-Object -First 8
-          foreach ($f in $nd) {
-            $lineNo = 0
-            Get-Content -Path $f.FullName | ForEach-Object {
-              $lineNo++
-              $raw = $_
-              try { $o = $raw | ConvertFrom-Json -ErrorAction Stop } catch { $o = $null }
-              if (IsFail $o) {
-                $firstFail = [pscustomobject]@{
-                  source  = $f.FullName
-                  line    = FirstNonEmpty $o @('line','lineno','row')
-                  file    = FirstNonEmpty $o @('file','path','target')
-                  check   = FirstNonEmpty $o @('check','id','name','rule','test','key')
-                  message = FirstNonEmpty $o @('message','msg','error','reason','note','details')
-                }
-                if (-not $firstFail.message) { $firstFail.message = $raw }
-                if (-not $firstFail.line)    { $firstFail.line    = $lineNo }
-                $snippet = (Get-Content -Path $f.FullName | Select-Object -Skip ([Math]::Max(0,$lineNo-3)) | Select-Object -First 10) -join "`n"
-                break
-              }
-            }
-            if ($firstFail) { break }
-          }
-
-          if (-not $firstFail) {
-            foreach ($f in $files) {
-              $lines = Get-Content -Path $f.FullName -Tail 400
-              $m = $lines | Select-String -Pattern '^(ERROR|FAIL|Failed|Exception|Traceback|ModuleNotFoundError).*' | Select-Object -First 1
-              if ($m) {
-                $firstFail = [pscustomobject]@{
-                  source  = $f.FullName
-                  line    = ""
-                  file    = ""
-                  check   = ""
-                  message = $m.Line
-                }
-                $idx = ($lines | ForEach-Object { $_ }).IndexOf($m.Line)
-                $start = [Math]::Max(0,$idx-2); $count = 10
-                $snippet = ($lines | Select-Object -Skip $start -First $count) -join "`n"
-                break
-              }
-            }
-          }
-
-          if (-not $firstFail) {
-            $firstFail = [pscustomobject]@{ source='dynamic-tests'; line=''; file=''; check=''; message='SKIPPED or SUCCESS (no fingerprint)' }
-            $snippet = 'SKIPPED or SUCCESS (no fingerprint)'
-          }
-
-          $firstFail.source  = TruncateText $firstFail.source 150
-          $firstFail.file    = TruncateText $firstFail.file 150
-          $firstFail.check   = TruncateText $firstFail.check 120
-          $firstFail.message = TruncateText $firstFail.message 300
-
-          if ($firstFail.line -ne $null -and -not ($firstFail.line -is [string]) -and -not ($firstFail.line -is [ValueType])) {
-            $firstFail.line = "$($firstFail.line)"
-          }
-
-          $snippet = $snippet -replace "`r",""
-          $snippet = TruncateText $snippet 500
-
-          $firstFailJson = $firstFail | ConvertTo-Json -Compress
-          if ($firstFailJson.Length -gt 800) {
-            $needed = $firstFailJson.Length - 800
-            $newLimit = [Math]::Max(0, $firstFail.message.Length - $needed)
-            $firstFail.message = TruncateText $firstFail.message $newLimit
-            $firstFailJson = $firstFail | ConvertTo-Json -Compress
-          }
-          if ($firstFailJson.Length -gt 800) {
-            $firstFail.source = TruncateText $firstFail.source 120
-            $firstFail.file   = TruncateText $firstFail.file 120
-            $firstFailJson = $firstFail | ConvertTo-Json -Compress
-          }
-
-          $branch = if ($env:GITHUB_HEAD_REF -and $env:GITHUB_HEAD_REF -ne "") { $env:GITHUB_HEAD_REF } else { $env:GITHUB_REF -replace '^refs/heads/','' }
-          $runUrl = "$($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/actions/runs/$($env:GITHUB_RUN_ID)"
-          if ($branch) {
-            $encodedBranch = [System.Uri]::EscapeDataString($branch)
-            $runsUrl = "$($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/actions?query=branch%3A$encodedBranch"
-          } else {
-            $runsUrl = "$($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/actions"
-          }
-
-          [System.IO.File]::WriteAllText('first_failure.json',$firstFailJson,[System.Text.Encoding]::ASCII)
-          [System.IO.File]::WriteAllText('snippet.txt',$snippet,[System.Text.Encoding]::ASCII)
-
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (machine-readable)"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $firstFailJson
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (snippet)"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```text'
-          foreach ($line in $snippet -split "`n") {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $line
-          }
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
-
-          $summaryPath = '.\tests\~test-summary.txt'
-          $passFailLine = 'PASS/FAIL: unavailable'
-          if (Test-Path $summaryPath) {
-            $pf = Get-Content $summaryPath -Encoding Ascii | Where-Object { $_ -match '^PASS:' } | Select-Object -First 1
-            if ($pf) { $passFailLine = $pf.Trim() }
-          }
-
-          $statusPath = '.\~bootstrap.status.json'
-          $bootstrapLine = 'Bootstrap status: <missing>'
-          if (Test-Path $statusPath) {
-            try {
-              $status = Get-Content $statusPath -Raw -Encoding Ascii | ConvertFrom-Json
-              $bootstrapLine = "Bootstrap status: state={0}, exitCode={1}, pyFiles={2}" -f $status.state, $status.exitCode, $status.pyFiles
-            } catch {
-              $bootstrapLine = "Bootstrap status: <invalid JSON>"
-            }
-          }
-
-          $artifactLink = $runUrl + '#artifacts'
-
-          $commentLines = @(
-            '@codex',
-            '',
-            'Summary:',
-            $passFailLine,
-            $bootstrapLine,
-            '',
-            'Snippet:',
-            '```text',
-            $snippet,
-            '```',
-            '',
-            'Machine-readable:',
-            '```json',
-            $firstFailJson,
-            '```',
-            '',
-            'Run: ' + $runUrl,
-            'tests/~test-results.ndjson: ' + $artifactLink,
-            'Branch runs: ' + $runsUrl
-          )
-          [System.IO.File]::WriteAllText('codex_body.txt', ($commentLines -join "`n"), [System.Text.Encoding]::ASCII)
 
       - name: Summarize bootstrap self-tests
         if: always()

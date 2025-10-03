@@ -10,6 +10,11 @@ if (Test-Path -LiteralPath $summaryPath) {
 }
 $repoRoot = Split-Path -Parent $here
 
+if (-not (Test-Path -LiteralPath $resultsPath)) {
+    New-Item -ItemType File -Force -Path $resultsPath | Out-Null
+}
+Add-Content -LiteralPath $resultsPath -Value '{"id":"self.harness.started","pass":true,"desc":"harness init"}' -Encoding Ascii
+
 $record = [ordered]@{
     id = 'self.empty_repo.msg'
     pass = $false
@@ -37,6 +42,33 @@ try {
         }
 
         cmd.exe /d /c "run_setup.bat *> ~empty_bootstrap.log" | Out-Null
+
+        $statusPath = Join-Path -Path $selfTestDir -ChildPath '~bootstrap.status.json'
+        $stateRow = [ordered]@{
+            id = 'self.bootstrap.state'
+            pass = $false
+            desc = 'status json missing'
+            details = [ordered]@{ path = $statusPath }
+        }
+        if (Test-Path -LiteralPath $statusPath) {
+            try {
+                $status = Get-Content -LiteralPath $statusPath -Raw -Encoding Ascii | ConvertFrom-Json
+                $stateRow.desc = "state=$($status.state)"
+                $stateRow.details.state = $status.state
+                $stateRow.details.exitCode = $status.exitCode
+                $stateRow.details.pyFiles = $status.pyFiles
+                if ($status.state -eq 'no_python_files') {
+                    $stateRow.pass = $true
+                } else {
+                    $stateRow.pass = $false
+                }
+            } catch {
+                $stateRow.desc = 'invalid bootstrap status json'
+                $stateRow.details.error = $_.Exception.Message
+            }
+        }
+        $stateJson = $stateRow | ConvertTo-Json -Compress
+        Add-Content -LiteralPath $resultsPath -Value $stateJson -Encoding Ascii
 
         $record.details.logExists = Test-Path -LiteralPath $logPath
         if ($record.details.logExists) {
