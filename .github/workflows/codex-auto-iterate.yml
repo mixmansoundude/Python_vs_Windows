@@ -153,26 +153,44 @@ jobs:
         continue-on-error: true
         with:
           run_id: ${{ github.event.workflow_run.id }}
-          name: codex_nudge.txt
+          name: codex_nudge-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: ${{ runner.temp }}
 
-      - name: Download CI summary (if present)
+      - name: Download CI summary (cache lane)
         if: ${{ github.event_name == 'workflow_run' }}
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           run_id: ${{ github.event.workflow_run.id }}
-          name: ci_test_summary.txt
-          path: ${{ runner.temp }}
+          name: ci_test_summary-cache-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/ci_summary_cache
 
-      - name: Download CI NDJSON (if present)
+      - name: Download CI summary (real lane)
         if: ${{ github.event_name == 'workflow_run' }}
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           run_id: ${{ github.event.workflow_run.id }}
-          name: ci_test_results.ndjson
-          path: ${{ runner.temp }}
+          name: ci_test_summary-real-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/ci_summary_real
+
+      - name: Download CI NDJSON (cache lane)
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: ci_test_results-cache-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/ci_ndjson_cache
+
+      - name: Download CI NDJSON (real lane)
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          name: ci_test_results-real-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/ci_ndjson_real
 
       - name: Download diagnostics URL (if present)
         if: ${{ github.event_name == 'workflow_run' }}
@@ -180,7 +198,7 @@ jobs:
         continue-on-error: true
         with:
           run_id: ${{ github.event.workflow_run.id }}
-          name: codex_nudge_url.txt
+          name: codex_nudge_url-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: ${{ runner.temp }}
 
       - name: Download logs for triggering run
@@ -210,7 +228,7 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts" > artifacts.json
           mkdir -p artifacts
           for name in ci_test_results test-results tests-artifacts; do
-            id=$(jq -r --arg n "$name" '.artifacts[] | select(.name==$n) | .id' artifacts.json | head -n 1)
+            id=$(jq -r --arg n "$name" '.artifacts[] | select((.name|startswith($n))) | .id' artifacts.json | head -n 1)
             if [ -n "$id" ] && [ "$id" != "null" ]; then
               curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
                 -L "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$id/zip" \
@@ -223,6 +241,9 @@ jobs:
       - name: Determine NDJSON verdict
         id: verdict
         shell: pwsh
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -241,7 +262,7 @@ jobs:
           }
           $found = $found | Sort-Object -Unique
 
-          $isManual = '${{ github.event_name }}' -eq 'workflow_dispatch'
+          $isManual = $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch'
 
           if ($found.Count -eq 0) {
             if ($isManual) {
@@ -249,6 +270,9 @@ jobs:
               Write-Host 'NDJSON verdict: manual run; no results; has_failures=false'
               return
             }
+            'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host 'NDJSON verdict: no results; has_failures=true'
+            return
           }
 
           $fails = 0
@@ -269,13 +293,15 @@ jobs:
             return
           }
 
-          if (-not $isManual -and '${{ github.event_name }}' -eq 'workflow_run') {
+          if (-not $isManual -and $env:GITHUB_EVENT_NAME -eq 'workflow_run') {
             $red = $false
             $patterns = @(
               '(?i)\bERROR\b',
               '(?i)SyntaxError:',
               '(?i)not recognized as an internal or external command',
-              '(?i)No module named pipreqs\.__main__'
+              '(?i)No module named pipreqs\.__main__',
+              '(?i)artifact name already exists',
+              '(?i)Failed to CreateArtifact'
             )
 
             if (Test-Path -LiteralPath 'runlogs') {
@@ -298,6 +324,18 @@ jobs:
                 Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
               Write-Host 'NDJSON verdict: clean but red-flag strings detected -> has_failures=true'
               return
+            }
+
+            $conclusion = $env:WORKFLOW_CONCLUSION
+            if ($conclusion) {
+              $lower = $conclusion.ToLowerInvariant()
+              if ($lower -ne 'success') {
+                'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+                "NDJSON clean but workflow conclusion was '$conclusion' — has_failures=true." |
+                  Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+                Write-Host "NDJSON verdict: workflow conclusion=$conclusion -> has_failures=true"
+                return
+              }
             }
           }
 
@@ -385,8 +423,9 @@ jobs:
             fi
             echo "- logs_downloaded: $([ -d runlogs ] && echo true || echo false)"
             echo "- artifacts_downloaded: $([ -d artifacts ] && echo true || echo false)"
-            if [ -f "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt" ]; then
-              echo "- diagnostics_url: $(cat "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt")"
+            URL_FILE=$(find "$RUNNER_TEMP" -maxdepth 2 -name "codex_nudge_url.txt" | head -n 1 || true)
+            if [ -n "$URL_FILE" ] && [ -f "$URL_FILE" ]; then
+              echo "- diagnostics_url: $(cat "$URL_FILE")"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -395,14 +434,29 @@ jobs:
         run: |
           PROMPT="$RUNNER_TEMP/prompt.txt"
           # Seed with the existing nudge or fallback
+          NUDGE_PATH=""
           if [ -f "$RUNNER_TEMP/codex_nudge.txt" ]; then
-            BASE="$(cat "$RUNNER_TEMP/codex_nudge.txt")"
+            NUDGE_PATH="$RUNNER_TEMP/codex_nudge.txt"
+          else
+            NUDGE_PATH=$(find "$RUNNER_TEMP" -maxdepth 2 -name "codex_nudge.txt" | head -n 1 || true)
+          fi
+          if [ -n "$NUDGE_PATH" ] && [ -f "$NUDGE_PATH" ]; then
+            BASE="$(cat "$NUDGE_PATH")"
           else
             BASE="Analyze the last CI failure and apply the smallest safe change set to make our Windows CI pass."
           fi
           printf "%s\n\nPreserve CRLF; ASCII where practical; keep run_setup.bat robust; avoid sweeping refactors; minimal diagnostics only if required; write changes to files.\n" "$BASE" > "$PROMPT"
 
           # If we have the human-readable summary, include it verbatim
+          for summary_dir in "$RUNNER_TEMP"/ci_summary_*; do
+            if [ -f "$summary_dir/tests/~test-summary.txt" ]; then
+              {
+                echo ""
+                echo "----- CI Summary ($(basename "$summary_dir")) -----"
+                head -n 300 "$summary_dir/tests/~test-summary.txt"
+              } >> "$PROMPT"
+            fi
+          done
           if [ -f "$RUNNER_TEMP/ci_test_summary.txt/ci_test_summary.txt" ]; then
             {
               echo ""
@@ -412,6 +466,15 @@ jobs:
           fi
 
           # If we have the NDJSON, include the first ~40 lines for structured hints
+          for ndjson_dir in "$RUNNER_TEMP"/ci_ndjson_*; do
+            if [ -f "$ndjson_dir/tests/~test-results.ndjson" ]; then
+              {
+                echo ""
+                echo "----- CI NDJSON ($(basename "$ndjson_dir")) (first lines) -----"
+                head -n 40 "$ndjson_dir/tests/~test-results.ndjson"
+              } >> "$PROMPT"
+            fi
+          done
           if [ -f "$RUNNER_TEMP/ci_test_results.ndjson/ci_test-results.ndjson" ]; then
             {
               echo ""
@@ -420,10 +483,11 @@ jobs:
             } >> "$PROMPT"
           fi
 
-          if [ -f "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt" ]; then
+          URL_FILE=$(find "$RUNNER_TEMP" -maxdepth 2 -name "codex_nudge_url.txt" | head -n 1 || true)
+          if [ -n "$URL_FILE" ] && [ -f "$URL_FILE" ]; then
             {
               echo ""
-              echo "Diagnostics site: $(cat "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt")"
+              echo "Diagnostics site: $(cat "$URL_FILE")"
             } >> "$PROMPT"
           fi
 

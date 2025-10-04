@@ -32,11 +32,21 @@ set "PYCOUNT=0"
 for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul') do call :count_python "%%F"
 if "%PYCOUNT%"=="" set "PYCOUNT=0"
 call :log "[INFO] Python file count: %PYCOUNT%"
+set "HP_CONDA_PROBE_STATUS=skipped"
+set "HP_CONDA_PROBE_REASON=not-requested"
 if "%HP_CI_TEST_CONDA_DL%"=="1" (
   if not defined HP_CI_SKIP_ENV (
+    set "HP_CONDA_PROBE_STATUS=ran"
     call :probe_conda_url
     if errorlevel 1 goto :conda_probe_failed
+  ) else (
+    set "HP_CONDA_PROBE_REASON=skip-env"
   )
+) else if defined HP_CI_SKIP_ENV (
+  set "HP_CONDA_PROBE_REASON=skip-env"
+)
+if not "%HP_CONDA_PROBE_STATUS%"=="ran" (
+  call :emit_conda_probe_skip
 )
 
 if "%PYCOUNT%"=="0" (
@@ -582,6 +592,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$row = @{ id='helper.find_entry.syntax'; pass=$ok; details=@{ } } | ConvertTo-Json -Compress;" ^
   "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 set "HP_HELPER_SYNTAX_EMITTED=1"
+exit /b 0
+
+:emit_conda_probe_skip
+if not defined HP_NDJSON exit /b 0
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$reason = [Environment]::GetEnvironmentVariable('HP_CONDA_PROBE_REASON');" ^
+  "if (-not $reason) { $reason = 'not-requested' }" ^
+  "$row = @{ id='conda.url'; pass=$true; details=@{ skipped=$true; reason=$reason; bytes=0 } } | ConvertTo-Json -Compress;" ^
+  "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 exit /b 0
 
 :probe_conda_url

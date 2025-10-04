@@ -532,51 +532,6 @@ jobs:
               }
             }
 
-      - name: First failure (machine-readable + snippet)
-        if: ${{ always() }}
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            const fs = require('fs');
-            const path = 'tests\\~test-results.ndjson';
-            let first = null;
-            if (fs.existsSync(path)) {
-              const lines = fs.readFileSync(path, 'utf8').split(/\r?\n/);
-              for (const line of lines) {
-                const s = line.trim();
-                if (!s) continue;
-                try {
-                  const row = JSON.parse(s);
-                  if (row && row.pass === false) { first = row; break; }
-                } catch {}
-              }
-            }
-            const asJson = obj => JSON.stringify(obj);
-            if (first) {
-              const j = {
-                source: first.source || (first.details && first.details.source) || 'ndjson',
-                line: first.line || '',
-                file: first.file || '',
-                check: first.id || first.check || '',
-                message: asJson({ id: first.id, pass: first.pass, desc: first.desc, details: first.details || {} })
-              };
-              await core.summary
-                .addHeading('First failure (machine-readable)', 3)
-                .addCodeBlock(JSON.stringify(j), 'json')
-                .addHeading('First failure (snippet)', 3)
-                .addCodeBlock(first.message || first.desc || 'See run link.', 'text')
-                .write();
-            } else {
-              const j = { source: 'dynamic-tests', line: '', file: '', check: '', message: 'SKIPPED or SUCCESS (no fingerprint)' };
-              await core.summary
-                .addHeading('First failure (machine-readable)', 3)
-                .addCodeBlock(JSON.stringify(j), 'json')
-                .addHeading('First failure (snippet)', 3)
-                .addCodeBlock('SKIPPED or SUCCESS (no fingerprint)', 'text')
-                .write();
-            }
-
       - name: Append diagnostics to Summary (public)
         if: ${{ always() }}
         shell: pwsh
@@ -759,6 +714,8 @@ jobs:
             'tests\~test-summary.txt',
             'iterate_gate.json',
             'iterate_auth.json',
+            'ndjson_stats.json',
+            'first_failure.json',
             'codex_nudge.txt',
             'codex_exec.log'
           )
@@ -782,9 +739,102 @@ jobs:
               $existingNd += (Resolve-Path -LiteralPath $cand).Path
             }
           }
-          if (-not $existingNd) {
+          $uniqueNd = $existingNd | Sort-Object -Unique
+          if (-not $uniqueNd) {
             $note = @{ cwd = $cwd.Path; tried = $ndjsonCandidates; found = @() } | ConvertTo-Json -Compress
             $note | Out-File -Encoding UTF8 (Join-Path $logsDir 'ndjson_missing.json')
+          }
+
+          $passCount = 0
+          $failCount = 0
+          $skipCount = 0
+          $firstFail = $null
+          $firstSource = $null
+
+          foreach ($path in $uniqueNd) {
+            foreach ($line in Get-Content -LiteralPath $path -Encoding UTF8) {
+              $trim = $line.Trim()
+              if (-not $trim) { continue }
+              try {
+                $row = $trim | ConvertFrom-Json
+              } catch {
+                continue
+              }
+              $value = $null
+              if ($row.PSObject.Properties['pass']) { $value = $row.pass }
+              if ($value -is [bool]) {
+                if ($value) {
+                  $passCount++
+                } else {
+                  $failCount++
+                  if (-not $firstFail) { $firstFail = $row; $firstSource = $path }
+                }
+              } elseif ($value -is [string]) {
+                $lower = $value.ToLowerInvariant()
+                switch ($lower) {
+                  'pass' { $passCount++ }
+                  'fail' { $failCount++; if (-not $firstFail) { $firstFail = $row; $firstSource = $path } }
+                  'skip' { $skipCount++ }
+                  default { $skipCount++ }
+                }
+              } else {
+                $skipCount++
+              }
+            }
+          }
+
+          $stats = [ordered]@{
+            pass    = $passCount
+            fail    = $failCount
+            skip    = $skipCount
+            sources = $uniqueNd
+          }
+          $stats | ConvertTo-Json -Compress | Out-File -Encoding UTF8 'ndjson_stats.json'
+          if ($firstFail) {
+            $firstFail | ConvertTo-Json -Compress | Out-File -Encoding UTF8 'first_failure.json'
+          } elseif (Test-Path -LiteralPath 'first_failure.json') {
+            Remove-Item -LiteralPath 'first_failure.json' -Force
+          }
+
+          $zipNames = @()
+          foreach ($path in $uniqueNd) {
+            $leaf = Split-Path -Leaf $path
+            $safeLeaf = ($leaf -replace '[^0-9A-Za-z_.-]', '-')
+            $zipName = "ci_test_results-$safeLeaf.zip"
+            $zipPath = Join-Path $logsDir $zipName
+            if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+            try {
+              Compress-Archive -LiteralPath $path -DestinationPath $zipPath -Force
+              $zipNames += $zipName
+            } catch {
+              Write-Host ("DIAG export failed for {0}: {1}" -f $path, $_.Exception.Message)
+            }
+          }
+
+          '### NDJSON totals' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          ("- PASS: {0}" -f $passCount) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          ("- FAIL: {0}" -f $failCount) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          ("- SKIP: {0}" -f $skipCount) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+          if ($failCount -gt 0 -and $firstFail) {
+            $firstInfo = [ordered]@{
+              id     = $firstFail.id
+              desc   = $firstFail.desc
+              source = $firstSource
+            }
+            if ($firstFail.PSObject.Properties['details']) {
+              $details = $firstFail.details
+              if ($details -and $details.PSObject.Properties['file']) { $firstInfo.file = $details.file }
+              if ($details -and $details.PSObject.Properties['line']) { $firstInfo.line = $details.line }
+              if ($details -and $details.PSObject.Properties['snippet']) { $firstInfo.snippet = $details.snippet }
+            }
+            if ($firstFail.PSObject.Properties['message']) { $firstInfo.message = $firstFail.message }
+            '### First failure' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            ($firstInfo | ConvertTo-Json -Compress) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          } else {
+            '- First failure: none (all rows passed)' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
 
           $wantSrc = @(
@@ -803,39 +853,6 @@ jobs:
             Copy-Item -Path $_.FullName -Destination (Join-Path $repoDir $_.Name) -Recurse -Force -ErrorAction SilentlyContinue
           }
 
-          $firstFail = $null
-          $firstSource = $null
-          foreach ($cand in $ndjsonCandidates) {
-            if (-not (Test-Path -LiteralPath $cand)) { continue }
-            foreach ($line in Get-Content -LiteralPath $cand -Encoding UTF8) {
-              $trim = $line.Trim()
-              if (-not $trim) { continue }
-              try {
-                $row = $trim | ConvertFrom-Json
-              } catch {
-                continue
-              }
-              if ($row.pass -eq $false) {
-                $firstFail = $row
-                $firstSource = $cand
-                break
-              }
-            }
-            if ($firstFail) { break }
-          }
-
-          if ($firstFail) {
-            $firstJson = $firstFail | ConvertTo-Json -Compress
-            '### NDJSON first failure' | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            ("- source: {0}" -f $firstSource) | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            $firstJson | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          } else {
-            '### NDJSON first failure' | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            '- source: (none found)' | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          }
-
           try { $ct = [TimeZoneInfo]::FindSystemTimeZoneById('Central Standard Time') } catch { $ct = $null }
           $utc = [DateTime]::UtcNow
           $ctNow = if ($ct) { [TimeZoneInfo]::ConvertTimeFromUtc($utc, $ct) } else { $utc }
@@ -852,19 +869,44 @@ jobs:
           )
 
           $idx = @()
-          if ($firstFail) {
-            $idx += '## NDJSON first failure'
-            $idx += ("* Source: {0}" -f $firstSource)
-            $idx += ('```json')
-            $idx += ($firstFail | ConvertTo-Json -Compress)
-            $idx += ('```')
-            $idx += ''
-          } else {
-            $idx += '## NDJSON first failure'
-            $idx += '* None (all rows pass or NDJSON missing)'
+
+          $keyArtifacts = @()
+          $keyTargets = @(
+            @{ Name = 'ci_test_results.ndjson'; Path = Join-Path $logsDir 'ci_test_results.ndjson' },
+            @{ Name = 'tests~test-results.ndjson'; Path = Join-Path $logsDir 'tests~test-results.ndjson' },
+            @{ Name = 'tests~test-summary.txt'; Path = Join-Path $logsDir 'tests~test-summary.txt' }
+          )
+          foreach ($entry in $keyTargets) {
+            if (Test-Path -LiteralPath $entry.Path) {
+              $keyArtifacts += "- [logs/$($entry.Name)](logs/$($entry.Name))"
+            }
+          }
+          if ($keyArtifacts) {
+            $idx += '## Key artifacts'
+            $idx += $keyArtifacts
             $idx += ''
           }
 
+          $idx += '## NDJSON totals'
+          $idx += ("- PASS: {0}" -f $passCount)
+          $idx += ("- FAIL: {0}" -f $failCount)
+          $idx += ("- SKIP: {0}" -f $skipCount)
+          if ($failCount -gt 0 -and $firstFail) {
+            $idx += ''
+            $idx += '## NDJSON first failure'
+            $idx += ("* Source: {0}" -f $firstSource)
+            $idx += '```json'
+            $idx += ($firstFail | ConvertTo-Json -Compress)
+            $idx += '```'
+          }
+
+          if ($zipNames) {
+            $idx += ''
+            $idx += '## NDJSON exports'
+            foreach ($zip in $zipNames) { $idx += "- [logs/$zip](logs/$zip)" }
+          }
+
+          $idx += ''
           $idx += '## Raw NDJSON / logs'
           $logItems = Get-ChildItem -Name $logsDir -ErrorAction SilentlyContinue
           if ($logItems) {
@@ -917,6 +959,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-pages-artifact@v3
         with:
+          name: diagnostics-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.build_public.outputs.public_dir }}
 
       - name: Gate on NDJSON results
@@ -1234,6 +1277,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-pages-artifact@v3
         with:
+          name: iterate-debug-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.publish_iterate.outputs.publish_dir }}
 
       - name: Deploy iterate debug to Pages
@@ -1258,7 +1302,7 @@ jobs:
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
-          name: codex_nudge_url.txt
+          name: codex_nudge_url-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}
 
       - name: Build Codex nudge
@@ -1276,9 +1320,9 @@ jobs:
         run: |
           $target = "$env:RUNNER_TEMP\codex_nudge.txt"
           if (-not (Test-Path $target)) { return }
-          $urlFile = Join-Path $env:RUNNER_TEMP 'codex_nudge_url.txt'
-          if (Test-Path $urlFile) {
-            $url = Get-Content -Raw -LiteralPath $urlFile
+          $urlItem = Get-ChildItem -Path $env:RUNNER_TEMP -Filter 'codex_nudge_url.txt' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -ne $urlItem) {
+            $url = Get-Content -Raw -LiteralPath $urlItem.FullName
             if ($url) {
               Add-Content -Path $target -Value "`nDiagnostics: $url`n"
             }
@@ -1287,8 +1331,9 @@ jobs:
       - name: Upload Codex nudge artifact
         uses: actions/upload-artifact@v4
         with:
-          name: codex_nudge.txt
+          name: codex_nudge-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/codex_nudge.txt
+          if-no-files-found: ignore
           retention-days: 3
 
   deploy-pages:
@@ -1322,6 +1367,7 @@ jobs:
         if: ${{ always() && steps.deployment.outputs.page_url != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: codex_nudge_url.txt
+          name: codex_nudge_url-${{ github.run_id }}-${{ github.run_attempt }}
           path: codex_nudge_url.txt
+          if-no-files-found: ignore
           retention-days: 3
