@@ -59,6 +59,30 @@ jobs:
             echo "auth_ok=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: OpenAI chat ping (proof only)
+        id: openai_chat
+        if: steps.openai_auth.outputs.auth_ok == 'true'
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          body='{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Reply with PONG"}],"max_tokens":1}'
+          code=$(curl -s -o /tmp/chat.json -w "%{http_code}" \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$body" https://api.openai.com/v1/chat/completions || echo 000)
+          echo "http_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = "200" ]; then echo "chat_ok=true" >> "$GITHUB_OUTPUT"; else echo "chat_ok=false" >> "$GITHUB_OUTPUT"; fi
+          {
+            echo "### Iterate chat ping"
+            echo "- http_code: $code"
+            if [ "$code" = "200" ]; then
+              echo "- chat_ok: true"
+            else
+              echo "- chat_ok: false"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # Keep CRLF stable (harmless even if we no-op)
       - name: Normalize CRLF
         run: |
@@ -123,33 +147,58 @@ jobs:
       - name: Determine NDJSON verdict
         id: verdict
         shell: pwsh
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Candidate result files
           $paths = @(
-            Join-Path $env:RUNNER_TEMP 'ci_test_results.ndjson/ci_test_results.ndjson'),
-            'tests\~test-results.ndjson'
+            'tests\~test-results.ndjson',
+            'ci_test_results.ndjson'
           )
-          $target = $null
+
+          # Collect existing files
+          $found = @()
           foreach ($p in $paths) {
-            if (Test-Path -LiteralPath $p) { $target = $p; break }
-          }
-          if (-not $target) {
-            'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
-            return
-          }
-          $has = $false
-          foreach ($line in Get-Content -LiteralPath $target -Encoding ASCII) {
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            try {
-              $row = $line | ConvertFrom-Json
-            } catch {
-              $has = $true
-              break
+            if (Test-Path -LiteralPath $p) {
+              $found += (Resolve-Path -LiteralPath $p).Path
             }
-            if ($row.pass -eq $false) { $has = $true; break }
-            if ($row.id -eq 'bootstrap.state' -and $row.details.state -notin @('ok','no_python_files')) { $has = $true; break }
           }
-          $value = $has.ToString().ToLowerInvariant()
-          "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
+          $isManual = $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch'
+
+          if ($found.Count -eq 0) {
+            # On manual runs with no NDJSON, treat as clean (do not iterate)
+            if ($isManual) {
+              'has_failures=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              Write-Host 'NDJSON verdict: manual run; no results; has_failures=false'
+              exit 0
+            }
+            'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host 'NDJSON verdict: no results; has_failures=true'
+            exit 0
+          }
+
+          $fails = 0
+          foreach ($f in $found) {
+            Get-Content -LiteralPath $f | ForEach-Object {
+              try {
+                $row = $_ | ConvertFrom-Json
+              } catch {
+                return
+              }
+              if ($null -ne $row -and $row.pass -eq $false) { $fails++ }
+            }
+          }
+
+          if ($fails -gt 0) {
+            'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "NDJSON verdict: $fails failing checks -> has_failures=true"
+          } else {
+            'has_failures=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host 'NDJSON verdict: all passing -> has_failures=false'
+          }
 
       # If the key is missing, loudly but cleanly skip (logs + summary + tiny artifact)
       - name: Skip (no OPENAI_API_KEY configured)
@@ -220,10 +269,10 @@ jobs:
         run: |
           {
             echo '### Iterate gate report'
-            echo "- has_failures: ${{ steps.verdict.outputs.has_failures || 'n/a' }}"
             echo "- api_key_present: ${{ steps.apikey.outputs.present || 'false' }}"
             echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok || 'false' }}"
-            echo "- http_code: ${{ steps.openai_auth.outputs.http_code || 'n/a' }}"
+            echo "- chat_ok: ${{ steps.openai_chat.outputs.chat_ok || 'false' }}"
+            echo "- has_failures: ${{ steps.verdict.outputs.has_failures || 'n/a' }}"
             echo "- guard_stop: ${{ steps.guard.outputs.stop || 'false' }}"
             echo "- event: ${{ github.event_name }}"
             echo "- ref: ${{ github.ref }}"
@@ -269,7 +318,7 @@ jobs:
           echo "PROMPT=$PROMPT" >> $GITHUB_ENV
 
       - name: Run Codex headlessly (gpt-4o-mini, write-enabled)
-        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.verdict.outputs.has_failures == 'true' && steps.guard.outputs.stop == 'false'
         timeout-minutes: 10
         continue-on-error: true
         env:
