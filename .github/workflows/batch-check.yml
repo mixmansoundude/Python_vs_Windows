@@ -531,7 +531,6 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
-            const core = require('@actions/core');
             const path = 'tests\\~test-results.ndjson';
             let first = null;
             if (fs.existsSync(path)) {
@@ -607,8 +606,8 @@ jobs:
         shell: pwsh
         run: |
           function Read-Ndjson([string]$p) {
-            if (Test-Path -LiteralPath $p) {
-              Get-Content -Raw -LiteralPath $p | Select-String -AllMatches '^\{.*\}$' | ForEach-Object {
+            if (Test-Path $p) {
+              Get-Content -Raw $p | Select-String -AllMatches '^\{.*\}$' | ForEach-Object {
                 try { $_.Matches.Value | ConvertFrom-Json } catch {}
               }
             }
@@ -625,10 +624,12 @@ jobs:
             if ($r.id -eq 'self.bootstrap.state' -and $r.details.state -and $r.details.state -ne 'ok') { $has = $true }
           }
 
+          $verdict = @{ has_failures = $has; sources = @('tests~test-results.ndjson','ci_test_results.ndjson') }
+          if (-not $rows) { $verdict.missing = @('tests~test-results.ndjson','ci_test_results.ndjson') }
+
           $value = $has.ToString().ToLowerInvariant()
           "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
-          @{has_failures=$has; source=@('tests~test-results.ndjson','ci_test_results.ndjson')} |
-            ConvertTo-Json -Compress | Out-File -Encoding UTF8 'iterate_gate.json'
+          $verdict | ConvertTo-Json -Compress | Out-File -Encoding UTF8 'iterate_gate.json'
 
       - name: Append iterate gate to Summary
         if: ${{ always() }}
@@ -654,7 +655,7 @@ jobs:
           New-Item -Force -ItemType Directory -Path (Join-Path $pub 'sources') | Out-Null
           New-Item -Force -ItemType Directory -Path (Join-Path $pub 'repo') | Out-Null
 
-          $copy = @(
+          $wantLogs = @(
             'tests\~test-results.ndjson',
             'ci_test_results.ndjson',
             'tests\~entry1\~entry1_bootstrap.log',
@@ -665,21 +666,22 @@ jobs:
             'tests\~selftest_stub\~setup.log',
             'dynamic_tests.log',
             'tests\~test-summary.txt',
-            'iterate_gate.json'
+            'iterate_gate.json',
+            'codex_nudge.txt'
           )
-          foreach ($p in $copy) {
+          foreach ($p in $wantLogs) {
             if (Test-Path -LiteralPath $p) {
               Copy-Item -LiteralPath $p -Destination (Join-Path $pub 'logs') -Force
             }
           }
 
-          $srcs = @(
+          $wantSrc = @(
             '.github\workflows\batch-check.yml',
             'run_setup.bat',
             'tests\selftests.ps1',
             'tests\harness.ps1'
           )
-          foreach ($s in $srcs) {
+          foreach ($s in $wantSrc) {
             if (Test-Path -LiteralPath $s) {
               Copy-Item -LiteralPath $s -Destination (Join-Path $pub 'sources') -Force
             }
@@ -690,13 +692,22 @@ jobs:
             Copy-Item -Path $_.FullName -Destination (Join-Path $repoRoot $_.Name) -Recurse -Force -ErrorAction SilentlyContinue
           }
 
+          try { $ct = [TimeZoneInfo]::FindSystemTimeZoneById('Central Standard Time') } catch { $ct = $null }
+          $utc = [DateTime]::UtcNow
+          $ctNow = if ($ct) { [TimeZoneInfo]::ConvertTimeFromUtc($utc, $ct) } else { $utc }
+
+          $header = @(
+            '# CI Diagnostics',
+            '',
+            "* Repo: ${{ github.repository }}",
+            "* Commit: ${{ github.sha }}",
+            "* Run: ${{ github.run_id }}",
+            "* Built (UTC): " + $utc.ToString('o'),
+            "* Built (CT): " + $ctNow.ToString('o'),
+            ''
+          )
+
           $idx = @()
-          $idx += '# CI Diagnostics'
-          $idx += ''
-          $idx += "* Repo: ${{ github.repository }}"
-          $idx += "* Commit: ${{ github.sha }}"
-          $idx += "* Run: ${{ github.run_id }}"
-          $idx += ''
           $idx += '## Raw NDJSON / logs'
           $logDir = Join-Path $pub 'logs'
           $logItems = Get-ChildItem -Name $logDir -ErrorAction SilentlyContinue
@@ -727,7 +738,7 @@ jobs:
             $idx += '- (repo snapshot empty)'
           }
 
-          $idx -join "`n" | Out-File -Encoding UTF8 (Join-Path $pub 'index.md')
+          ($header + $idx) -join "`n" | Out-File -Encoding UTF8 (Join-Path $pub 'index.md')
 
           $html = @"
           <!doctype html>
@@ -741,7 +752,7 @@ jobs:
             a{color:#0366d6}
           </style>
           <h1>CI Diagnostics</h1>
-          <p class="muted"><b>Repo:</b> ${{ github.repository }}<br><b>Commit:</b> ${{ github.sha }}<br><b>Run:</b> ${{ github.run_id }}</p>
+          <p class="muted"><b>Repo:</b> ${{ github.repository }}<br><b>Commit:</b> ${{ github.sha }}<br><b>Run:</b> ${{ github.run_id }}<br><b>Built (UTC):</b> $($utc.ToString('o'))<br><b>Built (CT):</b> $($ctNow.ToString('o'))</p>
           <p>See <a href="index.md">index.md</a> for the Markdown listing.</p>
           "@
           Set-Content -LiteralPath (Join-Path $pub 'index.html') -Value $html -Encoding UTF8
@@ -1004,7 +1015,7 @@ jobs:
           if ($u) {
             "### Diagnostics site`n[$u]($u)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
             $u | Out-File -Encoding UTF8 -FilePath codex_nudge_url.txt
-            if (Test-Path 'codex_nudge.txt') { Add-Content -Path 'codex_nudge.txt' -Value "`nDiagnostics: $u`n" }
+            $u | Out-File -Encoding UTF8 -FilePath codex_nudge.txt -Append
           } else {
             "### Diagnostics site (no URL from deploy step)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
