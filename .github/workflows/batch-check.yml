@@ -644,6 +644,40 @@ jobs:
             '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
 
+      - name: Preflight OpenAI auth (diagnostics)
+        id: openai_auth
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "present=true" >> "$GITHUB_OUTPUT"
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.OPENAI_API_KEY }}" \
+            https://api.openai.com/v1/models || echo 000)
+          if [ "$status" = "200" ]; then
+            echo "auth_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=OpenAI auth failed::HTTP $status from /v1/models (will skip Codex iteration)"
+            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Iterate auth summary
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $present = '${{ steps.openai_auth.outputs.present }}'
+          if (-not $present) { $present = 'false' }
+          $auth = '${{ steps.openai_auth.outputs.auth_ok }}'
+          if (-not $auth) { $auth = 'false' }
+          "### Iterate auth" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "- api_key_present: $present" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "- auth_ok: $auth" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+
       - name: Build public diagnostics tree
         if: ${{ always() }}
         id: build_public
@@ -667,13 +701,23 @@ jobs:
             'dynamic_tests.log',
             'tests\~test-summary.txt',
             'iterate_gate.json',
-            'codex_nudge.txt'
+            'iterate_auth.json',
+            'codex_nudge.txt',
+            'codex_exec.log'
           )
           foreach ($p in $wantLogs) {
             if (Test-Path -LiteralPath $p) {
               Copy-Item -LiteralPath $p -Destination (Join-Path $pub 'logs') -Force
             }
           }
+
+          $iterAuthPath = Join-Path $pub 'logs/iterate_auth.json'
+          $iterPresent = '${{ steps.openai_auth.outputs.present }}'
+          if (-not $iterPresent) { $iterPresent = 'false' }
+          $iterAuthOk = '${{ steps.openai_auth.outputs.auth_ok }}'
+          if (-not $iterAuthOk) { $iterAuthOk = 'false' }
+          @{ api_key_present = $iterPresent; auth_ok = $iterAuthOk } |
+            ConvertTo-Json -Compress | Out-File -Encoding UTF8 $iterAuthPath
 
           $wantSrc = @(
             '.github\workflows\batch-check.yml',

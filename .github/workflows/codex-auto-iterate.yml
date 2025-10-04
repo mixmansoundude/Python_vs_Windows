@@ -36,11 +36,49 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Preflight OpenAI auth
+        id: openai_auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "present=true" >> "$GITHUB_OUTPUT"
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.OPENAI_API_KEY }}" \
+            https://api.openai.com/v1/models || echo 000)
+          if [ "$status" = "200" ]; then
+            echo "auth_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=OpenAI auth failed::HTTP $status from /v1/models (will skip Codex iteration)"
+            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # Keep CRLF stable (harmless even if we no-op)
       - name: Normalize CRLF
         run: |
           git config core.autocrlf true
           git config core.eol crlf
+
+      - name: Iterate auth summary
+        if: ${{ always() }}
+        run: |
+          echo "### Iterate auth" >> "$GITHUB_STEP_SUMMARY"
+          echo "- api_key_present: ${{ steps.apikey.outputs.present }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skip Codex iteration (auth failure)
+        if: steps.apikey.outputs.present == 'true' && steps.verdict.outputs.has_failures == 'true' && steps.openai_auth.outputs.auth_ok != 'true'
+        run: |
+          echo "::warning title=Codex iteration skipped::OpenAI authentication failed preflight."
+          {
+            echo "## Codex iteration"
+            echo ""
+            echo "Skipped because OpenAI authentication preflight failed (check iterate auth summary)."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Try to pull the failure hint artifact produced by the Windows job.
       # Note: For PR-triggered failures, there may be NO artifact (that job posts a PR comment instead).
@@ -136,18 +174,18 @@ jobs:
 
       # Only proceed with Codex path when the key exists
       - name: Install Codex CLI
-        if: steps.apikey.outputs.present == 'true' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.verdict.outputs.has_failures == 'true'
         run: npm i -g @openai/codex@latest
 
       - name: Git author
-        if: steps.apikey.outputs.present == 'true' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.verdict.outputs.has_failures == 'true'
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name  "github-actions[bot]"
 
       # 20-attempt guard based on our standard commit prefix
       - name: Loop guard
-        if: steps.apikey.outputs.present == 'true' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.verdict.outputs.has_failures == 'true'
         id: guard
         shell: bash
         run: |
@@ -164,14 +202,19 @@ jobs:
           fi
 
       - name: Iterate gate debug
-        if: steps.apikey.outputs.present == 'true'
+        if: ${{ always() }}
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
         run: |
           echo "has_failures=${{ steps.verdict.outputs.has_failures }}"
           echo "apikey_present=${{ steps.apikey.outputs.present }}"
+          echo "auth_ok=${{ steps.openai_auth.outputs.auth_ok }}"
           echo "guard_stop=${{ steps.guard.outputs.stop }}"
+          echo "event=${{ github.event_name }} ref=${{ github.ref }}"
+          echo "needs.json=$NEEDS_JSON"
 
       - name: Build prompt for Codex
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         run: |
           PROMPT="$RUNNER_TEMP/prompt.txt"
           # Seed with the existing nudge or fallback
@@ -210,7 +253,7 @@ jobs:
           echo "PROMPT=$PROMPT" >> $GITHUB_ENV
 
       - name: Run Codex headlessly (gpt-4o-mini, write-enabled)
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         timeout-minutes: 10
         continue-on-error: true
         env:
@@ -220,7 +263,7 @@ jobs:
           codex -a never --sandbox workspace-write exec --model gpt-4o-mini "$(cat "$PROMPT")" 2>&1 | tee "$RUNNER_TEMP/codex_exec.log" || true
 
       - name: Upload Codex exec log
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: codex-exec-log
@@ -228,7 +271,7 @@ jobs:
           retention-days: 7
 
       - name: Summarize Codex outcome
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         run: |
           echo "## Codex iterate summary" >> "$GITHUB_STEP_SUMMARY"
           if [ -f "$RUNNER_TEMP/codex_exec.log" ]; then
@@ -241,7 +284,7 @@ jobs:
           fi
 
       - name: Detect changes
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         id: diffcheck
         run: |
           if [ -z "$(git status --porcelain)" ]; then
@@ -251,7 +294,7 @@ jobs:
           fi
 
       - name: Summarize no-op Codex run
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'false' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'false' && steps.verdict.outputs.has_failures == 'true'
         run: |
           echo "::notice title=Codex iteration::Codex made no edits; see codex-exec-log artifact for details."
           {
@@ -261,14 +304,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clean up repo temp files
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         run: |
           rm -f prompt.txt codex_nudge.txt codex_exec.log || true
 
       # Let the action stage/commit/push the working tree itself.
       # This avoids the "no changes" early exit when the tree is clean.
       - name: Create/Update PR (commit & push inside action)
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'true' && steps.verdict.outputs.has_failures == 'true'
+        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'true' && steps.verdict.outputs.has_failures == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token:  ${{ secrets.GITHUB_TOKEN }}
