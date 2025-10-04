@@ -7,9 +7,113 @@ if (-not $here) {
 
 $repoRoot = Split-Path -Path $here -Parent
 $nd = Join-Path -Path $here -ChildPath '~test-results.ndjson'
+$ciNd = Join-Path -Path $repoRoot -ChildPath 'ci_test_results.ndjson'
 
 if (-not (Test-Path -LiteralPath $nd)) {
     New-Item -ItemType File -Path $nd -Force | Out-Null
+}
+if (-not (Test-Path -LiteralPath $ciNd)) {
+    New-Item -ItemType File -Path $ciNd -Force | Out-Null
+}
+
+function Write-NdjsonRow {
+    param([hashtable]$Row)
+
+    $json = $Row | ConvertTo-Json -Compress
+    Add-Content -LiteralPath $nd -Value $json -Encoding Ascii
+    Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
+}
+
+function Get-LineSnippet {
+    param(
+        [string]$Text,
+        [string]$Pattern
+    )
+
+    if (-not $Text) { return '' }
+    foreach ($line in $Text -split "`r?`n") {
+        if ($line -match $Pattern) {
+            $trimmed = $line.Trim()
+            if ($trimmed.Length -gt 160) { return $trimmed.Substring(0,160) }
+            return $trimmed
+        }
+    }
+    return ''
+}
+
+function Emit-FailureRow {
+    param(
+        [string]$Id,
+        [string]$Description,
+        [string]$FilePath,
+        [string]$Pattern,
+        [string]$LogText
+    )
+
+    if (-not $LogText) {
+        $LogText = Get-Content -LiteralPath $FilePath -Raw -Encoding Ascii
+    }
+    $snippet = Get-LineSnippet -Text $LogText -Pattern $Pattern
+    $details = [ordered]@{ file = $FilePath }
+    if ($snippet) { $details.snippet = $snippet }
+
+    Write-NdjsonRow ([ordered]@{
+        id      = $Id
+        pass    = $false
+        desc    = $Description
+        details = $details
+    })
+}
+
+$script:RecordedPipreqs = $false
+$script:RecordedHelperInvoke = $false
+
+function Check-PipreqsFailure {
+    param(
+        [string]$LogPath,
+        [string]$LogText
+    )
+
+    if ($script:RecordedPipreqs -or -not $LogPath -or -not (Test-Path -LiteralPath $LogPath)) { return }
+    if (-not $LogText) { $LogText = Get-Content -LiteralPath $LogPath -Raw -Encoding Ascii }
+
+    $patterns = @(
+        'No module named pipreqs\.__main__',
+        'ERROR\s+conda\.cli\.main_run:execute\(127\):'
+    )
+
+    foreach ($pattern in $patterns) {
+        if ($LogText -match $pattern) {
+            Emit-FailureRow -Id 'pipreqs.run' -Description 'pipreqs invocation failed during bootstrap' -FilePath $LogPath -Pattern $pattern -LogText $LogText
+            $script:RecordedPipreqs = $true
+            break
+        }
+    }
+}
+
+function Check-HelperInvokeFailure {
+    param(
+        [string]$LogPath,
+        [string]$LogText
+    )
+
+    if ($script:RecordedHelperInvoke -or -not $LogPath -or -not (Test-Path -LiteralPath $LogPath)) { return }
+    if (-not $LogText) { $LogText = Get-Content -LiteralPath $LogPath -Raw -Encoding Ascii }
+
+    $patterns = @(
+        @{ Pattern = "'python\" \"~find_entry\.py' is not recognized as an internal or external command"; RequireFindEntry = $false },
+        @{ Pattern = 'SyntaxError:'; RequireFindEntry = $true }
+    )
+
+    foreach ($item in $patterns) {
+        $pattern = $item.Pattern
+        if ($LogText -match $pattern) {
+            if ($item.RequireFindEntry -and ($LogText -notmatch '~find_entry\.py')) { continue }
+            Emit-FailureRow -Id 'helper.invoke' -Description 'Entry helper failed to execute under Python' -FilePath $LogPath -Pattern $pattern -LogText $LogText
+            $script:RecordedHelperInvoke = $true
+            break
+        }
+    }
 }
 
 function Invoke-EntryScenario {
@@ -24,6 +128,10 @@ function Invoke-EntryScenario {
         log = ''
         crumb = ''
         error = $null
+        setupPath = $null
+        setupLog = ''
+        bootstrapPath = $null
+        bootstrapLog = ''
     }
 
     try {
@@ -58,12 +166,19 @@ function Invoke-EntryScenario {
             Pop-Location
         }
 
+        $result.setupPath = $setupLog
         if (Test-Path -LiteralPath $setupLog) {
             $result.log = Get-Content -LiteralPath $setupLog -Raw -Encoding Ascii
+            $result.setupLog = $result.log
             $match = [regex]::Match($result.log, '^Chosen entry: (.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
             if ($match.Success) {
                 $result.crumb = $match.Groups[1].Value
             }
+        }
+
+        $result.bootstrapPath = $bootstrapLog
+        if (Test-Path -LiteralPath $bootstrapLog) {
+            $result.bootstrapLog = Get-Content -LiteralPath $bootstrapLog -Raw -Encoding Ascii
         }
     }
     catch {
@@ -96,12 +211,12 @@ function Write-EntryRow {
 
     $pass = ($Scenario.exitCode -eq 0) -and ($chosen -eq $Expected)
 
-    Add-Content -LiteralPath $nd -Value (@{
+    Write-NdjsonRow ([ordered]@{
         id      = $Id
         pass    = $pass
         desc    = $Description
         details = $details
-    } | ConvertTo-Json -Compress) -Encoding Ascii
+    })
 }
 
 # Scenario 1: single entry file should breadcrumb correctly
@@ -113,6 +228,8 @@ if __name__ == "__main__":
 })
 $expected1 = Join-Path '.' 'entry1.py'
 Write-EntryRow -Id 'self.entry.entry1' -Expected $expected1 -Scenario $scenario1 -Description 'Single entry file detected'
+Check-PipreqsFailure -LogPath $scenario1.setupPath -LogText $scenario1.setupLog
+Check-HelperInvokeFailure -LogPath $scenario1.bootstrapPath -LogText $scenario1.bootstrapLog
 
 # Scenario A: main.py should win over app.py when both present
 $scenarioA = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entryA') -LogName '~entryA_bootstrap.log' -Files ([ordered]@{
@@ -127,6 +244,8 @@ if __name__ == "__main__":
 })
 $expectedA = Join-Path '.' 'main.py'
 Write-EntryRow -Id 'self.entry.entryA' -Expected $expectedA -Scenario $scenarioA -Description 'main.py beats app.py'
+Check-PipreqsFailure -LogPath $scenarioA.setupPath -LogText $scenarioA.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioA.bootstrapPath -LogText $scenarioA.bootstrapLog
 
 # Scenario B: prefer common names over generic modules when picking entries
 $scenarioB = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entryB') -LogName '~entryB_bootstrap.log' -Files ([ordered]@{
@@ -141,3 +260,5 @@ if __name__ == "__main__":
 })
 $expectedB = Join-Path '.' 'app.py'
 Write-EntryRow -Id 'self.entry.entryB' -Expected $expectedB -Scenario $scenarioB -Description 'app.py preferred over generic modules'
+Check-PipreqsFailure -LogPath $scenarioB.setupPath -LogText $scenarioB.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioB.bootstrapPath -LogText $scenarioB.bootstrapLog

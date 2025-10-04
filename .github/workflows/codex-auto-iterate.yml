@@ -169,7 +169,6 @@ jobs:
           $isManual = $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch'
 
           if ($found.Count -eq 0) {
-            # On manual runs with no NDJSON, treat as clean (do not iterate)
             if ($isManual) {
               'has_failures=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
               Write-Host 'NDJSON verdict: manual run; no results; has_failures=false'
@@ -195,6 +194,46 @@ jobs:
           if ($fails -gt 0) {
             'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             Write-Host "NDJSON verdict: $fails failing checks -> has_failures=true"
+            exit 0
+          }
+
+          $redFlags = $false
+          if (-not $isManual -and $env:GITHUB_EVENT_NAME -eq 'workflow_run') {
+            $logCandidates = @(
+              'tests\~selftest_empty\~empty_bootstrap.log',
+              'tests\~entry1\~entry1_bootstrap.log',
+              'tests\~entryA\~entryA_bootstrap.log',
+              'tests\~entryB\~entryB_bootstrap.log',
+              'tests\~envsmoke\~setup.log',
+              'tests\~envsmoke\~run.out.txt',
+              '~setup.log'
+            )
+            $patterns = @(
+              '(?i)\bERROR\b',
+              '(?i)SyntaxError:',
+              '(?i)not recognized as an internal or external command',
+              '(?i)No module named pipreqs\.__main__'
+            )
+
+            foreach ($logPath in $logCandidates) {
+              if (-not (Test-Path -LiteralPath $logPath)) { continue }
+              $text = Get-Content -LiteralPath $logPath -Raw -Encoding Ascii
+              foreach ($pattern in $patterns) {
+                if ($text -match $pattern) {
+                  $redFlags = $true
+                  Write-Host "Red-flag pattern '$pattern' found in $logPath"
+                  break
+                }
+              }
+              if ($redFlags) { break }
+            }
+          }
+
+          if ($redFlags) {
+            'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host 'NDJSON verdict: clean but red-flag strings detected -> has_failures=true'
+            "NDJSON clean but red-flag strings found in logs (see artifacts) — has_failures=true." |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           } else {
             'has_failures=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             Write-Host 'NDJSON verdict: all passing -> has_failures=false'
@@ -276,6 +315,9 @@ jobs:
             echo "- guard_stop: ${{ steps.guard.outputs.stop || 'false' }}"
             echo "- event: ${{ github.event_name }}"
             echo "- ref: ${{ github.ref }}"
+            if [ -f "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt" ]; then
+              echo "- diagnostics_url: $(cat "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt")"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build prompt for Codex
