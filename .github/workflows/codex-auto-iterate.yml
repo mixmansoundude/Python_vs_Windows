@@ -7,8 +7,8 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write
-  pull-requests: write
+  actions: read
+  contents: read
 
 concurrency:
   group: codex-iterate-${{ github.event.workflow_run.head_branch }}
@@ -22,7 +22,7 @@ jobs:
       - name: Checkout failing branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_branch }}
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
           fetch-depth: 0
 
       # Preflight: detect the API key (do not echo it)
@@ -89,12 +89,15 @@ jobs:
           git config core.autocrlf true
           git config core.eol crlf
 
-      - name: Iterate auth summary
+      - name: Iterate auth preflight
         if: ${{ always() }}
         run: |
-          echo "### Iterate auth" >> "$GITHUB_STEP_SUMMARY"
-          echo "- api_key_present: ${{ steps.apikey.outputs.present }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok }}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Iterate auth preflight"
+            echo "- api_key_present: ${{ steps.apikey.outputs.present || 'false' }}"
+            echo "- http_code: ${{ steps.openai_auth.outputs.http_code || '000' }}"
+            echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok || 'false' }}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Skip Codex iteration (auth failure)
         if: steps.apikey.outputs.present == 'true' && steps.verdict.outputs.has_failures == 'true' && steps.openai_auth.outputs.auth_ok != 'true'
@@ -144,44 +147,77 @@ jobs:
           name: codex_nudge_url.txt
           path: ${{ runner.temp }}
 
+      - name: Download logs for triggering run
+        if: ${{ github.event_name == 'workflow_run' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+               -o runlogs.zip \
+               "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/logs"
+          mkdir -p runlogs
+          unzip -q runlogs.zip -d runlogs || true
+
+      - name: Try to download NDJSON artifact(s)
+        if: ${{ github.event_name == 'workflow_run' }}
+        id: get_artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts" > artifacts.json
+          mkdir -p artifacts
+          for name in ci_test_results test-results tests-artifacts; do
+            id=$(jq -r --arg n "$name" '.artifacts[] | select(.name==$n) | .id' artifacts.json | head -n 1)
+            if [ -n "$id" ] && [ "$id" != "null" ]; then
+              curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+                -L "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$id/zip" \
+                -o "$name.zip" || true
+              mkdir -p "artifacts/$name"
+              unzip -q "$name.zip" -d "artifacts/$name" || true
+            fi
+          done
+
       - name: Determine NDJSON verdict
         id: verdict
         shell: pwsh
-        env:
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # Candidate result files
-          $paths = @(
-            'tests\~test-results.ndjson',
-            'ci_test_results.ndjson'
+          $ndjsonGlobs = @(
+            'artifacts/**/ci_test_results.ndjson',
+            'artifacts/**/ci_test-results.ndjson',
+            'artifacts/**/~test-results.ndjson',
+            'ci_test_results.ndjson',
+            'tests\~test-results.ndjson'
           )
 
-          # Collect existing files
           $found = @()
-          foreach ($p in $paths) {
-            if (Test-Path -LiteralPath $p) {
-              $found += (Resolve-Path -LiteralPath $p).Path
-            }
+          foreach ($glob in $ndjsonGlobs) {
+            $found += Get-ChildItem -Path $glob -File -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty FullName
           }
+          $found = $found | Sort-Object -Unique
 
-          $isManual = $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch'
+          $isManual = '${{ github.event_name }}' -eq 'workflow_dispatch'
 
           if ($found.Count -eq 0) {
             if ($isManual) {
               'has_failures=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
               Write-Host 'NDJSON verdict: manual run; no results; has_failures=false'
-              exit 0
+              return
             }
-            'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            Write-Host 'NDJSON verdict: no results; has_failures=true'
-            exit 0
           }
 
           $fails = 0
-          foreach ($f in $found) {
-            Get-Content -LiteralPath $f | ForEach-Object {
+          foreach ($file in $found) {
+            Get-Content -LiteralPath $file | ForEach-Object {
               try {
                 $row = $_ | ConvertFrom-Json
               } catch {
@@ -194,20 +230,11 @@ jobs:
           if ($fails -gt 0) {
             'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             Write-Host "NDJSON verdict: $fails failing checks -> has_failures=true"
-            exit 0
+            return
           }
 
-          $redFlags = $false
-          if (-not $isManual -and $env:GITHUB_EVENT_NAME -eq 'workflow_run') {
-            $logCandidates = @(
-              'tests\~selftest_empty\~empty_bootstrap.log',
-              'tests\~entry1\~entry1_bootstrap.log',
-              'tests\~entryA\~entryA_bootstrap.log',
-              'tests\~entryB\~entryB_bootstrap.log',
-              'tests\~envsmoke\~setup.log',
-              'tests\~envsmoke\~run.out.txt',
-              '~setup.log'
-            )
+          if (-not $isManual -and '${{ github.event_name }}' -eq 'workflow_run') {
+            $red = $false
             $patterns = @(
               '(?i)\bERROR\b',
               '(?i)SyntaxError:',
@@ -215,29 +242,31 @@ jobs:
               '(?i)No module named pipreqs\.__main__'
             )
 
-            foreach ($logPath in $logCandidates) {
-              if (-not (Test-Path -LiteralPath $logPath)) { continue }
-              $text = Get-Content -LiteralPath $logPath -Raw -Encoding Ascii
-              foreach ($pattern in $patterns) {
-                if ($text -match $pattern) {
-                  $redFlags = $true
-                  Write-Host "Red-flag pattern '$pattern' found in $logPath"
-                  break
+            if (Test-Path -LiteralPath 'runlogs') {
+              Get-ChildItem -Path 'runlogs' -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+                $content = Get-Content -LiteralPath $_.FullName -Raw -ErrorAction SilentlyContinue
+                foreach ($pattern in $patterns) {
+                  if ($content -match $pattern) {
+                    $red = $true
+                    Write-Host "Red-flag pattern '$pattern' found in $($_.FullName)"
+                    break
+                  }
                 }
+                if ($red) { return }
               }
-              if ($redFlags) { break }
+            }
+
+            if ($red) {
+              'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+              "NDJSON clean but red-flag strings found in logs (see artifacts) — has_failures=true." |
+                Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+              Write-Host 'NDJSON verdict: clean but red-flag strings detected -> has_failures=true'
+              return
             }
           }
 
-          if ($redFlags) {
-            'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            Write-Host 'NDJSON verdict: clean but red-flag strings detected -> has_failures=true'
-            "NDJSON clean but red-flag strings found in logs (see artifacts) — has_failures=true." |
-              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-          } else {
-            'has_failures=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            Write-Host 'NDJSON verdict: all passing -> has_failures=false'
-          }
+          'has_failures=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host 'NDJSON verdict: all passing -> has_failures=false'
 
       # If the key is missing, loudly but cleanly skip (logs + summary + tiny artifact)
       - name: Skip (no OPENAI_API_KEY configured)
@@ -303,18 +332,19 @@ jobs:
           echo "event=${{ github.event_name }} ref=${{ github.ref }}"
           echo "needs.json=$NEEDS_JSON"
 
-      - name: Append gate report to Summary
+      - name: Iterate gate report
         if: ${{ always() }}
         run: |
           {
-            echo '### Iterate gate report'
+            echo "### Iterate gate report"
             echo "- api_key_present: ${{ steps.apikey.outputs.present || 'false' }}"
             echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok || 'false' }}"
             echo "- chat_ok: ${{ steps.openai_chat.outputs.chat_ok || 'false' }}"
             echo "- has_failures: ${{ steps.verdict.outputs.has_failures || 'n/a' }}"
-            echo "- guard_stop: ${{ steps.guard.outputs.stop || 'false' }}"
             echo "- event: ${{ github.event_name }}"
-            echo "- ref: ${{ github.ref }}"
+            if [ "${{ github.event_name }}" = "workflow_run" ]; then
+              echo "- triggering_run: https://github.com/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
+            fi
             if [ -f "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt" ]; then
               echo "- diagnostics_url: $(cat "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt")"
             fi
