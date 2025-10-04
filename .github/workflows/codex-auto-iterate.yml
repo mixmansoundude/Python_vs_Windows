@@ -44,12 +44,14 @@ jobs:
           if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "auth_ok=false" >> "$GITHUB_OUTPUT"
+            echo "http_code=000" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "present=true" >> "$GITHUB_OUTPUT"
           status=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${{ secrets.OPENAI_API_KEY }}" \
             https://api.openai.com/v1/models || echo 000)
+          echo "http_code=$status" >> "$GITHUB_OUTPUT"
           if [ "$status" = "200" ]; then
             echo "auth_ok=true" >> "$GITHUB_OUTPUT"
           else
@@ -221,6 +223,7 @@ jobs:
             echo "- has_failures: ${{ steps.verdict.outputs.has_failures || 'n/a' }}"
             echo "- api_key_present: ${{ steps.apikey.outputs.present || 'false' }}"
             echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok || 'false' }}"
+            echo "- http_code: ${{ steps.openai_auth.outputs.http_code || 'n/a' }}"
             echo "- guard_stop: ${{ steps.guard.outputs.stop || 'false' }}"
             echo "- event: ${{ github.event_name }}"
             echo "- ref: ${{ github.ref }}"
