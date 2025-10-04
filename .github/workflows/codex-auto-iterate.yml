@@ -153,7 +153,7 @@ jobs:
         continue-on-error: true
         with:
           run_id: ${{ github.event.workflow_run.id }}
-          name: codex_nudge-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          name: codex_nudge-emit-nudge-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: ${{ runner.temp }}
 
       - name: Download CI summary (cache lane)
@@ -162,7 +162,7 @@ jobs:
         continue-on-error: true
         with:
           run_id: ${{ github.event.workflow_run.id }}
-          name: ci_test_summary-cache-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          name: ci_test_summary-selftest-cache-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: ${{ runner.temp }}/ci_summary_cache
 
       - name: Download CI summary (real lane)
@@ -171,7 +171,7 @@ jobs:
         continue-on-error: true
         with:
           run_id: ${{ github.event.workflow_run.id }}
-          name: ci_test_summary-real-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          name: ci_test_summary-selftest-real-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: ${{ runner.temp }}/ci_summary_real
 
       - name: Download CI NDJSON (cache lane)
@@ -180,7 +180,7 @@ jobs:
         continue-on-error: true
         with:
           run_id: ${{ github.event.workflow_run.id }}
-          name: ci_test_results-cache-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          name: ci_test_results-selftest-cache-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: ${{ runner.temp }}/ci_ndjson_cache
 
       - name: Download CI NDJSON (real lane)
@@ -189,7 +189,7 @@ jobs:
         continue-on-error: true
         with:
           run_id: ${{ github.event.workflow_run.id }}
-          name: ci_test_results-real-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          name: ci_test_results-selftest-real-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: ${{ runner.temp }}/ci_ndjson_real
 
       - name: Download diagnostics URL (if present)
@@ -198,7 +198,7 @@ jobs:
         continue-on-error: true
         with:
           run_id: ${{ github.event.workflow_run.id }}
-          name: codex_nudge_url-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          name: codex_nudge_url-deploy-pages-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: ${{ runner.temp }}
 
       - name: Download logs for triggering run
@@ -361,7 +361,7 @@ jobs:
         if: steps.apikey.outputs.present != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: codex-skip-reason-${{ github.run_id }}-${{ github.run_attempt }}
+          name: codex-skip-reason-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: codex_skip_reason.txt
           if-no-files-found: ignore
           retention-days: 7
@@ -508,7 +508,7 @@ jobs:
         if: ${{ always() && steps.codex_exec.outcome != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: codex_exec-${{ github.run_id }}-${{ github.run_attempt }}
+          name: codex_exec-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/codex_exec.log
           if-no-files-found: ignore
           retention-days: 7

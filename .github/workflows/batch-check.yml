@@ -167,7 +167,7 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ci_test_summary-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ci_test_summary-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: tests/~test-summary.txt
           if-no-files-found: ignore
           retention-days: 7
@@ -176,7 +176,7 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ci_test_results-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ci_test_results-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: tests/~test-results.ndjson
           if-no-files-found: ignore
           retention-days: 7
@@ -381,7 +381,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: test-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             bootstrap.log
             ~setup.log
@@ -562,6 +562,20 @@ jobs:
           Read-Optional 'Empty bootstrap (tail)' @('tests\~selftest_empty\~empty_bootstrap.log') 4000
           Read-Optional 'Single-entry bootstrap (tail)' @('tests\~entry1\~entry1_bootstrap.log') 4000
           Read-Optional 'Env smoke bootstrap (tail)' @('tests\~envsmoke\~envsmoke_bootstrap.log') 4000
+
+      - name: Append matrix mode meta row
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $row = [ordered]@{
+            id  = 'meta.env.mode'
+            pass = $true
+            desc = 'matrix lane'
+            details = [ordered]@{ mode = '${{ matrix.mode }}' }
+          }
+          $json = $row | ConvertTo-Json -Compress
+          Add-Content -LiteralPath tests\~test-results.ndjson -Value $json -Encoding Ascii
+          Add-Content -LiteralPath ci_test_results.ndjson -Value $json -Encoding Ascii
 
       - name: Verdict from NDJSON
         id: verdict
@@ -955,12 +969,14 @@ jobs:
 
           "public_dir=$pub" | Out-File -Append $env:GITHUB_OUTPUT
 
-      - name: Upload Pages artifact
+      - name: Upload diagnostics bundle
         if: ${{ always() }}
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: diagnostics-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: diag-selftest-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.build_public.outputs.public_dir }}
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Gate on NDJSON results
         if: ${{ always() }}
@@ -1201,6 +1217,37 @@ jobs:
           fi
           echo "models_status=$STATUS" >> "$GITHUB_OUTPUT"
 
+      - name: OpenAI chat proof
+        id: openai_chat
+        if: steps.openai_auth.outputs.auth_ok == 'true'
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          body='{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Reply with PONG"}],"max_tokens":1}'
+          tmp="$(mktemp)"
+          code=$(curl -s -o "$tmp" -w "%{http_code}" \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$body" https://api.openai.com/v1/chat/completions || echo 000)
+          echo "http_code=$code" >> "$GITHUB_OUTPUT"
+          chat_flag=false
+          if [ "$code" = "200" ] && python -c "import json,sys;d=json.load(open(sys.argv[1]));print('PONG' in (''.join(m.get('content','') for m in [c.get('message',{}) for c in d.get('choices',[])]).upper()))" "$tmp" | grep -q True; then
+            chat_flag=true
+          fi
+          if [ "$chat_flag" = true ]; then
+            echo "chat_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "chat_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "### Iterate chat ping"
+            echo "- http_code: $code"
+            echo "- chat_ok: $([ "$chat_flag" = true ] && echo true || echo false)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$tmp"
+
       - name: Iterate gate debug
         if: ${{ always() }}
         env:
@@ -1222,9 +1269,37 @@ jobs:
             echo "- has_failures: ${{ needs.selftest.outputs.has_failures || 'n/a' }}"
             echo "- api_key_present: ${{ steps.apikey.outputs.present || 'false' }}"
             echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok || 'false' }}"
+            echo "- chat_ok: ${{ steps.openai_chat.outputs.chat_ok || 'false' }}"
             echo "- guard_stop: ${{ steps.guard.outputs.stop || 'false' }}"
             echo "- event: ${{ github.event_name }}"
             echo "- ref: ${{ github.ref }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skip Codex iteration (no NDJSON failures)
+        if: needs.selftest.outputs.has_failures != 'true'
+        run: |
+          {
+            echo "## Codex iteration"
+            echo ""
+            echo "Skipped because NDJSON verdict indicated no failures (has_failures != true)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skip Codex iteration (auth failure)
+        if: needs.selftest.outputs.has_failures == 'true' && steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok != 'true'
+        run: |
+          {
+            echo "## Codex iteration"
+            echo ""
+            echo "Skipped because OpenAI auth preflight failed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skip Codex iteration (chat failure)
+        if: needs.selftest.outputs.has_failures == 'true' && steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.openai_chat.outputs.chat_ok != 'true'
+        run: |
+          {
+            echo "## Codex iteration"
+            echo ""
+            echo "Skipped because chat proof failed; see Iterate chat ping summary for HTTP status."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build Codex prompt
@@ -1242,6 +1317,7 @@ jobs:
         if: needs.selftest.outputs.has_failures == 'true' &&
             steps.apikey.outputs.present == 'true' &&
             steps.openai_auth.outputs.auth_ok == 'true' &&
+            steps.openai_chat.outputs.chat_ok == 'true' &&
             steps.guard.outputs.stop == 'false'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -1250,7 +1326,7 @@ jobs:
           set -o pipefail
           codex -a never --sandbox workspace-write exec --model gpt-4o-mini "$(cat "$PROMPT")" 2>&1 | tee "$RUNNER_TEMP/codex_exec.log" || true
 
-      - name: Publish iterate gate to Diagnostics
+      - name: Publish iterate gate bundle
         if: ${{ always() }}
         id: publish_iterate
         shell: pwsh
@@ -1273,24 +1349,14 @@ jobs:
           }
           "publish_dir=$pub" | Out-File -Append $env:GITHUB_OUTPUT
 
-      - name: Upload iterate diag artifact
+      - name: Upload iterate diagnostics
         if: ${{ always() }}
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: iterate-debug-${{ github.run_id }}-${{ github.run_attempt }}
+          name: iterate-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.publish_iterate.outputs.publish_dir }}
-
-      - name: Deploy iterate debug to Pages
-        if: ${{ always() && github.event_name != 'pull_request' }}
-        id: iter_deploy
-        uses: actions/deploy-pages@v4
-
-      - name: Add iterate URL to Summary
-        if: ${{ always() }}
-        shell: pwsh
-        run: |
-          $u='${{ steps.iter_deploy.outputs.page_url }}'
-          if ($u) { "### Iterate debug`n[$u]($u)" | Out-File -Append $env:GITHUB_STEP_SUMMARY }
+          if-no-files-found: ignore
+          retention-days: 7
 
   emit-nudge:
     name: Emit Codex nudge (on failure)
@@ -1302,7 +1368,7 @@ jobs:
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
-          name: codex_nudge_url-${{ github.run_id }}-${{ github.run_attempt }}
+          name: codex_nudge_url-deploy-pages-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}
 
       - name: Build Codex nudge
@@ -1331,14 +1397,14 @@ jobs:
       - name: Upload Codex nudge artifact
         uses: actions/upload-artifact@v4
         with:
-          name: codex_nudge-${{ github.run_id }}-${{ github.run_attempt }}
+          name: codex_nudge-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/codex_nudge.txt
           if-no-files-found: ignore
           retention-days: 3
 
   deploy-pages:
     if: ${{ always() && github.event_name != 'pull_request' }}
-    needs: [selftest]
+    needs: [selftest, iterate]
     permissions:
       pages: write
       id-token: write
@@ -1346,7 +1412,105 @@ jobs:
       name: github-pages
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Download diagnostics bundle (cache)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: diag-selftest-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/diag/cache
+
+      - name: Download diagnostics bundle (real)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: diag-selftest-real-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/diag/real
+
+      - name: Download iterate diagnostics
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: iterate-iterate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/iterate
+
+      - name: Build combined diagnostics site
+        id: build_public
+        shell: pwsh
+        run: |
+          $pub = Join-Path $env:RUNNER_TEMP 'public'
+          New-Item -Force -ItemType Directory -Path $pub | Out-Null
+          $diagRoot = Join-Path $pub 'diag'
+          $iterRoot = Join-Path $pub 'iterate'
+          New-Item -Force -ItemType Directory -Path $diagRoot | Out-Null
+          New-Item -Force -ItemType Directory -Path $iterRoot | Out-Null
+
+          Write-Host "DIAG CWD: $PWD"
+          $targets = @(
+            (Join-Path $env:RUNNER_TEMP 'diag/cache'),
+            (Join-Path $env:RUNNER_TEMP 'diag/real')
+          )
+          foreach ($path in $targets) {
+            Write-Host "Inspecting $path"
+            if (Test-Path -LiteralPath $path) {
+              Get-ChildItem -Path $path -Recurse | ForEach-Object { Write-Host $_.FullName }
+              $leaf = Split-Path -Leaf $path
+              $dest = Join-Path $diagRoot $leaf
+              Copy-Item -Path (Join-Path $path '*') -Destination $dest -Recurse -Force -ErrorAction SilentlyContinue
+            } else {
+              Write-Host "Missing diagnostic bundle: $path"
+            }
+          }
+
+          $iterSrc = Join-Path $env:RUNNER_TEMP 'iterate'
+          if (Test-Path -LiteralPath $iterSrc) {
+            Copy-Item -Path (Join-Path $iterSrc '*') -Destination $iterRoot -Recurse -Force -ErrorAction SilentlyContinue
+          } else {
+            Write-Host 'Iterate diagnostics missing; continuing without iterate section.'
+          }
+
+          $repo = '${{ github.repository }}'
+          $run = '${{ github.run_id }}'
+          $attempt = '${{ github.run_attempt }}'
+          $index = @(
+            "# CI Diagnostics",
+            '',
+            "* Repo: $repo",
+            "* Run: $run",
+            "* Attempt: $attempt",
+            '',
+            '## Sections',
+            '- [Diagnostics bundles](diag/)'
+          )
+          if (Test-Path -LiteralPath $iterRoot) {
+            $index += '- [Iterate debug](iterate/)'
+          }
+          $index += ''
+          $index += 'See the per-section indexes for detailed NDJSON exports, logs, and sources.'
+          $index -join "`n" | Out-File -Encoding UTF8 (Join-Path $pub 'index.md')
+
+          $html = @"
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>CI Diagnostics — run $run</title>
+          <style>
+            body{font-family:ui-sans-serif,system-ui;margin:24px}
+            code,pre{font-family:ui-monospace,Consolas,monospace}
+          </style>
+          <h1>CI Diagnostics</h1>
+          <p><strong>Repo:</strong> $repo<br><strong>Run:</strong> $run<br><strong>Attempt:</strong> $attempt</p>
+          <p>See <a href="index.md">index.md</a> for a Markdown listing.</p>
+          "@
+          Set-Content -LiteralPath (Join-Path $pub 'index.html') -Value $html -Encoding UTF8
+
+          "public_dir=$pub" | Out-File -Append $env:GITHUB_OUTPUT
+
+      - name: Upload combined Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          name: pages-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.build_public.outputs.public_dir }}
+
+      - name: Deploy combined diagnostics to Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
@@ -1367,7 +1531,7 @@ jobs:
         if: ${{ always() && steps.deployment.outputs.page_url != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: codex_nudge_url-${{ github.run_id }}-${{ github.run_attempt }}
+          name: codex_nudge_url-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: codex_nudge_url.txt
           if-no-files-found: ignore
           retention-days: 3
