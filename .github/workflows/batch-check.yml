@@ -601,144 +601,158 @@ jobs:
           Read-Optional 'Single-entry bootstrap (tail)' @('tests\~entry1\~entry1_bootstrap.log') 4000
           Read-Optional 'Env smoke bootstrap (tail)' @('tests\~envsmoke\~envsmoke_bootstrap.log') 4000
 
-      - name: Build diagnostics site
+      - name: Verdict from NDJSON
+        id: verdict
         if: ${{ always() }}
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path site | Out-Null
-          function Read-Multi($paths, $limit=50000) {
-            foreach ($p in $paths) {
-              if (Test-Path -LiteralPath $p) {
-                $t = Get-Content -Raw -LiteralPath $p
-                if ($null -eq $t) { $t = "" }
-                if ($t.Length -eq 0) { return "(empty) $p" }
-                if ($t.Length -gt $limit) { $t = $t.Substring(0,$limit) + "`n... [truncated]" }
-                return $t
+          function Read-Ndjson([string]$p) {
+            if (Test-Path -LiteralPath $p) {
+              Get-Content -Raw -LiteralPath $p | Select-String -AllMatches '^\{.*\}$' | ForEach-Object {
+                try { $_.Matches.Value | ConvertFrom-Json } catch {}
               }
             }
-            return "(missing) " + ($paths -join ', ')
           }
 
-          $nd  = Read-Multi @('tests\~test-results.ndjson','ci_test_results.ndjson') 50000
-          $sum = Read-Multi @('tests\~test-summary.txt') 20000
-          $b0  = Read-Multi @('tests\~selftest_empty\~empty_bootstrap.log') 12000
-          $b1  = Read-Multi @('tests\~entry1\~entry1_bootstrap.log') 12000
-          $bS  = Read-Multi @('tests\~envsmoke\~envsmoke_bootstrap.log') 12000
+          $rows = @()
+          $rows += Read-Ndjson 'tests\~test-results.ndjson'
+          if (-not $rows) { $rows += Read-Ndjson 'ci_test_results.ndjson' }
 
-          New-Item -ItemType Directory -Force -Path site/workflows,site/src/tests,site/repo | Out-Null
-          if (Test-Path '.github/workflows') { Copy-Item '.github/workflows\*.yml' 'site/workflows' -Force -ErrorAction SilentlyContinue }
-          if (Test-Path 'run_setup.bat') { Copy-Item 'run_setup.bat' 'site/src/run_setup.bat' -Force }
-          if (Test-Path 'run_tests.bat') { Copy-Item 'run_tests.bat' 'site/src/run_tests.bat' -Force -ErrorAction SilentlyContinue }
-          if (Test-Path 'tests\selftests.ps1') { Copy-Item 'tests\selftests.ps1' 'site/src/tests/selftests.ps1' -Force -ErrorAction SilentlyContinue }
-          if (Test-Path 'tests\harness.ps1') { Copy-Item 'tests\harness.ps1' 'site/src/tests/harness.ps1' -Force -ErrorAction SilentlyContinue }
-          if (Test-Path 'tests') { Copy-Item 'tests\selfapps_*.ps1' 'site/src/tests' -Force -ErrorAction SilentlyContinue }
-          Get-ChildItem -LiteralPath . -Force | Where-Object { $_.Name -notin @('.', '..', '.git', 'site') } | ForEach-Object {
-            Copy-Item $_.FullName "site/repo/$($_.Name)" -Recurse -Force -ErrorAction SilentlyContinue
+          $has = (-not $rows)
+          foreach ($r in $rows) {
+            if ($r.pass -eq $false) { $has = $true }
+            if ($r.id -eq 'bootstrap.state' -and $r.details.state -and $r.details.state -notin @('ok','no_python_files')) { $has = $true }
+            if ($r.id -eq 'self.bootstrap.state' -and $r.details.state -and $r.details.state -ne 'ok') { $has = $true }
           }
 
-          $workflowLinks = '  <li>(none)</li>'
-          if (Test-Path 'site/workflows') {
-            $items = Get-ChildItem 'site/workflows' -File -Filter *.yml -ErrorAction SilentlyContinue
-            if ($items) {
-              $workflowLinks = ($items | ForEach-Object { "  <li><a href='workflows/$($_.Name)'>$($_.Name)</a></li>" }) -join "`n"
+          $value = $has.ToString().ToLowerInvariant()
+          "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          @{has_failures=$has; source=@('tests~test-results.ndjson','ci_test_results.ndjson')} |
+            ConvertTo-Json -Compress | Out-File -Encoding UTF8 'iterate_gate.json'
+
+      - name: Append iterate gate to Summary
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $flag = '${{ steps.verdict.outputs.has_failures }}'
+          "### Iterate gate" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "- has_failures: $flag" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          if (Test-Path 'iterate_gate.json') {
+            '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            Get-Content -Raw 'iterate_gate.json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Build public diagnostics tree
+        if: ${{ always() }}
+        id: build_public
+        shell: pwsh
+        run: |
+          $pub = Join-Path $env:RUNNER_TEMP 'public'
+          New-Item -Force -ItemType Directory -Path $pub | Out-Null
+          New-Item -Force -ItemType Directory -Path (Join-Path $pub 'logs') | Out-Null
+          New-Item -Force -ItemType Directory -Path (Join-Path $pub 'sources') | Out-Null
+          New-Item -Force -ItemType Directory -Path (Join-Path $pub 'repo') | Out-Null
+
+          $copy = @(
+            'tests\~test-results.ndjson',
+            'ci_test_results.ndjson',
+            'tests\~entry1\~entry1_bootstrap.log',
+            'tests\~entryA\~entryA_bootstrap.log',
+            'tests\~entryB\~entryB_bootstrap.log',
+            'tests\~envsmoke\~envsmoke_bootstrap.log',
+            'tests\~selftest_empty\~empty_bootstrap.log',
+            'tests\~selftest_stub\~setup.log',
+            'dynamic_tests.log',
+            'tests\~test-summary.txt',
+            'iterate_gate.json'
+          )
+          foreach ($p in $copy) {
+            if (Test-Path -LiteralPath $p) {
+              Copy-Item -LiteralPath $p -Destination (Join-Path $pub 'logs') -Force
             }
           }
 
-          $keyScripts = @('site/src/run_setup.bat','site/src/run_tests.bat','site/src/tests/selftests.ps1','site/src/tests/harness.ps1')
-          $scriptLinks = ($keyScripts | ForEach-Object {
-              if (Test-Path $_) { "  <li><a href='$(($_.Substring(5)))'>$(($_.Substring(5)))</a></li>" }
-              else { "  <li>$(($_.Substring(5))) (missing)</li>" }
-            }) -join "`n"
-
-          $repoFiles = Get-ChildItem 'site/repo' -Recurse -File -ErrorAction SilentlyContinue
-          if ($repoFiles) {
-            $sitePath = (Get-Item 'site').FullName
-            $repoLinks = ($repoFiles | ForEach-Object {
-                $rel = $_.FullName.Substring($sitePath.Length + 1)
-                $rel = $rel -replace '\\','/'
-                "  <li><a href='$rel'>$rel</a></li>"
-              }) -join "`n"
-          } else {
-            $repoLinks = '  <li>(repo snapshot empty)</li>'
+          $srcs = @(
+            '.github\workflows\batch-check.yml',
+            'run_setup.bat',
+            'tests\selftests.ps1',
+            'tests\harness.ps1'
+          )
+          foreach ($s in $srcs) {
+            if (Test-Path -LiteralPath $s) {
+              Copy-Item -LiteralPath $s -Destination (Join-Path $pub 'sources') -Force
+            }
           }
 
-          $enc = [System.Net.WebUtility]::HtmlEncode
-          $sha = '${{ github.sha }}'
-          $run = '${{ github.run_id }}'
-          $repo= '${{ github.repository }}'
+          $repoRoot = Join-Path $pub 'repo'
+          Get-ChildItem -LiteralPath . -Force | Where-Object { $_.Name -notin @('.', '..', '.git', 'site') } | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination (Join-Path $repoRoot $_.Name) -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          $idx = @()
+          $idx += '# CI Diagnostics'
+          $idx += ''
+          $idx += "* Repo: ${{ github.repository }}"
+          $idx += "* Commit: ${{ github.sha }}"
+          $idx += "* Run: ${{ github.run_id }}"
+          $idx += ''
+          $idx += '## Raw NDJSON / logs'
+          $logDir = Join-Path $pub 'logs'
+          $logItems = Get-ChildItem -Name $logDir -ErrorAction SilentlyContinue
+          if ($logItems) {
+            foreach ($name in $logItems) { $idx += "- [logs/$name](logs/$name)" }
+          } else {
+            $idx += '- (no logs captured)'
+          }
+          $idx += ''
+          $idx += '## Sources (what code ran)'
+          $srcDir = Join-Path $pub 'sources'
+          $srcItems = Get-ChildItem -Name $srcDir -ErrorAction SilentlyContinue
+          if ($srcItems) {
+            foreach ($name in $srcItems) { $idx += "- [sources/$name](sources/$name)" }
+          } else {
+            $idx += '- (no sources captured)'
+          }
+          $idx += ''
+          $idx += '## Repository snapshot'
+          $repoDir = Join-Path $pub 'repo'
+          $repoItems = Get-ChildItem -Path $repoDir -Recurse -File -ErrorAction SilentlyContinue
+          if ($repoItems) {
+            foreach ($item in $repoItems) {
+              $rel = $item.FullName.Substring($repoDir.Length + 1) -replace '\\','/'
+              $idx += "- [repo/$rel](repo/$rel)"
+            }
+          } else {
+            $idx += '- (repo snapshot empty)'
+          }
+
+          $idx -join "`n" | Out-File -Encoding UTF8 (Join-Path $pub 'index.md')
 
           $html = @"
           <!doctype html>
           <meta charset="utf-8">
-          <title>CI Diagnostics — run $run</title>
+          <title>CI Diagnostics — run ${{ github.run_id }}</title>
           <style>
             body{font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;margin:24px}
             h1,h2{font-family:ui-sans-serif,system-ui}
             code,pre{white-space:pre-wrap}
             .muted{color:#666}
             a{color:#0366d6}
-            .grid{display:grid;gap:16px}
-            .two{grid-template-columns:1fr 1fr}
           </style>
           <h1>CI Diagnostics</h1>
-          <p class="muted"><b>Repo:</b> $repo<br><b>Commit:</b> $sha<br><b>Run:</b> $run</p>
-
-          <h2>NDJSON</h2><pre>$($enc.Invoke($nd))</pre>
-          <h2>Self-test summary.txt</h2><pre>$($enc.Invoke($sum))</pre>
-          <div class="grid two">
-            <div><h2>Empty bootstrap (tail)</h2><pre>$($enc.Invoke($b0))</pre></div>
-            <div><h2>Single-entry bootstrap (tail)</h2><pre>$($enc.Invoke($b1))</pre></div>
-          </div>
-          <h2>Env smoke bootstrap (tail)</h2><pre>$($enc.Invoke($bS))</pre>
-
-          <h2>Workflows</h2>
-          <ul>
-          $workflowLinks
-          </ul>
-
-          <h2>Key scripts</h2>
-          <ul>
-          $scriptLinks
-          </ul>
-
-          <h2>Repository snapshot</h2>
-          <p>Browse the workspace snapshot below (excludes .git):</p>
-          <ul>
-          $repoLinks
-          </ul>
+          <p class="muted"><b>Repo:</b> ${{ github.repository }}<br><b>Commit:</b> ${{ github.sha }}<br><b>Run:</b> ${{ github.run_id }}</p>
+          <p>See <a href="index.md">index.md</a> for the Markdown listing.</p>
           "@
-          Set-Content -LiteralPath site/index.html -Value $html -Encoding UTF8
+          Set-Content -LiteralPath (Join-Path $pub 'index.html') -Value $html -Encoding UTF8
 
-      - name: Verdict from NDJSON
-        id: verdict
-        if: ${{ always() }}
-        shell: pwsh
-        run: |
-          $path = 'tests\~test-results.ndjson'
-          if (-not (Test-Path -LiteralPath $path)) {
-            'has_failures=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
-            return
-          }
-          $has = $false
-          foreach ($line in Get-Content -LiteralPath $path -Encoding ASCII) {
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            try {
-              $row = $line | ConvertFrom-Json
-            } catch {
-              $has = $true
-              break
-            }
-            if ($row.pass -eq $false) { $has = $true; break }
-            if ($row.id -eq 'bootstrap.state' -and $row.details.state -notin @('ok','no_python_files')) { $has = $true; break }
-          }
-          $value = $has.ToString().ToLowerInvariant()
-          "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          "public_dir=$pub" | Out-File -Append $env:GITHUB_OUTPUT
 
       - name: Upload Pages artifact
         if: ${{ always() }}
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: ${{ steps.build_public.outputs.public_dir }}
 
       - name: Gate on NDJSON results
         if: ${{ always() }}
@@ -990,6 +1004,7 @@ jobs:
           if ($u) {
             "### Diagnostics site`n[$u]($u)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
             $u | Out-File -Encoding UTF8 -FilePath codex_nudge_url.txt
+            if (Test-Path 'codex_nudge.txt') { Add-Content -Path 'codex_nudge.txt' -Value "`nDiagnostics: $u`n" }
           } else {
             "### Diagnostics site (no URL from deploy step)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
