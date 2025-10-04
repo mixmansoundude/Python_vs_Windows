@@ -1,12 +1,47 @@
 # ASCII only
 param()
 $ErrorActionPreference = "Stop"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'
 $OutDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjDir = Split-Path -Parent $OutDir
 $BatchPath = Join-Path $ProjDir "run_setup.bat"
 $ResultsPath = Join-Path $OutDir "~test-results.ndjson"
 $SummaryPath = Join-Path $OutDir "~test-summary.txt"
 $ExtractDir = Join-Path $OutDir "extracted"
+
+function Invoke-Download {
+  param(
+    [string]$Url,
+    [string]$Dest,
+    [int]$Retries = 3
+  )
+  for ($i = 1; $i -le $Retries; $i++) {
+    try {
+      Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -MaximumRedirection 5 -ErrorAction Stop
+      if ((Test-Path $Dest) -and ((Get-Item $Dest).Length -gt 0)) {
+        return $true
+      }
+      throw "Zero-length download: $Url"
+    } catch {
+      Write-Warning ("Download attempt {0} failed: {1}" -f $i, $_.Exception.Message)
+      Start-Sleep -Seconds ([int][Math]::Min(3 * $i, 15))
+    }
+  }
+  return $false
+}
+
+function Test-MinicondaUrl {
+  param([string]$Url)
+  $tmp = Join-Path $env:RUNNER_TEMP "conda_probe.tmp"
+  if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+  $ok = Invoke-Download -Url $Url -Dest $tmp -Retries 3
+  if (-not $ok) {
+    Write-Host ("[ERROR] Miniconda download probe failed for URL: {0}" -f $Url)
+  }
+  if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+  return $ok
+}
 if (Test-Path $ResultsPath) { Remove-Item -Force $ResultsPath }
 if (!(Test-Path $BatchPath)) { Write-Host "run_setup.bat not found next to run_tests.bat." -ForegroundColor Red; exit 2 }
 if (-not (Test-Path ".\.ci_bootstrap_marker")) {

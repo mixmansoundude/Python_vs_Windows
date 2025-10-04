@@ -50,6 +50,8 @@ if not "%HP_CONDA_PROBE_STATUS%"=="ran" (
 )
 
 if "%PYCOUNT%"=="0" (
+  echo No Python files detected; skipping environment bootstrap.
+  >> "%LOG%" echo No Python files detected; skipping environment bootstrap.
   call :log "[INFO] No Python files detected; skipping environment bootstrap."
   call :write_status no_python_files 0 %PYCOUNT%
   goto :success
@@ -72,9 +74,23 @@ if not defined CONDA_BAT (
   set "HP_CONDA_DL_RC=0"
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "try {"
+  "  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12"
+  "  $ProgressPreference = 'SilentlyContinue'"
   "  $uri = [Environment]::GetEnvironmentVariable('HP_MINICONDA_URL');"
   "  if (-not $uri) { throw 'HP_MINICONDA_URL not set' }"
-  "  Invoke-WebRequest -Uri $uri -OutFile $env:TEMP\miniconda.exe -UseBasicParsing"
+  "  $target = Join-Path $env:TEMP 'miniconda.exe'"
+  "  $max = 3"
+  "  for ($i = 1; $i -le $max; $i++) {"
+  "    try {"
+  "      Invoke-WebRequest -Uri $uri -OutFile $target -UseBasicParsing -MaximumRedirection 5"
+  "      if ((Test-Path $target) -and ((Get-Item $target).Length -gt 0)) { break }"
+  "      throw 'Zero-length download'"
+  "    } catch {"
+  "      if ($i -eq $max) { throw }"
+  "      Write-Host ('[WARN] Miniconda download retry {0}: {1}' -f $i, $_.Exception.Message)"
+  "      Start-Sleep -Seconds ([int][Math]::Min(3 * $i, 15))"
+  "    }"
+  "  }"
   "} catch {"
   "  Write-Host ('[WARN] Miniconda download failed: {0}' -f $_.Exception.Message)"
   "  exit 1"
@@ -607,17 +623,22 @@ exit /b 0
 set "HP_DL_PATH=~miniconda.exe"
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12" ^
+  "$ProgressPreference = 'SilentlyContinue'" ^
   "$uri = [Environment]::GetEnvironmentVariable('HP_MINICONDA_URL');" ^
   "if (-not $uri) { Write-Host '[ERROR] HP_MINICONDA_URL not set'; exit 1 }" ^
   "$out = Join-Path (Get-Location) '%HP_DL_PATH%';" ^
   "$max = 3; $ok = $false;" ^
   "for ($i = 1; $i -le $max; $i++) {" ^
   "  try {" ^
-  "    Invoke-WebRequest -Uri $uri -OutFile $out -UseBasicParsing" ^
-  "    $ok = $true; break" ^
+  "    Invoke-WebRequest -Uri $uri -OutFile $out -UseBasicParsing -MaximumRedirection 5" ^
+  "    if ((Test-Path $out) -and ((Get-Item $out).Length -gt 0)) {" ^
+  "      $ok = $true; break" ^
+  "    }" ^
+  "    throw 'Zero-length download'" ^
   "  } catch {" ^
   "    Write-Host ('[WARN] Download attempt {0} failed: {1}' -f $i, $_.Exception.Message)" ^
-  "    Start-Sleep -Seconds (3 * $i)" ^
+  "    Start-Sleep -Seconds ([int][Math]::Min(3 * $i, 15))" ^
   "  }" ^
   "}" ^
   "if (-not $ok) { exit 1 }" >> "%LOG%" 2>&1

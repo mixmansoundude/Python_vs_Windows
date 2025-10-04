@@ -25,6 +25,15 @@ jobs:
           ref: ${{ github.event.workflow_run.head_branch || github.ref }}
           fetch-depth: 0
 
+      - name: Run iterate gate probe
+        id: gate_probe
+        shell: pwsh
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+        run: |
+          ./scripts/gate.ps1
+
       # Preflight: detect the API key (do not echo it)
       - name: Check for OPENAI_API_KEY
         id: apikey
@@ -38,76 +47,33 @@ jobs:
 
       - name: Preflight OpenAI auth
         id: openai_auth
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
-            echo "http_code=000" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "present=true" >> "$GITHUB_OUTPUT"
-          status=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.OPENAI_API_KEY }}" \
-            https://api.openai.com/v1/models || echo 000)
-          echo "http_code=$status" >> "$GITHUB_OUTPUT"
-          if [ "$status" = "200" ]; then
-            echo "auth_ok=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning title=OpenAI auth failed::HTTP $status from /v1/models (will skip Codex iteration)"
-            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
-          fi
+          $path = Join-Path (Get-Location) 'logs/iterate_auth.json'
+          if (-not (Test-Path $path)) { throw 'iterate_auth.json missing from gate probe' }
+          $json = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
+          $present = if ($json.api_key_present) { 'true' } else { 'false' }
+          $auth = if ($json.auth_ok) { 'true' } else { 'false' }
+          $http = if ($json.models_status) { [string]$json.models_status } else { '000' }
+          "present=$present" >> $env:GITHUB_OUTPUT
+          "auth_ok=$auth" >> $env:GITHUB_OUTPUT
+          "http_code=$http" >> $env:GITHUB_OUTPUT
+          if ($auth -ne 'true') {
+            Write-Warning ("OpenAI auth preflight failed with status {0}" -f $json.models_status)
+          }
 
       - name: OpenAI chat ping (proof only)
         id: openai_chat
-        if: steps.openai_auth.outputs.auth_ok == 'true'
-        shell: bash
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        if: steps.openai_auth.outputs.present == 'true'
+        shell: pwsh
         run: |
-          body='{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Reply with PONG"}],"max_tokens":1}'
-          resp=$(mktemp)
-          code=$(curl -s -o "$resp" -w "%{http_code}" \
-            -H "Authorization: Bearer $OPENAI_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "$body" https://api.openai.com/v1/chat/completions || echo 000)
-          echo "http_code=$code" >> "$GITHUB_OUTPUT"
-          chat_flag=false
-          if [ "$code" = "200" ]; then
-            if python -c "import json, sys
-            from pathlib import Path
-            path = Path(sys.argv[1])
-            try:
-                data = json.loads(path.read_text(encoding='utf-8'))
-            except Exception:
-                sys.exit(1)
-            text = ''
-            for choice in data.get('choices', []):
-                message = choice.get('message') or {}
-                content = message.get('content')
-                if isinstance(content, str):
-                    text += content
-            sys.exit(0 if 'PONG' in text.upper() else 1)
-            " "$resp"; then
-              chat_flag=true
-            fi
-          fi
-          if [ "$chat_flag" = true ]; then
-            echo "chat_ok=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "chat_ok=false" >> "$GITHUB_OUTPUT"
-          fi
-          {
-            echo "### Iterate chat ping"
-            echo "- http_code: $code"
-            if [ "$chat_flag" = true ]; then
-              echo "- chat_ok: true"
-            else
-              echo "- chat_ok: false"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-          rm -f "$resp"
+          $path = Join-Path (Get-Location) 'logs/iterate_auth.json'
+          if (-not (Test-Path $path)) { throw 'iterate_auth.json missing from gate probe' }
+          $json = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
+          $chatHttp = if ($json.chat_status) { [string]$json.chat_status } else { '000' }
+          $chatOk = if ($json.chat_ok) { 'true' } else { 'false' }
+          "http_code=$chatHttp" >> $env:GITHUB_OUTPUT
+          "chat_ok=$chatOk" >> $env:GITHUB_OUTPUT
 
       # Keep CRLF stable (harmless even if we no-op)
       - name: Normalize CRLF
@@ -120,9 +86,11 @@ jobs:
         run: |
           {
             echo "### Iterate auth preflight"
-            echo "- api_key_present: ${{ steps.apikey.outputs.present || 'false' }}"
-            echo "- http_code: ${{ steps.openai_auth.outputs.http_code || '000' }}"
+            echo "- api_key_present: ${{ steps.openai_auth.outputs.present || 'false' }}"
+            echo "- models_http: ${{ steps.openai_auth.outputs.http_code || '000' }}"
             echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok || 'false' }}"
+            echo "- chat_http: ${{ steps.openai_chat.outputs.http_code || '000' }}"
+            echo "- chat_ok: ${{ steps.openai_chat.outputs.chat_ok || 'false' }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Skip Codex iteration (auth failure)
@@ -144,6 +112,15 @@ jobs:
             echo ""
             echo "Skipped because chat ping failed (see Iterate chat ping summary for HTTP status and proof)."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload iterate auth JSON
+        if: ${{ always() && steps.openai_auth.outputs.present == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iterate-auth-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: logs/iterate_auth.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       # Try to pull the failure hint artifact produced by the Windows job.
       # Note: For PR-triggered failures, there may be NO artifact (that job posts a PR comment instead).
@@ -416,6 +393,8 @@ jobs:
             echo "- api_key_present: ${{ steps.apikey.outputs.present || 'false' }}"
             echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok || 'false' }}"
             echo "- chat_ok: ${{ steps.openai_chat.outputs.chat_ok || 'false' }}"
+            echo "- models_http: ${{ steps.openai_auth.outputs.http_code || '000' }}"
+            echo "- chat_http: ${{ steps.openai_chat.outputs.http_code || '000' }}"
             echo "- has_failures: ${{ steps.verdict.outputs.has_failures || 'n/a' }}"
             echo "- event: ${{ github.event_name }}"
             if [ "${{ github.event_name }}" = "workflow_run" ]; then
