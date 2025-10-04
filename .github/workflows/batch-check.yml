@@ -17,7 +17,7 @@ permissions:
   issues: write
 
 jobs:
-  check:
+  selftest:
     name: Batch syntax/run check (${{ matrix.mode }})
     strategy:
       matrix:
@@ -685,9 +685,38 @@ jobs:
         run: |
           $pub = Join-Path $env:RUNNER_TEMP 'public'
           New-Item -Force -ItemType Directory -Path $pub | Out-Null
-          New-Item -Force -ItemType Directory -Path (Join-Path $pub 'logs') | Out-Null
-          New-Item -Force -ItemType Directory -Path (Join-Path $pub 'sources') | Out-Null
-          New-Item -Force -ItemType Directory -Path (Join-Path $pub 'repo') | Out-Null
+          $logsDir = Join-Path $pub 'logs'
+          $srcDirPath = Join-Path $pub 'sources'
+          $repoDir = Join-Path $pub 'repo'
+          New-Item -Force -ItemType Directory -Path $logsDir | Out-Null
+          New-Item -Force -ItemType Directory -Path $srcDirPath | Out-Null
+          New-Item -Force -ItemType Directory -Path $repoDir | Out-Null
+
+          $cwd = Get-Location
+          Write-Host ("Diagnostics builder CWD: {0}" -f $cwd.Path)
+
+          $ndjsonCandidates = @('tests\~test-results.ndjson','ci_test_results.ndjson')
+          foreach ($cand in $ndjsonCandidates) {
+            if (Test-Path -LiteralPath $cand) {
+              Resolve-Path -LiteralPath $cand | ForEach-Object { Write-Host ("Found NDJSON candidate {0}: {1}" -f $cand, $_) }
+            } else {
+              Write-Host ("Missing NDJSON candidate {0}" -f $cand)
+            }
+          }
+
+          $summaryCandidate = 'tests\~test-summary.txt'
+          if (Test-Path -LiteralPath $summaryCandidate) {
+            Resolve-Path -LiteralPath $summaryCandidate | ForEach-Object { Write-Host ("Found summary file: {0}" -f $_) }
+          } else {
+            Write-Host ("Missing summary file {0}" -f $summaryCandidate)
+          }
+
+          $bootstrapGlob = Get-ChildItem -Path . -Recurse -Include *~*bootstrap.log -File -ErrorAction SilentlyContinue
+          if ($bootstrapGlob) {
+            foreach ($item in $bootstrapGlob) { Write-Host ("Bootstrap log candidate: {0}" -f $item.FullName) }
+          } else {
+            Write-Host 'No ~*_bootstrap.log files found'
+          }
 
           $wantLogs = @(
             'tests\~test-results.ndjson',
@@ -707,17 +736,28 @@ jobs:
           )
           foreach ($p in $wantLogs) {
             if (Test-Path -LiteralPath $p) {
-              Copy-Item -LiteralPath $p -Destination (Join-Path $pub 'logs') -Force
+              Copy-Item -LiteralPath $p -Destination $logsDir -Force
             }
           }
 
-          $iterAuthPath = Join-Path $pub 'logs/iterate_auth.json'
+          $iterAuthPath = Join-Path $logsDir 'iterate_auth.json'
           $iterPresent = '${{ steps.openai_auth.outputs.present }}'
           if (-not $iterPresent) { $iterPresent = 'false' }
           $iterAuthOk = '${{ steps.openai_auth.outputs.auth_ok }}'
           if (-not $iterAuthOk) { $iterAuthOk = 'false' }
           @{ api_key_present = $iterPresent; auth_ok = $iterAuthOk } |
             ConvertTo-Json -Compress | Out-File -Encoding UTF8 $iterAuthPath
+
+          $existingNd = @()
+          foreach ($cand in $ndjsonCandidates) {
+            if (Test-Path -LiteralPath $cand) {
+              $existingNd += (Resolve-Path -LiteralPath $cand).Path
+            }
+          }
+          if (-not $existingNd) {
+            $note = @{ cwd = $cwd.Path; tried = $ndjsonCandidates; found = @() } | ConvertTo-Json -Compress
+            $note | Out-File -Encoding UTF8 (Join-Path $logsDir 'ndjson_missing.json')
+          }
 
           $wantSrc = @(
             '.github\workflows\batch-check.yml',
@@ -727,13 +767,45 @@ jobs:
           )
           foreach ($s in $wantSrc) {
             if (Test-Path -LiteralPath $s) {
-              Copy-Item -LiteralPath $s -Destination (Join-Path $pub 'sources') -Force
+              Copy-Item -LiteralPath $s -Destination $srcDirPath -Force
             }
           }
 
-          $repoRoot = Join-Path $pub 'repo'
           Get-ChildItem -LiteralPath . -Force | Where-Object { $_.Name -notin @('.', '..', '.git', 'site') } | ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination (Join-Path $repoRoot $_.Name) -Recurse -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path $_.FullName -Destination (Join-Path $repoDir $_.Name) -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          $firstFail = $null
+          $firstSource = $null
+          foreach ($cand in $ndjsonCandidates) {
+            if (-not (Test-Path -LiteralPath $cand)) { continue }
+            foreach ($line in Get-Content -LiteralPath $cand -Encoding UTF8) {
+              $trim = $line.Trim()
+              if (-not $trim) { continue }
+              try {
+                $row = $trim | ConvertFrom-Json
+              } catch {
+                continue
+              }
+              if ($row.pass -eq $false) {
+                $firstFail = $row
+                $firstSource = $cand
+                break
+              }
+            }
+            if ($firstFail) { break }
+          }
+
+          if ($firstFail) {
+            $firstJson = $firstFail | ConvertTo-Json -Compress
+            '### NDJSON first failure' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            ("- source: {0}" -f $firstSource) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            $firstJson | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          } else {
+            '### NDJSON first failure' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '- source: (none found)' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
 
           try { $ct = [TimeZoneInfo]::FindSystemTimeZoneById('Central Standard Time') } catch { $ct = $null }
@@ -752,9 +824,21 @@ jobs:
           )
 
           $idx = @()
+          if ($firstFail) {
+            $idx += '## NDJSON first failure'
+            $idx += ("* Source: {0}" -f $firstSource)
+            $idx += ('```json')
+            $idx += ($firstFail | ConvertTo-Json -Compress)
+            $idx += ('```')
+            $idx += ''
+          } else {
+            $idx += '## NDJSON first failure'
+            $idx += '* None (all rows pass or NDJSON missing)'
+            $idx += ''
+          }
+
           $idx += '## Raw NDJSON / logs'
-          $logDir = Join-Path $pub 'logs'
-          $logItems = Get-ChildItem -Name $logDir -ErrorAction SilentlyContinue
+          $logItems = Get-ChildItem -Name $logsDir -ErrorAction SilentlyContinue
           if ($logItems) {
             foreach ($name in $logItems) { $idx += "- [logs/$name](logs/$name)" }
           } else {
@@ -762,8 +846,7 @@ jobs:
           }
           $idx += ''
           $idx += '## Sources (what code ran)'
-          $srcDir = Join-Path $pub 'sources'
-          $srcItems = Get-ChildItem -Name $srcDir -ErrorAction SilentlyContinue
+          $srcItems = Get-ChildItem -Name $srcDirPath -ErrorAction SilentlyContinue
           if ($srcItems) {
             foreach ($name in $srcItems) { $idx += "- [sources/$name](sources/$name)" }
           } else {
@@ -771,7 +854,6 @@ jobs:
           }
           $idx += ''
           $idx += '## Repository snapshot'
-          $repoDir = Join-Path $pub 'repo'
           $repoItems = Get-ChildItem -Path $repoDir -Recurse -File -ErrorAction SilentlyContinue
           if ($repoItems) {
             foreach ($item in $repoItems) {
@@ -994,11 +1076,149 @@ jobs:
               body
             });
 
+  iterate:
+    name: Codex – Iterate (same workflow)
+    needs: [selftest]
+    if: ${{ always() }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: API key present?
+        id: apikey
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.OPENAI_API_KEY }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Guard
+        id: guard
+        shell: bash
+        run: |
+          echo "stop=false" >> "$GITHUB_OUTPUT"
+
+      - name: OpenAI auth preflight
+        id: openai_auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="${OPENAI_API_BASE:-https://api.openai.com/v1}"
+          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "present=true" >> "$GITHUB_OUTPUT"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.OPENAI_API_KEY }}" \
+            "${BASE%/}/models" || echo 000)
+          if [ "$STATUS" = "200" ]; then
+            echo "auth_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=OpenAI auth failed::HTTP $STATUS from /v1/models"
+            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "models_status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Iterate gate debug
+        if: ${{ always() }}
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          echo "has_failures=${{ needs.selftest.outputs.has_failures }}"
+          echo "apikey_present=${{ steps.apikey.outputs.present }}"
+          echo "auth_ok=${{ steps.openai_auth.outputs.auth_ok }}"
+          echo "guard_stop=${{ steps.guard.outputs.stop }}"
+          echo "event=${{ github.event_name }} ref=${{ github.ref }}"
+          echo "needs.json=$NEEDS_JSON"
+
+      - name: Append gate report to Summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo '### Iterate gate report'
+            echo "- has_failures: ${{ needs.selftest.outputs.has_failures }}"
+            echo "- api_key_present: ${{ steps.apikey.outputs.present }}"
+            echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok }}"
+            echo "- guard_stop: ${{ steps.guard.outputs.stop }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build Codex prompt
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROMPT_PATH="$RUNNER_TEMP/prompt.txt"
+          cat <<'EOF' > "$PROMPT_PATH"
+          Analyze the latest Windows CI failure. Use NDJSON diagnostics and logs already published in this run.
+          Apply the smallest safe change set that makes self-tests pass without weakening gates.
+          EOF
+          echo "PROMPT=$PROMPT_PATH" >> "$GITHUB_ENV"
+
+      - name: Run Codex headlessly
+        if: needs.selftest.outputs.has_failures == 'true' &&
+            steps.apikey.outputs.present == 'true' &&
+            steps.openai_auth.outputs.auth_ok == 'true' &&
+            steps.guard.outputs.stop == 'false'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        shell: bash
+        run: |
+          set -o pipefail
+          codex -a never --sandbox workspace-write exec --model gpt-4o-mini "$(cat "$PROMPT")" 2>&1 | tee "$RUNNER_TEMP/codex_exec.log" || true
+
+      - name: Publish iterate gate to Diagnostics
+        if: ${{ always() }}
+        id: publish_iterate
+        shell: pwsh
+        run: |
+          $pub = Join-Path $env:RUNNER_TEMP 'public_iterate'
+          New-Item -Force -ItemType Directory -Path $pub | Out-Null
+          $logs = Join-Path $pub 'logs'
+          New-Item -Force -ItemType Directory -Path $logs | Out-Null
+          $gate = @{
+            has_failures = '${{ needs.selftest.outputs.has_failures }}'
+            api_key_present = '${{ steps.apikey.outputs.present }}'
+            auth_ok = '${{ steps.openai_auth.outputs.auth_ok }}'
+            guard_stop = '${{ steps.guard.outputs.stop }}'
+            event = '${{ github.event_name }}'
+            ref = '${{ github.ref }}'
+          } | ConvertTo-Json -Compress
+          $gate | Out-File -Encoding UTF8 (Join-Path $logs 'iterate_gate_debug.json')
+          if (Test-Path "$env:RUNNER_TEMP/codex_exec.log") {
+            Copy-Item "$env:RUNNER_TEMP/codex_exec.log" -Destination (Join-Path $logs 'codex_exec.log') -Force
+          }
+          "publish_dir=$pub" | Out-File -Append $env:GITHUB_OUTPUT
+
+      - name: Upload iterate diag artifact
+        if: ${{ always() }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.publish_iterate.outputs.publish_dir }}
+
+      - name: Deploy iterate debug to Pages
+        if: ${{ always() }}
+        id: iter_deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Add iterate URL to Summary
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $u='${{ steps.iter_deploy.outputs.page_url }}'
+          if ($u) { "### Iterate debug`n[$u]($u)" | Out-File -Append $env:GITHUB_STEP_SUMMARY }
+
   emit-nudge:
     name: Emit Codex nudge (on failure)
-    needs: [check, deploy-pages]
+    needs: [selftest, deploy-pages]
     runs-on: windows-latest
-    if: ${{ always() && needs.check.outputs.has_failures == 'true' }}
+    if: ${{ always() && needs.selftest.outputs.has_failures == 'true' }}
     steps:
       - name: Download diagnostics URL (optional)
         uses: actions/download-artifact@v4
@@ -1039,7 +1259,7 @@ jobs:
 
   deploy-pages:
     if: ${{ always() && github.event_name != 'pull_request' }}
-    needs: [check]
+    needs: [selftest]
     permissions:
       pages: write
       id-token: write
