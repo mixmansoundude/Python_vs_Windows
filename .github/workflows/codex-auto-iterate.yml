@@ -287,8 +287,9 @@ jobs:
         if: steps.apikey.outputs.present != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: codex-skip-reason
+          name: codex-skip-reason-${{ github.run_id }}-${{ github.run_attempt }}
           path: codex_skip_reason.txt
+          if-no-files-found: ignore
           retention-days: 7
 
       # Only proceed with Codex path when the key exists
@@ -345,6 +346,8 @@ jobs:
             if [ "${{ github.event_name }}" = "workflow_run" ]; then
               echo "- triggering_run: https://github.com/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
             fi
+            echo "- logs_downloaded: $([ -d runlogs ] && echo true || echo false)"
+            echo "- artifacts_downloaded: $([ -d artifacts ] && echo true || echo false)"
             if [ -f "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt" ]; then
               echo "- diagnostics_url: $(cat "$RUNNER_TEMP/codex_nudge_url.txt/codex_nudge_url.txt")"
             fi
@@ -391,6 +394,7 @@ jobs:
 
       - name: Run Codex headlessly (gpt-4o-mini, write-enabled)
         if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.verdict.outputs.has_failures == 'true' && steps.guard.outputs.stop == 'false'
+        id: codex_exec
         timeout-minutes: 10
         continue-on-error: true
         env:
@@ -400,11 +404,12 @@ jobs:
           codex -a never --sandbox workspace-write exec --model gpt-4o-mini "$(cat "$PROMPT")" 2>&1 | tee "$RUNNER_TEMP/codex_exec.log" || true
 
       - name: Upload Codex exec log
-        if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
+        if: ${{ always() && steps.codex_exec.outcome != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: codex-exec-log
+          name: codex_exec-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/codex_exec.log
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Summarize Codex outcome

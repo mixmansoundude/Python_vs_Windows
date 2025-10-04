@@ -22,6 +22,7 @@ jobs:
     strategy:
       matrix:
         mode: [cache, real]
+      fail-fast: false
     runs-on: windows-latest
 
     outputs:
@@ -161,16 +162,18 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ci_test_summary.txt
+          name: ci_test_summary-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: tests/~test-summary.txt
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Upload CI NDJSON (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ci_test_results.ndjson
+          name: ci_test_results-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: tests/~test-results.ndjson
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Run dynamic tests (if present)
@@ -373,7 +376,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs
+          name: test-logs-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             bootstrap.log
             ~setup.log
@@ -393,7 +396,7 @@ jobs:
             tests/~test-summary.txt
             tests/~test-results.ndjson
             tests/extracted/**
-          if-no-files-found: warn
+          if-no-files-found: ignore
           retention-days: 14
 
       - name: Summarize bootstrap result
