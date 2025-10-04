@@ -144,7 +144,14 @@ for ($i=0; $i -lt $Lines.Count; $i++) {
 }
 Write-Result "conda.channels" "All conda create/install use --override-channels -c conda-forge" ($badConda.Count -eq 0) @{ misses=$badConda }
 $expectedPipreqs = @('pipreqs', '.', '--force', '--mode', 'compat', '--savepath', 'requirements.auto.txt')
-$pipreqsLine = $Lines | Where-Object { $_ -match '\-m\s+pipreqs\b' } | Select-Object -First 1
+# Prefer the actual Python -m invocation; fall back to logged command text when
+# the run only records the pipreqs CLI (e.g., bootstrap log summaries).
+$pipreqsLine = $Lines | Where-Object { $_ -match '\-m\s+pipreqs\b' -and $_ -match '--savepath' } | Select-Object -First 1
+$pipreqsSource = 'script'
+if (-not $pipreqsLine) {
+  $pipreqsLine = $Lines | Where-Object { $_ -match 'pipreqs\s+\.\s+--force\s+--mode\s+compat\s+--savepath' } | Select-Object -First 1
+  if ($pipreqsLine) { $pipreqsSource = 'log' } else { $pipreqsSource = 'missing' }
+}
 $observedTokens = @()
 if ($pipreqsLine) {
   $tail = $pipreqsLine.Substring($pipreqsLine.IndexOf('pipreqs'))
@@ -178,6 +185,8 @@ $details = [ordered]@{
   observed = $normalized
   rawTokens = $observedTokens
   line = if ($pipreqsLine) { $pipreqsLine.Trim() } else { '<pipreqs invocation not found>' }
+  source = $pipreqsSource
+  hasModulePrefix = ($pipreqsLine -match '\-m\s+pipreqs\b')
   hasIgnore = ($normalized -contains '--ignore')
   extraArgs = if ($normalized.Count -gt $expectedPipreqs.Count) { $normalized[$expectedPipreqs.Count..($normalized.Count-1)] } else { @() }
   message = "expected: $expectedCommand | observed: $observedCommand"
