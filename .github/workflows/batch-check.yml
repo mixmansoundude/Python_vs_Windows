@@ -693,30 +693,50 @@ jobs:
           New-Item -Force -ItemType Directory -Path $repoDir | Out-Null
 
           $cwd = Get-Location
-          Write-Host ("Diagnostics builder CWD: {0}" -f $cwd.Path)
+          Write-Host ("DIAG CWD: {0}" -f $cwd.Path)
+          $rootPath = $null
+          try {
+            $rootPath = (Resolve-Path -LiteralPath .).Path
+            Write-Host ("DIAG ROOT: {0}" -f $rootPath)
+          } catch {}
 
-          $ndjsonCandidates = @('tests\~test-results.ndjson','ci_test_results.ndjson')
-          foreach ($cand in $ndjsonCandidates) {
-            if (Test-Path -LiteralPath $cand) {
-              Resolve-Path -LiteralPath $cand | ForEach-Object { Write-Host ("Found NDJSON candidate {0}: {1}" -f $cand, $_) }
+          try {
+            $treeBase = if ($rootPath) { $rootPath } else { $cwd.Path }
+            $tree = Get-ChildItem -Path $treeBase -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 200
+            if ($tree) {
+              Write-Host 'DIAG TREE (first 200 within depth 2):'
+              foreach ($item in $tree) { Write-Host ("  {0}" -f $item.FullName) }
             } else {
-              Write-Host ("Missing NDJSON candidate {0}" -f $cand)
+              Write-Host 'DIAG TREE: no entries found within depth 2.'
+            }
+          } catch {
+            Write-Host ("DIAG TREE: failed to enumerate - {0}" -f $_.Exception.Message)
+          }
+
+          $targets = @(
+            @{ Label = 'tests~test-results.ndjson'; Pattern = 'tests\~test-results.ndjson'; Literal = $true },
+            @{ Label = 'ci_test_results.ndjson'; Pattern = 'ci_test_results.ndjson'; Literal = $true },
+            @{ Label = 'tests~test-summary.txt'; Pattern = 'tests\~test-summary.txt'; Literal = $true },
+            @{ Label = '*~*_bootstrap.log'; Pattern = '*~*bootstrap.log'; Literal = $false }
+          )
+          foreach ($target in $targets) {
+            if ($target.Literal) {
+              if (Test-Path -LiteralPath $target.Pattern) {
+                Resolve-Path -LiteralPath $target.Pattern | ForEach-Object { Write-Host ("FOUND {0} -> {1}" -f $target.Label, $_) }
+              } else {
+                Write-Host ("MISSING {0}" -f $target.Pattern)
+              }
+            } else {
+              $matches = Get-ChildItem -Path . -Recurse -Include $target.Pattern -File -ErrorAction SilentlyContinue
+              if ($matches) {
+                foreach ($m in $matches) { Write-Host ("FOUND {0} -> {1}" -f $target.Label, $m.FullName) }
+              } else {
+                Write-Host ("MISSING {0}" -f $target.Pattern)
+              }
             }
           }
 
-          $summaryCandidate = 'tests\~test-summary.txt'
-          if (Test-Path -LiteralPath $summaryCandidate) {
-            Resolve-Path -LiteralPath $summaryCandidate | ForEach-Object { Write-Host ("Found summary file: {0}" -f $_) }
-          } else {
-            Write-Host ("Missing summary file {0}" -f $summaryCandidate)
-          }
-
-          $bootstrapGlob = Get-ChildItem -Path . -Recurse -Include *~*bootstrap.log -File -ErrorAction SilentlyContinue
-          if ($bootstrapGlob) {
-            foreach ($item in $bootstrapGlob) { Write-Host ("Bootstrap log candidate: {0}" -f $item.FullName) }
-          } else {
-            Write-Host 'No ~*_bootstrap.log files found'
-          }
+          $ndjsonCandidates = @('tests\~test-results.ndjson','ci_test_results.ndjson')
 
           $wantLogs = @(
             'tests\~test-results.ndjson',
@@ -1082,6 +1102,10 @@ jobs:
     if: ${{ always() }}
     permissions:
       contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -1144,10 +1168,12 @@ jobs:
         run: |
           {
             echo '### Iterate gate report'
-            echo "- has_failures: ${{ needs.selftest.outputs.has_failures }}"
-            echo "- api_key_present: ${{ steps.apikey.outputs.present }}"
-            echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok }}"
-            echo "- guard_stop: ${{ steps.guard.outputs.stop }}"
+            echo "- has_failures: ${{ needs.selftest.outputs.has_failures || 'n/a' }}"
+            echo "- api_key_present: ${{ steps.apikey.outputs.present || 'false' }}"
+            echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok || 'false' }}"
+            echo "- guard_stop: ${{ steps.guard.outputs.stop || 'false' }}"
+            echo "- event: ${{ github.event_name }}"
+            echo "- ref: ${{ github.ref }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build Codex prompt
@@ -1183,10 +1209,10 @@ jobs:
           $logs = Join-Path $pub 'logs'
           New-Item -Force -ItemType Directory -Path $logs | Out-Null
           $gate = @{
-            has_failures = '${{ needs.selftest.outputs.has_failures }}'
-            api_key_present = '${{ steps.apikey.outputs.present }}'
-            auth_ok = '${{ steps.openai_auth.outputs.auth_ok }}'
-            guard_stop = '${{ steps.guard.outputs.stop }}'
+            has_failures = '${{ needs.selftest.outputs.has_failures || '' }}'
+            api_key_present = '${{ steps.apikey.outputs.present || '' }}'
+            auth_ok = '${{ steps.openai_auth.outputs.auth_ok || '' }}'
+            guard_stop = '${{ steps.guard.outputs.stop || '' }}'
             event = '${{ github.event_name }}'
             ref = '${{ github.ref }}'
           } | ConvertTo-Json -Compress
@@ -1203,7 +1229,7 @@ jobs:
           path: ${{ steps.publish_iterate.outputs.publish_dir }}
 
       - name: Deploy iterate debug to Pages
-        if: ${{ always() }}
+        if: ${{ always() && github.event_name != 'pull_request' }}
         id: iter_deploy
         uses: actions/deploy-pages@v4
 

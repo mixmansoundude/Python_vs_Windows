@@ -213,6 +213,19 @@ jobs:
           echo "event=${{ github.event_name }} ref=${{ github.ref }}"
           echo "needs.json=$NEEDS_JSON"
 
+      - name: Append gate report to Summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo '### Iterate gate report'
+            echo "- has_failures: ${{ steps.verdict.outputs.has_failures || 'n/a' }}"
+            echo "- api_key_present: ${{ steps.apikey.outputs.present || 'false' }}"
+            echo "- auth_ok: ${{ steps.openai_auth.outputs.auth_ok || 'false' }}"
+            echo "- guard_stop: ${{ steps.guard.outputs.stop || 'false' }}"
+            echo "- event: ${{ github.event_name }}"
+            echo "- ref: ${{ github.ref }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build prompt for Codex
         if: steps.apikey.outputs.present == 'true' && steps.openai_auth.outputs.auth_ok == 'true' && steps.guard.outputs.stop == 'false' && steps.verdict.outputs.has_failures == 'true'
         run: |
