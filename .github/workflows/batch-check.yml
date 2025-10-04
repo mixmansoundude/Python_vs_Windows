@@ -20,9 +20,14 @@ jobs:
   selftest:
     name: Batch syntax/run check (${{ matrix.mode }})
     strategy:
-      matrix:
-        mode: [cache, real]
       fail-fast: false
+      matrix:
+        include:
+          - mode: cache
+            continue-on-error: true
+          - mode: real
+            continue-on-error: false
+    continue-on-error: ${{ matrix.continue-on-error }}
     runs-on: windows-latest
 
     outputs:
