@@ -1230,20 +1230,72 @@ jobs:
           $has = $false
           $lanes = @()
 
+          function Convert-ToBooleanOrNull {
+            param(
+              [Parameter(Mandatory = $false)]
+              $Value
+            )
+
+            if ($null -eq $Value) { return $null }
+            if ($Value -is [bool]) { return $Value }
+            if ($Value -is [string]) {
+              $text = $Value.Trim().ToLowerInvariant()
+              switch ($text) {
+                'true' { return $true }
+                't' { return $true }
+                'yes' { return $true }
+                'y' { return $true }
+                '1' { return $true }
+                'false' { return $false }
+                'f' { return $false }
+                'no' { return $false }
+                'n' { return $false }
+                '0' { return $false }
+              }
+              return $null
+            }
+            if ($Value -is [int] -or $Value -is [long]) {
+              if ($Value -eq 0) { return $false }
+              if ($Value -eq 1) { return $true }
+            }
+            return $null
+          }
+
           foreach ($file in $files) {
             try {
               $content = Get-Content -Raw -LiteralPath $file.FullName
-              if (-not $content) { continue }
-              $data = $content | ConvertFrom-Json
-              if ($null -ne $data) {
-                $lanes += $data
-                if ($data.has_failures) { $has = $true }
+              if ([string]::IsNullOrWhiteSpace($content)) { continue }
+              $data = $content | ConvertFrom-Json -Depth 16
+              if ($null -eq $data) { continue }
+
+              $records = if ($data -is [array]) { $data } else { @($data) }
+              foreach ($record in $records) {
+                if ($null -eq $record) { continue }
+
+                $value = $null
+                if ($record.PSObject.Properties.Name -contains 'has_failures') {
+                  $value = Convert-ToBooleanOrNull -Value $record.has_failures
+                }
+
+                if ($record.PSObject.Properties.Name -notcontains 'source_file') {
+                  $record | Add-Member -NotePropertyName source_file -NotePropertyValue $file.FullName -Force
+                }
+
+                if ($null -eq $value) {
+                  $has = $true
+                  $record | Add-Member -NotePropertyName parse_warning -NotePropertyValue 'has_failures missing or unparseable' -Force
+                } elseif ($value) {
+                  $has = $true
+                }
+
+                $lanes += $record
               }
             } catch {
               $has = $true
               $lanes += [ordered]@{
                 lane = $file.BaseName
                 error = $_.Exception.Message
+                source_file = $file.FullName
               }
             }
           }
