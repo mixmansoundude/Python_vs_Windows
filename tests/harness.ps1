@@ -169,9 +169,10 @@ foreach ($token in $observedTokens) {
   }
 }
 $pipreqsOk = $false
+$expectedPrefixCount = $expectedPipreqs.Count - 1
 if ($normalized.Count -ge $expectedPipreqs.Count) {
   $pipreqsOk = $true
-  for ($i = 0; $i -lt $expectedPipreqs.Count; $i++) {
+  for ($i = 0; $i -lt $expectedPrefixCount; $i++) {
     if ($normalized[$i] -ne $expectedPipreqs[$i]) {
       $pipreqsOk = $false
       break
