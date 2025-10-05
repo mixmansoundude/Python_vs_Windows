@@ -101,7 +101,7 @@ function Check-HelperInvokeFailure {
     if (-not $LogText) { $LogText = Get-Content -LiteralPath $LogPath -Raw -Encoding Ascii }
 
     $patterns = @(
-        @{ Pattern = "'python\" \"~find_entry\.py' is not recognized as an internal or external command"; RequireFindEntry = $false },
+        @{ Pattern = '''python" "~find_entry\.py'' is not recognized as an internal or external command'; RequireFindEntry = $false },
         @{ Pattern = 'SyntaxError:'; RequireFindEntry = $true }
     )
 
