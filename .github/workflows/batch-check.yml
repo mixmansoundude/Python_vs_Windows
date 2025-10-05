@@ -631,6 +631,33 @@ jobs:
             '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
 
+      - name: Persist iterate gate verdict
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $flag = '${{ steps.verdict.outputs.has_failures }}'
+          if (-not $flag) { $flag = 'false' }
+          $has = $false
+          if ($flag -eq 'true') { $has = $true }
+          $record = [ordered]@{
+            lane = '${{ matrix.mode }}'
+            has_failures = $has
+            raw = $flag
+            run_id = $env:GITHUB_RUN_ID
+            run_attempt = $env:GITHUB_RUN_ATTEMPT
+            sources = @('tests~test-results.ndjson','ci_test_results.ndjson')
+          }
+          $record | ConvertTo-Json -Compress | Out-File -FilePath lane_verdict.json -Encoding ascii
+
+      - name: Upload iterate gate verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-verdict-${{ matrix.mode }}
+          path: lane_verdict.json
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Preflight OpenAI auth (diagnostics)
         id: openai_auth
         if: ${{ always() }}
@@ -1173,11 +1200,88 @@ jobs:
               body
             });
 
+  selftest-gate:
+    name: Aggregate self-test verdicts
+    needs: [selftest]
+    if: ${{ always() }}
+    runs-on: windows-latest
+    outputs:
+      has_failures: ${{ steps.aggregate.outputs.has_failures }}
+    steps:
+      - name: Download lane verdicts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: selftest-verdict-*
+          path: ${{ runner.temp }}/selftest-verdicts
+          merge-multiple: true
+
+      - name: Aggregate verdicts
+        id: aggregate
+        shell: pwsh
+        run: |
+          $fallback = '${{ needs.selftest.result }}'
+          $dir = Join-Path $env:RUNNER_TEMP 'selftest-verdicts'
+          $files = @()
+          if (Test-Path $dir) {
+            $files = Get-ChildItem -Path $dir -Filter '*.json' -File -Recurse -ErrorAction SilentlyContinue
+          }
+
+          $has = $false
+          $lanes = @()
+
+          foreach ($file in $files) {
+            try {
+              $content = Get-Content -Raw -LiteralPath $file.FullName
+              if (-not $content) { continue }
+              $data = $content | ConvertFrom-Json
+              if ($null -ne $data) {
+                $lanes += $data
+                if ($data.has_failures) { $has = $true }
+              }
+            } catch {
+              $has = $true
+              $lanes += [ordered]@{
+                lane = $file.BaseName
+                error = $_.Exception.Message
+              }
+            }
+          }
+
+          if (-not $files -and $fallback -and $fallback -ne 'success') {
+            $has = $true
+          }
+
+          $value = if ($has) { 'true' } else { 'false' }
+          "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
+          $report = [ordered]@{
+            fallback_result = $fallback
+            has_failures = $has
+            lanes = @($lanes)
+            verdict_files = if ($files) { $files.FullName } else { @() }
+          }
+          $report | ConvertTo-Json -Depth 6 | Out-File -FilePath (Join-Path $env:RUNNER_TEMP 'selftest-gate.json') -Encoding utf8
+
+      - name: Append gate summary
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'selftest-gate.json'
+          "### Self-test gate" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          if (Test-Path $path) {
+            '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            Get-Content -Raw $path | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          } else {
+            '- No gate summary generated.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+
   emit-nudge:
     name: Emit Codex nudge (on failure)
-    needs: [selftest]
+    needs: [selftest-gate]
     runs-on: windows-latest
-    if: ${{ always() && needs.selftest.outputs.has_failures == 'true' }}
+    if: ${{ always() && needs.selftest-gate.outputs.has_failures == 'true' }}
     steps:
       - name: Download diagnostics URL (optional)
         uses: actions/download-artifact@v4
