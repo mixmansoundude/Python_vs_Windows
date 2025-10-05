@@ -323,6 +323,8 @@ jobs:
       - name: Prepare attempt counter
         id: attempts
         shell: bash
+        env:
+          HAS_FAILURES: ${{ steps.verdict.outputs.has_failures }}
         run: |
           set -euo pipefail
           attempts=0
@@ -331,14 +333,31 @@ jobs:
           fi
           echo "previous=$attempts" >> "$GITHUB_OUTPUT"
           should_iterate=true
+          stop_reason=""
+          fail_flag="${HAS_FAILURES:-}"
+          if [ "$fail_flag" != "true" ]; then
+            should_iterate=false
+            stop_reason="no failing diagnostics"
+          fi
           if [ "${{ github.event_name }}" != "workflow_run" ]; then
             should_iterate=false
+            stop_reason="manual run"
+          fi
+          if [ "${{ steps.auth.outputs.chat_ok }}" != "true" ]; then
+            should_iterate=false
+            stop_reason="chat ping failed"
+          fi
+          if [ "${{ steps.auth.outputs.auth_ok }}" != "true" ]; then
+            should_iterate=false
+            stop_reason="OpenAI auth failed"
+          fi
+          if [ "${{ steps.auth.outputs.present }}" != "true" ]; then
+            should_iterate=false
+            stop_reason="OPENAI_API_KEY missing"
           fi
           if [ "${{ steps.context.outputs.is_bot }}" = "true" ]; then
             should_iterate=false
-          fi
-          if [ "${{ steps.auth.outputs.present }}" != "true" ] || [ "${{ steps.auth.outputs.auth_ok }}" != "true" ] || [ "${{ steps.auth.outputs.chat_ok }}" != "true" ]; then
-            should_iterate=false
+            stop_reason="actor is a bot"
           fi
           if [ "$should_iterate" = "true" ]; then
             next=$((attempts + 1))
@@ -347,16 +366,19 @@ jobs:
           fi
           if [ "$next" -gt 20 ]; then
             should_iterate=false
+            next=$attempts
+            stop_reason="Max attempts reached"
           fi
           echo "next=$next" >> "$GITHUB_OUTPUT"
           echo "should_iterate=$should_iterate" >> "$GITHUB_OUTPUT"
-          if [ "$next" -gt 20 ]; then
-            echo "stop_reason=Max attempts reached" >> "$GITHUB_OUTPUT"
+          if [ -n "$stop_reason" ]; then
+            echo "stop_reason=$stop_reason" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Gate report
         if: ${{ always() }}
         run: |
+          skip_reason="${{ steps.attempts.outputs.stop_reason }}"
           {
             echo "### Iterate gate report"
             echo "- has_failures: ${{ steps.verdict.outputs.has_failures || 'false' }}"
@@ -366,30 +388,41 @@ jobs:
             echo "- actor: ${{ steps.context.outputs.actor }}"
             echo "- actor_is_bot: ${{ steps.context.outputs.is_bot }}"
             echo "- attempt: ${{ steps.attempts.outputs.next || steps.attempts.outputs.previous || '0' }}/20"
+            echo "- should_iterate: ${{ steps.attempts.outputs.should_iterate || 'false' }}"
             echo "- event: ${{ github.event_name }}"
             if [ "${{ github.event_name }}" = "workflow_run" ]; then
               echo "- triggering_run: https://github.com/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}"
             fi
             echo "- logs_downloaded: $([ -d runlogs ] && echo true || echo false)"
             echo "- artifacts_downloaded: $([ -d artifacts ] && echo true || echo false)"
+            if [ -n "$skip_reason" ]; then
+              echo "- skip_reason: $skip_reason"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Explain skip
         if: ${{ steps.attempts.outputs.should_iterate != 'true' }}
+        env:
+          STOP_REASON: ${{ steps.attempts.outputs.stop_reason }}
+          HAS_FAILURES: ${{ steps.verdict.outputs.has_failures || 'false' }}
         run: |
-          reason=""
-          if [ "${{ steps.context.outputs.is_bot }}" = "true" ]; then
-            reason="actor is a bot"
-          elif [ "${{ steps.auth.outputs.present }}" != "true" ]; then
-            reason="OPENAI_API_KEY missing"
-          elif [ "${{ steps.auth.outputs.auth_ok }}" != "true" ]; then
-            reason="OpenAI auth failed"
-          elif [ "${{ steps.auth.outputs.chat_ok }}" != "true" ]; then
-            reason="chat ping failed"
-          elif [ "${{ github.event_name }}" != "workflow_run" ]; then
-            reason="manual run"
-          else
-            reason="max attempts reached"
+          reason="${STOP_REASON:-}"
+          if [ -z "$reason" ]; then
+            if [ "${{ steps.context.outputs.is_bot }}" = "true" ]; then
+              reason="actor is a bot"
+            elif [ "${{ steps.auth.outputs.present }}" != "true" ]; then
+              reason="OPENAI_API_KEY missing"
+            elif [ "${{ steps.auth.outputs.auth_ok }}" != "true" ]; then
+              reason="OpenAI auth failed"
+            elif [ "${{ steps.auth.outputs.chat_ok }}" != "true" ]; then
+              reason="chat ping failed"
+            elif [ "${{ github.event_name }}" != "workflow_run" ]; then
+              reason="manual run"
+            elif [ "${HAS_FAILURES}" != "true" ]; then
+              reason="no failing diagnostics"
+            else
+              reason="max attempts reached"
+            fi
           fi
           echo "::notice title=Codex iteration skipped::$reason"
           {
@@ -426,7 +459,7 @@ jobs:
             if [ -n "${{ steps.verdict.outputs.fail_count }}" ] && [ "${{ steps.verdict.outputs.fail_count }}" != "0" ]; then
               echo "- NDJSON reported $fail failing row(s)."
             else
-              echo "- NDJSON clean; iteration triggered to honor the deterministic loop contract."
+              echo "- NDJSON rows passed, but gate detected failing diagnostics (logs or workflow state)."
             fi
             if [ -n "${{ steps.verdict.outputs.first_failure }}" ]; then
               echo ""
