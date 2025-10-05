@@ -31,6 +31,30 @@ Operating policy for automated agents (Codex, Copilot, others).
   - Trigger CI by push (or an empty commit) and wait for completion.
 - Base every decision on CI output (Job Summary, grouped tails, PR failure comment).
 
+# Iteration Contract (Agent)
+
+You MUST follow this order every loop:
+Always run yml lint on workflow.
+
+IF scope change requested → create backlog item; DO NOT edit current requirements unless explicitly told to do so.
+
+IF CI red → fix CI.
+
+IF tests error (crash/invalid) → fix tests/harness. Run yml lint, python compile, install and run pyflakes, do other self checks/tests.
+
+IF tests fail (assert red) → fix product code at root cause.
+
+IF all green → verify no false passes (hunt flakiness/missing checks).
+
+ELSE IF unmet requirement exists → implement ONE slice.
+
+ELSE IF implemented behavior lacks a test → add ONE test.
+
+IF any code is untraceable to a requirement → add comment:
+`derived requirement: <why needed>` and propose a requirement.
+
+THEN stop and open/append a PR. One loop = one change set.
+
 - Canonical pipreqs invocation (locked by CI gates):
 
   `pipreqs . --force --mode compat --savepath requirements.auto.txt`
