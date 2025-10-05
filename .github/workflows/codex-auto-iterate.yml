@@ -23,7 +23,7 @@ jobs:
     name: Codex – Iterate
     runs-on: ubuntu-latest
     env:
-      AGENT_POLICY_PATH: agents.md
+      AGENT_POLICY_PATH: AGENTS.md
     steps:
       - name: Gather context
         id: context
@@ -73,7 +73,7 @@ jobs:
         id: policy
         shell: bash
         run: |
-          POLICY="${AGENT_POLICY_PATH:-agents.md}"
+          POLICY="${AGENT_POLICY_PATH:-AGENTS.md}"
           if [[ ! -f "$POLICY" ]]; then
             echo "agents.md missing; falling back to CONTRIBUTING.md" >&2
             POLICY="CONTRIBUTING.md"
