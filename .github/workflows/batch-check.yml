@@ -1175,7 +1175,7 @@ jobs:
 
   emit-nudge:
     name: Emit Codex nudge (on failure)
-    needs: [selftest, deploy-pages]
+    needs: [selftest]
     runs-on: windows-latest
     if: ${{ always() && needs.selftest.outputs.has_failures == 'true' }}
     steps:
