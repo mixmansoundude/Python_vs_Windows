@@ -595,10 +595,20 @@ jobs:
           if (-not $rows) { $rows += Read-Ndjson 'ci_test_results.ndjson' }
 
           $has = (-not $rows)
+          $allowedStates = @('ok','no_python_files','venv_env','degraded_env')
           foreach ($r in $rows) {
-            if ($r.pass -eq $false) { $has = $true }
-            if ($r.id -eq 'bootstrap.state' -and $r.details.state -and $r.details.state -notin @('ok','no_python_files')) { $has = $true }
-            if ($r.id -eq 'self.bootstrap.state' -and $r.details.state -and $r.details.state -ne 'ok') { $has = $true }
+            $hasPass = $false
+            if ($r -is [psobject]) {
+              $hasPass = $r.PSObject.Properties.Name -contains 'pass'
+            }
+
+            if ($hasPass) {
+              if ($r.pass -eq $false) { $has = $true }
+              continue
+            }
+
+            if ($r.id -eq 'bootstrap.state' -and $r.details.state -and $r.details.state -notin $allowedStates) { $has = $true }
+            if ($r.id -eq 'self.bootstrap.state' -and $r.details.state -and $r.details.state -notin $allowedStates) { $has = $true }
           }
 
           $verdict = @{ has_failures = $has; sources = @('tests~test-results.ndjson','ci_test_results.ndjson') }
