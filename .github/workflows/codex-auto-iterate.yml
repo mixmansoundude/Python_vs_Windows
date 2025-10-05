@@ -104,14 +104,32 @@ jobs:
             fi
           done
 
-      - name: Download diagnostics URL (if present)
+      - name: Download Codex nudge artifacts (if present)
         if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          run_id: ${{ github.event.workflow_run.id }}
-          name: codex_nudge_url-deploy-pages-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
-          path: ${{ runner.temp }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          if [ ! -f artifacts.json ]; then
+            echo "artifacts.json missing; skipping Codex nudge retrieval"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/codex_nudge"
+          for prefix in codex_nudge_url codex_nudge; do
+            id=$(jq -r --arg p "$prefix" '.artifacts[] | select(.name|startswith($p)) | .id' artifacts.json | head -n 1)
+            if [ -z "$id" ] || [ "$id" = "null" ]; then
+              echo "No artifact found with prefix $prefix"
+              continue
+            fi
+            zip_path="$RUNNER_TEMP/codex_nudge/$prefix.zip"
+            curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+              -L "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$id/zip" \
+              -o "$zip_path" || true
+            dest="$RUNNER_TEMP/codex_nudge/$prefix"
+            mkdir -p "$dest"
+            unzip -q "$zip_path" -d "$dest" || true
+          done
 
       - name: Determine NDJSON verdict
         id: verdict
