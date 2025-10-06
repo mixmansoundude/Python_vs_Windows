@@ -1,13 +1,14 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-05.1
+# version: v2025-10-06.3
 # Purpose: Self-healing CI supervisor that iterates on any non-success upstream run.
 # Notes:
-# - Avoids status functions in expressions (always(), cancelled(), etc.) to prevent parser issues.
+# - Avoids status functions in expressions (always(), cancelled(), etc.).
 # - Uses body-path for PR creation to avoid 21k expression limits.
-# - Minimal assumptions about repo-specific iterate logic; calls a script if present.
+# - Corrects multiline $GITHUB_ENV syntax by using a unique delimiter (no quotes).
 # Helpful refs:
 # - GH expressions: https://docs.github.com/actions/learn-github-actions/expressions
-# - create-pull-request action: https://github.com/peter-evans/create-pull-request
+# - Environment files: https://docs.github.com/actions/using-workflows/workflow-commands-for-github-actions#environment-files
+# - create-pull-request: https://github.com/peter-evans/create-pull-request
 
 name: Codex - Auto Iterate on CI Failure
 
@@ -37,7 +38,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch'
             || github.event_name == 'push'
             || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'success') }}
-    name: Codex – Iterate
+    name: Codex - Iterate
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -89,7 +90,7 @@ jobs:
           echo "run_attempt=$run_attempt" >> "$GITHUB_OUTPUT"
           echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
 
-      - name: Load agent policy
+      - name: Load agent policy (multiline $GITHUB_ENV)
         id: policy
         shell: bash
         run: |
@@ -99,11 +100,12 @@ jobs:
             echo "AGENTS.md missing; falling back to CONTRIBUTING.md" >&2
             POLICY="CONTRIBUTING.md"
           fi
-          # Limit to 2000 lines to avoid giant envs/expressions.
+          # Limit to 2000 lines to avoid huge envs/expressions. Use a unique delimiter.
+          DELIM="$(uuidgen 2>/dev/null || openssl rand -hex 8 2>/dev/null || date +%s)"
           {
-            echo "AGENT_POLICY<<'EOF'"
+            printf 'AGENT_POLICY<<%s\n' "$DELIM"
             sed -n '1,2000p' "$POLICY"
-            echo "EOF"
+            printf '%s\n' "$DELIM"
           } >> "$GITHUB_ENV"
 
       - name: Show policy (summary)
@@ -265,7 +267,7 @@ jobs:
           {
             echo "## Codex iteration"
             echo
-            echo "- Upstream: ${FAILED_WORKFLOW_NAME:-} — ${FAILED_RUN_URL:-}"
+            echo "- Upstream: ${FAILED_WORKFLOW_NAME:-} - ${FAILED_RUN_URL:-}"
             echo "- Branch: \`${FAILED_HEAD_BRANCH:-}\` @ ${FAILED_HEAD_SHA:-}"
             echo
             echo "### Agent Policy (first 2000 lines)"
