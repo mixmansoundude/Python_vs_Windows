@@ -1,6 +1,5 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-name: Codex – Auto Iterate on CI Failure
-
+name: Codex - Auto Iterate on CI Failure
 on:
   workflow_run:
     workflows:
@@ -23,6 +22,7 @@ concurrency:
 jobs:
   iterate:
     name: Codex – Iterate
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'success') }}
     runs-on: ubuntu-latest
     env:
       MAIN_WORKFLOW_FILE: batch-check.yml
@@ -361,7 +361,7 @@ jobs:
                 "chat_http=$($json.chat_status)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       
             - name: Iterate auth summary
-              if: ${{ always() }}
+              if: ${{ !cancelled() }}
               run: |
                 {
                   echo "### Iterate auth"
@@ -453,7 +453,7 @@ jobs:
                 fi
       
             - name: Gate report
-              if: ${{ always() }}
+              if: ${{ !cancelled() }}
               run: |
                 skip_reason="${{ steps.attempts.outputs.stop_reason }}"
                 {
@@ -616,7 +616,7 @@ jobs:
                 fi
       
             - name: Upload iterate diagnostics
-              if: ${{ always() }}
+              if: ${{ !cancelled() }}
               run: |
                 mkdir -p iterate_diag
                 if [ -f "$RUNNER_TEMP/prompt.txt" ]; then cp "$RUNNER_TEMP/prompt.txt" iterate_diag/prompt.txt; fi
@@ -628,7 +628,7 @@ jobs:
               shell: bash
       
             - name: Archive iterate diagnostics
-              if: ${{ always() }}
+              if: ${{ !cancelled() }}
               uses: actions/upload-artifact@v4
               with:
                 name: iterate-diag-${{ github.run_id }}-${{ github.run_attempt }}
