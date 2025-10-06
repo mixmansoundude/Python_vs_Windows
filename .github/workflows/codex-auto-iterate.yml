@@ -1,15 +1,17 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-06.7 (Cookbook-lean + Auth probe)
-# Purpose: Self-healing CI iterate job (lean, based on cookbook patterns) with auth probe
+# version: v2025-10-06.8 (Cookbook-lean + Auth probe + API patcher)
+# Purpose: Self-healing CI iterate job using OpenAI API to propose unified diffs, then apply and PR.
 # Major choices:
 # - No status functions in expressions (avoid always()/cancelled()).
-# - Prompt is a small file; Codex reads repo files (AGENTS.md, etc.) itself.
+# - Prompt is a small file; the model reads repo files (AGENTS.md, etc.) itself.
 # - Use body-path for PR to avoid 21k expression limits.
 # - Attempts limited to 20 via branch-scoped artifact state.
 # - Adds an auth probe (key presence + 1-token chat) and surfaces results in summary.
+# - Uses Chat Completions API to request a unified diff inside ```diff fences; extracts + applies.
 # Helpful URLs:
 # - Expressions: https://docs.github.com/actions/learn-github-actions/expressions
 # - PR action: https://github.com/peter-evans/create-pull-request
+# - GitHub environment files: https://docs.github.com/actions/using-workflows/workflow-commands-for-github-actions#about-workflow-commands
 
 name: Codex - Auto Iterate on CI Failure
 
@@ -41,6 +43,7 @@ jobs:
     timeout-minutes: 60
     env:
       MAX_ATTEMPTS: '20'
+      OPENAI_MODEL: gpt-4o-mini
 
     steps:
       - name: Debug event
@@ -60,6 +63,7 @@ jobs:
         continue-on-error: true
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
         shell: bash
         run: |
           set -euo pipefail
@@ -74,7 +78,7 @@ jobs:
             exit 0
           fi
           key_prefix="${OPENAI_API_KEY:0:4}"
-          http_code=$(curl -sS -o "$RUNNER_TEMP/auth_body.json" -w "%{http_code}"             https://api.openai.com/v1/chat/completions             -H "authorization: Bearer $OPENAI_API_KEY"             -H "content-type: application/json"             -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}],"max_tokens":1,"temperature":0}')
+          http_code=$(curl -sS -o "$RUNNER_TEMP/auth_body.json" -w "%{http_code}"             https://api.openai.com/v1/chat/completions             -H "authorization: Bearer $OPENAI_API_KEY"             -H "content-type: application/json"             -d "{"model":"${OPENAI_MODEL}","messages":[{"role":"user","content":"ping"}],"max_tokens":1,"temperature":0}")
           if [ "$http_code" = "200" ]; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
             echo "reason=ok" >> "$GITHUB_OUTPUT"
@@ -198,16 +202,17 @@ jobs:
             echo "Upstream run (that triggered this): $run_url"
             echo "Attempt: $attempt/${MAX_ATTEMPTS}"
             echo ""
-            echo "Acceptance criteria:"
-            echo "1) Primary CI workflow passes end-to-end on this branch."
-            echo "2) No new warnings/errors introduced; keep diffs small and ASCII-safe."
-            echo "3) Preserve Windows batch quoting/escaping and CRLF conventions if applicable."
+            echo "Strict output instruction: Return a unified diff patch inside a single fenced code block labeled 'diff'."
+            echo "Example:"
+            echo "```diff"
+            echo "--- a/path/file.txt"
+            echo "+++ b/path/file.txt"
+            echo "@@ -1,1 +1,1 @@"
+            echo "-old"
+            echo "+new"
+            echo "```"
             echo ""
-            echo "Instructions:"
-            echo "- Inspect recent workflow logs and any artifacts under ./artifacts and ./runlogs."
-            echo "- Open and modify files to address the failure."
-            echo "- Run any repo-provided self-tests/scripts to validate."
-            echo "- Stage changes and commit with a descriptive message."
+            echo "Do not include any prose outside the fenced diff. If no changes are needed, output exactly: ```diff\n# no changes\n```"
           } > "$PROMPT"
           echo "path=$PROMPT" >> "$GITHUB_OUTPUT"
 
@@ -221,39 +226,91 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Install Codex CLI
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' }}
-        run: npm i -g @openai/codex@latest
-
-      - name: Configure git author
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' }}
-        run: |
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name  "github-actions[bot]"
-
-      - name: Run Codex (stdin prompt)
+      - name: Ask model for patch
         if: ${{ steps.attempts.outputs.should_iterate == 'true' && steps.auth.outputs.ok == 'true' }}
-        id: codex
-        timeout-minutes: 10
-        continue-on-error: true
+        id: llm
         env:
-            OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
+        shell: bash
         run: |
-          set -o pipefail
-          codex -a never --sandbox workspace-write exec --model gpt-4o-mini < "${{ steps.prompt.outputs.path }}" 2>&1 | tee "$RUNNER_TEMP/codex_exec.log" || true
+          set -euo pipefail
+          REQ="$RUNNER_TEMP/llm_req.json"
+          RES="$RUNNER_TEMP/llm_res.json"
+          PROMPT_FILE="${{ steps.prompt.outputs.path }}"
+          jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
+          cat > "$REQ" <<JSON
+          {
+            "model": "${OPENAI_MODEL}",
+            "messages": [
+              {"role": "system", "content": "You are an expert software engineer that proposes precise, minimal unified diffs."},
+              {"role": "user", "content": $(cat "$RUNNER_TEMP/prompt.json")}
+            ],
+            "temperature": 0,
+            "max_tokens": 2000
+          }
+          JSON
+          http_code=$(curl -sS -o "$RES" -w "%{http_code}"             https://api.openai.com/v1/chat/completions             -H "authorization: Bearer $OPENAI_API_KEY"             -H "content-type: application/json"             -d @"$REQ")
+          echo "http_code=$http_code"
+          # Extract assistant content
+          CONTENT="$RUNNER_TEMP/llm_content.txt"
+          jq -r '.choices[0].message.content // ""' "$RES" > "$CONTENT" || true
+          echo "content_bytes=$(wc -c < "$CONTENT" || echo 0)" >> "$GITHUB_OUTPUT"
+          # Save summary snippets
+          {
+            echo "### LLM response (first 200 lines)"
+            echo '```'
+            head -n 200 "$CONTENT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Detect changes
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' }}
-        id: diffcheck
+      - name: Extract fenced diff
+        if: ${{ steps.attempts.outputs.should_iterate == 'true' && steps.auth.outputs.ok == 'true' }}
+        id: diff
+        shell: bash
         run: |
+          set -euo pipefail
+          CONTENT="$RUNNER_TEMP/llm_content.txt"
+          DIFF_OUT="$RUNNER_TEMP/patch.diff"
+          awk 'BEGIN{f=0} /```diff/ && f==0 {f=1; next} /```/ && f==1 {f=2} f==1 {print}' "$CONTENT" > "$DIFF_OUT" || true
+          if [ ! -s "$DIFF_OUT" ]; then
+            echo "# no changes" > "$DIFF_OUT"
+          fi
+          echo "diff_path=$DIFF_OUT" >> "$GITHUB_OUTPUT"
+          echo "### Extracted diff (first 200 lines)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```diff' >> "$GITHUB_STEP_SUMMARY"
+          head -n 200 "$DIFF_OUT" >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply patch
+        if: ${{ steps.attempts.outputs.should_iterate == 'true' && steps.auth.outputs.ok == 'true' }}
+        id: apply
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIFF_OUT="${{ steps.diff.outputs.diff_path }}"
+          if grep -q '^# no changes$' "$DIFF_OUT"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Try apply with -p0, then fallback to -p1
+          if git apply -p0 --index "$DIFF_OUT"; then
+            echo "applied_with=-p0" >> "$GITHUB_OUTPUT"
+          elif git apply -p1 --index "$DIFF_OUT"; then
+            echo "applied_with=-p1" >> "$GITHUB_OUTPUT"
+          else
+            echo "Patch failed to apply"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -z "$(git status --porcelain)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
+            git commit -m "codex: apply suggested patch (attempt ${{ steps.attempts.outputs.next }}/${{ env.MAX_ATTEMPTS }})"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build PR body file
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' }}
         id: pr_body
         shell: bash
         run: |
@@ -261,7 +318,7 @@ jobs:
           BODY=".github/ITERATE_PR_BODY.md"
           mkdir -p .github
           {
-            echo "## Codex iteration"
+            echo "## Codex iteration (API patcher)"
             echo
             echo "- Branch: \`${{ steps.ctx.outputs.branch }}\` @ ${{ steps.ctx.outputs.head_sha }}"
             echo "- Trigger: ${{ steps.ctx.outputs.run_url }}"
@@ -274,15 +331,15 @@ jobs:
             head -n 200 "${{ steps.prompt.outputs.path }}" || true
             echo '```'
             echo
-            echo "### Codex log (last 200 lines)"
-            echo '```text'
-            tail -n 200 "$RUNNER_TEMP/codex_exec.log" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true
+            echo "### Extracted diff (first 200 lines)"
+            echo '```diff'
+            head -n 200 "$RUNNER_TEMP/patch.diff" || true
             echo '```'
           } > "$BODY"
           echo "body_path=$BODY" >> "$GITHUB_OUTPUT"
 
       - name: Create PR (if edits)
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' && steps.diffcheck.outputs.changed == 'true' }}
+        if: ${{ steps.apply.outputs.changed == 'true' }}
         uses: peter-evans/create-pull-request@v6
         with:
           commit-message: "codex: iterate on CI failure (attempt ${{ steps.attempts.outputs.next }}/${{ env.MAX_ATTEMPTS }})"
@@ -302,7 +359,10 @@ jobs:
             artifacts/**
             ${{ steps.prompt.outputs.path }}
             ${{ steps.pr_body.outputs.body_path }}
-            $RUNNER_TEMP/codex_exec.log
+            $RUNNER_TEMP/llm_req.json
+            $RUNNER_TEMP/llm_res.json
+            $RUNNER_TEMP/llm_content.txt
+            $RUNNER_TEMP/patch.diff
             $RUNNER_TEMP/auth_body.json
           if-no-files-found: ignore
           retention-days: 14
