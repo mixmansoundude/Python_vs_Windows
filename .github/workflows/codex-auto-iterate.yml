@@ -1,28 +1,29 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-06.8 (Cookbook-lean + Auth probe + API patcher)
-# Purpose: Self-healing CI iterate job using OpenAI API to propose unified diffs, then apply and PR.
-# Major choices:
-# - No status functions in expressions (avoid always()/cancelled()).
-# - Prompt is a small file; the model reads repo files (AGENTS.md, etc.) itself.
-# - Use body-path for PR to avoid 21k expression limits.
-# - Attempts limited to 20 via branch-scoped artifact state.
-# - Adds an auth probe (key presence + 1-token chat) and surfaces results in summary.
-# - Uses Chat Completions API to request a unified diff inside ```diff fences; extracts + applies.
-# Helpful URLs:
-# - Expressions: https://docs.github.com/actions/learn-github-actions/expressions
-# - PR action: https://github.com/peter-evans/create-pull-request
-# - GitHub environment files: https://docs.github.com/actions/using-workflows/workflow-commands-for-github-actions#about-workflow-commands
+# version: v2025-10-06.9 (Cookbook-lean + Auth probe + API patcher + Push-poll main CI)
+# Purpose: Iterate safely even when main CI can't start (YAML errors), by polling on push for head_sha runs.
+# Notes:
+# - On push: poll all workflow runs for this commit (head_sha). If none show up within timeout => iterate.
+# - If a non-iterate workflow completes with conclusion != success => iterate. If success => skip.
+# - On workflow_dispatch: iterate immediately.
+# - You can keep `workflow_run` too, but push+poll already covers "main CI never started" scenarios.
+# - Auth probe uses file-based JSON to avoid request-quoting issues.
+# - Avoids status functions in expressions; uses small, robust conditions.
+# - PR body only built when iterating to avoid empty sections.
+# Helpful docs:
+# - List runs for repo (head_sha): https://docs.github.com/rest/actions/workflow-runs#list-workflow-runs-for-a-repository
+# - GitHub expressions: https://docs.github.com/actions/learn-github-actions/expressions
+# - Workflow commands & env files: https://docs.github.com/actions/using-workflows/workflow-commands-for-github-actions
 
 name: Codex - Auto Iterate on CI Failure
 
 on:
-  workflow_run:
-    workflows:
-      - "Batch syntax/run check"
-    types: [completed]
-  workflow_dispatch: {}
   push:
     branches: ['**']
+  workflow_dispatch: {}
+  # Keep this commented unless you still want workflow_run triggering too.
+  # workflow_run:
+  #   workflows: ['Batch syntax/run check']
+  #   types: [completed]
 
 permissions:
   actions: read
@@ -30,20 +31,19 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: codex-iterate-${{ github.event.workflow_run.head_sha || github.sha }}
+  group: codex-iterate-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
   iterate:
-    # Allow manual & push. For workflow_run, only when upstream wasn't success.
-    if: ${{ github.event_name == 'workflow_dispatch'
-            || github.event_name == 'push'
-            || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       MAX_ATTEMPTS: '20'
       OPENAI_MODEL: gpt-4o-mini
+      ITERATE_WORKFLOW_NAME: ${{ github.workflow }} # name of this workflow, used to exclude self from polling list
+      POLL_TIMEOUT_SECONDS: '600' # 10 minutes
+      POLL_INTERVAL_SECONDS: '10'
 
     steps:
       - name: Debug event
@@ -52,6 +52,7 @@ jobs:
           echo "ref_name=${{ github.ref_name }}"
           echo "sha=${{ github.sha }}"
           echo "actor=${{ github.actor }}"
+          echo "workflow=${{ github.workflow }}"
 
       - name: Checkout repo (latest)
         uses: actions/checkout@v4
@@ -77,8 +78,20 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          key_prefix="${OPENAI_API_KEY:0:4}"
-          http_code=$(curl -sS -o "$RUNNER_TEMP/auth_body.json" -w "%{http_code}"             https://api.openai.com/v1/chat/completions             -H "authorization: Bearer $OPENAI_API_KEY"             -H "content-type: application/json"             -d "{"model":"${OPENAI_MODEL}","messages":[{"role":"user","content":"ping"}],"max_tokens":1,"temperature":0}")
+          REQ="$RUNNER_TEMP/auth_req.json"
+          cat > "$REQ" <<'JSON'
+          {
+            "model": "gpt-4o-mini",
+            "messages": [{"role":"user","content":"ping"}],
+            "max_tokens": 1,
+            "temperature": 0
+          }
+          JSON
+          http_code=$(curl -sS -o "$RUNNER_TEMP/auth_body.json" -w "%{http_code}" \
+            https://api.openai.com/v1/chat/completions \
+            -H "authorization: Bearer $OPENAI_API_KEY" \
+            -H "content-type: application/json" \
+            -d @"$REQ")
           if [ "$http_code" = "200" ]; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
             echo "reason=ok" >> "$GITHUB_OUTPUT"
@@ -89,12 +102,12 @@ jobs:
           {
             echo "### Auth probe"
             echo ""
-            echo "- key: present (prefix: ${key_prefix}...)"
+            if [ "$http_code" = "200" ]; then echo "- key: present"; else echo "- key: present (but request failed)"; fi
             echo "- http_code: $http_code"
             echo ""
             echo "Body (first 400 chars):"
             echo '```json'
-            head -c 400 "$RUNNER_TEMP/auth_body.json" | sed 's/[^[:print:]	]/?/g' || true
+            head -c 400 "$RUNNER_TEMP/auth_body.json" | sed 's/[^[:print:]\t]/?/g' || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -103,82 +116,140 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            branch="${{ github.event.workflow_run.head_branch }}"
-            sha="${{ github.event.workflow_run.head_sha }}"
-            run_id="${{ github.event.workflow_run.id }}"
-            conclusion="${{ github.event.workflow_run.conclusion }}"
-          else
-            branch="${{ github.ref_name }}"
-            sha="${{ github.sha }}"
-            run_id="${{ github.run_id }}"
-            conclusion=""
-          fi
-          if [ -z "$branch" ]; then branch="${{ github.ref_name }}"; fi
-          branch_slug=$(echo "$branch" | tr ':/ ' '---')
+          branch="${{ github.ref_name }}"
+          sha="${{ github.sha }}"
+          run_id="${{ github.run_id }}"
           run_url="https://github.com/${{ github.repository }}/actions/runs/${run_id}"
+          branch_slug=$(echo "$branch" | tr ':/ ' '---')
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "branch_slug=$branch_slug" >> "$GITHUB_OUTPUT"
           echo "head_sha=$sha" >> "$GITHUB_OUTPUT"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
-          echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
 
-      - name: "Optional: download upstream logs/artifacts"
-        if: ${{ github.event_name == 'workflow_run' }}
+      - name: Poll main CI run for this commit (push path)
+        id: poll
+        uses: actions/github-script@v7
+        env:
+          ITERATE_WORKFLOW_NAME: ${{ env.ITERATE_WORKFLOW_NAME }}
+          POLL_TIMEOUT_SECONDS: ${{ env.POLL_TIMEOUT_SECONDS }}
+          POLL_INTERVAL_SECONDS: ${{ env.POLL_INTERVAL_SECONDS }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const sha = context.sha;
+            const selfName = process.env.ITERATE_WORKFLOW_NAME || context.workflow;
+            const pollDeadline = Date.now() + (parseInt(process.env.POLL_TIMEOUT_SECONDS||"600")*1000);
+            const interval = parseInt(process.env.POLL_INTERVAL_SECONDS||"10")*1000;
+
+            function isMainCandidate(run) {
+              const nm = (run.name || "").toLowerCase();
+              if (nm === (selfName||"").toLowerCase()) return false;
+              if (nm.includes("iterate")) return false;
+              return run.head_sha === sha;
+            }
+
+            async function listRuns() {
+              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner, repo, per_page: 100, head_sha: sha
+              });
+              return data.workflow_runs.filter(isMainCandidate);
+            }
+
+            let chosen = null;
+            while (Date.now() < pollDeadline) {
+              const runs = await listRuns();
+              if (runs.length > 0) {
+                runs.sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
+                chosen = runs[0];
+                if (chosen.status === "completed") break;
+              }
+              await new Promise(r => setTimeout(r, interval));
+            }
+
+            if (!chosen) {
+              core.info("No main CI run found for this commit within timeout; will iterate (assume CI did not start).");
+              core.setOutput("found", "false");
+              core.setOutput("status", "missing");
+              core.setOutput("conclusion", "");
+              core.setOutput("run_id", "");
+            } else {
+              core.info(`Main candidate: ${chosen.name} id=${chosen.id} status=${chosen.status} conclusion=${chosen.conclusion}`);
+              core.setOutput("found", "true");
+              core.setOutput("status", chosen.status || "");
+              core.setOutput("conclusion", chosen.conclusion || "");
+              core.setOutput("run_id", String(chosen.id));
+              core.setOutput("name", chosen.name || "");
+              core.setOutput("html_url", chosen.html_url || "");
+            }
+
+      - name: Decide gate (iterate vs skip)
+        id: gate
         shell: bash
         env:
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          GH_TOKEN: ${{ github.token }}
+          FOUND: ${{ steps.poll.outputs.found }}
+          STATUS: ${{ steps.poll.outputs.status }}
+          CONCLUSION: ${{ steps.poll.outputs.conclusion }}
         run: |
-          set -e
-          mkdir -p runlogs artifacts
-          curl -sSL -H "Authorization: Bearer $GH_TOKEN"             -o runlogs.zip             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/logs"
-          unzip -q runlogs.zip -d runlogs || true
-          curl -sS -H "Authorization: Bearer $GH_TOKEN"             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts" > artifacts.json
-          ids=$(jq -r '.artifacts[] | select(.expired==false) | .id' artifacts.json || true)
-          for id in $ids; do
-            curl -sSL -H "Authorization: Bearer $GH_TOKEN"               -L "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$id/zip"               -o "artifacts/$id.zip" || true
-            unzip -q "artifacts/$id.zip" -d "artifacts/$id" || true
-          done
+          set -euo pipefail
+          should_iterate=false
+          reason=""
+          if [ "${FOUND}" != "true" ]; then
+            should_iterate=true
+            reason="no_main_run_found"
+          else
+            if [ "${STATUS}" != "completed" ]; then
+              should_iterate=true
+              reason="main_run_not_completed"
+            else
+              if [ "${CONCLUSION}" != "success" ]; then
+                should_iterate=true
+                reason="main_conclusion_${CONCLUSION:-empty}"
+              else
+                should_iterate=false
+                reason="main_success"
+              fi
+            fi
+          fi
+          echo "should_iterate=${should_iterate}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
+          echo "Gate: should_iterate=${should_iterate} reason=${reason}"
 
       - name: Load/Update attempt counter
+        if: ${{ steps.gate.outputs.should_iterate == 'true' }}
         id: attempts
         shell: bash
         run: |
           set -euo pipefail
           attempts=0
-          # Try get previous from artifact named by branch slug
           GH_TOKEN="${{ github.token }}"
           owner_repo="${{ github.repository }}"
           branch_slug="${{ steps.ctx.outputs.branch_slug }}"
-          curl -sS -H "Authorization: Bearer $GH_TOKEN"             "https://api.github.com/repos/${owner_repo}/actions/artifacts?per_page=100" > artifacts_all.json
+          curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${owner_repo}/actions/artifacts?per_page=100" > artifacts_all.json
           id=$(jq -r --arg n "iterate-state-$branch_slug" '.artifacts[] | select(.name==$n and .expired==false) | .id' artifacts_all.json | head -n 1 || true)
           if [ -n "$id" ] && [ "$id" != "null" ]; then
-            curl -sSL -H "Authorization: Bearer $GH_TOKEN" -L               "https://api.github.com/repos/${owner_repo}/actions/artifacts/$id/zip"               -o state.zip || true
+            curl -sSL -H "Authorization: Bearer $GH_TOKEN" -L \
+              "https://api.github.com/repos/${owner_repo}/actions/artifacts/$id/zip" \
+              -o state.zip || true
             mkdir -p state && unzip -q state.zip -d state || true
             attempts=$(jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0)
           fi
           next=$(( attempts + 1 ))
           if [ "$next" -gt "${MAX_ATTEMPTS}" ]; then
-            echo "should_iterate=false" >> "$GITHUB_OUTPUT"
+            echo "stop=true" >> "$GITHUB_OUTPUT"
             echo "stop_reason=Max attempts reached (${MAX_ATTEMPTS})" >> "$GITHUB_OUTPUT"
             echo "previous=$attempts" >> "$GITHUB_OUTPUT"
             echo "next=$attempts" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "stop=false" >> "$GITHUB_OUTPUT"
           echo "previous=$attempts" >> "$GITHUB_OUTPUT"
           echo "next=$next" >> "$GITHUB_OUTPUT"
-          # Gate: iterate on workflow_run or manual; push remains opt-in (false by default)
-          if [ "${{ github.event_name }}" = "workflow_run" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "should_iterate=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_iterate=false" >> "$GITHUB_OUTPUT"
-            echo "stop_reason=push run - dry gate" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Build prompt
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
         id: prompt
         shell: bash
         run: |
@@ -187,11 +258,12 @@ jobs:
           repo="${{ github.repository }}"
           branch="${{ steps.ctx.outputs.branch }}"
           sha="${{ steps.ctx.outputs.head_sha }}"
-          run_url="${{ steps.ctx.outputs.run_url }}"
+          run_id="${{ steps.poll.outputs.run_id || steps.ctx.outputs.run_id }}"
+          run_url="${{ steps.poll.outputs.html_url || steps.ctx.outputs.run_url }}"
           attempt="${{ steps.attempts.outputs.next }}"
           {
             echo "You are Codex. You have a working copy of the repo checked out."
-            echo "Read AGENTS.md (if present) and README.md in the workspace for local policy."
+            echo "Read README.md and AGENTS.md (if present) in the workspace for local policy."
             echo ""
             echo "Task: diagnose and fix CI failures for the GitHub Actions workflow(s)."
             echo "Prefer minimal edits and explain changes in commit messages."
@@ -199,25 +271,18 @@ jobs:
             echo "Repo: $repo"
             echo "Branch: $branch"
             echo "Commit: $sha"
-            echo "Upstream run (that triggered this): $run_url"
+            echo "Upstream run (that triggered this or was expected to): ${run_url:-none}"
             echo "Attempt: $attempt/${MAX_ATTEMPTS}"
             echo ""
             echo "Strict output instruction: Return a unified diff patch inside a single fenced code block labeled 'diff'."
-            echo "Example:"
-            echo "```diff"
-            echo "--- a/path/file.txt"
-            echo "+++ b/path/file.txt"
-            echo "@@ -1,1 +1,1 @@"
-            echo "-old"
-            echo "+new"
+            echo "If no changes are needed, output exactly: ```diff"
+            echo "# no changes"
             echo "```"
-            echo ""
-            echo "Do not include any prose outside the fenced diff. If no changes are needed, output exactly: ```diff\n# no changes\n```"
           } > "$PROMPT"
           echo "path=$PROMPT" >> "$GITHUB_OUTPUT"
 
       - name: Prompt preview
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
         run: |
           {
             echo "### Prompt (first 120 lines)"
@@ -227,7 +292,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Ask model for patch
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' && steps.auth.outputs.ok == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: llm
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -250,22 +315,23 @@ jobs:
             "max_tokens": 2000
           }
           JSON
-          http_code=$(curl -sS -o "$RES" -w "%{http_code}"             https://api.openai.com/v1/chat/completions             -H "authorization: Bearer $OPENAI_API_KEY"             -H "content-type: application/json"             -d @"$REQ")
+          http_code=$(curl -sS -o "$RES" -w "%{http_code}" \
+            https://api.openai.com/v1/chat/completions \
+            -H "authorization: Bearer $OPENAI_API_KEY" \
+            -H "content-type: application/json" \
+            -d @"$REQ")
           echo "http_code=$http_code"
-          # Extract assistant content
           CONTENT="$RUNNER_TEMP/llm_content.txt"
           jq -r '.choices[0].message.content // ""' "$RES" > "$CONTENT" || true
-          echo "content_bytes=$(wc -c < "$CONTENT" || echo 0)" >> "$GITHUB_OUTPUT"
-          # Save summary snippets
           {
-            echo "### LLM response (first 200 lines)"
+            echo "### LLM response (first 120 lines)"
             echo '```'
-            head -n 200 "$CONTENT"
+            head -n 120 "$CONTENT"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Extract fenced diff
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' && steps.auth.outputs.ok == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: diff
         shell: bash
         run: |
@@ -277,13 +343,13 @@ jobs:
             echo "# no changes" > "$DIFF_OUT"
           fi
           echo "diff_path=$DIFF_OUT" >> "$GITHUB_OUTPUT"
-          echo "### Extracted diff (first 200 lines)" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Extracted diff (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
           echo '```diff' >> "$GITHUB_STEP_SUMMARY"
-          head -n 200 "$DIFF_OUT" >> "$GITHUB_STEP_SUMMARY" || true
+          head -n 120 "$DIFF_OUT" >> "$GITHUB_STEP_SUMMARY" || true
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Apply patch
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' && steps.auth.outputs.ok == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: apply
         shell: bash
         run: |
@@ -293,7 +359,6 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Try apply with -p0, then fallback to -p1
           if git apply -p0 --index "$DIFF_OUT"; then
             echo "applied_with=-p0" >> "$GITHUB_OUTPUT"
           elif git apply -p1 --index "$DIFF_OUT"; then
@@ -306,11 +371,14 @@ jobs:
           if [ -z "$(git status --porcelain)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git config user.name  "github-actions[bot]"
             git commit -m "codex: apply suggested patch (attempt ${{ steps.attempts.outputs.next }}/${{ env.MAX_ATTEMPTS }})"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build PR body file
+        if: ${{ steps.gate.outputs.should_iterate == 'true' }}
         id: pr_body
         shell: bash
         run: |
@@ -318,23 +386,31 @@ jobs:
           BODY=".github/ITERATE_PR_BODY.md"
           mkdir -p .github
           {
-            echo "## Codex iteration (API patcher)"
+            echo "## Codex iteration (push-poll flow)"
             echo
             echo "- Branch: \`${{ steps.ctx.outputs.branch }}\` @ ${{ steps.ctx.outputs.head_sha }}"
-            echo "- Trigger: ${{ steps.ctx.outputs.run_url }}"
+            if [ -n "${{ steps.poll.outputs.html_url }}" ]; then
+              echo "- Polled main run: ${{ steps.poll.outputs.name }} – ${{ steps.poll.outputs.html_url }} (conclusion: ${{ steps.poll.outputs.conclusion || 'n/a' }})"
+            else
+              echo "- Polled main run: none detected for this commit (within timeout)"
+            fi
             echo
             echo "### Auth probe"
             echo "- ok: ${{ steps.auth.outputs.ok || 'false' }} (reason: ${{ steps.auth.outputs.reason || 'n/a' }})"
             echo
-            echo "### Prompt (first 200 lines)"
-            echo '```text'
-            head -n 200 "${{ steps.prompt.outputs.path }}" || true
-            echo '```'
-            echo
-            echo "### Extracted diff (first 200 lines)"
-            echo '```diff'
-            head -n 200 "$RUNNER_TEMP/patch.diff" || true
-            echo '```'
+            if [ -f "$RUNNER_TEMP/prompt.txt" ]; then
+              echo "### Prompt (first 200 lines)"
+              echo '```text'
+              head -n 200 "$RUNNER_TEMP/prompt.txt" || true
+              echo '```'
+            fi
+            if [ -f "$RUNNER_TEMP/patch.diff" ]; then
+              echo
+              echo "### Extracted diff (first 200 lines)"
+              echo '```diff'
+              head -n 200 "$RUNNER_TEMP/patch.diff" || true
+              echo '```'
+            fi
           } > "$BODY"
           echo "body_path=$BODY" >> "$GITHUB_OUTPUT"
 
@@ -350,25 +426,22 @@ jobs:
           labels: codex,ci-fix,automerge-candidate
 
       - name: Upload diagnostics
-        if: ${{ true }}
         uses: actions/upload-artifact@v4
         with:
           name: iterate-diag-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            runlogs/**
-            artifacts/**
-            ${{ steps.prompt.outputs.path }}
-            ${{ steps.pr_body.outputs.body_path }}
+            $RUNNER_TEMP/auth_body.json
             $RUNNER_TEMP/llm_req.json
             $RUNNER_TEMP/llm_res.json
             $RUNNER_TEMP/llm_content.txt
             $RUNNER_TEMP/patch.diff
-            $RUNNER_TEMP/auth_body.json
+            $RUNNER_TEMP/prompt.txt
+            artifacts/**
           if-no-files-found: ignore
           retention-days: 14
 
       - name: Save attempt state
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
         shell: bash
         run: |
           mkdir -p state_out
@@ -381,7 +454,7 @@ jobs:
           JSON
 
       - name: Upload attempt state
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: iterate-state-${{ steps.ctx.outputs.branch_slug }}
