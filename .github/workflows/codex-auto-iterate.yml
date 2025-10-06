@@ -1,10 +1,11 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-06.4
+# version: v2025-10-06.5
 # Purpose: Self-healing CI supervisor that iterates on any non-success upstream run.
 # Notes:
 # - Avoids status functions in expressions (always(), cancelled(), etc.).
 # - Uses body-path for PR creation to avoid 21k expression limits.
-# - Avoids multiline $GITHUB_ENV entirely (writes policy to a temp file and passes its path).
+# - Avoids multiline $GITHUB_ENV entirely (uses file handoff).
+# - **NEW**: Checkout repo early so AGENTS.md exists; graceful fallback to README.md or empty.
 # Helpful refs:
 # - GH expressions: https://docs.github.com/actions/learn-github-actions/expressions
 # - Environment files: https://docs.github.com/actions/using-workflows/workflow-commands-for-github-actions#environment-files
@@ -53,6 +54,11 @@ jobs:
           echo "sha=${{ github.sha }}"
           echo "actor=${{ github.actor }}"
 
+      - name: Checkout repository (initial)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Gather context
         id: context
         shell: bash
@@ -97,13 +103,18 @@ jobs:
           set -euo pipefail
           POLICY="${AGENT_POLICY_PATH:-AGENTS.md}"
           if [[ ! -f "$POLICY" ]]; then
-            echo "AGENTS.md missing; falling back to CONTRIBUTING.md" >&2
-            POLICY="CONTRIBUTING.md"
+            if [[ -f "README.md" ]]; then
+              echo "AGENTS.md missing; falling back to README.md" >&2
+              POLICY="README.md"
+            else
+              echo "AGENTS.md and README.md missing; creating empty snippet" >&2
+              POLICY="/dev/null"
+            fi
           fi
           OUT=".github/_AGENT_POLICY_SNIP.md"
           mkdir -p .github
           # Limit to 2000 lines to avoid giant strings.
-          sed -n '1,2000p' "$POLICY" > "$OUT"
+          sed -n '1,2000p' "$POLICY" > "$OUT" || true
           echo "policy_path=$OUT" >> "$GITHUB_OUTPUT"
 
       - name: Show policy (summary)
@@ -113,7 +124,9 @@ jobs:
             echo "### Agent Policy (first 2000 lines)"
             echo
             echo '```markdown'
-            cat ".github/_AGENT_POLICY_SNIP.md"
+            if [ -f ".github/_AGENT_POLICY_SNIP.md" ]; then
+              cat ".github/_AGENT_POLICY_SNIP.md"
+            fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -217,7 +230,7 @@ jobs:
           echo "FAIL_CTX:"
           echo "  SHA=$F_SHA BRANCH=$F_BRANCH URL=$F_URL NAME=$F_NAME"
 
-      - name: Checkout failing ref
+      - name: Checkout failing ref (exact SHA)
         uses: actions/checkout@v4
         with:
           ref: ${{ env.FAILED_HEAD_SHA }}
@@ -270,7 +283,9 @@ jobs:
             echo
             echo "### Agent Policy (first 2000 lines)"
             echo '```markdown'
-            cat ".github/_AGENT_POLICY_SNIP.md"
+            if [ -f ".github/_AGENT_POLICY_SNIP.md" ]; then
+              cat ".github/_AGENT_POLICY_SNIP.md"
+            fi
             echo '```'
           } > "$BODY_FILE"
           echo "body_path=$BODY_FILE" >> "$GITHUB_OUTPUT"
