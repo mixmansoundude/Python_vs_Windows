@@ -1,14 +1,14 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-06.6 (Cookbook-lean)
-# Purpose: Self-healing CI iterate job (lean, based on cookbook patterns)
+# version: v2025-10-06.7 (Cookbook-lean + Auth probe)
+# Purpose: Self-healing CI iterate job (lean, based on cookbook patterns) with auth probe
 # Major choices:
 # - No status functions in expressions (avoid always()/cancelled()).
 # - Prompt is a small file; Codex reads repo files (AGENTS.md, etc.) itself.
 # - Use body-path for PR to avoid 21k expression limits.
 # - Attempts limited to 20 via branch-scoped artifact state.
+# - Adds an auth probe (key presence + 1-token chat) and surfaces results in summary.
 # Helpful URLs:
 # - Expressions: https://docs.github.com/actions/learn-github-actions/expressions
-# - Env files: https://docs.github.com/actions/using-workflows/workflow-commands-for-github-actions#environment-files
 # - PR action: https://github.com/peter-evans/create-pull-request
 
 name: Codex - Auto Iterate on CI Failure
@@ -54,6 +54,45 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Auth probe (key + 1-token chat)
+        id: auth
+        continue-on-error: true
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no_key" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Auth probe"
+              echo ""
+              echo "- key: MISSING"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          key_prefix="${OPENAI_API_KEY:0:4}"
+          http_code=$(curl -sS -o "$RUNNER_TEMP/auth_body.json" -w "%{http_code}"             https://api.openai.com/v1/chat/completions             -H "authorization: Bearer $OPENAI_API_KEY"             -H "content-type: application/json"             -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}],"max_tokens":1,"temperature":0}')
+          if [ "$http_code" = "200" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "reason=ok" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "reason=http_${http_code}" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "### Auth probe"
+            echo ""
+            echo "- key: present (prefix: ${key_prefix}...)"
+            echo "- http_code: $http_code"
+            echo ""
+            echo "Body (first 400 chars):"
+            echo '```json'
+            head -c 400 "$RUNNER_TEMP/auth_body.json" | sed 's/[^[:print:]	]/?/g' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Gather context
         id: ctx
@@ -126,12 +165,12 @@ jobs:
           fi
           echo "previous=$attempts" >> "$GITHUB_OUTPUT"
           echo "next=$next" >> "$GITHUB_OUTPUT"
-          # Gate: Only iterate on workflow_run or manual; for push you can flip this if desired
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+          # Gate: iterate on workflow_run or manual; push remains opt-in (false by default)
+          if [ "${{ github.event_name }}" = "workflow_run" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "should_iterate=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_iterate=false" >> "$GITHUB_OUTPUT"
-            echo "stop_reason=manual/push run - dry gate" >> "$GITHUB_OUTPUT"
+            echo "stop_reason=push run - dry gate" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build prompt
@@ -193,7 +232,7 @@ jobs:
           git config user.name  "github-actions[bot]"
 
       - name: Run Codex (stdin prompt)
-        if: ${{ steps.attempts.outputs.should_iterate == 'true' }}
+        if: ${{ steps.attempts.outputs.should_iterate == 'true' && steps.auth.outputs.ok == 'true' }}
         id: codex
         timeout-minutes: 10
         continue-on-error: true
@@ -226,6 +265,9 @@ jobs:
             echo
             echo "- Branch: \`${{ steps.ctx.outputs.branch }}\` @ ${{ steps.ctx.outputs.head_sha }}"
             echo "- Trigger: ${{ steps.ctx.outputs.run_url }}"
+            echo
+            echo "### Auth probe"
+            echo "- ok: ${{ steps.auth.outputs.ok || 'false' }} (reason: ${{ steps.auth.outputs.reason || 'n/a' }})"
             echo
             echo "### Prompt (first 200 lines)"
             echo '```text'
@@ -261,6 +303,7 @@ jobs:
             ${{ steps.prompt.outputs.path }}
             ${{ steps.pr_body.outputs.body_path }}
             $RUNNER_TEMP/codex_exec.log
+            $RUNNER_TEMP/auth_body.json
           if-no-files-found: ignore
           retention-days: 14
 
