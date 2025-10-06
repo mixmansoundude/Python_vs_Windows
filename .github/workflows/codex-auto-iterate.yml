@@ -361,7 +361,7 @@ jobs:
                 "chat_http=$($json.chat_status)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       
             - name: Iterate auth summary
-              if: ${{ !cancelled() }}
+              if: ${{ true }}
               run: |
                 {
                   echo "### Iterate auth"
@@ -453,7 +453,7 @@ jobs:
                 fi
       
             - name: Gate report
-              if: ${{ !cancelled() }}
+              if: ${{ true }}
               run: |
                 skip_reason="${{ steps.attempts.outputs.stop_reason }}"
                 {
@@ -616,7 +616,7 @@ jobs:
                 fi
       
             - name: Upload iterate diagnostics
-              if: ${{ !cancelled() }}
+              if: ${{ true }}
               run: |
                 mkdir -p iterate_diag
                 if [ -f "$RUNNER_TEMP/prompt.txt" ]; then cp "$RUNNER_TEMP/prompt.txt" iterate_diag/prompt.txt; fi
@@ -628,7 +628,7 @@ jobs:
               shell: bash
       
             - name: Archive iterate diagnostics
-              if: ${{ !cancelled() }}
+              if: ${{ true }}
               uses: actions/upload-artifact@v4
               with:
                 name: iterate-diag-${{ github.run_id }}-${{ github.run_attempt }}
