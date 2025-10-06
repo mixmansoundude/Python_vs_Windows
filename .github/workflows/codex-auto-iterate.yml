@@ -1,10 +1,10 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-06.3
+# version: v2025-10-06.4
 # Purpose: Self-healing CI supervisor that iterates on any non-success upstream run.
 # Notes:
 # - Avoids status functions in expressions (always(), cancelled(), etc.).
 # - Uses body-path for PR creation to avoid 21k expression limits.
-# - Corrects multiline $GITHUB_ENV syntax by using a unique delimiter (no quotes).
+# - Avoids multiline $GITHUB_ENV entirely (writes policy to a temp file and passes its path).
 # Helpful refs:
 # - GH expressions: https://docs.github.com/actions/learn-github-actions/expressions
 # - Environment files: https://docs.github.com/actions/using-workflows/workflow-commands-for-github-actions#environment-files
@@ -90,7 +90,7 @@ jobs:
           echo "run_attempt=$run_attempt" >> "$GITHUB_OUTPUT"
           echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
 
-      - name: Load agent policy (multiline $GITHUB_ENV)
+      - name: Prepare agent policy snippet file
         id: policy
         shell: bash
         run: |
@@ -100,13 +100,11 @@ jobs:
             echo "AGENTS.md missing; falling back to CONTRIBUTING.md" >&2
             POLICY="CONTRIBUTING.md"
           fi
-          # Limit to 2000 lines to avoid huge envs/expressions. Use a unique delimiter.
-          DELIM="$(uuidgen 2>/dev/null || openssl rand -hex 8 2>/dev/null || date +%s)"
-          {
-            printf 'AGENT_POLICY<<%s\n' "$DELIM"
-            sed -n '1,2000p' "$POLICY"
-            printf '%s\n' "$DELIM"
-          } >> "$GITHUB_ENV"
+          OUT=".github/_AGENT_POLICY_SNIP.md"
+          mkdir -p .github
+          # Limit to 2000 lines to avoid giant strings.
+          sed -n '1,2000p' "$POLICY" > "$OUT"
+          echo "policy_path=$OUT" >> "$GITHUB_OUTPUT"
 
       - name: Show policy (summary)
         shell: bash
@@ -115,7 +113,7 @@ jobs:
             echo "### Agent Policy (first 2000 lines)"
             echo
             echo '```markdown'
-            printf '%s\n' "${AGENT_POLICY}"
+            cat ".github/_AGENT_POLICY_SNIP.md"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -272,7 +270,7 @@ jobs:
             echo
             echo "### Agent Policy (first 2000 lines)"
             echo '```markdown'
-            printf '%s\n' "${AGENT_POLICY}"
+            cat ".github/_AGENT_POLICY_SNIP.md"
             echo '```'
           } > "$BODY_FILE"
           echo "body_path=$BODY_FILE" >> "$GITHUB_OUTPUT"
@@ -328,5 +326,6 @@ jobs:
           path: |
             runlogs/**
             artifacts/**
+            .github/_AGENT_POLICY_SNIP.md
             .github/ITERATE_PR_BODY.md
           if-no-files-found: ignore
