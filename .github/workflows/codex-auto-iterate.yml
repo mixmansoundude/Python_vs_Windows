@@ -1,6 +1,6 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-06.15 (Fix PR-body JSON quoting + upload diag earlier + no local commit)
-# Purpose: Iterate safely even if CI can't start; poll ALL runs for this commit and iterate if any are non-success.
+# version: v2025-10-07.16 (ALL-RUNS gate, backtick-safe prompt, actions: write, early artifacts)
+# Purpose: Iterate even if CI doesn't start; poll *all* runs for this commit and iterate if any are non-success.
 
 name: Codex - Auto Iterate on CI Failure
 
@@ -10,7 +10,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  actions: read
+  actions: write       # upload-artifact requires write
   contents: write
   pull-requests: write
 
@@ -217,7 +217,7 @@ jobs:
           {
             echo "### Poll summary"
             echo '```json'
-            echo '${{ steps.poll.outputs.summary_json }}'
+            echo "${{ steps.poll.outputs.summary_json }}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -233,7 +233,7 @@ jobs:
           branch_slug="${{ steps.ctx.outputs.branch_slug }}"
           curl -sS -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${owner_repo}/actions/artifacts?per_page=100" > artifacts_all.json
-          id=$(jq -r --arg n "iterate-state-$branch_slug" '.artifacts[] | select(.name==$n and .expired==false) | .id' artifacts_all.json | head -n 1 || true)
+          id=$(jq -r --arg n "iterate-state-$branch_slug" '.artifacts[] | select(.name==$n and ..expired==false) | .id' artifacts_all.json | head -n 1 || true)
           if [ -n "$id" ] && [ "$id" != "null" ]; then
             curl -sSL -H "Authorization: Bearer $GH_TOKEN" -L \
               "https://api.github.com/repos/${owner_repo}/actions/artifacts/$id/zip" \
@@ -277,9 +277,10 @@ jobs:
             echo "Attempt: $attempt/${MAX_ATTEMPTS}"
             echo ""
             echo "Strict output instruction: Return a unified diff patch inside a single fenced code block labeled 'diff'."
-            echo "If no changes are needed, output exactly: ```diff"
-            echo "# no changes"
-            echo "```"
+            echo "If no changes are needed, output exactly:"
+            echo '```diff'
+            echo '# no changes'
+            echo '```'
           } > "$PROMPT"
           echo "path=$PROMPT" >> "$GITHUB_OUTPUT"
 
@@ -377,7 +378,7 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Upload diagnostics BEFORE building PR body, so errors there don't prevent artifacts.
+      # Upload diagnostics BEFORE building PR body
       - name: Upload diagnostics
         uses: actions/upload-artifact@v4
         with:
@@ -409,7 +410,6 @@ jobs:
             if [ -n "${{ steps.poll.outputs.summary_json }}" ]; then
               echo "### Polled runs"
               echo '```json'
-              # Use double quotes here to avoid breaking on single quotes inside JSON
               echo "${{ steps.poll.outputs.summary_json }}"
               echo '```'
             fi
