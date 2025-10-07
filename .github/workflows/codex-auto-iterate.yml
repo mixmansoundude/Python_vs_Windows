@@ -1,18 +1,6 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-06.14 (Push→Poll ALL runs + fixed PR creation)
-# Purpose: Iterate safely even if main CI can't start, by polling *all* workflow runs for this commit.
-# Behavior:
-# - On push (any branch) and manual dispatch.
-# - Polls all workflow runs for this commit's head_sha (excluding this iterate workflow).
-# - Waits until they all complete (within timeout). If none appear within timeout, iterate (assume CI didn't start).
-# - If any completed run concludes != success, iterate; otherwise skip.
-# - When iterating: ask LLM for a unified diff, stage it, and let create-pull-request open the PR.
-# Notes:
-# - We do not commit locally in Apply patch; PR action needs uncommitted changes.
-# - Add helpful URLs in comments for quick maintenance:
-#   * list runs for repo: https://docs.github.com/rest/actions/workflow-runs#list-workflow-runs-for-a-repository
-#   * expressions/context: https://docs.github.com/actions/learn-github-actions/expressions
-#   * create-pull-request action: https://github.com/peter-evans/create-pull-request
+# version: v2025-10-06.15 (Fix PR-body JSON quoting + upload diag earlier + no local commit)
+# Purpose: Iterate safely even if CI can't start; poll ALL runs for this commit and iterate if any are non-success.
 
 name: Codex - Auto Iterate on CI Failure
 
@@ -251,7 +239,7 @@ jobs:
               "https://api.github.com/repos/${owner_repo}/actions/artifacts/$id/zip" \
               -o state.zip || true
             mkdir -p state && unzip -q state.zip -d state || true
-            attempts=$(jq -r '.attempts // 0' state/iterate_state.json 2>/dev-null || echo 0)
+            attempts=$(jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0)
           fi
           next=$(( attempts + 1 ))
           if [ "$next" -gt "${MAX_ATTEMPTS}" ]; then
@@ -389,6 +377,21 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Upload diagnostics BEFORE building PR body, so errors there don't prevent artifacts.
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: iterate-diag-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            $RUNNER_TEMP/auth_body.json
+            $RUNNER_TEMP/llm_req.json
+            $RUNNER_TEMP/llm_res.json
+            $RUNNER_TEMP/llm_content.txt
+            $RUNNER_TEMP/patch.diff
+            $RUNNER_TEMP/prompt.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Build PR body file
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
         id: pr_body
@@ -406,7 +409,8 @@ jobs:
             if [ -n "${{ steps.poll.outputs.summary_json }}" ]; then
               echo "### Polled runs"
               echo '```json'
-              echo '${{ steps.poll.outputs.summary_json }}'
+              # Use double quotes here to avoid breaking on single quotes inside JSON
+              echo "${{ steps.poll.outputs.summary_json }}"
               echo '```'
             fi
             echo
@@ -433,27 +437,12 @@ jobs:
         if: ${{ steps.apply.outputs.changed == 'true' }}
         uses: peter-evans/create-pull-request@v6
         with:
-            commit-message: "codex: iterate on CI failure (attempt ${{ steps.attempts.outputs.next }}/${{ env.MAX_ATTEMPTS }})"
-            branch: codex/ci-fix-${{ steps.ctx.outputs.branch_slug }}
-            base: ${{ steps.ctx.outputs.branch }}
-            title: "Codex: iterate on CI failure – ${{ steps.ctx.outputs.branch }}"
-            body-path: ${{ steps.pr_body.outputs.body_path }}
-            labels: codex,ci-fix,automerge-candidate
-
-      - name: Upload diagnostics
-        uses: actions/upload-artifact@v4
-        with:
-          name: iterate-diag-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            $RUNNER_TEMP/auth_body.json
-            $RUNNER_TEMP/llm_req.json
-            $RUNNER_TEMP/llm_res.json
-            $RUNNER_TEMP/llm_content.txt
-            $RUNNER_TEMP/patch.diff
-            $RUNNER_TEMP/prompt.txt
-            artifacts/**
-          if-no-files-found: ignore
-          retention-days: 14
+          commit-message: "codex: iterate on CI failure (attempt ${{ steps.attempts.outputs.next }}/${{ env.MAX_ATTEMPTS }})"
+          branch: codex/ci-fix-${{ steps.ctx.outputs.branch_slug }}
+          base: ${{ steps.ctx.outputs.branch }}
+          title: "Codex: iterate on CI failure – ${{ steps.ctx.outputs.branch }}"
+          body-path: ${{ steps.pr_body.outputs.body_path }}
+          labels: codex,ci-fix,automerge-candidate
 
       - name: Save attempt state
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
