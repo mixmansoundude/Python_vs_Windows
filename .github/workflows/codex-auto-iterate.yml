@@ -1,18 +1,18 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-06.9 (Cookbook-lean + Auth probe + API patcher + Push-poll main CI)
-# Purpose: Iterate safely even when main CI can't start (YAML errors), by polling on push for head_sha runs.
+# version: v2025-10-06.14 (Push→Poll ALL runs + fixed PR creation)
+# Purpose: Iterate safely even if main CI can't start, by polling *all* workflow runs for this commit.
+# Behavior:
+# - On push (any branch) and manual dispatch.
+# - Polls all workflow runs for this commit's head_sha (excluding this iterate workflow).
+# - Waits until they all complete (within timeout). If none appear within timeout, iterate (assume CI didn't start).
+# - If any completed run concludes != success, iterate; otherwise skip.
+# - When iterating: ask LLM for a unified diff, stage it, and let create-pull-request open the PR.
 # Notes:
-# - On push: poll all workflow runs for this commit (head_sha). If none show up within timeout => iterate.
-# - If a non-iterate workflow completes with conclusion != success => iterate. If success => skip.
-# - On workflow_dispatch: iterate immediately.
-# - You can keep `workflow_run` too, but push+poll already covers "main CI never started" scenarios.
-# - Auth probe uses file-based JSON to avoid request-quoting issues.
-# - Avoids status functions in expressions; uses small, robust conditions.
-# - PR body only built when iterating to avoid empty sections.
-# Helpful docs:
-# - List runs for repo (head_sha): https://docs.github.com/rest/actions/workflow-runs#list-workflow-runs-for-a-repository
-# - GitHub expressions: https://docs.github.com/actions/learn-github-actions/expressions
-# - Workflow commands & env files: https://docs.github.com/actions/using-workflows/workflow-commands-for-github-actions
+# - We do not commit locally in Apply patch; PR action needs uncommitted changes.
+# - Add helpful URLs in comments for quick maintenance:
+#   * list runs for repo: https://docs.github.com/rest/actions/workflow-runs#list-workflow-runs-for-a-repository
+#   * expressions/context: https://docs.github.com/actions/learn-github-actions/expressions
+#   * create-pull-request action: https://github.com/peter-evans/create-pull-request
 
 name: Codex - Auto Iterate on CI Failure
 
@@ -20,10 +20,6 @@ on:
   push:
     branches: ['**']
   workflow_dispatch: {}
-  # Keep this commented unless you still want workflow_run triggering too.
-  # workflow_run:
-  #   workflows: ['Batch syntax/run check']
-  #   types: [completed]
 
 permissions:
   actions: read
@@ -41,10 +37,8 @@ jobs:
     env:
       MAX_ATTEMPTS: '20'
       OPENAI_MODEL: gpt-4o-mini
-      ITERATE_WORKFLOW_NAME: ${{ github.workflow }} # name of this workflow, used to exclude self from polling list
-      POLL_TIMEOUT_SECONDS: '600' # 10 minutes
+      POLL_TIMEOUT_SECONDS: '1200'   # 20 minutes
       POLL_INTERVAL_SECONDS: '10'
-
     steps:
       - name: Debug event
         run: |
@@ -53,6 +47,7 @@ jobs:
           echo "sha=${{ github.sha }}"
           echo "actor=${{ github.actor }}"
           echo "workflow=${{ github.workflow }}"
+          echo "run_id=${{ github.run_id }}"
 
       - name: Checkout repo (latest)
         uses: actions/checkout@v4
@@ -105,9 +100,9 @@ jobs:
             if [ "$http_code" = "200" ]; then echo "- key: present"; else echo "- key: present (but request failed)"; fi
             echo "- http_code: $http_code"
             echo ""
-            echo "Body (first 400 chars):"
+            echo "Body (first 300 chars):"
             echo '```json'
-            head -c 400 "$RUNNER_TEMP/auth_body.json" | sed 's/[^[:print:]\t]/?/g' || true
+            head -c 300 "$RUNNER_TEMP/auth_body.json" | sed 's/[^[:print:]\t]/?/g' || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -127,94 +122,116 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
 
-      - name: Poll main CI run for this commit (push path)
+      - name: Poll ALL workflow runs for this commit
         id: poll
         uses: actions/github-script@v7
         env:
-          ITERATE_WORKFLOW_NAME: ${{ env.ITERATE_WORKFLOW_NAME }}
           POLL_TIMEOUT_SECONDS: ${{ env.POLL_TIMEOUT_SECONDS }}
           POLL_INTERVAL_SECONDS: ${{ env.POLL_INTERVAL_SECONDS }}
         with:
           script: |
             const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const sha = context.sha;
-            const selfName = process.env.ITERATE_WORKFLOW_NAME || context.workflow;
-            const pollDeadline = Date.now() + (parseInt(process.env.POLL_TIMEOUT_SECONDS||"600")*1000);
+            const repo  = context.repo.repo;
+            const sha   = context.sha;
+            const selfRunId = String(context.runId || "");
+            const selfName  = (context.workflow || "").toLowerCase();
+            const deadline = Date.now() + (parseInt(process.env.POLL_TIMEOUT_SECONDS||"1200")*1000);
             const interval = parseInt(process.env.POLL_INTERVAL_SECONDS||"10")*1000;
 
-            function isMainCandidate(run) {
-              const nm = (run.name || "").toLowerCase();
-              if (nm === (selfName||"").toLowerCase()) return false;
-              if (nm.includes("iterate")) return false;
-              return run.head_sha === sha;
-            }
-
-            async function listRuns() {
+            async function listRunsForSha() {
               const { data } = await github.rest.actions.listWorkflowRunsForRepo({
-                owner, repo, per_page: 100, head_sha: sha
+                owner, repo, head_sha: sha, per_page: 100
               });
-              return data.workflow_runs.filter(isMainCandidate);
+              return data.workflow_runs || [];
             }
 
+            function filterNotSelf(runs) {
+              return runs.filter(r =>
+                String(r.id) !== selfRunId &&
+                (r.name||"").toLowerCase() !== selfName
+              );
+            }
+
+            let lastSeen = [];
             let chosen = null;
-            while (Date.now() < pollDeadline) {
-              const runs = await listRuns();
-              if (runs.length > 0) {
-                runs.sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
-                chosen = runs[0];
-                if (chosen.status === "completed") break;
+            while (Date.now() < deadline) {
+              let runs = await listRunsForSha();
+              runs = filterNotSelf(runs);
+              // Track for debugging
+              lastSeen = runs.map(r => ({id:r.id, name:r.name, status:r.status, conclusion:r.conclusion}));
+
+              // If no other runs yet, wait
+              if (runs.length === 0) {
+                await new Promise(r => setTimeout(r, interval));
+                continue;
               }
-              await new Promise(r => setTimeout(r, interval));
+
+              const incomplete = runs.filter(r => r.status !== "completed");
+              if (incomplete.length > 0) {
+                await new Promise(r => setTimeout(r, interval));
+                continue;
+              }
+
+              // All completed. If any non-success, choose the first non-success
+              const nonSuccess = runs.find(r => (r.conclusion||"") !== "success");
+              chosen = nonSuccess || runs[0];
+              break;
             }
 
             if (!chosen) {
-              core.info("No main CI run found for this commit within timeout; will iterate (assume CI did not start).");
-              core.setOutput("found", "false");
-              core.setOutput("status", "missing");
-              core.setOutput("conclusion", "");
-              core.setOutput("run_id", "");
+              core.info("Either no runs appeared, or still pending at timeout. Will iterate by default.");
+              core.setOutput("found_any", "false");
+              core.setOutput("all_completed", "false");
+              core.setOutput("any_non_success", "true"); // treat as condition to iterate
+              core.setOutput("summary_json", JSON.stringify(lastSeen));
             } else {
-              core.info(`Main candidate: ${chosen.name} id=${chosen.id} status=${chosen.status} conclusion=${chosen.conclusion}`);
-              core.setOutput("found", "true");
-              core.setOutput("status", chosen.status || "");
-              core.setOutput("conclusion", chosen.conclusion || "");
-              core.setOutput("run_id", String(chosen.id));
-              core.setOutput("name", chosen.name || "");
-              core.setOutput("html_url", chosen.html_url || "");
+              core.setOutput("found_any", "true");
+              core.setOutput("all_completed", "true");
+              const anyNonSucc = lastSeen.some(r => (r.conclusion||"") !== "success");
+              core.setOutput("any_non_success", String(anyNonSucc));
+              core.setOutput("summary_json", JSON.stringify(lastSeen));
+              core.setOutput("picked_id", String(chosen.id));
+              core.setOutput("picked_name", chosen.name||"");
+              core.setOutput("picked_status", chosen.status||"");
+              core.setOutput("picked_conclusion", chosen.conclusion||"");
             }
 
       - name: Decide gate (iterate vs skip)
         id: gate
         shell: bash
         env:
-          FOUND: ${{ steps.poll.outputs.found }}
-          STATUS: ${{ steps.poll.outputs.status }}
-          CONCLUSION: ${{ steps.poll.outputs.conclusion }}
+          FOUND_ANY: ${{ steps.poll.outputs.found_any }}
+          ALL_COMPLETED: ${{ steps.poll.outputs.all_completed }}
+          ANY_NON_SUCCESS: ${{ steps.poll.outputs.any_non_success }}
         run: |
           set -euo pipefail
           should_iterate=false
           reason=""
-          if [ "${FOUND}" != "true" ]; then
+          if [ "${FOUND_ANY}" != "true" ]; then
             should_iterate=true
-            reason="no_main_run_found"
+            reason="no_runs_or_timeout"
           else
-            if [ "${STATUS}" != "completed" ]; then
+            if [ "${ALL_COMPLETED}" != "true" ]; then
               should_iterate=true
-              reason="main_run_not_completed"
+              reason="runs_not_completed_timeout"
             else
-              if [ "${CONCLUSION}" != "success" ]; then
+              if [ "${ANY_NON_SUCCESS}" = "true" ]; then
                 should_iterate=true
-                reason="main_conclusion_${CONCLUSION:-empty}"
+                reason="one_or_more_runs_failed"
               else
                 should_iterate=false
-                reason="main_success"
+                reason="all_success"
               fi
             fi
           fi
           echo "should_iterate=${should_iterate}" >> "$GITHUB_OUTPUT"
           echo "reason=${reason}" >> "$GITHUB_OUTPUT"
-          echo "Gate: should_iterate=${should_iterate} reason=${reason}"
+          {
+            echo "### Poll summary"
+            echo '```json'
+            echo '${{ steps.poll.outputs.summary_json }}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Load/Update attempt counter
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
@@ -234,7 +251,7 @@ jobs:
               "https://api.github.com/repos/${owner_repo}/actions/artifacts/$id/zip" \
               -o state.zip || true
             mkdir -p state && unzip -q state.zip -d state || true
-            attempts=$(jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0)
+            attempts=$(jq -r '.attempts // 0' state/iterate_state.json 2>/dev-null || echo 0)
           fi
           next=$(( attempts + 1 ))
           if [ "$next" -gt "${MAX_ATTEMPTS}" ]; then
@@ -258,8 +275,6 @@ jobs:
           repo="${{ github.repository }}"
           branch="${{ steps.ctx.outputs.branch }}"
           sha="${{ steps.ctx.outputs.head_sha }}"
-          run_id="${{ steps.poll.outputs.run_id || steps.ctx.outputs.run_id }}"
-          run_url="${{ steps.poll.outputs.html_url || steps.ctx.outputs.run_url }}"
           attempt="${{ steps.attempts.outputs.next }}"
           {
             echo "You are Codex. You have a working copy of the repo checked out."
@@ -271,7 +286,6 @@ jobs:
             echo "Repo: $repo"
             echo "Branch: $branch"
             echo "Commit: $sha"
-            echo "Upstream run (that triggered this or was expected to): ${run_url:-none}"
             echo "Attempt: $attempt/${MAX_ATTEMPTS}"
             echo ""
             echo "Strict output instruction: Return a unified diff patch inside a single fenced code block labeled 'diff'."
@@ -348,7 +362,7 @@ jobs:
           head -n 120 "$DIFF_OUT" >> "$GITHUB_STEP_SUMMARY" || true
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Apply patch
+      - name: Apply patch (stage only; let PR action commit)
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: apply
         shell: bash
@@ -371,9 +385,7 @@ jobs:
           if [ -z "$(git status --porcelain)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git config user.name  "github-actions[bot]"
-            git commit -m "codex: apply suggested patch (attempt ${{ steps.attempts.outputs.next }}/${{ env.MAX_ATTEMPTS }})"
+            # Do not commit here—leave changes staged for create-pull-request.
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -386,13 +398,16 @@ jobs:
           BODY=".github/ITERATE_PR_BODY.md"
           mkdir -p .github
           {
-            echo "## Codex iteration (push-poll flow)"
+            echo "## Codex iteration (push-poll ALL workflows)"
             echo
             echo "- Branch: \`${{ steps.ctx.outputs.branch }}\` @ ${{ steps.ctx.outputs.head_sha }}"
-            if [ -n "${{ steps.poll.outputs.html_url }}" ]; then
-              echo "- Polled main run: ${{ steps.poll.outputs.name }} – ${{ steps.poll.outputs.html_url }} (conclusion: ${{ steps.poll.outputs.conclusion || 'n/a' }})"
-            else
-              echo "- Polled main run: none detected for this commit (within timeout)"
+            echo "- Gate reason: ${{ steps.gate.outputs.reason }}"
+            echo
+            if [ -n "${{ steps.poll.outputs.summary_json }}" ]; then
+              echo "### Polled runs"
+              echo '```json'
+              echo '${{ steps.poll.outputs.summary_json }}'
+              echo '```'
             fi
             echo
             echo "### Auth probe"
@@ -418,12 +433,12 @@ jobs:
         if: ${{ steps.apply.outputs.changed == 'true' }}
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "codex: iterate on CI failure (attempt ${{ steps.attempts.outputs.next }}/${{ env.MAX_ATTEMPTS }})"
-          branch: codex/ci-fix-${{ steps.ctx.outputs.branch_slug }}
-          base: ${{ steps.ctx.outputs.branch }}
-          title: "Codex: iterate on CI failure – ${{ steps.ctx.outputs.branch }}"
-          body-path: ${{ steps.pr_body.outputs.body_path }}
-          labels: codex,ci-fix,automerge-candidate
+            commit-message: "codex: iterate on CI failure (attempt ${{ steps.attempts.outputs.next }}/${{ env.MAX_ATTEMPTS }})"
+            branch: codex/ci-fix-${{ steps.ctx.outputs.branch_slug }}
+            base: ${{ steps.ctx.outputs.branch }}
+            title: "Codex: iterate on CI failure – ${{ steps.ctx.outputs.branch }}"
+            body-path: ${{ steps.pr_body.outputs.body_path }}
+            labels: codex,ci-fix,automerge-candidate
 
       - name: Upload diagnostics
         uses: actions/upload-artifact@v4
