@@ -217,7 +217,7 @@ jobs:
           {
             echo "### Poll summary"
             echo '```json'
-            echo "${{ steps.poll.outputs.summary_json }}"
+            echo '${{ steps.poll.outputs.summary_json }}'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -390,7 +390,7 @@ jobs:
             $RUNNER_TEMP/llm_content.txt
             $RUNNER_TEMP/patch.diff
             $RUNNER_TEMP/prompt.txt
-          if-no-files-found: ignore
+          if-no-files-found: warn
           retention-days: 14
 
       - name: Build PR body file
@@ -407,7 +407,7 @@ jobs:
             echo "- Branch: \`${{ steps.ctx.outputs.branch }}\` @ ${{ steps.ctx.outputs.head_sha }}"
             echo "- Gate reason: ${{ steps.gate.outputs.reason }}"
             echo
-            if [ -n "${{ steps.poll.outputs.summary_json }}" ]; then
+            if [ -n '${{ steps.poll.outputs.summary_json }}' ]; then
               echo "### Polled runs"
               echo '```json'
               echo "${{ steps.poll.outputs.summary_json }}"
@@ -463,7 +463,7 @@ jobs:
         with:
           name: iterate-state-${{ steps.ctx.outputs.branch_slug }}
           path: state_out
-          if-no-files-found: ignore
+          if-no-files-found: warn
           retention-days: 30
 
       # In .github/workflows/codex-auto-iterate.yml
@@ -481,7 +481,7 @@ jobs:
             ${{ runner.temp }}/llm_content.txt
             ${{ runner.temp }}/patch.diff
             ${{ runner.temp }}/prompt.txt
-          if-no-files-found: ignore
+          if-no-files-found: warn
           retention-days: 14
       
       # 2) At the very end, force a neutral outcome so iteration doesn’t “fail fast”
