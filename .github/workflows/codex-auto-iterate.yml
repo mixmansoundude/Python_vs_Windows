@@ -1,4 +1,5 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
+# version: v2025-10-07.22
 # version: v2025-10-07.16 (ALL-RUNS gate, backtick-safe prompt, actions: write, early artifacts)
 # Purpose: Iterate even if CI doesn't start; poll *all* runs for this commit and iterate if any are non-success.
 
@@ -217,9 +218,11 @@ jobs:
           {
             echo "### Poll summary"
             echo '```json'
-            echo '${{ steps.poll.outputs.summary_json }}'
-            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          cat >> "$GITHUB_STEP_SUMMARY" <<'JSON_EOF'
+          ${{ steps.poll.outputs.summary_json }}
+          JSON_EOF
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Load/Update attempt counter
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
@@ -418,12 +421,8 @@ jobs:
             echo "- Branch: \`${{ steps.ctx.outputs.branch }}\` @ ${{ steps.ctx.outputs.head_sha }}"
             echo "- Gate reason: ${{ steps.gate.outputs.reason }}"
             echo
-            if [ -n '${{ steps.poll.outputs.summary_json }}' ]; then
-              echo "### Polled runs"
-              echo '```json'
-              echo "${{ steps.poll.outputs.summary_json }}"
-              echo '```'
-            fi
+            echo "### Polled runs"
+            echo '```json'
             echo
             echo "### Auth probe"
             echo "- ok: ${{ steps.auth.outputs.ok || 'false' }} (reason: ${{ steps.auth.outputs.reason || 'n/a' }})"
@@ -442,6 +441,10 @@ jobs:
               echo '```'
             fi
           } > "$BODY"
+          cat >> "$BODY" <<'JSON_EOF'
+          ${ steps.poll.outputs.summary_json }
+          JSON_EOF
+          { echo '```'; } >> "$BODY"
           echo "body_path=$BODY" >> "$GITHUB_OUTPUT"
 
       - name: Create PR (if edits)
