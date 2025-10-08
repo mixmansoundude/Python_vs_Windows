@@ -465,3 +465,28 @@ jobs:
           path: state_out
           if-no-files-found: ignore
           retention-days: 30
+
+      # In .github/workflows/codex-auto-iterate.yml
+      
+      # 1) Make the diagnostic upload run even if earlier steps fail
+      - name: Upload diagnostics
+        if: ${{ always() }}   # <-- ensures we get logs even when earlier steps fail
+        uses: actions/upload-artifact@v4
+        with:
+          name: iterate-diag-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/auth_body.json
+            ${{ runner.temp }}/llm_req.json
+            ${{ runner.temp }}/llm_res.json
+            ${{ runner.temp }}/llm_content.txt
+            ${{ runner.temp }}/patch.diff
+            ${{ runner.temp }}/prompt.txt
+          if-no-files-found: ignore
+          retention-days: 14
+      
+      # 2) At the very end, force a neutral outcome so iteration doesn’t “fail fast”
+      - name: Mark job neutral if we got this far
+        if: ${{ always() }}
+        run: echo "::notice title=iterate::Job completed (forcing neutral so logs persist)"
+        # Don’t `exit 1`; let earlier failures be visible in step outcomes
+      
