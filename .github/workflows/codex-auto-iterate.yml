@@ -1,11 +1,11 @@
 # =============================================================================
 # Codex – Auto Iterate on CI Failure
-# version: v2025-10-07.19-rollback
+# version: v2025-10-07.19c   # minimal patch: allow cancelled/timed_out
 #
 # Purpose:
-#   Trigger ONLY when the Windows "Batch syntax/run check" workflow FAILS,
-#   then run a headless Codex pass to propose and apply minimal changes,
-#   and open/update a PR. This is a rollback to the simpler, stable trigger.
+#   Trigger ONLY when the Windows "Batch syntax/run check" workflow completes,
+#   and run when its conclusion is failure/cancelled/timed_out; then launch a
+#   headless Codex pass to propose/apply minimal changes and open/update a PR.
 #
 # Notes:
 #   - If OPENAI_API_KEY is missing, it cleanly no-ops with an obvious summary.
@@ -16,7 +16,7 @@
 name: Codex – Auto Iterate on CI Failure
 
 on:
-  # Fire after our Windows workflow finishes; iterate when it FAILED.
+  # Fire after our Windows workflow finishes.
   workflow_run:
     workflows: ["Batch syntax/run check"]   # exact name
     types: [completed]
@@ -33,14 +33,15 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  ITERATOR_VERSION: v2025-10-07.19-rollback
+  ITERATOR_VERSION: v2025-10-07.19c
   OPENAI_MODEL: gpt-4o-mini
   MAX_ATTEMPTS: "20"           # guardrail: stop after N codex commits overall
 
 jobs:
   iterate:
-    # Run on manual dispatch, OR when the upstream run truly failed.
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure') }}
+    # v19 -> v19c change: include 'cancelled' and 'timed_out' so we still iterate
+    # when the upstream workflow is marked cancelled even if a job failed.
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && contains(fromJson('["failure","cancelled","timed_out"]'), github.event.workflow_run.conclusion)) }}
     runs-on: ubuntu-latest
 
     steps:
