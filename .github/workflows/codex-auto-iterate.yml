@@ -1,6 +1,6 @@
 # =============================================================================
 # Codex – Auto Iterate on CI Failure
-# version: v2025-10-07.18
+# version: v2025-10-07.19
 #
 # Purpose:
 #   After the Windows "Batch syntax/run check" workflow reports a FAILURE,
@@ -21,33 +21,26 @@
 name: Codex – Auto Iterate on CI Failure
 
 on:
-  # Fire after our Windows workflow finishes; iterate when it FAILED.
   workflow_run:
-    workflows: ["Batch syntax/run check"]   # must match the exact name
+    workflows: ["Batch syntax/run check"]
     types: [completed]
-  # Allow a manual dry-run/smoke without waiting for a failure.
   workflow_dispatch: {}
 
 permissions:
   contents: write
   pull-requests: write
 
-# Keep iterations for the same branch serialized, but do NOT cancel in-progress
-# runs (we prefer to let an iteration finish).
 concurrency:
   group: codex-iterate-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: false
 
 env:
-  # ---- Tunables (safe defaults) ---------------------------------------------
-  ITERATOR_VERSION: v2025-10-07.18
+  ITERATOR_VERSION: v2025-10-07.19
   OPENAI_MODEL: gpt-4o-mini
-  MAX_ATTEMPTS: "20"           # guardrail: stop after N codex commits overall
-  # ---------------------------------------------------------------------------
+  MAX_ATTEMPTS: "20"
 
 jobs:
   iterate:
-    # Run on manual dispatch, OR when the upstream run truly failed.
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure') }}
     runs-on: ubuntu-latest
 
@@ -60,7 +53,6 @@ jobs:
       - name: Checkout failing branch
         uses: actions/checkout@v4
         with:
-          # On workflow_run we target the same branch that failed
           ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           fetch-depth: 0
 
@@ -69,7 +61,6 @@ jobs:
           git config core.autocrlf true
           git config core.eol crlf
 
-      # Detect whether OPENAI_API_KEY is present WITHOUT leaking it.
       - name: Check for OPENAI_API_KEY
         id: apikey
         shell: bash
@@ -80,7 +71,6 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Download artifacts emitted by the failed Windows run (if any).
       - name: Download codex_nudge.txt (if present)
         if: ${{ github.event_name == 'workflow_run' }}
         uses: actions/download-artifact@v4
@@ -108,7 +98,6 @@ jobs:
           name: ci_test_results.ndjson
           path: ${{ runner.temp }}
 
-      # Loud but clean skip when no API key
       - name: Skip (no OPENAI_API_KEY configured)
         if: steps.apikey.outputs.present != 'true'
         shell: bash
@@ -131,7 +120,6 @@ jobs:
           path: ${{ runner.temp }}/codex_skip_reason.txt
           retention-days: 7
 
-      # Only proceed if we have an API key
       - name: Install Codex CLI
         if: steps.apikey.outputs.present == 'true'
         run: npm i -g @openai/codex@latest
@@ -142,7 +130,6 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name  "github-actions[bot]"
 
-      # Global attempt guard across the history (count commits with our prefix)
       - name: Loop guard
         if: steps.apikey.outputs.present == 'true'
         id: guard
@@ -156,6 +143,7 @@ jobs:
           else
             echo "stop=false" >> "$GITHUB_OUTPUT"
             echo "next=$((COUNT+1))" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build prompt for Codex
         if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
@@ -165,7 +153,6 @@ jobs:
           set -euo pipefail
           PROMPT="$RUNNER_TEMP/prompt.txt"
 
-          # Seed with the nudge if present; otherwise a generic brief.
           if [ -f "$RUNNER_TEMP/codex_nudge.txt/codex_nudge.txt" ]; then
             BASE="$(cat "$RUNNER_TEMP/codex_nudge.txt/codex_nudge.txt")"
           else
@@ -179,7 +166,6 @@ jobs:
             echo "- Avoid sweeping refactors; make minimal, targeted edits."
             echo "- Update matching tests/docs when behavior is intentional and gates assert it."
             echo "- Produce actual file edits in the workspace."
-            # Append compact slices of CI outputs if present (best-effort).
             if [ -f "$RUNNER_TEMP/ci_test_summary.txt/ci_test_summary.txt" ]; then
               echo ""
               echo "----- CI Summary (first 300 lines) -----"
@@ -201,7 +187,6 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Write-enabled + no-approval; retry briefly on transient stream errors.
       - name: Run Codex headlessly (write-enabled, resilient)
         if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
         id: codex
@@ -236,7 +221,6 @@ jobs:
             echo "Non-stream failure (rc=$rc). Not retrying." | tee -a "$LOG"
             break
           done
-          # Save branch name for later steps
           echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
       - name: Detect changes
@@ -248,17 +232,14 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            # Save a diffstat for the summary
             (git diff --staged --stat=160,999 || git diff --stat=160,999) > "$RUNNER_TEMP/diffstat.txt" || true
           fi
 
-      # Clean any accidental temp files that might have been written into the repo
       - name: Clean repo temp files
         if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
         run: |
           rm -f prompt.txt codex_nudge.txt codex_exec.log || true
 
-      # Let the action stage/commit/push internally (avoid the "no changes" trap).
       - name: Create/Update PR (commit & push inside action)
         if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
@@ -271,7 +252,6 @@ jobs:
           labels: codex,ci-fix,automerge-candidate
           commit-message: "codex: iterate on CI failure (attempt ${{ steps.guard.outputs.next }}/${{ env.MAX_ATTEMPTS }}) for ${{ github.event.workflow_run.head_branch || github.ref_name }}"
 
-      # Always upload logs & prompt so we can debug even when nothing changed.
       - name: Upload Codex artifacts (always)
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
