@@ -1,305 +1,467 @@
-# =============================================================================
-# Codex – Auto Iterate on CI Failure
-# version: v2025-10-07.19c   # minimal patch: allow cancelled/timed_out
-#
-# Purpose:
-#   Trigger ONLY when the Windows "Batch syntax/run check" workflow completes,
-#   and run when its conclusion is failure/cancelled/timed_out; then launch a
-#   headless Codex pass to propose/apply minimal changes and open/update a PR.
-#
-# Notes:
-#   - If OPENAI_API_KEY is missing, it cleanly no-ops with an obvious summary.
-#   - Temp files live ONLY in $RUNNER_TEMP (never committed).
-#   - Codex runs with:  workspace-write  +  approval: never (unattended CI).
-# =============================================================================
+# yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
+# version: v2025-10-07.16 (ALL-RUNS gate, backtick-safe prompt, actions: write, early artifacts)
+# Purpose: Iterate even if CI doesn't start; poll *all* runs for this commit and iterate if any are non-success.
 
-name: Codex – Auto Iterate on CI Failure
+name: Codex - Auto Iterate on CI Failure
 
 on:
-  # Fire after our Windows workflow finishes.
-  workflow_run:
-    workflows: ["Batch syntax/run check"]   # exact name
-    types: [completed]
-  # Allow a manual dry-run/smoke without waiting for a failure.
+  push:
+    branches: ['**']
   workflow_dispatch: {}
 
 permissions:
+  actions: write       # upload-artifact requires write
   contents: write
   pull-requests: write
 
-# Keep iterations for the same branch serialized, but do NOT cancel in-progress runs.
 concurrency:
-  group: codex-iterate-${{ github.event.workflow_run.head_branch || github.ref_name }}
-  cancel-in-progress: false
-
-env:
-  ITERATOR_VERSION: v2025-10-07.19c
-  OPENAI_MODEL: gpt-4o-mini
-  MAX_ATTEMPTS: "20"           # guardrail: stop after N codex commits overall
+  group: codex-iterate-${{ github.sha }}
+  cancel-in-progress: true
 
 jobs:
   iterate:
-    # v19 -> v19c change: include 'cancelled' and 'timed_out' so we still iterate
-    # when the upstream workflow is marked cancelled even if a job failed.
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && contains(fromJson('["failure","cancelled","timed_out"]'), github.event.workflow_run.conclusion)) }}
     runs-on: ubuntu-latest
-
+    timeout-minutes: 60
+    env:
+      MAX_ATTEMPTS: '20'
+      OPENAI_MODEL: gpt-4o-mini
+      POLL_TIMEOUT_SECONDS: '1200'   # 20 minutes
+      POLL_INTERVAL_SECONDS: '10'
     steps:
-      - name: Iterator version
+      - name: Debug event
         run: |
-          echo "### Codex iterator" >> "$GITHUB_STEP_SUMMARY"
-          echo "- version: $ITERATOR_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "event=${{ github.event_name }}"
+          echo "ref_name=${{ github.ref_name }}"
+          echo "sha=${{ github.sha }}"
+          echo "actor=${{ github.actor }}"
+          echo "workflow=${{ github.workflow }}"
+          echo "run_id=${{ github.run_id }}"
 
-      - name: Checkout failing branch
+      - name: Checkout repo (latest)
         uses: actions/checkout@v4
         with:
-          # On workflow_run we target the same branch that failed
-          ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           fetch-depth: 0
 
-      - name: Normalize CRLF (harmless no-op on Linux files)
-        run: |
-          git config core.autocrlf true
-          git config core.eol crlf
-
-      # Detect whether OPENAI_API_KEY is present WITHOUT leaking it.
-      - name: Check for OPENAI_API_KEY
-        id: apikey
-        shell: bash
-        run: |
-          if [ -n "${{ secrets.OPENAI_API_KEY }}" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # Download artifacts emitted by the failed Windows run (if any).
-      - name: Download codex_nudge.txt (if present)
-        if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          run_id: ${{ github.event.workflow_run.id }}
-          name: codex_nudge.txt
-          path: ${{ runner.temp }}
-
-      - name: Download CI summary (if present)
-        if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          run_id: ${{ github.event.workflow_run.id }}
-          name: ci_test_summary.txt
-          path: ${{ runner.temp }}
-
-      - name: Download CI NDJSON (if present)
-        if: ${{ github.event_name == 'workflow_run' }}
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          run_id: ${{ github.event.workflow_run.id }}
-          name: ci_test_results.ndjson
-          path: ${{ runner.temp }}
-
-      # Loud but clean skip when no API key
-      - name: Skip (no OPENAI_API_KEY configured)
-        if: steps.apikey.outputs.present != 'true'
-        shell: bash
-        run: |
-          echo "::notice title=Codex auto-iterate is disabled::Reason: OPENAI_API_KEY not set. Skipping headless iteration and leaving existing flow unchanged."
-          {
-            echo "#### Auto-iterate skipped"
-            echo ""
-            echo "- Reason: \`OPENAI_API_KEY\` is not configured in repo **Settings → Secrets and variables → Actions**."
-            echo "- Effect: No headless Codex run; your existing behavior (manual flow) remains unchanged."
-            echo "- Iterator version: $ITERATOR_VERSION"
-          } >> "$GITHUB_STEP_SUMMARY"
-          printf "Codex auto-iterate skipped: missing OPENAI_API_KEY\n" > "$RUNNER_TEMP/codex_skip_reason.txt"
-
-      - name: Upload skip reason
-        if: steps.apikey.outputs.present != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex-skip-reason
-          path: ${{ runner.temp }}/codex_skip_reason.txt
-          retention-days: 7
-
-      # Only proceed if we have an API key
-      - name: Install Codex CLI
-        if: steps.apikey.outputs.present == 'true'
-        run: npm i -g @openai/codex@latest
-
-      - name: Git author (bot)
-        if: steps.apikey.outputs.present == 'true'
-        run: |
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name  "github-actions[bot]"
-
-      # Global attempt guard across the history (count commits with our prefix)
-      - name: Loop guard
-        if: steps.apikey.outputs.present == 'true'
-        id: guard
-        shell: bash
-        run: |
-          COUNT=$(git rev-list --all --grep='^codex: iterate on CI failure' | wc -l || true)
-          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
-          if [ "$COUNT" -ge "$MAX_ATTEMPTS" ]; then
-            echo "stop=true" >> "$GITHUB_OUTPUT"
-            echo "Reached $MAX_ATTEMPTS attempts; exiting without changes." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "stop=false" >> "$GITHUB_OUTPUT"
-            echo "next=$((COUNT+1))" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build prompt for Codex
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
-        id: prompt
-        shell: bash
-        run: |
-          set -euo pipefail
-          PROMPT="$RUNNER_TEMP/prompt.txt"
-
-          # Seed with the nudge if present; otherwise a generic brief.
-          if [ -f "$RUNNER_TEMP/codex_nudge.txt/codex_nudge.txt" ]; then
-            BASE="$(cat "$RUNNER_TEMP/codex_nudge.txt/codex_nudge.txt")"
-          else
-            BASE="Analyze the last CI failure and apply the smallest safe change set to make our Windows CI pass."
-          fi
-
-          {
-            printf "%s\n\n" "$BASE"
-            echo "Constraints:"
-            echo "- Preserve CRLF; ASCII where practical; keep Windows batch scripts robust."
-            echo "- Avoid sweeping refactors; make minimal, targeted edits."
-            echo "- Update matching tests/docs when behavior is intentional and gates assert it."
-            echo "- Produce actual file edits in the workspace."
-            # Append compact slices of CI outputs if present (best-effort).
-            if [ -f "$RUNNER_TEMP/ci_test_summary.txt/ci_test_summary.txt" ]; then
-              echo ""
-              echo "----- CI Summary (first 300 lines) -----"
-              head -n 300 "$RUNNER_TEMP/ci_test_summary.txt/ci_test_summary.txt"
-            fi
-            if [ -f "$RUNNER_TEMP/ci_test_results.ndjson/ci_test-results.ndjson" ]; then
-              echo ""
-              echo "----- CI NDJSON (first 40 lines) -----"
-              head -n 40 "$RUNNER_TEMP/ci_test_results.ndjson/ci_test-results.ndjson"
-            fi
-          } > "$PROMPT"
-
-          echo "path=$PROMPT" >> "$GITHUB_OUTPUT"
-          {
-            echo ""
-            echo "#### Prompt (head)"
-            echo '```'
-            head -n 60 "$PROMPT"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # Write-enabled + no-approval; retry briefly on transient stream errors.
-      - name: Run Codex headlessly (write-enabled, resilient)
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
-        id: codex
-        timeout-minutes: 10
+      - name: Auth probe (key + 1-token chat)
+        id: auth
         continue-on-error: true
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
         shell: bash
         run: |
-          set -o pipefail
-          LOG="$RUNNER_TEMP/codex_exec.log"
-          PROMPT_PATH="${{ steps.prompt.outputs.path }}"
-          BRANCH="codex/ci-fix-${{ github.event.workflow_run.head_branch || github.ref_name }}"
-          echo "Target branch: $BRANCH" | tee -a "$LOG"
-          tries=0
-          max=3
-          until [ $tries -ge $max ]; do
-            tries=$((tries+1))
-            echo "=== Codex attempt $tries/$max (model=$OPENAI_MODEL) ===" | tee -a "$LOG"
-            codex -a never --sandbox workspace-write exec --model "$OPENAI_MODEL" "$(cat "$PROMPT_PATH")" 2>&1 | tee -a "$LOG"
-            rc=${PIPESTATUS[0]}
-            if [ $rc -eq 0 ]; then
-              echo "codex exec exit code 0" | tee -a "$LOG"
-              break
-            fi
-            if grep -qi 'stream error' "$LOG"; then
-              echo "Detected stream error. Sleeping briefly before retry..." | tee -a "$LOG"
-              sleep 6
-              continue
-            fi
-            echo "Non-stream failure (rc=$rc). Not retrying." | tee -a "$LOG"
-            break
-          done
-          # Save branch name for later steps
-          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
+          set -euo pipefail
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no_key" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Auth probe"
+              echo ""
+              echo "- key: MISSING"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          REQ="$RUNNER_TEMP/auth_req.json"
+          cat > "$REQ" <<'JSON'
+          {
+            "model": "gpt-4o-mini",
+            "messages": [{"role":"user","content":"ping"}],
+            "max_tokens": 1,
+            "temperature": 0
+          }
+          JSON
+          http_code=$(curl -sS -o "$RUNNER_TEMP/auth_body.json" -w "%{http_code}" \
+            https://api.openai.com/v1/chat/completions \
+            -H "authorization: Bearer $OPENAI_API_KEY" \
+            -H "content-type: application/json" \
+            -d @"$REQ")
+          if [ "$http_code" = "200" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "reason=ok" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "reason=http_${http_code}" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "### Auth probe"
+            echo ""
+            if [ "$http_code" = "200" ]; then echo "- key: present"; else echo "- key: present (but request failed)"; fi
+            echo "- http_code: $http_code"
+            echo ""
+            echo "Body (first 300 chars):"
+            echo '```json'
+            head -c 300 "$RUNNER_TEMP/auth_body.json" | sed 's/[^[:print:]\t]/?/g' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Detect changes
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
-        id: diffcheck
+      - name: Gather context
+        id: ctx
         shell: bash
         run: |
+          set -euo pipefail
+          branch="${{ github.ref_name }}"
+          sha="${{ github.sha }}"
+          run_id="${{ github.run_id }}"
+          run_url="https://github.com/${{ github.repository }}/actions/runs/${run_id}"
+          branch_slug=$(echo "$branch" | tr ':/ ' '---')
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "branch_slug=$branch_slug" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
+
+      - name: Poll ALL workflow runs for this commit
+        id: poll
+        uses: actions/github-script@v7
+        env:
+          POLL_TIMEOUT_SECONDS: ${{ env.POLL_TIMEOUT_SECONDS }}
+          POLL_INTERVAL_SECONDS: ${{ env.POLL_INTERVAL_SECONDS }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const sha   = context.sha;
+            const selfRunId = String(context.runId || "");
+            const selfName  = (context.workflow || "").toLowerCase();
+            const deadline = Date.now() + (parseInt(process.env.POLL_TIMEOUT_SECONDS||"1200")*1000);
+            const interval = parseInt(process.env.POLL_INTERVAL_SECONDS||"10")*1000;
+
+            async function listRunsForSha() {
+              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner, repo, head_sha: sha, per_page: 100
+              });
+              return data.workflow_runs || [];
+            }
+
+            function filterNotSelf(runs) {
+              return runs.filter(r =>
+                String(r.id) !== selfRunId &&
+                (r.name||"").toLowerCase() !== selfName
+              );
+            }
+
+            let lastSeen = [];
+            let chosen = null;
+            while (Date.now() < deadline) {
+              let runs = await listRunsForSha();
+              runs = filterNotSelf(runs);
+              // Track for debugging
+              lastSeen = runs.map(r => ({id:r.id, name:r.name, status:r.status, conclusion:r.conclusion}));
+
+              // If no other runs yet, wait
+              if (runs.length === 0) {
+                await new Promise(r => setTimeout(r, interval));
+                continue;
+              }
+
+              const incomplete = runs.filter(r => r.status !== "completed");
+              if (incomplete.length > 0) {
+                await new Promise(r => setTimeout(r, interval));
+                continue;
+              }
+
+              // All completed. If any non-success, choose the first non-success
+              const nonSuccess = runs.find(r => (r.conclusion||"") !== "success");
+              chosen = nonSuccess || runs[0];
+              break;
+            }
+
+            if (!chosen) {
+              core.info("Either no runs appeared, or still pending at timeout. Will iterate by default.");
+              core.setOutput("found_any", "false");
+              core.setOutput("all_completed", "false");
+              core.setOutput("any_non_success", "true"); // treat as condition to iterate
+              core.setOutput("summary_json", JSON.stringify(lastSeen));
+            } else {
+              core.setOutput("found_any", "true");
+              core.setOutput("all_completed", "true");
+              const anyNonSucc = lastSeen.some(r => (r.conclusion||"") !== "success");
+              core.setOutput("any_non_success", String(anyNonSucc));
+              core.setOutput("summary_json", JSON.stringify(lastSeen));
+              core.setOutput("picked_id", String(chosen.id));
+              core.setOutput("picked_name", chosen.name||"");
+              core.setOutput("picked_status", chosen.status||"");
+              core.setOutput("picked_conclusion", chosen.conclusion||"");
+            }
+
+      - name: Decide gate (iterate vs skip)
+        id: gate
+        shell: bash
+        env:
+          FOUND_ANY: ${{ steps.poll.outputs.found_any }}
+          ALL_COMPLETED: ${{ steps.poll.outputs.all_completed }}
+          ANY_NON_SUCCESS: ${{ steps.poll.outputs.any_non_success }}
+        run: |
+          set -euo pipefail
+          should_iterate=false
+          reason=""
+          if [ "${FOUND_ANY}" != "true" ]; then
+            should_iterate=true
+            reason="no_runs_or_timeout"
+          else
+            if [ "${ALL_COMPLETED}" != "true" ]; then
+              should_iterate=true
+              reason="runs_not_completed_timeout"
+            else
+              if [ "${ANY_NON_SUCCESS}" = "true" ]; then
+                should_iterate=true
+                reason="one_or_more_runs_failed"
+              else
+                should_iterate=false
+                reason="all_success"
+              fi
+            fi
+          fi
+          echo "should_iterate=${should_iterate}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Poll summary"
+            echo '```json'
+            echo "${{ steps.poll.outputs.summary_json }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Load/Update attempt counter
+        if: ${{ steps.gate.outputs.should_iterate == 'true' }}
+        id: attempts
+        shell: bash
+        run: |
+          set -euo pipefail
+          attempts=0
+          GH_TOKEN="${{ github.token }}"
+          owner_repo="${{ github.repository }}"
+          branch_slug="${{ steps.ctx.outputs.branch_slug }}"
+          curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${owner_repo}/actions/artifacts?per_page=100" > artifacts_all.json
+          id=$(jq -r --arg n "iterate-state-$branch_slug" '.artifacts[] | select(.name==$n and ..expired==false) | .id' artifacts_all.json | head -n 1 || true)
+          if [ -n "$id" ] && [ "$id" != "null" ]; then
+            curl -sSL -H "Authorization: Bearer $GH_TOKEN" -L \
+              "https://api.github.com/repos/${owner_repo}/actions/artifacts/$id/zip" \
+              -o state.zip || true
+            mkdir -p state && unzip -q state.zip -d state || true
+            attempts=$(jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0)
+          fi
+          next=$(( attempts + 1 ))
+          if [ "$next" -gt "${MAX_ATTEMPTS}" ]; then
+            echo "stop=true" >> "$GITHUB_OUTPUT"
+            echo "stop_reason=Max attempts reached (${MAX_ATTEMPTS})" >> "$GITHUB_OUTPUT"
+            echo "previous=$attempts" >> "$GITHUB_OUTPUT"
+            echo "next=$attempts" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "stop=false" >> "$GITHUB_OUTPUT"
+          echo "previous=$attempts" >> "$GITHUB_OUTPUT"
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Build prompt
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        id: prompt
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROMPT="$RUNNER_TEMP/prompt.txt"
+          repo="${{ github.repository }}"
+          branch="${{ steps.ctx.outputs.branch }}"
+          sha="${{ steps.ctx.outputs.head_sha }}"
+          attempt="${{ steps.attempts.outputs.next }}"
+          {
+            echo "You are Codex. You have a working copy of the repo checked out."
+            echo "Read README.md and AGENTS.md (if present) in the workspace for local policy."
+            echo ""
+            echo "Task: diagnose and fix CI failures for the GitHub Actions workflow(s)."
+            echo "Prefer minimal edits and explain changes in commit messages."
+            echo ""
+            echo "Repo: $repo"
+            echo "Branch: $branch"
+            echo "Commit: $sha"
+            echo "Attempt: $attempt/${MAX_ATTEMPTS}"
+            echo ""
+            echo "Strict output instruction: Return a unified diff patch inside a single fenced code block labeled 'diff'."
+            echo "If no changes are needed, output exactly:"
+            echo '```diff'
+            echo '# no changes'
+            echo '```'
+          } > "$PROMPT"
+          echo "path=$PROMPT" >> "$GITHUB_OUTPUT"
+
+      - name: Prompt preview
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        run: |
+          {
+            echo "### Prompt (first 120 lines)"
+            echo '```text'
+            head -n 120 "${{ steps.prompt.outputs.path }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ask model for patch
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        id: llm
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQ="$RUNNER_TEMP/llm_req.json"
+          RES="$RUNNER_TEMP/llm_res.json"
+          PROMPT_FILE="${{ steps.prompt.outputs.path }}"
+          jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
+          cat > "$REQ" <<JSON
+          {
+            "model": "${OPENAI_MODEL}",
+            "messages": [
+              {"role": "system", "content": "You are an expert software engineer that proposes precise, minimal unified diffs."},
+              {"role": "user", "content": $(cat "$RUNNER_TEMP/prompt.json")}
+            ],
+            "temperature": 0,
+            "max_tokens": 2000
+          }
+          JSON
+          http_code=$(curl -sS -o "$RES" -w "%{http_code}" \
+            https://api.openai.com/v1/chat/completions \
+            -H "authorization: Bearer $OPENAI_API_KEY" \
+            -H "content-type: application/json" \
+            -d @"$REQ")
+          echo "http_code=$http_code"
+          CONTENT="$RUNNER_TEMP/llm_content.txt"
+          jq -r '.choices[0].message.content // ""' "$RES" > "$CONTENT" || true
+          {
+            echo "### LLM response (first 120 lines)"
+            echo '```'
+            head -n 120 "$CONTENT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Extract fenced diff
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONTENT="$RUNNER_TEMP/llm_content.txt"
+          DIFF_OUT="$RUNNER_TEMP/patch.diff"
+          awk 'BEGIN{f=0} /```diff/ && f==0 {f=1; next} /```/ && f==1 {f=2} f==1 {print}' "$CONTENT" > "$DIFF_OUT" || true
+          if [ ! -s "$DIFF_OUT" ]; then
+            echo "# no changes" > "$DIFF_OUT"
+          fi
+          echo "diff_path=$DIFF_OUT" >> "$GITHUB_OUTPUT"
+          echo "### Extracted diff (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```diff' >> "$GITHUB_STEP_SUMMARY"
+          head -n 120 "$DIFF_OUT" >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply patch (stage only; let PR action commit)
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        id: apply
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIFF_OUT="${{ steps.diff.outputs.diff_path }}"
+          if grep -q '^# no changes$' "$DIFF_OUT"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git apply -p0 --index "$DIFF_OUT"; then
+            echo "applied_with=-p0" >> "$GITHUB_OUTPUT"
+          elif git apply -p1 --index "$DIFF_OUT"; then
+            echo "applied_with=-p1" >> "$GITHUB_OUTPUT"
+          else
+            echo "Patch failed to apply"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -z "$(git status --porcelain)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
+            # Do not commit here—leave changes staged for create-pull-request.
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            # Save a diffstat for the summary
-            (git diff --staged --stat=160,999 || git diff --stat=160,999) > "$RUNNER_TEMP/diffstat.txt" || true
           fi
 
-      # Clean any accidental temp files that might have been written into the repo
-      - name: Clean repo temp files
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
-        run: |
-          rm -f prompt.txt codex_nudge.txt codex_exec.log || true
-
-      # Let the action stage/commit/push internally (avoid the "no changes" trap).
-      - name: Create/Update PR (commit & push inside action)
-        if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false' && steps.diffcheck.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token:  ${{ secrets.GITHUB_TOKEN }}
-          base:   ${{ github.event.workflow_run.head_branch || github.ref_name }}
-          branch: ${{ env.BRANCH }}
-          title:  "Codex: iterate on CI failure – ${{ github.event.workflow_run.head_branch || github.ref_name }}"
-          body:   "Automated Codex iteration.\n\n- Iterator version: ${{ env.ITERATOR_VERSION }}\n- Model: ${{ env.OPENAI_MODEL }}\n- Minimal edits; CRLF/Windows-safe."
-          labels: codex,ci-fix,automerge-candidate
-          commit-message: "codex: iterate on CI failure (attempt ${{ steps.guard.outputs.next }}/${{ env.MAX_ATTEMPTS }}) for ${{ github.event.workflow_run.head_branch || github.ref_name }}"
-
-      # Always upload logs & prompt so we can debug even when nothing changed.
-      - name: Upload Codex artifacts (always)
-        if: ${{ always() }}
+      # Upload diagnostics BEFORE building PR body
+      - name: Upload diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: codex-iterate-${{ github.run_id }}-${{ github.run_attempt }}
+          name: iterate-diag-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/codex_exec.log
-            ${{ steps.prompt.outputs.path }}
-          if-no-files-found: warn
+            $RUNNER_TEMP/auth_body.json
+            $RUNNER_TEMP/llm_req.json
+            $RUNNER_TEMP/llm_res.json
+            $RUNNER_TEMP/llm_content.txt
+            $RUNNER_TEMP/patch.diff
+            $RUNNER_TEMP/prompt.txt
+          if-no-files-found: ignore
           retention-days: 14
 
-      - name: Summarize Codex outcome
-        if: ${{ always() }}
+      - name: Build PR body file
+        if: ${{ steps.gate.outputs.should_iterate == 'true' }}
+        id: pr_body
         shell: bash
         run: |
-          echo "### Codex iterate summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "- iterator version: $ITERATOR_VERSION" >> "$GITHUB_STEP_SUMMARY"
-          echo "- model: $OPENAI_MODEL" >> "$GITHUB_STEP_SUMMARY"
-          echo "- branch: ${{ env.BRANCH || github.event.workflow_run.head_branch || github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ steps.diffcheck.outputs.changed || 'false' }}" = "true" ]; then
-            echo "- result: changes detected (PR will be created/updated)" >> "$GITHUB_STEP_SUMMARY"
-            if [ -f "$RUNNER_TEMP/diffstat.txt" ]; then
-              echo "" >> "$GITHUB_STEP_SUMMARY"
-              echo "#### Diffstat" >> "$GITHUB_STEP_SUMMARY"
-              { echo '```'; cat "$RUNNER_TEMP/diffstat.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          BODY=".github/ITERATE_PR_BODY.md"
+          mkdir -p .github
+          {
+            echo "## Codex iteration (push-poll ALL workflows)"
+            echo
+            echo "- Branch: \`${{ steps.ctx.outputs.branch }}\` @ ${{ steps.ctx.outputs.head_sha }}"
+            echo "- Gate reason: ${{ steps.gate.outputs.reason }}"
+            echo
+            if [ -n "${{ steps.poll.outputs.summary_json }}" ]; then
+              echo "### Polled runs"
+              echo '```json'
+              echo "${{ steps.poll.outputs.summary_json }}"
+              echo '```'
             fi
-          else
-            echo "- result: no changes produced" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f "$RUNNER_TEMP/codex_exec.log" ]; then
-            if grep -qi 'stream error' "$RUNNER_TEMP/codex_exec.log"; then
-              echo "- note: stream errors occurred; a short retry was attempted" >> "$GITHUB_STEP_SUMMARY"
+            echo
+            echo "### Auth probe"
+            echo "- ok: ${{ steps.auth.outputs.ok || 'false' }} (reason: ${{ steps.auth.outputs.reason || 'n/a' }})"
+            echo
+            if [ -f "$RUNNER_TEMP/prompt.txt" ]; then
+              echo "### Prompt (first 200 lines)"
+              echo '```text'
+              head -n 200 "$RUNNER_TEMP/prompt.txt" || true
+              echo '```'
             fi
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "#### codex_exec.log (tail)" >> "$GITHUB_STEP_SUMMARY"
-            { echo '```'; tail -n 60 "$RUNNER_TEMP/codex_exec.log" | sed 's/\x1b\[[0-9;]*m//g'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          fi
+            if [ -f "$RUNNER_TEMP/patch.diff" ]; then
+              echo
+              echo "### Extracted diff (first 200 lines)"
+              echo '```diff'
+              head -n 200 "$RUNNER_TEMP/patch.diff" || true
+              echo '```'
+            fi
+          } > "$BODY"
+          echo "body_path=$BODY" >> "$GITHUB_OUTPUT"
+
+      - name: Create PR (if edits)
+        if: ${{ steps.apply.outputs.changed == 'true' }}
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "codex: iterate on CI failure (attempt ${{ steps.attempts.outputs.next }}/${{ env.MAX_ATTEMPTS }})"
+          branch: codex/ci-fix-${{ steps.ctx.outputs.branch_slug }}
+          base: ${{ steps.ctx.outputs.branch }}
+          title: "Codex: iterate on CI failure – ${{ steps.ctx.outputs.branch }}"
+          body-path: ${{ steps.pr_body.outputs.body_path }}
+          labels: codex,ci-fix,automerge-candidate
+
+      - name: Save attempt state
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        shell: bash
+        run: |
+          mkdir -p state_out
+          cat > state_out/iterate_state.json <<'JSON'
+          {
+            "attempts": ${{ steps.attempts.outputs.next }},
+            "run_id": "${{ steps.ctx.outputs.run_id }}",
+            "head_sha": "${{ steps.ctx.outputs.head_sha }}"
+          }
+          JSON
+
+      - name: Upload attempt state
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iterate-state-${{ steps.ctx.outputs.branch_slug }}
+          path: state_out
+          if-no-files-found: ignore
+          retention-days: 30
