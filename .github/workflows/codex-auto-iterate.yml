@@ -282,6 +282,17 @@ jobs:
             echo '# no changes'
             echo '```'
           } > "$PROMPT"
+
+          # v16+micro: give Codex a quick map of REAL files so it doesn’t invent paths
+          git ls-files > "$RUNNER_TEMP/repo-files.txt" || true
+          if [ -s "$RUNNER_TEMP/repo-files.txt" ]; then
+            {
+              echo ""
+              echo "----- Repo files (head) -----"
+              head -n 300 "$RUNNER_TEMP/repo-files.txt"
+            } >> "$PROMPT"
+          fi
+
           echo "path=$PROMPT" >> "$GITHUB_OUTPUT"
 
       - name: Prompt preview
