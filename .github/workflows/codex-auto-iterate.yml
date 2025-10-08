@@ -1,47 +1,55 @@
 # =============================================================================
 # Codex – Auto Iterate on CI Failure
-# version: v2025-10-07.19
+# version: v2025-10-07.20
 #
 # Purpose:
-#   After the Windows "Batch syntax/run check" workflow reports a FAILURE,
-#   run a headless Codex pass that:
+#   After the Windows "Batch syntax/run check" workflow completes, if it
+#   FAILED (or was CANCELLED/TIMED_OUT early), run a headless Codex pass that:
 #     - ingests the failure nudge + optional CI artifacts (summary/NDJSON),
 #     - proposes minimal changes,
 #     - applies them to the workspace,
 #     - opens/updates a PR against the failing branch.
 #
 # Notes:
-#   - This workflow is additive and safe to leave in place.
-#   - If OPENAI_API_KEY is missing, it cleanly no-ops with an obvious summary.
+#   - If OPENAI_API_KEY is missing, we cleanly no-op with an obvious Summary.
 #   - Temp files live ONLY in $RUNNER_TEMP (never committed).
-#   - Codex runs with:  workspace-write  +  approval: never
-#     so CI is fully unattended but sandboxed to the repo checkout.
+#   - Codex runs with: workspace-write  +  approval: never (unattended CI).
+#   - This file renders enough context into the Job Summary so you don’t
+#     need to download artifacts to understand what happened.
 # =============================================================================
 
 name: Codex – Auto Iterate on CI Failure
 
 on:
+  # Fire after our Windows workflow finishes (exact name must match).
   workflow_run:
-    workflows: ["Batch syntax/run check"]
+    workflows:
+      - "Batch syntax/run check"
+      - "Batch syntax & run check"
+      - "Batch syntax and run check"
     types: [completed]
+  # Allow a manual run.
   workflow_dispatch: {}
 
 permissions:
   contents: write
   pull-requests: write
 
+# Keep iterations for the same branch serialized, but do NOT cancel
+# an in-flight iteration (we prefer to finish cleanly).
 concurrency:
   group: codex-iterate-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: false
 
 env:
-  ITERATOR_VERSION: v2025-10-07.19
+  ITERATOR_VERSION: v2025-10-07.20
   OPENAI_MODEL: gpt-4o-mini
   MAX_ATTEMPTS: "20"
 
 jobs:
   iterate:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure') }}
+    # Run on manual dispatch OR when the upstream run concluded as a real problem.
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && contains(fromJson('["failure","cancelled","timed_out"]'), github.event.workflow_run.conclusion)) }}
     runs-on: ubuntu-latest
 
     steps:
@@ -49,11 +57,18 @@ jobs:
         run: |
           echo "### Codex iterator" >> "$GITHUB_STEP_SUMMARY"
           echo "- version: $ITERATOR_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "- source workflow: ${{ github.event.workflow_run.name }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- source conclusion: ${{ github.event.workflow_run.conclusion }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- head_branch: ${{ github.event.workflow_run.head_branch || '∅' }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- head_sha: ${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-      - name: Checkout failing branch
+      - name: Checkout failing branch (or SHA fallback)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          # Prefer the branch that failed; fall back to current ref name; finally to the head SHA.
+          ref: ${{ github.event.workflow_run.head_branch || github.ref_name || github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       - name: Normalize CRLF (harmless no-op on Linux files)
@@ -71,6 +86,7 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Download artifacts emitted by the failed Windows run (if any).
       - name: Download codex_nudge.txt (if present)
         if: ${{ github.event_name == 'workflow_run' }}
         uses: actions/download-artifact@v4
@@ -98,6 +114,7 @@ jobs:
           name: ci_test_results.ndjson
           path: ${{ runner.temp }}
 
+      # Loud but clean skip when no API key
       - name: Skip (no OPENAI_API_KEY configured)
         if: steps.apikey.outputs.present != 'true'
         shell: bash
@@ -120,6 +137,7 @@ jobs:
           path: ${{ runner.temp }}/codex_skip_reason.txt
           retention-days: 7
 
+      # Only proceed if we have an API key
       - name: Install Codex CLI
         if: steps.apikey.outputs.present == 'true'
         run: npm i -g @openai/codex@latest
@@ -130,6 +148,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name  "github-actions[bot]"
 
+      # Global attempt guard across the history (count commits with our prefix)
       - name: Loop guard
         if: steps.apikey.outputs.present == 'true'
         id: guard
@@ -187,6 +206,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Write-enabled + no-approval; retry briefly on transient stream errors.
       - name: Run Codex headlessly (write-enabled, resilient)
         if: steps.apikey.outputs.present == 'true' && steps.guard.outputs.stop == 'false'
         id: codex
@@ -200,6 +220,7 @@ jobs:
           set -o pipefail
           LOG="$RUNNER_TEMP/codex_exec.log"
           PROMPT_PATH="${{ steps.prompt.outputs.path }}"
+          # Construct a stable working branch, include fallback to ref_name
           BRANCH="codex/ci-fix-${{ github.event.workflow_run.head_branch || github.ref_name }}"
           echo "Target branch: $BRANCH" | tee -a "$LOG"
           tries=0
