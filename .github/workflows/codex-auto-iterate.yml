@@ -1,4 +1,5 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
+# version: v2025-10-08.25 (auth probe → Responses API max_output_tokens=16)
 # version: v2025-10-08.24 (auth probe → Responses API + lowercase fallback)
 # version: v2025-10-07.22
 # version: v2025-10-07.16 (ALL-RUNS gate, backtick-safe prompt, actions: write, early artifacts)
@@ -44,7 +45,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # >>> CHANGED: Auth probe now uses Responses API + lowercase model fallback <<<
+      # Auth probe now uses Responses API (microsurgery: only max_output_tokens changed 1->16)
       - name: Auth probe (Responses API)
         id: auth
         continue-on-error: true
@@ -72,7 +73,8 @@ jobs:
             local model="$1"
             local req
             req=$(mktemp)
-            printf '{"model":"%s","input":"ping","max_output_tokens":1}' "$model" > "$req"
+            # MICROSURGERY: bump max_output_tokens from 1 -> 16 to satisfy API minimum
+            printf '{"model":"%s","input":"ping","max_output_tokens":16}' "$model" > "$req"
             local code
             code=$(curl -sS -o "$RESP" -w "%{http_code}" \
               https://api.openai.com/v1/responses \
@@ -247,8 +249,8 @@ jobs:
             echo '```json'
           } >> "$GITHUB_STEP_SUMMARY"
           cat >> "$GITHUB_STEP_SUMMARY" <<'JSON_EOF'
-          ${{ steps.poll.outputs.summary_json }}
-          JSON_EOF
+${{ steps.poll.outputs.summary_json }}
+JSON_EOF
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Load/Update attempt counter
@@ -349,16 +351,16 @@ jobs:
           PROMPT_FILE="${{ steps.prompt.outputs.path }}"
           jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
           cat > "$REQ" <<JSON
-          {
-            "model": "${OPENAI_MODEL}",
-            "messages": [
-              {"role": "system", "content": "You are an expert software engineer that proposes precise, minimal unified diffs."},
-              {"role": "user", "content": $(cat "$RUNNER_TEMP/prompt.json")}
-            ],
-            "temperature": 0,
-            "max_tokens": 2000
-          }
-          JSON
+{
+  "model": "${OPENAI_MODEL}",
+  "messages": [
+    {"role": "system", "content": "You are an expert software engineer that proposes precise, minimal unified diffs."},
+    {"role": "user", "content": $(cat "$RUNNER_TEMP/prompt.json")}
+  ],
+  "temperature": 0,
+  "max_tokens": 2000
+}
+JSON
           http_code=$(curl -sS -o "$RES" -w "%{http_code}" \
             https://api.openai.com/v1/chat/completions \
             -H "authorization: Bearer $OPENAI_API_KEY" \
@@ -469,8 +471,8 @@ jobs:
             fi
           } > "$BODY"
           cat >> "$BODY" <<'JSON_EOF'
-          ${ steps.poll.outputs.summary_json }
-          JSON_EOF
+${ steps.poll.outputs.summary_json }
+JSON_EOF
           { echo '```'; } >> "$BODY"
           echo "body_path=$BODY" >> "$GITHUB_OUTPUT"
 
@@ -491,12 +493,12 @@ jobs:
         run: |
           mkdir -p state_out
           cat > state_out/iterate_state.json <<'JSON'
-          {
-            "attempts": ${{ steps.attempts.outputs.next }},
-            "run_id": "${{ steps.ctx.outputs.run_id }}",
-            "head_sha": "${{ steps.ctx.outputs.head_sha }}"
-          }
-          JSON
+{
+  "attempts": ${{ steps.attempts.outputs.next }},
+  "run_id": "${{ steps.ctx.outputs.run_id }}",
+  "head_sha": "${{ steps.ctx.outputs.head_sha }}"
+}
+JSON
 
       - name: Upload attempt state
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
