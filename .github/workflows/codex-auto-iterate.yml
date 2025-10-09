@@ -1,7 +1,7 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-08.32 (linted; no bash functions; gpt-5-codex; Responses API; YAML hardened)
 # version: v2025-10-08.31 (auth probe: remove bash function to avoid '(' parse under sh)
 # version: v2025-10-08.30 (Fix model slug + robust retry when model_not_found)
+# version: v2025-10-08.29 (YAML hardening; no heredocs; Responses API for probe + main call)
 
 name: Codex - Auto Iterate on CI Failure
 
