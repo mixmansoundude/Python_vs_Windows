@@ -1,7 +1,7 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
+# version: v2025-10-08.33 (add defaults.run.shell:bash; avoid $(( )); remove paren in notice)
 # version: v2025-10-08.31 (auth probe: remove bash function to avoid '(' parse under sh)
 # version: v2025-10-08.30 (Fix model slug + robust retry when model_not_found)
-# version: v2025-10-08.29 (YAML hardening; no heredocs; Responses API for probe + main call)
 
 name: Codex - Auto Iterate on CI Failure
 
@@ -14,6 +14,10 @@ permissions:
   actions: write
   contents: write
   pull-requests: write
+
+defaults:
+  run:
+    shell: bash
 
 concurrency:
   group: codex-iterate-${{ github.sha }}
@@ -260,7 +264,7 @@ jobs:
             mkdir -p state && unzip -q state.zip -d state || true
             attempts=$(jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0)
           fi
-          next=$(( attempts + 1 ))
+          next=$(expr "${attempts}" + 1 )
           if [ "$next" -gt "${MAX_ATTEMPTS}" ]; then
             echo "stop=true" >> "$GITHUB_OUTPUT"
             echo "stop_reason=Max attempts reached (${MAX_ATTEMPTS})" >> "$GITHUB_OUTPUT"
@@ -491,4 +495,4 @@ jobs:
       - name: Mark job neutral if we got this far
         if: ${{ always() }}
         shell: bash
-        run: echo "::notice title=iterate::Job completed (forcing neutral so logs persist)"
+        run: echo "::notice title=iterate::Job completed - forcing neutral so logs persist"
