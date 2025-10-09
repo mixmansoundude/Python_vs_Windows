@@ -1,14 +1,7 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
+# version: v2025-10-08.32 (linted; no bash functions; gpt-5-codex; Responses API; YAML hardened)
+# version: v2025-10-08.31 (auth probe: remove bash function to avoid '(' parse under sh)
 # version: v2025-10-08.30 (Fix model slug + robust retry when model_not_found)
-# version: v2025-10-08.29 (YAML hardening: no heredocs, Responses API probe + main call unchanged)
-# version: v2025-10-08.28 (YAML lint fixes; Responses API for probe + main call)
-# version: v2025-10-08.27 (Ask model → Responses API)
-# version: v2025-10-08.26
-# version: v2025-10-08.25 (auth probe → Responses API max_output_tokens=16)
-# version: v2025-10-08.24 (auth probe → Responses API + lowercase fallback)
-# version: v2025-10-07.22
-# version: v2025-10-07.16 (ALL-RUNS gate, backtick-safe prompt, actions: write, early artifacts)
-# Purpose: Iterate even if CI doesn't start; poll *all* runs for this commit and iterate if any are non-success.
 
 name: Codex - Auto Iterate on CI Failure
 
@@ -61,57 +54,65 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "ok=false"   >> "$GITHUB_OUTPUT"
+            echo "ok=false"      >> "$GITHUB_OUTPUT"
             echo "reason=no_key" >> "$GITHUB_OUTPUT"
             {
               echo "### Auth probe"
-              echo ""
+              echo
               echo "- key: MISSING"
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+
           RESP="$RUNNER_TEMP/auth_body.json"
-          call_probe () {
-            local model="$1"
-            local req
-            req=$(mktemp)
-            printf '{"model":"%s","input":"ping","max_output_tokens":16}' "$model" > "$req"
-            local code
-            code=$(curl -sS -o "$RESP" -w "%{http_code}" \
-              https://api.openai.com/v1/responses \
-              -H "authorization: Bearer $OPENAI_API_KEY" \
-              -H "content-type: application/json" \
-              -d @"$req")
-            rm -f "$req"
-            printf '%s' "$code"
-          }
-          http_code=$(call_probe "$OPENAI_MODEL") || true
+          http_code=0
+          reason=""
+
+          # First try: model as provided
+          req1=$(mktemp)
+          printf '{"model":"%s","input":"ping","max_output_tokens":16}' "$OPENAI_MODEL" > "$req1"
+          http_code=$(curl -sS -o "$RESP" -w "%{http_code}" \
+            https://api.openai.com/v1/responses \
+            -H "authorization: Bearer $OPENAI_API_KEY" \
+            -H "content-type: application/json" \
+            -d @"$req1") || true
+          rm -f "$req1"
           reason="http_${http_code}"
-          # Retry on any non-200 (covers 400 model_not_found as seen in your run)
+
+          # Retry with lowercase slug on any non-200 (covers 400/404 model_not_found)
           if [ "$http_code" != "200" ]; then
             lower_model="$(printf '%s' "$OPENAI_MODEL" | tr 'A-Z' 'a-z')"
             if [ "$lower_model" != "$OPENAI_MODEL" ]; then
-              http_code=$(call_probe "$lower_model") || true
+              req2=$(mktemp)
+              printf '{"model":"%s","input":"ping","max_output_tokens":16}' "$lower_model" > "$req2"
+              http_code=$(curl -sS -o "$RESP" -w "%{http_code}" \
+                https://api.openai.com/v1/responses \
+                -H "authorization: Bearer $OPENAI_API_KEY" \
+                -H "content-type: application/json" \
+                -d @"$req2") || true
+              rm -f "$req2"
               reason="retry_lowercase_http_${http_code}"
             fi
           fi
+
           if [ "$http_code" = "200" ]; then
             echo "ok=true"   >> "$GITHUB_OUTPUT"
             echo "reason=ok" >> "$GITHUB_OUTPUT"
           else
-            short=$(jq -r '.error.message // empty' "$RESP" 2>/dev/null || true)
-            if [ -n "$short" ]; then reason="$reason:$short"; fi
-            echo "ok=false"    >> "$GITHUB_OUTPUT"
-            echo "reason=$reason" >> "$GITHUB_OUTPUT"
+            short="$(jq -r '.error.message // empty' "$RESP" 2>/dev/null || true)"
+            [ -n "$short" ] && reason="$reason:$short"
+            echo "ok=false"        >> "$GITHUB_OUTPUT"
+            echo "reason=$reason"  >> "$GITHUB_OUTPUT"
           fi
+
           {
             echo "### Auth probe (Responses API)"
-            echo ""
+            echo
             echo "- model (env): ${OPENAI_MODEL}"
             echo "- http_code: ${http_code}"
             echo "- ok: ${{ steps.auth.outputs.ok || 'n/a' }}"
             echo "- reason: ${reason}"
-            echo ""
+            echo
             echo "Body (first 300 chars):"
             echo '```json'
             head -c 300 "$RESP" | sed 's/[^[:print:]\t]/?/g' || true
@@ -128,11 +129,11 @@ jobs:
           run_id="${{ github.run_id }}"
           run_url="https://github.com/${{ github.repository }}/actions/runs/${run_id}"
           branch_slug=$(echo "$branch" | tr ':/ ' '---')
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch"         >> "$GITHUB_OUTPUT"
           echo "branch_slug=$branch_slug" >> "$GITHUB_OUTPUT"
-          echo "head_sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$sha"          >> "$GITHUB_OUTPUT"
+          echo "run_id=$run_id"         >> "$GITHUB_OUTPUT"
+          echo "run_url=$run_url"       >> "$GITHUB_OUTPUT"
 
       - name: Poll ALL workflow runs for this commit
         id: poll
@@ -149,31 +150,44 @@ jobs:
             const selfName  = (context.workflow || "").toLowerCase();
             const deadline = Date.now() + (parseInt(process.env.POLL_TIMEOUT_SECONDS||"1200")*1000);
             const interval = parseInt(process.env.POLL_INTERVAL_SECONDS||"10")*1000;
+
             async function listRunsForSha() {
               const { data } = await github.rest.actions.listWorkflowRunsForRepo({
                 owner, repo, head_sha: sha, per_page: 100
               });
               return data.workflow_runs || [];
             }
+
             function filterNotSelf(runs) {
               return runs.filter(r =>
                 String(r.id) !== selfRunId &&
                 (r.name||"").toLowerCase() !== selfName
               );
             }
+
             let lastSeen = [];
             let chosen = null;
             while (Date.now() < deadline) {
               let runs = await listRunsForSha();
               runs = filterNotSelf(runs);
               lastSeen = runs.map(r => ({id:r.id, name:r.name, status:r.status, conclusion:r.conclusion}));
-              if (runs.length === 0) { await new Promise(r => setTimeout(r, interval)); continue; }
+
+              if (runs.length === 0) {
+                await new Promise(r => setTimeout(r, interval));
+                continue;
+              }
+
               const incomplete = runs.filter(r => r.status !== "completed");
-              if (incomplete.length > 0) { await new Promise(r => setTimeout(r, interval)); continue; }
+              if (incomplete.length > 0) {
+                await new Promise(r => setTimeout(r, interval));
+                continue;
+              }
+
               const nonSuccess = runs.find(r => (r.conclusion||"") !== "success");
               chosen = nonSuccess || runs[0];
               break;
             }
+
             if (!chosen) {
               core.setOutput("found_any", "false");
               core.setOutput("all_completed", "false");
@@ -272,15 +286,15 @@ jobs:
           {
             echo "You are Codex. You have a working copy of the repo checked out."
             echo "Read README.md and AGENTS.md (if present) in the workspace for local policy."
-            echo ""
+            echo
             echo "Task: diagnose and fix CI failures for the GitHub Actions workflow(s)."
             echo "Prefer minimal edits and explain changes in commit messages."
-            echo ""
+            echo
             echo "Repo: $repo"
             echo "Branch: $branch"
             echo "Commit: $sha"
             echo "Attempt: $attempt/${MAX_ATTEMPTS}"
-            echo ""
+            echo
             echo "Strict output instruction: Return a unified diff patch inside a single fenced code block labeled 'diff'."
             echo "If no changes are needed, output exactly:"
             echo '```diff'
@@ -290,7 +304,7 @@ jobs:
           git ls-files > "$RUNNER_TEMP/repo-files.txt" || true
           if [ -s "$RUNNER_TEMP/repo-files.txt" ]; then
             {
-              echo ""
+              echo
               echo "----- Repo files (head) -----"
               head -n 300 "$RUNNER_TEMP/repo-files.txt"
             } >> "$PROMPT"
@@ -320,22 +334,24 @@ jobs:
           OUTTXT="$RUNNER_TEMP/llm_content.txt"
           PROMPT_FILE="${{ steps.prompt.outputs.path }}"
           jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
-          printf '{\n'                              > "$REQ"
-          printf '  "model": "%s",\n' "$OPENAI_MODEL" >> "$REQ"
-          printf '  "input": [\n'                  >> "$REQ"
-          printf '    {"role":"system","content":"You are an expert software engineer that proposes precise, minimal unified diffs."},\n' >> "$REQ"
-          printf '    {"role":"user","content": '  >> "$REQ"
-          cat "$RUNNER_TEMP/prompt.json"           >> "$REQ"
-          printf '}\n'                              >> "$REQ"
-          printf '  ],\n'                           >> "$REQ"
-          printf '  "max_output_tokens": 2000,\n'  >> "$REQ"
-          printf '  "temperature": 0\n'            >> "$REQ"
-          printf '}\n'                              >> "$REQ"
+          {
+            printf '{\n'
+            printf '  "model": "%s",\n' "$OPENAI_MODEL"
+            printf '  "input": [\n'
+            printf '    {"role":"system","content":"You are an expert software engineer that proposes precise, minimal unified diffs."},\n'
+            printf '    {"role":"user","content": '
+            cat "$RUNNER_TEMP/prompt.json"
+            printf '}\n'
+            printf '  ],\n'
+            printf '  "max_output_tokens": 2000,\n'
+            printf '  "temperature": 0\n'
+            printf '}\n'
+          } > "$REQ"
           http_code=$(curl -sS -o "$RES" -w "%{http_code}" \
             https://api.openai.com/v1/responses \
             -H "authorization: Bearer $OPENAI_API_KEY" \
             -H "content-type: application/json" \
-            -d @"$REQ")
+            -d @"$REQ") || true
           echo "http_code=$http_code"
           jq -r '.output_text // (.output[0].content[0].text // "")' "$RES" > "$OUTTXT" || true
           echo "### LLM response (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
@@ -410,18 +426,18 @@ jobs:
           BODY=".github/ITERATE_PR_BODY.md"
           mkdir -p .github
           echo "## Codex iteration (push-poll ALL workflows)" > "$BODY"
-          echo "" >> "$BODY"
+          echo >> "$BODY"
           echo "- Branch: \`${{ steps.ctx.outputs.branch }}\` @ ${{ steps.ctx.outputs.head_sha }}" >> "$BODY"
           echo "- Gate reason: ${{ steps.gate.outputs.reason }}" >> "$BODY"
-          echo "" >> "$BODY"
+          echo >> "$BODY"
           echo "### Polled runs" >> "$BODY"
           echo '```json' >> "$BODY"
           echo "${{ steps.poll.outputs.summary_json }}" >> "$BODY"
           echo '```' >> "$BODY"
-          echo "" >> "$BODY"
+          echo >> "$BODY"
           echo "### Auth probe" >> "$BODY"
           echo "- ok: ${{ steps.auth.outputs.ok || 'false' }} (reason: ${{ steps.auth.outputs.reason || 'n/a' }})" >> "$BODY"
-          echo "" >> "$BODY"
+          echo >> "$BODY"
           if [ -f "$RUNNER_TEMP/prompt.txt" ]; then
             echo "### Prompt (first 200 lines)" >> "$BODY"
             echo '```text' >> "$BODY"
@@ -429,7 +445,7 @@ jobs:
             echo '```' >> "$BODY"
           fi
           if [ -f "$RUNNER_TEMP/patch.diff" ]; then
-            echo "" >> "$BODY"
+            echo >> "$BODY"
             echo "### Extracted diff (first 200 lines)" >> "$BODY"
             echo '```diff' >> "$BODY"
             head -n 200 "$RUNNER_TEMP/patch.diff" >> "$BODY" || true
