@@ -2,7 +2,7 @@
 name: Codex – Auto Iterate on CI Failure
 on:
   workflow_run:
-    workflows: ["Batch syntax/run check"]   # keep this exact name
+    workflows: ["never"]   # keep this exact name
     types: [completed]
   workflow_dispatch: {}
 
