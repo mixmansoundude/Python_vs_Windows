@@ -1,5 +1,7 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-08.26 (auth probe → Responses API max_output_tokens=16)
+# version: v2025-10-08.27 (Ask model → Responses API; no other behavior changes)
+# version: v2025-10-08.26
+# version: v2025-10-08.25 (auth probe → Responses API max_output_tokens=16)
 # version: v2025-10-08.24 (auth probe → Responses API + lowercase fallback)
 # version: v2025-10-07.22
 # version: v2025-10-07.16 (ALL-RUNS gate, backtick-safe prompt, actions: write, early artifacts)
@@ -45,7 +47,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Auth probe now uses Responses API (microsurgery: only max_output_tokens changed 1->16)
+      # Auth probe uses Responses API (+ lowercase fallback)
       - name: Auth probe (Responses API)
         id: auth
         continue-on-error: true
@@ -73,7 +75,6 @@ jobs:
             local model="$1"
             local req
             req=$(mktemp)
-            # MICROSURGERY: bump max_output_tokens from 1 -> 16 to satisfy API minimum
             printf '{"model":"%s","input":"ping","max_output_tokens":16}' "$model" > "$req"
             local code
             code=$(curl -sS -o "$RESP" -w "%{http_code}" \
@@ -249,8 +250,8 @@ jobs:
             echo '```json'
           } >> "$GITHUB_STEP_SUMMARY"
           cat >> "$GITHUB_STEP_SUMMARY" <<'JSON_EOF'
-          ${{ steps.poll.outputs.summary_json }}
-          JSON_EOF
+${{ steps.poll.outputs.summary_json }}
+JSON_EOF
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Load/Update attempt counter
@@ -337,6 +338,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # ====== MICROSURGERY HERE: use Responses API for main LLM call ======
       - name: Ask model for patch
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: llm
@@ -348,31 +350,41 @@ jobs:
           set -euo pipefail
           REQ="$RUNNER_TEMP/llm_req.json"
           RES="$RUNNER_TEMP/llm_res.json"
+          OUTTXT="$RUNNER_TEMP/llm_content.txt"
           PROMPT_FILE="${{ steps.prompt.outputs.path }}"
           jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
+
           cat > "$REQ" <<JSON
-          {
-            "model": "${OPENAI_MODEL}",
-            "messages": [
-              {"role": "system", "content": "You are an expert software engineer that proposes precise, minimal unified diffs."},
-              {"role": "user", "content": $(cat "$RUNNER_TEMP/prompt.json")}
-            ],
-            "temperature": 0,
-            "max_tokens": 2000
-          }
-          JSON
+{
+  "model": "${OPENAI_MODEL}",
+  "input": [
+    {"role":"system","content":"You are an expert software engineer that proposes precise, minimal unified diffs."},
+    {"role":"user","content": $(cat "$RUNNER_TEMP/prompt.json")}
+  ],
+  "max_output_tokens": 2000,
+  "temperature": 0
+}
+JSON
+
           http_code=$(curl -sS -o "$RES" -w "%{http_code}" \
-            https://api.openai.com/v1/chat/completions \
+            https://api.openai.com/v1/responses \
             -H "authorization: Bearer $OPENAI_API_KEY" \
             -H "content-type: application/json" \
             -d @"$REQ")
           echo "http_code=$http_code"
-          CONTENT="$RUNNER_TEMP/llm_content.txt"
-          jq -r '.choices[0].message.content // ""' "$RES" > "$CONTENT" || true
+
+          # Extract free-form text from Responses API
+          # It can be at output[0].content[0].text or at top-level 'output_text'
+          jq -r '
+            .output_text // (
+              .output[0].content[0].text // ""
+            )
+          ' "$RES" > "$OUTTXT" || true
+
           {
             echo "### LLM response (first 120 lines)"
             echo '```'
-            head -n 120 "$CONTENT"
+            head -n 120 "$OUTTXT"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -471,8 +483,8 @@ jobs:
             fi
           } > "$BODY"
           cat >> "$BODY" <<'JSON_EOF'
-          ${{ steps.poll.outputs.summary_json }}
-          JSON_EOF
+${ steps.poll.outputs.summary_json }
+JSON_EOF
           { echo '```'; } >> "$BODY"
           echo "body_path=$BODY" >> "$GITHUB_OUTPUT"
 
@@ -493,13 +505,13 @@ jobs:
         run: |
           mkdir -p state_out
           cat > state_out/iterate_state.json <<'JSON'
-          {
-            "attempts": ${{ steps.attempts.outputs.next }},
-            "run_id": "${{ steps.ctx.outputs.run_id }}",
-            "head_sha": "${{ steps.ctx.outputs.head_sha }}"
-          }
-          JSON
-          
+{
+  "attempts": ${{ steps.attempts.outputs.next }},
+  "run_id": "${{ steps.ctx.outputs.run_id }}",
+  "head_sha": "${{ steps.ctx.outputs.head_sha }}"
+}
+JSON
+
       - name: Upload attempt state
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
         uses: actions/upload-artifact@v4
