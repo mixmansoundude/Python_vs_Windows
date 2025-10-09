@@ -1,4 +1,5 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
+# version: v2025-10-08.30 (Fix model slug + robust retry when model_not_found)
 # version: v2025-10-08.29 (YAML hardening: no heredocs, Responses API probe + main call unchanged)
 # version: v2025-10-08.28 (YAML lint fixes; Responses API for probe + main call)
 # version: v2025-10-08.27 (Ask model → Responses API)
@@ -31,7 +32,7 @@ jobs:
     timeout-minutes: 60
     env:
       MAX_ATTEMPTS: '20'
-      OPENAI_MODEL: GPT-5-Codex
+      OPENAI_MODEL: gpt-5-codex
       POLL_TIMEOUT_SECONDS: '1200'
       POLL_INTERVAL_SECONDS: '10'
     steps:
@@ -86,7 +87,8 @@ jobs:
           }
           http_code=$(call_probe "$OPENAI_MODEL") || true
           reason="http_${http_code}"
-          if [ "$http_code" = "404" ]; then
+          # Retry on any non-200 (covers 400 model_not_found as seen in your run)
+          if [ "$http_code" != "200" ]; then
             lower_model="$(printf '%s' "$OPENAI_MODEL" | tr 'A-Z' 'a-z')"
             if [ "$lower_model" != "$OPENAI_MODEL" ]; then
               http_code=$(call_probe "$lower_model") || true
