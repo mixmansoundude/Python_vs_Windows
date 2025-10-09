@@ -285,6 +285,7 @@ jobs:
           FOUND_ANY: ${{ steps.poll.outputs.found_any }}
           ALL_COMPLETED: ${{ steps.poll.outputs.all_completed }}
           ANY_NON_SUCCESS: ${{ steps.poll.outputs.any_non_success }}
+          SUMMARY_JSON: ${{ steps.poll.outputs.summary_json }}
         run: |
           set -euo pipefail
           # Safe defaults so -u doesn't explode if outputs are unset
@@ -314,15 +315,12 @@ jobs:
           echo "should_iterate=${should_iterate}" >> "$GITHUB_OUTPUT"
           echo "reason=${reason}" >> "$GITHUB_OUTPUT"
 
-          # Write poll summary JSON via heredoc so bash never parses its contents
           {
             echo "### Poll summary"
             echo '```json'
+            printf '%s\n' "$SUMMARY_JSON"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          cat >> "$GITHUB_STEP_SUMMARY" <<'JSON'
-${{ steps.poll.outputs.summary_json }}
-JSON
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Load/Update attempt counter
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
