@@ -1,6 +1,6 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-08.37 (Responses API: input_text content parts; show body/error; log tail; hardened shell)
-# lineage: v35 → add content parts + error preview; fix types to input_text
+# version: v2025-10-08.39 (fix JS arrow function in poll; NDJSON pickup; input_text parts; hardened shell)
+# lineage: v37 → add structured artifact pickup; fix poll arrow fn
 
 name: Codex - Auto Iterate on CI Failure
 
@@ -205,6 +205,53 @@ jobs:
               core.setOutput("picked_conclusion", chosen.conclusion||"");
             }
 
+      - name: Fetch failing run artifact (structured)
+        if: ${{ steps.poll.outputs.picked_id != '' }}
+        id: struct
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID_PICKED: ${{ steps.poll.outputs.picked_id }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID_PICKED}/artifacts"
+          meta="$RUNNER_TEMP/artifacts.json"
+          curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$api" -o "$meta" || true
+          # Pick an artifact likely containing structured CI results
+          name=`jq -r '.artifacts[].name' "$meta" 2>/dev/null | grep -E -i 'ndjson|summary_raw|self.?test|ci[-_]?result|first.?error' | head -n 1 || true`
+          if [ -z "$name" ] || [ "$name" = "null" ]; then
+            echo "path=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          id=`jq -r --arg n "$name" '.artifacts[] | select(.name==$n) | .id' "$meta" 2>/dev/null || true`
+          if [ -z "$id" ] || [ "$id" = "null" ]; then
+            echo "path=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          zipfile="$RUNNER_TEMP/struct.zip"
+          curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" -L \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$id/zip" -o "$zipfile" || true
+          dest="$RUNNER_TEMP/struct"
+          mkdir -p "$dest"
+          unzip -q "$zipfile" -d "$dest" || true
+          out="$RUNNER_TEMP/ci_structured.txt"
+          : > "$out"
+          # Prefer *.ndjson; else summary_raw*.txt; else any *.json with errors
+          nd=`find "$dest" -type f -name '*.ndjson' | head -n 1 || true`
+          if [ -n "$nd" ]; then
+            jq -rc 'select((.level=="error") or (.status=="fail") or (.conclusion=="failure") or (.type=="error")) | . | {job:(.job//.workflow//"unknown"),step:(.step//"unknown"),file:(.file//"unknown"),line:(.line//null),msg:(.msg//.message//.error//.detail//"") } | @json' "$nd" | head -n 1 > "$out" || true
+          fi
+          if [ ! -s "$out" ]; then
+            sr=`find "$dest" -type f -iname 'summary_raw*' -o -iname '*first*error*' -o -iname '*ci*result*.json' | head -n 1 || true`
+            if [ -n "$sr" ]; then
+              head -n 120 "$sr" > "$out" || true
+            fi
+          fi
+          if [ -s "$out" ]; then
+            echo "path=$out" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Fetch failing run logs (tail)
         if: ${{ steps.poll.outputs.picked_id != '' }}
         id: logtail
@@ -335,6 +382,15 @@ jobs:
               head -n 300 "$RUNNER_TEMP/repo-files.txt"
             } >> "$PROMPT"
           fi
+          # Append structured CI error first (preferred)
+          if [ -n "${{ steps.struct.outputs.path }}" ] && [ -s "${{ steps.struct.outputs.path }}" ]; then
+            {
+              echo
+              echo "----- CI structured error (first record / head) -----"
+              sed -e 's/[^[:print:]\t]/?/g' "${{ steps.struct.outputs.path }}" | head -n 120
+            } >> "$PROMPT"
+          fi
+          # Then append failing-job log tail as fallback signal
           if [ -n "${{ steps.logtail.outputs.path }}" ] && [ -s "${{ steps.logtail.outputs.path }}" ]; then
             {
               echo
