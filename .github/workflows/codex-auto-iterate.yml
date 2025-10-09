@@ -1,7 +1,6 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-08.34 (replace all `...` with backticks to avoid '(' parse issues)
-# version: v2025-10-08.31 (auth probe: remove bash function to avoid '(' parse under sh)
-# version: v2025-10-08.30 (Fix model slug + robust retry when model_not_found)
+# version: v2025-10-08.35 (attach failing-run log tail to prompt; hardened shell/YAML)
+# lineage: v34 → add logtail step, keep Responses API, gpt-5-codex, no functions/paren arith
 
 name: Codex - Auto Iterate on CI Failure
 
@@ -34,7 +33,6 @@ jobs:
       POLL_INTERVAL_SECONDS: '10'
     steps:
       - name: Debug event
-        shell: bash
         run: |
           echo "event=${{ github.event_name }}"
           echo "ref_name=${{ github.ref_name }}"
@@ -54,7 +52,6 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
-        shell: bash
         run: |
           set -euo pipefail
           if [ -z "${OPENAI_API_KEY:-}" ]; then
@@ -79,13 +76,13 @@ jobs:
             https://api.openai.com/v1/responses \
             -H "authorization: Bearer $OPENAI_API_KEY" \
             -H "content-type: application/json" \
-            -d @"$req1"` || true
+            -d @"$req1" || true`
           rm -f "$req1"
           reason="http_${http_code}"
 
           # Retry with lowercase slug on any non-200 (covers 400/404 model_not_found)
           if [ "$http_code" != "200" ]; then
-            lower_model="`printf '%s' "$OPENAI_MODEL" | tr 'A-Z' 'a-z'`"
+            lower_model=`printf '%s' "$OPENAI_MODEL" | tr 'A-Z' 'a-z'`
             if [ "$lower_model" != "$OPENAI_MODEL" ]; then
               req2=`mktemp`
               printf '{"model":"%s","input":"ping","max_output_tokens":16}' "$lower_model" > "$req2"
@@ -93,7 +90,7 @@ jobs:
                 https://api.openai.com/v1/responses \
                 -H "authorization: Bearer $OPENAI_API_KEY" \
                 -H "content-type: application/json" \
-                -d @"$req2"` || true
+                -d @"$req2" || true`
               rm -f "$req2"
               reason="retry_lowercase_http_${http_code}"
             fi
@@ -103,8 +100,8 @@ jobs:
             echo "ok=true"   >> "$GITHUB_OUTPUT"
             echo "reason=ok" >> "$GITHUB_OUTPUT"
           else
-            short="`jq -r '.error.message // empty' "$RESP" 2>/dev/null || true`"
-            [ -n "$short" ] && reason="$reason:$short"
+            short=`jq -r '.error.message // empty' "$RESP" 2>/dev/null || true`
+            if [ -n "$short" ]; then reason="$reason:$short"; fi
             echo "ok=false"        >> "$GITHUB_OUTPUT"
             echo "reason=$reason"  >> "$GITHUB_OUTPUT"
           fi
@@ -125,7 +122,6 @@ jobs:
 
       - name: Gather context
         id: ctx
-        shell: bash
         run: |
           set -euo pipefail
           branch="${{ github.ref_name }}"
@@ -133,11 +129,11 @@ jobs:
           run_id="${{ github.run_id }}"
           run_url="https://github.com/${{ github.repository }}/actions/runs/${run_id}"
           branch_slug=`echo "$branch" | tr ':/ ' '---'`
-          echo "branch=$branch"         >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "branch_slug=$branch_slug" >> "$GITHUB_OUTPUT"
-          echo "head_sha=$sha"          >> "$GITHUB_OUTPUT"
-          echo "run_id=$run_id"         >> "$GITHUB_OUTPUT"
-          echo "run_url=$run_url"       >> "$GITHUB_OUTPUT"
+          echo "head_sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
 
       - name: Poll ALL workflow runs for this commit
         id: poll
@@ -209,9 +205,36 @@ jobs:
               core.setOutput("picked_conclusion", chosen.conclusion||"");
             }
 
+      - name: Fetch failing run logs (tail)
+        if: ${{ steps.poll.outputs.picked_id != '' }}
+        id: logtail
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID_PICKED: ${{ steps.poll.outputs.picked_id }}
+        run: |
+          set -euo pipefail
+          zipfile="$RUNNER_TEMP/other_run_logs.zip"
+          curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -L "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID_PICKED}/logs" \
+            -o "$zipfile" || true
+          mkdir -p "$RUNNER_TEMP/logs_extract"
+          unzip -q "$zipfile" -d "$RUNNER_TEMP/logs_extract" || true
+          OUT="$RUNNER_TEMP/failing_log_tail.txt"
+          : > "$OUT"
+          # Find largest .txt log file; avoid $(...) to keep '(' out of the script
+          find "$RUNNER_TEMP/logs_extract" -type f -name '*.txt' -printf "%s %p\n" > "$RUNNER_TEMP/logsizes.txt" || true
+          sort -nr "$RUNNER_TEMP/logsizes.txt" | awk 'NR==1{print $2}' > "$RUNNER_TEMP/largest.txt" || true
+          if [ -s "$RUNNER_TEMP/largest.txt" ]; then
+            candidate=`cat "$RUNNER_TEMP/largest.txt"`
+            if [ -f "$candidate" ]; then
+              tail -n 200 "$candidate" > "$OUT" || true
+            fi
+          fi
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+
       - name: Decide gate (iterate vs skip)
         id: gate
-        shell: bash
         env:
           FOUND_ANY: ${{ steps.poll.outputs.found_any }}
           ALL_COMPLETED: ${{ steps.poll.outputs.all_completed }}
@@ -247,7 +270,6 @@ jobs:
       - name: Load/Update attempt counter
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
         id: attempts
-        shell: bash
         run: |
           set -euo pipefail
           attempts=0
@@ -256,7 +278,7 @@ jobs:
           branch_slug="${{ steps.ctx.outputs.branch_slug }}"
           curl -sS -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${owner_repo}/actions/artifacts?per_page=100" > artifacts_all.json
-          id=$(jq -r --arg n "iterate-state-$branch_slug" '.artifacts[] | select(.name==$n and ..expired==false) | .id' artifacts_all.json | head -n 1 || true)
+          id=`jq -r --arg n "iterate-state-$branch_slug" '.artifacts[] | select(.name==$n and ..expired==false) | .id' artifacts_all.json | head -n 1 || true`
           if [ -n "$id" ] && [ "$id" != "null" ]; then
             curl -sSL -H "Authorization: Bearer $GH_TOKEN" -L \
               "https://api.github.com/repos/${owner_repo}/actions/artifacts/$id/zip" \
@@ -264,7 +286,10 @@ jobs:
             mkdir -p state && unzip -q state.zip -d state || true
             attempts=`jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0`
           fi
-          next=`expr "${attempts}" + 1 `
+          # next = attempts + 1 (without arithmetic parens)
+          nextfile="$RUNNER_TEMP/next.txt"
+          echo "$attempts" | awk '{print $1+1}' > "$nextfile"
+          next=`cat "$nextfile"`
           if [ "$next" -gt "${MAX_ATTEMPTS}" ]; then
             echo "stop=true" >> "$GITHUB_OUTPUT"
             echo "stop_reason=Max attempts reached (${MAX_ATTEMPTS})" >> "$GITHUB_OUTPUT"
@@ -279,7 +304,6 @@ jobs:
       - name: Build prompt
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
         id: prompt
-        shell: bash
         run: |
           set -euo pipefail
           PROMPT="$RUNNER_TEMP/prompt.txt"
@@ -313,11 +337,18 @@ jobs:
               head -n 300 "$RUNNER_TEMP/repo-files.txt"
             } >> "$PROMPT"
           fi
+          # Append failing job log tail if captured
+          if [ -n "${{ steps.logtail.outputs.path }}" ] && [ -s "${{ steps.logtail.outputs.path }}" ]; then
+            {
+              echo
+              echo "----- Failing job log tail (last 200 lines) -----"
+              sed -e 's/[^[:print:]\t]/?/g' "${{ steps.logtail.outputs.path }}" | tail -n 200
+            } >> "$PROMPT"
+          fi
           echo "path=$PROMPT" >> "$GITHUB_OUTPUT"
 
       - name: Prompt preview
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
-        shell: bash
         run: |
           echo "### Prompt (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
           echo '```text' >> "$GITHUB_STEP_SUMMARY"
@@ -330,7 +361,6 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
-        shell: bash
         run: |
           set -euo pipefail
           REQ="$RUNNER_TEMP/llm_req.json"
@@ -355,7 +385,7 @@ jobs:
             https://api.openai.com/v1/responses \
             -H "authorization: Bearer $OPENAI_API_KEY" \
             -H "content-type: application/json" \
-            -d @"$REQ"` || true
+            -d @"$REQ" || true`
           echo "http_code=$http_code"
           jq -r '.output_text // (.output[0].content[0].text // "")' "$RES" > "$OUTTXT" || true
           echo "### LLM response (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
@@ -366,7 +396,6 @@ jobs:
       - name: Extract fenced diff
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: diff
-        shell: bash
         run: |
           set -euo pipefail
           CONTENT="$RUNNER_TEMP/llm_content.txt"
@@ -384,7 +413,6 @@ jobs:
       - name: Apply patch (stage only; let PR action commit)
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: apply
-        shell: bash
         run: |
           set -euo pipefail
           DIFF_OUT="${{ steps.diff.outputs.diff_path }}"
@@ -424,7 +452,6 @@ jobs:
       - name: Build PR body file
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
         id: pr_body
-        shell: bash
         run: |
           set -euo pipefail
           BODY=".github/ITERATE_PR_BODY.md"
@@ -470,7 +497,6 @@ jobs:
 
       - name: Save attempt state
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
-        shell: bash
         env:
           ATTEMPTS: ${{ steps.attempts.outputs.next }}
           RUN_ID: ${{ steps.ctx.outputs.run_id }}
@@ -494,5 +520,4 @@ jobs:
 
       - name: Mark job neutral if we got this far
         if: ${{ always() }}
-        shell: bash
         run: echo "::notice title=iterate::Job completed - forcing neutral so logs persist"
