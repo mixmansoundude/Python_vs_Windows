@@ -439,8 +439,7 @@ jobs:
             cat "$RUNNER_TEMP/prompt.json"
             printf ' }]}\n'
             printf '  ],\n'
-            printf '  "max_output_tokens": 2000,\n'
-            printf '  "temperature": 0\n'
+            printf '  "max_output_tokens": 2000\n'
             printf '}\n'
           } > "$REQ"
           http_code=`curl -sS -o "$RES" -w "%{http_code}" \
@@ -520,36 +519,68 @@ jobs:
       - name: Build PR body file
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
         id: pr_body
+        env:
+          SUMMARY_JSON: ${{ steps.poll.outputs.summary_json }}
+          AUTH_OK_RAW: ${{ steps.auth.outputs.ok }}
+          AUTH_REASON_RAW: ${{ steps.auth.outputs.reason }}
+          BRANCH_NAME: ${{ steps.ctx.outputs.branch }}
+          HEAD_SHA: ${{ steps.ctx.outputs.head_sha }}
+          GATE_REASON: ${{ steps.gate.outputs.reason }}
         run: |
           set -euo pipefail
           BODY=".github/ITERATE_PR_BODY.md"
           mkdir -p .github
-          echo "## Codex iteration (push-poll ALL workflows)" > "$BODY"
-          echo >> "$BODY"
-          echo "- Branch: \`${{ steps.ctx.outputs.branch }}\` @ ${{ steps.ctx.outputs.head_sha }}" >> "$BODY"
-          echo "- Gate reason: ${{ steps.gate.outputs.reason }}" >> "$BODY"
-          echo >> "$BODY"
-          echo "### Polled runs" >> "$BODY"
-          echo '```json' >> "$BODY"
-          echo "${{ steps.poll.outputs.summary_json }}" >> "$BODY"
-          echo '```' >> "$BODY"
-          echo >> "$BODY"
-          echo "### Auth probe" >> "$BODY"
-          echo "- ok: ${{ steps.auth.outputs.ok || 'false' }} (reason: ${{ steps.auth.outputs.reason || 'n/a' }})" >> "$BODY"
-          echo >> "$BODY"
+          summary="${SUMMARY_JSON:-}"
+          if [ -z "$summary" ] || [ "$summary" = "null" ]; then
+            summary='[]'
+          fi
+
+          auth_ok="${AUTH_OK_RAW:-}"
+          if [ -z "$auth_ok" ]; then
+            auth_ok='false'
+          fi
+
+          auth_reason_raw="${AUTH_REASON_RAW:-}"
+          auth_reason_raw="${auth_reason_raw//$'\r'/ }"
+          auth_reason_raw="${auth_reason_raw//$'\n'/ }"
+          if [ -z "$auth_reason_raw" ]; then
+            auth_reason_raw='n/a'
+          fi
+
+          branch_name="${BRANCH_NAME:-unknown}"
+          head_sha="${HEAD_SHA:-unknown}"
+          gate_reason="${GATE_REASON:-unknown}"
+
+          {
+            printf '## Codex iteration (push-poll ALL workflows)\n\n'
+            printf -- '- Branch: `%s` @ %s\n' "$branch_name" "$head_sha"
+            printf -- '- Gate reason: %s\n\n' "$gate_reason"
+            printf '### Polled runs\n'
+            printf '```json\n'
+            printf '%s\n' "$summary"
+            printf '```\n\n'
+            printf '### Auth probe\n'
+            printf -- '- ok: %s (reason: %s)\n' "$auth_ok" "$auth_reason_raw"
+          } > "$BODY"
+
           if [ -f "$RUNNER_TEMP/prompt.txt" ]; then
-            echo "### Prompt (first 200 lines)" >> "$BODY"
-            echo '```text' >> "$BODY"
-            head -n 200 "$RUNNER_TEMP/prompt.txt" >> "$BODY" || true
-            echo '```' >> "$BODY"
+            {
+              printf '\n### Prompt (first 200 lines)\n'
+              printf '```text\n'
+              head -n 200 "$RUNNER_TEMP/prompt.txt" || true
+              printf '```\n'
+            } >> "$BODY"
           fi
+
           if [ -f "$RUNNER_TEMP/patch.diff" ]; then
-            echo >> "$BODY"
-            echo "### Extracted diff (first 200 lines)" >> "$BODY"
-            echo '```diff' >> "$BODY"
-            head -n 200 "$RUNNER_TEMP/patch.diff" >> "$BODY" || true
-            echo '```' >> "$BODY"
+            {
+              printf '\n### Extracted diff (first 200 lines)\n'
+              printf '```diff\n'
+              head -n 200 "$RUNNER_TEMP/patch.diff" || true
+              printf '```\n'
+            } >> "$BODY"
           fi
+
           echo "body_path=$BODY" >> "$GITHUB_OUTPUT"
 
       - name: Create PR (if edits)
