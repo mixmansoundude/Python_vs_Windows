@@ -1,5 +1,5 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-08.35 (attach failing-run log tail to prompt; hardened shell/YAML)
+# version: v2025-10-08.36 (Responses API: use content parts; show error body/head in summary)
 # lineage: v34 → add logtail step, keep Responses API, gpt-5-codex, no functions/paren arith
 
 name: Codex - Auto Iterate on CI Failure
@@ -372,10 +372,10 @@ jobs:
             printf '{\n'
             printf '  "model": "%s",\n' "$OPENAI_MODEL"
             printf '  "input": [\n'
-            printf '    {"role":"system","content":"You are an expert software engineer that proposes precise, minimal unified diffs."},\n'
-            printf '    {"role":"user","content": '
+            printf '    {"role":"system","content":[{"type":"text","text":"You are an expert software engineer that proposes precise, minimal unified diffs."}]},\n'
+            printf '    {"role":"user","content":[{"type":"text","text": '
             cat "$RUNNER_TEMP/prompt.json"
-            printf '}\n'
+            printf ' }]}\n'
             printf '  ],\n'
             printf '  "max_output_tokens": 2000,\n'
             printf '  "temperature": 0\n'
@@ -387,6 +387,13 @@ jobs:
             -H "content-type: application/json" \
             -d @"$REQ" || true`
           echo "http_code=$http_code"
+          # Add body head and error, if any, to summary
+          echo "### LLM body (first 300 chars)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          head -c 300 "$RES" | sed 's/[^[:print:]\t]/?/g' >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          err=`jq -r '.error.message // empty' "$RES" 2>/dev/null || true`
+          if [ -n "$err" ]; then echo "**error:** $err" >> "$GITHUB_STEP_SUMMARY"; fi
           jq -r '.output_text // (.output[0].content[0].text // "")' "$RES" > "$OUTTXT" || true
           echo "### LLM response (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
