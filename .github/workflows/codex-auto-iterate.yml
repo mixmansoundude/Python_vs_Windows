@@ -1,5 +1,7 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-08.27 (Ask model → Responses API; no other behavior changes)
+# version: v2025-10-08.29 (YAML hardening: no heredocs, Responses API probe + main call unchanged)
+# version: v2025-10-08.28 (YAML lint fixes; Responses API for probe + main call)
+# version: v2025-10-08.27 (Ask model → Responses API)
 # version: v2025-10-08.26
 # version: v2025-10-08.25 (auth probe → Responses API max_output_tokens=16)
 # version: v2025-10-08.24 (auth probe → Responses API + lowercase fallback)
@@ -15,7 +17,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  actions: write       # upload-artifact requires write
+  actions: write
   contents: write
   pull-requests: write
 
@@ -30,10 +32,11 @@ jobs:
     env:
       MAX_ATTEMPTS: '20'
       OPENAI_MODEL: GPT-5-Codex
-      POLL_TIMEOUT_SECONDS: '1200'   # 20 minutes
+      POLL_TIMEOUT_SECONDS: '1200'
       POLL_INTERVAL_SECONDS: '10'
     steps:
       - name: Debug event
+        shell: bash
         run: |
           echo "event=${{ github.event_name }}"
           echo "ref_name=${{ github.ref_name }}"
@@ -47,7 +50,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Auth probe uses Responses API (+ lowercase fallback)
       - name: Auth probe (Responses API)
         id: auth
         continue-on-error: true
@@ -57,7 +59,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # No key? Mark ok=false and summarize.
           if [ -z "${OPENAI_API_KEY:-}" ]; then
             echo "ok=false"   >> "$GITHUB_OUTPUT"
             echo "reason=no_key" >> "$GITHUB_OUTPUT"
@@ -68,9 +69,7 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-
           RESP="$RUNNER_TEMP/auth_body.json"
-          # Helper: call Responses API with a given model slug
           call_probe () {
             local model="$1"
             local req
@@ -85,32 +84,24 @@ jobs:
             rm -f "$req"
             printf '%s' "$code"
           }
-
-          http_code=$(call_probe "$OPENAI_MODEL")
+          http_code=$(call_probe "$OPENAI_MODEL") || true
           reason="http_${http_code}"
-
-          # If 404, try again with a lowercased model slug (helps when env is 'GPT-5-Codex' vs 'gpt-5-codex')
           if [ "$http_code" = "404" ]; then
             lower_model="$(printf '%s' "$OPENAI_MODEL" | tr 'A-Z' 'a-z')"
             if [ "$lower_model" != "$OPENAI_MODEL" ]; then
-              http_code=$(call_probe "$lower_model")
+              http_code=$(call_probe "$lower_model") || true
               reason="retry_lowercase_http_${http_code}"
             fi
           fi
-
           if [ "$http_code" = "200" ]; then
             echo "ok=true"   >> "$GITHUB_OUTPUT"
             echo "reason=ok" >> "$GITHUB_OUTPUT"
           else
-            # Try to extract short error message
             short=$(jq -r '.error.message // empty' "$RESP" 2>/dev/null || true)
-            if [ -n "$short" ]; then
-              reason="$reason:$short"
-            fi
+            if [ -n "$short" ]; then reason="$reason:$short"; fi
             echo "ok=false"    >> "$GITHUB_OUTPUT"
             echo "reason=$reason" >> "$GITHUB_OUTPUT"
           fi
-
           {
             echo "### Auth probe (Responses API)"
             echo ""
@@ -156,52 +147,35 @@ jobs:
             const selfName  = (context.workflow || "").toLowerCase();
             const deadline = Date.now() + (parseInt(process.env.POLL_TIMEOUT_SECONDS||"1200")*1000);
             const interval = parseInt(process.env.POLL_INTERVAL_SECONDS||"10")*1000;
-
             async function listRunsForSha() {
               const { data } = await github.rest.actions.listWorkflowRunsForRepo({
                 owner, repo, head_sha: sha, per_page: 100
               });
               return data.workflow_runs || [];
             }
-
             function filterNotSelf(runs) {
               return runs.filter(r =>
                 String(r.id) !== selfRunId &&
                 (r.name||"").toLowerCase() !== selfName
               );
             }
-
             let lastSeen = [];
             let chosen = null;
             while (Date.now() < deadline) {
               let runs = await listRunsForSha();
               runs = filterNotSelf(runs);
-              // Track for debugging
               lastSeen = runs.map(r => ({id:r.id, name:r.name, status:r.status, conclusion:r.conclusion}));
-
-              // If no other runs yet, wait
-              if (runs.length === 0) {
-                await new Promise(r => setTimeout(r, interval));
-                continue;
-              }
-
+              if (runs.length === 0) { await new Promise(r => setTimeout(r, interval)); continue; }
               const incomplete = runs.filter(r => r.status !== "completed");
-              if (incomplete.length > 0) {
-                await new Promise(r => setTimeout(r, interval));
-                continue;
-              }
-
-              // All completed. If any non-success, choose the first non-success
+              if (incomplete.length > 0) { await new Promise(r => setTimeout(r, interval)); continue; }
               const nonSuccess = runs.find(r => (r.conclusion||"") !== "success");
               chosen = nonSuccess || runs[0];
               break;
             }
-
             if (!chosen) {
-              core.info("Either no runs appeared, or still pending at timeout. Will iterate by default.");
               core.setOutput("found_any", "false");
               core.setOutput("all_completed", "false");
-              core.setOutput("any_non_success", "true"); // treat as condition to iterate
+              core.setOutput("any_non_success", "true");
               core.setOutput("summary_json", JSON.stringify(lastSeen));
             } else {
               core.setOutput("found_any", "true");
@@ -245,13 +219,9 @@ jobs:
           fi
           echo "should_iterate=${should_iterate}" >> "$GITHUB_OUTPUT"
           echo "reason=${reason}" >> "$GITHUB_OUTPUT"
-          {
-            echo "### Poll summary"
-            echo '```json'
-          } >> "$GITHUB_STEP_SUMMARY"
-          cat >> "$GITHUB_STEP_SUMMARY" <<'JSON_EOF'
-${{ steps.poll.outputs.summary_json }}
-JSON_EOF
+          echo "### Poll summary" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.poll.outputs.summary_json }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Load/Update attempt counter
@@ -315,8 +285,6 @@ JSON_EOF
             echo '# no changes'
             echo '```'
           } > "$PROMPT"
-
-          # v16+micro: give Codex a quick map of REAL files so it doesn’t invent paths
           git ls-files > "$RUNNER_TEMP/repo-files.txt" || true
           if [ -s "$RUNNER_TEMP/repo-files.txt" ]; then
             {
@@ -325,21 +293,18 @@ JSON_EOF
               head -n 300 "$RUNNER_TEMP/repo-files.txt"
             } >> "$PROMPT"
           fi
-
           echo "path=$PROMPT" >> "$GITHUB_OUTPUT"
 
       - name: Prompt preview
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        shell: bash
         run: |
-          {
-            echo "### Prompt (first 120 lines)"
-            echo '```text'
-            head -n 120 "${{ steps.prompt.outputs.path }}"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "### Prompt (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          head -n 120 "${{ steps.prompt.outputs.path }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      # ====== MICROSURGERY HERE: use Responses API for main LLM call ======
-      - name: Ask model for patch
+      - name: Ask model for patch (Responses API)
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: llm
         env:
@@ -353,40 +318,28 @@ JSON_EOF
           OUTTXT="$RUNNER_TEMP/llm_content.txt"
           PROMPT_FILE="${{ steps.prompt.outputs.path }}"
           jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
-
-          cat > "$REQ" <<JSON
-{
-  "model": "${OPENAI_MODEL}",
-  "input": [
-    {"role":"system","content":"You are an expert software engineer that proposes precise, minimal unified diffs."},
-    {"role":"user","content": $(cat "$RUNNER_TEMP/prompt.json")}
-  ],
-  "max_output_tokens": 2000,
-  "temperature": 0
-}
-JSON
-
+          printf '{\n'                              > "$REQ"
+          printf '  "model": "%s",\n' "$OPENAI_MODEL" >> "$REQ"
+          printf '  "input": [\n'                  >> "$REQ"
+          printf '    {"role":"system","content":"You are an expert software engineer that proposes precise, minimal unified diffs."},\n' >> "$REQ"
+          printf '    {"role":"user","content": '  >> "$REQ"
+          cat "$RUNNER_TEMP/prompt.json"           >> "$REQ"
+          printf '}\n'                              >> "$REQ"
+          printf '  ],\n'                           >> "$REQ"
+          printf '  "max_output_tokens": 2000,\n'  >> "$REQ"
+          printf '  "temperature": 0\n'            >> "$REQ"
+          printf '}\n'                              >> "$REQ"
           http_code=$(curl -sS -o "$RES" -w "%{http_code}" \
             https://api.openai.com/v1/responses \
             -H "authorization: Bearer $OPENAI_API_KEY" \
             -H "content-type: application/json" \
             -d @"$REQ")
           echo "http_code=$http_code"
-
-          # Extract free-form text from Responses API
-          # It can be at output[0].content[0].text or at top-level 'output_text'
-          jq -r '
-            .output_text // (
-              .output[0].content[0].text // ""
-            )
-          ' "$RES" > "$OUTTXT" || true
-
-          {
-            echo "### LLM response (first 120 lines)"
-            echo '```'
-            head -n 120 "$OUTTXT"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.output_text // (.output[0].content[0].text // "")' "$RES" > "$OUTTXT" || true
+          echo "### LLM response (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          head -n 120 "$OUTTXT" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Extract fenced diff
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
@@ -429,11 +382,9 @@ JSON
           if [ -z "$(git status --porcelain)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            # Do not commit here—leave changes staged for create-pull-request.
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Upload diagnostics BEFORE building PR body
       - name: Upload diagnostics
         uses: actions/upload-artifact@v4
         with:
@@ -456,36 +407,32 @@ JSON
           set -euo pipefail
           BODY=".github/ITERATE_PR_BODY.md"
           mkdir -p .github
-          {
-            echo "## Codex iteration (push-poll ALL workflows)"
-            echo
-            echo "- Branch: \`${{ steps.ctx.outputs.branch }}\` @ ${{ steps.ctx.outputs.head_sha }}"
-            echo "- Gate reason: ${{ steps.gate.outputs.reason }}"
-            echo
-            echo "### Polled runs"
-            echo '```json'
-            echo
-            echo "### Auth probe"
-            echo "- ok: ${{ steps.auth.outputs.ok || 'false' }} (reason: ${{ steps.auth.outputs.reason || 'n/a' }})"
-            echo
-            if [ -f "$RUNNER_TEMP/prompt.txt" ]; then
-              echo "### Prompt (first 200 lines)"
-              echo '```text'
-              head -n 200 "$RUNNER_TEMP/prompt.txt" || true
-              echo '```'
-            fi
-            if [ -f "$RUNNER_TEMP/patch.diff" ]; then
-              echo
-              echo "### Extracted diff (first 200 lines)"
-              echo '```diff'
-              head -n 200 "$RUNNER_TEMP/patch.diff" || true
-              echo '```'
-            fi
-          } > "$BODY"
-          cat >> "$BODY" <<'JSON_EOF'
-${ steps.poll.outputs.summary_json }
-JSON_EOF
-          { echo '```'; } >> "$BODY"
+          echo "## Codex iteration (push-poll ALL workflows)" > "$BODY"
+          echo "" >> "$BODY"
+          echo "- Branch: \`${{ steps.ctx.outputs.branch }}\` @ ${{ steps.ctx.outputs.head_sha }}" >> "$BODY"
+          echo "- Gate reason: ${{ steps.gate.outputs.reason }}" >> "$BODY"
+          echo "" >> "$BODY"
+          echo "### Polled runs" >> "$BODY"
+          echo '```json' >> "$BODY"
+          echo "${{ steps.poll.outputs.summary_json }}" >> "$BODY"
+          echo '```' >> "$BODY"
+          echo "" >> "$BODY"
+          echo "### Auth probe" >> "$BODY"
+          echo "- ok: ${{ steps.auth.outputs.ok || 'false' }} (reason: ${{ steps.auth.outputs.reason || 'n/a' }})" >> "$BODY"
+          echo "" >> "$BODY"
+          if [ -f "$RUNNER_TEMP/prompt.txt" ]; then
+            echo "### Prompt (first 200 lines)" >> "$BODY"
+            echo '```text' >> "$BODY"
+            head -n 200 "$RUNNER_TEMP/prompt.txt" >> "$BODY" || true
+            echo '```' >> "$BODY"
+          fi
+          if [ -f "$RUNNER_TEMP/patch.diff" ]; then
+            echo "" >> "$BODY"
+            echo "### Extracted diff (first 200 lines)" >> "$BODY"
+            echo '```diff' >> "$BODY"
+            head -n 200 "$RUNNER_TEMP/patch.diff" >> "$BODY" || true
+            echo '```' >> "$BODY"
+          fi
           echo "body_path=$BODY" >> "$GITHUB_OUTPUT"
 
       - name: Create PR (if edits)
@@ -502,15 +449,17 @@ JSON_EOF
       - name: Save attempt state
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
         shell: bash
+        env:
+          ATTEMPTS: ${{ steps.attempts.outputs.next }}
+          RUN_ID: ${{ steps.ctx.outputs.run_id }}
+          HEAD_SHA: ${{ steps.ctx.outputs.head_sha }}
         run: |
           mkdir -p state_out
-          cat > state_out/iterate_state.json <<'JSON'
-{
-  "attempts": ${{ steps.attempts.outputs.next }},
-  "run_id": "${{ steps.ctx.outputs.run_id }}",
-  "head_sha": "${{ steps.ctx.outputs.head_sha }}"
-}
-JSON
+          printf '{\n' > state_out/iterate_state.json
+          printf '  "attempts": "%s",\n' "$ATTEMPTS" >> state_out/iterate_state.json
+          printf '  "run_id": "%s",\n' "$RUN_ID" >> state_out/iterate_state.json
+          printf '  "head_sha": "%s"\n' "$HEAD_SHA" >> state_out/iterate_state.json
+          printf '}\n' >> state_out/iterate_state.json
 
       - name: Upload attempt state
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
@@ -521,26 +470,7 @@ JSON
           if-no-files-found: warn
           retention-days: 30
 
-      # In .github/workflows/codex-auto-iterate.yml
-      
-      # 1) Make the diagnostic upload run even if earlier steps fail
-      - name: Upload diagnostics
-        if: ${{ always() }}   # <-- ensures we get logs even when earlier steps fail
-        uses: actions/upload-artifact@v4
-        with:
-          name: iterate-diag-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/auth_body.json
-            ${{ runner.temp }}/llm_req.json
-            ${{ runner.temp }}/llm_res.json
-            ${{ runner.temp }}/llm_content.txt
-            ${{ runner.temp }}/patch.diff
-            ${{ runner.temp }}/prompt.txt
-          if-no-files-found: warn
-          retention-days: 14
-      
-      # 2) At the very end, force a neutral outcome so iteration doesn’t “fail fast”
       - name: Mark job neutral if we got this far
         if: ${{ always() }}
+        shell: bash
         run: echo "::notice title=iterate::Job completed (forcing neutral so logs persist)"
-        # Don’t `exit 1`; let earlier failures be visible in step outcomes
