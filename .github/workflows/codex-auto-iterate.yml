@@ -69,9 +69,18 @@ jobs:
           http_code=0
           reason=""
 
-          # First try: model as provided
+          # First try: model as provided using input_text payload required by Responses API
           req1=`mktemp`
-          printf '{"model":"%s","input":"ping","max_output_tokens":16}' "$OPENAI_MODEL" > "$req1"
+          {
+            printf '{\n'
+            printf '  "model": "%s",\n' "$OPENAI_MODEL"
+            printf '  "input": [\n'
+            printf '    {"role":"system","content":[{"type":"input_text","text":"Auth probe: expect 200"}]},\n'
+            printf '    {"role":"user","content":[{"type":"input_text","text":"ping"}]}\n'
+            printf '  ],\n'
+            printf '  "max_output_tokens": 16\n'
+            printf '}\n'
+          } > "$req1"
           http_code=`curl -sS -o "$RESP" -w "%{http_code}" \
             https://api.openai.com/v1/responses \
             -H "authorization: Bearer $OPENAI_API_KEY" \
@@ -85,7 +94,16 @@ jobs:
             lower_model=`printf '%s' "$OPENAI_MODEL" | tr 'A-Z' 'a-z'`
             if [ "$lower_model" != "$OPENAI_MODEL" ]; then
               req2=`mktemp`
-              printf '{"model":"%s","input":"ping","max_output_tokens":16}' "$lower_model" > "$req2"
+              {
+                printf '{\n'
+                printf '  "model": "%s",\n' "$lower_model"
+                printf '  "input": [\n'
+                printf '    {"role":"system","content":[{"type":"input_text","text":"Auth probe retry: expect 200"}]},\n'
+                printf '    {"role":"user","content":[{"type":"input_text","text":"ping"}]}\n'
+                printf '  ],\n'
+                printf '  "max_output_tokens": 16\n'
+                printf '}\n'
+              } > "$req2"
               http_code=`curl -sS -o "$RESP" -w "%{http_code}" \
                 https://api.openai.com/v1/responses \
                 -H "authorization: Bearer $OPENAI_API_KEY" \
@@ -454,7 +472,12 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           err=`jq -r '.error.message // empty' "$RES" 2>/dev/null || true`
           if [ -n "$err" ]; then echo "**error:** $err" >> "$GITHUB_STEP_SUMMARY"; fi
-          jq -r '.output_text // (.output[0].content[0].text // "")' "$RES" > "$OUTTXT" || true
+          # Responses API prefers output_text; fall back to first textual content item if absent
+          jq -r '(
+            .output_text //
+            (.output[]? | .content[]? | select(.type=="output_text") | .text) //
+            (.output[0]? | .content[0]? | .text // "")
+          )' "$RES" > "$OUTTXT" || true
           echo "### LLM response (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           head -n 120 "$OUTTXT" >> "$GITHUB_STEP_SUMMARY"
