@@ -1,6 +1,6 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-08.39 (fix JS arrow function in poll; NDJSON pickup; input_text parts; hardened shell)
-# lineage: v37 → add structured artifact pickup; fix poll arrow fn
+# version: v2025-10-08.41 (Decide gate: here-doc JSON + env defaults; PR body unchanged)
+# lineage: v39 → tiny fix only in Decide gate
 
 name: Codex - Auto Iterate on CI Failure
 
@@ -155,7 +155,7 @@ jobs:
               const { data } = await github.rest.actions.listWorkflowRunsForRepo({
                 owner, repo, head_sha: sha, per_page: 100
               });
-              return data.workflow_runs || [];
+              return (data.workflow_runs || []);
             }
 
             function filterNotSelf(runs) {
@@ -287,6 +287,11 @@ jobs:
           ANY_NON_SUCCESS: ${{ steps.poll.outputs.any_non_success }}
         run: |
           set -euo pipefail
+          # Safe defaults so -u doesn't explode if outputs are unset
+          FOUND_ANY="${FOUND_ANY:-}"
+          ALL_COMPLETED="${ALL_COMPLETED:-}"
+          ANY_NON_SUCCESS="${ANY_NON_SUCCESS:-}"
+
           should_iterate=false
           reason=""
           if [ "${FOUND_ANY}" != "true" ]; then
@@ -308,9 +313,15 @@ jobs:
           fi
           echo "should_iterate=${should_iterate}" >> "$GITHUB_OUTPUT"
           echo "reason=${reason}" >> "$GITHUB_OUTPUT"
-          echo "### Poll summary" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          echo "${{ steps.poll.outputs.summary_json }}" >> "$GITHUB_STEP_SUMMARY"
+
+          # Write poll summary JSON via heredoc so bash never parses its contents
+          {
+            echo "### Poll summary"
+            echo '```json'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat >> "$GITHUB_STEP_SUMMARY" <<'JSON'
+${{ steps.poll.outputs.summary_json }}
+JSON
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Load/Update attempt counter
