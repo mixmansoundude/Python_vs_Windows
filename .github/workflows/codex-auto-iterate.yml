@@ -1,6 +1,6 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-08.36 (Responses API: use content parts; show error body/head in summary)
-# lineage: v34 → add logtail step, keep Responses API, gpt-5-codex, no functions/paren arith
+# version: v2025-10-08.37 (Responses API: input_text content parts; show body/error; log tail; hardened shell)
+# lineage: v35 → add content parts + error preview; fix types to input_text
 
 name: Codex - Auto Iterate on CI Failure
 
@@ -80,7 +80,7 @@ jobs:
           rm -f "$req1"
           reason="http_${http_code}"
 
-          # Retry with lowercase slug on any non-200 (covers 400/404 model_not_found)
+          # Retry with lowercase slug on any non-200
           if [ "$http_code" != "200" ]; then
             lower_model=`printf '%s' "$OPENAI_MODEL" | tr 'A-Z' 'a-z'`
             if [ "$lower_model" != "$OPENAI_MODEL" ]; then
@@ -222,7 +222,6 @@ jobs:
           unzip -q "$zipfile" -d "$RUNNER_TEMP/logs_extract" || true
           OUT="$RUNNER_TEMP/failing_log_tail.txt"
           : > "$OUT"
-          # Find largest .txt log file; avoid $(...) to keep '(' out of the script
           find "$RUNNER_TEMP/logs_extract" -type f -name '*.txt' -printf "%s %p\n" > "$RUNNER_TEMP/logsizes.txt" || true
           sort -nr "$RUNNER_TEMP/logsizes.txt" | awk 'NR==1{print $2}' > "$RUNNER_TEMP/largest.txt" || true
           if [ -s "$RUNNER_TEMP/largest.txt" ]; then
@@ -286,7 +285,6 @@ jobs:
             mkdir -p state && unzip -q state.zip -d state || true
             attempts=`jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0`
           fi
-          # next = attempts + 1 (without arithmetic parens)
           nextfile="$RUNNER_TEMP/next.txt"
           echo "$attempts" | awk '{print $1+1}' > "$nextfile"
           next=`cat "$nextfile"`
@@ -337,7 +335,6 @@ jobs:
               head -n 300 "$RUNNER_TEMP/repo-files.txt"
             } >> "$PROMPT"
           fi
-          # Append failing job log tail if captured
           if [ -n "${{ steps.logtail.outputs.path }}" ] && [ -s "${{ steps.logtail.outputs.path }}" ]; then
             {
               echo
@@ -372,8 +369,8 @@ jobs:
             printf '{\n'
             printf '  "model": "%s",\n' "$OPENAI_MODEL"
             printf '  "input": [\n'
-            printf '    {"role":"system","content":[{"type":"text","text":"You are an expert software engineer that proposes precise, minimal unified diffs."}]},\n'
-            printf '    {"role":"user","content":[{"type":"text","text": '
+            printf '    {"role":"system","content":[{"type":"input_text","text":"You are an expert software engineer that proposes precise, minimal unified diffs."}]},\n'
+            printf '    {"role":"user","content":[{"type":"input_text","text": '
             cat "$RUNNER_TEMP/prompt.json"
             printf ' }]}\n'
             printf '  ],\n'
@@ -387,7 +384,6 @@ jobs:
             -H "content-type: application/json" \
             -d @"$REQ" || true`
           echo "http_code=$http_code"
-          # Add body head and error, if any, to summary
           echo "### LLM body (first 300 chars)" >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
           head -c 300 "$RES" | sed 's/[^[:print:]\t]/?/g' >> "$GITHUB_STEP_SUMMARY" || true
