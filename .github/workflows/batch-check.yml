@@ -1468,6 +1468,8 @@ jobs:
 
           "public_dir=$pub" | Out-File -Append $env:GITHUB_OUTPUT
 
+      - uses: actions/configure-pages@v4
+
       - name: Upload combined Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
