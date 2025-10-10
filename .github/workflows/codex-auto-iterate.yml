@@ -706,8 +706,11 @@ jobs:
           src_dir="${RUNNER_TEMP}/iterate-diag"
           if [ -d "$src_dir" ]; then
             shopt -s dotglob nullglob
-            if find "$src_dir" -mindepth 1 -print -quit >/dev/null 2>&1; then
-              cp -R "$src_dir"/* public/logs/
+            entries=("$src_dir"/*)
+            if (( ${#entries[@]} )); then
+              cp -R "${entries[@]}" public/logs/
+            else
+              echo "No diagnostics files to stage; skipping copy."
             fi
             shopt -u dotglob nullglob
           fi
