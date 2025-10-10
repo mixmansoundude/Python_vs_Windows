@@ -647,3 +647,185 @@ jobs:
       - name: Mark job neutral if we got this far
         if: ${{ always() }}
         run: echo "::notice title=iterate::Job completed - forcing neutral so logs persist"
+
+  deploy-iterate-pages:
+    name: Deploy iterate diagnostics to Pages
+    needs: iterate
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - name: Locate iterate diagnostics artifact
+        id: diag_lookup
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runId = context.runId;
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner,
+              repo,
+              run_id: runId,
+              per_page: 100,
+            });
+            const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
+            const match = artifacts.find(art => {
+              if (!art || art.expired) return false;
+              return typeof art.name === 'string' && art.name.startsWith('iterate-diag-');
+            });
+            if (!match) {
+              core.info('iterate-diag-* artifact not found for this run.');
+              core.setOutput('found', 'false');
+              return;
+            }
+            core.info(`Found iterate diagnostics artifact: ${match.name} (id=${match.id})`);
+            core.setOutput('found', 'true');
+            core.setOutput('artifact-name', match.name);
+
+      - name: Download iterate diagnostics
+        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.diag_lookup.outputs.artifact-name }}
+          path: ${{ runner.temp }}/iterate-diag
+
+      - name: Stage diagnostics into public directory
+        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
+        run: |
+          set -euo pipefail
+          rm -rf public
+          mkdir -p public/logs public/sources public/repo
+          src_dir="${RUNNER_TEMP}/iterate-diag"
+          if [ -d "$src_dir" ]; then
+            shopt -s dotglob nullglob
+            if find "$src_dir" -mindepth 1 -print -quit >/dev/null 2>&1; then
+              cp -R "$src_dir"/* public/logs/
+            fi
+            shopt -u dotglob nullglob
+          fi
+          rm -rf "$src_dir"
+          touch public/.nojekyll
+
+      - name: Build Pages index
+        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
+        run: |
+          set -euo pipefail
+          python <<'PY'
+          import datetime
+          from pathlib import Path
+
+          base = Path('public')
+          logs_dir = base / 'logs'
+          sources_dir = base / 'sources'
+          repo_dir = base / 'repo'
+          for path in (logs_dir, sources_dir, repo_dir):
+              path.mkdir(parents=True, exist_ok=True)
+
+          entries = []
+          for path in base.rglob('*'):
+              if not path.is_file():
+                  continue
+              if path.name in {'index.md', 'index.html'}:
+                  continue
+              entries.append(path.relative_to(base))
+
+          entries.sort()
+
+          repo = "${{ github.repository }}"
+          run_id = "${{ github.run_id }}"
+          attempt = "${{ github.run_attempt }}"
+          run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
+          timestamp = datetime.datetime.utcnow().isoformat(timespec='seconds') + 'Z'
+
+          index_md = base / 'index.md'
+          lines = [
+              '# Iterate diagnostics',
+              '',
+              f'- Repo: `{repo}`',
+              f'- Workflow run: [{run_id}]({run_url})',
+              f'- Run attempt: {attempt}',
+              f'- Generated: {timestamp}',
+              '',
+              '## Files',
+          ]
+
+          if entries:
+              for rel in entries:
+                  rel_path = rel.as_posix()
+                  lines.append(f'- [{rel_path}]({rel_path})')
+          else:
+              lines.append('- (no files captured)')
+
+          index_md.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+          html_lines = [
+              '<!doctype html>',
+              '<meta charset="utf-8">',
+              f'<title>Iterate diagnostics — run {run_id}</title>',
+              '<style>',
+              'body{font-family:ui-sans-serif,system-ui;line-height:1.5;margin:24px;}',
+              'code{font-family:ui-monospace,Consolas,monospace;}',
+              'a{color:#0366d6;}',
+              '</style>',
+              '<h1>Iterate diagnostics</h1>',
+              f'<p><strong>Repo:</strong> {repo}<br>',
+              f'<strong>Run:</strong> <a href="{run_url}">{run_id}</a> (attempt {attempt})<br>',
+              f'<strong>Generated:</strong> {timestamp}</p>',
+              '<p>See <a href="index.md">index.md</a> for a Markdown listing.</p>',
+          ]
+
+          if entries:
+              html_lines.append('<ul>')
+              for rel in entries:
+                  rel_path = rel.as_posix()
+                  html_lines.append(f'<li><a href="{rel_path}">{rel_path}</a></li>')
+              html_lines.append('</ul>')
+          else:
+              html_lines.append('<p>(no files captured)</p>')
+
+          (base / 'index.html').write_text('\n'.join(html_lines) + '\n', encoding='utf-8')
+          PY
+
+      - name: Configure Pages
+        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to Pages
+        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
+        id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Summarize deployment
+        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
+        run: |
+          url='${{ steps.deploy.outputs.page_url }}'
+          {
+            echo '### Iterate diagnostics Pages'
+            if [ -n "$url" ]; then
+              echo "- Deployed: [$url]($url)"
+            else
+              echo '- Deployed: (no URL returned)'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Note missing diagnostics
+        if: ${{ steps.diag_lookup.outputs.found != 'true' }}
+        run: |
+          {
+            echo '### Iterate diagnostics Pages'
+            echo '- iterate-diag-* artifact not found; skipping deployment.'
+          } >> "$GITHUB_STEP_SUMMARY"
