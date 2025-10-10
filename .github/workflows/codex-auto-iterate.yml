@@ -201,12 +201,22 @@ jobs:
                 continue;
               }
 
-              // Prefer actual failures so Codex inspects a run with real errors.
-              const failure = runs.find(r => (r.conclusion||"") === "failure");
-              const needsAction = runs.find(r => ["timed_out", "action_required"].includes(r.conclusion||""));
-              const cancelled = runs.find(r => (r.conclusion||"") === "cancelled");
-              const nonSuccess = runs.find(r => (r.conclusion||"") !== "success");
-              chosen = failure || needsAction || cancelled || nonSuccess || runs[0];
+              const runsWithJobs = [];
+              for (const r of runs) {
+                const { data } = await github.rest.actions.listJobsForWorkflowRun({
+                  owner, repo, run_id: r.id, per_page: 100
+                });
+                const hasFailJob = (data.jobs || []).some(j => (j.conclusion||"") === "failure");
+                runsWithJobs.push({ ...r, hasFailJob });
+              }
+
+              // Prefer runs with a failed job; some runs are 'cancelled' despite job failures.
+              const failedJob = runsWithJobs.find(r => r.hasFailJob);
+              const failure = runsWithJobs.find(r => (r.conclusion||"") === "failure");
+              const needsAction = runsWithJobs.find(r => ["timed_out", "action_required"].includes(r.conclusion||""));
+              const cancelled = runsWithJobs.find(r => (r.conclusion||"") === "cancelled");
+              const nonSuccess = runsWithJobs.find(r => (r.conclusion||"") !== "success");
+              chosen = failedJob || failure || needsAction || cancelled || nonSuccess || runsWithJobs[0];
               break;
             }
 
@@ -239,7 +249,7 @@ jobs:
           meta="$RUNNER_TEMP/artifacts.json"
           curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$api" -o "$meta" || true
           # Pick an artifact likely containing structured CI results
-          name=`jq -r '.artifacts[].name' "$meta" 2>/dev/null | grep -E -i 'ndjson|summary_raw|self.?test|ci[-_]?result|first.?error' | head -n 1 || true`
+          name=`jq -r '.artifacts[].name' "$meta" 2>/dev/null | grep -E -i 'ndjson|summary_raw|self.?test|ci[-_]?result|first.?error|test[-_]?logs|diag' | head -n 1 || true`
           if [ -z "$name" ] || [ "$name" = "null" ]; then
             echo "path=" >> "$GITHUB_OUTPUT"
             exit 0
