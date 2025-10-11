@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin"
           curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash \
-            | bash -s -- latest "$RUNNER_TEMP/bin"
+            | bash -s -- -b "$RUNNER_TEMP/bin"
           # Make it available both now (this step) and in later steps
           export PATH="$RUNNER_TEMP/bin:$PATH"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
@@ -90,22 +90,29 @@ jobs:
             printf '%s\n' "$first" > "$SUMMARY_TXT"
 
             # Optional NDJSON single-line first error (for iterate to ingest if needed)
-            printf '{"id":"workflow.lint","desc":%s,"source":%s}\n' \
-              "$(python3 - <<'PY'
-                import json, os
-                out = os.environ.get('OUT')
-                first = os.environ.get('FIRST')
-                if not first:
-                    first = open(out, 'r', encoding='utf-8', errors='ignore').read().splitlines()[0]
-                print(json.dumps(first))
-              PY
-              )" \
-              "$(python3 - <<'PY'
-                import json
-                print(json.dumps('.github/workflows'))
-              PY
-              )" \
-              > "$NDJSON" || true
+            # NOTE: python is used here to avoid the nested heredoc quoting that previously broke on CI.
+            python3 - <<'PY' "$NDJSON"
+            import json
+            import os
+            import sys
+
+            ndjson_path = sys.argv[1]
+            first = os.environ.get('FIRST')
+            if not first:
+                out_path = os.environ.get('OUT')
+                if out_path:
+                    with open(out_path, 'r', encoding='utf-8', errors='ignore') as handle:
+                        first = handle.readline().rstrip('\n')
+            first = first or ""
+            record = {
+                "id": "workflow.lint",
+                "desc": first,
+                "source": ".github/workflows",
+            }
+            with open(ndjson_path, 'w', encoding='utf-8') as handle:
+                json.dump(record, handle, ensure_ascii=False)
+                handle.write('\n')
+            PY
 
           else
             if [ "${ACTIONLINT_CONCLUSION:-success}" != "success" ]; then
