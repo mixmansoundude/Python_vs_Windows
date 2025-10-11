@@ -24,6 +24,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download actionlint (no external linters)
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin"
@@ -43,6 +44,7 @@ jobs:
             -color never
             -shellcheck=
             -pyflakes=
+        shell: bash
         run: |
           set -euo pipefail
           : > "$RUNNER_TEMP/actionlint.out"
@@ -55,60 +57,52 @@ jobs:
         id: summarize
         env:
           ACTIONLINT_CONCLUSION: ${{ steps.alint.conclusion }}
+        shell: bash
         run: |
           set -euo pipefail
           OUT="$RUNNER_TEMP/actionlint.out"
-          export OUT
           mkdir -p tests
-          SUMMARY_TXT="tests/~workflow-lint-summary.txt"
-          NDJSON="tests/~workflow-lint.ndjson"
+          SUMMARY_MD="tests/~workflow-lint-summary.md"
+          TMP_MD="$RUNNER_TEMP/workflow-lint-summary.md"
+
+          ACTIONLINT_STATUS="${ACTIONLINT_CONCLUSION:-success}"
+          count=0
+          first_line=""
 
           if [ -s "$OUT" ]; then
-            first="$(head -n 1 "$OUT")"
-            FIRST="$first"
-            export FIRST
-            total="$(grep -c '' "$OUT" || true)"
-            echo "first_line<<EOF" >> "$GITHUB_OUTPUT"
-            echo "$first" >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
-            echo "count=$total" >> "$GITHUB_OUTPUT"
+            ACTIONLINT_STATUS="failure"
+            first_line="$(head -n 1 "$OUT")"
+            count="$(wc -l < "$OUT")"
+          elif [ "$ACTIONLINT_STATUS" != "success" ]; then
+            echo "::error title=actionlint::actionlint execution failed (see logs above)"
+            exit 1
+          fi
 
-            # Job Summary (public)
-            {
-              echo "## actionlint: **errors found**"
+          printf 'count=%s\n' "$count" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Workflow Lint summary"
+            echo
+            echo "- actionlint status: $ACTIONLINT_STATUS"
+            echo "- run id: $GITHUB_RUN_ID"
+            echo "- sha: $GITHUB_SHA"
+            if [ "$count" -gt 0 ]; then
+              echo "- diagnostics: $count"
               echo
-              echo "**First problem**"
+              echo "#### First diagnostic"
               echo
               echo '```text'
-              echo "$first"
+              echo "$first_line"
               echo '```'
-              echo
-              echo "- Total diagnostics: $total"
-            } >> "$GITHUB_STEP_SUMMARY"
-
-            # Pages-friendly text
-            printf '%s\n' "$first" > "$SUMMARY_TXT"
-
-            # Optional NDJSON single-line first error (for iterate to ingest if needed)
-            # NOTE: python is used here to avoid the nested heredoc quoting that previously broke on CI.
-            # NOTE: avoid fragile heredocs; using python -c keeps YAML indentation valid while still quoting safely.
-            python3 -c $'import json\nimport os\nimport sys\n\nndjson_path = sys.argv[1]\nfirst = os.environ.get("FIRST")\nif not first:\n    out_path = os.environ.get("OUT")\n    if out_path:\n        with open(out_path, "r", encoding="utf-8", errors="ignore") as handle:\n            first = handle.readline().rstrip("\\n")\nfirst = first or ""\nrecord = {\n    "id": "workflow.lint",\n    "desc": first,\n    "source": ".github/workflows",\n}\nwith open(ndjson_path, "w", encoding="utf-8") as handle:\n    json.dump(record, handle, ensure_ascii=False)\n    handle.write("\\n")\n' "$NDJSON"
-
-          else
-            if [ "${ACTIONLINT_CONCLUSION:-success}" != "success" ]; then
-              echo "::error title=actionlint::actionlint execution failed (see logs above)"
-              exit 1
-            }
-            echo "count=0" >> "$GITHUB_OUTPUT"
-            {
-              echo "## actionlint: no issues"
+            else
               echo
               echo "Scanned .github/workflows/**/*.yml and .yaml"
-            } >> "$GITHUB_STEP_SUMMARY"
-            printf 'actionlint: no issues\n' > "$SUMMARY_TXT"
-            : > "$NDJSON"
-          fi
-        shell: bash
+            fi
+            echo
+          } > "$TMP_MD"
+
+          cat "$TMP_MD" >> "$GITHUB_STEP_SUMMARY"
+          cp "$TMP_MD" "$SUMMARY_MD"
 
       - name: Fail if problems were found
         if: ${{ steps.summarize.outputs.count != '0' }}
@@ -120,9 +114,8 @@ jobs:
       - name: Upload mini outputs (optional)
         uses: actions/upload-artifact@v4
         with:
-          name: workflow-lint-mini
+          name: workflow-lint-summary-${{ github.run_attempt }}
           path: |
-            tests/~workflow-lint-summary.txt
-            tests/~workflow-lint.ndjson
+            tests/~workflow-lint-summary.md
           if-no-files-found: warn
           retention-days: 7
