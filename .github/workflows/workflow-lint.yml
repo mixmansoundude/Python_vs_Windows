@@ -91,28 +91,8 @@ jobs:
 
             # Optional NDJSON single-line first error (for iterate to ingest if needed)
             # NOTE: python is used here to avoid the nested heredoc quoting that previously broke on CI.
-            python3 - <<'PY' "$NDJSON"
-            import json
-            import os
-            import sys
-
-            ndjson_path = sys.argv[1]
-            first = os.environ.get('FIRST')
-            if not first:
-                out_path = os.environ.get('OUT')
-                if out_path:
-                    with open(out_path, 'r', encoding='utf-8', errors='ignore') as handle:
-                        first = handle.readline().rstrip('\n')
-            first = first or ""
-            record = {
-                "id": "workflow.lint",
-                "desc": first,
-                "source": ".github/workflows",
-            }
-            with open(ndjson_path, 'w', encoding='utf-8') as handle:
-                json.dump(record, handle, ensure_ascii=False)
-                handle.write('\n')
-            PY
+            # NOTE: avoid fragile heredocs; using python -c keeps YAML indentation valid while still quoting safely.
+            python3 -c $'import json\nimport os\nimport sys\n\nndjson_path = sys.argv[1]\nfirst = os.environ.get("FIRST")\nif not first:\n    out_path = os.environ.get("OUT")\n    if out_path:\n        with open(out_path, "r", encoding="utf-8", errors="ignore") as handle:\n            first = handle.readline().rstrip("\\n")\nfirst = first or ""\nrecord = {\n    "id": "workflow.lint",\n    "desc": first,\n    "source": ".github/workflows",\n}\nwith open(ndjson_path, "w", encoding="utf-8") as handle:\n    json.dump(record, handle, ensure_ascii=False)\n    handle.write("\\n")\n' "$NDJSON"
 
           else
             if [ "${ACTIONLINT_CONCLUSION:-success}" != "success" ]; then
