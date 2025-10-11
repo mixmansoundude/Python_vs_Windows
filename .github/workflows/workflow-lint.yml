@@ -91,7 +91,7 @@ jobs:
 
             # Optional NDJSON single-line first error (for iterate to ingest if needed)
             # NOTE: python is used here to avoid the nested heredoc quoting that previously broke on CI.
-            python3 - <<'PY' "$NDJSON"
+            python3 - "$NDJSON" <<'PY'
             import json
             import os
             import sys
