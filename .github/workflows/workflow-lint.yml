@@ -33,6 +33,7 @@ jobs:
           export PATH="$RUNNER_TEMP/bin:$PATH"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           actionlint -version
+        shell: bash
 
       - name: Run actionlint over all workflows
         id: alint
@@ -50,6 +51,7 @@ jobs:
           actionlint $ACTIONLINT_OPTS --pattern ".github/workflows/**/*.yml" --pattern ".github/workflows/**/*.yaml" \
             | tee "$RUNNER_TEMP/actionlint.out"
           # actionlint exits non-zero on problems; allow continue-on-error to proceed
+        shell: bash
 
       - name: Summarize result & publish tiny public files
         id: summarize
@@ -58,54 +60,55 @@ jobs:
         run: |
           set -euo pipefail
           OUT="$RUNNER_TEMP/actionlint.out"
-          export OUT
           mkdir -p tests
-          SUMMARY_TXT="tests/~workflow-lint-summary.txt"
+          SUMMARY_MD="tests/~workflow-lint-summary.md"
           NDJSON="tests/~workflow-lint.ndjson"
 
           if [ -s "$OUT" ]; then
-            first="$(head -n 1 "$OUT")"
-            FIRST="$first"
-            export FIRST
-            total="$(grep -c '' "$OUT" || true)"
-            echo "first_line<<EOF" >> "$GITHUB_OUTPUT"
-            echo "$first" >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
-            echo "count=$total" >> "$GITHUB_OUTPUT"
+            FIRST_LINE="$(head -n 1 "$OUT")"
+            export FIRST_LINE
+            DIAG_COUNT="$(wc -l < "$OUT" | tr -d '[:space:]')"
 
-            # Job Summary (public)
+            echo "first_line<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$FIRST_LINE" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "count=$DIAG_COUNT" >> "$GITHUB_OUTPUT"
+
             {
-              echo "## actionlint: **errors found**"
+              echo "### Workflow Lint summary"
               echo
-              echo "**First problem**"
+              echo "- actionlint status: failure"
+              echo "- run id: $GITHUB_RUN_ID"
+              echo "- sha: $GITHUB_SHA"
+              echo
+              echo "#### First problem"
               echo
               echo '```text'
-              echo "$first"
+              echo "$FIRST_LINE"
               echo '```'
               echo
-              echo "- Total diagnostics: $total"
-            } >> "$GITHUB_STEP_SUMMARY"
+              echo "- Total diagnostics: $DIAG_COUNT"
+            } | tee "$SUMMARY_MD" >> "$GITHUB_STEP_SUMMARY"
 
-            # Pages-friendly text
-            printf '%s\n' "$first" > "$SUMMARY_TXT"
-
-            # Optional NDJSON single-line first error (for iterate to ingest if needed)
-            # NOTE: python is used here to avoid the nested heredoc quoting that previously broke on CI.
-            # NOTE: avoid fragile heredocs; using python -c keeps YAML indentation valid while still quoting safely.
-            python3 -c $'import json\nimport os\nimport sys\n\nndjson_path = sys.argv[1]\nfirst = os.environ.get("FIRST")\nif not first:\n    out_path = os.environ.get("OUT")\n    if out_path:\n        with open(out_path, "r", encoding="utf-8", errors="ignore") as handle:\n            first = handle.readline().rstrip("\\n")\nfirst = first or ""\nrecord = {\n    "id": "workflow.lint",\n    "desc": first,\n    "source": ".github/workflows",\n}\nwith open(ndjson_path, "w", encoding="utf-8") as handle:\n    json.dump(record, handle, ensure_ascii=False)\n    handle.write("\\n")\n' "$NDJSON"
+            python3 -c $'import json\nimport os\nimport sys\n\nndjson_path = sys.argv[1]\nfirst_line = os.environ.get("FIRST_LINE", "")\nrecord = {"id": "workflow.lint", "desc": first_line, "source": ".github/workflows"}\nwith open(ndjson_path, "w", encoding="utf-8") as handle:\n    json.dump(record, handle, ensure_ascii=False)\n    handle.write("\\n")\n' "$NDJSON"
 
           else
             if [ "${ACTIONLINT_CONCLUSION:-success}" != "success" ]; then
               echo "::error title=actionlint::actionlint execution failed (see logs above)"
               exit 1
-            }
+            fi
             echo "count=0" >> "$GITHUB_OUTPUT"
+
             {
-              echo "## actionlint: no issues"
+              echo "### Workflow Lint summary"
+              echo
+              echo "- actionlint status: success"
+              echo "- run id: $GITHUB_RUN_ID"
+              echo "- sha: $GITHUB_SHA"
               echo
               echo "Scanned .github/workflows/**/*.yml and .yaml"
-            } >> "$GITHUB_STEP_SUMMARY"
-            printf 'actionlint: no issues\n' > "$SUMMARY_TXT"
+            } | tee "$SUMMARY_MD" >> "$GITHUB_STEP_SUMMARY"
+
             : > "$NDJSON"
           fi
         shell: bash
@@ -115,14 +118,15 @@ jobs:
         run: |
           echo "::error title=actionlint::Workflow YAML problems detected (see summary above)"
           exit 1
+        shell: bash
 
       # Optional: keep tiny files for other jobs (e.g., your Pages job)
       - name: Upload mini outputs (optional)
         uses: actions/upload-artifact@v4
         with:
-          name: workflow-lint-mini
+          name: workflow-lint-summary-${{ github.run_attempt }}
           path: |
-            tests/~workflow-lint-summary.txt
+            tests/~workflow-lint-summary.md
             tests/~workflow-lint.ndjson
           if-no-files-found: warn
           retention-days: 7
