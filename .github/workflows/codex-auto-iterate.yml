@@ -251,11 +251,13 @@ jobs:
           # Pick an artifact likely containing structured CI results
           name=`jq -r '.artifacts[].name' "$meta" 2>/dev/null | grep -E -i 'ndjson|summary_raw|self.?test|ci[-_]?result|first.?error|test[-_]?logs|diag' | head -n 1 || true`
           if [ -z "$name" ] || [ "$name" = "null" ]; then
+            echo "artifact_name=" >> "$GITHUB_OUTPUT"
             echo "path=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           id=`jq -r --arg n "$name" '.artifacts[] | select(.name==$n) | .id' "$meta" 2>/dev/null || true`
           if [ -z "$id" ] || [ "$id" = "null" ]; then
+            echo "artifact_name=" >> "$GITHUB_OUTPUT"
             echo "path=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -279,8 +281,11 @@ jobs:
             fi
           fi
           if [ -s "$out" ]; then
+            # record artifact name so the context digest can cite the source
+            echo "artifact_name=$name" >> "$GITHUB_OUTPUT"
             echo "path=$out" >> "$GITHUB_OUTPUT"
           else
+            echo "artifact_name=" >> "$GITHUB_OUTPUT"
             echo "path=" >> "$GITHUB_OUTPUT"
           fi
 
@@ -410,6 +415,7 @@ jobs:
             echo "Attempt: $attempt/${MAX_ATTEMPTS}"
             echo
             echo "Strict output instruction: Return a unified diff patch inside a single fenced code block labeled 'diff'."
+            echo "Optionally, immediately follow the diff with a fenced block labeled 'summary_text' (max 10 lines) describing the rationale."
             echo "If no changes are needed, output exactly:"
             echo '```diff'
             echo '# no changes'
@@ -497,6 +503,28 @@ jobs:
           head -n 120 "$OUTTXT" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Extract model rationale (optional)
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        id: rationale
+        run: |
+          set -euo pipefail
+          CONTENT="$RUNNER_TEMP/llm_content.txt"
+          OUT="$RUNNER_TEMP/llm_rationale.txt"
+          : > "$OUT"
+          if [ -f "$CONTENT" ]; then
+            # capture optional summary_text fence (cap at 10 lines)
+            awk '/^```summary_text[[:space:]]*$/{inside=1;next} /^```$/{if(inside){exit}} inside{print}' "$CONTENT" | head -n 10 > "$OUT" || true
+          fi
+          if [ -s "$OUT" ]; then
+            echo "rationale_path=$OUT" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Model rationale"
+              cat "$OUT"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "rationale_path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Extract fenced diff
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: diff
@@ -553,6 +581,93 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Build context digest
+        if: ${{ steps.gate.outputs.should_iterate == 'true' }}
+        id: digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO_SLUG: ${{ github.repository }}
+          RUN_ID_PICKED: ${{ steps.poll.outputs.picked_id }}
+          RUN_NAME: ${{ steps.poll.outputs.picked_name }}
+          RUN_CONCLUSION: ${{ steps.poll.outputs.picked_conclusion }}
+          STRUCT_PATH: ${{ steps.struct.outputs.path }}
+          STRUCT_NAME: ${{ steps.struct.outputs.artifact_name }}
+          LOG_PATH: ${{ steps.logtail.outputs.path }}
+        run: |
+          set -euo pipefail
+          run_id="${RUN_ID_PICKED:-}"
+          run_name="${RUN_NAME:-}"
+          run_conclusion="${RUN_CONCLUSION:-}"
+          job_id=""
+          job_name=""
+          if [ -n "$run_id" ]; then
+            jobs_json="$RUNNER_TEMP/picked_jobs.json"
+            curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO_SLUG}/actions/runs/${run_id}/jobs?per_page=100" \
+              -o "$jobs_json" || true
+            job_id=`jq -r '.jobs[] | select(.conclusion=="failure") | .id' "$jobs_json" 2>/dev/null | head -n 1 || true`
+            job_name=`jq -r '.jobs[] | select(.conclusion=="failure") | .name' "$jobs_json" 2>/dev/null | head -n 1 || true`
+            if [ "$job_id" = "null" ]; then job_id=""; fi
+            if [ "$job_name" = "null" ]; then job_name=""; fi
+          fi
+
+          struct_path="${STRUCT_PATH:-}"
+          struct_name="${STRUCT_NAME:-}"
+          log_path="${LOG_PATH:-}"
+          context_path=""
+          context_source=""
+          if [ -n "$struct_path" ] && [ -s "$struct_path" ]; then
+            context_path="$struct_path"
+            context_source="$struct_name"
+            if [ -z "$context_source" ]; then
+              context_source="structured-artifact"
+            fi
+          elif [ -n "$log_path" ] && [ -s "$log_path" ]; then
+            context_path="$log_path"
+            context_source="failing-job-log"
+          fi
+
+          first_line=""
+          if [ -n "$context_path" ] && [ -f "$context_path" ]; then
+            # sanitize the first line from the selected context source
+            first_line=`head -n 1 "$context_path" | sed 's/[^[:print:]\t]/?/g' || true`
+          fi
+
+          path_display="$context_path"
+          if [ -z "$path_display" ]; then
+            path_display="N/A"
+          fi
+          source_display="$context_source"
+          if [ -z "$source_display" ]; then
+            source_display="N/A"
+          fi
+
+          digest_file="$RUNNER_TEMP/context_digest.txt"
+          {
+            echo "### Context digest"
+            if [ -n "$run_id" ] || [ -n "$run_name" ] || [ -n "$run_conclusion" ]; then
+              printf -- '- run: %s "%s" — %s\n' "$run_id" "$run_name" "$run_conclusion"
+            else
+              echo "- run:"
+            fi
+            if [ -n "$job_id" ] || [ -n "$job_name" ]; then
+              printf -- '- job: %s "%s"\n' "$job_id" "$job_name"
+            else
+              echo "- job:"
+            fi
+            printf -- '- source: %s\n' "$source_display"
+            printf -- '- path: %s\n' "$path_display"
+            printf -- '- first-line: %s\n' "$first_line"
+          } > "$digest_file"
+
+          {
+            echo
+            cat "$digest_file"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "digest_file=$digest_file" >> "$GITHUB_OUTPUT"
+
       - name: Build PR body file
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
         id: pr_body
@@ -563,6 +678,8 @@ jobs:
           BRANCH_NAME: ${{ steps.ctx.outputs.branch }}
           HEAD_SHA: ${{ steps.ctx.outputs.head_sha }}
           GATE_REASON: ${{ steps.gate.outputs.reason }}
+          CONTEXT_DIGEST_PATH: ${{ steps.digest.outputs.digest_file }}
+          RATIONALE_PATH: ${{ steps.rationale.outputs.rationale_path }}
         run: |
           set -euo pipefail
           BODY=".github/ITERATE_PR_BODY.md"
@@ -600,6 +717,13 @@ jobs:
             printf -- '- ok: %s (reason: %s)\n' "$auth_ok" "$auth_reason_raw"
           } > "$BODY"
 
+          context_digest_file="${CONTEXT_DIGEST_PATH:-}"
+          if [ -n "$context_digest_file" ] && [ -s "$context_digest_file" ]; then
+            printf '\n' >> "$BODY"
+            cat "$context_digest_file" >> "$BODY"
+            printf '\n' >> "$BODY"
+          fi
+
           if [ -f "$RUNNER_TEMP/prompt.txt" ]; then
             {
               printf '\n### Prompt (first 200 lines)\n'
@@ -615,6 +739,15 @@ jobs:
               printf '```diff\n'
               head -n 200 "$RUNNER_TEMP/patch.diff" || true
               printf '```\n'
+            } >> "$BODY"
+          fi
+
+          rationale_file="${RATIONALE_PATH:-}"
+          if [ -n "$rationale_file" ] && [ -s "$rationale_file" ]; then
+            {
+              printf '\n### Model rationale\n'
+              cat "$rationale_file"
+              printf '\n'
             } >> "$BODY"
           fi
 
