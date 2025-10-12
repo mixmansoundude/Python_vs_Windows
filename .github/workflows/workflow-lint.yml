@@ -18,26 +18,51 @@ jobs:
   lint-workflows:
     name: Lint GitHub workflows
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: List workflow files (for visibility)
+        id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP"
+          ls_out="$RUNNER_TEMP/workflow-files.txt"
+          # Find both .yml and .yaml under .github/workflows
+          git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' > "$ls_out" || true
+          count="$(grep -c '' "$ls_out" || true)"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Workflow Lint summary"
+            echo
+            if [ "$count" -gt 0 ]; then
+              echo "_Discovered workflow files:_"
+              echo
+              echo '```text'
+              head -n 200 "$ls_out"
+              echo '```'
+            else
+              echo "_No workflow files found in .github/workflows_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Download actionlint (no external linters)
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash \
-            | bash -s -- latest "$RUNNER_TEMP/bin"
-          # Make it available both now (this step) and in later steps
+          curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash             | bash -s -- -b "$RUNNER_TEMP/bin"
+          # Make it available both now and in later steps
           export PATH="$RUNNER_TEMP/bin:$PATH"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           actionlint -version
-        shell: bash
 
       - name: Run actionlint over all workflows
         id: alint
         continue-on-error: true
+        shell: bash
         env:
           # Avoid invoking shellcheck/pyflakes which require extra setup
           ACTIONLINT_OPTS: >-
@@ -47,81 +72,106 @@ jobs:
         run: |
           set -euo pipefail
           : > "$RUNNER_TEMP/actionlint.out"
-          # Lint both .yml and .yaml under .github/workflows/
-          actionlint $ACTIONLINT_OPTS --pattern ".github/workflows/**/*.yml" --pattern ".github/workflows/**/*.yaml" \
-            | tee "$RUNNER_TEMP/actionlint.out"
-          # actionlint exits non-zero on problems; allow continue-on-error to proceed
-        shell: bash
+          # Let actionlint auto-discover workflows under .github/workflows/
+          set +e
+          actionlint $ACTIONLINT_OPTS 2>&1 | tee "$RUNNER_TEMP/actionlint.out"
+          rc=$?
+          set -e
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
 
-      - name: Summarize result & publish tiny public files
-        id: summarize
-        env:
-          ACTIONLINT_CONCLUSION: ${{ steps.alint.conclusion }}
+      - name: YAML syntax check (PyYAML)
+        id: pyyaml
+        continue-on-error: true
+        shell: bash
         run: |
           set -euo pipefail
-          OUT="$RUNNER_TEMP/actionlint.out"
+          python3 -m pip install --disable-pip-version-check --no-input --quiet pyyaml
+          PY_TMP="$RUNNER_TEMP/pyyaml.out"
+          : > "$PY_TMP"
+          python3 - <<'PY'
+import glob, sys, yaml
+files = glob.glob(".github/workflows/**/*.yml", recursive=True) + glob.glob(".github/workflows/**/*.yaml", recursive=True)
+bad = []
+for f in sorted(files):
+    try:
+        with open(f, "rb") as fh:
+            yaml.safe_load(fh)
+    except Exception as e:
+        msg = str(e).splitlines()[0]
+        print(f"{f}: {msg}")
+        bad.append(f)
+sys.exit(1 if bad else 0)
+PY
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize and fail if needed
+        if: always()
+        id: summarize
+        shell: bash
+        run: |
+          set -euo pipefail
+          AL_OUT="$RUNNER_TEMP/actionlint.out"
+          al_rc="${{ steps.alint.outputs.exit_code || '0' }}"
+          py_rc="${{ steps.pyyaml.outputs.exit_code || '0' }}"
+          # First actionable line from actionlint, if any
+          first_al="$( (grep -m1 -E '^[^:]+:[0-9]+:[0-9]+:' "$AL_OUT" || true) )"
+          {
+            echo "### actionlint result"
+            echo "- exit_code: ${al_rc}"
+            if [ -s "$AL_OUT" ]; then
+              echo
+              echo "**First diagnostic**"
+              echo '```text'
+              if [ -n "$first_al" ]; then echo "$first_al"; else head -n 1 "$AL_OUT"; fi
+              echo '```'
+            else
+              echo
+              echo "_No output from actionlint_"
+            fi
+            echo
+            echo "### YAML parse check (PyYAML)"
+            echo "- exit_code: ${py_rc}"
+            if [ "${py_rc}" != "0" ]; then
+              echo
+              echo "**PyYAML detected a syntax error. See job log for details.**"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Produce tiny files for your Pages sweep (optional)
           mkdir -p tests
           SUMMARY_MD="tests/~workflow-lint-summary.md"
           NDJSON="tests/~workflow-lint.ndjson"
-
-          if [ -s "$OUT" ]; then
-            FIRST_LINE="$(head -n 1 "$OUT")"
-            export FIRST_LINE
-            DIAG_COUNT="$(wc -l < "$OUT" | tr -d '[:space:]')"
-
-            echo "first_line<<EOF" >> "$GITHUB_OUTPUT"
-            echo "$FIRST_LINE" >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
-            echo "count=$DIAG_COUNT" >> "$GITHUB_OUTPUT"
-
-            {
-              echo "### Workflow Lint summary"
-              echo
-              echo "- actionlint status: failure"
-              echo "- run id: $GITHUB_RUN_ID"
-              echo "- sha: $GITHUB_SHA"
-              echo
-              echo "#### First problem"
-              echo
-              echo '```text'
-              echo "$FIRST_LINE"
-              echo '```'
-              echo
-              echo "- Total diagnostics: $DIAG_COUNT"
-            } | tee "$SUMMARY_MD" >> "$GITHUB_STEP_SUMMARY"
-
-            python3 -c $'import json\nimport os\nimport sys\n\nndjson_path = sys.argv[1]\nfirst_line = os.environ.get("FIRST_LINE", "")\nrecord = {"id": "workflow.lint", "desc": first_line, "source": ".github/workflows"}\nwith open(ndjson_path, "w", encoding="utf-8") as handle:\n    json.dump(record, handle, ensure_ascii=False)\n    handle.write("\\n")\n' "$NDJSON"
-
-          else
-            if [ "${ACTIONLINT_CONCLUSION:-success}" != "success" ]; then
-              echo "::error title=actionlint::actionlint execution failed (see logs above)"
-              exit 1
+          if [ "${al_rc}" != "0" ] || [ "${py_rc}" != "0" ]; then
+            if [ -s "$AL_OUT" ]; then
+              FIRST_LINE="$(head -n 1 "$AL_OUT")"
+            else
+              FIRST_LINE="YAML parse error (see job log)"
             fi
-            echo "count=0" >> "$GITHUB_OUTPUT"
-
-            {
-              echo "### Workflow Lint summary"
-              echo
-              echo "- actionlint status: success"
-              echo "- run id: $GITHUB_RUN_ID"
-              echo "- sha: $GITHUB_SHA"
-              echo
-              echo "Scanned .github/workflows/**/*.yml and .yaml"
-            } | tee "$SUMMARY_MD" >> "$GITHUB_STEP_SUMMARY"
-
+            printf '%s
+' "$FIRST_LINE" > "$SUMMARY_MD"
+            python3 - <<'PY' "$NDJSON" "$FIRST_LINE"
+import json, sys
+path, first = sys.argv[1], sys.argv[2]
+with open(path, "w", encoding="utf-8") as f:
+    f.write(json.dumps({"id":"workflow.lint","desc":first,"source":".github/workflows"}))
+    f.write("
+")
+PY
+          else
+            printf 'actionlint: no issues
+' > "$SUMMARY_MD"
             : > "$NDJSON"
           fi
-        shell: bash
 
-      - name: Fail if problems were found
-        if: ${{ steps.summarize.outputs.count != '0' }}
-        run: |
-          echo "::error title=actionlint::Workflow YAML problems detected (see summary above)"
-          exit 1
-        shell: bash
+          # Final outcome
+          if [ "${al_rc}" != "0" ] || [ "${py_rc}" != "0" ]; then
+            echo "::error title=workflow-lint::Problems detected by actionlint or YAML parse check"
+            exit 1
+          fi
 
-      # Optional: keep tiny files for other jobs (e.g., your Pages job)
       - name: Upload mini outputs (optional)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: workflow-lint-summary-${{ github.run_attempt }}
