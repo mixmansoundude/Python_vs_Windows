@@ -316,6 +316,77 @@ jobs:
           fi
           echo "path=$OUT" >> "$GITHUB_OUTPUT"
 
+      # Prefer the failing job’s log; some runs are 'cancelled' despite job failures.
+      - name: Focus failing job log
+        if: ${{ steps.poll.outputs.picked_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID_PICKED: ${{ steps.poll.outputs.picked_id }}
+        run: |
+          set -euo pipefail
+          JOBS_JSON="$RUNNER_TEMP/run_jobs.json"
+          curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -L "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID_PICKED}/jobs?per_page=100" \
+            -o "$JOBS_JSON" || true
+          LOG_DIR="$RUNNER_TEMP/logs_extract"
+          TAIL_PATH="$RUNNER_TEMP/failing_log_tail.txt"
+          python - <<'PY'
+import json
+import os
+from collections import deque
+
+jobs_path = os.environ.get("JOBS_JSON", "")
+log_dir = os.environ.get("LOG_DIR", "")
+tail_path = os.environ.get("TAIL_PATH", "")
+
+try:
+    with open(jobs_path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    raise SystemExit(0)
+
+target_job = None
+for job in data.get("jobs", []):
+    if (job.get("conclusion") or "") == "failure":
+        target_job = {
+            "name": job.get("name") or "",
+            "id": str(job.get("id") or ""),
+        }
+        break
+
+if not target_job:
+    raise SystemExit(0)
+
+job_name = target_job["name"].lower()
+job_id = target_job["id"]
+
+def pick_file():
+    if not os.path.isdir(log_dir):
+        return None
+    for root, _, files in os.walk(log_dir):
+        for fname in files:
+            if not fname.lower().endswith(".txt"):
+                continue
+            lower = fname.lower()
+            path = os.path.join(root, fname)
+            if job_name and job_name in lower:
+                return path
+            if job_id and job_id in fname:
+                return path
+    return None
+
+selected = pick_file()
+if not selected:
+    raise SystemExit(0)
+
+with open(selected, "r", encoding="utf-8", errors="ignore") as src:
+    last = deque(src, maxlen=200)
+
+with open(tail_path, "w", encoding="utf-8", errors="ignore") as dst:
+    dst.writelines(last)
+PY
+
       - name: Decide gate (iterate vs skip)
         id: gate
         env:
@@ -468,6 +539,7 @@ jobs:
           OUTTXT="$RUNNER_TEMP/llm_content.txt"
           PROMPT_FILE="${{ steps.prompt.outputs.path }}"
           jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
+          did_retry=false
           {
             printf '{\n'
             printf '  "model": "%s",\n' "$OPENAI_MODEL"
@@ -485,6 +557,35 @@ jobs:
             -H "authorization: Bearer $OPENAI_API_KEY" \
             -H "content-type: application/json" \
             -d @"$REQ" || true`
+          trunc_reason=`jq -r '.incomplete_details.reason // empty' "$RES" 2>/dev/null || true`
+          if [ "$http_code" = "200" ] && [ "$trunc_reason" = "max_output_tokens" ]; then
+            did_retry=true
+            tmp_req="$RUNNER_TEMP/llm_req_retry.json"
+            if jq '.max_output_tokens=4000' "$REQ" > "$tmp_req" 2>/dev/null; then
+              mv "$tmp_req" "$REQ"
+            else
+              rm -f "$tmp_req"
+              {
+                printf '{\n'
+                printf '  "model": "%s",\n' "$OPENAI_MODEL"
+                printf '  "input": [\n'
+                printf '    {"role":"system","content":[{"type":"input_text","text":"You are an expert software engineer that proposes precise, minimal unified diffs."}]},\n'
+                printf '    {"role":"user","content":[{"type":"input_text","text": '
+                cat "$RUNNER_TEMP/prompt.json"
+                printf ' }]}\n'
+                printf '  ],\n'
+                printf '  "max_output_tokens": 4000\n'
+                printf '}\n'
+              } > "$REQ"
+            fi
+            http_code_retry=`curl -sS -o "$RES" -w "%{http_code}" \
+              https://api.openai.com/v1/responses \
+              -H "authorization: Bearer $OPENAI_API_KEY" \
+              -H "content-type: application/json" \
+              -d @"$REQ" || true`
+            echo "retry_http_code=$http_code_retry"
+            http_code="$http_code_retry"
+          fi
           echo "http_code=$http_code"
           echo "### LLM body (first 300 chars)" >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
@@ -502,6 +603,9 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           head -n 120 "$OUTTXT" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ "$did_retry" = "true" ]; then
+            echo "TRUNCATION: retried once at max_output_tokens=4000" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Extract model rationale (optional)
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
