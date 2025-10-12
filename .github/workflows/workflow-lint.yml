@@ -1,0 +1,132 @@
+# yamllint disable rule:line-length rule:truthy rule:document-start
+# workflow-lint: standalone guard for GitHub Actions/YAML syntax
+# Add this file at: .github/workflows/workflow-lint.yml
+# Make it a required check in branch protection.
+
+name: Workflow Lint (actionlint)
+
+on:
+  push:
+    branches: ["**"]
+    # Restricted to push events to avoid duplicate runs with other workflows per operator request.
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  lint-workflows:
+    name: Lint GitHub workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download actionlint (no external linters)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash \
+            | bash -s -- latest "$RUNNER_TEMP/bin"
+          # Make it available both now (this step) and in later steps
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          actionlint -version
+        shell: bash
+
+      - name: Run actionlint over all workflows
+        id: alint
+        continue-on-error: true
+        env:
+          # Avoid invoking shellcheck/pyflakes which require extra setup
+          ACTIONLINT_OPTS: >-
+            -color never
+            -shellcheck=
+            -pyflakes=
+        run: |
+          set -euo pipefail
+          : > "$RUNNER_TEMP/actionlint.out"
+          # Lint both .yml and .yaml under .github/workflows/
+          actionlint $ACTIONLINT_OPTS --pattern ".github/workflows/**/*.yml" --pattern ".github/workflows/**/*.yaml" \
+            | tee "$RUNNER_TEMP/actionlint.out"
+          # actionlint exits non-zero on problems; allow continue-on-error to proceed
+        shell: bash
+
+      - name: Summarize result & publish tiny public files
+        id: summarize
+        env:
+          ACTIONLINT_CONCLUSION: ${{ steps.alint.conclusion }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/actionlint.out"
+          mkdir -p tests
+          SUMMARY_MD="tests/~workflow-lint-summary.md"
+          NDJSON="tests/~workflow-lint.ndjson"
+
+          if [ -s "$OUT" ]; then
+            FIRST_LINE="$(head -n 1 "$OUT")"
+            export FIRST_LINE
+            DIAG_COUNT="$(wc -l < "$OUT" | tr -d '[:space:]')"
+
+            echo "first_line<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$FIRST_LINE" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "count=$DIAG_COUNT" >> "$GITHUB_OUTPUT"
+
+            {
+              echo "### Workflow Lint summary"
+              echo
+              echo "- actionlint status: failure"
+              echo "- run id: $GITHUB_RUN_ID"
+              echo "- sha: $GITHUB_SHA"
+              echo
+              echo "#### First problem"
+              echo
+              echo '```text'
+              echo "$FIRST_LINE"
+              echo '```'
+              echo
+              echo "- Total diagnostics: $DIAG_COUNT"
+            } | tee "$SUMMARY_MD" >> "$GITHUB_STEP_SUMMARY"
+
+            python3 -c $'import json\nimport os\nimport sys\n\nndjson_path = sys.argv[1]\nfirst_line = os.environ.get("FIRST_LINE", "")\nrecord = {"id": "workflow.lint", "desc": first_line, "source": ".github/workflows"}\nwith open(ndjson_path, "w", encoding="utf-8") as handle:\n    json.dump(record, handle, ensure_ascii=False)\n    handle.write("\\n")\n' "$NDJSON"
+
+          else
+            if [ "${ACTIONLINT_CONCLUSION:-success}" != "success" ]; then
+              echo "::error title=actionlint::actionlint execution failed (see logs above)"
+              exit 1
+            fi
+            echo "count=0" >> "$GITHUB_OUTPUT"
+
+            {
+              echo "### Workflow Lint summary"
+              echo
+              echo "- actionlint status: success"
+              echo "- run id: $GITHUB_RUN_ID"
+              echo "- sha: $GITHUB_SHA"
+              echo
+              echo "Scanned .github/workflows/**/*.yml and .yaml"
+            } | tee "$SUMMARY_MD" >> "$GITHUB_STEP_SUMMARY"
+
+            : > "$NDJSON"
+          fi
+        shell: bash
+
+      - name: Fail if problems were found
+        if: ${{ steps.summarize.outputs.count != '0' }}
+        run: |
+          echo "::error title=actionlint::Workflow YAML problems detected (see summary above)"
+          exit 1
+        shell: bash
+
+      # Optional: keep tiny files for other jobs (e.g., your Pages job)
+      - name: Upload mini outputs (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: workflow-lint-summary-${{ github.run_attempt }}
+          path: |
+            tests/~workflow-lint-summary.md
+            tests/~workflow-lint.ndjson
+          if-no-files-found: warn
+          retention-days: 7
