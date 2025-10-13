@@ -370,7 +370,7 @@ jobs:
           branch_slug="${{ steps.ctx.outputs.branch_slug }}"
           curl -sS -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${owner_repo}/actions/artifacts?per_page=100" > artifacts_all.json
-          id=`jq -r --arg n "iterate-state-$branch_slug" '.artifacts[] | select(.name==$n and ..expired==false) | .id' artifacts_all.json | head -n 1 || true`
+          id=`jq -r --arg n "iterate-state-$branch_slug" '.artifacts[] | select(.name==$n and ((.expired // false) | not)) | .id' artifacts_all.json | head -n 1 || true`
           if [ -n "$id" ] && [ "$id" != "null" ]; then
             curl -sSL -H "Authorization: Bearer $GH_TOKEN" -L \
               "https://api.github.com/repos/${owner_repo}/actions/artifacts/$id/zip" \
