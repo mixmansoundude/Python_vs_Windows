@@ -387,60 +387,12 @@ jobs:
             echo "path=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          focus_path=$(python - <<'PY'
-            import os
-            from collections import deque
-
-            extract_dir = os.environ.get("EXTRACT_DIR", "")
-            runner_temp = os.environ.get("RUNNER_TEMP", os.getcwd())
-            primary = os.environ.get("JOB_ID", "").strip()
-            secondary = os.environ.get("JOB_NAME", "").strip()
-            identifiers = []
-            if primary:
-                identifiers.append(primary)
-            if secondary and secondary not in identifiers:
-                identifiers.append(secondary)
-
-            focus_path = os.path.join(runner_temp, "failing_job_focus.txt")
-
-            matches = []
-            if extract_dir and os.path.isdir(extract_dir) and identifiers:
-                for root, _, files in os.walk(extract_dir):
-                    for name in files:
-                        path = os.path.join(root, name)
-                        try:
-                            with open(path, 'r', errors='ignore') as handle:
-                                found = False
-                                tail = deque(maxlen=200)
-                                for line in handle:
-                                    tail.append(line)
-                                    if not found and any(identifier in line for identifier in identifiers):
-                                        found = True
-                                if found:
-                                    matches.append((path, list(tail)))
-                        except (OSError, UnicodeDecodeError):
-                            continue
-                    if len(matches) >= 3:
-                        break
-
-            if matches:
-                os.makedirs(os.path.dirname(focus_path), exist_ok=True)
-                with open(focus_path, 'w', encoding='utf-8') as out:
-                    for idx, (path, tail) in enumerate(matches, start=1):
-                        rel = os.path.relpath(path, extract_dir)
-                        out.write(f"===== match {idx}: {rel} =====\n")
-                        out.writelines(tail)
-                        if not tail or not tail[-1].endswith("\n"):
-                            out.write("\n")
-                print(focus_path)
-            else:
-                if os.path.isfile(focus_path):
-                    os.remove(focus_path)
-                print("")
-          PY)
-          if [ -n "$focus_path" ]; then
+          focus_path="$RUNNER_TEMP/failing_job_focus.txt"
+          python tools/focus_logs.py "$EXTRACT_DIR" "$focus_path" "$JOB_ID" "$JOB_NAME"
+          if [ -s "$focus_path" ]; then
             echo "path=$focus_path" >> "$GITHUB_OUTPUT"
           else
+            rm -f "$focus_path"
             echo "path=" >> "$GITHUB_OUTPUT"
           fi
 
