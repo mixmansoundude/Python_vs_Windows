@@ -302,11 +302,12 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -L "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID_PICKED}/logs" \
             -o "$zipfile" || true
-          mkdir -p "$RUNNER_TEMP/logs_extract"
-          unzip -q "$zipfile" -d "$RUNNER_TEMP/logs_extract" || true
+          extract_dir="$RUNNER_TEMP/logs_extract"
+          mkdir -p "$extract_dir"
+          unzip -q "$zipfile" -d "$extract_dir" || true
           OUT="$RUNNER_TEMP/failing_log_tail.txt"
           : > "$OUT"
-          find "$RUNNER_TEMP/logs_extract" -type f -name '*.txt' -printf "%s %p\n" > "$RUNNER_TEMP/logsizes.txt" || true
+          find "$extract_dir" -type f -name '*.txt' -printf "%s %p\n" > "$RUNNER_TEMP/logsizes.txt" || true
           sort -nr "$RUNNER_TEMP/logsizes.txt" | awk 'NR==1{print $2}' > "$RUNNER_TEMP/largest.txt" || true
           if [ -s "$RUNNER_TEMP/largest.txt" ]; then
             candidate=`cat "$RUNNER_TEMP/largest.txt"`
@@ -314,7 +315,134 @@ jobs:
               tail -n 200 "$candidate" > "$OUT" || true
             fi
           fi
+          manifest="$RUNNER_TEMP/logs_manifest.txt"
+          : > "$manifest"
+          if [ -d "$extract_dir" ]; then
+            find "$extract_dir" -type f -printf '%P\t%f\t%k\n' | sort > "$manifest" || true
+          fi
+          if [ ! -s "$manifest" ]; then
+            rm -f "$manifest"
+          fi
           echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          echo "extract_dir=$extract_dir" >> "$GITHUB_OUTPUT"
+          if [ -f "$manifest" ]; then
+            echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch failing job metadata
+        if: ${{ steps.poll.outputs.picked_id != '' }}
+        id: jobmeta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID_PICKED: ${{ steps.poll.outputs.picked_id }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          run_id="${RUN_ID_PICKED:-}"
+          jobs_json="$RUNNER_TEMP/picked_jobs.json"
+          rm -f "$jobs_json"
+          if [ -n "$run_id" ]; then
+            curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO_SLUG}/actions/runs/${run_id}/jobs?per_page=100" \
+              -o "$jobs_json" || true
+          fi
+          failed_id=""
+          failed_name=""
+          if [ -s "$jobs_json" ]; then
+            failed_id=`jq -r '.jobs[] | select(.conclusion=="failure") | .id' "$jobs_json" 2>/dev/null | head -n 1 || true`
+            failed_name=`jq -r '.jobs[] | select(.conclusion=="failure") | .name' "$jobs_json" 2>/dev/null | head -n 1 || true`
+          else
+            jobs_json=""
+          fi
+          if [ "$failed_id" = "null" ]; then failed_id=""; fi
+          if [ "$failed_name" = "null" ]; then failed_name=""; fi
+          echo "failed_id=$failed_id" >> "$GITHUB_OUTPUT"
+          echo "failed_name=$failed_name" >> "$GITHUB_OUTPUT"
+          if [ -n "$jobs_json" ] && [ -f "$jobs_json" ]; then
+            echo "jobs_path=$jobs_json" >> "$GITHUB_OUTPUT"
+          else
+            echo "jobs_path=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Focus failing job logs
+        if: ${{ steps.logtail.outputs.extract_dir != '' && (steps.jobmeta.outputs.failed_id != '' || steps.jobmeta.outputs.failed_name != '') }}
+        id: logfocus
+        env:
+          EXTRACT_DIR: ${{ steps.logtail.outputs.extract_dir }}
+          JOB_ID: ${{ steps.jobmeta.outputs.failed_id }}
+          JOB_NAME: ${{ steps.jobmeta.outputs.failed_name }}
+        run: |
+          set -euo pipefail
+          extract_dir="${EXTRACT_DIR:-}"
+          if [ -z "$extract_dir" ] || [ ! -d "$extract_dir" ]; then
+            echo "path=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ident_primary="${JOB_ID:-}"
+          ident_secondary="${JOB_NAME:-}"
+          if [ -z "$ident_primary" ] && [ -z "$ident_secondary" ]; then
+            echo "path=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          focus_path=$(python - <<'PY'
+            import os
+            from collections import deque
+
+            extract_dir = os.environ.get("EXTRACT_DIR", "")
+            runner_temp = os.environ.get("RUNNER_TEMP", os.getcwd())
+            primary = os.environ.get("JOB_ID", "").strip()
+            secondary = os.environ.get("JOB_NAME", "").strip()
+            identifiers = []
+            if primary:
+                identifiers.append(primary)
+            if secondary and secondary not in identifiers:
+                identifiers.append(secondary)
+
+            focus_path = os.path.join(runner_temp, "failing_job_focus.txt")
+
+            matches = []
+            if extract_dir and os.path.isdir(extract_dir) and identifiers:
+                for root, _, files in os.walk(extract_dir):
+                    for name in files:
+                        path = os.path.join(root, name)
+                        try:
+                            with open(path, 'r', errors='ignore') as handle:
+                                found = False
+                                tail = deque(maxlen=200)
+                                for line in handle:
+                                    tail.append(line)
+                                    if not found and any(identifier in line for identifier in identifiers):
+                                        found = True
+                                if found:
+                                    matches.append((path, list(tail)))
+                        except (OSError, UnicodeDecodeError):
+                            continue
+                    if len(matches) >= 3:
+                        break
+
+            if matches:
+                os.makedirs(os.path.dirname(focus_path), exist_ok=True)
+                with open(focus_path, 'w', encoding='utf-8') as out:
+                    for idx, (path, tail) in enumerate(matches, start=1):
+                        rel = os.path.relpath(path, extract_dir)
+                        out.write(f"===== match {idx}: {rel} =====\n")
+                        out.writelines(tail)
+                        if not tail or not tail[-1].endswith("\n"):
+                            out.write("\n")
+                print(focus_path)
+            else:
+                if os.path.isfile(focus_path):
+                    os.remove(focus_path)
+                print("")
+          PY)
+          if [ -n "$focus_path" ]; then
+            echo "path=$focus_path" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Decide gate (iterate vs skip)
         id: gate
@@ -437,8 +565,14 @@ jobs:
               sed -e 's/[^[:print:]\t]/?/g' "${{ steps.struct.outputs.path }}" | head -n 120
             } >> "$PROMPT"
           fi
-          # Then append failing-job log tail as fallback signal
-          if [ -n "${{ steps.logtail.outputs.path }}" ] && [ -s "${{ steps.logtail.outputs.path }}" ]; then
+          focus_log="${{ steps.logfocus.outputs.path }}"
+          if [ -n "$focus_log" ] && [ -s "$focus_log" ]; then
+            {
+              echo
+              echo "----- Focused failing job log (matched identifier) -----"
+              sed -e 's/[^[:print:]\t]/?/g' "$focus_log"
+            } >> "$PROMPT"
+          elif [ -n "${{ steps.logtail.outputs.path }}" ] && [ -s "${{ steps.logtail.outputs.path }}" ]; then
             {
               echo
               echo "----- Failing job log tail (last 200 lines) -----"
@@ -585,36 +719,27 @@ jobs:
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
         id: digest
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO_SLUG: ${{ github.repository }}
           RUN_ID_PICKED: ${{ steps.poll.outputs.picked_id }}
           RUN_NAME: ${{ steps.poll.outputs.picked_name }}
           RUN_CONCLUSION: ${{ steps.poll.outputs.picked_conclusion }}
           STRUCT_PATH: ${{ steps.struct.outputs.path }}
           STRUCT_NAME: ${{ steps.struct.outputs.artifact_name }}
           LOG_PATH: ${{ steps.logtail.outputs.path }}
+          LOGFOCUS_PATH: ${{ steps.logfocus.outputs.path }}
+          JOB_ID_RAW: ${{ steps.jobmeta.outputs.failed_id }}
+          JOB_NAME_RAW: ${{ steps.jobmeta.outputs.failed_name }}
         run: |
           set -euo pipefail
           run_id="${RUN_ID_PICKED:-}"
           run_name="${RUN_NAME:-}"
           run_conclusion="${RUN_CONCLUSION:-}"
-          job_id=""
-          job_name=""
-          if [ -n "$run_id" ]; then
-            jobs_json="$RUNNER_TEMP/picked_jobs.json"
-            curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${REPO_SLUG}/actions/runs/${run_id}/jobs?per_page=100" \
-              -o "$jobs_json" || true
-            job_id=`jq -r '.jobs[] | select(.conclusion=="failure") | .id' "$jobs_json" 2>/dev/null | head -n 1 || true`
-            job_name=`jq -r '.jobs[] | select(.conclusion=="failure") | .name' "$jobs_json" 2>/dev/null | head -n 1 || true`
-            if [ "$job_id" = "null" ]; then job_id=""; fi
-            if [ "$job_name" = "null" ]; then job_name=""; fi
-          fi
+          job_id="${JOB_ID_RAW:-}"
+          job_name="${JOB_NAME_RAW:-}"
 
           struct_path="${STRUCT_PATH:-}"
           struct_name="${STRUCT_NAME:-}"
           log_path="${LOG_PATH:-}"
+          focus_path="${LOGFOCUS_PATH:-}"
           context_path=""
           context_source=""
           if [ -n "$struct_path" ] && [ -s "$struct_path" ]; then
@@ -623,6 +748,9 @@ jobs:
             if [ -z "$context_source" ]; then
               context_source="structured-artifact"
             fi
+          elif [ -n "$focus_path" ] && [ -s "$focus_path" ]; then
+            context_path="$focus_path"
+            context_source="focused-job-log"
           elif [ -n "$log_path" ] && [ -s "$log_path" ]; then
             context_path="$log_path"
             context_source="failing-job-log"
