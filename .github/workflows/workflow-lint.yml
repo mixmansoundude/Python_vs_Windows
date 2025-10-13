@@ -45,24 +45,120 @@ jobs:
             -shellcheck=
             -pyflakes=
         run: |
-          set -euo pipefail
-          : > "$RUNNER_TEMP/actionlint.out"
+          set -uo pipefail
+          OUT="$RUNNER_TEMP/actionlint.out"
+          : > "$OUT"
           # Lint both .yml and .yaml under .github/workflows/
           actionlint $ACTIONLINT_OPTS --pattern ".github/workflows/**/*.yml" --pattern ".github/workflows/**/*.yaml" \
-            | tee "$RUNNER_TEMP/actionlint.out"
+            | tee "$OUT"
+          status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           # actionlint exits non-zero on problems; allow continue-on-error to proceed
+          exit $status
+        shell: bash
+
+      - name: Install PyYAML
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --upgrade pyyaml
+        shell: bash
+
+      - name: Parse workflows with PyYAML
+        id: raw_yaml
+        continue-on-error: true
+        env:
+          WORKFLOW_ROOT: .github/workflows
+        run: |
+          set -uo pipefail
+          LIST_FILE="$RUNNER_TEMP/workflow-files.txt"
+          RAW_LOG="$RUNNER_TEMP/pyyaml.out"
+          python3 tools/check_workflows_yaml.py --root "$WORKFLOW_ROOT" --list "$LIST_FILE" --log "$RAW_LOG"
+          status=$?
+          RAW_COUNT=0
+          if [ -s "$RAW_LOG" ]; then
+            RAW_COUNT="$(wc -l < "$RAW_LOG" | tr -d '[:space:]')"
+          fi
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          echo "error_count=$RAW_COUNT" >> "$GITHUB_OUTPUT"
+          echo "file_list=$LIST_FILE" >> "$GITHUB_OUTPUT"
+          echo "diag_file=$RAW_LOG" >> "$GITHUB_OUTPUT"
+          exit $status
         shell: bash
 
       - name: Summarize result & publish tiny public files
         id: summarize
         env:
           ACTIONLINT_CONCLUSION: ${{ steps.alint.conclusion }}
+          ACTIONLINT_EXIT: ${{ steps.alint.outputs.exit_code }}
+          RAW_YAML_CONCLUSION: ${{ steps.raw_yaml.conclusion }}
+          RAW_YAML_EXIT: ${{ steps.raw_yaml.outputs.exit_code }}
+          RAW_YAML_ERRORS: ${{ steps.raw_yaml.outputs.error_count }}
+          RAW_YAML_LOG: ${{ steps.raw_yaml.outputs.diag_file }}
+          WORKFLOW_LIST_FILE: ${{ steps.raw_yaml.outputs.file_list }}
         run: |
           set -euo pipefail
           OUT="$RUNNER_TEMP/actionlint.out"
           mkdir -p tests
           SUMMARY_MD="tests/~workflow-lint-summary.md"
           NDJSON="tests/~workflow-lint.ndjson"
+
+          build_summary() {
+            local actionlint_status="$1"
+            local raw_yaml_status="$2"
+            local include_actionlint_details="$3"
+
+            local workflow_list="${WORKFLOW_LIST_FILE:-}"
+            local raw_log_path="${RAW_YAML_LOG:-}"
+            local raw_count="${RAW_YAML_ERRORS:-0}"
+            local raw_first=""
+            if [ -n "$raw_log_path" ] && [ -s "$raw_log_path" ]; then
+              raw_first="$(head -n 1 "$raw_log_path")"
+            fi
+
+            {
+              echo "### Workflow Lint summary"
+              echo
+              echo "- actionlint exit code: ${ACTIONLINT_EXIT:-unknown} (${actionlint_status})"
+              echo "- PyYAML exit code: ${RAW_YAML_EXIT:-unknown} (${raw_yaml_status})"
+              echo "- run id: $GITHUB_RUN_ID"
+              echo "- sha: $GITHUB_SHA"
+              echo
+              echo "#### Workflow files"
+              echo
+              if [ -n "$workflow_list" ] && [ -s "$workflow_list" ]; then
+                while IFS= read -r workflow_path; do
+                  [ -n "$workflow_path" ] && echo "- \`$workflow_path\`"
+                done < "$workflow_list"
+              else
+                echo "- (none discovered)"
+              fi
+              echo
+              if [ "$include_actionlint_details" = "yes" ]; then
+                echo "#### First actionlint diagnostic"
+                echo
+                echo '```text'
+                echo "$FIRST_LINE"
+                echo '```'
+                echo
+                echo "- Total actionlint diagnostics: $DIAG_COUNT"
+                echo
+              else
+                echo "- actionlint reported no diagnostics."
+                echo
+              fi
+              if [ -n "$raw_first" ]; then
+                echo "#### First PyYAML diagnostic"
+                echo
+                echo '```text'
+                echo "$raw_first"
+                echo '```'
+                echo
+                echo "- Total PyYAML diagnostics: $raw_count"
+              else
+                echo "- PyYAML parsing succeeded for all workflows."
+              fi
+            }
+          }
 
           if [ -s "$OUT" ]; then
             FIRST_LINE="$(head -n 1 "$OUT")"
@@ -74,21 +170,7 @@ jobs:
             echo "EOF" >> "$GITHUB_OUTPUT"
             echo "count=$DIAG_COUNT" >> "$GITHUB_OUTPUT"
 
-            {
-              echo "### Workflow Lint summary"
-              echo
-              echo "- actionlint status: failure"
-              echo "- run id: $GITHUB_RUN_ID"
-              echo "- sha: $GITHUB_SHA"
-              echo
-              echo "#### First problem"
-              echo
-              echo '```text'
-              echo "$FIRST_LINE"
-              echo '```'
-              echo
-              echo "- Total diagnostics: $DIAG_COUNT"
-            } | tee "$SUMMARY_MD" >> "$GITHUB_STEP_SUMMARY"
+            build_summary failure "${RAW_YAML_CONCLUSION:-unknown}" yes | tee "$SUMMARY_MD" >> "$GITHUB_STEP_SUMMARY"
 
             python3 -c $'import json\nimport os\nimport sys\n\nndjson_path = sys.argv[1]\nfirst_line = os.environ.get("FIRST_LINE", "")\nrecord = {"id": "workflow.lint", "desc": first_line, "source": ".github/workflows"}\nwith open(ndjson_path, "w", encoding="utf-8") as handle:\n    json.dump(record, handle, ensure_ascii=False)\n    handle.write("\\n")\n' "$NDJSON"
 
@@ -99,24 +181,23 @@ jobs:
             fi
             echo "count=0" >> "$GITHUB_OUTPUT"
 
-            {
-              echo "### Workflow Lint summary"
-              echo
-              echo "- actionlint status: success"
-              echo "- run id: $GITHUB_RUN_ID"
-              echo "- sha: $GITHUB_SHA"
-              echo
-              echo "Scanned .github/workflows/**/*.yml and .yaml"
-            } | tee "$SUMMARY_MD" >> "$GITHUB_STEP_SUMMARY"
+            build_summary success "${RAW_YAML_CONCLUSION:-unknown}" no | tee "$SUMMARY_MD" >> "$GITHUB_STEP_SUMMARY"
 
             : > "$NDJSON"
           fi
+
+          echo "pyyaml_count=${RAW_YAML_ERRORS:-0}" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - name: Fail if problems were found
-        if: ${{ steps.summarize.outputs.count != '0' }}
+        if: ${{ steps.alint.outputs.exit_code != '0' || steps.raw_yaml.outputs.exit_code != '0' || steps.summarize.outputs.count != '0' || steps.summarize.outputs.pyyaml_count != '0' }}
+        env:
+          ACTIONLINT_EXIT: ${{ steps.alint.outputs.exit_code }}
+          RAW_YAML_EXIT: ${{ steps.raw_yaml.outputs.exit_code }}
+          ACTIONLINT_COUNT: ${{ steps.summarize.outputs.count }}
+          RAW_YAML_COUNT: ${{ steps.summarize.outputs.pyyaml_count }}
         run: |
-          echo "::error title=actionlint::Workflow YAML problems detected (see summary above)"
+          echo "::error title=workflow-lint::Workflow validation detected problems (actionlint exit=${ACTIONLINT_EXIT:-unknown}, PyYAML exit=${RAW_YAML_EXIT:-unknown}, actionlint diagnostics=${ACTIONLINT_COUNT:-unknown}, PyYAML diagnostics=${RAW_YAML_COUNT:-unknown}). See summary above for details."
           exit 1
         shell: bash
 
