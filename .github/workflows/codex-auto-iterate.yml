@@ -468,24 +468,68 @@ jobs:
           OUTTXT="$RUNNER_TEMP/llm_content.txt"
           PROMPT_FILE="${{ steps.prompt.outputs.path }}"
           jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
-          {
-            printf '{\n'
-            printf '  "model": "%s",\n' "$OPENAI_MODEL"
-            printf '  "input": [\n'
-            printf '    {"role":"system","content":[{"type":"input_text","text":"You are an expert software engineer that proposes precise, minimal unified diffs."}]},\n'
-            printf '    {"role":"user","content":[{"type":"input_text","text": '
-            cat "$RUNNER_TEMP/prompt.json"
-            printf ' }]}\n'
-            printf '  ],\n'
-            printf '  "max_output_tokens": 2000\n'
-            printf '}\n'
-          } > "$REQ"
+          MAX_OUTPUT_TOKENS_INITIAL=2000
+          # gpt-5-codex supports responses up to 16k output tokens; keep retries within ceiling.
+          MAX_OUTPUT_TOKENS_CEIL=16000
+          RETRY_OUTPUT_TOKENS=$(( MAX_OUTPUT_TOKENS_INITIAL * 2 ))
+          if [ "$RETRY_OUTPUT_TOKENS" -gt "$MAX_OUTPUT_TOKENS_CEIL" ]; then
+            RETRY_OUTPUT_TOKENS=$MAX_OUTPUT_TOKENS_CEIL
+          fi
+          write_request() {
+            local tokens="$1"
+            {
+              printf '{\n'
+              printf '  "model": "%s",\n' "$OPENAI_MODEL"
+              printf '  "input": [\n'
+              printf '    {"role":"system","content":[{"type":"input_text","text":"You are an expert software engineer that proposes precise, minimal unified diffs."}]},\n'
+              printf '    {"role":"user","content":[{"type":"input_text","text": '
+              cat "$RUNNER_TEMP/prompt.json"
+              printf ' }]}\n'
+              printf '  ],\n'
+              printf '  "max_output_tokens": %s\n' "$tokens"
+              printf '}\n'
+            } > "$REQ"
+          }
+          write_request "$MAX_OUTPUT_TOKENS_INITIAL"
           http_code=`curl -sS -o "$RES" -w "%{http_code}" \
             https://api.openai.com/v1/responses \
             -H "authorization: Bearer $OPENAI_API_KEY" \
             -H "content-type: application/json" \
             -d @"$REQ" || true`
+          attempt_summary="first request"
+          first_incomplete_reason=""
+          final_response_attempt="none"
+          if [ "$http_code" = "200" ]; then
+            first_incomplete_reason=`jq -r '.incomplete_details.reason // empty' "$RES" 2>/dev/null || true`
+            final_response_attempt="first"
+            if [ "$first_incomplete_reason" = "max_output_tokens" ] && [ "$RETRY_OUTPUT_TOKENS" -gt "$MAX_OUTPUT_TOKENS_INITIAL" ]; then
+              attempt_summary="retry after max_output_tokens (tokens=${RETRY_OUTPUT_TOKENS})"
+              write_request "$RETRY_OUTPUT_TOKENS"
+              http_code=`curl -sS -o "$RES" -w "%{http_code}" \
+                https://api.openai.com/v1/responses \
+                -H "authorization: Bearer $OPENAI_API_KEY" \
+                -H "content-type: application/json" \
+                -d @"$REQ" || true`
+              if [ "$http_code" = "200" ]; then
+                final_response_attempt="second"
+              else
+                final_response_attempt="none"
+              fi
+            fi
+          fi
           echo "http_code=$http_code"
+          {
+            echo "- completion attempt: $attempt_summary"
+            if [ -n "$first_incomplete_reason" ]; then
+              echo "- first attempt incomplete_reason: $first_incomplete_reason"
+            fi
+            if [ "$final_response_attempt" != "none" ]; then
+              echo "- final response produced by: ${final_response_attempt} attempt"
+            else
+              echo "- final response produced by: none (http ${http_code})"
+            fi
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
           echo "### LLM body (first 300 chars)" >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
           head -c 300 "$RES" | sed 's/[^[:print:]\t]/?/g' >> "$GITHUB_STEP_SUMMARY" || true
