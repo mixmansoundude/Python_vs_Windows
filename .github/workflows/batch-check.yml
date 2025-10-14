@@ -32,6 +32,10 @@ jobs:
 
     outputs:
       has_failures: ${{ steps.verdict.outputs.has_failures }}
+      ndjson_found: ${{ steps.verdict.outputs.found }}
+      ndjson_passes: ${{ steps.verdict.outputs.passes }}
+      ndjson_fails: ${{ steps.verdict.outputs.fails }}
+      ndjson_verdict: ${{ steps.verdict.outputs.verdict }}
 
     env:
       HP_PIPREQS_VERSION: 0.5.0
@@ -581,50 +585,120 @@ jobs:
         id: verdict
         if: ${{ always() }}
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          function Read-Ndjson([string]$p) {
-            if (Test-Path $p) {
-              Get-Content -Raw $p | Select-String -AllMatches '^\{.*\}$' | ForEach-Object {
-                try { $_.Matches.Value | ConvertFrom-Json } catch {}
+          $script = @'
+          param(
+            [string]$Workspace,
+            [string]$Repo,
+            [string]$RunId,
+            [string]$Token
+          )
+
+          function Get-Headers {
+            param([string]$Accept)
+            $headers = @{
+              Authorization = "Bearer $Token"
+              Accept = if ($Accept) { $Accept } else { 'application/vnd.github+json' }
+              'User-Agent' = 'ndjson-verdict'
+            }
+            return $headers
+          }
+
+          $ndjsonPath = Join-Path $Workspace 'tests\~test-results.ndjson'
+          if (-not (Test-Path $ndjsonPath)) {
+            $artifactUri = "https://api.github.com/repos/$Repo/actions/runs/$RunId/artifacts?per_page=100"
+            try {
+              $meta = Invoke-RestMethod -Uri $artifactUri -Headers (Get-Headers 'application/vnd.github+json') -ErrorAction Stop
+            } catch {
+              $meta = $null
+            }
+            if ($meta -and $meta.artifacts) {
+              foreach ($artifact in $meta.artifacts) {
+                if ($artifact.expired -or -not $artifact.name) { continue }
+                if ($artifact.name -notmatch 'ci_test_results|test-results') { continue }
+                $zipPath = Join-Path $env:RUNNER_TEMP "ndjson_$($artifact.id).zip"
+                $zipUri = "https://api.github.com/repos/$Repo/actions/artifacts/$($artifact.id)/zip"
+                try {
+                  Invoke-WebRequest -Uri $zipUri -Headers (Get-Headers 'application/zip') -OutFile $zipPath -ErrorAction Stop
+                  $extract = Join-Path $env:RUNNER_TEMP "ndjson_$($artifact.id)"
+                  if (Test-Path $extract) { Remove-Item -LiteralPath $extract -Recurse -Force }
+                  Expand-Archive -LiteralPath $zipPath -DestinationPath $extract -Force
+                  $candidate = Get-ChildItem -LiteralPath $extract -Recurse -Filter '*~test-results.ndjson' -File | Select-Object -First 1
+                  if ($candidate) {
+                    $candidateContent = Get-Content -LiteralPath $candidate.FullName -Raw -ErrorAction SilentlyContinue
+                    if ($null -ne $candidateContent) {
+                      $candidateContent | Set-Content -LiteralPath $ndjsonPath -Encoding Ascii
+                      break
+                    }
+                  }
+                } catch {
+                  continue
+                }
               }
             }
           }
 
           $rows = @()
-          $rows += Read-Ndjson 'tests\~test-results.ndjson'
-          if (-not $rows) { $rows += Read-Ndjson 'ci_test_results.ndjson' }
-
-          $has = (-not $rows)
-          $allowedStates = @('ok','no_python_files','venv_env','degraded_env')
-          foreach ($r in $rows) {
-            $hasPass = $false
-            if ($r -is [psobject]) {
-              $hasPass = $r.PSObject.Properties.Name -contains 'pass'
-            }
-
-            if ($hasPass) {
-              if ($r.pass -eq $false) { $has = $true }
-              continue
-            }
-
-            if ($r.id -eq 'bootstrap.state' -and $r.details.state -and $r.details.state -notin $allowedStates) { $has = $true }
-            if ($r.id -eq 'self.bootstrap.state' -and $r.details.state -and $r.details.state -notin $allowedStates) { $has = $true }
+          if (Test-Path $ndjsonPath) {
+            $rows = Get-Content -LiteralPath $ndjsonPath | Where-Object { $_ -match '^\{.*\}$' } | ForEach-Object {
+              try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { $null }
+            } | Where-Object { $_ }
           }
 
-          $verdict = @{ has_failures = $has; sources = @('tests~test-results.ndjson','ci_test_results.ndjson') }
-          if (-not $rows) { $verdict.missing = @('tests~test-results.ndjson','ci_test_results.ndjson') }
+          $found = Test-Path $ndjsonPath
+          $passes = 0
+          $fails = 0
+          $hasFailures = $false
+          $allowed = @('ok','no_python_files','venv_env','degraded_env')
 
-          $value = $has.ToString().ToLowerInvariant()
-          "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
-          $verdict | ConvertTo-Json -Compress | Out-File -Encoding UTF8 'iterate_gate.json'
+          foreach ($row in $rows) {
+            if ($row.PSObject.Properties.Name -contains 'pass') {
+              if ($row.pass -eq $false) { $fails++; $hasFailures = $true }
+              elseif ($row.pass -eq $true) { $passes++ }
+              continue
+            }
+            if ($row.id -eq 'bootstrap.state' -and $row.details.state -and $row.details.state -notin $allowed) { $hasFailures = $true }
+            if ($row.id -eq 'self.bootstrap.state' -and $row.details.state -and $row.details.state -notin $allowed) { $hasFailures = $true }
+          }
+
+          $verdict = if ($hasFailures) { 'fail' } elseif ($found) { 'pass' } else { 'unknown' }
+          $outputs = [ordered]@{
+            found = $found
+            passes = $passes
+            fails = $fails
+            verdict = $verdict
+            has_failures = $hasFailures
+          }
+
+          ($outputs | ConvertTo-Json -Compress) | Set-Content -LiteralPath (Join-Path $Workspace 'iterate_gate.json') -Encoding UTF8
+
+          foreach ($key in $outputs.Keys) {
+            $value = $outputs[$key]
+            if ($value -is [bool]) { $value = $value.ToString().ToLowerInvariant() }
+            "${key}=${value}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          }
+          '@
+
+          & ([scriptblock]::Create($script)) -Workspace (Get-Location).Path -Repo $env:REPO -RunId $env:GITHUB_RUN_ID -Token $env:GH_TOKEN
 
       - name: Append iterate gate to Summary
         if: ${{ always() }}
         shell: pwsh
         run: |
           $flag = '${{ steps.verdict.outputs.has_failures }}'
+          $found = '${{ steps.verdict.outputs.found }}'
+          $passes = '${{ steps.verdict.outputs.passes }}'
+          $fails = '${{ steps.verdict.outputs.fails }}'
+          $verdict = '${{ steps.verdict.outputs.verdict }}'
           "### Iterate gate" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "- verdict: $verdict" | Out-File -Append $env:GITHUB_STEP_SUMMARY
           "- has_failures: $flag" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "- ndjson_found: $found" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "- passes: $passes" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "- fails: $fails" | Out-File -Append $env:GITHUB_STEP_SUMMARY
           if (Test-Path 'iterate_gate.json') {
             '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
             Get-Content -Raw 'iterate_gate.json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
@@ -639,10 +713,22 @@ jobs:
           if (-not $flag) { $flag = 'false' }
           $has = $false
           if ($flag -eq 'true') { $has = $true }
+          $found = '${{ steps.verdict.outputs.found }}'
+          $passes = '${{ steps.verdict.outputs.passes }}'
+          $fails = '${{ steps.verdict.outputs.fails }}'
+          $verdict = '${{ steps.verdict.outputs.verdict }}'
+          [int]$passesValue = 0
+          [int]$failsValue = 0
+          [void][int]::TryParse($passes, [ref]$passesValue)
+          [void][int]::TryParse($fails, [ref]$failsValue)
           $record = [ordered]@{
             lane = '${{ matrix.mode }}'
             has_failures = $has
             raw = $flag
+            verdict = $verdict
+            ndjson_found = $found
+            passes = $passesValue
+            fails = $failsValue
             run_id = $env:GITHUB_RUN_ID
             run_attempt = $env:GITHUB_RUN_ATTEMPT
             sources = @('tests~test-results.ndjson','ci_test_results.ndjson')
