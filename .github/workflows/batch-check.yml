@@ -477,34 +477,98 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
-            const path = 'tests\\~test-results.ndjson';
-            let rows = [];
-            if (fs.existsSync(path)) {
-              for (const line of fs.readFileSync(path, 'utf8').split(/\r?\n/)) {
-                if (!line.trim()) continue;
-                try { rows.push(JSON.parse(line)); } catch {}
+            const primaryPath = 'tests\\~test-results.ndjson';
+            const fallbackPath = 'ci_test_results.ndjson';
+            const sources = [];
+            const parsedRows = [];
+            const rawRows = [];
+
+            for (const [filePath, label] of [[primaryPath, 'tests~test-results.ndjson'], [fallbackPath, 'ci_test_results.ndjson']]) {
+              if (!fs.existsSync(filePath)) continue;
+              sources.push(label);
+              for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+                const trimmed = line.trim();
+                if (!trimmed) continue;
+                try {
+                  const data = JSON.parse(trimmed);
+                  parsedRows.push({ ...data, __source: label });
+                  rawRows.push({ data, source: label });
+                } catch (err) {
+                  rawRows.push({ data: null, source: label, error: err.message });
+                }
               }
             }
 
-            const passCt = rows.filter(r => r.pass === true).length;
-            const failCt = rows.filter(r => r.pass === false).length;
-
-            // Prefer self.* and entry.* at the top
             const rank = r => (r.id||'').startsWith('self.') || (r.id||'').startsWith('entry.') ? 0 : 1;
-            rows.sort((a,b) => rank(a) - rank(b) || String(a.id||'').localeCompare(String(b.id||'')));
+            parsedRows.sort((a,b) => rank(a) - rank(b) || String(a.id||'').localeCompare(String(b.id||'')));
 
-            const bullets = rows.map(r => {
-              const icon = r.pass === true ? '✅' : r.pass === false ? '❌' : '•';
+            const bullets = parsedRows.map(r => {
+              const icon = r.pass === true || (typeof r.pass === 'string' && r.pass.toLowerCase() === 'pass') ? '✅'
+                : r.pass === false || (typeof r.pass === 'string' && r.pass.toLowerCase() === 'fail') ? '❌'
+                : '•';
               const desc = r.desc ? ` — ${r.desc}` : '';
               return `${icon} ${r.id || '(no id)'}${desc}`;
             });
 
+            let passCt = 0, failCt = 0, skipCt = 0;
+            let firstFailure = null;
+            for (const row of rawRows) {
+              const data = row.data;
+              if (!data || typeof data !== 'object') {
+                skipCt++;
+                continue;
+              }
+              const value = data.pass;
+              const norm = typeof value === 'string' ? value.toLowerCase() : value;
+              if (norm === true || norm === 'pass') {
+                passCt++;
+              } else if (norm === false || norm === 'fail') {
+                failCt++;
+                if (!firstFailure) {
+                  firstFailure = { data, source: row.source };
+                }
+              } else if (norm === 'skip') {
+                skipCt++;
+              } else {
+                skipCt++;
+              }
+            }
+
+            const hasCondaUrl = rawRows.some(r => r.data && r.data.id === 'conda.url');
+            const hasEnvMode = rawRows.some(r => r.data && r.data.id === 'env.mode');
+
             const summary = core.summary;
-            await summary
-              .addHeading('Self-test results', 2)
-              .addList(bullets)
-              .addRaw(`\n**Totals:** PASS ${passCt} · FAIL ${failCt}\n`)
-              .write();
+            summary.addHeading('Self-test results', 2);
+            if (bullets.length) {
+              summary.addList(bullets);
+            } else {
+              summary.addRaw('*No NDJSON rows parsed from tests; treating as SKIPPED.*\n');
+            }
+            summary.addRaw(`\n**Totals:** PASS ${passCt} · FAIL ${failCt} · SKIP ${skipCt}\n`);
+            summary.addRaw(`\n- NDJSON source files: ${sources.length ? sources.join(', ') : 'none found'}\n`);
+            summary.addRaw(`- conda.url row: ${hasCondaUrl ? 'present' : 'missing'}\n`);
+            summary.addRaw(`- env.mode row: ${hasEnvMode ? 'present' : 'missing'}\n`);
+
+            if (firstFailure) {
+              const failure = firstFailure.data || {};
+              const detail = {
+                source: firstFailure.source || 'unknown',
+                id: failure.id || '(no id)',
+              };
+              if (failure.desc) detail.desc = failure.desc;
+              if (failure.message) detail.message = failure.message;
+              if (failure.details) {
+                if (failure.details.file) detail.file = failure.details.file;
+                if (failure.details.line !== undefined) detail.line = failure.details.line;
+                if (failure.details.message) detail.detail_message = failure.details.message;
+                if (failure.details.error) detail.detail_error = failure.details.error;
+              }
+              summary.addHeading('First failure', 3).addCodeBlock(JSON.stringify(detail, null, 2), 'json');
+            } else {
+              summary.addRaw('\n_First failure: none (all rows passed or no data)._\n');
+            }
+
+            await summary.write();
 
             // Optional tails (non-fatal if missing)
             function tail(p, n=80){
@@ -653,44 +717,10 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: selftest-verdict-${{ matrix.mode }}
+          name: selftest-verdict-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: lane_verdict.json
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Preflight OpenAI auth (diagnostics)
-        id: openai_auth
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "present=true" >> "$GITHUB_OUTPUT"
-          status=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.OPENAI_API_KEY }}" \
-            https://api.openai.com/v1/models || echo 000)
-          if [ "$status" = "200" ]; then
-            echo "auth_ok=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning title=OpenAI auth failed::HTTP $status from /v1/models (will skip Codex iteration)"
-            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Iterate auth summary
-        if: ${{ always() }}
-        shell: pwsh
-        run: |
-          $present = '${{ steps.openai_auth.outputs.present }}'
-          if (-not $present) { $present = 'false' }
-          $auth = '${{ steps.openai_auth.outputs.auth_ok }}'
-          if (-not $auth) { $auth = 'false' }
-          "### Iterate auth" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          "- api_key_present: $present" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          "- auth_ok: $auth" | Out-File -Append $env:GITHUB_STEP_SUMMARY
 
       - name: Build public diagnostics tree
         if: ${{ always() }}
@@ -777,12 +807,8 @@ jobs:
           }
 
           $iterAuthPath = Join-Path $logsDir 'iterate_auth.json'
-          $iterPresent = '${{ steps.openai_auth.outputs.present }}'
-          if (-not $iterPresent) { $iterPresent = 'false' }
-          $iterAuthOk = '${{ steps.openai_auth.outputs.auth_ok }}'
-          if (-not $iterAuthOk) { $iterAuthOk = 'false' }
-          @{ api_key_present = $iterPresent; auth_ok = $iterAuthOk } |
-            ConvertTo-Json -Compress | Out-File -Encoding UTF8 $iterAuthPath
+          $iterMeta = [ordered]@{ api_key_present = 'not-collected'; auth_ok = 'not-collected'; source = 'batch-check (no inline iterate)' }
+          $iterMeta | ConvertTo-Json -Compress | Out-File -Encoding UTF8 $iterAuthPath
 
           $existingNd = @()
           foreach ($cand in $ndjsonCandidates) {
@@ -1177,29 +1203,6 @@ jobs:
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "_No logs found_"
           }
 
-      - name: Distribute codex failure summary (PR comment)
-        if: ${{ failure() && github.event_name == 'pull_request' && env.AUTOMERGE_TOKEN != '' }}
-        uses: actions/github-script@v7
-        env:
-          AUTOMERGE_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
-        with:
-          github-token: ${{ env.AUTOMERGE_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const path = 'codex_body.txt';
-            if (!fs.existsSync(path)) {
-              core.info('codex_body.txt not found; skipping commenter.');
-              return;
-            }
-            const body = fs.readFileSync(path, { encoding: 'ascii' });
-            const number = context.payload.pull_request.number;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: number,
-              body
-            });
-
   selftest-gate:
     name: Aggregate self-test verdicts
     needs: [selftest]
@@ -1212,7 +1215,7 @@ jobs:
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
-          pattern: selftest-verdict-*
+          pattern: selftest-verdict-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/selftest-verdicts
           merge-multiple: true
 
