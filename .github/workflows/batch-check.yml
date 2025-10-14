@@ -477,36 +477,100 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
-            const path = 'tests\\~test-results.ndjson';
+            const primary = 'tests\\~test-results.ndjson';
+            const fallback = 'ci_test_results.ndjson';
+            const candidates = [primary, fallback];
+            let usedPath = null;
             let rows = [];
-            if (fs.existsSync(path)) {
-              for (const line of fs.readFileSync(path, 'utf8').split(/\r?\n/)) {
+            for (const candidate of candidates) {
+              if (!fs.existsSync(candidate)) continue;
+              usedPath = candidate;
+              for (const line of fs.readFileSync(candidate, 'utf8').split(/\r?\n/)) {
                 if (!line.trim()) continue;
-                try { rows.push(JSON.parse(line)); } catch {}
+                try {
+                  rows.push(JSON.parse(line));
+                } catch (err) {
+                  core.warning(`Failed to parse NDJSON line from ${candidate}: ${err}`);
+                }
               }
+              if (rows.length) break;
             }
 
-            const passCt = rows.filter(r => r.pass === true).length;
-            const failCt = rows.filter(r => r.pass === false).length;
-
-            // Prefer self.* and entry.* at the top
-            const rank = r => (r.id||'').startsWith('self.') || (r.id||'').startsWith('entry.') ? 0 : 1;
-            rows.sort((a,b) => rank(a) - rank(b) || String(a.id||'').localeCompare(String(b.id||'')));
-
-            const bullets = rows.map(r => {
-              const icon = r.pass === true ? '✅' : r.pass === false ? '❌' : '•';
-              const desc = r.desc ? ` — ${r.desc}` : '';
-              return `${icon} ${r.id || '(no id)'}${desc}`;
-            });
+            const rawRows = rows.slice();
+            const passCt = rows.filter(r => r && r.pass === true).length;
+            const failCt = rows.filter(r => r && r.pass === false).length;
+            const primaryMissing = !fs.existsSync(primary);
 
             const summary = core.summary;
-            await summary
-              .addHeading('Self-test results', 2)
-              .addList(bullets)
-              .addRaw(`\n**Totals:** PASS ${passCt} · FAIL ${failCt}\n`)
-              .write();
+            summary.addHeading('Self-test results', 2);
+            if (primaryMissing) {
+              summary.addRaw('_tests\\~test-results.ndjson missing_\n');
+            }
+            if (!usedPath) {
+              summary.addRaw('_No NDJSON files available; counts default to zero._\n');
+            } else if (primaryMissing && usedPath !== primary) {
+              summary.addRaw(`_Using fallback ${usedPath}_\n`);
+            } else {
+              summary.addRaw(`_source: ${usedPath}_\n`);
+            }
 
-            // Optional tails (non-fatal if missing)
+            if (rows.length) {
+              const rank = r => (r.id || '').startsWith('self.') || (r.id || '').startsWith('entry.') ? 0 : 1;
+              rows.sort((a,b) => rank(a) - rank(b) || String(a.id||'').localeCompare(String(b.id||'')));
+              const bullets = rows.map(r => {
+                const icon = r && r.pass === true ? '✅' : r && r.pass === false ? '❌' : '•';
+                const desc = r && r.desc ? ` — ${r.desc}` : '';
+                return `${icon} ${(r && r.id) || '(no id)'}${desc}`;
+              });
+              summary.addList(bullets);
+            } else {
+              summary.addRaw('_No NDJSON rows parsed._\n');
+            }
+            summary.addRaw(`**Totals:** PASS ${passCt} · FAIL ${failCt}\n`);
+            await summary.write();
+
+            const firstFailure = rawRows.find(r => r && r.pass === false) || null;
+            summary.addHeading('First failure', 3);
+            if (firstFailure) {
+              const details = firstFailure && typeof firstFailure.details === 'object' && firstFailure.details ? firstFailure.details : {};
+              const source = (details.source || firstFailure.source || firstFailure.id || '(unknown)').toString();
+              let message = '';
+              if (details.message) {
+                message = details.message.toString();
+              } else if (firstFailure.desc) {
+                message = firstFailure.desc.toString();
+              } else {
+                const keys = Object.keys(details || {});
+                if (keys.length) {
+                  message = JSON.stringify(details);
+                }
+              }
+              if (!message) {
+                message = '(no message)';
+              }
+              summary.addList([`source: ${source}`, `message: ${message}`]);
+              const detailKeys = Object.keys(details || {});
+              if (detailKeys.length) {
+                summary.addCodeBlock(JSON.stringify(details, null, 2), 'json');
+              }
+            } else if (!usedPath) {
+              summary.addRaw('_No NDJSON content available to inspect._\n');
+            } else {
+              summary.addRaw('_No failing NDJSON records found._\n');
+            }
+            await summary.write();
+
+            const telemetryTargets = [
+              { id: 'conda.url', label: 'conda.url row' },
+              { id: 'env.mode', label: 'env.mode row' },
+            ];
+            const telemetry = telemetryTargets.map(item => {
+              const present = rawRows.some(r => r && r.id === item.id);
+              return `${present ? '✅' : '❌'} ${item.label}${present ? '' : ' (missing)'}`;
+            });
+            summary.addHeading('Telemetry rows', 3).addList(telemetry);
+            await summary.write();
+
             function tail(p, n=80){
               try{
                 if (!fs.existsSync(p)) return null;
