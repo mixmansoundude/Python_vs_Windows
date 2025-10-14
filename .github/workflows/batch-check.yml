@@ -477,34 +477,96 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
-            const path = 'tests\\~test-results.ndjson';
-            let rows = [];
-            if (fs.existsSync(path)) {
-              for (const line of fs.readFileSync(path, 'utf8').split(/\r?\n/)) {
-                if (!line.trim()) continue;
-                try { rows.push(JSON.parse(line)); } catch {}
+            const parseNdjson = (p) => {
+              const entries = [];
+              if (!fs.existsSync(p)) {
+                return entries;
               }
-            }
+              const lines = fs.readFileSync(p, 'utf8').split(/\r?\n/);
+              for (let i = 0; i < lines.length; i += 1) {
+                const raw = lines[i].trim();
+                if (!raw) continue;
+                try {
+                  entries.push({ row: JSON.parse(raw), line: i + 1 });
+                } catch (error) {
+                  core.warning(`Failed to parse NDJSON row at ${p}:${i + 1}: ${error}`);
+                }
+              }
+              return entries;
+            };
 
-            const passCt = rows.filter(r => r.pass === true).length;
-            const failCt = rows.filter(r => r.pass === false).length;
+            const datasets = [
+              { label: 'tests/~test-results.ndjson', path: 'tests\\~test-results.ndjson' },
+              { label: 'ci_test_results.ndjson', path: 'ci_test_results.ndjson' },
+            ].map(info => ({ ...info, entries: parseNdjson(info.path) }));
 
-            // Prefer self.* and entry.* at the top
-            const rank = r => (r.id||'').startsWith('self.') || (r.id||'').startsWith('entry.') ? 0 : 1;
-            rows.sort((a,b) => rank(a) - rank(b) || String(a.id||'').localeCompare(String(b.id||'')));
+            const primary = datasets[0];
+            const fallback = datasets[1];
+            const displayEntries = primary.entries.length ? primary.entries : fallback.entries;
+            const displayRows = displayEntries.map(e => e.row).filter(Boolean);
 
-            const bullets = rows.map(r => {
+            const passCt = primary.entries.filter(e => e.row && e.row.pass === true).length;
+            const failCt = primary.entries.filter(e => e.row && e.row.pass === false).length;
+            const skipCt = primary.entries.filter(e => {
+              if (!e.row) return true;
+              if (e.row.pass === true) return false;
+              if (e.row.pass === false) return false;
+              return true;
+            }).length;
+
+            const rank = r => (r.id || '').startsWith('self.') || (r.id || '').startsWith('entry.') ? 0 : 1;
+            displayRows.sort((a, b) => rank(a) - rank(b) || String(a.id || '').localeCompare(String(b.id || '')));
+
+            const bullets = displayRows.map(r => {
               const icon = r.pass === true ? '✅' : r.pass === false ? '❌' : '•';
               const desc = r.desc ? ` — ${r.desc}` : '';
               return `${icon} ${r.id || '(no id)'}${desc}`;
             });
 
+            const telemetryRows = datasets.flatMap(d => d.entries.map(e => e.row).filter(Boolean));
+            const hasCondaUrl = telemetryRows.some(r => r && r.id === 'conda.url');
+            const hasEnvMode = telemetryRows.some(r => r && r.id === 'env.mode');
+
+            const firstFailurePrimary = primary.entries.find(e => e.row && e.row.pass === false);
+            const firstFailureFallback = fallback.entries.find(e => e.row && e.row.pass === false);
+            const firstFailure = firstFailurePrimary || firstFailureFallback || null;
+            const firstFailureSource = firstFailure
+              ? (firstFailurePrimary === firstFailure ? primary.label : fallback.label)
+              : null;
+
             const summary = core.summary;
-            await summary
-              .addHeading('Self-test results', 2)
-              .addList(bullets)
-              .addRaw(`\n**Totals:** PASS ${passCt} · FAIL ${failCt}\n`)
-              .write();
+            summary.addHeading('Self-test results', 2);
+            if (bullets.length) {
+              summary.addList(bullets);
+            } else {
+              summary.addRaw('_No NDJSON rows available for display._\n');
+            }
+            summary.addRaw(`\n**Totals (tests/~test-results.ndjson):** PASS ${passCt} · FAIL ${failCt} · SKIP ${skipCt}\n`);
+            if (!primary.entries.length) {
+              if (!fs.existsSync(primary.path)) {
+                summary.addRaw('\n_Missing tests/~test-results.ndjson; using ci_test_results.ndjson for visibility._\n');
+              } else {
+                summary.addRaw('\n_tests/~test-results.ndjson present but contained no rows._\n');
+              }
+            }
+
+            summary.addRaw(`\n**Telemetry rows:** conda.url=${hasCondaUrl ? 'present' : 'missing'} · env.mode=${hasEnvMode ? 'present' : 'missing'}\n`);
+
+            if (firstFailure) {
+              const payload = {
+                source: firstFailureSource,
+                id: firstFailure.row.id || '<missing id>',
+                desc: firstFailure.row.desc || null,
+                message: firstFailure.row.message || firstFailure.row.desc || null,
+                details: firstFailure.row.details || null,
+              };
+              summary.addHeading('First failure', 3);
+              summary.addCodeBlock(JSON.stringify(payload, null, 2), 'json');
+            } else {
+              summary.addRaw('\n_First failure: none detected (all rows passed or file empty)._\n');
+            }
+
+            await summary.write();
 
             // Optional tails (non-fatal if missing)
             function tail(p, n=80){
@@ -653,44 +715,10 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: selftest-verdict-${{ matrix.mode }}
+          name: selftest-verdict-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: lane_verdict.json
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Preflight OpenAI auth (diagnostics)
-        id: openai_auth
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "present=true" >> "$GITHUB_OUTPUT"
-          status=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.OPENAI_API_KEY }}" \
-            https://api.openai.com/v1/models || echo 000)
-          if [ "$status" = "200" ]; then
-            echo "auth_ok=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning title=OpenAI auth failed::HTTP $status from /v1/models (will skip Codex iteration)"
-            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Iterate auth summary
-        if: ${{ always() }}
-        shell: pwsh
-        run: |
-          $present = '${{ steps.openai_auth.outputs.present }}'
-          if (-not $present) { $present = 'false' }
-          $auth = '${{ steps.openai_auth.outputs.auth_ok }}'
-          if (-not $auth) { $auth = 'false' }
-          "### Iterate auth" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          "- api_key_present: $present" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          "- auth_ok: $auth" | Out-File -Append $env:GITHUB_STEP_SUMMARY
 
       - name: Build public diagnostics tree
         if: ${{ always() }}
@@ -777,11 +805,7 @@ jobs:
           }
 
           $iterAuthPath = Join-Path $logsDir 'iterate_auth.json'
-          $iterPresent = '${{ steps.openai_auth.outputs.present }}'
-          if (-not $iterPresent) { $iterPresent = 'false' }
-          $iterAuthOk = '${{ steps.openai_auth.outputs.auth_ok }}'
-          if (-not $iterAuthOk) { $iterAuthOk = 'false' }
-          @{ api_key_present = $iterPresent; auth_ok = $iterAuthOk } |
+          @{ api_key_present = 'not-run'; auth_ok = 'not-run' } |
             ConvertTo-Json -Compress | Out-File -Encoding UTF8 $iterAuthPath
 
           $existingNd = @()
