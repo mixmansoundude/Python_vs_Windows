@@ -653,44 +653,17 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: selftest-verdict-${{ matrix.mode }}
+          name: selftest-verdict-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: lane_verdict.json
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Preflight OpenAI auth (diagnostics)
-        id: openai_auth
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "present=true" >> "$GITHUB_OUTPUT"
-          status=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.OPENAI_API_KEY }}" \
-            https://api.openai.com/v1/models || echo 000)
-          if [ "$status" = "200" ]; then
-            echo "auth_ok=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning title=OpenAI auth failed::HTTP $status from /v1/models (will skip Codex iteration)"
-            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Iterate auth summary
+      - name: Iterate handoff note
         if: ${{ always() }}
         shell: pwsh
         run: |
-          $present = '${{ steps.openai_auth.outputs.present }}'
-          if (-not $present) { $present = 'false' }
-          $auth = '${{ steps.openai_auth.outputs.auth_ok }}'
-          if (-not $auth) { $auth = 'false' }
-          "### Iterate auth" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          "- api_key_present: $present" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          "- auth_ok: $auth" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "### Iterate handoff" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "Automated fixes now run via codex-auto-iterate.yml (workflow_run trigger)." | Out-File -Append $env:GITHUB_STEP_SUMMARY
 
       - name: Build public diagnostics tree
         if: ${{ always() }}
@@ -764,7 +737,6 @@ jobs:
             'dynamic_tests.log',
             'tests\~test-summary.txt',
             'iterate_gate.json',
-            'iterate_auth.json',
             'ndjson_stats.json',
             'first_failure.json',
             'codex_nudge.txt',
@@ -775,14 +747,6 @@ jobs:
               Copy-Item -LiteralPath $p -Destination $logsDir -Force
             }
           }
-
-          $iterAuthPath = Join-Path $logsDir 'iterate_auth.json'
-          $iterPresent = '${{ steps.openai_auth.outputs.present }}'
-          if (-not $iterPresent) { $iterPresent = 'false' }
-          $iterAuthOk = '${{ steps.openai_auth.outputs.auth_ok }}'
-          if (-not $iterAuthOk) { $iterAuthOk = 'false' }
-          @{ api_key_present = $iterPresent; auth_ok = $iterAuthOk } |
-            ConvertTo-Json -Compress | Out-File -Encoding UTF8 $iterAuthPath
 
           $existingNd = @()
           foreach ($cand in $ndjsonCandidates) {
@@ -801,6 +765,8 @@ jobs:
           $skipCount = 0
           $firstFail = $null
           $firstSource = $null
+          $foundCondaUrl = $false
+          $foundEnvMode = $false
 
           foreach ($path in $uniqueNd) {
             foreach ($line in Get-Content -LiteralPath $path -Encoding UTF8) {
@@ -812,6 +778,11 @@ jobs:
                 continue
               }
               $value = $null
+              if ($row.PSObject.Properties['id']) {
+                $idVal = [string]$row.id
+                if ($idVal -eq 'conda.url') { $foundCondaUrl = $true }
+                if ($idVal -eq 'env.mode' -or $idVal -eq 'meta.env.mode') { $foundEnvMode = $true }
+              }
               if ($row.PSObject.Properties['pass']) { $value = $row.pass }
               if ($value -is [bool]) {
                 if ($value) {
@@ -866,6 +837,13 @@ jobs:
           ("- PASS: {0}" -f $passCount) | Out-File -Append $env:GITHUB_STEP_SUMMARY
           ("- FAIL: {0}" -f $failCount) | Out-File -Append $env:GITHUB_STEP_SUMMARY
           ("- SKIP: {0}" -f $skipCount) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          if (-not $uniqueNd) {
+            '- NDJSON sources: none found' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+
+          '### NDJSON key coverage' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          ("- conda.url: {0}" -f ($foundCondaUrl ? 'present' : 'missing')) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          ("- env.mode: {0}" -f ($foundEnvMode ? 'present' : 'missing')) | Out-File -Append $env:GITHUB_STEP_SUMMARY
 
           if ($failCount -gt 0 -and $firstFail) {
             $firstInfo = [ordered]@{

@@ -1,1101 +1,493 @@
 # yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
-# version: v2025-10-08.41 (Decide gate: here-doc JSON + env defaults; PR body unchanged)
-# lineage: v39 → tiny fix only in Decide gate
-
 name: Codex - Auto Iterate on CI Failure
 
 on:
-  push:
-    branches: ['**']
-  workflow_dispatch: {}
+  workflow_run:
+    workflows:
+      - Batch syntax/run check
+    types:
+      - completed
 
 permissions:
-  actions: write
   contents: write
-  pull-requests: write
+  actions: read
+  pages: write
 
 defaults:
   run:
     shell: bash
 
 concurrency:
-  group: codex-iterate-${{ github.sha }}
+  group: codex-auto-${{ github.event.workflow_run.id }}-${{ github.run_attempt }}
   cancel-in-progress: true
 
 jobs:
   iterate:
+    name: Codex auto-iterate
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
+    environment:
+      name: github-pages
     env:
-      MAX_ATTEMPTS: '20'
-      OPENAI_MODEL: gpt-5-codex
-      POLL_TIMEOUT_SECONDS: '1200'
-      POLL_INTERVAL_SECONDS: '10'
+      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+      SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      SOURCE_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      SOURCE_RUN_HTML: ${{ github.event.workflow_run.html_url }}
+      SOURCE_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      REPO_SLUG: ${{ github.repository }}
+      MAX_ATTEMPTS: '4'
     steps:
-      - name: Debug event
+      - name: Summarize upstream status
         run: |
-          echo "event=${{ github.event_name }}"
-          echo "ref_name=${{ github.ref_name }}"
-          echo "sha=${{ github.sha }}"
-          echo "actor=${{ github.actor }}"
-          echo "workflow=${{ github.workflow }}"
-          echo "run_id=${{ github.run_id }}"
-
-      - name: Checkout repo (latest)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Auth probe (Responses API)
-        id: auth
-        continue-on-error: true
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
-        run: |
-          set -euo pipefail
-          if [ -z "${OPENAI_API_KEY:-}" ]; then
-            echo "ok=false"      >> "$GITHUB_OUTPUT"
-            echo "reason=no_key" >> "$GITHUB_OUTPUT"
-            {
-              echo "### Auth probe"
-              echo
-              echo "- key: MISSING"
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          RESP="$RUNNER_TEMP/auth_body.json"
-          http_code=0
-          reason=""
-
-          # First try: model as provided using input_text payload required by Responses API
-          req1=`mktemp`
           {
-            printf '{\n'
-            printf '  "model": "%s",\n' "$OPENAI_MODEL"
-            printf '  "input": [\n'
-            printf '    {"role":"system","content":[{"type":"input_text","text":"Auth probe: expect 200"}]},\n'
-            printf '    {"role":"user","content":[{"type":"input_text","text":"ping"}]}\n'
-            printf '  ],\n'
-            printf '  "max_output_tokens": 16\n'
-            printf '}\n'
-          } > "$req1"
-          http_code=`curl -sS -o "$RESP" -w "%{http_code}" \
-            https://api.openai.com/v1/responses \
-            -H "authorization: Bearer $OPENAI_API_KEY" \
-            -H "content-type: application/json" \
-            -d @"$req1" || true`
-          rm -f "$req1"
-          reason="http_${http_code}"
-
-          # Retry with lowercase slug on any non-200
-          if [ "$http_code" != "200" ]; then
-            lower_model=`printf '%s' "$OPENAI_MODEL" | tr 'A-Z' 'a-z'`
-            if [ "$lower_model" != "$OPENAI_MODEL" ]; then
-              req2=`mktemp`
-              {
-                printf '{\n'
-                printf '  "model": "%s",\n' "$lower_model"
-                printf '  "input": [\n'
-                printf '    {"role":"system","content":[{"type":"input_text","text":"Auth probe retry: expect 200"}]},\n'
-                printf '    {"role":"user","content":[{"type":"input_text","text":"ping"}]}\n'
-                printf '  ],\n'
-                printf '  "max_output_tokens": 16\n'
-                printf '}\n'
-              } > "$req2"
-              http_code=`curl -sS -o "$RESP" -w "%{http_code}" \
-                https://api.openai.com/v1/responses \
-                -H "authorization: Bearer $OPENAI_API_KEY" \
-                -H "content-type: application/json" \
-                -d @"$req2" || true`
-              rm -f "$req2"
-              reason="retry_lowercase_http_${http_code}"
-            fi
-          fi
-
-          if [ "$http_code" = "200" ]; then
-            echo "ok=true"   >> "$GITHUB_OUTPUT"
-            echo "reason=ok" >> "$GITHUB_OUTPUT"
-          else
-            short=`jq -r '.error.message // empty' "$RESP" 2>/dev/null || true`
-            if [ -n "$short" ]; then reason="$reason:$short"; fi
-            echo "ok=false"        >> "$GITHUB_OUTPUT"
-            echo "reason=$reason"  >> "$GITHUB_OUTPUT"
-          fi
-
-          {
-            echo "### Auth probe (Responses API)"
-            echo
-            echo "- model (env): ${OPENAI_MODEL}"
-            echo "- http_code: ${http_code}"
-            echo "- ok: ${{ steps.auth.outputs.ok || 'n/a' }}"
-            echo "- reason: ${reason}"
-            echo
-            echo "Body (first 300 chars):"
-            echo '```json'
-            head -c 300 "$RESP" | sed 's/[^[:print:]\t]/?/g' || true
-            echo '```'
+            echo "### Iterate trigger"
+            echo ""
+            echo "- upstream run: ${SOURCE_RUN_HTML}"
+            echo "- upstream conclusion: ${SOURCE_CONCLUSION}"
+            echo "- upstream attempt: ${SOURCE_RUN_ATTEMPT}"
+            echo "- head branch: ${SOURCE_HEAD_BRANCH:-'(none)'}"
+            echo "- head sha: ${SOURCE_HEAD_SHA}"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Gather context
-        id: ctx
+      - name: Nothing to do (upstream succeeded)
+        if: ${{ github.event.workflow_run.conclusion == 'success' }}
         run: |
-          set -euo pipefail
-          branch="${{ github.ref_name }}"
-          sha="${{ github.sha }}"
-          run_id="${{ github.run_id }}"
-          run_url="https://github.com/${{ github.repository }}/actions/runs/${run_id}"
-          branch_slug=`echo "$branch" | tr ':/ ' '---'`
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
-          echo "branch_slug=$branch_slug" >> "$GITHUB_OUTPUT"
-          echo "head_sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
+          {
+            echo ""
+            echo "- iteration skipped because upstream workflow completed successfully."
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Poll ALL workflow runs for this commit
-        id: poll
-        uses: actions/github-script@v7
-        env:
-          POLL_TIMEOUT_SECONDS: ${{ env.POLL_TIMEOUT_SECONDS }}
-          POLL_INTERVAL_SECONDS: ${{ env.POLL_INTERVAL_SECONDS }}
+      - name: Checkout failure branch
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        uses: actions/checkout@v4
         with:
-          script: |
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-            const sha   = context.sha;
-            const selfRunId = String(context.runId || "");
-            const selfName  = (context.workflow || "").toLowerCase();
-            const deadline = Date.now() + (parseInt(process.env.POLL_TIMEOUT_SECONDS||"1200")*1000);
-            const interval = parseInt(process.env.POLL_INTERVAL_SECONDS||"10")*1000;
+          ref: ${{ github.event.workflow_run.head_branch || github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: true
 
-            async function listRunsForSha() {
-              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
-                owner, repo, head_sha: sha, per_page: 100
-              });
-              return (data.workflow_runs || []);
-            }
+      - name: Configure git identity
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-            function filterNotSelf(runs) {
-              return runs.filter(r =>
-                String(r.id) !== selfRunId &&
-                (r.name||"").toLowerCase() !== selfName
-              );
-            }
-
-            let lastSeen = [];
-            let chosen = null;
-            while (Date.now() < deadline) {
-              let runs = await listRunsForSha();
-              runs = filterNotSelf(runs);
-              lastSeen = runs.map(r => ({id:r.id, name:r.name, status:r.status, conclusion:r.conclusion}));
-
-              if (runs.length === 0) {
-                await new Promise(r => setTimeout(r, interval));
-                continue;
-              }
-
-              const incomplete = runs.filter(r => r.status !== "completed");
-              if (incomplete.length > 0) {
-                await new Promise(r => setTimeout(r, interval));
-                continue;
-              }
-
-              const runsWithJobs = [];
-              for (const r of runs) {
-                const { data } = await github.rest.actions.listJobsForWorkflowRun({
-                  owner, repo, run_id: r.id, per_page: 100
-                });
-                const hasFailJob = (data.jobs || []).some(j => (j.conclusion||"") === "failure");
-                runsWithJobs.push({ ...r, hasFailJob });
-              }
-
-              // Prefer runs with a failed job; some runs are 'cancelled' despite job failures.
-              const failedJob = runsWithJobs.find(r => r.hasFailJob);
-              const failure = runsWithJobs.find(r => (r.conclusion||"") === "failure");
-              const needsAction = runsWithJobs.find(r => ["timed_out", "action_required"].includes(r.conclusion||""));
-              const cancelled = runsWithJobs.find(r => (r.conclusion||"") === "cancelled");
-              const nonSuccess = runsWithJobs.find(r => (r.conclusion||"") !== "success");
-              chosen = failedJob || failure || needsAction || cancelled || nonSuccess || runsWithJobs[0];
-              break;
-            }
-
-            if (!chosen) {
-              core.setOutput("found_any", "false");
-              core.setOutput("all_completed", "false");
-              core.setOutput("any_non_success", "true");
-              core.setOutput("summary_json", JSON.stringify(lastSeen));
-            } else {
-              core.setOutput("found_any", "true");
-              core.setOutput("all_completed", "true");
-              const anyNonSucc = lastSeen.some(r => (r.conclusion||"") !== "success");
-              core.setOutput("any_non_success", String(anyNonSucc));
-              core.setOutput("summary_json", JSON.stringify(lastSeen));
-              core.setOutput("picked_id", String(chosen.id));
-              core.setOutput("picked_name", chosen.name||"");
-              core.setOutput("picked_status", chosen.status||"");
-              core.setOutput("picked_conclusion", chosen.conclusion||"");
-            }
-
-      - name: Fetch failing run artifact (structured)
-        if: ${{ steps.poll.outputs.picked_id != '' }}
-        id: struct
+      - name: Collect upstream artifacts manifest
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        id: artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID_PICKED: ${{ steps.poll.outputs.picked_id }}
         run: |
           set -euo pipefail
-          api="https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID_PICKED}/artifacts"
-          meta="$RUNNER_TEMP/artifacts.json"
-          curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$api" -o "$meta" || true
-          # Pick an artifact likely containing structured CI results
-          name=`jq -r '.artifacts[].name' "$meta" 2>/dev/null | grep -E -i 'ndjson|summary_raw|self.?test|ci[-_]?result|first.?error|test[-_]?logs|diag' | head -n 1 || true`
-          if [ -z "$name" ] || [ "$name" = "null" ]; then
-            echo "artifact_name=" >> "$GITHUB_OUTPUT"
-            echo "path=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          id=`jq -r --arg n "$name" '.artifacts[] | select(.name==$n) | .id' "$meta" 2>/dev/null || true`
-          if [ -z "$id" ] || [ "$id" = "null" ]; then
-            echo "artifact_name=" >> "$GITHUB_OUTPUT"
-            echo "path=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          zipfile="$RUNNER_TEMP/struct.zip"
-          curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" -L \
-            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$id/zip" -o "$zipfile" || true
-          dest="$RUNNER_TEMP/struct"
-          mkdir -p "$dest"
-          unzip -q "$zipfile" -d "$dest" || true
-          out="$RUNNER_TEMP/ci_structured.txt"
-          : > "$out"
-          # Prefer *.ndjson; else summary_raw*.txt; else any *.json with errors
-          nd=`find "$dest" -type f -name '*.ndjson' | head -n 1 || true`
-          if [ -n "$nd" ]; then
-            jq -rc 'select((.level=="error") or (.status=="fail") or (.conclusion=="failure") or (.type=="error")) | . | {job:(.job//.workflow//"unknown"),step:(.step//"unknown"),file:(.file//"unknown"),line:(.line//null),msg:(.msg//.message//.error//.detail//"") } | @json' "$nd" | head -n 1 > "$out" || true
-          fi
-          if [ ! -s "$out" ]; then
-            sr=`find "$dest" -type f -iname 'summary_raw*' -o -iname '*first*error*' -o -iname '*ci*result*.json' | head -n 1 || true`
-            if [ -n "$sr" ]; then
-              head -n 120 "$sr" > "$out" || true
-            fi
-          fi
-          if [ -s "$out" ]; then
-            # record artifact name so the context digest can cite the source
-            echo "artifact_name=$name" >> "$GITHUB_OUTPUT"
-            echo "path=$out" >> "$GITHUB_OUTPUT"
-          else
-            echo "artifact_name=" >> "$GITHUB_OUTPUT"
-            echo "path=" >> "$GITHUB_OUTPUT"
-          fi
+          api="https://api.github.com/repos/${{ github.repository }}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100"
+          meta="$RUNNER_TEMP/upstream_artifacts.json"
+          curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api" -o "$meta"
+          echo "path=$meta" >> "$GITHUB_OUTPUT"
 
-      - name: Fetch failing run logs (tail)
-        if: ${{ steps.poll.outputs.picked_id != '' }}
-        id: logtail
+      - name: Download upstream nudge artifacts
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          pattern: codex_nudge-*
+          path: ${{ runner.temp }}/upstream_nudge
+          merge-multiple: true
+
+      - name: Download upstream diagnostics URLs
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          pattern: codex_nudge_url-*
+          path: ${{ runner.temp }}/upstream_diag
+          merge-multiple: true
+
+      - name: Download upstream Pages artifact
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          name: pages-deploy-pages-${{ env.SOURCE_RUN_ID }}-${{ env.SOURCE_RUN_ATTEMPT }}
+          path: ${{ runner.temp }}/pages-upstream
+
+      - name: Check OpenAI API key
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        id: key
         env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID_PICKED: ${{ steps.poll.outputs.picked_id }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
-          zipfile="$RUNNER_TEMP/other_run_logs.zip"
-          curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -L "https://api.github.com/repos/${{ github.repository }}/actions/runs/${RUN_ID_PICKED}/logs" \
-            -o "$zipfile" || true
-          extract_dir="$RUNNER_TEMP/logs_extract"
-          mkdir -p "$extract_dir"
-          unzip -q "$zipfile" -d "$extract_dir" || true
-          OUT="$RUNNER_TEMP/failing_log_tail.txt"
-          : > "$OUT"
-          find "$extract_dir" -type f -name '*.txt' -printf "%s %p\n" > "$RUNNER_TEMP/logsizes.txt" || true
-          sort -nr "$RUNNER_TEMP/logsizes.txt" | awk 'NR==1{print $2}' > "$RUNNER_TEMP/largest.txt" || true
-          if [ -s "$RUNNER_TEMP/largest.txt" ]; then
-            candidate=`cat "$RUNNER_TEMP/largest.txt"`
-            if [ -f "$candidate" ]; then
-              tail -n 200 "$candidate" > "$OUT" || true
-            fi
+          present=false
+          if [ -n "${OPENAI_API_KEY:-}" ]; then
+            present=true
           fi
-          manifest="$RUNNER_TEMP/logs_manifest.txt"
-          : > "$manifest"
-          if [ -d "$extract_dir" ]; then
-            find "$extract_dir" -type f -printf '%P\t%f\t%k\n' | sort > "$manifest" || true
+          echo "present=$present" >> "$GITHUB_OUTPUT"
+          {
+            echo "### OpenAI API key"
+            echo "- present: $present"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Mini preflight (gpt-4o-mini)
+        if: ${{ github.event.workflow_run.conclusion != 'success' && steps.key.outputs.present == 'true' }}
+        id: preflight
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          body='{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}],"max_tokens":1}'
+          resp="$RUNNER_TEMP/preflight.json"
+          http=$(curl -sS -o "$resp" -w '%{http_code}' https://api.openai.com/v1/chat/completions \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$body" || echo 000)
+          echo "$http" > "$RUNNER_TEMP/preflight.status"
+          head -c 1200 "$resp" > "$RUNNER_TEMP/preflight.body" || true
+          ok=false
+          if [ "$http" = "200" ]; then
+            ok=true
+            echo "mini-ok"
           fi
-          if [ ! -s "$manifest" ]; then
-            rm -f "$manifest"
-          fi
-          echo "path=$OUT" >> "$GITHUB_OUTPUT"
-          echo "extract_dir=$extract_dir" >> "$GITHUB_OUTPUT"
-          if [ -f "$manifest" ]; then
-            echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
-          else
-            echo "manifest=" >> "$GITHUB_OUTPUT"
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+          echo "http=$http" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Preflight (gpt-4o-mini)"
+            echo "- http: $http"
+            echo "- ok: $ok"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$ok" != "true" ]; then
+            {
+              echo ""
+              echo "Preflight response (first 400 chars):"
+              echo '```json'
+              sed 's/[^[:print:]\t]/?/g' "$RUNNER_TEMP/preflight.body" | head -c 400
+              echo
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Fetch failing job metadata
-        if: ${{ steps.poll.outputs.picked_id != '' }}
-        id: jobmeta
+      - name: Prepare iterate workspace
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        id: prep
         env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID_PICKED: ${{ steps.poll.outputs.picked_id }}
+          SOURCE_RUN_ID: ${{ env.SOURCE_RUN_ID }}
+          SOURCE_RUN_ATTEMPT: ${{ env.SOURCE_RUN_ATTEMPT }}
+          SOURCE_HEAD_SHA: ${{ env.SOURCE_HEAD_SHA }}
+          META_PATH: ${{ steps.artifacts.outputs.path }}
+          KEY_PRESENT: ${{ steps.key.outputs.present || 'false' }}
+          PREFLIGHT_OK: ${{ steps.preflight.outputs.ok || 'false' }}
           REPO_SLUG: ${{ github.repository }}
         run: |
           set -euo pipefail
-          run_id="${RUN_ID_PICKED:-}"
-          jobs_json="$RUNNER_TEMP/picked_jobs.json"
-          rm -f "$jobs_json"
-          if [ -n "$run_id" ]; then
-            curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${REPO_SLUG}/actions/runs/${run_id}/jobs?per_page=100" \
-              -o "$jobs_json" || true
+          attempt_dir="$RUNNER_TEMP/iterate/${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}"
+          mkdir -p "$attempt_dir"
+          nudge_path="$attempt_dir/codex_nudge.txt"
+          url_path="$attempt_dir/codex_nudge_url.txt"
+          upstream_nudge_dir="$RUNNER_TEMP/upstream_nudge"
+          if [ -d "$upstream_nudge_dir" ]; then
+            found=$(find "$upstream_nudge_dir" -maxdepth 3 -type f -name 'codex_nudge.txt' | head -n1 || true)
+            if [ -n "$found" ]; then
+              cat "$found" > "$nudge_path"
+            fi
           fi
-          failed_id=""
-          failed_name=""
-          if [ -s "$jobs_json" ]; then
-            failed_id=`jq -r '.jobs[] | select(.conclusion=="failure") | .id' "$jobs_json" 2>/dev/null | head -n 1 || true`
-            failed_name=`jq -r '.jobs[] | select(.conclusion=="failure") | .name' "$jobs_json" 2>/dev/null | head -n 1 || true`
-          else
-            jobs_json=""
+          if [ ! -s "$nudge_path" ]; then
+            printf '%s\n%s\n' \
+              'CI failed. Summarize the failure and apply the smallest safe change set to make the Windows batch bootstrapper pass CI.' \
+              'Respect existing logging, keep diagnostics minimal, and prefer surgical edits over refactors.' > "$nudge_path"
           fi
-          if [ "$failed_id" = "null" ]; then failed_id=""; fi
-          if [ "$failed_name" = "null" ]; then failed_name=""; fi
-          echo "failed_id=$failed_id" >> "$GITHUB_OUTPUT"
-          echo "failed_name=$failed_name" >> "$GITHUB_OUTPUT"
-          if [ -n "$jobs_json" ] && [ -f "$jobs_json" ]; then
-            echo "jobs_path=$jobs_json" >> "$GITHUB_OUTPUT"
-          else
-            echo "jobs_path=" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Focus failing job logs
-        if: ${{ steps.logtail.outputs.extract_dir != '' && (steps.jobmeta.outputs.failed_id != '' || steps.jobmeta.outputs.failed_name != '') }}
-        id: logfocus
-        env:
-          EXTRACT_DIR: ${{ steps.logtail.outputs.extract_dir }}
-          JOB_ID: ${{ steps.jobmeta.outputs.failed_id }}
-          JOB_NAME: ${{ steps.jobmeta.outputs.failed_name }}
-        run: |
-          set -euo pipefail
-          extract_dir="${EXTRACT_DIR:-}"
-          if [ -z "$extract_dir" ] || [ ! -d "$extract_dir" ]; then
-            echo "path=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          ident_primary="${JOB_ID:-}"
-          ident_secondary="${JOB_NAME:-}"
-          if [ -z "$ident_primary" ] && [ -z "$ident_secondary" ]; then
-            echo "path=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          focus_path="$RUNNER_TEMP/failing_job_focus.txt"
-          python tools/focus_logs.py "$EXTRACT_DIR" "$focus_path" "$JOB_ID" "$JOB_NAME"
-          if [ -s "$focus_path" ]; then
-            echo "path=$focus_path" >> "$GITHUB_OUTPUT"
-          else
-            rm -f "$focus_path"
-            echo "path=" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Decide gate (iterate vs skip)
-        id: gate
-        env:
-          FOUND_ANY: ${{ steps.poll.outputs.found_any }}
-          ALL_COMPLETED: ${{ steps.poll.outputs.all_completed }}
-          ANY_NON_SUCCESS: ${{ steps.poll.outputs.any_non_success }}
-          SUMMARY_JSON: ${{ steps.poll.outputs.summary_json }}
-        run: |
-          set -euo pipefail
-          # Safe defaults so -u doesn't explode if outputs are unset
-          FOUND_ANY="${FOUND_ANY:-}"
-          ALL_COMPLETED="${ALL_COMPLETED:-}"
-          ANY_NON_SUCCESS="${ANY_NON_SUCCESS:-}"
-
-          should_iterate=false
-          reason=""
-          if [ "${FOUND_ANY}" != "true" ]; then
-            should_iterate=true
-            reason="no_runs_or_timeout"
-          else
-            if [ "${ALL_COMPLETED}" != "true" ]; then
-              should_iterate=true
-              reason="runs_not_completed_timeout"
-            else
-              if [ "${ANY_NON_SUCCESS}" = "true" ]; then
-                should_iterate=true
-                reason="one_or_more_runs_failed"
-              else
-                should_iterate=false
-                reason="all_success"
+          {
+            echo "Run: https://github.com/${REPO_SLUG}/actions/runs/${SOURCE_RUN_ID}"
+            echo "Logs: https://github.com/${REPO_SLUG}/actions/runs/${SOURCE_RUN_ID}/logs"
+            echo "Artifacts: https://github.com/${REPO_SLUG}/actions/runs/${SOURCE_RUN_ID}/artifacts"
+            echo "Repo ZIP: https://github.com/${REPO_SLUG}/zipball/${SOURCE_HEAD_SHA}"
+          } > "$url_path"
+          upstream_diag_dir="$RUNNER_TEMP/upstream_diag"
+          if [ -d "$upstream_diag_dir" ]; then
+            diag_file=$(find "$upstream_diag_dir" -maxdepth 3 -type f -name 'codex_nudge_url.txt' | head -n1 || true)
+            if [ -n "$diag_file" ]; then
+              diag_url=$(cat "$diag_file")
+              if [ -n "$diag_url" ]; then
+                echo "Diagnostics: $diag_url" >> "$url_path"
               fi
             fi
           fi
-          echo "should_iterate=${should_iterate}" >> "$GITHUB_OUTPUT"
-          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
-
-          {
-            echo "### Poll summary"
-            echo '```json'
-            printf '%s\n' "$SUMMARY_JSON"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Load/Update attempt counter
-        if: ${{ steps.gate.outputs.should_iterate == 'true' }}
-        id: attempts
-        run: |
-          set -euo pipefail
-          attempts=0
-          GH_TOKEN="${{ github.token }}"
-          owner_repo="${{ github.repository }}"
-          branch_slug="${{ steps.ctx.outputs.branch_slug }}"
-          curl -sS -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${owner_repo}/actions/artifacts?per_page=100" > artifacts_all.json
-          id=`jq -r --arg n "iterate-state-$branch_slug" '.artifacts[] | select(.name==$n and ((.expired // false) | not)) | .id' artifacts_all.json | head -n 1 || true`
-          if [ -n "$id" ] && [ "$id" != "null" ]; then
-            curl -sSL -H "Authorization: Bearer $GH_TOKEN" -L \
-              "https://api.github.com/repos/${owner_repo}/actions/artifacts/$id/zip" \
-              -o state.zip || true
-            mkdir -p state && unzip -q state.zip -d state || true
-            attempts=`jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0`
+          if [ -n "$META_PATH" ] && [ -f "$META_PATH" ]; then
+            jq -r '.artifacts[] | select((.expired // false) == false) | "\(.name): \(.archive_download_url)"' "$META_PATH" > "$attempt_dir/artifacts.txt" || true
+            if [ -s "$attempt_dir/artifacts.txt" ]; then
+              {
+                echo ""
+                echo "Artifact download URLs:"
+                cat "$attempt_dir/artifacts.txt"
+              } >> "$url_path"
+            fi
           fi
-          nextfile="$RUNNER_TEMP/next.txt"
-          echo "$attempts" | awk '{print $1+1}' > "$nextfile"
-          next=`cat "$nextfile"`
-          if [ "$next" -gt "${MAX_ATTEMPTS}" ]; then
-            echo "stop=true" >> "$GITHUB_OUTPUT"
-            echo "stop_reason=Max attempts reached (${MAX_ATTEMPTS})" >> "$GITHUB_OUTPUT"
-            echo "previous=$attempts" >> "$GITHUB_OUTPUT"
-            echo "next=$attempts" >> "$GITHUB_OUTPUT"
-            exit 0
+          log="$RUNNER_TEMP/codex_exec.log"
+          if [ ! -f "$log" ]; then
+            : > "$log"
           fi
-          echo "stop=false" >> "$GITHUB_OUTPUT"
-          echo "previous=$attempts" >> "$GITHUB_OUTPUT"
-          echo "next=$next" >> "$GITHUB_OUTPUT"
+          attempts_log="$RUNNER_TEMP/codex_attempts.txt"
+          : > "$attempts_log"
+          if [ "$KEY_PRESENT" != "true" ]; then
+            echo "[iterate] skipped: OPENAI_API_KEY missing." >> "$log"
+          elif [ "$PREFLIGHT_OK" != "true" ]; then
+            echo "[iterate] skipped: preflight probe failed." >> "$log"
+          else
+            echo "[iterate] preflight ok; attempting automated fix." >> "$log"
+          fi
+          echo "dir=$attempt_dir" >> "$GITHUB_OUTPUT"
+          echo "nudge=$nudge_path" >> "$GITHUB_OUTPUT"
+          echo "urls=$url_path" >> "$GITHUB_OUTPUT"
+          echo "attempts_log=$attempts_log" >> "$GITHUB_OUTPUT"
 
-      - name: Build prompt
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
-        id: prompt
-        run: |
-          set -euo pipefail
-          PROMPT="$RUNNER_TEMP/prompt.txt"
-          repo="${{ github.repository }}"
-          branch="${{ steps.ctx.outputs.branch }}"
-          sha="${{ steps.ctx.outputs.head_sha }}"
-          attempt="${{ steps.attempts.outputs.next }}"
-          {
-            echo "You are Codex. You have a working copy of the repo checked out."
-            echo "Read README.md and AGENTS.md (if present) in the workspace for local policy."
-            echo
-            echo "Task: diagnose and fix CI failures for the GitHub Actions workflow(s)."
-            echo "Prefer minimal edits and explain changes in commit messages."
-            echo
-            echo "Repo: $repo"
-            echo "Branch: $branch"
-            echo "Commit: $sha"
-            echo "Attempt: $attempt/${MAX_ATTEMPTS}"
-            echo
-            echo "Strict output instruction: Return a unified diff patch inside a single fenced code block labeled 'diff'."
-            echo "Optionally, immediately follow the diff with a fenced block labeled 'summary_text' (max 10 lines) describing the rationale."
-            echo "If no changes are needed, output exactly:"
-            echo '```diff'
-            echo '# no changes'
-            echo '```'
-          } > "$PROMPT"
-          git ls-files > "$RUNNER_TEMP/repo-files.txt" || true
-          if [ -s "$RUNNER_TEMP/repo-files.txt" ]; then
-            {
-              echo
-              echo "----- Repo files (head) -----"
-              head -n 300 "$RUNNER_TEMP/repo-files.txt"
-            } >> "$PROMPT"
-          fi
-          # Append structured CI error first (preferred)
-          if [ -n "${{ steps.struct.outputs.path }}" ] && [ -s "${{ steps.struct.outputs.path }}" ]; then
-            {
-              echo
-              echo "----- CI structured error (first record / head) -----"
-              sed -e 's/[^[:print:]\t]/?/g' "${{ steps.struct.outputs.path }}" | head -n 120
-            } >> "$PROMPT"
-          fi
-          focus_log="${{ steps.logfocus.outputs.path }}"
-          if [ -n "$focus_log" ] && [ -s "$focus_log" ]; then
-            {
-              echo
-              echo "----- Focused failing job log (matched identifier) -----"
-              sed -e 's/[^[:print:]\t]/?/g' "$focus_log"
-            } >> "$PROMPT"
-          elif [ -n "${{ steps.logtail.outputs.path }}" ] && [ -s "${{ steps.logtail.outputs.path }}" ]; then
-            {
-              echo
-              echo "----- Failing job log tail (last 200 lines) -----"
-              sed -e 's/[^[:print:]\t]/?/g' "${{ steps.logtail.outputs.path }}" | tail -n 200
-            } >> "$PROMPT"
-          fi
-          echo "path=$PROMPT" >> "$GITHUB_OUTPUT"
-
-      - name: Prompt preview
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
-        run: |
-          echo "### Prompt (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```text' >> "$GITHUB_STEP_SUMMARY"
-          head -n 120 "${{ steps.prompt.outputs.path }}" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Ask model for patch (Responses API)
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
-        id: llm
+      - name: Run Codex attempts
+        if: ${{ github.event.workflow_run.conclusion != 'success' && steps.key.outputs.present == 'true' && steps.preflight.outputs.ok == 'true' }}
+        id: codex
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
+          MAX_ATTEMPTS: ${{ env.MAX_ATTEMPTS }}
+          NUDGE_PATH: ${{ steps.prep.outputs.nudge }}
+          ATTEMPTS_LOG: ${{ steps.prep.outputs.attempts_log }}
         run: |
           set -euo pipefail
-          REQ="$RUNNER_TEMP/llm_req.json"
-          RES="$RUNNER_TEMP/llm_res.json"
-          OUTTXT="$RUNNER_TEMP/llm_content.txt"
-          PROMPT_FILE="${{ steps.prompt.outputs.path }}"
-          jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
-          MAX_OUTPUT_TOKENS_INITIAL=2000
-          # gpt-5-codex supports responses up to 16k output tokens; keep retries within ceiling.
-          MAX_OUTPUT_TOKENS_CEIL=16000
-          RETRY_OUTPUT_TOKENS=$(( MAX_OUTPUT_TOKENS_INITIAL * 2 ))
-          if [ "$RETRY_OUTPUT_TOKENS" -gt "$MAX_OUTPUT_TOKENS_CEIL" ]; then
-            RETRY_OUTPUT_TOKENS=$MAX_OUTPUT_TOKENS_CEIL
+          log="$RUNNER_TEMP/codex_exec.log"
+          touch "$log"
+          prompt="$NUDGE_PATH"
+          if [ -z "$prompt" ] || [ ! -f "$prompt" ]; then
+            echo "codex prompt missing" >&2
+            exit 1
           fi
-          write_request() {
-            local tokens="$1"
-            {
-              printf '{\n'
-              printf '  "model": "%s",\n' "$OPENAI_MODEL"
-              printf '  "input": [\n'
-              printf '    {"role":"system","content":[{"type":"input_text","text":"You are an expert software engineer that proposes precise, minimal unified diffs."}]},\n'
-              printf '    {"role":"user","content":[{"type":"input_text","text": '
-              cat "$RUNNER_TEMP/prompt.json"
-              printf ' }]}\n'
-              printf '  ],\n'
-              printf '  "max_output_tokens": %s\n' "$tokens"
-              printf '}\n'
-            } > "$REQ"
+          attempts_run=0
+          success_commit=""
+          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+            attempts_run=$attempt
+            echo "::group::Codex attempt $attempt"
+            before=$(git rev-parse HEAD)
+            set +e
+            npx --yes @openai/codex exec --model codex-gpt-5 --sandbox workspace-write --full-auto - < "$prompt" 2>&1 | tee -a "$log"
+            status=${PIPESTATUS[0]}
+            set -e
+            echo "::endgroup::"
+            after=$(git rev-parse HEAD)
+            git status --short > "$RUNNER_TEMP/git-status-$attempt.txt"
+            printf 'attempt=%d status=%d before=%s after=%s\n' "$attempt" "$status" "$before" "$after" >> "$ATTEMPTS_LOG"
+            if [ "$status" -ne 0 ]; then
+              printf 'attempt=%d nonzero-status=%d\n' "$attempt" "$status" >> "$log"
+            fi
+            if [ "$before" != "$after" ]; then
+              success_commit="$after"
+              break
+            fi
+            if [ ! -s "$RUNNER_TEMP/git-status-$attempt.txt" ]; then
+              continue
+            fi
+          done
+          echo "attempts=$attempts_run" >> "$GITHUB_OUTPUT"
+          if [ -n "$success_commit" ]; then
+            echo "commit=$success_commit" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "### Codex attempts"
+            echo "- requested: $MAX_ATTEMPTS"
+            echo "- executed: $attempts_run"
+            if [ -n "$success_commit" ]; then
+              echo "- commit detected: $success_commit"
+            else
+              echo "- commit detected: none"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Determine iteration outcome
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        id: outcome
+        env:
+          KEY_PRESENT: ${{ steps.key.outputs.present || 'false' }}
+          PREFLIGHT_OK: ${{ steps.preflight.outputs.ok || 'false' }}
+          COMMIT_SHA: ${{ steps.codex.outputs.commit }}
+        run: |
+          set -euo pipefail
+          status="pending"
+          if [ "$KEY_PRESENT" != "true" ]; then
+            status="skipped_no_key"
+          elif [ "$PREFLIGHT_OK" != "true" ]; then
+            status="preflight_failed"
+          elif [ -n "$COMMIT_SHA" ]; then
+            status="commit_created"
+          else
+            status="completed_no_commit"
+          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Iterate outcome"
+            echo "- status: $status"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build iterate diagnostics site
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        id: build_site
+        env:
+          STATUS: ${{ steps.outcome.outputs.status }}
+          SITE_ROOT: ${{ runner.temp }}/site
+          ATTEMPT_DIR: ${{ steps.prep.outputs.dir }}
+          PAGES_SRC: ${{ runner.temp }}/pages-upstream
+          REPO_SLUG: ${{ github.repository }}
+          LOG_PATH: ${{ runner.temp }}/codex_exec.log
+          ATTEMPTS_LOG: ${{ steps.prep.outputs.attempts_log }}
+          PREFLIGHT_HTTP: ${{ steps.preflight.outputs.http }}
+          KEY_PRESENT: ${{ steps.key.outputs.present || 'false' }}
+          PREFLIGHT_OK: ${{ steps.preflight.outputs.ok || 'false' }}
+          SOURCE_RUN_ID: ${{ env.SOURCE_RUN_ID }}
+          SOURCE_RUN_ATTEMPT: ${{ env.SOURCE_RUN_ATTEMPT }}
+          SOURCE_HEAD_BRANCH: ${{ env.SOURCE_HEAD_BRANCH }}
+          SOURCE_HEAD_SHA: ${{ env.SOURCE_HEAD_SHA }}
+        run: |
+          set -euo pipefail
+          site_dir="$SITE_ROOT"
+          mkdir -p "$site_dir"
+          if [ -d "$PAGES_SRC" ]; then
+            cp -R "$PAGES_SRC"/. "$site_dir"/ 2>/dev/null || true
+          fi
+          mkdir -p "$site_dir/iterate"
+          iter_page="$site_dir/iterate/${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}"
+          mkdir -p "$iter_page"
+          attempt_dir="$ATTEMPT_DIR"
+          if [ -d "$attempt_dir" ]; then
+            cp -R "$attempt_dir"/. "$iter_page"/ 2>/dev/null || true
+          fi
+          log_path="$LOG_PATH"
+          touch "$log_path"
+          tail -n 20 "$log_path" > "$iter_page/codex_exec_tail.txt" || true
+          attempts_log="$ATTEMPTS_LOG"
+          if [ -f "$attempts_log" ]; then
+            cp "$attempts_log" "$iter_page/codex_attempts.txt"
+          fi
+          if [ -f "$RUNNER_TEMP/preflight.status" ]; then
+            cp "$RUNNER_TEMP/preflight.status" "$iter_page/preflight.status"
+          fi
+          if [ -f "$RUNNER_TEMP/preflight.body" ]; then
+            cp "$RUNNER_TEMP/preflight.body" "$iter_page/preflight.body"
+          fi
+          pr_number=$(jq -r '.workflow_run.pull_requests[0].number // ""' "$GITHUB_EVENT_PATH")
+          {
+            printf '# Codex iterate diagnostics\n\n' > "$iter_page/index.md"
+            printf -- '- Upstream run: https://github.com/%s/actions/runs/%s\n' "$REPO_SLUG" "$SOURCE_RUN_ID" >> "$iter_page/index.md"
+            printf -- '- Attempt: %s\n' "$SOURCE_RUN_ATTEMPT" >> "$iter_page/index.md"
+            printf -- '- Status: %s\n' "$STATUS" >> "$iter_page/index.md"
+            printf -- '- OpenAI key present: %s\n' "$KEY_PRESENT" >> "$iter_page/index.md"
+            printf -- '- Preflight ok: %s\n' "$PREFLIGHT_OK" >> "$iter_page/index.md"
+            printf -- '- Preflight HTTP: %s\n' "${PREFLIGHT_HTTP:-n/a}" >> "$iter_page/index.md"
+            printf -- '- Head branch: %s\n' "${SOURCE_HEAD_BRANCH:-unknown}" >> "$iter_page/index.md"
+            printf -- '- Head SHA: %s\n' "${SOURCE_HEAD_SHA:-unknown}" >> "$iter_page/index.md"
           }
-          write_request "$MAX_OUTPUT_TOKENS_INITIAL"
-          http_code=`curl -sS -o "$RES" -w "%{http_code}" \
-            https://api.openai.com/v1/responses \
-            -H "authorization: Bearer $OPENAI_API_KEY" \
-            -H "content-type: application/json" \
-            -d @"$REQ" || true`
-          attempt_summary="first request"
-          first_incomplete_reason=""
-          final_response_attempt="none"
-          if [ "$http_code" = "200" ]; then
-            first_incomplete_reason=`jq -r '.incomplete_details.reason // empty' "$RES" 2>/dev/null || true`
-            final_response_attempt="first"
-            if [ "$first_incomplete_reason" = "max_output_tokens" ] && [ "$RETRY_OUTPUT_TOKENS" -gt "$MAX_OUTPUT_TOKENS_INITIAL" ]; then
-              attempt_summary="retry after max_output_tokens (tokens=${RETRY_OUTPUT_TOKENS})"
-              write_request "$RETRY_OUTPUT_TOKENS"
-              http_code=`curl -sS -o "$RES" -w "%{http_code}" \
-                https://api.openai.com/v1/responses \
-                -H "authorization: Bearer $OPENAI_API_KEY" \
-                -H "content-type: application/json" \
-                -d @"$REQ" || true`
-              if [ "$http_code" = "200" ]; then
-                final_response_attempt="second"
-              else
-                final_response_attempt="none"
-              fi
+          if [ -n "$pr_number" ] && [ "$pr_number" != "null" ]; then
+            printf -- '- Pull request: #%s\n' "$pr_number" >> "$iter_page/index.md"
+          fi
+          if [ -f "$iter_page/codex_nudge_url.txt" ]; then
+            url=$(grep -m1 -E 'https?://|Diagnostics:' "$iter_page/codex_nudge_url.txt" || true)
+            if [ -n "$url" ]; then
+              printf -- '- Diagnostics reference: %s\n' "$url" >> "$iter_page/index.md"
             fi
           fi
-          echo "http_code=$http_code"
-          {
-            echo "- completion attempt: $attempt_summary"
-            if [ -n "$first_incomplete_reason" ]; then
-              echo "- first attempt incomplete_reason: $first_incomplete_reason"
-            fi
-            if [ "$final_response_attempt" != "none" ]; then
-              echo "- final response produced by: ${final_response_attempt} attempt"
-            else
-              echo "- final response produced by: none (http ${http_code})"
-            fi
-            echo
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "### LLM body (first 300 chars)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          head -c 300 "$RES" | sed 's/[^[:print:]\t]/?/g' >> "$GITHUB_STEP_SUMMARY" || true
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          err=`jq -r '.error.message // empty' "$RES" 2>/dev/null || true`
-          if [ -n "$err" ]; then echo "**error:** $err" >> "$GITHUB_STEP_SUMMARY"; fi
-          # Responses API prefers output_text; fall back to first textual content item if absent
-          jq -r '(
-            .output_text //
-            (.output[]? | .content[]? | select(.type=="output_text") | .text) //
-            (.output[0]? | .content[0]? | .text // "")
-          )' "$RES" > "$OUTTXT" || true
-          echo "### LLM response (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          head -n 120 "$OUTTXT" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          printf '\n## Codex log tail\n\n```text\n' >> "$iter_page/index.md"
+          sed 's/[^[:print:]\t]/?/g' "$iter_page/codex_exec_tail.txt" >> "$iter_page/index.md"
+          printf '\n```\n' >> "$iter_page/index.md"
+          if [ -f "$iter_page/codex_attempts.txt" ]; then
+            printf '\n## Attempt log\n\n```text\n' >> "$iter_page/index.md"
+            sed 's/[^[:print:]\t]/?/g' "$iter_page/codex_attempts.txt" >> "$iter_page/index.md"
+            printf '\n```\n' >> "$iter_page/index.md"
+          fi
+          if [ "$PREFLIGHT_OK" != "true" ] && [ -f "$iter_page/preflight.body" ]; then
+            printf '\n## Preflight response body\n\n```json\n' >> "$iter_page/index.md"
+            sed 's/[^[:print:]\t]/?/g' "$iter_page/preflight.body" | head -c 800 >> "$iter_page/index.md"
+            printf '\n```\n' >> "$iter_page/index.md"
+          fi
+          idx="$site_dir/index.md"
+          printf '%s\n' \
+            'import os, sys, pathlib' \
+            'idx_path = pathlib.Path(sys.argv[1])' \
+            'run_id = os.environ.get("SOURCE_RUN_ID")' \
+            'run_attempt = os.environ.get("SOURCE_RUN_ATTEMPT")' \
+            'status = os.environ.get("STATUS")' \
+            'repo = os.environ.get("REPO_SLUG")' \
+            'link = f"iterate/{run_id}-{run_attempt}/"' \
+            'lines = []' \
+            'if idx_path.exists():' \
+            '    lines = idx_path.read_text(encoding="utf-8").splitlines()' \
+            '    lines = [ln for ln in lines if link not in ln]' \
+            'else:' \
+            '    lines = ["# CI Diagnostics", ""]' \
+            'lines += [' \
+            '    f"## Iterate attempt {run_id}/{run_attempt}",' \
+            '    "",' \
+            '    f"- Status: {status}",' \
+            '    f"- Upstream run: https://github.com/{repo}/actions/runs/{run_id}",' \
+            '    f"- Details: {link}"' \
+            ']' \
+            'idx_path.write_text("\\n".join(lines) + "\\n", encoding="utf-8")' | python - "$idx"
+          html="$site_dir/index.html"
+          printf '%s\n' \
+            '<!doctype html>' \
+            '<meta charset="utf-8">' \
+            "<title>CI Diagnostics — iterate ${SOURCE_RUN_ID}</title>" \
+            '<style>' \
+            'body{font-family:ui-sans-serif,system-ui;margin:24px}' \
+            'code,pre{font-family:ui-monospace,Consolas,monospace}' \
+            '</style>' \
+            '<h1>CI Diagnostics</h1>' \
+            "<p><strong>Run:</strong> ${SOURCE_RUN_ID}<br><strong>Attempt:</strong> ${SOURCE_RUN_ATTEMPT}</p>" \
+            '<p>See <a href="index.md">index.md</a> for a Markdown listing.</p>' > "$html"
+          echo "site_dir=$site_dir" >> "$GITHUB_OUTPUT"
 
-      - name: Extract model rationale (optional)
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
-        id: rationale
-        run: |
-          set -euo pipefail
-          CONTENT="$RUNNER_TEMP/llm_content.txt"
-          OUT="$RUNNER_TEMP/llm_rationale.txt"
-          : > "$OUT"
-          if [ -f "$CONTENT" ]; then
-            # capture optional summary_text fence (cap at 10 lines)
-            awk '/^```summary_text[[:space:]]*$/{inside=1;next} /^```$/{if(inside){exit}} inside{print}' "$CONTENT" | head -n 10 > "$OUT" || true
-          fi
-          if [ -s "$OUT" ]; then
-            echo "rationale_path=$OUT" >> "$GITHUB_OUTPUT"
-            {
-              echo "### Model rationale"
-              cat "$OUT"
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "rationale_path=" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Extract fenced diff
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
-        id: diff
-        run: |
-          set -euo pipefail
-          CONTENT="$RUNNER_TEMP/llm_content.txt"
-          DIFF_OUT="$RUNNER_TEMP/patch.diff"
-          awk 'BEGIN{f=0} /```diff/ && f==0 {f=1; next} /```/ && f==1 {f=2} f==1 {print}' "$CONTENT" > "$DIFF_OUT" || true
-          if [ ! -s "$DIFF_OUT" ]; then
-            echo "# no changes" > "$DIFF_OUT"
-          fi
-          echo "diff_path=$DIFF_OUT" >> "$GITHUB_OUTPUT"
-          echo "### Extracted diff (first 120 lines)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```diff' >> "$GITHUB_STEP_SUMMARY"
-          head -n 120 "$DIFF_OUT" >> "$GITHUB_STEP_SUMMARY" || true
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Apply patch (stage only; let PR action commit)
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
-        id: apply
-        run: |
-          set -euo pipefail
-          DIFF_OUT="${{ steps.diff.outputs.diff_path }}"
-          if grep -q '^# no changes$' "$DIFF_OUT"; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if git apply -p0 --index "$DIFF_OUT"; then
-            echo "applied_with=-p0" >> "$GITHUB_OUTPUT"
-          elif git apply -p1 --index "$DIFF_OUT"; then
-            echo "applied_with=-p1" >> "$GITHUB_OUTPUT"
-          else
-            echo "Patch failed to apply"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ -z "`git status --porcelain`" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload diagnostics
+      - name: Upload iterate diagnostics artifact
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
         uses: actions/upload-artifact@v4
         with:
-          name: iterate-diag-${{ github.run_id }}-${{ github.run_attempt }}
+          name: iterate-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            $RUNNER_TEMP/auth_body.json
-            $RUNNER_TEMP/llm_req.json
-            $RUNNER_TEMP/llm_res.json
-            $RUNNER_TEMP/llm_content.txt
-            $RUNNER_TEMP/patch.diff
-            $RUNNER_TEMP/prompt.txt
-          if-no-files-found: warn
-          retention-days: 14
+            $RUNNER_TEMP/codex_exec.log
+            $RUNNER_TEMP/codex_attempts.txt
+            $RUNNER_TEMP/preflight.json
+            $RUNNER_TEMP/preflight.status
+            $RUNNER_TEMP/preflight.body
+            ${{ steps.prep.outputs.dir }}/codex_nudge.txt
+            ${{ steps.prep.outputs.dir }}/codex_nudge_url.txt
+            ${{ steps.prep.outputs.dir }}/artifacts.txt
+          if-no-files-found: ignore
+          retention-days: 7
 
-      - name: Build context digest
-        if: ${{ steps.gate.outputs.should_iterate == 'true' }}
-        id: digest
-        env:
-          RUN_ID_PICKED: ${{ steps.poll.outputs.picked_id }}
-          RUN_NAME: ${{ steps.poll.outputs.picked_name }}
-          RUN_CONCLUSION: ${{ steps.poll.outputs.picked_conclusion }}
-          STRUCT_PATH: ${{ steps.struct.outputs.path }}
-          STRUCT_NAME: ${{ steps.struct.outputs.artifact_name }}
-          LOG_PATH: ${{ steps.logtail.outputs.path }}
-          LOGFOCUS_PATH: ${{ steps.logfocus.outputs.path }}
-          JOB_ID_RAW: ${{ steps.jobmeta.outputs.failed_id }}
-          JOB_NAME_RAW: ${{ steps.jobmeta.outputs.failed_name }}
-        run: |
-          set -euo pipefail
-          run_id="${RUN_ID_PICKED:-}"
-          run_name="${RUN_NAME:-}"
-          run_conclusion="${RUN_CONCLUSION:-}"
-          job_id="${JOB_ID_RAW:-}"
-          job_name="${JOB_NAME_RAW:-}"
+      - uses: actions/configure-pages@v4
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
 
-          struct_path="${STRUCT_PATH:-}"
-          struct_name="${STRUCT_NAME:-}"
-          log_path="${LOG_PATH:-}"
-          focus_path="${LOGFOCUS_PATH:-}"
-          context_path=""
-          context_source=""
-          if [ -n "$struct_path" ] && [ -s "$struct_path" ]; then
-            context_path="$struct_path"
-            context_source="$struct_name"
-            if [ -z "$context_source" ]; then
-              context_source="structured-artifact"
-            fi
-          elif [ -n "$focus_path" ] && [ -s "$focus_path" ]; then
-            context_path="$focus_path"
-            context_source="focused-job-log"
-          elif [ -n "$log_path" ] && [ -s "$log_path" ]; then
-            context_path="$log_path"
-            context_source="failing-job-log"
-          fi
-
-          first_line=""
-          if [ -n "$context_path" ] && [ -f "$context_path" ]; then
-            # sanitize the first line from the selected context source
-            first_line=`head -n 1 "$context_path" | sed 's/[^[:print:]\t]/?/g' || true`
-          fi
-
-          path_display="$context_path"
-          if [ -z "$path_display" ]; then
-            path_display="N/A"
-          fi
-          source_display="$context_source"
-          if [ -z "$source_display" ]; then
-            source_display="N/A"
-          fi
-
-          digest_file="$RUNNER_TEMP/context_digest.txt"
-          {
-            echo "### Context digest"
-            if [ -n "$run_id" ] || [ -n "$run_name" ] || [ -n "$run_conclusion" ]; then
-              printf -- '- run: %s "%s" — %s\n' "$run_id" "$run_name" "$run_conclusion"
-            else
-              echo "- run:"
-            fi
-            if [ -n "$job_id" ] || [ -n "$job_name" ]; then
-              printf -- '- job: %s "%s"\n' "$job_id" "$job_name"
-            else
-              echo "- job:"
-            fi
-            printf -- '- source: %s\n' "$source_display"
-            printf -- '- path: %s\n' "$path_display"
-            printf -- '- first-line: %s\n' "$first_line"
-          } > "$digest_file"
-
-          {
-            echo
-            cat "$digest_file"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          echo "digest_file=$digest_file" >> "$GITHUB_OUTPUT"
-
-      - name: Build PR body file
-        if: ${{ steps.gate.outputs.should_iterate == 'true' }}
-        id: pr_body
-        env:
-          SUMMARY_JSON: ${{ steps.poll.outputs.summary_json }}
-          AUTH_OK_RAW: ${{ steps.auth.outputs.ok }}
-          AUTH_REASON_RAW: ${{ steps.auth.outputs.reason }}
-          BRANCH_NAME: ${{ steps.ctx.outputs.branch }}
-          HEAD_SHA: ${{ steps.ctx.outputs.head_sha }}
-          GATE_REASON: ${{ steps.gate.outputs.reason }}
-          CONTEXT_DIGEST_PATH: ${{ steps.digest.outputs.digest_file }}
-          RATIONALE_PATH: ${{ steps.rationale.outputs.rationale_path }}
-        run: |
-          set -euo pipefail
-          BODY=".github/ITERATE_PR_BODY.md"
-          mkdir -p .github
-          summary="${SUMMARY_JSON:-}"
-          if [ -z "$summary" ] || [ "$summary" = "null" ]; then
-            summary='[]'
-          fi
-
-          auth_ok="${AUTH_OK_RAW:-}"
-          if [ -z "$auth_ok" ]; then
-            auth_ok='false'
-          fi
-
-          auth_reason_raw="${AUTH_REASON_RAW:-}"
-          auth_reason_raw="${auth_reason_raw//$'\r'/ }"
-          auth_reason_raw="${auth_reason_raw//$'\n'/ }"
-          if [ -z "$auth_reason_raw" ]; then
-            auth_reason_raw='n/a'
-          fi
-
-          branch_name="${BRANCH_NAME:-unknown}"
-          head_sha="${HEAD_SHA:-unknown}"
-          gate_reason="${GATE_REASON:-unknown}"
-
-          {
-            printf '## Codex iteration (push-poll ALL workflows)\n\n'
-            printf -- '- Branch: `%s` @ %s\n' "$branch_name" "$head_sha"
-            printf -- '- Gate reason: %s\n\n' "$gate_reason"
-            printf '### Polled runs\n'
-            printf '```json\n'
-            printf '%s\n' "$summary"
-            printf '```\n\n'
-            printf '### Auth probe\n'
-            printf -- '- ok: %s (reason: %s)\n' "$auth_ok" "$auth_reason_raw"
-          } > "$BODY"
-
-          context_digest_file="${CONTEXT_DIGEST_PATH:-}"
-          if [ -n "$context_digest_file" ] && [ -s "$context_digest_file" ]; then
-            printf '\n' >> "$BODY"
-            cat "$context_digest_file" >> "$BODY"
-            printf '\n' >> "$BODY"
-          fi
-
-          if [ -f "$RUNNER_TEMP/prompt.txt" ]; then
-            {
-              printf '\n### Prompt (first 200 lines)\n'
-              printf '```text\n'
-              head -n 200 "$RUNNER_TEMP/prompt.txt" || true
-              printf '```\n'
-            } >> "$BODY"
-          fi
-
-          if [ -f "$RUNNER_TEMP/patch.diff" ]; then
-            {
-              printf '\n### Extracted diff (first 200 lines)\n'
-              printf '```diff\n'
-              head -n 200 "$RUNNER_TEMP/patch.diff" || true
-              printf '```\n'
-            } >> "$BODY"
-          fi
-
-          rationale_file="${RATIONALE_PATH:-}"
-          if [ -n "$rationale_file" ] && [ -s "$rationale_file" ]; then
-            {
-              printf '\n### Model rationale\n'
-              cat "$rationale_file"
-              printf '\n'
-            } >> "$BODY"
-          fi
-
-          echo "body_path=$BODY" >> "$GITHUB_OUTPUT"
-
-      - name: Create PR (if edits)
-        if: ${{ steps.apply.outputs.changed == 'true' }}
-        uses: peter-evans/create-pull-request@v6
-        with:
-          commit-message: "codex: iterate on CI failure (attempt ${{ steps.attempts.outputs.next }}/${{ env.MAX_ATTEMPTS }})"
-          branch: codex/ci-fix-${{ steps.ctx.outputs.branch_slug }}
-          base: ${{ steps.ctx.outputs.branch }}
-          title: "Codex: iterate on CI failure – ${{ steps.ctx.outputs.branch }}"
-          body-path: ${{ steps.pr_body.outputs.body_path }}
-          labels: codex,ci-fix,automerge-candidate
-
-      - name: Save attempt state
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
-        env:
-          ATTEMPTS: ${{ steps.attempts.outputs.next }}
-          RUN_ID: ${{ steps.ctx.outputs.run_id }}
-          HEAD_SHA: ${{ steps.ctx.outputs.head_sha }}
-        run: |
-          mkdir -p state_out
-          printf '{\n' > state_out/iterate_state.json
-          printf '  "attempts": "%s",\n' "$ATTEMPTS" >> state_out/iterate_state.json
-          printf '  "run_id": "%s",\n' "$RUN_ID" >> state_out/iterate_state.json
-          printf '  "head_sha": "%s"\n' "$HEAD_SHA" >> state_out/iterate_state.json
-          printf '}\n' >> state_out/iterate_state.json
-
-      - name: Upload attempt state
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: iterate-state-${{ steps.ctx.outputs.branch_slug }}
-          path: state_out
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Mark job neutral if we got this far
-        if: ${{ always() }}
-        run: echo "::notice title=iterate::Job completed - forcing neutral so logs persist"
-
-  deploy-iterate-pages:
-    name: Deploy iterate diagnostics to Pages
-    needs: iterate
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-    steps:
-      - name: Locate iterate diagnostics artifact
-        id: diag_lookup
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const runId = context.runId;
-            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
-              owner,
-              repo,
-              run_id: runId,
-              per_page: 100,
-            });
-            const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
-            const match = artifacts.find(art => {
-              if (!art || art.expired) return false;
-              return typeof art.name === 'string' && art.name.startsWith('iterate-diag-');
-            });
-            if (!match) {
-              core.info('iterate-diag-* artifact not found for this run.');
-              core.setOutput('found', 'false');
-              return;
-            }
-            core.info(`Found iterate diagnostics artifact: ${match.name} (id=${match.id})`);
-            core.setOutput('found', 'true');
-            core.setOutput('artifact-name', match.name);
-
-      - name: Download iterate diagnostics
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ steps.diag_lookup.outputs.artifact-name }}
-          path: ${{ runner.temp }}/iterate-diag
-
-      - name: Stage diagnostics into public directory
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
-        run: |
-          set -euo pipefail
-          rm -rf public
-          mkdir -p public/logs public/sources public/repo
-          src_dir="${RUNNER_TEMP}/iterate-diag"
-          if [ -d "$src_dir" ]; then
-            shopt -s dotglob nullglob
-            entries=("$src_dir"/*)
-            if (( ${#entries[@]} )); then
-              cp -R "${entries[@]}" public/logs/
-            else
-              echo "No diagnostics files to stage; skipping copy."
-            fi
-            shopt -u dotglob nullglob
-          fi
-          rm -rf "$src_dir"
-          touch public/.nojekyll
-
-      - name: Build Pages index
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
-        run: |
-          set -euo pipefail
-          python <<'PY'
-          import datetime
-          from pathlib import Path
-
-          base = Path('public')
-          logs_dir = base / 'logs'
-          sources_dir = base / 'sources'
-          repo_dir = base / 'repo'
-          for path in (logs_dir, sources_dir, repo_dir):
-              path.mkdir(parents=True, exist_ok=True)
-
-          entries = []
-          for path in base.rglob('*'):
-              if not path.is_file():
-                  continue
-              if path.name in {'index.md', 'index.html'}:
-                  continue
-              entries.append(path.relative_to(base))
-
-          entries.sort()
-
-          repo = "${{ github.repository }}"
-          run_id = "${{ github.run_id }}"
-          attempt = "${{ github.run_attempt }}"
-          run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
-          timestamp = datetime.datetime.utcnow().isoformat(timespec='seconds') + 'Z'
-
-          index_md = base / 'index.md'
-          lines = [
-              '# Iterate diagnostics',
-              '',
-              f'- Repo: `{repo}`',
-              f'- Workflow run: [{run_id}]({run_url})',
-              f'- Run attempt: {attempt}',
-              f'- Generated: {timestamp}',
-              '',
-              '## Files',
-          ]
-
-          if entries:
-              for rel in entries:
-                  rel_path = rel.as_posix()
-                  lines.append(f'- [{rel_path}]({rel_path})')
-          else:
-              lines.append('- (no files captured)')
-
-          index_md.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-
-          html_lines = [
-              '<!doctype html>',
-              '<meta charset="utf-8">',
-              f'<title>Iterate diagnostics — run {run_id}</title>',
-              '<style>',
-              'body{font-family:ui-sans-serif,system-ui;line-height:1.5;margin:24px;}',
-              'code{font-family:ui-monospace,Consolas,monospace;}',
-              'a{color:#0366d6;}',
-              '</style>',
-              '<h1>Iterate diagnostics</h1>',
-              f'<p><strong>Repo:</strong> {repo}<br>',
-              f'<strong>Run:</strong> <a href="{run_url}">{run_id}</a> (attempt {attempt})<br>',
-              f'<strong>Generated:</strong> {timestamp}</p>',
-              '<p>See <a href="index.md">index.md</a> for a Markdown listing.</p>',
-          ]
-
-          if entries:
-              html_lines.append('<ul>')
-              for rel in entries:
-                  rel_path = rel.as_posix()
-                  html_lines.append(f'<li><a href="{rel_path}">{rel_path}</a></li>')
-              html_lines.append('</ul>')
-          else:
-              html_lines.append('<p>(no files captured)</p>')
-
-          (base / 'index.html').write_text('\n'.join(html_lines) + '\n', encoding='utf-8')
-          PY
-
-      - name: Configure Pages
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
+      - name: Upload iterate Pages artifact
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
         uses: actions/upload-pages-artifact@v3
         with:
-          path: public
+          name: iterate-pages-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.build_site.outputs.site_dir }}
 
-      - name: Deploy to Pages
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
+      - name: Deploy iterate diagnostics
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
         id: deploy
         uses: actions/deploy-pages@v4
 
-      - name: Summarize deployment
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
+      - name: Publish diagnostics URL
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
         run: |
           url='${{ steps.deploy.outputs.page_url }}'
-          {
-            echo '### Iterate diagnostics Pages'
-            if [ -n "$url" ]; then
-              echo "- Deployed: [$url]($url)"
-            else
-              echo '- Deployed: (no URL returned)'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$url" ]; then
+            {
+              echo "### Iterate diagnostics"
+              echo "[$url]($url)"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-      - name: Note missing diagnostics
-        if: ${{ steps.diag_lookup.outputs.found != 'true' }}
+      - name: Codex log tail (summary)
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
         run: |
           {
-            echo '### Iterate diagnostics Pages'
-            echo '- iterate-diag-* artifact not found; skipping deployment.'
+            echo "### Codex log tail"
+            echo '```text'
+            tail -n 20 "$RUNNER_TEMP/codex_exec.log"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

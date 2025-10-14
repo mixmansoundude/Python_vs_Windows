@@ -233,6 +233,8 @@ set "HP_PIPREQS_CANON=pipreqs . --force --mode compat --savepath requirements.au
 set "HP_PIPREQS_CMD_LOG=pipreqs . --force --mode compat --savepath \"%HP_PIPREQS_TARGET%\"%HP_PIPREQS_IGNORE_DISPLAY%"
 call :log "[INFO] pipreqs (direct) command: %HP_PIPREQS_CMD_LOG%"
 echo Pipreqs command (direct): %HP_PIPREQS_CMD_LOG%
+call :ensure_pipreqs_runner
+if errorlevel 1 call :die "[ERROR] pipreqs helper staging failed."
 
 if defined HP_SKIP_PIPREQS (
   set "HP_PIPREQS_PHASE_RESULT=skipped"
@@ -245,11 +247,11 @@ if defined HP_SKIP_PIPREQS (
 if defined HP_PIPREQS_IGNORE (
   :: pipreqs flags are locked by CI (pipreqs.flags gate).
   :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-  "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore %HP_PIPREQS_IGNORE% > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+  "%HP_PY%" "~pipreqs_runner.py" "%HP_PIPREQS_TARGET%" "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
 ) else (
   :: pipreqs flags are locked by CI (pipreqs.flags gate).
   :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-  "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+  "%HP_PY%" "~pipreqs_runner.py" "%HP_PIPREQS_TARGET%" "" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
 )
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
 set "HP_PIPREQS_RC=%errorlevel%"
@@ -284,7 +286,7 @@ call :log "[INFO] pipreqs (staging) command: pipreqs . --force --mode compat --s
 echo Pipreqs command (staging): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%"
 :: pipreqs flags are locked by CI (pipreqs.flags gate).
 :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-"%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" > "%HP_PIPREQS_STAGE_LOG%" 2>&1
+"%HP_PY%" "~pipreqs_runner.py" "%HP_PIPREQS_STAGE_TARGET%" "" > "%HP_PIPREQS_STAGE_LOG%" 2>&1
 set "HP_PIPREQS_RC=%errorlevel%"
 popd
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_STAGE_LOG%"
@@ -722,6 +724,32 @@ rem Append same line to setup log
 
 rem If we also need an absolute path for execution, set HP_ENTRY elsewhere
 rem and keep the echo outside any ( ... ) block.
+exit /b 0
+:ensure_pipreqs_runner
+if defined HP_PIPREQS_RUNNER_READY exit /b 0
+rem Derived requirement: avoid `python -m pipreqs` so compat mode stays deterministic under Windows CMD.
+rem The helper mirrors `pipreqs . --force --mode compat --savepath <target> [--ignore <paths>]`.
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$content = @'
+import sys
+from pipreqs import pipreqs as _pr
+
+def _build_args(savepath, ignore):
+    args = ['--force','--mode','compat','--savepath', savepath,'.']
+    if ignore:
+        args.extend(['--ignore', ignore])
+    return args
+
+def main():
+    savepath = sys.argv[1]
+    ignore = sys.argv[2] if len(sys.argv) > 2 else ''
+    _pr.main(argv=_build_args(savepath, ignore))
+
+if __name__ == '__main__':
+    main()
+'@; Set-Content -LiteralPath '~pipreqs_runner.py' -Value $content -Encoding UTF8" >> "%LOG%" 2>&1
+if errorlevel 1 exit /b 1
+set "HP_PIPREQS_RUNNER_READY=1"
 exit /b 0
 :write_pipreqs_summary
 if "%HP_JOB_SUMMARY%"=="" exit /b 0
