@@ -203,18 +203,37 @@ jobs:
           RUN_ID: ${{ steps.poll.outputs.picked_id }}
         run: |
           set -euo pipefail
-          zipfile="$RUNNER_TEMP/upstream_logs.zip"
-          gh api repos/${{ github.repository }}/actions/runs/${RUN_ID}/logs > "$zipfile" || true
-          extract_dir="$RUNNER_TEMP/upstream_logs"
-          mkdir -p "$extract_dir"
-          unzip -q "$zipfile" -d "$extract_dir" || true
+          run_id="${RUN_ID:-}"
+          repo="${{ github.repository }}"
           tail_file="$RUNNER_TEMP/upstream_log_tail.txt"
+          extract_dir="$RUNNER_TEMP/upstream_logs"
+          zipfile="$RUNNER_TEMP/upstream_logs.zip"
           : > "$tail_file"
-          if [ -d "$extract_dir" ]; then
-            find "$extract_dir" -type f -name '*.txt' -printf '%s %p\n' | sort -nr | head -n 1 | awk '{print $2}' | while read -r largest; do
-              [ -f "$largest" ] && tail -n 200 "$largest" > "$tail_file"
-            done
+          rm -rf "$extract_dir"
+          mkdir -p "$extract_dir"
+          if [ -z "$run_id" ]; then
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "extract_dir=$extract_dir" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          # Guard the log fetch so transient API errors do not fail the iterate run.
+          if gh api "repos/${repo}/actions/runs/${run_id}/logs" > "$zipfile" 2>/dev/null; then
+            if [ -s "$zipfile" ]; then
+              if ! unzip -q "$zipfile" -d "$extract_dir" 2>/dev/null; then
+                rm -rf "$extract_dir"
+                mkdir -p "$extract_dir"
+              fi
+            fi
+          else
+            rm -f "$zipfile"
+          fi
+
+          if [ -d "$extract_dir" ]; then
+            # Reuse the fallback helper when the dedicated focus script is unavailable.
+            EXTRACT_DIR="$extract_dir" FOCUS_OUTPUT="$tail_file" python tools/focus_logs_fallback.py || true
+          fi
+
           if [ -s "$tail_file" ]; then
             echo "path=$tail_file" >> "$GITHUB_OUTPUT"
           else
