@@ -1200,6 +1200,104 @@ jobs:
               body
             });
 
+  publish_diag:
+    name: Publish diagnostics to Pages
+    runs-on: windows-latest
+    needs:
+      - selftest
+    if: always()
+    environment:
+      name: github-pages
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prep diag folder
+        id: prep
+        shell: pwsh
+        run: |
+          $RunId = "${{ github.run_id }}"
+          $Attempt = "${{ github.run_attempt }}"
+          $Diag = "diag/$RunId-$Attempt"
+          New-Item -ItemType Directory -Path $Diag | Out-Null
+          echo "DIAG=$Diag" >> $env:GITHUB_OUTPUT
+
+      - name: Write index.md
+        shell: pwsh
+        run: |
+          $Diag = "${{ steps.prep.outputs.DIAG }}"
+          $repo = "${{ github.repository }}"
+          $sha  = "${{ github.sha }}"
+          $run  = "${{ github.run_id }}"
+          $attempt = "${{ github.run_attempt }}"
+          $utcNow = [DateTime]::UtcNow.ToString("o")
+          $ct = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, "Central Standard Time").ToString("o")
+          $jobUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # The array form avoids YAML indentation pitfalls while keeping the requested Markdown structure.
+          $lines = @(
+            '# CI Diagnostics',
+            "Repo: $repo",
+            "Commit: $sha",
+            "Run: $run (attempt $attempt)",
+            "Built (UTC): $utcNow",
+            "Built (CT): $ct",
+            '',
+            "- **Run page:** $jobUrl",
+            '- See files in this folder for raw details.',
+            '',
+            '## Files included',
+            '- `tests/~test-results.ndjson` (if present)',
+            '- `summary_raw.md` (Job Summary raw markdown, if present)',
+            '- `repo-tree.txt` (full file list at this commit)',
+            '- `.github/workflows/` (workflow files in use)',
+            '- `env.txt` (sanitized environment basics)',
+            '- `logs/` (raw job logs if downloadable during the job)'
+          )
+          Set-Content -Path (Join-Path $Diag 'index.md') -Value $lines -Encoding utf8
+
+      - name: Gather artifacts into page
+        shell: pwsh
+        run: |
+          $Diag = "${{ steps.prep.outputs.DIAG }}"
+          New-Item -ItemType Directory -Path (Join-Path $Diag 'logs') -ErrorAction SilentlyContinue | Out-Null
+          $candidates = @(
+            'tests\~test-results.ndjson',
+            'tests\~dynamic-results.ndjson',
+            'tests\~test-summary.txt',
+            'summary_raw.md',
+            'summary_raw.txt',
+            'dynamic_tests.log'
+          )
+          foreach ($p in $candidates) {
+            if (Test-Path $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $Diag (Split-Path $p -Leaf)) -Force }
+          }
+          git ls-tree -r --name-only HEAD | Out-File -Encoding utf8 (Join-Path $Diag 'repo-tree.txt')
+          if (Test-Path '.github\workflows') {
+            $workflowDest = Join-Path $Diag '.github\workflows'
+            New-Item -ItemType Directory -Path $workflowDest -ErrorAction SilentlyContinue | Out-Null
+            # Use -Path so the wildcard expands; -LiteralPath would reject the trailing '*'.
+            Copy-Item -Recurse -Force -Path '.github\workflows\*' -Destination $workflowDest
+          }
+          Get-ChildItem Env: | Sort-Object Name | ForEach-Object {
+            if ($_.Name -notmatch 'TOKEN|SECRET|KEY|PASSWORD|COOKIE') {
+              '{0}={1}' -f $_.Name, $_.Value
+            }
+          } | Out-File -Encoding utf8 (Join-Path $Diag 'env.txt')
+
+      - name: Upload Pages content
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.prep.outputs.DIAG }}
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   selftest-gate:
     name: Aggregate self-test verdicts
     needs: [selftest]
