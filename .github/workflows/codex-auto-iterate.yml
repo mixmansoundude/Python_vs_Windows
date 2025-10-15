@@ -923,10 +923,6 @@ jobs:
     permissions:
       contents: read
       actions: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
     steps:
       - name: Locate iterate diagnostics artifact
         id: diag_lookup
@@ -991,6 +987,7 @@ jobs:
           python <<'PY'
           import datetime
           from pathlib import Path
+          import textwrap
 
           base = Path('public')
           logs_dir = base / 'logs'
@@ -1064,38 +1061,64 @@ jobs:
           (base / 'index.html').write_text('\n'.join(html_lines) + '\n', encoding='utf-8')
           PY
 
-      - name: Configure Pages
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
-        uses: actions/configure-pages@v5
+      - name: Ensure placeholder site bundle
+        run: |
+          set -euo pipefail
+          mkdir -p public
+          touch public/.nojekyll
+          python <<'PY'
+          from pathlib import Path
+          import textwrap
 
-      - name: Upload Pages artifact
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
-        uses: actions/upload-pages-artifact@v3
+          base = Path('public')
+          md = base / 'index.md'
+          html = base / 'index.html'
+
+          if not md.exists():
+              md.write_text(
+                  textwrap.dedent(
+                      """
+                      # Iterate diagnostics (placeholder)
+
+                      No iterate diagnostics artifact was available for this run.
+
+                      This file exists because the maintainers asked to "Always produce all artifacts/files that pages and other things depend on, even if blank." When data is present the earlier staging step will overwrite this placeholder.
+                      """
+                  ).lstrip("\n") + "\n",
+                  encoding='utf-8'
+              )
+
+          if not html.exists():
+              html.write_text(
+                  textwrap.dedent(
+                      """
+                      <!doctype html>
+                      <meta charset="utf-8">
+                      <title>Iterate diagnostics (placeholder)</title>
+                      <body><main><h1>Iterate diagnostics (placeholder)</h1><p>No iterate diagnostics artifact was available for this run. A placeholder bundle is published so downstream tooling always has the expected files.</p></main></body>
+                      """
+                  ).lstrip("\n") + "\n",
+                  encoding='utf-8'
+              )
+          PY
+
+      - name: Upload iterate diagnostics bundle
+        uses: actions/upload-artifact@v4
         with:
+          name: iterate-pages-${{ github.run_id }}-${{ github.run_attempt }}
           path: public
+          if-no-files-found: warn
+          retention-days: 7
 
-      - name: Deploy to Pages
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
-        id: deploy
-        uses: actions/deploy-pages@v4
-
-      - name: Summarize deployment
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
+      - name: Summarize iterate bundle
         run: |
-          url='${{ steps.deploy.outputs.page_url }}'
           {
-            echo '### Iterate diagnostics Pages'
-            if [ -n "$url" ]; then
-              echo "- Deployed: [$url]($url)"
+            echo '### Iterate diagnostics bundle'
+            echo '- Pages deployment is handled by batch-check publish_diag; this job now ships the staged site as an artifact instead.'
+            echo "- Artifact: iterate-pages-${{ github.run_id }}-${{ github.run_attempt }}"
+            if [ '${{ steps.diag_lookup.outputs.found }}' = 'true' ]; then
+              echo '- iterate-diag-* artifact: found and staged into public/'
             else
-              echo '- Deployed: (no URL returned)'
+              echo '- iterate-diag-* artifact: not found; placeholder bundle only.'
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Note missing diagnostics
-        if: ${{ steps.diag_lookup.outputs.found != 'true' }}
-        run: |
-          {
-            echo '### Iterate diagnostics Pages'
-            echo '- iterate-diag-* artifact not found; skipping deployment.'
           } >> "$GITHUB_STEP_SUMMARY"

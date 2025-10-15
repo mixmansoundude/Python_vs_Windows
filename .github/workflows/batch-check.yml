@@ -1229,6 +1229,10 @@ jobs:
           New-Item -ItemType Directory -Path $DiagRoot -Force | Out-Null
           $Diag = Join-Path $DiagRoot "$RunId-$Attempt"
           New-Item -ItemType Directory -Path $Diag -Force | Out-Null
+          # Professional note: the instructions said "Always produce all artifacts/files that pages and other things depend on, even if blank."
+          # To honor that contract we eagerly create the artifacts staging directory so later steps can populate (or at least keep) it.
+          $Artifacts = Join-Path $Diag '_artifacts'
+          New-Item -ItemType Directory -Path $Artifacts -Force | Out-Null
           $Subdir = "diag/$RunId-$Attempt"
           echo "DIAG=$Diag" >> $env:GITHUB_OUTPUT
           echo "SITE=$Site" >> $env:GITHUB_OUTPUT
@@ -1239,6 +1243,53 @@ jobs:
         with:
           path: ${{ steps.prep.outputs.DIAG }}/_artifacts
           pattern: "*"
+
+      - name: Inventory downloaded artifacts
+        id: inventory
+        shell: pwsh
+        run: |
+          $Diag = "${{ steps.prep.outputs.DIAG }}"
+          $Artifacts = Join-Path $Diag '_artifacts'
+          if (-not (Test-Path $Artifacts)) {
+            # Professional note: keep the directory present even when no artifacts were emitted so downstream readers see an explicit placeholder.
+            New-Item -ItemType Directory -Path $Artifacts -Force | Out-Null
+          }
+
+          $items = @()
+          if (Test-Path $Artifacts) {
+            $items = Get-ChildItem -Path $Artifacts -Recurse -File -Force -ErrorAction SilentlyContinue
+          }
+
+          $bulletLines = @()
+          $plainLines = @()
+          $htmlLines = @('<!doctype html>', '<meta charset="utf-8">', '<title>Artifact inventory</title>', '<body><main><h1>Artifact inventory</h1><p>Files copied from workflow artifacts.</p><ul>')
+
+          foreach ($item in $items | Sort-Object FullName) {
+            $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\\','/')
+            $size = "{0:N0}" -f $item.Length
+            $bulletLines += "- $size bytes — `$relative`"
+            $plainLines  += "$size bytes`t$relative"
+            $htmlLines   += "<li><code>$relative</code> <span>($size bytes)</span></li>"
+          }
+
+          if (-not $bulletLines) {
+            $bulletLines = @('- (no files captured)')
+            $plainLines  = @('no files captured')
+            $htmlLines  += '<li>(no files captured)</li>'
+          }
+
+          $htmlLines += '</ul></main></body>'
+
+          $inventoryMd = @('# Artifact inventory', '', 'Files copied from workflow artifacts are listed below.', '') + $bulletLines
+          $inventoryTxt = @('Artifact inventory (size \t path)', '---------------------------------', '') + $plainLines
+
+          $inventoryMd -join "`n" | Set-Content -Path (Join-Path $Diag 'inventory.md') -Encoding UTF8
+          $inventoryTxt -join "`n" | Set-Content -Path (Join-Path $Diag 'inventory.txt') -Encoding UTF8
+          ($htmlLines -join "`n") | Set-Content -Path (Join-Path $Diag 'inventory.html') -Encoding UTF8
+
+          $joined = $bulletLines -join "`n"
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($joined))
+          "bullets_b64=$encoded" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
       - name: Write index.md
         shell: pwsh
@@ -1251,6 +1302,18 @@ jobs:
           $UTC    = [DateTime]::UtcNow.ToString("o")
           $CT     = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, "Central Standard Time").ToString("o")
           $RunUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          $inventoryEncoded = "${{ steps.inventory.outputs.bullets_b64 }}"
+          $inventoryLines = @('- (no files captured)')
+          if ($inventoryEncoded) {
+            try {
+              $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($inventoryEncoded))
+              if ($decoded) {
+                $inventoryLines = $decoded -split "`n"
+              }
+            } catch {
+              $inventoryLines = @('- (inventory decode failed)')
+            }
+          }
           # NOTE: We build the Markdown as an array so YAML indentation cannot introduce leading spaces. This keeps the
           # publish index aligned with the instructions' shape while remaining robust to formatting changes.
           $lines = @(
@@ -1264,6 +1327,13 @@ jobs:
             '',
             '## Collected files (best-effort)',
             'See `_artifacts/` for all downloaded job artifacts.',
+            '',
+            '### Inventory',
+            'The following entries were found inside `_artifacts/`:',
+            ''
+          )
+          $lines += $inventoryLines
+          $lines += @(
             '',
             'Common paths you should find:',
             '- tests/~test-results.ndjson',
@@ -1510,7 +1580,6 @@ jobs:
     name: Emit Codex nudge (on failure)
     needs:
       - selftest-gate
-      - publish_diag
     runs-on: windows-latest
     if: ${{ always() && needs.selftest-gate.outputs.has_failures == 'true' }}
     steps:
