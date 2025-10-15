@@ -1205,6 +1205,7 @@ jobs:
     runs-on: windows-latest
     needs:
       - selftest
+      - selftest-gate
     if: always()
     environment:
       name: github-pages
@@ -1226,67 +1227,67 @@ jobs:
           New-Item -ItemType Directory -Path $Diag | Out-Null
           echo "DIAG=$Diag" >> $env:GITHUB_OUTPUT
 
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ steps.prep.outputs.DIAG }}/_artifacts
+          merge-multiple: true
+          pattern: "*"
+
       - name: Write index.md
         shell: pwsh
         run: |
-          $Diag = "${{ steps.prep.outputs.DIAG }}"
-          $repo = "${{ github.repository }}"
-          $sha  = "${{ github.sha }}"
-          $run  = "${{ github.run_id }}"
-          $attempt = "${{ github.run_attempt }}"
-          $utcNow = [DateTime]::UtcNow.ToString("o")
-          $ct = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, "Central Standard Time").ToString("o")
-          $jobUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          # The array form avoids YAML indentation pitfalls while keeping the requested Markdown structure.
+          $Diag   = "${{ steps.prep.outputs.DIAG }}"
+          $Repo   = "${{ github.repository }}"
+          $SHA    = "${{ github.sha }}"
+          $Run    = "${{ github.run_id }}"
+          $Att    = "${{ github.run_attempt }}"
+          $UTC    = [DateTime]::UtcNow.ToString("o")
+          $CT     = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, "Central Standard Time").ToString("o")
+          $RunUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # NOTE: We build the Markdown as an array so YAML indentation cannot introduce leading spaces. This keeps the
+          # publish index aligned with the instructions' shape while remaining robust to formatting changes.
           $lines = @(
             '# CI Diagnostics',
-            "Repo: $repo",
-            "Commit: $sha",
-            "Run: $run (attempt $attempt)",
-            "Built (UTC): $utcNow",
-            "Built (CT): $ct",
+            "Repo: $Repo",
+            "Commit: $SHA",
+            "Run: $Run (attempt $Att)",
+            "Built (UTC): $UTC",
+            "Built (CT): $CT",
+            "Run page: $RunUrl",
             '',
-            "- **Run page:** $jobUrl",
-            '- See files in this folder for raw details.',
+            '## Collected files (best-effort)',
+            'See `_artifacts/` for all downloaded job artifacts.',
             '',
-            '## Files included',
-            '- `tests/~test-results.ndjson` (if present)',
-            '- `summary_raw.md` (Job Summary raw markdown, if present)',
-            '- `repo-tree.txt` (full file list at this commit)',
-            '- `.github/workflows/` (workflow files in use)',
-            '- `env.txt` (sanitized environment basics)',
-            '- `logs/` (raw job logs if downloadable during the job)'
+            'Common paths you should find:',
+            '- tests/~test-results.ndjson',
+            '- tests/~dynamic-results.ndjson',
+            '- tests/~test-summary.txt',
+            '- summary_raw.md / summary_raw.txt',
+            '- dynamic_tests.log',
+            '- iterate/codex_exec.log, iterate/patch*.diff (if iteration ran)'
           )
-          Set-Content -Path (Join-Path $Diag 'index.md') -Value $lines -Encoding utf8
+          ($lines -join "`n") | Set-Content -Path (Join-Path $Diag 'index.md') -NoNewline
 
-      - name: Gather artifacts into page
+      - name: Add env + workflow files
         shell: pwsh
         run: |
           $Diag = "${{ steps.prep.outputs.DIAG }}"
-          New-Item -ItemType Directory -Path (Join-Path $Diag 'logs') -ErrorAction SilentlyContinue | Out-Null
-          $candidates = @(
-            'tests\~test-results.ndjson',
-            'tests\~dynamic-results.ndjson',
-            'tests\~test-summary.txt',
-            'summary_raw.md',
-            'summary_raw.txt',
-            'dynamic_tests.log'
-          )
-          foreach ($p in $candidates) {
-            if (Test-Path $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $Diag (Split-Path $p -Leaf)) -Force }
-          }
-          git ls-tree -r --name-only HEAD | Out-File -Encoding utf8 (Join-Path $Diag 'repo-tree.txt')
-          if (Test-Path '.github\workflows') {
-            $workflowDest = Join-Path $Diag '.github\workflows'
-            New-Item -ItemType Directory -Path $workflowDest -ErrorAction SilentlyContinue | Out-Null
-            # Use -Path so the wildcard expands; -LiteralPath would reject the trailing '*'.
-            Copy-Item -Recurse -Force -Path '.github\workflows\*' -Destination $workflowDest
-          }
+          # Sanitize env
           Get-ChildItem Env: | Sort-Object Name | ForEach-Object {
             if ($_.Name -notmatch 'TOKEN|SECRET|KEY|PASSWORD|COOKIE') {
               '{0}={1}' -f $_.Name, $_.Value
             }
           } | Out-File -Encoding utf8 (Join-Path $Diag 'env.txt')
+          # Repo tree
+          git ls-tree -r --name-only HEAD | Out-File -Encoding utf8 (Join-Path $Diag 'repo-tree.txt')
+          # Workflow files
+          if (Test-Path '.github\workflows') {
+            New-Item -ItemType Directory -Path (Join-Path $Diag '.github\workflows') -ErrorAction SilentlyContinue | Out-Null
+            Copy-Item -Force -Recurse '.github\workflows\*' (Join-Path $Diag '.github\workflows')
+          }
+
+      - uses: actions/configure-pages@v4
 
       - name: Upload Pages content
         uses: actions/upload-pages-artifact@v3
@@ -1294,9 +1295,32 @@ jobs:
           path: ${{ steps.prep.outputs.DIAG }}
 
       - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Record deployed URL
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $url = '${{ steps.deployment.outputs.page_url }}'
+          if ($url) {
+            "### Diagnostics site`n[$url]($url)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            $url | Out-File -Encoding UTF8 -FilePath codex_nudge_url.txt
+            $url | Out-File -Encoding UTF8 -FilePath codex_nudge.txt -Append
+          } else {
+            "### Diagnostics site (no URL from deploy step)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload diagnostics URL artifact
+        if: ${{ always() && steps.deployment.outputs.page_url != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex_nudge_url-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: codex_nudge_url.txt
+          if-no-files-found: ignore
+          retention-days: 3
 
   selftest-gate:
     name: Aggregate self-test verdicts
@@ -1429,7 +1453,9 @@ jobs:
 
   emit-nudge:
     name: Emit Codex nudge (on failure)
-    needs: [selftest-gate]
+    needs:
+      - selftest-gate
+      - publish_diag
     runs-on: windows-latest
     if: ${{ always() && needs.selftest-gate.outputs.has_failures == 'true' }}
     steps:
@@ -1437,7 +1463,7 @@ jobs:
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
-          name: codex_nudge_url-deploy-pages-${{ github.run_id }}-${{ github.run_attempt }}
+          name: codex_nudge_url-publish_diag-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}
 
       - name: Build Codex nudge
@@ -1468,134 +1494,5 @@ jobs:
         with:
           name: codex_nudge-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/codex_nudge.txt
-          if-no-files-found: ignore
-          retention-days: 3
-
-  deploy-pages:
-    if: ${{ always() && github.event_name != 'pull_request' }}
-    needs: [selftest]
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download diagnostics bundle (cache)
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: diag-selftest-cache-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/diag/cache
-
-      - name: Download diagnostics bundle (real)
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: diag-selftest-real-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/diag/real
-
-      - name: Build combined diagnostics site
-        id: build_public
-        shell: pwsh
-        run: |
-          $pub = Join-Path $env:RUNNER_TEMP 'public'
-          New-Item -Force -ItemType Directory -Path $pub | Out-Null
-          $diagRoot = Join-Path $pub 'diag'
-          $iterRoot = Join-Path $pub 'iterate'
-          New-Item -Force -ItemType Directory -Path $diagRoot | Out-Null
-          New-Item -Force -ItemType Directory -Path $iterRoot | Out-Null
-
-          Write-Host "DIAG CWD: $PWD"
-          $targets = @(
-            (Join-Path $env:RUNNER_TEMP 'diag/cache'),
-            (Join-Path $env:RUNNER_TEMP 'diag/real')
-          )
-          foreach ($path in $targets) {
-            Write-Host "Inspecting $path"
-            if (Test-Path -LiteralPath $path) {
-              Get-ChildItem -Path $path -Recurse | ForEach-Object { Write-Host $_.FullName }
-              $leaf = Split-Path -Leaf $path
-              $dest = Join-Path $diagRoot $leaf
-              Copy-Item -Path (Join-Path $path '*') -Destination $dest -Recurse -Force -ErrorAction SilentlyContinue
-            } else {
-              Write-Host "Missing diagnostic bundle: $path"
-            }
-          }
-
-          $iterSrc = Join-Path $env:RUNNER_TEMP 'iterate'
-          if (Test-Path -LiteralPath $iterSrc) {
-            Copy-Item -Path (Join-Path $iterSrc '*') -Destination $iterRoot -Recurse -Force -ErrorAction SilentlyContinue
-          } else {
-            Write-Host 'Iterate diagnostics missing; continuing without iterate section.'
-          }
-
-          $repo = '${{ github.repository }}'
-          $run = '${{ github.run_id }}'
-          $attempt = '${{ github.run_attempt }}'
-          $index = @(
-            "# CI Diagnostics",
-            '',
-            "* Repo: $repo",
-            "* Run: $run",
-            "* Attempt: $attempt",
-            '',
-            '## Sections',
-            '- [Diagnostics bundles](diag/)'
-          )
-          if (Test-Path -LiteralPath $iterRoot) {
-            $index += '- [Iterate debug](iterate/)'
-          }
-          $index += ''
-          $index += 'See the per-section indexes for detailed NDJSON exports, logs, and sources.'
-          $index -join "`n" | Out-File -Encoding UTF8 (Join-Path $pub 'index.md')
-
-          $html = @"
-          <!doctype html>
-          <meta charset="utf-8">
-          <title>CI Diagnostics — run $run</title>
-          <style>
-            body{font-family:ui-sans-serif,system-ui;margin:24px}
-            code,pre{font-family:ui-monospace,Consolas,monospace}
-          </style>
-          <h1>CI Diagnostics</h1>
-          <p><strong>Repo:</strong> $repo<br><strong>Run:</strong> $run<br><strong>Attempt:</strong> $attempt</p>
-          <p>See <a href="index.md">index.md</a> for a Markdown listing.</p>
-          "@
-          Set-Content -LiteralPath (Join-Path $pub 'index.html') -Value $html -Encoding UTF8
-
-          "public_dir=$pub" | Out-File -Append $env:GITHUB_OUTPUT
-
-      - uses: actions/configure-pages@v4
-
-      - name: Upload combined Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          name: pages-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.build_public.outputs.public_dir }}
-
-      - name: Deploy combined diagnostics to Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-
-      - name: Show deployed URL in Summary and nudge
-        if: ${{ always() }}
-        shell: pwsh
-        run: |
-          $u='${{ steps.deployment.outputs.page_url }}'
-          if ($u) {
-            "### Diagnostics site`n[$u]($u)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            $u | Out-File -Encoding UTF8 -FilePath codex_nudge_url.txt
-            $u | Out-File -Encoding UTF8 -FilePath codex_nudge.txt -Append
-          } else {
-            "### Diagnostics site (no URL from deploy step)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          }
-
-      - name: Upload diagnostics URL artifact
-        if: ${{ always() && steps.deployment.outputs.page_url != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex_nudge_url-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: codex_nudge_url.txt
           if-no-files-found: ignore
           retention-days: 3
