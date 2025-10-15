@@ -1238,7 +1238,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ${{ steps.prep.outputs.DIAG }}/_artifacts
-          merge-multiple: true
           pattern: "*"
 
       - name: Write index.md
@@ -1274,7 +1273,19 @@ jobs:
             '- dynamic_tests.log',
             '- iterate/codex_exec.log, iterate/patch*.diff (if iteration ran)'
           )
-          ($lines -join "`n") | Set-Content -Path (Join-Path $Diag 'index.md') -NoNewline
+          $markdown = $lines -join "`n"
+          $markdown | Set-Content -Path (Join-Path $Diag 'index.md') -NoNewline
+          $encoded = $markdown -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+          $html = @(
+            '<!doctype html>',
+            '<meta charset="utf-8">',
+            '<title>CI Diagnostics</title>',
+            '<pre>',
+            $encoded,
+            '</pre>'
+          )
+          # Keep a simple HTML twin so GitHub Pages resolves directory roots without 404s.
+          ($html -join "`n") | Set-Content -Path (Join-Path $Diag 'index.html') -NoNewline
 
       - name: Write site index
         shell: pwsh
@@ -1299,7 +1310,19 @@ jobs:
             '',
             'This site refreshes on each deployment, preserving the latest diagnostics bundle only.'
           )
-          ($lines -join "`n") | Set-Content -Path (Join-Path $Site 'index.md') -NoNewline
+          $markdown = $lines -join "`n"
+          $markdown | Set-Content -Path (Join-Path $Site 'index.md') -NoNewline
+          $encoded = $markdown -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+          $html = @(
+            '<!doctype html>',
+            '<meta charset="utf-8">',
+            '<title>Diagnostics overview</title>',
+            '<pre>',
+            $encoded,
+            '</pre>'
+          )
+          # Pair the Markdown with HTML so the site root loads for browsers and tools alike.
+          ($html -join "`n") | Set-Content -Path (Join-Path $Site 'index.html') -NoNewline
 
       - name: Add env + workflow files
         shell: pwsh
