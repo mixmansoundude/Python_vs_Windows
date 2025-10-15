@@ -2,11 +2,9 @@
 name: Codex - Auto Iterate on CI Failure
 
 on:
-  workflow_run:
-    workflows:
-      - Batch syntax/run check
-    types:
-      - completed
+  push:
+      branches: ['**']
+  workflow_dispatch: {}
 
 permissions:
   contents: write
