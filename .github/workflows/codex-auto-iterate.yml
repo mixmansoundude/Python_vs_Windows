@@ -54,7 +54,10 @@ jobs:
           OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
         run: |
           set -euo pipefail
+          ok_state="n/a"
+
           if [ -z "${OPENAI_API_KEY:-}" ]; then
+            ok_state="false"
             echo "ok=false"      >> "$GITHUB_OUTPUT"
             echo "reason=no_key" >> "$GITHUB_OUTPUT"
             {
@@ -115,11 +118,13 @@ jobs:
           fi
 
           if [ "$http_code" = "200" ]; then
+            ok_state="true"
             echo "ok=true"   >> "$GITHUB_OUTPUT"
             echo "reason=ok" >> "$GITHUB_OUTPUT"
           else
             short=`jq -r '.error.message // empty' "$RESP" 2>/dev/null || true`
             if [ -n "$short" ]; then reason="$reason:$short"; fi
+            ok_state="false"
             echo "ok=false"        >> "$GITHUB_OUTPUT"
             echo "reason=$reason"  >> "$GITHUB_OUTPUT"
           fi
@@ -129,7 +134,7 @@ jobs:
             echo
             echo "- model (env): ${OPENAI_MODEL}"
             echo "- http_code: ${http_code}"
-            echo "- ok: ${{ steps.auth.outputs.ok || 'n/a' }}"
+            echo "- ok: ${ok_state}"
             echo "- reason: ${reason}"
             echo
             echo "Body (first 300 chars):"
@@ -923,6 +928,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pages: write
+      id-token: write
     steps:
       - name: Locate iterate diagnostics artifact
         id: diag_lookup
@@ -1102,6 +1109,22 @@ jobs:
               )
           PY
 
+      - uses: actions/configure-pages@v4
+        if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Upload iterate Pages content
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy iterate diagnostics site
+        id: deploy
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/deploy-pages@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload iterate diagnostics bundle
         uses: actions/upload-artifact@v4
         with:
@@ -1114,7 +1137,15 @@ jobs:
         run: |
           {
             echo '### Iterate diagnostics bundle'
-            echo '- Pages deployment is handled by batch-check publish_diag; this job now ships the staged site as an artifact instead.'
+            if [ "${{ github.event_name }}" = 'pull_request' ]; then
+              echo '- Deployment skipped for pull_request events (token lacks pages/id-token permissions).'
+            else
+              if [ -n "${{ steps.deploy.outputs.page_url }}" ]; then
+                echo "- Deployed site: ${{ steps.deploy.outputs.page_url }}"
+              else
+                echo '- Deployed site: (actions/deploy-pages did not return a URL)'
+              fi
+            fi
             echo "- Artifact: iterate-pages-${{ github.run_id }}-${{ github.run_attempt }}"
             if [ '${{ steps.diag_lookup.outputs.found }}' = 'true' ]; then
               echo '- iterate-diag-* artifact: found and staged into public/'

@@ -1242,6 +1242,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ${{ steps.prep.outputs.DIAG }}/_artifacts
+          # Professional note: keep artifacts in distinct subdirectories so lane-specific payloads stay intact.
           pattern: "*"
 
       - name: Inventory downloaded artifacts
@@ -1260,34 +1261,38 @@ jobs:
             $items = Get-ChildItem -Path $Artifacts -Recurse -File -Force -ErrorAction SilentlyContinue
           }
 
-          $bulletLines = @()
-          $plainLines = @()
-          $htmlLines = @('<!doctype html>', '<meta charset="utf-8">', '<title>Artifact inventory</title>', '<body><main><h1>Artifact inventory</h1><p>Files copied from workflow artifacts.</p><ul>')
+          $bulletLines = [System.Collections.Generic.List[string]]::new()
+          $plainLines = [System.Collections.Generic.List[string]]::new()
+          $htmlLines = [System.Collections.Generic.List[string]]::new()
+          foreach ($seed in @('<!doctype html>', '<meta charset="utf-8">', '<title>Artifact inventory</title>', '<body><main><h1>Artifact inventory</h1><p>Files copied from workflow artifacts.</p><ul>')) {
+            $null = $htmlLines.Add($seed)
+          }
 
           foreach ($item in $items | Sort-Object FullName) {
             $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\\','/')
             $size = "{0:N0}" -f $item.Length
-            $bulletLines += "- $size bytes — `$relative`"
-            $plainLines  += "$size bytes`t$relative"
-            $htmlLines   += "<li><code>$relative</code> <span>($size bytes)</span></li>"
+            $htmlRelative = $relative -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;' -replace '"', '&quot;'
+            $null = $bulletLines.Add(("- {0} bytes - `{1}`" -f $size, $relative))
+            $null = $plainLines.Add(("{0} bytes{1}{2}" -f $size, [char]9, $relative))
+            $null = $htmlLines.Add("<li><code>$htmlRelative</code> <span>($size bytes)</span></li>")
           }
 
-          if (-not $bulletLines) {
-            $bulletLines = @('- (no files captured)')
-            $plainLines  = @('no files captured')
-            $htmlLines  += '<li>(no files captured)</li>'
+          if ($bulletLines.Count -eq 0) {
+            $null = $bulletLines.Add('- (no files captured)')
+            $null = $plainLines.Add('no files captured')
+            $null = $htmlLines.Add('<li>(no files captured)</li>')
           }
 
-          $htmlLines += '</ul></main></body>'
+          $null = $htmlLines.Add('</ul></main></body>')
 
-          $inventoryMd = @('# Artifact inventory', '', 'Files copied from workflow artifacts are listed below.', '') + $bulletLines
-          $inventoryTxt = @('Artifact inventory (size \t path)', '---------------------------------', '') + $plainLines
+          $inventoryMd = @('# Artifact inventory', '', 'Files copied from workflow artifacts are listed below.', '') + $bulletLines.ToArray()
+          $inventoryTxt = @('Artifact inventory (size \t path)', '---------------------------------', '') + $plainLines.ToArray()
 
           $inventoryMd -join "`n" | Set-Content -Path (Join-Path $Diag 'inventory.md') -Encoding UTF8
           $inventoryTxt -join "`n" | Set-Content -Path (Join-Path $Diag 'inventory.txt') -Encoding UTF8
-          ($htmlLines -join "`n") | Set-Content -Path (Join-Path $Diag 'inventory.html') -Encoding UTF8
+          ($htmlLines.ToArray() -join "`n") | Set-Content -Path (Join-Path $Diag 'inventory.html') -Encoding UTF8
 
-          $joined = $bulletLines -join "`n"
+          $joined = $bulletLines.ToArray() -join "`n"
           $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($joined))
           "bullets_b64=$encoded" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
