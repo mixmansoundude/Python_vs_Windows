@@ -1239,6 +1239,8 @@ jobs:
           echo "SUBDIR=$Subdir" >> $env:GITHUB_OUTPUT
 
       - name: Download all artifacts
+        # Professional note: previous runs aborted when no artifacts existed; allow the Pages bundle to publish a placeholder.
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           path: ${{ steps.prep.outputs.DIAG }}/_artifacts
@@ -1268,12 +1270,13 @@ jobs:
             $null = $htmlLines.Add($seed)
           }
 
+          # Professional note: [string]::Format avoids the -f parser complaints observed on hosted runners when braces appear near commas.
           foreach ($item in $items | Sort-Object FullName) {
             $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\\','/')
             $size = "{0:N0}" -f $item.Length
             $htmlRelative = $relative -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;' -replace '"', '&quot;'
-            $null = $bulletLines.Add(("- {0} bytes - `{1}`" -f $size, $relative))
-            $null = $plainLines.Add(("{0} bytes{1}{2}" -f $size, [char]9, $relative))
+            $null = $bulletLines.Add([string]::Format("- {0} bytes - `{1}`", $size, $relative))
+            $null = $plainLines.Add([string]::Format("{0} bytes{1}{2}", $size, [char]9, $relative))
             $null = $htmlLines.Add("<li><code>$htmlRelative</code> <span>($size bytes)</span></li>")
           }
 
