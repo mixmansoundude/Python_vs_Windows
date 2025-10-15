@@ -1,4 +1,4 @@
-# yamllint disable rule:line-length rule:truthy rule:colons rule:document-start
+# yamllint disable rule:line-length rule:truthy rule:colons rule:document-start rule:empty-lines
 # version: v2025-10-08.41 (Decide gate: here-doc JSON + env defaults; PR body unchanged)
 # lineage: v39 → tiny fix only in Decide gate
 
@@ -609,6 +609,7 @@ jobs:
             fi
           fi
           echo "http_code=$http_code"
+          echo "http_code=$http_code" >> "$GITHUB_OUTPUT"
           {
             echo "- completion attempt: $attempt_summary"
             if [ -n "$first_incomplete_reason" ]; then
@@ -683,6 +684,8 @@ jobs:
         run: |
           set -euo pipefail
           DIFF_OUT="${{ steps.diff.outputs.diff_path }}"
+          LOG="$RUNNER_TEMP/patch_apply.log"
+          exec > >(tee "$LOG") 2>&1
           if grep -q '^# no changes$' "$DIFF_OUT"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -701,55 +704,158 @@ jobs:
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+          echo "log_path=$LOG" >> "$GITHUB_OUTPUT"
 
       - name: Stage iterate diagnostics artifact
         id: diag_stage
         run: |
           set -euo pipefail
-          out="${RUNNER_TEMP}/iterate-diag"
-          rm -rf "$out"
-          mkdir -p "$out"
+          iter_dir="$GITHUB_WORKSPACE/iterate"
+          rm -rf "$iter_dir"
+          mkdir -p "$iter_dir"
 
-          # Professional note: instructions require "Always produce all artifacts/files that pages and other things depend on, even if blank."
-          # We seed a placeholder so downstream jobs (publish_diag + iterate deploy) always see an artifact, even when Codex produced no files.
-          placeholder="$out/README.txt"
+          placeholder="$iter_dir/README.txt"
           {
-            printf 'Iterate diagnostics placeholder\n\n'
-            printf 'This file exists because the iterate job had no diagnostics payload to export.\n'
-            printf 'Downstream automation expects an iterate-diag-* artifact every run per maintainer instructions.\n'
+            printf 'Iterate diagnostics placeholder\n'
+            printf 'No iterate payloads were captured for this run.\n'
           } >"$placeholder"
 
-          found=0
-          candidates=(
-            "$RUNNER_TEMP/auth_body.json"
-            "$RUNNER_TEMP/llm_req.json"
-            "$RUNNER_TEMP/llm_res.json"
-            "$RUNNER_TEMP/llm_content.txt"
-            "$RUNNER_TEMP/patch.diff"
-            "$RUNNER_TEMP/prompt.txt"
-          )
+          # Professional note: create redacted request/response bundles and metadata per maintainer checklist.
+          model="${{ env.OPENAI_MODEL }}"
+          printf 'model=%s\n' "${model:-n/a}" > "$iter_dir/model.txt"
 
-          for candidate in "${candidates[@]}"; do
-            [ -n "$candidate" ] || continue
-            if [ -f "$candidate" ]; then
-              cp "$candidate" "$out/"
-              found=1
+          endpoint="https://api.openai.com/v1/responses"
+          printf 'endpoint=%s\n' "$endpoint" > "$iter_dir/endpoint.txt"
+
+          sdk_file="$iter_dir/sdk.txt"
+          {
+            printf 'node=%s\n' "$(node --version 2>/dev/null || echo n/a)"
+            printf 'npm=%s\n' "$(npm --version 2>/dev/null || echo n/a)"
+            printf 'python=%s\n' "$(python --version 2>/dev/null || echo n/a)"
+            pwsh_ver="$(pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>/dev/null || echo n/a)"
+            printf 'pwsh=%s\n' "$pwsh_ver"
+            printf 'curl=%s\n' "$(curl --version 2>/dev/null | head -n1 | tr -d '\r' || echo n/a)"
+          } > "$sdk_file"
+
+          http_status="${{ steps.llm.outputs.http_code }}"
+          if [ -z "$http_status" ]; then
+            http_status="n/a"
+          fi
+          printf '%s\n' "$http_status" > "$iter_dir/http_status.txt"
+
+          req_raw="$RUNNER_TEMP/llm_req.json"
+          res_raw="$RUNNER_TEMP/llm_res.json"
+          content_txt="$RUNNER_TEMP/llm_content.txt"
+          diff_path="${{ steps.diff.outputs.diff_path }}"
+          apply_log="${{ steps.apply.outputs.log_path }}"
+
+          sanitize(){
+            local input="$1"
+            local output="$2"
+            local limit="$3"
+            if [ -f "$input" ]; then
+              python tools/sanitize_iterate_payload.py \
+                --input "$input" \
+                --output "$output" \
+                --truncate "$limit" \
+                --redact-pattern '(?i)(secret|token|password|apikey|key)' \
+                --placeholder '***'
             fi
-          done
+          }
 
-          if [ "$found" -eq 1 ]; then
+          sanitize "$req_raw" "$iter_dir/request.redacted.json" 100000 || true
+          sanitize "$res_raw" "$iter_dir/response.json" 200000 || true
+
+          tokens_file="$iter_dir/tokens.txt"
+          if [ -f "$res_raw" ]; then
+            prompt=$(jq -r '.usage.prompt_tokens // empty' "$res_raw" 2>/dev/null || echo '')
+            completion=$(jq -r '.usage.completion_tokens // empty' "$res_raw" 2>/dev/null || echo '')
+            total=$(jq -r '.usage.total_tokens // empty' "$res_raw" 2>/dev/null || echo '')
+            {
+              printf 'prompt=%s\n' "${prompt:-n/a}"
+              printf 'completion=%s\n' "${completion:-n/a}"
+              printf 'total=%s\n' "${total:-n/a}"
+            } > "$tokens_file"
+          else
+            printf 'prompt=n/a\ncompletion=n/a\ntotal=n/a\n' > "$tokens_file"
+          fi
+
+          decision_file="$iter_dir/decision.txt"
+          decision="no-diff"
+          reason=""
+          if [ "$http_status" != "200" ] && [ "$http_status" != "n/a" ]; then
+            decision="error-$http_status"
+            reason="HTTP failure"
+          else
+            if [ -n "$diff_path" ] && [ -f "$diff_path" ] && grep -q '^# no changes$' "$diff_path"; then
+              decision="no-diff"
+            elif [ "${{ steps.apply.outputs.changed }}" = "true" ]; then
+              decision="diff-applied"
+            elif [ -n "$diff_path" ] && [ -f "$diff_path" ]; then
+              decision="diff-failed"
+              reason="apply returned ${{ steps.apply.outputs.changed }}"
+            else
+              decision="error-missing-diff"
+              reason="diff not generated"
+            fi
+          fi
+          {
+            printf 'decision=%s\n' "$decision"
+            if [ -n "$reason" ]; then
+              printf 'reason=%s\n' "$reason"
+            fi
+          } > "$decision_file"
+
+          if [ -n "$diff_path" ] && [ -f "$diff_path" ]; then
+            cp "$diff_path" "$iter_dir/patch.diff"
+          fi
+
+          if [ -n "$apply_log" ] && [ -f "$apply_log" ]; then
+            cp "$apply_log" "$iter_dir/patch.apply.log"
+          else
+            printf 'apply log unavailable\n' > "$iter_dir/patch.apply.log"
+          fi
+
+          codex_log="$GITHUB_WORKSPACE/codex_exec.log"
+
+          if [ -f "$content_txt" ]; then
+            {
+              printf '### iterate exec log\n'
+              printf 'Captured from Responses API output.\n\n'
+              cat "$content_txt"
+            } > "$iter_dir/exec.log"
+            cp "$iter_dir/exec.log" "$codex_log"
+          else
+            printf 'no exec content captured\n' > "$iter_dir/exec.log"
+            cp "$iter_dir/exec.log" "$codex_log"
+          fi
+
+          if [ -f "$RUNNER_TEMP/prompt.txt" ]; then
+            cp "$RUNNER_TEMP/prompt.txt" "$iter_dir/prompt.txt"
+          fi
+
+          if [ -f "$RUNNER_TEMP/auth_body.json" ]; then
+            sanitize "$RUNNER_TEMP/auth_body.json" "$iter_dir/auth_probe.json" 100000 || true
+          fi
+
+          files_found=$(find "$iter_dir" -type f 2>/dev/null | wc -l || echo 0)
+          if [ "$files_found" -gt 0 ]; then
             rm -f "$placeholder"
           fi
 
-          printf 'dir=%s\n' "$out" >> "$GITHUB_OUTPUT"
+          printf 'dir=%s\n' "$iter_dir" >> "$GITHUB_OUTPUT"
+          printf 'codex_log=%s\n' "$codex_log" >> "$GITHUB_OUTPUT"
 
-      - name: Upload diagnostics
+      - name: Upload iterate artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: iterate-diag-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.diag_stage.outputs.dir }}
+          name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.diag_stage.outputs.dir }}/**
+            ${{ steps.diag_stage.outputs.codex_log }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 7
 
       - name: Build context digest
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
@@ -955,238 +1061,3 @@ jobs:
         if: ${{ always() }}
         run: echo "::notice title=iterate::Job completed - forcing neutral so logs persist"
 
-  deploy-iterate-pages:
-    name: Deploy iterate diagnostics to Pages
-    needs: iterate
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-    permissions:
-      contents: read
-      actions: read
-      pages: write
-      id-token: write
-    steps:
-      - name: Locate iterate diagnostics artifact
-        id: diag_lookup
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ github.token }}
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const runId = context.runId;
-            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
-              owner,
-              repo,
-              run_id: runId,
-              per_page: 100,
-            });
-            const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
-            const match = artifacts.find(art => {
-              if (!art || art.expired) return false;
-              return typeof art.name === 'string' && art.name.startsWith('iterate-diag-');
-            });
-            if (!match) {
-              core.info('iterate-diag-* artifact not found for this run.');
-              core.setOutput('found', 'false');
-              return;
-            }
-            core.info(`Found iterate diagnostics artifact: ${match.name} (id=${match.id})`);
-            core.setOutput('found', 'true');
-            core.setOutput('artifact-name', match.name);
-
-      - name: Download iterate diagnostics
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ steps.diag_lookup.outputs.artifact-name }}
-          path: ${{ runner.temp }}/iterate-diag
-
-      - name: Stage diagnostics into public directory
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
-        run: |
-          set -euo pipefail
-          rm -rf public
-          mkdir -p public/logs public/sources public/repo
-          src_dir="${RUNNER_TEMP}/iterate-diag"
-          if [ -d "$src_dir" ]; then
-            shopt -s dotglob nullglob
-            entries=("$src_dir"/*)
-            if (( ${#entries[@]} )); then
-              cp -R "${entries[@]}" public/logs/
-            else
-              echo "No diagnostics files to stage; skipping copy."
-            fi
-            shopt -u dotglob nullglob
-          fi
-          rm -rf "$src_dir"
-          touch public/.nojekyll
-
-      - name: Build Pages index
-        if: ${{ steps.diag_lookup.outputs.found == 'true' }}
-        run: |
-          set -euo pipefail
-          python <<'PY'
-          import datetime
-          from pathlib import Path
-          import textwrap
-
-          base = Path('public')
-          logs_dir = base / 'logs'
-          sources_dir = base / 'sources'
-          repo_dir = base / 'repo'
-          for path in (logs_dir, sources_dir, repo_dir):
-              path.mkdir(parents=True, exist_ok=True)
-
-          entries = []
-          for path in base.rglob('*'):
-              if not path.is_file():
-                  continue
-              if path.name in {'index.md', 'index.html'}:
-                  continue
-              entries.append(path.relative_to(base))
-
-          entries.sort()
-
-          repo = "${{ github.repository }}"
-          run_id = "${{ github.run_id }}"
-          attempt = "${{ github.run_attempt }}"
-          run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
-          timestamp = datetime.datetime.utcnow().isoformat(timespec='seconds') + 'Z'
-
-          index_md = base / 'index.md'
-          lines = [
-              '# Iterate diagnostics',
-              '',
-              f'- Repo: `{repo}`',
-              f'- Workflow run: [{run_id}]({run_url})',
-              f'- Run attempt: {attempt}',
-              f'- Generated: {timestamp}',
-              '',
-              '## Files',
-          ]
-
-          if entries:
-              for rel in entries:
-                  rel_path = rel.as_posix()
-                  lines.append(f'- [{rel_path}]({rel_path})')
-          else:
-              lines.append('- (no files captured)')
-
-          index_md.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-
-          html_lines = [
-              '<!doctype html>',
-              '<meta charset="utf-8">',
-              f'<title>Iterate diagnostics — run {run_id}</title>',
-              '<style>',
-              'body{font-family:ui-sans-serif,system-ui;line-height:1.5;margin:24px;}',
-              'code{font-family:ui-monospace,Consolas,monospace;}',
-              'a{color:#0366d6;}',
-              '</style>',
-              '<h1>Iterate diagnostics</h1>',
-              f'<p><strong>Repo:</strong> {repo}<br>',
-              f'<strong>Run:</strong> <a href="{run_url}">{run_id}</a> (attempt {attempt})<br>',
-              f'<strong>Generated:</strong> {timestamp}</p>',
-              '<p>See <a href="index.md">index.md</a> for a Markdown listing.</p>',
-          ]
-
-          if entries:
-              html_lines.append('<ul>')
-              for rel in entries:
-                  rel_path = rel.as_posix()
-                  html_lines.append(f'<li><a href="{rel_path}">{rel_path}</a></li>')
-              html_lines.append('</ul>')
-          else:
-              html_lines.append('<p>(no files captured)</p>')
-
-          (base / 'index.html').write_text('\n'.join(html_lines) + '\n', encoding='utf-8')
-          PY
-
-      - name: Ensure placeholder site bundle
-        run: |
-          set -euo pipefail
-          mkdir -p public
-          touch public/.nojekyll
-          python <<'PY'
-          from pathlib import Path
-          import textwrap
-
-          base = Path('public')
-          md = base / 'index.md'
-          html = base / 'index.html'
-
-          if not md.exists():
-              md.write_text(
-                  textwrap.dedent(
-                      """
-                      # Iterate diagnostics (placeholder)
-
-                      No iterate diagnostics artifact was available for this run.
-
-                      This file exists because the maintainers asked to "Always produce all artifacts/files that pages and other things depend on, even if blank." When data is present the earlier staging step will overwrite this placeholder.
-                      """
-                  ).lstrip("\n") + "\n",
-                  encoding='utf-8'
-              )
-
-          if not html.exists():
-              html.write_text(
-                  textwrap.dedent(
-                      """
-                      <!doctype html>
-                      <meta charset="utf-8">
-                      <title>Iterate diagnostics (placeholder)</title>
-                      <body><main><h1>Iterate diagnostics (placeholder)</h1><p>No iterate diagnostics artifact was available for this run. A placeholder bundle is published so downstream tooling always has the expected files.</p></main></body>
-                      """
-                  ).lstrip("\n") + "\n",
-                  encoding='utf-8'
-              )
-          PY
-
-      - uses: actions/configure-pages@v4
-        if: ${{ github.event_name != 'pull_request' }}
-
-      - name: Upload iterate Pages content
-        if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: public
-
-      - name: Deploy iterate diagnostics site
-        id: deploy
-        if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/deploy-pages@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload iterate diagnostics bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: iterate-pages-${{ github.run_id }}-${{ github.run_attempt }}
-          path: public
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Summarize iterate bundle
-        run: |
-          {
-            echo '### Iterate diagnostics bundle'
-            if [ "${{ github.event_name }}" = 'pull_request' ]; then
-              echo '- Deployment skipped for pull_request events (token lacks pages/id-token permissions).'
-            else
-              if [ -n "${{ steps.deploy.outputs.page_url }}" ]; then
-                echo "- Deployed site: ${{ steps.deploy.outputs.page_url }}"
-              else
-                echo '- Deployed site: (actions/deploy-pages did not return a URL)'
-              fi
-            fi
-            echo "- Artifact: iterate-pages-${{ github.run_id }}-${{ github.run_attempt }}"
-            if [ '${{ steps.diag_lookup.outputs.found }}' = 'true' ]; then
-              echo '- iterate-diag-* artifact: found and staged into public/'
-            else
-              echo '- iterate-diag-* artifact: not found; placeholder bundle only.'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
