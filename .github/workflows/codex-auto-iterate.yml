@@ -702,17 +702,52 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Stage iterate diagnostics artifact
+        id: diag_stage
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/iterate-diag"
+          rm -rf "$out"
+          mkdir -p "$out"
+
+          # Professional note: instructions require "Always produce all artifacts/files that pages and other things depend on, even if blank."
+          # We seed a placeholder so downstream jobs (publish_diag + iterate deploy) always see an artifact, even when Codex produced no files.
+          placeholder="$out/README.txt"
+          {
+            printf 'Iterate diagnostics placeholder\n\n'
+            printf 'This file exists because the iterate job had no diagnostics payload to export.\n'
+            printf 'Downstream automation expects an iterate-diag-* artifact every run per maintainer instructions.\n'
+          } >"$placeholder"
+
+          found=0
+          candidates=(
+            "$RUNNER_TEMP/auth_body.json"
+            "$RUNNER_TEMP/llm_req.json"
+            "$RUNNER_TEMP/llm_res.json"
+            "$RUNNER_TEMP/llm_content.txt"
+            "$RUNNER_TEMP/patch.diff"
+            "$RUNNER_TEMP/prompt.txt"
+          )
+
+          for candidate in "${candidates[@]}"; do
+            [ -n "$candidate" ] || continue
+            if [ -f "$candidate" ]; then
+              cp "$candidate" "$out/"
+              found=1
+            fi
+          done
+
+          if [ "$found" -eq 1 ]; then
+            rm -f "$placeholder"
+          fi
+
+          printf 'dir=%s\n' "$out" >> "$GITHUB_OUTPUT"
+
       - name: Upload diagnostics
         uses: actions/upload-artifact@v4
         with:
           name: iterate-diag-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            $RUNNER_TEMP/auth_body.json
-            $RUNNER_TEMP/llm_req.json
-            $RUNNER_TEMP/llm_res.json
-            $RUNNER_TEMP/llm_content.txt
-            $RUNNER_TEMP/patch.diff
-            $RUNNER_TEMP/prompt.txt
+          path: ${{ steps.diag_stage.outputs.dir }}
           if-no-files-found: warn
           retention-days: 14
 
@@ -925,6 +960,8 @@ jobs:
     needs: iterate
     if: ${{ always() }}
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
     permissions:
       contents: read
       actions: read
