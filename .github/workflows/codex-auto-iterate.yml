@@ -12,6 +12,8 @@ on:
 permissions:
   actions: write
   contents: write
+  pages: write
+  id-token: write
   pull-requests: write
 
 defaults:
@@ -1061,3 +1063,489 @@ jobs:
         if: ${{ always() }}
         run: echo "::notice title=iterate::Job completed - forcing neutral so logs persist"
 
+
+  publish_diag:
+    name: Publish diagnostics to Pages
+    needs: [iterate]
+    if: ${{ always() }}
+    runs-on: windows-latest
+    environment:
+      name: github-pages
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prep site directories
+        id: prep
+        shell: pwsh
+        run: |
+          $RunId = "${{ github.run_id }}"
+          $Attempt = "${{ github.run_attempt }}"
+          $SiteRoot = Join-Path $PWD 'site'
+          if (Test-Path $SiteRoot) { Remove-Item -Recurse -Force $SiteRoot }
+          New-Item -ItemType Directory -Path $SiteRoot | Out-Null
+          $DiagRoot = Join-Path $SiteRoot 'diag'
+          New-Item -ItemType Directory -Path $DiagRoot | Out-Null
+          $Diag = Join-Path $DiagRoot "$RunId-$Attempt"
+          New-Item -ItemType Directory -Path $Diag | Out-Null
+          $Artifacts = Join-Path $Diag '_artifacts'
+          New-Item -ItemType Directory -Path $Artifacts | Out-Null
+          echo "SITE=$SiteRoot" >> $env:GITHUB_OUTPUT
+          echo "DIAG=$Diag" >> $env:GITHUB_OUTPUT
+          echo "ARTIFACTS=$Artifacts" >> $env:GITHUB_OUTPUT
+
+      - name: Download iterate artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.prep.outputs.ARTIFACTS }}\iterate
+
+      - name: Fetch batch-check artifacts
+        id: fetch_batch
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ArtifactsRoot = "${{ steps.prep.outputs.ARTIFACTS }}"
+          $BatchRoot = Join-Path $ArtifactsRoot 'batch-check'
+          New-Item -ItemType Directory -Path $BatchRoot -Force | Out-Null
+          $statusPath = Join-Path $BatchRoot 'STATUS.txt'
+
+          $repoParts = "${{ github.repository }}".Split('/')
+          if ($repoParts.Count -ne 2) {
+            'repository parsing failed' | Set-Content -Encoding UTF8 $statusPath
+            return
+          }
+
+          if (-not $env:GH_TOKEN) {
+            'GH_TOKEN unavailable; batch-check artifacts skipped.' | Set-Content -Encoding UTF8 $statusPath
+            return
+          }
+
+          $owner = $repoParts[0]
+          $repo  = $repoParts[1]
+          $base = "https://api.github.com/repos/$owner/$repo"
+          $headers = @{
+            Accept      = 'application/vnd.github+json'
+            Authorization = "Bearer $env:GH_TOKEN"
+            'User-Agent' = 'iterate-publish'
+          }
+
+          try {
+            $workflow = Invoke-RestMethod -Uri "$base/actions/workflows/.github/workflows/batch-check.yml" -Headers $headers -ErrorAction Stop
+          } catch {
+            "workflow lookup failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
+            return
+          }
+
+          if (-not $workflow.id) {
+            'workflow id missing' | Set-Content -Encoding UTF8 $statusPath
+            return
+          }
+
+          $pollSeconds = 20
+          $deadline = [DateTime]::UtcNow.AddMinutes(15)
+          $run = $null
+          while ([DateTime]::UtcNow -lt $deadline) {
+            try {
+              $runs = Invoke-RestMethod -Uri "$base/actions/workflows/$($workflow.id)/runs?per_page=20&head_sha=${{ github.sha }}" -Headers $headers -ErrorAction Stop
+            } catch {
+              "list runs failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
+              return
+            }
+
+            $candidates = @($runs.workflow_runs | ForEach-Object { $_ }) | Where-Object { $_ -and $_.status -eq 'completed' }
+            if ($candidates.Count -gt 0) {
+              $run = $candidates | Sort-Object run_attempt -Descending | Select-Object -First 1
+              break
+            }
+
+            Start-Sleep -Seconds $pollSeconds
+          }
+
+          if (-not $run) {
+            'no completed run found before timeout' | Set-Content -Encoding UTF8 $statusPath
+            return
+          }
+
+          $meta = [ordered]@{
+            workflow_id = $workflow.id
+            run_id = $run.id
+            run_attempt = $run.run_attempt
+            status = $run.status
+            conclusion = $run.conclusion
+            html_url = $run.html_url
+          }
+          $meta | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 (Join-Path $BatchRoot 'run.json')
+          "run_id=$($run.id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          "run_attempt=$($run.run_attempt)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          if ($run.html_url) {
+            "run_url=$($run.html_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          }
+
+          try {
+            $artifacts = Invoke-RestMethod -Uri "$base/actions/runs/$($run.id)/artifacts?per_page=100" -Headers $headers -ErrorAction Stop
+          } catch {
+            "artifact list failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
+            return
+          }
+
+          if (-not $artifacts.artifacts) {
+            'no artifacts published by batch-check' | Set-Content -Encoding UTF8 $statusPath
+            return
+          }
+
+          Remove-Item -LiteralPath $statusPath -ErrorAction SilentlyContinue
+
+          foreach ($artifact in $artifacts.artifacts) {
+            if (-not $artifact -or $artifact.expired) { continue }
+            $safeName = ($artifact.name -replace '[^A-Za-z0-9_.-]', '_')
+            $dest = Join-Path $BatchRoot $safeName
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            $zipPath = Join-Path $env:RUNNER_TEMP ("batch-" + $artifact.id + '.zip')
+            try {
+              Invoke-WebRequest -Uri $artifact.archive_download_url -Headers $headers -OutFile $zipPath -ErrorAction Stop
+              Expand-Archive -LiteralPath $zipPath -DestinationPath $dest -Force
+            } catch {
+              "download failed: $($artifact.name) -> $($_.Exception.Message)" | Out-File -Append -Encoding UTF8 $statusPath
+            } finally {
+              Remove-Item -LiteralPath $zipPath -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Download workflow logs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $Diag = "${{ steps.prep.outputs.DIAG }}"
+          $repoParts = "${{ github.repository }}".Split('/')
+          if ($repoParts.Count -ne 2) { return }
+          if (-not $env:GH_TOKEN) {
+            'GH_TOKEN unavailable; workflow logs skipped.' | Set-Content -Encoding UTF8 (Join-Path $Diag 'logs-note.txt')
+            return
+          }
+
+          $owner = $repoParts[0]
+          $repo  = $repoParts[1]
+          $headers = @{
+            Accept      = 'application/vnd.github+json'
+            Authorization = "Bearer $env:GH_TOKEN"
+            'User-Agent' = 'iterate-publish'
+          }
+
+          $logDir = Join-Path $Diag 'logs'
+          New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+
+          $iterateZip = Join-Path $logDir ("iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip")
+          try {
+            Invoke-WebRequest -Uri "https://api.github.com/repos/$owner/$repo/actions/runs/${{ github.run_id }}/logs" -Headers $headers -OutFile $iterateZip -ErrorAction Stop
+          } catch {
+            "iterate log download failed: $($_.Exception.Message)" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'iterate-log-error.txt')
+          }
+
+          $batchRunId = "${{ steps.fetch_batch.outputs.run_id }}"
+          if ($batchRunId) {
+            $batchAttempt = "${{ steps.fetch_batch.outputs.run_attempt }}"
+            if (-not $batchAttempt) { $batchAttempt = '1' }
+            $batchZip = Join-Path $logDir ("batch-check-$batchRunId-$batchAttempt.zip")
+            try {
+              Invoke-WebRequest -Uri "https://api.github.com/repos/$owner/$repo/actions/runs/$batchRunId/logs" -Headers $headers -OutFile $batchZip -ErrorAction Stop
+            } catch {
+              "batch-check log download failed: $($_.Exception.Message)" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'batch-check-log-error.txt')
+            }
+          }
+
+      - name: Capture repository snapshot
+        shell: pwsh
+        run: |
+          $Diag = "${{ steps.prep.outputs.DIAG }}"
+          git ls-tree -r --name-only HEAD | Set-Content -Encoding UTF8 (Join-Path $Diag 'repo-tree.txt')
+          $repoZip = Join-Path $Diag 'repo.zip'
+          $items = Get-ChildItem -Force | Where-Object { $_.Name -notin '.git', 'site' }
+          if ($items) {
+            Compress-Archive -Path ($items | ForEach-Object { $_.FullName }) -DestinationPath $repoZip -Force
+          }
+          Get-ChildItem Env: | Sort-Object Name | ForEach-Object {
+            if ($_.Name -notmatch 'TOKEN|SECRET|KEY|PASSWORD|COOKIE') {
+              '{0}={1}' -f $_.Name, $_.Value
+            }
+          } | Set-Content -Encoding UTF8 (Join-Path $Diag 'env.txt')
+          if (Test-Path '.github\workflows') {
+            $wfDest = Join-Path $Diag '.github\workflows'
+            New-Item -ItemType Directory -Path $wfDest -Force | Out-Null
+            Copy-Item -Recurse -Force '.github\workflows\*' $wfDest
+          }
+
+      - name: Inventory collected files
+        id: inventory
+        shell: pwsh
+        run: |
+          $Diag = "${{ steps.prep.outputs.DIAG }}"
+          $items = Get-ChildItem -Path $Diag -Recurse -File -Force -ErrorAction SilentlyContinue
+          $bulletLines = [System.Collections.Generic.List[string]]::new()
+          $plainLines = [System.Collections.Generic.List[string]]::new()
+          $htmlLines = [System.Collections.Generic.List[string]]::new()
+          foreach ($seed in @('<!doctype html>', '<meta charset="utf-8">', '<title>Artifact inventory</title>', '<body><main><h1>Artifact inventory</h1><ul>')) {
+            $null = $htmlLines.Add($seed)
+          }
+
+          foreach ($item in $items | Sort-Object FullName) {
+            $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\\','/')
+            $size = '{0:N0}' -f $item.Length
+            $safe = $relative -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;' -replace '"', '&quot;'
+            $null = $bulletLines.Add(('- {0} bytes - `{1}`' -f $size, $relative))
+            $null = $plainLines.Add(('{0} bytes{1}{2}' -f $size, [char]9, $relative))
+            $null = $htmlLines.Add("<li><code>$safe</code> <span>($size bytes)</span></li>")
+          }
+
+          if ($bulletLines.Count -eq 0) {
+            $null = $bulletLines.Add('- (no files captured)')
+            $null = $plainLines.Add('no files captured')
+            $null = $htmlLines.Add('<li>(no files captured)</li>')
+          }
+
+          $null = $htmlLines.Add('</ul></main></body>')
+
+          $joined = $bulletLines.ToArray() -join "`n"
+          $joined | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.md')
+          ($plainLines.ToArray() -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.txt')
+          ($htmlLines.ToArray() -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.html')
+          [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($joined)) | ForEach-Object {
+            "inventory_b64=$_" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          }
+
+      - name: Write diagnostics index
+        shell: pwsh
+        run: |
+          $Diag   = "${{ steps.prep.outputs.DIAG }}"
+          $Artifacts = "${{ steps.prep.outputs.ARTIFACTS }}"
+          $Repo   = "${{ github.repository }}"
+          $SHA    = "${{ github.sha }}"
+          $Run    = "${{ github.run_id }}"
+          $Att    = "${{ github.run_attempt }}"
+          $UTC    = [DateTime]::UtcNow.ToString('o')
+          $CT     = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, 'Central Standard Time').ToString('o')
+          $RunUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          function Get-FirstDir([string]$root) {
+            if (-not (Test-Path $root)) { return $null }
+            return Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+
+          $iterateDir = Get-FirstDir (Join-Path $Artifacts 'iterate')
+
+          function Read-Value($dir, $name) {
+            if (-not $dir) { return 'n/a' }
+            $path = Join-Path $dir $name
+            if (Test-Path $path) {
+              return (Get-Content -Raw -LiteralPath $path).Trim()
+            }
+            return 'n/a'
+          }
+
+          $decision   = Read-Value $iterateDir 'decision.txt'
+          $model      = Read-Value $iterateDir 'model.txt'
+          $endpoint   = Read-Value $iterateDir 'endpoint.txt'
+          $httpStatus = Read-Value $iterateDir 'http_status.txt'
+          $tokens     = @{}
+          $tokens['prompt']     = 'n/a'
+          $tokens['completion'] = 'n/a'
+          $tokens['total']      = 'n/a'
+          if ($iterateDir) {
+            $tokensPath = Join-Path $iterateDir 'tokens.txt'
+            if (Test-Path $tokensPath) {
+              foreach ($line in Get-Content -LiteralPath $tokensPath) {
+                if ($line -match '^(?<k>[^=]+)=(?<v>.*)$') {
+                  $tokens[$matches['k']] = $matches['v']
+                }
+              }
+            }
+          }
+
+          $ndjsonSummaries = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue
+
+          $lines = @(
+            '# CI Diagnostics',
+            "Repo: $Repo",
+            "Commit: $SHA",
+            "Run: $Run (attempt $Att)",
+            "Built (UTC): $UTC",
+            "Built (CT): $CT",
+            "Run page: $RunUrl",
+            '',
+            '## Iterate metadata',
+            "- Decision: $decision",
+            "- HTTP status: $httpStatus",
+            "- Model: $model",
+            "- Endpoint: $endpoint",
+            "- Tokens: prompt=$($tokens['prompt']) completion=$($tokens['completion']) total=$($tokens['total'])"
+          )
+
+          if ($iterateDir) {
+            $iterFiles = Get-ChildItem -Path $iterateDir -File -ErrorAction SilentlyContinue
+            if ($iterFiles) {
+              $lines += ''
+              $lines += '### Iterate files'
+              foreach ($file in $iterFiles) {
+                $rel = $file.FullName.Substring($Diag.Length + 1).Replace('\\','/')
+                $lines += "- `$rel`"
+              }
+            }
+          }
+
+          $batchRunMeta = Join-Path (Join-Path $Artifacts 'batch-check') 'run.json'
+          if (Test-Path $batchRunMeta) {
+            try {
+              $meta = Get-Content -Raw -LiteralPath $batchRunMeta | ConvertFrom-Json
+              $lines += ''
+              $lines += '## Batch-check run'
+              $lines += "- Run id: $($meta.run_id) (attempt $($meta.run_attempt))"
+              $lines += "- Status: $($meta.status) / $($meta.conclusion)"
+              if ($meta.html_url) { $lines += "- Run page: $($meta.html_url)" }
+            } catch {}
+          }
+
+          if ($ndjsonSummaries) {
+            $lines += ''
+            $lines += '## NDJSON summaries'
+            foreach ($file in $ndjsonSummaries) {
+              $rel = $file.FullName.Substring($Diag.Length + 1).Replace('\\','/')
+              $lines += "### $rel"
+              $lines += '```text'
+              $lines += (Get-Content -LiteralPath $file.FullName)
+              $lines += '```'
+            }
+          }
+
+          $inventoryB64 = "${{ steps.inventory.outputs.inventory_b64 }}"
+          if ($inventoryB64) {
+            try {
+              $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($inventoryB64))
+              if ($decoded) {
+                $lines += ''
+                $lines += '## Inventory'
+                $lines += $decoded.Split("`n")
+              }
+            } catch {}
+          }
+
+          $markdown = $lines -join "`n"
+          $markdown | Set-Content -Encoding UTF8 -NoNewline (Join-Path $Diag 'index.md')
+          $encoded = $markdown -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+          $html = @(
+            '<!doctype html>',
+            '<meta charset="utf-8">',
+            '<title>CI Diagnostics</title>',
+            '<pre>',
+            $encoded,
+            '</pre>'
+          )
+          ($html -join "`n") | Set-Content -Encoding UTF8 -NoNewline (Join-Path $Diag 'index.html')
+
+      - name: Write site overview
+        shell: pwsh
+        run: |
+          $Site = "${{ steps.prep.outputs.SITE }}"
+          $Diag = "${{ steps.prep.outputs.DIAG }}"
+          $Artifacts = "${{ steps.prep.outputs.ARTIFACTS }}"
+          $Run  = "${{ github.run_id }}"
+          $Att  = "${{ github.run_attempt }}"
+          $Repo = "${{ github.repository }}"
+          $SHA  = "${{ github.sha }}"
+          $RunUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          $bundle = "diag/$Run-$Att/"
+
+          function Get-FirstDir([string]$root) {
+            if (-not (Test-Path $root)) { return $null }
+            return Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+
+          $iterateDir = Get-FirstDir (Join-Path $Artifacts 'iterate')
+          $decision = 'n/a'
+          $httpStatus = 'n/a'
+          if ($iterateDir) {
+            $decisionPath = Join-Path $iterateDir 'decision.txt'
+            if (Test-Path $decisionPath) { $decision = (Get-Content -Raw -LiteralPath $decisionPath).Trim() }
+            $statusPath = Join-Path $iterateDir 'http_status.txt'
+            if (Test-Path $statusPath) { $httpStatus = (Get-Content -Raw -LiteralPath $statusPath).Trim() }
+          }
+
+          $ndjsonSummary = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          $summaryPreview = @()
+          if ($ndjsonSummary) {
+            $summaryPreview += '```text'
+            $summaryPreview += (Get-Content -LiteralPath $ndjsonSummary.FullName)
+            $summaryPreview += '```'
+          }
+
+          $lines = @(
+            '# Diagnostics overview',
+            '',
+            "Latest run: [$Run (attempt $Att)]($bundle)",
+            '',
+            '## Metadata',
+            "- Repo: $Repo",
+            "- Commit: $SHA",
+            "- Run page: $RunUrl",
+            "- Iterate decision: $decision",
+            "- Iterate HTTP status: $httpStatus"
+          )
+
+          if ($summaryPreview.Count -gt 0) {
+            $lines += ''
+            $lines += '## NDJSON summary (first bundle)'
+            $lines += $summaryPreview
+          }
+
+          $lines += ''
+          $lines += 'Artifacts from the self-test workflow and iterate job are merged under the bundle directory above.'
+
+          ($lines -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Site 'index.md')
+          $html = @(
+            '<!doctype html>',
+            '<meta charset="utf-8">',
+            '<title>Diagnostics overview</title>',
+            '<pre>',
+            ($lines -join "`n") -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;',
+            '</pre>'
+          )
+          ($html -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Site 'index.html')
+
+      - name: Append job summary
+        shell: pwsh
+        run: |
+          $Run = "${{ github.run_id }}"
+          $Att = "${{ github.run_attempt }}"
+          $ownerRepo = "${{ github.repository }}"
+          $parts = $ownerRepo.Split('/')
+          if ($parts.Count -eq 2) {
+            $bundle = "https://$($parts[0]).github.io/$($parts[1])/diag/$Run-$Att/"
+            "### Diagnostics bundle" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            "- [$bundle]($bundle)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+
+      - uses: actions/configure-pages@v4
+        if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Upload Pages artifact
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.prep.outputs.SITE }}
+
+      - name: Deploy to GitHub Pages
+        if: ${{ github.event_name != 'pull_request' }}
+        id: deploy
+        uses: actions/deploy-pages@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
