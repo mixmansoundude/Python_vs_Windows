@@ -1079,13 +1079,14 @@ jobs:
             $fail = ($rows | Select-String '"pass":\s*false').Count
             $hasConda = ($rows | Select-String '"id":"conda.url"').Count
             $hasEnv   = ($rows | Select-String '"id":"env.mode"').Count
-            @"
-rows: $($rows.Count)
-pass: $pass
-fail: $fail
-has_conda_url: $hasConda
-has_env_mode: $hasEnv
-"@ | Out-File -Encoding utf8 'diag/ndjson_summary.txt'
+            $content = @(
+              "rows: $($rows.Count)"
+              "pass: $pass"
+              "fail: $fail"
+              "has_conda_url: $hasConda"
+              "has_env_mode: $hasEnv"
+            )
+            $content | Out-File -Encoding utf8 'diag/ndjson_summary.txt'
             Write-Host 'NDJSON summary written to diag/ndjson_summary.txt'
           } else {
             'missing' | Out-File -Encoding utf8 'diag/ndjson_summary.txt'
@@ -1370,24 +1371,44 @@ has_env_mode: $hasEnv
             return
           }
 
-          $runsUri = "$base/actions/workflows/$($workflow.id)/runs?per_page=20&head_sha=${{ github.sha }}"
-          try {
-            $runs = Invoke-RestMethod -Uri $runsUri -Headers $headers -ErrorAction Stop
-          } catch {
-            Write-Warning "Failed to list iterate runs: $($_.Exception.Message)"
-            return
-          }
-
+          # Professional note: the iterate workflow runs on a separate runner and can finish minutes after the self-tests.
+          # Poll for its completion so we do not publish a diagnostics bundle without iterate data (see review feedback).
+          $pollSeconds = 15
+          $timeoutSeconds = 900
+          $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSeconds)
           $run = $null
-          foreach ($candidate in $runs.workflow_runs) {
-            if ($candidate.status -eq 'completed') {
-              $run = $candidate
-              break
+          $attempt = 0
+
+          while (-not $run -and [DateTime]::UtcNow -lt $deadline) {
+            $attempt += 1
+            $runsUri = "$base/actions/workflows/$($workflow.id)/runs?per_page=20&head_sha=${{ github.sha }}"
+            try {
+              $runs = Invoke-RestMethod -Uri $runsUri -Headers $headers -ErrorAction Stop
+            } catch {
+              Write-Warning "Failed to list iterate runs: $($_.Exception.Message)"
+              return
+            }
+
+            foreach ($candidate in ($runs.workflow_runs | ForEach-Object { $_ })) {
+              if ($candidate -and $candidate.status -eq 'completed') {
+                $run = $candidate
+                break
+              }
+            }
+
+            if (-not $run) {
+              $remaining = [Math]::Max(0, [int][Math]::Ceiling(($deadline - [DateTime]::UtcNow).TotalSeconds))
+              Write-Host ("Attempt {0}: iterate workflow has not completed yet; sleeping {1}s (time left {2}s)." -f $attempt, $pollSeconds, $remaining)
+              if ($remaining -le 0) {
+                break
+              }
+              $sleep = [Math]::Min($pollSeconds, $remaining)
+              Start-Sleep -Seconds $sleep
             }
           }
 
           if (-not $run) {
-            Write-Host 'No completed iterate workflow run found for this SHA.'
+            Write-Warning 'Timed out waiting for iterate workflow run to complete; continuing without iterate artifact.'
             return
           }
 
