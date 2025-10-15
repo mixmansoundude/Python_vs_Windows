@@ -1206,7 +1206,7 @@ jobs:
     needs:
       - selftest
       - selftest-gate
-    if: always()
+    if: ${{ always() && github.event_name != 'pull_request' }}
     environment:
       name: github-pages
     permissions:
@@ -1223,9 +1223,16 @@ jobs:
         run: |
           $RunId = "${{ github.run_id }}"
           $Attempt = "${{ github.run_attempt }}"
-          $Diag = "diag/$RunId-$Attempt"
-          New-Item -ItemType Directory -Path $Diag | Out-Null
+          $Site = 'site'
+          New-Item -ItemType Directory -Path $Site -Force | Out-Null
+          $DiagRoot = Join-Path $Site 'diag'
+          New-Item -ItemType Directory -Path $DiagRoot -Force | Out-Null
+          $Diag = Join-Path $DiagRoot "$RunId-$Attempt"
+          New-Item -ItemType Directory -Path $Diag -Force | Out-Null
+          $Subdir = "diag/$RunId-$Attempt"
           echo "DIAG=$Diag" >> $env:GITHUB_OUTPUT
+          echo "SITE=$Site" >> $env:GITHUB_OUTPUT
+          echo "SUBDIR=$Subdir" >> $env:GITHUB_OUTPUT
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -1269,6 +1276,31 @@ jobs:
           )
           ($lines -join "`n") | Set-Content -Path (Join-Path $Diag 'index.md') -NoNewline
 
+      - name: Write site index
+        shell: pwsh
+        run: |
+          $Site   = "${{ steps.prep.outputs.SITE }}"
+          $Subdir = "${{ steps.prep.outputs.SUBDIR }}"
+          $Repo   = "${{ github.repository }}"
+          $SHA    = "${{ github.sha }}"
+          $Run    = "${{ github.run_id }}"
+          $Att    = "${{ github.run_attempt }}"
+          $RunUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          $Relative = $Subdir -replace '\\', '/'
+          $lines = @(
+            '# Diagnostics overview',
+            '',
+            "Latest run: [$Run (attempt $Att)]($Relative/)",
+            '',
+            '## Metadata',
+            "- Repo: $Repo",
+            "- Commit: $SHA",
+            "- Run page: $RunUrl",
+            '',
+            'This site refreshes on each deployment, preserving the latest diagnostics bundle only.'
+          )
+          ($lines -join "`n") | Set-Content -Path (Join-Path $Site 'index.md') -NoNewline
+
       - name: Add env + workflow files
         shell: pwsh
         run: |
@@ -1292,7 +1324,7 @@ jobs:
       - name: Upload Pages content
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ${{ steps.prep.outputs.DIAG }}
+          path: ${{ steps.prep.outputs.SITE }}
 
       - name: Deploy to GitHub Pages
         id: deployment
