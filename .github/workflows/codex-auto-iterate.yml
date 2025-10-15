@@ -13,6 +13,14 @@ permissions:
   id-token: write
   pull-requests: write
 
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: codex-iterate-${{ github.sha }}
+  cancel-in-progress: true
+
 env:
   ITERATION_CAP: '4'
   MINI_PROBE_MODEL: gpt-4o-mini
