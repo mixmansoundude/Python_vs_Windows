@@ -1415,9 +1415,15 @@ jobs:
               $meta = Get-Content -Raw -LiteralPath $batchRunMeta | ConvertFrom-Json
               $null = $lines.Add('')
               $null = $lines.Add('## Batch-check run')
-              $null = $lines.Add("- Run id: $($meta.run_id) (attempt $($meta.run_attempt))")
-              $null = $lines.Add("- Status: $($meta.status) / $($meta.conclusion)")
-              if ($meta.html_url) { $null = $lines.Add("- Run page: $($meta.html_url)") }
+              # NOTE: Pre-format hyphen-prefixed rows so hosted PowerShell never tokenizes the dash as a unary minus.
+              $runLine = [string]::Format('- Run id: {0} (attempt {1})', $meta.run_id, $meta.run_attempt)
+              $statusLine = [string]::Format('- Status: {0} / {1}', $meta.status, $meta.conclusion)
+              $null = $lines.Add($runLine)
+              $null = $lines.Add($statusLine)
+              if ($meta.html_url) {
+                $runPageLine = [string]::Format('- Run page: {0}', $meta.html_url)
+                $null = $lines.Add($runPageLine)
+              }
             } catch {}
           }
 

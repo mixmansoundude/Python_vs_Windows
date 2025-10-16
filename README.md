@@ -173,7 +173,41 @@ Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` w
 
 ## How CI decides pass/fail
 
-See [docs/ci_contract.md](docs/ci_contract.md) for the GitHub Actions contract covering the bootstrap status JSON, dynamic test skip rules, summary layout, and archived artifacts.
+### Bootstrap status JSON
+- CI enforces the `run_setup.bat` status contract described above: every run writes `~bootstrap.status.json` (ASCII) with `state`, `exitCode`, and `pyFiles` fields.
+- `state` is one of `ok`, `no_python_files`, or `error`; `exitCode` mirrors the batch exit code; `pyFiles` records how many `.py` files were detected before bootstrapping.
+- When tightening CI parsing or changing the bootstrap log text, update both sides together so the JSON and logs stay in sync.
+
+### Dynamic test rules
+- The dynamic test step reads `~bootstrap.status.json` before running optional tests.
+- `state == "no_python_files"` skips the dynamic tests and logs `SKIPPED: no_python_files` while exiting 0.
+- `state == "ok"` searches for `tests/dynamic_tests.bat` or `tests/dynamic_tests.py` and runs whichever exists; missing runners count as skips, not failures.
+- `state == "error"` or a missing/invalid status file surfaces the bootstrap logs and fails immediately.
+
+### Summary layout
+The GitHub Actions job summary always lists information in this order:
+1. Bootstrap status one-liner.
+2. `Bootstrap (tail)` code block (last ~120 lines of `bootstrap.log`).
+3. Dynamic test note (skip or run) followed by `Dynamic tests (tail)`.
+4. Static test PASS/FAIL counts and a short code block from `tests/~test-summary.txt`.
+5. First three non-comment lines from `tests/extracted/~prep_requirements.py` and `tests/extracted/~detect_python.py`.
+6. Machine-readable first failure JSON and a matching snippet when any static check fails.
+
+### Artifacts
+The workflow uploads a single artifact bundle named `test-logs` containing:
+- `bootstrap.log` – full bootstrap transcript.
+- `~setup.log` – rolling setup log from the batch.
+- `tests/~dynamic-run.log` – canonical dynamic test status line.
+- `tests/~test-summary.txt` – condensed static harness output.
+- `tests/~test-results.ndjson` – machine-readable check results.
+- `tests/extracted/**` – helper scripts decoded from the bootstrapper for inspection.
+
+### Green on empty repositories
+A branch with zero Python files still counts as healthy when:
+- `~bootstrap.status.json` reports `state=no_python_files`, `exitCode=0`, and `pyFiles=0`.
+- Dynamic tests log `SKIPPED: no_python_files` and exit 0.
+- Static checks succeed (PASS count equals total checks, FAIL 0).
+- `tests/selftests.ps1` confirms the bootstrap log still prints `Python file count: 0` and `No Python files detected; skipping environment bootstrap.` so CI never relies on exit-code remapping to spot regressions.
 
 ---
 
