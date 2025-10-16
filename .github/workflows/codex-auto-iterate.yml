@@ -1374,31 +1374,37 @@ jobs:
 
           $ndjsonSummaries = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue
 
-          $lines = @(
-            '# CI Diagnostics',
-            "Repo: $Repo",
-            "Commit: $SHA",
-            "Run: $Run (attempt $Att)",
-            "Built (UTC): $UTC",
-            "Built (CT): $CT",
-            "Run page: $RunUrl",
-            '',
-            '## Iterate metadata',
-            "- Decision: $decision",
-            "- HTTP status: $httpStatus",
-            "- Model: $model",
-            "- Endpoint: $endpoint",
-            "- Tokens: prompt=$($tokens['prompt']) completion=$($tokens['completion']) total=$($tokens['total'])"
-          )
+          # NOTE: Using a typed list ensures strings that begin with '-' are stored verbatim.
+          # The hosted runners mis-parsed array += assignments that started with hyphens and
+          # aborted the diagnostics step, so we append via List.Add to keep the bundle intact.
+          $lines = [System.Collections.Generic.List[string]]::new()
+          foreach ($seed in @(
+              '# CI Diagnostics',
+              "Repo: $Repo",
+              "Commit: $SHA",
+              "Run: $Run (attempt $Att)",
+              "Built (UTC): $UTC",
+              "Built (CT): $CT",
+              "Run page: $RunUrl",
+              '',
+              '## Iterate metadata',
+              "- Decision: $decision",
+              "- HTTP status: $httpStatus",
+              "- Model: $model",
+              "- Endpoint: $endpoint",
+              "- Tokens: prompt=$($tokens['prompt']) completion=$($tokens['completion']) total=$($tokens['total'])"
+            )) {
+            $null = $lines.Add($seed)
+          }
 
           if ($iterateDir) {
             $iterFiles = Get-ChildItem -Path $iterateDir -File -ErrorAction SilentlyContinue
             if ($iterFiles) {
-              $lines += ''
-              $lines += '### Iterate files'
+              $null = $lines.Add('')
+              $null = $lines.Add('### Iterate files')
               foreach ($file in $iterFiles) {
                 $rel = $file.FullName.Substring($Diag.Length + 1).Replace('\\','/')
-                $lines += "- `$rel`"
+                $null = $lines.Add("- `$rel`")
               }
             }
           }
@@ -1407,23 +1413,25 @@ jobs:
           if (Test-Path $batchRunMeta) {
             try {
               $meta = Get-Content -Raw -LiteralPath $batchRunMeta | ConvertFrom-Json
-              $lines += ''
-              $lines += '## Batch-check run'
-              $lines += "- Run id: $($meta.run_id) (attempt $($meta.run_attempt))"
-              $lines += "- Status: $($meta.status) / $($meta.conclusion)"
-              if ($meta.html_url) { $lines += "- Run page: $($meta.html_url)" }
+              $null = $lines.Add('')
+              $null = $lines.Add('## Batch-check run')
+              $null = $lines.Add("- Run id: $($meta.run_id) (attempt $($meta.run_attempt))")
+              $null = $lines.Add("- Status: $($meta.status) / $($meta.conclusion)")
+              if ($meta.html_url) { $null = $lines.Add("- Run page: $($meta.html_url)") }
             } catch {}
           }
 
           if ($ndjsonSummaries) {
-            $lines += ''
-            $lines += '## NDJSON summaries'
+            $null = $lines.Add('')
+            $null = $lines.Add('## NDJSON summaries')
             foreach ($file in $ndjsonSummaries) {
               $rel = $file.FullName.Substring($Diag.Length + 1).Replace('\\','/')
-              $lines += "### $rel"
-              $lines += '```text'
-              $lines += (Get-Content -LiteralPath $file.FullName)
-              $lines += '```'
+              $null = $lines.Add("### $rel")
+              $null = $lines.Add('```text')
+              foreach ($segment in Get-Content -LiteralPath $file.FullName) {
+                $null = $lines.Add($segment)
+              }
+              $null = $lines.Add('```')
             }
           }
 
@@ -1432,14 +1440,16 @@ jobs:
             try {
               $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($inventoryB64))
               if ($decoded) {
-                $lines += ''
-                $lines += '## Inventory'
-                $lines += $decoded.Split("`n")
+                $null = $lines.Add('')
+                $null = $lines.Add('## Inventory')
+                foreach ($entry in $decoded.Split("`n")) {
+                  $null = $lines.Add($entry)
+                }
               }
             } catch {}
           }
 
-          $markdown = $lines -join "`n"
+          $markdown = $lines.ToArray() -join "`n"
           $markdown | Set-Content -Encoding UTF8 -NoNewline (Join-Path $Diag 'index.md')
           $encoded = $markdown -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
           $html = @(
