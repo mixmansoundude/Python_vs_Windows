@@ -1097,9 +1097,15 @@ jobs:
           New-Item -ItemType Directory -Path $Diag | Out-Null
           $Artifacts = Join-Path $Diag '_artifacts'
           New-Item -ItemType Directory -Path $Artifacts | Out-Null
+          # Professional note: .nojekyll keeps GitHub Pages from stripping the leading underscore
+          # directories that we rely on to surface raw diagnostics.
+          New-Item -ItemType File -Path (Join-Path $SiteRoot '.nojekyll') -Force | Out-Null
+          $short = "${{ github.sha }}"
+          if ($short.Length -gt 7) { $short = $short.Substring(0,7) }
           echo "SITE=$SiteRoot" >> $env:GITHUB_OUTPUT
           echo "DIAG=$Diag" >> $env:GITHUB_OUTPUT
           echo "ARTIFACTS=$Artifacts" >> $env:GITHUB_OUTPUT
+          echo "SHORTSHA=$short" >> $env:GITHUB_OUTPUT
 
       - name: Download iterate artifacts
         if: ${{ always() }}
@@ -1108,6 +1114,21 @@ jobs:
         with:
           name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prep.outputs.ARTIFACTS }}\iterate
+
+      - name: Record iterate artifact status
+        shell: pwsh
+        run: |
+          $Artifacts = "${{ steps.prep.outputs.ARTIFACTS }}"
+          $Iter = Join-Path $Artifacts 'iterate'
+          $sentinel = Join-Path $Artifacts 'MISSING.txt'
+          # Professional note: _artifacts/ mirrors producer payloads exactly; the sentinel documents gaps for external analysts.
+          $files = @()
+          if (Test-Path $Iter) {
+            $files = Get-ChildItem -Path $Iter -Recurse -File -ErrorAction SilentlyContinue
+          }
+          if (-not $files -or $files.Count -eq 0) {
+            "iterate artifact missing or empty" | Out-File -Append -Encoding UTF8 $sentinel
+          }
 
       - name: Fetch batch-check artifacts
         id: fetch_batch
@@ -1119,15 +1140,20 @@ jobs:
           $BatchRoot = Join-Path $ArtifactsRoot 'batch-check'
           New-Item -ItemType Directory -Path $BatchRoot -Force | Out-Null
           $statusPath = Join-Path $BatchRoot 'STATUS.txt'
+          $missingPath = Join-Path $ArtifactsRoot 'MISSING.txt'
+          # Professional note: correlate the batch-check workflow by commit SHA so the diagnostics bundle mirrors
+          # the matching self-test run; missing runs append a sentinel entry so downstream readers understand why.
 
           $repoParts = "${{ github.repository }}".Split('/')
           if ($repoParts.Count -ne 2) {
             'repository parsing failed' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: repository parse error' | Out-File -Append -Encoding UTF8 $missingPath
             return
           }
 
           if (-not $env:GH_TOKEN) {
             'GH_TOKEN unavailable; batch-check artifacts skipped.' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: GH_TOKEN unavailable' | Out-File -Append -Encoding UTF8 $missingPath
             return
           }
 
@@ -1144,11 +1170,13 @@ jobs:
             $workflow = Invoke-RestMethod -Uri "$base/actions/workflows/.github/workflows/batch-check.yml" -Headers $headers -ErrorAction Stop
           } catch {
             "workflow lookup failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
+            "batch-check artifact lookup failed: $($_.Exception.Message)" | Out-File -Append -Encoding UTF8 $missingPath
             return
           }
 
           if (-not $workflow.id) {
             'workflow id missing' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: workflow id missing' | Out-File -Append -Encoding UTF8 $missingPath
             return
           }
 
@@ -1174,6 +1202,7 @@ jobs:
 
           if (-not $run) {
             'no completed run found before timeout' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: no completed run for this commit' | Out-File -Append -Encoding UTF8 $missingPath
             return
           }
 
@@ -1201,6 +1230,7 @@ jobs:
 
           if (-not $artifacts.artifacts) {
             'no artifacts published by batch-check' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: no artifacts in run' | Out-File -Append -Encoding UTF8 $missingPath
             return
           }
 
@@ -1247,10 +1277,21 @@ jobs:
           New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 
           $iterateZip = Join-Path $logDir ("iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip")
+          $iterateSentinel = Join-Path $logDir 'iterate.MISSING.txt'
+          # Professional note: log downloads remain optional; when they fail we emit explicit sentinel files so the
+          # published bundle still explains what is missing without failing the workflow.
           try {
             Invoke-WebRequest -Uri "https://api.github.com/repos/$owner/$repo/actions/runs/${{ github.run_id }}/logs" -Headers $headers -OutFile $iterateZip -ErrorAction Stop
           } catch {
             "iterate log download failed: $($_.Exception.Message)" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'iterate-log-error.txt')
+          }
+          if (-not (Test-Path $iterateZip)) {
+            'iterate log archive missing' | Set-Content -Encoding UTF8 $iterateSentinel
+          } else {
+            $info = Get-Item -LiteralPath $iterateZip
+            if (-not $info -or $info.Length -eq 0) {
+              'iterate log archive empty' | Set-Content -Encoding UTF8 $iterateSentinel
+            }
           }
 
           $batchRunId = "${{ steps.fetch_batch.outputs.run_id }}"
@@ -1258,22 +1299,60 @@ jobs:
             $batchAttempt = "${{ steps.fetch_batch.outputs.run_attempt }}"
             if (-not $batchAttempt) { $batchAttempt = '1' }
             $batchZip = Join-Path $logDir ("batch-check-$batchRunId-$batchAttempt.zip")
+            $batchSentinel = Join-Path $logDir 'batch-check.MISSING.txt'
             try {
               Invoke-WebRequest -Uri "https://api.github.com/repos/$owner/$repo/actions/runs/$batchRunId/logs" -Headers $headers -OutFile $batchZip -ErrorAction Stop
             } catch {
               "batch-check log download failed: $($_.Exception.Message)" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'batch-check-log-error.txt')
             }
+            if (-not (Test-Path $batchZip)) {
+              'batch-check log archive missing' | Set-Content -Encoding UTF8 $batchSentinel
+            } else {
+              $bInfo = Get-Item -LiteralPath $batchZip
+              if (-not $bInfo -or $bInfo.Length -eq 0) {
+                'batch-check log archive empty' | Set-Content -Encoding UTF8 $batchSentinel
+              }
+            }
+          } else {
+            $missing = Join-Path $logDir 'batch-check.MISSING.txt'
+            'batch-check logs not located for this commit' | Set-Content -Encoding UTF8 $missing
           }
 
       - name: Capture repository snapshot
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $Diag = "${{ steps.prep.outputs.DIAG }}"
+          $short = "${{ steps.prep.outputs.SHORTSHA }}"
+          if (-not $short) {
+            $short = "${{ github.sha }}"
+            if ($short.Length -gt 7) { $short = $short.Substring(0,7) }
+          }
           git ls-tree -r --name-only HEAD | Set-Content -Encoding UTF8 (Join-Path $Diag 'repo-tree.txt')
-          $repoZip = Join-Path $Diag 'repo.zip'
-          $items = Get-ChildItem -Force | Where-Object { $_.Name -notin '.git', 'site' }
-          if ($items) {
-            Compress-Archive -Path ($items | ForEach-Object { $_.FullName }) -DestinationPath $repoZip -Force
+          $repoDir = Join-Path $Diag 'repo'
+          New-Item -ItemType Directory -Path $repoDir -Force | Out-Null
+          $repoZip = Join-Path $repoDir ("repo-$short.zip")
+          $repoMissing = Join-Path $repoDir 'repo.MISSING.txt'
+          # Professional note: the repo/ folder mirrors GitHub's zipball for this commit so analysts can download
+          # an authenticated snapshot without signing into Actions.
+          $parts = "${{ github.repository }}".Split('/')
+          if ($parts.Count -eq 2 -and $env:GH_TOKEN) {
+            $owner = $parts[0]
+            $repo = $parts[1]
+            $headers = @{
+              Accept       = 'application/vnd.github+json'
+              Authorization = "Bearer $env:GH_TOKEN"
+              'User-Agent'  = 'iterate-publish'
+            }
+            $zipUrl = "https://api.github.com/repos/$owner/$repo/zipball/${{ github.sha }}"
+            try {
+              Invoke-WebRequest -Uri $zipUrl -Headers $headers -OutFile $repoZip -ErrorAction Stop
+            } catch {
+              "repo zip download failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $repoMissing
+            }
+          } else {
+            'repo zip download skipped: missing GH token or repo metadata' | Set-Content -Encoding UTF8 $repoMissing
           }
           Get-ChildItem Env: | Sort-Object Name | ForEach-Object {
             if ($_.Name -notmatch 'TOKEN|SECRET|KEY|PASSWORD|COOKIE') {
@@ -1336,6 +1415,11 @@ jobs:
           $UTC    = [DateTime]::UtcNow.ToString('o')
           $CT     = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, 'Central Standard Time').ToString('o')
           $RunUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          $Short = "${{ steps.prep.outputs.SHORTSHA }}"
+          if (-not $Short) {
+            $Short = $SHA
+            if ($Short.Length -gt 7) { $Short = $Short.Substring(0,7) }
+          }
 
           function Get-FirstDir([string]$root) {
             if (-not (Test-Path $root)) { return $null }
@@ -1343,6 +1427,14 @@ jobs:
           }
 
           $iterateDir = Get-FirstDir (Join-Path $Artifacts 'iterate')
+
+          function Get-Relative([string]$fullPath) {
+            if (-not $fullPath) { return $null }
+            if ($fullPath.StartsWith($Diag, [StringComparison]::OrdinalIgnoreCase)) {
+              return $fullPath.Substring($Diag.Length + 1).Replace('\\','/')
+            }
+            return $fullPath
+          }
 
           function Read-Value($dir, $name) {
             if (-not $dir) { return 'n/a' }
@@ -1374,6 +1466,44 @@ jobs:
 
           $ndjsonSummaries = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue
 
+          $iterateZipName = "iterate-$Run-$Att.zip"
+          $iterateZipPath = Join-Path $Diag ('logs\' + $iterateZipName)
+          $iterateStatus = 'found'
+          if (-not (Test-Path $iterateZipPath)) {
+            $iterateStatus = 'missing (see logs/iterate.MISSING.txt)'
+          }
+
+          $batchRunId = "${{ steps.fetch_batch.outputs.run_id }}"
+          $batchRunAttempt = "${{ steps.fetch_batch.outputs.run_attempt }}"
+          if (-not $batchRunAttempt) { $batchRunAttempt = 'n/a' }
+          $batchZipName = $null
+          $batchStatus = 'missing'
+          if ($batchRunId) {
+            $batchZipName = "batch-check-$batchRunId-$batchRunAttempt.zip"
+            $batchZipPath = Join-Path $Diag ('logs\' + $batchZipName)
+            if (Test-Path $batchZipPath) {
+              $batchStatus = "found (run $batchRunId, attempt $batchRunAttempt)"
+            } else {
+              $batchStatus = "missing archive (run $batchRunId, attempt $batchRunAttempt)"
+            }
+          } elseif (Test-Path (Join-Path $Diag 'logs\batch-check.MISSING.txt')) {
+            $batchStatus = 'missing (see logs/batch-check.MISSING.txt)'
+          }
+
+          $artifactFiles = @()
+          if (Test-Path $Artifacts) {
+            $artifactFiles = Get-ChildItem -Path $Artifacts -Recurse -File -ErrorAction SilentlyContinue
+          }
+          $artifactCount = 0
+          if ($artifactFiles) { $artifactCount = $artifactFiles.Count }
+          $artifactMissing = $null
+          $artifactMissingPath = Join-Path $Artifacts 'MISSING.txt'
+          if (Test-Path $artifactMissingPath) {
+            $artifactMissing = (Get-Content -Raw -LiteralPath $artifactMissingPath).Trim()
+          }
+
+          $allFiles = Get-ChildItem -Path $Diag -Recurse -File -ErrorAction SilentlyContinue | Sort-Object FullName
+
           # NOTE: Using a typed list ensures strings that begin with '-' are stored verbatim.
           # The hosted runners mis-parsed array += assignments that started with hyphens and
           # aborted the diagnostics step, so we append via List.Add to keep the bundle intact.
@@ -1387,12 +1517,49 @@ jobs:
               "Built (CT): $CT",
               "Run page: $RunUrl",
               '',
-              '## Iterate metadata',
-              "- Decision: $decision",
-              "- HTTP status: $httpStatus",
-              "- Model: $model",
-              "- Endpoint: $endpoint",
-              "- Tokens: prompt=$($tokens['prompt']) completion=$($tokens['completion']) total=$($tokens['total'])"
+              # Professional note: surface sentinel results up front so unauthenticated readers know which assets landed.
+              '## Status',
+              [string]::Format('- Iterate logs: {0}', $iterateStatus),
+              [string]::Format('- Batch-check run id: {0}', $batchStatus),
+              [string]::Format('- Artifact files enumerated: {0}', $artifactCount)
+            )) {
+            $null = $lines.Add($seed)
+          }
+
+          if ($artifactMissing) {
+            $null = $lines.Add([string]::Format('- Artifact sentinel: {0}', $artifactMissing))
+          }
+
+          $null = $lines.Add('')
+          $null = $lines.Add('## Quick links')
+          $bundleLinks = @(
+            @{ Label = 'Inventory (HTML)'; Path = 'inventory.html'; Exists = Test-Path (Join-Path $Diag 'inventory.html') },
+            @{ Label = 'Inventory (text)'; Path = 'inventory.txt'; Exists = Test-Path (Join-Path $Diag 'inventory.txt') },
+            @{ Label = 'Inventory (markdown)'; Path = 'inventory.md'; Exists = Test-Path (Join-Path $Diag 'inventory.md') },
+            @{ Label = 'Iterate logs zip'; Path = "logs/$iterateZipName"; Exists = Test-Path $iterateZipPath },
+            @{ Label = 'Batch-check logs zip'; Path = if ($batchZipName) { "logs/$batchZipName" } else { $null }; Exists = if ($batchZipName) { Test-Path (Join-Path $Diag ('logs\' + $batchZipName)) } else { $false } },
+            @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = Test-Path (Join-Path $Diag ("repo\repo-$Short.zip")) }
+          )
+
+          foreach ($entry in $bundleLinks) {
+            if (-not $entry.Path) { continue }
+            if ($entry.Exists) {
+              $link = [string]::Format('- {0}: [{1}]({1})', $entry.Label, $entry.Path)
+              $null = $lines.Add($link)
+            } else {
+              $note = [string]::Format('- {0}: missing', $entry.Label)
+              $null = $lines.Add($note)
+            }
+          }
+
+          $null = $lines.Add('')
+          $null = $lines.Add('## Iterate metadata')
+          foreach ($seed in @(
+              [string]::Format('- Decision: {0}', $decision),
+              [string]::Format('- HTTP status: {0}', $httpStatus),
+              [string]::Format('- Model: {0}', $model),
+              [string]::Format('- Endpoint: {0}', $endpoint),
+              [string]::Format('- Tokens: prompt={0} completion={1} total={2}', $tokens['prompt'], $tokens['completion'], $tokens['total'])
             )) {
             $null = $lines.Add($seed)
           }
@@ -1403,10 +1570,8 @@ jobs:
               $null = $lines.Add('')
               $null = $lines.Add('### Iterate files')
               foreach ($file in $iterFiles) {
-                $rel = $file.FullName.Substring($Diag.Length + 1).Replace('\\','/')
-                # NOTE: Format outside the Add() call to stop PowerShell from mis-parsing
-                # dash-prefixed strings as unary operators during hosted runs.
-                $iterLine = [string]::Format('- `{0}`', $rel)
+                $rel = Get-Relative $file.FullName
+                $iterLine = [string]::Format('- [`{0}`]({0})', $rel)
                 $null = $lines.Add($iterLine)
               }
             }
@@ -1418,7 +1583,6 @@ jobs:
               $meta = Get-Content -Raw -LiteralPath $batchRunMeta | ConvertFrom-Json
               $null = $lines.Add('')
               $null = $lines.Add('## Batch-check run')
-              # NOTE: Pre-format hyphen-prefixed rows so hosted PowerShell never tokenizes the dash as a unary minus.
               $runLine = [string]::Format('- Run id: {0} (attempt {1})', $meta.run_id, $meta.run_attempt)
               $statusLine = [string]::Format('- Status: {0} / {1}', $meta.status, $meta.conclusion)
               $null = $lines.Add($runLine)
@@ -1434,9 +1598,7 @@ jobs:
             $null = $lines.Add('')
             $null = $lines.Add('## NDJSON summaries')
             foreach ($file in $ndjsonSummaries) {
-              $rel = $file.FullName.Substring($Diag.Length + 1).Replace('\\','/')
-              # NOTE: Hosted PowerShell has previously rejected inline hyphen headings,
-              # so we pre-build the formatted string before adding it.
+              $rel = Get-Relative $file.FullName
               $heading = [string]::Format('### {0}', $rel)
               $null = $lines.Add($heading)
               $null = $lines.Add('```text')
@@ -1447,13 +1609,24 @@ jobs:
             }
           }
 
+          if ($allFiles) {
+            $null = $lines.Add('')
+            $null = $lines.Add('## File listing')
+            foreach ($item in $allFiles) {
+              $rel = Get-Relative $item.FullName
+              $size = '{0:N0}' -f $item.Length
+              $line = [string]::Format('- [{0} bytes]({1})', $size, $rel)
+              $null = $lines.Add($line)
+            }
+          }
+
           $inventoryB64 = "${{ steps.inventory.outputs.inventory_b64 }}"
           if ($inventoryB64) {
             try {
               $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($inventoryB64))
               if ($decoded) {
                 $null = $lines.Add('')
-                $null = $lines.Add('## Inventory')
+                $null = $lines.Add('## Inventory (raw)')
                 foreach ($entry in $decoded.Split("`n")) {
                   $null = $lines.Add($entry)
                 }
@@ -1485,7 +1658,13 @@ jobs:
           $Repo = "${{ github.repository }}"
           $SHA  = "${{ github.sha }}"
           $RunUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          $bundle = "diag/$Run-$Att/"
+          $bundlePrefix = "diag/$Run-$Att"
+          $bundle = "$bundlePrefix/"
+          $Short = "${{ steps.prep.outputs.SHORTSHA }}"
+          if (-not $Short) {
+            $Short = $SHA
+            if ($Short.Length -gt 7) { $Short = $Short.Substring(0,7) }
+          }
 
           function Get-FirstDir([string]$root) {
             if (-not (Test-Path $root)) { return $null }
@@ -1500,6 +1679,26 @@ jobs:
             if (Test-Path $decisionPath) { $decision = (Get-Content -Raw -LiteralPath $decisionPath).Trim() }
             $statusPath = Join-Path $iterateDir 'http_status.txt'
             if (Test-Path $statusPath) { $httpStatus = (Get-Content -Raw -LiteralPath $statusPath).Trim() }
+          }
+
+          $bundleIndex   = "$bundlePrefix/index.html"
+          $inventoryHtml = "$bundlePrefix/inventory.html"
+          $inventoryTxt  = "$bundlePrefix/inventory.txt"
+          $inventoryMd   = "$bundlePrefix/inventory.md"
+          $iterateZipRel = "$bundlePrefix/logs/iterate-$Run-$Att.zip"
+          $batchZipRel   = $null
+          $batchRunId    = "${{ steps.fetch_batch.outputs.run_id }}"
+          $batchRunAttempt = "${{ steps.fetch_batch.outputs.run_attempt }}"
+          if ($batchRunId) {
+            if (-not $batchRunAttempt) { $batchRunAttempt = 'n/a' }
+            $batchZipRel = "$bundlePrefix/logs/batch-check-$batchRunId-$batchRunAttempt.zip"
+          }
+          $repoZipRel = "$bundlePrefix/repo/repo-$Short.zip"
+
+          function Has-File([string]$relative) {
+            if (-not $relative) { return $false }
+            $full = Join-Path $Site $relative
+            return Test-Path $full
           }
 
           $ndjsonSummary = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -1522,6 +1721,48 @@ jobs:
             "- Iterate decision: $decision",
             "- Iterate HTTP status: $httpStatus"
           )
+
+          $lines += ''
+          $lines += '## Quick links'
+          if (Has-File $bundleIndex) {
+            $lines += [string]::Format('- [Bundle index]({0})', $bundle)
+          } else {
+            $lines += '- Bundle index: missing'
+          }
+          if (Has-File $inventoryHtml) {
+            $lines += [string]::Format('- [Artifact inventory (HTML)]({0})', $inventoryHtml)
+          } else {
+            $lines += '- Artifact inventory (HTML): missing'
+          }
+          if (Has-File $inventoryTxt) {
+            $lines += [string]::Format('- [Artifact inventory (text)]({0})', $inventoryTxt)
+          } else {
+            $lines += '- Artifact inventory (text): missing'
+          }
+          if (Has-File $iterateZipRel) {
+            $lines += [string]::Format('- [Iterate logs zip]({0})', $iterateZipRel)
+          } else {
+            $lines += '- Iterate logs zip: missing'
+          }
+          if ($batchZipRel) {
+            if (Has-File $batchZipRel) {
+              $lines += [string]::Format('- [Batch-check logs zip]({0})', $batchZipRel)
+            } else {
+              $lines += '- Batch-check logs zip: missing'
+            }
+          } else {
+            $lines += '- Batch-check logs zip: missing'
+          }
+          if (Has-File $repoZipRel) {
+            $lines += [string]::Format('- [Repository zip]({0})', $repoZipRel)
+          } else {
+            $lines += '- Repository zip: missing'
+          }
+          if (Has-File $inventoryMd) {
+            $lines += [string]::Format('- [Inventory (markdown)]({0})', $inventoryMd)
+          } else {
+            $lines += '- Inventory (markdown): missing'
+          }
 
           if ($summaryPreview.Count -gt 0) {
             $lines += ''
