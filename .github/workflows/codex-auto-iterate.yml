@@ -1533,12 +1533,20 @@ jobs:
           $lines += 'Artifacts from the self-test workflow and iterate job are merged under the bundle directory above.'
 
           ($lines -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Site 'index.md')
+          # NOTE: Precompute the encoded body so trailing commas in the array literal
+          # never cause PowerShell to interpret the -replace chain as a single call with
+          # three arguments (which would trigger "The -replace operator allows only two
+          # elements" at runtime on the hosted runner).
+          $plainBody = $lines -join "`n"
+          $encodedBody = $plainBody -replace '&', '&amp;'
+          $encodedBody = $encodedBody -replace '<', '&lt;'
+          $encodedBody = $encodedBody -replace '>', '&gt;'
           $html = @(
             '<!doctype html>',
             '<meta charset="utf-8">',
             '<title>Diagnostics overview</title>',
             '<pre>',
-            ($lines -join "`n") -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;',
+            $encodedBody,
             '</pre>'
           )
           ($html -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Site 'index.html')
