@@ -1404,7 +1404,10 @@ jobs:
               $null = $lines.Add('### Iterate files')
               foreach ($file in $iterFiles) {
                 $rel = $file.FullName.Substring($Diag.Length + 1).Replace('\\','/')
-                $null = $lines.Add("- `$rel`")
+                # NOTE: Format outside the Add() call to stop PowerShell from mis-parsing
+                # dash-prefixed strings as unary operators during hosted runs.
+                $iterLine = [string]::Format('- `{0}`', $rel)
+                $null = $lines.Add($iterLine)
               }
             }
           }
@@ -1432,7 +1435,10 @@ jobs:
             $null = $lines.Add('## NDJSON summaries')
             foreach ($file in $ndjsonSummaries) {
               $rel = $file.FullName.Substring($Diag.Length + 1).Replace('\\','/')
-              $null = $lines.Add("### $rel")
+              # NOTE: Hosted PowerShell has previously rejected inline hyphen headings,
+              # so we pre-build the formatted string before adding it.
+              $heading = [string]::Format('### {0}', $rel)
+              $null = $lines.Add($heading)
               $null = $lines.Add('```text')
               foreach ($segment in Get-Content -LiteralPath $file.FullName) {
                 $null = $lines.Add($segment)
