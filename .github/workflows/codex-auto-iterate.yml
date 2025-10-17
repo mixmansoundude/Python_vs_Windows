@@ -556,6 +556,12 @@ jobs:
           OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
         run: |
           set -euo pipefail
+          # Professional note: tee stdout/stderr so publish_diag can fall back to this
+          # local copy when GitHub's run-logs zip is still propagating (per maintainer request
+          # to "add a fallback: capture stdout/stderr from the iterate job into a file").
+          ITER_LOG="$RUNNER_TEMP/iterate_step.log"
+          : > "$ITER_LOG"
+          exec > >(tee -a "$ITER_LOG") 2>&1
           REQ="$RUNNER_TEMP/llm_req.json"
           RES="$RUNNER_TEMP/llm_res.json"
           OUTTXT="$RUNNER_TEMP/llm_content.txt"
@@ -838,6 +844,13 @@ jobs:
 
           if [ -f "$RUNNER_TEMP/auth_body.json" ]; then
             sanitize "$RUNNER_TEMP/auth_body.json" "$iter_dir/auth_probe.json" 100000 || true
+          fi
+
+          iter_stdout="$RUNNER_TEMP/iterate_step.log"
+          if [ -f "$iter_stdout" ]; then
+            # Professional note: surface the raw job stream when GitHub's run-logs zip
+            # is unavailable so the published bundle still exposes iterate stdout/stderr.
+            cp "$iter_stdout" "$iter_dir/job.log"
           fi
 
           files_found=$(find "$iter_dir" -type f 2>/dev/null | wc -l || echo 0)
@@ -1273,6 +1286,30 @@ jobs:
             'User-Agent' = 'iterate-publish'
           }
 
+          # Professional note: maintainers requested "add a short retry loop ... before writing
+          # the missing sentinel", so we wrap Invoke-WebRequest with a bounded retry helper.
+          function Download-WithRetry {
+            param(
+              [Parameter(Mandatory=$true)][string]$Uri,
+              [Parameter(Mandatory=$true)][string]$Destination,
+              [Parameter(Mandatory=$true)][hashtable]$Headers,
+              [int]$Attempts = 3,
+              [int]$DelaySeconds = 5
+            )
+
+            for ($i = 1; $i -le $Attempts; $i++) {
+              try {
+                Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $Destination -ErrorAction Stop
+                return $true
+              } catch {
+                if ($i -ge $Attempts) {
+                  return $false
+                }
+                Start-Sleep -Seconds $DelaySeconds
+              }
+            }
+          }
+
           $logDir = Join-Path $Diag 'logs'
           New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 
@@ -1280,10 +1317,9 @@ jobs:
           $iterateSentinel = Join-Path $logDir 'iterate.MISSING.txt'
           # Professional note: log downloads remain optional; when they fail we emit explicit sentinel files so the
           # published bundle still explains what is missing without failing the workflow.
-          try {
-            Invoke-WebRequest -Uri "https://api.github.com/repos/$owner/$repo/actions/runs/${{ github.run_id }}/logs" -Headers $headers -OutFile $iterateZip -ErrorAction Stop
-          } catch {
-            "iterate log download failed: $($_.Exception.Message)" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'iterate-log-error.txt')
+          $iterateLogUri = "https://api.github.com/repos/$owner/$repo/actions/runs/${{ github.run_id }}/logs"
+          if (-not (Download-WithRetry -Uri $iterateLogUri -Destination $iterateZip -Headers $headers)) {
+            "iterate log download failed after retries: $iterateLogUri" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'iterate-log-error.txt')
           }
           if (-not (Test-Path $iterateZip)) {
             'iterate log archive missing' | Set-Content -Encoding UTF8 $iterateSentinel
@@ -1300,10 +1336,9 @@ jobs:
             if (-not $batchAttempt) { $batchAttempt = '1' }
             $batchZip = Join-Path $logDir ("batch-check-$batchRunId-$batchAttempt.zip")
             $batchSentinel = Join-Path $logDir 'batch-check.MISSING.txt'
-            try {
-              Invoke-WebRequest -Uri "https://api.github.com/repos/$owner/$repo/actions/runs/$batchRunId/logs" -Headers $headers -OutFile $batchZip -ErrorAction Stop
-            } catch {
-              "batch-check log download failed: $($_.Exception.Message)" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'batch-check-log-error.txt')
+            $batchLogUri = "https://api.github.com/repos/$owner/$repo/actions/runs/$batchRunId/logs"
+            if (-not (Download-WithRetry -Uri $batchLogUri -Destination $batchZip -Headers $headers)) {
+              "batch-check log download failed after retries: $batchLogUri" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'batch-check-log-error.txt')
             }
             if (-not (Test-Path $batchZip)) {
               'batch-check log archive missing' | Set-Content -Encoding UTF8 $batchSentinel
@@ -1353,6 +1388,18 @@ jobs:
             }
           } else {
             'repo zip download skipped: missing GH token or repo metadata' | Set-Content -Encoding UTF8 $repoMissing
+          }
+          if (Test-Path $repoZip) {
+            $repoExtract = Join-Path $repoDir 'files'
+            if (Test-Path $repoExtract) { Remove-Item -LiteralPath $repoExtract -Recurse -Force -ErrorAction SilentlyContinue }
+            New-Item -ItemType Directory -Path $repoExtract -Force | Out-Null
+            try {
+              # Professional note: maintainers asked for "an unzipped set alongside/sub page" so analysts can
+              # browse without downloading the archive; we unpack the commit zip alongside the original bundle.
+              Expand-Archive -LiteralPath $repoZip -DestinationPath $repoExtract -Force
+            } catch {
+              "repo unzip failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 (Join-Path $repoDir 'repo-unpack-error.txt')
+            }
           }
           Get-ChildItem Env: | Sort-Object Name | ForEach-Object {
             if ($_.Name -notmatch 'TOKEN|SECRET|KEY|PASSWORD|COOKIE') {
@@ -1434,6 +1481,13 @@ jobs:
               return $fullPath.Substring($Diag.Length + 1).Replace('\\','/')
             }
             return $fullPath
+          }
+
+          function Normalize-Link([string]$value) {
+            if (-not $value) { return $value }
+            # Professional note: GitHub Pages treats backslashes as %5C and 404s; convert to
+            # forward slashes per maintainer request to "fix broken links caused by backslashes".
+            return ($value -replace '\\','/')
           }
 
           function Read-Value($dir, $name) {
@@ -1538,13 +1592,15 @@ jobs:
             @{ Label = 'Inventory (markdown)'; Path = 'inventory.md'; Exists = Test-Path (Join-Path $Diag 'inventory.md') },
             @{ Label = 'Iterate logs zip'; Path = "logs/$iterateZipName"; Exists = Test-Path $iterateZipPath },
             @{ Label = 'Batch-check logs zip'; Path = if ($batchZipName) { "logs/$batchZipName" } else { $null }; Exists = if ($batchZipName) { Test-Path (Join-Path $Diag ('logs\' + $batchZipName)) } else { $false } },
-            @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = Test-Path (Join-Path $Diag ("repo\repo-$Short.zip")) }
+            @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = Test-Path (Join-Path $Diag ("repo\repo-$Short.zip")) },
+            @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = Test-Path (Join-Path $Diag 'repo\files') }
           )
 
           foreach ($entry in $bundleLinks) {
             if (-not $entry.Path) { continue }
             if ($entry.Exists) {
-              $link = [string]::Format('- {0}: [{1}]({1})', $entry.Label, $entry.Path)
+              $linkPath = Normalize-Link $entry.Path
+              $link = [string]::Format('- {0}: [{1}]({1})', $entry.Label, $linkPath)
               $null = $lines.Add($link)
             } else {
               $note = [string]::Format('- {0}: missing', $entry.Label)
@@ -1571,7 +1627,8 @@ jobs:
               $null = $lines.Add('### Iterate files')
               foreach ($file in $iterFiles) {
                 $rel = Get-Relative $file.FullName
-                $iterLine = [string]::Format('- [`{0}`]({0})', $rel)
+                $relNorm = Normalize-Link $rel
+                $iterLine = [string]::Format('- [`{0}`]({1})', $relNorm, $relNorm)
                 $null = $lines.Add($iterLine)
               }
             }
@@ -1615,7 +1672,8 @@ jobs:
             foreach ($item in $allFiles) {
               $rel = Get-Relative $item.FullName
               $size = '{0:N0}' -f $item.Length
-              $line = [string]::Format('- [{0} bytes]({1})', $size, $rel)
+              $relNorm = Normalize-Link $rel
+              $line = [string]::Format('- [{0} bytes]({1})', $size, $relNorm)
               $null = $lines.Add($line)
             }
           }
@@ -1724,7 +1782,7 @@ jobs:
             if (-not $entry.Path) { continue }
             $label = Escape-Html $entry.Label
             if ($entry.Exists) {
-              $href = Escape-Href $entry.Path
+              $href = Escape-Href (Normalize-Link $entry.Path)
               $html.Add([string]::Format('<li><a href="{0}">{1}</a></li>', $href, $label))
             } else {
               $html.Add([string]::Format('<li>{0}: missing</li>', $label))
@@ -1748,8 +1806,9 @@ jobs:
             $html.Add('<ul>')
             foreach ($file in $iterFiles) {
               $rel = Get-Relative $file.FullName
-              $href = Escape-Href $rel
-              $text = Escape-Html $rel
+              $relNorm = Normalize-Link $rel
+              $href = Escape-Href $relNorm
+              $text = Escape-Html $relNorm
               $html.Add([string]::Format('<li><code><a href="{0}">{1}</a></code></li>', $href, $text))
             }
             $html.Add('</ul>')
@@ -1793,8 +1852,9 @@ jobs:
             $html.Add('<ul>')
             foreach ($item in $allFiles) {
               $rel = Get-Relative $item.FullName
-              $href = Escape-Href $rel
-              $text = Escape-Html $rel
+              $relNorm = Normalize-Link $rel
+              $href = Escape-Href $relNorm
+              $text = Escape-Html $relNorm
               $size = Escape-Html ('{0:N0} bytes' -f $item.Length)
               $html.Add([string]::Format('<li><a href="{0}">{1}</a> — {2}</li>', $href, $text, $size))
             }
@@ -1878,6 +1938,13 @@ jobs:
             return Test-Path $full
           }
 
+          function Normalize-Link([string]$value) {
+            if (-not $value) { return $value }
+            # Professional note: keep URLs browsable on Pages by converting any
+            # Windows-style backslashes that snuck in via Join-Path.
+            return ($value -replace '\\','/')
+          }
+
           $ndjsonSummary = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           $summaryPreview = @()
           if ($ndjsonSummary) {
@@ -1902,17 +1969,17 @@ jobs:
           $lines += ''
           $lines += '## Quick links'
           if (Has-File $bundleIndex) {
-            $lines += [string]::Format('- [Bundle index]({0})', $bundle)
+            $lines += [string]::Format('- [Bundle index]({0})', (Normalize-Link $bundle))
           } else {
             $lines += '- Bundle index: missing'
           }
           if (Has-File $inventoryHtml) {
-            $lines += [string]::Format('- [Artifact inventory (HTML)]({0})', $inventoryHtml)
+            $lines += [string]::Format('- [Artifact inventory (HTML)]({0})', (Normalize-Link $inventoryHtml))
           } else {
             $lines += '- Artifact inventory (HTML): missing'
           }
           if (Has-File $inventoryTxt) {
-            $lines += [string]::Format('- [Artifact inventory (text)]({0})', $inventoryTxt)
+            $lines += [string]::Format('- [Artifact inventory (text)]({0})', (Normalize-Link $inventoryTxt))
           } else {
             $lines += '- Artifact inventory (text): missing'
           }
@@ -1931,12 +1998,18 @@ jobs:
             $lines += '- Batch-check logs zip: missing'
           }
           if (Has-File $repoZipRel) {
-            $lines += [string]::Format('- [Repository zip]({0})', $repoZipRel)
+            $lines += [string]::Format('- [Repository zip]({0})', (Normalize-Link $repoZipRel))
           } else {
             $lines += '- Repository zip: missing'
           }
+          $repoFilesRel = "$bundlePrefix/repo/files/"
+          if (Has-File "$bundlePrefix/repo/files") {
+            $lines += [string]::Format('- [Repository files (unzipped)]({0})', (Normalize-Link $repoFilesRel))
+          } else {
+            $lines += '- Repository files (unzipped): missing'
+          }
           if (Has-File $inventoryMd) {
-            $lines += [string]::Format('- [Inventory (markdown)]({0})', $inventoryMd)
+            $lines += [string]::Format('- [Inventory (markdown)]({0})', (Normalize-Link $inventoryMd))
           } else {
             $lines += '- Inventory (markdown): missing'
           }
@@ -1982,6 +2055,7 @@ jobs:
             @{ Label = 'Iterate logs zip'; Path = $iterateZipRel; Exists = Has-File $iterateZipRel },
             @{ Label = 'Batch-check logs zip'; Path = $batchZipRel; Exists = if ($batchZipRel) { Has-File $batchZipRel } else { $false } },
             @{ Label = 'Repository zip'; Path = $repoZipRel; Exists = Has-File $repoZipRel },
+            @{ Label = 'Repository files (unzipped)'; Path = $repoFilesRel; Exists = Has-File "$bundlePrefix/repo/files" },
             @{ Label = 'Inventory (markdown)'; Path = $inventoryMd; Exists = Has-File $inventoryMd }
           )
 
@@ -1994,7 +2068,7 @@ jobs:
           $html.Add('</head>')
           $html.Add('<body>')
           $html.Add('<h1>Diagnostics overview</h1>')
-          $html.Add([string]::Format('<p>Latest run: <a href="{0}">{1}</a></p>', $(Escape-Href $bundle), $(Escape-Html ([string]::Format('{0} (attempt {1})', $Run, $Att)))))
+          $html.Add([string]::Format('<p>Latest run: <a href="{0}">{1}</a></p>', $(Escape-Href (Normalize-Link $bundle)), $(Escape-Html ([string]::Format('{0} (attempt {1})', $Run, $Att)))))
 
           $html.Add('<section>')
           $html.Add('<h2>Metadata</h2>')
@@ -2018,7 +2092,7 @@ jobs:
           foreach ($entry in $quickLinkSpecs) {
             $label = Escape-Html $entry.Label
             if ($entry.Path -and $entry.Exists) {
-              $html.Add([string]::Format('<li><a href="{0}">{1}</a></li>', $(Escape-Href $entry.Path), $label))
+              $html.Add([string]::Format('<li><a href="{0}">{1}</a></li>', $(Escape-Href (Normalize-Link $entry.Path)), $label))
             } elseif ($entry.Path) {
               $html.Add([string]::Format('<li>{0}: missing</li>', $label))
             } else {
