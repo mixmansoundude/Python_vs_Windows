@@ -1691,14 +1691,18 @@ jobs:
           $html.Add('<section>')
           $html.Add('<h2>Metadata</h2>')
           $html.Add('<ul>')
+          # Professional note: Invoke the Escape-* helpers without parentheses here;
+          # hyphenated function names like Escape-Html() can be parsed as parameter
+          # switches if written as Escape-Html($value), which triggers hosted runner
+          # syntax errors during publishing.
           foreach ($pair in $metadataPairs) {
-            $label = Escape-Html($pair.Label)
+            $label = Escape-Html $pair.Label
             if ($pair.ContainsKey('Href') -and $pair.Href) {
-              $href = Escape-Href($pair.Href)
-              $value = Escape-Html($pair.Value)
+              $href = Escape-Href $pair.Href
+              $value = Escape-Html $pair.Value
               $html.Add([string]::Format('<li><strong>{0}:</strong> <a href="{1}">{2}</a></li>', $label, $href, $value))
             } else {
-              $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $label, Escape-Html($pair.Value)))
+              $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $label, $(Escape-Html $pair.Value)))
             }
           }
           $html.Add('</ul>')
@@ -1708,7 +1712,7 @@ jobs:
           $html.Add('<h2>Status</h2>')
           $html.Add('<ul>')
           foreach ($pair in $statusPairs) {
-            $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', Escape-Html($pair.Label), Escape-Html($pair.Value)))
+            $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $(Escape-Html $pair.Label), $(Escape-Html $pair.Value)))
           }
           $html.Add('</ul>')
           $html.Add('</section>')
@@ -1718,9 +1722,9 @@ jobs:
           $html.Add('<ul>')
           foreach ($entry in $bundleLinks) {
             if (-not $entry.Path) { continue }
-            $label = Escape-Html($entry.Label)
+            $label = Escape-Html $entry.Label
             if ($entry.Exists) {
-              $href = Escape-Href($entry.Path)
+              $href = Escape-Href $entry.Path
               $html.Add([string]::Format('<li><a href="{0}">{1}</a></li>', $href, $label))
             } else {
               $html.Add([string]::Format('<li>{0}: missing</li>', $label))
@@ -1733,7 +1737,7 @@ jobs:
           $html.Add('<h2>Iterate metadata</h2>')
           $html.Add('<ul>')
           foreach ($pair in $iteratePairs) {
-            $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', Escape-Html($pair.Label), Escape-Html($pair.Value)))
+            $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $(Escape-Html $pair.Label), $(Escape-Html $pair.Value)))
           }
           $html.Add('</ul>')
           $html.Add('</section>')
@@ -1744,8 +1748,8 @@ jobs:
             $html.Add('<ul>')
             foreach ($file in $iterFiles) {
               $rel = Get-Relative $file.FullName
-              $href = Escape-Href($rel)
-              $text = Escape-Html($rel)
+              $href = Escape-Href $rel
+              $text = Escape-Html $rel
               $html.Add([string]::Format('<li><code><a href="{0}">{1}</a></code></li>', $href, $text))
             }
             $html.Add('</ul>')
@@ -1758,10 +1762,10 @@ jobs:
               $html.Add('<section>')
               $html.Add('<h2>Batch-check run</h2>')
               $html.Add('<ul>')
-              $html.Add([string]::Format('<li>Run id: {0} (attempt {1})</li>', Escape-Html($meta.run_id), Escape-Html($meta.run_attempt)))
-              $html.Add([string]::Format('<li>Status: {0} / {1}</li>', Escape-Html($meta.status), Escape-Html($meta.conclusion)))
+              $html.Add([string]::Format('<li>Run id: {0} (attempt {1})</li>', $(Escape-Html $meta.run_id), $(Escape-Html $meta.run_attempt)))
+              $html.Add([string]::Format('<li>Status: {0} / {1}</li>', $(Escape-Html $meta.status), $(Escape-Html $meta.conclusion)))
               if ($meta.html_url) {
-                $html.Add([string]::Format('<li><a href="{0}">Run page</a></li>', Escape-Href($meta.html_url)))
+                $html.Add([string]::Format('<li><a href="{0}">Run page</a></li>', $(Escape-Href $meta.html_url)))
               }
               $html.Add('</ul>')
               $html.Add('</section>')
@@ -1773,10 +1777,10 @@ jobs:
             $html.Add('<h2>NDJSON summaries</h2>')
             foreach ($file in $ndjsonSummaries) {
               $rel = Get-Relative $file.FullName
-              $html.Add([string]::Format('<h3>{0}</h3>', Escape-Html($rel)))
+              $html.Add([string]::Format('<h3>{0}</h3>', $(Escape-Html $rel)))
               $html.Add('<pre>')
               foreach ($segment in Get-Content -LiteralPath $file.FullName) {
-                $html.Add(Escape-Html($segment))
+                $html.Add($(Escape-Html $segment))
               }
               $html.Add('</pre>')
             }
@@ -1789,9 +1793,9 @@ jobs:
             $html.Add('<ul>')
             foreach ($item in $allFiles) {
               $rel = Get-Relative $item.FullName
-              $href = Escape-Href($rel)
-              $text = Escape-Html($rel)
-              $size = Escape-Html('{0:N0} bytes' -f $item.Length)
+              $href = Escape-Href $rel
+              $text = Escape-Html $rel
+              $size = Escape-Html ('{0:N0} bytes' -f $item.Length)
               $html.Add([string]::Format('<li><a href="{0}">{1}</a> — {2}</li>', $href, $text, $size))
             }
             $html.Add('</ul>')
@@ -1806,7 +1810,7 @@ jobs:
                 $html.Add('<h2>Inventory (raw)</h2>')
                 $html.Add('<pre>')
                 foreach ($entry in $decoded.Split("`n")) {
-                  $html.Add(Escape-Html($entry))
+                  $html.Add($(Escape-Html $entry))
                 }
                 $html.Add('</pre>')
                 $html.Add('</section>')
@@ -1990,19 +1994,19 @@ jobs:
           $html.Add('</head>')
           $html.Add('<body>')
           $html.Add('<h1>Diagnostics overview</h1>')
-          $html.Add([string]::Format('<p>Latest run: <a href="{0}">{1}</a></p>', Escape-Href($bundle), Escape-Html([string]::Format('{0} (attempt {1})', $Run, $Att))))
+          $html.Add([string]::Format('<p>Latest run: <a href="{0}">{1}</a></p>', $(Escape-Href $bundle), $(Escape-Html ([string]::Format('{0} (attempt {1})', $Run, $Att)))))
 
           $html.Add('<section>')
           $html.Add('<h2>Metadata</h2>')
           $html.Add('<ul>')
           foreach ($item in $metadataItems) {
-            $label = Escape-Html($item.Label)
+            $label = Escape-Html $item.Label
             if ($item.ContainsKey('Href') -and $item.Href) {
-              $href = Escape-Href($item.Href)
-              $value = Escape-Html($item.Value)
+              $href = Escape-Href $item.Href
+              $value = Escape-Html $item.Value
               $html.Add([string]::Format('<li><strong>{0}:</strong> <a href="{1}">{2}</a></li>', $label, $href, $value))
             } else {
-              $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $label, Escape-Html($item.Value)))
+              $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $label, $(Escape-Html $item.Value)))
             }
           }
           $html.Add('</ul>')
@@ -2012,9 +2016,9 @@ jobs:
           $html.Add('<h2>Quick links</h2>')
           $html.Add('<ul>')
           foreach ($entry in $quickLinkSpecs) {
-            $label = Escape-Html($entry.Label)
+            $label = Escape-Html $entry.Label
             if ($entry.Path -and $entry.Exists) {
-              $html.Add([string]::Format('<li><a href="{0}">{1}</a></li>', Escape-Href($entry.Path), $label))
+              $html.Add([string]::Format('<li><a href="{0}">{1}</a></li>', $(Escape-Href $entry.Path), $label))
             } elseif ($entry.Path) {
               $html.Add([string]::Format('<li>{0}: missing</li>', $label))
             } else {
@@ -2031,7 +2035,7 @@ jobs:
             foreach ($line in $summaryPreview) {
               $trimmed = $line
               if ($trimmed -like '```*') { continue }
-              $html.Add(Escape-Html($line))
+              $html.Add($(Escape-Html $line))
             }
             $html.Add('</pre>')
             $html.Add('</section>')
