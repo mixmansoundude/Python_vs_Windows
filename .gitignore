@@ -1,0 +1,28 @@
+# Python caches and bytecode
+__pycache__/
+*/__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Build/test artifacts
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Virtual environments
+.env/
+.venv/
+ENV/
+venv/
+
+# Tools output
+*.coverage
+.pytest_cache/
+.mypy_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
