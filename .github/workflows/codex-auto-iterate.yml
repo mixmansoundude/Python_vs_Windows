@@ -1636,15 +1636,188 @@ jobs:
 
           $markdown = $lines.ToArray() -join "`n"
           $markdown | Set-Content -Encoding UTF8 -NoNewline (Join-Path $Diag 'index.md')
-          $encoded = $markdown -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
-          $html = @(
-            '<!doctype html>',
-            '<meta charset="utf-8">',
-            '<title>CI Diagnostics</title>',
-            '<pre>',
-            $encoded,
-            '</pre>'
+
+          function Escape-Html([string]$value) {
+            if ($null -eq $value) { return '' }
+            $encoded = $value -replace '&', '&amp;'
+            $encoded = $encoded -replace '<', '&lt;'
+            return $encoded -replace '>', '&gt;'
+          }
+
+          function Escape-Href([string]$value) {
+            if ([string]::IsNullOrWhiteSpace($value)) { return $value }
+            try {
+              return [System.Uri]::EscapeUriString($value)
+            } catch {
+              return $value
+            }
+          }
+
+          $statusPairs = @(
+            @{ Label = 'Iterate logs'; Value = $iterateStatus },
+            @{ Label = 'Batch-check run id'; Value = $batchStatus },
+            @{ Label = 'Artifact files enumerated'; Value = [string]$artifactCount }
           )
+          if ($artifactMissing) {
+            $statusPairs += @{ Label = 'Artifact sentinel'; Value = $artifactMissing }
+          }
+
+          $metadataPairs = @(
+            @{ Label = 'Repo'; Value = $Repo },
+            @{ Label = 'Commit'; Value = $SHA },
+            @{ Label = 'Run'; Value = [string]::Format('{0} (attempt {1})', $Run, $Att) },
+            @{ Label = 'Built (UTC)'; Value = $UTC },
+            @{ Label = 'Built (CT)'; Value = $CT },
+            @{ Label = 'Run page'; Value = $RunUrl; Href = $RunUrl }
+          )
+
+          $iteratePairs = @(
+            @{ Label = 'Decision'; Value = $decision },
+            @{ Label = 'HTTP status'; Value = $httpStatus },
+            @{ Label = 'Model'; Value = $model },
+            @{ Label = 'Endpoint'; Value = $endpoint },
+            @{ Label = 'Tokens'; Value = [string]::Format('prompt={0} completion={1} total={2}', $tokens['prompt'], $tokens['completion'], $tokens['total']) }
+          )
+
+          $html = [System.Collections.Generic.List[string]]::new()
+          $html.Add('<!doctype html>')
+          $html.Add('<html lang="en">')
+          $html.Add('<head>')
+          $html.Add('<meta charset="utf-8">')
+          $html.Add('<title>CI Diagnostics</title>')
+          $html.Add('</head>')
+          $html.Add('<body>')
+          $html.Add('<h1>CI Diagnostics</h1>')
+          $html.Add('<section>')
+          $html.Add('<h2>Metadata</h2>')
+          $html.Add('<ul>')
+          foreach ($pair in $metadataPairs) {
+            $label = Escape-Html($pair.Label)
+            if ($pair.ContainsKey('Href') -and $pair.Href) {
+              $href = Escape-Href($pair.Href)
+              $value = Escape-Html($pair.Value)
+              $html.Add([string]::Format('<li><strong>{0}:</strong> <a href="{1}">{2}</a></li>', $label, $href, $value))
+            } else {
+              $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $label, Escape-Html($pair.Value)))
+            }
+          }
+          $html.Add('</ul>')
+          $html.Add('</section>')
+
+          $html.Add('<section>')
+          $html.Add('<h2>Status</h2>')
+          $html.Add('<ul>')
+          foreach ($pair in $statusPairs) {
+            $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', Escape-Html($pair.Label), Escape-Html($pair.Value)))
+          }
+          $html.Add('</ul>')
+          $html.Add('</section>')
+
+          $html.Add('<section>')
+          $html.Add('<h2>Quick links</h2>')
+          $html.Add('<ul>')
+          foreach ($entry in $bundleLinks) {
+            if (-not $entry.Path) { continue }
+            $label = Escape-Html($entry.Label)
+            if ($entry.Exists) {
+              $href = Escape-Href($entry.Path)
+              $html.Add([string]::Format('<li><a href="{0}">{1}</a></li>', $href, $label))
+            } else {
+              $html.Add([string]::Format('<li>{0}: missing</li>', $label))
+            }
+          }
+          $html.Add('</ul>')
+          $html.Add('</section>')
+
+          $html.Add('<section>')
+          $html.Add('<h2>Iterate metadata</h2>')
+          $html.Add('<ul>')
+          foreach ($pair in $iteratePairs) {
+            $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', Escape-Html($pair.Label), Escape-Html($pair.Value)))
+          }
+          $html.Add('</ul>')
+          $html.Add('</section>')
+
+          if ($iterateDir -and $iterFiles) {
+            $html.Add('<section>')
+            $html.Add('<h3>Iterate files</h3>')
+            $html.Add('<ul>')
+            foreach ($file in $iterFiles) {
+              $rel = Get-Relative $file.FullName
+              $href = Escape-Href($rel)
+              $text = Escape-Html($rel)
+              $html.Add([string]::Format('<li><code><a href="{0}">{1}</a></code></li>', $href, $text))
+            }
+            $html.Add('</ul>')
+            $html.Add('</section>')
+          }
+
+          if (Test-Path $batchRunMeta) {
+            try {
+              $meta = Get-Content -Raw -LiteralPath $batchRunMeta | ConvertFrom-Json
+              $html.Add('<section>')
+              $html.Add('<h2>Batch-check run</h2>')
+              $html.Add('<ul>')
+              $html.Add([string]::Format('<li>Run id: {0} (attempt {1})</li>', Escape-Html($meta.run_id), Escape-Html($meta.run_attempt)))
+              $html.Add([string]::Format('<li>Status: {0} / {1}</li>', Escape-Html($meta.status), Escape-Html($meta.conclusion)))
+              if ($meta.html_url) {
+                $html.Add([string]::Format('<li><a href="{0}">Run page</a></li>', Escape-Href($meta.html_url)))
+              }
+              $html.Add('</ul>')
+              $html.Add('</section>')
+            } catch {}
+          }
+
+          if ($ndjsonSummaries) {
+            $html.Add('<section>')
+            $html.Add('<h2>NDJSON summaries</h2>')
+            foreach ($file in $ndjsonSummaries) {
+              $rel = Get-Relative $file.FullName
+              $html.Add([string]::Format('<h3>{0}</h3>', Escape-Html($rel)))
+              $html.Add('<pre>')
+              foreach ($segment in Get-Content -LiteralPath $file.FullName) {
+                $html.Add(Escape-Html($segment))
+              }
+              $html.Add('</pre>')
+            }
+            $html.Add('</section>')
+          }
+
+          if ($allFiles) {
+            $html.Add('<section>')
+            $html.Add('<h2>File listing</h2>')
+            $html.Add('<ul>')
+            foreach ($item in $allFiles) {
+              $rel = Get-Relative $item.FullName
+              $href = Escape-Href($rel)
+              $text = Escape-Html($rel)
+              $size = Escape-Html('{0:N0} bytes' -f $item.Length)
+              $html.Add([string]::Format('<li><a href="{0}">{1}</a> — {2}</li>', $href, $text, $size))
+            }
+            $html.Add('</ul>')
+            $html.Add('</section>')
+          }
+
+          if ($inventoryB64) {
+            try {
+              $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($inventoryB64))
+              if ($decoded) {
+                $html.Add('<section>')
+                $html.Add('<h2>Inventory (raw)</h2>')
+                $html.Add('<pre>')
+                foreach ($entry in $decoded.Split("`n")) {
+                  $html.Add(Escape-Html($entry))
+                }
+                $html.Add('</pre>')
+                $html.Add('</section>')
+              }
+            } catch {}
+          }
+
+          $html.Add('</body>')
+          $html.Add('</html>')
+          # Professional note: Render structured HTML instead of an encoded Markdown <pre>
+          # block so unauthenticated readers receive clickable anchors on GitHub Pages.
           ($html -join "`n") | Set-Content -Encoding UTF8 -NoNewline (Join-Path $Diag 'index.html')
 
       - name: Write site overview
@@ -1774,22 +1947,101 @@ jobs:
           $lines += 'Artifacts from the self-test workflow and iterate job are merged under the bundle directory above.'
 
           ($lines -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Site 'index.md')
-          # NOTE: Precompute the encoded body so trailing commas in the array literal
-          # never cause PowerShell to interpret the -replace chain as a single call with
-          # three arguments (which would trigger "The -replace operator allows only two
-          # elements" at runtime on the hosted runner).
-          $plainBody = $lines -join "`n"
-          $encodedBody = $plainBody -replace '&', '&amp;'
-          $encodedBody = $encodedBody -replace '<', '&lt;'
-          $encodedBody = $encodedBody -replace '>', '&gt;'
-          $html = @(
-            '<!doctype html>',
-            '<meta charset="utf-8">',
-            '<title>Diagnostics overview</title>',
-            '<pre>',
-            $encodedBody,
-            '</pre>'
+          function Escape-Html([string]$value) {
+            if ($null -eq $value) { return '' }
+            $encoded = $value -replace '&', '&amp;'
+            $encoded = $encoded -replace '<', '&lt;'
+            return $encoded -replace '>', '&gt;'
+          }
+
+          function Escape-Href([string]$value) {
+            if ([string]::IsNullOrWhiteSpace($value)) { return $value }
+            try {
+              return [System.Uri]::EscapeUriString($value)
+            } catch {
+              return $value
+            }
+          }
+
+          $metadataItems = @(
+            @{ Label = 'Repo'; Value = $Repo },
+            @{ Label = 'Commit'; Value = $SHA },
+            @{ Label = 'Run page'; Value = $RunUrl; Href = $RunUrl },
+            @{ Label = 'Iterate decision'; Value = $decision },
+            @{ Label = 'Iterate HTTP status'; Value = $httpStatus }
           )
+
+          $quickLinkSpecs = @(
+            @{ Label = 'Bundle index'; Path = $bundle; Exists = Has-File $bundleIndex },
+            @{ Label = 'Artifact inventory (HTML)'; Path = $inventoryHtml; Exists = Has-File $inventoryHtml },
+            @{ Label = 'Artifact inventory (text)'; Path = $inventoryTxt; Exists = Has-File $inventoryTxt },
+            @{ Label = 'Iterate logs zip'; Path = $iterateZipRel; Exists = Has-File $iterateZipRel },
+            @{ Label = 'Batch-check logs zip'; Path = $batchZipRel; Exists = if ($batchZipRel) { Has-File $batchZipRel } else { $false } },
+            @{ Label = 'Repository zip'; Path = $repoZipRel; Exists = Has-File $repoZipRel },
+            @{ Label = 'Inventory (markdown)'; Path = $inventoryMd; Exists = Has-File $inventoryMd }
+          )
+
+          $html = [System.Collections.Generic.List[string]]::new()
+          $html.Add('<!doctype html>')
+          $html.Add('<html lang="en">')
+          $html.Add('<head>')
+          $html.Add('<meta charset="utf-8">')
+          $html.Add('<title>Diagnostics overview</title>')
+          $html.Add('</head>')
+          $html.Add('<body>')
+          $html.Add('<h1>Diagnostics overview</h1>')
+          $html.Add([string]::Format('<p>Latest run: <a href="{0}">{1}</a></p>', Escape-Href($bundle), Escape-Html([string]::Format('{0} (attempt {1})', $Run, $Att))))
+
+          $html.Add('<section>')
+          $html.Add('<h2>Metadata</h2>')
+          $html.Add('<ul>')
+          foreach ($item in $metadataItems) {
+            $label = Escape-Html($item.Label)
+            if ($item.ContainsKey('Href') -and $item.Href) {
+              $href = Escape-Href($item.Href)
+              $value = Escape-Html($item.Value)
+              $html.Add([string]::Format('<li><strong>{0}:</strong> <a href="{1}">{2}</a></li>', $label, $href, $value))
+            } else {
+              $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $label, Escape-Html($item.Value)))
+            }
+          }
+          $html.Add('</ul>')
+          $html.Add('</section>')
+
+          $html.Add('<section>')
+          $html.Add('<h2>Quick links</h2>')
+          $html.Add('<ul>')
+          foreach ($entry in $quickLinkSpecs) {
+            $label = Escape-Html($entry.Label)
+            if ($entry.Path -and $entry.Exists) {
+              $html.Add([string]::Format('<li><a href="{0}">{1}</a></li>', Escape-Href($entry.Path), $label))
+            } elseif ($entry.Path) {
+              $html.Add([string]::Format('<li>{0}: missing</li>', $label))
+            } else {
+              $html.Add([string]::Format('<li>{0}: missing</li>', $label))
+            }
+          }
+          $html.Add('</ul>')
+          $html.Add('</section>')
+
+          if ($summaryPreview.Count -gt 0) {
+            $html.Add('<section>')
+            $html.Add('<h2>NDJSON summary (first bundle)</h2>')
+            $html.Add('<pre>')
+            foreach ($line in $summaryPreview) {
+              $trimmed = $line
+              if ($trimmed -like '```*') { continue }
+              $html.Add(Escape-Html($line))
+            }
+            $html.Add('</pre>')
+            $html.Add('</section>')
+          }
+
+          $html.Add('<p>Artifacts from the self-test workflow and iterate job are merged under the bundle directory above.</p>')
+          $html.Add('</body>')
+          $html.Add('</html>')
+          # Professional note: Emit clickable anchors at the root so external analysts can
+          # navigate the published diagnostics without copying Markdown links manually.
           ($html -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Site 'index.html')
 
       - name: Append job summary
