@@ -1908,6 +1908,8 @@ jobs:
           $RunUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           $bundlePrefix = "diag/$Run-$Att"
           $bundle = "$bundlePrefix/"
+          $cb = '${{ github.run_id }}'
+          $bundleIndexHref = "$bundlePrefix/index.html?v=$cb"
           $Short = "${{ steps.prep.outputs.SHORTSHA }}"
           if (-not $Short) {
             $Short = $SHA
@@ -1967,7 +1969,7 @@ jobs:
           $lines = @(
             '# Diagnostics overview',
             '',
-            "Latest run: [$Run (attempt $Att)]($bundle)",
+            "Latest run: [$Run (attempt $Att)]($bundleIndexHref)",
             '',
             '## Metadata',
             "- Repo: $Repo",
@@ -1980,7 +1982,8 @@ jobs:
           $lines += ''
           $lines += '## Quick links'
           if (Has-File $bundleIndex) {
-            $lines += [string]::Format('- [Bundle index]({0})', (Normalize-Link $bundle))
+            $lines += [string]::Format('- [Bundle index]({0})', (Normalize-Link $bundleIndexHref))
+            $lines += [string]::Format('- [Open latest (cache-busted)]({0})', (Normalize-Link $bundleIndexHref))
           } else {
             $lines += '- Bundle index: missing'
           }
@@ -2060,7 +2063,8 @@ jobs:
           )
 
           $quickLinkSpecs = @(
-            @{ Label = 'Bundle index'; Path = $bundle; Exists = Has-File $bundleIndex },
+            @{ Label = 'Bundle index'; Path = $bundleIndexHref; Exists = Has-File $bundleIndex },
+            @{ Label = 'Open latest (cache-busted)'; Path = $bundleIndexHref; Exists = Has-File $bundleIndex },
             @{ Label = 'Artifact inventory (HTML)'; Path = $inventoryHtml; Exists = Has-File $inventoryHtml },
             @{ Label = 'Artifact inventory (text)'; Path = $inventoryTxt; Exists = Has-File $inventoryTxt },
             @{ Label = 'Iterate logs zip'; Path = $iterateZipRel; Exists = Has-File $iterateZipRel },
@@ -2079,7 +2083,7 @@ jobs:
           $html.Add('</head>')
           $html.Add('<body>')
           $html.Add('<h1>Diagnostics overview</h1>')
-          $html.Add([string]::Format('<p>Latest run: <a href="{0}">{1}</a></p>', $(Escape-Href (Normalize-Link $bundle)), $(Escape-Html ([string]::Format('{0} (attempt {1})', $Run, $Att)))))
+          $html.Add([string]::Format('<p>Latest run: <a href="{0}">{1}</a></p>', $(Escape-Href (Normalize-Link $bundleIndexHref)), $(Escape-Html ([string]::Format('{0} (attempt {1})', $Run, $Att)))))
 
           $html.Add('<section>')
           $html.Add('<h2>Metadata</h2>')
