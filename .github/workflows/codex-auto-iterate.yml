@@ -1417,10 +1417,9 @@ jobs:
             Copy-Item -Recurse -Force '.github\workflows\*' $wfDest
             $wfCopyDir = Join-Path $Diag 'wf'
             New-Item -ItemType Directory -Path $wfCopyDir -Force | Out-Null
-            $src = '.github\workflows\codex-auto-iterate.yml'
-            if (Test-Path $src) {
-              Copy-Item -Force $src (Join-Path $wfCopyDir 'codex-auto-iterate.yml')
-              Copy-Item -Force $src (Join-Path $wfCopyDir 'codex-auto-iterate.yml.txt')
+            Get-ChildItem -Path '.github\workflows' -Filter *.yml -File -ErrorAction SilentlyContinue | ForEach-Object {
+              Copy-Item -Force $_.FullName (Join-Path $wfCopyDir $_.Name)
+              Copy-Item -Force $_.FullName (Join-Path $wfCopyDir ($_.Name + '.txt'))
             }
           }
 
@@ -1625,9 +1624,14 @@ jobs:
             @{ Label = 'Iterate logs zip'; Path = "logs/$iterateZipName"; Exists = Test-Path $iterateZipPath },
             @{ Label = 'Batch-check logs zip'; Path = if ($batchZipName) { "logs/$batchZipName" } else { $null }; Exists = if ($batchZipName) { Test-Path (Join-Path $Diag ('logs\' + $batchZipName)) } else { $false } },
             @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = Test-Path (Join-Path $Diag ("repo\repo-$Short.zip")) },
-            @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = Test-Path (Join-Path $Diag 'repo\files') },
-            @{ Label = 'Workflow: codex-auto-iterate.yml'; Path = 'wf/codex-auto-iterate.yml.txt'; Exists = Test-Path (Join-Path $Diag 'wf\codex-auto-iterate.yml.txt') }
+            @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = Test-Path (Join-Path $Diag 'repo\files') }
           )
+
+          $wfTxts = Get-ChildItem -Path (Join-Path $Diag 'wf') -Filter '*.yml.txt' -File -ErrorAction SilentlyContinue
+          foreach ($w in $wfTxts) {
+            $name = $w.Name
+            $bundleLinks += @{ Label = "Workflow: $name"; Path = ("wf/" + $name); Exists = $true }
+          }
 
           foreach ($entry in $bundleLinks) {
             if (-not $entry.Path) { continue }
