@@ -1428,6 +1428,25 @@ jobs:
         run: |
           $Diag = "${{ steps.prep.outputs.DIAG }}"
           $items = Get-ChildItem -Path $Diag -Recurse -File -Force -ErrorAction SilentlyContinue
+          if (-not $items) { $items = @() }
+          $manifestFiles = @()
+          foreach ($item in $items) {
+            $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\\','/')
+            $manifestFiles += [PSCustomObject]@{
+              path         = $relative
+              size         = $item.Length
+              sha256       = (Get-FileHash -Algorithm SHA256 -LiteralPath $item.FullName).Hash
+              modified_utc = $item.LastWriteTimeUtc.ToString('o')
+            }
+          }
+          $manifest = [PSCustomObject]@{
+            run_id        = '${{ github.run_id }}'
+            run_attempt   = '${{ github.run_attempt }}'
+            sha           = '${{ github.sha }}'
+            generated_utc = (Get-Date).ToUniversalTime().ToString('o')
+            files         = $manifestFiles
+          }
+          $manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.json')
           $bulletLines = [System.Collections.Generic.List[string]]::new()
           $plainLines = [System.Collections.Generic.List[string]]::new()
           $htmlLines = [System.Collections.Generic.List[string]]::new()
@@ -1600,6 +1619,7 @@ jobs:
             @{ Label = 'Inventory (HTML)'; Path = 'inventory.html'; Exists = Test-Path (Join-Path $Diag 'inventory.html') },
             @{ Label = 'Inventory (text)'; Path = 'inventory.txt'; Exists = Test-Path (Join-Path $Diag 'inventory.txt') },
             @{ Label = 'Inventory (markdown)'; Path = 'inventory.md'; Exists = Test-Path (Join-Path $Diag 'inventory.md') },
+            @{ Label = 'Inventory (json)'; Path = 'inventory.json'; Exists = Test-Path (Join-Path $Diag 'inventory.json') },
             @{ Label = 'Iterate logs zip'; Path = "logs/$iterateZipName"; Exists = Test-Path $iterateZipPath },
             @{ Label = 'Batch-check logs zip'; Path = if ($batchZipName) { "logs/$batchZipName" } else { $null }; Exists = if ($batchZipName) { Test-Path (Join-Path $Diag ('logs\' + $batchZipName)) } else { $false } },
             @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = Test-Path (Join-Path $Diag ("repo\repo-$Short.zip")) },
