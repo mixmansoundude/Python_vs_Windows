@@ -1420,6 +1420,7 @@ jobs:
             $src = '.github\workflows\codex-auto-iterate.yml'
             if (Test-Path $src) {
               Copy-Item -Force $src (Join-Path $wfCopyDir 'codex-auto-iterate.yml')
+              Copy-Item -Force $src (Join-Path $wfCopyDir 'codex-auto-iterate.yml.txt')
             }
           }
 
@@ -1625,7 +1626,7 @@ jobs:
             @{ Label = 'Batch-check logs zip'; Path = if ($batchZipName) { "logs/$batchZipName" } else { $null }; Exists = if ($batchZipName) { Test-Path (Join-Path $Diag ('logs\' + $batchZipName)) } else { $false } },
             @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = Test-Path (Join-Path $Diag ("repo\repo-$Short.zip")) },
             @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = Test-Path (Join-Path $Diag 'repo\files') },
-            @{ Label = 'Workflow: codex-auto-iterate.yml'; Path = 'wf/codex-auto-iterate.yml'; Exists = Test-Path (Join-Path $Diag 'wf\codex-auto-iterate.yml') }
+            @{ Label = 'Workflow: codex-auto-iterate.yml'; Path = 'wf/codex-auto-iterate.yml.txt'; Exists = Test-Path (Join-Path $Diag 'wf\codex-auto-iterate.yml.txt') }
           )
 
           foreach ($entry in $bundleLinks) {
