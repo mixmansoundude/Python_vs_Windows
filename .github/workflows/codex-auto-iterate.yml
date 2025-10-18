@@ -889,7 +889,7 @@ jobs:
           path: |
             ${{ steps.diag_stage.outputs.dir }}/**
             ${{ steps.diag_stage.outputs.codex_log }}
-            .codex\*
+            .codex/**
           if-no-files-found: warn
           retention-days: 7
 
