@@ -1921,6 +1921,28 @@ jobs:
           # block so unauthenticated readers receive clickable anchors on GitHub Pages.
           ($html -join "`n") | Set-Content -Encoding UTF8 -NoNewline (Join-Path $Diag 'index.html')
 
+          $site = "${{ steps.prep.outputs.SITE }}"
+          $diag = "${{ steps.prep.outputs.DIAG }}"
+          $run  = '${{ github.run_id }}'
+          $att  = '${{ github.run_attempt }}'
+          $sha  = '${{ github.sha }}'
+          $obj = [pscustomobject]@{
+            repo        = '${{ github.repository }}'
+            run_id      = $run
+            run_attempt = $att
+            sha         = $sha
+            bundle_url  = "diag/$run-$att/index.html"
+            inventory   = "diag/$run-$att/inventory.json"
+            workflow    = "diag/$run-$att/wf/codex-auto-iterate.yml.txt"
+            iterate = @{
+              prompt   = "diag/$run-$att/_artifacts/iterate/iterate/prompt.txt"
+              response = "diag/$run-$att/_artifacts/iterate/iterate/response.json"
+              diff     = "diag/$run-$att/_artifacts/iterate/iterate/patch.diff"
+              log      = "diag/$run-$att/_artifacts/iterate/iterate/exec.log"
+            }
+          }
+          $obj | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 (Join-Path $site 'latest.json')
+
       - name: Write site overview
         shell: pwsh
         run: |
