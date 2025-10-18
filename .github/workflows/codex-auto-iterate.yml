@@ -150,7 +150,7 @@ jobs:
         run: |
           set -euo pipefail
           branch="${{ github.ref_name }}"
-          sha="${{ github.sha }}"
+          sha="${{ github.event.pull_request.head.sha || github.sha }}"
           run_id="${{ github.run_id }}"
           run_url="https://github.com/${{ github.repository }}/actions/runs/${run_id}"
           branch_slug=`echo "$branch" | tr ':/ ' '---'`
@@ -1199,10 +1199,11 @@ jobs:
 
           $pollSeconds = 20
           $deadline = [DateTime]::UtcNow.AddMinutes(15)
+          $headSha = "${{ github.event.pull_request.head.sha || github.sha }}"
           $run = $null
           while ([DateTime]::UtcNow -lt $deadline) {
             try {
-              $runs = Invoke-RestMethod -Uri "$base/actions/workflows/$($workflow.id)/runs?per_page=20&head_sha=${{ github.sha }}" -Headers $headers -ErrorAction Stop
+              $runs = Invoke-RestMethod -Uri "$base/actions/workflows/$($workflow.id)/runs?per_page=20&head_sha=$headSha" -Headers $headers -ErrorAction Stop
             } catch {
               "list runs failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
               return
