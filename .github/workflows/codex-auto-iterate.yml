@@ -160,6 +160,26 @@ jobs:
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
 
+      - name: Write local Codex context
+        shell: pwsh
+        run: |
+          $Head = "${{ github.event.pull_request.head.sha || github.sha }}"
+          $Base = "${{ github.event.pull_request.base.sha || '' }}"
+          if (-not $Base) { $Base = (git rev-parse HEAD~1).Trim() }
+          New-Item -ItemType Directory -Path .codex -Force | Out-Null
+          git diff --name-only --diff-filter=ACMRT $Base $Head | Set-Content -Encoding UTF8 .codex/changed_files.txt
+          $wf = Get-ChildItem '.github/workflows' -Filter *.yml -File -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.FullName.Replace($PWD,'').TrimStart('\').Replace('\','/') }
+          $ctx = [pscustomobject]@{
+            repo='${{ github.repository }}'; event='${{ github.event_name }}'
+            head_sha=$Head; base_sha=$Base; ref='${{ github.ref }}'
+            run_id='${{ github.run_id }}'; run_attempt='${{ github.run_attempt }}'
+            runner_os=$env:RUNNER_OS; shell='pwsh'
+            apply_patch = (Resolve-Path 'tools/apply_patch.py' -ErrorAction SilentlyContinue).Path
+            workflows = $wf
+          }
+          $ctx | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 .codex/context.json
+
       - name: Poll ALL workflow runs for this commit
         id: poll
         uses: actions/github-script@v7
@@ -547,61 +567,6 @@ jobs:
           echo '```text' >> "$GITHUB_STEP_SUMMARY"
           head -n 120 "${{ steps.prompt.outputs.path }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Write local Codex context
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
-        shell: pwsh
-        run: |
-          $Head = "${{ github.event.pull_request.head.sha || github.sha }}"
-          $Base = "${{ github.event.pull_request.base.sha || '' }}"
-          if (-not $Base) {
-            $fallback = git rev-parse HEAD~1 2>$null
-            if ($LASTEXITCODE -eq 0 -and $fallback) {
-              $Base = $fallback.Trim()
-            }
-            else {
-              # Professional note: fall back to the root commit when no parent exists (e.g. first push on a branch).
-              $roots = git rev-list --max-parents=0 HEAD 2>$null
-              if ($LASTEXITCODE -eq 0 -and $roots) {
-                $Base = ($roots | Select-Object -First 1).Trim()
-              }
-              else {
-                $Base = $Head
-              }
-            }
-          }
-          New-Item -ItemType Directory -Path .codex -Force | Out-Null
-          $changedPath = Join-Path '.codex' 'changed_files.txt'
-          New-Item -ItemType File -Path $changedPath -Force | Out-Null
-          $diffArgs = @('--name-only', '--diff-filter=ACMRT', $Base, $Head)
-          $changes = git diff @diffArgs 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            $changes = @()
-          }
-          Set-Content -Encoding UTF8 -Path $changedPath -Value $changes
-          $rootPath = (Get-Location).ProviderPath
-          $wfList = @(
-                    Get-ChildItem '.github/workflows' -Filter *.yml -File -ErrorAction SilentlyContinue |
-                    ForEach-Object {
-                      $relative = $_.FullName.Replace($rootPath, '')
-                      # Professional note: normalize separators for Linux and Windows runners before persisting the manifest.
-                      $relative = $relative -replace '^[\\/]+', ''
-                      $relative = $relative -replace '\\', '/'
-                      if (-not $relative) { $relative = $_.Name }
-                      $relative
-                    })
-          $applyPath = Resolve-Path 'apply_patch.py' -ErrorAction SilentlyContinue
-          # Professional note: Resolve-Path can return $null on repositories without apply_patch.py; guard before dereferencing.
-          if ($applyPath) { $applyPath = $applyPath.Path } else { $applyPath = $null }
-          $ctx = [pscustomobject]@{
-            repo='${{ github.repository }}'; event='${{ github.event_name }}'
-            head_sha=$Head; base_sha=$Base; ref='${{ github.ref }}'
-            run_id='${{ github.run_id }}'; run_attempt='${{ github.run_attempt }}'
-            os=$env:RUNNER_OS; shell='pwsh'
-            apply_patch = $applyPath
-            workflows = $wfList
-          }
-          $ctx | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 .codex/context.json
 
       - name: Ask model for patch (Responses API)
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
