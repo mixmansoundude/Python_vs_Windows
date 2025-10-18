@@ -16,6 +16,12 @@ Operating policy for automated agents (Codex, Copilot, others).
 - Do not delete or skip checks to obtain a green build.
 - Do not change workflow triggers, permissions, or retention.
 
+## Interface contract with CI
+- CI asserts on the exact bootstrapper messages emitted by `run_setup.bat` and related helpers.
+- When adjusting bootstrap log text or status summaries, update the workflow checks that parse them at the same time.
+- Likewise, when tightening CI parsing or summaries, ensure `run_setup.bat` keeps emitting the expected phrases.
+- Always validate both sides together so the message contract stays synchronized and avoids false regressions.
+
 ## Conda policy (mandatory)
 - Enforce conda-forge only.
 - Before any update/install:
@@ -71,26 +77,19 @@ THEN stop and open/append a PR. One loop = one change set.
 - Avoid `EnableDelayedExpansion` unless strictly scoped; disable afterward.
 - Batch file syntax has been a critical source of failures. Especially for escaping special characters.
   - Since batch file syntax is tricky, and there is not an easy checker, if you cannot run it on a windows environment then utilize the CI workflow actions that run on every push so wait for the results to appear and recheck after the push.
-- Use LF endings in the repository.
-- Only Windows scripts (.bat .cmd .ps1 .psm1 .psd1) should check out as CRLF.
 - Do not change line endings manually; follow .gitattributes.
 - If you change the bootstrapper’s console text or these entry rules in a future PR, update the self-test and any entry-selection tests accordingly.
 - The bootstrapper’s exit code when no Python files are present is not a release contract; guard on the console text instead.
-- Keep core.autocrlf=false and let .gitattributes control endings.
-- Be sure to sanity check anything touched before submitting code. Here are some methods:
-  - Python syntax errors and name errors: use `python -m compileall -q .` and `python -m pyflakes .` (or `pip install pyflakes`).
-  - PowerShell lint: run PSScriptAnalyzer (`Install-Module PSScriptAnalyzer -Force -Scope CurrentUser` then `Invoke-ScriptAnalyzer -Path . -Recurse -EnableExit`).
-  - YAML lint: use `pip install yamllint` (or `actionshub/yamllint@v1`) and run over `*.yml`/`*.yaml`.
-  - JSON lint: use `jq -e .` over `*.json`.
-  - Generic **paired-delimiter** scanner for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
-     - Implement a kind of `tools/check_delimiters.py` that reads text files and validates balanced/ordered pairs: (), {}, [], and quotes " ' (handle escapes and ignore inside comments where feasible).
-     - For `.bat/.cmd`, be conservative: treat `^` (escape) and `REM`/`::` as comment starts; don’t over-parse redirection `<` `>`; just count (), quotes, and braces/brackets. For `.ps1`, respect `#` comments and here-strings (@'…'@, @"…"@).
+- Be sure to sanity check anything touched before submitting code. Recommended options include:
+  - Python: `python -m compileall -q .` and `python -m pyflakes .` (install `pyflakes` if needed).
+  - PowerShell: run PSScriptAnalyzer (`Install-Module PSScriptAnalyzer -Force -Scope CurrentUser` then `Invoke-ScriptAnalyzer -Path . -Recurse -EnableExit`).
+  - YAML (and GitHub Actions): run `python -m yamllint <file>` (or `actionshub/yamllint@v1`) and `actionlint -oneline` for workflow validation.
+  - JSON: `jq -e .` over `*.json`.
+  - Generic paired-delimiter scan for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
+    - Provide a helper such as `tools/check_delimiters.py` that validates (), {}, [], and quotes " ' (handle escapes and ignore comments when practical).
+    - For `.bat/.cmd`, treat `^` as escape and `REM`/`::` as comment starts; avoid over-parsing redirection symbols.
+    - For `.ps1`, respect `#` comments and here-strings (@'…'@, @"…"@) when counting delimiters.
 
-
-## Headless Codex Iteration (CI)
-- Trigger: Workflow_run completion of **Batch syntax/run check**.
-- Requires repository secret **OPENAI_API_KEY** (used by the Codex CLI).
-- Model pin: `gpt-4o-mini` via `codex exec` headless mode.
-- Attempt cap: 20 commits per source branch (tracked by commit prefix).
-- Branch naming: `codex/ci-fix-<failing head branch>` for automated fixes.
-- Disable by commenting out the workflow job or forcing an always-false condition in `.github/workflows/codex-auto-iterate.yml`.
+- Work in an explicit loop: **Plan → Check the plan → Execute → Self-check/tests**. Document the plan before coding, verify it against requirements, act, then rerun the listed sanity checks.
+- When fixing bugs, leave professional comments that explain why the change is structured the way it is so future readers understand the constraint.
+- You may add helper utilities under `tools/` (preferred over embedding long scripts inside YAML/PowerShell/batch files). Run helpers from there freely, but update existing tools carefully to avoid regressions.
