@@ -48,6 +48,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Normalize Git EOL for patching
+        shell: pwsh
+        run: |
+          git config core.autocrlf false
+          git config core.eol lf
+          git config core.safecrlf warn
+
       - name: Auth probe (Responses API)
         id: auth
         continue-on-error: true
