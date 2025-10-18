@@ -1113,6 +1113,10 @@ jobs:
           # Professional note: .nojekyll keeps GitHub Pages from stripping the leading underscore
           # directories that we rely on to surface raw diagnostics.
           New-Item -ItemType File -Path (Join-Path $SiteRoot '.nojekyll') -Force | Out-Null
+          # Professional note: duplicate .nojekyll at the per-run diag root so direct links into
+          # underscore-prefixed folders (e.g., _artifacts) stay browsable when users open the
+          # diagnostics bundle without hitting the site root first.
+          New-Item -ItemType File -Path (Join-Path $Diag '.nojekyll') -Force | Out-Null
           $short = "${{ github.sha }}"
           if ($short.Length -gt 7) { $short = $short.Substring(0,7) }
           echo "SITE=$SiteRoot" >> $env:GITHUB_OUTPUT
