@@ -683,18 +683,17 @@ jobs:
             return [System.IO.Path]::GetRelativePath($Base, $Path)
           }
 
-          function Get-FailureInfoFromObject {
-            param([object]$Root)
+          function Get-DeepValues {
+            param(
+              [object]$Root,
+              [Parameter(Mandatory = $true)][string]$Key
+            )
 
-            $result = [pscustomobject]@{ HasFailure = $false; Id = $null }
-            if ($null -eq $Root) { return $result }
+            $values = [System.Collections.Generic.List[string]]::new()
+            if ($null -eq $Root) { return $values.ToArray() }
 
             $stack = [System.Collections.Stack]::new()
             $stack.Push($Root)
-
-            $hasFailure = $false
-            $nodeId = $null
-            $nameVal = $null
 
             while ($stack.Count -gt 0) {
               $current = $stack.Pop()
@@ -702,26 +701,21 @@ jobs:
 
               if ($current -is [System.Collections.IDictionary] -or $current -is [PSCustomObject]) {
                 foreach ($prop in $current.PSObject.Properties) {
-                  $propName = $prop.Name
-                  $propValue = $prop.Value
+                  $name = $prop.Name
+                  if ([string]::IsNullOrEmpty($name)) { continue }
 
-                  if ([string]::IsNullOrEmpty($propName)) { continue }
-
-                  if ($propName -ieq 'outcome') {
-                    if ($propValue -is [string] -and $propValue -eq 'failed') { $hasFailure = $true }
-                  } elseif ($propName -ieq 'nodeid') {
-                    if (-not $nodeId -and $propValue) { $nodeId = [string]$propValue }
-                  } elseif ($propName -ieq 'name') {
-                    if (-not $nameVal -and $propValue) { $nameVal = [string]$propValue }
+                  $value = $prop.Value
+                  if ($name -ieq $Key -and $value -is [string]) {
+                    $values.Add([string]$value) | Out-Null
                   }
 
-                  if ($propValue -ne $null -and -not ($propValue -is [string])) {
-                    if ($propValue -is [System.Collections.IDictionary] -or $propValue -is [PSCustomObject]) {
-                      $stack.Push($propValue)
+                  if ($value -ne $null -and -not ($value -is [string])) {
+                    if ($value -is [System.Collections.IDictionary] -or $value -is [PSCustomObject]) {
+                      $stack.Push($value)
                       continue
                     }
-                    if ($propValue -is [System.Collections.IEnumerable]) {
-                      foreach ($item in $propValue) { $stack.Push($item) }
+                    if ($value -is [System.Collections.IEnumerable]) {
+                      foreach ($item in $value) { $stack.Push($item) }
                     }
                   }
                 }
@@ -730,23 +724,8 @@ jobs:
               }
             }
 
-            if ($hasFailure) {
-              $result.HasFailure = $true
-              if ($nodeId) { $result.Id = $nodeId }
-              elseif ($nameVal) { $result.Id = $nameVal }
-            }
-
-            return $result
+            return $values.ToArray()
           }
-
-          # Professional note: Requirement "Search broadly under the job workspace for NDJSON" — focus on the
-          # batch-check patterns (**/*~test-results.ndjson and **/ci_test_results*.ndjson) and skip archived
-          # forms so diagnostics see the same inputs without walking unrelated telemetry.
-          $ndjsonFiles = Get-ChildItem -Path $root.Path -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object {
-              ($_.Name -like '*~test-results.ndjson' -or $_.Name -like 'ci_test_results*.ndjson') -and
-              ($_.FullName -notmatch '\.ndjson\.(zip|gz)$')
-            }
 
           function Ensure-PerFileSet {
             param([string]$Key)
@@ -757,9 +736,16 @@ jobs:
             return $perFile[$Key]
           }
 
-          # Professional note: some pytest plugins stream ANSI/control characters that break ConvertFrom-Json;
-          # keep a text fallback so we still honour "Produce a correct list of failing test IDs" when parsing fails.
-          function Get-FailureInfoFromLine {
+          # Professional note: Requirement "Search broadly under the job workspace for NDJSON" — walk
+          # **/*~test-results.ndjson and **/ci_test_results*.ndjson (excluding archived forms) so diagnostics
+          # see the exact data called out on the run page without fetching unrelated telemetry.
+          $ndjsonFiles = Get-ChildItem -Path $root.Path -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object {
+              ($_.Name -like '*~test-results.ndjson' -or $_.Name -like 'ci_test_results*.ndjson') -and
+              ($_.FullName -notmatch '\.ndjson\.(zip|gz)$')
+            }
+
+          function Get-FallbackFailure {
             param([string]$Line)
 
             $result = [pscustomobject]@{ HasFailure = $false; Id = $null }
@@ -793,35 +779,44 @@ jobs:
             $lines = Get-Content -LiteralPath $file.FullName -Encoding UTF8
             foreach ($line in $lines) {
               if ([string]::IsNullOrWhiteSpace($line)) { continue }
-              $hasFailure = $false
+
+              $failed = $false
               $id = $null
+
+              $obj = $null
               try {
                 $obj = $line | ConvertFrom-Json -ErrorAction Stop
-                $info = Get-FailureInfoFromObject -Root $obj
-                if ($info) {
-                  $hasFailure = $info.HasFailure
-                  if ($info.Id) { $id = $info.Id }
-                }
               } catch {
-                $hasFailure = $false
+                $obj = $null
               }
 
-              if (-not $hasFailure -or -not $id) {
-                $fallback = Get-FailureInfoFromLine -Line $line
+              if ($obj -ne $null) {
+                $outcomes = @(Get-DeepValues -Root $obj -Key 'outcome')
+                if ($outcomes -and ($outcomes -contains 'failed')) {
+                  $failed = $true
+                  $ids = @(Get-DeepValues -Root $obj -Key 'nodeid')
+                  if ($ids.Count -gt 0) {
+                    $id = $ids[0]
+                  } else {
+                    $names = @(Get-DeepValues -Root $obj -Key 'name')
+                    if ($names.Count -gt 0) { $id = $names[0] }
+                  }
+                }
+              }
+
+              if (-not $failed -or -not $id) {
+                $fallback = Get-FallbackFailure -Line $line
                 if ($fallback.HasFailure) {
-                  $hasFailure = $true
+                  $failed = $true
                   if (-not $id -and $fallback.Id) { $id = $fallback.Id }
                 }
               }
 
-              if (-not $hasFailure) { continue }
+              if (-not $failed -or -not $id) { continue }
 
-              if ($id) {
-                $null = $set.Add($id)
-                $null = $allFailures.Add($id)
-              }
+              $null = $set.Add($id)
+              $null = $allFailures.Add($id)
             }
-
           }
 
           if ($allFailures.Count -eq 0) {
