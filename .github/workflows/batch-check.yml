@@ -669,7 +669,19 @@ jobs:
           }
 
           $outPath = Join-Path $diagDir 'failing-tests.txt'
-          $fails = [System.Collections.Generic.List[string]]::new()
+          $debugPath = Join-Path $diagDir 'fail-debug.txt'
+
+          $allFailures = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+          $perFile = [ordered]@{}
+
+          function Get-RelativePath {
+            param(
+              [Parameter(Mandatory = $true)][string]$Base,
+              [Parameter(Mandatory = $true)][string]$Path
+            )
+
+            return [System.IO.Path]::GetRelativePath($Base, $Path)
+          }
 
           function Get-FailureIdFromObject {
             param([object]$Root)
@@ -694,14 +706,12 @@ jobs:
 
                   if ([string]::IsNullOrEmpty($propName)) { continue }
 
-                  if ($propValue -is [string]) {
-                    if ($propName -ieq 'outcome' -and $propValue -ieq 'failed') {
-                      $hasFailure = $true
-                    } elseif ($propName -ieq 'nodeid' -and -not $nodeId) {
-                      $nodeId = [string]$propValue
-                    } elseif ($propName -ieq 'name' -and -not $nameVal) {
-                      $nameVal = [string]$propValue
-                    }
+                  if ($propName -ieq 'outcome') {
+                    if ($propValue -is [string] -and $propValue -eq 'failed') { $hasFailure = $true }
+                  } elseif ($propName -ieq 'nodeid') {
+                    if (-not $nodeId -and $propValue) { $nodeId = [string]$propValue }
+                  } elseif ($propName -ieq 'name') {
+                    if (-not $nameVal -and $propValue) { $nameVal = [string]$propValue }
                   }
 
                   if ($propValue -ne $null -and -not ($propValue -is [string])) {
@@ -722,6 +732,20 @@ jobs:
             if (-not $hasFailure) { return $null }
             if ($nodeId) { return $nodeId }
             return $nameVal
+          }
+
+          # Professional note: "Locates ALL test-result NDJSON under the job’s workspace" — enumerate every *.ndjson that the
+          # run produces and filter out archived forms (.gz/.zip) so we match the diagnostics bundle without hard-coding paths.
+          $ndjsonFiles = Get-ChildItem -Path $root.Path -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -eq '.ndjson' -and $_.Name -notmatch '\.ndjson\.(zip|gz)$' }
+
+          function Ensure-PerFileSet {
+            param([string]$Key)
+
+            if (-not $perFile.Contains($Key)) {
+              $perFile[$Key] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            }
+            return $perFile[$Key]
           }
 
           # Professional note: some pytest plugins stream ANSI/control characters that break ConvertFrom-Json;
@@ -748,12 +772,14 @@ jobs:
             }
           }
 
-          $ndjsonFiles = Get-ChildItem -Path $root.Path -Recurse -File -Filter '*.ndjson' -ErrorAction SilentlyContinue
           foreach ($file in $ndjsonFiles) {
-            Get-Content -LiteralPath $file.FullName -Encoding UTF8 | ForEach-Object {
-              $line = $_
-              if (-not $line) { return }
-              if ($line -notmatch '"outcome"\s*:\s*"failed"') { return }
+            $rel = Get-RelativePath -Base $root.Path -Path $file.FullName
+            $set = Ensure-PerFileSet -Key $rel
+
+            $lines = Get-Content -LiteralPath $file.FullName -Encoding UTF8
+            foreach ($line in $lines) {
+              if ([string]::IsNullOrWhiteSpace($line)) { continue }
+              if ($line -notmatch '"outcome"\s*:\s*"failed"') { continue }
 
               $id = $null
               try {
@@ -767,22 +793,42 @@ jobs:
                 $id = Get-FailureIdFromLine -Line $line
               }
 
-              if ($id) { $fails.Add($id) }
+              if ($id) {
+                $null = $set.Add($id)
+                $null = $allFailures.Add($id)
+              }
             }
+
           }
 
-          if ($fails.Count -eq 0) {
+          if ($allFailures.Count -eq 0) {
             Set-Content -Encoding UTF8 -LiteralPath $outPath -Value 'none'
           } else {
-            $fails | Sort-Object -Unique | Set-Content -Encoding UTF8 -LiteralPath $outPath
+            $sorted = $allFailures.ToArray() | Sort-Object
+            $sorted | Set-Content -Encoding UTF8 -LiteralPath $outPath
           }
+
+          $debugLines = [System.Collections.Generic.List[string]]::new()
+          foreach ($entry in $perFile.GetEnumerator() | Sort-Object Key) {
+            $count = 0
+            if ($entry.Value) { $count = $entry.Value.Count }
+            $debugLines.Add([string]::Format('{0}`t{1}', $entry.Key, $count)) | Out-Null
+          }
+
+          if ($debugLines.Count -eq 0) {
+            $debugLines.Add('none') | Out-Null
+          }
+
+          $debugLines | Set-Content -Encoding UTF8 -LiteralPath $debugPath
 
       - name: Upload failing test IDs
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: batchcheck-failures-${{ matrix.mode }}
-          path: diag/failing-tests.txt
+          path: |
+            diag/failing-tests.txt
+            diag/fail-debug.txt
           if-no-files-found: ignore
           retention-days: 14
 

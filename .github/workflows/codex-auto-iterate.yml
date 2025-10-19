@@ -1386,7 +1386,9 @@ jobs:
           $diag = "${{ steps.prep.outputs.DIAG }}"
           $batchRoot = Join-Path $diag '_artifacts/batch-check'
           $target = Join-Path $diag 'batchcheck_failing.txt'
+          $debugTarget = Join-Path $diag 'batchcheck_fail-debug.txt'
           $collected = [System.Collections.Generic.List[string]]::new()
+          $debugLines = [System.Collections.Generic.List[string]]::new()
 
           if (Test-Path $batchRoot) {
             $artifactFiles = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'failing-tests.txt' -ErrorAction SilentlyContinue
@@ -1398,6 +1400,16 @@ jobs:
                 if ($line) { $collected.Add($line) }
               }
             }
+
+            $debugArtifacts = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'fail-debug.txt' -ErrorAction SilentlyContinue
+            foreach ($debug in $debugArtifacts) {
+              $rel = [System.IO.Path]::GetRelativePath($batchRoot, $debug.FullName)
+              $null = $debugLines.Add([string]::Format('# {0}', $rel))
+              Get-Content -LiteralPath $debug.FullName -Encoding UTF8 | ForEach-Object {
+                $debugLines.Add($_) | Out-Null
+              }
+              $null = $debugLines.Add('')
+            }
           }
 
           if ($collected.Count -eq 0) {
@@ -1407,6 +1419,8 @@ jobs:
             if (Test-Path $batchRoot) {
               $ndjsonFiles = Get-ChildItem -Path $batchRoot -Recurse -File -Filter '*.ndjson' -ErrorAction SilentlyContinue
             }
+
+            $perFileCounts = @{}
 
             function Get-FailureIdFromObject {
               param([object]$Root)
@@ -1460,13 +1474,29 @@ jobs:
             }
 
             foreach ($file in $ndjsonFiles) {
+              $rel = [System.IO.Path]::GetRelativePath($batchRoot, $file.FullName)
+              if (-not $perFileCounts.ContainsKey($rel)) { $perFileCounts[$rel] = [System.Collections.Generic.List[string]]::new() }
+
               Get-Content -LiteralPath $file.FullName -Encoding UTF8 | ForEach-Object {
                 try {
                   $obj = $_ | ConvertFrom-Json -ErrorAction Stop
                   $id = Get-FailureIdFromObject -Root $obj
-                  if ($id) { $collected.Add($id) }
+                  if ($id) {
+                    $collected.Add($id)
+                    $perFileCounts[$rel].Add($id) | Out-Null
+                  }
                 } catch {}
               }
+            }
+
+            if ($perFileCounts.Count -gt 0) {
+              foreach ($entry in $perFileCounts.GetEnumerator() | Sort-Object Key) {
+                $count = 0
+                if ($entry.Value) { $count = (@($entry.Value | Sort-Object -Unique)).Count }
+                $debugLines.Add([string]::Format('fallback:{0}`t{1}', $entry.Key, $count)) | Out-Null
+              }
+            } elseif ($debugLines.Count -eq 0) {
+              $debugLines.Add('fallback: no ndjson located') | Out-Null
             }
           }
 
@@ -1480,6 +1510,11 @@ jobs:
 
           if (-not $final -or $final.Count -eq 0) { $final = @('none') }
           $final | Set-Content -Encoding UTF8 $target
+
+          if ($debugLines.Count -eq 0) {
+            $debugLines.Add('none') | Out-Null
+          }
+          $debugLines | Set-Content -Encoding UTF8 $debugTarget
 
       - name: Download workflow logs
         shell: pwsh
@@ -1835,6 +1870,7 @@ jobs:
             @{ Label = 'Iterate logs zip'; Path = "logs/$iterateZipName"; Exists = Test-Path $iterateZipPath },
             @{ Label = 'Batch-check logs zip'; Path = if ($batchZipName) { "logs/$batchZipName" } else { $null }; Exists = if ($batchZipName) { Test-Path (Join-Path $Diag ('logs\' + $batchZipName)) } else { $false } },
             @{ Label = 'Batch-check failing tests'; Path = 'batchcheck_failing.txt'; Exists = Test-Path (Join-Path $Diag 'batchcheck_failing.txt') },
+            @{ Label = 'Batch-check fail debug'; Path = 'batchcheck_fail-debug.txt'; Exists = Test-Path (Join-Path $Diag 'batchcheck_fail-debug.txt') },
             @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = Test-Path (Join-Path $Diag ("repo\repo-$Short.zip")) },
             @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = Test-Path (Join-Path $Diag 'repo\files') }
           )
