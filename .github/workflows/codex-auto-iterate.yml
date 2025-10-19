@@ -743,6 +743,52 @@ jobs:
             fi
           fi
 
+      - name: Synthesize failing summary
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path .codex -Force | Out-Null
+          $root = Join-Path '.codex' 'fail'
+          $out  = Join-Path '.codex' 'failing_summary.md'
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+
+          # Professional note: Join-Path keeps the summary portable across ubuntu-latest and any future Windows runners.
+          $lines = @(
+            '# Failing context',
+            '- run: ${{ github.run_id }} attempt ${{ github.run_attempt }}',
+            '- ref: `${{ github.ref }}`  sha: `${{ github.sha }}`',
+            '',
+            '## First errors (grep)',
+            ''
+          )
+
+          $resolvedRoot = (Resolve-Path $root).Path
+
+          # Professional note: allow regex matching so the summary surfaces the first error-class message from each log file.
+          Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue |
+            Select-String -Pattern 'ERROR|Exception|Traceback|failed' -List |
+            Select-Object -First 40 |
+            ForEach-Object {
+              $rel = [System.IO.Path]::GetRelativePath($resolvedRoot, $_.Path) -replace '\\','/'
+              $lines += ('* {0}:{1}: {2}' -f $rel, $_.LineNumber, $_.Line.Trim())
+            }
+
+          $lines += @("", "## Tail of failing job log", '```')
+
+          $tailLog = Get-ChildItem -Path $root -Recurse -File -Include '*fail*.log*','*job*.log*' -ErrorAction SilentlyContinue |
+            Sort-Object Length -Descending |
+            Select-Object -First 1
+
+          if ($null -ne $tailLog) {
+            Get-Content -Tail 200 $tailLog.FullName | ForEach-Object { $lines += $_ }
+          } else {
+            $lines += '<no fail logs captured>'
+          }
+
+          $lines += '```'
+
+          ($lines -join "`n") | Set-Content -Encoding UTF8 $out
+
       - name: Stage iterate diagnostics artifact
         id: diag_stage
         run: |
@@ -902,8 +948,6 @@ jobs:
         with:
           name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ steps.diag_stage.outputs.dir }}/**
-            ${{ steps.diag_stage.outputs.codex_log }}
             .codex/**
             ${{ runner.temp }}/patch.apply.log
           if-no-files-found: warn
