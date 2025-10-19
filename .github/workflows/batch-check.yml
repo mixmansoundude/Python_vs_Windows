@@ -702,15 +702,27 @@ jobs:
 
             if (-not $BasePath) { return @() }
 
-            # Professional note: Requirement "Search broadly under the job workspace for NDJSON" —
-            # include **/*~test-results.ndjson and **/ci_test_results*.ndjson while skipping archived
-            # copies so diagnostics mirror the run page listings.
-            return Get-ChildItem -Path $BasePath -Recurse -File -ErrorAction SilentlyContinue |
+            $batchRoot = Join-Path $BasePath '_artifacts'
+            $batchRoot = Join-Path $batchRoot 'batch-check'
+            if (-not (Test-Path -LiteralPath $batchRoot)) {
+              # Professional note: Requirement "have batch-check’s producer step scan all NDJSON under
+              # _artifacts/batch-check/" — bail out when the bundle has not been staged yet so we do not
+              # falsely return "none" from unrelated paths.
+              Write-Host "_artifacts/batch-check directory not present; skipping failing-ID scan."
+              return @()
+            }
+
+            $patterns = @('*~test-results.ndjson', 'ci_test_results*.ndjson')
+            $files = foreach ($pattern in $patterns) {
+              Get-ChildItem -Path $batchRoot -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue
+            }
+
+            return $files |
               Where-Object {
-                ($_.Name -like '*~test-results.ndjson' -or $_.Name -like 'ci_test_results*.ndjson') -and
                 ($_.FullName -notmatch '(?i)\.zip$') -and
                 ($_.FullName -notmatch '(?i)\.gz$')
-              }
+              } |
+              Sort-Object -Property FullName -Unique
           }
 
           function Test-OutcomeFailed {
