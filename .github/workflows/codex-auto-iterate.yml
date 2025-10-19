@@ -1391,6 +1391,7 @@ jobs:
           ) | ForEach-Object { Join-Path $diag $_ }
 
           $fails = @()
+          $failListPath = Join-Path $diag 'batchcheck_failing.txt'
           foreach ($g in $globs) {
             Get-ChildItem -Path $g -ErrorAction SilentlyContinue | ForEach-Object {
               Get-Content -LiteralPath $_.FullName -Encoding UTF8 | ForEach-Object {
@@ -1407,7 +1408,7 @@ jobs:
             }
           }
           if ($fails.Count -eq 0) { $fails = @('none') }
-          $fails | Sort-Object -Unique | Set-Content -Encoding UTF8 (Join-Path $diag 'batchcheck_failing.txt')
+          $fails | Sort-Object -Unique | Set-Content -Encoding UTF8 $failListPath
 
       - name: Download workflow logs
         shell: pwsh
@@ -1762,6 +1763,7 @@ jobs:
             @{ Label = 'Inventory (json)'; Path = 'inventory.json'; Exists = Test-Path (Join-Path $Diag 'inventory.json') },
             @{ Label = 'Iterate logs zip'; Path = "logs/$iterateZipName"; Exists = Test-Path $iterateZipPath },
             @{ Label = 'Batch-check logs zip'; Path = if ($batchZipName) { "logs/$batchZipName" } else { $null }; Exists = if ($batchZipName) { Test-Path (Join-Path $Diag ('logs\' + $batchZipName)) } else { $false } },
+            @{ Label = 'Batch-check failing tests'; Path = 'batchcheck_failing.txt'; Exists = Test-Path (Join-Path $Diag 'batchcheck_failing.txt') },
             @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = Test-Path (Join-Path $Diag ("repo\repo-$Short.zip")) },
             @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = Test-Path (Join-Path $Diag 'repo\files') }
           )
@@ -2168,11 +2170,17 @@ jobs:
 
           $lines += ''
           $lines += '## Quick links'
+          $failListRel = "$bundlePrefix/batchcheck_failing.txt"
           if (Has-File $bundleIndex) {
             $lines += [string]::Format('- [Bundle index]({0})', (Normalize-Link $bundleIndexHref))
             $lines += [string]::Format('- [Open latest (cache-busted)]({0})', (Normalize-Link $bundleIndexHref))
           } else {
             $lines += '- Bundle index: missing'
+          }
+          if (Has-File $failListRel) {
+            $lines += [string]::Format('- [Batch-check failing tests]({0})', (Normalize-Link $failListRel))
+          } else {
+            $lines += '- Batch-check failing tests: missing'
           }
           if (Has-File $inventoryHtml) {
             $lines += [string]::Format('- [Artifact inventory (HTML)]({0})', (Normalize-Link $inventoryHtml))
@@ -2252,6 +2260,7 @@ jobs:
           $quickLinkSpecs = @(
             @{ Label = 'Bundle index'; Path = $bundleIndexHref; Exists = Has-File $bundleIndex },
             @{ Label = 'Open latest (cache-busted)'; Path = $bundleIndexHref; Exists = Has-File $bundleIndex },
+            @{ Label = 'Batch-check failing tests'; Path = $failListRel; Exists = Has-File $failListRel },
             @{ Label = 'Artifact inventory (HTML)'; Path = $inventoryHtml; Exists = Has-File $inventoryHtml },
             @{ Label = 'Artifact inventory (text)'; Path = $inventoryTxt; Exists = Has-File $inventoryTxt },
             @{ Label = 'Iterate logs zip'; Path = $iterateZipRel; Exists = Has-File $iterateZipRel },
