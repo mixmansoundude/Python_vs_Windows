@@ -1391,7 +1391,6 @@ jobs:
           ) | ForEach-Object { Join-Path $diag $_ }
 
           $fails = @()
-          $failListPath = Join-Path $diag 'batchcheck_failing.txt'
           foreach ($g in $globs) {
             Get-ChildItem -Path $g -ErrorAction SilentlyContinue | ForEach-Object {
               Get-Content -LiteralPath $_.FullName -Encoding UTF8 | ForEach-Object {
@@ -1408,7 +1407,7 @@ jobs:
             }
           }
           if ($fails.Count -eq 0) { $fails = @('none') }
-          $fails | Sort-Object -Unique | Set-Content -Encoding UTF8 $failListPath
+          $fails | Sort-Object -Unique | Set-Content -Encoding UTF8 (Join-Path $diag 'batchcheck_failing.txt')
 
       - name: Download workflow logs
         shell: pwsh
@@ -2170,17 +2169,11 @@ jobs:
 
           $lines += ''
           $lines += '## Quick links'
-          $failListRel = "$bundlePrefix/batchcheck_failing.txt"
           if (Has-File $bundleIndex) {
             $lines += [string]::Format('- [Bundle index]({0})', (Normalize-Link $bundleIndexHref))
             $lines += [string]::Format('- [Open latest (cache-busted)]({0})', (Normalize-Link $bundleIndexHref))
           } else {
             $lines += '- Bundle index: missing'
-          }
-          if (Has-File $failListRel) {
-            $lines += [string]::Format('- [Batch-check failing tests]({0})', (Normalize-Link $failListRel))
-          } else {
-            $lines += '- Batch-check failing tests: missing'
           }
           if (Has-File $inventoryHtml) {
             $lines += [string]::Format('- [Artifact inventory (HTML)]({0})', (Normalize-Link $inventoryHtml))
@@ -2260,7 +2253,6 @@ jobs:
           $quickLinkSpecs = @(
             @{ Label = 'Bundle index'; Path = $bundleIndexHref; Exists = Has-File $bundleIndex },
             @{ Label = 'Open latest (cache-busted)'; Path = $bundleIndexHref; Exists = Has-File $bundleIndex },
-            @{ Label = 'Batch-check failing tests'; Path = $failListRel; Exists = Has-File $failListRel },
             @{ Label = 'Artifact inventory (HTML)'; Path = $inventoryHtml; Exists = Has-File $inventoryHtml },
             @{ Label = 'Artifact inventory (text)'; Path = $inventoryTxt; Exists = Has-File $inventoryTxt },
             @{ Label = 'Iterate logs zip'; Path = $iterateZipRel; Exists = Has-File $iterateZipRel },
