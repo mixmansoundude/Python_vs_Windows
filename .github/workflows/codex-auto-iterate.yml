@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      MAX_ATTEMPTS: '20'
+      MAX_ATTEMPTS: '4'
       OPENAI_MODEL: gpt-5-codex
       POLL_TIMEOUT_SECONDS: '1200'
       POLL_INTERVAL_SECONDS: '10'
