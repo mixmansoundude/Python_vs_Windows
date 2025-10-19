@@ -1385,108 +1385,101 @@ jobs:
         run: |
           $diag = "${{ steps.prep.outputs.DIAG }}"
           $batchRoot = Join-Path $diag '_artifacts/batch-check'
-          # Professional note: enumerate every *.ndjson under the batch-check bundle so we honor
-          # "rely on globs under `_artifacts/batch-check/`" and capture future layout variants.
-          $ndjsonFiles = @()
+          $target = Join-Path $diag 'batchcheck_failing.txt'
+          $collected = [System.Collections.Generic.List[string]]::new()
+
           if (Test-Path $batchRoot) {
-            $ndjsonFiles = Get-ChildItem -Path $batchRoot -Recurse -File -Filter '*.ndjson' -ErrorAction SilentlyContinue
-          }
-
-          function Get-FailureIdFromObject {
-            param([object]$Root)
-
-            if ($null -eq $Root) { return $null }
-
-            $stack = [System.Collections.Stack]::new()
-            $stack.Push($Root)
-
-            $hasFailure = $false
-            $nodeId = $null
-            $nameVal = $null
-
-            while ($stack.Count -gt 0) {
-              $current = $stack.Pop()
-              if ($null -eq $current) { continue }
-
-              if ($current -is [System.Collections.IDictionary] -or $current -is [PSCustomObject]) {
-                foreach ($prop in $current.PSObject.Properties) {
-                  $propName = $prop.Name
-                  $propValue = $prop.Value
-
-                  if ([string]::IsNullOrEmpty($propName)) { continue }
-
-                  if ($propName -ieq 'outcome') {
-                    if ($propValue -is [string]) {
-                      if ($propValue -ieq 'failed') { $hasFailure = $true }
-                    } elseif ($propValue -eq 'failed') {
-                      $hasFailure = $true
-                    }
-                  } elseif (-not $nodeId -and $propName -ieq 'nodeid' -and $propValue) {
-                    $candidate = $propValue
-                    if ($candidate -is [System.Collections.IEnumerable] -and -not ($candidate -is [string])) {
-                      $enumCandidate = $null
-                      foreach ($entry in $candidate) {
-                        if ($entry -is [string] -and $entry) { $enumCandidate = $entry; break }
-                      }
-                      $candidate = $enumCandidate
-                    }
-                    if ($candidate) { $nodeId = [string]$candidate }
-                  } elseif (-not $nameVal -and $propName -ieq 'name' -and $propValue) {
-                    $candidate = $propValue
-                    if ($candidate -is [System.Collections.IEnumerable] -and -not ($candidate -is [string])) {
-                      $enumCandidate = $null
-                      foreach ($entry in $candidate) {
-                        if ($entry -is [string] -and $entry) { $enumCandidate = $entry; break }
-                      }
-                      $candidate = $enumCandidate
-                    }
-                    if ($candidate) { $nameVal = [string]$candidate }
-                  }
-
-                  if ($propValue -ne $null -and -not ($propValue -is [string])) {
-                    if (
-                      $propValue -is [System.Collections.IEnumerable] -or
-                      $propValue -is [System.Collections.IDictionary] -or
-                      $propValue -is [PSCustomObject]
-                    ) {
-                      $stack.Push($propValue)
-                    }
-                  }
-                }
-                continue
-              }
-
-              if ($current -is [System.Collections.IEnumerable] -and -not ($current -is [string])) {
-                foreach ($item in $current) {
-                  if ($item -ne $null) { $stack.Push($item) }
-                }
+            $artifactFiles = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'failing-tests.txt' -ErrorAction SilentlyContinue
+            foreach ($artifact in $artifactFiles) {
+              # Professional note: prefer the precomputed failing-tests artifact from batch-check when it exists;
+              # falling back to NDJSON parsing keeps backwards compatibility with older runs.
+              Get-Content -LiteralPath $artifact.FullName -Encoding UTF8 | ForEach-Object {
+                $line = $_.Trim()
+                if ($line) { $collected.Add($line) }
               }
             }
+          }
 
-            if ($hasFailure) {
+          if ($collected.Count -eq 0) {
+            # Professional note: retain the existing NDJSON scan so legacy runs still emit a fail list even when the
+            # artifact is missing (e.g., historic runs or partial fetches).
+            $ndjsonFiles = @()
+            if (Test-Path $batchRoot) {
+              $ndjsonFiles = Get-ChildItem -Path $batchRoot -Recurse -File -Filter '*.ndjson' -ErrorAction SilentlyContinue
+            }
+
+            function Get-FailureIdFromObject {
+              param([object]$Root)
+
+              if ($null -eq $Root) { return $null }
+
+              $stack = [System.Collections.Stack]::new()
+              $stack.Push($Root)
+
+              $hasFailure = $false
+              $nodeId = $null
+              $nameVal = $null
+
+              while ($stack.Count -gt 0) {
+                $current = $stack.Pop()
+                if ($null -eq $current) { continue }
+
+                if ($current -is [System.Collections.IDictionary] -or $current -is [PSCustomObject]) {
+                  foreach ($prop in $current.PSObject.Properties) {
+                    $propName = $prop.Name
+                    $propValue = $prop.Value
+
+                    if ([string]::IsNullOrEmpty($propName)) { continue }
+
+                    if ($propName -ieq 'outcome') {
+                      if ($propValue -is [string] -and $propValue -eq 'failed') { $hasFailure = $true }
+                    } elseif ($propName -ieq 'nodeid') {
+                      if (-not $nodeId -and $propValue) { $nodeId = [string]$propValue }
+                    } elseif ($propName -ieq 'name') {
+                      if (-not $nameVal -and $propValue) { $nameVal = [string]$propValue }
+                    }
+
+                    if ($propValue -ne $null -and -not ($propValue -is [string])) {
+                      if ($propValue -is [System.Collections.IDictionary] -or $propValue -is [PSCustomObject]) {
+                        $stack.Push($propValue)
+                        continue
+                      }
+                      if ($propValue -is [System.Collections.IEnumerable]) {
+                        foreach ($item in $propValue) { $stack.Push($item) }
+                      }
+                    }
+                  }
+                } elseif ($current -is [System.Collections.IEnumerable] -and -not ($current -is [string])) {
+                  foreach ($item in $current) { $stack.Push($item) }
+                }
+              }
+
+              if (-not $hasFailure) { return $null }
               if ($nodeId) { return $nodeId }
-              if ($nameVal) { return $nameVal }
+              return $nameVal
             }
 
-            return $null
-          }
-
-          # Professional note: "Treat each NDJSON line as a single JSON event" and
-          # "decide it is a failure if the JSON contains \"outcome\":\"failed\" anywhere" were
-          # explicit requirements, so we traverse each parsed object once, capture the
-          # nodeid/name while walking, and only emit IDs when a failed outcome exists.
-          $fails = [System.Collections.Generic.List[string]]::new()
-          foreach ($file in $ndjsonFiles) {
-            Get-Content -LiteralPath $file.FullName -Encoding UTF8 | ForEach-Object {
-              try {
-                $obj = $_ | ConvertFrom-Json -ErrorAction Stop
-                $id = Get-FailureIdFromObject -Root $obj
-                if ($id) { $fails.Add($id) }
-              } catch {}
+            foreach ($file in $ndjsonFiles) {
+              Get-Content -LiteralPath $file.FullName -Encoding UTF8 | ForEach-Object {
+                try {
+                  $obj = $_ | ConvertFrom-Json -ErrorAction Stop
+                  $id = Get-FailureIdFromObject -Root $obj
+                  if ($id) { $collected.Add($id) }
+                } catch {}
+              }
             }
           }
-          if ($fails.Count -eq 0) { $fails.Add('none') }
-          $fails | Sort-Object -Unique | Set-Content -Encoding UTF8 (Join-Path $diag 'batchcheck_failing.txt')
+
+          $final = @()
+          if ($collected.Count -gt 0) {
+            $final = @($collected | Sort-Object -Unique)
+            if ($final.Count -gt 1 -and ($final -contains 'none')) {
+              $final = @($final | Where-Object { $_ -ne 'none' })
+            }
+          }
+
+          if (-not $final -or $final.Count -eq 0) { $final = @('none') }
+          $final | Set-Content -Encoding UTF8 $target
 
       - name: Download workflow logs
         shell: pwsh
