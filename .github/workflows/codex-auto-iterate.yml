@@ -1392,56 +1392,80 @@ jobs:
             $ndjsonFiles = Get-ChildItem -Path $batchRoot -Recurse -File -Filter '*.ndjson' -ErrorAction SilentlyContinue
           }
 
-          function Contains-OutcomeFailed {
-            param([object]$Node)
+          function Get-FailureIdFromObject {
+            param([object]$Root)
 
-            if ($null -eq $Node) { return $false }
+            if ($null -eq $Root) { return $null }
 
-            $isObject = $Node -is [System.Collections.IDictionary] -or $Node -is [PSCustomObject]
-            if ($isObject) {
-              $props = $Node.PSObject.Properties
-              if ($props['outcome'] -and $props['outcome'].Value -eq 'failed') { return $true }
-              foreach ($prop in $props) {
-                if (Contains-OutcomeFailed -Node $prop.Value) { return $true }
+            $stack = [System.Collections.Stack]::new()
+            $stack.Push($Root)
+
+            $hasFailure = $false
+            $nodeId = $null
+            $nameVal = $null
+
+            while ($stack.Count -gt 0) {
+              $current = $stack.Pop()
+              if ($null -eq $current) { continue }
+
+              if ($current -is [System.Collections.IDictionary] -or $current -is [PSCustomObject]) {
+                foreach ($prop in $current.PSObject.Properties) {
+                  $propName = $prop.Name
+                  $propValue = $prop.Value
+
+                  if ([string]::IsNullOrEmpty($propName)) { continue }
+
+                  if ($propName -ieq 'outcome') {
+                    if ($propValue -is [string]) {
+                      if ($propValue -ieq 'failed') { $hasFailure = $true }
+                    } elseif ($propValue -eq 'failed') {
+                      $hasFailure = $true
+                    }
+                  } elseif (-not $nodeId -and $propName -ieq 'nodeid' -and $propValue) {
+                    $candidate = $propValue
+                    if ($candidate -is [System.Collections.IEnumerable] -and -not ($candidate -is [string])) {
+                      $enumCandidate = $null
+                      foreach ($entry in $candidate) {
+                        if ($entry -is [string] -and $entry) { $enumCandidate = $entry; break }
+                      }
+                      $candidate = $enumCandidate
+                    }
+                    if ($candidate) { $nodeId = [string]$candidate }
+                  } elseif (-not $nameVal -and $propName -ieq 'name' -and $propValue) {
+                    $candidate = $propValue
+                    if ($candidate -is [System.Collections.IEnumerable] -and -not ($candidate -is [string])) {
+                      $enumCandidate = $null
+                      foreach ($entry in $candidate) {
+                        if ($entry -is [string] -and $entry) { $enumCandidate = $entry; break }
+                      }
+                      $candidate = $enumCandidate
+                    }
+                    if ($candidate) { $nameVal = [string]$candidate }
+                  }
+
+                  if ($propValue -ne $null -and -not ($propValue -is [string])) {
+                    if (
+                      $propValue -is [System.Collections.IEnumerable] -or
+                      $propValue -is [System.Collections.IDictionary] -or
+                      $propValue -is [PSCustomObject]
+                    ) {
+                      $stack.Push($propValue)
+                    }
+                  }
+                }
+                continue
               }
-              return $false
+
+              if ($current -is [System.Collections.IEnumerable] -and -not ($current -is [string])) {
+                foreach ($item in $current) {
+                  if ($item -ne $null) { $stack.Push($item) }
+                }
+              }
             }
 
-            if ($Node -is [System.Collections.IEnumerable] -and -not ($Node -is [string])) {
-              foreach ($item in $Node) {
-                if (Contains-OutcomeFailed -Node $item) { return $true }
-              }
-            }
-
-            return $false
-          }
-
-          function Find-FirstProperty {
-            param(
-              [object]$Node,
-              [string]$PropertyName
-            )
-
-            if ($null -eq $Node) { return $null }
-
-            $isObject = $Node -is [System.Collections.IDictionary] -or $Node -is [PSCustomObject]
-            if ($isObject) {
-              $props = $Node.PSObject.Properties
-              if ($props[$PropertyName] -and $props[$PropertyName].Value) {
-                return [string]$props[$PropertyName].Value
-              }
-              foreach ($prop in $props) {
-                $candidate = Find-FirstProperty -Node $prop.Value -PropertyName $PropertyName
-                if ($candidate) { return $candidate }
-              }
-              return $null
-            }
-
-            if ($Node -is [System.Collections.IEnumerable] -and -not ($Node -is [string])) {
-              foreach ($item in $Node) {
-                $candidate = Find-FirstProperty -Node $item -PropertyName $PropertyName
-                if ($candidate) { return $candidate }
-              }
+            if ($hasFailure) {
+              if ($nodeId) { return $nodeId }
+              if ($nameVal) { return $nameVal }
             }
 
             return $null
@@ -1449,20 +1473,15 @@ jobs:
 
           # Professional note: "Treat each NDJSON line as a single JSON event" and
           # "decide it is a failure if the JSON contains \"outcome\":\"failed\" anywhere" were
-          # explicit requirements, so we first check for that outcome anywhere in the structure
-          # before extracting nodeid/name from the same JSON line.
+          # explicit requirements, so we traverse each parsed object once, capture the
+          # nodeid/name while walking, and only emit IDs when a failed outcome exists.
           $fails = [System.Collections.Generic.List[string]]::new()
           foreach ($file in $ndjsonFiles) {
             Get-Content -LiteralPath $file.FullName -Encoding UTF8 | ForEach-Object {
               try {
                 $obj = $_ | ConvertFrom-Json -ErrorAction Stop
-                if (Contains-OutcomeFailed -Node $obj) {
-                  $id = Find-FirstProperty -Node $obj -PropertyName 'nodeid'
-                  if (-not $id) {
-                    $id = Find-FirstProperty -Node $obj -PropertyName 'name'
-                  }
-                  if ($id) { $fails.Add($id) }
-                }
+                $id = Get-FailureIdFromObject -Root $obj
+                if ($id) { $fails.Add($id) }
               } catch {}
             }
           }
