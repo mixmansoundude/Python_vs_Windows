@@ -949,7 +949,10 @@ jobs:
           name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             .codex/**
+            ${{ steps.diag_stage.outputs.dir }}/**
+            ${{ steps.diag_stage.outputs.codex_log }}
             ${{ runner.temp }}/patch.apply.log
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
 
