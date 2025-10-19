@@ -743,6 +743,41 @@ jobs:
             fi
           fi
 
+      - name: Synthesize failing summary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path .codex -Force | Out-Null
+          $root = ".codex\fail"
+          $out  = ".codex\failing_summary.md"
+          $lines = @("# Failing context",
+            "- run: ${{ github.run_id }} attempt ${{ github.run_attempt }}",
+            "- ref: `${{ github.ref }}`  sha: `${{ github.sha }}`",
+            "",
+            "## First errors (grep)",
+            "")
+          $rootResolved = $null
+          if (Test-Path $root) {
+            $rootResolved = (Resolve-Path $root -ErrorAction Stop).Path
+          }
+          Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue |
+            Select-String -Pattern 'ERROR|Exception|Traceback|failed' -SimpleMatch -List |
+            Select-Object -First 40 | ForEach-Object {
+              if ($rootResolved) {
+                $rel = $_.Path.Replace($rootResolved,'').TrimStart('\').Replace('\','/')
+              } else {
+                $rel = $_.Path
+              }
+              $lines += "* $rel:`$($_.LineNumber)`: $($_.Line.Trim())"
+            }
+          $lines += @("", "## Tail of failing job log", "```")
+          # Professional note: -Include handles both fail/job patterns; -Filter only accepts a single wildcard and would miss the
+          # job logs requested by the maintainer snippet.
+          Get-ChildItem -Path $root -Recurse -Include '*fail*.log*','*job*.log*' -File -ErrorAction SilentlyContinue |
+            Sort-Object Length -Descending | Select-Object -First 1 |
+            ForEach-Object { Get-Content -Tail 200 $_.FullName } | ForEach-Object { $lines += $_ }
+          $lines += "```"
+          ($lines -join "`n") | Set-Content -Encoding UTF8 $out
+
       - name: Stage iterate diagnostics artifact
         id: diag_stage
         run: |
