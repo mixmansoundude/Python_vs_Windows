@@ -1384,26 +1384,26 @@ jobs:
         shell: pwsh
         run: |
           $diag = "${{ steps.prep.outputs.DIAG }}"
-          $globs = @(
-            '_artifacts/batch-check/ci_test_results-selftest-*-*/~test-results.ndjson',
-            '_artifacts/batch-check/diag-selftest-*-*/logs/~test-results.ndjson',
-            '_artifacts/batch-check/selftest-*-*/tests/~test-results.ndjson'
-          ) | ForEach-Object { Join-Path $diag $_ }
+          $batchRoot = Join-Path $diag '_artifacts/batch-check'
+          # Professional note: enumerate every *.ndjson under the batch-check bundle so we honor
+          # "rely on globs under `_artifacts/batch-check/`" and capture future layout variants.
+          $ndjsonFiles = @()
+          if (Test-Path $batchRoot) {
+            $ndjsonFiles = Get-ChildItem -Path $batchRoot -Recurse -File -Filter '*.ndjson' -ErrorAction SilentlyContinue
+          }
 
           $fails = @()
-          foreach ($g in $globs) {
-            Get-ChildItem -Path $g -ErrorAction SilentlyContinue | ForEach-Object {
-              Get-Content -LiteralPath $_.FullName -Encoding UTF8 | ForEach-Object {
-                try {
-                  $o = $_ | ConvertFrom-Json -ErrorAction Stop
-                  if ($o.outcome -eq 'failed') {
-                    $id = $null
-                    if ($o.PSObject.Properties['nodeid']) { $id = $o.nodeid }
-                    elseif ($o.PSObject.Properties['name']) { $id = $o.name }
-                    if ($id) { $fails += $id }
-                  }
-                } catch {}
-              }
+          foreach ($file in $ndjsonFiles) {
+            Get-Content -LiteralPath $file.FullName -Encoding UTF8 | ForEach-Object {
+              try {
+                $o = $_ | ConvertFrom-Json -ErrorAction Stop
+                if ($o.outcome -eq 'failed') {
+                  $id = $null
+                  if ($o.PSObject.Properties['nodeid']) { $id = $o.nodeid }
+                  elseif ($o.PSObject.Properties['name']) { $id = $o.name }
+                  if ($id) { $fails += $id }
+                }
+              } catch {}
             }
           }
           if ($fails.Count -eq 0) { $fails = @('none') }
