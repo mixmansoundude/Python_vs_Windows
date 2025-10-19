@@ -1384,31 +1384,25 @@ jobs:
         shell: pwsh
         run: |
           $diag = "${{ steps.prep.outputs.DIAG }}"
-          $out  = Join-Path $diag 'batchcheck_failing.txt'
-          $paths = @(
-            '_artifacts/batch-check/ci_test_results-selftest-cache-*/~test-results.ndjson',
-            '_artifacts/batch-check/ci_test_results-selftest-real-*/~test-results.ndjson'
-          ) | ForEach-Object { Join-Path $diag $_ }
           $fails = @()
-          foreach ($g in $paths) {
+          foreach ($g in @(
+            Join-Path $diag '_artifacts/batch-check/*-cache-*/~test-results.ndjson';
+            Join-Path $diag '_artifacts/batch-check/*-real-*/~test-results.ndjson'
+          )) {
             Get-ChildItem -Path $g -ErrorAction SilentlyContinue | ForEach-Object {
-              Get-Content -LiteralPath $_.FullName | ForEach-Object {
-                if ($_ -match '"outcome"\s*:\s*"failed"') {
-                  # Prefer pytest-style nodeid but fall back to the legacy name field for older payloads.
-                  $id = $null
-                  $m1 = [regex]::Match($_, '"nodeid"\s*:\s*"([^"]+)"')
-                  if ($m1.Success) { $id = $m1.Groups[1].Value }
-                  if (-not $id) {
-                    $m2 = [regex]::Match($_, '"name"\s*:\s*"([^"]+)"')
-                    if ($m2.Success) { $id = $m2.Groups[1].Value }
+              Get-Content -LiteralPath $_.FullName -Encoding UTF8 | ForEach-Object {
+                try {
+                  $o = $_ | ConvertFrom-Json -ErrorAction Stop
+                  if ($o.outcome -eq 'failed') {
+                    $id = if ($o.PSObject.Properties['nodeid']) { $o.nodeid } elseif ($o.PSObject.Properties['name']) { $o.name } else { $null }
+                    if ($id) { $fails += $id }
                   }
-                  if ($id) { $fails += $id }
-                }
+                } catch {}
               }
             }
           }
           if ($fails.Count -eq 0) { $fails = @('none') }
-          $fails | Sort-Object -Unique | Set-Content -Encoding UTF8 $out
+          $fails | Sort-Object -Unique | Set-Content -Encoding UTF8 (Join-Path $diag 'batchcheck_failing.txt')
 
       - name: Download workflow logs
         shell: pwsh
