@@ -683,10 +683,11 @@ jobs:
             return [System.IO.Path]::GetRelativePath($Base, $Path)
           }
 
-          function Get-FailureIdFromObject {
+          function Get-FailureInfoFromObject {
             param([object]$Root)
 
-            if ($null -eq $Root) { return $null }
+            $result = [pscustomobject]@{ HasFailure = $false; Id = $null }
+            if ($null -eq $Root) { return $result }
 
             $stack = [System.Collections.Stack]::new()
             $stack.Push($Root)
@@ -729,15 +730,23 @@ jobs:
               }
             }
 
-            if (-not $hasFailure) { return $null }
-            if ($nodeId) { return $nodeId }
-            return $nameVal
+            if ($hasFailure) {
+              $result.HasFailure = $true
+              if ($nodeId) { $result.Id = $nodeId }
+              elseif ($nameVal) { $result.Id = $nameVal }
+            }
+
+            return $result
           }
 
-          # Professional note: "Locates ALL test-result NDJSON under the job’s workspace" — enumerate every *.ndjson that the
-          # run produces and filter out archived forms (.gz/.zip) so we match the diagnostics bundle without hard-coding paths.
+          # Professional note: Requirement "Search broadly under the job workspace for NDJSON" — focus on the
+          # batch-check patterns (**/*~test-results.ndjson and **/ci_test_results*.ndjson) and skip archived
+          # forms so diagnostics see the same inputs without walking unrelated telemetry.
           $ndjsonFiles = Get-ChildItem -Path $root.Path -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Extension -eq '.ndjson' -and $_.Name -notmatch '\.ndjson\.(zip|gz)$' }
+            Where-Object {
+              ($_.Name -like '*~test-results.ndjson' -or $_.Name -like 'ci_test_results*.ndjson') -and
+              ($_.FullName -notmatch '\.ndjson\.(zip|gz)$')
+            }
 
           function Ensure-PerFileSet {
             param([string]$Key)
@@ -750,11 +759,14 @@ jobs:
 
           # Professional note: some pytest plugins stream ANSI/control characters that break ConvertFrom-Json;
           # keep a text fallback so we still honour "Produce a correct list of failing test IDs" when parsing fails.
-          function Get-FailureIdFromLine {
+          function Get-FailureInfoFromLine {
             param([string]$Line)
 
-            if (-not $Line) { return $null }
-            if ($Line -notmatch '"outcome"\s*:\s*"failed"') { return $null }
+            $result = [pscustomobject]@{ HasFailure = $false; Id = $null }
+            if (-not $Line) { return $result }
+            if ($Line -notmatch '"outcome"\s*:\s*"failed"') { return $result }
+
+            $result.HasFailure = $true
 
             $capture = $null
             $m = [regex]::Match($Line, '"nodeid"\s*:\s*"((?:[^"\\]|\\.)*)"')
@@ -764,12 +776,14 @@ jobs:
               if ($m.Success) { $capture = $m.Groups[1].Value }
             }
 
-            if (-not $capture) { return $null }
+            if (-not $capture) { return $result }
             try {
-              return ('"' + $capture + '"') | ConvertFrom-Json -ErrorAction Stop
+              $result.Id = ('"' + $capture + '"') | ConvertFrom-Json -ErrorAction Stop
             } catch {
-              return $capture
+              $result.Id = $capture
             }
+
+            return $result
           }
 
           foreach ($file in $ndjsonFiles) {
@@ -779,19 +793,28 @@ jobs:
             $lines = Get-Content -LiteralPath $file.FullName -Encoding UTF8
             foreach ($line in $lines) {
               if ([string]::IsNullOrWhiteSpace($line)) { continue }
-              if ($line -notmatch '"outcome"\s*:\s*"failed"') { continue }
-
+              $hasFailure = $false
               $id = $null
               try {
                 $obj = $line | ConvertFrom-Json -ErrorAction Stop
-                $id = Get-FailureIdFromObject -Root $obj
+                $info = Get-FailureInfoFromObject -Root $obj
+                if ($info) {
+                  $hasFailure = $info.HasFailure
+                  if ($info.Id) { $id = $info.Id }
+                }
               } catch {
-                $id = $null
+                $hasFailure = $false
               }
 
-              if (-not $id) {
-                $id = Get-FailureIdFromLine -Line $line
+              if (-not $hasFailure -or -not $id) {
+                $fallback = Get-FailureInfoFromLine -Line $line
+                if ($fallback.HasFailure) {
+                  $hasFailure = $true
+                  if (-not $id -and $fallback.Id) { $id = $fallback.Id }
+                }
               }
+
+              if (-not $hasFailure) { continue }
 
               if ($id) {
                 $null = $set.Add($id)
