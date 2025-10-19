@@ -50,6 +50,31 @@ jobs:
             const nums = await numbersFromEvent();
             core.setOutput('numbers', JSON.stringify(nums));
 
+      - name: Comment for Codex review
+        if: ${{ steps.prs.outputs.numbers != '[]' }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const nums = JSON.parse(process.env.numbers || '[]');
+            for (const number of nums) {
+              try {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: number,
+                  body: '@codex review'
+                });
+                core.info(`#${number}: posted "@codex review" comment`);
+              } catch (error) {
+                core.info(`#${number}: failed to post comment - ${error?.message || error}`);
+              }
+            }
+        env:
+          numbers: ${{ steps.prs.outputs.numbers }}
+
       - name: Enable Auto-merge (codex) via PAT
         if: ${{ steps.prs.outputs.numbers != '[]' && env.AUTOMERGE_TOKEN }}
         uses: actions/github-script@v7
