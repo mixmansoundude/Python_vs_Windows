@@ -743,6 +743,36 @@ jobs:
             fi
           fi
 
+      - name: Synthesize failing summary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path .codex -Force | Out-Null
+          $root = ".codex\fail"
+          if (-not (Test-Path $root)) {
+            # Professional note: guard against missing artifacts so this summary always materializes for investigators.
+            New-Item -ItemType Directory -Path $root -Force | Out-Null
+          }
+          $out  = ".codex\failing_summary.md"
+          $lines = @("# Failing context",
+            "- run: ${{ github.run_id }} attempt ${{ github.run_attempt }}",
+            "- ref: `${{ github.ref }}`  sha: `${{ github.sha }}`",
+            "",
+            "## First errors (grep)",
+            "")
+          $base = (Resolve-Path $root).ProviderPath
+          Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue |
+            Select-String -Pattern 'ERROR|Exception|Traceback|failed' -SimpleMatch -List |
+            Select-Object -First 40 | ForEach-Object {
+              $rel = $_.Path.Replace($base,'').TrimStart('\').Replace('\','/')
+              $lines += "* $rel:`$($_.LineNumber)`: $($_.Line.Trim())"
+            }
+          $lines += @("", "## Tail of failing job log", "```")
+          Get-ChildItem -Path $root -Recurse -Filter '*fail*.log*','*job*.log*' |
+            Sort-Object Length -Descending | Select-Object -First 1 |
+            ForEach-Object { Get-Content -Tail 200 $_.FullName } | ForEach-Object { $lines += $_ }
+          $lines += "```"
+          ($lines -join "`n") | Set-Content -Encoding UTF8 $out
+
       - name: Stage iterate diagnostics artifact
         id: diag_stage
         run: |
