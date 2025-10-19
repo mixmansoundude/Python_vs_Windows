@@ -1392,21 +1392,50 @@ jobs:
             $ndjsonFiles = Get-ChildItem -Path $batchRoot -Recurse -File -Filter '*.ndjson' -ErrorAction SilentlyContinue
           }
 
-          $fails = @()
+          function Find-FailingIds {
+            param([object]$Node)
+
+            $results = @()
+            if ($null -eq $Node) { return $results }
+
+            $isObject = $Node -is [System.Collections.IDictionary] -or $Node -is [PSCustomObject]
+            if ($isObject) {
+              $props = $Node.PSObject.Properties
+              if ($props['outcome'] -and $props['outcome'].Value -eq 'failed') {
+                $id = $null
+                if ($props['nodeid'] -and $props['nodeid'].Value) { $id = [string]$props['nodeid'].Value }
+                elseif ($props['name'] -and $props['name'].Value) { $id = [string]$props['name'].Value }
+                if ($id) { $results += $id }
+              }
+              foreach ($prop in $props) {
+                $results += Find-FailingIds -Node $prop.Value
+              }
+              return $results
+            }
+
+            if ($Node -is [System.Collections.IEnumerable] -and -not ($Node -is [string])) {
+              foreach ($item in $Node) {
+                $results += Find-FailingIds -Node $item
+              }
+            }
+
+            return $results
+          }
+
+          # Professional note: the goal explicitly said "Parse each NDJSON line as JSON" and fetch
+          # real test IDs even when pytest nests them (for example {"report": {...}}), so we walk
+          # every JSON object looking for outcome == failed before extracting nodeid/name.
+          $fails = [System.Collections.Generic.List[string]]::new()
           foreach ($file in $ndjsonFiles) {
             Get-Content -LiteralPath $file.FullName -Encoding UTF8 | ForEach-Object {
               try {
-                $o = $_ | ConvertFrom-Json -ErrorAction Stop
-                if ($o.outcome -eq 'failed') {
-                  $id = $null
-                  if ($o.PSObject.Properties['nodeid']) { $id = $o.nodeid }
-                  elseif ($o.PSObject.Properties['name']) { $id = $o.name }
-                  if ($id) { $fails += $id }
+                foreach ($candidate in Find-FailingIds -Node ($_ | ConvertFrom-Json -ErrorAction Stop)) {
+                  if ($candidate) { $fails.Add($candidate) }
                 }
               } catch {}
             }
           }
-          if ($fails.Count -eq 0) { $fails = @('none') }
+          if ($fails.Count -eq 0) { $fails.Add('none') }
           $fails | Sort-Object -Unique | Set-Content -Encoding UTF8 (Join-Path $diag 'batchcheck_failing.txt')
 
       - name: Download workflow logs
