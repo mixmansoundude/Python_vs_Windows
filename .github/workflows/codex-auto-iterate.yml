@@ -191,13 +191,14 @@ jobs:
         id: poll
         uses: actions/github-script@v7
         env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           POLL_TIMEOUT_SECONDS: ${{ env.POLL_TIMEOUT_SECONDS }}
           POLL_INTERVAL_SECONDS: ${{ env.POLL_INTERVAL_SECONDS }}
         with:
           script: |
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
-            const sha   = context.sha;
+            const sha   = process.env.HEAD_SHA || context.sha;
             const selfRunId = String(context.runId || "");
             const selfName  = (context.workflow || "").toLowerCase();
             const deadline = Date.now() + (parseInt(process.env.POLL_TIMEOUT_SECONDS||"1200")*1000);
