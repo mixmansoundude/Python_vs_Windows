@@ -713,33 +713,35 @@ jobs:
           head -n 120 "$DIFF_OUT" >> "$GITHUB_STEP_SUMMARY" || true
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Apply patch (stage only; let PR action commit)
+      - name: Apply model patch (robust)
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: apply
+        shell: bash
         run: |
           set -euo pipefail
-          DIFF_OUT="${{ steps.diff.outputs.diff_path }}"
-          LOG="$RUNNER_TEMP/patch_apply.log"
-          exec > >(tee "$LOG") 2>&1
-          if grep -q '^# no changes$' "$DIFF_OUT"; then
+          diff="$RUNNER_TEMP/patch.diff"
+          log="$RUNNER_TEMP/patch.apply.log"
+          : > "$log"
+          echo "log_path=$log" >> "$GITHUB_OUTPUT"
+          if [ ! -s "$diff" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "no diff" >> "$log"
             exit 0
           fi
-          if git apply -p0 --index "$DIFF_OUT"; then
-            echo "applied_with=-p0" >> "$GITHUB_OUTPUT"
-          elif git apply -p1 --index "$DIFF_OUT"; then
-            echo "applied_with=-p1" >> "$GITHUB_OUTPUT"
-          else
-            echo "Patch failed to apply"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ -z "`git status --porcelain`" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
+          if git apply --check --whitespace=fix "$diff" 2>>"$log"; then
+            echo "git apply --check succeeded; applying patch" >>"$log"
+            git apply --whitespace=fix "$diff" 2>>"$log"
             echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "git apply --check failed; invoking tools/apply_patch.py" >>"$log"
+            python3 tools/apply_patch.py --input "$diff" >>"$log" 2>&1 || true
+            if ! git diff --quiet; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "fallback produced no tree changes" >>"$log"
+            fi
           fi
-          echo "log_path=$LOG" >> "$GITHUB_OUTPUT"
 
       - name: Stage iterate diagnostics artifact
         id: diag_stage
@@ -783,6 +785,7 @@ jobs:
           content_txt="$RUNNER_TEMP/llm_content.txt"
           diff_path="${{ steps.diff.outputs.diff_path }}"
           apply_log="${{ steps.apply.outputs.log_path }}"
+          fallback_log="$RUNNER_TEMP/patch.apply.log"
 
           sanitize(){
             local input="$1"
@@ -848,7 +851,12 @@ jobs:
           if [ -n "$apply_log" ] && [ -f "$apply_log" ]; then
             cp "$apply_log" "$iter_dir/patch.apply.log"
           else
-            printf 'apply log unavailable\n' > "$iter_dir/patch.apply.log"
+            printf 'apply log unavailable\n' | tee "$iter_dir/patch.apply.log" > "$fallback_log"
+            apply_log="$fallback_log"
+          fi
+
+          if [ ! -f "$fallback_log" ]; then
+            printf 'apply log unavailable\n' > "$fallback_log"
           fi
 
           codex_log="$GITHUB_WORKSPACE/codex_exec.log"
@@ -897,6 +905,7 @@ jobs:
             ${{ steps.diag_stage.outputs.dir }}/**
             ${{ steps.diag_stage.outputs.codex_log }}
             .codex/**
+            ${{ runner.temp }}/patch.apply.log
           if-no-files-found: warn
           retention-days: 7
 
