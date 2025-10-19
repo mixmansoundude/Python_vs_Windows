@@ -1268,11 +1268,36 @@ jobs:
             'User-Agent' = 'iterate-publish'
           }
 
+          $workflow = $null
           try {
-            $workflow = Invoke-RestMethod -Uri "$base/actions/workflows/.github/workflows/batch-check.yml" -Headers $headers -ErrorAction Stop
+            $workflow = Invoke-RestMethod -Uri "$base/actions/workflows/batch-check.yml" -Headers $headers -ErrorAction Stop
           } catch {
-            "workflow lookup failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
-            "batch-check artifact lookup failed: $($_.Exception.Message)" | Out-File -Append -Encoding UTF8 $missingPath
+            $response = $_.Exception.Response
+            $statusCode = $null
+            if ($response -and $response.StatusCode) {
+              $statusCode = [int]$response.StatusCode.value__
+            }
+
+            if ($statusCode -eq 404) {
+              # Professional note: fall back to enumerating the workflow catalog so forks with relocated files still resolve batch-check.
+              try {
+                $catalog = Invoke-RestMethod -Uri "$base/actions/workflows" -Headers $headers -ErrorAction Stop
+                $workflow = @($catalog.workflows | Where-Object { $_.path -and $_.path.ToLower().EndsWith('batch-check.yml') })[0]
+              } catch {
+                "workflow lookup failed (fallback enumeration): $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
+                "batch-check artifact lookup failed: fallback enumeration error: $($_.Exception.Message)" | Out-File -Append -Encoding UTF8 $missingPath
+                return
+              }
+            } else {
+              "workflow lookup failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
+              "batch-check artifact lookup failed: $($_.Exception.Message)" | Out-File -Append -Encoding UTF8 $missingPath
+              return
+            }
+          }
+
+          if (-not $workflow) {
+            'workflow lookup failed: batch-check workflow not found' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: batch-check workflow not found' | Out-File -Append -Encoding UTF8 $missingPath
             return
           }
 
