@@ -663,7 +663,8 @@ jobs:
         shell: pwsh
         run: |
           $root = Get-Location
-          $diagDir = Join-Path $root.Path 'diag'
+          $basePath = $root.Path
+          $diagDir = Join-Path $basePath 'diag'
           if (-not (Test-Path -LiteralPath $diagDir)) {
             New-Item -ItemType Directory -Path $diagDir -Force | Out-Null
           }
@@ -683,14 +684,39 @@ jobs:
             return [System.IO.Path]::GetRelativePath($Base, $Path)
           }
 
-          function Get-DeepValues {
-            param(
-              [object]$Root,
-              [Parameter(Mandatory = $true)][string]$Key
-            )
+          function Ensure-PerFileEntry {
+            param([string]$Key)
 
-            $values = [System.Collections.Generic.List[string]]::new()
-            if ($null -eq $Root) { return $values.ToArray() }
+            if (-not $perFile.Contains($Key)) {
+              $perFile[$Key] = [pscustomobject]@{
+                Set  = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+                Hits = 0
+              }
+            }
+
+            return $perFile[$Key]
+          }
+
+          function Get-CandidateFiles {
+            param([string]$BasePath)
+
+            if (-not $BasePath) { return @() }
+
+            # Professional note: Requirement "Search broadly under the job workspace for NDJSON" —
+            # include **/*~test-results.ndjson and **/ci_test_results*.ndjson while skipping archived
+            # copies so diagnostics mirror the run page listings.
+            return Get-ChildItem -Path $BasePath -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object {
+                ($_.Name -like '*~test-results.ndjson' -or $_.Name -like 'ci_test_results*.ndjson') -and
+                ($_.FullName -notmatch '(?i)\.zip$') -and
+                ($_.FullName -notmatch '(?i)\.gz$')
+              }
+          }
+
+          function Test-OutcomeFailed {
+            param([object]$Root)
+
+            if ($null -eq $Root) { return $false }
 
             $stack = [System.Collections.Stack]::new()
             $stack.Push($Root)
@@ -705,8 +731,8 @@ jobs:
                   if ([string]::IsNullOrEmpty($name)) { continue }
 
                   $value = $prop.Value
-                  if ($name -ieq $Key -and $value -is [string]) {
-                    $values.Add([string]$value) | Out-Null
+                  if ($name -ieq 'outcome' -and $value -is [string] -and $value -ieq 'failed') {
+                    return $true
                   }
 
                   if ($value -ne $null -and -not ($value -is [string])) {
@@ -714,6 +740,7 @@ jobs:
                       $stack.Push($value)
                       continue
                     }
+
                     if ($value -is [System.Collections.IEnumerable]) {
                       foreach ($item in $value) { $stack.Push($item) }
                     }
@@ -724,57 +751,84 @@ jobs:
               }
             }
 
-            return $values.ToArray()
+            return $false
           }
 
-          function Ensure-PerFileSet {
-            param([string]$Key)
+          function Get-FirstId {
+            param([object]$Root)
 
-            if (-not $perFile.Contains($Key)) {
-              $perFile[$Key] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            if ($null -eq $Root) { return $null }
+
+            $preferred = $null
+            $fallback = $null
+            $stack = [System.Collections.Stack]::new()
+            $stack.Push($Root)
+
+            while ($stack.Count -gt 0) {
+              $current = $stack.Pop()
+              if ($null -eq $current) { continue }
+
+              if ($current -is [System.Collections.IDictionary] -or $current -is [PSCustomObject]) {
+                foreach ($prop in $current.PSObject.Properties) {
+                  $name = $prop.Name
+                  if ([string]::IsNullOrEmpty($name)) { continue }
+
+                  $value = $prop.Value
+                  if ($value -is [string]) {
+                    if (-not $preferred -and $name -ieq 'nodeid') {
+                      $preferred = $value
+                    } elseif (-not $fallback -and $name -ieq 'name') {
+                      $fallback = $value
+                    }
+                  }
+
+                  if ($value -ne $null -and -not ($value -is [string])) {
+                    if ($value -is [System.Collections.IDictionary] -or $value -is [PSCustomObject]) {
+                      $stack.Push($value)
+                      continue
+                    }
+
+                    if ($value -is [System.Collections.IEnumerable]) {
+                      foreach ($item in $value) { $stack.Push($item) }
+                    }
+                  }
+                }
+              } elseif ($current -is [System.Collections.IEnumerable] -and -not ($current -is [string])) {
+                foreach ($item in $current) { $stack.Push($item) }
+              }
+
+              if ($preferred) { break }
             }
-            return $perFile[$Key]
+
+            if ($preferred) { return $preferred }
+            return $fallback
           }
 
-          # Professional note: Requirement "Search broadly under the job workspace for NDJSON" — walk
-          # **/*~test-results.ndjson and **/ci_test_results*.ndjson (excluding archived forms) so diagnostics
-          # see the exact data called out on the run page without fetching unrelated telemetry.
-          $ndjsonFiles = Get-ChildItem -Path $root.Path -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object {
-              ($_.Name -like '*~test-results.ndjson' -or $_.Name -like 'ci_test_results*.ndjson') -and
-              ($_.FullName -notmatch '\.ndjson\.(zip|gz)$')
-            }
-
-          function Get-FallbackFailure {
+          function Get-FallbackId {
             param([string]$Line)
 
-            $result = [pscustomobject]@{ HasFailure = $false; Id = $null }
-            if (-not $Line) { return $result }
-            if ($Line -notmatch '"outcome"\s*:\s*"failed"') { return $result }
+            if (-not $Line) { return $null }
 
-            $result.HasFailure = $true
-
-            $capture = $null
-            $m = [regex]::Match($Line, '"nodeid"\s*:\s*"((?:[^"\\]|\\.)*)"')
-            if ($m.Success) { $capture = $m.Groups[1].Value }
-            if (-not $capture) {
-              $m = [regex]::Match($Line, '"name"\s*:\s*"((?:[^"\\]|\\.)*)"')
-              if ($m.Success) { $capture = $m.Groups[1].Value }
+            foreach ($pattern in @('"nodeid"\s*:\s*"((?:[^"\\]|\\.)*)"', '"name"\s*:\s*"((?:[^"\\]|\\.)*)"')) {
+              $m = [regex]::Match($Line, $pattern)
+              if ($m.Success) {
+                $capture = $m.Groups[1].Value
+                try {
+                  return ('"' + $capture + '"') | ConvertFrom-Json -ErrorAction Stop
+                } catch {
+                  return $capture
+                }
+              }
             }
 
-            if (-not $capture) { return $result }
-            try {
-              $result.Id = ('"' + $capture + '"') | ConvertFrom-Json -ErrorAction Stop
-            } catch {
-              $result.Id = $capture
-            }
-
-            return $result
+            return $null
           }
 
-          foreach ($file in $ndjsonFiles) {
-            $rel = Get-RelativePath -Base $root.Path -Path $file.FullName
-            $set = Ensure-PerFileSet -Key $rel
+          $files = @(Get-CandidateFiles -BasePath $basePath)
+
+          foreach ($file in $files) {
+            $rel = Get-RelativePath -Base $basePath -Path $file.FullName
+            $entry = Ensure-PerFileEntry -Key $rel
 
             $lines = Get-Content -LiteralPath $file.FullName -Encoding UTF8
             foreach ($line in $lines) {
@@ -783,38 +837,29 @@ jobs:
               $failed = $false
               $id = $null
 
-              $obj = $null
               try {
                 $obj = $line | ConvertFrom-Json -ErrorAction Stop
               } catch {
                 $obj = $null
               }
 
-              if ($obj -ne $null) {
-                $outcomes = @(Get-DeepValues -Root $obj -Key 'outcome')
-                if ($outcomes -and ($outcomes -contains 'failed')) {
-                  $failed = $true
-                  $ids = @(Get-DeepValues -Root $obj -Key 'nodeid')
-                  if ($ids.Count -gt 0) {
-                    $id = $ids[0]
-                  } else {
-                    $names = @(Get-DeepValues -Root $obj -Key 'name')
-                    if ($names.Count -gt 0) { $id = $names[0] }
-                  }
-                }
+              if ($obj -ne $null -and (Test-OutcomeFailed -Root $obj)) {
+                $failed = $true
+                $id = Get-FirstId -Root $obj
               }
 
-              if (-not $failed -or -not $id) {
-                $fallback = Get-FallbackFailure -Line $line
-                if ($fallback.HasFailure) {
-                  $failed = $true
-                  if (-not $id -and $fallback.Id) { $id = $fallback.Id }
+              if (-not $failed -and $line -match '"outcome"\s*:\s*"failed"') {
+                $failed = $true
+                if (-not $id) {
+                  $id = Get-FallbackId -Line $line
                 }
               }
 
               if (-not $failed -or -not $id) { continue }
 
-              $null = $set.Add($id)
+              # Professional note: log total failing rows per file so fail-debug verifies coverage at a glance.
+              $entry.Hits++
+              $null = $entry.Set.Add($id)
               $null = $allFailures.Add($id)
             }
           }
@@ -827,10 +872,13 @@ jobs:
           }
 
           $debugLines = [System.Collections.Generic.List[string]]::new()
-          foreach ($entry in $perFile.GetEnumerator() | Sort-Object Key) {
-            $count = 0
-            if ($entry.Value) { $count = $entry.Value.Count }
-            $debugLines.Add([string]::Format('{0}`t{1}', $entry.Key, $count)) | Out-Null
+          foreach ($kvp in $perFile.GetEnumerator() | Sort-Object Key) {
+            $hits = 0
+            if ($kvp.Value -and $kvp.Value.PSObject.Properties['Hits']) {
+              $hits = [int]$kvp.Value.Hits
+            }
+
+            $debugLines.Add([string]::Format('{0}`t{1}', $kvp.Key, $hits)) | Out-Null
           }
 
           if ($debugLines.Count -eq 0) {
