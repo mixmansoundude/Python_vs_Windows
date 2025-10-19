@@ -1380,6 +1380,30 @@ jobs:
             }
           }
 
+      - name: Summarize failing tests
+        shell: pwsh
+        run: |
+          $diag = "${{ steps.prep.outputs.DIAG }}"
+          $out  = Join-Path $diag 'batchcheck_failing.txt'
+          $paths = @(
+            '_artifacts/batch-check/ci_test_results-selftest-cache-*/~test-results.ndjson',
+            '_artifacts/batch-check/ci_test_results-selftest-real-*/~test-results.ndjson'
+          ) | ForEach-Object { Join-Path $diag $_ }
+          $fails = @()
+          foreach ($g in $paths) {
+            Get-ChildItem -Path $g -ErrorAction SilentlyContinue | ForEach-Object {
+              Get-Content -LiteralPath $_.FullName | ForEach-Object {
+                if ($_ -match '"outcome"\s*:\s*"failed"') {
+                  # crude parse: pull "name" if present
+                  $m = [regex]::Match($_, '"name"\s*:\s*"([^"]+)"')
+                  if ($m.Success) { $fails += $m.Groups[1].Value }
+                }
+              }
+            }
+          }
+          if ($fails.Count -eq 0) { $fails = @('none') }
+          $fails | Sort-Object -Unique | Set-Content -Encoding UTF8 $out
+
       - name: Download workflow logs
         shell: pwsh
         env:
