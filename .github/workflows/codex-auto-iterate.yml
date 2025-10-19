@@ -1384,17 +1384,22 @@ jobs:
         shell: pwsh
         run: |
           $diag = "${{ steps.prep.outputs.DIAG }}"
+          $globs = @(
+            '_artifacts/batch-check/ci_test_results-selftest-*-*/~test-results.ndjson',
+            '_artifacts/batch-check/diag-selftest-*-*/logs/~test-results.ndjson',
+            '_artifacts/batch-check/selftest-*-*/tests/~test-results.ndjson'
+          ) | ForEach-Object { Join-Path $diag $_ }
+
           $fails = @()
-          foreach ($g in @(
-            Join-Path $diag '_artifacts/batch-check/*-cache-*/~test-results.ndjson';
-            Join-Path $diag '_artifacts/batch-check/*-real-*/~test-results.ndjson'
-          )) {
+          foreach ($g in $globs) {
             Get-ChildItem -Path $g -ErrorAction SilentlyContinue | ForEach-Object {
               Get-Content -LiteralPath $_.FullName -Encoding UTF8 | ForEach-Object {
                 try {
                   $o = $_ | ConvertFrom-Json -ErrorAction Stop
                   if ($o.outcome -eq 'failed') {
-                    $id = if ($o.PSObject.Properties['nodeid']) { $o.nodeid } elseif ($o.PSObject.Properties['name']) { $o.name } else { $null }
+                    $id = $null
+                    if ($o.PSObject.Properties['nodeid']) { $id = $o.nodeid }
+                    elseif ($o.PSObject.Properties['name']) { $id = $o.name }
                     if ($id) { $fails += $id }
                   }
                 } catch {}
