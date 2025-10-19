@@ -743,6 +743,34 @@ jobs:
             fi
           fi
 
+      - name: Synthesize failing summary
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path .codex -Force | Out-Null
+          $root = ".codex\fail"
+          $out  = ".codex\failing_summary.md"
+          $lines = @("# Failing context",
+            "- run: ${{ github.run_id }} attempt ${{ github.run_attempt }}",
+            "- ref: `${{ github.ref }}`  sha: `${{ github.sha }}`",
+            "",
+            "## First errors (grep)",
+            "")
+          Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue |
+            Select-String -Pattern 'ERROR','Exception','Traceback','failed' -List |
+            Select-Object -First 40 | ForEach-Object {
+              $rel = $_.Path.Replace((Resolve-Path $root),'').TrimStart('\').Replace('\','/')
+              $lines += "* $rel:`$($_.LineNumber)`: $($_.Line.Trim())"
+            }
+          $lines += @("", "## Tail of failing job log", "```")
+          # Professional note: explicit Where-Object keeps compatibility because Get-ChildItem -Filter only accepts one pattern.
+          Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like '*fail*.log*' -or $_.Name -like '*job*.log*' } |
+            Sort-Object Length -Descending | Select-Object -First 1 |
+            ForEach-Object { Get-Content -Tail 200 $_.FullName } | ForEach-Object { $lines += $_ }
+          $lines += "```"
+          ($lines -join "`n") | Set-Content -Encoding UTF8 $out
+
       - name: Stage iterate diagnostics artifact
         id: diag_stage
         run: |
