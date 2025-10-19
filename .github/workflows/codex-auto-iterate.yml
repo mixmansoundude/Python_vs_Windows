@@ -1394,9 +1394,15 @@ jobs:
             Get-ChildItem -Path $g -ErrorAction SilentlyContinue | ForEach-Object {
               Get-Content -LiteralPath $_.FullName | ForEach-Object {
                 if ($_ -match '"outcome"\s*:\s*"failed"') {
-                  # crude parse: pull "name" if present
-                  $m = [regex]::Match($_, '"name"\s*:\s*"([^"]+)"')
-                  if ($m.Success) { $fails += $m.Groups[1].Value }
+                  # Prefer pytest-style nodeid but fall back to the legacy name field for older payloads.
+                  $id = $null
+                  $m1 = [regex]::Match($_, '"nodeid"\s*:\s*"([^"]+)"')
+                  if ($m1.Success) { $id = $m1.Groups[1].Value }
+                  if (-not $id) {
+                    $m2 = [regex]::Match($_, '"name"\s*:\s*"([^"]+)"')
+                    if ($m2.Success) { $id = $m2.Groups[1].Value }
+                  }
+                  if ($id) { $fails += $id }
                 }
               }
             }
