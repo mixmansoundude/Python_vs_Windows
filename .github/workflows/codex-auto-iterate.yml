@@ -1020,18 +1020,24 @@ jobs:
             paths="$paths"$'\n'"${DIAG_CODEX_LOG}"
           fi
           paths="$paths"$'\n'"${PATCH_LOG}"
-          {
-            echo "list<<'EOF'"
-            printf '%s\n' "$paths"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
+          if [ -n "$paths" ]; then
+            {
+              printf 'list<<EOF_ITER\n'
+              printf '%s\n' "$paths"
+              printf 'EOF_ITER\n'
+            } >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload iterate artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.iter_paths.outputs.list }}
+          path: |
+            .codex/**
+            ${{ steps.diag_stage.outputs.dir != '' && format('{0}/**', steps.diag_stage.outputs.dir) || '' }}
+            ${{ steps.diag_stage.outputs.codex_log || '' }}
+            ${{ runner.temp }}/patch.apply.log
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
