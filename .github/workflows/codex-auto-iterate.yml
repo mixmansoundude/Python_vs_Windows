@@ -938,6 +938,13 @@ jobs:
           log="$RUNNER_TEMP/patch.apply.log"
           : > "$log"
           echo "log_path=$log" >> "$GITHUB_OUTPUT"
+          if [ -f "$diff" ] && grep -Fxq '# no changes' "$diff"; then
+            # Professional note: respect "model returned # no changes" so downstream steps
+            # skip needless apply/PR work and surface the diagnostic reason instead.
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "model returned # no changes; skipping apply" >> "$log"
+            exit 0
+          fi
           if [ ! -s "$diff" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "no diff" >> "$log"
@@ -1992,7 +1999,61 @@ jobs:
             return Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
           }
 
-          $iterateDir = Get-FirstDir (Join-Path $Artifacts 'iterate')
+          $iterateRoot = Join-Path $Artifacts 'iterate'
+          $iterateDir = Get-FirstDir $iterateRoot
+          if ($iterateRoot -and (Test-Path $iterateRoot)) {
+            $candidateDirs = Get-ChildItem -Path $iterateRoot -Directory -ErrorAction SilentlyContinue
+            foreach ($candidate in $candidateDirs) {
+              $decisionProbe = Join-Path $candidate.FullName 'decision.txt'
+              if (Test-Path $decisionProbe) {
+                # Professional note: some artifacts expose `_temp` alongside the sanitized iterate
+                # folder; prefer the directory that carries decision.txt so metadata stays accurate.
+                $iterateDir = $candidate.FullName
+                break
+              }
+            }
+          }
+
+          $iterateTemp = $null
+          if ($iterateRoot -and (Test-Path $iterateRoot)) {
+            $candidateTemp = Join-Path $iterateRoot '_temp'
+            if (Test-Path $candidateTemp) {
+              $iterateTemp = $candidateTemp
+            } elseif ($iterateDir) {
+              $altTemp = Join-Path $iterateDir '_temp'
+              if (Test-Path $altTemp) { $iterateTemp = $altTemp }
+            }
+            if (-not $iterateTemp) {
+              $maybeTemp = Get-ChildItem -Path $iterateRoot -Directory -Filter '_temp' -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+              if ($maybeTemp) { $iterateTemp = $maybeTemp.FullName }
+            }
+          }
+
+          $responseData = $null
+          if ($iterateTemp) {
+            $responsePath = Join-Path $iterateTemp 'response.json'
+            if (Test-Path $responsePath) {
+              try { $responseData = Get-Content -Raw -LiteralPath $responsePath | ConvertFrom-Json } catch {}
+            }
+          }
+
+          $statusData = $null
+          if ($iterateTemp) {
+            $statusPath = Join-Path $iterateTemp 'iterate_status.json'
+            if (Test-Path $statusPath) {
+              try { $statusData = Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json } catch {}
+            }
+          }
+
+          $whyOutcome = $null
+          if ($iterateTemp) {
+            $whyPath = Join-Path $iterateTemp 'why_no_diff.txt'
+            if (Test-Path $whyPath) {
+              $line = (Get-Content -LiteralPath $whyPath -TotalCount 1 | Select-Object -First 1)
+              if ($line) { $whyOutcome = $line.Trim() }
+            }
+          }
 
           function Get-Relative([string]$fullPath) {
             if (-not $fullPath) { return $null }
@@ -2022,19 +2083,72 @@ jobs:
           $model      = Read-Value $iterateDir 'model.txt'
           $endpoint   = Read-Value $iterateDir 'endpoint.txt'
           $httpStatus = Read-Value $iterateDir 'http_status.txt'
+          if ($responseData) {
+            if ($null -ne $responseData.http_status) { $httpStatus = [string]$responseData.http_status }
+            if ($responseData.model) { $model = [string]$responseData.model }
+          }
           $tokens     = @{}
           $tokens['prompt']     = 'n/a'
           $tokens['completion'] = 'n/a'
           $tokens['total']      = 'n/a'
+          if ($responseData -and $responseData.usage) {
+            if ($null -ne $responseData.usage.prompt_tokens) { $tokens['prompt'] = [string]$responseData.usage.prompt_tokens }
+            if ($null -ne $responseData.usage.completion_tokens) { $tokens['completion'] = [string]$responseData.usage.completion_tokens }
+            if ($null -ne $responseData.usage.total_tokens) { $tokens['total'] = [string]$responseData.usage.total_tokens }
+          }
           if ($iterateDir) {
             $tokensPath = Join-Path $iterateDir 'tokens.txt'
             if (Test-Path $tokensPath) {
               foreach ($line in Get-Content -LiteralPath $tokensPath) {
                 if ($line -match '^(?<k>[^=]+)=(?<v>.*)$') {
-                  $tokens[$matches['k']] = $matches['v']
+                  $key = $matches['k']
+                  $value = $matches['v']
+                  if (-not $tokens.ContainsKey($key)) { $tokens[$key] = $value; continue }
+                  if ([string]::IsNullOrWhiteSpace($tokens[$key]) -or $tokens[$key] -eq 'n/a') {
+                    $tokens[$key] = $value
+                  }
                 }
               }
             }
+          }
+
+          $patchDiffPath = $null
+          if ($iterateDir) {
+            $candidatePatch = Join-Path $iterateDir 'patch.diff'
+            if (Test-Path $candidatePatch) { $patchDiffPath = $candidatePatch }
+          }
+
+          $diffProduced = $false
+          if ($patchDiffPath -and (Test-Path $patchDiffPath)) {
+            $head = Get-Content -LiteralPath $patchDiffPath -TotalCount 20
+            if ($head) {
+              $allNoChanges = ($head.Count -eq 1 -and $head[0].Trim() -eq '# no changes')
+              if (-not $allNoChanges) { $diffProduced = $true }
+            }
+          }
+
+          $outcome = 'n/a'
+          if ($whyOutcome) {
+            $outcome = $whyOutcome
+          } elseif ($diffProduced) {
+            $outcome = 'diff produced'
+          }
+
+          function Format-StatusValue($value) {
+            if ($null -eq $value) { return 'n/a' }
+            if ($value -is [bool]) { return $value.ToString().ToLowerInvariant() }
+            return [string]$value
+          }
+
+          $attemptSummary = $null
+          if ($statusData) {
+            $attemptSummary = [string]::Format(
+              'attempted={0} gate={1} auth_ok={2} attempts_left={3}',
+              (Format-StatusValue $statusData.attempted),
+              (Format-StatusValue $statusData.gate),
+              (Format-StatusValue $statusData.auth_ok),
+              (Format-StatusValue $statusData.attempts_left)
+            )
           }
 
           $ndjsonSummaries = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue
@@ -2140,12 +2254,19 @@ jobs:
           $null = $lines.Add('## Iterate metadata')
           foreach ($seed in @(
               [string]::Format('- Decision: {0}', $decision),
+              [string]::Format('- Outcome: {0}', $outcome),
               [string]::Format('- HTTP status: {0}', $httpStatus),
               [string]::Format('- Model: {0}', $model),
               [string]::Format('- Endpoint: {0}', $endpoint),
               [string]::Format('- Tokens: prompt={0} completion={1} total={2}', $tokens['prompt'], $tokens['completion'], $tokens['total'])
             )) {
             $null = $lines.Add($seed)
+          }
+
+          if (-not $responseData -and $attemptSummary) {
+            # Professional note: surface gate/auth outcomes when no response payload exists so
+            # analysts immediately see why the iterate call was skipped.
+            $null = $lines.Add([string]::Format('- Attempt summary: {0}', $attemptSummary))
           }
 
           if ($iterateDir) {
@@ -2259,11 +2380,15 @@ jobs:
 
           $iteratePairs = @(
             @{ Label = 'Decision'; Value = $decision },
+            @{ Label = 'Outcome'; Value = $outcome },
             @{ Label = 'HTTP status'; Value = $httpStatus },
             @{ Label = 'Model'; Value = $model },
             @{ Label = 'Endpoint'; Value = $endpoint },
             @{ Label = 'Tokens'; Value = [string]::Format('prompt={0} completion={1} total={2}', $tokens['prompt'], $tokens['completion'], $tokens['total']) }
           )
+          if (-not $responseData -and $attemptSummary) {
+            $iteratePairs += @{ Label = 'Attempt summary'; Value = $attemptSummary }
+          }
 
           $html = [System.Collections.Generic.List[string]]::new()
           $html.Add('<!doctype html>')
