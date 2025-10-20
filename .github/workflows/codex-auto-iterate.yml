@@ -535,11 +535,92 @@ jobs:
             echo "stop_reason=Max attempts reached (${MAX_ATTEMPTS})" >> "$GITHUB_OUTPUT"
             echo "previous=$attempts" >> "$GITHUB_OUTPUT"
             echo "next=$attempts" >> "$GITHUB_OUTPUT"
+            echo "remaining=0" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          remaining=$(( ${MAX_ATTEMPTS:-0} - next ))
+          if [ "$remaining" -lt 0 ]; then
+            remaining=0
           fi
           echo "stop=false" >> "$GITHUB_OUTPUT"
           echo "previous=$attempts" >> "$GITHUB_OUTPUT"
           echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "remaining=$remaining" >> "$GITHUB_OUTPUT"
+
+      - name: Record iterate status
+        if: always()
+        env:
+          GATE: ${{ steps.gate.outputs.should_iterate }}
+          GATE_REASON: ${{ steps.gate.outputs.reason }}
+          AUTH_OK: ${{ steps.auth.outputs.ok }}
+          AUTH_REASON: ${{ steps.auth.outputs.reason }}
+          STOP: ${{ steps.attempts.outputs.stop }}
+          STOP_REASON: ${{ steps.attempts.outputs.stop_reason }}
+          REMAINING: ${{ steps.attempts.outputs.remaining }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, pathlib
+
+
+          def _parse_bool(value: str):
+              if value == "true":
+                  return True
+              if value == "false":
+                  return False
+              return None
+
+
+          def _parse_int(value: str):
+              if not value:
+                  return None
+              try:
+                  return int(value)
+              except ValueError:
+                  return None
+
+
+          gate = os.environ.get("GATE", "")
+          gate_reason = os.environ.get("GATE_REASON", "")
+          auth_ok = os.environ.get("AUTH_OK", "")
+          auth_reason = os.environ.get("AUTH_REASON", "")
+          stop = os.environ.get("STOP", "")
+          stop_reason = os.environ.get("STOP_REASON", "")
+          remaining = os.environ.get("REMAINING", "")
+
+          attempted = gate == "true" and auth_ok == "true" and stop != "true"
+
+          status = {
+              "attempted": attempted,
+              "gate": _parse_bool(gate),
+              "auth_ok": _parse_bool(auth_ok),
+              "attempts_left": _parse_int(remaining),
+          }
+
+          runner_temp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          status_path = runner_temp / "iterate_status.json"
+          status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+
+          why_reason = None
+          if not attempted:
+              gate_val = _parse_bool(gate)
+              auth_val = _parse_bool(auth_ok)
+              if gate_val is False:
+                  detail = gate_reason or "gate reason unavailable"
+                  why_reason = f"skipped: gate=false ({detail})"
+              elif stop == "true":
+                  detail = stop_reason or "no stop reason"
+                  why_reason = f"skipped: attempts exhausted ({detail})"
+              elif auth_val is False or auth_ok == "":
+                  detail = auth_reason or "auth unavailable"
+                  why_reason = f"skipped: auth failure ({detail})"
+
+          why_path = runner_temp / "why_no_diff.txt"
+          if why_reason:
+              why_path.write_text(why_reason + "\n", encoding="utf-8")
+          elif why_path.exists():
+              why_path.unlink()
+          PY
 
       - name: Build prompt
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
@@ -735,6 +816,43 @@ jobs:
           head -n 120 "$OUTTXT" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
+          usage_json='null'
+          if [ -s "$RES" ]; then
+            usage_json=$(jq -c '{prompt_tokens: (.usage.prompt_tokens // null), completion_tokens: (.usage.completion_tokens // null), total_tokens: (.usage.total_tokens // null)}' "$RES" 2>/dev/null || echo 'null')
+          fi
+          jq -n \
+            --arg status "$http_code" \
+            --arg model "$OPENAI_MODEL" \
+            --arg attempt_summary "$attempt_summary" \
+            --arg final_attempt "$final_response_attempt" \
+            --arg incomplete "$first_incomplete_reason" \
+            --argjson usage "$usage_json" \
+            '{
+              http_status: (if ($status|tonumber? // null) != null then ($status|tonumber) else $status end),
+              model: $model,
+              attempt_summary: $attempt_summary,
+              final_response_attempt: (if $final_attempt == "none" then null else $final_attempt end),
+              incomplete_reason: (if $incomplete == "" then null else $incomplete end),
+              usage: (if $usage == null then null else $usage end)
+            }' > "$RUNNER_TEMP/response.json"
+
+          WHY_FILE="$RUNNER_TEMP/why_no_diff.txt"
+          reason=""
+          if [ "$http_code" != "200" ]; then
+            reason="http_error_${http_code}"
+          else
+            if [ ! -s "$OUTTXT" ]; then
+              reason="empty response"
+            elif ! grep -q '```diff' "$OUTTXT"; then
+              reason="diff fence not found"
+            fi
+          fi
+          if [ -n "$reason" ]; then
+            printf '%s\n' "$reason" > "$WHY_FILE"
+          else
+            rm -f "$WHY_FILE"
+          fi
+
       - name: Extract model rationale (optional)
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: rationale
@@ -792,6 +910,23 @@ jobs:
           echo '```diff' >> "$GITHUB_STEP_SUMMARY"
           head -n 120 "$DIFF_OUT" >> "$GITHUB_STEP_SUMMARY" || true
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Note diff availability
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        run: |
+          set -euo pipefail
+          diff_path="${{ steps.diff.outputs.diff_path }}"
+          why_file="$RUNNER_TEMP/why_no_diff.txt"
+          if [ -z "$diff_path" ] || [ ! -f "$diff_path" ]; then
+            exit 0
+          fi
+          if grep -Fxq '# no changes' "$diff_path"; then
+            if [ ! -s "$why_file" ]; then
+              printf '%s\n' "model returned # no changes" > "$why_file"
+            fi
+          else
+            rm -f "$why_file"
+          fi
 
       - name: Apply model patch (robust)
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
@@ -1055,6 +1190,9 @@ jobs:
           path: |
             .codex/**
             ${{ runner.temp }}/prompt.txt
+            ${{ runner.temp }}/response.json
+            ${{ runner.temp }}/why_no_diff.txt
+            ${{ runner.temp }}/iterate_status.json
             ${{ runner.temp }}/patch.apply.log
             ${{ steps.diag_stage.outputs.dir != '' && format('{0}/**', steps.diag_stage.outputs.dir) || '' }}
             ${{ steps.diag_stage.outputs.codex_log || '' }}
