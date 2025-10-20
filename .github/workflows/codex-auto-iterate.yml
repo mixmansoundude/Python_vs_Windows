@@ -288,12 +288,14 @@ jobs:
           if [ -z "$name" ] || [ "$name" = "null" ]; then
             echo "artifact_name=" >> "$GITHUB_OUTPUT"
             echo "path=" >> "$GITHUB_OUTPUT"
+            echo "extract_dir=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           id=`jq -r --arg n "$name" '.artifacts[] | select(.name==$n) | .id' "$meta" 2>/dev/null || true`
           if [ -z "$id" ] || [ "$id" = "null" ]; then
             echo "artifact_name=" >> "$GITHUB_OUTPUT"
             echo "path=" >> "$GITHUB_OUTPUT"
+            echo "extract_dir=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           zipfile="$RUNNER_TEMP/struct.zip"
@@ -302,6 +304,7 @@ jobs:
           dest="$RUNNER_TEMP/struct"
           mkdir -p "$dest"
           unzip -q "$zipfile" -d "$dest" || true
+          echo "extract_dir=$dest" >> "$GITHUB_OUTPUT"
           out="$RUNNER_TEMP/ci_structured.txt"
           : > "$out"
           # Prefer *.ndjson; else summary_raw*.txt; else any *.json with errors
@@ -322,6 +325,8 @@ jobs:
           else
             echo "artifact_name=" >> "$GITHUB_OUTPUT"
             echo "path=" >> "$GITHUB_OUTPUT"
+            # Preserve extract_dir for downstream consumers even if parsing failed
+            echo "extract_dir=$dest" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Fetch failing run logs (tail)
@@ -429,6 +434,35 @@ jobs:
           else
             rm -f "$focus_path"
             echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stage failure snippets for prompt
+        if: ${{ steps.poll.outputs.picked_id != '' }}
+        env:
+          STRUCT_PATH: ${{ steps.struct.outputs.path }}
+          STRUCT_DIR: ${{ steps.struct.outputs.extract_dir }}
+          LOGFOCUS_PATH: ${{ steps.logfocus.outputs.path }}
+        run: |
+          set -euo pipefail
+          mkdir -p .codex/fail
+          if [ -n "${STRUCT_PATH:-}" ] && [ -f "$STRUCT_PATH" ]; then
+            cp "$STRUCT_PATH" .codex/fail/ci_structured.txt
+          fi
+          if [ -n "${LOGFOCUS_PATH:-}" ] && [ -f "$LOGFOCUS_PATH" ]; then
+            cp "$LOGFOCUS_PATH" .codex/fail/failing_job_focus.txt
+          fi
+          first_json=""
+          if [ -n "${STRUCT_DIR:-}" ] && [ -d "$STRUCT_DIR" ]; then
+            first_json=`find "$STRUCT_DIR" -type f -name 'first_failure.json' | head -n 1 || true`
+          fi
+          if [ -n "$first_json" ] && [ -f "$first_json" ]; then
+            id=$(jq -r '(.id // .name // "") | gsub("[\r\n]+"; " ")' "$first_json" 2>/dev/null || true)
+            desc=$(jq -r '(.desc // .description // .message // "") | gsub("[\r\n]+"; " ")' "$first_json" 2>/dev/null || true)
+            source=$(jq -r '(.source // .file // .path // "") | gsub("[\r\n]+"; " ")' "$first_json" 2>/dev/null || true)
+            if [ -z "$id" ]; then id="unknown"; fi
+            if [ -z "$desc" ]; then desc="unknown"; fi
+            if [ -z "$source" ]; then source="unknown"; fi
+            printf 'id=%s | %s (source=%s)\n' "$id" "$desc" "$source" > .codex/fail/first_failure.txt
           fi
 
       - name: Decide gate (iterate vs skip)
@@ -542,6 +576,28 @@ jobs:
               echo
               echo "----- Repo files (head) -----"
               head -n 300 "$RUNNER_TEMP/repo-files.txt"
+            } >> "$PROMPT"
+          fi
+          fail_dir=".codex/fail"
+          first_fail="$fail_dir/first_failure.txt"
+          if [ -f "$first_fail" ]; then
+            {
+              echo
+              echo "First failure:"
+              head -n 5 "$first_fail"
+            } >> "$PROMPT"
+          fi
+          context_src=""
+          if [ -f "$fail_dir/ci_structured.txt" ]; then
+            context_src="$fail_dir/ci_structured.txt"
+          elif [ -f "$fail_dir/failing_job_focus.txt" ]; then
+            context_src="$fail_dir/failing_job_focus.txt"
+          fi
+          if [ -n "$context_src" ]; then
+            {
+              echo
+              echo "Failure context (first 120 lines):"
+              sed -e 's/[^[:print:]\t]/?/g' "$context_src" | head -n 120
             } >> "$PROMPT"
           fi
           # Append structured CI error first (preferred)
