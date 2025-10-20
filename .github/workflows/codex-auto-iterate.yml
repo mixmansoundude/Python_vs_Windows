@@ -597,7 +597,9 @@ jobs:
             {
               echo
               echo "Failure context (first 120 lines):"
-              sed -e 's/[^[:print:]\t]/?/g' "$context_src" | head -n 120
+              # Professional note: run the bounded consumer (head) before sanitizing to avoid
+              # SIGPIPE failures when trimming large logs for the prompt.
+              head -n 120 "$context_src" | sed -e 's/[^[:print:]\t]/?/g'
             } >> "$PROMPT"
           fi
           # Append structured CI error first (preferred)
@@ -605,7 +607,7 @@ jobs:
             {
               echo
               echo "----- CI structured error (first record / head) -----"
-              sed -e 's/[^[:print:]\t]/?/g' "${{ steps.struct.outputs.path }}" | head -n 120
+              head -n 120 "${{ steps.struct.outputs.path }}" | sed -e 's/[^[:print:]\t]/?/g'
             } >> "$PROMPT"
           fi
           focus_log="${{ steps.logfocus.outputs.path }}"
@@ -619,7 +621,9 @@ jobs:
             {
               echo
               echo "----- Failing job log tail (last 200 lines) -----"
-              sed -e 's/[^[:print:]\t]/?/g' "${{ steps.logtail.outputs.path }}" | tail -n 200
+              # Professional note: take the bounded tail first so sanitizing does not fail on
+              # SIGPIPE when tail closes after emitting the requested lines.
+              tail -n 200 "${{ steps.logtail.outputs.path }}" | sed -e 's/[^[:print:]\t]/?/g'
             } >> "$PROMPT"
           fi
           echo "path=$PROMPT" >> "$GITHUB_OUTPUT"
@@ -999,16 +1003,35 @@ jobs:
           printf 'dir=%s\n' "$iter_dir" >> "$GITHUB_OUTPUT"
           printf 'codex_log=%s\n' "$codex_log" >> "$GITHUB_OUTPUT"
 
+      - name: Collect iterate artifact paths
+        if: always()
+        id: iter_paths
+        env:
+          DIAG_DIR: ${{ steps.diag_stage.outputs.dir }}
+          DIAG_CODEX_LOG: ${{ steps.diag_stage.outputs.codex_log }}
+          PATCH_LOG: ${{ runner.temp }}/patch.apply.log
+        run: |
+          set -euo pipefail
+          paths=".codex/**"
+          if [ -n "${DIAG_DIR:-}" ]; then
+            paths="$paths"$'\n'"${DIAG_DIR}/**"
+          fi
+          if [ -n "${DIAG_CODEX_LOG:-}" ]; then
+            paths="$paths"$'\n'"${DIAG_CODEX_LOG}"
+          fi
+          paths="$paths"$'\n'"${PATCH_LOG}"
+          {
+            echo "list<<'EOF'"
+            printf '%s\n' "$paths"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Upload iterate artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            .codex/**
-            ${{ steps.diag_stage.outputs.dir }}/**
-            ${{ steps.diag_stage.outputs.codex_log }}
-            ${{ runner.temp }}/patch.apply.log
+          path: ${{ steps.iter_paths.outputs.list }}
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
