@@ -584,7 +584,7 @@ jobs:
             {
               echo
               echo "First failure:"
-              head -n 5 "$first_fail"
+              head -n 1 "$first_fail"
             } >> "$PROMPT"
           fi
           context_src=""
@@ -596,7 +596,7 @@ jobs:
           if [ -n "$context_src" ]; then
             {
               echo
-              echo "Failure context (first 120 lines):"
+              echo "Failing job log tail (first 120 lines):"
               # Professional note: run the bounded consumer (head) before sanitizing to avoid
               # SIGPIPE failures when trimming large logs for the prompt.
               head -n 120 "$context_src" | sed -e 's/[^[:print:]\t]/?/g'
@@ -755,6 +755,25 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "rationale_path=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ensure iterate failure bundle assets
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        env:
+          STRUCT_PATH: ${{ steps.struct.outputs.path }}
+          LOGFOCUS_PATH: ${{ steps.logfocus.outputs.path }}
+        run: |
+          set -euo pipefail
+          fail_dir=".codex/fail"
+          mkdir -p "$fail_dir"
+          if [ -n "${STRUCT_PATH:-}" ] && [ -f "$STRUCT_PATH" ]; then
+            cp "$STRUCT_PATH" "$fail_dir/ci_structured.txt"
+          fi
+          if [ -n "${LOGFOCUS_PATH:-}" ] && [ -f "$LOGFOCUS_PATH" ]; then
+            cp "$LOGFOCUS_PATH" "$fail_dir/failing_job_focus.txt"
+          fi
+          if [ ! -f "$RUNNER_TEMP/prompt.txt" ]; then
+            : > "$RUNNER_TEMP/prompt.txt"
           fi
 
       - name: Extract fenced diff
@@ -1035,9 +1054,10 @@ jobs:
           name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             .codex/**
+            ${{ runner.temp }}/prompt.txt
+            ${{ runner.temp }}/patch.apply.log
             ${{ steps.diag_stage.outputs.dir != '' && format('{0}/**', steps.diag_stage.outputs.dir) || '' }}
             ${{ steps.diag_stage.outputs.codex_log || '' }}
-            ${{ runner.temp }}/patch.apply.log
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
