@@ -702,19 +702,12 @@ jobs:
 
             if (-not $BasePath) { return @() }
 
-            $batchRoot = Join-Path $BasePath '_artifacts'
-            $batchRoot = Join-Path $batchRoot 'batch-check'
-            if (-not (Test-Path -LiteralPath $batchRoot)) {
-              # Professional note: Requirement "have batch-check’s producer step scan all NDJSON under
-              # _artifacts/batch-check/" — bail out when the bundle has not been staged yet so we do not
-              # falsely return "none" from unrelated paths.
-              Write-Host "_artifacts/batch-check directory not present; skipping failing-ID scan."
-              return @()
-            }
-
+            # Professional note: Requirement "search under the job workspace using broad globs" —
+            # scan the entire workspace instead of the packaged artifact layout so we detect
+            # freshly written NDJSON before diagnostics copies them elsewhere.
             $patterns = @('*~test-results.ndjson', 'ci_test_results*.ndjson')
             $files = foreach ($pattern in $patterns) {
-              Get-ChildItem -Path $batchRoot -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue
+              Get-ChildItem -Path $BasePath -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue
             }
 
             return $files |
