@@ -249,12 +249,28 @@ def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
     return len(files), missing_note
 
 
-def _iterate_status(diag: Optional[Path], context: Context) -> str:
+def _iterate_status(
+    context: Context, iterate_file_status: Optional[str] = None
+) -> str:
+    diag = context.diag
+    if iterate_file_status is None:
+        iterate_file_status, _ = _summarize_iterate_files(context)
+    if iterate_file_status == "present":
+        return "present"
+
+    iterate_root = _locate_iterate_root(context)
+    if iterate_root and iterate_root.exists():
+        # Professional note: signal the absence of extracted iterate files even
+        # though the directory exists so analysts know to review the zip
+        # fallback below.
+        return "missing"
+
     if not diag:
         return "missing (no diag root)"
+
     iterate_zip = diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
     if iterate_zip.exists():
-        return "found"
+        return "found (zip only)"
     missing = diag / "logs" / "iterate.MISSING.txt"
     if missing.exists():
         return "missing (see logs/iterate.MISSING.txt)"
@@ -302,7 +318,7 @@ def _ensure_repo_index(diag: Optional[Path]) -> None:
         "<body>",
         "<main>",
         "<h1>Repository files</h1>",
-        '<p><a href="files/">Open extracted repository snapshot</a></p>',
+        '<p><a href="/repo/">Open extracted repository snapshot</a></p>',
         "</main>",
         "</body>",
         "</html>",
@@ -357,23 +373,73 @@ def _locate_iterate_root(context: Context) -> Optional[Path]:
     return None
 
 
+def _discover_iterate_temp_dirs(iterate_root: Path) -> List[Path]:
+    """Return candidate _temp directories that should contain iterate payloads."""
+
+    candidates: List[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Path) -> None:
+        if path.is_dir() and path not in seen:
+            candidates.append(path)
+            seen.add(path)
+
+    add(iterate_root / "_temp")
+    try:
+        for child in sorted(iterate_root.iterdir()):
+            if not child.is_dir():
+                continue
+            if child.name == "_temp":
+                add(child)
+            else:
+                add(child / "_temp")
+    except FileNotFoundError:
+        pass
+
+    for path in sorted(iterate_root.rglob("_temp")):
+        add(path)
+
+    if not candidates:
+        add(iterate_root)
+
+    return candidates
+
+
 def _summarize_iterate_files(context: Context) -> Tuple[str, List[Path]]:
     iterate_root = _locate_iterate_root(context)
     if not iterate_root or not iterate_root.exists():
         return "missing", []
 
-    has_files = any(path.is_file() for path in iterate_root.rglob("*"))
+    temp_dirs = _discover_iterate_temp_dirs(iterate_root)
+    has_files = False
+    for temp_dir in temp_dirs:
+        for path in temp_dir.rglob("*"):
+            if path.is_file():
+                has_files = True
+                break
+        if has_files:
+            break
     if not has_files:
         return "missing", []
 
     key_names = ["prompt.txt", "response.json", "why_no_diff.txt"]
     found: List[Path] = []
     for pattern in key_names:
-        try:
-            match = next(iterate_root.rglob(pattern))
-        except StopIteration:
-            continue
-        else:
+        match: Optional[Path] = None
+        for directory in temp_dirs:
+            candidate = directory / pattern
+            if candidate.exists():
+                match = candidate
+                break
+        if not match:
+            for directory in temp_dirs:
+                try:
+                    match = next(p for p in directory.rglob(pattern) if p.is_file())
+                except StopIteration:
+                    continue
+                else:
+                    break
+        if match:
             found.append(match)
 
     if not found:
@@ -475,7 +541,7 @@ def _build_markdown(
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
-    iterate_status = _iterate_status(diag, context)
+    iterate_status = _iterate_status(context, iterate_file_status)
     batch_status = _batch_status(diag, context)
     lines: List[str] = []
 
@@ -490,7 +556,7 @@ def _build_markdown(
             f"Run page: {context.run_url}",
             "",
             "## Status",
-            f"- Iterate logs: {iterate_status}",
+            f"- Iterate files: {iterate_status}",
             f"- Batch-check run id: {batch_status}",
             f"- Artifact files enumerated: {artifact_count}",
         ]
@@ -634,10 +700,10 @@ def _write_html(
         )
 
     artifact_count, artifact_missing = _artifact_stats(artifacts)
-    iterate_status = _iterate_status(diag, context)
-    batch_status = _batch_status(diag, context)
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
+    iterate_status = _iterate_status(context, iterate_file_status)
+    batch_status = _batch_status(diag, context)
     diag_files = _diag_files(diag)
 
     metadata_pairs = [
@@ -650,7 +716,7 @@ def _write_html(
     ]
 
     status_pairs = [
-        {"label": "Iterate logs", "value": iterate_status},
+        {"label": "Iterate files", "value": iterate_status},
         {"label": "Batch-check run id", "value": batch_status},
         {"label": "Artifact files enumerated", "value": str(artifact_count)},
     ]
