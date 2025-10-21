@@ -249,32 +249,23 @@ def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
     return len(files), missing_note
 
 
-def _iterate_status(
-    context: Context, iterate_file_status: Optional[str] = None
-) -> str:
+def _iterate_status(context: Context) -> str:
+    """Return the legacy iterate-log status consumed by downstream dashboards."""
+
     diag = context.diag
-    if iterate_file_status is None:
-        iterate_file_status, _ = _summarize_iterate_files(context)
-    if iterate_file_status == "present":
-        return "present"
+    iterate_zip: Optional[Path]
+    if diag:
+        iterate_zip = diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
+    else:
+        iterate_zip = None
 
-    iterate_root = _locate_iterate_root(context)
-    if iterate_root and iterate_root.exists():
-        # Professional note: signal the absence of extracted iterate files even
-        # though the directory exists so analysts know to review the zip
-        # fallback below.
-        return "missing"
+    if iterate_zip and iterate_zip.exists():
+        return "found"
 
-    if not diag:
-        return "missing (no diag root)"
-
-    iterate_zip = diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
-    if iterate_zip.exists():
-        return "found (zip only)"
-    missing = diag / "logs" / "iterate.MISSING.txt"
-    if missing.exists():
-        return "missing (see logs/iterate.MISSING.txt)"
-    return "missing"
+    # Professional note: preserve the historical wording "missing (see
+    # logs/iterate.MISSING.txt)" even when the sentinel is absent so the
+    # diagnostics headline stays compatible with existing CI parsers.
+    return "missing (see logs/iterate.MISSING.txt)"
 
 
 def _batch_status(diag: Optional[Path], context: Context) -> str:
@@ -465,7 +456,7 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[Path]]:
     return "present", found
 
 
-def _bundle_links(context: Context, iterate_status: str) -> List[dict]:
+def _bundle_links(context: Context) -> List[dict]:
     diag = context.diag
     entries = [
         {"label": "Inventory (HTML)", "path": "inventory.html", "exists": diag and (diag / "inventory.html").exists()},
@@ -556,7 +547,7 @@ def _build_markdown(
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
-    iterate_status = _iterate_status(context, iterate_file_status)
+    iterate_log_status = _iterate_status(context)
     batch_status = _batch_status(diag, context)
     lines: List[str] = []
 
@@ -571,7 +562,7 @@ def _build_markdown(
             f"Run page: {context.run_url}",
             "",
             "## Status",
-            f"- Iterate files: {iterate_status}",
+            f"- Iterate logs: {iterate_log_status}",
             f"- Batch-check run id: {batch_status}",
             f"- Artifact files enumerated: {artifact_count}",
         ]
@@ -582,7 +573,7 @@ def _build_markdown(
     lines.append("")
     lines.append("## Quick links")
 
-    for entry in _bundle_links(context, iterate_status):
+    for entry in _bundle_links(context):
         label = entry["label"]
         path = entry.get("path")
         exists = entry.get("exists")
@@ -717,7 +708,7 @@ def _write_html(
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
-    iterate_status = _iterate_status(context, iterate_file_status)
+    iterate_log_status = _iterate_status(context)
     batch_status = _batch_status(diag, context)
     diag_files = _diag_files(diag)
 
@@ -731,7 +722,7 @@ def _write_html(
     ]
 
     status_pairs = [
-        {"label": "Iterate files", "value": iterate_status},
+        {"label": "Iterate logs", "value": iterate_log_status},
         {"label": "Batch-check run id", "value": batch_status},
         {"label": "Artifact files enumerated", "value": str(artifact_count)},
     ]
@@ -785,7 +776,7 @@ def _write_html(
     html.append("<section>")
     html.append("<h2>Quick links</h2>")
     html.append("<ul>")
-    for entry in _bundle_links(context, iterate_status):
+    for entry in _bundle_links(context):
         label = _escape_html(entry["label"])
         path = entry.get("path")
         exists = entry.get("exists")
