@@ -83,7 +83,8 @@ THEN stop and open/append a PR. One loop = one change set.
 - Be sure to sanity check anything touched before submitting code. Recommended options include:
   - Python: `python -m compileall -q .` and `python -m pyflakes .` (install `pyflakes` if needed).
   - PowerShell: run PSScriptAnalyzer (`Install-Module PSScriptAnalyzer -Force -Scope CurrentUser` then `Invoke-ScriptAnalyzer -Path . -Recurse -EnableExit`).
-  - YAML (and GitHub Actions): run `python -m yamllint <file>` (or `actionshub/yamllint@v1`) and `actionlint -oneline` for workflow validation.
+- YAML (and GitHub Actions): run `python -m yamllint <file>` (or `actionshub/yamllint@v1`) and `actionlint -oneline` for workflow validation.
+  - Preferred actionlint install: `curl -sSLO https://github.com/rhysd/actionlint/releases/latest/download/actionlint_linux_amd64.tar.gz && tar -xzf actionlint_linux_amd64.tar.gz actionlint && ./actionlint -oneline .`
   - JSON: `jq -e .` over `*.json`.
   - Generic paired-delimiter scan for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
     - Provide a helper such as `tools/check_delimiters.py` that validates (), {}, [], and quotes " ' (handle escapes and ignore comments when practical).

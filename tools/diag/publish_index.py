@@ -1,0 +1,940 @@
+#!/usr/bin/env python3
+"""Publish diagnostics markdown/html and site overview pages."""
+from __future__ import annotations
+
+import base64
+import json
+import os
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterable, List, Optional
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python < 3.9 is not expected on Actions
+    ZoneInfo = None  # type: ignore
+
+
+@dataclass
+class Context:
+    diag: Optional[Path]
+    artifacts: Optional[Path]
+    repo: str
+    sha: str
+    run_id: str
+    run_attempt: str
+    run_url: str
+    short_sha: str
+    inventory_b64: Optional[str]
+    batch_run_id: Optional[str]
+    batch_run_attempt: Optional[str]
+    site: Optional[Path]
+
+
+def _get_env_path(name: str) -> Optional[Path]:
+    value = os.getenv(name)
+    return Path(value) if value else None
+
+
+def _isoformat_ct(now: Optional[datetime] = None) -> str:
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if ZoneInfo is None:
+        # Professional note: fall back to UTC when zoneinfo is unavailable so we still emit a timestamp.
+        return now.isoformat()
+    central = now.astimezone(ZoneInfo("America/Chicago"))
+    return central.isoformat()
+
+
+def _get_context() -> Context:
+    diag = _get_env_path("DIAG")
+    artifacts = _get_env_path("ARTIFACTS")
+    repo = os.getenv("REPO", "n/a")
+    sha = os.getenv("SHA", "n/a")
+    run_id = os.getenv("RUN_ID", "n/a")
+    run_attempt = os.getenv("RUN_ATTEMPT", "n/a")
+    run_url = os.getenv("RUN_URL", "n/a")
+    short_sha = os.getenv("SHORTSHA") or sha[:7]
+    inventory_b64 = os.getenv("INVENTORY_B64")
+    batch_run_id = os.getenv("BATCH_RUN_ID")
+    batch_run_attempt = os.getenv("BATCH_RUN_ATTEMPT")
+    site = _get_env_path("SITE")
+    return Context(
+        diag=diag,
+        artifacts=artifacts,
+        repo=repo,
+        sha=sha,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        run_url=run_url,
+        short_sha=short_sha,
+        inventory_b64=inventory_b64,
+        batch_run_id=batch_run_id,
+        batch_run_attempt=batch_run_attempt,
+        site=site,
+    )
+
+
+def _first_child_directory(root: Path) -> Optional[Path]:
+    try:
+        return next(item for item in sorted(root.iterdir()) if item.is_dir())
+    except (FileNotFoundError, StopIteration):
+        return None
+
+
+def _discover_iterate_dir(artifacts: Optional[Path]) -> Optional[Path]:
+    if not artifacts:
+        return None
+    iterate_root = artifacts / "iterate"
+    if not iterate_root.exists():
+        return None
+
+    iterate_dir = _first_child_directory(iterate_root)
+    try:
+        candidates = sorted(p for p in iterate_root.iterdir() if p.is_dir())
+    except FileNotFoundError:
+        candidates = []
+    for candidate in candidates:
+        if (candidate / "decision.txt").exists():
+            iterate_dir = candidate
+            break
+    return iterate_dir
+
+
+def _discover_temp_dir(iterate_dir: Optional[Path], artifacts: Optional[Path]) -> Optional[Path]:
+    if not artifacts:
+        return None
+    iterate_root = artifacts / "iterate"
+    candidates: List[Path] = []
+    if (iterate_root / "_temp").exists():
+        candidates.append(iterate_root / "_temp")
+    if iterate_dir and (iterate_dir / "_temp").exists():
+        candidates.append(iterate_dir / "_temp")
+    if not candidates and iterate_root.exists():
+        candidates.extend(p for p in iterate_root.rglob("_temp") if p.is_dir())
+    return candidates[0] if candidates else None
+
+
+def _read_first_line(path: Path) -> Optional[str]:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                return line.strip()
+    except FileNotFoundError:
+        return None
+    return None
+
+
+def _read_text(path: Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+
+
+def _load_json(path: Path) -> Optional[dict]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _format_status_value(value: object) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    if value is None:
+        return "n/a"
+    return str(value)
+
+
+def _normalize_link(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return value
+    return value.replace("\\", "/")
+
+
+def _escape_html(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _escape_href(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return value
+    try:
+        from urllib.parse import quote
+
+        return quote(value, safe="/:?=&%#")
+    except Exception:
+        return value
+
+
+def _relative_to_diag(path: Path, diag: Optional[Path]) -> str:
+    if not diag:
+        return path.as_posix()
+    try:
+        return path.relative_to(diag).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _gather_iterate_tokens(iterate_dir: Optional[Path], response_data: Optional[dict]) -> dict:
+    tokens = {"prompt": "n/a", "completion": "n/a", "total": "n/a"}
+    if response_data and isinstance(response_data.get("usage"), dict):
+        usage = response_data["usage"]
+        for key in ("prompt", "completion", "total"):
+            field = f"{key}_tokens" if key != "total" else "total_tokens"
+            value = usage.get(field)
+            if value is not None:
+                tokens[key] = str(value)
+    if iterate_dir and (iterate_dir / "tokens.txt").exists():
+        for line in (iterate_dir / "tokens.txt").read_text(encoding="utf-8").splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if key and key not in tokens:
+                tokens[key] = value
+            elif key in tokens and (tokens[key] in {"n/a", "", None}):
+                tokens[key] = value
+    return tokens
+
+
+def _diff_produced(iterate_dir: Optional[Path]) -> bool:
+    if not iterate_dir:
+        return False
+    patch_path = iterate_dir / "patch.diff"
+    if not patch_path.exists():
+        return False
+    head = patch_path.read_text(encoding="utf-8", errors="ignore").splitlines()[:20]
+    if not head:
+        return False
+    return not (len(head) == 1 and head[0].strip() == "# no changes")
+
+
+def _gather_ndjson_summaries(artifacts: Optional[Path]) -> List[Path]:
+    if not artifacts or not artifacts.exists():
+        return []
+    return sorted(artifacts.rglob("ndjson_summary.txt"))
+
+
+def _iterate_files(iterate_dir: Optional[Path]) -> List[Path]:
+    if not iterate_dir or not iterate_dir.exists():
+        return []
+    return sorted(p for p in iterate_dir.iterdir() if p.is_file())
+
+
+def _diag_files(diag: Optional[Path]) -> List[Path]:
+    if not diag or not diag.exists():
+        return []
+    return sorted(p for p in diag.rglob("*") if p.is_file())
+
+
+def _inventory_lines(encoded: Optional[str]) -> List[str]:
+    if not encoded:
+        return []
+    try:
+        decoded = base64.b64decode(encoded).decode("utf-8")
+    except Exception:
+        return []
+    return decoded.splitlines()
+
+
+def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
+    if not artifacts or not artifacts.exists():
+        return 0, None
+    files = [p for p in artifacts.rglob("*") if p.is_file()]
+    missing = artifacts / "MISSING.txt"
+    missing_note = _read_text(missing) if missing.exists() else None
+    return len(files), missing_note
+
+
+def _iterate_status(diag: Optional[Path], context: Context) -> str:
+    if not diag:
+        return "missing (no diag root)"
+    iterate_zip = diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
+    if iterate_zip.exists():
+        return "found"
+    missing = diag / "logs" / "iterate.MISSING.txt"
+    if missing.exists():
+        return "missing (see logs/iterate.MISSING.txt)"
+    return "missing"
+
+
+def _batch_status(diag: Optional[Path], context: Context) -> str:
+    run_id = context.batch_run_id
+    attempt = context.batch_run_attempt or "n/a"
+    if run_id:
+        if not diag:
+            return f"missing archive (run {run_id}, attempt {attempt})"
+        candidate = diag / "logs" / f"batch-check-{run_id}-{attempt}.zip"
+        if candidate.exists():
+            return f"found (run {run_id}, attempt {attempt})"
+        return f"missing archive (run {run_id}, attempt {attempt})"
+    if diag and (diag / "logs" / "batch-check.MISSING.txt").exists():
+        return "missing (see logs/batch-check.MISSING.txt)"
+    return "missing"
+
+
+def _bundle_links(context: Context, iterate_status: str) -> List[dict]:
+    diag = context.diag
+    entries = [
+        {"label": "Inventory (HTML)", "path": "inventory.html", "exists": diag and (diag / "inventory.html").exists()},
+        {"label": "Inventory (text)", "path": "inventory.txt", "exists": diag and (diag / "inventory.txt").exists()},
+        {"label": "Inventory (markdown)", "path": "inventory.md", "exists": diag and (diag / "inventory.md").exists()},
+        {"label": "Inventory (json)", "path": "inventory.json", "exists": diag and (diag / "inventory.json").exists()},
+        {
+            "label": "Iterate logs zip",
+            "path": f"logs/iterate-{context.run_id}-{context.run_attempt}.zip",
+            "exists": diag and (diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip").exists(),
+        },
+    ]
+    batch_zip = None
+    if context.batch_run_id:
+        attempt = context.batch_run_attempt or "n/a"
+        batch_zip = f"logs/batch-check-{context.batch_run_id}-{attempt}.zip"
+    entries.append(
+        {
+            "label": "Batch-check logs zip",
+            "path": batch_zip,
+            "exists": bool(batch_zip and diag and (diag / batch_zip.replace("/", os.sep)).exists()),
+        }
+    )
+    entries.extend(
+        [
+            {
+                "label": "Batch-check failing tests",
+                "path": "batchcheck_failing.txt",
+                "exists": diag and (diag / "batchcheck_failing.txt").exists(),
+            },
+            {
+                "label": "Batch-check fail debug",
+                "path": "batchcheck_fail-debug.txt",
+                "exists": diag and (diag / "batchcheck_fail-debug.txt").exists(),
+            },
+            {
+                "label": "Repository zip",
+                "path": f"repo/repo-{context.short_sha}.zip",
+                "exists": diag and (diag / "repo" / f"repo-{context.short_sha}.zip").exists(),
+            },
+            {
+                "label": "Repository files (unzipped)",
+                "path": "repo/files/",
+                "exists": diag and (diag / "repo" / "files").exists(),
+            },
+        ]
+    )
+    if diag and (diag / "wf").exists():
+        for file in sorted((diag / "wf").glob("*.yml.txt")):
+            entries.append({"label": f"Workflow: {file.name}", "path": f"wf/{file.name}", "exists": True})
+    return entries
+
+
+def _build_markdown(
+    context: Context,
+    iterate_dir: Optional[Path],
+    built_utc: str,
+    built_ct: str,
+    response_data: Optional[dict],
+    status_data: Optional[dict],
+    why_outcome: Optional[str],
+) -> str:
+    diag = context.diag
+    artifacts = context.artifacts
+
+    def read_value(directory: Optional[Path], name: str) -> str:
+        if not directory:
+            return "n/a"
+        value = _read_text(directory / name)
+        return value if value else "n/a"
+
+    decision = read_value(iterate_dir, "decision.txt")
+    model = read_value(iterate_dir, "model.txt")
+    endpoint = read_value(iterate_dir, "endpoint.txt")
+    http_status = read_value(iterate_dir, "http_status.txt")
+
+    if response_data:
+        if response_data.get("http_status") is not None:
+            http_status = str(response_data["http_status"])
+        if response_data.get("model"):
+            model = str(response_data["model"])
+
+    tokens = _gather_iterate_tokens(iterate_dir, response_data)
+
+    diff_produced = _diff_produced(iterate_dir)
+    outcome = why_outcome or ("diff produced" if diff_produced else "n/a")
+
+    attempt_summary = None
+    if not response_data and status_data:
+        attempt_summary = "attempted={0} gate={1} auth_ok={2} attempts_left={3}".format(
+            _format_status_value(status_data.get("attempted")),
+            _format_status_value(status_data.get("gate")),
+            _format_status_value(status_data.get("auth_ok")),
+            _format_status_value(status_data.get("attempts_left")),
+        )
+
+    ndjson_summaries = _gather_ndjson_summaries(artifacts)
+    iterate_files = _iterate_files(iterate_dir)
+    diag_files = _diag_files(diag)
+    artifact_count, artifact_missing = _artifact_stats(artifacts)
+    iterate_status = _iterate_status(diag, context)
+    batch_status = _batch_status(diag, context)
+    lines: List[str] = []
+
+    lines.extend(
+        [
+            "# CI Diagnostics",
+            f"Repo: {context.repo}",
+            f"Commit: {context.sha}",
+            f"Run: {context.run_id} (attempt {context.run_attempt})",
+            f"Built (UTC): {built_utc}",
+            f"Built (CT): {built_ct}",
+            f"Run page: {context.run_url}",
+            "",
+            "## Status",
+            f"- Iterate logs: {iterate_status}",
+            f"- Batch-check run id: {batch_status}",
+            f"- Artifact files enumerated: {artifact_count}",
+        ]
+    )
+
+    if artifact_missing:
+        lines.append(f"- Artifact sentinel: {artifact_missing}")
+    lines.append("")
+    lines.append("## Quick links")
+
+    for entry in _bundle_links(context, iterate_status):
+        label = entry["label"]
+        path = entry.get("path")
+        exists = entry.get("exists")
+        if not path:
+            continue
+        if exists:
+            normalized = _normalize_link(path)
+            lines.append(f"- {label}: [{normalized}]({normalized})")
+        else:
+            lines.append(f"- {label}: missing")
+
+    lines.extend(
+        [
+            "",
+            "## Iterate metadata",
+            f"- Decision: {decision}",
+            f"- Outcome: {outcome}",
+            f"- HTTP status: {http_status}",
+            f"- Model: {model}",
+            f"- Endpoint: {endpoint}",
+            f"- Tokens: prompt={tokens['prompt']} completion={tokens['completion']} total={tokens['total']}",
+        ]
+    )
+    if attempt_summary:
+        lines.append(f"- Attempt summary: {attempt_summary}")
+
+    if iterate_files:
+        lines.append("")
+        lines.append("### Iterate files")
+        for file in iterate_files:
+            rel = _relative_to_diag(file, diag)
+            normalized = _normalize_link(rel)
+            lines.append(f"- [`{normalized}`]({normalized})")
+
+    batch_meta = artifacts / "batch-check" / "run.json" if artifacts else None
+    if batch_meta and batch_meta.exists():
+        try:
+            meta = json.loads(batch_meta.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            meta = None
+        if meta:
+            lines.extend(
+                [
+                    "",
+                    "## Batch-check run",
+                    f"- Run id: {meta.get('run_id')} (attempt {meta.get('run_attempt')})",
+                    f"- Status: {meta.get('status')} / {meta.get('conclusion')}",
+                ]
+            )
+            if meta.get("html_url"):
+                lines.append(f"- Run page: {meta['html_url']}")
+
+    if ndjson_summaries:
+        lines.append("")
+        lines.append("## NDJSON summaries")
+        for file in ndjson_summaries:
+            rel = _relative_to_diag(file, diag)
+            lines.append(f"### {rel}")
+            lines.append("```text")
+            lines.extend(file.read_text(encoding="utf-8").splitlines())
+            lines.append("```")
+
+    if diag_files:
+        lines.append("")
+        lines.append("## File listing")
+        for file in diag_files:
+            rel = _relative_to_diag(file, diag)
+            size = f"{file.stat().st_size:,}"
+            normalized = _normalize_link(rel)
+            lines.append(f"- [{size} bytes]({normalized})")
+
+    inventory_lines = _inventory_lines(context.inventory_b64)
+    if inventory_lines:
+        lines.append("")
+        lines.append("## Inventory (raw)")
+        lines.extend(inventory_lines)
+
+    return "\n".join(lines)
+
+
+def _write_markdown(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+
+
+def _write_html(
+    context: Context,
+    iterate_dir: Optional[Path],
+    built_utc: str,
+    built_ct: str,
+    response_data: Optional[dict],
+    status_data: Optional[dict],
+    why_outcome: Optional[str],
+) -> str:
+    diag = context.diag
+    artifacts = context.artifacts
+
+    def read_value(directory: Optional[Path], name: str) -> str:
+        if not directory:
+            return "n/a"
+        value = _read_text(directory / name)
+        return value if value else "n/a"
+
+    decision = read_value(iterate_dir, "decision.txt")
+    model = read_value(iterate_dir, "model.txt")
+    endpoint = read_value(iterate_dir, "endpoint.txt")
+    http_status = read_value(iterate_dir, "http_status.txt")
+
+    if response_data:
+        if response_data.get("http_status") is not None:
+            http_status = str(response_data["http_status"])
+        if response_data.get("model"):
+            model = str(response_data["model"])
+
+    tokens = _gather_iterate_tokens(iterate_dir, response_data)
+    diff_produced = _diff_produced(iterate_dir)
+    outcome = why_outcome or ("diff produced" if diff_produced else "n/a")
+    attempt_summary = None
+    if not response_data and status_data:
+        attempt_summary = "attempted={0} gate={1} auth_ok={2} attempts_left={3}".format(
+            _format_status_value(status_data.get("attempted")),
+            _format_status_value(status_data.get("gate")),
+            _format_status_value(status_data.get("auth_ok")),
+            _format_status_value(status_data.get("attempts_left")),
+        )
+
+    artifact_count, artifact_missing = _artifact_stats(artifacts)
+    iterate_status = _iterate_status(diag, context)
+    batch_status = _batch_status(diag, context)
+    ndjson_summaries = _gather_ndjson_summaries(artifacts)
+    iterate_files = _iterate_files(iterate_dir)
+    diag_files = _diag_files(diag)
+
+    metadata_pairs = [
+        {"label": "Repo", "value": context.repo},
+        {"label": "Commit", "value": context.sha},
+        {"label": "Run", "value": f"{context.run_id} (attempt {context.run_attempt})"},
+        {"label": "Built (UTC)", "value": built_utc},
+        {"label": "Built (CT)", "value": built_ct},
+        {"label": "Run page", "value": context.run_url, "href": context.run_url},
+    ]
+
+    status_pairs = [
+        {"label": "Iterate logs", "value": iterate_status},
+        {"label": "Batch-check run id", "value": batch_status},
+        {"label": "Artifact files enumerated", "value": str(artifact_count)},
+    ]
+    if artifact_missing:
+        status_pairs.append({"label": "Artifact sentinel", "value": artifact_missing})
+
+    iterate_pairs = [
+        {"label": "Decision", "value": decision},
+        {"label": "Outcome", "value": outcome},
+        {"label": "HTTP status", "value": http_status},
+        {"label": "Model", "value": model},
+        {"label": "Endpoint", "value": endpoint},
+        {
+            "label": "Tokens",
+            "value": f"prompt={tokens['prompt']} completion={tokens['completion']} total={tokens['total']}",
+        },
+    ]
+    if attempt_summary:
+        iterate_pairs.append({"label": "Attempt summary", "value": attempt_summary})
+
+    html: List[str] = []
+    html.append("<!doctype html>")
+    html.append('<html lang="en">')
+    html.append("<head>")
+    html.append('<meta charset="utf-8">')
+    html.append("<title>CI Diagnostics</title>")
+    html.append("</head>")
+    html.append("<body>")
+    html.append("<h1>CI Diagnostics</h1>")
+
+    def render_pairs(title: str, pairs: Iterable[dict]) -> None:
+        html.append("<section>")
+        html.append(f"<h2>{_escape_html(title)}</h2>")
+        html.append("<ul>")
+        for pair in pairs:
+            label = _escape_html(pair.get("label"))
+            value = pair.get("value")
+            href = pair.get("href")
+            if href:
+                html.append(
+                    f"<li><strong>{label}:</strong> <a href=\"{_escape_href(href)}\">{_escape_html(str(value))}</a></li>"
+                )
+            else:
+                html.append(f"<li><strong>{label}:</strong> {_escape_html(str(value))}</li>")
+        html.append("</ul>")
+        html.append("</section>")
+
+    render_pairs("Metadata", metadata_pairs)
+    render_pairs("Status", status_pairs)
+
+    html.append("<section>")
+    html.append("<h2>Quick links</h2>")
+    html.append("<ul>")
+    for entry in _bundle_links(context, iterate_status):
+        label = _escape_html(entry["label"])
+        path = entry.get("path")
+        exists = entry.get("exists")
+        if path and exists:
+            href = _escape_href(_normalize_link(path))
+            html.append(f"<li><a href=\"{href}\">{label}</a></li>")
+        elif path:
+            html.append(f"<li>{label}: missing</li>")
+    html.append("</ul>")
+    html.append("</section>")
+
+    render_pairs("Iterate metadata", iterate_pairs)
+
+    if iterate_files:
+        html.append("<section>")
+        html.append("<h3>Iterate files</h3>")
+        html.append("<ul>")
+        for file in iterate_files:
+            rel = _normalize_link(_relative_to_diag(file, diag))
+            href = _escape_href(rel)
+            text = _escape_html(rel)
+            html.append(f"<li><code><a href=\"{href}\">{text}</a></code></li>")
+        html.append("</ul>")
+        html.append("</section>")
+
+    batch_meta = artifacts / "batch-check" / "run.json" if artifacts else None
+    if batch_meta and batch_meta.exists():
+        try:
+            meta = json.loads(batch_meta.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            meta = None
+        if meta:
+            html.append("<section>")
+            html.append("<h2>Batch-check run</h2>")
+            html.append("<ul>")
+            run_id_html = _escape_html(str(meta.get("run_id")))
+            attempt_html = _escape_html(str(meta.get("run_attempt")))
+            html.append(f"<li>Run id: {run_id_html} (attempt {attempt_html})</li>")
+            html.append(
+                f"<li>Status: {_escape_html(str(meta.get('status')))} / {_escape_html(str(meta.get('conclusion')))}</li>"
+            )
+            if meta.get("html_url"):
+                html.append(f"<li><a href=\"{_escape_href(meta['html_url'])}\">Run page</a></li>")
+            html.append("</ul>")
+            html.append("</section>")
+
+    if ndjson_summaries:
+        html.append("<section>")
+        html.append("<h2>NDJSON summaries</h2>")
+        for file in ndjson_summaries:
+            rel = _escape_html(_relative_to_diag(file, diag))
+            html.append(f"<h3>{rel}</h3>")
+            html.append("<pre>")
+            for line in file.read_text(encoding="utf-8").splitlines():
+                html.append(_escape_html(line))
+            html.append("</pre>")
+        html.append("</section>")
+
+    if diag_files:
+        html.append("<section>")
+        html.append("<h2>File listing</h2>")
+        html.append("<ul>")
+        for file in diag_files:
+            rel = _normalize_link(_relative_to_diag(file, diag))
+            href = _escape_href(rel)
+            text = _escape_html(rel)
+            size = _escape_html(f"{file.stat().st_size:,} bytes")
+            html.append(f"<li><a href=\"{href}\">{text}</a> — {size}</li>")
+        html.append("</ul>")
+        html.append("</section>")
+
+    inventory_lines = _inventory_lines(context.inventory_b64)
+    if inventory_lines:
+        html.append("<section>")
+        html.append("<h2>Inventory (raw)</h2>")
+        html.append("<pre>")
+        for line in inventory_lines:
+            html.append(_escape_html(line))
+        html.append("</pre>")
+        html.append("</section>")
+
+    html.append("</body>")
+    html.append("</html>")
+    return "\n".join(html)
+
+
+def _write_latest_json(context: Context) -> None:
+    if not (context.site and context.diag):
+        return
+    data = {
+        "repo": context.repo,
+        "run_id": context.run_id,
+        "run_attempt": context.run_attempt,
+        "sha": context.sha,
+        "bundle_url": f"diag/{context.run_id}-{context.run_attempt}/index.html",
+        "inventory": f"diag/{context.run_id}-{context.run_attempt}/inventory.json",
+        "workflow": f"diag/{context.run_id}-{context.run_attempt}/wf/codex-auto-iterate.yml.txt",
+        "iterate": {
+            "prompt": f"diag/{context.run_id}-{context.run_attempt}/_artifacts/iterate/iterate/prompt.txt",
+            "response": f"diag/{context.run_id}-{context.run_attempt}/_artifacts/iterate/iterate/response.json",
+            "diff": f"diag/{context.run_id}-{context.run_attempt}/_artifacts/iterate/iterate/patch.diff",
+            "log": f"diag/{context.run_id}-{context.run_attempt}/_artifacts/iterate/iterate/exec.log",
+        },
+    }
+    (context.site / "latest.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _has_file(site: Optional[Path], relative: str) -> bool:
+    if not site:
+        return False
+    return (site / Path(relative)).exists()
+
+
+def _build_site_overview(
+    context: Context,
+    iterate_dir: Optional[Path],
+    response_data: Optional[dict],
+) -> tuple[str, str]:
+    site = context.site
+    artifacts = context.artifacts
+    run_id = context.run_id
+    run_attempt = context.run_attempt
+    bundle_prefix = f"diag/{run_id}-{run_attempt}"
+    cache_bust = context.run_id
+    bundle_index_href = f"{bundle_prefix}/index.html?v={cache_bust}"
+
+    def read_value(directory: Optional[Path], name: str) -> str:
+        if not directory:
+            return "n/a"
+        value = _read_text(directory / name)
+        return value if value else "n/a"
+
+    decision = read_value(iterate_dir, "decision.txt")
+    http_status = read_value(iterate_dir, "http_status.txt")
+    if response_data and response_data.get("http_status") is not None:
+        http_status = str(response_data["http_status"])
+
+    inventory_html = f"{bundle_prefix}/inventory.html"
+    inventory_txt = f"{bundle_prefix}/inventory.txt"
+    inventory_md = f"{bundle_prefix}/inventory.md"
+    iterate_zip_rel = f"{bundle_prefix}/logs/iterate-{run_id}-{run_attempt}.zip"
+    batch_zip_rel = None
+    if context.batch_run_id:
+        attempt = context.batch_run_attempt or "n/a"
+        batch_zip_rel = f"{bundle_prefix}/logs/batch-check-{context.batch_run_id}-{attempt}.zip"
+    repo_zip_rel = f"{bundle_prefix}/repo/repo-{context.short_sha}.zip"
+    repo_files_rel = f"{bundle_prefix}/repo/files/"
+
+    ndjson_summary = None
+    if artifacts and artifacts.exists():
+        ndjson_summary = next(artifacts.rglob("ndjson_summary.txt"), None)
+
+    summary_preview: List[str] = []
+    if ndjson_summary:
+        summary_preview.append("```text")
+        summary_preview.extend(ndjson_summary.read_text(encoding="utf-8").splitlines())
+        summary_preview.append("```")
+
+    lines = [
+        "# Diagnostics overview",
+        "",
+        f"Latest run: [{run_id} (attempt {run_attempt})]({_normalize_link(bundle_index_href)})",
+        "",
+        "## Metadata",
+        f"- Repo: {context.repo}",
+        f"- Commit: {context.sha}",
+        f"- Run page: {context.run_url}",
+        f"- Iterate decision: {decision}",
+        f"- Iterate HTTP status: {http_status}",
+        "",
+        "## Quick links",
+    ]
+
+    def quick_link(label: str, path: Optional[str]) -> None:
+        if path and _has_file(site, path.split("?", 1)[0]):
+            lines.append(f"- [{label}]({_normalize_link(path)})")
+        elif path:
+            lines.append(f"- {label}: missing")
+        else:
+            lines.append(f"- {label}: missing")
+
+    quick_link("Bundle index", bundle_index_href)
+    quick_link("Open latest (cache-busted)", bundle_index_href)
+    quick_link("Artifact inventory (HTML)", inventory_html)
+    quick_link("Artifact inventory (text)", inventory_txt)
+    quick_link("Iterate logs zip", iterate_zip_rel)
+    quick_link("Batch-check logs zip", batch_zip_rel)
+    quick_link("Repository zip", repo_zip_rel)
+    quick_link("Repository files (unzipped)", repo_files_rel)
+    quick_link("Inventory (markdown)", inventory_md)
+
+    if summary_preview:
+        lines.append("")
+        lines.append("## NDJSON summary (first bundle)")
+        lines.extend(summary_preview)
+
+    lines.append("")
+    lines.append(
+        "Artifacts from the self-test workflow and iterate job are merged under the bundle directory above."
+    )
+
+    markdown = "\n".join(lines)
+
+    html_lines: List[str] = []
+    html_lines.append("<!doctype html>")
+    html_lines.append('<html lang="en">')
+    html_lines.append("<head>")
+    html_lines.append('<meta charset="utf-8">')
+    html_lines.append("<title>Diagnostics overview</title>")
+    html_lines.append("</head>")
+    html_lines.append("<body>")
+    html_lines.append("<h1>Diagnostics overview</h1>")
+    html_lines.append(
+        f"<p>Latest run: <a href=\"{_escape_href(_normalize_link(bundle_index_href))}\">{_escape_html(f'{run_id} (attempt {run_attempt})')}</a></p>"
+    )
+
+    metadata_items = [
+        {"label": "Repo", "value": context.repo},
+        {"label": "Commit", "value": context.sha},
+        {"label": "Run page", "value": context.run_url, "href": context.run_url},
+        {"label": "Iterate decision", "value": decision},
+        {"label": "Iterate HTTP status", "value": http_status},
+    ]
+
+    html_lines.append("<section>")
+    html_lines.append("<h2>Metadata</h2>")
+    html_lines.append("<ul>")
+    for item in metadata_items:
+        label = _escape_html(item["label"])
+        value = _escape_html(str(item["value"]))
+        href = item.get("href")
+        if href:
+            html_lines.append(
+                f"<li><strong>{label}:</strong> <a href=\"{_escape_href(href)}\">{value}</a></li>"
+            )
+        else:
+            html_lines.append(f"<li><strong>{label}:</strong> {value}</li>")
+    html_lines.append("</ul>")
+    html_lines.append("</section>")
+
+    quick_link_specs = [
+        {"label": "Bundle index", "path": bundle_index_href},
+        {"label": "Open latest (cache-busted)", "path": bundle_index_href},
+        {"label": "Artifact inventory (HTML)", "path": inventory_html},
+        {"label": "Artifact inventory (text)", "path": inventory_txt},
+        {"label": "Iterate logs zip", "path": iterate_zip_rel},
+        {"label": "Batch-check logs zip", "path": batch_zip_rel},
+        {"label": "Repository zip", "path": repo_zip_rel},
+        {"label": "Repository files (unzipped)", "path": repo_files_rel},
+        {"label": "Inventory (markdown)", "path": inventory_md},
+    ]
+
+    html_lines.append("<section>")
+    html_lines.append("<h2>Quick links</h2>")
+    html_lines.append("<ul>")
+    for spec in quick_link_specs:
+        label = _escape_html(spec["label"])
+        path = spec.get("path")
+        if path and _has_file(site, path.split("?", 1)[0]):
+            html_lines.append(
+                f"<li><a href=\"{_escape_href(_normalize_link(path))}\">{label}</a></li>"
+            )
+        else:
+            html_lines.append(f"<li>{label}: missing</li>")
+    html_lines.append("</ul>")
+    html_lines.append("</section>")
+
+    if summary_preview:
+        html_lines.append("<section>")
+        html_lines.append("<h2>NDJSON summary (first bundle)</h2>")
+        html_lines.append("<pre>")
+        for line in summary_preview:
+            if line.startswith("```"):
+                continue
+            html_lines.append(_escape_html(line))
+        html_lines.append("</pre>")
+        html_lines.append("</section>")
+
+    html_lines.append(
+        "<p>Artifacts from the self-test workflow and iterate job are merged under the bundle directory above.</p>"
+    )
+    html_lines.append("</body>")
+    html_lines.append("</html>")
+
+    return markdown, "\n".join(html_lines)
+
+
+def main() -> None:
+    context = _get_context()
+    iterate_dir = _discover_iterate_dir(context.artifacts)
+    iterate_temp = _discover_temp_dir(iterate_dir, context.artifacts)
+    now = datetime.now(timezone.utc)
+    # Professional note: capture the timestamps once so markdown and HTML stay synchronized.
+    built_utc = now.isoformat()
+    built_ct = _isoformat_ct(now)
+    response_data = _load_json(iterate_temp / "response.json") if iterate_temp else None
+    status_data = _load_json(iterate_temp / "iterate_status.json") if iterate_temp else None
+    why_outcome = _read_first_line(iterate_temp / "why_no_diff.txt") if iterate_temp else None
+
+    diag_markdown = _build_markdown(
+        context,
+        iterate_dir,
+        built_utc,
+        built_ct,
+        response_data,
+        status_data,
+        why_outcome,
+    )
+    if context.diag:
+        _write_markdown(context.diag / "index.md", diag_markdown)
+        diag_html = _write_html(
+            context,
+            iterate_dir,
+            built_utc,
+            built_ct,
+            response_data,
+            status_data,
+            why_outcome,
+        )
+        (context.diag / "index.html").write_text(diag_html, encoding="utf-8")
+
+    if context.site:
+        site_markdown, site_html = _build_site_overview(context, iterate_dir, response_data)
+        _write_markdown(context.site / "index.md", site_markdown)
+        (context.site / "index.html").write_text(site_html, encoding="utf-8")
+        _write_latest_json(context)
+
+
+if __name__ == "__main__":
+    main()
