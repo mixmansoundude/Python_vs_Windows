@@ -1344,7 +1344,7 @@ jobs:
     name: Publish diagnostics to Pages
     needs: [iterate]
     if: ${{ always() }}
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
     permissions:
@@ -1393,7 +1393,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.prep.outputs.ARTIFACTS }}\iterate
+          path: ${{ steps.prep.outputs.ARTIFACTS }}/iterate
 
       - name: Record iterate artifact status
         shell: pwsh
@@ -1559,11 +1559,9 @@ jobs:
           }
 
       - name: Summarize failing tests
-        shell: pwsh
         env:
           DIAG: ${{ steps.prep.outputs.DIAG }}
-        run: |
-          & "$env:GITHUB_WORKSPACE/tools/diag/ndjson_fail_list.ps1"
+        run: python tools/diag/ndjson_fail_list.py
 
       - name: Download workflow logs
         shell: pwsh
@@ -1706,13 +1704,14 @@ jobs:
               '{0}={1}' -f $_.Name, $_.Value
             }
           } | Set-Content -Encoding UTF8 (Join-Path $Diag 'env.txt')
-          if (Test-Path '.github\workflows') {
-            $wfDest = Join-Path $Diag '.github\workflows'
+          $wfSource = Join-Path '.github' 'workflows'
+          if (Test-Path $wfSource) {
+            $wfDest = Join-Path (Join-Path $Diag '.github') 'workflows'
             New-Item -ItemType Directory -Path $wfDest -Force | Out-Null
-            Copy-Item -Recurse -Force '.github\workflows\*' $wfDest
+            Copy-Item -Recurse -Force (Join-Path $wfSource '*') $wfDest
             $wfCopyDir = Join-Path $Diag 'wf'
             New-Item -ItemType Directory -Path $wfCopyDir -Force | Out-Null
-            Get-ChildItem -Path '.github\workflows' -Filter *.yml -File -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-ChildItem -Path $wfSource -Filter *.yml -File -ErrorAction SilentlyContinue | ForEach-Object {
               Copy-Item -Force $_.FullName (Join-Path $wfCopyDir $_.Name)
               Copy-Item -Force $_.FullName (Join-Path $wfCopyDir ($_.Name + '.txt'))
             }
@@ -1776,7 +1775,6 @@ jobs:
           }
 
       - name: Write diagnostics index
-        shell: pwsh
         env:
           DIAG: ${{ steps.prep.outputs.DIAG }}
           ARTIFACTS: ${{ steps.prep.outputs.ARTIFACTS }}
@@ -1790,250 +1788,7 @@ jobs:
           BATCH_RUN_ID: ${{ steps.fetch_batch.outputs.run_id }}
           BATCH_RUN_ATTEMPT: ${{ steps.fetch_batch.outputs.run_attempt }}
           SITE: ${{ steps.prep.outputs.SITE }}
-        run: |
-          & "$env:GITHUB_WORKSPACE/tools/diag/publish_index.ps1"
-
-      - name: Write site overview
-        shell: pwsh
-        run: |
-          $Site = "${{ steps.prep.outputs.SITE }}"
-          $Diag = "${{ steps.prep.outputs.DIAG }}"
-          $Artifacts = "${{ steps.prep.outputs.ARTIFACTS }}"
-          $Run  = "${{ github.run_id }}"
-          $Att  = "${{ github.run_attempt }}"
-          $Repo = "${{ github.repository }}"
-          $SHA  = "${{ github.sha }}"
-          $RunUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          $bundlePrefix = "diag/$Run-$Att"
-          $bundle = "$bundlePrefix/"
-          $cb = '${{ github.run_id }}'
-          $bundleIndexHref = "$bundlePrefix/index.html?v=$cb"
-          $Short = "${{ steps.prep.outputs.SHORTSHA }}"
-          if (-not $Short) {
-            $Short = $SHA
-            if ($Short.Length -gt 7) { $Short = $Short.Substring(0,7) }
-          }
-
-          function Get-FirstDir([string]$root) {
-            if (-not (Test-Path $root)) { return $null }
-            return Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
-
-          $iterateDir = Get-FirstDir (Join-Path $Artifacts 'iterate')
-          $decision = 'n/a'
-          $httpStatus = 'n/a'
-          if ($iterateDir) {
-            $decisionPath = Join-Path $iterateDir 'decision.txt'
-            if (Test-Path $decisionPath) { $decision = (Get-Content -Raw -LiteralPath $decisionPath).Trim() }
-            $statusPath = Join-Path $iterateDir 'http_status.txt'
-            if (Test-Path $statusPath) { $httpStatus = (Get-Content -Raw -LiteralPath $statusPath).Trim() }
-          }
-
-          $bundleIndex   = "$bundlePrefix/index.html"
-          $inventoryHtml = "$bundlePrefix/inventory.html"
-          $inventoryTxt  = "$bundlePrefix/inventory.txt"
-          $inventoryMd   = "$bundlePrefix/inventory.md"
-          $iterateZipRel = "$bundlePrefix/logs/iterate-$Run-$Att.zip"
-          $batchZipRel   = $null
-          $batchRunId    = "${{ steps.fetch_batch.outputs.run_id }}"
-          $batchRunAttempt = "${{ steps.fetch_batch.outputs.run_attempt }}"
-          if ($batchRunId) {
-            if (-not $batchRunAttempt) { $batchRunAttempt = 'n/a' }
-            $batchZipRel = "$bundlePrefix/logs/batch-check-$batchRunId-$batchRunAttempt.zip"
-          }
-          $repoZipRel = "$bundlePrefix/repo/repo-$Short.zip"
-
-          function Has-File([string]$relative) {
-            if (-not $relative) { return $false }
-            $full = Join-Path $Site $relative
-            return Test-Path $full
-          }
-
-          function Normalize-Link([string]$value) {
-            if (-not $value) { return $value }
-            # Professional note: keep URLs browsable on Pages by converting any
-            # Windows-style backslashes that snuck in via Join-Path.
-            return ($value -replace '\\','/')
-          }
-
-          $ndjsonSummary = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          $summaryPreview = @()
-          if ($ndjsonSummary) {
-            $summaryPreview += '```text'
-            $summaryPreview += (Get-Content -LiteralPath $ndjsonSummary.FullName)
-            $summaryPreview += '```'
-          }
-
-          $lines = @(
-            '# Diagnostics overview',
-            '',
-            "Latest run: [$Run (attempt $Att)]($bundleIndexHref)",
-            '',
-            '## Metadata',
-            "- Repo: $Repo",
-            "- Commit: $SHA",
-            "- Run page: $RunUrl",
-            "- Iterate decision: $decision",
-            "- Iterate HTTP status: $httpStatus"
-          )
-
-          $lines += ''
-          $lines += '## Quick links'
-          if (Has-File $bundleIndex) {
-            $lines += [string]::Format('- [Bundle index]({0})', (Normalize-Link $bundleIndexHref))
-            $lines += [string]::Format('- [Open latest (cache-busted)]({0})', (Normalize-Link $bundleIndexHref))
-          } else {
-            $lines += '- Bundle index: missing'
-          }
-          if (Has-File $inventoryHtml) {
-            $lines += [string]::Format('- [Artifact inventory (HTML)]({0})', (Normalize-Link $inventoryHtml))
-          } else {
-            $lines += '- Artifact inventory (HTML): missing'
-          }
-          if (Has-File $inventoryTxt) {
-            $lines += [string]::Format('- [Artifact inventory (text)]({0})', (Normalize-Link $inventoryTxt))
-          } else {
-            $lines += '- Artifact inventory (text): missing'
-          }
-          if (Has-File $iterateZipRel) {
-            $lines += [string]::Format('- [Iterate logs zip]({0})', $iterateZipRel)
-          } else {
-            $lines += '- Iterate logs zip: missing'
-          }
-          if ($batchZipRel) {
-            if (Has-File $batchZipRel) {
-              $lines += [string]::Format('- [Batch-check logs zip]({0})', $batchZipRel)
-            } else {
-              $lines += '- Batch-check logs zip: missing'
-            }
-          } else {
-            $lines += '- Batch-check logs zip: missing'
-          }
-          if (Has-File $repoZipRel) {
-            $lines += [string]::Format('- [Repository zip]({0})', (Normalize-Link $repoZipRel))
-          } else {
-            $lines += '- Repository zip: missing'
-          }
-          $repoFilesRel = "$bundlePrefix/repo/files/"
-          if (Has-File "$bundlePrefix/repo/files") {
-            $lines += [string]::Format('- [Repository files (unzipped)]({0})', (Normalize-Link $repoFilesRel))
-          } else {
-            $lines += '- Repository files (unzipped): missing'
-          }
-          if (Has-File $inventoryMd) {
-            $lines += [string]::Format('- [Inventory (markdown)]({0})', (Normalize-Link $inventoryMd))
-          } else {
-            $lines += '- Inventory (markdown): missing'
-          }
-
-          if ($summaryPreview.Count -gt 0) {
-            $lines += ''
-            $lines += '## NDJSON summary (first bundle)'
-            $lines += $summaryPreview
-          }
-
-          $lines += ''
-          $lines += 'Artifacts from the self-test workflow and iterate job are merged under the bundle directory above.'
-
-          ($lines -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Site 'index.md')
-          function Escape-Html([string]$value) {
-            if ($null -eq $value) { return '' }
-            $encoded = $value -replace '&', '&amp;'
-            $encoded = $encoded -replace '<', '&lt;'
-            return $encoded -replace '>', '&gt;'
-          }
-
-          function Escape-Href([string]$value) {
-            if ([string]::IsNullOrWhiteSpace($value)) { return $value }
-            try {
-              return [System.Uri]::EscapeUriString($value)
-            } catch {
-              return $value
-            }
-          }
-
-          $metadataItems = @(
-            @{ Label = 'Repo'; Value = $Repo },
-            @{ Label = 'Commit'; Value = $SHA },
-            @{ Label = 'Run page'; Value = $RunUrl; Href = $RunUrl },
-            @{ Label = 'Iterate decision'; Value = $decision },
-            @{ Label = 'Iterate HTTP status'; Value = $httpStatus }
-          )
-
-          $quickLinkSpecs = @(
-            @{ Label = 'Bundle index'; Path = $bundleIndexHref; Exists = Has-File $bundleIndex },
-            @{ Label = 'Open latest (cache-busted)'; Path = $bundleIndexHref; Exists = Has-File $bundleIndex },
-            @{ Label = 'Artifact inventory (HTML)'; Path = $inventoryHtml; Exists = Has-File $inventoryHtml },
-            @{ Label = 'Artifact inventory (text)'; Path = $inventoryTxt; Exists = Has-File $inventoryTxt },
-            @{ Label = 'Iterate logs zip'; Path = $iterateZipRel; Exists = Has-File $iterateZipRel },
-            @{ Label = 'Batch-check logs zip'; Path = $batchZipRel; Exists = if ($batchZipRel) { Has-File $batchZipRel } else { $false } },
-            @{ Label = 'Repository zip'; Path = $repoZipRel; Exists = Has-File $repoZipRel },
-            @{ Label = 'Repository files (unzipped)'; Path = $repoFilesRel; Exists = Has-File "$bundlePrefix/repo/files" },
-            @{ Label = 'Inventory (markdown)'; Path = $inventoryMd; Exists = Has-File $inventoryMd }
-          )
-
-          $html = [System.Collections.Generic.List[string]]::new()
-          $html.Add('<!doctype html>')
-          $html.Add('<html lang="en">')
-          $html.Add('<head>')
-          $html.Add('<meta charset="utf-8">')
-          $html.Add('<title>Diagnostics overview</title>')
-          $html.Add('</head>')
-          $html.Add('<body>')
-          $html.Add('<h1>Diagnostics overview</h1>')
-          $html.Add([string]::Format('<p>Latest run: <a href="{0}">{1}</a></p>', $(Escape-Href (Normalize-Link $bundleIndexHref)), $(Escape-Html ([string]::Format('{0} (attempt {1})', $Run, $Att)))))
-
-          $html.Add('<section>')
-          $html.Add('<h2>Metadata</h2>')
-          $html.Add('<ul>')
-          foreach ($item in $metadataItems) {
-            $label = Escape-Html $item.Label
-            if ($item.ContainsKey('Href') -and $item.Href) {
-              $href = Escape-Href $item.Href
-              $value = Escape-Html $item.Value
-              $html.Add([string]::Format('<li><strong>{0}:</strong> <a href="{1}">{2}</a></li>', $label, $href, $value))
-            } else {
-              $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $label, $(Escape-Html $item.Value)))
-            }
-          }
-          $html.Add('</ul>')
-          $html.Add('</section>')
-
-          $html.Add('<section>')
-          $html.Add('<h2>Quick links</h2>')
-          $html.Add('<ul>')
-          foreach ($entry in $quickLinkSpecs) {
-            $label = Escape-Html $entry.Label
-            if ($entry.Path -and $entry.Exists) {
-              $html.Add([string]::Format('<li><a href="{0}">{1}</a></li>', $(Escape-Href (Normalize-Link $entry.Path)), $label))
-            } elseif ($entry.Path) {
-              $html.Add([string]::Format('<li>{0}: missing</li>', $label))
-            } else {
-              $html.Add([string]::Format('<li>{0}: missing</li>', $label))
-            }
-          }
-          $html.Add('</ul>')
-          $html.Add('</section>')
-
-          if ($summaryPreview.Count -gt 0) {
-            $html.Add('<section>')
-            $html.Add('<h2>NDJSON summary (first bundle)</h2>')
-            $html.Add('<pre>')
-            foreach ($line in $summaryPreview) {
-              $trimmed = $line
-              if ($trimmed -like '```*') { continue }
-              $html.Add($(Escape-Html $line))
-            }
-            $html.Add('</pre>')
-            $html.Add('</section>')
-          }
-
-          $html.Add('<p>Artifacts from the self-test workflow and iterate job are merged under the bundle directory above.</p>')
-          $html.Add('</body>')
-          $html.Add('</html>')
-          # Professional note: Emit clickable anchors at the root so external analysts can
-          # navigate the published diagnostics without copying Markdown links manually.
-          ($html -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Site 'index.html')
+        run: python tools/diag/publish_index.py
 
       - name: Append job summary
         shell: pwsh
