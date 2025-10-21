@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 try:
     from zoneinfo import ZoneInfo
@@ -224,13 +224,6 @@ def _gather_ndjson_summaries(artifacts: Optional[Path]) -> List[Path]:
         return []
     return sorted(artifacts.rglob("ndjson_summary.txt"))
 
-
-def _iterate_files(iterate_dir: Optional[Path]) -> List[Path]:
-    if not iterate_dir or not iterate_dir.exists():
-        return []
-    return sorted(p for p in iterate_dir.iterdir() if p.is_file())
-
-
 def _diag_files(diag: Optional[Path]) -> List[Path]:
     if not diag or not diag.exists():
         return []
@@ -283,6 +276,114 @@ def _batch_status(diag: Optional[Path], context: Context) -> str:
     return "missing"
 
 
+def _ensure_repo_index(diag: Optional[Path]) -> None:
+    """Create repo/index.html when the extracted repository snapshot is present."""
+
+    if not diag:
+        return
+    repo_dir = diag / "repo"
+    files_dir = repo_dir / "files"
+    if not files_dir.is_dir():
+        return
+
+    index_path = repo_dir / "index.html"
+    if index_path.exists():
+        return
+
+    # Professional note: GitHub Pages does not auto-list directories, so we
+    # seed a tiny landing page that points analysts at the extracted tree.
+    lines = [
+        "<!doctype html>",
+        '<html lang="en">',
+        "<head>",
+        '<meta charset="utf-8">',
+        "<title>Repository files</title>",
+        "</head>",
+        "<body>",
+        "<main>",
+        "<h1>Repository files</h1>",
+        '<p><a href="files/">Open extracted repository snapshot</a></p>',
+        "</main>",
+        "</body>",
+        "</html>",
+    ]
+    index_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _describe_batch_ndjson_label(filename: str) -> str:
+    lower = filename.lower()
+    if "cache" in lower:
+        return "Batch-check NDJSON (cache)"
+    if lower.endswith(".ndjson.zip") or lower.endswith(".zip"):
+        return "Batch-check NDJSON"
+    return f"Batch-check log: {filename}"
+
+
+def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
+    if not diag:
+        return []
+
+    results: List[dict] = []
+    seen: set[str] = set()
+    candidates = [diag / "logs", diag / "_artifacts" / "batch-check"]
+    for root in candidates:
+        if not root or not root.exists():
+            continue
+        for path in sorted(root.rglob("*.zip")):
+            if "ndjson" not in path.name.lower():
+                continue
+            # Professional note: only surface bundles that actually shipped in
+            # this run so the published links stay accurate when cache or run
+            # payloads are absent.
+            rel = _relative_to_diag(path, diag)
+            if rel in seen:
+                continue
+            seen.add(rel)
+            results.append({
+                "label": _describe_batch_ndjson_label(path.name),
+                "path": rel,
+                "exists": True,
+            })
+    return results
+
+
+def _locate_iterate_root(context: Context) -> Optional[Path]:
+    if context.artifacts and (context.artifacts / "iterate").exists():
+        return context.artifacts / "iterate"
+    if context.diag:
+        candidate = context.diag / "_artifacts" / "iterate"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _summarize_iterate_files(context: Context) -> Tuple[str, List[Path]]:
+    iterate_root = _locate_iterate_root(context)
+    if not iterate_root or not iterate_root.exists():
+        return "missing", []
+
+    has_files = any(path.is_file() for path in iterate_root.rglob("*"))
+    if not has_files:
+        return "missing", []
+
+    key_names = ["prompt.txt", "response.json", "why_no_diff.txt"]
+    found: List[Path] = []
+    for pattern in key_names:
+        try:
+            match = next(iterate_root.rglob(pattern))
+        except StopIteration:
+            continue
+        else:
+            found.append(match)
+
+    if not found:
+        # Professional note: surface that content exists even if the usual
+        # prompt/response/why files are missing so analysts know to explore.
+        return "present", []
+
+    return "present", found
+
+
 def _bundle_links(context: Context, iterate_status: str) -> List[dict]:
     diag = context.diag
     entries = [
@@ -296,17 +397,7 @@ def _bundle_links(context: Context, iterate_status: str) -> List[dict]:
             "exists": diag and (diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip").exists(),
         },
     ]
-    batch_zip = None
-    if context.batch_run_id:
-        attempt = context.batch_run_attempt or "n/a"
-        batch_zip = f"logs/batch-check-{context.batch_run_id}-{attempt}.zip"
-    entries.append(
-        {
-            "label": "Batch-check logs zip",
-            "path": batch_zip,
-            "exists": bool(batch_zip and diag and (diag / batch_zip.replace("/", os.sep)).exists()),
-        }
-    )
+    entries.extend(_collect_batch_ndjson_links(diag))
     entries.extend(
         [
             {
@@ -326,8 +417,8 @@ def _bundle_links(context: Context, iterate_status: str) -> List[dict]:
             },
             {
                 "label": "Repository files (unzipped)",
-                "path": "repo/files/",
-                "exists": diag and (diag / "repo" / "files").exists(),
+                "path": "repo/index.html",
+                "exists": diag and (diag / "repo" / "index.html").exists(),
             },
         ]
     )
@@ -381,7 +472,7 @@ def _build_markdown(
         )
 
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
-    iterate_files = _iterate_files(iterate_dir)
+    iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     iterate_status = _iterate_status(diag, context)
@@ -437,13 +528,19 @@ def _build_markdown(
     if attempt_summary:
         lines.append(f"- Attempt summary: {attempt_summary}")
 
-    if iterate_files:
-        lines.append("")
-        lines.append("### Iterate files")
-        for file in iterate_files:
-            rel = _relative_to_diag(file, diag)
-            normalized = _normalize_link(rel)
-            lines.append(f"- [`{normalized}`]({normalized})")
+    lines.append("")
+    lines.append(f"### Iterate files: {iterate_file_status}")
+    if iterate_file_status == "present":
+        if iterate_key_files:
+            for file in iterate_key_files:
+                rel = _relative_to_diag(file, diag)
+                normalized = _normalize_link(rel)
+                label = file.name
+                lines.append(f"- [{label}]({normalized})")
+        else:
+            lines.append("- (prompt/response/why_no_diff not located)")
+    else:
+        lines.append("- (no iterate files captured)")
 
     batch_meta = artifacts / "batch-check" / "run.json" if artifacts else None
     if batch_meta and batch_meta.exists():
@@ -540,7 +637,7 @@ def _write_html(
     iterate_status = _iterate_status(diag, context)
     batch_status = _batch_status(diag, context)
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
-    iterate_files = _iterate_files(iterate_dir)
+    iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     diag_files = _diag_files(diag)
 
     metadata_pairs = [
@@ -621,17 +718,24 @@ def _write_html(
 
     render_pairs("Iterate metadata", iterate_pairs)
 
-    if iterate_files:
-        html.append("<section>")
-        html.append("<h3>Iterate files</h3>")
-        html.append("<ul>")
-        for file in iterate_files:
-            rel = _normalize_link(_relative_to_diag(file, diag))
-            href = _escape_href(rel)
-            text = _escape_html(rel)
-            html.append(f"<li><code><a href=\"{href}\">{text}</a></code></li>")
-        html.append("</ul>")
-        html.append("</section>")
+    html.append("<section>")
+    html.append(f"<h3>Iterate files: {_escape_html(iterate_file_status)}</h3>")
+    html.append("<ul>")
+    if iterate_file_status == "present":
+        if iterate_key_files:
+            for file in iterate_key_files:
+                rel = _relative_to_diag(file, diag)
+                normalized = _normalize_link(rel)
+                href = _escape_href(normalized)
+                html.append(
+                    f"<li><code><a href=\"{href}\">{_escape_html(file.name)}</a></code></li>"
+                )
+        else:
+            html.append("<li>(prompt/response/why_no_diff not located)</li>")
+    else:
+        html.append("<li>(no iterate files captured)</li>")
+    html.append("</ul>")
+    html.append("</section>")
 
     batch_meta = artifacts / "batch-check" / "run.json" if artifacts else None
     if batch_meta and batch_meta.exists():
@@ -749,12 +853,9 @@ def _build_site_overview(
     inventory_txt = f"{bundle_prefix}/inventory.txt"
     inventory_md = f"{bundle_prefix}/inventory.md"
     iterate_zip_rel = f"{bundle_prefix}/logs/iterate-{run_id}-{run_attempt}.zip"
-    batch_zip_rel = None
-    if context.batch_run_id:
-        attempt = context.batch_run_attempt or "n/a"
-        batch_zip_rel = f"{bundle_prefix}/logs/batch-check-{context.batch_run_id}-{attempt}.zip"
     repo_zip_rel = f"{bundle_prefix}/repo/repo-{context.short_sha}.zip"
-    repo_files_rel = f"{bundle_prefix}/repo/files/"
+    repo_index_rel = f"{bundle_prefix}/repo/index.html"
+    batch_ndjson_links = _collect_batch_ndjson_links(context.diag)
 
     ndjson_summary = None
     if artifacts and artifacts.exists():
@@ -794,9 +895,10 @@ def _build_site_overview(
     quick_link("Artifact inventory (HTML)", inventory_html)
     quick_link("Artifact inventory (text)", inventory_txt)
     quick_link("Iterate logs zip", iterate_zip_rel)
-    quick_link("Batch-check logs zip", batch_zip_rel)
+    for entry in batch_ndjson_links:
+        quick_link(entry["label"], f"{bundle_prefix}/{entry['path']}")
     quick_link("Repository zip", repo_zip_rel)
-    quick_link("Repository files (unzipped)", repo_files_rel)
+    quick_link("Repository files (unzipped)", repo_index_rel)
     quick_link("Inventory (markdown)", inventory_md)
 
     if summary_preview:
@@ -854,11 +956,17 @@ def _build_site_overview(
         {"label": "Artifact inventory (HTML)", "path": inventory_html},
         {"label": "Artifact inventory (text)", "path": inventory_txt},
         {"label": "Iterate logs zip", "path": iterate_zip_rel},
-        {"label": "Batch-check logs zip", "path": batch_zip_rel},
         {"label": "Repository zip", "path": repo_zip_rel},
-        {"label": "Repository files (unzipped)", "path": repo_files_rel},
+        {"label": "Repository files (unzipped)", "path": repo_index_rel},
         {"label": "Inventory (markdown)", "path": inventory_md},
     ]
+    ndjson_specs = [
+        {"label": entry["label"], "path": f"{bundle_prefix}/{entry['path']}"}
+        for entry in batch_ndjson_links
+    ]
+    if ndjson_specs:
+        insert_at = 5
+        quick_link_specs[insert_at:insert_at] = ndjson_specs
 
     html_lines.append("<section>")
     html_lines.append("<h2>Quick links</h2>")
@@ -897,6 +1005,7 @@ def _build_site_overview(
 
 def main() -> None:
     context = _get_context()
+    _ensure_repo_index(context.diag)
     iterate_dir = _discover_iterate_dir(context.artifacts)
     iterate_temp = _discover_temp_dir(iterate_dir, context.artifacts)
     now = datetime.now(timezone.utc)
