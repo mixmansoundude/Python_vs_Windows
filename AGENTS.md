@@ -84,6 +84,7 @@ THEN stop and open/append a PR. One loop = one change set.
   - Python: `python -m compileall -q .` and `python -m pyflakes .` (install `pyflakes` if needed).
   - PowerShell: run PSScriptAnalyzer (`Install-Module PSScriptAnalyzer -Force -Scope CurrentUser` then `Invoke-ScriptAnalyzer -Path . -Recurse -EnableExit`).
   - YAML (and GitHub Actions): run `python -m yamllint <file>` (or `actionshub/yamllint@v1`) and `actionlint -oneline` for workflow validation.
+    - Download actionlint via `curl -sSfL https://github.com/rhysd/actionlint/releases/download/v1.7.1/actionlint_1.7.1_linux_amd64.tar.gz | tar -xz -C /tmp` then run `/tmp/actionlint -oneline .`.
   - JSON: `jq -e .` over `*.json`.
   - Generic paired-delimiter scan for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
     - Provide a helper such as `tools/check_delimiters.py` that validates (), {}, [], and quotes " ' (handle escapes and ignore comments when practical).

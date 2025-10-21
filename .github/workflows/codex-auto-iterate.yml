@@ -1344,7 +1344,7 @@ jobs:
     name: Publish diagnostics to Pages
     needs: [iterate]
     if: ${{ always() }}
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
     permissions:
@@ -1393,7 +1393,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.prep.outputs.ARTIFACTS }}\iterate
+          path: ${{ steps.prep.outputs.ARTIFACTS }}/iterate
 
       - name: Record iterate artifact status
         shell: pwsh
@@ -1559,11 +1559,9 @@ jobs:
           }
 
       - name: Summarize failing tests
-        shell: pwsh
+        run: python tools/diag/ndjson_fail_list.py
         env:
           DIAG: ${{ steps.prep.outputs.DIAG }}
-        run: |
-          & "$env:GITHUB_WORKSPACE/tools/diag/ndjson_fail_list.ps1"
 
       - name: Download workflow logs
         shell: pwsh
@@ -1706,13 +1704,13 @@ jobs:
               '{0}={1}' -f $_.Name, $_.Value
             }
           } | Set-Content -Encoding UTF8 (Join-Path $Diag 'env.txt')
-          if (Test-Path '.github\workflows') {
-            $wfDest = Join-Path $Diag '.github\workflows'
+          if (Test-Path '.github/workflows') {
+            $wfDest = Join-Path $Diag '.github/workflows'
             New-Item -ItemType Directory -Path $wfDest -Force | Out-Null
-            Copy-Item -Recurse -Force '.github\workflows\*' $wfDest
+            Copy-Item -Recurse -Force '.github/workflows/*' $wfDest
             $wfCopyDir = Join-Path $Diag 'wf'
             New-Item -ItemType Directory -Path $wfCopyDir -Force | Out-Null
-            Get-ChildItem -Path '.github\workflows' -Filter *.yml -File -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-ChildItem -Path '.github/workflows' -Filter *.yml -File -ErrorAction SilentlyContinue | ForEach-Object {
               Copy-Item -Force $_.FullName (Join-Path $wfCopyDir $_.Name)
               Copy-Item -Force $_.FullName (Join-Path $wfCopyDir ($_.Name + '.txt'))
             }

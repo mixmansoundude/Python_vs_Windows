@@ -211,7 +211,7 @@ if ($BatchRunId) {
     } else {
         $batchStatus = "missing archive (run $BatchRunId, attempt $batchRunAttempt)"
     }
-} elseif ($Diag -and Test-Path (Join-Path $Diag 'logs\batch-check.MISSING.txt')) {
+} elseif ($Diag -and (Test-Path (Join-Path $Diag 'logs\batch-check.MISSING.txt'))) {
     $batchStatus = 'missing (see logs/batch-check.MISSING.txt)'
 }
 
