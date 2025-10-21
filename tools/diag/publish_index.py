@@ -318,7 +318,10 @@ def _ensure_repo_index(diag: Optional[Path]) -> None:
         "<body>",
         "<main>",
         "<h1>Repository files</h1>",
-        '<p><a href="/repo/">Open extracted repository snapshot</a></p>',
+        # Professional note: link relative to the run-scoped repo directory so
+        # GitHub Pages resolves the extracted tree without jumping to the
+        # diagnostics site root.
+        '<p><a href="./">Open extracted repository snapshot</a></p>',
         "</main>",
         "</body>",
         "</html>",
@@ -340,7 +343,8 @@ def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
         return []
 
     results: List[dict] = []
-    seen: set[str] = set()
+    seen_zip: set[str] = set()
+    seen_plain: set[str] = set()
     candidates = [diag / "logs", diag / "_artifacts" / "batch-check"]
     for root in candidates:
         if not root or not root.exists():
@@ -352,14 +356,25 @@ def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
             # this run so the published links stay accurate when cache or run
             # payloads are absent.
             rel = _relative_to_diag(path, diag)
-            if rel in seen:
+            if rel in seen_zip:
                 continue
-            seen.add(rel)
+            seen_zip.add(rel)
+            label = _describe_batch_ndjson_label(path.name)
             results.append({
-                "label": _describe_batch_ndjson_label(path.name),
+                "label": label,
                 "path": rel,
                 "exists": True,
             })
+            plain = path.with_suffix("")
+            if plain.exists() and plain.is_file():
+                plain_rel = _relative_to_diag(plain, diag)
+                if plain_rel not in seen_plain:
+                    seen_plain.add(plain_rel)
+                    results.append({
+                        "label": f"{label} (unzipped)",
+                        "path": plain_rel,
+                        "exists": True,
+                    })
     return results
 
 
