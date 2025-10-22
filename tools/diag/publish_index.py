@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -249,7 +250,7 @@ def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
     return len(files), missing_note
 
 
-def _iterate_status(context: Context) -> str:
+def _iterate_status(context: Context) -> Tuple[str, Optional[str]]:
     """Return the legacy iterate-log status consumed by downstream dashboards."""
 
     diag = context.diag
@@ -260,12 +261,13 @@ def _iterate_status(context: Context) -> str:
         iterate_zip = None
 
     if iterate_zip and iterate_zip.exists():
-        return "found"
+        return "found", None
 
-    # Professional note: preserve the historical wording "missing (see
-    # logs/iterate.MISSING.txt)" even when the sentinel is absent so the
-    # diagnostics headline stays compatible with existing CI parsers.
-    return "missing (see logs/iterate.MISSING.txt)"
+    # Professional note: maintain the traditional hint but surface it outside
+    # the parser-facing bullet to keep downstream consumers stable. GitHub
+    # Actions job summaries render Markdown bullets per
+    # https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/using-job-summaries.
+    return "missing", "see logs/iterate.MISSING.txt"
 
 
 def _batch_status(diag: Optional[Path], context: Context) -> str:
@@ -299,6 +301,7 @@ def _ensure_repo_index(diag: Optional[Path]) -> None:
 
     # Professional note: GitHub Pages does not auto-list directories, so we
     # seed a tiny landing page that points analysts at the extracted tree.
+    # Reference: https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages
     lines = [
         "<!doctype html>",
         '<html lang="en">',
@@ -458,17 +461,25 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[Path]]:
 
 def _bundle_links(context: Context) -> List[dict]:
     diag = context.diag
-    entries = [
-        {"label": "Inventory (HTML)", "path": "inventory.html", "exists": diag and (diag / "inventory.html").exists()},
-        {"label": "Inventory (text)", "path": "inventory.txt", "exists": diag and (diag / "inventory.txt").exists()},
-        {"label": "Inventory (markdown)", "path": "inventory.md", "exists": diag and (diag / "inventory.md").exists()},
-        {"label": "Inventory (json)", "path": "inventory.json", "exists": diag and (diag / "inventory.json").exists()},
+    entries: List[dict] = []
+
+    if diag:
+        for label, relative in [
+            ("Inventory (HTML)", "inventory.html"),
+            ("Inventory (text)", "inventory.txt"),
+            ("Inventory (markdown)", "inventory.md"),
+            ("Inventory (json)", "inventory.json"),
+        ]:
+            if (diag / relative).exists():
+                entries.append({"label": label, "path": relative, "exists": True})
+
+    entries.append(
         {
             "label": "Iterate logs zip",
             "path": f"logs/iterate-{context.run_id}-{context.run_attempt}.zip",
             "exists": diag and (diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip").exists(),
-        },
-    ]
+        }
+    )
     entries.extend(_collect_batch_ndjson_links(diag))
     entries.extend(
         [
@@ -547,7 +558,7 @@ def _build_markdown(
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
-    iterate_log_status = _iterate_status(context)
+    iterate_log_status, iterate_hint = _iterate_status(context)
     batch_status = _batch_status(diag, context)
     lines: List[str] = []
 
@@ -562,11 +573,14 @@ def _build_markdown(
             f"Run page: {context.run_url}",
             "",
             "## Status",
-            f"- Iterate logs: {iterate_log_status}",
+            f"* Iterate logs: {iterate_log_status}",
             f"- Batch-check run id: {batch_status}",
             f"- Artifact files enumerated: {artifact_count}",
         ]
     )
+
+    if iterate_hint:
+        lines.append(f"  {iterate_hint}")
 
     if artifact_missing:
         lines.append(f"- Artifact sentinel: {artifact_missing}")
@@ -595,24 +609,23 @@ def _build_markdown(
             f"- Model: {model}",
             f"- Endpoint: {endpoint}",
             f"- Tokens: prompt={tokens['prompt']} completion={tokens['completion']} total={tokens['total']}",
+            f"- Iterate files: {iterate_file_status}",
         ]
     )
     if attempt_summary:
         lines.append(f"- Attempt summary: {attempt_summary}")
 
-    lines.append("")
-    lines.append(f"### Iterate files: {iterate_file_status}")
     if iterate_file_status == "present":
         if iterate_key_files:
             for file in iterate_key_files:
                 rel = _relative_to_diag(file, diag)
                 normalized = _normalize_link(rel)
                 label = file.name
-                lines.append(f"- [{label}]({normalized})")
+                lines.append(f"  - [{label}]({normalized})")
         else:
-            lines.append("- (prompt/response/why_no_diff not located)")
+            lines.append("  - (prompt/response/why_no_diff not located)")
     else:
-        lines.append("- (no iterate files captured)")
+        lines.append("  - (no iterate files captured)")
 
     batch_meta = artifacts / "batch-check" / "run.json" if artifacts else None
     if batch_meta and batch_meta.exists():
@@ -708,7 +721,7 @@ def _write_html(
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
-    iterate_log_status = _iterate_status(context)
+    iterate_log_status, iterate_hint = _iterate_status(context)
     batch_status = _batch_status(diag, context)
     diag_files = _diag_files(diag)
 
@@ -739,6 +752,7 @@ def _write_html(
             "label": "Tokens",
             "value": f"prompt={tokens['prompt']} completion={tokens['completion']} total={tokens['total']}",
         },
+        {"label": "Iterate files", "value": iterate_file_status, "files": iterate_key_files},
     ]
     if attempt_summary:
         iterate_pairs.append({"label": "Attempt summary", "value": attempt_summary})
@@ -761,12 +775,34 @@ def _write_html(
             label = _escape_html(pair.get("label"))
             value = pair.get("value")
             href = pair.get("href")
+            files = pair.get("files")
             if href:
                 html.append(
                     f"<li><strong>{label}:</strong> <a href=\"{_escape_href(href)}\">{_escape_html(str(value))}</a></li>"
                 )
-            else:
-                html.append(f"<li><strong>{label}:</strong> {_escape_html(str(value))}</li>")
+                continue
+
+            if files is not None:
+                html.append(f"<li><strong>{label}:</strong> {_escape_html(str(value))}")
+                html.append("<ul>")
+                if str(value) == "present":
+                    if files:
+                        for file in files:
+                            rel = _relative_to_diag(file, diag)
+                            normalized = _normalize_link(rel)
+                            href_file = _escape_href(normalized)
+                            html.append(
+                                f"<li><code><a href=\"{href_file}\">{_escape_html(file.name)}</a></code></li>"
+                            )
+                    else:
+                        html.append("<li>(prompt/response/why_no_diff not located)</li>")
+                else:
+                    html.append("<li>(no iterate files captured)</li>")
+                html.append("</ul>")
+                html.append("</li>")
+                continue
+
+            html.append(f"<li><strong>{label}:</strong> {_escape_html(str(value))}</li>")
         html.append("</ul>")
         html.append("</section>")
 
@@ -790,24 +826,10 @@ def _write_html(
 
     render_pairs("Iterate metadata", iterate_pairs)
 
-    html.append("<section>")
-    html.append(f"<h3>Iterate files: {_escape_html(iterate_file_status)}</h3>")
-    html.append("<ul>")
-    if iterate_file_status == "present":
-        if iterate_key_files:
-            for file in iterate_key_files:
-                rel = _relative_to_diag(file, diag)
-                normalized = _normalize_link(rel)
-                href = _escape_href(normalized)
-                html.append(
-                    f"<li><code><a href=\"{href}\">{_escape_html(file.name)}</a></code></li>"
-                )
-        else:
-            html.append("<li>(prompt/response/why_no_diff not located)</li>")
-    else:
-        html.append("<li>(no iterate files captured)</li>")
-    html.append("</ul>")
-    html.append("</section>")
+    if iterate_hint:
+        html.append(
+            f"<!-- Iterate logs hint: {_escape_html(iterate_hint)} -->"
+        )
 
     batch_meta = artifacts / "batch-check" / "run.json" if artifacts else None
     if batch_meta and batch_meta.exists():
@@ -868,6 +890,17 @@ def _write_html(
     html.append("</body>")
     html.append("</html>")
     return "\n".join(html)
+
+
+def _validate_iterate_status_line(markdown: str) -> None:
+    """Ensure the parser-facing iterate bullet stays in the legacy format."""
+
+    pattern = re.compile(r"(?m)^\* Iterate logs: (found|missing)$")
+    matches = pattern.findall(markdown)
+    if len(matches) != 1:
+        raise ValueError(
+            "Iterate logs bullet missing or invalid; expected '* Iterate logs: found|missing'."
+        )
 
 
 def _write_latest_json(context: Context) -> None:
@@ -955,12 +988,10 @@ def _build_site_overview(
     ]
 
     def quick_link(label: str, path: Optional[str]) -> None:
-        if path and _has_file(site, path.split("?", 1)[0]):
+        if not path:
+            return
+        if _has_file(site, path.split("?", 1)[0]):
             lines.append(f"- [{label}]({_normalize_link(path)})")
-        elif path:
-            lines.append(f"- {label}: missing")
-        else:
-            lines.append(f"- {label}: missing")
 
     quick_link("Bundle index", bundle_index_href)
     quick_link("Open latest (cache-busted)", bundle_index_href)
@@ -1043,15 +1074,17 @@ def _build_site_overview(
     html_lines.append("<section>")
     html_lines.append("<h2>Quick links</h2>")
     html_lines.append("<ul>")
-    for spec in quick_link_specs:
+    filtered_specs = [
+        spec
+        for spec in quick_link_specs
+        if spec.get("path") and _has_file(site, spec["path"].split("?", 1)[0])
+    ]
+    for spec in filtered_specs:
         label = _escape_html(spec["label"])
         path = spec.get("path")
-        if path and _has_file(site, path.split("?", 1)[0]):
-            html_lines.append(
-                f"<li><a href=\"{_escape_href(_normalize_link(path))}\">{label}</a></li>"
-            )
-        else:
-            html_lines.append(f"<li>{label}: missing</li>")
+        html_lines.append(
+            f"<li><a href=\"{_escape_href(_normalize_link(path))}\">{label}</a></li>"
+        )
     html_lines.append("</ul>")
     html_lines.append("</section>")
 
@@ -1097,6 +1130,7 @@ def main() -> None:
         status_data,
         why_outcome,
     )
+    _validate_iterate_status_line(diag_markdown)
     if context.diag:
         _write_markdown(context.diag / "index.md", diag_markdown)
         diag_html = _write_html(

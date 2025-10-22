@@ -511,6 +511,8 @@ jobs:
       - name: Load/Update attempt counter
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
         id: attempts
+        env:
+          HEAD_SHA: ${{ steps.ctx.outputs.head_sha }}
         run: |
           set -euo pipefail
           attempts=0
@@ -520,12 +522,23 @@ jobs:
           curl -sS -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${owner_repo}/actions/artifacts?per_page=100" > artifacts_all.json
           id=`jq -r --arg n "iterate-state-$branch_slug" '.artifacts[] | select(.name==$n and ((.expired // false) | not)) | .id' artifacts_all.json | head -n 1 || true`
+          stored_sha=""
           if [ -n "$id" ] && [ "$id" != "null" ]; then
             curl -sSL -H "Authorization: Bearer $GH_TOKEN" -L \
               "https://api.github.com/repos/${owner_repo}/actions/artifacts/$id/zip" \
               -o state.zip || true
             mkdir -p state && unzip -q state.zip -d state || true
-            attempts=`jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0`
+            attempts_raw=`jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0`
+            stored_sha=`jq -r '.head_sha // ""' state/iterate_state.json 2>/dev/null || echo ''`
+            if printf '%s' "$attempts_raw" | grep -Eq '^[0-9]+$'; then
+              attempts="$attempts_raw"
+            else
+              attempts=0
+            fi
+          fi
+          head_sha="${HEAD_SHA:-}"
+          if [ -n "$stored_sha" ] && [ -n "$head_sha" ] && [ "$stored_sha" != "$head_sha" ]; then
+            attempts=0
           fi
           nextfile="$RUNNER_TEMP/next.txt"
           echo "$attempts" | awk '{print $1+1}' > "$nextfile"
@@ -602,6 +615,8 @@ jobs:
           status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
 
           why_reason = None
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+
           if not attempted:
               gate_val = _parse_bool(gate)
               auth_val = _parse_bool(auth_ok)
@@ -614,6 +629,15 @@ jobs:
               elif auth_val is False or auth_ok == "":
                   detail = auth_reason or "auth unavailable"
                   why_reason = f"skipped: auth failure ({detail})"
+
+              if summary_path and stop == "true":
+                  detail = stop_reason or "no stop reason"
+                  message = (
+                      "### Iterate gate\n"
+                      "- skipping due to gate with 0 attempts left ({detail})\n"
+                  ).format(detail=detail)
+                  with open(summary_path, "a", encoding="utf-8") as handle:
+                      handle.write(message)
 
           why_path = runner_temp / "why_no_diff.txt"
           if why_reason:
@@ -1313,7 +1337,7 @@ jobs:
           labels: codex,ci-fix,automerge-candidate
 
       - name: Save attempt state
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         env:
           ATTEMPTS: ${{ steps.attempts.outputs.next }}
           RUN_ID: ${{ steps.ctx.outputs.run_id }}
@@ -1327,7 +1351,7 @@ jobs:
           printf '}\n' >> state_out/iterate_state.json
 
       - name: Upload attempt state
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: iterate-state-${{ steps.ctx.outputs.branch_slug }}
