@@ -92,20 +92,44 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
     if not iterate_root.exists():
         return None
 
+    metadata_names = (
+        "decision.txt",
+        "model.txt",
+        "http_status.txt",
+        "response.json",
+        "iterate_status.json",
+        "why_no_diff.txt",
+    )
+
+    if any((iterate_root / name).exists() for name in metadata_names):
+        # Professional note: actions/download-artifact@v4 can unpack iterate metadata directly
+        # into the root without an intermediate iterate-logs-* directory. Honor that layout so
+        # diagnostics capture the files instead of defaulting to the child _temp directory.
+        return iterate_root
+
     expected = iterate_root / f"iterate-logs-{context.run_id}-{context.run_attempt}"
     if expected.exists():
         return expected
 
-    iterate_dir = _first_child_directory(iterate_root)
     try:
         candidates = sorted(p for p in iterate_root.iterdir() if p.is_dir())
     except FileNotFoundError:
         candidates = []
+
     for candidate in candidates:
-        if (candidate / "decision.txt").exists():
-            iterate_dir = candidate
-            break
-    return iterate_dir
+        if candidate.name == "_temp":
+            continue
+        if (candidate / "decision.txt").exists() or (candidate / "response.json").exists():
+            return candidate
+
+    if candidates and all(candidate.name == "_temp" for candidate in candidates):
+        return iterate_root
+
+    preferred = next((c for c in candidates if c.name != "_temp"), None)
+    if preferred:
+        return preferred
+
+    return _first_child_directory(iterate_root)
 
 
 def _discover_temp_dir(iterate_dir: Optional[Path], context: Context) -> Optional[Path]:
@@ -121,6 +145,70 @@ def _discover_temp_dir(iterate_dir: Optional[Path], context: Context) -> Optiona
     if not candidates and iterate_root.exists():
         candidates.extend(p for p in iterate_root.rglob("_temp") if p.is_dir())
     return candidates[0] if candidates else None
+
+
+def _iterate_lookup_dirs(
+    iterate_dir: Optional[Path], iterate_temp: Optional[Path] = None
+) -> List[Path]:
+    """Return iterate directories to search, prioritizing metadata roots."""
+
+    candidates: List[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Optional[Path]) -> None:
+        if not path:
+            return
+        try:
+            if not path.exists() or not path.is_dir():
+                return
+        except FileNotFoundError:
+            return
+        if path not in seen:
+            candidates.append(path)
+            seen.add(path)
+
+    add(iterate_dir)
+    if iterate_dir:
+        add(iterate_dir / "_temp")
+    add(iterate_temp)
+    if iterate_temp:
+        add(iterate_temp / "_temp")
+
+    return candidates
+
+
+def _find_iterate_file(
+    iterate_dir: Optional[Path], iterate_temp: Optional[Path], name: str
+) -> Optional[Path]:
+    for directory in _iterate_lookup_dirs(iterate_dir, iterate_temp):
+        candidate = directory / name
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
+def _read_iterate_text(
+    iterate_dir: Optional[Path], iterate_temp: Optional[Path], name: str
+) -> str:
+    path = _find_iterate_file(iterate_dir, iterate_temp, name)
+    if not path:
+        return "n/a"
+    value = _read_text(path)
+    return value if value else "n/a"
+
+
+def _read_iterate_first_line(
+    iterate_dir: Optional[Path], iterate_temp: Optional[Path], name: str
+) -> Optional[str]:
+    path = _find_iterate_file(iterate_dir, iterate_temp, name)
+    return _read_first_line(path) if path else None
+
+
+def _load_iterate_json(
+    iterate_dir: Optional[Path], iterate_temp: Optional[Path], name: str
+) -> Optional[dict]:
+    path = _find_iterate_file(iterate_dir, iterate_temp, name)
+    return _load_json(path) if path else None
 
 
 def _read_first_line(path: Path) -> Optional[str]:
@@ -191,7 +279,9 @@ def _relative_to_diag(path: Path, diag: Optional[Path]) -> str:
         return path.as_posix()
 
 
-def _gather_iterate_tokens(iterate_dir: Optional[Path], response_data: Optional[dict]) -> dict:
+def _gather_iterate_tokens(
+    iterate_dir: Optional[Path], iterate_temp: Optional[Path], response_data: Optional[dict]
+) -> dict:
     tokens = {"prompt": "n/a", "completion": "n/a", "total": "n/a"}
     if response_data and isinstance(response_data.get("usage"), dict):
         usage = response_data["usage"]
@@ -200,8 +290,9 @@ def _gather_iterate_tokens(iterate_dir: Optional[Path], response_data: Optional[
             value = usage.get(field)
             if value is not None:
                 tokens[key] = str(value)
-    if iterate_dir and (iterate_dir / "tokens.txt").exists():
-        for line in (iterate_dir / "tokens.txt").read_text(encoding="utf-8").splitlines():
+    token_path = _find_iterate_file(iterate_dir, iterate_temp, "tokens.txt")
+    if token_path and token_path.exists():
+        for line in token_path.read_text(encoding="utf-8").splitlines():
             if "=" not in line:
                 continue
             key, value = line.split("=", 1)
@@ -214,11 +305,9 @@ def _gather_iterate_tokens(iterate_dir: Optional[Path], response_data: Optional[
     return tokens
 
 
-def _diff_produced(iterate_dir: Optional[Path]) -> bool:
-    if not iterate_dir:
-        return False
-    patch_path = iterate_dir / "patch.diff"
-    if not patch_path.exists():
+def _diff_produced(iterate_dir: Optional[Path], iterate_temp: Optional[Path]) -> bool:
+    patch_path = _find_iterate_file(iterate_dir, iterate_temp, "patch.diff")
+    if not patch_path:
         return False
     head = patch_path.read_text(encoding="utf-8", errors="ignore").splitlines()[:20]
     if not head:
@@ -581,6 +670,7 @@ def _bundle_links(context: Context) -> List[dict]:
 def _build_markdown(
     context: Context,
     iterate_dir: Optional[Path],
+    iterate_temp: Optional[Path],
     built_utc: str,
     built_ct: str,
     response_data: Optional[dict],
@@ -590,16 +680,13 @@ def _build_markdown(
     diag = context.diag
     artifacts = context.artifacts
 
-    def read_value(directory: Optional[Path], name: str) -> str:
-        if not directory:
-            return "n/a"
-        value = _read_text(directory / name)
-        return value if value else "n/a"
+    def read_value(name: str) -> str:
+        return _read_iterate_text(iterate_dir, iterate_temp, name)
 
-    decision = read_value(iterate_dir, "decision.txt")
-    model = read_value(iterate_dir, "model.txt")
-    endpoint = read_value(iterate_dir, "endpoint.txt")
-    http_status = read_value(iterate_dir, "http_status.txt")
+    decision = read_value("decision.txt")
+    model = read_value("model.txt")
+    endpoint = read_value("endpoint.txt")
+    http_status = read_value("http_status.txt")
 
     if response_data:
         if response_data.get("http_status") is not None:
@@ -607,9 +694,9 @@ def _build_markdown(
         if response_data.get("model"):
             model = str(response_data["model"])
 
-    tokens = _gather_iterate_tokens(iterate_dir, response_data)
+    tokens = _gather_iterate_tokens(iterate_dir, iterate_temp, response_data)
 
-    diff_produced = _diff_produced(iterate_dir)
+    diff_produced = _diff_produced(iterate_dir, iterate_temp)
     outcome = why_outcome or ("diff produced" if diff_produced else "n/a")
 
     attempt_summary = None
@@ -752,6 +839,7 @@ def _write_markdown(path: Path, content: str) -> None:
 def _write_html(
     context: Context,
     iterate_dir: Optional[Path],
+    iterate_temp: Optional[Path],
     built_utc: str,
     built_ct: str,
     response_data: Optional[dict],
@@ -761,16 +849,13 @@ def _write_html(
     diag = context.diag
     artifacts = context.artifacts
 
-    def read_value(directory: Optional[Path], name: str) -> str:
-        if not directory:
-            return "n/a"
-        value = _read_text(directory / name)
-        return value if value else "n/a"
+    def read_value(name: str) -> str:
+        return _read_iterate_text(iterate_dir, iterate_temp, name)
 
-    decision = read_value(iterate_dir, "decision.txt")
-    model = read_value(iterate_dir, "model.txt")
-    endpoint = read_value(iterate_dir, "endpoint.txt")
-    http_status = read_value(iterate_dir, "http_status.txt")
+    decision = read_value("decision.txt")
+    model = read_value("model.txt")
+    endpoint = read_value("endpoint.txt")
+    http_status = read_value("http_status.txt")
 
     if response_data:
         if response_data.get("http_status") is not None:
@@ -778,8 +863,8 @@ def _write_html(
         if response_data.get("model"):
             model = str(response_data["model"])
 
-    tokens = _gather_iterate_tokens(iterate_dir, response_data)
-    diff_produced = _diff_produced(iterate_dir)
+    tokens = _gather_iterate_tokens(iterate_dir, iterate_temp, response_data)
+    diff_produced = _diff_produced(iterate_dir, iterate_temp)
     outcome = why_outcome or ("diff produced" if diff_produced else "n/a")
     attempt_summary = None
     if not response_data and status_data:
@@ -1015,6 +1100,7 @@ def _has_file(site: Optional[Path], relative: str) -> bool:
 def _build_site_overview(
     context: Context,
     iterate_dir: Optional[Path],
+    iterate_temp: Optional[Path],
     response_data: Optional[dict],
 ) -> tuple[str, str]:
     site = context.site
@@ -1025,14 +1111,11 @@ def _build_site_overview(
     cache_bust = context.run_id
     bundle_index_href = f"{bundle_prefix}/index.html?v={cache_bust}"
 
-    def read_value(directory: Optional[Path], name: str) -> str:
-        if not directory:
-            return "n/a"
-        value = _read_text(directory / name)
-        return value if value else "n/a"
+    def read_value(name: str) -> str:
+        return _read_iterate_text(iterate_dir, iterate_temp, name)
 
-    decision = read_value(iterate_dir, "decision.txt")
-    http_status = read_value(iterate_dir, "http_status.txt")
+    decision = read_value("decision.txt")
+    http_status = read_value("http_status.txt")
     if response_data and response_data.get("http_status") is not None:
         http_status = str(response_data["http_status"])
 
@@ -1202,13 +1285,14 @@ def main() -> None:
     # Professional note: capture the timestamps once so markdown and HTML stay synchronized.
     built_utc = now.isoformat()
     built_ct = _isoformat_ct(now)
-    response_data = _load_json(iterate_temp / "response.json") if iterate_temp else None
-    status_data = _load_json(iterate_temp / "iterate_status.json") if iterate_temp else None
-    why_outcome = _read_first_line(iterate_temp / "why_no_diff.txt") if iterate_temp else None
+    response_data = _load_iterate_json(iterate_dir, iterate_temp, "response.json")
+    status_data = _load_iterate_json(iterate_dir, iterate_temp, "iterate_status.json")
+    why_outcome = _read_iterate_first_line(iterate_dir, iterate_temp, "why_no_diff.txt")
 
     diag_markdown = _build_markdown(
         context,
         iterate_dir,
+        iterate_temp,
         built_utc,
         built_ct,
         response_data,
@@ -1221,6 +1305,7 @@ def main() -> None:
         diag_html = _write_html(
             context,
             iterate_dir,
+            iterate_temp,
             built_utc,
             built_ct,
             response_data,
@@ -1230,7 +1315,9 @@ def main() -> None:
         (context.diag / "index.html").write_text(diag_html, encoding="utf-8")
 
     if context.site:
-        site_markdown, site_html = _build_site_overview(context, iterate_dir, response_data)
+        site_markdown, site_html = _build_site_overview(
+            context, iterate_dir, iterate_temp, response_data
+        )
         _write_markdown(context.site / "index.md", site_markdown)
         (context.site / "index.html").write_text(site_html, encoding="utf-8")
         _write_latest_json(context)
