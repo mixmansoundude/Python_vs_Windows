@@ -316,8 +316,7 @@ def _ensure_repo_index(diag: Optional[Path]) -> None:
     if not diag:
         return
     repo_dir = diag / "repo"
-    files_dir = repo_dir / "files"
-    if not files_dir.is_dir():
+    if not repo_dir.is_dir():
         return
 
     index_path = repo_dir / "index.html"
@@ -328,13 +327,38 @@ def _ensure_repo_index(diag: Optional[Path]) -> None:
     # seed a tiny landing page that points analysts at the extracted tree and
     # renders a static file listing. Reference:
     # https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages
-    files = sorted(p for p in files_dir.rglob("*") if p.is_file())
+    content_roots = [
+        entry
+        for entry in sorted(repo_dir.iterdir())
+        if entry.is_dir() and entry.name != "files"
+    ]
+
+    if not content_roots:
+        legacy_files = repo_dir / "files"
+        if legacy_files.is_dir():
+            # Professional note: support the historical repo/files layout so
+            # older diagnostics remain navigable while we prefer the flattened
+            # paths for new runs. GitHub Pages documentation:
+            # https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages
+            content_roots = [legacy_files]
+        else:
+            content_roots = [repo_dir]
+
+    files = [
+        path
+        for root in content_roots
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    ]
+
     rows: List[str] = []
     for file in files:
+        if file == index_path:
+            continue
         relative = file.relative_to(repo_dir).as_posix()
-        href = _escape_href(relative) or relative
+        href_target = _escape_href(relative) or relative
         rows.append(
-            f'<li><a href="{href}">{_escape_html(relative)}</a></li>'
+            f'<li><a href="./{href_target}">{_escape_html(relative)}</a></li>'
         )
 
     if not rows:
