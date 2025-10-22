@@ -22,6 +22,7 @@ Operating policy for automated agents (Codex, Copilot, others).
 - Likewise, when tightening CI parsing or summaries, ensure `run_setup.bat` keeps emitting the expected phrases.
 - Always validate both sides together so the message contract stays synchronized and avoids false regressions.
 - The only parser-facing signal for iterate presence is the single line '* Iterate logs: {found|missing}'. Any additional iterate-related details are advisory and must not change consumer logic.
+- The diagnostics publisher expects the iterate job to upload a single artifact named `iterate-logs-${run_id}-${run_attempt}` that contains the `iterate/_temp/` payload plus the job summary. Missing that artifact yields '* Iterate logs: missing'.
 
 ## Conda policy (mandatory)
 - Enforce conda-forge only.

@@ -84,12 +84,17 @@ def _first_child_directory(root: Path) -> Optional[Path]:
         return None
 
 
-def _discover_iterate_dir(artifacts: Optional[Path]) -> Optional[Path]:
+def _discover_iterate_dir(context: Context) -> Optional[Path]:
+    artifacts = context.artifacts
     if not artifacts:
         return None
     iterate_root = artifacts / "iterate"
     if not iterate_root.exists():
         return None
+
+    expected = iterate_root / f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    if expected.exists():
+        return expected
 
     iterate_dir = _first_child_directory(iterate_root)
     try:
@@ -103,7 +108,8 @@ def _discover_iterate_dir(artifacts: Optional[Path]) -> Optional[Path]:
     return iterate_dir
 
 
-def _discover_temp_dir(iterate_dir: Optional[Path], artifacts: Optional[Path]) -> Optional[Path]:
+def _discover_temp_dir(iterate_dir: Optional[Path], context: Context) -> Optional[Path]:
+    artifacts = context.artifacts
     if not artifacts:
         return None
     iterate_root = artifacts / "iterate"
@@ -241,6 +247,13 @@ def _inventory_lines(encoded: Optional[str]) -> List[str]:
     return decoded.splitlines()
 
 
+def _nonempty_file(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except FileNotFoundError:
+        return False
+
+
 def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
     if not artifacts or not artifacts.exists():
         return 0, None
@@ -254,6 +267,16 @@ def _iterate_status(context: Context) -> Tuple[str, Optional[str]]:
     """Return the legacy iterate-log status consumed by downstream dashboards."""
 
     diag = context.diag
+    artifacts = context.artifacts
+    if artifacts:
+        expected = (
+            artifacts
+            / "iterate"
+            / f"iterate-logs-{context.run_id}-{context.run_attempt}"
+        )
+        if expected.exists():
+            return "found", None
+
     iterate_zip: Optional[Path]
     if diag:
         iterate_zip = diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
@@ -266,7 +289,9 @@ def _iterate_status(context: Context) -> Tuple[str, Optional[str]]:
     # Professional note: maintain the traditional hint but surface it outside
     # the parser-facing bullet to keep downstream consumers stable. GitHub
     # Actions job summaries render Markdown bullets per
-    # https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/using-job-summaries.
+    # https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/using-job-summaries
+    # and artifact names follow the public contract at
+    # https://docs.github.com/en/actions/using-workflows/storing-workflow-data-as-artifacts.
     return "missing", "see logs/iterate.MISSING.txt"
 
 
@@ -300,8 +325,21 @@ def _ensure_repo_index(diag: Optional[Path]) -> None:
         return
 
     # Professional note: GitHub Pages does not auto-list directories, so we
-    # seed a tiny landing page that points analysts at the extracted tree.
-    # Reference: https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages
+    # seed a tiny landing page that points analysts at the extracted tree and
+    # renders a static file listing. Reference:
+    # https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages
+    files = sorted(p for p in files_dir.rglob("*") if p.is_file())
+    rows: List[str] = []
+    for file in files:
+        relative = file.relative_to(repo_dir).as_posix()
+        href = _escape_href(relative) or relative
+        rows.append(
+            f'<li><a href="{href}">{_escape_html(relative)}</a></li>'
+        )
+
+    if not rows:
+        rows.append("<li>(no files extracted)</li>")
+
     lines = [
         "<!doctype html>",
         '<html lang="en">',
@@ -312,14 +350,11 @@ def _ensure_repo_index(diag: Optional[Path]) -> None:
         "<body>",
         "<main>",
         "<h1>Repository files</h1>",
-        # Professional note: link relative to the run-scoped repo directory so
-        # GitHub Pages resolves the extracted tree without jumping to the
-        # diagnostics site root.
-        '<p><a href="./">Open extracted repository snapshot</a></p>',
-        "</main>",
-        "</body>",
-        "</html>",
+        "<p>Browse the extracted commit snapshot below.</p>",
+        "<ul>",
     ]
+    lines.extend(rows)
+    lines.extend(["</ul>", "</main>", "</body>", "</html>"])
     index_path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -470,14 +505,20 @@ def _bundle_links(context: Context) -> List[dict]:
             ("Inventory (markdown)", "inventory.md"),
             ("Inventory (json)", "inventory.json"),
         ]:
-            if (diag / relative).exists():
+            candidate = diag / relative
+            if _nonempty_file(candidate):
                 entries.append({"label": label, "path": relative, "exists": True})
 
     entries.append(
         {
             "label": "Iterate logs zip",
             "path": f"logs/iterate-{context.run_id}-{context.run_attempt}.zip",
-            "exists": diag and (diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip").exists(),
+            "exists": bool(
+                diag
+                and _nonempty_file(
+                    diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
+                )
+            ),
         }
     )
     entries.extend(_collect_batch_ndjson_links(diag))
@@ -496,7 +537,10 @@ def _bundle_links(context: Context) -> List[dict]:
             {
                 "label": "Repository zip",
                 "path": f"repo/repo-{context.short_sha}.zip",
-                "exists": diag and (diag / "repo" / f"repo-{context.short_sha}.zip").exists(),
+                "exists": bool(
+                    diag
+                    and _nonempty_file(diag / "repo" / f"repo-{context.short_sha}.zip")
+                ),
             },
             {
                 "label": "Repository files (unzipped)",
@@ -561,6 +605,11 @@ def _build_markdown(
     iterate_log_status, iterate_hint = _iterate_status(context)
     batch_status = _batch_status(diag, context)
     lines: List[str] = []
+
+    if iterate_log_status != "found":
+        outcome = "n/a"
+        iterate_file_status = "missing"
+        iterate_key_files = []
 
     lines.extend(
         [
@@ -724,6 +773,11 @@ def _write_html(
     iterate_log_status, iterate_hint = _iterate_status(context)
     batch_status = _batch_status(diag, context)
     diag_files = _diag_files(diag)
+
+    if iterate_log_status != "found":
+        outcome = "n/a"
+        iterate_file_status = "missing"
+        iterate_key_files = []
 
     metadata_pairs = [
         {"label": "Repo", "value": context.repo},
@@ -927,7 +981,12 @@ def _write_latest_json(context: Context) -> None:
 def _has_file(site: Optional[Path], relative: str) -> bool:
     if not site:
         return False
-    return (site / Path(relative)).exists()
+    candidate = site / Path(relative)
+    if not candidate.exists():
+        return False
+    if candidate.is_file() and candidate.name.startswith("inventory."):
+        return candidate.stat().st_size > 0
+    return True
 
 
 def _build_site_overview(
@@ -957,6 +1016,7 @@ def _build_site_overview(
     inventory_html = f"{bundle_prefix}/inventory.html"
     inventory_txt = f"{bundle_prefix}/inventory.txt"
     inventory_md = f"{bundle_prefix}/inventory.md"
+    inventory_json = f"{bundle_prefix}/inventory.json"
     iterate_zip_rel = f"{bundle_prefix}/logs/iterate-{run_id}-{run_attempt}.zip"
     repo_zip_rel = f"{bundle_prefix}/repo/repo-{context.short_sha}.zip"
     repo_index_rel = f"{bundle_prefix}/repo/index.html"
@@ -997,6 +1057,7 @@ def _build_site_overview(
     quick_link("Open latest (cache-busted)", bundle_index_href)
     quick_link("Artifact inventory (HTML)", inventory_html)
     quick_link("Artifact inventory (text)", inventory_txt)
+    quick_link("Artifact inventory (JSON)", inventory_json)
     quick_link("Iterate logs zip", iterate_zip_rel)
     for entry in batch_ndjson_links:
         quick_link(entry["label"], f"{bundle_prefix}/{entry['path']}")
@@ -1058,6 +1119,7 @@ def _build_site_overview(
         {"label": "Open latest (cache-busted)", "path": bundle_index_href},
         {"label": "Artifact inventory (HTML)", "path": inventory_html},
         {"label": "Artifact inventory (text)", "path": inventory_txt},
+        {"label": "Artifact inventory (JSON)", "path": inventory_json},
         {"label": "Iterate logs zip", "path": iterate_zip_rel},
         {"label": "Repository zip", "path": repo_zip_rel},
         {"label": "Repository files (unzipped)", "path": repo_index_rel},
@@ -1111,8 +1173,8 @@ def _build_site_overview(
 def main() -> None:
     context = _get_context()
     _ensure_repo_index(context.diag)
-    iterate_dir = _discover_iterate_dir(context.artifacts)
-    iterate_temp = _discover_temp_dir(iterate_dir, context.artifacts)
+    iterate_dir = _discover_iterate_dir(context)
+    iterate_temp = _discover_temp_dir(iterate_dir, context)
     now = datetime.now(timezone.utc)
     # Professional note: capture the timestamps once so markdown and HTML stay synchronized.
     built_utc = now.isoformat()

@@ -970,6 +970,8 @@ jobs:
           iter_dir="$GITHUB_WORKSPACE/iterate"
           rm -rf "$iter_dir"
           mkdir -p "$iter_dir"
+          temp_dir="$iter_dir/_temp"
+          mkdir -p "$temp_dir"
 
           placeholder="$iter_dir/README.txt"
           {
@@ -1021,8 +1023,18 @@ jobs:
             fi
           }
 
+          copy_into_temp(){
+            local source="$1"
+            local name="$2"
+            if [ -f "$source" ]; then
+              cp "$source" "$temp_dir/$name"
+            fi
+          }
+
           sanitize "$req_raw" "$iter_dir/request.redacted.json" 100000 || true
           sanitize "$res_raw" "$iter_dir/response.json" 200000 || true
+          copy_into_temp "$iter_dir/request.redacted.json" "request.redacted.json"
+          copy_into_temp "$iter_dir/response.json" "response.json"
 
           tokens_file="$iter_dir/tokens.txt"
           if [ -f "$res_raw" ]; then
@@ -1037,6 +1049,7 @@ jobs:
           else
             printf 'prompt=n/a\ncompletion=n/a\ntotal=n/a\n' > "$tokens_file"
           fi
+          copy_into_temp "$tokens_file" "tokens.txt"
 
           decision_file="$iter_dir/decision.txt"
           decision="no-diff"
@@ -1066,6 +1079,7 @@ jobs:
 
           if [ -n "$diff_path" ] && [ -f "$diff_path" ]; then
             cp "$diff_path" "$iter_dir/patch.diff"
+            copy_into_temp "$iter_dir/patch.diff" "patch.diff"
           fi
 
           if [ -n "$apply_log" ] && [ -f "$apply_log" ]; then
@@ -1074,6 +1088,7 @@ jobs:
             printf 'apply log unavailable\n' | tee "$iter_dir/patch.apply.log" > "$fallback_log"
             apply_log="$fallback_log"
           fi
+          copy_into_temp "$iter_dir/patch.apply.log" "patch.apply.log"
 
           if [ ! -f "$fallback_log" ]; then
             printf 'apply log unavailable\n' > "$fallback_log"
@@ -1092,20 +1107,39 @@ jobs:
             printf 'no exec content captured\n' > "$iter_dir/exec.log"
             cp "$iter_dir/exec.log" "$codex_log"
           fi
+          copy_into_temp "$iter_dir/exec.log" "exec.log"
 
           if [ -f "$RUNNER_TEMP/prompt.txt" ]; then
             cp "$RUNNER_TEMP/prompt.txt" "$iter_dir/prompt.txt"
+            copy_into_temp "$iter_dir/prompt.txt" "prompt.txt"
           fi
 
           if [ -f "$RUNNER_TEMP/auth_body.json" ]; then
             sanitize "$RUNNER_TEMP/auth_body.json" "$iter_dir/auth_probe.json" 100000 || true
           fi
+          copy_into_temp "$iter_dir/auth_probe.json" "auth_probe.json"
 
           iter_stdout="$RUNNER_TEMP/iterate_step.log"
           if [ -f "$iter_stdout" ]; then
             # Professional note: surface the raw job stream when GitHub's run-logs zip
             # is unavailable so the published bundle still exposes iterate stdout/stderr.
             cp "$iter_stdout" "$iter_dir/job.log"
+          fi
+          copy_into_temp "$iter_dir/job.log" "job.log"
+
+          if [ -f "$RUNNER_TEMP/why_no_diff.txt" ]; then
+            cp "$RUNNER_TEMP/why_no_diff.txt" "$iter_dir/why_no_diff.txt"
+            copy_into_temp "$iter_dir/why_no_diff.txt" "why_no_diff.txt"
+          fi
+
+          if [ -f "$RUNNER_TEMP/iterate_status.json" ]; then
+            cp "$RUNNER_TEMP/iterate_status.json" "$iter_dir/iterate_status.json"
+            copy_into_temp "$iter_dir/iterate_status.json" "iterate_status.json"
+          fi
+
+          summary_file="${GITHUB_STEP_SUMMARY:-}"
+          if [ -n "$summary_file" ] && [ -f "$summary_file" ]; then
+            cp "$summary_file" "$iter_dir/job-summary.md"
           fi
 
           files_found=$(find "$iter_dir" -type f 2>/dev/null | wc -l || echo 0)
@@ -1141,22 +1175,16 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Upload iterate artifact
-        if: always()
+      - name: Upload iterate logs artifact
+        if: ${{ always() && steps.llm.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
-          name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
+          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             .codex/**
-            ${{ runner.temp }}/prompt.txt
-            ${{ runner.temp }}/response.json
-            ${{ runner.temp }}/why_no_diff.txt
-            ${{ runner.temp }}/iterate_status.json
-            ${{ runner.temp }}/patch.apply.log
-            ${{ steps.diag_stage.outputs.dir != '' && format('{0}/**', steps.diag_stage.outputs.dir) || '' }}
-            ${{ steps.diag_stage.outputs.codex_log || '' }}
+            ${{ steps.diag_stage.outputs.dir }}/**
           include-hidden-files: true
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
       - name: Build context digest
@@ -1416,7 +1444,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
+          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prep.outputs.ARTIFACTS }}/iterate
 
       - name: Record iterate artifact status
