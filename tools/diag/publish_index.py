@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,6 +83,135 @@ def _first_child_directory(root: Path) -> Optional[Path]:
         return next(item for item in sorted(root.iterdir()) if item.is_dir())
     except (FileNotFoundError, StopIteration):
         return None
+
+
+def _repo_directory(context: Context) -> Optional[Path]:
+    diag = context.diag
+    if not diag:
+        return None
+    repo_dir = diag / "repo"
+    if repo_dir.is_dir():
+        return repo_dir
+    return None
+
+
+def _sanitize_repo_name(context: Context) -> Optional[str]:
+    repo = context.repo
+    if not repo or repo == "n/a":
+        return None
+    return repo.replace("/", "-")
+
+
+def _candidate_repo_roots(repo_dir: Path) -> List[Path]:
+    try:
+        return [
+            child
+            for child in sorted(repo_dir.iterdir())
+            if child.is_dir() and child.name != "files"
+        ]
+    except FileNotFoundError:
+        return []
+
+
+def _resolve_repo_root(context: Context) -> Optional[Path]:
+    """Locate the extracted working tree for this run's commit."""
+
+    repo_dir = _repo_directory(context)
+    if not repo_dir:
+        return None
+
+    sanitized = _sanitize_repo_name(context)
+    candidates = _candidate_repo_roots(repo_dir)
+
+    def prefer(name: str) -> Optional[Path]:
+        candidate = repo_dir / name
+        if candidate.is_dir():
+            return candidate
+        return None
+
+    if sanitized:
+        for suffix in (
+            context.short_sha,
+            context.sha[:12] if context.sha and context.sha != "n/a" else None,
+            context.sha if context.sha and context.sha != "n/a" else None,
+        ):
+            if not suffix:
+                continue
+            resolved = prefer(f"{sanitized}-{suffix}")
+            if resolved:
+                return resolved
+
+    for candidate in candidates:
+        if sanitized and context.short_sha and context.short_sha in candidate.name:
+            return candidate
+        if sanitized and context.sha and context.sha != "n/a" and context.sha in candidate.name:
+            return candidate
+
+    try:
+        direct_children = [child for child in repo_dir.iterdir() if child.name != "index.html"]
+    except FileNotFoundError:
+        direct_children = []
+
+    if any(child.is_file() for child in direct_children):
+        return repo_dir
+    if (repo_dir / ".github").is_dir():
+        return repo_dir
+    if candidates:
+        return candidates[0]
+    return repo_dir
+
+
+def _relative_repo_path(path: Path, context: Context) -> Optional[str]:
+    diag = context.diag
+    if not diag:
+        return None
+    try:
+        return path.relative_to(diag).as_posix()
+    except ValueError:
+        return _relative_to_diag(path, diag)
+
+
+def _normalize_repo_zip(context: Context) -> None:
+    """Ensure repo.zip lives at the bundle root to avoid legacy aliases."""
+
+    diag = context.diag
+    if not diag:
+        return
+    desired = diag / "repo.zip"
+    if desired.exists():
+        return
+    repo_dir = _repo_directory(context)
+    if not repo_dir:
+        return
+
+    sanitized = _sanitize_repo_name(context)
+    legacy_names: List[str] = []
+    if sanitized:
+        legacy_names.append(f"{sanitized}-{context.short_sha}.zip")
+        if context.sha and context.sha != "n/a":
+            legacy_names.append(f"{sanitized}-{context.sha}.zip")
+    legacy_names.append(f"repo-{context.short_sha}.zip")
+
+    for name in legacy_names:
+        candidate = repo_dir / name
+        if not candidate.exists():
+            continue
+        try:
+            candidate.rename(desired)
+        except OSError:
+            # Professional note: fall back to copying when rename fails, e.g.,
+            # when the artifact lives on a different filesystem. We remove the
+            # legacy file afterward so GitHub Pages only serves the canonical
+            # repo.zip expected by consumers.
+            try:
+                shutil.copyfile(candidate, desired)
+            except OSError:
+                return
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
+        return
 
 
 def _discover_iterate_dir(context: Context) -> Optional[Path]:
@@ -399,51 +529,36 @@ def _batch_status(diag: Optional[Path], context: Context) -> str:
     return "missing"
 
 
-def _ensure_repo_index(diag: Optional[Path]) -> None:
-    """Create repo/index.html when the extracted repository snapshot is present."""
+def _ensure_repo_index(context: Context) -> None:
+    """Create repo/index.html that reflects the run's working tree."""
 
-    if not diag:
+    repo_dir = _repo_directory(context)
+    if not repo_dir:
         return
-    repo_dir = diag / "repo"
-    if not repo_dir.is_dir():
+    repo_root = _resolve_repo_root(context)
+    if not repo_root or not repo_root.exists():
         return
 
     index_path = repo_dir / "index.html"
 
-    # Professional note: always rewrite the landing page so newer runs drop
-    # the legacy `/repo/files/` anchors that older publishers emitted. This
-    # keeps the diagnostics quick link pointing at the actual extracted tree
-    # without asking analysts to clean stale content by hand. Reference:
+    # Professional note: regenerate the landing page from the extracted
+    # working copy so the diagnostics site only exposes the tree Codex
+    # evaluated for this run. GitHub Pages reference:
     # https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages
-    content_roots = [
-        entry
-        for entry in sorted(repo_dir.iterdir())
-        if entry.is_dir() and entry.name != "files"
-    ]
-
-    if not content_roots:
-        legacy_files = repo_dir / "files"
-        if legacy_files.is_dir():
-            # Professional note: support the historical repo/files layout so
-            # older diagnostics remain navigable while we prefer the flattened
-            # paths for new runs. GitHub Pages documentation:
-            # https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages
-            content_roots = [legacy_files]
-        else:
-            content_roots = [repo_dir]
-
     files = [
         path
-        for root in content_roots
-        for path in sorted(root.rglob("*"))
+        for path in sorted(repo_root.rglob("*"))
         if path.is_file()
     ]
 
     rows: List[str] = []
     for file in files:
-        if file == index_path:
+        try:
+            relative = file.relative_to(repo_dir).as_posix()
+        except ValueError:
             continue
-        relative = file.relative_to(repo_dir).as_posix()
+        if relative == "index.html":
+            continue
         href_target = _escape_href(relative) or relative
         rows.append(
             f'<li><a href="./{href_target}">{_escape_html(relative)}</a></li>'
@@ -646,24 +761,47 @@ def _bundle_links(context: Context) -> List[dict]:
                 "path": "batchcheck_fail-debug.txt",
                 "exists": diag and (diag / "batchcheck_fail-debug.txt").exists(),
             },
-            {
-                "label": "Repository zip",
-                "path": f"repo/repo-{context.short_sha}.zip",
-                "exists": bool(
-                    diag
-                    and _nonempty_file(diag / "repo" / f"repo-{context.short_sha}.zip")
-                ),
-            },
-            {
-                "label": "Repository files (unzipped)",
-                "path": "repo/index.html",
-                "exists": diag and (diag / "repo" / "index.html").exists(),
-            },
         ]
     )
-    if diag and (diag / "wf").exists():
-        for file in sorted((diag / "wf").glob("*.yml.txt")):
-            entries.append({"label": f"Workflow: {file.name}", "path": f"wf/{file.name}", "exists": True})
+
+    if diag:
+        repo_zip = diag / "repo.zip"
+        if _nonempty_file(repo_zip):
+            entries.append({
+                "label": "Repository (zip)",
+                "path": "repo.zip",
+                "exists": True,
+            })
+        repo_index = diag / "repo" / "index.html"
+        entries.append(
+            {
+                "label": "Repository (unzipped)",
+                "path": "repo/index.html",
+                "exists": repo_index.exists(),
+            }
+        )
+
+        repo_root = _resolve_repo_root(context)
+        if repo_root and repo_root.exists():
+            workflow_targets = [
+                (
+                    "Workflow: codex-auto-iterate.yml (iterate/publish_diag)",
+                    repo_root / ".github" / "workflows" / "codex-auto-iterate.yml",
+                ),
+                (
+                    "Workflow: batch-check.yml",
+                    repo_root / ".github" / "workflows" / "batch-check.yml",
+                ),
+            ]
+            for label, path in workflow_targets:
+                if path.exists():
+                    entries.append(
+                        {
+                            "label": label,
+                            "path": _relative_to_diag(path, diag),
+                            "exists": True,
+                        }
+                    )
     return entries
 
 
@@ -1124,9 +1262,14 @@ def _build_site_overview(
     inventory_md = f"{bundle_prefix}/inventory.md"
     inventory_json = f"{bundle_prefix}/inventory.json"
     iterate_zip_rel = f"{bundle_prefix}/logs/iterate-{run_id}-{run_attempt}.zip"
-    repo_zip_rel = f"{bundle_prefix}/repo/repo-{context.short_sha}.zip"
+    repo_zip_rel = f"{bundle_prefix}/repo.zip"
     repo_index_rel = f"{bundle_prefix}/repo/index.html"
     batch_ndjson_links = _collect_batch_ndjson_links(context.diag)
+
+    repo_root = _resolve_repo_root(context)
+    repo_root_rel = (
+        _relative_repo_path(repo_root, context) if repo_root and context.diag else None
+    )
 
     ndjson_summary = None
     if artifacts and artifacts.exists():
@@ -1167,8 +1310,20 @@ def _build_site_overview(
     quick_link("Iterate logs zip", iterate_zip_rel)
     for entry in batch_ndjson_links:
         quick_link(entry["label"], f"{bundle_prefix}/{entry['path']}")
-    quick_link("Repository zip", repo_zip_rel)
-    quick_link("Repository files (unzipped)", repo_index_rel)
+    quick_link("Repository (zip)", repo_zip_rel)
+    quick_link("Repository (unzipped)", repo_index_rel)
+    if repo_root_rel:
+        for label, relative in [
+            (
+                "Workflow: codex-auto-iterate.yml (iterate/publish_diag)",
+                f"{repo_root_rel}/.github/workflows/codex-auto-iterate.yml",
+            ),
+            (
+                "Workflow: batch-check.yml",
+                f"{repo_root_rel}/.github/workflows/batch-check.yml",
+            ),
+        ]:
+            quick_link(label, f"{bundle_prefix}/{relative}")
     quick_link("Inventory (markdown)", inventory_md)
 
     if summary_preview:
@@ -1227,10 +1382,23 @@ def _build_site_overview(
         {"label": "Artifact inventory (text)", "path": inventory_txt},
         {"label": "Artifact inventory (JSON)", "path": inventory_json},
         {"label": "Iterate logs zip", "path": iterate_zip_rel},
-        {"label": "Repository zip", "path": repo_zip_rel},
-        {"label": "Repository files (unzipped)", "path": repo_index_rel},
+        {"label": "Repository (zip)", "path": repo_zip_rel},
+        {"label": "Repository (unzipped)", "path": repo_index_rel},
         {"label": "Inventory (markdown)", "path": inventory_md},
     ]
+    if repo_root_rel:
+        quick_link_specs.extend(
+            [
+                {
+                    "label": "Workflow: codex-auto-iterate.yml (iterate/publish_diag)",
+                    "path": f"{bundle_prefix}/{repo_root_rel}/.github/workflows/codex-auto-iterate.yml",
+                },
+                {
+                    "label": "Workflow: batch-check.yml",
+                    "path": f"{bundle_prefix}/{repo_root_rel}/.github/workflows/batch-check.yml",
+                },
+            ]
+        )
     ndjson_specs = [
         {"label": entry["label"], "path": f"{bundle_prefix}/{entry['path']}"}
         for entry in batch_ndjson_links
@@ -1278,7 +1446,8 @@ def _build_site_overview(
 
 def main() -> None:
     context = _get_context()
-    _ensure_repo_index(context.diag)
+    _normalize_repo_zip(context)
+    _ensure_repo_index(context)
     iterate_dir = _discover_iterate_dir(context)
     iterate_temp = _discover_temp_dir(iterate_dir, context)
     now = datetime.now(timezone.utc)
