@@ -320,12 +320,11 @@ def _ensure_repo_index(diag: Optional[Path]) -> None:
         return
 
     index_path = repo_dir / "index.html"
-    if index_path.exists():
-        return
 
-    # Professional note: GitHub Pages does not auto-list directories, so we
-    # seed a tiny landing page that points analysts at the extracted tree and
-    # renders a static file listing. Reference:
+    # Professional note: always rewrite the landing page so newer runs drop
+    # the legacy `/repo/files/` anchors that older publishers emitted. This
+    # keeps the diagnostics quick link pointing at the actual extracted tree
+    # without asking analysts to clean stale content by hand. Reference:
     # https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages
     content_roots = [
         entry
