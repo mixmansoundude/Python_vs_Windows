@@ -840,28 +840,38 @@ def _ensure_iterate_text_mirrors(
             pass
 
     def mirror_json(json_name: str, txt_name: str) -> None:
+        source = _find_iterate_file(iterate_dir, iterate_temp, json_name)
+        if not source or not source.exists():
+            return
+
         present = copy_into_diag(json_name)
         if present:
             json_source = diag_temp / json_name
             if not json_source.exists():
-                original = _find_iterate_file(iterate_dir, iterate_temp, json_name)
-                json_source = original if original else json_source
+                json_source = source
         else:
-            json_source = None
+            json_source = source
 
-        if json_source and json_source.exists():
-            try:
-                parsed = json.loads(json_source.read_text(encoding="utf-8"))
-                pretty = json.dumps(parsed, indent=2, sort_keys=True)
-            except (json.JSONDecodeError, OSError):
-                try:
-                    pretty = json_source.read_text(encoding="utf-8")
-                except OSError:
-                    pretty = "missing"
+        try:
+            raw = json_source.read_text(encoding="utf-8")
+        except OSError:
+            return
+
+        payload: Optional[str]
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = raw
         else:
-            pretty = "missing"
+            payload = json.dumps(parsed, indent=2, sort_keys=True)
 
-        write_text(diag_temp / txt_name, pretty if pretty else "missing")
+        if payload is None:
+            return
+
+        if not payload.endswith("\n"):
+            payload += "\n"
+
+        write_text(diag_temp / txt_name, payload)
 
     copy_into_diag("prompt.txt")
     copy_into_diag("why_no_diff.txt")
