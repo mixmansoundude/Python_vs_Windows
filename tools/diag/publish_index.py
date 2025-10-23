@@ -507,6 +507,103 @@ def _nonempty_file(path: Path) -> bool:
         return False
 
 
+TEXT_COPY_EXTENSIONS = {
+    ".json",
+    ".ndjson",
+    ".yml",
+    ".yaml",
+    ".log",
+    ".txt",
+    ".md",
+    ".html",
+    ".htm",
+}
+
+BINARY_OR_LARGE_EXTENSIONS = {
+    ".zip",
+    ".tar",
+    ".gz",
+    ".tgz",
+    ".bz2",
+    ".xz",
+    ".pdf",
+    ".png",
+    ".jpg",
+    ".jpeg",
+}
+
+
+def ensure_txt_mirror(path: Path) -> Optional[Path]:
+    """Create a .txt sidecar for diagnostics links and return its path."""
+
+    try:
+        if not path.exists() or not path.is_file():
+            return None
+        size = path.stat().st_size
+    except OSError:
+        return None
+
+    mirror = path.with_name(path.name + ".txt")
+    suffix = path.suffix.lower()
+
+    def write_payload(payload: str) -> None:
+        mirror.parent.mkdir(parents=True, exist_ok=True)
+        mirror.write_text(payload, encoding="utf-8")
+
+    try:
+        if suffix == ".json":
+            try:
+                parsed = json.loads(path.read_text(encoding="utf-8"))
+                payload = json.dumps(parsed, indent=2, sort_keys=True) + "\n"
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+                payload = path.read_text(encoding="utf-8", errors="replace")
+            write_payload(payload)
+            return mirror
+
+        if suffix == ".ndjson":
+            lines: List[str] = []
+            try:
+                for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    stripped = raw.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        parsed_line = json.loads(stripped)
+                        lines.append(json.dumps(parsed_line, indent=2, sort_keys=True))
+                    except json.JSONDecodeError:
+                        lines.append(stripped)
+            except OSError:
+                lines = []
+            payload = "\n\n".join(lines) + ("\n" if lines else "missing\n")
+            write_payload(payload)
+            return mirror
+
+        if suffix in TEXT_COPY_EXTENSIONS:
+            # Professional note: retain existing textual formatting for YAML, logs,
+            # and other human-readable files to honor the "txt mirror first" contract.
+            payload = path.read_text(encoding="utf-8", errors="replace")
+            write_payload(payload)
+            return mirror
+
+        if size > 1_000_000 or suffix in BINARY_OR_LARGE_EXTENSIONS:
+            write_payload(f"This is a binary/large file: {path.name}\n")
+            return mirror
+
+        try:
+            payload = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            write_payload(f"This is a binary/large file: {path.name}\n")
+        else:
+            write_payload(payload)
+        return mirror
+    except OSError:
+        try:
+            write_payload(f"This is a binary/large file: {path.name}\n")
+            return mirror
+        except OSError:
+            return None
+
+
 def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
     if not artifacts or not artifacts.exists():
         return 0, None
@@ -598,6 +695,15 @@ def _describe_batch_ndjson_label(filename: str) -> str:
     return f"Batch-check log: {filename}"
 
 
+def _link_entry(diag: Optional[Path], label: str, path: Path) -> Optional[dict]:
+    if not diag:
+        return None
+    if not _nonempty_file(path):
+        return None
+    mirror = ensure_txt_mirror(path)
+    return {"label": label, "path": path, "mirror": mirror}
+
+
 def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
     if not diag:
         return []
@@ -614,7 +720,9 @@ def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
                 continue
             seen.add(rel)
             label = _describe_batch_ndjson_label(path.name)
-            results.append({"label": label, "path": rel})
+            entry = _link_entry(diag, label, path)
+            if entry:
+                results.append(entry)
     return results
 
 
@@ -738,7 +846,7 @@ def _ensure_iterate_text_mirrors(
     mirror_json("first_failure.json", "first_failure.txt")
 
 
-def _summarize_iterate_files(context: Context) -> Tuple[str, List[Path]]:
+def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
     iterate_root = _locate_iterate_root(context)
     roots: List[Path] = []
     if context.diag:
@@ -779,7 +887,8 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[Path]]:
         "first_failure.txt",
         "patch.apply.log",
     ]
-    found: List[Path] = []
+    found: List[dict] = []
+    seen: set[Path] = set()
     for pattern in key_names:
         match: Optional[Path] = None
         for directory in temp_dirs:
@@ -796,7 +905,14 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[Path]]:
                 else:
                     break
         if match:
-            found.append(match)
+            if match not in seen:
+                seen.add(match)
+                found.append(
+                    {
+                        "path": match,
+                        "mirror": ensure_txt_mirror(match),
+                    }
+                )
 
     if not found:
         # Professional note: surface that content exists even if the usual
@@ -859,63 +975,53 @@ def _bundle_links(context: Context) -> List[dict]:
     diag = context.diag
     entries: List[dict] = []
 
-    if diag:
-        inventory_entries = [
-            ("Inventory (HTML)", "inventory.html"),
-            ("Inventory (text)", "inventory.txt"),
-            ("Inventory (markdown)", "inventory.md"),
-            ("Inventory (json)", "inventory.json"),
+    if not diag:
+        return entries
+
+    def add(label: str, relative: str) -> None:
+        entry = _link_entry(diag, label, diag / relative)
+        if entry:
+            entries.append(entry)
+
+    inventory_entries = [
+        ("Inventory (HTML)", "inventory.html"),
+        ("Inventory (text)", "inventory.txt"),
+        ("Inventory (markdown)", "inventory.md"),
+        ("Inventory (json)", "inventory.json"),
+    ]
+    for label, relative in inventory_entries:
+        add(label, relative)
+
+    iterate_zip = diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
+    entry = _link_entry(diag, "Iterate logs zip", iterate_zip)
+    if entry:
+        entries.append(entry)
+
+    entries.extend(_collect_batch_ndjson_links(diag))
+
+    for label, relative in [
+        ("Batch-check failing tests", "batchcheck_failing.txt"),
+        ("Batch-check fail debug", "batchcheck_fail-debug.txt"),
+    ]:
+        add(label, relative)
+
+    repo_zip = diag / "repo.zip"
+    entry = _link_entry(diag, "Repository (zip)", repo_zip)
+    if entry:
+        entries.append(entry)
+    repo_index = diag / "repo" / "index.html"
+    entry = _link_entry(diag, "Repository (unzipped)", repo_index)
+    if entry:
+        entries.append(entry)
+
+    wf_dir = diag / "wf"
+    if wf_dir.exists():
+        workflow_files = [
+            ("Workflow: codex-auto-iterate.yml", "codex-auto-iterate.yml"),
+            ("Workflow: batch-check.yml", "batch-check.yml"),
         ]
-        for label, relative in inventory_entries:
-            candidate = diag / relative
-            if _nonempty_file(candidate):
-                entries.append({"label": label, "path": relative})
-
-        iterate_zip = (
-            diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
-        )
-        if _nonempty_file(iterate_zip):
-            entries.append(
-                {
-                    "label": "Iterate logs zip",
-                    "path": _relative_to_diag(iterate_zip, diag),
-                }
-            )
-
-        entries.extend(_collect_batch_ndjson_links(diag))
-
-        for label, relative in [
-            ("Batch-check failing tests", "batchcheck_failing.txt"),
-            ("Batch-check fail debug", "batchcheck_fail-debug.txt"),
-        ]:
-            candidate = diag / relative
-            if candidate.exists():
-                entries.append({"label": label, "path": relative})
-
-        repo_zip = diag / "repo.zip"
-        if _nonempty_file(repo_zip):
-            entries.append({"label": "Repository (zip)", "path": "repo.zip"})
-        repo_index = diag / "repo" / "index.html"
-        if repo_index.exists():
-            entries.append(
-                {"label": "Repository (unzipped)", "path": "repo/index.html"}
-            )
-
-        wf_dir = diag / "wf"
-        if wf_dir.exists():
-            workflow_files = [
-                ("Workflow: codex-auto-iterate.yml", "codex-auto-iterate.yml"),
-                (
-                    "Workflow: codex-auto-iterate.yml (text)",
-                    "codex-auto-iterate.yml.txt",
-                ),
-                ("Workflow: batch-check.yml", "batch-check.yml"),
-                ("Workflow: batch-check.yml (text)", "batch-check.yml.txt"),
-            ]
-            for label, name in workflow_files:
-                candidate = wf_dir / name
-                if _nonempty_file(candidate):
-                    entries.append({"label": label, "path": f"wf/{name}"})
+        for label, name in workflow_files:
+            add(label, f"wf/{name}")
 
     return entries
 
@@ -1008,11 +1114,22 @@ def _build_markdown(
 
     for entry in _bundle_links(context):
         label = entry["label"]
-        path = entry.get("path")
-        if not path:
+        path_obj: Optional[Path] = entry.get("path")
+        if not path_obj:
             continue
-        normalized = _normalize_link(path)
-        lines.append(f"- {label}: [{normalized}]({normalized})")
+        mirror_obj: Optional[Path] = entry.get("mirror")
+        original_rel = _relative_to_diag(path_obj, diag)
+        original_name = Path(original_rel).name
+        original_href = _normalize_link(original_rel)
+        if mirror_obj:
+            mirror_rel = _relative_to_diag(mirror_obj, diag)
+            mirror_name = Path(mirror_rel).name
+            mirror_href = _normalize_link(mirror_rel)
+            lines.append(
+                f"- {label}: [{mirror_name}]({mirror_href}) ([{original_name}]({original_href}))"
+            )
+        else:
+            lines.append(f"- {label}: [{original_name}]({original_href})")
 
     lines.extend(
         [
@@ -1032,11 +1149,23 @@ def _build_markdown(
 
     if iterate_file_status == "present":
         if iterate_key_files:
-            for file in iterate_key_files:
-                rel = _relative_to_diag(file, diag)
+            for file_entry in iterate_key_files:
+                path_obj: Optional[Path] = file_entry.get("path")
+                if not path_obj:
+                    continue
+                rel = _relative_to_diag(path_obj, diag)
                 normalized = _normalize_link(rel)
-                label = file.name
-                lines.append(f"  - [{label}]({normalized})")
+                label = Path(rel).name
+                mirror_obj: Optional[Path] = file_entry.get("mirror")
+                if mirror_obj:
+                    mirror_rel = _relative_to_diag(mirror_obj, diag)
+                    mirror_norm = _normalize_link(mirror_rel)
+                    mirror_label = Path(mirror_rel).name
+                    lines.append(
+                        f"  - {label}: [{mirror_label}]({mirror_norm}) ([{label}]({normalized}))"
+                    )
+                else:
+                    lines.append(f"  - [{label}]({normalized})")
         else:
             lines.append("  - (prompt/response/why_no_diff not located)")
     else:
@@ -1210,13 +1339,32 @@ def _write_html(
                 html.append("<ul>")
                 if str(value) == "present":
                     if files:
-                        for file in files:
-                            rel = _relative_to_diag(file, diag)
+                        for file_entry in files:
+                            path_obj: Optional[Path] = file_entry.get("path")
+                            if not path_obj:
+                                continue
+                            rel = _relative_to_diag(path_obj, diag)
                             normalized = _normalize_link(rel)
                             href_file = _escape_href(normalized)
-                            html.append(
-                                f"<li><code><a href=\"{href_file}\">{_escape_html(file.name)}</a></code></li>"
-                            )
+                            name_html = _escape_html(Path(rel).name)
+                            mirror_obj: Optional[Path] = file_entry.get("mirror")
+                            if mirror_obj:
+                                mirror_rel = _relative_to_diag(mirror_obj, diag)
+                                mirror_href = _escape_href(_normalize_link(mirror_rel))
+                                mirror_name = _escape_html(Path(mirror_rel).name)
+                                html.append(
+                                    "<li><code><a href=\"{0}\">{1}</a></code> "
+                                    "(<code><a href=\"{2}\">{3}</a></code>)</li>".format(
+                                        mirror_href or "",
+                                        mirror_name,
+                                        href_file or "",
+                                        name_html,
+                                    )
+                                )
+                            else:
+                                html.append(
+                                    f"<li><code><a href=\"{href_file}\">{name_html}</a></code></li>"
+                                )
                     else:
                         html.append("<li>(prompt/response/why_no_diff not located)</li>")
                 else:
@@ -1237,10 +1385,25 @@ def _write_html(
     html.append("<ul>")
     for entry in _bundle_links(context):
         label = _escape_html(entry["label"])
-        path = entry.get("path")
-        if path:
-            href = _escape_href(_normalize_link(path))
-            html.append(f"<li><a href=\"{href}\">{label}</a></li>")
+        path_obj: Optional[Path] = entry.get("path")
+        if not path_obj:
+            continue
+        mirror_obj: Optional[Path] = entry.get("mirror")
+        original_rel = _relative_to_diag(path_obj, diag)
+        original_href = _escape_href(_normalize_link(original_rel))
+        original_name = _escape_html(Path(original_rel).name)
+        if mirror_obj:
+            mirror_rel = _relative_to_diag(mirror_obj, diag)
+            mirror_href = _escape_href(_normalize_link(mirror_rel))
+            mirror_name = _escape_html(Path(mirror_rel).name)
+            html.append(
+                f"<li><strong>{label}:</strong> <a href=\"{mirror_href}\">{mirror_name}</a> "
+                f"(<a href=\"{original_href}\">{original_name}</a>)</li>"
+            )
+        else:
+            html.append(
+                f"<li><strong>{label}:</strong> <a href=\"{original_href}\">{original_name}</a></li>"
+            )
     html.append("</ul>")
     html.append("</section>")
 
@@ -1486,7 +1649,9 @@ def _write_latest_json(context: Context) -> None:
         "iterate": iterate_payload,
     }
 
-    (context.site / "latest.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
+    latest_path = context.site / "latest.json"
+    latest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    ensure_txt_mirror(latest_path)
 
 
 def _has_file(site: Optional[Path], relative: str) -> bool:
@@ -1522,15 +1687,6 @@ def _build_site_overview(
     if response_data and response_data.get("http_status") is not None:
         http_status = str(response_data["http_status"])
 
-    inventory_html = f"{bundle_prefix}/inventory.html"
-    inventory_txt = f"{bundle_prefix}/inventory.txt"
-    inventory_md = f"{bundle_prefix}/inventory.md"
-    inventory_json = f"{bundle_prefix}/inventory.json"
-    iterate_zip_rel = f"{bundle_prefix}/logs/iterate-{run_id}-{run_attempt}.zip"
-    repo_zip_rel = f"{bundle_prefix}/repo.zip"
-    repo_index_rel = f"{bundle_prefix}/repo/index.html"
-    batch_ndjson_links = _collect_batch_ndjson_links(context.diag)
-
     ndjson_summary = None
     if artifacts and artifacts.exists():
         ndjson_summary = next(artifacts.rglob("ndjson_summary.txt"), None)
@@ -1564,25 +1720,30 @@ def _build_site_overview(
 
     quick_link("Bundle index", bundle_index_href)
     quick_link("Open latest (cache-busted)", bundle_index_href)
-    quick_link("Artifact inventory (HTML)", inventory_html)
-    quick_link("Artifact inventory (text)", inventory_txt)
-    quick_link("Artifact inventory (JSON)", inventory_json)
-    quick_link("Iterate logs zip", iterate_zip_rel)
-    for entry in batch_ndjson_links:
-        quick_link(entry["label"], f"{bundle_prefix}/{entry['path']}")
-    quick_link("Repository (zip)", repo_zip_rel)
-    quick_link("Repository (unzipped)", repo_index_rel)
-    for label, relative in [
-        ("Workflow: codex-auto-iterate.yml", f"{bundle_prefix}/wf/codex-auto-iterate.yml"),
-        (
-            "Workflow: codex-auto-iterate.yml (text)",
-            f"{bundle_prefix}/wf/codex-auto-iterate.yml.txt",
-        ),
-        ("Workflow: batch-check.yml", f"{bundle_prefix}/wf/batch-check.yml"),
-        ("Workflow: batch-check.yml (text)", f"{bundle_prefix}/wf/batch-check.yml.txt"),
-    ]:
-        quick_link(label, relative)
-    quick_link("Inventory (markdown)", inventory_md)
+
+    for entry in _bundle_links(context):
+        path_obj: Optional[Path] = entry.get("path")
+        if not path_obj:
+            continue
+        original_rel = _relative_to_diag(path_obj, context.diag)
+        original_url = f"{bundle_prefix}/{original_rel}"
+        if not _has_file(site, original_url.split("?", 1)[0]):
+            continue
+        original_name = Path(original_rel).name
+        mirror_obj: Optional[Path] = entry.get("mirror")
+        if mirror_obj:
+            mirror_rel = _relative_to_diag(mirror_obj, context.diag)
+            mirror_url = f"{bundle_prefix}/{mirror_rel}"
+            if _has_file(site, mirror_url.split("?", 1)[0]):
+                mirror_name = Path(mirror_rel).name
+                lines.append(
+                    f"- {entry['label']}: [{mirror_name}]({_normalize_link(mirror_url)}) "
+                    f"([{original_name}]({_normalize_link(original_url)}))"
+                )
+                continue
+        lines.append(
+            f"- {entry['label']}: [{original_name}]({_normalize_link(original_url)})"
+        )
 
     if summary_preview:
         lines.append("")
@@ -1633,58 +1794,44 @@ def _build_site_overview(
     html_lines.append("</ul>")
     html_lines.append("</section>")
 
-    quick_link_specs = [
-        {"label": "Bundle index", "path": bundle_index_href},
-        {"label": "Open latest (cache-busted)", "path": bundle_index_href},
-        {"label": "Artifact inventory (HTML)", "path": inventory_html},
-        {"label": "Artifact inventory (text)", "path": inventory_txt},
-        {"label": "Artifact inventory (JSON)", "path": inventory_json},
-        {"label": "Iterate logs zip", "path": iterate_zip_rel},
-        {"label": "Repository (zip)", "path": repo_zip_rel},
-        {"label": "Repository (unzipped)", "path": repo_index_rel},
-        {"label": "Inventory (markdown)", "path": inventory_md},
-    ]
-    quick_link_specs.extend(
-        [
-            {
-                "label": "Workflow: codex-auto-iterate.yml",
-                "path": f"{bundle_prefix}/wf/codex-auto-iterate.yml",
-            },
-            {
-                "label": "Workflow: codex-auto-iterate.yml (text)",
-                "path": f"{bundle_prefix}/wf/codex-auto-iterate.yml.txt",
-            },
-            {
-                "label": "Workflow: batch-check.yml",
-                "path": f"{bundle_prefix}/wf/batch-check.yml",
-            },
-            {
-                "label": "Workflow: batch-check.yml (text)",
-                "path": f"{bundle_prefix}/wf/batch-check.yml.txt",
-            },
-        ]
-    )
-    ndjson_specs = [
-        {"label": entry["label"], "path": f"{bundle_prefix}/{entry['path']}"}
-        for entry in batch_ndjson_links
-    ]
-    if ndjson_specs:
-        insert_at = 5
-        quick_link_specs[insert_at:insert_at] = ndjson_specs
-
     html_lines.append("<section>")
     html_lines.append("<h2>Quick links</h2>")
     html_lines.append("<ul>")
-    filtered_specs = [
-        spec
-        for spec in quick_link_specs
-        if spec.get("path") and _has_file(site, spec["path"].split("?", 1)[0])
-    ]
-    for spec in filtered_specs:
-        label = _escape_html(spec["label"])
-        path = spec.get("path")
+    for label, path in [
+        ("Bundle index", bundle_index_href),
+        ("Open latest (cache-busted)", bundle_index_href),
+    ]:
+        if path and _has_file(site, path.split("?", 1)[0]):
+            html_lines.append(
+                f"<li><a href=\"{_escape_href(_normalize_link(path))}\">{_escape_html(label)}</a></li>"
+            )
+
+    for entry in _bundle_links(context):
+        path_obj: Optional[Path] = entry.get("path")
+        if not path_obj:
+            continue
+        original_rel = _relative_to_diag(path_obj, context.diag)
+        original_url = f"{bundle_prefix}/{original_rel}"
+        if not _has_file(site, original_url.split("?", 1)[0]):
+            continue
+        original_href = _escape_href(_normalize_link(original_url))
+        original_name = _escape_html(Path(original_rel).name)
+        mirror_obj: Optional[Path] = entry.get("mirror")
+        if mirror_obj:
+            mirror_rel = _relative_to_diag(mirror_obj, context.diag)
+            mirror_url = f"{bundle_prefix}/{mirror_rel}"
+            if _has_file(site, mirror_url.split("?", 1)[0]):
+                mirror_href = _escape_href(_normalize_link(mirror_url))
+                mirror_name = _escape_html(Path(mirror_rel).name)
+                html_lines.append(
+                    f"<li><strong>{_escape_html(entry['label'])}:</strong> "
+                    f"<a href=\"{mirror_href}\">{mirror_name}</a> "
+                    f"(<a href=\"{original_href}\">{original_name}</a>)</li>"
+                )
+                continue
         html_lines.append(
-            f"<li><a href=\"{_escape_href(_normalize_link(path))}\">{label}</a></li>"
+            f"<li><strong>{_escape_html(entry['label'])}:</strong> "
+            f"<a href=\"{original_href}\">{original_name}</a></li>"
         )
     html_lines.append("</ul>")
     html_lines.append("</section>")
