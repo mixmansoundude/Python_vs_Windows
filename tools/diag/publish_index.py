@@ -440,7 +440,11 @@ def _relative_to_diag(path: Path, diag: Optional[Path]) -> str:
     try:
         return path.relative_to(diag).as_posix()
     except ValueError:
-        return path.as_posix()
+        try:
+            rel = os.path.relpath(path, start=diag)
+        except Exception:
+            return path.as_posix()
+        return Path(rel).as_posix()
 
 
 def _gather_iterate_tokens(
@@ -684,17 +688,6 @@ def _ensure_repo_index(context: Context) -> None:
     index_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _describe_batch_ndjson_label(filename: str) -> str:
-    lower = filename.lower()
-    if "cache" in lower:
-        return "Batch-check NDJSON (cache)"
-    if lower.endswith(".ndjson"):
-        return "Batch-check NDJSON"
-    if lower.endswith(".ndjson.zip") or lower.endswith(".zip"):
-        return "Batch-check NDJSON"
-    return f"Batch-check log: {filename}"
-
-
 def _link_entry(diag: Optional[Path], label: str, path: Path) -> Optional[dict]:
     if not diag:
         return None
@@ -709,20 +702,52 @@ def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
         return []
 
     results: List[dict] = []
-    seen: set[str] = set()
-    candidates = [diag / "logs", diag / "_artifacts" / "batch-check"]
-    for root in candidates:
-        if not root or not root.exists():
-            continue
-        for path in sorted(root.rglob("*.ndjson")):
-            rel = _relative_to_diag(path, diag)
-            if rel in seen:
+    seen_paths: set[Path] = set()
+
+    def search_for(name: str, prefer_cache: bool) -> Optional[Path]:
+        """Locate a specific NDJSON file while honoring cache vs real lanes."""
+
+        candidates = [diag / "logs", diag / "_artifacts" / "batch-check"]
+        for root in candidates:
+            if not root or not root.exists():
                 continue
-            seen.add(rel)
-            label = _describe_batch_ndjson_label(path.name)
-            entry = _link_entry(diag, label, path)
-            if entry:
-                results.append(entry)
+            for path in sorted(root.rglob(name)):
+                rel = _relative_to_diag(path, diag).lower()
+                if prefer_cache and "cache" not in rel:
+                    continue
+                if not prefer_cache and "cache" in rel:
+                    continue
+                return path
+        return None
+
+    # Professional note: expose at most one unzipped NDJSON per cache/real lane
+    # so the diagnostics quick links stay aligned with the published file list.
+    ndjson_targets = [
+        ("cache", "ci_test_results.ndjson"),
+        ("cache", "~test-results.ndjson"),
+        ("real", "ci_test_results.ndjson"),
+        ("real", "~test-results.ndjson"),
+    ]
+
+    for lane, filename in ndjson_targets:
+        prefer_cache = lane == "cache"
+        path = search_for(filename, prefer_cache)
+        if not path or path in seen_paths:
+            continue
+        seen_paths.add(path)
+        label = (
+            "Batch-check NDJSON (cache)"
+            if prefer_cache
+            else "Batch-check NDJSON (real)"
+        )
+        if filename.startswith("~"):
+            label += " ~test-results"
+        else:
+            label += " ci_test_results"
+        entry = _link_entry(diag, label, path)
+        if entry:
+            results.append(entry)
+
     return results
 
 
@@ -992,6 +1017,25 @@ def _bundle_links(context: Context) -> List[dict]:
     for label, relative in inventory_entries:
         add(label, relative)
 
+    if context.site and context.diag:
+        # Professional note: surface the site-level manifests so analysts can
+        # retrieve the JSON/TXT snapshots directly from the diagnostics page.
+        site_links = [
+            ("Latest manifest (json)", context.site / "latest.json"),
+            ("Latest manifest (txt)", context.site / "latest.txt"),
+        ]
+        for label, site_path in site_links:
+            if not site_path.exists():
+                continue
+            mirror = ensure_txt_mirror(site_path)
+            entries.append(
+                {
+                    "label": label,
+                    "path": site_path,
+                    "mirror": mirror,
+                }
+            )
+
     iterate_zip = diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
     entry = _link_entry(diag, "Iterate logs zip", iterate_zip)
     if entry:
@@ -1203,10 +1247,24 @@ def _build_markdown(
         lines.append("")
         lines.append("## File listing")
         for file in diag_files:
+            if file.suffix == ".txt":
+                candidate = file.with_name(file.stem)
+                if candidate.exists():
+                    continue
             rel = _relative_to_diag(file, diag)
-            size = f"{file.stat().st_size:,}"
             normalized = _normalize_link(rel)
-            lines.append(f"- [{size} bytes]({normalized})")
+            display_name = Path(rel).name
+            size = f"{file.stat().st_size:,} bytes"
+            mirror_obj = ensure_txt_mirror(file)
+            if mirror_obj and mirror_obj.exists():
+                mirror_rel = _relative_to_diag(mirror_obj, diag)
+                mirror_link = _normalize_link(mirror_rel)
+                mirror_name = Path(mirror_rel).name
+                lines.append(
+                    f"- [{mirror_name}]({mirror_link}) ([{display_name}]({normalized})) — {size}"
+                )
+            else:
+                lines.append(f"- [{display_name}]({normalized}) — {size}")
 
     inventory_lines = _inventory_lines(context.inventory_b64)
     if inventory_lines:
@@ -1452,11 +1510,32 @@ def _write_html(
         html.append("<h2>File listing</h2>")
         html.append("<ul>")
         for file in diag_files:
-            rel = _normalize_link(_relative_to_diag(file, diag))
-            href = _escape_href(rel)
-            text = _escape_html(rel)
+            if file.suffix == ".txt":
+                candidate = file.with_name(file.stem)
+                if candidate.exists():
+                    continue
+            rel = _relative_to_diag(file, diag)
+            normalized = _normalize_link(rel)
+            href = _escape_href(normalized)
+            text = _escape_html(Path(rel).as_posix())
             size = _escape_html(f"{file.stat().st_size:,} bytes")
-            html.append(f"<li><a href=\"{href}\">{text}</a> — {size}</li>")
+            mirror_obj = ensure_txt_mirror(file)
+            if mirror_obj and mirror_obj.exists():
+                mirror_rel = _relative_to_diag(mirror_obj, diag)
+                mirror_norm = _normalize_link(mirror_rel)
+                mirror_href = _escape_href(mirror_norm)
+                mirror_text = _escape_html(Path(mirror_rel).as_posix())
+                html.append(
+                    "<li><a href=\"{0}\">{1}</a> (<a href=\"{2}\">{3}</a>) — {4}</li>".format(
+                        mirror_href or "",
+                        mirror_text,
+                        href or "",
+                        text,
+                        size,
+                    )
+                )
+            else:
+                html.append(f"<li><a href=\"{href}\">{text}</a> — {size}</li>")
         html.append("</ul>")
         html.append("</section>")
 
@@ -1703,6 +1782,7 @@ def _write_latest_json(context: Context) -> None:
     if flat_lines:
         latest_txt_payload += "\n"
     latest_txt_path.write_text(latest_txt_payload, encoding="utf-8")
+    ensure_txt_mirror(latest_txt_path)
 
 
 def _has_file(site: Optional[Path], relative: str) -> bool:
@@ -1922,6 +2002,9 @@ def main() -> None:
     why_outcome = _read_iterate_first_line(iterate_dir, iterate_temp, "why_no_diff.txt")
     _ensure_iterate_text_mirrors(context, iterate_dir, iterate_temp)
 
+    if context.site:
+        _write_latest_json(context)
+
     diag_markdown = _build_markdown(
         context,
         iterate_dir,
@@ -1954,7 +2037,6 @@ def main() -> None:
         )
         _write_markdown(context.site / "index.md", site_markdown)
         (context.site / "index.html").write_text(site_html, encoding="utf-8")
-        _write_latest_json(context)
 
 
 if __name__ == "__main__":
