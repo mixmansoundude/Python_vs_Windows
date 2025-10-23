@@ -482,51 +482,6 @@ def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
     return len(files), missing_note
 
 
-def _iterate_status(context: Context) -> Tuple[str, Optional[str]]:
-    """Return the legacy iterate-log status consumed by downstream dashboards."""
-
-    artifacts = context.artifacts
-    iterate_root: Optional[Path] = None
-    if artifacts:
-        iterate_root = artifacts / "iterate"
-        expected = (
-            iterate_root
-            / f"iterate-logs-{context.run_id}-{context.run_attempt}"
-        )
-        if expected.exists():
-            return "found", None
-
-        if iterate_root.exists():
-            metadata_names = (
-                "decision.txt",
-                "model.txt",
-                "http_status.txt",
-                "response.json",
-                "iterate_status.json",
-                "why_no_diff.txt",
-            )
-            if any((iterate_root / name).exists() for name in metadata_names):
-                # Professional note: actions/download-artifact@v4 can hydrate the
-                # iterate payload directly into ARTIFACTS/iterate without the
-                # iterate-logs-* wrapper directory. Treat that layout as a
-                # successful artifact download so the legacy status stays
-                # aligned with the contract documented in AGENTS.md.
-                return "found", None
-
-            temp_dir = iterate_root / "_temp"
-            for candidate in temp_dir.rglob("*") if temp_dir.exists() else []:
-                if candidate.is_file():
-                    return "found", None
-
-    # Professional note: maintain the traditional hint but surface it outside
-    # the parser-facing bullet to keep downstream consumers stable. GitHub
-    # Actions job summaries render Markdown bullets per
-    # https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/using-job-summaries
-    # and artifact names follow the public contract at
-    # https://docs.github.com/en/actions/using-workflows/storing-workflow-data-as-artifacts.
-    return "missing", "see logs/iterate.MISSING.txt"
-
-
 def _batch_status(diag: Optional[Path], context: Context) -> str:
     run_id = context.batch_run_id
     attempt = context.batch_run_attempt or "n/a"
@@ -831,6 +786,23 @@ def _build_markdown(
     diag = context.diag
     artifacts = context.artifacts
 
+    # Professional note: honor the "Simplify diagnostics" directive by basing the
+    # parser-facing signal solely on the iterate-logs artifact directory for this
+    # run. Avoid consulting legacy run-log zips so downstream dashboards receive a
+    # consistent contract.
+    iterate_found = False
+    if artifacts:
+        try:
+            iterate_found = (
+                artifacts
+                / "iterate"
+                / f"iterate-logs-{context.run_id}-{context.run_attempt}"
+            ).exists()
+        except OSError:
+            iterate_found = False
+    iterate_log_status = "found" if iterate_found else "missing"
+    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
+
     def read_value(name: str) -> str:
         return _read_iterate_text(iterate_dir, iterate_temp, name)
 
@@ -863,7 +835,6 @@ def _build_markdown(
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
-    iterate_log_status, iterate_hint = _iterate_status(context)
     batch_status = _batch_status(diag, context)
     lines: List[str] = []
 
@@ -1000,6 +971,21 @@ def _write_html(
     diag = context.diag
     artifacts = context.artifacts
 
+    # Professional note: mirror the Markdown status logic here so HTML renders the
+    # same parser-facing state derived from the iterate-logs artifact directory.
+    iterate_found = False
+    if artifacts:
+        try:
+            iterate_found = (
+                artifacts
+                / "iterate"
+                / f"iterate-logs-{context.run_id}-{context.run_attempt}"
+            ).exists()
+        except OSError:
+            iterate_found = False
+    iterate_log_status = "found" if iterate_found else "missing"
+    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
+
     def read_value(name: str) -> str:
         return _read_iterate_text(iterate_dir, iterate_temp, name)
 
@@ -1029,7 +1015,6 @@ def _write_html(
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
-    iterate_log_status, iterate_hint = _iterate_status(context)
     batch_status = _batch_status(diag, context)
     diag_files = _diag_files(diag)
 
