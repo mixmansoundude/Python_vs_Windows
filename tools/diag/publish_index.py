@@ -1491,9 +1491,16 @@ def _write_latest_json(context: Context) -> None:
         return
 
     bundle_prefix = f"diag/{context.run_id}-{context.run_attempt}"
-    iterate_dir = _discover_iterate_dir(context)
-    iterate_temp = _discover_temp_dir(iterate_dir, context)
-    iterate_found = iterate_dir is not None
+    iterate_dir_candidate = _discover_iterate_dir(context)
+    # Professional note: reuse the shared iterate detection so latest.json mirrors
+    # the parser-facing status line and avoids diverging on empty artifacts.
+    iterate_found = _iterate_logs_found(context)
+    iterate_dir = iterate_dir_candidate if iterate_found else None
+    iterate_temp = (
+        _discover_temp_dir(iterate_dir_candidate, context)
+        if iterate_found
+        else None
+    )
 
     diag_iterate_root = context.diag / "_artifacts" / "iterate" if context.diag else None
 
@@ -1531,6 +1538,8 @@ def _write_latest_json(context: Context) -> None:
         add_diag(diag_iterate_root)
 
     def diag_iterate_path(name: str) -> Optional[Path]:
+        if not iterate_found:
+            return None
         for root in diag_lookup_dirs:
             candidate = root / name
             if candidate.exists():
@@ -1607,8 +1616,12 @@ def _write_latest_json(context: Context) -> None:
         "status_json": diag_href(status_json_path) if iterate_found else None,
         "status_txt": diag_href(status_txt_path) if iterate_found else None,
         "why_no_diff": diag_href(why_path) if iterate_found else None,
-        "first_failure_json": diag_href(first_failure_json_path) if iterate_found else None,
-        "first_failure_txt": diag_href(first_failure_txt_path) if iterate_found else None,
+        "first_failure_json": diag_href(first_failure_json_path)
+        if iterate_found
+        else None,
+        "first_failure_txt": diag_href(first_failure_txt_path)
+        if iterate_found
+        else None,
         "patch_apply_log": diag_href(patch_apply_log_path) if iterate_found else None,
         "diff": diag_href(diff_path) if iterate_found else None,
         "log": diag_href(exec_log_path) if iterate_found else None,
@@ -1623,6 +1636,7 @@ def _write_latest_json(context: Context) -> None:
     if not iterate_found:
         iterate_payload.update(
             {
+                "directory": None,
                 "prompt": None,
                 "response": None,
                 "response_json": None,
@@ -1652,6 +1666,43 @@ def _write_latest_json(context: Context) -> None:
     latest_path = context.site / "latest.json"
     latest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     ensure_txt_mirror(latest_path)
+
+    latest_txt_path = context.site / "latest.txt"
+    # Professional note: keep a flat text manifest so lightweight clients can
+    # resolve diagnostics links without parsing JSON.
+    flat_lines: List[str] = []
+
+    def add_line(key: str, value: Optional[str]) -> None:
+        if isinstance(value, str) and value:
+            flat_lines.append(f"{key}={value}")
+
+    add_line("bundle_url", data.get("bundle_url"))
+    add_line("inventory", data.get("inventory"))
+    add_line("workflow", data.get("workflow"))
+
+    iterate_section = data.get("iterate")
+    if isinstance(iterate_section, dict):
+        for key in [
+            "directory",
+            "prompt",
+            "response",
+            "response_json",
+            "response_txt",
+            "status_json",
+            "status_txt",
+            "why_no_diff",
+            "first_failure_json",
+            "first_failure_txt",
+            "patch_apply_log",
+            "diff",
+            "log",
+        ]:
+            add_line(f"iterate.{key}", iterate_section.get(key))
+
+    latest_txt_payload = "\n".join(flat_lines)
+    if flat_lines:
+        latest_txt_payload += "\n"
+    latest_txt_path.write_text(latest_txt_payload, encoding="utf-8")
 
 
 def _has_file(site: Optional[Path], relative: str) -> bool:
