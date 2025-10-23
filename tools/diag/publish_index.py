@@ -1342,21 +1342,137 @@ def _validate_iterate_status_line(markdown: str) -> None:
 def _write_latest_json(context: Context) -> None:
     if not (context.site and context.diag):
         return
+
+    bundle_prefix = f"diag/{context.run_id}-{context.run_attempt}"
+    iterate_dir = _discover_iterate_dir(context)
+    iterate_temp = _discover_temp_dir(iterate_dir, context)
+    iterate_found = iterate_dir is not None
+
+    diag_iterate_root = context.diag / "_artifacts" / "iterate" if context.diag else None
+    diag_iterate_temp = diag_iterate_root / "_temp" if diag_iterate_root else None
+
+    def diag_iterate_path(name: str) -> Optional[Path]:
+        roots = [diag_iterate_temp, diag_iterate_root]
+        for root in roots:
+            if not root:
+                continue
+            candidate = root / name
+            if candidate.exists():
+                return candidate
+        if diag_iterate_root and diag_iterate_root.exists():
+            try:
+                return next(
+                    candidate
+                    for candidate in diag_iterate_root.rglob(name)
+                    if candidate.is_file()
+                )
+            except StopIteration:
+                return None
+        return None
+
+    def diag_href(path: Optional[Path]) -> Optional[str]:
+        if not path or not context.diag:
+            return None
+        try:
+            relative = path.relative_to(context.diag).as_posix()
+        except ValueError:
+            return None
+        return f"{bundle_prefix}/{relative}"
+
+    response_data = _load_iterate_json(iterate_dir, iterate_temp, "response.json")
+    status_data = _load_iterate_json(iterate_dir, iterate_temp, "iterate_status.json")
+    why_outcome = _read_iterate_first_line(iterate_dir, iterate_temp, "why_no_diff.txt")
+
+    model_value: Optional[str] = None
+    if response_data and response_data.get("model") is not None:
+        model_value = str(response_data["model"])
+    elif iterate_found:
+        model_text = _read_iterate_text(iterate_dir, iterate_temp, "model.txt")
+        model_value = model_text if model_text != "n/a" else None
+
+    http_status_value: Optional[str] = None
+    if response_data and response_data.get("http_status") is not None:
+        http_status_value = str(response_data["http_status"])
+    elif status_data and status_data.get("http_status") is not None:
+        http_status_value = str(status_data["http_status"])
+    elif iterate_found:
+        http_text = _read_iterate_text(iterate_dir, iterate_temp, "http_status.txt")
+        http_status_value = http_text if http_text != "n/a" else None
+
+    tokens_data = (
+        _gather_iterate_tokens(iterate_dir, iterate_temp, response_data)
+        if iterate_found
+        else {"prompt": "n/a", "completion": "n/a", "total": "n/a"}
+    )
+
+    iterate_directory_href = (
+        diag_href(diag_iterate_root) if diag_iterate_root and diag_iterate_root.exists() else None
+    )
+
+    prompt_path = diag_iterate_path("prompt.txt")
+    response_json_path = diag_iterate_path("response.json")
+    response_txt_path = diag_iterate_path("response.txt")
+    status_json_path = diag_iterate_path("iterate_status.json")
+    status_txt_path = diag_iterate_path("iterate_status.txt")
+    why_path = diag_iterate_path("why_no_diff.txt")
+    first_failure_json_path = diag_iterate_path("first_failure.json")
+    first_failure_txt_path = diag_iterate_path("first_failure.txt")
+    patch_apply_log_path = diag_iterate_path("patch.apply.log")
+    diff_path = diag_iterate_path("patch.diff")
+    exec_log_path = diag_iterate_path("exec.log")
+
+    iterate_payload = {
+        "found": iterate_found,
+        "directory": iterate_directory_href if iterate_found else None,
+        "prompt": diag_href(prompt_path) if iterate_found else None,
+        "response": diag_href(response_json_path) if iterate_found else None,
+        "response_json": diag_href(response_json_path) if iterate_found else None,
+        "response_txt": diag_href(response_txt_path) if iterate_found else None,
+        "status_json": diag_href(status_json_path) if iterate_found else None,
+        "status_txt": diag_href(status_txt_path) if iterate_found else None,
+        "why_no_diff": diag_href(why_path) if iterate_found else None,
+        "first_failure_json": diag_href(first_failure_json_path) if iterate_found else None,
+        "first_failure_txt": diag_href(first_failure_txt_path) if iterate_found else None,
+        "patch_apply_log": diag_href(patch_apply_log_path) if iterate_found else None,
+        "diff": diag_href(diff_path) if iterate_found else None,
+        "log": diag_href(exec_log_path) if iterate_found else None,
+        "metadata": {
+            "model": model_value,
+            "http_status": http_status_value,
+            "tokens": tokens_data,
+            "outcome": why_outcome,
+        },
+    }
+
+    if not iterate_found:
+        iterate_payload.update(
+            {
+                "prompt": None,
+                "response": None,
+                "response_json": None,
+                "response_txt": None,
+                "status_json": None,
+                "status_txt": None,
+                "why_no_diff": None,
+                "first_failure_json": None,
+                "first_failure_txt": None,
+                "patch_apply_log": None,
+                "diff": None,
+                "log": None,
+            }
+        )
+
     data = {
         "repo": context.repo,
         "run_id": context.run_id,
         "run_attempt": context.run_attempt,
         "sha": context.sha,
-        "bundle_url": f"diag/{context.run_id}-{context.run_attempt}/index.html",
-        "inventory": f"diag/{context.run_id}-{context.run_attempt}/inventory.json",
-        "workflow": f"diag/{context.run_id}-{context.run_attempt}/wf/codex-auto-iterate.yml.txt",
-        "iterate": {
-            "prompt": f"diag/{context.run_id}-{context.run_attempt}/_artifacts/iterate/iterate/prompt.txt",
-            "response": f"diag/{context.run_id}-{context.run_attempt}/_artifacts/iterate/iterate/response.json",
-            "diff": f"diag/{context.run_id}-{context.run_attempt}/_artifacts/iterate/iterate/patch.diff",
-            "log": f"diag/{context.run_id}-{context.run_attempt}/_artifacts/iterate/iterate/exec.log",
-        },
+        "bundle_url": f"{bundle_prefix}/index.html",
+        "inventory": f"{bundle_prefix}/inventory.json",
+        "workflow": f"{bundle_prefix}/wf/codex-auto-iterate.yml.txt",
+        "iterate": iterate_payload,
     }
+
     (context.site / "latest.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
