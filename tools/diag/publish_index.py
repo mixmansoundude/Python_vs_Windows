@@ -485,25 +485,38 @@ def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
 def _iterate_status(context: Context) -> Tuple[str, Optional[str]]:
     """Return the legacy iterate-log status consumed by downstream dashboards."""
 
-    diag = context.diag
     artifacts = context.artifacts
+    iterate_root: Optional[Path] = None
     if artifacts:
+        iterate_root = artifacts / "iterate"
         expected = (
-            artifacts
-            / "iterate"
+            iterate_root
             / f"iterate-logs-{context.run_id}-{context.run_attempt}"
         )
         if expected.exists():
             return "found", None
 
-    iterate_zip: Optional[Path]
-    if diag:
-        iterate_zip = diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
-    else:
-        iterate_zip = None
+        if iterate_root.exists():
+            metadata_names = (
+                "decision.txt",
+                "model.txt",
+                "http_status.txt",
+                "response.json",
+                "iterate_status.json",
+                "why_no_diff.txt",
+            )
+            if any((iterate_root / name).exists() for name in metadata_names):
+                # Professional note: actions/download-artifact@v4 can hydrate the
+                # iterate payload directly into ARTIFACTS/iterate without the
+                # iterate-logs-* wrapper directory. Treat that layout as a
+                # successful artifact download so the legacy status stays
+                # aligned with the contract documented in AGENTS.md.
+                return "found", None
 
-    if iterate_zip and iterate_zip.exists():
-        return "found", None
+            temp_dir = iterate_root / "_temp"
+            for candidate in temp_dir.rglob("*") if temp_dir.exists() else []:
+                if candidate.is_file():
+                    return "found", None
 
     # Professional note: maintain the traditional hint but surface it outside
     # the parser-facing bullet to keep downstream consumers stable. GitHub
