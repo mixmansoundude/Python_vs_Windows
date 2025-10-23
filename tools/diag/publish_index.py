@@ -591,6 +591,8 @@ def _describe_batch_ndjson_label(filename: str) -> str:
     lower = filename.lower()
     if "cache" in lower:
         return "Batch-check NDJSON (cache)"
+    if lower.endswith(".ndjson"):
+        return "Batch-check NDJSON"
     if lower.endswith(".ndjson.zip") or lower.endswith(".zip"):
         return "Batch-check NDJSON"
     return f"Batch-check log: {filename}"
@@ -601,36 +603,18 @@ def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
         return []
 
     results: List[dict] = []
-    seen_zip: set[str] = set()
-    seen_plain: set[str] = set()
+    seen: set[str] = set()
     candidates = [diag / "logs", diag / "_artifacts" / "batch-check"]
     for root in candidates:
         if not root or not root.exists():
             continue
-        for path in sorted(root.rglob("*.zip")):
-            if "ndjson" not in path.name.lower():
-                continue
-            # Professional note: only surface bundles that actually shipped in
-            # this run so the published links stay accurate when cache or run
-            # payloads are absent.
+        for path in sorted(root.rglob("*.ndjson")):
             rel = _relative_to_diag(path, diag)
-            if rel in seen_zip:
+            if rel in seen:
                 continue
-            seen_zip.add(rel)
+            seen.add(rel)
             label = _describe_batch_ndjson_label(path.name)
-            results.append({
-                "label": label,
-                "path": rel,
-            })
-            plain = path.with_suffix("")
-            if plain.exists() and plain.is_file():
-                plain_rel = _relative_to_diag(plain, diag)
-                if plain_rel not in seen_plain:
-                    seen_plain.add(plain_rel)
-                    results.append({
-                        "label": f"{label} (unzipped)",
-                        "path": plain_rel,
-                    })
+            results.append({"label": label, "path": rel})
     return results
 
 
@@ -1349,13 +1333,42 @@ def _write_latest_json(context: Context) -> None:
     iterate_found = iterate_dir is not None
 
     diag_iterate_root = context.diag / "_artifacts" / "iterate" if context.diag else None
-    diag_iterate_temp = diag_iterate_root / "_temp" if diag_iterate_root else None
+
+    diag_lookup_dirs: List[Path] = []
+    seen_diag: set[Path] = set()
+
+    def add_diag(path: Optional[Path]) -> None:
+        if not path:
+            return
+        try:
+            if not path.exists() or not path.is_dir():
+                return
+        except OSError:
+            return
+        if path not in seen_diag:
+            diag_lookup_dirs.append(path)
+            seen_diag.add(path)
+
+    if diag_iterate_root and diag_iterate_root.exists():
+        # Professional note: prefer the mirrored _temp directory so diagnostics
+        # link to the same iterate payload analysts inspect. This mirrors the
+        # iterate/_temp layout while still supporting legacy nested bundles.
+        add_diag(diag_iterate_root / "_temp")
+        if iterate_dir:
+            add_diag(diag_iterate_root / iterate_dir.name / "_temp")
+            add_diag(diag_iterate_root / iterate_dir.name)
+        try:
+            for child in sorted(diag_iterate_root.iterdir()):
+                if not child.is_dir():
+                    continue
+                add_diag(child / "_temp")
+                add_diag(child)
+        except OSError:
+            pass
+        add_diag(diag_iterate_root)
 
     def diag_iterate_path(name: str) -> Optional[Path]:
-        roots = [diag_iterate_temp, diag_iterate_root]
-        for root in roots:
-            if not root:
-                continue
+        for root in diag_lookup_dirs:
             candidate = root / name
             if candidate.exists():
                 return candidate
