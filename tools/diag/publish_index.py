@@ -85,6 +85,49 @@ def _first_child_directory(root: Path) -> Optional[Path]:
         return None
 
 
+ITERATE_METADATA_FILENAMES = (
+    "decision.txt",
+    "model.txt",
+    "http_status.txt",
+    "response.json",
+    "iterate_status.json",
+    "why_no_diff.txt",
+)
+
+
+def _iterate_logs_found(context: Context) -> bool:
+    """Return True when the iterate-logs artifact actually exists."""
+
+    artifacts = context.artifacts
+    if not artifacts:
+        return False
+
+    iterate_root = artifacts / "iterate"
+    if not iterate_root.exists():
+        return False
+
+    expected = iterate_root / f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    if expected.exists():
+        return True
+
+    # Professional note: actions/download-artifact@v4 can unpack the payload
+    # directly under the iterate root instead of a named iterate-logs-*
+    # directory. Treat the root as present when metadata files land there so we
+    # continue reporting success for flattened artifacts.
+    if any((iterate_root / name).exists() for name in ITERATE_METADATA_FILENAMES):
+        return True
+
+    temp_dir = iterate_root / "_temp"
+    try:
+        for candidate in temp_dir.rglob("*"):
+            if candidate.is_file():
+                return True
+    except FileNotFoundError:
+        pass
+
+    return False
+
+
 def _repo_directory(context: Context) -> Optional[Path]:
     diag = context.diag
     if not diag:
@@ -222,16 +265,7 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
     if not iterate_root.exists():
         return None
 
-    metadata_names = (
-        "decision.txt",
-        "model.txt",
-        "http_status.txt",
-        "response.json",
-        "iterate_status.json",
-        "why_no_diff.txt",
-    )
-
-    if any((iterate_root / name).exists() for name in metadata_names):
+    if any((iterate_root / name).exists() for name in ITERATE_METADATA_FILENAMES):
         # Professional note: actions/download-artifact@v4 can unpack iterate metadata directly
         # into the root without an intermediate iterate-logs-* directory. Honor that layout so
         # diagnostics capture the files instead of defaulting to the child _temp directory.
@@ -587,7 +621,6 @@ def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
             results.append({
                 "label": label,
                 "path": rel,
-                "exists": True,
             })
             plain = path.with_suffix("")
             if plain.exists() and plain.is_file():
@@ -597,7 +630,6 @@ def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
                     results.append({
                         "label": f"{label} (unzipped)",
                         "path": plain_rel,
-                        "exists": True,
                     })
     return results
 
@@ -644,12 +676,103 @@ def _discover_iterate_temp_dirs(iterate_root: Path) -> List[Path]:
     return candidates
 
 
+def _ensure_iterate_text_mirrors(
+    context: Context, iterate_dir: Optional[Path], iterate_temp: Optional[Path]
+) -> None:
+    """Materialize iterate JSON mirrors (.txt) for the diagnostics bundle."""
+
+    diag = context.diag
+    if not diag:
+        return
+
+    diag_iterate_root = diag / "_artifacts" / "iterate"
+    diag_temp = diag_iterate_root / "_temp"
+    try:
+        diag_temp.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    def copy_into_diag(source_name: str, dest_name: Optional[str] = None) -> bool:
+        source = _find_iterate_file(iterate_dir, iterate_temp, source_name)
+        if not source:
+            return False
+
+        destination = diag_temp / (dest_name or source_name)
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return False
+
+        try:
+            if source.resolve() == destination.resolve():
+                return True
+        except OSError:
+            pass
+
+        try:
+            shutil.copyfile(source, destination)
+        except OSError:
+            return destination.exists()
+        return True
+
+    def write_text(destination: Path, payload: str) -> None:
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(payload, encoding="utf-8")
+        except OSError:
+            pass
+
+    def mirror_json(json_name: str, txt_name: str) -> None:
+        present = copy_into_diag(json_name)
+        if present:
+            json_source = diag_temp / json_name
+            if not json_source.exists():
+                original = _find_iterate_file(iterate_dir, iterate_temp, json_name)
+                json_source = original if original else json_source
+        else:
+            json_source = None
+
+        if json_source and json_source.exists():
+            try:
+                parsed = json.loads(json_source.read_text(encoding="utf-8"))
+                pretty = json.dumps(parsed, indent=2, sort_keys=True)
+            except (json.JSONDecodeError, OSError):
+                try:
+                    pretty = json_source.read_text(encoding="utf-8")
+                except OSError:
+                    pretty = "missing"
+        else:
+            pretty = "missing"
+
+        write_text(diag_temp / txt_name, pretty if pretty else "missing")
+
+    copy_into_diag("prompt.txt")
+    copy_into_diag("why_no_diff.txt")
+    copy_into_diag("patch.apply.log")
+    mirror_json("response.json", "response.txt")
+    mirror_json("iterate_status.json", "iterate_status.txt")
+    mirror_json("first_failure.json", "first_failure.txt")
+
+
 def _summarize_iterate_files(context: Context) -> Tuple[str, List[Path]]:
     iterate_root = _locate_iterate_root(context)
-    if not iterate_root or not iterate_root.exists():
+    roots: List[Path] = []
+    if context.diag:
+        diag_root = context.diag / "_artifacts" / "iterate"
+        if diag_root.exists():
+            roots.append(diag_root)
+    if iterate_root and iterate_root.exists() and iterate_root not in roots:
+        roots.append(iterate_root)
+
+    if not roots:
         return "missing", []
 
-    temp_dirs = _discover_iterate_temp_dirs(iterate_root)
+    temp_dirs: List[Path] = []
+    for root in roots:
+        for candidate in _discover_iterate_temp_dirs(root):
+            if candidate not in temp_dirs:
+                temp_dirs.append(candidate)
+
     has_files = False
     for temp_dir in temp_dirs:
         for path in temp_dir.rglob("*"):
@@ -661,7 +784,17 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[Path]]:
     if not has_files:
         return "missing", []
 
-    key_names = ["prompt.txt", "response.json", "why_no_diff.txt"]
+    key_names = [
+        "prompt.txt",
+        "response.json",
+        "response.txt",
+        "iterate_status.json",
+        "iterate_status.txt",
+        "why_no_diff.txt",
+        "first_failure.json",
+        "first_failure.txt",
+        "patch.apply.log",
+    ]
     found: List[Path] = []
     for pattern in key_names:
         match: Optional[Path] = None
@@ -689,87 +822,117 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[Path]]:
     return "present", found
 
 
+def _write_summary_files(
+    context: Context,
+    iterate_dir: Optional[Path],
+    iterate_temp: Optional[Path],
+    response_data: Optional[dict],
+    why_outcome: Optional[str],
+) -> None:
+    """Emit diag/_summary.txt and status.json for downstream consumers."""
+
+    diag = context.diag
+    if not diag:
+        return
+
+    model = _read_iterate_text(iterate_dir, iterate_temp, "model.txt")
+    if response_data and response_data.get("model"):
+        model = str(response_data["model"])
+
+    tokens = _gather_iterate_tokens(iterate_dir, iterate_temp, response_data)
+    total_tokens = tokens.get("total", "n/a")
+    if not total_tokens or str(total_tokens).lower() in {"n/a", "none"}:
+        total_tokens = "unknown"
+    total_tokens_str = str(total_tokens)
+
+    diff_produced = _diff_produced(iterate_dir, iterate_temp)
+    outcome = why_outcome or ("diff produced" if diff_produced else "n/a")
+
+    if not _iterate_logs_found(context):
+        outcome = "n/a"
+
+    summary_line = f"model={model} tokens={total_tokens_str} outcome={outcome}"
+    try:
+        (diag / "_summary.txt").write_text(summary_line + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+    status_payload = {
+        "model": model,
+        "tokens": total_tokens_str,
+        "outcome": outcome,
+    }
+    try:
+        (diag / "status.json").write_text(
+            json.dumps(status_payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
 def _bundle_links(context: Context) -> List[dict]:
     diag = context.diag
     entries: List[dict] = []
 
     if diag:
-        for label, relative in [
+        inventory_entries = [
             ("Inventory (HTML)", "inventory.html"),
             ("Inventory (text)", "inventory.txt"),
             ("Inventory (markdown)", "inventory.md"),
             ("Inventory (json)", "inventory.json"),
-        ]:
+        ]
+        for label, relative in inventory_entries:
             candidate = diag / relative
             if _nonempty_file(candidate):
-                entries.append({"label": label, "path": relative, "exists": True})
+                entries.append({"label": label, "path": relative})
 
-    entries.append(
-        {
-            "label": "Iterate logs zip",
-            "path": f"logs/iterate-{context.run_id}-{context.run_attempt}.zip",
-            "exists": bool(
-                diag
-                and _nonempty_file(
-                    diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
-                )
-            ),
-        }
-    )
-    entries.extend(_collect_batch_ndjson_links(diag))
-    entries.extend(
-        [
-            {
-                "label": "Batch-check failing tests",
-                "path": "batchcheck_failing.txt",
-                "exists": diag and (diag / "batchcheck_failing.txt").exists(),
-            },
-            {
-                "label": "Batch-check fail debug",
-                "path": "batchcheck_fail-debug.txt",
-                "exists": diag and (diag / "batchcheck_fail-debug.txt").exists(),
-            },
-        ]
-    )
+        iterate_zip = (
+            diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
+        )
+        if _nonempty_file(iterate_zip):
+            entries.append(
+                {
+                    "label": "Iterate logs zip",
+                    "path": _relative_to_diag(iterate_zip, diag),
+                }
+            )
 
-    if diag:
+        entries.extend(_collect_batch_ndjson_links(diag))
+
+        for label, relative in [
+            ("Batch-check failing tests", "batchcheck_failing.txt"),
+            ("Batch-check fail debug", "batchcheck_fail-debug.txt"),
+        ]:
+            candidate = diag / relative
+            if candidate.exists():
+                entries.append({"label": label, "path": relative})
+
         repo_zip = diag / "repo.zip"
         if _nonempty_file(repo_zip):
-            entries.append({
-                "label": "Repository (zip)",
-                "path": "repo.zip",
-                "exists": True,
-            })
+            entries.append({"label": "Repository (zip)", "path": "repo.zip"})
         repo_index = diag / "repo" / "index.html"
-        entries.append(
-            {
-                "label": "Repository (unzipped)",
-                "path": "repo/index.html",
-                "exists": repo_index.exists(),
-            }
-        )
+        if repo_index.exists():
+            entries.append(
+                {"label": "Repository (unzipped)", "path": "repo/index.html"}
+            )
 
-        repo_root = _resolve_repo_root(context)
-        if repo_root and repo_root.exists():
-            workflow_targets = [
+        wf_dir = diag / "wf"
+        if wf_dir.exists():
+            workflow_files = [
+                ("Workflow: codex-auto-iterate.yml", "codex-auto-iterate.yml"),
                 (
-                    "Workflow: codex-auto-iterate.yml (iterate/publish_diag)",
-                    repo_root / ".github" / "workflows" / "codex-auto-iterate.yml",
+                    "Workflow: codex-auto-iterate.yml (text)",
+                    "codex-auto-iterate.yml.txt",
                 ),
-                (
-                    "Workflow: batch-check.yml",
-                    repo_root / ".github" / "workflows" / "batch-check.yml",
-                ),
+                ("Workflow: batch-check.yml", "batch-check.yml"),
+                ("Workflow: batch-check.yml (text)", "batch-check.yml.txt"),
             ]
-            for label, path in workflow_targets:
-                if path.exists():
-                    entries.append(
-                        {
-                            "label": label,
-                            "path": _relative_to_diag(path, diag),
-                            "exists": True,
-                        }
-                    )
+            for label, name in workflow_files:
+                candidate = wf_dir / name
+                if _nonempty_file(candidate):
+                    entries.append({"label": label, "path": f"wf/{name}"})
+
     return entries
 
 
@@ -790,16 +953,7 @@ def _build_markdown(
     # parser-facing signal solely on the iterate-logs artifact directory for this
     # run. Avoid consulting legacy run-log zips so downstream dashboards receive a
     # consistent contract.
-    iterate_found = False
-    if artifacts:
-        try:
-            iterate_found = (
-                artifacts
-                / "iterate"
-                / f"iterate-logs-{context.run_id}-{context.run_attempt}"
-            ).exists()
-        except OSError:
-            iterate_found = False
+    iterate_found = _iterate_logs_found(context)
     iterate_log_status = "found" if iterate_found else "missing"
     iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
 
@@ -871,14 +1025,10 @@ def _build_markdown(
     for entry in _bundle_links(context):
         label = entry["label"]
         path = entry.get("path")
-        exists = entry.get("exists")
         if not path:
             continue
-        if exists:
-            normalized = _normalize_link(path)
-            lines.append(f"- {label}: [{normalized}]({normalized})")
-        else:
-            lines.append(f"- {label}: missing")
+        normalized = _normalize_link(path)
+        lines.append(f"- {label}: [{normalized}]({normalized})")
 
     lines.extend(
         [
@@ -973,16 +1123,7 @@ def _write_html(
 
     # Professional note: mirror the Markdown status logic here so HTML renders the
     # same parser-facing state derived from the iterate-logs artifact directory.
-    iterate_found = False
-    if artifacts:
-        try:
-            iterate_found = (
-                artifacts
-                / "iterate"
-                / f"iterate-logs-{context.run_id}-{context.run_attempt}"
-            ).exists()
-        except OSError:
-            iterate_found = False
+    iterate_found = _iterate_logs_found(context)
     iterate_log_status = "found" if iterate_found else "missing"
     iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
 
@@ -1113,12 +1254,9 @@ def _write_html(
     for entry in _bundle_links(context):
         label = _escape_html(entry["label"])
         path = entry.get("path")
-        exists = entry.get("exists")
-        if path and exists:
+        if path:
             href = _escape_href(_normalize_link(path))
             html.append(f"<li><a href=\"{href}\">{label}</a></li>")
-        elif path:
-            html.append(f"<li>{label}: missing</li>")
     html.append("</ul>")
     html.append("</section>")
 
@@ -1264,11 +1402,6 @@ def _build_site_overview(
     repo_index_rel = f"{bundle_prefix}/repo/index.html"
     batch_ndjson_links = _collect_batch_ndjson_links(context.diag)
 
-    repo_root = _resolve_repo_root(context)
-    repo_root_rel = (
-        _relative_repo_path(repo_root, context) if repo_root and context.diag else None
-    )
-
     ndjson_summary = None
     if artifacts and artifacts.exists():
         ndjson_summary = next(artifacts.rglob("ndjson_summary.txt"), None)
@@ -1310,18 +1443,16 @@ def _build_site_overview(
         quick_link(entry["label"], f"{bundle_prefix}/{entry['path']}")
     quick_link("Repository (zip)", repo_zip_rel)
     quick_link("Repository (unzipped)", repo_index_rel)
-    if repo_root_rel:
-        for label, relative in [
-            (
-                "Workflow: codex-auto-iterate.yml (iterate/publish_diag)",
-                f"{repo_root_rel}/.github/workflows/codex-auto-iterate.yml",
-            ),
-            (
-                "Workflow: batch-check.yml",
-                f"{repo_root_rel}/.github/workflows/batch-check.yml",
-            ),
-        ]:
-            quick_link(label, f"{bundle_prefix}/{relative}")
+    for label, relative in [
+        ("Workflow: codex-auto-iterate.yml", f"{bundle_prefix}/wf/codex-auto-iterate.yml"),
+        (
+            "Workflow: codex-auto-iterate.yml (text)",
+            f"{bundle_prefix}/wf/codex-auto-iterate.yml.txt",
+        ),
+        ("Workflow: batch-check.yml", f"{bundle_prefix}/wf/batch-check.yml"),
+        ("Workflow: batch-check.yml (text)", f"{bundle_prefix}/wf/batch-check.yml.txt"),
+    ]:
+        quick_link(label, relative)
     quick_link("Inventory (markdown)", inventory_md)
 
     if summary_preview:
@@ -1384,19 +1515,26 @@ def _build_site_overview(
         {"label": "Repository (unzipped)", "path": repo_index_rel},
         {"label": "Inventory (markdown)", "path": inventory_md},
     ]
-    if repo_root_rel:
-        quick_link_specs.extend(
-            [
-                {
-                    "label": "Workflow: codex-auto-iterate.yml (iterate/publish_diag)",
-                    "path": f"{bundle_prefix}/{repo_root_rel}/.github/workflows/codex-auto-iterate.yml",
-                },
-                {
-                    "label": "Workflow: batch-check.yml",
-                    "path": f"{bundle_prefix}/{repo_root_rel}/.github/workflows/batch-check.yml",
-                },
-            ]
-        )
+    quick_link_specs.extend(
+        [
+            {
+                "label": "Workflow: codex-auto-iterate.yml",
+                "path": f"{bundle_prefix}/wf/codex-auto-iterate.yml",
+            },
+            {
+                "label": "Workflow: codex-auto-iterate.yml (text)",
+                "path": f"{bundle_prefix}/wf/codex-auto-iterate.yml.txt",
+            },
+            {
+                "label": "Workflow: batch-check.yml",
+                "path": f"{bundle_prefix}/wf/batch-check.yml",
+            },
+            {
+                "label": "Workflow: batch-check.yml (text)",
+                "path": f"{bundle_prefix}/wf/batch-check.yml.txt",
+            },
+        ]
+    )
     ndjson_specs = [
         {"label": entry["label"], "path": f"{bundle_prefix}/{entry['path']}"}
         for entry in batch_ndjson_links
@@ -1455,6 +1593,7 @@ def main() -> None:
     response_data = _load_iterate_json(iterate_dir, iterate_temp, "response.json")
     status_data = _load_iterate_json(iterate_dir, iterate_temp, "iterate_status.json")
     why_outcome = _read_iterate_first_line(iterate_dir, iterate_temp, "why_no_diff.txt")
+    _ensure_iterate_text_mirrors(context, iterate_dir, iterate_temp)
 
     diag_markdown = _build_markdown(
         context,
@@ -1480,6 +1619,7 @@ def main() -> None:
             why_outcome,
         )
         (context.diag / "index.html").write_text(diag_html, encoding="utf-8")
+        _write_summary_files(context, iterate_dir, iterate_temp, response_data, why_outcome)
 
     if context.site:
         site_markdown, site_html = _build_site_overview(
