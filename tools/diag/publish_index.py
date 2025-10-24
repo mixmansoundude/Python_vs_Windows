@@ -20,13 +20,14 @@ except ImportError:  # pragma: no cover - Python < 3.9 is not expected on Action
     ZoneInfo = None  # type: ignore
 
 
-CURRENT_DIR = Path(__file__).resolve().parent
-
-
 def _discover_repo_root(start: Path) -> Path:
     """Walk ancestors until we locate the folder that hosts *tools*."""
 
-    current = start
+    # Professional note: "Make `python tools/diag/publish_index.py` reliably import `tools.*`"
+    # requires handling direct script execution where *start* can be the file itself.
+    current = start.resolve()
+    if current.is_file():
+        current = current.parent
     while True:
         candidate = current / "tools"
         if candidate.is_dir():
@@ -37,12 +38,12 @@ def _discover_repo_root(start: Path) -> Path:
 
     # Fallback per "Make `python tools/diag/publish_index.py` reliably import `tools.*`".
     try:
-        return start.parents[1]
+        return current.parents[1]
     except IndexError:
-        return start
+        return current
 
 
-REPO_ROOT = _discover_repo_root(Path(__file__).resolve().parent)
+REPO_ROOT = _discover_repo_root(Path(__file__).resolve())
 if str(REPO_ROOT) not in sys.path:
     # Professional note: ensure the repository root is importable so diagnostics can
     # load sibling helpers even when publish_index.py runs as a script.
