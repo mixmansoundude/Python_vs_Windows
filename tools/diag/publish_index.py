@@ -2186,14 +2186,17 @@ def main() -> None:
     why_outcome = _read_iterate_first_line(iterate_dir, iterate_temp, "why_no_diff.txt")
     _ensure_iterate_text_mirrors(context, iterate_dir, iterate_temp)
     if context.diag:
-        # Professional note: populate the global preview mirrors before rendering
-        # markdown/HTML so all link helpers can point at the shared _mirrors tree.
-        _write_global_txt_mirrors(context.diag, context.diag / "_mirrors")
         batch_root = context.diag / "_artifacts" / "batch-check"
         if batch_root.exists():
             # Professional note: honor "Ensure the failing-IDs list is GENERATED after batch-check artifacts are staged"
             # by invoking the helper only once the staged tree is present (prevents premature 'none').
+            # Additional note: placing this call before mirroring avoids copying a stale placeholder into _mirrors/ when the
+            # list is regenerated later in the publish step (per "Move the generate_fail_list(context.diag) call to run before
+            # _write_global_txt_mirrors(context.diag, context.diag / '_mirrors')").
             generate_fail_list(context.diag)
+        # Professional note: populate the global preview mirrors before rendering
+        # markdown/HTML so all link helpers can point at the shared _mirrors tree.
+        _write_global_txt_mirrors(context.diag, context.diag / "_mirrors")
 
     if context.site:
         _write_latest_json(context)
