@@ -103,6 +103,79 @@ if ($collected.Count -eq 0) {
         return $nameVal
     }
 
+    function Get-NdjsonSegments {
+        param(
+            [Parameter(Mandatory = $true)][string]$RawText
+        )
+
+        $segments = [System.Collections.Generic.List[string]]::new()
+        if ([string]::IsNullOrEmpty($RawText)) { return $segments }
+
+        $builder = [System.Text.StringBuilder]::new()
+        $depth = 0
+        $inString = $false
+        $escapeNext = $false
+
+        foreach ($ch in $RawText.ToCharArray()) {
+            if ($inString) {
+                $null = $builder.Append($ch)
+
+                if ($escapeNext) {
+                    $escapeNext = $false
+                    continue
+                }
+
+                if ($ch -eq '\\') {
+                    $escapeNext = $true
+                    continue
+                }
+
+                if ($ch -eq '"') {
+                    $inString = $false
+                }
+
+                continue
+            }
+
+            switch ($ch) {
+                '"' {
+                    $inString = $true
+                    $null = $builder.Append($ch)
+                    continue
+                }
+                '{' {
+                    $depth += 1
+                    $null = $builder.Append($ch)
+                    continue
+                }
+                '}' {
+                    if ($depth -gt 0) { $depth -= 1 }
+                    $null = $builder.Append($ch)
+
+                    if ($depth -eq 0) {
+                        $segment = $builder.ToString().Trim()
+                        if ($segment.Length -gt 0) {
+                            $segments.Add($segment) | Out-Null
+                        }
+                        $null = $builder.Clear()
+                    }
+
+                    continue
+                }
+                default {
+                    if ($depth -gt 0) {
+                        $null = $builder.Append($ch)
+                    }
+                }
+            }
+        }
+
+        $tail = $builder.ToString().Trim()
+        if ($tail.Length -gt 0) { $segments.Add($tail) | Out-Null }
+
+        return $segments
+    }
+
     foreach ($file in $ndjsonFiles) {
         $rel = [System.IO.Path]::GetRelativePath($batchRoot, $file.FullName)
         if (-not $perFileCounts.ContainsKey($rel)) { $perFileCounts[$rel] = [System.Collections.Generic.List[string]]::new() }
@@ -110,59 +183,53 @@ if ($collected.Count -eq 0) {
         $raw = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8)
         if ([string]::IsNullOrWhiteSpace($raw)) { continue }
 
-        # Professional note: some batch-check uploads concatenate JSON objects without newlines.
-        # Normalizing `}{` into line breaks keeps ConvertFrom-Json working without rewriting the artifact.
-        $normalized = [Regex]::Replace($raw, '}\s*{', "}`n{")
-        $reader = New-Object IO.StringReader($normalized)
+        # Professional note: upstream bundles sometimes concatenate JSON objects into one line. A
+        # character-by-character tokenizer keeps `}{` sequences found inside strings intact while
+        # still surfacing individual objects for ConvertFrom-Json.
+        $segments = Get-NdjsonSegments -RawText $raw
 
-        try {
-            while ($true) {
-                $line = $reader.ReadLine()
-                if ($null -eq $line) { break }
+        foreach ($segment in $segments) {
+            $line = $segment.Trim()
+            if (-not $line) { continue }
 
-                $line = $line.Trim()
-                if (-not $line) { continue }
+            try {
+                $obj = $line | ConvertFrom-Json -ErrorAction Stop
 
-                try {
-                    $obj = $line | ConvertFrom-Json -ErrorAction Stop
+                $failed = $false
+                $name = $null
 
-                    $failed = $false
-                    $name = $null
+                $legacyId = Get-FailureIdFromObject -Root $obj
+                if ($legacyId) {
+                    $failed = $true
+                    $name = $legacyId
+                }
 
-                    $legacyId = Get-FailureIdFromObject -Root $obj
-                    if ($legacyId) {
-                        $failed = $true
-                        $name = $legacyId
+                if (-not $failed) {
+                    # Professional note: batch-check emits compact NDJSON where `pass:false` marks
+                    # failures instead of pytest-style "outcome" fields. Preserve the legacy scan
+                    # while honoring the new signal so diagnostics stay in sync with Codex.
+                    if ($obj.PSObject.Properties.Name -contains 'pass') {
+                        if ($obj.pass -is [bool] -and -not $obj.pass) { $failed = $true }
+                        elseif (($obj.pass -is [string]) -and ($obj.pass -ieq 'false')) { $failed = $true }
                     }
-
-                    if (-not $failed) {
-                        # Professional note: batch-check emits compact NDJSON where `pass:false` marks
-                        # failures instead of pytest-style "outcome" fields. Preserve the legacy scan
-                        # while honoring the new signal so diagnostics stay in sync with Codex.
-                        if ($obj.PSObject.Properties.Name -contains 'pass') {
-                            if ($obj.pass -is [bool] -and -not $obj.pass) { $failed = $true }
-                        }
-                        if (-not $failed -and $obj.status) {
-                            $s = [string]$obj.status
-                            if ($s -eq 'fail' -or $s -eq 'failure') { $failed = $true }
-                        }
-                        if ($failed) {
-                            if ($obj.id) {
-                                $name = [string]$obj.id
-                            } elseif ($obj.desc) {
-                                $name = [string]$obj.desc
-                            }
+                    if (-not $failed -and $obj.status) {
+                        $s = [string]$obj.status
+                        if ($s -eq 'fail' -or $s -eq 'failure') { $failed = $true }
+                    }
+                    if ($failed) {
+                        if ($obj.id) {
+                            $name = [string]$obj.id
+                        } elseif ($obj.desc) {
+                            $name = [string]$obj.desc
                         }
                     }
+                }
 
-                    if ($failed -and $name) {
-                        $collected.Add($name)
-                        $perFileCounts[$rel].Add($name) | Out-Null
-                    }
-                } catch {}
-            }
-        } finally {
-            $reader.Dispose()
+                if ($failed -and $name) {
+                    $collected.Add($name)
+                    $perFileCounts[$rel].Add($name) | Out-Null
+                }
+            } catch {}
         }
     }
 
