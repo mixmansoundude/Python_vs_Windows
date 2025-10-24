@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
+
+
+_PLACEHOLDER = "none"
 
 
 def _require_env(name: str) -> str:
@@ -31,7 +34,7 @@ def _collect_from_artifacts(batch_root: Path, collected: List[str], debug_lines:
     for artifact in batch_root.rglob("failing-tests.txt"):
         for line in _iter_lines(artifact):
             value = line.strip()
-            if value:
+            if value and value.lower() != _PLACEHOLDER:
                 collected.append(value)
 
     for debug in batch_root.rglob("fail-debug.txt"):
@@ -91,40 +94,126 @@ def _extract_failure_id(root: object) -> Optional[str]:
     return name_val
 
 
+def _ndjson_segments(raw: str) -> List[str]:
+    """Split concatenated JSON objects without disturbing braces inside strings."""
+
+    segments: List[str] = []
+    if not raw:
+        return segments
+
+    builder: List[str] = []
+    depth = 0
+    in_string = False
+    escape_next = False
+
+    for ch in raw:
+        if in_string:
+            builder.append(ch)
+            if escape_next:
+                escape_next = False
+            elif ch == "\\":
+                escape_next = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            builder.append(ch)
+            in_string = True
+        elif ch == "{":
+            builder.append(ch)
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+            builder.append(ch)
+            if depth == 0 and builder:
+                segment = "".join(builder).strip()
+                if segment:
+                    segments.append(segment)
+                builder.clear()
+        else:
+            if depth > 0:
+                builder.append(ch)
+            # Ignore whitespace between objects when depth == 0.
+
+    if builder:
+        tail = "".join(builder).strip()
+        if tail:
+            segments.append(tail)
+
+    return segments
+
+
 def _fallback_ndjson(batch_root: Path, collected: List[str], debug_lines: List[str]) -> None:
     if not batch_root.is_dir():
         return
 
-    per_file: dict[str, List[str]] = {}
+    per_file: Dict[str, List[str]] = {}
     ndjson_files = sorted(batch_root.rglob("*.ndjson"))
+
     for file in ndjson_files:
         try:
             rel = file.relative_to(batch_root).as_posix()
         except ValueError:
             rel = file.as_posix()
         per_file.setdefault(rel, [])
-        for line in _iter_lines(file):
+
+        try:
+            raw = file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        segments = _ndjson_segments(raw)
+        for segment in segments:
+            line = segment.strip()
             if not line:
                 continue
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            failure_id = _extract_failure_id(obj)
-            if failure_id:
-                collected.append(failure_id)
-                per_file.setdefault(rel, []).append(failure_id)
+
+            failed = False
+            name: Optional[str] = None
+
+            legacy_id = _extract_failure_id(obj)
+            if legacy_id:
+                failed = True
+                name = legacy_id
+
+            if not failed:
+                if "pass" in obj:
+                    value = obj["pass"]
+                    if isinstance(value, bool) and not value:
+                        failed = True
+                    elif isinstance(value, str) and value.lower() == "false":
+                        failed = True
+                if not failed and "status" in obj:
+                    status = obj["status"]
+                    if isinstance(status, str) and status.lower() in {"fail", "failure"}:
+                        failed = True
+                if failed:
+                    if isinstance(obj.get("id"), str) and obj["id"].strip():
+                        name = obj["id"].strip()
+                    elif isinstance(obj.get("desc"), str) and obj["desc"].strip():
+                        name = obj["desc"].strip()
+
+            if failed and name:
+                collected.append(name)
+                per_file[rel].append(name)
 
     if per_file:
         for rel, ids in sorted(per_file.items()):
-            unique_count = len(sorted(set(ids))) if ids else 0
+            unique_count = len({value for value in ids if value})
             debug_lines.append(f"fallback:{rel}\t{unique_count}")
     elif not debug_lines:
         debug_lines.append("fallback: no ndjson located")
 
 
-def main() -> None:
-    diag_root = Path(_require_env("DIAG"))
+def generate_fail_list(diag_root: Path) -> None:
+    """Write batch-check fail lists under *diag* using staged artifacts."""
+
     batch_root = diag_root / "_artifacts" / "batch-check"
     target = diag_root / "batchcheck_failing.txt"
     debug_target = diag_root / "batchcheck_fail-debug.txt"
@@ -135,19 +224,27 @@ def main() -> None:
     _collect_from_artifacts(batch_root, collected, debug_lines)
 
     if not collected:
+        # Professional note: legacy bundles only expose NDJSON. Re-running the
+        # brace-aware scan here mirrors the PowerShell extractor so publisher
+        # runs stay consistent regardless of platform availability.
         _fallback_ndjson(batch_root, collected, debug_lines)
 
-    final = sorted(set(collected))
-    if len(final) > 1 and "none" in final:
-        final = [item for item in final if item != "none"]
-    if not final:
-        final = ["none"]
+    unique = sorted({item for item in collected if item})
+    real_items = [item for item in unique if item.lower() != _PLACEHOLDER]
+    final = real_items or (unique if unique else [_PLACEHOLDER])
 
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(final), encoding="utf-8")
 
     if not debug_lines:
-        debug_lines.append("none")
+        debug_lines.append(_PLACEHOLDER)
+    debug_target.parent.mkdir(parents=True, exist_ok=True)
     debug_target.write_text("\n".join(debug_lines), encoding="utf-8")
+
+
+def main() -> None:
+    diag_root = Path(_require_env("DIAG"))
+    generate_fail_list(diag_root)
 
 
 if __name__ == "__main__":

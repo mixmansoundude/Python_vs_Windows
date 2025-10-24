@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,6 +18,16 @@ try:
     from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover - Python < 3.9 is not expected on Actions
     ZoneInfo = None  # type: ignore
+
+
+CURRENT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = CURRENT_DIR.parents[2]
+if str(REPO_ROOT) not in sys.path:
+    # Professional note: ensure the repository root is importable so diagnostics can
+    # load sibling helpers even when publish_index.py runs as a script.
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.diag.ndjson_fail_list import generate_fail_list
 
 
 @dataclass
@@ -2156,6 +2167,9 @@ def main() -> None:
         # Professional note: populate the global preview mirrors before rendering
         # markdown/HTML so all link helpers can point at the shared _mirrors tree.
         _write_global_txt_mirrors(context.diag, context.diag / "_mirrors")
+        # Professional note: "Ensure diag/batchcheck_failing.txt contains real IDs by running an extractor AFTER artifacts are staged"
+        # so trigger the Python helper now that staged artifacts live under diag/.
+        generate_fail_list(context.diag)
 
     if context.site:
         _write_latest_json(context)

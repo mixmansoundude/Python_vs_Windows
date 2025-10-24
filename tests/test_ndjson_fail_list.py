@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+from tools.diag.ndjson_fail_list import generate_fail_list
 
 
 class NdjsonFailListScriptTest(unittest.TestCase):
@@ -100,6 +104,71 @@ class NdjsonFailListScriptTest(unittest.TestCase):
                 sorted({"conda.url", "self.bootstrap.state"}),
                 sorted(lines),
             )
+
+
+class GenerateFailListHelperTest(unittest.TestCase):
+    def _read_lines(self, diag_root: Path) -> list[str]:
+        path = diag_root / "batchcheck_failing.txt"
+        if not path.exists():
+            return []
+        return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def _read_debug(self, diag_root: Path) -> list[str]:
+        path = diag_root / "batchcheck_fail-debug.txt"
+        if not path.exists():
+            return []
+        return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def test_generate_fail_list_with_concatenated_objects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp)
+            batch_root = diag_root / "_artifacts" / "batch-check"
+            batch_root.mkdir(parents=True, exist_ok=True)
+            (batch_root / "failing-tests.txt").write_text("none\n", encoding="utf-8")
+            ndjson_path = batch_root / "mega~test-results.ndjson"
+            ndjson_path.write_text(
+                '{"id":"conda.url","pass":false}'
+                '{"id":"self.bootstrap.state","status":"fail"}'
+                '{"desc":"self.empty_repo.msg","pass":false}',
+                encoding="utf-8",
+            )
+
+            generate_fail_list(diag_root)
+
+            lines = self._read_lines(diag_root)
+            self.assertEqual(
+                sorted({"conda.url", "self.bootstrap.state", "self.empty_repo.msg"}),
+                sorted(lines),
+            )
+            debug_lines = self._read_debug(diag_root)
+            self.assertTrue(any(line.startswith("fallback:") for line in debug_lines))
+
+    def test_generate_fail_list_respects_precomputed_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp)
+            batch_root = diag_root / "_artifacts" / "batch-check"
+            batch_root.mkdir(parents=True, exist_ok=True)
+            (batch_root / "failing-tests.txt").write_text(
+                "self.bootstrap.state\n none \n", encoding="utf-8"
+            )
+
+            generate_fail_list(diag_root)
+
+            lines = self._read_lines(diag_root)
+            self.assertEqual(["self.bootstrap.state"], lines)
+            debug_lines = self._read_debug(diag_root)
+            self.assertFalse(any(line.startswith("fallback:") for line in debug_lines))
+
+    def test_generate_fail_list_without_artifacts_writes_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp)
+
+            generate_fail_list(diag_root)
+
+            lines = self._read_lines(diag_root)
+            self.assertEqual(["none"], lines)
+            debug_lines = self._read_debug(diag_root)
+            self.assertEqual(["none"], debug_lines)
 
 
 if __name__ == "__main__":
