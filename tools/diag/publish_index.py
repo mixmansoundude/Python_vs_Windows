@@ -7,10 +7,11 @@ import json
 import os
 import re
 import shutil
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 try:
     from zoneinfo import ZoneInfo
@@ -511,6 +512,33 @@ def _nonempty_file(path: Path) -> bool:
         return False
 
 
+MIRROR_TEXT_LIMIT = 64_000
+MIRROR_SIZE_LIMIT = 100 * 1024 * 1024
+
+_MIRROR_REGISTRY: Dict[Path, Path] = {}
+
+
+def _normalize_mirror_key(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def _register_mirror(src: Path, mirror: Path) -> None:
+    key = _normalize_mirror_key(src)
+    _MIRROR_REGISTRY[key] = mirror
+    if key != src:
+        _MIRROR_REGISTRY[src] = mirror
+
+
+def _lookup_mirror(path: Path) -> Optional[Path]:
+    for candidate in (path, _normalize_mirror_key(path)):
+        if candidate in _MIRROR_REGISTRY:
+            return _MIRROR_REGISTRY[candidate]
+    return None
+
+
 TEXT_COPY_EXTENSIONS = {
     ".json",
     ".ndjson",
@@ -538,74 +566,178 @@ BINARY_OR_LARGE_EXTENSIONS = {
 
 
 def ensure_txt_mirror(path: Path) -> Optional[Path]:
-    """Create a .txt sidecar for diagnostics links and return its path."""
+    """Return the precomputed preview mirror for *path* if available."""
 
-    try:
-        if not path.exists() or not path.is_file():
-            return None
-        size = path.stat().st_size
-    except OSError:
-        return None
+    mirror = _lookup_mirror(path)
+    if mirror and mirror.exists():
+        return mirror
+    return None
 
-    mirror = path.with_name(path.name + ".txt")
+
+def _needs_truncation(size: int, preview_length: int) -> bool:
+    return size > preview_length
+
+
+def _maybe_append_truncation_footer(
+    lines: List[str], *, truncated: bool, size: int, preview_length: int
+) -> None:
+    if truncated:
+        lines.append(
+            "--- [truncated preview: original size {0:,} bytes, showing first {1:,}] ---".format(
+                size, preview_length
+            )
+        )
+
+
+def _as_text_preview(path: Path, max_bytes: int = MIRROR_TEXT_LIMIT) -> str:
+    """Return a human-readable preview for *path* within *max_bytes*."""
+
+    size = path.stat().st_size
     suffix = path.suffix.lower()
+    lines: List[str]
 
-    def write_payload(payload: str) -> None:
-        mirror.parent.mkdir(parents=True, exist_ok=True)
-        mirror.write_text(payload, encoding="utf-8")
-
-    try:
-        if suffix == ".json":
-            try:
-                parsed = json.loads(path.read_text(encoding="utf-8"))
-                payload = json.dumps(parsed, indent=2, sort_keys=True) + "\n"
-            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-                payload = path.read_text(encoding="utf-8", errors="replace")
-            write_payload(payload)
-            return mirror
-
-        if suffix == ".ndjson":
-            lines: List[str] = []
-            try:
-                for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
-                    stripped = raw.strip()
-                    if not stripped:
-                        continue
-                    try:
-                        parsed_line = json.loads(stripped)
-                        lines.append(json.dumps(parsed_line, indent=2, sort_keys=True))
-                    except json.JSONDecodeError:
-                        lines.append(stripped)
-            except OSError:
-                lines = []
-            payload = "\n\n".join(lines) + ("\n" if lines else "missing\n")
-            write_payload(payload)
-            return mirror
-
-        if suffix in TEXT_COPY_EXTENSIONS:
-            # Professional note: retain existing textual formatting for YAML, logs,
-            # and other human-readable files to honor the "txt mirror first" contract.
-            payload = path.read_text(encoding="utf-8", errors="replace")
-            write_payload(payload)
-            return mirror
-
-        if size > 1_000_000 or suffix in BINARY_OR_LARGE_EXTENSIONS:
-            write_payload(f"This is a binary/large file: {path.name}\n")
-            return mirror
-
+    if suffix == ".json" and size <= max_bytes:
         try:
             payload = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            write_payload(f"This is a binary/large file: {path.name}\n")
-        else:
-            write_payload(payload)
-        return mirror
-    except OSError:
+            parsed = json.loads(payload)
+            return json.dumps(parsed, indent=2, sort_keys=True) + "\n"
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            pass
+
+    if suffix == ".ndjson" and size <= max_bytes:
+        lines = []
         try:
-            write_payload(f"This is a binary/large file: {path.name}\n")
-            return mirror
+            raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
-            return None
+            raw_lines = []
+        for raw in raw_lines:
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            try:
+                parsed_line = json.loads(stripped)
+            except json.JSONDecodeError:
+                lines.append(stripped)
+            else:
+                lines.append(json.dumps(parsed_line, indent=2, sort_keys=True))
+        if lines:
+            return "\n\n".join(lines) + "\n"
+
+    if suffix in {".zip"}:
+        try:
+            with zipfile.ZipFile(path) as archive:
+                infos = archive.infolist()
+        except (OSError, zipfile.BadZipFile):
+            infos = []
+        lines = [
+            f"Zip archive preview: {len(infos)} entries, size {size:,} bytes",
+        ]
+        for info in infos[:200]:
+            lines.append(
+                "- {0} (compressed {1:,} bytes → {2:,} bytes)".format(
+                    info.filename, info.compress_size, info.file_size
+                )
+            )
+        if len(infos) > 200:
+            lines.append(f"- ... {len(infos) - 200} additional entries omitted ...")
+        lines.append("")
+        lines.append("(Use Download for full contents.)")
+        return "\n".join(lines) + "\n"
+
+    try:
+        with path.open("rb") as handle:
+            data = handle.read(max_bytes + 1)
+    except OSError:
+        return "(unable to read preview)\n"
+
+    if len(data) > max_bytes:
+        data = data[:max_bytes]
+
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            text = data.decode("utf-8", errors="replace")
+        except UnicodeDecodeError:
+            text = ""
+
+    # Treat clearly textual formats specially to preserve formatting.
+    if suffix in TEXT_COPY_EXTENSIONS or text:
+        preview_text = text
+        preview_length = len(data)
+        lines = preview_text.splitlines()
+        _maybe_append_truncation_footer(
+            lines,
+            truncated=_needs_truncation(size, preview_length),
+            size=size,
+            preview_length=preview_length,
+        )
+        result = "\n".join(lines)
+        if not result.endswith("\n"):
+            result += "\n"
+        return result
+
+    # Binary fallback: emit a short hex dump with ASCII gutter.
+    binary_preview_bytes = data[:4096]
+    lines = [f"Binary preview: {size:,} bytes total"]
+    for offset in range(0, len(binary_preview_bytes), 16):
+        chunk = binary_preview_bytes[offset : offset + 16]
+        hex_part = " ".join(f"{byte:02x}" for byte in chunk)
+        ascii_part = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
+        lines.append(f"{offset:08x}  {hex_part:<47}  {ascii_part}")
+    _maybe_append_truncation_footer(
+        lines,
+        truncated=_needs_truncation(size, len(binary_preview_bytes)),
+        size=size,
+        preview_length=len(binary_preview_bytes),
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _write_global_txt_mirrors(root: Optional[Path], mirrors_root: Path) -> List[Tuple[Path, Path]]:
+    """Mirror the diagnostics bundle under *_mirrors* for in-browser previews."""
+
+    created: List[Tuple[Path, Path]] = []
+    if not root or not root.exists():
+        return created
+
+    try:
+        mirrors_root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return created
+
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        if mirrors_root in path.parents:
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size > MIRROR_SIZE_LIMIT:
+            continue
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            continue
+        mirror_name = relative.name if relative.suffix == ".txt" else relative.name + ".txt"
+        mirror_path = mirrors_root / relative.parent / mirror_name
+        try:
+            mirror_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        try:
+            preview = _as_text_preview(path)
+        except Exception:
+            continue
+        try:
+            mirror_path.write_text(preview, encoding="utf-8")
+        except OSError:
+            continue
+        _register_mirror(path, mirror_path)
+        created.append((path, mirror_path))
+    return created
 
 
 def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
@@ -1173,17 +1305,15 @@ def _build_markdown(
             continue
         mirror_obj: Optional[Path] = entry.get("mirror")
         original_rel = _relative_to_diag(path_obj, diag)
-        original_name = Path(original_rel).name
         original_href = _normalize_link(original_rel)
         if mirror_obj:
             mirror_rel = _relative_to_diag(mirror_obj, diag)
-            mirror_name = Path(mirror_rel).name
             mirror_href = _normalize_link(mirror_rel)
             lines.append(
-                f"- {label}: [{mirror_name}]({mirror_href}) ([{original_name}]({original_href}))"
+                f"- {label}: [Preview (.txt)]({mirror_href}) ([Download]({original_href}))"
             )
         else:
-            lines.append(f"- {label}: [{original_name}]({original_href})")
+            lines.append(f"- {label}: [Download]({original_href})")
 
     lines.extend(
         [
@@ -1214,12 +1344,11 @@ def _build_markdown(
                 if mirror_obj:
                     mirror_rel = _relative_to_diag(mirror_obj, diag)
                     mirror_norm = _normalize_link(mirror_rel)
-                    mirror_label = Path(mirror_rel).name
                     lines.append(
-                        f"  - {label}: [{mirror_label}]({mirror_norm}) ([{label}]({normalized}))"
+                        f"  - {label}: [Preview (.txt)]({mirror_norm}) ([Download]({normalized}))"
                     )
                 else:
-                    lines.append(f"  - [{label}]({normalized})")
+                    lines.append(f"  - {label}: [Download]({normalized})")
         else:
             lines.append("  - (prompt/response/why_no_diff not located)")
     else:
@@ -1269,12 +1398,11 @@ def _build_markdown(
             if mirror_obj and mirror_obj.exists():
                 mirror_rel = _relative_to_diag(mirror_obj, diag)
                 mirror_link = _normalize_link(mirror_rel)
-                mirror_name = Path(mirror_rel).name
                 lines.append(
-                    f"- [{mirror_name}]({mirror_link}) ([{display_name}]({normalized})) — {size}"
+                    f"- {display_name}: [Preview (.txt)]({mirror_link}) ([Download]({normalized})) — {size}"
                 )
             else:
-                lines.append(f"- [{display_name}]({normalized}) — {size}")
+                lines.append(f"- {display_name}: [Download]({normalized}) — {size}")
 
     inventory_lines = _inventory_lines(context.inventory_b64)
     if inventory_lines:
@@ -1419,19 +1547,20 @@ def _write_html(
                             if mirror_obj:
                                 mirror_rel = _relative_to_diag(mirror_obj, diag)
                                 mirror_href = _escape_href(_normalize_link(mirror_rel))
-                                mirror_name = _escape_html(Path(mirror_rel).name)
                                 html.append(
-                                    "<li><code><a href=\"{0}\">{1}</a></code> "
-                                    "(<code><a href=\"{2}\">{3}</a></code>)</li>".format(
-                                        mirror_href or "",
-                                        mirror_name,
-                                        href_file or "",
+                                    "<li><code>{0}</code>: "
+                                    "<a href=\"{1}\">Preview (.txt)</a> "
+                                    "(<a href=\"{2}\">Download</a>)</li>".format(
                                         name_html,
+                                        mirror_href or "",
+                                        href_file or "",
                                     )
                                 )
                             else:
                                 html.append(
-                                    f"<li><code><a href=\"{href_file}\">{name_html}</a></code></li>"
+                                    "<li><code>{0}</code>: <a href=\"{1}\">Download</a></li>".format(
+                                        name_html, href_file or ""
+                                    )
                                 )
                     else:
                         html.append("<li>(prompt/response/why_no_diff not located)</li>")
@@ -1459,18 +1588,16 @@ def _write_html(
         mirror_obj: Optional[Path] = entry.get("mirror")
         original_rel = _relative_to_diag(path_obj, diag)
         original_href = _escape_href(_normalize_link(original_rel))
-        original_name = _escape_html(Path(original_rel).name)
         if mirror_obj:
             mirror_rel = _relative_to_diag(mirror_obj, diag)
             mirror_href = _escape_href(_normalize_link(mirror_rel))
-            mirror_name = _escape_html(Path(mirror_rel).name)
             html.append(
-                f"<li><strong>{label}:</strong> <a href=\"{mirror_href}\">{mirror_name}</a> "
-                f"(<a href=\"{original_href}\">{original_name}</a>)</li>"
+                f"<li><strong>{label}:</strong> <a href=\"{mirror_href}\">Preview (.txt)</a> "
+                f"(<a href=\"{original_href}\">Download</a>)</li>"
             )
         else:
             html.append(
-                f"<li><strong>{label}:</strong> <a href=\"{original_href}\">{original_name}</a></li>"
+                f"<li><strong>{label}:</strong> <a href=\"{original_href}\">Download</a></li>"
             )
     html.append("</ul>")
     html.append("</section>")
@@ -1534,18 +1661,19 @@ def _write_html(
                 mirror_rel = _relative_to_diag(mirror_obj, diag)
                 mirror_norm = _normalize_link(mirror_rel)
                 mirror_href = _escape_href(mirror_norm)
-                mirror_text = _escape_html(Path(mirror_rel).as_posix())
                 html.append(
-                    "<li><a href=\"{0}\">{1}</a> (<a href=\"{2}\">{3}</a>) — {4}</li>".format(
-                        mirror_href or "",
-                        mirror_text,
-                        href or "",
+                    "<li>{0}: <a href=\"{1}\">Preview (.txt)</a> "
+                    "(<a href=\"{2}\">Download</a>) — {3}</li>".format(
                         text,
+                        mirror_href or "",
+                        href or "",
                         size,
                     )
                 )
             else:
-                html.append(f"<li><a href=\"{href}\">{text}</a> — {size}</li>")
+                html.append(
+                    f"<li>{text}: <a href=\"{href}\">Download</a> — {size}</li>"
+                )
         html.append("</ul>")
         html.append("</section>")
 
@@ -1870,21 +1998,19 @@ def _build_site_overview(
         original_url = f"{bundle_prefix}/{original_rel}"
         if not _has_file(site, original_url.split("?", 1)[0]):
             continue
-        original_name = Path(original_rel).name
         mirror_obj: Optional[Path] = entry.get("mirror")
         if mirror_obj:
             mirror_rel = _relative_to_diag(mirror_obj, context.diag)
             mirror_url = f"{bundle_prefix}/{mirror_rel}"
             if _has_file(site, mirror_url.split("?", 1)[0]):
-                mirror_name = Path(mirror_rel).name
                 lines.append(
-                    f"- {entry['label']}: [{mirror_name}]({_normalize_link(mirror_url)}) "
-                    f"([{original_name}]({_normalize_link(original_url)}))"
+                    f"- {entry['label']}: [Preview (.txt)]({_normalize_link(mirror_url)}) "
+                    f"([Download]({_normalize_link(original_url)}))"
                 )
                 continue
-        lines.append(
-            f"- {entry['label']}: [{original_name}]({_normalize_link(original_url)})"
-        )
+    lines.append(
+        f"- {entry['label']}: [Download]({_normalize_link(original_url)})"
+    )
 
     if summary_preview:
         lines.append("")
@@ -1956,24 +2082,22 @@ def _build_site_overview(
         if not _has_file(site, original_url.split("?", 1)[0]):
             continue
         original_href = _escape_href(_normalize_link(original_url))
-        original_name = _escape_html(Path(original_rel).name)
         mirror_obj: Optional[Path] = entry.get("mirror")
         if mirror_obj:
             mirror_rel = _relative_to_diag(mirror_obj, context.diag)
             mirror_url = f"{bundle_prefix}/{mirror_rel}"
             if _has_file(site, mirror_url.split("?", 1)[0]):
                 mirror_href = _escape_href(_normalize_link(mirror_url))
-                mirror_name = _escape_html(Path(mirror_rel).name)
                 html_lines.append(
                     f"<li><strong>{_escape_html(entry['label'])}:</strong> "
-                    f"<a href=\"{mirror_href}\">{mirror_name}</a> "
-                    f"(<a href=\"{original_href}\">{original_name}</a>)</li>"
+                    f"<a href=\"{mirror_href}\">Preview (.txt)</a> "
+                    f"(<a href=\"{original_href}\">Download</a>)</li>"
                 )
                 continue
-        html_lines.append(
-            f"<li><strong>{_escape_html(entry['label'])}:</strong> "
-            f"<a href=\"{original_href}\">{original_name}</a></li>"
-        )
+    html_lines.append(
+        f"<li><strong>{_escape_html(entry['label'])}:</strong> "
+        f"<a href=\"{original_href}\">Download</a></li>"
+    )
     html_lines.append("</ul>")
     html_lines.append("</section>")
 
@@ -2011,6 +2135,10 @@ def main() -> None:
     status_data = _load_iterate_json(iterate_dir, iterate_temp, "iterate_status.json")
     why_outcome = _read_iterate_first_line(iterate_dir, iterate_temp, "why_no_diff.txt")
     _ensure_iterate_text_mirrors(context, iterate_dir, iterate_temp)
+    if context.diag:
+        # Professional note: populate the global preview mirrors before rendering
+        # markdown/HTML so all link helpers can point at the shared _mirrors tree.
+        _write_global_txt_mirrors(context.diag, context.diag / "_mirrors")
 
     if context.site:
         _write_latest_json(context)
