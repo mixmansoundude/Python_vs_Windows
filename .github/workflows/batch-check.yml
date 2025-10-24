@@ -658,6 +658,251 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Collect failing test IDs
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $root = Get-Location
+          $basePath = $root.Path
+          $diagDir = Join-Path $basePath 'diag'
+          if (-not (Test-Path -LiteralPath $diagDir)) {
+            New-Item -ItemType Directory -Path $diagDir -Force | Out-Null
+          }
+
+          $outPath = Join-Path $diagDir 'failing-tests.txt'
+          $debugPath = Join-Path $diagDir 'fail-debug.txt'
+
+          $allFailures = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+          $perFile = [ordered]@{}
+
+          function Get-RelativePath {
+            param(
+              [Parameter(Mandatory = $true)][string]$Base,
+              [Parameter(Mandatory = $true)][string]$Path
+            )
+
+            return [System.IO.Path]::GetRelativePath($Base, $Path)
+          }
+
+          function Ensure-PerFileEntry {
+            param([string]$Key)
+
+            if (-not $perFile.Contains($Key)) {
+              $perFile[$Key] = [pscustomobject]@{
+                Set  = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+                Hits = 0
+              }
+            }
+
+            return $perFile[$Key]
+          }
+
+          function Get-CandidateFiles {
+            param([string]$BasePath)
+
+            if (-not $BasePath) { return @() }
+
+            # Professional note: Requirement "search under the job workspace using broad globs" —
+            # scan the entire workspace instead of the packaged artifact layout so we detect
+            # freshly written NDJSON before diagnostics copies them elsewhere.
+            $patterns = @('*~test-results.ndjson', 'ci_test_results*.ndjson')
+            $files = foreach ($pattern in $patterns) {
+              Get-ChildItem -Path $BasePath -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue
+            }
+
+            return $files |
+              Where-Object {
+                ($_.FullName -notmatch '(?i)\.zip$') -and
+                ($_.FullName -notmatch '(?i)\.gz$')
+              } |
+              Sort-Object -Property FullName -Unique
+          }
+
+          function Test-OutcomeFailed {
+            param([object]$Root)
+
+            if ($null -eq $Root) { return $false }
+
+            $stack = [System.Collections.Stack]::new()
+            $stack.Push($Root)
+
+            while ($stack.Count -gt 0) {
+              $current = $stack.Pop()
+              if ($null -eq $current) { continue }
+
+              if ($current -is [System.Collections.IDictionary] -or $current -is [PSCustomObject]) {
+                foreach ($prop in $current.PSObject.Properties) {
+                  $name = $prop.Name
+                  if ([string]::IsNullOrEmpty($name)) { continue }
+
+                  $value = $prop.Value
+                  if ($name -ieq 'outcome' -and $value -is [string] -and $value -ieq 'failed') {
+                    return $true
+                  }
+
+                  if ($value -ne $null -and -not ($value -is [string])) {
+                    if ($value -is [System.Collections.IDictionary] -or $value -is [PSCustomObject]) {
+                      $stack.Push($value)
+                      continue
+                    }
+
+                    if ($value -is [System.Collections.IEnumerable]) {
+                      foreach ($item in $value) { $stack.Push($item) }
+                    }
+                  }
+                }
+              } elseif ($current -is [System.Collections.IEnumerable] -and -not ($current -is [string])) {
+                foreach ($item in $current) { $stack.Push($item) }
+              }
+            }
+
+            return $false
+          }
+
+          function Get-FirstId {
+            param([object]$Root)
+
+            if ($null -eq $Root) { return $null }
+
+            $preferred = $null
+            $fallback = $null
+            $stack = [System.Collections.Stack]::new()
+            $stack.Push($Root)
+
+            while ($stack.Count -gt 0) {
+              $current = $stack.Pop()
+              if ($null -eq $current) { continue }
+
+              if ($current -is [System.Collections.IDictionary] -or $current -is [PSCustomObject]) {
+                foreach ($prop in $current.PSObject.Properties) {
+                  $name = $prop.Name
+                  if ([string]::IsNullOrEmpty($name)) { continue }
+
+                  $value = $prop.Value
+                  if ($value -is [string]) {
+                    if (-not $preferred -and $name -ieq 'nodeid') {
+                      $preferred = $value
+                    } elseif (-not $fallback -and $name -ieq 'name') {
+                      $fallback = $value
+                    }
+                  }
+
+                  if ($value -ne $null -and -not ($value -is [string])) {
+                    if ($value -is [System.Collections.IDictionary] -or $value -is [PSCustomObject]) {
+                      $stack.Push($value)
+                      continue
+                    }
+
+                    if ($value -is [System.Collections.IEnumerable]) {
+                      foreach ($item in $value) { $stack.Push($item) }
+                    }
+                  }
+                }
+              } elseif ($current -is [System.Collections.IEnumerable] -and -not ($current -is [string])) {
+                foreach ($item in $current) { $stack.Push($item) }
+              }
+
+              if ($preferred) { break }
+            }
+
+            if ($preferred) { return $preferred }
+            return $fallback
+          }
+
+          function Get-FallbackId {
+            param([string]$Line)
+
+            if (-not $Line) { return $null }
+
+            foreach ($pattern in @('"nodeid"\s*:\s*"((?:[^"\\]|\\.)*)"', '"name"\s*:\s*"((?:[^"\\]|\\.)*)"')) {
+              $m = [regex]::Match($Line, $pattern)
+              if ($m.Success) {
+                $capture = $m.Groups[1].Value
+                try {
+                  return ('"' + $capture + '"') | ConvertFrom-Json -ErrorAction Stop
+                } catch {
+                  return $capture
+                }
+              }
+            }
+
+            return $null
+          }
+
+          $files = @(Get-CandidateFiles -BasePath $basePath)
+
+          foreach ($file in $files) {
+            $rel = Get-RelativePath -Base $basePath -Path $file.FullName
+            $entry = Ensure-PerFileEntry -Key $rel
+
+            $lines = Get-Content -LiteralPath $file.FullName -Encoding UTF8
+            foreach ($line in $lines) {
+              if ([string]::IsNullOrWhiteSpace($line)) { continue }
+
+              $failed = $false
+              $id = $null
+
+              try {
+                $obj = $line | ConvertFrom-Json -ErrorAction Stop
+              } catch {
+                $obj = $null
+              }
+
+              if ($obj -ne $null -and (Test-OutcomeFailed -Root $obj)) {
+                $failed = $true
+                $id = Get-FirstId -Root $obj
+              }
+
+              if (-not $failed -and $line -match '"outcome"\s*:\s*"failed"') {
+                $failed = $true
+                if (-not $id) {
+                  $id = Get-FallbackId -Line $line
+                }
+              }
+
+              if (-not $failed -or -not $id) { continue }
+
+              # Professional note: log total failing rows per file so fail-debug verifies coverage at a glance.
+              $entry.Hits++
+              $null = $entry.Set.Add($id)
+              $null = $allFailures.Add($id)
+            }
+          }
+
+          if ($allFailures.Count -eq 0) {
+            Set-Content -Encoding UTF8 -LiteralPath $outPath -Value 'none'
+          } else {
+            $sorted = $allFailures.ToArray() | Sort-Object
+            $sorted | Set-Content -Encoding UTF8 -LiteralPath $outPath
+          }
+
+          $debugLines = [System.Collections.Generic.List[string]]::new()
+          foreach ($kvp in $perFile.GetEnumerator() | Sort-Object Key) {
+            $hits = 0
+            if ($kvp.Value -and $kvp.Value.PSObject.Properties['Hits']) {
+              $hits = [int]$kvp.Value.Hits
+            }
+
+            $debugLines.Add([string]::Format('{0}`t{1}', $kvp.Key, $hits)) | Out-Null
+          }
+
+          if ($debugLines.Count -eq 0) {
+            $debugLines.Add('none') | Out-Null
+          }
+
+          $debugLines | Set-Content -Encoding UTF8 -LiteralPath $debugPath
+
+      - name: Upload failing test IDs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: batchcheck-failures-${{ matrix.mode }}
+          path: |
+            diag/failing-tests.txt
+            diag/fail-debug.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Preflight OpenAI auth (diagnostics)
         id: openai_auth
         if: ${{ always() }}

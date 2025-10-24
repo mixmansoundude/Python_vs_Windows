@@ -1,0 +1,603 @@
+[CmdletBinding()]
+param()
+
+# Implements the prior inline "Write diagnostics index" logic as a reusable script in tools/diag
+# per the request to "Create repo scripts under tools/diag".
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$Diag       = $env:DIAG
+$Artifacts  = $env:ARTIFACTS
+$Repo       = $env:REPO
+$SHA        = $env:SHA
+$Run        = $env:RUN_ID
+$Att        = $env:RUN_ATTEMPT
+$UTC        = [DateTime]::UtcNow.ToString('o')
+$CT         = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, 'Central Standard Time').ToString('o')
+$RunUrl     = $env:RUN_URL
+$Short      = $env:SHORTSHA
+$InventoryB64 = $env:INVENTORY_B64
+$BatchRunId   = $env:BATCH_RUN_ID
+$BatchRunAttempt = $env:BATCH_RUN_ATTEMPT
+if (-not $Short) {
+    $Short = $SHA
+    if ($Short.Length -gt 7) { $Short = $Short.Substring(0,7) }
+}
+
+function Get-FirstDir {
+    param([string]$root)
+    if (-not $root) { return $null }
+    if (-not (Test-Path $root)) { return $null }
+    return Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+}
+
+$iterateRoot = if ($Artifacts) { Join-Path $Artifacts 'iterate' } else { $null }
+$iterateDir = Get-FirstDir $iterateRoot
+if ($iterateRoot -and (Test-Path $iterateRoot)) {
+    $candidateDirs = Get-ChildItem -Path $iterateRoot -Directory -ErrorAction SilentlyContinue
+    foreach ($candidate in $candidateDirs) {
+        $decisionProbe = Join-Path $candidate.FullName 'decision.txt'
+        if (Test-Path $decisionProbe) {
+            # Professional note: some artifacts expose `_temp` alongside the sanitized iterate
+            # folder; prefer the directory that carries decision.txt so metadata stays accurate.
+            $iterateDir = $candidate.FullName
+            break
+        }
+    }
+}
+
+$iterateTemp = $null
+if ($iterateRoot -and (Test-Path $iterateRoot)) {
+    $candidateTemp = Join-Path $iterateRoot '_temp'
+    if (Test-Path $candidateTemp) {
+        $iterateTemp = $candidateTemp
+    } elseif ($iterateDir) {
+        $altTemp = Join-Path $iterateDir '_temp'
+        if (Test-Path $altTemp) { $iterateTemp = $altTemp }
+    }
+    if (-not $iterateTemp) {
+        $maybeTemp = Get-ChildItem -Path $iterateRoot -Directory -Filter '_temp' -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($maybeTemp) { $iterateTemp = $maybeTemp.FullName }
+    }
+}
+
+$responseData = $null
+if ($iterateTemp) {
+    $responsePath = Join-Path $iterateTemp 'response.json'
+    if (Test-Path $responsePath) {
+        try { $responseData = Get-Content -Raw -LiteralPath $responsePath | ConvertFrom-Json } catch {}
+    }
+}
+
+$statusData = $null
+if ($iterateTemp) {
+    $statusPath = Join-Path $iterateTemp 'iterate_status.json'
+    if (Test-Path $statusPath) {
+        try { $statusData = Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json } catch {}
+    }
+}
+
+$whyOutcome = $null
+if ($iterateTemp) {
+    $whyPath = Join-Path $iterateTemp 'why_no_diff.txt'
+    if (Test-Path $whyPath) {
+        $line = (Get-Content -LiteralPath $whyPath -TotalCount 1 | Select-Object -First 1)
+        if ($line) { $whyOutcome = $line.Trim() }
+    }
+}
+
+function Get-Relative {
+    param([string]$fullPath)
+    if (-not $fullPath) { return $null }
+    if (-not $Diag) { return $fullPath }
+    if ($fullPath.StartsWith($Diag, [StringComparison]::OrdinalIgnoreCase)) {
+        return $fullPath.Substring($Diag.Length + 1).Replace('\\','/')
+    }
+    return $fullPath
+}
+
+function Normalize-Link {
+    param([string]$value)
+    if (-not $value) { return $value }
+    # Professional note: GitHub Pages treats backslashes as %5C and 404s; convert to
+    # forward slashes per maintainer request to "fix broken links caused by backslashes".
+    return ($value -replace '\\','/')
+}
+
+function Read-Value {
+    param([string]$dir, [string]$name)
+    if (-not $dir) { return 'n/a' }
+    $path = Join-Path $dir $name
+    if (Test-Path $path) {
+        return (Get-Content -Raw -LiteralPath $path).Trim()
+    }
+    return 'n/a'
+}
+
+$decision   = Read-Value $iterateDir 'decision.txt'
+$model      = Read-Value $iterateDir 'model.txt'
+$endpoint   = Read-Value $iterateDir 'endpoint.txt'
+$httpStatus = Read-Value $iterateDir 'http_status.txt'
+if ($responseData) {
+    if ($null -ne $responseData.http_status) { $httpStatus = [string]$responseData.http_status }
+    if ($responseData.model) { $model = [string]$responseData.model }
+}
+$tokens     = @{}
+$tokens['prompt']     = 'n/a'
+$tokens['completion'] = 'n/a'
+$tokens['total']      = 'n/a'
+if ($responseData -and $responseData.usage) {
+    if ($null -ne $responseData.usage.prompt_tokens) { $tokens['prompt'] = [string]$responseData.usage.prompt_tokens }
+    if ($null -ne $responseData.usage.completion_tokens) { $tokens['completion'] = [string]$responseData.usage.completion_tokens }
+    if ($null -ne $responseData.usage.total_tokens) { $tokens['total'] = [string]$responseData.usage.total_tokens }
+}
+if ($iterateDir) {
+    $tokensPath = Join-Path $iterateDir 'tokens.txt'
+    if (Test-Path $tokensPath) {
+        foreach ($line in Get-Content -LiteralPath $tokensPath) {
+            if ($line -match '^(?<k>[^=]+)=(?<v>.*)$') {
+                $key = $matches['k']
+                $value = $matches['v']
+                if (-not $tokens.ContainsKey($key)) { $tokens[$key] = $value; continue }
+                if ([string]::IsNullOrWhiteSpace($tokens[$key]) -or $tokens[$key] -eq 'n/a') {
+                    $tokens[$key] = $value
+                }
+            }
+        }
+    }
+}
+
+$patchDiffPath = $null
+if ($iterateDir) {
+    $candidatePatch = Join-Path $iterateDir 'patch.diff'
+    if (Test-Path $candidatePatch) { $patchDiffPath = $candidatePatch }
+}
+
+$diffProduced = $false
+if ($patchDiffPath -and (Test-Path $patchDiffPath)) {
+    $head = Get-Content -LiteralPath $patchDiffPath -TotalCount 20
+    if ($head) {
+        $allNoChanges = ($head.Count -eq 1 -and $head[0].Trim() -eq '# no changes')
+        if (-not $allNoChanges) { $diffProduced = $true }
+    }
+}
+
+$outcome = 'n/a'
+if ($whyOutcome) {
+    $outcome = $whyOutcome
+} elseif ($diffProduced) {
+    $outcome = 'diff produced'
+}
+
+function Format-StatusValue {
+    param($value)
+    if ($null -eq $value) { return 'n/a' }
+    if ($value -is [bool]) { return $value.ToString().ToLowerInvariant() }
+    return [string]$value
+}
+
+$attemptSummary = $null
+if ($statusData) {
+    $attemptSummary = [string]::Format(
+        'attempted={0} gate={1} auth_ok={2} attempts_left={3}',
+        (Format-StatusValue $statusData.attempted),
+        (Format-StatusValue $statusData.gate),
+        (Format-StatusValue $statusData.auth_ok),
+        (Format-StatusValue $statusData.attempts_left)
+    )
+}
+
+$ndjsonSummaries = @()
+if ($Artifacts) {
+    $ndjsonSummaries = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue
+}
+
+$iterateZipName = "iterate-$Run-$Att.zip"
+$iterateZipPath = if ($Diag) { Join-Path $Diag ('logs\' + $iterateZipName) } else { $null }
+$iterateStatus = 'found'
+if (-not $iterateZipPath -or -not (Test-Path $iterateZipPath)) {
+    $iterateStatus = 'missing (see logs/iterate.MISSING.txt)'
+}
+
+$batchRunAttempt = if ($BatchRunAttempt) { $BatchRunAttempt } else { 'n/a' }
+$batchZipName = $null
+$batchStatus = 'missing'
+if ($BatchRunId) {
+    $batchZipName = "batch-check-$BatchRunId-$batchRunAttempt.zip"
+    $batchZipPath = if ($Diag) { Join-Path $Diag ('logs\' + $batchZipName) } else { $null }
+    if ($batchZipPath -and (Test-Path $batchZipPath)) {
+        $batchStatus = "found (run $BatchRunId, attempt $batchRunAttempt)"
+    } else {
+        $batchStatus = "missing archive (run $BatchRunId, attempt $batchRunAttempt)"
+    }
+} elseif ($Diag -and (Test-Path (Join-Path $Diag 'logs\batch-check.MISSING.txt'))) {
+    $batchStatus = 'missing (see logs/batch-check.MISSING.txt)'
+}
+
+$artifactFiles = @()
+if ($Artifacts) {
+    $artifactFiles = Get-ChildItem -Path $Artifacts -Recurse -File -ErrorAction SilentlyContinue
+}
+$artifactCount = 0
+if ($artifactFiles) { $artifactCount = $artifactFiles.Count }
+$artifactMissing = $null
+$artifactMissingPath = if ($Artifacts) { Join-Path $Artifacts 'MISSING.txt' } else { $null }
+if ($artifactMissingPath -and (Test-Path $artifactMissingPath)) {
+    $artifactMissing = (Get-Content -Raw -LiteralPath $artifactMissingPath).Trim()
+}
+
+$allFiles = @()
+if ($Diag) {
+    $allFiles = Get-ChildItem -Path $Diag -Recurse -File -ErrorAction SilentlyContinue | Sort-Object FullName
+}
+
+$lines = [System.Collections.Generic.List[string]]::new()
+foreach ($seed in @(
+        '# CI Diagnostics',
+        "Repo: $Repo",
+        "Commit: $SHA",
+        "Run: $Run (attempt $Att)",
+        "Built (UTC): $UTC",
+        "Built (CT): $CT",
+        "Run page: $RunUrl",
+        '',
+        # Professional note: surface sentinel results up front so unauthenticated readers know which assets landed.
+        '## Status',
+        [string]::Format('- Iterate logs: {0}', $iterateStatus),
+        [string]::Format('- Batch-check run id: {0}', $batchStatus),
+        [string]::Format('- Artifact files enumerated: {0}', $artifactCount)
+    )) {
+    $null = $lines.Add($seed)
+}
+
+if ($artifactMissing) {
+    $null = $lines.Add([string]::Format('- Artifact sentinel: {0}', $artifactMissing))
+}
+
+$null = $lines.Add('')
+$null = $lines.Add('## Quick links')
+$bundleLinks = @(
+    @{ Label = 'Inventory (HTML)'; Path = 'inventory.html'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.html')) },
+    @{ Label = 'Inventory (text)'; Path = 'inventory.txt'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.txt')) },
+    @{ Label = 'Inventory (markdown)'; Path = 'inventory.md'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.md')) },
+    @{ Label = 'Inventory (json)'; Path = 'inventory.json'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.json')) },
+    @{ Label = 'Iterate logs zip'; Path = "logs/$iterateZipName"; Exists = ($iterateZipPath -and Test-Path $iterateZipPath) },
+    @{ Label = 'Batch-check logs zip'; Path = if ($batchZipName) { "logs/$batchZipName" } else { $null }; Exists = if ($batchZipName -and $Diag) { Test-Path (Join-Path $Diag ('logs\' + $batchZipName)) } else { $false } },
+    @{ Label = 'Batch-check failing tests'; Path = 'batchcheck_failing.txt'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'batchcheck_failing.txt')) },
+    @{ Label = 'Batch-check fail debug'; Path = 'batchcheck_fail-debug.txt'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'batchcheck_fail-debug.txt')) },
+    @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = ($Diag -and Test-Path (Join-Path $Diag ("repo\repo-$Short.zip"))) },
+    @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'repo\files')) }
+)
+
+if ($Diag) {
+    $wfTxts = Get-ChildItem -Path (Join-Path $Diag 'wf') -Filter '*.yml.txt' -File -ErrorAction SilentlyContinue
+    foreach ($w in $wfTxts) {
+        $name = $w.Name
+        $bundleLinks += @{ Label = "Workflow: $name"; Path = ("wf/" + $name); Exists = $true }
+    }
+}
+
+foreach ($entry in $bundleLinks) {
+    if (-not $entry.Path) { continue }
+    if ($entry.Exists) {
+        $linkPath = Normalize-Link $entry.Path
+        $link = [string]::Format('- {0}: [{1}]({1})', $entry.Label, $linkPath)
+        $null = $lines.Add($link)
+    } else {
+        $note = [string]::Format('- {0}: missing', $entry.Label)
+        $null = $lines.Add($note)
+    }
+}
+
+$null = $lines.Add('')
+$null = $lines.Add('## Iterate metadata')
+foreach ($seed in @(
+        [string]::Format('- Decision: {0}', $decision),
+        [string]::Format('- Outcome: {0}', $outcome),
+        [string]::Format('- HTTP status: {0}', $httpStatus),
+        [string]::Format('- Model: {0}', $model),
+        [string]::Format('- Endpoint: {0}', $endpoint),
+        [string]::Format('- Tokens: prompt={0} completion={1} total={2}', $tokens['prompt'], $tokens['completion'], $tokens['total'])
+    )) {
+    $null = $lines.Add($seed)
+}
+
+if (-not $responseData -and $attemptSummary) {
+    # Professional note: surface gate/auth outcomes when no response payload exists so
+    # analysts immediately see why the iterate call was skipped.
+    $null = $lines.Add([string]::Format('- Attempt summary: {0}', $attemptSummary))
+}
+
+if ($iterateDir) {
+    $iterFiles = Get-ChildItem -Path $iterateDir -File -ErrorAction SilentlyContinue
+    if ($iterFiles) {
+        $null = $lines.Add('')
+        $null = $lines.Add('### Iterate files')
+        foreach ($file in $iterFiles) {
+            $rel = Get-Relative $file.FullName
+            $relNorm = Normalize-Link $rel
+            $iterLine = [string]::Format('- [`{0}`]({1})', $relNorm, $relNorm)
+            $null = $lines.Add($iterLine)
+        }
+    }
+}
+
+$batchRunMeta = if ($Artifacts) { Join-Path (Join-Path $Artifacts 'batch-check') 'run.json' } else { $null }
+if ($batchRunMeta -and (Test-Path $batchRunMeta)) {
+    try {
+        $meta = Get-Content -Raw -LiteralPath $batchRunMeta | ConvertFrom-Json
+        $null = $lines.Add('')
+        $null = $lines.Add('## Batch-check run')
+        $runLine = [string]::Format('- Run id: {0} (attempt {1})', $meta.run_id, $meta.run_attempt)
+        $statusLine = [string]::Format('- Status: {0} / {1}', $meta.status, $meta.conclusion)
+        $null = $lines.Add($runLine)
+        $null = $lines.Add($statusLine)
+        if ($meta.html_url) {
+            $runPageLine = [string]::Format('- Run page: {0}', $meta.html_url)
+            $null = $lines.Add($runPageLine)
+        }
+    } catch {}
+}
+
+if ($ndjsonSummaries) {
+    $null = $lines.Add('')
+    $null = $lines.Add('## NDJSON summaries')
+    foreach ($file in $ndjsonSummaries) {
+        $rel = Get-Relative $file.FullName
+        $heading = [string]::Format('### {0}', $rel)
+        $null = $lines.Add($heading)
+        $null = $lines.Add('```text')
+        foreach ($segment in Get-Content -LiteralPath $file.FullName) {
+            $null = $lines.Add($segment)
+        }
+        $null = $lines.Add('```')
+    }
+}
+
+if ($allFiles) {
+    $null = $lines.Add('')
+    $null = $lines.Add('## File listing')
+    foreach ($item in $allFiles) {
+        $rel = Get-Relative $item.FullName
+        $size = '{0:N0}' -f $item.Length
+        $relNorm = Normalize-Link $rel
+        $line = [string]::Format('- [{0} bytes]({1})', $size, $relNorm)
+        $null = $lines.Add($line)
+    }
+}
+
+if ($InventoryB64) {
+    try {
+        $decoded = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($InventoryB64))
+        if ($decoded) {
+            $null = $lines.Add('')
+            $null = $lines.Add('## Inventory (raw)')
+            foreach ($entry in $decoded.Split("`n")) {
+                $null = $lines.Add($entry)
+            }
+        }
+    } catch {}
+}
+
+$markdown = $lines.ToArray() -join "`n"
+$mdPath = if ($Diag) { Join-Path $Diag 'index.md' } else { $null }
+if ($mdPath) {
+    $markdown | Set-Content -Encoding UTF8 -NoNewline $mdPath
+}
+
+function Escape-Html {
+    param([string]$value)
+    if ($null -eq $value) { return '' }
+    $encoded = $value -replace '&', '&amp;'
+    $encoded = $encoded -replace '<', '&lt;'
+    return $encoded -replace '>', '&gt;'
+}
+
+function Escape-Href {
+    param([string]$value)
+    if ([string]::IsNullOrWhiteSpace($value)) { return $value }
+    try {
+        return [System.Uri]::EscapeUriString($value)
+    } catch {
+        return $value
+    }
+}
+
+$statusPairs = @(
+    @{ Label = 'Iterate logs'; Value = $iterateStatus },
+    @{ Label = 'Batch-check run id'; Value = $batchStatus },
+    @{ Label = 'Artifact files enumerated'; Value = [string]$artifactCount }
+)
+if ($artifactMissing) {
+    $statusPairs += @{ Label = 'Artifact sentinel'; Value = $artifactMissing }
+}
+
+$metadataPairs = @(
+    @{ Label = 'Repo'; Value = $Repo },
+    @{ Label = 'Commit'; Value = $SHA },
+    @{ Label = 'Run'; Value = [string]::Format('{0} (attempt {1})', $Run, $Att) },
+    @{ Label = 'Built (UTC)'; Value = $UTC },
+    @{ Label = 'Built (CT)'; Value = $CT },
+    @{ Label = 'Run page'; Value = $RunUrl; Href = $RunUrl }
+)
+
+$iteratePairs = @(
+    @{ Label = 'Decision'; Value = $decision },
+    @{ Label = 'Outcome'; Value = $outcome },
+    @{ Label = 'HTTP status'; Value = $httpStatus },
+    @{ Label = 'Model'; Value = $model },
+    @{ Label = 'Endpoint'; Value = $endpoint },
+    @{ Label = 'Tokens'; Value = [string]::Format('prompt={0} completion={1} total={2}', $tokens['prompt'], $tokens['completion'], $tokens['total']) }
+)
+if (-not $responseData -and $attemptSummary) {
+    $iteratePairs += @{ Label = 'Attempt summary'; Value = $attemptSummary }
+}
+
+$html = [System.Collections.Generic.List[string]]::new()
+$html.Add('<!doctype html>') | Out-Null
+$html.Add('<html lang="en">') | Out-Null
+$html.Add('<head>') | Out-Null
+$html.Add('<meta charset="utf-8">') | Out-Null
+$html.Add('<title>CI Diagnostics</title>') | Out-Null
+$html.Add('</head>') | Out-Null
+$html.Add('<body>') | Out-Null
+$html.Add('<h1>CI Diagnostics</h1>') | Out-Null
+$html.Add('<section>') | Out-Null
+$html.Add('<h2>Metadata</h2>') | Out-Null
+$html.Add('<ul>') | Out-Null
+# Professional note: Invoke the Escape-* helpers without parentheses here;
+# hyphenated function names like Escape-Html() can be parsed as parameter
+# switches if written as Escape-Html($value), which triggers hosted runner
+# syntax errors during publishing.
+foreach ($pair in $metadataPairs) {
+    $label = Escape-Html $pair.Label
+    if ($pair.ContainsKey('Href') -and $pair.Href) {
+        $href = Escape-Href $pair.Href
+        $value = Escape-Html $pair.Value
+        $html.Add([string]::Format('<li><strong>{0}:</strong> <a href="{1}">{2}</a></li>', $label, $href, $value)) | Out-Null
+    } else {
+        $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $label, $(Escape-Html $pair.Value))) | Out-Null
+    }
+}
+$html.Add('</ul>') | Out-Null
+$html.Add('</section>') | Out-Null
+
+$html.Add('<section>') | Out-Null
+$html.Add('<h2>Status</h2>') | Out-Null
+$html.Add('<ul>') | Out-Null
+foreach ($pair in $statusPairs) {
+    $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $(Escape-Html $pair.Label), $(Escape-Html $pair.Value))) | Out-Null
+}
+$html.Add('</ul>') | Out-Null
+$html.Add('</section>') | Out-Null
+
+$html.Add('<section>') | Out-Null
+$html.Add('<h2>Quick links</h2>') | Out-Null
+$html.Add('<ul>') | Out-Null
+foreach ($entry in $bundleLinks) {
+    if (-not $entry.Path) { continue }
+    $label = Escape-Html $entry.Label
+    if ($entry.Exists) {
+        $href = Escape-Href (Normalize-Link $entry.Path)
+        $html.Add([string]::Format('<li><a href="{0}">{1}</a></li>', $href, $label)) | Out-Null
+    } else {
+        $html.Add([string]::Format('<li>{0}: missing</li>', $label)) | Out-Null
+    }
+}
+$html.Add('</ul>') | Out-Null
+$html.Add('</section>') | Out-Null
+
+$html.Add('<section>') | Out-Null
+$html.Add('<h2>Iterate metadata</h2>') | Out-Null
+$html.Add('<ul>') | Out-Null
+foreach ($pair in $iteratePairs) {
+    $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $(Escape-Html $pair.Label), $(Escape-Html $pair.Value))) | Out-Null
+}
+$html.Add('</ul>') | Out-Null
+$html.Add('</section>') | Out-Null
+
+if ($iterateDir -and $iterFiles) {
+    $html.Add('<section>') | Out-Null
+    $html.Add('<h3>Iterate files</h3>') | Out-Null
+    $html.Add('<ul>') | Out-Null
+    foreach ($file in $iterFiles) {
+        $rel = Get-Relative $file.FullName
+        $relNorm = Normalize-Link $rel
+        $href = Escape-Href $relNorm
+        $text = Escape-Html $relNorm
+        $html.Add([string]::Format('<li><code><a href="{0}">{1}</a></code></li>', $href, $text)) | Out-Null
+    }
+    $html.Add('</ul>') | Out-Null
+    $html.Add('</section>') | Out-Null
+}
+
+if ($batchRunMeta -and (Test-Path $batchRunMeta)) {
+    try {
+        $meta = Get-Content -Raw -LiteralPath $batchRunMeta | ConvertFrom-Json
+        $html.Add('<section>') | Out-Null
+        $html.Add('<h2>Batch-check run</h2>') | Out-Null
+        $html.Add('<ul>') | Out-Null
+        $html.Add([string]::Format('<li>Run id: {0} (attempt {1})</li>', $(Escape-Html $meta.run_id), $(Escape-Html $meta.run_attempt))) | Out-Null
+        $html.Add([string]::Format('<li>Status: {0} / {1}</li>', $(Escape-Html $meta.status), $(Escape-Html $meta.conclusion))) | Out-Null
+        if ($meta.html_url) {
+            $html.Add([string]::Format('<li><a href="{0}">Run page</a></li>', $(Escape-Href $meta.html_url))) | Out-Null
+        }
+        $html.Add('</ul>') | Out-Null
+        $html.Add('</section>') | Out-Null
+    } catch {}
+}
+
+if ($ndjsonSummaries) {
+    $html.Add('<section>') | Out-Null
+    $html.Add('<h2>NDJSON summaries</h2>') | Out-Null
+    foreach ($file in $ndjsonSummaries) {
+        $rel = Get-Relative $file.FullName
+        $html.Add([string]::Format('<h3>{0}</h3>', $(Escape-Html $rel))) | Out-Null
+        $html.Add('<pre>') | Out-Null
+        foreach ($segment in Get-Content -LiteralPath $file.FullName) {
+            $html.Add($(Escape-Html $segment)) | Out-Null
+        }
+        $html.Add('</pre>') | Out-Null
+    }
+    $html.Add('</section>') | Out-Null
+}
+
+if ($allFiles) {
+    $html.Add('<section>') | Out-Null
+    $html.Add('<h2>File listing</h2>') | Out-Null
+    $html.Add('<ul>') | Out-Null
+    foreach ($item in $allFiles) {
+        $rel = Get-Relative $item.FullName
+        $relNorm = Normalize-Link $rel
+        $href = Escape-Href $relNorm
+        $text = Escape-Html $relNorm
+        $size = Escape-Html ('{0:N0} bytes' -f $item.Length)
+        $html.Add([string]::Format('<li><a href="{0}">{1}</a> — {2}</li>', $href, $text, $size)) | Out-Null
+    }
+    $html.Add('</ul>') | Out-Null
+    $html.Add('</section>') | Out-Null
+}
+
+if ($InventoryB64) {
+    try {
+        $decoded = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($InventoryB64))
+        if ($decoded) {
+            $html.Add('<section>') | Out-Null
+            $html.Add('<h2>Inventory (raw)</h2>') | Out-Null
+            $html.Add('<pre>') | Out-Null
+            foreach ($entry in $decoded.Split("`n")) {
+                $html.Add($(Escape-Html $entry)) | Out-Null
+            }
+            $html.Add('</pre>') | Out-Null
+            $html.Add('</section>') | Out-Null
+        }
+    } catch {}
+}
+
+$html.Add('</body>') | Out-Null
+$html.Add('</html>') | Out-Null
+
+if ($Diag) {
+    ($html -join "`n") | Set-Content -Encoding UTF8 -NoNewline (Join-Path $Diag 'index.html')
+}
+
+$site = $env:SITE
+if ($site -and $Diag -and $Run -and $Att -and $Repo -and $SHA) {
+    $obj = [pscustomobject]@{
+        repo        = $Repo
+        run_id      = $Run
+        run_attempt = $Att
+        sha         = $SHA
+        bundle_url  = "diag/$Run-$Att/index.html"
+        inventory   = "diag/$Run-$Att/inventory.json"
+        workflow    = "diag/$Run-$Att/wf/codex-auto-iterate.yml.txt"
+        iterate = @{
+            prompt   = "diag/$Run-$Att/_artifacts/iterate/iterate/prompt.txt"
+            response = "diag/$Run-$Att/_artifacts/iterate/iterate/response.json"
+            diff     = "diag/$Run-$Att/_artifacts/iterate/iterate/patch.diff"
+            log      = "diag/$Run-$Att/_artifacts/iterate/iterate/exec.log"
+        }
+    }
+    $obj | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 (Join-Path $site 'latest.json')
+}
