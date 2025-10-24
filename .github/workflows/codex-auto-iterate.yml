@@ -646,6 +646,40 @@ jobs:
               why_path.unlink()
           PY
 
+      - name: Discover diagnostics root
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          diag=""
+          search_dirs=("$GITHUB_WORKSPACE" "$RUNNER_TEMP")
+          for base in "${search_dirs[@]}"; do
+            if [ -z "$base" ] || [ ! -d "$base" ]; then
+              continue
+            fi
+            candidate=$(find "$base" -type d -path '*/_artifacts/batch-check' -print -quit 2>/dev/null || true)
+            if [ -n "$candidate" ]; then
+              diag="$(dirname "$candidate")"
+              break
+            fi
+          done
+          if [ -z "$diag" ] && [ -d "$GITHUB_WORKSPACE/diag" ]; then
+            diag="$GITHUB_WORKSPACE/diag"
+          fi
+          if [ -n "$diag" ]; then
+            echo "DIAG_DIR=$diag" >> "$GITHUB_ENV"
+            {
+              echo "### Diagnostics root"
+              echo "- path: $diag"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "DIAG_DIR=" >> "$GITHUB_ENV"
+            {
+              echo "### Diagnostics root"
+              echo "- path: not found"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Build prompt
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
         id: prompt
@@ -658,6 +692,7 @@ jobs:
           STRUCT_PATH: ${{ steps.struct.outputs.path }}
           LOGFOCUS_PATH: ${{ steps.logfocus.outputs.path }}
           LOGTAIL_PATH: ${{ steps.logtail.outputs.path }}
+          DIAG: ${{ env.DIAG_DIR }}
         run: |
           & "$env:GITHUB_WORKSPACE/tools/diag/build_prompt.ps1"
 
@@ -965,6 +1000,8 @@ jobs:
 
       - name: Stage iterate diagnostics artifact
         id: diag_stage
+        env:
+          DIAG_DIR: ${{ env.DIAG_DIR }}
         run: |
           set -euo pipefail
           iter_dir="$GITHUB_WORKSPACE/iterate"
@@ -1013,13 +1050,15 @@ jobs:
             local input="$1"
             local output="$2"
             local limit="$3"
+            shift 3
             if [ -f "$input" ]; then
               python tools/sanitize_iterate_payload.py \
                 --input "$input" \
                 --output "$output" \
                 --truncate "$limit" \
                 --redact-pattern '(?i)(secret|token|password|apikey|key)' \
-                --placeholder '***'
+                --placeholder '***' \
+                "$@"
             fi
           }
 
@@ -1032,7 +1071,11 @@ jobs:
           }
 
           sanitize "$req_raw" "$iter_dir/request.redacted.json" 100000 || true
-          sanitize "$res_raw" "$iter_dir/response.json" 200000 || true
+          sanitize "$res_raw" "$iter_dir/response.json" 200000 \
+            --why-output "$RUNNER_TEMP/why_no_diff.txt" \
+            --diff-path "$diff_path" \
+            --response-text "$content_txt" \
+            --diag-root "${DIAG_DIR:-}" || true
           copy_into_temp "$iter_dir/request.redacted.json" "request.redacted.json"
           copy_into_temp "$iter_dir/response.json" "response.json"
 

@@ -19,6 +19,41 @@ function Add-Lines {
     }
 }
 
+function Find-DiagRoot {
+    param([string[]]$Hints)
+
+    foreach ($hint in $Hints) {
+        if ([string]::IsNullOrWhiteSpace($hint)) { continue }
+        $resolved = @()
+        try {
+            $resolved = Resolve-Path -LiteralPath $hint -ErrorAction Stop
+        } catch {
+            continue
+        }
+
+        foreach ($entry in $resolved) {
+            $candidate = $entry.Path
+            if (Test-Path (Join-Path $candidate '_artifacts/batch-check')) {
+                return $candidate
+            }
+
+            try {
+                $match = Get-ChildItem -Path $candidate -Directory -Recurse -Depth 4 -ErrorAction SilentlyContinue |
+                    Where-Object { Test-Path (Join-Path $_.FullName '_artifacts/batch-check') } |
+                    Select-Object -First 1
+            } catch {
+                $match = $null
+            }
+
+            if ($match) {
+                return $match.FullName
+            }
+        }
+    }
+
+    return $null
+}
+
 $promptPath = Join-Path $env:RUNNER_TEMP 'prompt.txt'
 $repoFilesPath = Join-Path $env:RUNNER_TEMP 'repo-files.txt'
 
@@ -61,8 +96,11 @@ Add-Lines $lines @(
     "Attempt: $attempt/$maxAttempts",
     '',
     "Strict output instruction: Return a unified diff patch inside a single fenced code block labeled 'diff'.",
-    "Optionally, immediately follow the diff with a fenced block labeled 'summary_text' (max 10 lines) describing the rationale.",
-    'If no changes are needed, output exactly:',
+    "Immediately follow the diff block with a fenced block labeled 'summary_text' (max 10 lines) explaining:",
+    "- the top 1-3 candidate fixes you considered (file + hunk hint)",
+    "- why you rejected each candidate",
+    "- what additional evidence would unblock progress",
+    'If no changes are needed, the diff fence must contain exactly "# no changes" and the summary_text fence must still satisfy the points above.',
     '```diff',
     '# no changes',
     '```'
@@ -134,6 +172,15 @@ if ($focusLog -and (Test-Path $focusLog)) {
 }
 
 $diagRoot = $env:DIAG
+if (-not $diagRoot) {
+    $diagRoot = Find-DiagRoot @(
+        $workspaceRoot,
+        (Join-Path $workspaceRoot 'diag'),
+        (Join-Path $workspaceRoot '.codex'),
+        (Join-Path $workspaceRoot 'iterate'),
+        $env:RUNNER_TEMP
+    )
+}
 if ($diagRoot) {
     $failListPath = Join-Path $diagRoot 'batchcheck_failing.txt'
     if (Test-Path $failListPath) {
