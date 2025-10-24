@@ -21,7 +21,28 @@ except ImportError:  # pragma: no cover - Python < 3.9 is not expected on Action
 
 
 CURRENT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = CURRENT_DIR.parents[2]
+
+
+def _discover_repo_root(start: Path) -> Path:
+    """Walk ancestors until we locate the folder that hosts *tools*."""
+
+    current = start
+    while True:
+        candidate = current / "tools"
+        if candidate.is_dir():
+            return current
+        if current.parent == current:
+            break
+        current = current.parent
+
+    # Fallback per "Make `python tools/diag/publish_index.py` reliably import `tools.*`".
+    try:
+        return start.parents[1]
+    except IndexError:
+        return start
+
+
+REPO_ROOT = _discover_repo_root(Path(__file__).resolve().parent)
 if str(REPO_ROOT) not in sys.path:
     # Professional note: ensure the repository root is importable so diagnostics can
     # load sibling helpers even when publish_index.py runs as a script.
@@ -2167,9 +2188,11 @@ def main() -> None:
         # Professional note: populate the global preview mirrors before rendering
         # markdown/HTML so all link helpers can point at the shared _mirrors tree.
         _write_global_txt_mirrors(context.diag, context.diag / "_mirrors")
-        # Professional note: "Ensure diag/batchcheck_failing.txt contains real IDs by running an extractor AFTER artifacts are staged"
-        # so trigger the Python helper now that staged artifacts live under diag/.
-        generate_fail_list(context.diag)
+        batch_root = context.diag / "_artifacts" / "batch-check"
+        if batch_root.exists():
+            # Professional note: honor "Ensure the failing-IDs list is GENERATED after batch-check artifacts are staged"
+            # by invoking the helper only once the staged tree is present (prevents premature 'none').
+            generate_fail_list(context.diag)
 
     if context.site:
         _write_latest_json(context)
