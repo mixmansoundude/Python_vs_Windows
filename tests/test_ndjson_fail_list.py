@@ -47,6 +47,28 @@ class NdjsonFailListScriptTest(unittest.TestCase):
             self.assertIn("conda.url", lines)
             self.assertNotIn("none", lines)
 
+    def test_concatenated_json_objects_are_normalized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp)
+            batch_root = diag_root / "_artifacts" / "batch-check"
+            batch_root.mkdir(parents=True, exist_ok=True)
+            (batch_root / "failing-tests.txt").write_text("none\n", encoding="utf-8")
+
+            ndjson_path = batch_root / "mega~test-results.ndjson"
+            ndjson_path.write_text(
+                '{"id":"conda.url","pass":false} {"id":"self.bootstrap.state","pass":false}'
+                '{"id":"self.empty_repo.msg","pass":false}',
+                encoding="utf-8",
+            )
+
+            output_path = self._run_script(diag_root)
+            lines = [line.strip() for line in output_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(
+                sorted({"conda.url", "self.bootstrap.state", "self.empty_repo.msg"}),
+                sorted(lines),
+            )
+            self.assertNotIn("none", lines)
+
     def test_precomputed_list_filters_placeholder(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             diag_root = Path(tmp)

@@ -107,44 +107,62 @@ if ($collected.Count -eq 0) {
         $rel = [System.IO.Path]::GetRelativePath($batchRoot, $file.FullName)
         if (-not $perFileCounts.ContainsKey($rel)) { $perFileCounts[$rel] = [System.Collections.Generic.List[string]]::new() }
 
-        Get-Content -LiteralPath $file.FullName -Encoding UTF8 | ForEach-Object {
-            try {
-                $obj = $_ | ConvertFrom-Json -ErrorAction Stop
+        $raw = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8)
+        if ([string]::IsNullOrWhiteSpace($raw)) { continue }
 
-                $failed = $false
-                $name = $null
+        # Professional note: some batch-check uploads concatenate JSON objects without newlines.
+        # Normalizing `}{` into line breaks keeps ConvertFrom-Json working without rewriting the artifact.
+        $normalized = [Regex]::Replace($raw, '}\s*{', "}`n{")
+        $reader = New-Object IO.StringReader($normalized)
 
-                $legacyId = Get-FailureIdFromObject -Root $obj
-                if ($legacyId) {
-                    $failed = $true
-                    $name = $legacyId
-                }
+        try {
+            while ($true) {
+                $line = $reader.ReadLine()
+                if ($null -eq $line) { break }
 
-                if (-not $failed) {
-                    # Professional note: batch-check emits compact NDJSON where `pass:false` marks
-                    # failures instead of pytest-style "outcome" fields. Preserve the legacy scan
-                    # while honoring the new signal so diagnostics stay in sync with Codex.
-                    if ($obj.PSObject.Properties.Name -contains 'pass') {
-                        if ($obj.pass -is [bool] -and -not $obj.pass) { $failed = $true }
+                $line = $line.Trim()
+                if (-not $line) { continue }
+
+                try {
+                    $obj = $line | ConvertFrom-Json -ErrorAction Stop
+
+                    $failed = $false
+                    $name = $null
+
+                    $legacyId = Get-FailureIdFromObject -Root $obj
+                    if ($legacyId) {
+                        $failed = $true
+                        $name = $legacyId
                     }
-                    if (-not $failed -and $obj.status) {
-                        $s = [string]$obj.status
-                        if ($s -eq 'fail' -or $s -eq 'failure') { $failed = $true }
-                    }
-                    if ($failed) {
-                        if ($obj.id) {
-                            $name = [string]$obj.id
-                        } elseif ($obj.desc) {
-                            $name = [string]$obj.desc
+
+                    if (-not $failed) {
+                        # Professional note: batch-check emits compact NDJSON where `pass:false` marks
+                        # failures instead of pytest-style "outcome" fields. Preserve the legacy scan
+                        # while honoring the new signal so diagnostics stay in sync with Codex.
+                        if ($obj.PSObject.Properties.Name -contains 'pass') {
+                            if ($obj.pass -is [bool] -and -not $obj.pass) { $failed = $true }
+                        }
+                        if (-not $failed -and $obj.status) {
+                            $s = [string]$obj.status
+                            if ($s -eq 'fail' -or $s -eq 'failure') { $failed = $true }
+                        }
+                        if ($failed) {
+                            if ($obj.id) {
+                                $name = [string]$obj.id
+                            } elseif ($obj.desc) {
+                                $name = [string]$obj.desc
+                            }
                         }
                     }
-                }
 
-                if ($failed -and $name) {
-                    $collected.Add($name)
-                    $perFileCounts[$rel].Add($name) | Out-Null
-                }
-            } catch {}
+                    if ($failed -and $name) {
+                        $collected.Add($name)
+                        $perFileCounts[$rel].Add($name) | Out-Null
+                    }
+                } catch {}
+            }
+        } finally {
+            $reader.Dispose()
         }
     }
 
