@@ -234,7 +234,35 @@ def generate_fail_list(diag_root: Path) -> None:
     final = real_items or (unique if unique else [_PLACEHOLDER])
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("\n".join(final), encoding="utf-8")
+    text = "\n".join(final)
+    try:
+        existing = target.read_text(encoding="utf-8")
+    except OSError:
+        existing = None
+    if existing != text:
+        target.write_text(text, encoding="utf-8")
+
+    # Professional note: CI can drop placeholder "none" files into artifacts before
+    # this publisher reruns the extractor. Synchronizing the staged copies keeps the
+    # mirrors, artifact browsing, and canonical file aligned so future refactors do
+    # not reintroduce stale previews.
+    artifacts_root = diag_root / "_artifacts"
+    synced = 0
+    if artifacts_root.exists():
+        for candidate in artifacts_root.rglob("failing-tests.txt"):
+            try:
+                current = candidate.read_text(encoding="utf-8")
+            except OSError:
+                current = None
+            if current == text:
+                continue
+            try:
+                candidate.write_text(text, encoding="utf-8")
+            except OSError:
+                continue
+            synced += 1
+    if synced:
+        print(f"[ndjson_fail_list] synced {synced} artifact fail-list file(s)")
 
     if not debug_lines:
         debug_lines.append(_PLACEHOLDER)
