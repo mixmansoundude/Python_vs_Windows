@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,6 +18,38 @@ try:
     from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover - Python < 3.9 is not expected on Actions
     ZoneInfo = None  # type: ignore
+
+
+def _discover_repo_root(start: Path) -> Path:
+    """Walk ancestors until we locate the folder that hosts *tools*."""
+
+    # Professional note: "Make `python tools/diag/publish_index.py` reliably import `tools.*`"
+    # requires handling direct script execution where *start* can be the file itself.
+    current = start.resolve()
+    if current.is_file():
+        current = current.parent
+    while True:
+        candidate = current / "tools"
+        if candidate.is_dir():
+            return current
+        if current.parent == current:
+            break
+        current = current.parent
+
+    # Fallback per "Make `python tools/diag/publish_index.py` reliably import `tools.*`".
+    try:
+        return current.parents[1]
+    except IndexError:
+        return current
+
+
+REPO_ROOT = _discover_repo_root(Path(__file__).resolve())
+if str(REPO_ROOT) not in sys.path:
+    # Professional note: ensure the repository root is importable so diagnostics can
+    # load sibling helpers even when publish_index.py runs as a script.
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.diag.ndjson_fail_list import generate_fail_list
 
 
 @dataclass
@@ -1990,7 +2023,13 @@ def _build_site_overview(
     quick_link("Bundle index", bundle_index_href)
     quick_link("Open latest (cache-busted)", bundle_index_href)
 
-    for entry in _bundle_links(context):
+    bundle_entries = list(_bundle_links(context))
+    if not bundle_entries:
+        # Professional note: guard the zero-entry case per "guard the zero-entries case" so we do not
+        # depend on loop-scoped variables when no quick-links exist; the behavior remains unchanged.
+        pass
+
+    for entry in bundle_entries:
         path_obj: Optional[Path] = entry.get("path")
         if not path_obj:
             continue
@@ -2008,9 +2047,12 @@ def _build_site_overview(
                     f"([Download]({_normalize_link(original_url)}))"
                 )
                 continue
-    lines.append(
-        f"- {entry['label']}: [Download]({_normalize_link(original_url)})"
-    )
+        # Professional note: keep the download link within the loop so each bundle entry
+        # renders even when a mirror is unavailable; the previous tail-position fallback
+        # dropped earlier links and triggered UnboundLocalError when the loop never ran.
+        lines.append(
+            f"- {entry['label']}: [Download]({_normalize_link(original_url)})"
+        )
 
     if summary_preview:
         lines.append("")
@@ -2073,7 +2115,13 @@ def _build_site_overview(
                 f"<li><a href=\"{_escape_href(_normalize_link(path))}\">{_escape_html(label)}</a></li>"
             )
 
-    for entry in _bundle_links(context):
+    if not bundle_entries:
+        # Professional note: mirror the markdown guard here so empty bundles skip the loop
+        # without touching loop-local variables. The previous tail-position fallback accessed
+        # `entry` after the loop and crashed when no quick links existed.
+        pass
+
+    for entry in bundle_entries:
         path_obj: Optional[Path] = entry.get("path")
         if not path_obj:
             continue
@@ -2094,10 +2142,12 @@ def _build_site_overview(
                     f"(<a href=\"{original_href}\">Download</a>)</li>"
                 )
                 continue
-    html_lines.append(
-        f"<li><strong>{_escape_html(entry['label'])}:</strong> "
-        f"<a href=\"{original_href}\">Download</a></li>"
-    )
+        # Professional note: keep the download fallback inside the loop so every bundle entry
+        # emits exactly one list item and so empty bundles avoid referencing loop variables.
+        html_lines.append(
+            f"<li><strong>{_escape_html(entry['label'])}:</strong> "
+            f"<a href=\"{original_href}\">Download</a></li>"
+        )
     html_lines.append("</ul>")
     html_lines.append("</section>")
 
@@ -2136,6 +2186,14 @@ def main() -> None:
     why_outcome = _read_iterate_first_line(iterate_dir, iterate_temp, "why_no_diff.txt")
     _ensure_iterate_text_mirrors(context, iterate_dir, iterate_temp)
     if context.diag:
+        batch_root = context.diag / "_artifacts" / "batch-check"
+        if batch_root.exists():
+            # Professional note: honor "Ensure the failing-IDs list is GENERATED after batch-check artifacts are staged"
+            # by invoking the helper only once the staged tree is present (prevents premature 'none').
+            # Additional note: placing this call before mirroring avoids copying a stale placeholder into _mirrors/ when the
+            # list is regenerated later in the publish step (per "Move the generate_fail_list(context.diag) call to run before
+            # _write_global_txt_mirrors(context.diag, context.diag / '_mirrors')").
+            generate_fail_list(context.diag)
         # Professional note: populate the global preview mirrors before rendering
         # markdown/HTML so all link helpers can point at the shared _mirrors tree.
         _write_global_txt_mirrors(context.diag, context.diag / "_mirrors")

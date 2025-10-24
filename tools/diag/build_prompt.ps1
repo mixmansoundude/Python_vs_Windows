@@ -133,6 +133,28 @@ if ($focusLog -and (Test-Path $focusLog)) {
     }
 }
 
+$diagRoot = $env:DIAG
+if ($diagRoot) {
+    $failListPath = Join-Path $diagRoot 'batchcheck_failing.txt'
+    if (Test-Path $failListPath) {
+        Add-Lines $lines @('', '----- Batch-check failing IDs -----')
+        Get-Content -LiteralPath $failListPath -TotalCount 10 | ForEach-Object {
+            $lines.Add($_) | Out-Null
+        }
+    }
+
+    $batchRoot = Join-Path $diagRoot '_artifacts/batch-check'
+    if (Test-Path $batchRoot) {
+        $ndjsonHead = Get-ChildItem -Path $batchRoot -Recurse -File -Filter '*~test-results.ndjson' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($ndjsonHead) {
+            Add-Lines $lines @('', '----- NDJSON head (batch-check) -----')
+            Get-Content -LiteralPath $ndjsonHead.FullName -TotalCount 8 | ForEach-Object {
+                $lines.Add((Convert-ToPrintable $_)) | Out-Null
+            }
+        }
+    }
+}
+
 [IO.File]::WriteAllLines($promptPath, $lines, [System.Text.Encoding]::UTF8)
 
 if ($env:GITHUB_OUTPUT) {

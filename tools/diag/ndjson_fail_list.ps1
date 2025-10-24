@@ -21,10 +21,13 @@ if (Test-Path $batchRoot) {
     $artifactFiles = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'failing-tests.txt' -ErrorAction SilentlyContinue
     foreach ($artifact in $artifactFiles) {
         # Professional note: prefer the precomputed failing-tests artifact from batch-check when it exists;
-        # falling back to NDJSON parsing keeps backwards compatibility with older runs.
+        # falling back to NDJSON parsing keeps backwards compatibility with older runs. The literal "none"
+        # from the artifact is a placeholder per "skip lines that equal none (trim + case-insensitive)".
         Get-Content -LiteralPath $artifact.FullName -Encoding UTF8 | ForEach-Object {
             $line = $_.Trim()
-            if ($line) { $collected.Add($line) }
+            if ($line -and -not ($line -ieq 'none')) {
+                $collected.Add($line)
+            }
         }
     }
 
@@ -100,17 +103,131 @@ if ($collected.Count -eq 0) {
         return $nameVal
     }
 
+    function Get-NdjsonSegments {
+        param(
+            [Parameter(Mandatory = $true)][string]$RawText
+        )
+
+        $segments = [System.Collections.Generic.List[string]]::new()
+        if ([string]::IsNullOrEmpty($RawText)) { return $segments }
+
+        $builder = [System.Text.StringBuilder]::new()
+        $depth = 0
+        $inString = $false
+        $escapeNext = $false
+
+        foreach ($ch in $RawText.ToCharArray()) {
+            if ($inString) {
+                $null = $builder.Append($ch)
+
+                if ($escapeNext) {
+                    $escapeNext = $false
+                    continue
+                }
+
+                if ($ch -eq '\\') {
+                    $escapeNext = $true
+                    continue
+                }
+
+                if ($ch -eq '"') {
+                    $inString = $false
+                }
+
+                continue
+            }
+
+            switch ($ch) {
+                '"' {
+                    $inString = $true
+                    $null = $builder.Append($ch)
+                    continue
+                }
+                '{' {
+                    $depth += 1
+                    $null = $builder.Append($ch)
+                    continue
+                }
+                '}' {
+                    if ($depth -gt 0) { $depth -= 1 }
+                    $null = $builder.Append($ch)
+
+                    if ($depth -eq 0) {
+                        $segment = $builder.ToString().Trim()
+                        if ($segment.Length -gt 0) {
+                            $segments.Add($segment) | Out-Null
+                        }
+                        $null = $builder.Clear()
+                    }
+
+                    continue
+                }
+                default {
+                    if ($depth -gt 0) {
+                        $null = $builder.Append($ch)
+                    }
+                }
+            }
+        }
+
+        $tail = $builder.ToString().Trim()
+        if ($tail.Length -gt 0) { $segments.Add($tail) | Out-Null }
+
+        return $segments
+    }
+
     foreach ($file in $ndjsonFiles) {
         $rel = [System.IO.Path]::GetRelativePath($batchRoot, $file.FullName)
         if (-not $perFileCounts.ContainsKey($rel)) { $perFileCounts[$rel] = [System.Collections.Generic.List[string]]::new() }
 
-        Get-Content -LiteralPath $file.FullName -Encoding UTF8 | ForEach-Object {
+        $raw = [IO.File]::ReadAllText($file.FullName, [Text.Encoding]::UTF8)
+        if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+
+        # Professional note: upstream bundles sometimes concatenate JSON objects into one line. A
+        # character-by-character tokenizer keeps `}{` sequences found inside strings intact while
+        # still surfacing individual objects for ConvertFrom-Json.
+        $segments = Get-NdjsonSegments -RawText $raw
+
+        foreach ($segment in $segments) {
+            $line = $segment.Trim()
+            if (-not $line) { continue }
+
             try {
-                $obj = $_ | ConvertFrom-Json -ErrorAction Stop
-                $id = Get-FailureIdFromObject -Root $obj
-                if ($id) {
-                    $collected.Add($id)
-                    $perFileCounts[$rel].Add($id) | Out-Null
+                $obj = $line | ConvertFrom-Json -ErrorAction Stop
+
+                $failed = $false
+                $name = $null
+
+                $legacyId = Get-FailureIdFromObject -Root $obj
+                if ($legacyId) {
+                    $failed = $true
+                    $name = $legacyId
+                }
+
+                if (-not $failed) {
+                    # Professional note: batch-check emits compact NDJSON where `pass:false` marks
+                    # failures instead of pytest-style "outcome" fields. Preserve the legacy scan
+                    # while honoring the new signal so diagnostics stay in sync with Codex.
+                    if ($obj.PSObject.Properties.Name -contains 'pass') {
+                        if ($obj.pass -is [bool] -and -not $obj.pass) { $failed = $true }
+                        elseif (($obj.pass -is [string]) -and ($obj.pass -ieq 'false')) { $failed = $true }
+                    }
+                    if (-not $failed -and $obj.status) {
+                        $s = [string]$obj.status
+                        if ($s -eq 'fail' -or $s -eq 'failure') { $failed = $true }
+                    }
+                    if ($failed) {
+                        if ($obj.id) {
+                            $name = [string]$obj.id
+                        } elseif ($obj.desc) {
+                            $name = [string]$obj.desc
+                        }
+                    }
+                }
+
+                if ($failed -and $name) {
+                    $collected.Add($name)
+                    $perFileCounts[$rel].Add($name) | Out-Null
                 }
             } catch {}
         }
@@ -130,8 +247,9 @@ if ($collected.Count -eq 0) {
 $final = @()
 if ($collected.Count -gt 0) {
     $final = @($collected | Sort-Object -Unique)
-    if ($final.Count -gt 1 -and ($final -contains 'none')) {
-        $final = @($final | Where-Object { $_ -ne 'none' })
+    $realItems = @($final | Where-Object { $_ -and -not ($_ -ieq 'none') })
+    if ($realItems.Count -gt 0) {
+        $final = $realItems
     }
 }
 
