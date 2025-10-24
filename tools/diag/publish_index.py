@@ -2082,7 +2082,13 @@ def _build_site_overview(
                 f"<li><a href=\"{_escape_href(_normalize_link(path))}\">{_escape_html(label)}</a></li>"
             )
 
-    for entry in _bundle_links(context):
+    if not bundle_entries:
+        # Professional note: mirror the markdown guard here so empty bundles skip the loop
+        # without touching loop-local variables. The previous tail-position fallback accessed
+        # `entry` after the loop and crashed when no quick links existed.
+        pass
+
+    for entry in bundle_entries:
         path_obj: Optional[Path] = entry.get("path")
         if not path_obj:
             continue
@@ -2103,10 +2109,12 @@ def _build_site_overview(
                     f"(<a href=\"{original_href}\">Download</a>)</li>"
                 )
                 continue
-    html_lines.append(
-        f"<li><strong>{_escape_html(entry['label'])}:</strong> "
-        f"<a href=\"{original_href}\">Download</a></li>"
-    )
+        # Professional note: keep the download fallback inside the loop so every bundle entry
+        # emits exactly one list item and so empty bundles avoid referencing loop variables.
+        html_lines.append(
+            f"<li><strong>{_escape_html(entry['label'])}:</strong> "
+            f"<a href=\"{original_href}\">Download</a></li>"
+        )
     html_lines.append("</ul>")
     html_lines.append("</section>")
 
