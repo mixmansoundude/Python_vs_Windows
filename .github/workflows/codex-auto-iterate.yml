@@ -511,6 +511,8 @@ jobs:
       - name: Load/Update attempt counter
         if: ${{ steps.gate.outputs.should_iterate == 'true' }}
         id: attempts
+        env:
+          HEAD_SHA: ${{ steps.ctx.outputs.head_sha }}
         run: |
           set -euo pipefail
           attempts=0
@@ -520,12 +522,23 @@ jobs:
           curl -sS -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${owner_repo}/actions/artifacts?per_page=100" > artifacts_all.json
           id=`jq -r --arg n "iterate-state-$branch_slug" '.artifacts[] | select(.name==$n and ((.expired // false) | not)) | .id' artifacts_all.json | head -n 1 || true`
+          stored_sha=""
           if [ -n "$id" ] && [ "$id" != "null" ]; then
             curl -sSL -H "Authorization: Bearer $GH_TOKEN" -L \
               "https://api.github.com/repos/${owner_repo}/actions/artifacts/$id/zip" \
               -o state.zip || true
             mkdir -p state && unzip -q state.zip -d state || true
-            attempts=`jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0`
+            attempts_raw=`jq -r '.attempts // 0' state/iterate_state.json 2>/dev/null || echo 0`
+            stored_sha=`jq -r '.head_sha // ""' state/iterate_state.json 2>/dev/null || echo ''`
+            if printf '%s' "$attempts_raw" | grep -Eq '^[0-9]+$'; then
+              attempts="$attempts_raw"
+            else
+              attempts=0
+            fi
+          fi
+          head_sha="${HEAD_SHA:-}"
+          if [ -n "$stored_sha" ] && [ -n "$head_sha" ] && [ "$stored_sha" != "$head_sha" ]; then
+            attempts=0
           fi
           nextfile="$RUNNER_TEMP/next.txt"
           echo "$attempts" | awk '{print $1+1}' > "$nextfile"
@@ -602,6 +615,8 @@ jobs:
           status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
 
           why_reason = None
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+
           if not attempted:
               gate_val = _parse_bool(gate)
               auth_val = _parse_bool(auth_ok)
@@ -614,6 +629,15 @@ jobs:
               elif auth_val is False or auth_ok == "":
                   detail = auth_reason or "auth unavailable"
                   why_reason = f"skipped: auth failure ({detail})"
+
+              if summary_path and stop == "true":
+                  detail = stop_reason or "no stop reason"
+                  message = (
+                      "### Iterate gate\n"
+                      "- skipping due to gate with 0 attempts left ({detail})\n"
+                  ).format(detail=detail)
+                  with open(summary_path, "a", encoding="utf-8") as handle:
+                      handle.write(message)
 
           why_path = runner_temp / "why_no_diff.txt"
           if why_reason:
@@ -946,6 +970,8 @@ jobs:
           iter_dir="$GITHUB_WORKSPACE/iterate"
           rm -rf "$iter_dir"
           mkdir -p "$iter_dir"
+          temp_dir="$iter_dir/_temp"
+          mkdir -p "$temp_dir"
 
           placeholder="$iter_dir/README.txt"
           {
@@ -997,8 +1023,18 @@ jobs:
             fi
           }
 
+          copy_into_temp(){
+            local source="$1"
+            local name="$2"
+            if [ -f "$source" ]; then
+              cp "$source" "$temp_dir/$name"
+            fi
+          }
+
           sanitize "$req_raw" "$iter_dir/request.redacted.json" 100000 || true
           sanitize "$res_raw" "$iter_dir/response.json" 200000 || true
+          copy_into_temp "$iter_dir/request.redacted.json" "request.redacted.json"
+          copy_into_temp "$iter_dir/response.json" "response.json"
 
           tokens_file="$iter_dir/tokens.txt"
           if [ -f "$res_raw" ]; then
@@ -1013,6 +1049,7 @@ jobs:
           else
             printf 'prompt=n/a\ncompletion=n/a\ntotal=n/a\n' > "$tokens_file"
           fi
+          copy_into_temp "$tokens_file" "tokens.txt"
 
           decision_file="$iter_dir/decision.txt"
           decision="no-diff"
@@ -1042,6 +1079,7 @@ jobs:
 
           if [ -n "$diff_path" ] && [ -f "$diff_path" ]; then
             cp "$diff_path" "$iter_dir/patch.diff"
+            copy_into_temp "$iter_dir/patch.diff" "patch.diff"
           fi
 
           if [ -n "$apply_log" ] && [ -f "$apply_log" ]; then
@@ -1050,6 +1088,7 @@ jobs:
             printf 'apply log unavailable\n' | tee "$iter_dir/patch.apply.log" > "$fallback_log"
             apply_log="$fallback_log"
           fi
+          copy_into_temp "$iter_dir/patch.apply.log" "patch.apply.log"
 
           if [ ! -f "$fallback_log" ]; then
             printf 'apply log unavailable\n' > "$fallback_log"
@@ -1068,20 +1107,39 @@ jobs:
             printf 'no exec content captured\n' > "$iter_dir/exec.log"
             cp "$iter_dir/exec.log" "$codex_log"
           fi
+          copy_into_temp "$iter_dir/exec.log" "exec.log"
 
           if [ -f "$RUNNER_TEMP/prompt.txt" ]; then
             cp "$RUNNER_TEMP/prompt.txt" "$iter_dir/prompt.txt"
+            copy_into_temp "$iter_dir/prompt.txt" "prompt.txt"
           fi
 
           if [ -f "$RUNNER_TEMP/auth_body.json" ]; then
             sanitize "$RUNNER_TEMP/auth_body.json" "$iter_dir/auth_probe.json" 100000 || true
           fi
+          copy_into_temp "$iter_dir/auth_probe.json" "auth_probe.json"
 
           iter_stdout="$RUNNER_TEMP/iterate_step.log"
           if [ -f "$iter_stdout" ]; then
             # Professional note: surface the raw job stream when GitHub's run-logs zip
             # is unavailable so the published bundle still exposes iterate stdout/stderr.
             cp "$iter_stdout" "$iter_dir/job.log"
+          fi
+          copy_into_temp "$iter_dir/job.log" "job.log"
+
+          if [ -f "$RUNNER_TEMP/why_no_diff.txt" ]; then
+            cp "$RUNNER_TEMP/why_no_diff.txt" "$iter_dir/why_no_diff.txt"
+            copy_into_temp "$iter_dir/why_no_diff.txt" "why_no_diff.txt"
+          fi
+
+          if [ -f "$RUNNER_TEMP/iterate_status.json" ]; then
+            cp "$RUNNER_TEMP/iterate_status.json" "$iter_dir/iterate_status.json"
+            copy_into_temp "$iter_dir/iterate_status.json" "iterate_status.json"
+          fi
+
+          summary_file="${GITHUB_STEP_SUMMARY:-}"
+          if [ -n "$summary_file" ] && [ -f "$summary_file" ]; then
+            cp "$summary_file" "$iter_dir/job-summary.md"
           fi
 
           files_found=$(find "$iter_dir" -type f 2>/dev/null | wc -l || echo 0)
@@ -1117,22 +1175,16 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Upload iterate artifact
-        if: always()
+      - name: Upload iterate logs artifact
+        if: ${{ always() && steps.llm.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
-          name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
+          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             .codex/**
-            ${{ runner.temp }}/prompt.txt
-            ${{ runner.temp }}/response.json
-            ${{ runner.temp }}/why_no_diff.txt
-            ${{ runner.temp }}/iterate_status.json
-            ${{ runner.temp }}/patch.apply.log
-            ${{ steps.diag_stage.outputs.dir != '' && format('{0}/**', steps.diag_stage.outputs.dir) || '' }}
-            ${{ steps.diag_stage.outputs.codex_log || '' }}
+            ${{ steps.diag_stage.outputs.dir }}/**
           include-hidden-files: true
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
       - name: Build context digest
@@ -1313,7 +1365,7 @@ jobs:
           labels: codex,ci-fix,automerge-candidate
 
       - name: Save attempt state
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         env:
           ATTEMPTS: ${{ steps.attempts.outputs.next }}
           RUN_ID: ${{ steps.ctx.outputs.run_id }}
@@ -1327,7 +1379,7 @@ jobs:
           printf '}\n' >> state_out/iterate_state.json
 
       - name: Upload attempt state
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: iterate-state-${{ steps.ctx.outputs.branch_slug }}
@@ -1344,7 +1396,7 @@ jobs:
     name: Publish diagnostics to Pages
     needs: [iterate]
     if: ${{ always() }}
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
     permissions:
@@ -1392,8 +1444,8 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: iterate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.prep.outputs.ARTIFACTS }}\iterate
+          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.prep.outputs.ARTIFACTS }}/iterate
 
       - name: Record iterate artifact status
         shell: pwsh
@@ -1559,11 +1611,11 @@ jobs:
           }
 
       - name: Summarize failing tests
-        shell: pwsh
+        shell: bash
         env:
           DIAG: ${{ steps.prep.outputs.DIAG }}
         run: |
-          & "$env:GITHUB_WORKSPACE/tools/diag/ndjson_fail_list.ps1"
+          python tools/diag/ndjson_fail_list.py
 
       - name: Download workflow logs
         shell: pwsh
@@ -1775,8 +1827,8 @@ jobs:
             "inventory_b64=$_" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           }
 
-      - name: Write diagnostics index
-        shell: pwsh
+      - name: Publish diagnostics index
+        shell: bash
         env:
           DIAG: ${{ steps.prep.outputs.DIAG }}
           ARTIFACTS: ${{ steps.prep.outputs.ARTIFACTS }}
@@ -1791,249 +1843,7 @@ jobs:
           BATCH_RUN_ATTEMPT: ${{ steps.fetch_batch.outputs.run_attempt }}
           SITE: ${{ steps.prep.outputs.SITE }}
         run: |
-          & "$env:GITHUB_WORKSPACE/tools/diag/publish_index.ps1"
-
-      - name: Write site overview
-        shell: pwsh
-        run: |
-          $Site = "${{ steps.prep.outputs.SITE }}"
-          $Diag = "${{ steps.prep.outputs.DIAG }}"
-          $Artifacts = "${{ steps.prep.outputs.ARTIFACTS }}"
-          $Run  = "${{ github.run_id }}"
-          $Att  = "${{ github.run_attempt }}"
-          $Repo = "${{ github.repository }}"
-          $SHA  = "${{ github.sha }}"
-          $RunUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          $bundlePrefix = "diag/$Run-$Att"
-          $bundle = "$bundlePrefix/"
-          $cb = '${{ github.run_id }}'
-          $bundleIndexHref = "$bundlePrefix/index.html?v=$cb"
-          $Short = "${{ steps.prep.outputs.SHORTSHA }}"
-          if (-not $Short) {
-            $Short = $SHA
-            if ($Short.Length -gt 7) { $Short = $Short.Substring(0,7) }
-          }
-
-          function Get-FirstDir([string]$root) {
-            if (-not (Test-Path $root)) { return $null }
-            return Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
-
-          $iterateDir = Get-FirstDir (Join-Path $Artifacts 'iterate')
-          $decision = 'n/a'
-          $httpStatus = 'n/a'
-          if ($iterateDir) {
-            $decisionPath = Join-Path $iterateDir 'decision.txt'
-            if (Test-Path $decisionPath) { $decision = (Get-Content -Raw -LiteralPath $decisionPath).Trim() }
-            $statusPath = Join-Path $iterateDir 'http_status.txt'
-            if (Test-Path $statusPath) { $httpStatus = (Get-Content -Raw -LiteralPath $statusPath).Trim() }
-          }
-
-          $bundleIndex   = "$bundlePrefix/index.html"
-          $inventoryHtml = "$bundlePrefix/inventory.html"
-          $inventoryTxt  = "$bundlePrefix/inventory.txt"
-          $inventoryMd   = "$bundlePrefix/inventory.md"
-          $iterateZipRel = "$bundlePrefix/logs/iterate-$Run-$Att.zip"
-          $batchZipRel   = $null
-          $batchRunId    = "${{ steps.fetch_batch.outputs.run_id }}"
-          $batchRunAttempt = "${{ steps.fetch_batch.outputs.run_attempt }}"
-          if ($batchRunId) {
-            if (-not $batchRunAttempt) { $batchRunAttempt = 'n/a' }
-            $batchZipRel = "$bundlePrefix/logs/batch-check-$batchRunId-$batchRunAttempt.zip"
-          }
-          $repoZipRel = "$bundlePrefix/repo/repo-$Short.zip"
-
-          function Has-File([string]$relative) {
-            if (-not $relative) { return $false }
-            $full = Join-Path $Site $relative
-            return Test-Path $full
-          }
-
-          function Normalize-Link([string]$value) {
-            if (-not $value) { return $value }
-            # Professional note: keep URLs browsable on Pages by converting any
-            # Windows-style backslashes that snuck in via Join-Path.
-            return ($value -replace '\\','/')
-          }
-
-          $ndjsonSummary = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          $summaryPreview = @()
-          if ($ndjsonSummary) {
-            $summaryPreview += '```text'
-            $summaryPreview += (Get-Content -LiteralPath $ndjsonSummary.FullName)
-            $summaryPreview += '```'
-          }
-
-          $lines = @(
-            '# Diagnostics overview',
-            '',
-            "Latest run: [$Run (attempt $Att)]($bundleIndexHref)",
-            '',
-            '## Metadata',
-            "- Repo: $Repo",
-            "- Commit: $SHA",
-            "- Run page: $RunUrl",
-            "- Iterate decision: $decision",
-            "- Iterate HTTP status: $httpStatus"
-          )
-
-          $lines += ''
-          $lines += '## Quick links'
-          if (Has-File $bundleIndex) {
-            $lines += [string]::Format('- [Bundle index]({0})', (Normalize-Link $bundleIndexHref))
-            $lines += [string]::Format('- [Open latest (cache-busted)]({0})', (Normalize-Link $bundleIndexHref))
-          } else {
-            $lines += '- Bundle index: missing'
-          }
-          if (Has-File $inventoryHtml) {
-            $lines += [string]::Format('- [Artifact inventory (HTML)]({0})', (Normalize-Link $inventoryHtml))
-          } else {
-            $lines += '- Artifact inventory (HTML): missing'
-          }
-          if (Has-File $inventoryTxt) {
-            $lines += [string]::Format('- [Artifact inventory (text)]({0})', (Normalize-Link $inventoryTxt))
-          } else {
-            $lines += '- Artifact inventory (text): missing'
-          }
-          if (Has-File $iterateZipRel) {
-            $lines += [string]::Format('- [Iterate logs zip]({0})', $iterateZipRel)
-          } else {
-            $lines += '- Iterate logs zip: missing'
-          }
-          if ($batchZipRel) {
-            if (Has-File $batchZipRel) {
-              $lines += [string]::Format('- [Batch-check logs zip]({0})', $batchZipRel)
-            } else {
-              $lines += '- Batch-check logs zip: missing'
-            }
-          } else {
-            $lines += '- Batch-check logs zip: missing'
-          }
-          if (Has-File $repoZipRel) {
-            $lines += [string]::Format('- [Repository zip]({0})', (Normalize-Link $repoZipRel))
-          } else {
-            $lines += '- Repository zip: missing'
-          }
-          $repoFilesRel = "$bundlePrefix/repo/files/"
-          if (Has-File "$bundlePrefix/repo/files") {
-            $lines += [string]::Format('- [Repository files (unzipped)]({0})', (Normalize-Link $repoFilesRel))
-          } else {
-            $lines += '- Repository files (unzipped): missing'
-          }
-          if (Has-File $inventoryMd) {
-            $lines += [string]::Format('- [Inventory (markdown)]({0})', (Normalize-Link $inventoryMd))
-          } else {
-            $lines += '- Inventory (markdown): missing'
-          }
-
-          if ($summaryPreview.Count -gt 0) {
-            $lines += ''
-            $lines += '## NDJSON summary (first bundle)'
-            $lines += $summaryPreview
-          }
-
-          $lines += ''
-          $lines += 'Artifacts from the self-test workflow and iterate job are merged under the bundle directory above.'
-
-          ($lines -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Site 'index.md')
-          function Escape-Html([string]$value) {
-            if ($null -eq $value) { return '' }
-            $encoded = $value -replace '&', '&amp;'
-            $encoded = $encoded -replace '<', '&lt;'
-            return $encoded -replace '>', '&gt;'
-          }
-
-          function Escape-Href([string]$value) {
-            if ([string]::IsNullOrWhiteSpace($value)) { return $value }
-            try {
-              return [System.Uri]::EscapeUriString($value)
-            } catch {
-              return $value
-            }
-          }
-
-          $metadataItems = @(
-            @{ Label = 'Repo'; Value = $Repo },
-            @{ Label = 'Commit'; Value = $SHA },
-            @{ Label = 'Run page'; Value = $RunUrl; Href = $RunUrl },
-            @{ Label = 'Iterate decision'; Value = $decision },
-            @{ Label = 'Iterate HTTP status'; Value = $httpStatus }
-          )
-
-          $quickLinkSpecs = @(
-            @{ Label = 'Bundle index'; Path = $bundleIndexHref; Exists = Has-File $bundleIndex },
-            @{ Label = 'Open latest (cache-busted)'; Path = $bundleIndexHref; Exists = Has-File $bundleIndex },
-            @{ Label = 'Artifact inventory (HTML)'; Path = $inventoryHtml; Exists = Has-File $inventoryHtml },
-            @{ Label = 'Artifact inventory (text)'; Path = $inventoryTxt; Exists = Has-File $inventoryTxt },
-            @{ Label = 'Iterate logs zip'; Path = $iterateZipRel; Exists = Has-File $iterateZipRel },
-            @{ Label = 'Batch-check logs zip'; Path = $batchZipRel; Exists = if ($batchZipRel) { Has-File $batchZipRel } else { $false } },
-            @{ Label = 'Repository zip'; Path = $repoZipRel; Exists = Has-File $repoZipRel },
-            @{ Label = 'Repository files (unzipped)'; Path = $repoFilesRel; Exists = Has-File "$bundlePrefix/repo/files" },
-            @{ Label = 'Inventory (markdown)'; Path = $inventoryMd; Exists = Has-File $inventoryMd }
-          )
-
-          $html = [System.Collections.Generic.List[string]]::new()
-          $html.Add('<!doctype html>')
-          $html.Add('<html lang="en">')
-          $html.Add('<head>')
-          $html.Add('<meta charset="utf-8">')
-          $html.Add('<title>Diagnostics overview</title>')
-          $html.Add('</head>')
-          $html.Add('<body>')
-          $html.Add('<h1>Diagnostics overview</h1>')
-          $html.Add([string]::Format('<p>Latest run: <a href="{0}">{1}</a></p>', $(Escape-Href (Normalize-Link $bundleIndexHref)), $(Escape-Html ([string]::Format('{0} (attempt {1})', $Run, $Att)))))
-
-          $html.Add('<section>')
-          $html.Add('<h2>Metadata</h2>')
-          $html.Add('<ul>')
-          foreach ($item in $metadataItems) {
-            $label = Escape-Html $item.Label
-            if ($item.ContainsKey('Href') -and $item.Href) {
-              $href = Escape-Href $item.Href
-              $value = Escape-Html $item.Value
-              $html.Add([string]::Format('<li><strong>{0}:</strong> <a href="{1}">{2}</a></li>', $label, $href, $value))
-            } else {
-              $html.Add([string]::Format('<li><strong>{0}:</strong> {1}</li>', $label, $(Escape-Html $item.Value)))
-            }
-          }
-          $html.Add('</ul>')
-          $html.Add('</section>')
-
-          $html.Add('<section>')
-          $html.Add('<h2>Quick links</h2>')
-          $html.Add('<ul>')
-          foreach ($entry in $quickLinkSpecs) {
-            $label = Escape-Html $entry.Label
-            if ($entry.Path -and $entry.Exists) {
-              $html.Add([string]::Format('<li><a href="{0}">{1}</a></li>', $(Escape-Href (Normalize-Link $entry.Path)), $label))
-            } elseif ($entry.Path) {
-              $html.Add([string]::Format('<li>{0}: missing</li>', $label))
-            } else {
-              $html.Add([string]::Format('<li>{0}: missing</li>', $label))
-            }
-          }
-          $html.Add('</ul>')
-          $html.Add('</section>')
-
-          if ($summaryPreview.Count -gt 0) {
-            $html.Add('<section>')
-            $html.Add('<h2>NDJSON summary (first bundle)</h2>')
-            $html.Add('<pre>')
-            foreach ($line in $summaryPreview) {
-              $trimmed = $line
-              if ($trimmed -like '```*') { continue }
-              $html.Add($(Escape-Html $line))
-            }
-            $html.Add('</pre>')
-            $html.Add('</section>')
-          }
-
-          $html.Add('<p>Artifacts from the self-test workflow and iterate job are merged under the bundle directory above.</p>')
-          $html.Add('</body>')
-          $html.Add('</html>')
-          # Professional note: Emit clickable anchors at the root so external analysts can
-          # navigate the published diagnostics without copying Markdown links manually.
-          ($html -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Site 'index.html')
+          python tools/diag/publish_index.py
 
       - name: Append job summary
         shell: pwsh
