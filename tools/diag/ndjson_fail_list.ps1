@@ -21,10 +21,13 @@ if (Test-Path $batchRoot) {
     $artifactFiles = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'failing-tests.txt' -ErrorAction SilentlyContinue
     foreach ($artifact in $artifactFiles) {
         # Professional note: prefer the precomputed failing-tests artifact from batch-check when it exists;
-        # falling back to NDJSON parsing keeps backwards compatibility with older runs.
+        # falling back to NDJSON parsing keeps backwards compatibility with older runs. The literal "none"
+        # from the artifact is a placeholder per "skip lines that equal none (trim + case-insensitive)".
         Get-Content -LiteralPath $artifact.FullName -Encoding UTF8 | ForEach-Object {
             $line = $_.Trim()
-            if ($line) { $collected.Add($line) }
+            if ($line -and -not ($line -ieq 'none')) {
+                $collected.Add($line)
+            }
         }
     }
 
@@ -159,8 +162,9 @@ if ($collected.Count -eq 0) {
 $final = @()
 if ($collected.Count -gt 0) {
     $final = @($collected | Sort-Object -Unique)
-    if ($final.Count -gt 1 -and ($final -contains 'none')) {
-        $final = @($final | Where-Object { $_ -ne 'none' })
+    $realItems = @($final | Where-Object { $_ -and -not ($_ -ieq 'none') })
+    if ($realItems.Count -gt 0) {
+        $final = $realItems
     }
 }
 

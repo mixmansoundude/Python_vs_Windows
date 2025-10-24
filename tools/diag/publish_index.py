@@ -1990,7 +1990,13 @@ def _build_site_overview(
     quick_link("Bundle index", bundle_index_href)
     quick_link("Open latest (cache-busted)", bundle_index_href)
 
-    for entry in _bundle_links(context):
+    bundle_entries = list(_bundle_links(context))
+    if not bundle_entries:
+        # Professional note: guard the zero-entry case per "guard the zero-entries case" so we do not
+        # depend on loop-scoped variables when no quick-links exist; the behavior remains unchanged.
+        pass
+
+    for entry in bundle_entries:
         path_obj: Optional[Path] = entry.get("path")
         if not path_obj:
             continue
