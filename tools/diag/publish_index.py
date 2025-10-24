@@ -2008,9 +2008,12 @@ def _build_site_overview(
                     f"([Download]({_normalize_link(original_url)}))"
                 )
                 continue
-    lines.append(
-        f"- {entry['label']}: [Download]({_normalize_link(original_url)})"
-    )
+        # Professional note: keep the download link within the loop so each bundle entry
+        # renders even when a mirror is unavailable; the previous tail-position fallback
+        # dropped earlier links and triggered UnboundLocalError when the loop never ran.
+        lines.append(
+            f"- {entry['label']}: [Download]({_normalize_link(original_url)})"
+        )
 
     if summary_preview:
         lines.append("")

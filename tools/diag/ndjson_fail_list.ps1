@@ -107,10 +107,39 @@ if ($collected.Count -eq 0) {
         Get-Content -LiteralPath $file.FullName -Encoding UTF8 | ForEach-Object {
             try {
                 $obj = $_ | ConvertFrom-Json -ErrorAction Stop
-                $id = Get-FailureIdFromObject -Root $obj
-                if ($id) {
-                    $collected.Add($id)
-                    $perFileCounts[$rel].Add($id) | Out-Null
+
+                $failed = $false
+                $name = $null
+
+                $legacyId = Get-FailureIdFromObject -Root $obj
+                if ($legacyId) {
+                    $failed = $true
+                    $name = $legacyId
+                }
+
+                if (-not $failed) {
+                    # Professional note: batch-check emits compact NDJSON where `pass:false` marks
+                    # failures instead of pytest-style "outcome" fields. Preserve the legacy scan
+                    # while honoring the new signal so diagnostics stay in sync with Codex.
+                    if ($obj.PSObject.Properties.Name -contains 'pass') {
+                        if ($obj.pass -is [bool] -and -not $obj.pass) { $failed = $true }
+                    }
+                    if (-not $failed -and $obj.status) {
+                        $s = [string]$obj.status
+                        if ($s -eq 'fail' -or $s -eq 'failure') { $failed = $true }
+                    }
+                    if ($failed) {
+                        if ($obj.id) {
+                            $name = [string]$obj.id
+                        } elseif ($obj.desc) {
+                            $name = [string]$obj.desc
+                        }
+                    }
+                }
+
+                if ($failed -and $name) {
+                    $collected.Add($name)
+                    $perFileCounts[$rel].Add($name) | Out-Null
                 }
             } catch {}
         }
