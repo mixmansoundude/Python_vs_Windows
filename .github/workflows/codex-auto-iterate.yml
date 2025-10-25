@@ -659,7 +659,10 @@ jobs:
             fi
             candidate=$(find "$base" -type d -path '*/_artifacts/batch-check' -print -quit 2>/dev/null || true)
             if [ -n "$candidate" ]; then
-              diag="$(dirname "$candidate")"
+              # derived requirement: keep DIAG pointing at the diagnostics root that holds
+              # batchcheck_failing.txt alongside the _artifacts directory so downstream
+              # prompt builders resolve both correctly.
+              diag="$(dirname "$(dirname "$candidate")")"
               break
             fi
           done
