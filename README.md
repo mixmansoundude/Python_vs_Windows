@@ -1,9 +1,25 @@
 # Python_vs_Windows
 
+![Armchair Vibe Coded](promo/avc-shield-charcoal-left-purple-right.svg)
 [![Batch syntax/run check](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml)
 [![CodeQL](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml)
 
 Prime Directive: With only one or more Python files on a clean Windows 10+ machine with internet, get at least one to run, with all imports installed.
+
+---
+
+### 🌟 Armchair Vibe Coding
+
+> 🔧 This project was **entirely armchair vibe coded** — built from a mobile device using conversational AI prompts, without a traditional development setup.
+
+**What is Armchair Vibe Coding?**  
+Armchair Vibe Coding is a new workflow where developers build software by interacting with AI tools (like ChatGPT or GitHub Copilot) primarily from mobile devices. It combines the philosophy of **vibe coding** — coding through natural-language prompts and AI — with a relaxed, mobile-first posture.
+
+You’re not at a desk. You’re not opening VS Code. You’re on your couch, your bed, a train — just vibing and coding through AI.
+
+> It’s not just code — it’s coding on your terms, powered by AI and creativity, not IDEs and desk chairs.
+
+This repository serves as a proof of concept of this new approach.
 
 ---
 
