@@ -329,6 +329,26 @@ jobs:
             echo "extract_dir=$dest" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Collect NDJSON sources
+        if: ${{ steps.poll.outputs.picked_id != '' }}
+        shell: pwsh
+        run: |
+          $candidates = @('ci_test_results.ndjson','~test-results.ndjson')
+          $searchRoots = @("$env:RUNNER_TEMP/struct", "$env:RUNNER_TEMP", (Get-Location).Path) `
+            | Where-Object { $_ -and (Test-Path $_) }
+          $hit = $null
+          foreach ($root in $searchRoots) {
+            $probe = Get-ChildItem -Path $root -Recurse -File -Include $candidates -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($probe) { $hit = $probe; break }
+          }
+          if ($hit) {
+            Copy-Item $hit.FullName "ci_test_results.ndjson" -Force
+            Copy-Item $hit.FullName "tests~test-results.ndjson" -Force
+            "iterate-collector: collected=$($hit.FullName)" | Out-File -Append -Encoding ascii "$env:GITHUB_STEP_SUMMARY"
+          } else {
+            "iterate-collector: collected=none" | Out-File -Append -Encoding ascii "$env:GITHUB_STEP_SUMMARY"
+          }
+
       - name: Fetch failing run logs (tail)
         if: ${{ steps.poll.outputs.picked_id != '' }}
         id: logtail
