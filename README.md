@@ -1,7 +1,6 @@
-![Armchair Vibe Coded](https://img.shields.io/badge/Armchair_Vibe_Coded-%F0%9F%92%9F-blueviolet)
-
 # Python_vs_Windows
 
+![Armchair Vibe Coded](promo/avc-shield-charcoal-left-purple-right.svg)
 [![Batch syntax/run check](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml)
 [![CodeQL](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml)
 
