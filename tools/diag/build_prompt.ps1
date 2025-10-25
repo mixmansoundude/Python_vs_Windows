@@ -211,6 +211,61 @@ function Get-FailureContextLines {
     return $block
 }
 
+function Get-StagedFailureContextLines {
+    param([string]$WorkspaceRoot)
+
+    $result = [System.Collections.Generic.List[string]]::new()
+
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return $result }
+
+    $fallbackRoot = Join-Path $WorkspaceRoot '.codex/fail'
+    if (-not (Test-Path $fallbackRoot)) { return $result }
+
+    # derived requirement: reviewer flagged that iterate prompts lacked failure context when
+    # no diagnostics tree was present. Mirror the staged .codex/fail payloads so Codex
+    # always sees the first failing clues even when _artifacts/batch-check is missing.
+    $budget = 40
+    $sources = @(
+        @{ Header = '----- First failure -----'; Path = Join-Path $fallbackRoot 'first_failure.txt'; Limit = 5 },
+        @{ Header = '----- CI structured -----'; Path = Join-Path $fallbackRoot 'ci_structured.txt'; Limit = 20 },
+        @{ Header = '----- Focused job tail -----'; Path = Join-Path $fallbackRoot 'failing_job_focus.txt'; Limit = 80 }
+    )
+
+    foreach ($source in $sources) {
+        if ($budget -le 0) { break }
+
+        $path = $source.Path
+        if (-not (Test-Path $path)) { continue }
+
+        $lines = @()
+        try {
+            $lines = Get-Content -LiteralPath $path -Encoding UTF8 -TotalCount $source.Limit
+        } catch {
+            $lines = @()
+        }
+
+        if (-not $lines) { continue }
+
+        if ($result.Count -gt 0) {
+            $result.Add('') | Out-Null
+            $budget--
+            if ($budget -le 0) { break }
+        }
+
+        $result.Add($source.Header) | Out-Null
+        $budget--
+        if ($budget -le 0) { break }
+
+        foreach ($line in Sanitize-TextLines $lines) {
+            if ($budget -le 0) { break }
+            $result.Add($line) | Out-Null
+            $budget--
+        }
+    }
+
+    return $result
+}
+
 $promptPath = Join-Path $env:RUNNER_TEMP 'prompt.txt'
 
 $repo    = $env:REPO
@@ -256,11 +311,20 @@ Add-Lines $lines @(
     '```'
 )
 
+$failureContext = [System.Collections.Generic.List[string]]::new()
 if ($diagRoot) {
     $failureContext = Get-FailureContextLines $diagRoot
     if ($failureContext.Count -gt 0) {
         Add-Lines $lines @('')
         Add-Lines $lines $failureContext
+    }
+}
+
+if (-not $diagRoot -or $failureContext.Count -eq 0) {
+    $stagedContext = Get-StagedFailureContextLines $workspaceRoot
+    if ($stagedContext.Count -gt 0) {
+        Add-Lines $lines @('')
+        Add-Lines $lines $stagedContext
     }
 }
 if ($diagRoot) {

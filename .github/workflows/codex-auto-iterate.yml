@@ -702,6 +702,7 @@ jobs:
           PY
 
       - name: Discover diagnostics root
+        id: diag_discover
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
         shell: bash
         run: |
@@ -726,12 +727,17 @@ jobs:
           fi
           if [ -n "$diag" ]; then
             echo "DIAG_DIR=$diag" >> "$GITHUB_ENV"
+            # derived requirement: reviewer flagged that env-expressions resolve before the
+            # discovery step executes. Surface the path as a step output so later steps can
+            # reference the resolved directory without clobbering it to empty.
+            printf 'path=%s\n' "$diag" >> "$GITHUB_OUTPUT"
             {
               echo "### Diagnostics root"
               echo "- path: $diag"
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "DIAG_DIR=" >> "$GITHUB_ENV"
+            printf 'path=\n' >> "$GITHUB_OUTPUT"
             {
               echo "### Diagnostics root"
               echo "- path: not found"
@@ -750,7 +756,7 @@ jobs:
           STRUCT_PATH: ${{ steps.struct.outputs.path }}
           LOGFOCUS_PATH: ${{ steps.logfocus.outputs.path }}
           LOGTAIL_PATH: ${{ steps.logtail.outputs.path }}
-          DIAG: ${{ env.DIAG_DIR }}
+          DIAG: ${{ steps.diag_discover.outputs.path }}
           ITERATE_REDACT_PATTERN: '(?i)(secret|token|password|apikey|key|sk-[A-Za-z0-9]{20,})'
           REDACT_PLACEHOLDER: '***'
         run: |
@@ -1061,7 +1067,7 @@ jobs:
       - name: Stage iterate diagnostics artifact
         id: diag_stage
         env:
-          DIAG_DIR: ${{ env.DIAG_DIR }}
+          DIAG_DIR: ${{ steps.diag_discover.outputs.path }}
         run: |
           set -euo pipefail
           iter_dir="$GITHUB_WORKSPACE/iterate"
