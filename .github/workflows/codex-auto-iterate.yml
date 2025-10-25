@@ -1055,11 +1055,14 @@ jobs:
             local limit="$3"
             shift 3
             if [ -f "$input" ]; then
+              # derived requirement: reviewer flagged that standalone OpenAI tokens
+              # like ``sk-...`` appear without preceding keywords; extend the pattern
+              # so diagnostics never leak those values.
               python tools/sanitize_iterate_payload.py \
                 --input "$input" \
                 --output "$output" \
                 --truncate "$limit" \
-                --redact-pattern '(?i)(secret|token|password|apikey|key)' \
+                --redact-pattern '(?i)(secret|token|password|apikey|key|sk-[A-Za-z0-9]{20,})' \
                 --placeholder '***' \
                 "$@"
             fi
