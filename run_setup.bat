@@ -377,6 +377,7 @@ if errorlevel 1 call :die "[ERROR] find_entry helper syntax error"
 
 rem --- locate a Python ---
 set "HP_SYS_PY=" & set "HP_SYS_PY_ARGS="
+set "HP_SYS_PY_LOGGED="
 where python >nul 2>&1 && set "HP_SYS_PY=python"
 if not defined HP_SYS_PY (
   where py >nul 2>&1 && (set "HP_SYS_PY=py" & set "HP_SYS_PY_ARGS=-3")
@@ -391,6 +392,19 @@ if defined HP_SYS_PY (
   rem derived requirement: CI observed `'python" "~find_entry.py' is not recognized` when
   rem helper args were empty. Keep the helper invocation split so CMD never appends a stray
   rem quote to the interpreter token.
+  if not defined HP_SYS_PY_LOGGED (
+    if defined HP_SYS_PY_ARGS (
+      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"
+    ) else (
+      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" "~find_entry.py"
+    )
+    set "HP_SYS_PY_LOGGED=1"
+  )
+  if defined HP_SYS_PY_ARGS (
+    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "~find_entry.py" 1>nul 2>nul
+  ) else (
+    "%HP_SYS_PY%" -m py_compile "~find_entry.py" 1>nul 2>nul
+  )
   if defined HP_SYS_PY_ARGS (
     for /f "usebackq delims=" %%L in (`"%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"`) do set "HP_CRUMB=%%L"
   ) else (

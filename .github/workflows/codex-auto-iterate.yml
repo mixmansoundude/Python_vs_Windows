@@ -465,6 +465,27 @@ jobs:
             printf 'id=%s | %s (source=%s)\n' "$id" "$desc" "$source" > .codex/fail/first_failure.txt
           fi
 
+      - name: Ensure NDJSON sources for gate
+        if: ${{ steps.poll.outputs.picked_id != '' }}
+        shell: pwsh
+        env:
+          STRUCT_DIR: ${{ steps.struct.outputs.extract_dir }}
+        run: |
+          $workspace = Convert-Path '.'
+          $structDir = $env:STRUCT_DIR
+          $diagRoot = ''
+          if ($structDir) {
+            try {
+              $diagRoot = Split-Path -LiteralPath (Convert-Path $structDir) -Parent
+            } catch {
+              $diagRoot = ''
+            }
+          }
+          # derived requirement: gate previously skipped iterate because tests~test-results.ndjson
+          # and ci_test_results.ndjson were missing. Reuse a helper so both filenames are
+          # synthesized or copied before the Decide gate runs.
+          & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" -Workspace $workspace -StructDir $structDir -DiagRoot $diagRoot
+
       - name: Decide gate (iterate vs skip)
         id: gate
         env:
@@ -472,12 +493,18 @@ jobs:
           ALL_COMPLETED: ${{ steps.poll.outputs.all_completed }}
           ANY_NON_SUCCESS: ${{ steps.poll.outputs.any_non_success }}
           SUMMARY_JSON: ${{ steps.poll.outputs.summary_json }}
+          NDJSON_FOUND: ${{ env.GATE_NDJSON_FOUND }}
+          NDJSON_SOURCE: ${{ env.GATE_NDJSON_SOURCE }}
+          NDJSON_MISSING: ${{ env.GATE_NDJSON_MISSING }}
         run: |
           set -euo pipefail
           # Safe defaults so -u doesn't explode if outputs are unset
           FOUND_ANY="${FOUND_ANY:-}"
           ALL_COMPLETED="${ALL_COMPLETED:-}"
           ANY_NON_SUCCESS="${ANY_NON_SUCCESS:-}"
+          NDJSON_FOUND="${NDJSON_FOUND:-}"
+          NDJSON_SOURCE="${NDJSON_SOURCE:-}"
+          NDJSON_MISSING="${NDJSON_MISSING:-}"
 
           should_iterate=false
           reason=""
@@ -506,6 +533,14 @@ jobs:
             echo '```json'
             printf '%s\n' "$SUMMARY_JSON"
             echo '```'
+            echo
+            echo "### Iterate NDJSON sources"
+            if [ "$NDJSON_FOUND" = "true" ]; then
+              echo "- found: ${NDJSON_SOURCE:-unknown}"
+            else
+              missing_note="${NDJSON_MISSING:-tests~test-results.ndjson;ci_test_results.ndjson}"
+              echo "- missing: ${missing_note}"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Load/Update attempt counter
