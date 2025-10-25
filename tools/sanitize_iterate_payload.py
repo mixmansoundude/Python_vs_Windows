@@ -153,6 +153,8 @@ def _maybe_write_why(
     diff_path: Path | None,
     response_text_path: Path | None,
     diag_root: Path | None,
+    pattern: re.Pattern | None,
+    placeholder: str,
 ) -> None:
     if not diff_path or not diff_path.exists():
         return
@@ -196,9 +198,14 @@ def _maybe_write_why(
             payload_lines.append("First failing IDs unavailable; batchcheck_failing.txt not found.")
 
     payload = "\n".join(payload_lines).rstrip() + "\n"
+    if pattern is not None:
+        # derived requirement: reviewer flagged raw rationale leaking secrets when
+        # ``_maybe_write_why`` bypassed the sanitizer. Keep the payload aligned with
+        # ``--redact-pattern`` so diagnostics never surface unmasked secrets.
+        payload = pattern.sub(placeholder, payload)
     why_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        why_path.write_text(payload, encoding="utf-8")
+        why_path.write_text(payload, encoding="utf-8", errors="replace")
     except OSError:
         pass
 
@@ -247,7 +254,15 @@ def main() -> int:
         diff_path = Path(args.diff_path) if args.diff_path else None
         response_path = Path(args.response_text) if args.response_text else None
         diag_root = Path(args.diag_root) if args.diag_root else None
-        _maybe_write_why(text, why_path, diff_path, response_path, diag_root)
+        _maybe_write_why(
+            text,
+            why_path,
+            diff_path,
+            response_path,
+            diag_root,
+            pattern,
+            args.placeholder,
+        )
     return 0
 
 
