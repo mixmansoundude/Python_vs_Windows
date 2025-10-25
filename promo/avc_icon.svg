@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Armchair Vibe Coding logo kit (v1) — 2025-10-25 02:46:35
+Palette:
+  Deep Violet #5B2A86
+  Electric Cyan #00D1FF
+  Charcoal #222428
+  Soft Gray #8A8F98
+Guidelines:
+  • Transparent background. Flat shapes, no gradients.
+  • Icon is readable from 32px up. Keep ≥12px margin when placed in a circle/square.
+  • Primary on light: Deep Violet fills, Cyan accents. Invert for dark backgrounds.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+
+    <!-- Armchair -->
+    <g id="chair" fill="#5B2A86">
+      <!-- back -->
+      <rect x="96" y="96" width="320" height="220" rx="48" ry="48"/>
+      <!-- seat -->
+      <rect x="128" y="280" width="256" height="120" rx="28" ry="28"/>
+      <!-- arms -->
+      <rect x="48" y="240" width="88" height="112" rx="24" ry="24"/>
+      <rect x="376" y="240" width="88" height="112" rx="24" ry="24"/>
+      <!-- legs -->
+      <rect x="160" y="420" width="32" height="40" rx="8" ry="8"/>
+      <rect x="320" y="420" width="32" height="40" rx="8" ry="8"/>
+    </g>
+    
+    <!-- Smartphone with code glyph -->
+    <g id="phone" transform="rotate(-15 370 220)">
+      <!-- body -->
+      <rect x="310" y="120" width="120" height="200" rx="20" ry="20"
+            fill="none" stroke="#00D1FF" stroke-width="12"/>
+      <!-- camera dot -->
+      <circle cx="362" cy="138" r="4" fill="#00D1FF"/>
+      <!-- code glyph </> -->
+      <polyline points="340,240 320,220 340,200" fill="none" stroke="#00D1FF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+      <line x1="356" y1="200" x2="374" y2="240" stroke="#00D1FF" stroke-width="12" stroke-linecap="round"/>
+      <polyline points="388,200 408,220 388,240" fill="none" stroke="#00D1FF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    
+    <!-- vibe lines -->
+    <g stroke="#00D1FF" stroke-width="6" opacity="0.28" stroke-linecap="round">
+      <path d="M430 150 q24 24 0 48" fill="none"/>
+      <path d="M440 130 q36 36 0 72" fill="none"/>
+    </g>
+    
+</svg>
