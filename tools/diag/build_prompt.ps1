@@ -19,6 +19,48 @@ function Add-Lines {
     }
 }
 
+# derived requirement: Failure Context must reuse the iterate sanitizer's pattern so prompts never
+# leak secrets when we inline first_failure.json or NDJSON rows.
+$script:RedactRegex = $null
+$script:RedactPlaceholder = if ($env:REDACT_PLACEHOLDER) { $env:REDACT_PLACEHOLDER } else { '***' }
+$promptRedactPattern = $env:REDACT_PATTERN
+if (-not $promptRedactPattern) {
+    $promptRedactPattern = $env:ITERATE_REDACT_PATTERN
+}
+if ($promptRedactPattern) {
+    try {
+        $script:RedactRegex = [System.Text.RegularExpressions.Regex]::new($promptRedactPattern)
+    } catch {
+        $script:RedactRegex = $null
+    }
+}
+
+function Invoke-RedactLine {
+    param([string]$Text)
+
+    if ($null -eq $Text) { return '' }
+    if (-not $script:RedactRegex) { return $Text }
+    if (-not $script:RedactRegex.IsMatch($Text)) { return $Text }
+
+    $prefixMatch = [System.Text.RegularExpressions.Regex]::Match($Text, '^(?<prefix>\s*(?:[-*]\s+)?)')
+    $prefix = $prefixMatch.Groups['prefix'].Value
+    if ([string]::IsNullOrEmpty($prefix)) {
+        return $script:RedactPlaceholder
+    }
+    return $prefix + $script:RedactPlaceholder
+}
+
+function Sanitize-TextLines {
+    param([string[]]$Lines)
+
+    $buffer = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in $Lines) {
+        $printable = Convert-ToPrintable $line
+        $buffer.Add((Invoke-RedactLine $printable)) | Out-Null
+    }
+    return $buffer
+}
+
 function Find-DiagRoot {
     param([string[]]$Hints)
 
@@ -54,8 +96,122 @@ function Find-DiagRoot {
     return $null
 }
 
+function Get-FailureContextLines {
+    param([string]$DiagRoot)
+
+    $block = [System.Collections.Generic.List[string]]::new()
+    if ([string]::IsNullOrWhiteSpace($DiagRoot)) { return $block }
+
+    $batchRoot = Join-Path $DiagRoot '_artifacts/batch-check'
+    if (-not (Test-Path $batchRoot)) { return $block }
+
+    $remaining = 40
+    $block.Add('----- Failure Context -----') | Out-Null
+    $remaining--
+
+    $added = $false
+
+    $firstFailure = $null
+    try {
+        $firstFailure = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'first_failure.json' -ErrorAction SilentlyContinue | Select-Object -First 1
+    } catch {
+        $firstFailure = $null
+    }
+    if ($firstFailure -and $remaining -gt 0) {
+        if ($block.Count -gt 1) {
+            $block.Add('') | Out-Null
+            $remaining--
+        }
+
+        $relative = $firstFailure.FullName
+        try {
+            $relative = [System.IO.Path]::GetRelativePath($DiagRoot, $firstFailure.FullName)
+        } catch {
+            $relative = $firstFailure.FullName
+        }
+        $block.Add("first_failure.json ($relative):") | Out-Null
+        $remaining--
+
+        if ($remaining -gt 0) {
+            try {
+                $rawLines = Get-Content -LiteralPath $firstFailure.FullName -Encoding UTF8
+            } catch {
+                $rawLines = @()
+            }
+            foreach ($line in Sanitize-TextLines $rawLines) {
+                if ($remaining -le 0) { break }
+                $block.Add($line) | Out-Null
+                $remaining--
+            }
+        }
+
+        $added = $true
+    }
+
+    if ($remaining -gt 0) {
+        $ndjsonPath = $null
+        try {
+            $ndjsonPath = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'ci_test_results.ndjson' -ErrorAction SilentlyContinue | Select-Object -First 1
+        } catch {
+            $ndjsonPath = $null
+        }
+
+        if ($ndjsonPath) {
+            $firstFailLine = $null
+            try {
+                foreach ($line in Get-Content -LiteralPath $ndjsonPath.FullName -Encoding UTF8) {
+                    $trim = $line.Trim()
+                    if (-not $trim) { continue }
+                    try {
+                        $obj = $trim | ConvertFrom-Json
+                    } catch {
+                        continue
+                    }
+                    if ($null -ne $obj.pass -and -not [bool]$obj.pass) {
+                        $firstFailLine = $trim
+                        break
+                    }
+                }
+            } catch {
+                $firstFailLine = $null
+            }
+
+            if ($firstFailLine) {
+                if ($block.Count -gt 1) {
+                    $block.Add('') | Out-Null
+                    $remaining--
+                }
+
+                $relativeNd = $ndjsonPath.FullName
+                try {
+                    $relativeNd = [System.IO.Path]::GetRelativePath($DiagRoot, $ndjsonPath.FullName)
+                } catch {
+                    $relativeNd = $ndjsonPath.FullName
+                }
+                $block.Add("First failing NDJSON row ($relativeNd):") | Out-Null
+                $remaining--
+
+                if ($remaining -gt 0) {
+                    foreach ($line in Sanitize-TextLines @($firstFailLine)) {
+                        if ($remaining -le 0) { break }
+                        $block.Add($line) | Out-Null
+                        $remaining--
+                    }
+                }
+
+                $added = $true
+            }
+        }
+    }
+
+    if (-not $added) {
+        return [System.Collections.Generic.List[string]]::new()
+    }
+
+    return $block
+}
+
 $promptPath = Join-Path $env:RUNNER_TEMP 'prompt.txt'
-$repoFilesPath = Join-Path $env:RUNNER_TEMP 'repo-files.txt'
 
 $repo    = $env:REPO
 $branch  = $env:BRANCH
@@ -64,22 +220,16 @@ $attempt = $env:ATTEMPT_NEXT
 $maxAttempts = if ($env:MAX_ATTEMPTS) { $env:MAX_ATTEMPTS } else { 'n/a' }
 
 $workspaceRoot = (Get-Location).Path
-$failDir = Join-Path $workspaceRoot '.codex/fail'
-if (-not (Test-Path $failDir)) {
-    New-Item -ItemType Directory -Path $failDir -Force | Out-Null
-}
 
-try {
-    $gitOutput = & git ls-files 2>$null
-    if ($LASTEXITCODE -eq 0 -and $gitOutput) {
-        [IO.File]::WriteAllLines($repoFilesPath, $gitOutput, [System.Text.Encoding]::UTF8)
-    } elseif (Test-Path $repoFilesPath) {
-        Remove-Item -LiteralPath $repoFilesPath -ErrorAction SilentlyContinue
-    }
-} catch {
-    if (Test-Path $repoFilesPath) {
-        Remove-Item -LiteralPath $repoFilesPath -ErrorAction SilentlyContinue
-    }
+$diagRoot = $env:DIAG
+if (-not $diagRoot) {
+    $diagRoot = Find-DiagRoot @(
+        $workspaceRoot,
+        (Join-Path $workspaceRoot 'diag'),
+        (Join-Path $workspaceRoot '.codex'),
+        (Join-Path $workspaceRoot 'iterate'),
+        $env:RUNNER_TEMP
+    )
 }
 
 $lines = [System.Collections.Generic.List[string]]::new()
@@ -106,87 +256,27 @@ Add-Lines $lines @(
     '```'
 )
 
-if (Test-Path $repoFilesPath) {
-    $head = Get-Content -LiteralPath $repoFilesPath -TotalCount 300
-    if ($head) {
-        Add-Lines $lines @('', '----- Repo files (head) -----')
-        foreach ($entry in $head) {
-            $lines.Add($entry) | Out-Null
-        }
+if ($diagRoot) {
+    $failureContext = Get-FailureContextLines $diagRoot
+    if ($failureContext.Count -gt 0) {
+        Add-Lines $lines @('')
+        Add-Lines $lines $failureContext
     }
-}
-
-$firstFailurePath = Join-Path $failDir 'first_failure.txt'
-if (Test-Path $firstFailurePath) {
-    $firstLine = Get-Content -LiteralPath $firstFailurePath -TotalCount 1 | Select-Object -First 1
-    if ($firstLine) {
-        Add-Lines $lines @('', 'First failure:', $firstLine)
-    }
-}
-
-$contextSource = $null
-$structuredPath = Join-Path $failDir 'ci_structured.txt'
-if (Test-Path $structuredPath) {
-    $contextSource = $structuredPath
-} else {
-    $focusFallback = Join-Path $failDir 'failing_job_focus.txt'
-    if (Test-Path $focusFallback) {
-        $contextSource = $focusFallback
-    }
-}
-if (-not $contextSource) {
-    $contextSource = $env:LOGFOCUS_PATH
-    if (-not $contextSource -or -not (Test-Path $contextSource)) {
-        $contextSource = $env:LOGTAIL_PATH
-    }
-}
-if ($contextSource -and (Test-Path $contextSource)) {
-    $head120 = Get-Content -LiteralPath $contextSource -TotalCount 120 | ForEach-Object { Convert-ToPrintable $_ }
-    if ($head120) {
-        Add-Lines $lines @('', 'Failing job log tail (first 120 lines):')
-        foreach ($entry in $head120) { $lines.Add($entry) | Out-Null }
-    }
-}
-
-if ($env:STRUCT_PATH -and (Test-Path $env:STRUCT_PATH)) {
-    $structHead = Get-Content -LiteralPath $env:STRUCT_PATH -TotalCount 120 | ForEach-Object { Convert-ToPrintable $_ }
-    if ($structHead) {
-        Add-Lines $lines @('', '----- CI structured error (first record / head) -----')
-        foreach ($entry in $structHead) { $lines.Add($entry) | Out-Null }
-    }
-}
-
-$focusLog = $env:LOGFOCUS_PATH
-if ($focusLog -and (Test-Path $focusLog)) {
-    $focusLines = Get-Content -LiteralPath $focusLog | ForEach-Object { Convert-ToPrintable $_ }
-    if ($focusLines) {
-        Add-Lines $lines @('', '----- Focused failing job log (matched identifier) -----')
-        foreach ($entry in $focusLines) { $lines.Add($entry) | Out-Null }
-    }
-} elseif ($env:LOGTAIL_PATH -and (Test-Path $env:LOGTAIL_PATH)) {
-    $tailLines = Get-Content -LiteralPath $env:LOGTAIL_PATH | Select-Object -Last 200 | ForEach-Object { Convert-ToPrintable $_ }
-    if ($tailLines) {
-        Add-Lines $lines @('', '----- Failing job log tail (last 200 lines) -----')
-        foreach ($entry in $tailLines) { $lines.Add($entry) | Out-Null }
-    }
-}
-
-$diagRoot = $env:DIAG
-if (-not $diagRoot) {
-    $diagRoot = Find-DiagRoot @(
-        $workspaceRoot,
-        (Join-Path $workspaceRoot 'diag'),
-        (Join-Path $workspaceRoot '.codex'),
-        (Join-Path $workspaceRoot 'iterate'),
-        $env:RUNNER_TEMP
-    )
 }
 if ($diagRoot) {
     $failListPath = Join-Path $diagRoot 'batchcheck_failing.txt'
     if (Test-Path $failListPath) {
-        Add-Lines $lines @('', '----- Batch-check failing IDs -----')
-        Get-Content -LiteralPath $failListPath -TotalCount 10 | ForEach-Object {
-            $lines.Add($_) | Out-Null
+        $failLines = @()
+        try {
+            $failLines = Get-Content -LiteralPath $failListPath -TotalCount 10
+        } catch {
+            $failLines = @()
+        }
+        if ($failLines) {
+            Add-Lines $lines @('', '----- Batch-check failing IDs -----')
+            foreach ($entry in Sanitize-TextLines $failLines) {
+                $lines.Add($entry) | Out-Null
+            }
         }
     }
 
@@ -194,9 +284,17 @@ if ($diagRoot) {
     if (Test-Path $batchRoot) {
         $ndjsonHead = Get-ChildItem -Path $batchRoot -Recurse -File -Filter '*~test-results.ndjson' -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($ndjsonHead) {
-            Add-Lines $lines @('', '----- NDJSON head (batch-check) -----')
-            Get-Content -LiteralPath $ndjsonHead.FullName -TotalCount 8 | ForEach-Object {
-                $lines.Add((Convert-ToPrintable $_)) | Out-Null
+            $ndLines = @()
+            try {
+                $ndLines = Get-Content -LiteralPath $ndjsonHead.FullName -TotalCount 8
+            } catch {
+                $ndLines = @()
+            }
+            if ($ndLines) {
+                Add-Lines $lines @('', '----- NDJSON head (batch-check) -----')
+                foreach ($entry in Sanitize-TextLines $ndLines) {
+                    $lines.Add($entry) | Out-Null
+                }
             }
         }
     }

@@ -696,6 +696,8 @@ jobs:
           LOGFOCUS_PATH: ${{ steps.logfocus.outputs.path }}
           LOGTAIL_PATH: ${{ steps.logtail.outputs.path }}
           DIAG: ${{ env.DIAG_DIR }}
+          ITERATE_REDACT_PATTERN: '(?i)(secret|token|password|apikey|key|sk-[A-Za-z0-9]{20,})'
+          REDACT_PLACEHOLDER: '***'
         run: |
           & "$env:GITHUB_WORKSPACE/tools/diag/build_prompt.ps1"
 

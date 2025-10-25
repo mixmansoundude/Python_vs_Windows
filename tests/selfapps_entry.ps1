@@ -262,3 +262,53 @@ $expectedB = Join-Path '.' 'app.py'
 Write-EntryRow -Id 'self.entry.entryB' -Expected $expectedB -Scenario $scenarioB -Description 'app.py preferred over generic modules'
 Check-PipreqsFailure -LogPath $scenarioB.setupPath -LogText $scenarioB.setupLog
 Check-HelperInvokeFailure -LogPath $scenarioB.bootstrapPath -LogText $scenarioB.bootstrapLog
+
+$parsedRows = @()
+if (Test-Path -LiteralPath $ciNd) {
+    foreach ($line in Get-Content -LiteralPath $ciNd -Encoding Ascii) {
+        $trim = $line.Trim()
+        if (-not $trim) { continue }
+        try {
+            $parsedRows += ($trim | ConvertFrom-Json)
+        } catch {
+            # derived requirement: keep parsing resilient so diagnostics survive malformed
+            # lines without crashing the self-test loop.
+        }
+    }
+}
+
+$helperRows = @($parsedRows | Where-Object { $_.id -eq 'helper.invoke' })
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.entry.helper.invoke.absent'
+    pass    = ($helperRows.Count -eq 0)
+    desc    = 'Helper invocation rows are absent in NDJSON output'
+    details = @{ count = $helperRows.Count }
+})
+
+$expectedMap = @(
+    @{ Id = 'self.entry.entry1'; Expected = $expected1 },
+    @{ Id = 'self.entry.entryA'; Expected = $expectedA },
+    @{ Id = 'self.entry.entryB'; Expected = $expectedB }
+)
+$issues = @()
+foreach ($item in $expectedMap) {
+    $row = $parsedRows | Where-Object { $_.id -eq $item.Id } | Select-Object -First 1
+    if (-not $row) {
+        $issues += [ordered]@{ id = $item.Id; reason = 'missing-row' }
+        continue
+    }
+    if (-not $row.pass) {
+        $issues += [ordered]@{ id = $item.Id; reason = 'row-failed'; exitCode = $row.details.exitCode; chosen = $row.details.chosen }
+        continue
+    }
+    if (-not $row.details -or -not $row.details.chosen) {
+        $issues += [ordered]@{ id = $item.Id; reason = 'missing-chosen' }
+    }
+}
+
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.entry.results'
+    pass    = ($issues.Count -eq 0)
+    desc    = 'Entry scenarios emitted breadcrumbs and passed'
+    details = @{ issues = $issues }
+})

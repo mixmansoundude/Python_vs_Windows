@@ -114,3 +114,27 @@ def test_fallback_rationale_uses_fail_ids_and_redacts(tmp_path):
     assert "- ***" in lines
     assert "sk-THISISFAKEBUTLONGENOUGH" not in payload
     assert "contains token" not in payload
+
+
+def test_failure_context_lines_are_redacted(tmp_path):
+    raw_json_path, diff_path, diag_root = _write_common_files(tmp_path)
+    response_text = """```summary_text
+----- Failure Context -----
+first_failure.json: {"token": "sk-THISISFAKEBUTLONGENOUGH"}
+First failing NDJSON row: {"password": "abc123"}
+```"""
+    why_path = _run_sanitizer(
+        tmp_path,
+        raw_json_path,
+        diff_path,
+        response_text,
+        diag_root,
+        "(?i)(secret|token|password|apikey|key|sk-[A-Za-z0-9]{20,})",
+        "***",
+    )
+    payload = why_path.read_text(encoding="utf-8")
+    lines = payload.splitlines()
+
+    assert any(line.strip() == '***' for line in lines)
+    assert 'sk-THISISFAKEBUTLONGENOUGH' not in payload
+    assert 'password' not in payload
