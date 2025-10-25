@@ -147,6 +147,26 @@ def _load_fail_ids(diag_root: Path | None) -> list[str]:
     return entries
 
 
+def _redact_rationale_lines(
+    lines: list[str], pattern: re.Pattern, placeholder: str
+) -> list[str]:
+    """Redact summary/fallback rationale lines while preserving bullets."""
+
+    redacted: list[str] = []
+    for line in lines:
+        if pattern.search(line):
+            # derived requirement: reviewer highlighted that keyword-only replacement
+            # leaked secret values (e.g., ``password=abc123`` -> ``***=abc123``).
+            # Replace the entire line while keeping any leading bullet/indentation so
+            # downstream diagnostics remain legible without exposing sensitive text.
+            prefix_match = re.match(r"(\s*(?:[-*+]\s*)?)", line)
+            prefix = prefix_match.group(1) if prefix_match else ""
+            redacted.append(f"{prefix}{placeholder}")
+            continue
+        redacted.append(line)
+    return redacted
+
+
 def _maybe_write_why(
     raw_json: str,
     why_path: Path,
@@ -197,12 +217,10 @@ def _maybe_write_why(
             payload_lines.append("")
             payload_lines.append("First failing IDs unavailable; batchcheck_failing.txt not found.")
 
-    payload = "\n".join(payload_lines).rstrip() + "\n"
     if pattern is not None:
-        # derived requirement: reviewer flagged raw rationale leaking secrets when
-        # ``_maybe_write_why`` bypassed the sanitizer. Keep the payload aligned with
-        # ``--redact-pattern`` so diagnostics never surface unmasked secrets.
-        payload = pattern.sub(placeholder, payload)
+        payload_lines = _redact_rationale_lines(payload_lines, pattern, placeholder)
+
+    payload = "\n".join(payload_lines).rstrip() + "\n"
     why_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         why_path.write_text(payload, encoding="utf-8", errors="replace")

@@ -81,11 +81,13 @@ secret hint
         "***",
     )
     payload = why_path.read_text(encoding="utf-8")
+    lines = payload.splitlines()
 
-    assert payload.splitlines()[0] == "Model rationale (summary_text):"
-    assert "***" in payload
+    assert lines[0] == "Model rationale (summary_text):"
+    assert any(line == "***" for line in lines)
     assert "sk-THISISFAKEBUTLONGENOUGH" not in payload
     assert "password=abc123" not in payload
+    assert "***=abc123" not in payload
 
 
 def test_fallback_rationale_uses_fail_ids_and_redacts(tmp_path):
@@ -105,8 +107,10 @@ def test_fallback_rationale_uses_fail_ids_and_redacts(tmp_path):
         "***",
     )
     payload = why_path.read_text(encoding="utf-8")
+    lines = payload.splitlines()
 
-    assert "Model returned # no changes" in payload.splitlines()[0]
-    assert "***" in payload
+    assert "Model returned # no changes" in lines[0]
+    assert any(line.endswith("***") for line in lines)
+    assert "- ***" in lines
     assert "sk-THISISFAKEBUTLONGENOUGH" not in payload
     assert "contains token" not in payload
