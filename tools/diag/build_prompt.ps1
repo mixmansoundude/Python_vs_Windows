@@ -61,6 +61,121 @@ function Sanitize-TextLines {
     return $buffer
 }
 
+function Clip-Lines {
+    param(
+        [string[]]$Lines,
+        [int]$Max = 60
+    )
+
+    if ($null -eq $Lines) { return @() }
+    if ($Max -le 0) { return @() }
+    if ($Lines.Count -le $Max) { return $Lines }
+
+    if ($Max -le 1) {
+        return @($Lines[0])
+    }
+
+    $tailBudget = [Math]::Min(40, [Math]::Max(0, $Max - 21))
+    $headBudget = $Max - $tailBudget - 1
+    if ($headBudget -lt 1) { $headBudget = 1 }
+    if ($headBudget -gt 20) { $headBudget = 20 }
+
+    if ($headBudget -gt ($Lines.Count - $tailBudget)) {
+        $headBudget = [Math]::Max(1, $Lines.Count - $tailBudget)
+    }
+
+    $tailBudget = [Math]::Min($tailBudget, [Math]::Max(0, $Lines.Count - $headBudget))
+
+    $buffer = [System.Collections.Generic.List[string]]::new()
+    for ($i = 0; $i -lt $headBudget; $i++) {
+        $buffer.Add($Lines[$i]) | Out-Null
+    }
+
+    if (($headBudget + $tailBudget) -lt $Lines.Count) {
+        $buffer.Add('... [clipped] ...') | Out-Null
+    }
+
+    if ($tailBudget -gt 0) {
+        $start = $Lines.Count - $tailBudget
+        for ($j = $start; $j -lt $Lines.Count; $j++) {
+            $buffer.Add($Lines[$j]) | Out-Null
+        }
+    }
+
+    return $buffer
+}
+
+function Read-TextIfExists {
+    param(
+        [string]$Path,
+        [int]$Max = 60
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return @() }
+    if (-not (Test-Path $Path)) { return @() }
+
+    try {
+        $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+    } catch {
+        return @()
+    }
+
+    if ($null -eq $raw) { return @() }
+
+    $lines = $raw -split "`n"
+    if ($null -eq $lines) { return @() }
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($null -ne $lines[$i]) {
+            $lines[$i] = $lines[$i].TrimEnd("`r")
+        }
+    }
+
+    return Clip-Lines $lines $Max
+}
+
+function Grep-Context {
+    param(
+        [string]$Path,
+        [string[]]$Patterns,
+        [int]$Radius = 6,
+        [int]$Max = 80
+    )
+
+    if (-not (Test-Path $Path)) { return @() }
+
+    try {
+        $lines = Get-Content -LiteralPath $Path -Encoding UTF8
+    } catch {
+        return @()
+    }
+
+    if ($null -eq $lines) { return @() }
+
+    $hits = [System.Collections.Generic.List[string]]::new()
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $current = $lines[$i]
+        foreach ($pattern in $Patterns) {
+            if ($current -match $pattern) {
+                $start = [Math]::Max(0, $i - $Radius)
+                $end = [Math]::Min($lines.Count - 1, $i + $Radius)
+                for ($j = $start; $j -le $end; $j++) {
+                    $hits.Add($lines[$j]) | Out-Null
+                }
+                $hits.Add('---') | Out-Null
+                break
+            }
+        }
+    }
+
+    if ($hits.Count -eq 0) { return @() }
+    if ($hits[$hits.Count - 1] -eq '---') {
+        $hits.RemoveAt($hits.Count - 1)
+    }
+
+    return Clip-Lines ($hits.ToArray()) $Max
+}
+
 function Find-DiagRoot {
     param([string[]]$Hints)
 
@@ -219,12 +334,13 @@ function Get-StagedFailureContextLines {
     if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return $result }
 
     $fallbackRoot = Join-Path $WorkspaceRoot '.codex/fail'
-    if (-not (Test-Path $fallbackRoot)) { return $result }
 
-    # derived requirement: reviewer flagged that iterate prompts lacked failure context when
-    # no diagnostics tree was present. Mirror the staged .codex/fail payloads so Codex
-    # always sees the first failing clues even when _artifacts/batch-check is missing.
-    $budget = 40
+    # derived requirement: earlier iterate runs produced empty prompts when diagnostics
+    # artifacts were absent. Mirror the staged .codex/fail payloads and mirrored NDJSON to
+    # keep Codex anchored to the real failure regardless of artifact layout.
+    $budget = 120
+    $headerAdded = $false
+
     $sources = @(
         @{ Header = '----- First failure -----'; Path = Join-Path $fallbackRoot 'first_failure.txt'; Limit = 5 },
         @{ Header = '----- CI structured -----'; Path = Join-Path $fallbackRoot 'ci_structured.txt'; Limit = 20 },
@@ -234,19 +350,17 @@ function Get-StagedFailureContextLines {
     foreach ($source in $sources) {
         if ($budget -le 0) { break }
 
-        $path = $source.Path
-        if (-not (Test-Path $path)) { continue }
+        $lines = Read-TextIfExists $source.Path $source.Limit
+        if (-not $lines -or $lines.Count -eq 0) { continue }
 
-        $lines = @()
-        try {
-            $lines = Get-Content -LiteralPath $path -Encoding UTF8 -TotalCount $source.Limit
-        } catch {
-            $lines = @()
+        if (-not $headerAdded) {
+            $result.Add('----- Failure Context (staged) -----') | Out-Null
+            $budget--
+            $headerAdded = $true
+            if ($budget -le 0) { break }
         }
 
-        if (-not $lines) { continue }
-
-        if ($result.Count -gt 0) {
+        if ($result.Count -gt 1) {
             $result.Add('') | Out-Null
             $budget--
             if ($budget -le 0) { break }
@@ -261,6 +375,102 @@ function Get-StagedFailureContextLines {
             $result.Add($line) | Out-Null
             $budget--
         }
+    }
+
+    if ($budget -le 0) { return $result }
+
+    $ndjsonCandidates = @('ci_test_results.ndjson', 'tests~test-results.ndjson')
+    foreach ($candidate in $ndjsonCandidates) {
+        if ($budget -le 0) { break }
+
+        $candidatePath = Join-Path $WorkspaceRoot $candidate
+        if (-not (Test-Path $candidatePath)) { continue }
+
+        try {
+            $line = Get-Content -LiteralPath $candidatePath -Encoding UTF8 -TotalCount 1
+        } catch {
+            $line = @()
+        }
+
+        if (-not $line) { continue }
+
+        if (-not $headerAdded) {
+            $result.Add('----- Failure Context (staged) -----') | Out-Null
+            $budget--
+            $headerAdded = $true
+            if ($budget -le 0) { break }
+        }
+
+        if ($result.Count -gt 1) {
+            $result.Add('') | Out-Null
+            $budget--
+            if ($budget -le 0) { break }
+        }
+
+        $result.Add('first failing NDJSON row:') | Out-Null
+        $budget--
+        if ($budget -le 0) { break }
+
+        foreach ($entry in Sanitize-TextLines $line) {
+            if ($budget -le 0) { break }
+            $result.Add($entry) | Out-Null
+            $budget--
+        }
+
+        break
+    }
+
+    return $result
+}
+
+function Get-CodeSnippetLines {
+    param([string]$WorkspaceRoot)
+
+    $result = [System.Collections.Generic.List[string]]::new()
+
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { return $result }
+
+    $budget = 160
+    $headerAdded = $false
+
+    $snippets = @(
+        @{ Label = 'run_setup.bat (helper invocation):'; Path = Join-Path $WorkspaceRoot 'run_setup.bat'; Patterns = @('~find_entry\.py', 'HP_SYS_PY', 'HP_HELPER_(CMD|ARGS)'); Radius = 6; Max = 80 },
+        @{ Label = 'tests/selfapps_entry.ps1 (entry checks):'; Path = Join-Path $WorkspaceRoot 'tests/selfapps_entry.ps1'; Patterns = @('entry\.single\.direct', 'breadcrumb', 'Chosen entry'); Radius = 4; Max = 60 },
+        @{ Label = 'tests/harness.ps1 (NDJSON emitters):'; Path = Join-Path $WorkspaceRoot 'tests/harness.ps1'; Patterns = @('ndjson', 'emit', 'id='); Radius = 4; Max = 60 }
+    )
+
+    foreach ($snippet in $snippets) {
+        if ($budget -le 0) { break }
+
+        $lines = Grep-Context $snippet.Path $snippet.Patterns $snippet.Radius $snippet.Max
+        if (-not $lines -or $lines.Count -eq 0) { continue }
+
+        if (-not $headerAdded) {
+            $result.Add('----- Candidate code snippets -----') | Out-Null
+            $budget--
+            $headerAdded = $true
+            if ($budget -le 0) { break }
+        }
+
+        if ($result.Count -gt 1) {
+            $result.Add('') | Out-Null
+            $budget--
+            if ($budget -le 0) { break }
+        }
+
+        $result.Add($snippet.Label) | Out-Null
+        $budget--
+        if ($budget -le 0) { break }
+
+        foreach ($line in Sanitize-TextLines $lines) {
+            if ($budget -le 0) { break }
+            $result.Add("  $line") | Out-Null
+            $budget--
+        }
+    }
+
+    if ($headerAdded -and $result.Count -gt 0 -and $result[$result.Count - 1] -eq '') {
+        $result.RemoveAt($result.Count - 1)
     }
 
     return $result
@@ -326,6 +536,15 @@ if (-not $diagRoot -or $failureContext.Count -eq 0) {
         Add-Lines $lines @('')
         Add-Lines $lines $stagedContext
     }
+}
+
+# derived requirement: iterate reviewers asked for actionable code anchors when Codex saw
+# only failure metadata. Surface small repo excerpts near helper and NDJSON emitters so the
+# model can jump directly to likely edit points without scanning the full tree.
+$codeSnippets = Get-CodeSnippetLines $workspaceRoot
+if ($codeSnippets.Count -gt 0) {
+    Add-Lines $lines @('')
+    Add-Lines $lines $codeSnippets
 }
 if ($diagRoot) {
     $failListPath = Join-Path $diagRoot 'batchcheck_failing.txt'
