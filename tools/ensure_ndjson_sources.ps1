@@ -131,7 +131,10 @@ function Sync-Target {
     if (Test-Path -LiteralPath $Destination) {
         $size = (Get-Item -LiteralPath $Destination).Length
         if ($size -gt 0) {
-            $foundSources.Add("$Label:$Destination (existing)") | Out-Null
+            $note = "{0}:{1} (existing)" -f $Label, $Destination
+            # derived requirement: avoid PowerShell's scoped-variable parsing ("$var:") so
+            # we do not reintroduce the ParserError seen when the gate executed this script.
+            $foundSources.Add($note) | Out-Null
             Write-Info "Found existing $Label source at $Destination"
             return
         }
@@ -150,7 +153,7 @@ function Sync-Target {
         } else {
             Write-Info "$Label source already at $Destination"
         }
-        $foundSources.Add("$Label:$source") | Out-Null
+        $foundSources.Add("{0}:{1}" -f $Label, $source) | Out-Null
     } else {
         $missingTargets.Add($Label) | Out-Null
         Write-Info "No source located for $Label"
@@ -202,7 +205,7 @@ if ($foundSources.Count -eq 0) {
         }
         Ensure-DestinationDirectory -Path $destCi
         ($payload | ConvertTo-Json -Compress) | Set-Content -LiteralPath $destCi -Encoding Ascii
-        $foundSources.Add("synth:$destCi") | Out-Null
+        $foundSources.Add("{0}:{1}" -f 'synth', $destCi) | Out-Null
         Write-Info "Synthesized ci_test_results.ndjson from $firstFailure"
         $missingTargets.Clear() | Out-Null
     }
