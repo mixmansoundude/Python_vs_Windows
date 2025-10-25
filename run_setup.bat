@@ -14,6 +14,7 @@ set "HP_SKIP_PIPREQS="
 set "HP_PY="
 set "HP_FIND_ENTRY_SYNTAX_OK="
 set "HP_HELPER_SYNTAX_EMITTED="
+set "HP_HELPER_CMD_LOGGED="
 set "HP_PIPREQS_VERSION=%HP_PIPREQS_VERSION%"
 if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
 set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
@@ -376,14 +377,34 @@ if errorlevel 1 call :die "[ERROR] find_entry helper syntax error"
 
 rem --- locate a Python ---
 set "HP_SYS_PY=" & set "HP_SYS_PY_ARGS="
+set "HP_SYS_PY_LOGGED="
 where python >nul 2>&1 && set "HP_SYS_PY=python"
 if not defined HP_SYS_PY (
   where py >nul 2>&1 && (set "HP_SYS_PY=py" & set "HP_SYS_PY_ARGS=-3")
 )
 
+if defined HP_SYS_PY for %%C in ("%HP_SYS_PY%") do set "HP_SYS_PY=%%~C"
+if defined HP_SYS_PY_ARGS for %%A in ("%HP_SYS_PY_ARGS%") do set "HP_SYS_PY_ARGS=%%~A"
+
 rem --- run helper and capture RELATIVE crumb ---
 set "HP_CRUMB="
 if defined HP_SYS_PY (
+  rem derived requirement: CI observed `'python" "~find_entry.py' is not recognized` when
+  rem helper args were empty. Keep the helper invocation split so CMD never appends a stray
+  rem quote to the interpreter token.
+  if not defined HP_SYS_PY_LOGGED (
+    if defined HP_SYS_PY_ARGS (
+      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"
+    ) else (
+      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" "~find_entry.py"
+    )
+    set "HP_SYS_PY_LOGGED=1"
+  )
+  if defined HP_SYS_PY_ARGS (
+    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "~find_entry.py" 1>nul 2>nul
+  ) else (
+    "%HP_SYS_PY%" -m py_compile "~find_entry.py" 1>nul 2>nul
+  )
   if defined HP_SYS_PY_ARGS (
     for /f "usebackq delims=" %%L in (`"%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"`) do set "HP_CRUMB=%%L"
   ) else (
@@ -570,7 +591,19 @@ if not defined HP_HELPER_CMD (
 if not defined HP_HELPER_CMD (
   where py >nul 2>&1 && (set "HP_HELPER_CMD=py" & set "HP_HELPER_ARGS=-3")
 )
+if defined HP_HELPER_CMD for %%C in ("%HP_HELPER_CMD%") do set "HP_HELPER_CMD=%%~C"
+if defined HP_HELPER_ARGS for %%A in ("%HP_HELPER_ARGS%") do set "HP_HELPER_ARGS=%%~A"
 if defined HP_HELPER_CMD (
+  if not defined HP_HELPER_CMD_LOGGED (
+    rem derived requirement: capture the helper command verbatim so future regressions can
+    rem trace quoting issues without reproducing CI. Logged once per bootstrap run.
+    if defined HP_HELPER_ARGS (
+      >> "%LOG%" echo Helper command: "%HP_HELPER_CMD%" %HP_HELPER_ARGS% "~find_entry.py"
+    ) else (
+      >> "%LOG%" echo Helper command: "%HP_HELPER_CMD%" "~find_entry.py"
+    )
+    set "HP_HELPER_CMD_LOGGED=1"
+  )
   if defined HP_HELPER_ARGS (
     "%HP_HELPER_CMD%" %HP_HELPER_ARGS% -m py_compile "~find_entry.py" 1>nul 2>nul
   ) else (
@@ -698,7 +731,11 @@ if not defined HP_ENTRY_CMD (
 if not defined HP_ENTRY_CMD (
   where py >nul 2>&1 && (set "HP_ENTRY_CMD=py" & set "HP_ENTRY_ARGS=-3")
 )
+if defined HP_ENTRY_CMD for %%C in ("%HP_ENTRY_CMD%") do set "HP_ENTRY_CMD=%%~C"
+if defined HP_ENTRY_ARGS for %%A in ("%HP_ENTRY_ARGS%") do set "HP_ENTRY_ARGS=%%~A"
 if not defined HP_ENTRY_CMD exit /b 0
+rem derived requirement: maintain split helper calls so `py -3` and bare `python` both expand
+rem without producing `python"` tokens. This mirrors the CI skip logic above.
 if defined HP_ENTRY_ARGS (
   for /f "usebackq delims=" %%M in (`"%HP_ENTRY_CMD%" %HP_ENTRY_ARGS% "~find_entry.py"`) do set "HP_ENTRY=%%M"
 ) else (

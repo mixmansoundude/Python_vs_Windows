@@ -1284,6 +1284,7 @@ def _build_markdown(
 
     diff_produced = _diff_produced(iterate_dir, iterate_temp)
     outcome = why_outcome or ("diff produced" if diff_produced else "n/a")
+    rationale_present = bool(why_outcome and why_outcome.strip())
 
     attempt_summary = None
     if not response_data and status_data:
@@ -1358,6 +1359,7 @@ def _build_markdown(
             f"- Model: {model}",
             f"- Endpoint: {endpoint}",
             f"- Tokens: prompt={tokens['prompt']} completion={tokens['completion']} total={tokens['total']}",
+            f"- Model rationale: {'present' if rationale_present else 'missing'}",
             f"- Iterate files: {iterate_file_status}",
         ]
     )
@@ -1486,6 +1488,7 @@ def _write_html(
     tokens = _gather_iterate_tokens(iterate_dir, iterate_temp, response_data)
     diff_produced = _diff_produced(iterate_dir, iterate_temp)
     outcome = why_outcome or ("diff produced" if diff_produced else "n/a")
+    rationale_present = bool(why_outcome and why_outcome.strip())
     attempt_summary = None
     if not response_data and status_data:
         attempt_summary = "attempted={0} gate={1} auth_ok={2} attempts_left={3}".format(
@@ -1533,6 +1536,7 @@ def _write_html(
             "label": "Tokens",
             "value": f"prompt={tokens['prompt']} completion={tokens['completion']} total={tokens['total']}",
         },
+        {"label": "Model rationale", "value": "present" if rationale_present else "missing"},
         {"label": "Iterate files", "value": iterate_file_status, "files": iterate_key_files},
     ]
     if attempt_summary:

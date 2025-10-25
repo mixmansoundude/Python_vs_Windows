@@ -42,7 +42,20 @@ function Test-MinicondaUrl {
   if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
   return $ok
 }
-if (Test-Path $ResultsPath) { Remove-Item -Force $ResultsPath }
+$bootstrapRows = @()
+if (Test-Path $ResultsPath) {
+  foreach ($line in Get-Content -LiteralPath $ResultsPath -Encoding Ascii) {
+    $trim = $line.Trim()
+    if (-not $trim) { continue }
+    try {
+      $bootstrapRows += ($trim | ConvertFrom-Json)
+    } catch {
+      # derived requirement: tolerate legacy rows when harvesting helper status.
+    }
+  }
+  Remove-Item -Force $ResultsPath
+}
+$entryHelperRow = $bootstrapRows | Where-Object { $_.id -eq 'helper.find_entry.syntax' } | Select-Object -First 1
 if (!(Test-Path $BatchPath)) { Write-Host "run_setup.bat not found next to run_tests.bat." -ForegroundColor Red; exit 2 }
 if (-not (Test-Path ".\.ci_bootstrap_marker")) {
   throw "CI bootstrap marker not found. Did run_setup.bat run?"
@@ -61,6 +74,13 @@ function Write-Result { param($Id,$Desc,[bool]$Pass,$Details)
   $rec = [ordered]@{ id=$Id; pass=$Pass; desc=$Desc; details=$Details }
   $json = $rec | ConvertTo-Json -Compress
   Add-Content -Path $ResultsPath -Value $json -Encoding Ascii
+}
+if ($entryHelperRow) {
+  Write-Result 'entry.helper.ok' 'Entry helper compile probe succeeded' ([bool]$entryHelperRow.pass) ([ordered]@{
+    source = 'run_setup.ndjson'
+    pass   = $entryHelperRow.pass
+    details = $entryHelperRow.details
+  })
 }
 $Lines = Get-Content -LiteralPath $BatchPath -Encoding ASCII
 $AllText = [string]::Join("`n", $Lines)
