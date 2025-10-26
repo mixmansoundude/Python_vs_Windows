@@ -125,27 +125,41 @@ if ($copied.Count -gt 0) {
     $copied | Sort-Object | ForEach-Object { $_ } | Add-Content -LiteralPath $manifestPath -Encoding UTF8
 }
 
-$redactPattern = $env:ITERATE_REDACT_PATTERN
+$bundlePattern = $env:BUNDLE_REDACT_PATTERN
+if (-not $bundlePattern -or $bundlePattern.Trim().Length -eq 0) {
+    # derived requirement: deleting files when ITERATE_REDACT_PATTERN matched "key" left the
+    # repo bundle empty. Use a narrower regex and redact substrings in place instead.
+    $bundlePattern = '(?ix)
+       ( sk-[A-Za-z0-9]{20,}
+       | (?:api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\s*
+         (?:[:=]\s*["\'']?[A-Za-z0-9_\-]{8,}["\'']?)?
+       )'
+}
+$textExtensions = @('.ps1','.psm1','.py','.bat','.cmd','.yml','.yaml','.md','.txt','.json','.toml','.ini','.cfg','.psd1')
+$regexOptions = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::Multiline -bor [System.Text.RegularExpressions.RegexOptions]::ExplicitCapture
+$regex = New-Object System.Text.RegularExpressions.Regex($bundlePattern, $regexOptions)
 $redacted = New-Object System.Collections.Generic.List[string]
-if ($redactPattern) {
-    $regex = New-Object System.Text.RegularExpressions.Regex($redactPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-    Get-ChildItem -LiteralPath $stage -File -Recurse | ForEach-Object {
-        try {
-            $text = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8
-        } catch {
-            return
-        }
-        if ($regex.IsMatch($text)) {
-            $rel = $_.FullName.Substring($stage.Length).TrimStart('\','/')
-            [void]$redacted.Add($rel)
-            Remove-Item -LiteralPath $_.FullName -Force
-        }
+Get-ChildItem -LiteralPath $stage -File -Recurse | ForEach-Object {
+    $extension = [System.IO.Path]::GetExtension($_.FullName).ToLowerInvariant()
+    if ($textExtensions -notcontains $extension) { return }
+    $content = $null
+    try {
+        $content = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8
+    } catch {
+        return
     }
-    if ($redacted.Count -gt 0) {
-        "" | Add-Content -LiteralPath $manifestPath -Encoding UTF8
-        "omitted_for_redaction:" | Add-Content -LiteralPath $manifestPath -Encoding UTF8
-        $redacted | Sort-Object | ForEach-Object { $_ } | Add-Content -LiteralPath $manifestPath -Encoding UTF8
+    if ($null -eq $content) { return }
+    $updated = $regex.Replace($content, '***')
+    if ($updated -ne $content) {
+        Set-Content -LiteralPath $_.FullName -Encoding UTF8 -NoNewline $updated
+        $relativePath = $_.FullName.Substring($stage.Length).TrimStart('\','/')
+        [void]$redacted.Add($relativePath)
     }
+}
+if ($redacted.Count -gt 0) {
+    "" | Add-Content -LiteralPath $manifestPath -Encoding UTF8
+    "redacted_files:" | Add-Content -LiteralPath $manifestPath -Encoding UTF8
+    $redacted | Sort-Object | ForEach-Object { $_ } | Add-Content -LiteralPath $manifestPath -Encoding UTF8
 }
 
 if (Test-Path -LiteralPath $OutZip) {
@@ -159,5 +173,8 @@ Write-Host "repo bundle: $OutZip (${bundleMB} MB)"
 
 if ($bundleMB -gt $MaxMB) {
     Write-Warning "Bundle size ${bundleMB}MB exceeds cap ${MaxMB}MB; consider trimming includes."
+}
+if ($bundleMB -lt 0.05) {
+    Write-Warning "Bundle size ${bundleMB}MB is unexpectedly small; verify allow/deny lists and bundle redaction."
 }
 

@@ -749,6 +749,7 @@ jobs:
         shell: pwsh
         env:
           ITERATE_REDACT_PATTERN: '(?i)(secret|token|password|apikey|key|sk-[A-Za-z0-9]{20,})'
+          BUNDLE_REDACT_PATTERN: "(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\\s*(?:[:=]\\s*['\"]?[A-Za-z0-9_\\-]{8,}['\"]?)?"
         run: |
           & "$env:GITHUB_WORKSPACE/tools/make_model_repo_bundle.ps1" -OutZip "$env:RUNNER_TEMP/repo_context.zip" -MaxMB 25
 
@@ -765,19 +766,21 @@ jobs:
             echo "repo bundle missing" >&2
             exit 1
           fi
-          resp="$(curl -sS -X POST https://api.openai.com/v1/files \
+          out_json="$RUNNER_TEMP/repo_upload.json"
+          http=$(curl -sS -o "$out_json" -w '%{http_code}' -X POST https://api.openai.com/v1/files \
             -H "Authorization: Bearer $OPENAI_API_KEY" \
-            -F purpose="assistants" \
-            -F file="@${bundle}" )"
-          file_id="$(printf '%s' "$resp" | python - <<'PY'
-            import json, sys
-            data = json.load(sys.stdin)
-            fid = data.get('id')
-            if not fid:
-                raise SystemExit('missing file id in upload response')
-            print(fid)
-          PY
-          )"
+            -F purpose=assistants \
+            -F file="@${bundle}")
+          printf 'http=%s\n' "$http" >> "$GITHUB_OUTPUT"
+          if [ "$http" != "200" ]; then
+            echo "Upload failed (http=$http)" >&2
+            exit 1
+          fi
+          file_id=$(jq -r '.id // empty' "$out_json")
+          if [ -z "$file_id" ] || [ "$file_id" = "null" ]; then
+            echo "Upload did not return a file id" >&2
+            exit 1
+          fi
           printf 'file_id=%s\n' "$file_id" >> "$GITHUB_OUTPUT"
           {
             echo "### Model repo bundle"
