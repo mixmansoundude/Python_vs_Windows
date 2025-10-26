@@ -759,10 +759,11 @@ jobs:
         env:
           BUNDLE_REDACT_PATTERN: "(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\\s*(?:[:=]\\s*['\"]?[A-Za-z0-9_\\-]{8,}['\"]?)?"
         run: |
-          $outDir = Join-Path $env:RUNNER_TEMP 'repo_corpus'
-          # derived requirement: the runner logged "Cannot convert 'System.Object[]' ... AdditionalChildPath" when the
-          # raw interpolated string was passed directly. Resolve through Join-Path so the script always receives a
-          # single string on every platform.
+          $runTemp = [System.IO.Path]::GetFullPath($env:RUNNER_TEMP)
+          $outDir = [System.IO.Path]::Combine($runTemp, 'repo_corpus')
+          # derived requirement: the runner logged "Cannot convert 'System.Object[]' ... AdditionalChildPath" when Join-Path
+          # received interpolated fragments that PowerShell treated as multiple arguments. Use Path.Combine so the
+          # corpus script always gets a single, canonicalized string on every platform.
           & "$env:GITHUB_WORKSPACE/tools/make_model_repo_corpus.ps1" -OutDir $outDir
 
       - name: Create vector store
@@ -902,7 +903,8 @@ jobs:
                 model: $model,
                 # derived requirement: force the model to rely on the vector store corpus via
                 # file_search instead of the deprecated code_interpreter container.
-                tools: [{type:"file_search", vector_store_ids:[$vs]}],
+                tools: [{type:"file_search"}],
+                tool_resources: {file_search:{vector_store_ids:[$vs]}},
                 tool_choice: "auto",
                 input: [
                   {role:"system",content:[{type:"input_text",text:"You are an expert software engineer that proposes precise, minimal unified diffs. Use the file_search tool to inspect the uploaded corpus before drafting a diff."}]},
