@@ -521,21 +521,19 @@ Add-Lines $lines @(
     '```'
 )
 
-# derived requirement: reviewer flagged that Codex ignored the repo bundle without an explicit
-# instruction. Surface a dedicated block so future refactors keep nudging the model to
-# unzip and inspect the attached archive before drafting a diff.
+# derived requirement: iterate now relies on the vector store corpus, so keep
+# the guidance explicit to steer file_search toward the critical entry points.
 Add-Lines $lines @(
     '',
-    '----- Attached Repo Bundle -----',
-    'An input file named repo_context.zip is attached to this request.',
-    'Use the code_interpreter tool to unzip it into ./_repo, then read files from there.',
-    'Before proposing changes, open and inspect these (if present):',
-    '- README.md and AGENTS.md',
+    '----- File Search Guidance -----',
+    'Use the file_search tool to open and inspect these, in order:',
+    '- README.md, AGENTS.md',
     '- .github/workflows/codex-auto-iterate.yml',
     '- tools/ensure_ndjson_sources.ps1, tools/diag/build_prompt.ps1',
+    '- run_setup.bat (and any *.bat/*.cmd invoked in logs)',
     '- tests/selfapps_entry.ps1, tests/harness.ps1',
-    'You are allowed to run small Python snippets to list, read, and grep files inside the container.',
-    'Do not claim missing files; they are inside repo_context.zip. If something is absent in the bundle, proceed with what is present.'
+    '- latest NDJSON (ci_test_results.ndjson or tests~test-results.ndjson)',
+    'Use these exact path hints and REPO_TREE.txt to locate files; then propose a minimal unified diff.'
 )
 
 $failureContext = [System.Collections.Generic.List[string]]::new()

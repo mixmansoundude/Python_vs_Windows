@@ -753,39 +753,84 @@ jobs:
         run: |
           & "$env:GITHUB_WORKSPACE/tools/make_model_repo_bundle.ps1" -OutZip "$env:RUNNER_TEMP/repo_context.zip" -MaxMB 25
 
-      - name: Upload repo bundle
+      - name: Build model repo corpus
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        shell: pwsh
+        env:
+          BUNDLE_REDACT_PATTERN: "(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\\s*(?:[:=]\\s*['\"]?[A-Za-z0-9_\\-]{8,}['\"]?)?"
+        run: |
+          & "$env:GITHUB_WORKSPACE/tools/make_model_repo_corpus.ps1" -OutDir "$env:RUNNER_TEMP/repo_corpus"
+
+      - name: Create vector store
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
-        id: upload_repo_zip
+        id: vs_create
         shell: bash
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
-          bundle="$RUNNER_TEMP/repo_context.zip"
-          if [ ! -s "$bundle" ]; then
-            echo "repo bundle missing" >&2
-            exit 1
-          fi
-          out_json="$RUNNER_TEMP/repo_upload.json"
-          http=$(curl -sS -o "$out_json" -w '%{http_code}' -X POST https://api.openai.com/v1/files \
+          resp="$(curl -sS -X POST https://api.openai.com/v1/vector_stores \
             -H "Authorization: Bearer $OPENAI_API_KEY" \
-            -F purpose=assistants \
-            -F file="@${bundle}")
-          printf 'http=%s\n' "$http" >> "$GITHUB_OUTPUT"
-          if [ "$http" != "200" ]; then
-            echo "Upload failed (http=$http)" >&2
+            -H "Content-Type: application/json" \
+            -d '{"name":"iterate-repo-corpus"}')"
+          vs_id="$(printf '%s' "$resp" | jq -r '.id')"
+          if [ -z "$vs_id" ] || [ "$vs_id" = "null" ]; then
+            echo "failed to create vector store" >&2
+            printf '%s\n' "$resp" >&2
             exit 1
           fi
-          file_id=$(jq -r '.id // empty' "$out_json")
-          if [ -z "$file_id" ] || [ "$file_id" = "null" ]; then
-            echo "Upload did not return a file id" >&2
+          echo "vs_id=$vs_id" >> "$GITHUB_OUTPUT"
+
+      - name: Upload repo corpus files to vector store
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        id: vs_upload
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          vs_id="${{ steps.vs_create.outputs.vs_id }}"
+          if [ -z "$vs_id" ]; then
+            echo "missing vector store id" >&2
             exit 1
           fi
-          printf 'file_id=%s\n' "$file_id" >> "$GITHUB_OUTPUT"
-          {
-            echo "### Model repo bundle"
-            echo "- file_id: $file_id"
-          } >> "$GITHUB_STEP_SUMMARY"
+          root="$RUNNER_TEMP/repo_corpus"
+          if [ ! -d "$root" ]; then
+            echo "corpus directory missing" >&2
+            exit 1
+          fi
+          mapfile -t files < <(find "$root" -type f -size -2M)
+          if [ "${#files[@]}" -le 0 ]; then
+            echo "no files found for upload" >&2
+            exit 1
+          fi
+          batch=()
+          for f in "${files[@]}"; do
+            up="$(curl -sS -X POST https://api.openai.com/v1/files \
+              -H "Authorization: Bearer $OPENAI_API_KEY" \
+              -F purpose=assistants \
+              -F file=@"$f")"
+            fid="$(printf '%s' "$up" | jq -r '.id')"
+            if [ -z "$fid" ] || [ "$fid" = "null" ]; then
+              echo "upload failed for $f" >&2
+              printf '%s\n' "$up" >&2
+              exit 1
+            fi
+            batch+=("$fid")
+          done
+          total=${#batch[@]}
+          for ((offset=0; offset<total; offset+=50)); do
+            chunk=("${batch[@]:offset:50}")
+            if [ "${#chunk[@]}" -le 0 ]; then
+              continue
+            fi
+            ids="$(printf '%s\n' "${chunk[@]}" | jq -R . | jq -s .)"
+            curl -sS -X POST "https://api.openai.com/v1/vector_stores/$vs_id/files" \
+              -H "Authorization: Bearer $OPENAI_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"file_ids\": $ids}" > /dev/null
+          done
+          echo "vs_id=$vs_id" >> "$GITHUB_OUTPUT"
 
       - name: Build prompt
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
@@ -814,7 +859,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Ask model for patch (Responses API)
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' }}
         id: llm
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -830,9 +875,9 @@ jobs:
           RES="$RUNNER_TEMP/llm_res.json"
           OUTTXT="$RUNNER_TEMP/llm_content.txt"
           PROMPT_FILE="${{ steps.prompt.outputs.path }}"
-          FILE_ID="${{ steps.upload_repo_zip.outputs.file_id }}"
-          if [ -z "$FILE_ID" ]; then
-            echo "missing repository file_id" >&2
+          VS_ID="${{ steps.vs_upload.outputs.vs_id }}"
+          if [ -z "$VS_ID" ]; then
+            echo "missing vector store id" >&2
             exit 1
           fi
           jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
@@ -846,21 +891,18 @@ jobs:
             local tokens="$1"
             jq -n \
               --arg model "$OPENAI_MODEL" \
-              --arg file_id "$FILE_ID" \
+              --arg vs "$VS_ID" \
               --arg tokens "$tokens" \
               --slurpfile prompt "$RUNNER_TEMP/prompt.json" \
               '{
                 model: $model,
-                # derived requirement: force use of the uploaded repo bundle so Codex opens
-                # files via code_interpreter rather than claiming the workspace is empty.
-                tools: [{type:"code_interpreter", container:{type:"auto"}}],
-                tool_choice: "required",
+                # derived requirement: force the model to rely on the vector store corpus via
+                # file_search instead of the deprecated code_interpreter container.
+                tools: [{type:"file_search", vector_store_ids:[$vs]}],
+                tool_choice: "auto",
                 input: [
-                  {role:"system",content:[{type:"input_text",text:"You are an expert software engineer that proposes precise, minimal unified diffs. Use the code_interpreter container to unzip and inspect the attached repo_context.zip before drafting a diff."}]},
-                  {role:"user",content:[
-                    {type:"input_text",text:$prompt[0]},
-                    {type:"input_file",file_id:$file_id}
-                  ]}
+                  {role:"system",content:[{type:"input_text",text:"You are an expert software engineer that proposes precise, minimal unified diffs. Use the file_search tool to inspect the uploaded corpus before drafting a diff."}]},
+                  {role:"user",content:[{type:"input_text",text:$prompt[0]}]}
                 ],
                 max_output_tokens: ($tokens|tonumber)
               }' > "$REQ"
