@@ -172,9 +172,13 @@ $treeLines = New-RepoTree $selected
 function Get-FirstFailNdjsonLine {
     param([string]$Root)
 
+    # derived requirement: the Windows runner logged "Cannot convert 'System.Object[]' ... AdditionalChildPath"
+    # because the trailing comma array syntax coerced each Join-Path result into a single-element
+    # System.Object[]. Wrap each call in parentheses without a trailing comma so the binder receives
+    # plain strings on every platform.
     $candidates = @(
-        Join-Path $Root 'ci_test_results.ndjson',
-        Join-Path $Root 'tests~test-results.ndjson'
+        (Join-Path $Root 'ci_test_results.ndjson'),
+        (Join-Path $Root 'tests~test-results.ndjson')
     )
 
     foreach ($candidate in $candidates) {
