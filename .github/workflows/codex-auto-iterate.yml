@@ -848,9 +848,12 @@ jobs:
               --slurpfile prompt "$RUNNER_TEMP/prompt.json" \
               '{
                 model: $model,
-                tools: [{type:"code_interpreter"}],
+                # derived requirement: force use of the uploaded repo bundle so Codex opens
+                # files via code_interpreter rather than claiming the workspace is empty.
+                tools: [{type:"code_interpreter", container:{type:"auto"}}],
+                tool_choice: "required",
                 input: [
-                  {role:"system",content:[{type:"input_text",text:"You are an expert software engineer that proposes precise, minimal unified diffs."}]},
+                  {role:"system",content:[{type:"input_text",text:"You are an expert software engineer that proposes precise, minimal unified diffs. Use the code_interpreter container to unzip and inspect the attached repo_context.zip before drafting a diff."}]},
                   {role:"user",content:[
                     {type:"input_text",text:$prompt[0]},
                     {type:"input_file",file_id:$file_id}
