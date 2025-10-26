@@ -43,7 +43,11 @@ $denyExtensions = @('.png', '.jpg', '.jpeg', '.gif', '.zip', '.pdf', '.exe', '.d
 
 $redactPattern = $env:BUNDLE_REDACT_PATTERN
 if ([string]::IsNullOrWhiteSpace($redactPattern)) {
-    $redactPattern = '(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\s*(?:[:=]\s*["\'\"][A-Za-z0-9_\-]{8,}["\'\"])?'
+    # derived requirement: keep the default pattern literal so PowerShell treats the
+    # quote characters as plain text and avoids parser regressions when publishing.
+    $redactPattern = @'
+(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\s*(?:[:=]\s*["'][A-Za-z0-9_-]{8,}["'])?
+'@
 }
 
 try {
