@@ -744,6 +744,49 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Build model repo bundle
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        shell: pwsh
+        env:
+          ITERATE_REDACT_PATTERN: '(?i)(secret|token|password|apikey|key|sk-[A-Za-z0-9]{20,})'
+          BUNDLE_REDACT_PATTERN: "(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\\s*(?:[:=]\\s*['\"]?[A-Za-z0-9_\\-]{8,}['\"]?)?"
+        run: |
+          & "$env:GITHUB_WORKSPACE/tools/make_model_repo_bundle.ps1" -OutZip "$env:RUNNER_TEMP/repo_context.zip" -MaxMB 25
+
+      - name: Upload repo bundle
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        id: upload_repo_zip
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/repo_context.zip"
+          if [ ! -s "$bundle" ]; then
+            echo "repo bundle missing" >&2
+            exit 1
+          fi
+          out_json="$RUNNER_TEMP/repo_upload.json"
+          http=$(curl -sS -o "$out_json" -w '%{http_code}' -X POST https://api.openai.com/v1/files \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -F purpose=assistants \
+            -F file="@${bundle}")
+          printf 'http=%s\n' "$http" >> "$GITHUB_OUTPUT"
+          if [ "$http" != "200" ]; then
+            echo "Upload failed (http=$http)" >&2
+            exit 1
+          fi
+          file_id=$(jq -r '.id // empty' "$out_json")
+          if [ -z "$file_id" ] || [ "$file_id" = "null" ]; then
+            echo "Upload did not return a file id" >&2
+            exit 1
+          fi
+          printf 'file_id=%s\n' "$file_id" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Model repo bundle"
+            echo "- file_id: $file_id"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build prompt
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
         id: prompt
@@ -778,9 +821,8 @@ jobs:
           OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
         run: |
           set -euo pipefail
-          # Professional note: tee stdout/stderr so publish_diag can fall back to this
-          # local copy when GitHub's run-logs zip is still propagating (per maintainer request
-          # to "add a fallback: capture stdout/stderr from the iterate job into a file").
+          # derived requirement: preserve tee-based logging so diagnostics uploads
+          # have a local stdout/stderr copy even when GitHub's run log zip lags.
           ITER_LOG="$RUNNER_TEMP/iterate_step.log"
           : > "$ITER_LOG"
           exec > >(tee -a "$ITER_LOG") 2>&1
@@ -788,9 +830,13 @@ jobs:
           RES="$RUNNER_TEMP/llm_res.json"
           OUTTXT="$RUNNER_TEMP/llm_content.txt"
           PROMPT_FILE="${{ steps.prompt.outputs.path }}"
+          FILE_ID="${{ steps.upload_repo_zip.outputs.file_id }}"
+          if [ -z "$FILE_ID" ]; then
+            echo "missing repository file_id" >&2
+            exit 1
+          fi
           jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
           MAX_OUTPUT_TOKENS_INITIAL=2000
-          # gpt-5-codex supports responses up to 16k output tokens; keep retries within ceiling.
           MAX_OUTPUT_TOKENS_CEIL=16000
           RETRY_OUTPUT_TOKENS=$(( MAX_OUTPUT_TOKENS_INITIAL * 2 ))
           if [ "$RETRY_OUTPUT_TOKENS" -gt "$MAX_OUTPUT_TOKENS_CEIL" ]; then
@@ -798,18 +844,26 @@ jobs:
           fi
           write_request() {
             local tokens="$1"
-            {
-              printf '{\n'
-              printf '  "model": "%s",\n' "$OPENAI_MODEL"
-              printf '  "input": [\n'
-              printf '    {"role":"system","content":[{"type":"input_text","text":"You are an expert software engineer that proposes precise, minimal unified diffs."}]},\n'
-              printf '    {"role":"user","content":[{"type":"input_text","text": '
-              cat "$RUNNER_TEMP/prompt.json"
-              printf ' }]}\n'
-              printf '  ],\n'
-              printf '  "max_output_tokens": %s\n' "$tokens"
-              printf '}\n'
-            } > "$REQ"
+            jq -n \
+              --arg model "$OPENAI_MODEL" \
+              --arg file_id "$FILE_ID" \
+              --arg tokens "$tokens" \
+              --slurpfile prompt "$RUNNER_TEMP/prompt.json" \
+              '{
+                model: $model,
+                # derived requirement: force use of the uploaded repo bundle so Codex opens
+                # files via code_interpreter rather than claiming the workspace is empty.
+                tools: [{type:"code_interpreter", container:{type:"auto"}}],
+                tool_choice: "required",
+                input: [
+                  {role:"system",content:[{type:"input_text",text:"You are an expert software engineer that proposes precise, minimal unified diffs. Use the code_interpreter container to unzip and inspect the attached repo_context.zip before drafting a diff."}]},
+                  {role:"user",content:[
+                    {type:"input_text",text:$prompt[0]},
+                    {type:"input_file",file_id:$file_id}
+                  ]}
+                ],
+                max_output_tokens: ($tokens|tonumber)
+              }' > "$REQ"
           }
           write_request "$MAX_OUTPUT_TOKENS_INITIAL"
           http_code=`curl -sS -o "$RES" -w "%{http_code}" \
@@ -1147,6 +1201,7 @@ jobs:
             --diag-root "${DIAG_DIR:-}" || true
           copy_into_temp "$iter_dir/request.redacted.json" "request.redacted.json"
           copy_into_temp "$iter_dir/response.json" "response.json"
+          copy_into_temp "$RUNNER_TEMP/repo_context.zip" "repo_context.zip"
 
           tokens_file="$iter_dir/tokens.txt"
           if [ -f "$res_raw" ]; then

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Armchair Vibe Coding icon">
+  <title>Armchair Vibe Coding — icon</title>
+  <!-- Background -->
+  <rect x="0" y="0" width="64" height="64" rx="12" fill="#121212"/>
+  <!-- Couch back -->
+  <rect x="8" y="16" width="36" height="22" rx="6" fill="#5C33FF"/>
+  <!-- Couch arm (left) -->
+  <circle cx="16" cy="30" r="8" fill="#5C33FF"/>
+  <!-- Couch seat -->
+  <rect x="14" y="28" width="28" height="12" rx="4" fill="#5C33FF"/>
+  <!-- Legs -->
+  <rect x="18" y="38" width="6" height="6" rx="2" fill="#5C33FF"/>
+  <rect x="34" y="38" width="6" height="6" rx="2" fill="#5C33FF"/>
+  <!-- Phone -->
+  <rect x="38" y="18" width="16" height="28" rx="3" fill="#FFFFFF" stroke="#2A2A2A" stroke-width="1"/>
+  <!-- Terminal symbol '>_' on phone -->
+  <polyline points="43,29 47,26 47,26 43,23" fill="none" stroke="#22D3EE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="44" y1="33" x2="50" y2="33" stroke="#22D3EE" stroke-width="2" stroke-linecap="round"/>
+</svg>

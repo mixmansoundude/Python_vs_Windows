@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="179" height="20" role="img" aria-label="Armchair Vibe Coded">
+  <linearGradient id="s" x2="0" y2="100%">
+    <stop offset="0" stop-color="#fff" stop-opacity=".1"/>
+    <stop offset="1" stop-opacity=".1"/>
+  </linearGradient>
+  <mask id="m">
+    <rect width="179" height="20" rx="3" fill="#fff"/>
+  </mask>
+  <g mask="url(#m)">
+    <rect width="151" height="20" fill="#5C33FF"/>
+    <rect x="151" width="28" height="20" fill="#5C33FF"/>
+    <rect width="179" height="20" fill="url(#s)"/>
+  </g>
+  <!-- Left text -->
+  <g fill="#fff" text-anchor="middle"
+     font-family="DejaVu Sans,Verdana,Geneva,sans-serif" font-size="11">
+    <text x="75.5" y="15" textLength="141" lengthAdjust="spacing">Armchair Vibe Coded</text>
+  </g>
+  <!-- Right icon (16x16) -->
+  <g transform="translate(157,2)">
+    <!-- Armchair back -->
+    <rect x="3" y="2" width="10" height="8" rx="2.5" fill="#FFFFFF"/>
+    <!-- Left rolled arm -->
+    <circle cx="4" cy="7" r="3" fill="#FFFFFF"/>
+    <!-- Seat -->
+    <rect x="5" y="6" width="8" height="5" rx="2" fill="#FFFFFF"/>
+    <!-- Legs -->
+    <rect x="6" y="11" width="2" height="3" rx="1" fill="#FFFFFF"/>
+    <rect x="11" y="11" width="2" height="3" rx="1" fill="#FFFFFF"/>
+    <!-- Arm definition seams -->
+    <path d="M3.2 5.2 A3 3 0 0 1 7 8.8" fill="none" stroke="#C9D2DA" stroke-width="0.9" stroke-linecap="round"/>
+    <path d="M7 6 V 11" fill="none" stroke="#C9D2DA" stroke-width="0.8" stroke-linecap="round"/>
+    <path d="M13 6 V 10" fill="none" stroke="#C9D2DA" stroke-width="0.7" stroke-linecap="round" opacity="0.65"/>
+    <!-- Phone -->
+    <rect x="12" y="2.5" width="4" height="11" rx="1" fill="#121212" stroke="#E5E7EB" stroke-width="0.7"/>
+    <!-- Terminal mark '>_' -->
+    <polyline points="13.5,7.8 15,6.8 13.5,5.8" fill="none" stroke="#22D3EE" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="14" y1="9.8" x2="16" y2="9.8" stroke="#22D3EE" stroke-width="0.9" stroke-linecap="round"/>
+  </g>
+</svg>
