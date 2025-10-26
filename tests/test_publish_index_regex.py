@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 import zipfile
@@ -9,6 +10,8 @@ from tools.diag.publish_index import (
     _build_site_overview,
     _validate_iterate_status_line,
     _write_global_txt_mirrors,
+    _write_latest_json,
+    _write_run_index_txt,
 )
 
 
@@ -101,6 +104,7 @@ class QuickLinksRenderingTest(unittest.TestCase):
             diag=self.diag,
             artifacts=None,
             repo="owner/repo",
+            branch="main",
             sha="deadbeef",
             run_id="1234",
             run_attempt="1",
@@ -176,6 +180,49 @@ class QuickLinksRenderingTest(unittest.TestCase):
             html,
         )
         self.assertEqual(mock_bundle_links.call_count, 1)
+
+    def test_latest_manifest_pointer_files(self) -> None:
+        context = self._make_context()
+        _write_latest_json(context, None, None, None, None)
+
+        latest_json = self.site / "latest.json"
+        payload = json.loads(latest_json.read_text(encoding="utf-8"))
+        self.assertEqual(
+            payload,
+            {"run_id": "1234-1", "url": "/repo/diag/1234-1/index.html"},
+        )
+
+        latest_txt = (self.site / "latest.txt").read_text(encoding="utf-8")
+        self.assertEqual(latest_txt, "/repo/diag/1234-1/index.html\n")
+
+    def test_run_index_txt_mirrors_prompt_and_rationale(self) -> None:
+        context = self._make_context()
+        iterate_temp = self.diag / "_artifacts" / "iterate" / "_temp"
+        iterate_temp.mkdir(parents=True, exist_ok=True)
+
+        (iterate_temp / "prompt.txt").write_text("line1\nline2\n", encoding="utf-8")
+        (iterate_temp / "why_no_diff.txt").write_text("reason1\nreason2\n", encoding="utf-8")
+        (iterate_temp / "request.redacted.json").write_text("{}", encoding="utf-8")
+        (iterate_temp / "response.json").write_text("{}", encoding="utf-8")
+        (iterate_temp / "repo_context.zip").write_bytes(b"PK")
+
+        response_data = {"model": "gpt-4o", "http_status": 200}
+        status_data = {"gate_summary": "pass: everything ok"}
+
+        _write_run_index_txt(context, None, None, response_data, status_data)
+
+        index_txt = (self.diag / "index.txt").read_text(encoding="utf-8")
+
+        self.assertIn("Run: 1234-1", index_txt)
+        self.assertIn("Branch: main", index_txt)
+        self.assertIn("Gate: pass: everything ok", index_txt)
+        self.assertIn("Iterate: model=gpt-4o; http=200", index_txt)
+        self.assertIn("_artifacts/iterate/_temp/prompt.txt", index_txt)
+        self.assertIn("_artifacts/iterate/_temp/repo_context.zip", index_txt)
+        self.assertIn("Rationale:", index_txt)
+        self.assertIn("  reason1", index_txt)
+        self.assertIn("Prompt (head):", index_txt)
+        self.assertIn("  line1", index_txt)
 
 
 if __name__ == "__main__":

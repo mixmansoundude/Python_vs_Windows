@@ -57,6 +57,7 @@ class Context:
     diag: Optional[Path]
     artifacts: Optional[Path]
     repo: str
+    branch: Optional[str]
     sha: str
     run_id: str
     run_attempt: str
@@ -87,6 +88,7 @@ def _get_context() -> Context:
     diag = _get_env_path("DIAG")
     artifacts = _get_env_path("ARTIFACTS")
     repo = os.getenv("REPO", "n/a")
+    branch = os.getenv("BRANCH")
     sha = os.getenv("SHA", "n/a")
     run_id = os.getenv("RUN_ID", "n/a")
     run_attempt = os.getenv("RUN_ATTEMPT", "n/a")
@@ -100,6 +102,7 @@ def _get_context() -> Context:
         diag=diag,
         artifacts=artifacts,
         repo=repo,
+        branch=branch,
         sha=sha,
         run_id=run_id,
         run_attempt=run_attempt,
@@ -441,6 +444,32 @@ def _format_status_value(value: object) -> str:
     return str(value)
 
 
+def _compose_attempt_summary(status_data: Optional[dict]) -> Optional[str]:
+    if not isinstance(status_data, dict):
+        return None
+
+    return "attempted={0} gate={1} auth_ok={2} attempts_left={3}".format(
+        _format_status_value(status_data.get("attempted")),
+        _format_status_value(status_data.get("gate")),
+        _format_status_value(status_data.get("auth_ok")),
+        _format_status_value(status_data.get("attempts_left")),
+    )
+
+
+def _gate_summary_line(status_data: Optional[dict]) -> str:
+    if isinstance(status_data, dict):
+        for key in ("gate_summary", "summary", "status"):
+            value = status_data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        summary = _compose_attempt_summary(status_data)
+        if summary:
+            return summary
+
+    return "n/a"
+
+
 def _normalize_link(value: Optional[str]) -> Optional[str]:
     if not value:
         return value
@@ -479,6 +508,47 @@ def _relative_to_diag(path: Path, diag: Optional[Path]) -> str:
         except Exception:
             return path.as_posix()
         return Path(rel).as_posix()
+
+
+def _find_run_file(context: Context, filename: str) -> Optional[Path]:
+    diag = context.diag
+    if not diag:
+        return None
+
+    try:
+        candidates = sorted(diag.rglob(filename))
+    except OSError:
+        return None
+
+    fallback: Optional[Path] = None
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        if fallback is None:
+            fallback = candidate
+        try:
+            relative_parts = candidate.relative_to(diag).parts
+        except ValueError:
+            relative_parts = ()
+        if "iterate" in relative_parts:
+            return candidate
+
+    return fallback
+
+
+def _read_head_lines(path: Path, limit: int) -> List[str]:
+    lines: List[str] = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for _ in range(limit):
+                text = handle.readline()
+                if not text:
+                    break
+                lines.append(text.rstrip("\n"))
+    except OSError:
+        return []
+
+    return lines
 
 
 def _gather_iterate_tokens(
@@ -1287,13 +1357,8 @@ def _build_markdown(
     rationale_present = bool(why_outcome and why_outcome.strip())
 
     attempt_summary = None
-    if not response_data and status_data:
-        attempt_summary = "attempted={0} gate={1} auth_ok={2} attempts_left={3}".format(
-            _format_status_value(status_data.get("attempted")),
-            _format_status_value(status_data.get("gate")),
-            _format_status_value(status_data.get("auth_ok")),
-            _format_status_value(status_data.get("attempts_left")),
-        )
+    if not response_data:
+        attempt_summary = _compose_attempt_summary(status_data)
 
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
@@ -1490,13 +1555,8 @@ def _write_html(
     outcome = why_outcome or ("diff produced" if diff_produced else "n/a")
     rationale_present = bool(why_outcome and why_outcome.strip())
     attempt_summary = None
-    if not response_data and status_data:
-        attempt_summary = "attempted={0} gate={1} auth_ok={2} attempts_left={3}".format(
-            _format_status_value(status_data.get("attempted")),
-            _format_status_value(status_data.get("gate")),
-            _format_status_value(status_data.get("auth_ok")),
-            _format_status_value(status_data.get("attempts_left")),
-        )
+    if not response_data:
+        attempt_summary = _compose_attempt_summary(status_data)
 
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
@@ -1740,224 +1800,127 @@ def _validate_iterate_status_line(markdown: str) -> None:
         )
 
 
-def _write_latest_json(context: Context) -> None:
+def _write_latest_json(
+    context: Context,
+    iterate_dir: Optional[Path],
+    iterate_temp: Optional[Path],
+    response_data: Optional[dict],
+    status_data: Optional[dict],
+) -> None:
     if not (context.site and context.diag):
         return
 
-    bundle_prefix = f"diag/{context.run_id}-{context.run_attempt}"
-    iterate_dir_candidate = _discover_iterate_dir(context)
-    # Professional note: reuse the shared iterate detection so latest.json mirrors
-    # the parser-facing status line and avoids diverging on empty artifacts.
-    iterate_found = _iterate_logs_found(context)
-    iterate_dir = iterate_dir_candidate if iterate_found else None
-    iterate_temp = (
-        _discover_temp_dir(iterate_dir_candidate, context)
-        if iterate_found
-        else None
-    )
+    run_slug = f"{context.run_id}-{context.run_attempt}"
+    bundle_relative = f"diag/{run_slug}/index.html"
 
-    diag_iterate_root = context.diag / "_artifacts" / "iterate" if context.diag else None
+    repo_name = context.repo.rsplit("/", 1)[-1] if context.repo else ""
+    base_path = "/"
+    if repo_name and not repo_name.endswith(".github.io"):
+        base_path = f"/{repo_name}"
 
-    diag_lookup_dirs: List[Path] = []
-    seen_diag: set[Path] = set()
+    if base_path == "/":
+        canonical_url = f"/{bundle_relative}"
+    else:
+        canonical_url = f"{base_path}/{bundle_relative}"
 
-    def add_diag(path: Optional[Path]) -> None:
-        if not path:
-            return
-        try:
-            if not path.exists() or not path.is_dir():
-                return
-        except OSError:
-            return
-        if path not in seen_diag:
-            diag_lookup_dirs.append(path)
-            seen_diag.add(path)
+    canonical_url = canonical_url.replace("//", "/")
 
-    if diag_iterate_root and diag_iterate_root.exists():
-        # Professional note: prefer the mirrored _temp directory so diagnostics
-        # link to the same iterate payload analysts inspect. This mirrors the
-        # iterate/_temp layout while still supporting legacy nested bundles.
-        add_diag(diag_iterate_root / "_temp")
-        if iterate_dir:
-            add_diag(diag_iterate_root / iterate_dir.name / "_temp")
-            add_diag(diag_iterate_root / iterate_dir.name)
-        try:
-            for child in sorted(diag_iterate_root.iterdir()):
-                if not child.is_dir():
-                    continue
-                add_diag(child / "_temp")
-                add_diag(child)
-        except OSError:
-            pass
-        add_diag(diag_iterate_root)
-
-    def diag_iterate_path(name: str) -> Optional[Path]:
-        if not iterate_found:
-            return None
-        for root in diag_lookup_dirs:
-            candidate = root / name
-            if candidate.exists():
-                return candidate
-        if diag_iterate_root and diag_iterate_root.exists():
-            try:
-                return next(
-                    candidate
-                    for candidate in diag_iterate_root.rglob(name)
-                    if candidate.is_file()
-                )
-            except StopIteration:
-                return None
-        return None
-
-    def diag_href(path: Optional[Path]) -> Optional[str]:
-        if not path or not context.diag:
-            return None
-        try:
-            relative = path.relative_to(context.diag).as_posix()
-        except ValueError:
-            return None
-        return f"{bundle_prefix}/{relative}"
-
-    response_data = _load_iterate_json(iterate_dir, iterate_temp, "response.json")
-    status_data = _load_iterate_json(iterate_dir, iterate_temp, "iterate_status.json")
-    why_outcome = _read_iterate_first_line(iterate_dir, iterate_temp, "why_no_diff.txt")
-
-    model_value: Optional[str] = None
-    if response_data and response_data.get("model") is not None:
-        model_value = str(response_data["model"])
-    elif iterate_found:
-        model_text = _read_iterate_text(iterate_dir, iterate_temp, "model.txt")
-        model_value = model_text if model_text != "n/a" else None
-
-    http_status_value: Optional[str] = None
-    if response_data and response_data.get("http_status") is not None:
-        http_status_value = str(response_data["http_status"])
-    elif status_data and status_data.get("http_status") is not None:
-        http_status_value = str(status_data["http_status"])
-    elif iterate_found:
-        http_text = _read_iterate_text(iterate_dir, iterate_temp, "http_status.txt")
-        http_status_value = http_text if http_text != "n/a" else None
-
-    tokens_data = (
-        _gather_iterate_tokens(iterate_dir, iterate_temp, response_data)
-        if iterate_found
-        else {"prompt": "n/a", "completion": "n/a", "total": "n/a"}
-    )
-
-    iterate_directory_href = (
-        diag_href(diag_iterate_root) if diag_iterate_root and diag_iterate_root.exists() else None
-    )
-
-    prompt_path = diag_iterate_path("prompt.txt")
-    response_json_path = diag_iterate_path("response.json")
-    response_txt_path = diag_iterate_path("response.txt")
-    status_json_path = diag_iterate_path("iterate_status.json")
-    status_txt_path = diag_iterate_path("iterate_status.txt")
-    why_path = diag_iterate_path("why_no_diff.txt")
-    first_failure_json_path = diag_iterate_path("first_failure.json")
-    first_failure_txt_path = diag_iterate_path("first_failure.txt")
-    patch_apply_log_path = diag_iterate_path("patch.apply.log")
-    diff_path = diag_iterate_path("patch.diff")
-    exec_log_path = diag_iterate_path("exec.log")
-
-    iterate_payload = {
-        "found": iterate_found,
-        "directory": iterate_directory_href if iterate_found else None,
-        "prompt": diag_href(prompt_path) if iterate_found else None,
-        "response": diag_href(response_json_path) if iterate_found else None,
-        "response_json": diag_href(response_json_path) if iterate_found else None,
-        "response_txt": diag_href(response_txt_path) if iterate_found else None,
-        "status_json": diag_href(status_json_path) if iterate_found else None,
-        "status_txt": diag_href(status_txt_path) if iterate_found else None,
-        "why_no_diff": diag_href(why_path) if iterate_found else None,
-        "first_failure_json": diag_href(first_failure_json_path)
-        if iterate_found
-        else None,
-        "first_failure_txt": diag_href(first_failure_txt_path)
-        if iterate_found
-        else None,
-        "patch_apply_log": diag_href(patch_apply_log_path) if iterate_found else None,
-        "diff": diag_href(diff_path) if iterate_found else None,
-        "log": diag_href(exec_log_path) if iterate_found else None,
-        "metadata": {
-            "model": model_value,
-            "http_status": http_status_value,
-            "tokens": tokens_data,
-            "outcome": why_outcome,
-        },
-    }
-
-    if not iterate_found:
-        iterate_payload.update(
-            {
-                "directory": None,
-                "prompt": None,
-                "response": None,
-                "response_json": None,
-                "response_txt": None,
-                "status_json": None,
-                "status_txt": None,
-                "why_no_diff": None,
-                "first_failure_json": None,
-                "first_failure_txt": None,
-                "patch_apply_log": None,
-                "diff": None,
-                "log": None,
-            }
-        )
-
-    data = {
-        "repo": context.repo,
-        "run_id": context.run_id,
-        "run_attempt": context.run_attempt,
-        "sha": context.sha,
-        "bundle_url": f"{bundle_prefix}/index.html",
-        "inventory": f"{bundle_prefix}/inventory.json",
-        "workflow": f"{bundle_prefix}/wf/codex-auto-iterate.yml.txt",
-        "iterate": iterate_payload,
-    }
+    # Professional note: latest.json now serves as a lightweight pointer so bots
+    # can locate the newest diagnostics run without diffing large manifests.
+    payload = {"run_id": run_slug, "url": canonical_url}
 
     latest_path = context.site / "latest.json"
-    latest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     ensure_txt_mirror(latest_path)
 
     latest_txt_path = context.site / "latest.txt"
-    # Professional note: keep a flat text manifest so lightweight clients can
-    # resolve diagnostics links without parsing JSON.
-    flat_lines: List[str] = []
-
-    def add_line(key: str, value: Optional[str]) -> None:
-        if isinstance(value, str) and value:
-            flat_lines.append(f"{key}={value}")
-
-    add_line("bundle_url", data.get("bundle_url"))
-    add_line("inventory", data.get("inventory"))
-    add_line("workflow", data.get("workflow"))
-
-    iterate_section = data.get("iterate")
-    if isinstance(iterate_section, dict):
-        for key in [
-            "directory",
-            "prompt",
-            "response",
-            "response_json",
-            "response_txt",
-            "status_json",
-            "status_txt",
-            "why_no_diff",
-            "first_failure_json",
-            "first_failure_txt",
-            "patch_apply_log",
-            "diff",
-            "log",
-        ]:
-            add_line(f"iterate.{key}", iterate_section.get(key))
-
-    latest_txt_payload = "\n".join(flat_lines)
-    if flat_lines:
-        latest_txt_payload += "\n"
-    latest_txt_path.write_text(latest_txt_payload, encoding="utf-8")
+    latest_txt_path.write_text(canonical_url + "\n", encoding="utf-8")
     ensure_txt_mirror(latest_txt_path)
+
+
+def _write_run_index_txt(
+    context: Context,
+    iterate_dir: Optional[Path],
+    iterate_temp: Optional[Path],
+    response_data: Optional[dict],
+    status_data: Optional[dict],
+) -> None:
+    diag = context.diag
+    if not diag:
+        return
+
+    run_slug = f"{context.run_id}-{context.run_attempt}"
+    branch_value = (context.branch or "n/a").strip() or "n/a"
+    gate_line = _gate_summary_line(status_data)
+
+    model_value = "n/a"
+    if response_data and response_data.get("model") is not None:
+        model_value = str(response_data["model"])
+    else:
+        model_text = _read_iterate_text(iterate_dir, iterate_temp, "model.txt")
+        if model_text and model_text != "n/a":
+            model_value = model_text
+
+    http_value = "n/a"
+    if response_data and response_data.get("http_status") is not None:
+        http_value = str(response_data["http_status"])
+    elif status_data and status_data.get("http_status") is not None:
+        http_value = str(status_data["http_status"])
+    else:
+        http_text = _read_iterate_text(iterate_dir, iterate_temp, "http_status.txt")
+        if http_text and http_text != "n/a":
+            http_value = http_text
+
+    lines = [
+        f"Run: {run_slug}",
+        f"Branch: {branch_value}",
+        f"Gate: {gate_line}",
+        f"Iterate: model={model_value}; http={http_value}",
+        "Files:",
+    ]
+
+    file_order = [
+        "prompt.txt",
+        "why_no_diff.txt",
+        "request.redacted.json",
+        "response.json",
+        "repo_context.zip",
+    ]
+
+    any_files = False
+    for filename in file_order:
+        path = _find_run_file(context, filename)
+        if not path:
+            continue
+        rel = _relative_to_diag(path, context.diag)
+        lines.append(f"  - {rel}")
+        any_files = True
+
+    if not any_files:
+        lines.append("  - (no iterate files located)")
+
+    why_path = _find_run_file(context, "why_no_diff.txt")
+    why_lines = _read_head_lines(why_path, 10) if why_path else []
+    if why_lines:
+        lines.append("")
+        lines.append("Rationale:")
+        for entry in why_lines:
+            lines.append(f"  {entry}")
+
+    prompt_path = _find_run_file(context, "prompt.txt")
+    prompt_lines = _read_head_lines(prompt_path, 120) if prompt_path else []
+    if prompt_lines:
+        lines.append("")
+        lines.append("Prompt (head):")
+        for entry in prompt_lines:
+            lines.append(f"  {entry}")
+
+    lines.append("")
+
+    try:
+        (diag / "index.txt").write_text("\n".join(lines), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _has_file(site: Optional[Path], relative: str) -> bool:
@@ -2203,7 +2166,7 @@ def main() -> None:
         _write_global_txt_mirrors(context.diag, context.diag / "_mirrors")
 
     if context.site:
-        _write_latest_json(context)
+        _write_latest_json(context, iterate_dir, iterate_temp, response_data, status_data)
 
     diag_markdown = _build_markdown(
         context,
@@ -2230,6 +2193,7 @@ def main() -> None:
         )
         (context.diag / "index.html").write_text(diag_html, encoding="utf-8")
         _write_summary_files(context, iterate_dir, iterate_temp, response_data, why_outcome)
+        _write_run_index_txt(context, iterate_dir, iterate_temp, response_data, status_data)
 
     if context.site:
         site_markdown, site_html = _build_site_overview(
