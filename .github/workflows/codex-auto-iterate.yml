@@ -759,7 +759,11 @@ jobs:
         env:
           BUNDLE_REDACT_PATTERN: "(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\\s*(?:[:=]\\s*['\"]?[A-Za-z0-9_\\-]{8,}['\"]?)?"
         run: |
-          & "$env:GITHUB_WORKSPACE/tools/make_model_repo_corpus.ps1" -OutDir "$env:RUNNER_TEMP/repo_corpus"
+          $outDir = Join-Path $env:RUNNER_TEMP 'repo_corpus'
+          # derived requirement: the runner logged "Cannot convert 'System.Object[]' ... AdditionalChildPath" when the
+          # raw interpolated string was passed directly. Resolve through Join-Path so the script always receives a
+          # single string on every platform.
+          & "$env:GITHUB_WORKSPACE/tools/make_model_repo_corpus.ps1" -OutDir $outDir
 
       - name: Create vector store
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
