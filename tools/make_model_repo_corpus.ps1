@@ -11,6 +11,24 @@ $ErrorActionPreference = 'Stop'
 # workflow can run from any working directory without drifting from tracked files.
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
+# derived requirement: reviewers flagged that vector-store uploads reject certain
+# extensions (e.g., .ps1, .yml). Maintain originals for diagnostics while emitting
+# .txt mirrors with provenance headers so the uploader can ingest text-friendly
+# copies without losing context.
+$transformToTxt = @('.ps1', '.psm1', '.bat', '.cmd', '.yml', '.yaml', '.ini', '.cfg', '.toml')
+
+function Get-AllowedOrTxtDest {
+    param(
+        [string]$Relative,
+        [string]$OutRoot
+    )
+
+    $ext = [System.IO.Path]::GetExtension($Relative).ToLowerInvariant()
+    $destRelative = if ($transformToTxt -contains $ext) { "$Relative.txt" } else { $Relative }
+    $destRelative = $destRelative -replace '/', [System.IO.Path]::DirectorySeparatorChar
+    return Join-Path $OutRoot $destRelative
+}
+
 if (-not $OutDir) {
     throw 'OutDir is required.'
 }
@@ -87,6 +105,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $selected = @()
+$mirrorCreated = 0
 foreach ($entry in $gitFiles) {
     if ([string]::IsNullOrWhiteSpace($entry)) { continue }
     if (-not (Should-IncludeFile $entry)) { continue }
@@ -114,7 +133,20 @@ foreach ($relative in $selected) {
         $content = $redactRegex.Replace($content, '***')
         $wasRedacted = $true
     }
+
     Set-Content -LiteralPath $destPath -Value $content -Encoding UTF8
+
+    $mirrorPath = Get-AllowedOrTxtDest -Relative $relative -OutRoot $resolvedOutDir
+    if ($mirrorPath -and ($mirrorPath -ne $destPath)) {
+        $mirrorDir = Split-Path -Parent $mirrorPath
+        if (-not (Test-Path -LiteralPath $mirrorDir)) {
+            New-Item -ItemType Directory -Path $mirrorDir -Force | Out-Null
+        }
+        $mirrorContent = "# source: $relative`r`n" + $content
+        Set-Content -LiteralPath $mirrorPath -Value $mirrorContent -Encoding UTF8
+        $mirrorCreated++
+    }
+
     if ($wasRedacted) {
         $redactedList.Add($relative) | Out-Null
     }
@@ -223,6 +255,7 @@ $manifest.Add("repo_root=$repoRoot") | Out-Null
 $manifest.Add("output_dir=$resolvedOutDir") | Out-Null
 $manifest.Add("files_total=$totalCopied") | Out-Null
 $manifest.Add("files_redacted=$($redactedList.Count)") | Out-Null
+$manifest.Add("files_mirrored=$mirrorCreated") | Out-Null
 $manifest.Add('redacted_files:') | Out-Null
 if ($redactedList.Count -eq 0) {
     $manifest.Add('  - none') | Out-Null

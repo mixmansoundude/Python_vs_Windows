@@ -746,20 +746,11 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Build model repo bundle
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
-        shell: pwsh
-        env:
-          ITERATE_REDACT_PATTERN: '(?i)(secret|token|password|apikey|key|sk-[A-Za-z0-9]{20,})'
-          BUNDLE_REDACT_PATTERN: "(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\\s*(?:[:=]\\s*['\"]?[A-Za-z0-9_\\-]{8,}['\"]?)?"
-        run: |
-          & "$env:GITHUB_WORKSPACE/tools/make_model_repo_bundle.ps1" -OutZip "$env:RUNNER_TEMP/repo_context.zip" -MaxMB 25
-
       - name: Build model repo corpus
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
         shell: pwsh
         env:
-          BUNDLE_REDACT_PATTERN: "(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\\s*(?:[:=]\\s*['\"]?[A-Za-z0-9_\\-]{8,}['\"]?)?"
+          BUNDLE_REDACT_PATTERN: '(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\s*(?:[:=]\s*[''\"]?[A-Za-z0-9_\-]{8,}[''\"]?)?'
         run: |
           $runTemp = [System.IO.Path]::GetFullPath($env:RUNNER_TEMP)
           $outDir = [System.IO.Path]::Combine($runTemp, 'repo_corpus')
@@ -806,7 +797,10 @@ jobs:
             echo "corpus directory missing" >&2
             exit 1
           fi
-          mapfile -t files < <(find "$root" -type f -size -2M)
+          # derived requirement: API rejects uploads like .ps1/.yml; rely on the .txt mirrors
+          # produced by make_model_repo_corpus.ps1 so only text-safe extensions reach the store.
+          mapfile -t files < <(find "$root" -type f -size -2M \
+            \( -name '*.txt' -o -name '*.md' -o -name '*.py' -o -name '*.json' -o -name '*.csv' -o -name '*.html' -o -name '*.xml' -o -name '*.js' -o -name '*.ts' \))
           if [ "${#files[@]}" -le 0 ]; then
             echo "no files found for upload" >&2
             exit 1
@@ -1208,6 +1202,15 @@ jobs:
           temp_dir="$iter_dir/_temp"
           mkdir -p "$temp_dir"
 
+          corpus_dir="$RUNNER_TEMP/repo_corpus"
+          if [ -d "$corpus_dir" ]; then
+            zip_target="$RUNNER_TEMP/repo_context.zip"
+            rm -f "$zip_target"
+            # derived requirement: consolidate corpus handling so diagnostics reuse the
+            # same text bundle the vector store consumed instead of rebuilding archives.
+            (cd "$corpus_dir" && zip -qry "$zip_target" .) || true
+          fi
+
           placeholder="$iter_dir/README.txt"
           {
             printf 'Iterate diagnostics placeholder\n'
@@ -1280,6 +1283,7 @@ jobs:
           copy_into_temp "$iter_dir/request.redacted.json" "request.redacted.json"
           copy_into_temp "$iter_dir/response.json" "response.json"
           copy_into_temp "$RUNNER_TEMP/repo_context.zip" "repo_context.zip"
+          copy_into_temp "$corpus_dir/REPO_TREE.txt" "REPO_TREE.txt"
 
           tokens_file="$iter_dir/tokens.txt"
           if [ -f "$res_raw" ]; then
@@ -1421,7 +1425,7 @@ jobs:
           fi
 
       - name: Upload iterate logs artifact
-        if: ${{ always() && steps.llm.outcome != 'skipped' }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
