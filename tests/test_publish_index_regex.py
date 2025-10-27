@@ -57,6 +57,13 @@ class MirrorGenerationTest(unittest.TestCase):
             response_path = iterate_temp / "response.json"
             response_path.write_text("{\"foo\": \"bar\"}", encoding="utf-8")
 
+            gate_path = root / "_artifacts" / "iterate" / "iterate_gate.json"
+            gate_path.parent.mkdir(parents=True, exist_ok=True)
+            gate_path.write_text(
+                '{"stage":"iterate-gate","proceed":true,"missing_inputs":["tests~test-results.ndjson"]}',
+                encoding="utf-8",
+            )
+
             logs_dir = root / "logs"
             logs_dir.mkdir(parents=True, exist_ok=True)
             zip_path = logs_dir / "example.zip"
@@ -72,6 +79,12 @@ class MirrorGenerationTest(unittest.TestCase):
             self.assertIn('"foo"', json_preview)
             self.assertIn("  \"foo\"", json_preview)
             self.assertTrue(json_preview.endswith("\n"))
+
+            gate_mirror = mirrors_root / "_artifacts" / "iterate" / "iterate_gate.json.txt"
+            self.assertTrue(gate_mirror.exists(), "Iterate gate preview should be generated")
+            gate_preview = gate_mirror.read_text(encoding="utf-8")
+            self.assertIn('"stage": "iterate-gate"', gate_preview)
+            self.assertIn('"missing_inputs"', gate_preview)
 
             zip_mirror = mirrors_root / "logs" / "example.zip.txt"
             self.assertTrue(zip_mirror.exists(), "ZIP preview should be generated")

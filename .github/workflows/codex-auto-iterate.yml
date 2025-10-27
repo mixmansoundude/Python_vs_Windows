@@ -25,7 +25,77 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  batch-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      completed: ${{ steps.wait.outputs.completed }}
+      conclusion: ${{ steps.wait.outputs.conclusion }}
+      run_id: ${{ steps.wait.outputs.run_id }}
+      run_url: ${{ steps.wait.outputs.run_url }}
+    steps:
+      - name: Await batch-check workflow completion
+        id: wait
+        uses: actions/github-script@v7
+        env:
+          POLL_TIMEOUT_SECONDS: '1800'
+          POLL_INTERVAL_SECONDS: '20'
+        with:
+          script: |
+            const { github, core, context } = require('@actions/github');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const workflowFile = 'batch-check.yml';
+            const headSha = context.payload?.pull_request?.head?.sha || context.sha;
+            const timeoutMs = parseInt(process.env.POLL_TIMEOUT_SECONDS || '1800', 10) * 1000;
+            const intervalMs = parseInt(process.env.POLL_INTERVAL_SECONDS || '20', 10) * 1000;
+            const start = Date.now();
+
+            async function locateRun() {
+              const resp = await github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: workflowFile,
+                per_page: 20,
+                head_sha: headSha,
+              });
+              return resp.data.workflow_runs.find(run => run.head_sha === headSha);
+            }
+
+            let observed = null;
+            while (Date.now() - start < timeoutMs) {
+              observed = await locateRun();
+              if (observed && observed.status === 'completed') {
+                break;
+              }
+              await new Promise(resolve => setTimeout(resolve, intervalMs));
+            }
+
+            if (!observed) {
+              core.warning('batch-check: no matching workflow run observed; proceeding fail-open.');
+              core.setOutput('completed', 'false');
+              core.setOutput('conclusion', 'unknown');
+              core.setOutput('run_id', '');
+              core.setOutput('run_url', '');
+              return;
+            }
+
+            core.setOutput('run_id', String(observed.id || ''));
+            core.setOutput('run_url', observed.html_url || '');
+
+            if (observed.status === 'completed') {
+              core.info(`batch-check: run ${observed.id} completed with conclusion ${observed.conclusion}`);
+              core.setOutput('completed', 'true');
+              core.setOutput('conclusion', observed.conclusion || '');
+              return;
+            }
+
+            core.warning(`batch-check: run ${observed.id} not completed within timeout; conclusion=${observed.conclusion}`);
+            core.setOutput('completed', 'false');
+            core.setOutput('conclusion', observed.conclusion || '');
+
   iterate:
+    needs: [batch-check]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -350,6 +420,20 @@ jobs:
           } else {
             "iterate-collector: collected=none" | Out-File -Append -Encoding ascii "$env:GITHUB_STEP_SUMMARY"
           }
+
+      - name: Stage batch-check diagnostics for gate probes
+        if: ${{ steps.poll.outputs.picked_id != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p _artifacts
+          mkdir -p _temp
+          if [ -d "$RUNNER_TEMP/struct" ]; then
+            rm -rf _artifacts/batch-check
+            mkdir -p _artifacts/batch-check
+            cp -a "$RUNNER_TEMP/struct/." "_artifacts/batch-check/" || true
+            rm -rf _temp/struct
+            cp -a "$RUNNER_TEMP/struct" "_temp/struct"
+          fi
 
       - name: Fetch failing run logs (tail)
         if: ${{ steps.poll.outputs.picked_id != '' }}
@@ -1398,6 +1482,33 @@ jobs:
 
           printf 'dir=%s\n' "$iter_dir" >> "$GITHUB_OUTPUT"
           printf 'codex_log=%s\n' "$codex_log" >> "$GITHUB_OUTPUT"
+
+      - name: Record iterate gate snapshot
+        shell: pwsh
+        run: |
+          $workspace = Convert-Path '.'
+          $artifactsRoot = Join-Path $workspace '_artifacts'
+          $iterateDir = Join-Path $workspace 'iterate'
+          & "$env:GITHUB_WORKSPACE/tools/iterate_gate.ps1" -Workspace $workspace -ArtifactsRoot $artifactsRoot -OutDir $iterateDir
+
+          $gatePath = Join-Path $iterateDir 'iterate_gate.json'
+          if (Test-Path -LiteralPath $gatePath) {
+              try {
+                  $gate = Get-Content -LiteralPath $gatePath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+              } catch {
+                  $gate = $null
+              }
+              if ($gate) {
+                  $lines = @('### Iterate gate snapshot')
+                  $lines += "- proceed: $($gate.proceed)"
+                  $missing = if ($gate.missing_inputs) { [string]::Join(', ', $gate.missing_inputs) } else { 'none' }
+                  $lines += "- missing_inputs: $missing"
+                  $patterns = if ($gate.checked_patterns) { $gate.checked_patterns.Count } else { 0 }
+                  $lines += "- checked_patterns: $patterns"
+                  $lines += "- note: $($gate.note)"
+                  $lines | Out-File -Append -Encoding UTF8 $env:GITHUB_STEP_SUMMARY
+              }
+          }
 
       - name: Collect iterate artifact paths
         if: always()

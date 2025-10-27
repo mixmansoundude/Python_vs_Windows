@@ -436,6 +436,14 @@ def _load_json(path: Path) -> Optional[dict]:
         return None
 
 
+def _load_iterate_gate(context: Context) -> Optional[dict]:
+    diag = context.diag
+    if not diag:
+        return None
+    gate_path = diag / "_artifacts" / "iterate" / "iterate_gate.json"
+    return _load_json(gate_path)
+
+
 def _format_status_value(value: object) -> str:
     if isinstance(value, bool):
         return str(value).lower()
@@ -1114,6 +1122,7 @@ def _ensure_iterate_text_mirrors(
     mirror_json("response.json", "response.txt")
     mirror_json("iterate_status.json", "iterate_status.txt")
     mirror_json("first_failure.json", "first_failure.txt")
+    mirror_json("iterate_gate.json", "iterate_gate.txt")
 
 
 def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
@@ -1365,6 +1374,7 @@ def _build_markdown(
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     batch_status = _batch_status(diag, context)
+    gate_data = _load_iterate_gate(context)
     lines: List[str] = []
 
     if iterate_log_status != "found":
@@ -1388,6 +1398,13 @@ def _build_markdown(
             f"- Artifact files enumerated: {artifact_count}",
         ]
     )
+    if gate_data:
+        stage_value = gate_data.get("stage", "n/a")
+        lines.append(f"- Gate stage: {stage_value}")
+        lines.append(f"- Gate proceed: {str(gate_data.get('proceed', True)).lower()}")
+        missing_inputs = gate_data.get("missing_inputs") or []
+        missing_line = ", ".join(str(item) for item in missing_inputs) if missing_inputs else "none"
+        lines.append(f"- Gate missing inputs: {missing_line}")
 
     if iterate_hint:
         lines.append(f"  {iterate_hint}")
@@ -1563,6 +1580,7 @@ def _write_html(
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     batch_status = _batch_status(diag, context)
     diag_files = _diag_files(diag)
+    gate_data = _load_iterate_gate(context)
 
     if iterate_log_status != "found":
         outcome = "n/a"
@@ -1583,6 +1601,14 @@ def _write_html(
         {"label": "Batch-check run id", "value": batch_status},
         {"label": "Artifact files enumerated", "value": str(artifact_count)},
     ]
+    if gate_data:
+        status_pairs.append({"label": "Gate stage", "value": gate_data.get("stage", "n/a")})
+        status_pairs.append({"label": "Gate proceed", "value": str(gate_data.get("proceed", True)).lower()})
+        missing_inputs = gate_data.get("missing_inputs") or []
+        status_pairs.append({
+            "label": "Gate missing inputs",
+            "value": ", ".join(str(item) for item in missing_inputs) if missing_inputs else "none",
+        })
     if artifact_missing:
         status_pairs.append({"label": "Artifact sentinel", "value": artifact_missing})
 
