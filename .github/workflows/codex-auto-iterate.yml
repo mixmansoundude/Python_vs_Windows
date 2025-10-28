@@ -1431,20 +1431,22 @@ jobs:
       - name: Collect iterate artifact paths
         if: always()
         id: iter_paths
-        env:
-          DIAG_DIR: ${{ steps.diag_stage.outputs.dir }}
-          DIAG_CODEX_LOG: ${{ steps.diag_stage.outputs.codex_log }}
-          PATCH_LOG: ${{ runner.temp }}/patch.apply.log
         run: |
           set -euo pipefail
-          paths=".codex/**"
-          if [ -n "${DIAG_DIR:-}" ]; then
-            paths="$paths"$'\n'"${DIAG_DIR}/**"
+          workspace="${GITHUB_WORKSPACE:?}"
+          paths=""
+          if [ -d "$workspace/.codex" ]; then
+            paths="$workspace/.codex/**"
           fi
-          if [ -n "${DIAG_CODEX_LOG:-}" ]; then
-            paths="$paths"$'\n'"${DIAG_CODEX_LOG}"
+          if [ -d "$workspace/iterate" ]; then
+            paths="${paths:+$paths$'\n'}$workspace/iterate/**"
           fi
-          paths="$paths"$'\n'"${PATCH_LOG}"
+          if [ -d "$workspace/_artifacts/iterate" ]; then
+            paths="${paths:+$paths$'\n'}$workspace/_artifacts/iterate/**"
+          fi
+          if [ -f "$workspace/codex_exec.log" ]; then
+            paths="${paths:+$paths$'\n'}$workspace/codex_exec.log"
+          fi
           if [ -n "$paths" ]; then
             {
               printf 'list<<EOF_ITER\n'
@@ -1458,13 +1460,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
-          # derived requirement: anchor every path to $GITHUB_WORKSPACE so the artifact
-          # uploader never glob-walks the runner root again (previous runs hit /boot/efi
-          # and failed with EACCES).
-          path: |
-            ${{ github.workspace }}/.codex/**
-            ${{ steps.diag_stage.outputs.dir }}/**
-            ${{ github.workspace }}/_artifacts/iterate/**
+          # derived requirement: scope uploads to known workspace artifacts so the
+          # runner never glob-walks outside (earlier runs hit /boot/efi and failed
+          # with EACCES).
+          path: ${{ steps.iter_paths.outputs.list }}
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7

@@ -217,7 +217,9 @@ foreach ($key in $targets.Keys) {
         $sources.Add("$($data.name):$($best.Uri.AbsoluteUri)") | Out-Null
         Write-Info "Downloaded $($data.name) from $($best.Uri.AbsoluteUri)"
     } catch {
-        Write-Warn "Failed to write $dest: $($_.Exception.Message)"
+        # derived requirement: format the warning so the colon after $dest never
+        # triggers PowerShell's scoped-variable parser again.
+        Write-Warn ("Failed to write {0}: {1}" -f $dest, $_.Exception.Message)
         $missing.Add($data.name) | Out-Null
     }
 }

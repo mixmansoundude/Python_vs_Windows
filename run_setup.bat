@@ -35,6 +35,20 @@ if "%PYCOUNT%"=="" set "PYCOUNT=0"
 call :log "[INFO] Python file count: %PYCOUNT%"
 set "HP_CONDA_PROBE_STATUS=skipped"
 set "HP_CONDA_PROBE_REASON=not-requested"
+
+if "%PYCOUNT%"=="0" (
+  rem derived requirement: CI observed the Miniconda probe firing before the
+  rem empty-repo fast path, so keep this guard ahead of any network/bootstrap
+  rem calls to avoid flaky failures when no Python sources exist.
+  echo Python file count: %PYCOUNT%
+  >> "%LOG%" echo Python file count: %PYCOUNT%
+  echo No Python files detected; skipping environment bootstrap.
+  >> "%LOG%" echo No Python files detected; skipping environment bootstrap.
+  call :log "[INFO] No Python files detected; skipping environment bootstrap."
+  call :write_status no_python_files 0 %PYCOUNT%
+  goto :success
+)
+
 if "%HP_CI_TEST_CONDA_DL%"=="1" (
   if not defined HP_CI_SKIP_ENV (
     set "HP_CONDA_PROBE_STATUS=ran"
@@ -48,14 +62,6 @@ if "%HP_CI_TEST_CONDA_DL%"=="1" (
 )
 if not "%HP_CONDA_PROBE_STATUS%"=="ran" (
   call :emit_conda_probe_skip
-)
-
-if "%PYCOUNT%"=="0" (
-  echo No Python files detected; skipping environment bootstrap.
-  >> "%LOG%" echo No Python files detected; skipping environment bootstrap.
-  call :log "[INFO] No Python files detected; skipping environment bootstrap."
-  call :write_status no_python_files 0 %PYCOUNT%
-  goto :success
 )
 
 if defined HP_CI_SKIP_ENV goto :ci_skip_entry
