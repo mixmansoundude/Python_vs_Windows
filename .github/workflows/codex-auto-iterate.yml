@@ -25,77 +25,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  batch-check:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    outputs:
-      completed: ${{ steps.wait.outputs.completed }}
-      conclusion: ${{ steps.wait.outputs.conclusion }}
-      run_id: ${{ steps.wait.outputs.run_id }}
-      run_url: ${{ steps.wait.outputs.run_url }}
-    steps:
-      - name: Await batch-check workflow completion
-        id: wait
-        uses: actions/github-script@v7
-        env:
-          POLL_TIMEOUT_SECONDS: '1800'
-          POLL_INTERVAL_SECONDS: '20'
-        with:
-          script: |
-            const { github, core, context } = require('@actions/github');
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const workflowFile = 'batch-check.yml';
-            const headSha = context.payload?.pull_request?.head?.sha || context.sha;
-            const timeoutMs = parseInt(process.env.POLL_TIMEOUT_SECONDS || '1800', 10) * 1000;
-            const intervalMs = parseInt(process.env.POLL_INTERVAL_SECONDS || '20', 10) * 1000;
-            const start = Date.now();
-
-            async function locateRun() {
-              const resp = await github.rest.actions.listWorkflowRuns({
-                owner,
-                repo,
-                workflow_id: workflowFile,
-                per_page: 20,
-                head_sha: headSha,
-              });
-              return resp.data.workflow_runs.find(run => run.head_sha === headSha);
-            }
-
-            let observed = null;
-            while (Date.now() - start < timeoutMs) {
-              observed = await locateRun();
-              if (observed && observed.status === 'completed') {
-                break;
-              }
-              await new Promise(resolve => setTimeout(resolve, intervalMs));
-            }
-
-            if (!observed) {
-              core.warning('batch-check: no matching workflow run observed; proceeding fail-open.');
-              core.setOutput('completed', 'false');
-              core.setOutput('conclusion', 'unknown');
-              core.setOutput('run_id', '');
-              core.setOutput('run_url', '');
-              return;
-            }
-
-            core.setOutput('run_id', String(observed.id || ''));
-            core.setOutput('run_url', observed.html_url || '');
-
-            if (observed.status === 'completed') {
-              core.info(`batch-check: run ${observed.id} completed with conclusion ${observed.conclusion}`);
-              core.setOutput('completed', 'true');
-              core.setOutput('conclusion', observed.conclusion || '');
-              return;
-            }
-
-            core.warning(`batch-check: run ${observed.id} not completed within timeout; conclusion=${observed.conclusion}`);
-            core.setOutput('completed', 'false');
-            core.setOutput('conclusion', observed.conclusion || '');
-
   iterate:
-    needs: [batch-check]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -259,6 +189,20 @@ jobs:
           }
           $ctx | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 .codex/context.json
 
+      - name: Public diagnostics poller
+        shell: pwsh
+        env:
+          CI_DIAG_URL: "https://mixmansoundude.github.io/Python_vs_Windows/diag/${{ github.run_id }}-${{ github.run_attempt }}/index.html?v=${{ github.run_id }}"
+          OUT_DIR: _artifacts/iterate/inputs
+          MAX_ATTEMPTS: '14'
+          BASE_DELAY_SEC: '0.6'
+        run: |
+          # Professional note: poll the public diagnostics page instead of rehydrating
+          # a mini batch-check run; this keeps iterate aligned with the single source of
+          # truth published by batch-check. See "Codex Web Prompt — Public-diag poller"
+          # for the fail-open requirements implemented here.
+          & "$env:GITHUB_WORKSPACE/scripts/poll_public_diag.ps1"
+
       - name: Poll ALL workflow runs for this commit
         id: poll
         uses: actions/github-script@v7
@@ -401,39 +345,6 @@ jobs:
             echo "extract_dir=$dest" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Collect NDJSON sources
-        if: ${{ steps.poll.outputs.picked_id != '' }}
-        shell: pwsh
-        run: |
-          $candidates = @('ci_test_results.ndjson','~test-results.ndjson')
-          $searchRoots = @("$env:RUNNER_TEMP/struct", "$env:RUNNER_TEMP", (Get-Location).Path) `
-            | Where-Object { $_ -and (Test-Path $_) }
-          $hit = $null
-          foreach ($root in $searchRoots) {
-            $probe = Get-ChildItem -Path $root -Recurse -File -Include $candidates -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($probe) { $hit = $probe; break }
-          }
-          if ($hit) {
-            Copy-Item $hit.FullName "ci_test_results.ndjson" -Force
-            Copy-Item $hit.FullName "tests~test-results.ndjson" -Force
-            "iterate-collector: collected=$($hit.FullName)" | Out-File -Append -Encoding ascii "$env:GITHUB_STEP_SUMMARY"
-          } else {
-            "iterate-collector: collected=none" | Out-File -Append -Encoding ascii "$env:GITHUB_STEP_SUMMARY"
-          }
-
-      - name: Stage batch-check diagnostics for gate probes
-        if: ${{ steps.poll.outputs.picked_id != '' }}
-        run: |
-          set -euo pipefail
-          mkdir -p _artifacts
-          mkdir -p _temp
-          if [ -d "$RUNNER_TEMP/struct" ]; then
-            rm -rf _artifacts/batch-check
-            mkdir -p _artifacts/batch-check
-            cp -a "$RUNNER_TEMP/struct/." "_artifacts/batch-check/" || true
-            rm -rf _temp/struct
-            cp -a "$RUNNER_TEMP/struct" "_temp/struct"
-          fi
 
       - name: Fetch failing run logs (tail)
         if: ${{ steps.poll.outputs.picked_id != '' }}
@@ -572,7 +483,6 @@ jobs:
           fi
 
       - name: Ensure NDJSON sources for gate
-        if: ${{ steps.poll.outputs.picked_id != '' }}
         shell: pwsh
         env:
           STRUCT_DIR: ${{ steps.struct.outputs.extract_dir }}
@@ -588,8 +498,9 @@ jobs:
             }
           }
           # derived requirement: gate previously skipped iterate because tests~test-results.ndjson
-          # and ci_test_results.ndjson were missing. Reuse a helper so both filenames are
-          # synthesized or copied before the Decide gate runs.
+          # and ci_test_results.ndjson were missing. The poller now writes them under
+          # _artifacts/iterate/inputs, but we continue reusing the helper to surface
+          # consistent env signals and root-level mirrors for legacy consumers.
           & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" -Workspace $workspace -StructDir $structDir -DiagRoot $diagRoot
 
       - name: Decide gate (iterate vs skip)
@@ -1301,6 +1212,17 @@ jobs:
             printf 'No iterate payloads were captured for this run.\n'
           } >"$placeholder"
 
+          gate_src="$GITHUB_WORKSPACE/_artifacts/iterate/iterate_gate.json"
+          if [ -f "$gate_src" ]; then
+            cp "$gate_src" "$iter_dir/iterate_gate.json"
+          fi
+
+          inputs_src="$GITHUB_WORKSPACE/_artifacts/iterate/inputs"
+          if [ -d "$inputs_src" ]; then
+            mkdir -p "$iter_dir/inputs"
+            cp -a "$inputs_src/." "$iter_dir/inputs/" || true
+          fi
+
           # Professional note: create redacted request/response bundles and metadata per maintainer checklist.
           model="${{ env.OPENAI_MODEL }}"
           printf 'model=%s\n' "${model:-n/a}" > "$iter_dir/model.txt"
@@ -1483,15 +1405,11 @@ jobs:
           printf 'dir=%s\n' "$iter_dir" >> "$GITHUB_OUTPUT"
           printf 'codex_log=%s\n' "$codex_log" >> "$GITHUB_OUTPUT"
 
-      - name: Record iterate gate snapshot
+      - name: Summarize iterate gate snapshot
         shell: pwsh
         run: |
           $workspace = Convert-Path '.'
-          $artifactsRoot = Join-Path $workspace '_artifacts'
-          $iterateDir = Join-Path $workspace 'iterate'
-          & "$env:GITHUB_WORKSPACE/tools/iterate_gate.ps1" -Workspace $workspace -ArtifactsRoot $artifactsRoot -OutDir $iterateDir
-
-          $gatePath = Join-Path $iterateDir 'iterate_gate.json'
+          $gatePath = Join-Path $workspace '_artifacts/iterate/iterate_gate.json'
           if (Test-Path -LiteralPath $gatePath) {
               try {
                   $gate = Get-Content -LiteralPath $gatePath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop

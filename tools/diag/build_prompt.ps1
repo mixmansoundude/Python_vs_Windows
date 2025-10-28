@@ -190,13 +190,18 @@ function Find-DiagRoot {
 
         foreach ($entry in $resolved) {
             $candidate = $entry.Path
-            if (Test-Path (Join-Path $candidate '_artifacts/batch-check')) {
+            $inputsProbe = Join-Path $candidate '_artifacts/iterate/inputs'
+            $batchProbe = Join-Path $candidate '_artifacts/batch-check'
+            if (Test-Path $inputsProbe -or Test-Path $batchProbe) {
                 return $candidate
             }
 
             try {
                 $match = Get-ChildItem -Path $candidate -Directory -Recurse -Depth 4 -ErrorAction SilentlyContinue |
-                    Where-Object { Test-Path (Join-Path $_.FullName '_artifacts/batch-check') } |
+                    Where-Object {
+                        Test-Path (Join-Path $_.FullName '_artifacts/iterate/inputs') -or
+                        Test-Path (Join-Path $_.FullName '_artifacts/batch-check')
+                    } |
                     Select-Object -First 1
             } catch {
                 $match = $null
@@ -217,8 +222,11 @@ function Get-FailureContextLines {
     $block = [System.Collections.Generic.List[string]]::new()
     if ([string]::IsNullOrWhiteSpace($DiagRoot)) { return $block }
 
+    $inputsRoot = Join-Path $DiagRoot '_artifacts/iterate/inputs'
     $batchRoot = Join-Path $DiagRoot '_artifacts/batch-check'
-    if (-not (Test-Path $batchRoot)) { return $block }
+    $hasInputs = Test-Path $inputsRoot
+    $hasBatch = Test-Path $batchRoot
+    if (-not $hasInputs -and -not $hasBatch) { return $block }
 
     $remaining = 40
     $block.Add('----- Failure Context -----') | Out-Null
@@ -226,55 +234,25 @@ function Get-FailureContextLines {
 
     $added = $false
 
-    $firstFailure = $null
-    try {
-        $firstFailure = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'first_failure.json' -ErrorAction SilentlyContinue | Select-Object -First 1
-    } catch {
-        $firstFailure = $null
-    }
-    if ($firstFailure -and $remaining -gt 0) {
-        if ($block.Count -gt 1) {
-            $block.Add('') | Out-Null
-            $remaining--
-        }
+    if ($hasInputs) {
+        foreach ($candidate in @('ci_test_results.ndjson', 'tests~test-results.ndjson')) {
+            if ($remaining -le 0) { break }
+            $path = Join-Path $inputsRoot $candidate
+            if (-not (Test-Path $path)) { continue }
 
-        $relative = $firstFailure.FullName
-        try {
-            $relative = [System.IO.Path]::GetRelativePath($DiagRoot, $firstFailure.FullName)
-        } catch {
-            $relative = $firstFailure.FullName
-        }
-        $block.Add("first_failure.json ($relative):") | Out-Null
-        $remaining--
-
-        if ($remaining -gt 0) {
-            try {
-                $rawLines = Get-Content -LiteralPath $firstFailure.FullName -Encoding UTF8
-            } catch {
-                $rawLines = @()
-            }
-            foreach ($line in Sanitize-TextLines $rawLines) {
-                if ($remaining -le 0) { break }
-                $block.Add($line) | Out-Null
+            if ($block.Count -gt 1) {
+                $block.Add('') | Out-Null
                 $remaining--
+                if ($remaining -le 0) { break }
             }
-        }
 
-        $added = $true
-    }
+            $block.Add("$candidate (public diag poller):") | Out-Null
+            $remaining--
+            if ($remaining -le 0) { break }
 
-    if ($remaining -gt 0) {
-        $ndjsonPath = $null
-        try {
-            $ndjsonPath = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'ci_test_results.ndjson' -ErrorAction SilentlyContinue | Select-Object -First 1
-        } catch {
-            $ndjsonPath = $null
-        }
-
-        if ($ndjsonPath) {
             $firstFailLine = $null
             try {
-                foreach ($line in Get-Content -LiteralPath $ndjsonPath.FullName -Encoding UTF8) {
+                foreach ($line in Get-Content -LiteralPath $path -Encoding UTF8) {
                     $trim = $line.Trim()
                     if (-not $trim) { continue }
                     try {
@@ -286,36 +264,60 @@ function Get-FailureContextLines {
                         $firstFailLine = $trim
                         break
                     }
+                    if (-not $firstFailLine) { $firstFailLine = $trim }
                 }
             } catch {
                 $firstFailLine = $null
             }
 
             if ($firstFailLine) {
-                if ($block.Count -gt 1) {
-                    $block.Add('') | Out-Null
+                foreach ($line in Sanitize-TextLines @($firstFailLine)) {
+                    if ($remaining -le 0) { break }
+                    $block.Add($line) | Out-Null
                     $remaining--
                 }
-
-                $relativeNd = $ndjsonPath.FullName
-                try {
-                    $relativeNd = [System.IO.Path]::GetRelativePath($DiagRoot, $ndjsonPath.FullName)
-                } catch {
-                    $relativeNd = $ndjsonPath.FullName
-                }
-                $block.Add("First failing NDJSON row ($relativeNd):") | Out-Null
-                $remaining--
-
-                if ($remaining -gt 0) {
-                    foreach ($line in Sanitize-TextLines @($firstFailLine)) {
-                        if ($remaining -le 0) { break }
-                        $block.Add($line) | Out-Null
-                        $remaining--
-                    }
-                }
-
-                $added = $true
             }
+
+            $added = $true
+        }
+    }
+
+    if ($hasBatch -and $remaining -gt 0) {
+        $firstFailure = $null
+        try {
+            $firstFailure = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'first_failure.json' -ErrorAction SilentlyContinue | Select-Object -First 1
+        } catch {
+            $firstFailure = $null
+        }
+        if ($firstFailure -and $remaining -gt 0) {
+            if ($block.Count -gt 1) {
+                $block.Add('') | Out-Null
+                $remaining--
+            }
+
+            $relative = $firstFailure.FullName
+            try {
+                $relative = [System.IO.Path]::GetRelativePath($DiagRoot, $firstFailure.FullName)
+            } catch {
+                $relative = $firstFailure.FullName
+            }
+            $block.Add("first_failure.json ($relative):") | Out-Null
+            $remaining--
+
+            if ($remaining -gt 0) {
+                try {
+                    $rawLines = Get-Content -LiteralPath $firstFailure.FullName -Encoding UTF8
+                } catch {
+                    $rawLines = @()
+                }
+                foreach ($line in Sanitize-TextLines $rawLines) {
+                    if ($remaining -le 0) { break }
+                    $block.Add($line) | Out-Null
+                    $remaining--
+                }
+            }
+
+            $added = $true
         }
     }
 
@@ -532,7 +534,7 @@ Add-Lines $lines @(
     '- tools/ensure_ndjson_sources.ps1, tools/diag/build_prompt.ps1',
     '- run_setup.bat (and any *.bat/*.cmd invoked in logs)',
     '- tests/selfapps_entry.ps1, tests/harness.ps1',
-    '- latest NDJSON (ci_test_results.ndjson or tests~test-results.ndjson)',
+    '- latest NDJSON (_artifacts/iterate/inputs/ci_test_results.ndjson and _artifacts/iterate/inputs/tests~test-results.ndjson)',
     'Use these exact path hints and REPO_TREE.txt to locate files; then propose a minimal unified diff.'
 )
 
@@ -574,6 +576,27 @@ if ($diagRoot) {
             Add-Lines $lines @('', '----- Batch-check failing IDs -----')
             foreach ($entry in Sanitize-TextLines $failLines) {
                 $lines.Add($entry) | Out-Null
+            }
+        }
+    }
+
+    $inputsRoot = Join-Path $diagRoot '_artifacts/iterate/inputs'
+    if (Test-Path $inputsRoot) {
+        $publicHead = Get-ChildItem -Path $inputsRoot -Filter '*.ndjson' -ErrorAction SilentlyContinue |
+            Sort-Object Name |
+            Select-Object -First 1
+        if ($publicHead) {
+            $ndLines = @()
+            try {
+                $ndLines = Get-Content -LiteralPath $publicHead.FullName -TotalCount 8
+            } catch {
+                $ndLines = @()
+            }
+            if ($ndLines) {
+                Add-Lines $lines @('', '----- NDJSON head (public diag poller) -----')
+                foreach ($entry in Sanitize-TextLines $ndLines) {
+                    $lines.Add($entry) | Out-Null
+                }
             }
         }
     }

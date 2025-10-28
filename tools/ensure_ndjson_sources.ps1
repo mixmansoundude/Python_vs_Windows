@@ -100,6 +100,15 @@ $destTests = Join-Path -Path $workspacePath -ChildPath 'tests~test-results.ndjso
 $destCi = Join-Path -Path $workspacePath -ChildPath 'ci_test_results.ndjson'
 
 $searchRoots = @($workspacePath)
+$inputsRoot = Join-Path -Path $workspacePath -ChildPath '_artifacts/iterate/inputs'
+if (Test-Path -LiteralPath $inputsRoot) {
+    try {
+        $resolvedInputs = (Resolve-Path -LiteralPath $inputsRoot -ErrorAction Stop).Path
+        $searchRoots += $resolvedInputs
+    } catch {
+        # Professional note: keep fail-open behaviour even if Resolve-Path is denied.
+    }
+}
 if (-not [string]::IsNullOrWhiteSpace($StructDir)) {
     try {
         $resolvedStruct = (Resolve-Path -LiteralPath $StructDir -ErrorAction Stop).Path

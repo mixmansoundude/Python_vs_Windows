@@ -165,6 +165,24 @@ def _iterate_logs_found(context: Context) -> bool:
     return False
 
 
+def _iterate_inputs_info(context: Context) -> Optional[Tuple[Path, List[Path]]]:
+    """Return the iterate input directory and sorted files when present."""
+
+    diag = context.diag
+    if not diag:
+        return None
+
+    inputs_root = diag / "_artifacts" / "iterate" / "inputs"
+    if not inputs_root.exists():
+        return None
+
+    files = sorted(p for p in inputs_root.glob("*.ndjson"))
+    if not files:
+        return None
+
+    return inputs_root, files
+
+
 def _repo_directory(context: Context) -> Optional[Path]:
     diag = context.diag
     if not diag:
@@ -1375,6 +1393,7 @@ def _build_markdown(
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     batch_status = _batch_status(diag, context)
     gate_data = _load_iterate_gate(context)
+    inputs_info = _iterate_inputs_info(context)
     lines: List[str] = []
 
     if iterate_log_status != "found":
@@ -1405,6 +1424,20 @@ def _build_markdown(
         missing_inputs = gate_data.get("missing_inputs") or []
         missing_line = ", ".join(str(item) for item in missing_inputs) if missing_inputs else "none"
         lines.append(f"- Gate missing inputs: {missing_line}")
+
+    if inputs_info:
+        inputs_root, input_files = inputs_info
+        run_fragment = f"{context.run_id}-{context.run_attempt}" if context.run_attempt else context.run_id
+        lines.append(
+            f"- Iterate inputs source: public diagnostics page for run {run_fragment}"
+        )
+        rel_root = _relative_to_diag(inputs_root, diag) if diag else None
+        root_display = rel_root or str(inputs_root)
+        lines.append(f"  root: {root_display}")
+        for file_path in input_files:
+            rel_file = _relative_to_diag(file_path, diag) if diag else None
+            file_display = rel_file or str(file_path)
+            lines.append(f"  - {file_display}")
 
     if iterate_hint:
         lines.append(f"  {iterate_hint}")
@@ -1924,6 +1957,19 @@ def _write_run_index_txt(
 
     if not any_files:
         lines.append("  - (no iterate files located)")
+
+    inputs_info = _iterate_inputs_info(context)
+    if inputs_info:
+        inputs_root, input_files = inputs_info
+        rel_root = _relative_to_diag(inputs_root, context.diag) if context.diag else None
+        root_display = rel_root or inputs_root.as_posix()
+        lines.append("")
+        lines.append(f"Iterate inputs source: public diagnostics page for run {run_slug}")
+        lines.append(f"root: {root_display}")
+        for file_path in input_files:
+            rel_file = _relative_to_diag(file_path, context.diag) if context.diag else None
+            file_display = rel_file or file_path.as_posix()
+            lines.append(f"  - {file_display}")
 
     why_path = _find_run_file(context, "why_no_diff.txt")
     why_lines = _read_head_lines(why_path, 10) if why_path else []

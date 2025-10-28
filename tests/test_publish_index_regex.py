@@ -219,6 +219,11 @@ class QuickLinksRenderingTest(unittest.TestCase):
         (iterate_temp / "response.json").write_text("{}", encoding="utf-8")
         (iterate_temp / "repo_context.zip").write_bytes(b"PK")
 
+        inputs_dir = self.diag / "_artifacts" / "iterate" / "inputs"
+        inputs_dir.mkdir(parents=True, exist_ok=True)
+        (inputs_dir / "ci_test_results.ndjson").write_text('{"id":"a","pass":false}\n', encoding="utf-8")
+        (inputs_dir / "tests~test-results.ndjson").write_text('{"id":"b","pass":true}\n', encoding="utf-8")
+
         response_data = {"model": "gpt-4o", "http_status": 200}
         status_data = {"gate_summary": "pass: everything ok"}
 
@@ -232,6 +237,10 @@ class QuickLinksRenderingTest(unittest.TestCase):
         self.assertIn("Iterate: model=gpt-4o; http=200", index_txt)
         self.assertIn("_artifacts/iterate/_temp/prompt.txt", index_txt)
         self.assertIn("_artifacts/iterate/_temp/repo_context.zip", index_txt)
+        self.assertIn("Iterate inputs source: public diagnostics page for run 1234-1", index_txt)
+        self.assertIn("root: _artifacts/iterate/inputs", index_txt)
+        self.assertIn("  - _artifacts/iterate/inputs/ci_test_results.ndjson", index_txt)
+        self.assertIn("  - _artifacts/iterate/inputs/tests~test-results.ndjson", index_txt)
         self.assertIn("Rationale:", index_txt)
         self.assertIn("  reason1", index_txt)
         self.assertIn("Prompt (head):", index_txt)
