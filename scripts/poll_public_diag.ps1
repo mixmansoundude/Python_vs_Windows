@@ -144,7 +144,10 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         $response = Invoke-WebRequest -Uri $diagUri -UseBasicParsing -ErrorAction Stop
         $html = $response.Content
     } catch {
-        Write-Warn "Attempt $attempt: failed to fetch diagnostics page (${_.Exception.Message})."
+        # derived requirement: keep the format invocation so the colon that follows $attempt
+        # never recreates the PowerShell parser error noted by CI (it treats "$attempt:" as a
+        # scoped variable name and aborts).
+        Write-Warn ("Attempt {0}: failed to fetch diagnostics page ({1})." -f $attempt, $_.Exception.Message)
         $html = $null
     }
 

@@ -1458,9 +1458,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          # derived requirement: anchor every path to $GITHUB_WORKSPACE so the artifact
+          # uploader never glob-walks the runner root again (previous runs hit /boot/efi
+          # and failed with EACCES).
           path: |
-            .codex/**
+            ${{ github.workspace }}/.codex/**
             ${{ steps.diag_stage.outputs.dir }}/**
+            ${{ github.workspace }}/_artifacts/iterate/**
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
