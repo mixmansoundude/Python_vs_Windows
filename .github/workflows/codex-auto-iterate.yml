@@ -1476,7 +1476,6 @@ jobs:
           # with EACCES).
           path: |
             ${{ steps.iter_paths.outputs.list }}
-          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 

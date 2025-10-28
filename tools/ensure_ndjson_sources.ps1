@@ -181,7 +181,10 @@ function Sync-Target {
         } else {
             Write-Info "$Label source already at $Destination"
         }
-        $foundSources.Add(Format-SafeString "{0}:{1}" $Label $source) | Out-Null
+        # derived requirement: wrap Format-SafeString calls in parentheses when passing to
+        # methods so PowerShell does not misparse the invocation (CI previously surfaced a
+        # "Missing ')'" error here).
+        $foundSources.Add((Format-SafeString "{0}:{1}" $Label $source)) | Out-Null
     } else {
         $missingTargets.Add($Label) | Out-Null
         Write-Info "No source located for $Label"
@@ -233,7 +236,7 @@ if ($foundSources.Count -eq 0) {
         }
         Ensure-DestinationDirectory -Path $destCi
         ($payload | ConvertTo-Json -Compress) | Set-Content -LiteralPath $destCi -Encoding Ascii
-        $foundSources.Add(Format-SafeString "{0}:{1}" 'synth' $destCi) | Out-Null
+        $foundSources.Add((Format-SafeString "{0}:{1}" 'synth' $destCi)) | Out-Null
         Write-Info "Synthesized ci_test_results.ndjson from $firstFailure"
         $missingTargets.Clear() | Out-Null
     }
