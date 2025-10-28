@@ -4,6 +4,25 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Never put a colon right after a PowerShell variable in double-quoted strings;
+# prefer -f or $($var)—and don’t mismatch placeholder counts. CI caught parser
+# errors in this script before, so keep this guard comment close to the helpers.
+
+function Format-Safe {
+    param(
+        [Parameter(Mandatory=$true)][string]$Template,
+        [Parameter(ValueFromRemainingArguments=$true)][object[]]$Args
+    )
+
+    try {
+        return [string]::Format($Template, $Args)
+    } catch {
+        $joined = if ($Args -and $Args.Count -gt 0) { [string]::Join(' | ', $Args) } else { '<no-args>' }
+        Write-Warn ("Format fallback engaged for template {0}" -f $Template)
+        return "$Template :: $joined"
+    }
+}
+
 function Write-Info {
     param([string]$Message)
     Write-Host "INFO  diag-poller: $Message"
@@ -147,7 +166,7 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         # derived requirement: keep the format invocation so the colon that follows $attempt
         # never recreates the PowerShell parser error noted by CI (it treats "$attempt:" as a
         # scoped variable name and aborts).
-        Write-Warn ("Attempt {0}: failed to fetch diagnostics page ({1})." -f $attempt, $_.Exception.Message)
+        Write-Warn (Format-Safe "Attempt {0}: failed to fetch diagnostics page ({1})." $attempt $_.Exception.Message)
         $html = $null
     }
 
@@ -219,7 +238,7 @@ foreach ($key in $targets.Keys) {
     } catch {
         # derived requirement: format the warning so the colon after $dest never
         # triggers PowerShell's scoped-variable parser again.
-        Write-Warn ("Failed to write {0}: {1}" -f $dest, $_.Exception.Message)
+        Write-Warn (Format-Safe "Failed to write {0}: {1}" $dest $_.Exception.Message)
         $missing.Add($data.name) | Out-Null
     }
 }
@@ -228,7 +247,7 @@ if ($missing.Count -gt 0) {
     $unique = $missing | Sort-Object -Unique
     $missing.Clear()
     foreach ($m in $unique) { $missing.Add($m) | Out-Null }
-    Write-Warn ("Missing inputs: {0}" -f ([string]::Join(', ', $missing)))
+    Write-Warn (Format-Safe "Missing inputs: {0}" ([string]::Join(', ', $missing)))
 }
 
 $gate = [ordered]@{

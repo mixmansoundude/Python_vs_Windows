@@ -50,6 +50,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Count Python sources
+        id: pycount
+        run: |
+          set -euo pipefail
+          # derived requirement: expensive corpus/vector-store work is pointless when
+          # the checkout has no Python sources. Surface the count for later guards.
+          py_count=$(git ls-files '*.py' '*.ipynb' 2>/dev/null | wc -l | tr -d '[:space:]')
+          if [ -z "$py_count" ]; then
+            py_count=0
+          fi
+          echo "PY_FILES=$py_count" >> "$GITHUB_ENV"
+          printf 'py_files=%s\n' "$py_count" >> "$GITHUB_OUTPUT"
+
       - name: Normalize Git EOL for patching
         shell: pwsh
         run: |
@@ -742,7 +755,7 @@ jobs:
           fi
 
       - name: Build model repo corpus
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.pycount.outputs.py_files != '0' }}
         shell: pwsh
         env:
           BUNDLE_REDACT_PATTERN: '(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\s*(?:[:=]\s*[''\"]?[A-Za-z0-9_\-]{8,}[''\"]?)?'
@@ -755,7 +768,7 @@ jobs:
           & "$env:GITHUB_WORKSPACE/tools/make_model_repo_corpus.ps1" -OutDir $outDir
 
       - name: Create vector store
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
         id: vs_create
         shell: bash
         env:
@@ -775,7 +788,7 @@ jobs:
           echo "vs_id=$vs_id" >> "$GITHUB_OUTPUT"
 
       - name: Upload repo corpus files to vector store
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
         id: vs_upload
         shell: bash
         env:
@@ -866,7 +879,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Ask model for patch (Responses API)
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' && steps.pycount.outputs.py_files != '0' }}
         id: llm
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -1011,7 +1024,7 @@ jobs:
           fi
 
       - name: Verify file_search usage
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' && steps.pycount.outputs.py_files != '0' }}
         run: |
           set -euo pipefail
           RES="$RUNNER_TEMP/llm_res.json"
@@ -1069,7 +1082,7 @@ jobs:
           fi
 
       - name: Extract fenced diff
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
         id: diff
         run: |
           set -euo pipefail
@@ -1086,7 +1099,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Note diff availability
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
         run: |
           set -euo pipefail
           diff_path="${{ steps.diff.outputs.diff_path }}"
@@ -1433,27 +1446,25 @@ jobs:
         id: iter_paths
         run: |
           set -euo pipefail
-          workspace="${GITHUB_WORKSPACE:?}"
-          paths=""
-          if [ -d "$workspace/.codex" ]; then
-            paths="$workspace/.codex/**"
+          cd "${GITHUB_WORKSPACE:?}"
+          mkdir -p _artifacts/iterate
+          paths=("_artifacts/iterate")
+          if [ -d ".codex" ]; then
+            paths+=(".codex")
           fi
-          if [ -d "$workspace/iterate" ]; then
-            paths="${paths:+$paths$'\n'}$workspace/iterate/**"
+          if [ -d "iterate" ]; then
+            paths+=("iterate")
           fi
-          if [ -d "$workspace/_artifacts/iterate" ]; then
-            paths="${paths:+$paths$'\n'}$workspace/_artifacts/iterate/**"
+          if [ -f "codex_exec.log" ]; then
+            paths+=("codex_exec.log")
           fi
-          if [ -f "$workspace/codex_exec.log" ]; then
-            paths="${paths:+$paths$'\n'}$workspace/codex_exec.log"
-          fi
-          if [ -n "$paths" ]; then
-            {
-              printf 'list<<EOF_ITER\n'
-              printf '%s\n' "$paths"
-              printf 'EOF_ITER\n'
-            } >> "$GITHUB_OUTPUT"
-          fi
+          {
+            printf 'list<<EOF_ITER\n'
+            for p in "${paths[@]}"; do
+              printf '%s\n' "$p"
+            done
+            printf 'EOF_ITER\n'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload iterate logs artifact
         if: ${{ always() }}
@@ -1463,7 +1474,8 @@ jobs:
           # derived requirement: scope uploads to known workspace artifacts so the
           # runner never glob-walks outside (earlier runs hit /boot/efi and failed
           # with EACCES).
-          path: ${{ steps.iter_paths.outputs.list }}
+          path: |
+            ${{ steps.iter_paths.outputs.list }}
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
