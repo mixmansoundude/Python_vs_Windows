@@ -2,6 +2,7 @@
 setlocal DisableDelayedExpansion
 rem Boot strap renamed to run_setup.bat
 cd /d "%~dp0"
+set "HP_SCRIPT_ROOT=%~dp0"
 set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
@@ -420,8 +421,7 @@ if defined HP_SYS_PY (
   ) else (
     "%HP_SYS_PY%" -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   )
-  set "HP_CRUMB_FILE=~crumb.txt"
-  for %%F in ("%HP_CRUMB_FILE%") do set "HP_CRUMB_FILE=%%~fF"
+  set "HP_CRUMB_FILE=%HP_SCRIPT_ROOT%~crumb.txt"
   if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
   if defined HP_SYS_PY_ARGS (
     "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
@@ -467,6 +467,10 @@ if "%HP_ENTRY%"=="" (
 ) else (
   call :record_chosen_entry "%HP_ENTRY%"
   call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
+  rem derived requirement: CI env smoke saw `The syntax of the command is incorrect.`
+  rem when this block silently built the command. Log the exact invocation (with
+  rem explicit redirection) so future regressions remain diagnosable.
+  >> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
   "%HP_PY%" "%HP_ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
   if errorlevel 1 call :die "[ERROR] Entry script execution failed."
   if "%HP_ENV_MODE%"=="system" (
@@ -606,6 +610,11 @@ rem for helper crumbs. Recompute the absolute helper path each time so commands 
 rem `py -3` never see a dangling relative path.
 if exist "%HP_FIND_ENTRY_NAME%" (
   for %%F in ("%HP_FIND_ENTRY_NAME%") do set "HP_FIND_ENTRY_ABS=%%~fF"
+) else if defined HP_SCRIPT_ROOT (
+  rem derived requirement: helper lookups must stay rooted to the bootstrapper
+  rem directory even if callers pushd elsewhere. Use HP_SCRIPT_ROOT so the CI
+  rem skip lane never feeds CMD a dangling relative path.
+  set "HP_FIND_ENTRY_ABS=%HP_SCRIPT_ROOT%%HP_FIND_ENTRY_NAME%"
 ) else (
   set "HP_FIND_ENTRY_ABS=%CD%\%HP_FIND_ENTRY_NAME%"
 )

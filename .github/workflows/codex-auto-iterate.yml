@@ -505,7 +505,7 @@ jobs:
         env:
           STRUCT_DIR: ${{ steps.struct.outputs.extract_dir }}
         run: |
-          $workspace = Convert-Path '.'
+          $workspace = Convert-Path "$env:GITHUB_WORKSPACE"
           $structDir = $env:STRUCT_DIR
           $diagRoot = ''
           if ($structDir) {
@@ -1865,6 +1865,17 @@ jobs:
               mv "$item" "$iter_root/"
             done
             rm -rf "$iter_root/_artifacts"
+          fi
+          shopt -s dotglob nullglob
+          entries=("$iter_root"/*)
+          if [ "${#entries[@]}" -eq 1 ] && [ -d "${entries[0]}" ]; then
+            echo "Flattening iterate artifact wrapper ${entries[0]}"
+            for item in "${entries[0]}"/*; do
+              base=$(basename "$item")
+              rm -rf "$iter_root/$base"
+              mv "$item" "$iter_root/"
+            done
+            rm -rf "${entries[0]}"
           fi
           # derived requirement: download-artifact@v4 nests the uploaded
           # _artifacts/iterate payload one directory deeper; flatten it so the
