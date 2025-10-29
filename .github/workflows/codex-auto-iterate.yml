@@ -35,6 +35,11 @@ jobs:
       OPENAI_MODEL: gpt-5-codex
       POLL_TIMEOUT_SECONDS: '1200'
       POLL_INTERVAL_SECONDS: '10'
+      VECTOR_STORE_ATTACH_TIMEOUT_SECONDS: '3600'
+      VECTOR_STORE_ATTACH_POLL_SECONDS: '10'
+      ALLOW_VS_ATTACH_TIMEOUT: 'true'
+      VECTOR_STORE_ATTACH_TIMEOUT_PER_FILE_SECONDS: '2'
+      VECTOR_STORE_ATTACH_TIMEOUT_CAP_SECONDS: '5400'
     steps:
       - name: Debug event
         run: |
@@ -828,18 +833,35 @@ jobs:
             batch+=("$fid")
           done
           total=${#batch[@]}
-          attach_timeout="${VECTOR_STORE_ATTACH_TIMEOUT_SECONDS:-3600}"
+          base_timeout="${VECTOR_STORE_ATTACH_TIMEOUT_SECONDS:-3600}"
           attach_interval="${VECTOR_STORE_ATTACH_POLL_SECONDS:-10}"
+          per_file_timeout="${VECTOR_STORE_ATTACH_TIMEOUT_PER_FILE_SECONDS:-2}"
+          timeout_cap="${VECTOR_STORE_ATTACH_TIMEOUT_CAP_SECONDS:-0}"
           allow_timeout="${ALLOW_VS_ATTACH_TIMEOUT:-true}"
           allow_timeout=$(printf '%s' "$allow_timeout" | tr '[:upper:]' '[:lower:]')
-          if ! [[ "$attach_timeout" =~ ^[0-9]+$ ]]; then
-            echo "invalid VECTOR_STORE_ATTACH_TIMEOUT_SECONDS: $attach_timeout" >&2
+          if ! [[ "$base_timeout" =~ ^[0-9]+$ ]]; then
+            echo "invalid VECTOR_STORE_ATTACH_TIMEOUT_SECONDS: $base_timeout" >&2
             exit 1
           fi
           if ! [[ "$attach_interval" =~ ^[0-9]+$ ]] || [ "$attach_interval" -le 0 ]; then
             echo "invalid VECTOR_STORE_ATTACH_POLL_SECONDS: $attach_interval" >&2
             exit 1
           fi
+          if ! [[ "$per_file_timeout" =~ ^[0-9]+$ ]]; then
+            per_file_timeout=2
+          fi
+          if ! [[ "$timeout_cap" =~ ^[0-9]+$ ]]; then
+            timeout_cap=0
+          fi
+          extra_timeout=$(( total * per_file_timeout ))
+          effective_timeout=$(( base_timeout + extra_timeout ))
+          if [ "$effective_timeout" -lt "$base_timeout" ]; then
+            effective_timeout=$base_timeout
+          fi
+          if [ "$timeout_cap" -gt 0 ] && [ "$effective_timeout" -gt "$timeout_cap" ]; then
+            effective_timeout=$timeout_cap
+          fi
+          echo "vector store attach: files=$total base=${base_timeout}s extra=${extra_timeout}s effective=${effective_timeout}s interval=${attach_interval}s"
           # derived requirement: reviewer observed vsfb_* batches timing out; honour
           # ALLOW_VS_ATTACH_TIMEOUT so iterate keeps running while indexing finishes
           # upstream rather than failing before indexing completes server-side.
@@ -879,7 +901,7 @@ jobs:
             while [ "$status" = "in_progress" ] || [ "$status" = "queued" ] || [ "$status" = "processing" ] || [ "$status" = "pending" ]; do
               now_epoch=$(date +%s)
               elapsed=$((now_epoch - start_epoch))
-              if [ "$elapsed" -ge "$attach_timeout" ]; then
+              if [ "$elapsed" -ge "$effective_timeout" ]; then
                 counts=$(jq -c '.file_counts // {}' "$poll_path" 2>/dev/null || echo '{}')
                 if [ "$allow_timeout" = "true" ] || [ "$allow_timeout" = "1" ]; then
                   echo "::warning title=vector-store::batch $batch_id timed out after ${elapsed}s (counts=$counts); proceeding per ALLOW_VS_ATTACH_TIMEOUT"

@@ -15,6 +15,8 @@ set "HP_PY="
 set "HP_FIND_ENTRY_SYNTAX_OK="
 set "HP_HELPER_SYNTAX_EMITTED="
 set "HP_HELPER_CMD_LOGGED="
+set "HP_FIND_ENTRY_NAME=~find_entry.py"
+set "HP_FIND_ENTRY_ABS="
 set "HP_PIPREQS_VERSION=%HP_PIPREQS_VERSION%"
 if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
 set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
@@ -384,6 +386,7 @@ if exist "~entry.abs" del "~entry.abs"
 rem --- stage helper ---
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 call :die "[ERROR] CI skip: entry helper staging failed"
+call :update_find_entry_abs
 call :verify_find_entry_helper
 if errorlevel 1 call :die "[ERROR] find_entry helper syntax error"
 
@@ -406,23 +409,24 @@ if defined HP_SYS_PY (
   rem quote to the interpreter token, and route stdout through a file to avoid shell quoting drift.
   if not defined HP_SYS_PY_LOGGED (
     if defined HP_SYS_PY_ARGS (
-      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"
+      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%"
     ) else (
-      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" "~find_entry.py"
+      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%"
     )
     set "HP_SYS_PY_LOGGED=1"
   )
   if defined HP_SYS_PY_ARGS (
-    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "~find_entry.py" 1>nul 2>nul
+    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   ) else (
-    "%HP_SYS_PY%" -m py_compile "~find_entry.py" 1>nul 2>nul
+    "%HP_SYS_PY%" -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   )
   set "HP_CRUMB_FILE=~crumb.txt"
+  for %%F in ("%HP_CRUMB_FILE%") do set "HP_CRUMB_FILE=%%~fF"
   if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
   if defined HP_SYS_PY_ARGS (
-    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
+    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
   ) else (
-    "%HP_SYS_PY%" "~find_entry.py" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
+    "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
   )
   if exist "%HP_CRUMB_FILE%" (
     for /f "usebackq delims=" %%L in ("%HP_CRUMB_FILE%") do if not defined HP_CRUMB set "HP_CRUMB=%%L"
@@ -596,6 +600,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 exit /b 0
 
+:update_find_entry_abs
+rem derived requirement: CI skip lane could change the working directory while probing
+rem for helper crumbs. Recompute the absolute helper path each time so commands like
+rem `py -3` never see a dangling relative path.
+if exist "%HP_FIND_ENTRY_NAME%" (
+  for %%F in ("%HP_FIND_ENTRY_NAME%") do set "HP_FIND_ENTRY_ABS=%%~fF"
+) else (
+  set "HP_FIND_ENTRY_ABS=%CD%\%HP_FIND_ENTRY_NAME%"
+)
+exit /b 0
+
 :verify_find_entry_helper
 if "%HP_FIND_ENTRY_SYNTAX_OK%"=="1" exit /b 0
 if "%HP_FIND_ENTRY_SYNTAX_OK%"=="0" exit /b 1
@@ -616,16 +631,16 @@ if defined HP_HELPER_CMD (
     rem derived requirement: capture the helper command verbatim so future regressions can
     rem trace quoting issues without reproducing CI. Logged once per bootstrap run.
     if defined HP_HELPER_ARGS (
-      >> "%LOG%" echo Helper command: "%HP_HELPER_CMD%" %HP_HELPER_ARGS% "~find_entry.py"
+      >> "%LOG%" echo Helper command: "%HP_HELPER_CMD%" %HP_HELPER_ARGS% "%HP_FIND_ENTRY_ABS%"
     ) else (
-      >> "%LOG%" echo Helper command: "%HP_HELPER_CMD%" "~find_entry.py"
+      >> "%LOG%" echo Helper command: "%HP_HELPER_CMD%" "%HP_FIND_ENTRY_ABS%"
     )
     set "HP_HELPER_CMD_LOGGED=1"
   )
   if defined HP_HELPER_ARGS (
-    "%HP_HELPER_CMD%" %HP_HELPER_ARGS% -m py_compile "~find_entry.py" 1>nul 2>nul
+    "%HP_HELPER_CMD%" %HP_HELPER_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   ) else (
-    "%HP_HELPER_CMD%" -m py_compile "~find_entry.py" 1>nul 2>nul
+    "%HP_HELPER_CMD%" -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   )
   if errorlevel 1 (
     set "HP_HELPER_SYNTAX_PASS=0"
@@ -739,6 +754,7 @@ set "HP_ENTRY_CMD="
 set "HP_ENTRY_ARGS="
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 exit /b 1
+call :update_find_entry_abs
 call :verify_find_entry_helper
 if errorlevel 1 exit /b 1
 if defined HP_PY if exist "%HP_PY%" set "HP_ENTRY_CMD=%HP_PY%"
@@ -758,9 +774,9 @@ rem so Windows never merges tokens when arguments are empty.
 set "HP_ENTRY_CRUMB=~entry.crumb"
 if exist "%HP_ENTRY_CRUMB%" del "%HP_ENTRY_CRUMB%" >nul 2>&1
 if defined HP_ENTRY_ARGS (
-  "%HP_ENTRY_CMD%" %HP_ENTRY_ARGS% "~find_entry.py" > "%HP_ENTRY_CRUMB%" 2>> "%LOG%"
+  "%HP_ENTRY_CMD%" %HP_ENTRY_ARGS% "%HP_FIND_ENTRY_ABS%" > "%HP_ENTRY_CRUMB%" 2>> "%LOG%"
 ) else (
-  "%HP_ENTRY_CMD%" "~find_entry.py" > "%HP_ENTRY_CRUMB%" 2>> "%LOG%"
+  "%HP_ENTRY_CMD%" "%HP_FIND_ENTRY_ABS%" > "%HP_ENTRY_CRUMB%" 2>> "%LOG%"
 )
 if exist "%HP_ENTRY_CRUMB%" (
   for /f "usebackq delims=" %%M in ("%HP_ENTRY_CRUMB%") do if not defined HP_ENTRY set "HP_ENTRY=%%M"
