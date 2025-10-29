@@ -828,6 +828,21 @@ jobs:
             batch+=("$fid")
           done
           total=${#batch[@]}
+          attach_timeout="${VECTOR_STORE_ATTACH_TIMEOUT_SECONDS:-3600}"
+          attach_interval="${VECTOR_STORE_ATTACH_POLL_SECONDS:-10}"
+          allow_timeout="${ALLOW_VS_ATTACH_TIMEOUT:-true}"
+          allow_timeout=$(printf '%s' "$allow_timeout" | tr '[:upper:]' '[:lower:]')
+          if ! [[ "$attach_timeout" =~ ^[0-9]+$ ]]; then
+            echo "invalid VECTOR_STORE_ATTACH_TIMEOUT_SECONDS: $attach_timeout" >&2
+            exit 1
+          fi
+          if ! [[ "$attach_interval" =~ ^[0-9]+$ ]] || [ "$attach_interval" -le 0 ]; then
+            echo "invalid VECTOR_STORE_ATTACH_POLL_SECONDS: $attach_interval" >&2
+            exit 1
+          fi
+          # derived requirement: reviewer observed vsfb_* batches timing out; honour
+          # ALLOW_VS_ATTACH_TIMEOUT so iterate keeps running while indexing finishes
+          # upstream rather than failing before indexing completes server-side.
           for ((offset=0; offset<total; offset+=50)); do
             chunk=("${batch[@]:offset:50}")
             if [ "${#chunk[@]}" -le 0 ]; then
@@ -859,44 +874,67 @@ jobs:
               exit 1
             fi
             status=$(jq -r '.status // empty' "$attach_body")
-            poll_attempt=0
+            poll_path="$attach_body"
+            start_epoch=$(date +%s)
             while [ "$status" = "in_progress" ] || [ "$status" = "queued" ] || [ "$status" = "processing" ] || [ "$status" = "pending" ]; do
-              sleep 2
-              poll_attempt=$((poll_attempt+1))
-              if [ "$poll_attempt" -gt 60 ]; then
-                echo "vector store association batch $batch_id did not complete in time" >&2
+              now_epoch=$(date +%s)
+              elapsed=$((now_epoch - start_epoch))
+              if [ "$elapsed" -ge "$attach_timeout" ]; then
+                counts=$(jq -c '.file_counts // {}' "$poll_path" 2>/dev/null || echo '{}')
+                if [ "$allow_timeout" = "true" ] || [ "$allow_timeout" = "1" ]; then
+                  echo "::warning title=vector-store::batch $batch_id timed out after ${elapsed}s (counts=$counts); proceeding per ALLOW_VS_ATTACH_TIMEOUT"
+                  status="timeout"
+                  break
+                fi
+                echo "vector store association batch $batch_id timed out after ${elapsed}s" >&2
+                if [ -s "$poll_path" ]; then
+                  cat "$poll_path" >&2
+                fi
                 exit 1
               fi
-              poll_body="$RUNNER_TEMP/vs_attach_${offset}_poll.json"
-              poll_code=$(curl -sS -o "$poll_body" -w '%{http_code}' \
+              sleep "$attach_interval"
+              poll_path="$RUNNER_TEMP/vs_attach_${offset}_poll.json"
+              poll_code=$(curl -sS -o "$poll_path" -w '%{http_code}' \
                 -X GET "https://api.openai.com/v1/vector_stores/$vs_id/file_batches/$batch_id" \
                 -H "Authorization: Bearer $OPENAI_API_KEY" || echo '000')
               if [ "$poll_code" -lt 200 ] || [ "$poll_code" -ge 300 ]; then
                 echo "vector store association status poll failed (http=$poll_code)" >&2
-                if [ -s "$poll_body" ]; then
-                  cat "$poll_body" >&2
+                if [ -s "$poll_path" ]; then
+                  cat "$poll_path" >&2
                 fi
                 exit 1
               fi
-              status=$(jq -r '.status // empty' "$poll_body")
+              status=$(jq -r '.status // empty' "$poll_path")
               if [ -z "$status" ]; then
                 echo "vector store association status missing for batch $batch_id" >&2
-                if [ -s "$poll_body" ]; then
-                  cat "$poll_body" >&2
+                if [ -s "$poll_path" ]; then
+                  cat "$poll_path" >&2
                 fi
                 exit 1
               fi
-              if [ "$status" = "failed" ]; then
-                echo "vector store association batch $batch_id failed" >&2
-                if [ -s "$poll_body" ]; then
-                  cat "$poll_body" >&2
+              if [ "$status" = "failed" ] || [ "$status" = "cancelled" ]; then
+                echo "vector store association batch $batch_id ended with status $status" >&2
+                if [ -s "$poll_path" ]; then
+                  cat "$poll_path" >&2
                 fi
                 exit 1
               fi
             done
-            if [ "$status" != "completed" ]; then
-              echo "vector store association batch $batch_id finished with unexpected status $status" >&2
-              exit 1
+            counts=$(jq -c '.file_counts // {}' "$poll_path" 2>/dev/null || echo '{}')
+            if [ "$status" = "completed" ]; then
+              echo "vector store batch $batch_id completed (counts=$counts)"
+            elif [ "$status" = "timeout" ]; then
+              echo "vector store batch $batch_id indexing in background (counts=$counts)"
+            else
+              if [ "$allow_timeout" = "true" ] || [ "$allow_timeout" = "1" ]; then
+                echo "::warning title=vector-store::batch $batch_id finished with status '$status' (counts=$counts); proceeding per ALLOW_VS_ATTACH_TIMEOUT"
+              else
+                echo "vector store association batch $batch_id finished with unexpected status $status" >&2
+                if [ -s "$poll_path" ]; then
+                  cat "$poll_path" >&2
+                fi
+                exit 1
+              fi
             fi
           done
           echo "vs_id=$vs_id" >> "$GITHUB_OUTPUT"
@@ -1787,6 +1825,28 @@ jobs:
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prep.outputs.ARTIFACTS }}/iterate
+
+      - name: Normalize iterate artifact layout
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          iter_root="${{ steps.prep.outputs.ARTIFACTS }}/iterate"
+          mkdir -p "$iter_root"
+          nested_dir="$iter_root/_artifacts/iterate"
+          if [ -d "$nested_dir" ]; then
+            echo "Flattening iterate artifact from $nested_dir"
+            shopt -s dotglob nullglob
+            for item in "$nested_dir"/*; do
+              base=$(basename "$item")
+              rm -rf "$iter_root/$base"
+              mv "$item" "$iter_root/"
+            done
+            rm -rf "$iter_root/_artifacts"
+          fi
+          # derived requirement: download-artifact@v4 nests the uploaded
+          # _artifacts/iterate payload one directory deeper; flatten it so the
+          # diagnostics publisher detects '* Iterate logs: found'.
 
       - name: Record iterate artifact status
         shell: pwsh
