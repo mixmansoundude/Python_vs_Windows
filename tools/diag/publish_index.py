@@ -1012,6 +1012,199 @@ def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
     return results
 
 
+
+def _find_ndjson_candidate(diag: Optional[Path], filename: str, *, prefer_real: bool) -> Optional[Path]:
+    if not diag:
+        return None
+
+    candidates: List[Tuple[str, Path]] = []
+    search_roots = [diag / "_artifacts" / "batch-check", diag / "logs"]
+    for root in search_roots:
+        if not root or not root.exists():
+            continue
+        for path in sorted(root.rglob(filename)):
+            rel = _relative_to_diag(path, diag).lower()
+            candidates.append((rel, path))
+
+    if not candidates:
+        return None
+
+    if prefer_real:
+        for rel, path in candidates:
+            if "real" in rel:
+                return path
+    else:
+        for rel, path in candidates:
+            if "real" not in rel:
+                return path
+
+    # Fall back to the first discovered candidate when the preferred lane is missing.
+    return candidates[0][1]
+
+
+def _summarize_ndjson_file(path: Path) -> Optional[dict]:
+    rows = 0
+    pass_count = 0
+    fail_count = 0
+
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                rows += 1
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    fail_count += 1
+                    continue
+
+                passed: Optional[bool]
+                value = obj.get("pass")
+                if isinstance(value, bool):
+                    passed = value
+                elif isinstance(value, str):
+                    lowered = value.strip().lower()
+                    if lowered == "true":
+                        passed = True
+                    elif lowered == "false":
+                        passed = False
+                    else:
+                        passed = None
+                else:
+                    passed = None
+
+                if passed is None:
+                    status = obj.get("status")
+                    if isinstance(status, str):
+                        lowered = status.lower()
+                        if lowered in {"pass", "success"}:
+                            passed = True
+                        elif lowered in {"fail", "failure"}:
+                            passed = False
+
+                if passed is None:
+                    passed = False
+
+                if passed:
+                    pass_count += 1
+                else:
+                    fail_count += 1
+    except OSError:
+        return None
+
+    return {"rows": rows, "pass": pass_count, "fail": fail_count}
+
+
+def _gather_real_lane_summaries(diag: Optional[Path]) -> List[dict]:
+    results: List[dict] = []
+    seen: set[Path] = set()
+    targets = [
+        ("real ci_test_results.ndjson", "ci_test_results.ndjson"),
+        ("real ~test-results.ndjson", "~test-results.ndjson"),
+    ]
+
+    for label, filename in targets:
+        path = _find_ndjson_candidate(diag, filename, prefer_real=True)
+        if not path:
+            path = _find_ndjson_candidate(diag, filename, prefer_real=False)
+        if not path or path in seen:
+            continue
+        summary = _summarize_ndjson_file(path)
+        if not summary:
+            continue
+        summary["label"] = label
+        summary["path"] = path
+        results.append(summary)
+        seen.add(path)
+
+    return results
+
+
+def _collect_real_failing_tests(diag: Optional[Path]) -> Optional[dict]:
+    if not diag:
+        return None
+
+    root = diag / "_artifacts" / "batch-check"
+    if not root.exists():
+        return None
+
+    candidates = sorted(root.rglob("failing-tests.txt"))
+    if not candidates:
+        return None
+
+    def _score(path: Path) -> Tuple[int, str]:
+        rel = _relative_to_diag(path, diag).lower()
+        return (0 if "real" in rel else 1, rel)
+
+    candidates.sort(key=_score)
+
+    for path in candidates:
+        try:
+            lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        except OSError:
+            continue
+        if not lines or all(line.lower() == "none" for line in lines):
+            continue
+        rel = _relative_to_diag(path, diag)
+        max_ids = 10
+        display = lines[:max_ids]
+        remaining = max(0, len(lines) - max_ids)
+        return {"ids": display, "more": remaining, "source": rel}
+
+    return None
+
+    results: List[dict] = []
+    seen_paths: set[Path] = set()
+
+    def search_for(name: str, prefer_cache: bool) -> Optional[Path]:
+        """Locate a specific NDJSON file while honoring cache vs real lanes."""
+
+        candidates = [diag / "logs", diag / "_artifacts" / "batch-check"]
+        for root in candidates:
+            if not root or not root.exists():
+                continue
+            for path in sorted(root.rglob(name)):
+                rel = _relative_to_diag(path, diag).lower()
+                if prefer_cache and "cache" not in rel:
+                    continue
+                if not prefer_cache and "cache" in rel:
+                    continue
+                return path
+        return None
+
+    # Professional note: expose at most one unzipped NDJSON per cache/real lane
+    # so the diagnostics quick links stay aligned with the published file list.
+    ndjson_targets = [
+        ("cache", "ci_test_results.ndjson"),
+        ("cache", "~test-results.ndjson"),
+        ("real", "ci_test_results.ndjson"),
+        ("real", "~test-results.ndjson"),
+    ]
+
+    for lane, filename in ndjson_targets:
+        prefer_cache = lane == "cache"
+        path = search_for(filename, prefer_cache)
+        if not path or path in seen_paths:
+            continue
+        seen_paths.add(path)
+        label = (
+            "Batch-check NDJSON (cache)"
+            if prefer_cache
+            else "Batch-check NDJSON (real)"
+        )
+        if filename.startswith("~"):
+            label += " ~test-results"
+        else:
+            label += " ci_test_results"
+        entry = _link_entry(diag, label, path)
+        if entry:
+            results.append(entry)
+
+    return results
+
+
 def _locate_iterate_root(context: Context) -> Optional[Path]:
     if context.artifacts and (context.artifacts / "iterate").exists():
         return context.artifacts / "iterate"
@@ -1522,6 +1715,32 @@ def _build_markdown(
             if meta.get("html_url"):
                 lines.append(f"- Run page: {meta['html_url']}")
 
+    real_lane_summaries = _gather_real_lane_summaries(diag)
+    real_lane_failures = _collect_real_failing_tests(diag)
+    if real_lane_summaries:
+        lines.append("")
+        lines.append("## NDJSON (real lane)")
+        for entry in real_lane_summaries:
+            rows = entry.get("rows", 0)
+            pass_count = entry.get("pass", 0)
+            fail_count = entry.get("fail", 0)
+            path_obj = entry.get("path")
+            rel_path = _relative_to_diag(path_obj, diag) if path_obj else None
+            lines.append(f"- {entry['label']}: rows={rows} pass={pass_count} fail={fail_count}")
+            if rel_path:
+                lines.append(f"  - source: {rel_path}")
+    if real_lane_failures:
+        lines.append("")
+        lines.append("**Real lane failures detected:**")
+        for identifier in real_lane_failures["ids"]:
+            lines.append(f"- {identifier}")
+        remaining = real_lane_failures["more"]
+        source_path = real_lane_failures["source"]
+        if remaining > 0:
+            lines.append(f"- ... ({remaining} more; see {source_path})")
+        else:
+            lines.append(f"- Source: {source_path}")
+
     if ndjson_summaries:
         lines.append("")
         lines.append("## NDJSON summaries")
@@ -1785,6 +2004,42 @@ def _write_html(
                 html.append(f"<li><a href=\"{_escape_href(meta['html_url'])}\">Run page</a></li>")
             html.append("</ul>")
             html.append("</section>")
+
+    real_lane_summaries = _gather_real_lane_summaries(diag)
+    real_lane_failures = _collect_real_failing_tests(diag)
+    if real_lane_summaries:
+        html.append("<section>")
+        html.append("<h2>NDJSON (real lane)</h2>")
+        html.append("<ul>")
+        for entry in real_lane_summaries:
+            label = _escape_html(entry.get("label", "unknown"))
+            rows = entry.get("rows", 0)
+            pass_count = entry.get("pass", 0)
+            fail_count = entry.get("fail", 0)
+            path_obj = entry.get("path")
+            rel_path = _relative_to_diag(path_obj, diag) if path_obj else None
+            details = _escape_html(f"rows={rows} pass={pass_count} fail={fail_count}")
+            if rel_path:
+                href = _escape_href(_normalize_link(rel_path))
+                html.append(f'<li>{label}: {details} (source: <a href="{href}">{_escape_html(rel_path)}</a>)</li>')
+            else:
+                html.append(f"<li>{label}: {details}</li>")
+        html.append("</ul>")
+        html.append("</section>")
+    if real_lane_failures:
+        html.append("<section>")
+        html.append("<h2>Real lane failures detected</h2>")
+        html.append("<ul>")
+        for identifier in real_lane_failures["ids"]:
+            html.append(f"<li>{_escape_html(identifier)}</li>")
+        remaining = real_lane_failures["more"]
+        source = real_lane_failures["source"]
+        if remaining > 0:
+            html.append(f"<li>... ({remaining} more; see {_escape_html(source)})</li>")
+        else:
+            html.append(f"<li>Source: {_escape_html(source)}</li>")
+        html.append("</ul>")
+        html.append("</section>")
 
     if ndjson_summaries:
         html.append("<section>")

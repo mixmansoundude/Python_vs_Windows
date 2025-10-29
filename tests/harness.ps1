@@ -72,7 +72,7 @@ try {
 New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
 function Write-Result { param($Id,$Desc,[bool]$Pass,$Details)
   $rec = [ordered]@{ id=$Id; pass=$Pass; desc=$Desc; details=$Details }
-  $json = $rec | ConvertTo-Json -Compress
+  $json = $rec | ConvertTo-Json -Compress -Depth 8
   Add-Content -Path $ResultsPath -Value $json -Encoding Ascii
 }
 if ($entryHelperRow) {

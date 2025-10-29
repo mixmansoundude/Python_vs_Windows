@@ -2071,7 +2071,7 @@ jobs:
           if (-not $items) { $items = @() }
           $manifestFiles = @()
           foreach ($item in $items) {
-            $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\\','/')
+            $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\','/')
             $manifestFiles += [PSCustomObject]@{
               path         = $relative
               size         = $item.Length
@@ -2086,7 +2086,19 @@ jobs:
             generated_utc = (Get-Date).ToUniversalTime().ToString('o')
             files         = $manifestFiles
           }
-          $manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.json')
+          $json = $manifest | ConvertTo-Json -Depth 6
+          $json | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.json')
+          try {
+            $manifestObj = $json | ConvertFrom-Json -Depth 6
+          } catch {
+            $manifestObj = $null
+          }
+          $filesForRender = @()
+          if ($manifestObj -and $manifestObj.files) {
+            $filesForRender = @($manifestObj.files)
+          }
+          # derived requirement: inventory.json went blank while HTML/TXT stayed populated; derive the mirrors from the parsed
+          # JSON payload so all formats stay in sync with the canonical manifest.
           $bulletLines = [System.Collections.Generic.List[string]]::new()
           $plainLines = [System.Collections.Generic.List[string]]::new()
           $htmlLines = [System.Collections.Generic.List[string]]::new()
@@ -2094,13 +2106,16 @@ jobs:
             $null = $htmlLines.Add($seed)
           }
 
-          foreach ($item in $items | Sort-Object FullName) {
-            $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\\','/')
-            $size = '{0:N0}' -f $item.Length
+          foreach ($entry in ($filesForRender | Sort-Object path)) {
+            $relative = $entry.path
+            if (-not $relative) { continue }
+            $sizeValue = 0
+            if ($entry.size -ne $null) { [void][int64]::TryParse($entry.size.ToString(), [ref]$sizeValue) }
+            $sizeText = ('{0:N0}' -f $sizeValue)
             $safe = $relative -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;' -replace '"', '&quot;'
-            $null = $bulletLines.Add(('- {0} bytes - `{1}`' -f $size, $relative))
-            $null = $plainLines.Add(('{0} bytes{1}{2}' -f $size, [char]9, $relative))
-            $null = $htmlLines.Add("<li><code>$safe</code> <span>($size bytes)</span></li>")
+            $null = $bulletLines.Add(('- {0} bytes - `{1}`' -f $sizeText, $relative))
+            $null = $plainLines.Add(('{0} bytes{1}{2}' -f $sizeText, [char]9, $relative))
+            $null = $htmlLines.Add("<li><code>$safe</code> <span>($sizeText bytes)</span></li>")
           }
 
           if ($bulletLines.Count -eq 0) {

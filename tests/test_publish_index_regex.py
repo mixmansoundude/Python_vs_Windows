@@ -7,9 +7,11 @@ from unittest.mock import patch
 
 from tools.diag.publish_index import (
     Context,
+    _build_markdown,
     _build_site_overview,
     _validate_iterate_status_line,
     _write_global_txt_mirrors,
+    _write_html,
     _write_latest_json,
     _write_run_index_txt,
 )
@@ -193,6 +195,69 @@ class QuickLinksRenderingTest(unittest.TestCase):
             html,
         )
         self.assertEqual(mock_bundle_links.call_count, 1)
+
+
+    def test_real_ndjson_summary_and_failures(self) -> None:
+        real_root = self.diag / "_artifacts" / "batch-check" / "diag-selftest-real-1"
+        logs_dir = real_root / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        (logs_dir / "ci_test_results.ndjson").write_text(
+            '{"id":"a","pass":true}\n{"id":"b","pass":false}\n{"id":"c"}\n',
+            encoding="utf-8",
+        )
+        (logs_dir / "~test-results.ndjson").write_text(
+            '{"id":"filtered","pass":true}\n',
+            encoding="utf-8",
+        )
+
+        failure_dir = real_root / "batchcheck-failures-real"
+        failure_dir.mkdir(parents=True, exist_ok=True)
+        (failure_dir / "failing-tests.txt").write_text(
+            "failure.one\nfailure.two\n",
+            encoding="utf-8",
+        )
+
+        context = self._make_context()
+        markdown = _build_markdown(
+            context,
+            iterate_dir=None,
+            iterate_temp=None,
+            built_utc="2024-01-01T00:00:00Z",
+            built_ct="2023-12-31T18:00:00-06:00",
+            response_data=None,
+            status_data=None,
+            why_outcome=None,
+        )
+
+        self.assertIn("## NDJSON (real lane)", markdown)
+        self.assertIn("- real ci_test_results.ndjson: rows=3 pass=1 fail=2", markdown)
+        self.assertIn("- real ~test-results.ndjson: rows=1 pass=1 fail=0", markdown)
+        self.assertIn("**Real lane failures detected:**", markdown)
+        self.assertIn("- failure.one", markdown)
+        self.assertIn("- failure.two", markdown)
+        self.assertIn(
+            "- Source: _artifacts/batch-check/diag-selftest-real-1/batchcheck-failures-real/failing-tests.txt",
+            markdown,
+        )
+
+        html = _write_html(
+            context,
+            iterate_dir=None,
+            iterate_temp=None,
+            built_utc="2024-01-01T00:00:00Z",
+            built_ct="2023-12-31T18:00:00-06:00",
+            response_data=None,
+            status_data=None,
+            why_outcome=None,
+        )
+
+        self.assertIn("<h2>NDJSON (real lane)</h2>", html)
+        self.assertIn("rows=3 pass=1 fail=2", html)
+        self.assertIn("rows=1 pass=1 fail=0", html)
+        self.assertIn("<h2>Real lane failures detected</h2>", html)
+        self.assertIn("failure.one", html)
+        self.assertIn("failure.two", html)
+        self.assertIn("failing-tests.txt", html)
 
     def test_latest_manifest_pointer_files(self) -> None:
         context = self._make_context()

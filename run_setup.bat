@@ -53,14 +53,20 @@ if "%HP_CI_TEST_CONDA_DL%"=="1" (
   if not defined HP_CI_SKIP_ENV (
     set "HP_CONDA_PROBE_STATUS=ran"
     call :probe_conda_url
-    if errorlevel 1 goto :conda_probe_failed
+    if errorlevel 1 (
+      rem derived requirement: CI observed the Miniconda probe erroring before real bootstrap.
+      rem Emit a warning and continue so the actual install path can still run.
+      set "HP_CONDA_PROBE_STATUS=failed"
+      set "HP_CONDA_PROBE_REASON=probe-failed"
+      call :log "[WARN] Miniconda download probe failed; continuing to bootstrap."
+    )
   ) else (
     set "HP_CONDA_PROBE_REASON=skip-env"
   )
 ) else if defined HP_CI_SKIP_ENV (
   set "HP_CONDA_PROBE_REASON=skip-env"
 )
-if not "%HP_CONDA_PROBE_STATUS%"=="ran" (
+if "%HP_CONDA_PROBE_STATUS%"=="skipped" (
   call :emit_conda_probe_skip
 )
 
@@ -397,7 +403,7 @@ set "HP_CRUMB="
 if defined HP_SYS_PY (
   rem derived requirement: CI observed `'python" "~find_entry.py' is not recognized` when
   rem helper args were empty. Keep the helper invocation split so CMD never appends a stray
-  rem quote to the interpreter token.
+  rem quote to the interpreter token, and route stdout through a file to avoid shell quoting drift.
   if not defined HP_SYS_PY_LOGGED (
     if defined HP_SYS_PY_ARGS (
       >> "%LOG%" echo Helper command: "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"
@@ -411,10 +417,16 @@ if defined HP_SYS_PY (
   ) else (
     "%HP_SYS_PY%" -m py_compile "~find_entry.py" 1>nul 2>nul
   )
+  set "HP_CRUMB_FILE=~crumb.txt"
+  if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
   if defined HP_SYS_PY_ARGS (
-    for /f "usebackq delims=" %%L in (`"%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"`) do set "HP_CRUMB=%%L"
+    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
   ) else (
-    for /f "usebackq delims=" %%L in (`"%HP_SYS_PY%" "~find_entry.py"`) do set "HP_CRUMB=%%L"
+    "%HP_SYS_PY%" "~find_entry.py" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
+  )
+  if exist "%HP_CRUMB_FILE%" (
+    for /f "usebackq delims=" %%L in ("%HP_CRUMB_FILE%") do if not defined HP_CRUMB set "HP_CRUMB=%%L"
+    del "%HP_CRUMB_FILE%" >nul 2>&1
   )
 )
 
@@ -580,7 +592,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$mode = [Environment]::GetEnvironmentVariable('HP_ENV_MODE');" ^
   "$py = [Environment]::GetEnvironmentVariable('HP_PY');" ^
   "if (-not $mode) { $mode = 'unknown' }" ^
-  "$row = @{ id='env.mode'; pass=$true; details=@{ mode=$mode; py=$py } } | ConvertTo-Json -Compress;" ^
+  "$row = @{ id='env.mode'; pass=$true; details=@{ mode=$mode; py=$py } } | ConvertTo-Json -Compress -Depth 8;" ^
   "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 exit /b 0
 
@@ -644,7 +656,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$flag = [Environment]::GetEnvironmentVariable('HP_FIND_ENTRY_SYNTAX_OK');" ^
   "if (-not $flag) { $flag = '0' }" ^
   "$ok = $flag -eq '1';" ^
-  "$row = @{ id='helper.find_entry.syntax'; pass=$ok; details=@{ } } | ConvertTo-Json -Compress;" ^
+  "$row = @{ id='helper.find_entry.syntax'; pass=$ok; details=@{ } } | ConvertTo-Json -Compress -Depth 8;" ^
   "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 set "HP_HELPER_SYNTAX_EMITTED=1"
 exit /b 0
@@ -654,7 +666,7 @@ if not defined HP_NDJSON exit /b 0
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$reason = [Environment]::GetEnvironmentVariable('HP_CONDA_PROBE_REASON');" ^
   "if (-not $reason) { $reason = 'not-requested' }" ^
-  "$row = @{ id='conda.url'; pass=$true; details=@{ skipped=$true; reason=$reason; bytes=0 } } | ConvertTo-Json -Compress;" ^
+  "$row = @{ id='conda.url'; pass=$true; details=@{ skipped=$true; reason=$reason; bytes=0 } } | ConvertTo-Json -Compress -Depth 8;" ^
   "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 exit /b 0
 
@@ -696,7 +708,7 @@ if "%HP_DL_PASS%"=="0" goto :probe_conda_url_fail_with_bytes
 call :log "[INFO] Miniconda probe downloaded %HP_DL_BYTES% bytes."
 if defined HP_NDJSON (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$row = @{ id='conda.url'; pass=$true; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress;" ^
+    "$row = @{ id='conda.url'; pass=$true; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress -Depth 8;" ^
     "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 )
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
@@ -705,7 +717,7 @@ exit /b 0
 :probe_conda_url_fail_with_bytes
 if defined HP_NDJSON (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress;" ^
+    "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress -Depth 8;" ^
     "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 )
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
@@ -715,7 +727,7 @@ exit /b 1
 set "HP_DL_BYTES=0"
 if defined HP_NDJSON (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=0 } } | ConvertTo-Json -Compress;" ^
+    "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=0 } } | ConvertTo-Json -Compress -Depth 8;" ^
     "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 )
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
@@ -741,17 +753,21 @@ if defined HP_ENTRY_CMD for %%C in ("%HP_ENTRY_CMD%") do set "HP_ENTRY_CMD=%%~C"
 if defined HP_ENTRY_ARGS for %%A in ("%HP_ENTRY_ARGS%") do set "HP_ENTRY_ARGS=%%~A"
 if not defined HP_ENTRY_CMD exit /b 0
 rem derived requirement: maintain split helper calls so `py -3` and bare `python` both expand
-rem without producing `python"` tokens. This mirrors the CI skip logic above.
+rem without producing `python"` tokens. This mirrors the CI skip logic above and uses a crumb file
+rem so Windows never merges tokens when arguments are empty.
+set "HP_ENTRY_CRUMB=~entry.crumb"
+if exist "%HP_ENTRY_CRUMB%" del "%HP_ENTRY_CRUMB%" >nul 2>&1
 if defined HP_ENTRY_ARGS (
-  for /f "usebackq delims=" %%M in (`"%HP_ENTRY_CMD%" %HP_ENTRY_ARGS% "~find_entry.py"`) do set "HP_ENTRY=%%M"
+  "%HP_ENTRY_CMD%" %HP_ENTRY_ARGS% "~find_entry.py" > "%HP_ENTRY_CRUMB%" 2>> "%LOG%"
 ) else (
-  for /f "usebackq delims=" %%M in (`"%HP_ENTRY_CMD%" "~find_entry.py"`) do set "HP_ENTRY=%%M"
+  "%HP_ENTRY_CMD%" "~find_entry.py" > "%HP_ENTRY_CRUMB%" 2>> "%LOG%"
+)
+if exist "%HP_ENTRY_CRUMB%" (
+  for /f "usebackq delims=" %%M in ("%HP_ENTRY_CRUMB%") do if not defined HP_ENTRY set "HP_ENTRY=%%M"
+  del "%HP_ENTRY_CRUMB%" >nul 2>&1
 )
 if not defined HP_ENTRY set "HP_ENTRY="
 exit /b 0
-
-:conda_probe_failed
-call :die "[ERROR] Miniconda download probe failed."
 
 :record_chosen_entry
 rem %~1 is the RELATIVE crumb (what we want to show users and tests)
