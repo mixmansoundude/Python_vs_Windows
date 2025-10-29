@@ -835,10 +835,11 @@ jobs:
             fi
             ids="$(printf '%s\n' "${chunk[@]}" | jq -R . | jq -s .)"
             attach_body="$RUNNER_TEMP/vs_attach_${offset}.json"
-            # derived requirement: reviewer flagged "Fail workflow when vector store association API errors"
-            # so capture the HTTP status and abort on non-2xx responses instead of piping to /dev/null.
+            # derived requirement: reviewer reported HTTP 400 "Missing required parameter: 'file_id'" when
+            # posting batches to /vector_stores/{id}/files. The API expects bulk association requests to use
+            # /vector_stores/{id}/file_batches instead, so switch to that endpoint and poll until completion.
             http_code=$(curl -sS -o "$attach_body" -w '%{http_code}' \
-              -X POST "https://api.openai.com/v1/vector_stores/$vs_id/files" \
+              -X POST "https://api.openai.com/v1/vector_stores/$vs_id/file_batches" \
               -H "Authorization: Bearer $OPENAI_API_KEY" \
               -H "Content-Type: application/json" \
               -d "{\"file_ids\": $ids}" || echo '000')
@@ -847,6 +848,54 @@ jobs:
               if [ -s "$attach_body" ]; then
                 cat "$attach_body" >&2
               fi
+              exit 1
+            fi
+            batch_id=$(jq -r '.id // empty' "$attach_body")
+            if [ -z "$batch_id" ]; then
+              echo "vector store association response missing batch id" >&2
+              if [ -s "$attach_body" ]; then
+                cat "$attach_body" >&2
+              fi
+              exit 1
+            fi
+            status=$(jq -r '.status // empty' "$attach_body")
+            poll_attempt=0
+            while [ "$status" = "in_progress" ] || [ "$status" = "queued" ] || [ "$status" = "processing" ] || [ "$status" = "pending" ]; do
+              sleep 2
+              poll_attempt=$((poll_attempt+1))
+              if [ "$poll_attempt" -gt 60 ]; then
+                echo "vector store association batch $batch_id did not complete in time" >&2
+                exit 1
+              fi
+              poll_body="$RUNNER_TEMP/vs_attach_${offset}_poll.json"
+              poll_code=$(curl -sS -o "$poll_body" -w '%{http_code}' \
+                -X GET "https://api.openai.com/v1/vector_stores/$vs_id/file_batches/$batch_id" \
+                -H "Authorization: Bearer $OPENAI_API_KEY" || echo '000')
+              if [ "$poll_code" -lt 200 ] || [ "$poll_code" -ge 300 ]; then
+                echo "vector store association status poll failed (http=$poll_code)" >&2
+                if [ -s "$poll_body" ]; then
+                  cat "$poll_body" >&2
+                fi
+                exit 1
+              fi
+              status=$(jq -r '.status // empty' "$poll_body")
+              if [ -z "$status" ]; then
+                echo "vector store association status missing for batch $batch_id" >&2
+                if [ -s "$poll_body" ]; then
+                  cat "$poll_body" >&2
+                fi
+                exit 1
+              fi
+              if [ "$status" = "failed" ]; then
+                echo "vector store association batch $batch_id failed" >&2
+                if [ -s "$poll_body" ]; then
+                  cat "$poll_body" >&2
+                fi
+                exit 1
+              fi
+            done
+            if [ "$status" != "completed" ]; then
+              echo "vector store association batch $batch_id finished with unexpected status $status" >&2
               exit 1
             fi
           done
