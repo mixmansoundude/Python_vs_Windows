@@ -506,11 +506,11 @@ jobs:
           STRUCT_DIR: ${{ steps.struct.outputs.extract_dir }}
         run: |
           $workspace = Convert-Path "$env:GITHUB_WORKSPACE"
-          $structDir = $env:STRUCT_DIR
+          $structDir = Join-Path $env:RUNNER_TEMP 'struct'
           $diagRoot = ''
-          if ($structDir) {
+          if ($env:STRUCT_DIR) {
             try {
-              $diagRoot = Split-Path -LiteralPath (Convert-Path $structDir) -Parent
+              $diagRoot = Split-Path -LiteralPath (Convert-Path $env:STRUCT_DIR) -Parent
             } catch {
               $diagRoot = ''
             }
@@ -1881,6 +1881,24 @@ jobs:
           # _artifacts/iterate payload one directory deeper; flatten it so the
           # diagnostics publisher detects '* Iterate logs: found'.
 
+      - name: Mirror iterate logs into site bundle
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $diagIter = Join-Path "${{ steps.prep.outputs.ARTIFACTS }}" 'iterate'
+          $siteIter = Join-Path "${{ steps.prep.outputs.SITE }}" '_artifacts/iterate'
+          if (Test-Path -LiteralPath $diagIter) {
+            New-Item -ItemType Directory -Path $siteIter -Force | Out-Null
+            Get-ChildItem -LiteralPath $diagIter -Force | ForEach-Object {
+              $target = Join-Path $siteIter $_.Name
+              if ($_.PSIsContainer) {
+                Copy-Item -LiteralPath $_.FullName -Destination $siteIter -Recurse -Force
+              } else {
+                Copy-Item -LiteralPath $_.FullName -Destination $target -Force
+              }
+            }
+          }
+
       - name: Record iterate artifact status
         shell: pwsh
         run: |
@@ -2233,8 +2251,9 @@ jobs:
           try {
             $manifestObj = $json | ConvertFrom-Json -Depth 6
           } catch {
-            $manifestObj = $null
+            $manifestObj = $manifest
           }
+          if (-not $manifestObj) { $manifestObj = $manifest }
           $filesForRender = @()
           if ($manifestObj -and $manifestObj.files) {
             $filesForRender = @($manifestObj.files)

@@ -3,6 +3,8 @@ setlocal DisableDelayedExpansion
 rem Boot strap renamed to run_setup.bat
 cd /d "%~dp0"
 set "HP_SCRIPT_ROOT=%~dp0"
+for %%R in ("%HP_SCRIPT_ROOT%") do set "HP_SCRIPT_ROOT=%%~fR"
+if not "%HP_SCRIPT_ROOT:~-1%"=="\\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"
 set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
@@ -23,9 +25,13 @@ if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
 set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
 if not defined HP_MINICONDA_MIN_BYTES set "HP_MINICONDA_MIN_BYTES=5000000"
 set "HP_MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
-set "HP_NDJSON="
-if exist "%CD%\tests" set "HP_NDJSON=%CD%\tests\~test-results.ndjson"
-if defined HP_NDJSON if not exist "%HP_NDJSON%" ( type nul > "%HP_NDJSON%" )
+if not defined HP_NDJSON if exist "%CD%\tests" set "HP_NDJSON=%CD%\tests\~test-results.ndjson"
+if defined HP_NDJSON (
+  for %%F in ("%HP_NDJSON%") do (
+    if not "%%~dpF"=="" if not exist "%%~dpF" mkdir "%%~dpF" >nul 2>&1
+  )
+  if not exist "%HP_NDJSON%" ( type nul > "%HP_NDJSON%" )
+)
 rem --- CI fast path (entry tests only) ---
 call :rotate_log
 rem HP_* variables represent "Helper Payload" assets emitted on demand.
@@ -416,18 +422,26 @@ if defined HP_SYS_PY (
     )
     set "HP_SYS_PY_LOGGED=1"
   )
+  rem derived requirement: CI skip jobs sometimes run from a borrowed working directory.
+  rem Normalize the helper root so helper discovery always executes from the bootstrapper tree.
+  set "HP_HELPER_ROOT=%HP_SCRIPT_ROOT%"
+  for %%R in ("%HP_HELPER_ROOT%") do set "HP_HELPER_ROOT=%%~fR"
+  if not defined HP_HELPER_ROOT set "HP_HELPER_ROOT=%CD%"
+  if not exist "%HP_HELPER_ROOT%" mkdir "%HP_HELPER_ROOT%" >nul 2>&1
+  set "HP_CRUMB_FILE=%HP_HELPER_ROOT%~crumb.txt"
+  if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
+  pushd "%HP_HELPER_ROOT%" >nul 2>&1
   if defined HP_SYS_PY_ARGS (
     "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   ) else (
     "%HP_SYS_PY%" -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   )
-  set "HP_CRUMB_FILE=%HP_SCRIPT_ROOT%~crumb.txt"
-  if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
   if defined HP_SYS_PY_ARGS (
     "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
   ) else (
     "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
   )
+  popd >nul 2>&1
   if exist "%HP_CRUMB_FILE%" (
     for /f "usebackq delims=" %%L in ("%HP_CRUMB_FILE%") do if not defined HP_CRUMB set "HP_CRUMB=%%L"
     del "%HP_CRUMB_FILE%" >nul 2>&1
@@ -456,6 +470,7 @@ if defined HP_ENTRY if defined HP_SYS_PY (
     "%HP_SYS_PY%" "%HP_ENTRY%" > "~run.out.txt" 2>&1 || echo [WARN] CI skip: system Python non-zero
   )
 )
+call :append_env_mode_row
 goto :after_env_bootstrap
 
 :after_env_bootstrap
@@ -468,10 +483,18 @@ if "%HP_ENTRY%"=="" (
   call :record_chosen_entry "%HP_ENTRY%"
   call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
   rem derived requirement: CI env smoke saw `The syntax of the command is incorrect.`
-  rem when this block silently built the command. Log the exact invocation (with
-  rem explicit redirection) so future regressions remain diagnosable.
-  >> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
-  "%HP_PY%" "%HP_ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
+  rem when this block silently built the command. Normalize the paths and log the
+  rem exact invocation so future regressions remain diagnosable.
+  set "HP_SMOKE_PY=%HP_PY%"
+  for %%P in ("%HP_PY%") do if exist "%%~fP" set "HP_SMOKE_PY=%%~fP"
+  set "HP_SMOKE_ENTRY=%HP_ENTRY%"
+  for %%E in ("%HP_ENTRY%") do if exist "%%~fE" set "HP_SMOKE_ENTRY=%%~fE"
+  set "HP_SMOKE_OUT=~run.out.txt"
+  for %%O in ("%HP_SMOKE_OUT%") do set "HP_SMOKE_OUT=%%~fO"
+  set "HP_SMOKE_ERR=~run.err.txt"
+  for %%R in ("%HP_SMOKE_ERR%") do set "HP_SMOKE_ERR=%%~fR"
+  >> "%LOG%" echo Smoke command: "%HP_SMOKE_PY%" "%HP_SMOKE_ENTRY%" 1^> "%HP_SMOKE_OUT%" 2^> "%HP_SMOKE_ERR%"
+  "%HP_SMOKE_PY%" "%HP_SMOKE_ENTRY%" 1> "%HP_SMOKE_OUT%" 2> "%HP_SMOKE_ERR%"
   if errorlevel 1 call :die "[ERROR] Entry script execution failed."
   if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] System fallback: skipping PyInstaller packaging."

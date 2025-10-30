@@ -119,6 +119,8 @@ $destTests = Join-Path -Path $workspacePath -ChildPath 'tests~test-results.ndjso
 $destCi = Join-Path -Path $workspacePath -ChildPath 'ci_test_results.ndjson'
 
 $searchRoots = @($workspacePath)
+$structCopyMap = @{}
+$resolvedStruct = $null
 $inputsRoot = Join-Path -Path $workspacePath -ChildPath '_artifacts/iterate/inputs'
 if (Test-Path -LiteralPath $inputsRoot) {
     try {
@@ -145,13 +147,34 @@ if (Test-Path -LiteralPath $workspaceArtifacts) {
 if (-not [string]::IsNullOrWhiteSpace($StructDir)) {
     try {
         $resolvedStruct = (Resolve-Path -LiteralPath $StructDir -ErrorAction Stop).Path
+    } catch {
+        $resolvedStruct = $StructDir
+    }
+    if ($resolvedStruct) {
+        # derived requirement: callers reported struct mirroring failing when the hashtable
+        # was populated before initialization. Seed the copy map up front and keep the
+        # resolved path so later diagnostics can report it.
         $searchRoots += $resolvedStruct
         $structArtifacts = Join-Path -Path $resolvedStruct -ChildPath '_artifacts'
         if (Test-Path -LiteralPath $structArtifacts) {
             $searchRoots += (Resolve-Path -LiteralPath $structArtifacts -ErrorAction SilentlyContinue)
         }
-    } catch {
-        # keep search robust even if struct dir is unavailable
+        $structCopyMap['tests~test-results.ndjson'] = Join-Path -Path $resolvedStruct -ChildPath 'tests~test-results.ndjson'
+        $structCopyMap['ci_test_results.ndjson'] = Join-Path -Path $resolvedStruct -ChildPath 'ci_test_results.ndjson'
+    }
+}
+$runnerTemp = $env:RUNNER_TEMP
+if ($runnerTemp) {
+    $tempStruct = Join-Path -Path $runnerTemp -ChildPath 'struct'
+    if (Test-Path -LiteralPath $tempStruct) {
+        try {
+            $resolvedTempStruct = (Resolve-Path -LiteralPath $tempStruct -ErrorAction Stop).Path
+        } catch {
+            $resolvedTempStruct = $tempStruct
+        }
+        if ($resolvedTempStruct) {
+            $searchRoots += $resolvedTempStruct
+        }
     }
 }
 if (-not [string]::IsNullOrWhiteSpace($DiagRoot)) {
@@ -165,6 +188,8 @@ $searchRoots = $searchRoots | Sort-Object -Unique
 
 $foundSources = New-Object System.Collections.Generic.List[string]
 $missingTargets = New-Object System.Collections.Generic.List[string]
+$gateFound = New-Object System.Collections.Generic.List[object]
+$gateMissing = New-Object System.Collections.Generic.List[string]
 
 function Sync-Target {
     param(
@@ -182,6 +207,27 @@ function Sync-Target {
             # we do not reintroduce the ParserError seen when the gate executed this script.
             $foundSources.Add($note) | Out-Null
             Write-Info "Found existing $Label source at $Destination"
+            $canonicalDest = $Destination
+            try { $canonicalDest = (Resolve-Path -LiteralPath $Destination -ErrorAction Stop).Path } catch {}
+            $copies = New-Object System.Collections.Generic.List[string]
+            if (-not ($copies -contains $canonicalDest)) { $copies.Add($canonicalDest) | Out-Null }
+            if ($structCopyMap.ContainsKey($Label)) {
+                $structMirror = $structCopyMap[$Label]
+                if ($structMirror) {
+                    Ensure-DestinationDirectory -Path $structMirror
+                    if (-not (Test-Path -LiteralPath $structMirror)) {
+                        Write-Info "Mirroring existing $Label into struct dir $structMirror"
+                        Copy-Item -LiteralPath $Destination -Destination $structMirror -Force
+                    }
+                    try {
+                        $structResolved = (Resolve-Path -LiteralPath $structMirror -ErrorAction Stop).Path
+                    } catch {
+                        $structResolved = $structMirror
+                    }
+                    if (-not ($copies -contains $structResolved)) { $copies.Add($structResolved) | Out-Null }
+                }
+            }
+            $gateFound.Add([ordered]@{ label = $Label; source = $canonicalDest; copies = @($copies) }) | Out-Null
             return
         }
     }
@@ -192,6 +238,9 @@ function Sync-Target {
     }
 
     if ($source) {
+        $copies = New-Object System.Collections.Generic.List[string]
+        $sourceResolved = $source
+        try { $sourceResolved = (Resolve-Path -LiteralPath $source -ErrorAction Stop).Path } catch {}
         if ([string]::Compare($source, $Destination, $true) -ne 0) {
             Write-Info "Copying $Label source from $source to $Destination"
             Ensure-DestinationDirectory -Path $Destination
@@ -199,13 +248,32 @@ function Sync-Target {
         } else {
             Write-Info "$Label source already at $Destination"
         }
+        $destResolved = $Destination
+        try { $destResolved = (Resolve-Path -LiteralPath $Destination -ErrorAction Stop).Path } catch {}
+        if (-not ($copies -contains $destResolved)) { $copies.Add($destResolved) | Out-Null }
+        if ($structCopyMap.ContainsKey($Label)) {
+            $structMirror = $structCopyMap[$Label]
+            if ($structMirror) {
+                Ensure-DestinationDirectory -Path $structMirror
+                Write-Info "Copying $Label source into struct dir $structMirror"
+                Copy-Item -LiteralPath $source -Destination $structMirror -Force
+                try {
+                    $structResolved = (Resolve-Path -LiteralPath $structMirror -ErrorAction Stop).Path
+                } catch {
+                    $structResolved = $structMirror
+                }
+                if (-not ($copies -contains $structResolved)) { $copies.Add($structResolved) | Out-Null }
+            }
+        }
         # derived requirement: wrap Format-SafeString calls in parentheses when passing to
         # methods so PowerShell does not misparse the invocation (CI previously surfaced a
         # "Missing ')'" error here).
         $foundSources.Add((Format-SafeString "{0}:{1}" $Label $source)) | Out-Null
+        $gateFound.Add([ordered]@{ label = $Label; source = $sourceResolved; copies = @($copies) }) | Out-Null
     } else {
         $missingTargets.Add($Label) | Out-Null
         Write-Info "No source located for $Label"
+        $gateMissing.Add($Label) | Out-Null
     }
 }
 
@@ -256,9 +324,51 @@ if ($foundSources.Count -eq 0) {
         ($payload | ConvertTo-Json -Compress) | Set-Content -LiteralPath $destCi -Encoding Ascii
         $foundSources.Add((Format-SafeString "{0}:{1}" 'synth' $destCi)) | Out-Null
         Write-Info "Synthesized ci_test_results.ndjson from $firstFailure"
+        $copies = New-Object System.Collections.Generic.List[string]
+        $ciResolved = $destCi
+        try { $ciResolved = (Resolve-Path -LiteralPath $destCi -ErrorAction Stop).Path } catch {}
+        if (-not ($copies -contains $ciResolved)) { $copies.Add($ciResolved) | Out-Null }
+        if ($structCopyMap.ContainsKey('ci_test_results.ndjson')) {
+            $structMirror = $structCopyMap['ci_test_results.ndjson']
+            if ($structMirror) {
+                Ensure-DestinationDirectory -Path $structMirror
+                Copy-Item -LiteralPath $destCi -Destination $structMirror -Force
+                try {
+                    $structResolved = (Resolve-Path -LiteralPath $structMirror -ErrorAction Stop).Path
+                } catch {
+                    $structResolved = $structMirror
+                }
+                if (-not ($copies -contains $structResolved)) { $copies.Add($structResolved) | Out-Null }
+            }
+        }
+        $gateFound.Add([ordered]@{ label = 'ci_test_results.ndjson'; source = $ciResolved; copies = @($copies); synthesized = $true }) | Out-Null
         $missingTargets.Clear() | Out-Null
+        $gateMissing.Clear() | Out-Null
     }
 }
+
+$searchedReport = @()
+foreach ($root in $searchRoots) {
+    if ([string]::IsNullOrWhiteSpace($root)) { continue }
+    $searchedReport += $root
+    if ($searchedReport.Count -ge 12) { break }
+}
+$gatePayload = [ordered]@{
+    stage = 'ensure-ndjson-sources'
+    proceed = $true
+    missing_inputs = @($gateMissing)
+    found_inputs = @($gateFound)
+    searched_roots = @($searchedReport)
+}
+if ($resolvedStruct) {
+    $gatePayload.struct_dir = $resolvedStruct
+}
+$iterateRoot = Join-Path -Path $workspacePath -ChildPath '_artifacts/iterate'
+try {
+    New-Item -ItemType Directory -Path $iterateRoot -Force | Out-Null
+} catch {}
+$gatePath = Join-Path -Path $iterateRoot -ChildPath 'iterate_gate.json'
+$gatePayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $gatePath -Encoding UTF8
 
 $envPath = $env:GITHUB_ENV
 if ($envPath) {
