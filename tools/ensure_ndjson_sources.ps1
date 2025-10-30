@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)][string]$Workspace,
-    [string]$StructDir,
-    [string]$DiagRoot
+    [Parameter(Mandatory=$true)][AllowNull()][AllowEmptyString()][string]$Workspace,
+    [AllowNull()][AllowEmptyString()][string]$StructDir,
+    [AllowNull()][AllowEmptyString()][string]$DiagRoot
 )
 
 Set-StrictMode -Version Latest
@@ -63,9 +63,15 @@ function Resolve-Candidate {
 
 function Find-ByNames {
     param(
-        [string[]]$Roots,
-        [string[]]$Names
+        [AllowNull()][string[]]$Roots,
+        [AllowNull()][string[]]$Names
     )
+
+    $Roots = @($Roots)
+    $Names = @($Names)
+    if (-not $Roots -and $script:resolvedStruct) {
+        $Roots = @($script:resolvedStruct)
+    }
 
     foreach ($root in $Roots) {
         if ([string]::IsNullOrWhiteSpace($root)) { continue }
@@ -80,9 +86,15 @@ function Find-ByNames {
 
 function Find-ByGlobs {
     param(
-        [string[]]$Roots,
-        [string[]]$Globs
+        [AllowNull()][string[]]$Roots,
+        [AllowNull()][string[]]$Globs
     )
+
+    $Roots = @($Roots)
+    $Globs = @($Globs)
+    if (-not $Roots -and $script:resolvedStruct) {
+        $Roots = @($script:resolvedStruct)
+    }
 
     foreach ($root in $Roots) {
         if ([string]::IsNullOrWhiteSpace($root)) { continue }
@@ -114,18 +126,65 @@ function Ensure-DestinationDirectory {
     }
 }
 
-$workspacePath = (Resolve-Path -LiteralPath $Workspace).Path
+$workspace = $null
+if ([string]::IsNullOrWhiteSpace($Workspace)) {
+    throw 'Workspace path is required.'
+}
+try {
+    $workspace = Convert-Path -LiteralPath $Workspace
+} catch {
+    $workspace = $Workspace
+}
+$workspacePath = $workspace
+try { $workspacePath = (Resolve-Path -LiteralPath $workspacePath -ErrorAction Stop).Path } catch {}
+$structResolved = $null
+if (-not [string]::IsNullOrWhiteSpace($StructDir)) {
+    try {
+        $structResolved = Convert-Path -LiteralPath $StructDir
+    } catch {
+        $structResolved = $StructDir
+    }
+}
+$diagResolved = $null
+if (-not [string]::IsNullOrWhiteSpace($DiagRoot)) {
+    try {
+        $diagResolved = Convert-Path -LiteralPath $DiagRoot
+    } catch {
+        $diagResolved = $DiagRoot
+    }
+}
 $destTests = Join-Path -Path $workspacePath -ChildPath 'tests~test-results.ndjson'
 $destCi = Join-Path -Path $workspacePath -ChildPath 'ci_test_results.ndjson'
 
-$searchRoots = @($workspacePath)
+$searchRoots = [System.Collections.Generic.List[string]]::new()
+function Add-SearchRoot {
+    param(
+        [System.Collections.Generic.List[string]]$List,
+        [AllowNull()][string]$Candidate
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Candidate)) { return }
+    $exists = $false
+    foreach ($existing in $List) {
+        if ([string]::Equals($existing, $Candidate, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $exists = $true
+            break
+        }
+    }
+    if (-not $exists) {
+        $List.Add($Candidate) | Out-Null
+    }
+}
+
+Add-SearchRoot -List $searchRoots -Candidate $structResolved
+Add-SearchRoot -List $searchRoots -Candidate $diagResolved
+Add-SearchRoot -List $searchRoots -Candidate $workspacePath
 $structCopyMap = @{}
-$resolvedStruct = $null
 $inputsRoot = Join-Path -Path $workspacePath -ChildPath '_artifacts/iterate/inputs'
 if (Test-Path -LiteralPath $inputsRoot) {
     try {
         $resolvedInputs = (Resolve-Path -LiteralPath $inputsRoot -ErrorAction Stop).Path
-        $searchRoots += $resolvedInputs
+        Add-SearchRoot -List $searchRoots -Candidate $resolvedInputs
     } catch {
         # Professional note: keep fail-open behaviour even if Resolve-Path is denied.
     }
@@ -133,35 +192,38 @@ if (Test-Path -LiteralPath $inputsRoot) {
 $workspaceArtifacts = Join-Path -Path $workspacePath -ChildPath '_artifacts'
 if (Test-Path -LiteralPath $workspaceArtifacts) {
     try {
-        $resolvedArtifacts = (Resolve-Path -LiteralPath $workspaceArtifacts -ErrorAction Stop).Path
-        $searchRoots += $resolvedArtifacts
-        $batchLogs = Join-Path -Path $resolvedArtifacts -ChildPath 'batch-check'
+        $resolvedArtifacts = (Resolve-Path -LiteralPath $workspaceArtifacts -ErrorAction Stop)
+        $artifactEntries = @($resolvedArtifacts)
+        foreach ($artifact in $artifactEntries) {
+            Add-SearchRoot -List $searchRoots -Candidate $artifact.Path
+        }
+        $artifactBase = if ($artifactEntries.Count -gt 0) { $artifactEntries[0].Path } else { $workspaceArtifacts }
+        $batchLogs = Join-Path -Path $artifactBase -ChildPath 'batch-check'
         if (Test-Path -LiteralPath $batchLogs) {
-            $searchRoots += (Resolve-Path -LiteralPath $batchLogs -ErrorAction SilentlyContinue)
+            $resolvedBatch = Resolve-Path -LiteralPath $batchLogs -ErrorAction SilentlyContinue
+            foreach ($batchEntry in @($resolvedBatch)) {
+                Add-SearchRoot -List $searchRoots -Candidate $batchEntry.Path
+            }
         }
     } catch {
         # derived requirement: the structured artifact unpack mirrors `_artifacts/batch-check`; even
         # if Resolve-Path fails (e.g., race with cleanup) we continue searching other roots.
     }
 }
-if (-not [string]::IsNullOrWhiteSpace($StructDir)) {
-    try {
-        $resolvedStruct = (Resolve-Path -LiteralPath $StructDir -ErrorAction Stop).Path
-    } catch {
-        $resolvedStruct = $StructDir
-    }
-    if ($resolvedStruct) {
-        # derived requirement: callers reported struct mirroring failing when the hashtable
-        # was populated before initialization. Seed the copy map up front and keep the
-        # resolved path so later diagnostics can report it.
-        $searchRoots += $resolvedStruct
-        $structArtifacts = Join-Path -Path $resolvedStruct -ChildPath '_artifacts'
-        if (Test-Path -LiteralPath $structArtifacts) {
-            $searchRoots += (Resolve-Path -LiteralPath $structArtifacts -ErrorAction SilentlyContinue)
+$resolvedStruct = $structResolved
+if ($resolvedStruct) {
+    # derived requirement: callers reported struct mirroring failing when the hashtable
+    # was populated before initialization. Seed the copy map up front and keep the
+    # resolved path so later diagnostics can report it.
+    $structArtifacts = Join-Path -Path $resolvedStruct -ChildPath '_artifacts'
+    if (Test-Path -LiteralPath $structArtifacts) {
+        $resolvedStructArtifacts = Resolve-Path -LiteralPath $structArtifacts -ErrorAction SilentlyContinue
+        foreach ($structArtifact in @($resolvedStructArtifacts)) {
+            Add-SearchRoot -List $searchRoots -Candidate $structArtifact.Path
         }
-        $structCopyMap['tests~test-results.ndjson'] = Join-Path -Path $resolvedStruct -ChildPath 'tests~test-results.ndjson'
-        $structCopyMap['ci_test_results.ndjson'] = Join-Path -Path $resolvedStruct -ChildPath 'ci_test_results.ndjson'
     }
+    $structCopyMap['tests~test-results.ndjson'] = Join-Path -Path $resolvedStruct -ChildPath 'tests~test-results.ndjson'
+    $structCopyMap['ci_test_results.ndjson'] = Join-Path -Path $resolvedStruct -ChildPath 'ci_test_results.ndjson'
 }
 $runnerTemp = $env:RUNNER_TEMP
 if ($runnerTemp) {
@@ -173,18 +235,18 @@ if ($runnerTemp) {
             $resolvedTempStruct = $tempStruct
         }
         if ($resolvedTempStruct) {
-            $searchRoots += $resolvedTempStruct
+            Add-SearchRoot -List $searchRoots -Candidate $resolvedTempStruct
         }
     }
 }
-if (-not [string]::IsNullOrWhiteSpace($DiagRoot)) {
+if ($diagResolved) {
     try {
-        $resolvedDiag = (Resolve-Path -LiteralPath $DiagRoot -ErrorAction Stop).Path
-        $searchRoots += $resolvedDiag
+        $resolvedDiag = (Resolve-Path -LiteralPath $diagResolved -ErrorAction Stop).Path
     } catch {
+        $resolvedDiag = $diagResolved
     }
+    Add-SearchRoot -List $searchRoots -Candidate $resolvedDiag
 }
-$searchRoots = $searchRoots | Sort-Object -Unique
 
 $foundSources = New-Object System.Collections.Generic.List[string]
 $missingTargets = New-Object System.Collections.Generic.List[string]
@@ -291,7 +353,7 @@ Sync-Target -Label 'ci_test_results.ndjson' -Destination $destCi -PreferredNames
     'tests/ci_test_results.ndjson'
 ) -FallbackGlobs @('ci_test_results.ndjson', '*test-results.ndjson')
 
-if ($foundSources.Count -eq 0) {
+if ((@($foundSources)).Count -eq 0) {
     # derived requirement: gate needs a minimal NDJSON row even when artifacts are sparse.
     # Use first_failure.json if available to synthesize a placeholder record.
     $firstFailure = Find-ByGlobs -Roots $searchRoots -Globs @('first_failure.json')
@@ -348,10 +410,17 @@ if ($foundSources.Count -eq 0) {
 }
 
 $searchedReport = @()
-foreach ($root in $searchRoots) {
+foreach ($root in @($searchRoots)) {
     if ([string]::IsNullOrWhiteSpace($root)) { continue }
     $searchedReport += $root
     if ($searchedReport.Count -ge 12) { break }
+}
+$foundCount = (@($foundSources)).Count
+if ($foundCount -eq 0) {
+    $preview = if ($searchedReport.Count -gt 0) { [string]::Join(', ', $searchedReport) } else { '<none>' }
+    # derived requirement: CI surfaced silent gate failures when no NDJSON files were located.
+    # Log the search roots explicitly so diagnostics preserve the trail without mutating outputs.
+    Write-Info ("searched roots: {0}" -f $preview)
 }
 $gatePayload = [ordered]@{
     stage = 'ensure-ndjson-sources'
@@ -372,14 +441,14 @@ $gatePayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $gatePath -Enc
 
 $envPath = $env:GITHUB_ENV
 if ($envPath) {
-    $foundValue = if ($foundSources.Count -gt 0) { 'true' } else { 'false' }
+    $foundValue = if ($foundCount -gt 0) { 'true' } else { 'false' }
     Add-Content -LiteralPath $envPath -Value "GATE_NDJSON_FOUND=$foundValue"
-    if ($foundSources.Count -gt 0) {
+    if ($foundCount -gt 0) {
         Add-Content -LiteralPath $envPath -Value "GATE_NDJSON_SOURCE=$([string]::Join(';', $foundSources))"
     } else {
         Add-Content -LiteralPath $envPath -Value "GATE_NDJSON_SOURCE="
     }
-    if ($missingTargets.Count -gt 0) {
+    if ((@($missingTargets)).Count -gt 0) {
         Add-Content -LiteralPath $envPath -Value "GATE_NDJSON_MISSING=$([string]::Join(';', $missingTargets))"
     } else {
         Add-Content -LiteralPath $envPath -Value "GATE_NDJSON_MISSING="

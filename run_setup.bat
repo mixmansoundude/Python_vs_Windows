@@ -493,9 +493,12 @@ if "%HP_ENTRY%"=="" (
   for %%O in ("%HP_SMOKE_OUT%") do set "HP_SMOKE_OUT=%%~fO"
   set "HP_SMOKE_ERR=~run.err.txt"
   for %%R in ("%HP_SMOKE_ERR%") do set "HP_SMOKE_ERR=%%~fR"
-  >> "%LOG%" echo Smoke command: "%HP_SMOKE_PY%" "%HP_SMOKE_ENTRY%" 1^> "%HP_SMOKE_OUT%" 2^> "%HP_SMOKE_ERR%"
+  rem derived requirement: execute the smoke command inline so cmd, not our logging, owns redirection parsing.
+  >> "%LOG%" echo Smoke command: "%HP_SMOKE_PY%" "%HP_SMOKE_ENTRY%" ^> "%HP_SMOKE_OUT%" 2^> "%HP_SMOKE_ERR%"
   "%HP_SMOKE_PY%" "%HP_SMOKE_ENTRY%" 1> "%HP_SMOKE_OUT%" 2> "%HP_SMOKE_ERR%"
-  if errorlevel 1 call :die "[ERROR] Entry script execution failed."
+  set "HP_SMOKE_RC=%ERRORLEVEL%"
+  call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
+  if not "%HP_SMOKE_RC%"=="0" call :die "[ERROR] Entry script execution failed."
   if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] System fallback: skipping PyInstaller packaging."
   ) else (

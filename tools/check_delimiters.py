@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import re
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
 
@@ -125,13 +126,43 @@ class DelimiterChecker:
             text = self.path.read_text(encoding="utf-8", errors="replace")
 
         lines = text.splitlines()
+        lower_suffix = self.path.suffix.lower()
+        if lower_suffix == ".ps1":
+            bad = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*:")
+            allow = re.compile(r"\$(?:script|global|local|private|env|using):", re.IGNORECASE)
+            for match in bad.finditer(text):
+                token = match.group(0)
+                if allow.fullmatch(token):
+                    continue
+                prefix = text[: match.start()]
+                line_no = prefix.count("\n") + 1
+                last_newline = prefix.rfind("\n")
+                column = match.start() + 1 if last_newline == -1 else match.start() - last_newline
+                line_text = lines[line_no - 1] if line_no - 1 < len(lines) else ""
+                stripped_line = line_text.lstrip()
+                if stripped_line.startswith("#"):
+                    continue
+                comment_index = line_text.find("#")
+                if comment_index != -1 and comment_index <= column - 1:
+                    continue
+                # derived requirement: catching `$var:` early prevents the Windows PowerShell parser
+                # from treating it as a scoped lookup and crashing the gate pipeline again.
+                self.add_issue(
+                    line_no,
+                    column,
+                    f'PowerShell scoped variable token "{token}" (wrap with ${{...}} or use -f formatting)',
+                )
+
         for line_no, raw_line in enumerate(lines, start=1):
             line = raw_line.rstrip("\n\r")
 
             if self.here_string:
                 terminator = self.here_string
-                if line.strip().startswith(terminator) and line.strip() == terminator:
-                    self.here_string = None
+                stripped_terminator = line.strip()
+                if stripped_terminator.startswith(terminator):
+                    remainder = stripped_terminator[len(terminator) :]
+                    if not remainder or remainder[0].isspace() or remainder.startswith('-'):
+                        self.here_string = None
                 continue
 
             cursor = LineCursor(line, line_no)
@@ -144,7 +175,6 @@ class DelimiterChecker:
                 cursor.advance(idx + 2)
 
             stripped = line.lstrip()
-            lower_suffix = self.path.suffix.lower()
             if lower_suffix in {".bat", ".cmd"}:
                 upper = stripped.upper()
                 if upper.startswith("REM ") or upper == "REM" or stripped.startswith("::"):
@@ -221,10 +251,10 @@ class DelimiterChecker:
 
                 if lower_suffix == ".ps1":
                     trimmed = line.strip()
-                    if trimmed.startswith("@\"") and trimmed == "@\"":
+                    if trimmed.endswith("@\""):
                         self.here_string = '"@'
                         break
-                    if trimmed.startswith("@'") and trimmed == "@'":
+                    if trimmed.endswith("@'"):
                         self.here_string = "'@"
                         break
 

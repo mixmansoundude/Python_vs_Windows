@@ -500,17 +500,33 @@ jobs:
             printf 'id=%s | %s (source=%s)\n' "$id" "$desc" "$source" > .codex/fail/first_failure.txt
           fi
 
+      - name: Check delimiter balance
+        run: python tools/check_delimiters.py
+
       - name: Ensure NDJSON sources for gate
         shell: pwsh
         env:
           STRUCT_DIR: ${{ steps.struct.outputs.extract_dir }}
         run: |
           $workspace = Convert-Path "$env:GITHUB_WORKSPACE"
-          $structDir = Join-Path $env:RUNNER_TEMP 'struct'
-          $diagRoot = ''
+          $structDir = $null
           if ($env:STRUCT_DIR) {
             try {
-              $diagRoot = Split-Path -LiteralPath (Convert-Path $env:STRUCT_DIR) -Parent
+              $structDir = Convert-Path $env:STRUCT_DIR
+            } catch {
+              $structDir = $env:STRUCT_DIR
+            }
+          }
+          if (-not $structDir) {
+            $structDir = Join-Path $env:RUNNER_TEMP 'struct'
+            if (Test-Path -LiteralPath $structDir) {
+              try { $structDir = Convert-Path $structDir } catch {}
+            }
+          }
+          $diagRoot = ''
+          if ($structDir) {
+            try {
+              $diagRoot = Split-Path -LiteralPath (Convert-Path $structDir) -Parent
             } catch {
               $diagRoot = ''
             }
@@ -519,7 +535,11 @@ jobs:
           # and ci_test_results.ndjson were missing. The poller now writes them under
           # _artifacts/iterate/inputs, but we continue reusing the helper to surface
           # consistent env signals and root-level mirrors for legacy consumers.
-          & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" -Workspace $workspace -StructDir $structDir -DiagRoot $diagRoot
+          if ($diagRoot) {
+            & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" -Workspace $workspace -StructDir $structDir -DiagRoot $diagRoot
+          } else {
+            & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" -Workspace $workspace -StructDir $structDir
+          }
 
       - name: Decide gate (iterate vs skip)
         id: gate

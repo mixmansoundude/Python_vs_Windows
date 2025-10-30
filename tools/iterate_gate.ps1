@@ -88,7 +88,7 @@ function Find-Ndjson {
             if ($_.Exception -is [System.UnauthorizedAccessException]) {
                 Write-Warn "EACCES on $nestedRoot (skipped)"
             } else {
-                Write-Warn "Failed to probe $nestedRoot: $($_.Exception.Message)"
+                Write-Warn ("Failed to probe {0}: {1}" -f $nestedRoot, $_.Exception.Message)
             }
         }
     }
@@ -107,7 +107,7 @@ function Find-Ndjson {
                 if ($_.Exception -is [System.UnauthorizedAccessException]) {
                     Write-Warn "EACCES on $repoMirror (skipped)"
                 } else {
-                    Write-Warn "Failed to probe $repoMirror: $($_.Exception.Message)"
+                    Write-Warn ("Failed to probe {0}: {1}" -f $repoMirror, $_.Exception.Message)
                 }
             }
         }
@@ -136,7 +136,7 @@ function Find-Ndjson {
                 if ($_.Exception -is [System.UnauthorizedAccessException]) {
                     Write-Warn "EACCES on $structRoot (skipped)"
                 } else {
-                    Write-Warn "Failed to probe $structRoot: $($_.Exception.Message)"
+                    Write-Warn ("Failed to probe {0}: {1}" -f $structRoot, $_.Exception.Message)
                 }
             }
         }
@@ -160,7 +160,7 @@ foreach ($name in $requiredFiles) {
         }
     } catch {
         $missing.Add($name) | Out-Null
-        Write-Warn "Exception while probing $name: $($_.Exception.Message)"
+        Write-Warn ("Exception while probing {0}: {1}" -f $name, $_.Exception.Message)
     }
 }
 
