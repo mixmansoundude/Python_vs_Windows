@@ -523,12 +523,19 @@ jobs:
               try { $structDir = Convert-Path $structDir } catch {}
             }
           }
-          $diagRoot = ''
+          $diagRoot = $null
           if ($structDir) {
             try {
-              $diagRoot = Split-Path -LiteralPath (Convert-Path $structDir) -Parent
+              $parent = Split-Path -LiteralPath $structDir -Parent
+              if ($parent) {
+                try {
+                  $diagRoot = Convert-Path $parent
+                } catch {
+                  $diagRoot = $parent
+                }
+              }
             } catch {
-              $diagRoot = ''
+              $diagRoot = $null
             }
           }
           # derived requirement: gate previously skipped iterate because tests~test-results.ndjson

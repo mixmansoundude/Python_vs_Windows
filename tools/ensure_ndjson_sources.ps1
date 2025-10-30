@@ -1,16 +1,16 @@
-[CmdletBinding()]
-param(
-    [Parameter(Mandatory=$true)][string]$Workspace,
-    [AllowNull()][AllowEmptyString()][string]$StructDir,
-    [AllowNull()][AllowEmptyString()][string]$DiagRoot
-)
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # Never put a colon right after a PowerShell variable in double-quoted strings;
 # prefer -f or $($var)—and don’t mismatch placeholder counts. CI previously
 # failed parsing "$value:" so we keep the reminder near the helpers.
+
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory=$true)][string]$Workspace,
+    [string]$StructDir,
+    [string]$DiagRoot
+)
 
 function Write-Info {
     param([string]$Message)
@@ -58,32 +58,30 @@ function Ensure-DestinationDirectory {
     }
 }
 
-$ws = Resolve-OptionalPath $Workspace
+$ws = if ($Workspace) { Resolve-OptionalPath $Workspace } else { $null }
 if (-not $ws) {
     throw 'Workspace path is required.'
 }
 
-$struct = Resolve-OptionalPath $StructDir
-$diag = Resolve-OptionalPath $DiagRoot
-
-$destinations = @{
-    'tests~test-results.ndjson' = Join-Path -Path $ws -ChildPath 'tests~test-results.ndjson'
-    'ci_test_results.ndjson'    = Join-Path -Path $ws -ChildPath 'ci_test_results.ndjson'
-}
+$struct = if ($StructDir) { Resolve-OptionalPath $StructDir } else { $null }
+$diag = if ($DiagRoot) { Resolve-OptionalPath $DiagRoot } else { $null }
 
 $searchRoots = @($struct, $diag) | Where-Object { $_ } | Select-Object -Unique
-$searchedReport = New-Object System.Collections.Generic.List[string]
-
 $requiredNames = @('tests~test-results.ndjson', 'ci_test_results.ndjson')
+$destinations = @{}
+foreach ($name in $requiredNames) {
+    $destinations[$name] = Join-Path -Path $ws -ChildPath $name
+}
+
 $foundMap = @{}
+$searchedReport = New-Object System.Collections.Generic.List[string]
 
 foreach ($root in @($searchRoots)) {
     if ([string]::IsNullOrWhiteSpace($root)) { continue }
 
-    $reportRoot = $root
     if (Test-Path -LiteralPath $root) {
-        $canonicalRoot = Get-CanonicalPath $root
-        if ($canonicalRoot) { $reportRoot = $canonicalRoot }
+        $reportRoot = Get-CanonicalPath $root
+        if (-not $reportRoot) { $reportRoot = $root }
         $searchedReport.Add($reportRoot) | Out-Null
 
         try {
@@ -105,75 +103,76 @@ foreach ($root in @($searchRoots)) {
     }
 }
 
-$foundSources = New-Object System.Collections.Generic.List[string]
-$missingTargets = New-Object System.Collections.Generic.List[string]
+$foundPairs = New-Object System.Collections.Generic.List[string]
+$missingList = New-Object System.Collections.Generic.List[string]
 $gateFound = New-Object System.Collections.Generic.List[object]
 $gateMissing = New-Object System.Collections.Generic.List[string]
 $sourcesDetail = New-Object System.Collections.Generic.List[object]
 
 foreach ($name in $requiredNames) {
-    $dest = $destinations[$name]
-    if (-not $foundMap.ContainsKey($name) -and (Test-Path -LiteralPath $dest)) {
-        $foundMap[$name] = Get-CanonicalPath $dest
-    }
-
-    $source = $null
+    $sourcePath = $null
     if ($foundMap.ContainsKey($name)) {
-        $source = $foundMap[$name]
+        $sourcePath = $foundMap[$name]
     }
 
-    if ([string]::IsNullOrWhiteSpace($source)) {
-        $missingTargets.Add($name) | Out-Null
+    if (-not $sourcePath) {
+        $existing = $destinations[$name]
+        if (Test-Path -LiteralPath $existing) {
+            # derived requirement: retain workspace copies so downstream consumers that mirrored
+            # before this helper ran still find the NDJSON payload.
+            $sourcePath = Get-CanonicalPath $existing
+        }
+    }
+
+    if (-not $sourcePath) {
+        $missingList.Add($name) | Out-Null
         $gateMissing.Add($name) | Out-Null
         continue
     }
 
-    Ensure-DestinationDirectory -Path $dest
+    $sourceCanonical = Get-CanonicalPath $sourcePath
+    if (-not $sourceCanonical) { $sourceCanonical = $sourcePath }
 
-    $sourceResolved = Get-CanonicalPath $source
-    $destResolved = Get-CanonicalPath $dest
+    $destinationsList = New-Object System.Collections.Generic.List[string]
 
-    if (-not ($sourceResolved -and $destResolved -and [string]::Equals($sourceResolved, $destResolved, [System.StringComparison]::OrdinalIgnoreCase))) {
-        # derived requirement: copy into the workspace mirror even if the producer lives under struct/diag roots.
-        Copy-Item -LiteralPath $source -Destination $dest -Force
-        $destResolved = Get-CanonicalPath $dest
+    $workspaceTarget = $destinations[$name]
+    Ensure-DestinationDirectory -Path $workspaceTarget
+    $workspaceCanonical = Get-CanonicalPath $workspaceTarget
+    if (-not ($workspaceCanonical -and [string]::Equals($workspaceCanonical, $sourceCanonical, [System.StringComparison]::OrdinalIgnoreCase))) {
+        Copy-Item -LiteralPath $sourcePath -Destination $workspaceTarget -Force
+        $workspaceCanonical = Get-CanonicalPath $workspaceTarget
     }
-
-    $copies = New-Object System.Collections.Generic.List[string]
-    if ($destResolved) {
-        $copies.Add($destResolved) | Out-Null
+    if ($workspaceCanonical) {
+        $destinationsList.Add($workspaceCanonical) | Out-Null
     }
 
     if ($struct) {
-        $structDest = Join-Path -Path $struct -ChildPath $name
-        Ensure-DestinationDirectory -Path $structDest
-        $structResolved = Get-CanonicalPath $structDest
-        if (-not ($structResolved -and $sourceResolved -and [string]::Equals($sourceResolved, $structResolved, [System.StringComparison]::OrdinalIgnoreCase))) {
-            Copy-Item -LiteralPath $source -Destination $structDest -Force
-            $structResolved = Get-CanonicalPath $structDest
+        $structTarget = Join-Path -Path $struct -ChildPath $name
+        Ensure-DestinationDirectory -Path $structTarget
+        $structCanonical = Get-CanonicalPath $structTarget
+        if (-not ($structCanonical -and [string]::Equals($structCanonical, $sourceCanonical, [System.StringComparison]::OrdinalIgnoreCase))) {
+            # derived requirement: keep the struct mirror in sync so diagnostics bundles expose the raw NDJSON.
+            Copy-Item -LiteralPath $sourcePath -Destination $structTarget -Force
+            $structCanonical = Get-CanonicalPath $structTarget
         }
-        if ($structResolved -and -not ($copies -contains $structResolved)) {
-            $copies.Add($structResolved) | Out-Null
+        if ($structCanonical -and -not ($destinationsList -contains $structCanonical)) {
+            $destinationsList.Add($structCanonical) | Out-Null
         }
     }
 
-    $sourceForEnv = if ($sourceResolved) { $sourceResolved } else { $source }
-    $foundSources.Add(('{0}:{1}' -f $name, $sourceForEnv)) | Out-Null
-    $gateFound.Add([ordered]@{ label = $name; source = $sourceForEnv; copies = @($copies) }) | Out-Null
-    $sourcesDetail.Add([ordered]@{ label = $name; path = $sourceForEnv; destinations = @($copies) }) | Out-Null
+    $foundPairs.Add(('{0}:{1}' -f $name, $sourceCanonical)) | Out-Null
+    $gateFound.Add([ordered]@{ label = $name; source = $sourceCanonical; copies = @($destinationsList) }) | Out-Null
+    $sourcesDetail.Add([ordered]@{ label = $name; path = $sourceCanonical; destinations = @($destinationsList) }) | Out-Null
 
-    Write-Info ("Located {0} at {1}" -f $name, $sourceForEnv)
+    Write-Info ("Located {0} at {1}" -f $name, $sourceCanonical)
 }
 
-if ((@($foundSources)).Count -lt $requiredNames.Count) {
-    $preview = @($searchedReport | Select-Object -Unique)
-    if ($preview.Count -gt 12) {
-        $preview = $preview[0..11] + '...'
-    }
-    $joined = if ($preview.Count -gt 0) { [string]::Join(', ', $preview) } else { '<none>' }
-    # derived requirement: Gate diagnostics regressed without an explicit search trace when both NDJSON files were absent.
-    Write-Info ("searched roots: {0}" -f $joined)
+$preview = @($searchedReport | Select-Object -Unique)
+if ($preview.Count -gt 12) {
+    $preview = $preview[0..11] + '...'
 }
+$joined = if ($preview.Count -gt 0) { [string]::Join(', ', $preview) } else { '<none>' }
+Write-Info ("searched roots: {0}" -f $joined)
 
 $iterateRoot = Join-Path -Path $ws -ChildPath '_artifacts/iterate'
 try {
@@ -199,15 +198,15 @@ $gatePayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $gatePath -Enc
 
 $envPath = $env:GITHUB_ENV
 if ($envPath) {
-    $foundCount = (@($foundSources)).Count
+    $foundCount = (@($foundPairs)).Count
     Add-Content -LiteralPath $envPath -Value ('GATE_NDJSON_FOUND={0}' -f ($(if ($foundCount -eq $requiredNames.Count) { 'true' } else { 'false' })))
     if ($foundCount -gt 0) {
-        Add-Content -LiteralPath $envPath -Value ('GATE_NDJSON_SOURCE={0}' -f ([string]::Join(';', $foundSources)))
+        Add-Content -LiteralPath $envPath -Value ('GATE_NDJSON_SOURCE={0}' -f ([string]::Join(';', $foundPairs)))
     } else {
         Add-Content -LiteralPath $envPath -Value 'GATE_NDJSON_SOURCE='
     }
-    if ((@($missingTargets)).Count -gt 0) {
-        Add-Content -LiteralPath $envPath -Value ('GATE_NDJSON_MISSING={0}' -f ([string]::Join(';', $missingTargets)))
+    if ((@($missingList)).Count -gt 0) {
+        Add-Content -LiteralPath $envPath -Value ('GATE_NDJSON_MISSING={0}' -f ([string]::Join(';', $missingList)))
     } else {
         Add-Content -LiteralPath $envPath -Value 'GATE_NDJSON_MISSING='
     }

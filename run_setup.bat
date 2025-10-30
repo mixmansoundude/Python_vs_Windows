@@ -429,10 +429,14 @@ if defined HP_SYS_PY (
   if not defined HP_HELPER_ROOT set "HP_HELPER_ROOT=%CD%"
   if not exist "%HP_HELPER_ROOT%" mkdir "%HP_HELPER_ROOT%" >nul 2>&1
   set "HP_CHOOSER_ROOT=%HP_HELPER_ROOT%"
-  if exist "%HP_HELPER_ROOT%tests\\" set "HP_CHOOSER_ROOT=%HP_HELPER_ROOT%tests\\"
+  for %%R in ("%HP_HELPER_ROOT%tests") do if exist "%%~fR" set "HP_CHOOSER_ROOT=%%~fR"
   rem derived requirement: the helper enumerates cwd *.py files; pivot into tests/ when present
   rem so crumbs reference the self-test entry scripts without emitting "The system cannot find the path specified.".
-  set "HP_CRUMB_FILE=%HP_CHOOSER_ROOT%~crumb.txt"
+  for %%R in ("%HP_CHOOSER_ROOT%") do set "HP_CHOOSER_ROOT=%%~fR"
+  if not exist "%HP_CHOOSER_ROOT%" set "HP_CHOOSER_ROOT=%HP_HELPER_ROOT%"
+  set "HP_CRUMB_FILE=%HP_CHOOSER_ROOT%"
+  if not "%HP_CRUMB_FILE:~-1%"=="\" set "HP_CRUMB_FILE=%HP_CRUMB_FILE%\"
+  set "HP_CRUMB_FILE=%HP_CRUMB_FILE%~crumb.txt"
   if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
   pushd "%HP_CHOOSER_ROOT%" >nul 2>&1
   if defined HP_SYS_PY_ARGS (
