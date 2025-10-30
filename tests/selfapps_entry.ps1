@@ -15,6 +15,7 @@ if (-not (Test-Path -LiteralPath $nd)) {
 if (-not (Test-Path -LiteralPath $ciNd)) {
     New-Item -ItemType File -Path $ciNd -Force | Out-Null
 }
+$ciNdFull = Convert-Path -LiteralPath $ciNd
 
 function Write-NdjsonRow {
     param([hashtable]$Row)
@@ -157,13 +158,27 @@ function Invoke-EntryScenario {
             Remove-Item -LiteralPath $bootstrapLog -Force
         }
 
-        Push-Location -LiteralPath $Root
+# derived requirement: real-lane diagnostics capture ci_test_results.ndjson alongside
+# the test-local sink, so mirror the bootstrapper's secondary sink contract during
+# self-tests to keep telemetry identical to CI.
+$previousNdjsonSecondary = $env:HP_NDJSON_SECONDARY
+$env:HP_NDJSON_SECONDARY = $ciNdFull
         try {
-            cmd /c .\run_setup.bat *> $LogName
-            $result.exitCode = $LASTEXITCODE
+            Push-Location -LiteralPath $Root
+            try {
+                cmd /c .\run_setup.bat *> $LogName
+                $result.exitCode = $LASTEXITCODE
+            }
+            finally {
+                Pop-Location
+            }
         }
         finally {
-            Pop-Location
+            if ($null -ne $previousNdjsonSecondary) {
+                $env:HP_NDJSON_SECONDARY = $previousNdjsonSecondary
+            } else {
+                Remove-Item Env:HP_NDJSON_SECONDARY -ErrorAction SilentlyContinue
+            }
         }
 
         $result.setupPath = $setupLog

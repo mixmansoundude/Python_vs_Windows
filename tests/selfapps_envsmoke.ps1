@@ -5,6 +5,7 @@ $nd   = Join-Path $here '~test-results.ndjson'
 $ciNd = Join-Path $repo 'ci_test_results.ndjson'
 if (-not (Test-Path $nd)) { New-Item -ItemType File -Path $nd -Force | Out-Null }
 if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
+$ciNdFull = Convert-Path -LiteralPath $ciNd
 
 function Write-NdjsonRow {
     param([hashtable]$Row)
@@ -78,13 +79,25 @@ if (Test-Path -LiteralPath $setupLog) {
     Remove-Item -LiteralPath $setupLog -Force
 }
 
-Push-Location -LiteralPath $app
+# derived requirement: sync with the bootstrapper's HP_NDJSON_SECONDARY plumbing so the
+# env smoke scenario mirrors CI's dual-sink diagnostics output.
+$previousNdjsonSecondary = $env:HP_NDJSON_SECONDARY
+$env:HP_NDJSON_SECONDARY = $ciNdFull
 try {
-    # FULL bootstrap here: do NOT set HP_CI_SKIP_ENV
-    cmd /c .\run_setup.bat *> '~envsmoke_bootstrap.log'
-    $exit = $LASTEXITCODE
+    Push-Location -LiteralPath $app
+    try {
+        # FULL bootstrap here: do NOT set HP_CI_SKIP_ENV
+        cmd /c .\run_setup.bat *> '~envsmoke_bootstrap.log'
+        $exit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
 } finally {
-    Pop-Location
+    if ($null -ne $previousNdjsonSecondary) {
+        $env:HP_NDJSON_SECONDARY = $previousNdjsonSecondary
+    } else {
+        Remove-Item Env:HP_NDJSON_SECONDARY -ErrorAction SilentlyContinue
+    }
 }
 
 $blog   = Join-Path $app '~envsmoke_bootstrap.log'
@@ -92,6 +105,11 @@ $runout = Join-Path $app '~run.out.txt'
 $setup  = (Test-Path $setupLog) ? (Get-Content -LiteralPath $setupLog -Raw -Encoding Ascii) : ''
 $bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw -Encoding Ascii) : ''
 $outxt  = (Test-Path $runout) ? (Get-Content -LiteralPath $runout -Raw -Encoding Ascii) : ''
+$smokeCommand = ''
+if ($setup) {
+    $cmdMatch = [regex]::Match($setup, '^\s*Smoke command:\s*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+    if ($cmdMatch.Success) { $smokeCommand = $cmdMatch.Groups[1].Value.Trim() }
+}
 
 Check-PipreqsFailure -LogPath $setupLog -LogText $setup
 
@@ -111,12 +129,12 @@ Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.run'
     pass=$passRun
     desc='App runs in created environment'
-    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut }
+    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut; smokeCommand=$smokeCommand }
 })
 
 if (($exit -eq 0) -and (-not $tokenFound)) {
     $snippet = Get-LineSnippet -Text $outxt -Pattern 'smoke-ok'
-    $details = [ordered]@{ file = $runout; exitCode = $exit; tokenFound = $tokenFound; haveRunOut = $haveRunOut }
+    $details = [ordered]@{ file = $runout; exitCode = $exit; tokenFound = $tokenFound; haveRunOut = $haveRunOut; smokeCommand = $smokeCommand }
     if ($snippet) { $details.snippet = $snippet }
     Write-NdjsonRow ([ordered]@{
         id='envsmoke.run'

@@ -502,24 +502,10 @@ jobs:
 
       - name: Ensure NDJSON sources for gate
         shell: pwsh
-        env:
-          STRUCT_DIR: ${{ steps.struct.outputs.extract_dir }}
         run: |
           $workspace = Convert-Path "$env:GITHUB_WORKSPACE"
-          $structDir = $env:STRUCT_DIR
-          $diagRoot = ''
-          if ($structDir) {
-            try {
-              $diagRoot = Split-Path -LiteralPath (Convert-Path $structDir) -Parent
-            } catch {
-              $diagRoot = ''
-            }
-          }
-          # derived requirement: gate previously skipped iterate because tests~test-results.ndjson
-          # and ci_test_results.ndjson were missing. The poller now writes them under
-          # _artifacts/iterate/inputs, but we continue reusing the helper to surface
-          # consistent env signals and root-level mirrors for legacy consumers.
-          & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" -Workspace $workspace -StructDir $structDir -DiagRoot $diagRoot
+          $structDir = Join-Path $env:RUNNER_TEMP 'struct'
+          & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" -Workspace $workspace -StructDir $structDir
 
       - name: Decide gate (iterate vs skip)
         id: gate
@@ -2228,19 +2214,12 @@ jobs:
             generated_utc = (Get-Date).ToUniversalTime().ToString('o')
             files         = $manifestFiles
           }
-          $json = $manifest | ConvertTo-Json -Depth 6
-          $json | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.json')
-          try {
-            $manifestObj = $json | ConvertFrom-Json -Depth 6
-          } catch {
-            $manifestObj = $null
-          }
-          $filesForRender = @()
-          if ($manifestObj -and $manifestObj.files) {
-            $filesForRender = @($manifestObj.files)
-          }
-          # derived requirement: inventory.json went blank while HTML/TXT stayed populated; derive the mirrors from the parsed
-          # JSON payload so all formats stay in sync with the canonical manifest.
+          $manifestJson = $manifest | ConvertTo-Json -Depth 6
+          $manifestJson | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.json')
+          $filesForRender = @($manifest.files)
+          if (-not $filesForRender) { $filesForRender = @() }
+          # derived requirement: keep inventory.html/md/txt in lockstep with inventory.json by sourcing from the in-memory manifest
+          # rather than reparsing serialized output.
           $bulletLines = [System.Collections.Generic.List[string]]::new()
           $plainLines = [System.Collections.Generic.List[string]]::new()
           $htmlLines = [System.Collections.Generic.List[string]]::new()
