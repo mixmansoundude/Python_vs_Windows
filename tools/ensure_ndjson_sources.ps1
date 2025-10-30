@@ -8,6 +8,25 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Never put a colon right after a PowerShell variable in double-quoted strings;
+# prefer -f or $($var)—and don’t mismatch placeholder counts. The gate once
+# failed parsing "$value:" so we centralize the reminder near the helpers.
+
+function Format-SafeString {
+    param(
+        [Parameter(Mandatory=$true)][string]$Template,
+        [Parameter(ValueFromRemainingArguments=$true)][object[]]$Args
+    )
+
+    try {
+        return [string]::Format($Template, $Args)
+    } catch {
+        $joined = if ($Args -and $Args.Count -gt 0) { [string]::Join(' | ', $Args) } else { '<no-args>' }
+        Write-Info ("Format fallback engaged for template {0}" -f $Template)
+        return "$Template :: $joined"
+    }
+}
+
 function Write-Info {
     param([string]$Message)
     Write-Host "[ensure-ndjson] $Message"
@@ -100,10 +119,37 @@ $destTests = Join-Path -Path $workspacePath -ChildPath 'tests~test-results.ndjso
 $destCi = Join-Path -Path $workspacePath -ChildPath 'ci_test_results.ndjson'
 
 $searchRoots = @($workspacePath)
+$inputsRoot = Join-Path -Path $workspacePath -ChildPath '_artifacts/iterate/inputs'
+if (Test-Path -LiteralPath $inputsRoot) {
+    try {
+        $resolvedInputs = (Resolve-Path -LiteralPath $inputsRoot -ErrorAction Stop).Path
+        $searchRoots += $resolvedInputs
+    } catch {
+        # Professional note: keep fail-open behaviour even if Resolve-Path is denied.
+    }
+}
+$workspaceArtifacts = Join-Path -Path $workspacePath -ChildPath '_artifacts'
+if (Test-Path -LiteralPath $workspaceArtifacts) {
+    try {
+        $resolvedArtifacts = (Resolve-Path -LiteralPath $workspaceArtifacts -ErrorAction Stop).Path
+        $searchRoots += $resolvedArtifacts
+        $batchLogs = Join-Path -Path $resolvedArtifacts -ChildPath 'batch-check'
+        if (Test-Path -LiteralPath $batchLogs) {
+            $searchRoots += (Resolve-Path -LiteralPath $batchLogs -ErrorAction SilentlyContinue)
+        }
+    } catch {
+        # derived requirement: the structured artifact unpack mirrors `_artifacts/batch-check`; even
+        # if Resolve-Path fails (e.g., race with cleanup) we continue searching other roots.
+    }
+}
 if (-not [string]::IsNullOrWhiteSpace($StructDir)) {
     try {
         $resolvedStruct = (Resolve-Path -LiteralPath $StructDir -ErrorAction Stop).Path
         $searchRoots += $resolvedStruct
+        $structArtifacts = Join-Path -Path $resolvedStruct -ChildPath '_artifacts'
+        if (Test-Path -LiteralPath $structArtifacts) {
+            $searchRoots += (Resolve-Path -LiteralPath $structArtifacts -ErrorAction SilentlyContinue)
+        }
     } catch {
         # keep search robust even if struct dir is unavailable
     }
@@ -131,7 +177,7 @@ function Sync-Target {
     if (Test-Path -LiteralPath $Destination) {
         $size = (Get-Item -LiteralPath $Destination).Length
         if ($size -gt 0) {
-            $note = "{0}:{1} (existing)" -f $Label, $Destination
+            $note = Format-SafeString "{0}:{1} (existing)" $Label $Destination
             # derived requirement: avoid PowerShell's scoped-variable parsing ("$var:") so
             # we do not reintroduce the ParserError seen when the gate executed this script.
             $foundSources.Add($note) | Out-Null
@@ -153,7 +199,10 @@ function Sync-Target {
         } else {
             Write-Info "$Label source already at $Destination"
         }
-        $foundSources.Add("{0}:{1}" -f $Label, $source) | Out-Null
+        # derived requirement: wrap Format-SafeString calls in parentheses when passing to
+        # methods so PowerShell does not misparse the invocation (CI previously surfaced a
+        # "Missing ')'" error here).
+        $foundSources.Add((Format-SafeString "{0}:{1}" $Label $source)) | Out-Null
     } else {
         $missingTargets.Add($Label) | Out-Null
         Write-Info "No source located for $Label"
@@ -205,7 +254,7 @@ if ($foundSources.Count -eq 0) {
         }
         Ensure-DestinationDirectory -Path $destCi
         ($payload | ConvertTo-Json -Compress) | Set-Content -LiteralPath $destCi -Encoding Ascii
-        $foundSources.Add("{0}:{1}" -f 'synth', $destCi) | Out-Null
+        $foundSources.Add((Format-SafeString "{0}:{1}" 'synth' $destCi)) | Out-Null
         Write-Info "Synthesized ci_test_results.ndjson from $firstFailure"
         $missingTargets.Clear() | Out-Null
     }

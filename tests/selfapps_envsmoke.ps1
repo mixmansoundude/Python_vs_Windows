@@ -9,7 +9,7 @@ if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-N
 function Write-NdjsonRow {
     param([hashtable]$Row)
 
-    $json = $Row | ConvertTo-Json -Compress
+    $json = $Row | ConvertTo-Json -Compress -Depth 8
     Add-Content -LiteralPath $nd -Value $json -Encoding Ascii
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }

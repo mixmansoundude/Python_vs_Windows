@@ -28,11 +28,18 @@ jobs:
   iterate:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      branch: ${{ steps.ctx.outputs.branch }}
     env:
       MAX_ATTEMPTS: '4'
       OPENAI_MODEL: gpt-5-codex
       POLL_TIMEOUT_SECONDS: '1200'
       POLL_INTERVAL_SECONDS: '10'
+      VECTOR_STORE_ATTACH_TIMEOUT_SECONDS: '3600'
+      VECTOR_STORE_ATTACH_POLL_SECONDS: '10'
+      ALLOW_VS_ATTACH_TIMEOUT: 'true'
+      VECTOR_STORE_ATTACH_TIMEOUT_PER_FILE_SECONDS: '2'
+      VECTOR_STORE_ATTACH_TIMEOUT_CAP_SECONDS: '5400'
     steps:
       - name: Debug event
         run: |
@@ -47,6 +54,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Count Python sources
+        id: pycount
+        run: |
+          set -euo pipefail
+          # derived requirement: expensive corpus/vector-store work is pointless when
+          # the checkout has no Python sources. Surface the count for later guards.
+          py_count=$(git ls-files '*.py' '*.ipynb' 2>/dev/null | wc -l | tr -d '[:space:]')
+          if [ -z "$py_count" ]; then
+            py_count=0
+          fi
+          echo "PY_FILES=$py_count" >> "$GITHUB_ENV"
+          printf 'py_files=%s\n' "$py_count" >> "$GITHUB_OUTPUT"
 
       - name: Normalize Git EOL for patching
         shell: pwsh
@@ -186,6 +206,20 @@ jobs:
             workflows = $wf
           }
           $ctx | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 .codex/context.json
+
+      - name: Public diagnostics poller
+        shell: pwsh
+        env:
+          CI_DIAG_URL: "https://mixmansoundude.github.io/Python_vs_Windows/diag/${{ github.run_id }}-${{ github.run_attempt }}/index.html?v=${{ github.run_id }}"
+          OUT_DIR: _artifacts/iterate/inputs
+          MAX_ATTEMPTS: '14'
+          BASE_DELAY_SEC: '0.6'
+        run: |
+          # Professional note: poll the public diagnostics page instead of rehydrating
+          # a mini batch-check run; this keeps iterate aligned with the single source of
+          # truth published by batch-check. See "Codex Web Prompt — Public-diag poller"
+          # for the fail-open requirements implemented here.
+          & "$env:GITHUB_WORKSPACE/scripts/poll_public_diag.ps1"
 
       - name: Poll ALL workflow runs for this commit
         id: poll
@@ -329,25 +363,6 @@ jobs:
             echo "extract_dir=$dest" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Collect NDJSON sources
-        if: ${{ steps.poll.outputs.picked_id != '' }}
-        shell: pwsh
-        run: |
-          $candidates = @('ci_test_results.ndjson','~test-results.ndjson')
-          $searchRoots = @("$env:RUNNER_TEMP/struct", "$env:RUNNER_TEMP", (Get-Location).Path) `
-            | Where-Object { $_ -and (Test-Path $_) }
-          $hit = $null
-          foreach ($root in $searchRoots) {
-            $probe = Get-ChildItem -Path $root -Recurse -File -Include $candidates -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($probe) { $hit = $probe; break }
-          }
-          if ($hit) {
-            Copy-Item $hit.FullName "ci_test_results.ndjson" -Force
-            Copy-Item $hit.FullName "tests~test-results.ndjson" -Force
-            "iterate-collector: collected=$($hit.FullName)" | Out-File -Append -Encoding ascii "$env:GITHUB_STEP_SUMMARY"
-          } else {
-            "iterate-collector: collected=none" | Out-File -Append -Encoding ascii "$env:GITHUB_STEP_SUMMARY"
-          }
 
       - name: Fetch failing run logs (tail)
         if: ${{ steps.poll.outputs.picked_id != '' }}
@@ -486,12 +501,11 @@ jobs:
           fi
 
       - name: Ensure NDJSON sources for gate
-        if: ${{ steps.poll.outputs.picked_id != '' }}
         shell: pwsh
         env:
           STRUCT_DIR: ${{ steps.struct.outputs.extract_dir }}
         run: |
-          $workspace = Convert-Path '.'
+          $workspace = Convert-Path "$env:GITHUB_WORKSPACE"
           $structDir = $env:STRUCT_DIR
           $diagRoot = ''
           if ($structDir) {
@@ -502,8 +516,9 @@ jobs:
             }
           }
           # derived requirement: gate previously skipped iterate because tests~test-results.ndjson
-          # and ci_test_results.ndjson were missing. Reuse a helper so both filenames are
-          # synthesized or copied before the Decide gate runs.
+          # and ci_test_results.ndjson were missing. The poller now writes them under
+          # _artifacts/iterate/inputs, but we continue reusing the helper to surface
+          # consistent env signals and root-level mirrors for legacy consumers.
           & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" -Workspace $workspace -StructDir $structDir -DiagRoot $diagRoot
 
       - name: Decide gate (iterate vs skip)
@@ -744,48 +759,207 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Build model repo bundle
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
+      - name: Build model repo corpus
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.pycount.outputs.py_files != '0' }}
         shell: pwsh
         env:
-          ITERATE_REDACT_PATTERN: '(?i)(secret|token|password|apikey|key|sk-[A-Za-z0-9]{20,})'
-          BUNDLE_REDACT_PATTERN: "(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\\s*(?:[:=]\\s*['\"]?[A-Za-z0-9_\\-]{8,}['\"]?)?"
+          BUNDLE_REDACT_PATTERN: '(?ix)(sk-[A-Za-z0-9]{20,}|api[_-]?key|client[_-]?secret|auth[_-]?token|access[_-]?token|password|passphrase|secret)\s*(?:[:=]\s*[''\"]?[A-Za-z0-9_\-]{8,}[''\"]?)?'
         run: |
-          & "$env:GITHUB_WORKSPACE/tools/make_model_repo_bundle.ps1" -OutZip "$env:RUNNER_TEMP/repo_context.zip" -MaxMB 25
+          $runTemp = [System.IO.Path]::GetFullPath($env:RUNNER_TEMP)
+          $outDir = [System.IO.Path]::Combine($runTemp, 'repo_corpus')
+          # derived requirement: the runner logged "Cannot convert 'System.Object[]' ... AdditionalChildPath" when Join-Path
+          # received interpolated fragments that PowerShell treated as multiple arguments. Use Path.Combine so the
+          # corpus script always gets a single, canonicalized string on every platform.
+          & "$env:GITHUB_WORKSPACE/tools/make_model_repo_corpus.ps1" -OutDir $outDir
 
-      - name: Upload repo bundle
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
-        id: upload_repo_zip
+      - name: Create vector store
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
+        id: vs_create
         shell: bash
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
-          bundle="$RUNNER_TEMP/repo_context.zip"
-          if [ ! -s "$bundle" ]; then
-            echo "repo bundle missing" >&2
-            exit 1
-          fi
-          out_json="$RUNNER_TEMP/repo_upload.json"
-          http=$(curl -sS -o "$out_json" -w '%{http_code}' -X POST https://api.openai.com/v1/files \
+          resp="$(curl -sS -X POST https://api.openai.com/v1/vector_stores \
             -H "Authorization: Bearer $OPENAI_API_KEY" \
-            -F purpose=assistants \
-            -F file="@${bundle}")
-          printf 'http=%s\n' "$http" >> "$GITHUB_OUTPUT"
-          if [ "$http" != "200" ]; then
-            echo "Upload failed (http=$http)" >&2
+            -H "Content-Type: application/json" \
+            -d '{"name":"iterate-repo-corpus"}')"
+          vs_id="$(printf '%s' "$resp" | jq -r '.id')"
+          if [ -z "$vs_id" ] || [ "$vs_id" = "null" ]; then
+            echo "failed to create vector store" >&2
+            printf '%s\n' "$resp" >&2
             exit 1
           fi
-          file_id=$(jq -r '.id // empty' "$out_json")
-          if [ -z "$file_id" ] || [ "$file_id" = "null" ]; then
-            echo "Upload did not return a file id" >&2
+          echo "vs_id=$vs_id" >> "$GITHUB_OUTPUT"
+
+      - name: Upload repo corpus files to vector store
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
+        id: vs_upload
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          vs_id="${{ steps.vs_create.outputs.vs_id }}"
+          if [ -z "$vs_id" ]; then
+            echo "missing vector store id" >&2
             exit 1
           fi
-          printf 'file_id=%s\n' "$file_id" >> "$GITHUB_OUTPUT"
-          {
-            echo "### Model repo bundle"
-            echo "- file_id: $file_id"
-          } >> "$GITHUB_STEP_SUMMARY"
+          root="$RUNNER_TEMP/repo_corpus"
+          if [ ! -d "$root" ]; then
+            echo "corpus directory missing" >&2
+            exit 1
+          fi
+          # derived requirement: API rejects uploads like .ps1/.yml; rely on the .txt mirrors
+          # produced by make_model_repo_corpus.ps1 so only text-safe extensions reach the store.
+          mapfile -t files < <(find "$root" -type f -size -2M \
+            \( -name '*.txt' -o -name '*.md' -o -name '*.py' -o -name '*.json' -o -name '*.csv' -o -name '*.html' -o -name '*.xml' -o -name '*.js' -o -name '*.ts' \))
+          if [ "${#files[@]}" -le 0 ]; then
+            echo "no files found for upload" >&2
+            exit 1
+          fi
+          batch=()
+          for f in "${files[@]}"; do
+            up="$(curl -sS -X POST https://api.openai.com/v1/files \
+              -H "Authorization: Bearer $OPENAI_API_KEY" \
+              -F purpose=assistants \
+              -F file=@"$f")"
+            fid="$(printf '%s' "$up" | jq -r '.id')"
+            if [ -z "$fid" ] || [ "$fid" = "null" ]; then
+              echo "upload failed for $f" >&2
+              printf '%s\n' "$up" >&2
+              exit 1
+            fi
+            batch+=("$fid")
+          done
+          total=${#batch[@]}
+          base_timeout="${VECTOR_STORE_ATTACH_TIMEOUT_SECONDS:-3600}"
+          attach_interval="${VECTOR_STORE_ATTACH_POLL_SECONDS:-10}"
+          per_file_timeout="${VECTOR_STORE_ATTACH_TIMEOUT_PER_FILE_SECONDS:-2}"
+          timeout_cap="${VECTOR_STORE_ATTACH_TIMEOUT_CAP_SECONDS:-0}"
+          allow_timeout="${ALLOW_VS_ATTACH_TIMEOUT:-true}"
+          allow_timeout=$(printf '%s' "$allow_timeout" | tr '[:upper:]' '[:lower:]')
+          if ! [[ "$base_timeout" =~ ^[0-9]+$ ]]; then
+            echo "invalid VECTOR_STORE_ATTACH_TIMEOUT_SECONDS: $base_timeout" >&2
+            exit 1
+          fi
+          if ! [[ "$attach_interval" =~ ^[0-9]+$ ]] || [ "$attach_interval" -le 0 ]; then
+            echo "invalid VECTOR_STORE_ATTACH_POLL_SECONDS: $attach_interval" >&2
+            exit 1
+          fi
+          if ! [[ "$per_file_timeout" =~ ^[0-9]+$ ]]; then
+            per_file_timeout=2
+          fi
+          if ! [[ "$timeout_cap" =~ ^[0-9]+$ ]]; then
+            timeout_cap=0
+          fi
+          extra_timeout=$(( total * per_file_timeout ))
+          effective_timeout=$(( base_timeout + extra_timeout ))
+          if [ "$effective_timeout" -lt "$base_timeout" ]; then
+            effective_timeout=$base_timeout
+          fi
+          if [ "$timeout_cap" -gt 0 ] && [ "$effective_timeout" -gt "$timeout_cap" ]; then
+            effective_timeout=$timeout_cap
+          fi
+          echo "vector store attach: files=$total base=${base_timeout}s extra=${extra_timeout}s effective=${effective_timeout}s interval=${attach_interval}s"
+          # derived requirement: reviewer observed vsfb_* batches timing out; honour
+          # ALLOW_VS_ATTACH_TIMEOUT so iterate keeps running while indexing finishes
+          # upstream rather than failing before indexing completes server-side.
+          for ((offset=0; offset<total; offset+=50)); do
+            chunk=("${batch[@]:offset:50}")
+            if [ "${#chunk[@]}" -le 0 ]; then
+              continue
+            fi
+            ids="$(printf '%s\n' "${chunk[@]}" | jq -R . | jq -s .)"
+            attach_body="$RUNNER_TEMP/vs_attach_${offset}.json"
+            # derived requirement: reviewer reported HTTP 400 "Missing required parameter: 'file_id'" when
+            # posting batches to /vector_stores/{id}/files. The API expects bulk association requests to use
+            # /vector_stores/{id}/file_batches instead, so switch to that endpoint and poll until completion.
+            http_code=$(curl -sS -o "$attach_body" -w '%{http_code}' \
+              -X POST "https://api.openai.com/v1/vector_stores/$vs_id/file_batches" \
+              -H "Authorization: Bearer $OPENAI_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"file_ids\": $ids}" || echo '000')
+            if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+              echo "vector store association failed (http=$http_code)" >&2
+              if [ -s "$attach_body" ]; then
+                cat "$attach_body" >&2
+              fi
+              exit 1
+            fi
+            batch_id=$(jq -r '.id // empty' "$attach_body")
+            if [ -z "$batch_id" ]; then
+              echo "vector store association response missing batch id" >&2
+              if [ -s "$attach_body" ]; then
+                cat "$attach_body" >&2
+              fi
+              exit 1
+            fi
+            status=$(jq -r '.status // empty' "$attach_body")
+            poll_path="$attach_body"
+            start_epoch=$(date +%s)
+            while [ "$status" = "in_progress" ] || [ "$status" = "queued" ] || [ "$status" = "processing" ] || [ "$status" = "pending" ]; do
+              now_epoch=$(date +%s)
+              elapsed=$((now_epoch - start_epoch))
+              if [ "$elapsed" -ge "$effective_timeout" ]; then
+                counts=$(jq -c '.file_counts // {}' "$poll_path" 2>/dev/null || echo '{}')
+                if [ "$allow_timeout" = "true" ] || [ "$allow_timeout" = "1" ]; then
+                  echo "::warning title=vector-store::batch $batch_id timed out after ${elapsed}s (counts=$counts); proceeding per ALLOW_VS_ATTACH_TIMEOUT"
+                  status="timeout"
+                  break
+                fi
+                echo "vector store association batch $batch_id timed out after ${elapsed}s" >&2
+                if [ -s "$poll_path" ]; then
+                  cat "$poll_path" >&2
+                fi
+                exit 1
+              fi
+              sleep "$attach_interval"
+              poll_path="$RUNNER_TEMP/vs_attach_${offset}_poll.json"
+              poll_code=$(curl -sS -o "$poll_path" -w '%{http_code}' \
+                -X GET "https://api.openai.com/v1/vector_stores/$vs_id/file_batches/$batch_id" \
+                -H "Authorization: Bearer $OPENAI_API_KEY" || echo '000')
+              if [ "$poll_code" -lt 200 ] || [ "$poll_code" -ge 300 ]; then
+                echo "vector store association status poll failed (http=$poll_code)" >&2
+                if [ -s "$poll_path" ]; then
+                  cat "$poll_path" >&2
+                fi
+                exit 1
+              fi
+              status=$(jq -r '.status // empty' "$poll_path")
+              if [ -z "$status" ]; then
+                echo "vector store association status missing for batch $batch_id" >&2
+                if [ -s "$poll_path" ]; then
+                  cat "$poll_path" >&2
+                fi
+                exit 1
+              fi
+              if [ "$status" = "failed" ] || [ "$status" = "cancelled" ]; then
+                echo "vector store association batch $batch_id ended with status $status" >&2
+                if [ -s "$poll_path" ]; then
+                  cat "$poll_path" >&2
+                fi
+                exit 1
+              fi
+            done
+            counts=$(jq -c '.file_counts // {}' "$poll_path" 2>/dev/null || echo '{}')
+            if [ "$status" = "completed" ]; then
+              echo "vector store batch $batch_id completed (counts=$counts)"
+            elif [ "$status" = "timeout" ]; then
+              echo "vector store batch $batch_id indexing in background (counts=$counts)"
+            else
+              if [ "$allow_timeout" = "true" ] || [ "$allow_timeout" = "1" ]; then
+                echo "::warning title=vector-store::batch $batch_id finished with status '$status' (counts=$counts); proceeding per ALLOW_VS_ATTACH_TIMEOUT"
+              else
+                echo "vector store association batch $batch_id finished with unexpected status $status" >&2
+                if [ -s "$poll_path" ]; then
+                  cat "$poll_path" >&2
+                fi
+                exit 1
+              fi
+            fi
+          done
+          echo "vs_id=$vs_id" >> "$GITHUB_OUTPUT"
 
       - name: Build prompt
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' }}
@@ -814,7 +988,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Ask model for patch (Responses API)
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' && steps.pycount.outputs.py_files != '0' }}
         id: llm
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -830,9 +1004,9 @@ jobs:
           RES="$RUNNER_TEMP/llm_res.json"
           OUTTXT="$RUNNER_TEMP/llm_content.txt"
           PROMPT_FILE="${{ steps.prompt.outputs.path }}"
-          FILE_ID="${{ steps.upload_repo_zip.outputs.file_id }}"
-          if [ -z "$FILE_ID" ]; then
-            echo "missing repository file_id" >&2
+          VS_ID="${{ steps.vs_upload.outputs.vs_id }}"
+          if [ -z "$VS_ID" ]; then
+            echo "missing vector store id" >&2
             exit 1
           fi
           jq -Rs '.' < "$PROMPT_FILE" > "$RUNNER_TEMP/prompt.json"
@@ -846,21 +1020,19 @@ jobs:
             local tokens="$1"
             jq -n \
               --arg model "$OPENAI_MODEL" \
-              --arg file_id "$FILE_ID" \
+              --arg vs "$VS_ID" \
               --arg tokens "$tokens" \
               --slurpfile prompt "$RUNNER_TEMP/prompt.json" \
               '{
                 model: $model,
-                # derived requirement: force use of the uploaded repo bundle so Codex opens
-                # files via code_interpreter rather than claiming the workspace is empty.
-                tools: [{type:"code_interpreter", container:{type:"auto"}}],
+                # derived requirement: force the model to rely on the vector store corpus via
+                # file_search instead of the deprecated code_interpreter container.
+                tools: [{type:"file_search"}],
+                tool_resources: {file_search:{vector_store_ids:[$vs]}},
                 tool_choice: "required",
                 input: [
-                  {role:"system",content:[{type:"input_text",text:"You are an expert software engineer that proposes precise, minimal unified diffs. Use the code_interpreter container to unzip and inspect the attached repo_context.zip before drafting a diff."}]},
-                  {role:"user",content:[
-                    {type:"input_text",text:$prompt[0]},
-                    {type:"input_file",file_id:$file_id}
-                  ]}
+                  {role:"system",content:[{type:"input_text",text:"You are an expert software engineer that proposes precise, minimal unified diffs. Use the file_search tool to inspect the uploaded corpus before drafting a diff."}]},
+                  {role:"user",content:[{type:"input_text",text:$prompt[0]}]}
                 ],
                 max_output_tokens: ($tokens|tonumber)
               }' > "$REQ"
@@ -960,6 +1132,23 @@ jobs:
             rm -f "$WHY_FILE"
           fi
 
+      - name: Verify file_search usage
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' && steps.pycount.outputs.py_files != '0' }}
+        run: |
+          set -euo pipefail
+          RES="$RUNNER_TEMP/llm_res.json"
+          if [ ! -s "$RES" ]; then
+            echo "missing Responses payload at $RES" >&2
+            exit 1
+          fi
+          # derived requirement: reviewer requested "Force file_search usage instead of letting model skip corpus".
+          # Enforce by failing fast if the Responses transcript lacks a file_search tool call.
+          used=$(jq '[.. | objects | select(.tool_calls?) | .tool_calls[]?.type] | index("file_search")' "$RES")
+          if [ "$used" = "null" ]; then
+            echo "model response omitted file_search tool calls; corpus was not consulted" >&2
+            exit 1
+          fi
+
       - name: Extract model rationale (optional)
         if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
         id: rationale
@@ -1002,7 +1191,7 @@ jobs:
           fi
 
       - name: Extract fenced diff
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
         id: diff
         run: |
           set -euo pipefail
@@ -1019,7 +1208,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Note diff availability
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
         run: |
           set -euo pipefail
           diff_path="${{ steps.diff.outputs.diff_path }}"
@@ -1130,11 +1319,31 @@ jobs:
           temp_dir="$iter_dir/_temp"
           mkdir -p "$temp_dir"
 
+          corpus_dir="$RUNNER_TEMP/repo_corpus"
+          if [ -d "$corpus_dir" ]; then
+            zip_target="$RUNNER_TEMP/repo_context.zip"
+            rm -f "$zip_target"
+            # derived requirement: consolidate corpus handling so diagnostics reuse the
+            # same text bundle the vector store consumed instead of rebuilding archives.
+            (cd "$corpus_dir" && zip -qry "$zip_target" .) || true
+          fi
+
           placeholder="$iter_dir/README.txt"
           {
             printf 'Iterate diagnostics placeholder\n'
             printf 'No iterate payloads were captured for this run.\n'
           } >"$placeholder"
+
+          gate_src="$GITHUB_WORKSPACE/_artifacts/iterate/iterate_gate.json"
+          if [ -f "$gate_src" ]; then
+            cp "$gate_src" "$iter_dir/iterate_gate.json"
+          fi
+
+          inputs_src="$GITHUB_WORKSPACE/_artifacts/iterate/inputs"
+          if [ -d "$inputs_src" ]; then
+            mkdir -p "$iter_dir/inputs"
+            cp -a "$inputs_src/." "$iter_dir/inputs/" || true
+          fi
 
           # Professional note: create redacted request/response bundles and metadata per maintainer checklist.
           model="${{ env.OPENAI_MODEL }}"
@@ -1202,6 +1411,7 @@ jobs:
           copy_into_temp "$iter_dir/request.redacted.json" "request.redacted.json"
           copy_into_temp "$iter_dir/response.json" "response.json"
           copy_into_temp "$RUNNER_TEMP/repo_context.zip" "repo_context.zip"
+          copy_into_temp "$corpus_dir/REPO_TREE.txt" "REPO_TREE.txt"
 
           tokens_file="$iter_dir/tokens.txt"
           if [ -f "$res_raw" ]; then
@@ -1317,40 +1527,64 @@ jobs:
           printf 'dir=%s\n' "$iter_dir" >> "$GITHUB_OUTPUT"
           printf 'codex_log=%s\n' "$codex_log" >> "$GITHUB_OUTPUT"
 
+      - name: Summarize iterate gate snapshot
+        shell: pwsh
+        run: |
+          $workspace = Convert-Path '.'
+          $gatePath = Join-Path $workspace '_artifacts/iterate/iterate_gate.json'
+          if (Test-Path -LiteralPath $gatePath) {
+              try {
+                  $gate = Get-Content -LiteralPath $gatePath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+              } catch {
+                  $gate = $null
+              }
+              if ($gate) {
+                  $lines = @('### Iterate gate snapshot')
+                  $lines += "- proceed: $($gate.proceed)"
+                  $missing = if ($gate.missing_inputs) { [string]::Join(', ', $gate.missing_inputs) } else { 'none' }
+                  $lines += "- missing_inputs: $missing"
+                  $patterns = if ($gate.checked_patterns) { $gate.checked_patterns.Count } else { 0 }
+                  $lines += "- checked_patterns: $patterns"
+                  $lines += "- note: $($gate.note)"
+                  $lines | Out-File -Append -Encoding UTF8 $env:GITHUB_STEP_SUMMARY
+              }
+          }
+
       - name: Collect iterate artifact paths
         if: always()
         id: iter_paths
-        env:
-          DIAG_DIR: ${{ steps.diag_stage.outputs.dir }}
-          DIAG_CODEX_LOG: ${{ steps.diag_stage.outputs.codex_log }}
-          PATCH_LOG: ${{ runner.temp }}/patch.apply.log
         run: |
           set -euo pipefail
-          paths=".codex/**"
-          if [ -n "${DIAG_DIR:-}" ]; then
-            paths="$paths"$'\n'"${DIAG_DIR}/**"
+          cd "${GITHUB_WORKSPACE:?}"
+          mkdir -p _artifacts/iterate
+          paths=("_artifacts/iterate")
+          if [ -d ".codex" ]; then
+            paths+=(".codex")
           fi
-          if [ -n "${DIAG_CODEX_LOG:-}" ]; then
-            paths="$paths"$'\n'"${DIAG_CODEX_LOG}"
+          if [ -d "iterate" ]; then
+            paths+=("iterate")
           fi
-          paths="$paths"$'\n'"${PATCH_LOG}"
-          if [ -n "$paths" ]; then
-            {
-              printf 'list<<EOF_ITER\n'
-              printf '%s\n' "$paths"
-              printf 'EOF_ITER\n'
-            } >> "$GITHUB_OUTPUT"
+          if [ -f "codex_exec.log" ]; then
+            paths+=("codex_exec.log")
           fi
+          {
+            printf 'list<<EOF_ITER\n'
+            for p in "${paths[@]}"; do
+              printf '%s\n' "$p"
+            done
+            printf 'EOF_ITER\n'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload iterate logs artifact
-        if: ${{ always() && steps.llm.outcome != 'skipped' }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          # derived requirement: scope uploads to known workspace artifacts so the
+          # runner never glob-walks outside (earlier runs hit /boot/efi and failed
+          # with EACCES).
           path: |
-            .codex/**
-            ${{ steps.diag_stage.outputs.dir }}/**
-          include-hidden-files: true
+            ${{ steps.iter_paths.outputs.list }}
           if-no-files-found: error
           retention-days: 7
 
@@ -1613,6 +1847,39 @@ jobs:
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prep.outputs.ARTIFACTS }}/iterate
+
+      - name: Normalize iterate artifact layout
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          iter_root="${{ steps.prep.outputs.ARTIFACTS }}/iterate"
+          mkdir -p "$iter_root"
+          nested_dir="$iter_root/_artifacts/iterate"
+          if [ -d "$nested_dir" ]; then
+            echo "Flattening iterate artifact from $nested_dir"
+            shopt -s dotglob nullglob
+            for item in "$nested_dir"/*; do
+              base=$(basename "$item")
+              rm -rf "$iter_root/$base"
+              mv "$item" "$iter_root/"
+            done
+            rm -rf "$iter_root/_artifacts"
+          fi
+          shopt -s dotglob nullglob
+          entries=("$iter_root"/*)
+          if [ "${#entries[@]}" -eq 1 ] && [ -d "${entries[0]}" ]; then
+            echo "Flattening iterate artifact wrapper ${entries[0]}"
+            for item in "${entries[0]}"/*; do
+              base=$(basename "$item")
+              rm -rf "$iter_root/$base"
+              mv "$item" "$iter_root/"
+            done
+            rm -rf "${entries[0]}"
+          fi
+          # derived requirement: download-artifact@v4 nests the uploaded
+          # _artifacts/iterate payload one directory deeper; flatten it so the
+          # diagnostics publisher detects '* Iterate logs: found'.
 
       - name: Record iterate artifact status
         shell: pwsh
@@ -1946,7 +2213,7 @@ jobs:
           if (-not $items) { $items = @() }
           $manifestFiles = @()
           foreach ($item in $items) {
-            $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\\','/')
+            $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\','/')
             $manifestFiles += [PSCustomObject]@{
               path         = $relative
               size         = $item.Length
@@ -1961,7 +2228,19 @@ jobs:
             generated_utc = (Get-Date).ToUniversalTime().ToString('o')
             files         = $manifestFiles
           }
-          $manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.json')
+          $json = $manifest | ConvertTo-Json -Depth 6
+          $json | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.json')
+          try {
+            $manifestObj = $json | ConvertFrom-Json -Depth 6
+          } catch {
+            $manifestObj = $null
+          }
+          $filesForRender = @()
+          if ($manifestObj -and $manifestObj.files) {
+            $filesForRender = @($manifestObj.files)
+          }
+          # derived requirement: inventory.json went blank while HTML/TXT stayed populated; derive the mirrors from the parsed
+          # JSON payload so all formats stay in sync with the canonical manifest.
           $bulletLines = [System.Collections.Generic.List[string]]::new()
           $plainLines = [System.Collections.Generic.List[string]]::new()
           $htmlLines = [System.Collections.Generic.List[string]]::new()
@@ -1969,13 +2248,16 @@ jobs:
             $null = $htmlLines.Add($seed)
           }
 
-          foreach ($item in $items | Sort-Object FullName) {
-            $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\\','/')
-            $size = '{0:N0}' -f $item.Length
+          foreach ($entry in ($filesForRender | Sort-Object path)) {
+            $relative = $entry.path
+            if (-not $relative) { continue }
+            $sizeValue = 0
+            if ($entry.size -ne $null) { [void][int64]::TryParse($entry.size.ToString(), [ref]$sizeValue) }
+            $sizeText = ('{0:N0}' -f $sizeValue)
             $safe = $relative -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;' -replace '"', '&quot;'
-            $null = $bulletLines.Add(('- {0} bytes - `{1}`' -f $size, $relative))
-            $null = $plainLines.Add(('{0} bytes{1}{2}' -f $size, [char]9, $relative))
-            $null = $htmlLines.Add("<li><code>$safe</code> <span>($size bytes)</span></li>")
+            $null = $bulletLines.Add(('- {0} bytes - `{1}`' -f $sizeText, $relative))
+            $null = $plainLines.Add(('{0} bytes{1}{2}' -f $sizeText, [char]9, $relative))
+            $null = $htmlLines.Add("<li><code>$safe</code> <span>($sizeText bytes)</span></li>")
           }
 
           if ($bulletLines.Count -eq 0) {
@@ -2000,6 +2282,7 @@ jobs:
           DIAG: ${{ steps.prep.outputs.DIAG }}
           ARTIFACTS: ${{ steps.prep.outputs.ARTIFACTS }}
           REPO: ${{ github.repository }}
+          BRANCH: ${{ needs.iterate.outputs.branch }}
           SHA: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}

@@ -57,6 +57,7 @@ class Context:
     diag: Optional[Path]
     artifacts: Optional[Path]
     repo: str
+    branch: Optional[str]
     sha: str
     run_id: str
     run_attempt: str
@@ -87,6 +88,7 @@ def _get_context() -> Context:
     diag = _get_env_path("DIAG")
     artifacts = _get_env_path("ARTIFACTS")
     repo = os.getenv("REPO", "n/a")
+    branch = os.getenv("BRANCH")
     sha = os.getenv("SHA", "n/a")
     run_id = os.getenv("RUN_ID", "n/a")
     run_attempt = os.getenv("RUN_ATTEMPT", "n/a")
@@ -100,6 +102,7 @@ def _get_context() -> Context:
         diag=diag,
         artifacts=artifacts,
         repo=repo,
+        branch=branch,
         sha=sha,
         run_id=run_id,
         run_attempt=run_attempt,
@@ -160,6 +163,24 @@ def _iterate_logs_found(context: Context) -> bool:
         pass
 
     return False
+
+
+def _iterate_inputs_info(context: Context) -> Optional[Tuple[Path, List[Path]]]:
+    """Return the iterate input directory and sorted files when present."""
+
+    diag = context.diag
+    if not diag:
+        return None
+
+    inputs_root = diag / "_artifacts" / "iterate" / "inputs"
+    if not inputs_root.exists():
+        return None
+
+    files = sorted(p for p in inputs_root.glob("*.ndjson"))
+    if not files:
+        return None
+
+    return inputs_root, files
 
 
 def _repo_directory(context: Context) -> Optional[Path]:
@@ -433,12 +454,46 @@ def _load_json(path: Path) -> Optional[dict]:
         return None
 
 
+def _load_iterate_gate(context: Context) -> Optional[dict]:
+    diag = context.diag
+    if not diag:
+        return None
+    gate_path = diag / "_artifacts" / "iterate" / "iterate_gate.json"
+    return _load_json(gate_path)
+
+
 def _format_status_value(value: object) -> str:
     if isinstance(value, bool):
         return str(value).lower()
     if value is None:
         return "n/a"
     return str(value)
+
+
+def _compose_attempt_summary(status_data: Optional[dict]) -> Optional[str]:
+    if not isinstance(status_data, dict):
+        return None
+
+    return "attempted={0} gate={1} auth_ok={2} attempts_left={3}".format(
+        _format_status_value(status_data.get("attempted")),
+        _format_status_value(status_data.get("gate")),
+        _format_status_value(status_data.get("auth_ok")),
+        _format_status_value(status_data.get("attempts_left")),
+    )
+
+
+def _gate_summary_line(status_data: Optional[dict]) -> str:
+    if isinstance(status_data, dict):
+        for key in ("gate_summary", "summary", "status"):
+            value = status_data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        summary = _compose_attempt_summary(status_data)
+        if summary:
+            return summary
+
+    return "n/a"
 
 
 def _normalize_link(value: Optional[str]) -> Optional[str]:
@@ -479,6 +534,47 @@ def _relative_to_diag(path: Path, diag: Optional[Path]) -> str:
         except Exception:
             return path.as_posix()
         return Path(rel).as_posix()
+
+
+def _find_run_file(context: Context, filename: str) -> Optional[Path]:
+    diag = context.diag
+    if not diag:
+        return None
+
+    try:
+        candidates = sorted(diag.rglob(filename))
+    except OSError:
+        return None
+
+    fallback: Optional[Path] = None
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        if fallback is None:
+            fallback = candidate
+        try:
+            relative_parts = candidate.relative_to(diag).parts
+        except ValueError:
+            relative_parts = ()
+        if "iterate" in relative_parts:
+            return candidate
+
+    return fallback
+
+
+def _read_head_lines(path: Path, limit: int) -> List[str]:
+    lines: List[str] = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for _ in range(limit):
+                text = handle.readline()
+                if not text:
+                    break
+                lines.append(text.rstrip("\n"))
+    except OSError:
+        return []
+
+    return lines
 
 
 def _gather_iterate_tokens(
@@ -916,6 +1012,199 @@ def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
     return results
 
 
+
+def _find_ndjson_candidate(diag: Optional[Path], filename: str, *, prefer_real: bool) -> Optional[Path]:
+    if not diag:
+        return None
+
+    candidates: List[Tuple[str, Path]] = []
+    search_roots = [diag / "_artifacts" / "batch-check", diag / "logs"]
+    for root in search_roots:
+        if not root or not root.exists():
+            continue
+        for path in sorted(root.rglob(filename)):
+            rel = _relative_to_diag(path, diag).lower()
+            candidates.append((rel, path))
+
+    if not candidates:
+        return None
+
+    if prefer_real:
+        for rel, path in candidates:
+            if "real" in rel:
+                return path
+    else:
+        for rel, path in candidates:
+            if "real" not in rel:
+                return path
+
+    # Fall back to the first discovered candidate when the preferred lane is missing.
+    return candidates[0][1]
+
+
+def _summarize_ndjson_file(path: Path) -> Optional[dict]:
+    rows = 0
+    pass_count = 0
+    fail_count = 0
+
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                rows += 1
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    fail_count += 1
+                    continue
+
+                passed: Optional[bool]
+                value = obj.get("pass")
+                if isinstance(value, bool):
+                    passed = value
+                elif isinstance(value, str):
+                    lowered = value.strip().lower()
+                    if lowered == "true":
+                        passed = True
+                    elif lowered == "false":
+                        passed = False
+                    else:
+                        passed = None
+                else:
+                    passed = None
+
+                if passed is None:
+                    status = obj.get("status")
+                    if isinstance(status, str):
+                        lowered = status.lower()
+                        if lowered in {"pass", "success"}:
+                            passed = True
+                        elif lowered in {"fail", "failure"}:
+                            passed = False
+
+                if passed is None:
+                    passed = False
+
+                if passed:
+                    pass_count += 1
+                else:
+                    fail_count += 1
+    except OSError:
+        return None
+
+    return {"rows": rows, "pass": pass_count, "fail": fail_count}
+
+
+def _gather_real_lane_summaries(diag: Optional[Path]) -> List[dict]:
+    results: List[dict] = []
+    seen: set[Path] = set()
+    targets = [
+        ("real ci_test_results.ndjson", "ci_test_results.ndjson"),
+        ("real ~test-results.ndjson", "~test-results.ndjson"),
+    ]
+
+    for label, filename in targets:
+        path = _find_ndjson_candidate(diag, filename, prefer_real=True)
+        if not path:
+            path = _find_ndjson_candidate(diag, filename, prefer_real=False)
+        if not path or path in seen:
+            continue
+        summary = _summarize_ndjson_file(path)
+        if not summary:
+            continue
+        summary["label"] = label
+        summary["path"] = path
+        results.append(summary)
+        seen.add(path)
+
+    return results
+
+
+def _collect_real_failing_tests(diag: Optional[Path]) -> Optional[dict]:
+    if not diag:
+        return None
+
+    root = diag / "_artifacts" / "batch-check"
+    if not root.exists():
+        return None
+
+    candidates = sorted(root.rglob("failing-tests.txt"))
+    if not candidates:
+        return None
+
+    def _score(path: Path) -> Tuple[int, str]:
+        rel = _relative_to_diag(path, diag).lower()
+        return (0 if "real" in rel else 1, rel)
+
+    candidates.sort(key=_score)
+
+    for path in candidates:
+        try:
+            lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        except OSError:
+            continue
+        if not lines or all(line.lower() == "none" for line in lines):
+            continue
+        rel = _relative_to_diag(path, diag)
+        max_ids = 10
+        display = lines[:max_ids]
+        remaining = max(0, len(lines) - max_ids)
+        return {"ids": display, "more": remaining, "source": rel}
+
+    return None
+
+    results: List[dict] = []
+    seen_paths: set[Path] = set()
+
+    def search_for(name: str, prefer_cache: bool) -> Optional[Path]:
+        """Locate a specific NDJSON file while honoring cache vs real lanes."""
+
+        candidates = [diag / "logs", diag / "_artifacts" / "batch-check"]
+        for root in candidates:
+            if not root or not root.exists():
+                continue
+            for path in sorted(root.rglob(name)):
+                rel = _relative_to_diag(path, diag).lower()
+                if prefer_cache and "cache" not in rel:
+                    continue
+                if not prefer_cache and "cache" in rel:
+                    continue
+                return path
+        return None
+
+    # Professional note: expose at most one unzipped NDJSON per cache/real lane
+    # so the diagnostics quick links stay aligned with the published file list.
+    ndjson_targets = [
+        ("cache", "ci_test_results.ndjson"),
+        ("cache", "~test-results.ndjson"),
+        ("real", "ci_test_results.ndjson"),
+        ("real", "~test-results.ndjson"),
+    ]
+
+    for lane, filename in ndjson_targets:
+        prefer_cache = lane == "cache"
+        path = search_for(filename, prefer_cache)
+        if not path or path in seen_paths:
+            continue
+        seen_paths.add(path)
+        label = (
+            "Batch-check NDJSON (cache)"
+            if prefer_cache
+            else "Batch-check NDJSON (real)"
+        )
+        if filename.startswith("~"):
+            label += " ~test-results"
+        else:
+            label += " ci_test_results"
+        entry = _link_entry(diag, label, path)
+        if entry:
+            results.append(entry)
+
+    return results
+
+
 def _locate_iterate_root(context: Context) -> Optional[Path]:
     if context.artifacts and (context.artifacts / "iterate").exists():
         return context.artifacts / "iterate"
@@ -1044,6 +1333,7 @@ def _ensure_iterate_text_mirrors(
     mirror_json("response.json", "response.txt")
     mirror_json("iterate_status.json", "iterate_status.txt")
     mirror_json("first_failure.json", "first_failure.txt")
+    mirror_json("iterate_gate.json", "iterate_gate.txt")
 
 
 def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
@@ -1287,19 +1577,16 @@ def _build_markdown(
     rationale_present = bool(why_outcome and why_outcome.strip())
 
     attempt_summary = None
-    if not response_data and status_data:
-        attempt_summary = "attempted={0} gate={1} auth_ok={2} attempts_left={3}".format(
-            _format_status_value(status_data.get("attempted")),
-            _format_status_value(status_data.get("gate")),
-            _format_status_value(status_data.get("auth_ok")),
-            _format_status_value(status_data.get("attempts_left")),
-        )
+    if not response_data:
+        attempt_summary = _compose_attempt_summary(status_data)
 
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     batch_status = _batch_status(diag, context)
+    gate_data = _load_iterate_gate(context)
+    inputs_info = _iterate_inputs_info(context)
     lines: List[str] = []
 
     if iterate_log_status != "found":
@@ -1323,6 +1610,27 @@ def _build_markdown(
             f"- Artifact files enumerated: {artifact_count}",
         ]
     )
+    if gate_data:
+        stage_value = gate_data.get("stage", "n/a")
+        lines.append(f"- Gate stage: {stage_value}")
+        lines.append(f"- Gate proceed: {str(gate_data.get('proceed', True)).lower()}")
+        missing_inputs = gate_data.get("missing_inputs") or []
+        missing_line = ", ".join(str(item) for item in missing_inputs) if missing_inputs else "none"
+        lines.append(f"- Gate missing inputs: {missing_line}")
+
+    if inputs_info:
+        inputs_root, input_files = inputs_info
+        run_fragment = f"{context.run_id}-{context.run_attempt}" if context.run_attempt else context.run_id
+        lines.append(
+            f"- Iterate inputs source: public diagnostics page for run {run_fragment}"
+        )
+        rel_root = _relative_to_diag(inputs_root, diag) if diag else None
+        root_display = rel_root or str(inputs_root)
+        lines.append(f"  root: {root_display}")
+        for file_path in input_files:
+            rel_file = _relative_to_diag(file_path, diag) if diag else None
+            file_display = rel_file or str(file_path)
+            lines.append(f"  - {file_display}")
 
     if iterate_hint:
         lines.append(f"  {iterate_hint}")
@@ -1407,6 +1715,32 @@ def _build_markdown(
             if meta.get("html_url"):
                 lines.append(f"- Run page: {meta['html_url']}")
 
+    real_lane_summaries = _gather_real_lane_summaries(diag)
+    real_lane_failures = _collect_real_failing_tests(diag)
+    if real_lane_summaries:
+        lines.append("")
+        lines.append("## NDJSON (real lane)")
+        for entry in real_lane_summaries:
+            rows = entry.get("rows", 0)
+            pass_count = entry.get("pass", 0)
+            fail_count = entry.get("fail", 0)
+            path_obj = entry.get("path")
+            rel_path = _relative_to_diag(path_obj, diag) if path_obj else None
+            lines.append(f"- {entry['label']}: rows={rows} pass={pass_count} fail={fail_count}")
+            if rel_path:
+                lines.append(f"  - source: {rel_path}")
+    if real_lane_failures:
+        lines.append("")
+        lines.append("**Real lane failures detected:**")
+        for identifier in real_lane_failures["ids"]:
+            lines.append(f"- {identifier}")
+        remaining = real_lane_failures["more"]
+        source_path = real_lane_failures["source"]
+        if remaining > 0:
+            lines.append(f"- ... ({remaining} more; see {source_path})")
+        else:
+            lines.append(f"- Source: {source_path}")
+
     if ndjson_summaries:
         lines.append("")
         lines.append("## NDJSON summaries")
@@ -1490,19 +1824,15 @@ def _write_html(
     outcome = why_outcome or ("diff produced" if diff_produced else "n/a")
     rationale_present = bool(why_outcome and why_outcome.strip())
     attempt_summary = None
-    if not response_data and status_data:
-        attempt_summary = "attempted={0} gate={1} auth_ok={2} attempts_left={3}".format(
-            _format_status_value(status_data.get("attempted")),
-            _format_status_value(status_data.get("gate")),
-            _format_status_value(status_data.get("auth_ok")),
-            _format_status_value(status_data.get("attempts_left")),
-        )
+    if not response_data:
+        attempt_summary = _compose_attempt_summary(status_data)
 
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     batch_status = _batch_status(diag, context)
     diag_files = _diag_files(diag)
+    gate_data = _load_iterate_gate(context)
 
     if iterate_log_status != "found":
         outcome = "n/a"
@@ -1523,6 +1853,14 @@ def _write_html(
         {"label": "Batch-check run id", "value": batch_status},
         {"label": "Artifact files enumerated", "value": str(artifact_count)},
     ]
+    if gate_data:
+        status_pairs.append({"label": "Gate stage", "value": gate_data.get("stage", "n/a")})
+        status_pairs.append({"label": "Gate proceed", "value": str(gate_data.get("proceed", True)).lower()})
+        missing_inputs = gate_data.get("missing_inputs") or []
+        status_pairs.append({
+            "label": "Gate missing inputs",
+            "value": ", ".join(str(item) for item in missing_inputs) if missing_inputs else "none",
+        })
     if artifact_missing:
         status_pairs.append({"label": "Artifact sentinel", "value": artifact_missing})
 
@@ -1667,6 +2005,42 @@ def _write_html(
             html.append("</ul>")
             html.append("</section>")
 
+    real_lane_summaries = _gather_real_lane_summaries(diag)
+    real_lane_failures = _collect_real_failing_tests(diag)
+    if real_lane_summaries:
+        html.append("<section>")
+        html.append("<h2>NDJSON (real lane)</h2>")
+        html.append("<ul>")
+        for entry in real_lane_summaries:
+            label = _escape_html(entry.get("label", "unknown"))
+            rows = entry.get("rows", 0)
+            pass_count = entry.get("pass", 0)
+            fail_count = entry.get("fail", 0)
+            path_obj = entry.get("path")
+            rel_path = _relative_to_diag(path_obj, diag) if path_obj else None
+            details = _escape_html(f"rows={rows} pass={pass_count} fail={fail_count}")
+            if rel_path:
+                href = _escape_href(_normalize_link(rel_path))
+                html.append(f'<li>{label}: {details} (source: <a href="{href}">{_escape_html(rel_path)}</a>)</li>')
+            else:
+                html.append(f"<li>{label}: {details}</li>")
+        html.append("</ul>")
+        html.append("</section>")
+    if real_lane_failures:
+        html.append("<section>")
+        html.append("<h2>Real lane failures detected</h2>")
+        html.append("<ul>")
+        for identifier in real_lane_failures["ids"]:
+            html.append(f"<li>{_escape_html(identifier)}</li>")
+        remaining = real_lane_failures["more"]
+        source = real_lane_failures["source"]
+        if remaining > 0:
+            html.append(f"<li>... ({remaining} more; see {_escape_html(source)})</li>")
+        else:
+            html.append(f"<li>Source: {_escape_html(source)}</li>")
+        html.append("</ul>")
+        html.append("</section>")
+
     if ndjson_summaries:
         html.append("<section>")
         html.append("<h2>NDJSON summaries</h2>")
@@ -1740,224 +2114,140 @@ def _validate_iterate_status_line(markdown: str) -> None:
         )
 
 
-def _write_latest_json(context: Context) -> None:
+def _write_latest_json(
+    context: Context,
+    iterate_dir: Optional[Path],
+    iterate_temp: Optional[Path],
+    response_data: Optional[dict],
+    status_data: Optional[dict],
+) -> None:
     if not (context.site and context.diag):
         return
 
-    bundle_prefix = f"diag/{context.run_id}-{context.run_attempt}"
-    iterate_dir_candidate = _discover_iterate_dir(context)
-    # Professional note: reuse the shared iterate detection so latest.json mirrors
-    # the parser-facing status line and avoids diverging on empty artifacts.
-    iterate_found = _iterate_logs_found(context)
-    iterate_dir = iterate_dir_candidate if iterate_found else None
-    iterate_temp = (
-        _discover_temp_dir(iterate_dir_candidate, context)
-        if iterate_found
-        else None
-    )
+    run_slug = f"{context.run_id}-{context.run_attempt}"
+    bundle_relative = f"diag/{run_slug}/index.html"
 
-    diag_iterate_root = context.diag / "_artifacts" / "iterate" if context.diag else None
+    repo_name = context.repo.rsplit("/", 1)[-1] if context.repo else ""
+    base_path = "/"
+    if repo_name and not repo_name.endswith(".github.io"):
+        base_path = f"/{repo_name}"
 
-    diag_lookup_dirs: List[Path] = []
-    seen_diag: set[Path] = set()
+    if base_path == "/":
+        canonical_url = f"/{bundle_relative}"
+    else:
+        canonical_url = f"{base_path}/{bundle_relative}"
 
-    def add_diag(path: Optional[Path]) -> None:
-        if not path:
-            return
-        try:
-            if not path.exists() or not path.is_dir():
-                return
-        except OSError:
-            return
-        if path not in seen_diag:
-            diag_lookup_dirs.append(path)
-            seen_diag.add(path)
+    canonical_url = canonical_url.replace("//", "/")
 
-    if diag_iterate_root and diag_iterate_root.exists():
-        # Professional note: prefer the mirrored _temp directory so diagnostics
-        # link to the same iterate payload analysts inspect. This mirrors the
-        # iterate/_temp layout while still supporting legacy nested bundles.
-        add_diag(diag_iterate_root / "_temp")
-        if iterate_dir:
-            add_diag(diag_iterate_root / iterate_dir.name / "_temp")
-            add_diag(diag_iterate_root / iterate_dir.name)
-        try:
-            for child in sorted(diag_iterate_root.iterdir()):
-                if not child.is_dir():
-                    continue
-                add_diag(child / "_temp")
-                add_diag(child)
-        except OSError:
-            pass
-        add_diag(diag_iterate_root)
-
-    def diag_iterate_path(name: str) -> Optional[Path]:
-        if not iterate_found:
-            return None
-        for root in diag_lookup_dirs:
-            candidate = root / name
-            if candidate.exists():
-                return candidate
-        if diag_iterate_root and diag_iterate_root.exists():
-            try:
-                return next(
-                    candidate
-                    for candidate in diag_iterate_root.rglob(name)
-                    if candidate.is_file()
-                )
-            except StopIteration:
-                return None
-        return None
-
-    def diag_href(path: Optional[Path]) -> Optional[str]:
-        if not path or not context.diag:
-            return None
-        try:
-            relative = path.relative_to(context.diag).as_posix()
-        except ValueError:
-            return None
-        return f"{bundle_prefix}/{relative}"
-
-    response_data = _load_iterate_json(iterate_dir, iterate_temp, "response.json")
-    status_data = _load_iterate_json(iterate_dir, iterate_temp, "iterate_status.json")
-    why_outcome = _read_iterate_first_line(iterate_dir, iterate_temp, "why_no_diff.txt")
-
-    model_value: Optional[str] = None
-    if response_data and response_data.get("model") is not None:
-        model_value = str(response_data["model"])
-    elif iterate_found:
-        model_text = _read_iterate_text(iterate_dir, iterate_temp, "model.txt")
-        model_value = model_text if model_text != "n/a" else None
-
-    http_status_value: Optional[str] = None
-    if response_data and response_data.get("http_status") is not None:
-        http_status_value = str(response_data["http_status"])
-    elif status_data and status_data.get("http_status") is not None:
-        http_status_value = str(status_data["http_status"])
-    elif iterate_found:
-        http_text = _read_iterate_text(iterate_dir, iterate_temp, "http_status.txt")
-        http_status_value = http_text if http_text != "n/a" else None
-
-    tokens_data = (
-        _gather_iterate_tokens(iterate_dir, iterate_temp, response_data)
-        if iterate_found
-        else {"prompt": "n/a", "completion": "n/a", "total": "n/a"}
-    )
-
-    iterate_directory_href = (
-        diag_href(diag_iterate_root) if diag_iterate_root and diag_iterate_root.exists() else None
-    )
-
-    prompt_path = diag_iterate_path("prompt.txt")
-    response_json_path = diag_iterate_path("response.json")
-    response_txt_path = diag_iterate_path("response.txt")
-    status_json_path = diag_iterate_path("iterate_status.json")
-    status_txt_path = diag_iterate_path("iterate_status.txt")
-    why_path = diag_iterate_path("why_no_diff.txt")
-    first_failure_json_path = diag_iterate_path("first_failure.json")
-    first_failure_txt_path = diag_iterate_path("first_failure.txt")
-    patch_apply_log_path = diag_iterate_path("patch.apply.log")
-    diff_path = diag_iterate_path("patch.diff")
-    exec_log_path = diag_iterate_path("exec.log")
-
-    iterate_payload = {
-        "found": iterate_found,
-        "directory": iterate_directory_href if iterate_found else None,
-        "prompt": diag_href(prompt_path) if iterate_found else None,
-        "response": diag_href(response_json_path) if iterate_found else None,
-        "response_json": diag_href(response_json_path) if iterate_found else None,
-        "response_txt": diag_href(response_txt_path) if iterate_found else None,
-        "status_json": diag_href(status_json_path) if iterate_found else None,
-        "status_txt": diag_href(status_txt_path) if iterate_found else None,
-        "why_no_diff": diag_href(why_path) if iterate_found else None,
-        "first_failure_json": diag_href(first_failure_json_path)
-        if iterate_found
-        else None,
-        "first_failure_txt": diag_href(first_failure_txt_path)
-        if iterate_found
-        else None,
-        "patch_apply_log": diag_href(patch_apply_log_path) if iterate_found else None,
-        "diff": diag_href(diff_path) if iterate_found else None,
-        "log": diag_href(exec_log_path) if iterate_found else None,
-        "metadata": {
-            "model": model_value,
-            "http_status": http_status_value,
-            "tokens": tokens_data,
-            "outcome": why_outcome,
-        },
-    }
-
-    if not iterate_found:
-        iterate_payload.update(
-            {
-                "directory": None,
-                "prompt": None,
-                "response": None,
-                "response_json": None,
-                "response_txt": None,
-                "status_json": None,
-                "status_txt": None,
-                "why_no_diff": None,
-                "first_failure_json": None,
-                "first_failure_txt": None,
-                "patch_apply_log": None,
-                "diff": None,
-                "log": None,
-            }
-        )
-
-    data = {
-        "repo": context.repo,
-        "run_id": context.run_id,
-        "run_attempt": context.run_attempt,
-        "sha": context.sha,
-        "bundle_url": f"{bundle_prefix}/index.html",
-        "inventory": f"{bundle_prefix}/inventory.json",
-        "workflow": f"{bundle_prefix}/wf/codex-auto-iterate.yml.txt",
-        "iterate": iterate_payload,
-    }
+    # Professional note: latest.json now serves as a lightweight pointer so bots
+    # can locate the newest diagnostics run without diffing large manifests.
+    payload = {"run_id": run_slug, "url": canonical_url}
 
     latest_path = context.site / "latest.json"
-    latest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     ensure_txt_mirror(latest_path)
 
     latest_txt_path = context.site / "latest.txt"
-    # Professional note: keep a flat text manifest so lightweight clients can
-    # resolve diagnostics links without parsing JSON.
-    flat_lines: List[str] = []
-
-    def add_line(key: str, value: Optional[str]) -> None:
-        if isinstance(value, str) and value:
-            flat_lines.append(f"{key}={value}")
-
-    add_line("bundle_url", data.get("bundle_url"))
-    add_line("inventory", data.get("inventory"))
-    add_line("workflow", data.get("workflow"))
-
-    iterate_section = data.get("iterate")
-    if isinstance(iterate_section, dict):
-        for key in [
-            "directory",
-            "prompt",
-            "response",
-            "response_json",
-            "response_txt",
-            "status_json",
-            "status_txt",
-            "why_no_diff",
-            "first_failure_json",
-            "first_failure_txt",
-            "patch_apply_log",
-            "diff",
-            "log",
-        ]:
-            add_line(f"iterate.{key}", iterate_section.get(key))
-
-    latest_txt_payload = "\n".join(flat_lines)
-    if flat_lines:
-        latest_txt_payload += "\n"
-    latest_txt_path.write_text(latest_txt_payload, encoding="utf-8")
+    latest_txt_path.write_text(canonical_url + "\n", encoding="utf-8")
     ensure_txt_mirror(latest_txt_path)
+
+
+def _write_run_index_txt(
+    context: Context,
+    iterate_dir: Optional[Path],
+    iterate_temp: Optional[Path],
+    response_data: Optional[dict],
+    status_data: Optional[dict],
+) -> None:
+    diag = context.diag
+    if not diag:
+        return
+
+    run_slug = f"{context.run_id}-{context.run_attempt}"
+    branch_value = (context.branch or "n/a").strip() or "n/a"
+    gate_line = _gate_summary_line(status_data)
+
+    model_value = "n/a"
+    if response_data and response_data.get("model") is not None:
+        model_value = str(response_data["model"])
+    else:
+        model_text = _read_iterate_text(iterate_dir, iterate_temp, "model.txt")
+        if model_text and model_text != "n/a":
+            model_value = model_text
+
+    http_value = "n/a"
+    if response_data and response_data.get("http_status") is not None:
+        http_value = str(response_data["http_status"])
+    elif status_data and status_data.get("http_status") is not None:
+        http_value = str(status_data["http_status"])
+    else:
+        http_text = _read_iterate_text(iterate_dir, iterate_temp, "http_status.txt")
+        if http_text and http_text != "n/a":
+            http_value = http_text
+
+    lines = [
+        f"Run: {run_slug}",
+        f"Branch: {branch_value}",
+        f"Gate: {gate_line}",
+        f"Iterate: model={model_value}; http={http_value}",
+        "Files:",
+    ]
+
+    file_order = [
+        "prompt.txt",
+        "why_no_diff.txt",
+        "request.redacted.json",
+        "response.json",
+        "repo_context.zip",
+    ]
+
+    any_files = False
+    for filename in file_order:
+        path = _find_run_file(context, filename)
+        if not path:
+            continue
+        rel = _relative_to_diag(path, context.diag)
+        lines.append(f"  - {rel}")
+        any_files = True
+
+    if not any_files:
+        lines.append("  - (no iterate files located)")
+
+    inputs_info = _iterate_inputs_info(context)
+    if inputs_info:
+        inputs_root, input_files = inputs_info
+        rel_root = _relative_to_diag(inputs_root, context.diag) if context.diag else None
+        root_display = rel_root or inputs_root.as_posix()
+        lines.append("")
+        lines.append(f"Iterate inputs source: public diagnostics page for run {run_slug}")
+        lines.append(f"root: {root_display}")
+        for file_path in input_files:
+            rel_file = _relative_to_diag(file_path, context.diag) if context.diag else None
+            file_display = rel_file or file_path.as_posix()
+            lines.append(f"  - {file_display}")
+
+    why_path = _find_run_file(context, "why_no_diff.txt")
+    why_lines = _read_head_lines(why_path, 10) if why_path else []
+    if why_lines:
+        lines.append("")
+        lines.append("Rationale:")
+        for entry in why_lines:
+            lines.append(f"  {entry}")
+
+    prompt_path = _find_run_file(context, "prompt.txt")
+    prompt_lines = _read_head_lines(prompt_path, 120) if prompt_path else []
+    if prompt_lines:
+        lines.append("")
+        lines.append("Prompt (head):")
+        for entry in prompt_lines:
+            lines.append(f"  {entry}")
+
+    lines.append("")
+
+    try:
+        (diag / "index.txt").write_text("\n".join(lines), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _has_file(site: Optional[Path], relative: str) -> bool:
@@ -2203,7 +2493,7 @@ def main() -> None:
         _write_global_txt_mirrors(context.diag, context.diag / "_mirrors")
 
     if context.site:
-        _write_latest_json(context)
+        _write_latest_json(context, iterate_dir, iterate_temp, response_data, status_data)
 
     diag_markdown = _build_markdown(
         context,
@@ -2230,6 +2520,7 @@ def main() -> None:
         )
         (context.diag / "index.html").write_text(diag_html, encoding="utf-8")
         _write_summary_files(context, iterate_dir, iterate_temp, response_data, why_outcome)
+        _write_run_index_txt(context, iterate_dir, iterate_temp, response_data, status_data)
 
     if context.site:
         site_markdown, site_html = _build_site_overview(

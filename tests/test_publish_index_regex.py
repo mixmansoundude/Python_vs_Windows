@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 import zipfile
@@ -6,9 +7,13 @@ from unittest.mock import patch
 
 from tools.diag.publish_index import (
     Context,
+    _build_markdown,
     _build_site_overview,
     _validate_iterate_status_line,
     _write_global_txt_mirrors,
+    _write_html,
+    _write_latest_json,
+    _write_run_index_txt,
 )
 
 
@@ -54,6 +59,13 @@ class MirrorGenerationTest(unittest.TestCase):
             response_path = iterate_temp / "response.json"
             response_path.write_text("{\"foo\": \"bar\"}", encoding="utf-8")
 
+            gate_path = root / "_artifacts" / "iterate" / "iterate_gate.json"
+            gate_path.parent.mkdir(parents=True, exist_ok=True)
+            gate_path.write_text(
+                '{"stage":"iterate-gate","proceed":true,"missing_inputs":["tests~test-results.ndjson"]}',
+                encoding="utf-8",
+            )
+
             logs_dir = root / "logs"
             logs_dir.mkdir(parents=True, exist_ok=True)
             zip_path = logs_dir / "example.zip"
@@ -69,6 +81,12 @@ class MirrorGenerationTest(unittest.TestCase):
             self.assertIn('"foo"', json_preview)
             self.assertIn("  \"foo\"", json_preview)
             self.assertTrue(json_preview.endswith("\n"))
+
+            gate_mirror = mirrors_root / "_artifacts" / "iterate" / "iterate_gate.json.txt"
+            self.assertTrue(gate_mirror.exists(), "Iterate gate preview should be generated")
+            gate_preview = gate_mirror.read_text(encoding="utf-8")
+            self.assertIn('"stage": "iterate-gate"', gate_preview)
+            self.assertIn('"missing_inputs"', gate_preview)
 
             zip_mirror = mirrors_root / "logs" / "example.zip.txt"
             self.assertTrue(zip_mirror.exists(), "ZIP preview should be generated")
@@ -101,6 +119,7 @@ class QuickLinksRenderingTest(unittest.TestCase):
             diag=self.diag,
             artifacts=None,
             repo="owner/repo",
+            branch="main",
             sha="deadbeef",
             run_id="1234",
             run_attempt="1",
@@ -176,6 +195,121 @@ class QuickLinksRenderingTest(unittest.TestCase):
             html,
         )
         self.assertEqual(mock_bundle_links.call_count, 1)
+
+
+    def test_real_ndjson_summary_and_failures(self) -> None:
+        real_root = self.diag / "_artifacts" / "batch-check" / "diag-selftest-real-1"
+        logs_dir = real_root / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        (logs_dir / "ci_test_results.ndjson").write_text(
+            '{"id":"a","pass":true}\n{"id":"b","pass":false}\n{"id":"c"}\n',
+            encoding="utf-8",
+        )
+        (logs_dir / "~test-results.ndjson").write_text(
+            '{"id":"filtered","pass":true}\n',
+            encoding="utf-8",
+        )
+
+        failure_dir = real_root / "batchcheck-failures-real"
+        failure_dir.mkdir(parents=True, exist_ok=True)
+        (failure_dir / "failing-tests.txt").write_text(
+            "failure.one\nfailure.two\n",
+            encoding="utf-8",
+        )
+
+        context = self._make_context()
+        markdown = _build_markdown(
+            context,
+            iterate_dir=None,
+            iterate_temp=None,
+            built_utc="2024-01-01T00:00:00Z",
+            built_ct="2023-12-31T18:00:00-06:00",
+            response_data=None,
+            status_data=None,
+            why_outcome=None,
+        )
+
+        self.assertIn("## NDJSON (real lane)", markdown)
+        self.assertIn("- real ci_test_results.ndjson: rows=3 pass=1 fail=2", markdown)
+        self.assertIn("- real ~test-results.ndjson: rows=1 pass=1 fail=0", markdown)
+        self.assertIn("**Real lane failures detected:**", markdown)
+        self.assertIn("- failure.one", markdown)
+        self.assertIn("- failure.two", markdown)
+        self.assertIn(
+            "- Source: _artifacts/batch-check/diag-selftest-real-1/batchcheck-failures-real/failing-tests.txt",
+            markdown,
+        )
+
+        html = _write_html(
+            context,
+            iterate_dir=None,
+            iterate_temp=None,
+            built_utc="2024-01-01T00:00:00Z",
+            built_ct="2023-12-31T18:00:00-06:00",
+            response_data=None,
+            status_data=None,
+            why_outcome=None,
+        )
+
+        self.assertIn("<h2>NDJSON (real lane)</h2>", html)
+        self.assertIn("rows=3 pass=1 fail=2", html)
+        self.assertIn("rows=1 pass=1 fail=0", html)
+        self.assertIn("<h2>Real lane failures detected</h2>", html)
+        self.assertIn("failure.one", html)
+        self.assertIn("failure.two", html)
+        self.assertIn("failing-tests.txt", html)
+
+    def test_latest_manifest_pointer_files(self) -> None:
+        context = self._make_context()
+        _write_latest_json(context, None, None, None, None)
+
+        latest_json = self.site / "latest.json"
+        payload = json.loads(latest_json.read_text(encoding="utf-8"))
+        self.assertEqual(
+            payload,
+            {"run_id": "1234-1", "url": "/repo/diag/1234-1/index.html"},
+        )
+
+        latest_txt = (self.site / "latest.txt").read_text(encoding="utf-8")
+        self.assertEqual(latest_txt, "/repo/diag/1234-1/index.html\n")
+
+    def test_run_index_txt_mirrors_prompt_and_rationale(self) -> None:
+        context = self._make_context()
+        iterate_temp = self.diag / "_artifacts" / "iterate" / "_temp"
+        iterate_temp.mkdir(parents=True, exist_ok=True)
+
+        (iterate_temp / "prompt.txt").write_text("line1\nline2\n", encoding="utf-8")
+        (iterate_temp / "why_no_diff.txt").write_text("reason1\nreason2\n", encoding="utf-8")
+        (iterate_temp / "request.redacted.json").write_text("{}", encoding="utf-8")
+        (iterate_temp / "response.json").write_text("{}", encoding="utf-8")
+        (iterate_temp / "repo_context.zip").write_bytes(b"PK")
+
+        inputs_dir = self.diag / "_artifacts" / "iterate" / "inputs"
+        inputs_dir.mkdir(parents=True, exist_ok=True)
+        (inputs_dir / "ci_test_results.ndjson").write_text('{"id":"a","pass":false}\n', encoding="utf-8")
+        (inputs_dir / "tests~test-results.ndjson").write_text('{"id":"b","pass":true}\n', encoding="utf-8")
+
+        response_data = {"model": "gpt-4o", "http_status": 200}
+        status_data = {"gate_summary": "pass: everything ok"}
+
+        _write_run_index_txt(context, None, None, response_data, status_data)
+
+        index_txt = (self.diag / "index.txt").read_text(encoding="utf-8")
+
+        self.assertIn("Run: 1234-1", index_txt)
+        self.assertIn("Branch: main", index_txt)
+        self.assertIn("Gate: pass: everything ok", index_txt)
+        self.assertIn("Iterate: model=gpt-4o; http=200", index_txt)
+        self.assertIn("_artifacts/iterate/_temp/prompt.txt", index_txt)
+        self.assertIn("_artifacts/iterate/_temp/repo_context.zip", index_txt)
+        self.assertIn("Iterate inputs source: public diagnostics page for run 1234-1", index_txt)
+        self.assertIn("root: _artifacts/iterate/inputs", index_txt)
+        self.assertIn("  - _artifacts/iterate/inputs/ci_test_results.ndjson", index_txt)
+        self.assertIn("  - _artifacts/iterate/inputs/tests~test-results.ndjson", index_txt)
+        self.assertIn("Rationale:", index_txt)
+        self.assertIn("  reason1", index_txt)
+        self.assertIn("Prompt (head):", index_txt)
+        self.assertIn("  line1", index_txt)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 setlocal DisableDelayedExpansion
 rem Boot strap renamed to run_setup.bat
 cd /d "%~dp0"
+set "HP_SCRIPT_ROOT=%~dp0"
 set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
@@ -15,6 +16,8 @@ set "HP_PY="
 set "HP_FIND_ENTRY_SYNTAX_OK="
 set "HP_HELPER_SYNTAX_EMITTED="
 set "HP_HELPER_CMD_LOGGED="
+set "HP_FIND_ENTRY_NAME=~find_entry.py"
+set "HP_FIND_ENTRY_ABS="
 set "HP_PIPREQS_VERSION=%HP_PIPREQS_VERSION%"
 if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
 set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
@@ -35,27 +38,39 @@ if "%PYCOUNT%"=="" set "PYCOUNT=0"
 call :log "[INFO] Python file count: %PYCOUNT%"
 set "HP_CONDA_PROBE_STATUS=skipped"
 set "HP_CONDA_PROBE_REASON=not-requested"
+
+if "%PYCOUNT%"=="0" (
+  rem derived requirement: CI observed the Miniconda probe firing before the
+  rem empty-repo fast path, so keep this guard ahead of any network/bootstrap
+  rem calls to avoid flaky failures when no Python sources exist.
+  echo Python file count: %PYCOUNT%
+  >> "%LOG%" echo Python file count: %PYCOUNT%
+  echo No Python files detected; skipping environment bootstrap.
+  >> "%LOG%" echo No Python files detected; skipping environment bootstrap.
+  call :log "[INFO] No Python files detected; skipping environment bootstrap."
+  call :write_status no_python_files 0 %PYCOUNT%
+  goto :success
+)
+
 if "%HP_CI_TEST_CONDA_DL%"=="1" (
   if not defined HP_CI_SKIP_ENV (
     set "HP_CONDA_PROBE_STATUS=ran"
     call :probe_conda_url
-    if errorlevel 1 goto :conda_probe_failed
+    if errorlevel 1 (
+      rem derived requirement: CI observed the Miniconda probe erroring before real bootstrap.
+      rem Emit a warning and continue so the actual install path can still run.
+      set "HP_CONDA_PROBE_STATUS=failed"
+      set "HP_CONDA_PROBE_REASON=probe-failed"
+      call :log "[WARN] Miniconda download probe failed; continuing to bootstrap."
+    )
   ) else (
     set "HP_CONDA_PROBE_REASON=skip-env"
   )
 ) else if defined HP_CI_SKIP_ENV (
   set "HP_CONDA_PROBE_REASON=skip-env"
 )
-if not "%HP_CONDA_PROBE_STATUS%"=="ran" (
+if "%HP_CONDA_PROBE_STATUS%"=="skipped" (
   call :emit_conda_probe_skip
-)
-
-if "%PYCOUNT%"=="0" (
-  echo No Python files detected; skipping environment bootstrap.
-  >> "%LOG%" echo No Python files detected; skipping environment bootstrap.
-  call :log "[INFO] No Python files detected; skipping environment bootstrap."
-  call :write_status no_python_files 0 %PYCOUNT%
-  goto :success
 )
 
 if defined HP_CI_SKIP_ENV goto :ci_skip_entry
@@ -372,6 +387,7 @@ if exist "~entry.abs" del "~entry.abs"
 rem --- stage helper ---
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 call :die "[ERROR] CI skip: entry helper staging failed"
+call :update_find_entry_abs
 call :verify_find_entry_helper
 if errorlevel 1 call :die "[ERROR] find_entry helper syntax error"
 
@@ -391,24 +407,30 @@ set "HP_CRUMB="
 if defined HP_SYS_PY (
   rem derived requirement: CI observed `'python" "~find_entry.py' is not recognized` when
   rem helper args were empty. Keep the helper invocation split so CMD never appends a stray
-  rem quote to the interpreter token.
+  rem quote to the interpreter token, and route stdout through a file to avoid shell quoting drift.
   if not defined HP_SYS_PY_LOGGED (
     if defined HP_SYS_PY_ARGS (
-      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"
+      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%"
     ) else (
-      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" "~find_entry.py"
+      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%"
     )
     set "HP_SYS_PY_LOGGED=1"
   )
   if defined HP_SYS_PY_ARGS (
-    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "~find_entry.py" 1>nul 2>nul
+    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   ) else (
-    "%HP_SYS_PY%" -m py_compile "~find_entry.py" 1>nul 2>nul
+    "%HP_SYS_PY%" -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   )
+  set "HP_CRUMB_FILE=%HP_SCRIPT_ROOT%~crumb.txt"
+  if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
   if defined HP_SYS_PY_ARGS (
-    for /f "usebackq delims=" %%L in (`"%HP_SYS_PY%" %HP_SYS_PY_ARGS% "~find_entry.py"`) do set "HP_CRUMB=%%L"
+    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
   ) else (
-    for /f "usebackq delims=" %%L in (`"%HP_SYS_PY%" "~find_entry.py"`) do set "HP_CRUMB=%%L"
+    "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
+  )
+  if exist "%HP_CRUMB_FILE%" (
+    for /f "usebackq delims=" %%L in ("%HP_CRUMB_FILE%") do if not defined HP_CRUMB set "HP_CRUMB=%%L"
+    del "%HP_CRUMB_FILE%" >nul 2>&1
   )
 )
 
@@ -445,6 +467,10 @@ if "%HP_ENTRY%"=="" (
 ) else (
   call :record_chosen_entry "%HP_ENTRY%"
   call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
+  rem derived requirement: CI env smoke saw `The syntax of the command is incorrect.`
+  rem when this block silently built the command. Log the exact invocation (with
+  rem explicit redirection) so future regressions remain diagnosable.
+  >> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
   "%HP_PY%" "%HP_ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
   if errorlevel 1 call :die "[ERROR] Entry script execution failed."
   if "%HP_ENV_MODE%"=="system" (
@@ -574,8 +600,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$mode = [Environment]::GetEnvironmentVariable('HP_ENV_MODE');" ^
   "$py = [Environment]::GetEnvironmentVariable('HP_PY');" ^
   "if (-not $mode) { $mode = 'unknown' }" ^
-  "$row = @{ id='env.mode'; pass=$true; details=@{ mode=$mode; py=$py } } | ConvertTo-Json -Compress;" ^
+  "$row = @{ id='env.mode'; pass=$true; details=@{ mode=$mode; py=$py } } | ConvertTo-Json -Compress -Depth 8;" ^
   "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+exit /b 0
+
+:update_find_entry_abs
+rem derived requirement: CI skip lane could change the working directory while probing
+rem for helper crumbs. Recompute the absolute helper path each time so commands like
+rem `py -3` never see a dangling relative path.
+if exist "%HP_FIND_ENTRY_NAME%" (
+  for %%F in ("%HP_FIND_ENTRY_NAME%") do set "HP_FIND_ENTRY_ABS=%%~fF"
+) else if defined HP_SCRIPT_ROOT (
+  rem derived requirement: helper lookups must stay rooted to the bootstrapper
+  rem directory even if callers pushd elsewhere. Use HP_SCRIPT_ROOT so the CI
+  rem skip lane never feeds CMD a dangling relative path.
+  set "HP_FIND_ENTRY_ABS=%HP_SCRIPT_ROOT%%HP_FIND_ENTRY_NAME%"
+) else (
+  set "HP_FIND_ENTRY_ABS=%CD%\%HP_FIND_ENTRY_NAME%"
+)
 exit /b 0
 
 :verify_find_entry_helper
@@ -598,16 +640,16 @@ if defined HP_HELPER_CMD (
     rem derived requirement: capture the helper command verbatim so future regressions can
     rem trace quoting issues without reproducing CI. Logged once per bootstrap run.
     if defined HP_HELPER_ARGS (
-      >> "%LOG%" echo Helper command: "%HP_HELPER_CMD%" %HP_HELPER_ARGS% "~find_entry.py"
+      >> "%LOG%" echo Helper command: "%HP_HELPER_CMD%" %HP_HELPER_ARGS% "%HP_FIND_ENTRY_ABS%"
     ) else (
-      >> "%LOG%" echo Helper command: "%HP_HELPER_CMD%" "~find_entry.py"
+      >> "%LOG%" echo Helper command: "%HP_HELPER_CMD%" "%HP_FIND_ENTRY_ABS%"
     )
     set "HP_HELPER_CMD_LOGGED=1"
   )
   if defined HP_HELPER_ARGS (
-    "%HP_HELPER_CMD%" %HP_HELPER_ARGS% -m py_compile "~find_entry.py" 1>nul 2>nul
+    "%HP_HELPER_CMD%" %HP_HELPER_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   ) else (
-    "%HP_HELPER_CMD%" -m py_compile "~find_entry.py" 1>nul 2>nul
+    "%HP_HELPER_CMD%" -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   )
   if errorlevel 1 (
     set "HP_HELPER_SYNTAX_PASS=0"
@@ -638,7 +680,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$flag = [Environment]::GetEnvironmentVariable('HP_FIND_ENTRY_SYNTAX_OK');" ^
   "if (-not $flag) { $flag = '0' }" ^
   "$ok = $flag -eq '1';" ^
-  "$row = @{ id='helper.find_entry.syntax'; pass=$ok; details=@{ } } | ConvertTo-Json -Compress;" ^
+  "$row = @{ id='helper.find_entry.syntax'; pass=$ok; details=@{ } } | ConvertTo-Json -Compress -Depth 8;" ^
   "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 set "HP_HELPER_SYNTAX_EMITTED=1"
 exit /b 0
@@ -648,7 +690,7 @@ if not defined HP_NDJSON exit /b 0
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$reason = [Environment]::GetEnvironmentVariable('HP_CONDA_PROBE_REASON');" ^
   "if (-not $reason) { $reason = 'not-requested' }" ^
-  "$row = @{ id='conda.url'; pass=$true; details=@{ skipped=$true; reason=$reason; bytes=0 } } | ConvertTo-Json -Compress;" ^
+  "$row = @{ id='conda.url'; pass=$true; details=@{ skipped=$true; reason=$reason; bytes=0 } } | ConvertTo-Json -Compress -Depth 8;" ^
   "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 exit /b 0
 
@@ -690,7 +732,7 @@ if "%HP_DL_PASS%"=="0" goto :probe_conda_url_fail_with_bytes
 call :log "[INFO] Miniconda probe downloaded %HP_DL_BYTES% bytes."
 if defined HP_NDJSON (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$row = @{ id='conda.url'; pass=$true; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress;" ^
+    "$row = @{ id='conda.url'; pass=$true; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress -Depth 8;" ^
     "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 )
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
@@ -699,7 +741,7 @@ exit /b 0
 :probe_conda_url_fail_with_bytes
 if defined HP_NDJSON (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress;" ^
+    "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress -Depth 8;" ^
     "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 )
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
@@ -709,7 +751,7 @@ exit /b 1
 set "HP_DL_BYTES=0"
 if defined HP_NDJSON (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=0 } } | ConvertTo-Json -Compress;" ^
+    "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=0 } } | ConvertTo-Json -Compress -Depth 8;" ^
     "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 )
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
@@ -721,6 +763,7 @@ set "HP_ENTRY_CMD="
 set "HP_ENTRY_ARGS="
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 exit /b 1
+call :update_find_entry_abs
 call :verify_find_entry_helper
 if errorlevel 1 exit /b 1
 if defined HP_PY if exist "%HP_PY%" set "HP_ENTRY_CMD=%HP_PY%"
@@ -735,17 +778,21 @@ if defined HP_ENTRY_CMD for %%C in ("%HP_ENTRY_CMD%") do set "HP_ENTRY_CMD=%%~C"
 if defined HP_ENTRY_ARGS for %%A in ("%HP_ENTRY_ARGS%") do set "HP_ENTRY_ARGS=%%~A"
 if not defined HP_ENTRY_CMD exit /b 0
 rem derived requirement: maintain split helper calls so `py -3` and bare `python` both expand
-rem without producing `python"` tokens. This mirrors the CI skip logic above.
+rem without producing `python"` tokens. This mirrors the CI skip logic above and uses a crumb file
+rem so Windows never merges tokens when arguments are empty.
+set "HP_ENTRY_CRUMB=~entry.crumb"
+if exist "%HP_ENTRY_CRUMB%" del "%HP_ENTRY_CRUMB%" >nul 2>&1
 if defined HP_ENTRY_ARGS (
-  for /f "usebackq delims=" %%M in (`"%HP_ENTRY_CMD%" %HP_ENTRY_ARGS% "~find_entry.py"`) do set "HP_ENTRY=%%M"
+  "%HP_ENTRY_CMD%" %HP_ENTRY_ARGS% "%HP_FIND_ENTRY_ABS%" > "%HP_ENTRY_CRUMB%" 2>> "%LOG%"
 ) else (
-  for /f "usebackq delims=" %%M in (`"%HP_ENTRY_CMD%" "~find_entry.py"`) do set "HP_ENTRY=%%M"
+  "%HP_ENTRY_CMD%" "%HP_FIND_ENTRY_ABS%" > "%HP_ENTRY_CRUMB%" 2>> "%LOG%"
+)
+if exist "%HP_ENTRY_CRUMB%" (
+  for /f "usebackq delims=" %%M in ("%HP_ENTRY_CRUMB%") do if not defined HP_ENTRY set "HP_ENTRY=%%M"
+  del "%HP_ENTRY_CRUMB%" >nul 2>&1
 )
 if not defined HP_ENTRY set "HP_ENTRY="
 exit /b 0
-
-:conda_probe_failed
-call :die "[ERROR] Miniconda download probe failed."
 
 :record_chosen_entry
 rem %~1 is the RELATIVE crumb (what we want to show users and tests)

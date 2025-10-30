@@ -573,7 +573,7 @@ jobs:
             desc = 'matrix lane'
             details = [ordered]@{ mode = '${{ matrix.mode }}' }
           }
-          $json = $row | ConvertTo-Json -Compress
+          $json = $row | ConvertTo-Json -Compress -Depth 8
           Add-Content -LiteralPath tests\~test-results.ndjson -Value $json -Encoding Ascii
           Add-Content -LiteralPath ci_test_results.ndjson -Value $json -Encoding Ascii
 
@@ -616,7 +616,7 @@ jobs:
 
           $value = $has.ToString().ToLowerInvariant()
           "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
-          $verdict | ConvertTo-Json -Compress | Out-File -Encoding UTF8 'iterate_gate.json'
+          $verdict | ConvertTo-Json -Compress -Depth 8 | Out-File -Encoding UTF8 'iterate_gate.json'
 
       - name: Append iterate gate to Summary
         if: ${{ always() }}
@@ -647,7 +647,7 @@ jobs:
             run_attempt = $env:GITHUB_RUN_ATTEMPT
             sources = @('tests~test-results.ndjson','ci_test_results.ndjson')
           }
-          $record | ConvertTo-Json -Compress | Out-File -FilePath lane_verdict.json -Encoding ascii
+          $record | ConvertTo-Json -Compress -Depth 8 | Out-File -FilePath lane_verdict.json -Encoding ascii
 
       - name: Upload iterate gate verdict
         if: ${{ always() }}
@@ -1027,7 +1027,7 @@ jobs:
           $iterAuthOk = '${{ steps.openai_auth.outputs.auth_ok }}'
           if (-not $iterAuthOk) { $iterAuthOk = 'false' }
           @{ api_key_present = $iterPresent; auth_ok = $iterAuthOk } |
-            ConvertTo-Json -Compress | Out-File -Encoding UTF8 $iterAuthPath
+            ConvertTo-Json -Compress -Depth 8 | Out-File -Encoding UTF8 $iterAuthPath
 
           $existingNd = @()
           foreach ($cand in $ndjsonCandidates) {
@@ -1037,7 +1037,7 @@ jobs:
           }
           $uniqueNd = $existingNd | Sort-Object -Unique
           if (-not $uniqueNd) {
-            $note = @{ cwd = $cwd.Path; tried = $ndjsonCandidates; found = @() } | ConvertTo-Json -Compress
+            $note = @{ cwd = $cwd.Path; tried = $ndjsonCandidates; found = @() } | ConvertTo-Json -Compress -Depth 8
             $note | Out-File -Encoding UTF8 (Join-Path $logsDir 'ndjson_missing.json')
           }
 
@@ -1085,9 +1085,9 @@ jobs:
             skip    = $skipCount
             sources = $uniqueNd
           }
-          $stats | ConvertTo-Json -Compress | Out-File -Encoding UTF8 'ndjson_stats.json'
+          $stats | ConvertTo-Json -Compress -Depth 8 | Out-File -Encoding UTF8 'ndjson_stats.json'
           if ($firstFail) {
-            $firstFail | ConvertTo-Json -Compress | Out-File -Encoding UTF8 'first_failure.json'
+            $firstFail | ConvertTo-Json -Compress -Depth 8 | Out-File -Encoding UTF8 'first_failure.json'
           } elseif (Test-Path -LiteralPath 'first_failure.json') {
             Remove-Item -LiteralPath 'first_failure.json' -Force
           }
@@ -1127,7 +1127,7 @@ jobs:
             if ($firstFail.PSObject.Properties['message']) { $firstInfo.message = $firstFail.message }
             '### First failure' | Out-File -Append $env:GITHUB_STEP_SUMMARY
             '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            ($firstInfo | ConvertTo-Json -Compress) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            ($firstInfo | ConvertTo-Json -Compress -Depth 8) | Out-File -Append $env:GITHUB_STEP_SUMMARY
             '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           } else {
             '- First failure: none (all rows passed)' | Out-File -Append $env:GITHUB_STEP_SUMMARY
@@ -1192,7 +1192,7 @@ jobs:
             $idx += '## NDJSON first failure'
             $idx += ("* Source: {0}" -f $firstSource)
             $idx += '```json'
-            $idx += ($firstFail | ConvertTo-Json -Compress)
+            $idx += ($firstFail | ConvertTo-Json -Compress -Depth 8)
             $idx += '```'
           }
 
@@ -1316,27 +1316,91 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $p = Join-Path 'tests' '~test-results.ndjson'
-          New-Item -ItemType Directory -Force -Path 'diag' | Out-Null
-          if (Test-Path $p) {
-            $rows = Get-Content $p | Where-Object { $_ -match '\S' }
-            $pass = ($rows | Select-String '"pass":\s*true').Count
-            $fail = ($rows | Select-String '"pass":\s*false').Count
-            $hasConda = ($rows | Select-String '"id":"conda.url"').Count
-            $hasEnv   = ($rows | Select-String '"id":"env.mode"').Count
-            $content = @(
-              "rows: $($rows.Count)"
-              "pass: $pass"
-              "fail: $fail"
-              "has_conda_url: $hasConda"
-              "has_env_mode: $hasEnv"
+          function Read-NdjsonFile {
+            param(
+              [string]$Label,
+              [string]$Path
             )
-            $content | Out-File -Encoding utf8 'diag/ndjson_summary.txt'
-            Write-Host 'NDJSON summary written to diag/ndjson_summary.txt'
-          } else {
-            'missing' | Out-File -Encoding utf8 'diag/ndjson_summary.txt'
-            Write-Host 'NDJSON missing; wrote placeholder summary.'
+
+            $result = [ordered]@{
+              label      = $Label
+              path       = $Path
+              present    = $false
+              rows       = 0
+              passCount  = 0
+              failCount  = 0
+              hasConda   = 0
+              hasEnvMode = 0
+            }
+
+            if (-not (Test-Path -LiteralPath $Path)) {
+              return $result
+            }
+
+            $lines = Get-Content -LiteralPath $Path | Where-Object { $_ -match '\S' }
+            $result.present = $true
+            $result.rows = $lines.Count
+
+            foreach ($line in $lines) {
+              try {
+                $row = $line | ConvertFrom-Json -ErrorAction Stop
+              } catch {
+                continue
+              }
+
+              if ($row -is [psobject]) {
+                if ($row.PSObject.Properties.Name -contains 'pass') {
+                  $value = $row.pass
+                  if ($value -eq $false -or ($value -is [string] -and $value.ToLowerInvariant() -eq 'false')) {
+                    $result.failCount++
+                  } elseif ($value -eq $true -or ($value -is [string] -and $value.ToLowerInvariant() -eq 'true')) {
+                    $result.passCount++
+                  }
+                }
+                if ($row.id -eq 'conda.url') { $result.hasConda++ }
+                if ($row.id -eq 'env.mode') { $result.hasEnvMode++ }
+              }
+            }
+
+            return $result
           }
+
+          New-Item -ItemType Directory -Force -Path 'diag' | Out-Null
+
+          $targets = @(
+            @{ Label = 'real ci_test_results.ndjson'; Path = 'ci_test_results.ndjson' },
+            @{ Label = 'filtered tests~test-results.ndjson'; Path = (Join-Path 'tests' '~test-results.ndjson') }
+          )
+
+          $lines = [System.Collections.Generic.List[string]]::new()
+          $anyPresent = $false
+
+          foreach ($target in $targets) {
+            $summary = Read-NdjsonFile -Label $target.Label -Path $target.Path
+            if (-not $summary.present) {
+              $null = $lines.Add(("{0}: missing ({1})" -f $summary.label, $summary.path))
+              continue
+            }
+
+            $anyPresent = $true
+            $null = $lines.Add(("{0}:" -f $summary.label))
+            $null = $lines.Add(("  rows: {0}" -f $summary.rows))
+            $null = $lines.Add(("  pass: {0}" -f $summary.passCount))
+            $null = $lines.Add(("  fail: {0}" -f $summary.failCount))
+            $null = $lines.Add(("  has_conda_url: {0}" -f $summary.hasConda))
+            $null = $lines.Add(("  has_env_mode: {0}" -f $summary.hasEnvMode))
+            $null = $lines.Add("")
+          }
+
+          if (-not $anyPresent) {
+            $lines.Clear()
+            $null = $lines.Add('missing')
+            Write-Host 'NDJSON summary missing; wrote placeholder summary.'
+          } else {
+            Write-Host 'NDJSON summary written to diag/ndjson_summary.txt'
+          }
+
+          $lines | Out-File -Encoding utf8 'diag/ndjson_summary.txt'
 
       - name: Stage self-test diagnostics payload
         if: always()
