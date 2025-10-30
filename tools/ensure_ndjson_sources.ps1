@@ -119,6 +119,41 @@ $destTests = Join-Path -Path $workspacePath -ChildPath 'tests~test-results.ndjso
 $destCi = Join-Path -Path $workspacePath -ChildPath 'ci_test_results.ndjson'
 
 $searchRoots = @($workspacePath)
+
+$structDestRoot = $null
+if (-not [string]::IsNullOrWhiteSpace($StructDir)) {
+    try {
+        $structDestRoot = (Resolve-Path -LiteralPath $StructDir -ErrorAction Stop).Path
+    } catch {
+        $structDestRoot = $StructDir
+    }
+    if ($structDestRoot) {
+        $searchRoots += $structDestRoot
+        $structArtifacts = Join-Path -Path $structDestRoot -ChildPath '_artifacts'
+        if (Test-Path -LiteralPath $structArtifacts) {
+            try {
+                $searchRoots += (Resolve-Path -LiteralPath $structArtifacts -ErrorAction Stop).Path
+            } catch {
+                $searchRoots += $structArtifacts
+            }
+        }
+    }
+}
+
+if ($env:RUNNER_TEMP) {
+    $runnerStructCandidate = Join-Path -Path $env:RUNNER_TEMP -ChildPath 'struct'
+    if (Test-Path -LiteralPath $runnerStructCandidate) {
+        try {
+            $resolvedRunnerStruct = (Resolve-Path -LiteralPath $runnerStructCandidate -ErrorAction Stop).Path
+        } catch {
+            $resolvedRunnerStruct = $runnerStructCandidate
+        }
+        if ($resolvedRunnerStruct) {
+            $searchRoots = @($resolvedRunnerStruct) + $searchRoots
+        }
+    }
+}
+
 $inputsRoot = Join-Path -Path $workspacePath -ChildPath '_artifacts/iterate/inputs'
 if (Test-Path -LiteralPath $inputsRoot) {
     try {
@@ -143,15 +178,10 @@ if (Test-Path -LiteralPath $workspaceArtifacts) {
     }
 }
 if (-not [string]::IsNullOrWhiteSpace($StructDir)) {
-    try {
-        $resolvedStruct = (Resolve-Path -LiteralPath $StructDir -ErrorAction Stop).Path
-        $searchRoots += $resolvedStruct
-        $structArtifacts = Join-Path -Path $resolvedStruct -ChildPath '_artifacts'
-        if (Test-Path -LiteralPath $structArtifacts) {
-            $searchRoots += (Resolve-Path -LiteralPath $structArtifacts -ErrorAction SilentlyContinue)
-        }
-    } catch {
-        # keep search robust even if struct dir is unavailable
+    # struct dir already handled above; retain fallback for diag traversal when the
+    # caller passed a relative path that Resolve-Path could not normalize earlier.
+    if (-not $structDestRoot) {
+        $searchRoots += $StructDir
     }
 }
 if (-not [string]::IsNullOrWhiteSpace($DiagRoot)) {
@@ -161,10 +191,11 @@ if (-not [string]::IsNullOrWhiteSpace($DiagRoot)) {
     } catch {
     }
 }
-$searchRoots = $searchRoots | Sort-Object -Unique
+$searchRoots = $searchRoots | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique
 
 $foundSources = New-Object System.Collections.Generic.List[string]
 $missingTargets = New-Object System.Collections.Generic.List[string]
+$gateFoundRecords = New-Object System.Collections.Generic.List[object]
 
 function Sync-Target {
     param(
@@ -174,14 +205,33 @@ function Sync-Target {
         [string[]]$FallbackGlobs
     )
 
+    $structTarget = $null
+    if ($structDestRoot) {
+        $structTarget = Join-Path -Path $structDestRoot -ChildPath $Label
+    }
+
     if (Test-Path -LiteralPath $Destination) {
-        $size = (Get-Item -LiteralPath $Destination).Length
-        if ($size -gt 0) {
-            $note = Format-SafeString "{0}:{1} (existing)" $Label $Destination
-            # derived requirement: avoid PowerShell's scoped-variable parsing ("$var:") so
-            # we do not reintroduce the ParserError seen when the gate executed this script.
-            $foundSources.Add($note) | Out-Null
+        $item = Get-Item -LiteralPath $Destination -ErrorAction SilentlyContinue
+        if ($item -and $item.Length -gt 0) {
+            $existing = (Resolve-Path -LiteralPath $Destination -ErrorAction SilentlyContinue)
+            $existingPath = if ($existing) { $existing.Path } else { $Destination }
+            $foundSources.Add((Format-SafeString "{0}:{1} (existing)" $Label $existingPath)) | Out-Null
             Write-Info "Found existing $Label source at $Destination"
+            if ($structTarget) {
+                try {
+                    Ensure-DestinationDirectory -Path $structTarget
+                    Copy-Item -LiteralPath $Destination -Destination $structTarget -Force
+                } catch {
+                    Write-Info "Struct mirror failed for $Label: $($_.Exception.Message)"
+                }
+            }
+            $record = [ordered]@{
+                label     = $Label
+                source    = $existingPath
+                workspace = $Destination
+            }
+            if ($structTarget) { $record.struct = $structTarget }
+            $gateFoundRecords.Add([pscustomobject]$record) | Out-Null
             return
         }
     }
@@ -195,14 +245,39 @@ function Sync-Target {
         if ([string]::Compare($source, $Destination, $true) -ne 0) {
             Write-Info "Copying $Label source from $source to $Destination"
             Ensure-DestinationDirectory -Path $Destination
-            Copy-Item -LiteralPath $source -Destination $Destination -Force
+            try {
+                Copy-Item -LiteralPath $source -Destination $Destination -Force
+            } catch {
+                Write-Info "Copy to workspace failed for $Label: $($_.Exception.Message)"
+            }
         } else {
             Write-Info "$Label source already at $Destination"
         }
-        # derived requirement: wrap Format-SafeString calls in parentheses when passing to
-        # methods so PowerShell does not misparse the invocation (CI previously surfaced a
-        # "Missing ')'" error here).
+
+        $structMirror = $null
+        if ($structTarget) {
+            Ensure-DestinationDirectory -Path $structTarget
+            if ([string]::Compare($source, $structTarget, $true) -ne 0) {
+                Write-Info "Mirroring $Label source to struct directory: $structTarget"
+                try {
+                    Copy-Item -LiteralPath $source -Destination $structTarget -Force
+                    $structMirror = $structTarget
+                } catch {
+                    Write-Info "Struct mirror failed for $Label: $($_.Exception.Message)"
+                }
+            } else {
+                $structMirror = $structTarget
+            }
+        }
+
         $foundSources.Add((Format-SafeString "{0}:{1}" $Label $source)) | Out-Null
+        $record = [ordered]@{
+            label     = $Label
+            source    = $source
+            workspace = $Destination
+        }
+        if ($structMirror) { $record.struct = $structMirror }
+        $gateFoundRecords.Add([pscustomobject]$record) | Out-Null
     } else {
         $missingTargets.Add($Label) | Out-Null
         Write-Info "No source located for $Label"
@@ -257,12 +332,30 @@ if ($foundSources.Count -eq 0) {
         $foundSources.Add((Format-SafeString "{0}:{1}" 'synth' $destCi)) | Out-Null
         Write-Info "Synthesized ci_test_results.ndjson from $firstFailure"
         $missingTargets.Clear() | Out-Null
+        $synthStruct = $null
+        if ($structDestRoot) {
+            $synthStruct = Join-Path -Path $structDestRoot -ChildPath 'ci_test_results.ndjson'
+            try {
+                Ensure-DestinationDirectory -Path $synthStruct
+                Copy-Item -LiteralPath $destCi -Destination $synthStruct -Force
+            } catch {
+                Write-Info "Struct mirror failed for synth ci_test_results.ndjson: $($_.Exception.Message)"
+                $synthStruct = $null
+            }
+        }
+        $record = [ordered]@{
+            label     = 'ci_test_results.ndjson'
+            source    = $destCi
+            workspace = $destCi
+        }
+        if ($synthStruct) { $record.struct = $synthStruct }
+        $gateFoundRecords.Add([pscustomobject]$record) | Out-Null
     }
 }
 
 $envPath = $env:GITHUB_ENV
 if ($envPath) {
-    $foundValue = if ($foundSources.Count -gt 0) { 'true' } else { 'false' }
+    $foundValue = if (($missingTargets.Count -eq 0) -and ($foundSources.Count -gt 0)) { 'true' } else { 'false' }
     Add-Content -LiteralPath $envPath -Value "GATE_NDJSON_FOUND=$foundValue"
     if ($foundSources.Count -gt 0) {
         Add-Content -LiteralPath $envPath -Value "GATE_NDJSON_SOURCE=$([string]::Join(';', $foundSources))"
@@ -275,3 +368,24 @@ if ($envPath) {
         Add-Content -LiteralPath $envPath -Value "GATE_NDJSON_MISSING="
     }
 }
+
+$gateDir = Join-Path -Path $workspacePath -ChildPath '_artifacts/iterate'
+New-Item -ItemType Directory -Force -Path $gateDir | Out-Null
+$searchedSnapshot = @($searchRoots | Select-Object -First 12)
+$gateData = [ordered]@{
+    stage           = 'ensure-ndjson-sources'
+    proceed         = $true
+    has_failures    = ($missingTargets.Count -gt 0)
+    missing_inputs  = @($missingTargets)
+    sources         = @($gateFoundRecords)
+    searched_roots  = $searchedSnapshot
+}
+if ($missingTargets.Count -gt 0) {
+    $gateData.note = 'NDJSON sources missing after recursive search.'
+} else {
+    $gateData.note = 'NDJSON sources copied to workspace/struct directories.'
+}
+$gatePath = Join-Path -Path $gateDir -ChildPath 'iterate_gate.json'
+$gateJson = $gateData | ConvertTo-Json -Depth 6
+$gateJson | Set-Content -LiteralPath $gatePath -Encoding UTF8
+Write-Info "iterate_gate.json written to $gatePath"

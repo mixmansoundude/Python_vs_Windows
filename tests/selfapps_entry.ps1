@@ -132,6 +132,7 @@ function Invoke-EntryScenario {
         setupLog = ''
         bootstrapPath = $null
         bootstrapLog = ''
+        helperCommand = ''
     }
 
     try {
@@ -174,6 +175,12 @@ function Invoke-EntryScenario {
             if ($match.Success) {
                 $result.crumb = $match.Groups[1].Value
             }
+            # derived requirement: surface the helper invocation verbatim so CI can confirm the
+            # absolute path emitted by run_setup.bat stays rooted under the bootstrap directory.
+            $helperMatch = [regex]::Match($result.setupLog, '^Helper command: .+$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+            if ($helperMatch.Success) {
+                $result.helperCommand = $helperMatch.Value
+            }
         }
 
         $result.bootstrapPath = $bootstrapLog
@@ -203,6 +210,10 @@ function Write-EntryRow {
         exitCode = $Scenario.exitCode
         expected = $Expected
         chosen   = $chosen
+    }
+
+    if ($Scenario.helperCommand) {
+        $details.helperCommand = $Scenario.helperCommand
     }
 
     if ($Scenario.error) {

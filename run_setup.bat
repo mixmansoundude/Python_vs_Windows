@@ -2,7 +2,11 @@
 setlocal DisableDelayedExpansion
 rem Boot strap renamed to run_setup.bat
 cd /d "%~dp0"
+rem derived requirement: keep a canonical script root so CI skip mode can always
+rem resolve helper artifacts even when callers change directories mid-run.
 set "HP_SCRIPT_ROOT=%~dp0"
+if not defined HP_SCRIPT_ROOT set "HP_SCRIPT_ROOT=%CD%\"
+if not "%HP_SCRIPT_ROOT:~-1%"=="\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"
 set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
@@ -381,6 +385,9 @@ goto :after_env_bootstrap
 
 :ci_skip_entry
 call :log "[INFO] CI self-test: skipping environment bootstrap"
+rem derived requirement: surface a distinct env.mode for skip runs so diagnostics
+rem register the lane even when no interpreter is materialized.
+set "HP_ENV_MODE=ci-skip"
 set "HP_ENTRY="
 set "HP_CRUMB="
 if exist "~entry.abs" del "~entry.abs"
@@ -409,19 +416,32 @@ if defined HP_SYS_PY (
   rem helper args were empty. Keep the helper invocation split so CMD never appends a stray
   rem quote to the interpreter token, and route stdout through a file to avoid shell quoting drift.
   if not defined HP_SYS_PY_LOGGED (
+    set "HP_HELPER_LINE=Helper command:"
     if defined HP_SYS_PY_ARGS (
-      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%"
+      set "HP_HELPER_LINE=%HP_HELPER_LINE% \"%HP_SYS_PY%\" %HP_SYS_PY_ARGS% \"%HP_FIND_ENTRY_ABS%\""
     ) else (
-      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%"
+      set "HP_HELPER_LINE=%HP_HELPER_LINE% \"%HP_SYS_PY%\" \"%HP_FIND_ENTRY_ABS%\""
     )
+    rem derived requirement: log the helper command verbatim so CI skip mode exposes
+    rem quoting regressions without having to reproduce the Windows environment locally.
+    call :log "%HP_HELPER_LINE%"
+    >> "%LOG%" echo %HP_HELPER_LINE%
     set "HP_SYS_PY_LOGGED=1"
+    set "HP_HELPER_LINE="
   )
   if defined HP_SYS_PY_ARGS (
     "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   ) else (
     "%HP_SYS_PY%" -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   )
-  set "HP_CRUMB_FILE=%HP_SCRIPT_ROOT%~crumb.txt"
+  set "HP_CRUMB_BASE=%HP_SCRIPT_ROOT%"
+  if not defined HP_CRUMB_BASE set "HP_CRUMB_BASE=%CD%\"
+  if not exist "%HP_CRUMB_BASE%." set "HP_CRUMB_BASE=%CD%\"
+  if not "%HP_CRUMB_BASE:~-1%"=="\" set "HP_CRUMB_BASE=%HP_CRUMB_BASE%\"
+  rem derived requirement: CI skip previously wrote ~crumb.txt into a non-existent
+  rem directory when callers pushed into subfolders. Anchor crumbs to the script root
+  rem so helper output never triggers 'The system cannot find the path specified.'
+  set "HP_CRUMB_FILE=%HP_CRUMB_BASE%~crumb.txt"
   if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
   if defined HP_SYS_PY_ARGS (
     "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
@@ -456,6 +476,7 @@ if defined HP_ENTRY if defined HP_SYS_PY (
     "%HP_SYS_PY%" "%HP_ENTRY%" > "~run.out.txt" 2>&1 || echo [WARN] CI skip: system Python non-zero
   )
 )
+call :append_env_mode_row
 goto :after_env_bootstrap
 
 :after_env_bootstrap
@@ -468,11 +489,17 @@ if "%HP_ENTRY%"=="" (
   call :record_chosen_entry "%HP_ENTRY%"
   call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
   rem derived requirement: CI env smoke saw `The syntax of the command is incorrect.`
-  rem when this block silently built the command. Log the exact invocation (with
-  rem explicit redirection) so future regressions remain diagnosable.
-  >> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
-  "%HP_PY%" "%HP_ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
+  rem when CMD re-parsed the implicit smoke test command inside a parenthesized block.
+  rem Build the command string explicitly and run it via cmd /d /c so quoting stays stable
+  rem even when entry paths contain spaces or parentheses.
+  set "HP_SMOKE_CMD=\"%HP_PY%\" \"%HP_ENTRY%\""
+  set "HP_SMOKE_LINE=%HP_SMOKE_CMD% > \"~run.out.txt\" 2> \"~run.err.txt\""
+  call :log "Smoke command: %HP_SMOKE_LINE%"
+  >> "%LOG%" echo Smoke command: %HP_SMOKE_LINE%
+  cmd /d /c "%HP_SMOKE_LINE%"
   if errorlevel 1 call :die "[ERROR] Entry script execution failed."
+  set "HP_SMOKE_LINE="
+  set "HP_SMOKE_CMD="
   if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] System fallback: skipping PyInstaller packaging."
   ) else (
@@ -595,11 +622,13 @@ exit /b 0
 
 :append_env_mode_row
 if not defined HP_NDJSON exit /b 0
-if not defined HP_PY exit /b 0
+rem derived requirement: skip-mode diagnostics still need an env.mode row even when
+rem no interpreter was resolved; PowerShell fills in a placeholder 'n/a' value for HP_PY.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$mode = [Environment]::GetEnvironmentVariable('HP_ENV_MODE');" ^
   "$py = [Environment]::GetEnvironmentVariable('HP_PY');" ^
   "if (-not $mode) { $mode = 'unknown' }" ^
+  "if (-not $py) { $py = 'n/a' }" ^
   "$row = @{ id='env.mode'; pass=$true; details=@{ mode=$mode; py=$py } } | ConvertTo-Json -Compress -Depth 8;" ^
   "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 exit /b 0

@@ -78,16 +78,23 @@ if (Test-Path -LiteralPath $setupLog) {
     Remove-Item -LiteralPath $setupLog -Force
 }
 
+$bootstrapCmd = 'cmd /c .\run_setup.bat'
+$blog   = Join-Path $app '~envsmoke_bootstrap.log'
+if (Test-Path -LiteralPath $blog) {
+    Remove-Item -LiteralPath $blog -Force
+}
+Set-Content -LiteralPath $blog -Encoding Ascii -Value ("Bootstrap command: {0}`r`n" -f $bootstrapCmd)
+
 Push-Location -LiteralPath $app
 try {
     # FULL bootstrap here: do NOT set HP_CI_SKIP_ENV
-    cmd /c .\run_setup.bat *> '~envsmoke_bootstrap.log'
+    # derived requirement: append the captured command line so syntax regressions remain visible in CI logs.
+    cmd /c .\run_setup.bat *>> '~envsmoke_bootstrap.log'
     $exit = $LASTEXITCODE
 } finally {
     Pop-Location
 }
 
-$blog   = Join-Path $app '~envsmoke_bootstrap.log'
 $runout = Join-Path $app '~run.out.txt'
 $setup  = (Test-Path $setupLog) ? (Get-Content -LiteralPath $setupLog -Raw -Encoding Ascii) : ''
 $bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw -Encoding Ascii) : ''
@@ -103,7 +110,7 @@ Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.conda'
     pass=($exit -eq 0)
     desc='Miniconda bootstrap + environment creation'
-    details=[ordered]@{ exitCode=$exit }
+    details=[ordered]@{ exitCode=$exit; bootstrapCommand=$bootstrapCmd }
 })
 
 $passRun = ($exit -eq 0) -and $tokenFound
@@ -111,7 +118,7 @@ Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.run'
     pass=$passRun
     desc='App runs in created environment'
-    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut }
+    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut; bootstrapCommand=$bootstrapCmd }
 })
 
 if (($exit -eq 0) -and (-not $tokenFound)) {

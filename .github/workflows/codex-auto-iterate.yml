@@ -506,19 +506,18 @@ jobs:
           STRUCT_DIR: ${{ steps.struct.outputs.extract_dir }}
         run: |
           $workspace = Convert-Path "$env:GITHUB_WORKSPACE"
-          $structDir = $env:STRUCT_DIR
+          $structDir = Join-Path $env:RUNNER_TEMP 'struct'
           $diagRoot = ''
-          if ($structDir) {
+          $extracted = $env:STRUCT_DIR
+          if ($extracted) {
             try {
-              $diagRoot = Split-Path -LiteralPath (Convert-Path $structDir) -Parent
+              $diagRoot = Split-Path -LiteralPath (Convert-Path $extracted) -Parent
             } catch {
               $diagRoot = ''
             }
           }
-          # derived requirement: gate previously skipped iterate because tests~test-results.ndjson
-          # and ci_test_results.ndjson were missing. The poller now writes them under
-          # _artifacts/iterate/inputs, but we continue reusing the helper to surface
-          # consistent env signals and root-level mirrors for legacy consumers.
+          # derived requirement: copy NDJSON rows into the structured temp tree so the iterate gate
+          # sees real CI results even when the workspace mirrors were empty.
           & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" -Workspace $workspace -StructDir $structDir -DiagRoot $diagRoot
 
       - name: Decide gate (iterate vs skip)
@@ -1846,7 +1845,24 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.prep.outputs.ARTIFACTS }}/iterate
+          path: ${{ runner.temp }}/iterate-logs
+
+      - name: Mirror iterate logs into site bundle
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_root="${RUNNER_TEMP}/iterate-logs"
+          dest_root="${{ steps.prep.outputs.ARTIFACTS }}/iterate"
+          mkdir -p "$dest_root"
+          if [ -d "$temp_root" ]; then
+            shopt -s dotglob nullglob
+            for item in "$temp_root"/*; do
+              base=$(basename "$item")
+              rm -rf "$dest_root/$base"
+              mv "$item" "$dest_root/"
+            done
+          fi
 
       - name: Normalize iterate artifact layout
         if: ${{ always() }}
@@ -2228,16 +2244,14 @@ jobs:
             generated_utc = (Get-Date).ToUniversalTime().ToString('o')
             files         = $manifestFiles
           }
-          $json = $manifest | ConvertTo-Json -Depth 6
-          $json | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.json')
-          try {
-            $manifestObj = $json | ConvertFrom-Json -Depth 6
-          } catch {
-            $manifestObj = $null
-          }
+          $manifestJson = $manifest | ConvertTo-Json -Depth 6
+          # derived requirement: inventory.json went blank when ConvertTo-Json output was piped
+          # through Set-Content in streaming mode. Write the JSON first, then reuse the in-memory
+          # manifest so every representation reflects the same file list.
+          [IO.File]::WriteAllText((Join-Path $Diag 'inventory.json'), $manifestJson, [Text.Encoding]::UTF8)
           $filesForRender = @()
-          if ($manifestObj -and $manifestObj.files) {
-            $filesForRender = @($manifestObj.files)
+          if ($manifest.files) {
+            $filesForRender = @($manifest.files)
           }
           # derived requirement: inventory.json went blank while HTML/TXT stayed populated; derive the mirrors from the parsed
           # JSON payload so all formats stay in sync with the canonical manifest.
