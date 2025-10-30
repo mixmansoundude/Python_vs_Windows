@@ -192,15 +192,22 @@ function Find-DiagRoot {
             $candidate = $entry.Path
             $inputsProbe = Join-Path $candidate '_artifacts/iterate/inputs'
             $batchProbe = Join-Path $candidate '_artifacts/batch-check'
-            if (Test-Path $inputsProbe -or Test-Path $batchProbe) {
+            if (Test-Path $inputsProbe) {
+                return $candidate
+            }
+            if (Test-Path $batchProbe) {
                 return $candidate
             }
 
             try {
                 $match = Get-ChildItem -Path $candidate -Directory -Recurse -Depth 4 -ErrorAction SilentlyContinue |
                     Where-Object {
-                        Test-Path (Join-Path $_.FullName '_artifacts/iterate/inputs') -or
-                        Test-Path (Join-Path $_.FullName '_artifacts/batch-check')
+                        $iterProbe = Join-Path $_.FullName '_artifacts/iterate/inputs'
+                        if (Test-Path $iterProbe) { $true }
+                        else {
+                            $batchProbeInner = Join-Path $_.FullName '_artifacts/batch-check'
+                            if (Test-Path $batchProbeInner) { $true } else { $false }
+                        }
                     } |
                     Select-Object -First 1
             } catch {

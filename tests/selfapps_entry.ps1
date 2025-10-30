@@ -132,6 +132,7 @@ function Invoke-EntryScenario {
         setupLog = ''
         bootstrapPath = $null
         bootstrapLog = ''
+        helperCommand = ''
     }
 
     try {
@@ -174,6 +175,10 @@ function Invoke-EntryScenario {
             if ($match.Success) {
                 $result.crumb = $match.Groups[1].Value
             }
+            $helperMatch = [regex]::Match($result.log, '^Helper command:\s*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+            if ($helperMatch.Success) {
+                $result.helperCommand = $helperMatch.Groups[1].Value
+            }
         }
 
         $result.bootstrapPath = $bootstrapLog
@@ -203,6 +208,10 @@ function Write-EntryRow {
         exitCode = $Scenario.exitCode
         expected = $Expected
         chosen   = $chosen
+    }
+
+    if ($Scenario.helperCommand) {
+        $details.helperCommand = $Scenario.helperCommand
     }
 
     if ($Scenario.error) {

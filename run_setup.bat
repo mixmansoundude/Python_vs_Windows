@@ -24,8 +24,26 @@ set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
 if not defined HP_MINICONDA_MIN_BYTES set "HP_MINICONDA_MIN_BYTES=5000000"
 set "HP_MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
 set "HP_NDJSON="
-if exist "%CD%\tests" set "HP_NDJSON=%CD%\tests\~test-results.ndjson"
-if defined HP_NDJSON if not exist "%HP_NDJSON%" ( type nul > "%HP_NDJSON%" )
+set "HP_NDJSON_PRIMARY="
+set "HP_NDJSON_SECONDARY="
+set "HP_NDJSON_SINKS="
+if exist "%CD%\tests" set "HP_NDJSON_PRIMARY=%CD%\tests\~test-results.ndjson"
+if defined HP_NDJSON_PRIMARY if not exist "%HP_NDJSON_PRIMARY%" ( type nul > "%HP_NDJSON_PRIMARY%" )
+for %%N in ("%CD%\ci_test_results.ndjson") do if exist "%%~fN" set "HP_NDJSON_SECONDARY=%%~fN"
+if defined HP_NDJSON_PRIMARY (
+  call :ensure_ndjson_file "%HP_NDJSON_PRIMARY%"
+  set "HP_NDJSON=%HP_NDJSON_PRIMARY%"
+  set "HP_NDJSON_SINKS=%HP_NDJSON_PRIMARY%"
+)
+if not defined HP_NDJSON if defined HP_NDJSON_SECONDARY set "HP_NDJSON=%HP_NDJSON_SECONDARY%"
+if defined HP_NDJSON_SECONDARY (
+  call :ensure_ndjson_file "%HP_NDJSON_SECONDARY%"
+  if defined HP_NDJSON_SINKS (
+    set "HP_NDJSON_SINKS=%HP_NDJSON_SINKS%;%HP_NDJSON_SECONDARY%"
+  ) else (
+    set "HP_NDJSON_SINKS=%HP_NDJSON_SECONDARY%"
+  )
+)
 rem --- CI fast path (entry tests only) ---
 call :rotate_log
 rem HP_* variables represent "Helper Payload" assets emitted on demand.
@@ -391,6 +409,16 @@ call :update_find_entry_abs
 call :verify_find_entry_helper
 if errorlevel 1 call :die "[ERROR] find_entry helper syntax error"
 
+set "HP_SKIP_HELPER_DIR="
+for %%F in ("%HP_FIND_ENTRY_ABS%") do set "HP_SKIP_HELPER_DIR=%%~dpF"
+if not defined HP_SKIP_HELPER_DIR set "HP_SKIP_HELPER_DIR=%HP_SCRIPT_ROOT%"
+if not defined HP_SKIP_HELPER_DIR set "HP_SKIP_HELPER_DIR=%CD%\"
+if defined HP_SKIP_HELPER_DIR if not exist "%HP_SKIP_HELPER_DIR%" (
+  rem derived requirement: CI skip helper must stage crumbs in a directory that exists so
+  rem Windows never emits "The system cannot find the path specified." when redirecting.
+  mkdir "%HP_SKIP_HELPER_DIR%" >nul 2>&1
+)
+
 rem --- locate a Python ---
 set "HP_SYS_PY=" & set "HP_SYS_PY_ARGS="
 set "HP_SYS_PY_LOGGED="
@@ -404,15 +432,23 @@ if defined HP_SYS_PY_ARGS for %%A in ("%HP_SYS_PY_ARGS%") do set "HP_SYS_PY_ARGS
 
 rem --- run helper and capture RELATIVE crumb ---
 set "HP_CRUMB="
+set "HP_SKIP_HELPER_CMD="
 if defined HP_SYS_PY (
   rem derived requirement: CI observed `'python" "~find_entry.py' is not recognized` when
   rem helper args were empty. Keep the helper invocation split so CMD never appends a stray
-  rem quote to the interpreter token, and route stdout through a file to avoid shell quoting drift.
+  rem quote to the interpreter token, route stdout through a file to avoid shell quoting drift,
+  rem and record the exact helper command in both the console and the log for diagnostics.
   if not defined HP_SYS_PY_LOGGED (
-    if defined HP_SYS_PY_ARGS (
-      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%"
-    ) else (
-      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%"
+    if not defined HP_SKIP_HELPER_CMD (
+      if defined HP_SYS_PY_ARGS (
+        set "HP_SKIP_HELPER_CMD=""%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%""
+      ) else (
+        set "HP_SKIP_HELPER_CMD=""%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%""
+      )
+    )
+    if defined HP_SKIP_HELPER_CMD (
+      call :log "[INFO] CI skip helper command: %HP_SKIP_HELPER_CMD%"
+      >> "%LOG%" echo Helper command: %HP_SKIP_HELPER_CMD%
     )
     set "HP_SYS_PY_LOGGED=1"
   )
@@ -421,7 +457,7 @@ if defined HP_SYS_PY (
   ) else (
     "%HP_SYS_PY%" -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   )
-  set "HP_CRUMB_FILE=%HP_SCRIPT_ROOT%~crumb.txt"
+  set "HP_CRUMB_FILE=%HP_SKIP_HELPER_DIR%~crumb.txt"
   if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
   if defined HP_SYS_PY_ARGS (
     "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
@@ -468,10 +504,10 @@ if "%HP_ENTRY%"=="" (
   call :record_chosen_entry "%HP_ENTRY%"
   call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
   rem derived requirement: CI env smoke saw `The syntax of the command is incorrect.`
-  rem when this block silently built the command. Log the exact invocation (with
-  rem explicit redirection) so future regressions remain diagnosable.
-  >> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
-  "%HP_PY%" "%HP_ENTRY%" > "~run.out.txt" 2> "~run.err.txt"
+  rem when CMD evaluated the redirections inside the surrounding parentheses. Use a
+  rem dedicated helper so the invocation stays fully-quoted and the redirections never
+  rem interfere with control flow.
+  call :run_entry_smoke "%HP_PY%" "%HP_ENTRY%"
   if errorlevel 1 call :die "[ERROR] Entry script execution failed."
   if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] System fallback: skipping PyInstaller packaging."
@@ -593,15 +629,44 @@ if defined HP_SYS_ARGS (
 if not defined HP_SYS_EXE exit /b 1
 exit /b 0
 
+:ensure_ndjson_file
+set "HP_TARGET=%~1"
+if "%HP_TARGET%"=="" exit /b 0
+setlocal
+set "HP_TARGET_DIR="
+for %%D in ("%HP_TARGET%") do set "HP_TARGET_DIR=%%~dpD"
+if defined HP_TARGET_DIR if not exist "%HP_TARGET_DIR%" mkdir "%HP_TARGET_DIR%" >nul 2>&1
+if not exist "%HP_TARGET%" type nul > "%HP_TARGET%" 2>nul
+endlocal
+exit /b 0
+
+:run_entry_smoke
+set "HP_SMOKE_PY=%~1"
+set "HP_SMOKE_ENTRY=%~2"
+if "%HP_SMOKE_PY%"=="" exit /b 1
+if "%HP_SMOKE_ENTRY%"=="" exit /b 1
+setlocal
+set "HP_SMOKE_PY=%~1"
+set "HP_SMOKE_ENTRY=%~2"
+set "HP_SMOKE_OUT=~run.out.txt"
+set "HP_SMOKE_ERR=~run.err.txt"
+>> "%LOG%" echo Smoke command: "%HP_SMOKE_PY%" "%HP_SMOKE_ENTRY%" ^> "%HP_SMOKE_OUT%" 2^> "%HP_SMOKE_ERR%"
+"%HP_SMOKE_PY%" "%HP_SMOKE_ENTRY%" > "%HP_SMOKE_OUT%" 2> "%HP_SMOKE_ERR%"
+set "HP_SMOKE_RC=%errorlevel%"
+endlocal & exit /b %HP_SMOKE_RC%
+
 :append_env_mode_row
-if not defined HP_NDJSON exit /b 0
+if not defined HP_NDJSON_SINKS exit /b 0
 if not defined HP_PY exit /b 0
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$mode = [Environment]::GetEnvironmentVariable('HP_ENV_MODE');" ^
   "$py = [Environment]::GetEnvironmentVariable('HP_PY');" ^
+  "$sinks = [Environment]::GetEnvironmentVariable('HP_NDJSON_SINKS');" ^
   "if (-not $mode) { $mode = 'unknown' }" ^
   "$row = @{ id='env.mode'; pass=$true; details=@{ mode=$mode; py=$py } } | ConvertTo-Json -Compress -Depth 8;" ^
-  "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+  "if (-not $sinks) { return }" ^
+  "$targets = $sinks -split ';' | Where-Object { $_ }" ^
+  "foreach ($target in $targets) { Add-Content -Path $target -Value $row -Encoding ASCII }" >> "%LOG%" 2>&1
 exit /b 0
 
 :update_find_entry_abs
@@ -668,7 +733,7 @@ exit /b 1
 
 :append_helper_syntax_row
 if "%HP_HELPER_SYNTAX_EMITTED%"=="1" exit /b 0
-if not defined HP_NDJSON (
+if not defined HP_NDJSON_SINKS (
   set "HP_HELPER_SYNTAX_EMITTED=1"
   exit /b 0
 )
@@ -681,17 +746,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "if (-not $flag) { $flag = '0' }" ^
   "$ok = $flag -eq '1';" ^
   "$row = @{ id='helper.find_entry.syntax'; pass=$ok; details=@{ } } | ConvertTo-Json -Compress -Depth 8;" ^
-  "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+  "$sinks = [Environment]::GetEnvironmentVariable('HP_NDJSON_SINKS');" ^
+  "if (-not $sinks) { return }" ^
+  "$targets = $sinks -split ';' | Where-Object { $_ }" ^
+  "foreach ($target in $targets) { Add-Content -Path $target -Value $row -Encoding ASCII }" >> "%LOG%" 2>&1
 set "HP_HELPER_SYNTAX_EMITTED=1"
 exit /b 0
 
 :emit_conda_probe_skip
-if not defined HP_NDJSON exit /b 0
+if not defined HP_NDJSON_SINKS exit /b 0
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$reason = [Environment]::GetEnvironmentVariable('HP_CONDA_PROBE_REASON');" ^
   "if (-not $reason) { $reason = 'not-requested' }" ^
   "$row = @{ id='conda.url'; pass=$true; details=@{ skipped=$true; reason=$reason; bytes=0 } } | ConvertTo-Json -Compress -Depth 8;" ^
-  "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+  "$sinks = [Environment]::GetEnvironmentVariable('HP_NDJSON_SINKS');" ^
+  "if (-not $sinks) { return }" ^
+  "$targets = $sinks -split ';' | Where-Object { $_ }" ^
+  "foreach ($target in $targets) { Add-Content -Path $target -Value $row -Encoding ASCII }" >> "%LOG%" 2>&1
 exit /b 0
 
 :probe_conda_url
@@ -730,29 +801,38 @@ set /a HP_MIN_CHECK=%HP_MIN_BYTES_SAFE%
 if %HP_BYTES_CHECK% LSS %HP_MIN_CHECK% set "HP_DL_PASS=0"
 if "%HP_DL_PASS%"=="0" goto :probe_conda_url_fail_with_bytes
 call :log "[INFO] Miniconda probe downloaded %HP_DL_BYTES% bytes."
-if defined HP_NDJSON (
+if defined HP_NDJSON_SINKS (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$row = @{ id='conda.url'; pass=$true; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress -Depth 8;" ^
-    "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+    "$sinks = [Environment]::GetEnvironmentVariable('HP_NDJSON_SINKS');" ^
+    "if (-not $sinks) { return }" ^
+    "$targets = $sinks -split ';' | Where-Object { $_ }" ^
+    "foreach ($target in $targets) { Add-Content -Path $target -Value $row -Encoding ASCII }" >> "%LOG%" 2>&1
 )
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
 exit /b 0
 
 :probe_conda_url_fail_with_bytes
-if defined HP_NDJSON (
+if defined HP_NDJSON_SINKS (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=%HP_DL_BYTES% } } | ConvertTo-Json -Compress -Depth 8;" ^
-    "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+    "$sinks = [Environment]::GetEnvironmentVariable('HP_NDJSON_SINKS');" ^
+    "if (-not $sinks) { return }" ^
+    "$targets = $sinks -split ';' | Where-Object { $_ }" ^
+    "foreach ($target in $targets) { Add-Content -Path $target -Value $row -Encoding ASCII }" >> "%LOG%" 2>&1
 )
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
 exit /b 1
 
 :probe_conda_url_fail
 set "HP_DL_BYTES=0"
-if defined HP_NDJSON (
+if defined HP_NDJSON_SINKS (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$row = @{ id='conda.url'; pass=$false; details=@{ bytes=0 } } | ConvertTo-Json -Compress -Depth 8;" ^
-    "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+    "$sinks = [Environment]::GetEnvironmentVariable('HP_NDJSON_SINKS');" ^
+    "if (-not $sinks) { return }" ^
+    "$targets = $sinks -split ';' | Where-Object { $_ }" ^
+    "foreach ($target in $targets) { Add-Content -Path $target -Value $row -Encoding ASCII }" >> "%LOG%" 2>&1
 )
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
 exit /b 1

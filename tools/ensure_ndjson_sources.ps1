@@ -142,6 +142,18 @@ if (Test-Path -LiteralPath $workspaceArtifacts) {
         # if Resolve-Path fails (e.g., race with cleanup) we continue searching other roots.
     }
 }
+$runnerTempStruct = $env:RUNNER_TEMP
+if ($runnerTempStruct) {
+    $tempStructRoot = Join-Path -Path $runnerTempStruct -ChildPath 'struct'
+    if (Test-Path -LiteralPath $tempStructRoot) {
+        try {
+            $resolvedTempStruct = (Resolve-Path -LiteralPath $tempStructRoot -ErrorAction Stop).Path
+        } catch {
+            $resolvedTempStruct = $tempStructRoot
+        }
+        if ($resolvedTempStruct) { $searchRoots += $resolvedTempStruct }
+    }
+}
 if (-not [string]::IsNullOrWhiteSpace($StructDir)) {
     try {
         $resolvedStruct = (Resolve-Path -LiteralPath $StructDir -ErrorAction Stop).Path
@@ -165,6 +177,7 @@ $searchRoots = $searchRoots | Sort-Object -Unique
 
 $foundSources = New-Object System.Collections.Generic.List[string]
 $missingTargets = New-Object System.Collections.Generic.List[string]
+$targetResults = [ordered]@{}
 
 function Sync-Target {
     param(
@@ -174,6 +187,14 @@ function Sync-Target {
         [string[]]$FallbackGlobs
     )
 
+    $result = [ordered]@{
+        label       = $Label
+        destination = $Destination
+        found       = $false
+        sources     = @()
+        struct      = @()
+    }
+
     if (Test-Path -LiteralPath $Destination) {
         $size = (Get-Item -LiteralPath $Destination).Length
         if ($size -gt 0) {
@@ -182,6 +203,15 @@ function Sync-Target {
             # we do not reintroduce the ParserError seen when the gate executed this script.
             $foundSources.Add($note) | Out-Null
             Write-Info "Found existing $Label source at $Destination"
+            $result.found = $true
+            $result.sources += $Destination
+            if (-not [string]::IsNullOrWhiteSpace($StructDir)) {
+                $structPath = Join-Path -Path $StructDir -ChildPath $Label
+                Ensure-DestinationDirectory -Path $structPath
+                Copy-Item -LiteralPath $Destination -Destination $structPath -Force
+                $result.struct += $structPath
+            }
+            $targetResults[$Label] = $result
             return
         }
     }
@@ -203,10 +233,20 @@ function Sync-Target {
         # methods so PowerShell does not misparse the invocation (CI previously surfaced a
         # "Missing ')'" error here).
         $foundSources.Add((Format-SafeString "{0}:{1}" $Label $source)) | Out-Null
+        $result.found = $true
+        $result.sources += $source
+        if (-not [string]::IsNullOrWhiteSpace($StructDir)) {
+            $structPath = Join-Path -Path $StructDir -ChildPath $Label
+            Ensure-DestinationDirectory -Path $structPath
+            Copy-Item -LiteralPath $Destination -Destination $structPath -Force
+            $result.struct += $structPath
+        }
     } else {
         $missingTargets.Add($Label) | Out-Null
         Write-Info "No source located for $Label"
     }
+
+    $targetResults[$Label] = $result
 }
 
 Sync-Target -Label 'tests~test-results.ndjson' -Destination $destTests -PreferredNames @(
@@ -257,12 +297,63 @@ if ($foundSources.Count -eq 0) {
         $foundSources.Add((Format-SafeString "{0}:{1}" 'synth' $destCi)) | Out-Null
         Write-Info "Synthesized ci_test_results.ndjson from $firstFailure"
         $missingTargets.Clear() | Out-Null
+        if (-not $targetResults.ContainsKey('ci_test_results.ndjson')) {
+            $targetResults['ci_test_results.ndjson'] = [ordered]@{
+                label       = 'ci_test_results.ndjson'
+                destination = $destCi
+                found       = $true
+                sources     = @($destCi)
+                struct      = @()
+            }
+        } else {
+            $ciResult = $targetResults['ci_test_results.ndjson']
+            $ciResult.found = $true
+            if (-not ($ciResult.sources -contains $destCi)) { $ciResult.sources += $destCi }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($StructDir)) {
+            $ciStruct = Join-Path -Path $StructDir -ChildPath 'ci_test_results.ndjson'
+            Ensure-DestinationDirectory -Path $ciStruct
+            Copy-Item -LiteralPath $destCi -Destination $ciStruct -Force
+            $ciResult = $targetResults['ci_test_results.ndjson']
+            if (-not ($ciResult.struct -contains $ciStruct)) { $ciResult.struct += $ciStruct }
+        }
     }
 }
 
+$gateDir = Join-Path -Path $workspacePath -ChildPath '_artifacts/iterate'
+if (-not (Test-Path -LiteralPath $gateDir)) {
+    try { New-Item -ItemType Directory -Path $gateDir -Force | Out-Null } catch {}
+}
+$gatePayload = [ordered]@{
+    stage = 'ensure-ndjson-sources'
+    proceed = $true
+    found_inputs = [ordered]@{}
+    missing_inputs = @($missingTargets | Sort-Object -Unique)
+    searched_roots = @($searchRoots | Where-Object { $_ } | Sort-Object -Unique | Select-Object -First 12)
+    checked_patterns = @()
+    note = 'Derived from ensure_ndjson_sources.ps1 discovery'
+}
+foreach ($key in $targetResults.Keys) {
+    $entry = $targetResults[$key]
+    if (-not $entry) { continue }
+    $gatePayload.found_inputs[$key] = [ordered]@{
+        found = [bool]$entry.found
+        destination = $entry.destination
+        sources = @($entry.sources | Where-Object { $_ } | Sort-Object -Unique)
+        struct = @($entry.struct | Where-Object { $_ } | Sort-Object -Unique)
+    }
+}
+$gatePath = Join-Path -Path $gateDir -ChildPath 'iterate_gate.json'
+$gatePayload | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $gatePath -Encoding UTF8
+Write-Info "iterate_gate.json written to $gatePath"
+
 $envPath = $env:GITHUB_ENV
 if ($envPath) {
-    $foundValue = if ($foundSources.Count -gt 0) { 'true' } else { 'false' }
+    $anyFound = $false
+    foreach ($entry in $targetResults.Values) {
+        if ($entry -and $entry.found) { $anyFound = $true; break }
+    }
+    $foundValue = if ($anyFound) { 'true' } else { 'false' }
     Add-Content -LiteralPath $envPath -Value "GATE_NDJSON_FOUND=$foundValue"
     if ($foundSources.Count -gt 0) {
         Add-Content -LiteralPath $envPath -Value "GATE_NDJSON_SOURCE=$([string]::Join(';', $foundSources))"

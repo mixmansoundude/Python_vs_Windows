@@ -79,6 +79,7 @@ if (Test-Path -LiteralPath $setupLog) {
 }
 
 Push-Location -LiteralPath $app
+$smokeCommand = "cmd /c .\\run_setup.bat *> '~envsmoke_bootstrap.log'"
 try {
     # FULL bootstrap here: do NOT set HP_CI_SKIP_ENV
     cmd /c .\run_setup.bat *> '~envsmoke_bootstrap.log'
@@ -103,7 +104,7 @@ Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.conda'
     pass=($exit -eq 0)
     desc='Miniconda bootstrap + environment creation'
-    details=[ordered]@{ exitCode=$exit }
+    details=[ordered]@{ exitCode=$exit; command=$smokeCommand }
 })
 
 $passRun = ($exit -eq 0) -and $tokenFound
@@ -111,7 +112,7 @@ Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.run'
     pass=$passRun
     desc='App runs in created environment'
-    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut }
+    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut; command=$smokeCommand }
 })
 
 if (($exit -eq 0) -and (-not $tokenFound)) {

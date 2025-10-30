@@ -506,11 +506,14 @@ jobs:
           STRUCT_DIR: ${{ steps.struct.outputs.extract_dir }}
         run: |
           $workspace = Convert-Path "$env:GITHUB_WORKSPACE"
-          $structDir = $env:STRUCT_DIR
+          $structDir = Join-Path -Path $env:RUNNER_TEMP -ChildPath 'struct'
+          if (-not (Test-Path $structDir)) {
+            New-Item -ItemType Directory -Path $structDir -Force | Out-Null
+          }
           $diagRoot = ''
-          if ($structDir) {
+          if ($env:STRUCT_DIR) {
             try {
-              $diagRoot = Split-Path -LiteralPath (Convert-Path $structDir) -Parent
+              $diagRoot = Split-Path -LiteralPath (Convert-Path $env:STRUCT_DIR) -Parent
             } catch {
               $diagRoot = ''
             }
@@ -1524,6 +1527,16 @@ jobs:
             rm -f "$placeholder"
           fi
 
+          mirror_root="$GITHUB_WORKSPACE/_artifacts/iterate"
+          mkdir -p "$mirror_root"
+          logs_dir="$mirror_root/iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}"
+          rm -rf "$logs_dir"
+          # Professional note: mirror the sanitized iterate payload into the artifact tree so
+          # publish_index.py can detect '* Iterate logs: found' and expose the files on the
+          # diagnostics page even when download-artifact flattens the archive.
+          mkdir -p "$logs_dir"
+          cp -a "$iter_dir/." "$logs_dir/"
+
           printf 'dir=%s\n' "$iter_dir" >> "$GITHUB_OUTPUT"
           printf 'codex_log=%s\n' "$codex_log" >> "$GITHUB_OUTPUT"
 
@@ -2228,19 +2241,15 @@ jobs:
             generated_utc = (Get-Date).ToUniversalTime().ToString('o')
             files         = $manifestFiles
           }
-          $json = $manifest | ConvertTo-Json -Depth 6
-          $json | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.json')
-          try {
-            $manifestObj = $json | ConvertFrom-Json -Depth 6
-          } catch {
-            $manifestObj = $null
-          }
+          $manifestJson = $manifest | ConvertTo-Json -Depth 6
+          $inventoryJsonPath = Join-Path $Diag 'inventory.json'
+          $manifestJson | Set-Content -Encoding UTF8 $inventoryJsonPath
           $filesForRender = @()
-          if ($manifestObj -and $manifestObj.files) {
-            $filesForRender = @($manifestObj.files)
+          if ($manifest.files) {
+            $filesForRender = @($manifest.files)
           }
-          # derived requirement: inventory.json went blank while HTML/TXT stayed populated; derive the mirrors from the parsed
-          # JSON payload so all formats stay in sync with the canonical manifest.
+          # derived requirement: keep all inventory formats in lockstep with the canonical JSON so
+          # diagnostics never show diverging file counts or stale entries.
           $bulletLines = [System.Collections.Generic.List[string]]::new()
           $plainLines = [System.Collections.Generic.List[string]]::new()
           $htmlLines = [System.Collections.Generic.List[string]]::new()
