@@ -93,6 +93,14 @@ $setup  = (Test-Path $setupLog) ? (Get-Content -LiteralPath $setupLog -Raw -Enco
 $bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw -Encoding Ascii) : ''
 $outxt  = (Test-Path $runout) ? (Get-Content -LiteralPath $runout -Raw -Encoding Ascii) : ''
 
+$smokeCommand = ''
+if ($setup) {
+    $cmdMatch = [regex]::Match($setup, '^Smoke command:\s*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+    if ($cmdMatch.Success) {
+        $smokeCommand = $cmdMatch.Groups[1].Value.Trim()
+    }
+}
+
 Check-PipreqsFailure -LogPath $setupLog -LogText $setup
 
 $haveRunOut = Test-Path -LiteralPath $runout
@@ -103,7 +111,7 @@ Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.conda'
     pass=($exit -eq 0)
     desc='Miniconda bootstrap + environment creation'
-    details=[ordered]@{ exitCode=$exit }
+    details=[ordered]@{ exitCode=$exit; command=$smokeCommand }
 })
 
 $passRun = ($exit -eq 0) -and $tokenFound
@@ -111,7 +119,7 @@ Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.run'
     pass=$passRun
     desc='App runs in created environment'
-    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut }
+    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut; command=$smokeCommand }
 })
 
 if (($exit -eq 0) -and (-not $tokenFound)) {
