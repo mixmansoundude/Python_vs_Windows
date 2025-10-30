@@ -1901,6 +1901,22 @@ jobs:
           # _artifacts/iterate payload one directory deeper; flatten it so the
           # diagnostics publisher detects '* Iterate logs: found'.
 
+      - name: Mirror iterate logs into diagnostics root
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="${{ steps.prep.outputs.ARTIFACTS }}/iterate"
+          dst="${{ steps.prep.outputs.DIAG }}/_artifacts/iterate"
+          mkdir -p "$dst"
+          if [ -d "$src" ]; then
+            # derived requirement: publisher consumers expect the diagnostics bundle to mirror
+            # _artifacts/iterate exactly so downstream readers never fall back to the site copy.
+            shopt -s dotglob nullglob
+            rm -rf "$dst"/*
+            cp -a "$src"/. "$dst"/ || true
+          fi
+
       - name: Mirror iterate logs into site bundle
         if: ${{ always() }}
         shell: pwsh
