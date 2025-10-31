@@ -508,6 +508,8 @@ jobs:
         env:
           STRUCT_DIR: ${{ steps.struct.outputs.extract_dir }}
         run: |
+          # IMPORTANT: each PowerShell statement must be on its own line (or separated with ';').
+          # Avoid: `& script @params if (...)` on the same line — PowerShell will parse `if` as a command.
           $workspace = Convert-Path "$env:GITHUB_WORKSPACE"
           $structDir = $null
           if ($env:STRUCT_DIR) {
