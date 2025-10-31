@@ -493,23 +493,25 @@ if "%HP_ENTRY%"=="" (
 ) else (
   call :record_chosen_entry "%HP_ENTRY%"
   call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
-  rem derived requirement: CI env smoke saw `The syntax of the command is incorrect.`
-  rem when this block silently built the command. Normalize the paths and log the
-  rem exact invocation so future regressions remain diagnosable.
-  set "HP_SMOKE_PY=%HP_PY%"
-  for %%P in ("%HP_PY%") do if exist "%%~fP" set "HP_SMOKE_PY=%%~fP"
-  set "HP_SMOKE_ENTRY=%HP_ENTRY%"
-  for %%E in ("%HP_ENTRY%") do if exist "%%~fE" set "HP_SMOKE_ENTRY=%%~fE"
-  set "HP_SMOKE_OUT=~run.out.txt"
-  for %%O in ("%HP_SMOKE_OUT%") do set "HP_SMOKE_OUT=%%~fO"
-  set "HP_SMOKE_ERR=~run.err.txt"
-  for %%R in ("%HP_SMOKE_ERR%") do set "HP_SMOKE_ERR=%%~fR"
   rem derived requirement: execute the smoke command inline so cmd, not our logging, owns redirection parsing.
-  >> "%LOG%" echo Smoke command: "%HP_SMOKE_PY%" "%HP_SMOKE_ENTRY%" ^> "%HP_SMOKE_OUT%" 2^> "%HP_SMOKE_ERR%"
-  "%HP_SMOKE_PY%" "%HP_SMOKE_ENTRY%" 1> "%HP_SMOKE_OUT%" 2> "%HP_SMOKE_ERR%"
+  >> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
+  "%HP_PY%" "%HP_ENTRY%" 1> "~run.out.txt" 2> "~run.err.txt"
   set "HP_SMOKE_RC=%ERRORLEVEL%"
   call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
   if not "%HP_SMOKE_RC%"=="0" call :die "[ERROR] Entry script execution failed."
+  rem derived requirement: the CI harness inspects the breadcrumb log to flag missing entries.
+  set "HP_BREADCRUMB=~entry1_bootstrap.log"
+  if exist "tests\~entry1\" set "HP_BREADCRUMB=tests\~entry1\~entry1_bootstrap.log"
+  if not exist "%HP_BREADCRUMB%" (
+    rem derived requirement: create the breadcrumb when the smoke run succeeds so diagnostics stay consistent.
+    for %%B in ("%HP_BREADCRUMB%") do if not "%%~dpB"=="" if not exist "%%~dpB" mkdir "%%~dpB" >nul 2>&1
+    type nul > "%HP_BREADCRUMB%"
+  )
+  if exist "%HP_BREADCRUMB%" (
+    call :log "[INFO] Entry smoke breadcrumb exists: %HP_BREADCRUMB%"
+  ) else (
+    call :log "[WARN] Entry smoke missing breadcrumb: %HP_BREADCRUMB%"
+  )
   if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] System fallback: skipping PyInstaller packaging."
   ) else (

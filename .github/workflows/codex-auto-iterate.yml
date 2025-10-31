@@ -542,11 +542,14 @@ jobs:
           # and ci_test_results.ndjson were missing. The poller now writes them under
           # _artifacts/iterate/inputs, but we continue reusing the helper to surface
           # consistent env signals and root-level mirrors for legacy consumers.
-          if ($diagRoot) {
-            & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" -Workspace $workspace -StructDir $structDir -DiagRoot $diagRoot
-          } else {
-            & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" -Workspace $workspace -StructDir $structDir
+          $params = @{ Workspace = $workspace }
+          if ($structDir -and -not [string]::IsNullOrWhiteSpace($structDir)) {
+            $params.StructDir = $structDir
           }
+          if ($diagRoot -and -not [string]::IsNullOrWhiteSpace($diagRoot)) {
+            $params.DiagRoot = $diagRoot
+          }
+          & "$env:GITHUB_WORKSPACE/tools/ensure_ndjson_sources.ps1" @params
 
       - name: Decide gate (iterate vs skip)
         id: gate

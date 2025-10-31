@@ -1,16 +1,16 @@
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
-# Never put a colon right after a PowerShell variable in double-quoted strings;
-# prefer -f or $($var)—and don’t mismatch placeholder counts. CI previously
-# failed parsing "$value:" so we keep the reminder near the helpers.
-
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$Workspace,
     [string]$StructDir,
     [string]$DiagRoot
 )
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+# Never put a colon right after a PowerShell variable in double-quoted strings;
+# prefer -f or $($var)—and don’t mismatch placeholder counts. CI previously
+# failed parsing "$value:" so we keep the reminder near the helpers.
 
 function Write-Info {
     param([string]$Message)
@@ -66,7 +66,19 @@ if (-not $ws) {
 $struct = if ($StructDir) { Resolve-OptionalPath $StructDir } else { $null }
 $diag = if ($DiagRoot) { Resolve-OptionalPath $DiagRoot } else { $null }
 
-$searchRoots = @($struct, $diag) | Where-Object { $_ } | Select-Object -Unique
+$searchCandidates = @(
+    $ws,
+    (if ($ws) { Join-Path -Path $ws -ChildPath '_artifacts' }),
+    (if ($ws) { Join-Path -Path $ws -ChildPath '_artifacts/iterate' }),
+    (if ($ws) { Join-Path -Path $ws -ChildPath '_artifacts/iterate/inputs' }),
+    $struct,
+    $diag
+) | Where-Object { $_ }
+
+# derived requirement: CI run 18957425807-1 wrote NDJSON beneath
+# _artifacts/iterate/inputs, so we must probe the workspace mirrors before
+# falling back to struct/diag roots to avoid declaring the gate missing.
+$searchRoots = @($searchCandidates | Select-Object -Unique)
 $requiredNames = @('tests~test-results.ndjson', 'ci_test_results.ndjson')
 $destinations = @{}
 foreach ($name in $requiredNames) {
@@ -198,14 +210,14 @@ $gatePayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $gatePath -Enc
 
 $envPath = $env:GITHUB_ENV
 if ($envPath) {
-    $foundCount = (@($foundPairs)).Count
+    $foundCount = $foundPairs.Count
     Add-Content -LiteralPath $envPath -Value ('GATE_NDJSON_FOUND={0}' -f ($(if ($foundCount -eq $requiredNames.Count) { 'true' } else { 'false' })))
     if ($foundCount -gt 0) {
         Add-Content -LiteralPath $envPath -Value ('GATE_NDJSON_SOURCE={0}' -f ([string]::Join(';', $foundPairs)))
     } else {
         Add-Content -LiteralPath $envPath -Value 'GATE_NDJSON_SOURCE='
     }
-    if ((@($missingList)).Count -gt 0) {
+    if ($missingList.Count -gt 0) {
         Add-Content -LiteralPath $envPath -Value ('GATE_NDJSON_MISSING={0}' -f ([string]::Join(';', $missingList)))
     } else {
         Add-Content -LiteralPath $envPath -Value 'GATE_NDJSON_MISSING='
