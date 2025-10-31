@@ -199,8 +199,9 @@ function Find-DiagRoot {
             try {
                 $match = Get-ChildItem -Path $candidate -Directory -Recurse -Depth 4 -ErrorAction SilentlyContinue |
                     Where-Object {
-                        Test-Path (Join-Path $_.FullName '_artifacts/iterate/inputs') -or
-                        Test-Path (Join-Path $_.FullName '_artifacts/batch-check')
+                        # derived requirement: keep -or inside a single expression so PowerShell never treats it as a
+                        # stray parameter when future edits adjust wrapping (prevents "parameter name 'or'" parser faults).
+                        (Test-Path (Join-Path $_.FullName '_artifacts/iterate/inputs')) -or (Test-Path (Join-Path $_.FullName '_artifacts/batch-check'))
                     } |
                     Select-Object -First 1
             } catch {

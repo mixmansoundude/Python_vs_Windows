@@ -59,6 +59,36 @@ class LineCursor:
         return self.index + 1
 
 
+def sanitize_ps1_line(line: str) -> Tuple[str, List[int]]:
+    """Strip comments/strings for heuristic scanning while tracking raw indexes."""
+
+    sanitized: List[str] = []
+    mapping: List[int] = []
+    quote: Optional[str] = None
+    i = 0
+    length = len(line)
+    while i < length:
+        ch = line[i]
+        if quote:
+            if quote == '"' and ch == '`' and i + 1 < length:
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in {'"', "'"}:
+            quote = ch
+            i += 1
+            continue
+        if ch == '#':
+            break
+        sanitized.append(ch)
+        mapping.append(i)
+        i += 1
+    return ("".join(sanitized), mapping)
+
+
 def iter_files(paths: Sequence[pathlib.Path]) -> Iterable[pathlib.Path]:
     for path in paths:
         if path.is_file():
@@ -100,6 +130,7 @@ class DelimiterChecker:
         self.string_state: Optional[Tuple[str, bool, int, int]] = None
         self.here_string: Optional[str] = None
         self.in_block_comment = False
+        self.prev_ps1_backtick = False
 
     def add_issue(self, line: int, column: int, message: str) -> None:
         self.issues.append(Issue(self.path, line, column, message))
@@ -155,6 +186,9 @@ class DelimiterChecker:
 
         for line_no, raw_line in enumerate(lines, start=1):
             line = raw_line.rstrip("\n\r")
+
+            if lower_suffix == ".ps1":
+                self._check_ps1_boolean_operators(line_no, line)
 
             if self.here_string:
                 terminator = self.here_string
@@ -295,6 +329,121 @@ class DelimiterChecker:
                 self.add_issue(item.line, item.column, f"Unclosed '{item.char}'")
 
         return self.issues
+
+    def _check_ps1_boolean_operators(self, line_no: int, line: str) -> None:
+        # derived requirement: guard against '-or'/'-and' mis-parsing as parameters when scripts rely on
+        # multiline formatting. These heuristics intentionally skew cautious so CI fails before PowerShell does.
+        if self.here_string or self.in_block_comment:
+            self.prev_ps1_backtick = False
+            return
+
+        sanitized, index_map = sanitize_ps1_line(line)
+        trimmed = sanitized.strip()
+        if not trimmed:
+            self.prev_ps1_backtick = False
+            return
+
+        sanitized_lower = sanitized.lower()
+        trimmed_lower = trimmed.lower()
+        keyword_pattern = re.compile(r"\b(if|elseif|while|for|switch|return|until)\b", re.IGNORECASE)
+        flagged: set[int] = set()
+
+        def note_issue(op: str, sanitized_index: int, detail: str) -> None:
+            if sanitized_index < 0 or sanitized_index >= len(index_map):
+                return
+            raw_index = index_map[sanitized_index]
+            if raw_index in flagged:
+                return
+            flagged.add(raw_index)
+            self.add_issue(
+                line_no,
+                raw_index + 1,
+                f"PowerShell boolean operator '{op}' {detail}; wrap it inside if/elseif/while logic or explicit parentheses.",
+            )
+
+        leading_issue = False
+        if trimmed_lower.startswith("-or") or trimmed_lower.startswith("-and"):
+            op = "-or" if trimmed_lower.startswith("-or") else "-and"
+            idx = sanitized_lower.find(op)
+            if idx != -1:
+                detail = "cannot begin a statement"
+                if self.prev_ps1_backtick:
+                    detail = "cannot continue after a line ending with '`' without parentheses"
+                note_issue(op, idx, detail)
+                leading_issue = True
+
+        pattern = re.compile(r"-(or|and)\b", re.IGNORECASE)
+        for match in pattern.finditer(sanitized_lower):
+            start = match.start()
+            op = match.group(0).lower()
+            if leading_issue and start == sanitized_lower.find(op):
+                continue
+
+            before_segment = sanitized[:start]
+            brace_index = before_segment.rfind("{")
+            segment_for_expr = before_segment[brace_index + 1 :] if brace_index != -1 else before_segment
+            semicolon_index = segment_for_expr.rfind(";")
+            expr_segment = segment_for_expr[semicolon_index + 1 :] if semicolon_index != -1 else segment_for_expr
+            left_expr = expr_segment.strip()
+            if not left_expr:
+                continue
+
+            left_lower = left_expr.lower()
+            has_keyword = bool(keyword_pattern.search(expr_segment))
+            has_assign = "=" in expr_segment
+            first_char = left_expr[0]
+
+            safe_prefix_chars = {"(", "[", "-", "$", "!", ".", "{"}
+            safe = False
+            if has_keyword or has_assign:
+                safe = True
+            elif first_char in safe_prefix_chars:
+                safe = True
+            elif left_expr.endswith(")"):
+                safe = True
+            elif left_lower.endswith(
+                (
+                    "-band",
+                    "-bor",
+                    "-xor",
+                    "-eq",
+                    "-ne",
+                    "-gt",
+                    "-ge",
+                    "-lt",
+                    "-le",
+                    "-like",
+                    "-match",
+                    "-contains",
+                    "-not",
+                    "-and",
+                    "-or",
+                    "-in",
+                )
+            ):
+                safe = True
+
+            left_stripped = left_expr.lstrip()
+            command_before = False
+            if not has_assign:
+                if "|" in segment_for_expr:
+                    command_before = True
+                elif left_stripped.startswith("&"):
+                    command_before = True
+                else:
+                    first_token = left_stripped.split()[0] if left_stripped else ""
+                    if first_token and first_token[0].isalpha():
+                        keyword_set = {"if", "elseif", "while", "for", "switch", "return", "until"}
+                        if first_token.lower() not in keyword_set:
+                            command_before = True
+
+            if not safe or command_before:
+                detail = "must follow a conditional expression; PowerShell otherwise binds it as a parameter"
+                if command_before:
+                    detail = "appears after a command invocation and PowerShell treats it as a parameter"
+                note_issue(op, start, detail)
+
+        self.prev_ps1_backtick = sanitized.rstrip().endswith("`")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
