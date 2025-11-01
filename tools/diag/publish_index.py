@@ -143,8 +143,15 @@ def _iterate_logs_found(context: Context) -> bool:
     if not iterate_root.exists():
         return False
 
-    expected = iterate_root / f"iterate-logs-{context.run_id}-{context.run_attempt}"
-    if expected.exists():
+    expected_name = f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    expected = iterate_root / expected_name
+    expected_zip = iterate_root / f"{expected_name}.zip"
+    if expected.exists() or expected_zip.exists():
+        # derived requirement: CI run 18957425807-1 showed the publisher flagging
+        # "Iterate logs: missing" even though the artifact existed as a zip. Treat
+        # the canonical iterate-logs-* payload as present regardless of whether the
+        # download step unpacked it into a directory or left it zipped in place so
+        # diagnostics stay aligned with the artifact inventory.
         return True
 
     # Professional note: actions/download-artifact@v4 can unpack the payload
@@ -1485,9 +1492,10 @@ def _bundle_links(context: Context) -> List[dict]:
     if context.site and context.diag:
         # Professional note: surface the site-level manifests so analysts can
         # retrieve the JSON/TXT snapshots directly from the diagnostics page.
+        diag_site = context.site / "diag"
         site_links = [
-            ("Latest manifest (json)", context.site / "latest.json"),
-            ("Latest manifest (txt)", context.site / "latest.txt"),
+            ("Latest manifest (json)", diag_site / "latest.json"),
+            ("Latest manifest (txt)", diag_site / "latest.txt"),
         ]
         for label, site_path in site_links:
             if not site_path.exists():
@@ -2143,11 +2151,16 @@ def _write_latest_json(
     # can locate the newest diagnostics run without diffing large manifests.
     payload = {"run_id": run_slug, "url": canonical_url}
 
-    latest_path = context.site / "latest.json"
+    # derived requirement: run 18972548512-1 exposed that the published manifest
+    # links dropped the '/diag/' prefix, yielding 400s. Keep the canonical files
+    # under the diag subtree so the diagnostics page links resolve correctly.
+    diag_site = context.site / "diag"
+    diag_site.mkdir(parents=True, exist_ok=True)
+    latest_path = diag_site / "latest.json"
     latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     ensure_txt_mirror(latest_path)
 
-    latest_txt_path = context.site / "latest.txt"
+    latest_txt_path = diag_site / "latest.txt"
     latest_txt_path.write_text(canonical_url + "\n", encoding="utf-8")
     ensure_txt_mirror(latest_txt_path)
 

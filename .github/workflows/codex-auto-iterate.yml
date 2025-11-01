@@ -1607,6 +1607,33 @@ jobs:
             printf 'EOF_ITER\n'
           } >> "$GITHUB_OUTPUT"
 
+      - name: Archive iterate logs payload
+        if: always()
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE:?}"
+          archive_name="iterate-logs-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.zip"
+          archive_tmp="$RUNNER_TEMP/$archive_name"
+          archive_dir="_artifacts/iterate"
+          rm -f "$archive_tmp"
+          mapfile -t include_paths <<< "${{ steps.iter_paths.outputs.list }}"
+          kept=()
+          for entry in "${include_paths[@]}"; do
+            [ -n "$entry" ] || continue
+            if [ -e "$entry" ]; then
+              kept+=("$entry")
+            fi
+          done
+          if [ "${#kept[@]}" -eq 0 ]; then
+            echo "::error title=iterate-archive::No iterate artifacts found to archive." >&2
+            exit 1
+          fi
+          # derived requirement: expose a deterministic iterate-logs-*.zip so the
+          # diagnostics publisher can detect the artifact without unpack heuristics.
+          zip -r "$archive_tmp" "${kept[@]}"
+          mkdir -p "$archive_dir"
+          mv "$archive_tmp" "$archive_dir/$archive_name"
+
       - name: Upload iterate logs artifact
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -1615,8 +1642,7 @@ jobs:
           # derived requirement: scope uploads to known workspace artifacts so the
           # runner never glob-walks outside (earlier runs hit /boot/efi and failed
           # with EACCES).
-          path: |
-            ${{ steps.iter_paths.outputs.list }}
+          path: _artifacts/iterate/iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}.zip
           if-no-files-found: error
           retention-days: 7
 

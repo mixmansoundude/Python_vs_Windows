@@ -131,6 +131,10 @@ class DelimiterChecker:
         self.here_string: Optional[str] = None
         self.in_block_comment = False
         self.prev_ps1_backtick = False
+        self.yaml_shell_by_indent: dict[int, str] = {}
+        self.in_yaml_pwsh_block = False
+        self.yaml_pwsh_block_indent = 0
+        self.yaml_prev_pwsh_command = False
 
     def add_issue(self, line: int, column: int, message: str) -> None:
         self.issues.append(Issue(self.path, line, column, message))
@@ -186,6 +190,9 @@ class DelimiterChecker:
 
         for line_no, raw_line in enumerate(lines, start=1):
             line = raw_line.rstrip("\n\r")
+
+            if lower_suffix in {".yml", ".yaml"}:
+                self._check_yaml_pwsh_block(line_no, line)
 
             if lower_suffix == ".ps1":
                 self._check_ps1_boolean_operators(line_no, line)
@@ -415,6 +422,89 @@ class DelimiterChecker:
 
         raw_trimmed = line.rstrip()
         self.prev_ps1_backtick = bool(trimmed) and raw_trimmed.endswith("`")
+
+    def _check_yaml_pwsh_block(self, line_no: int, line: str) -> None:
+        if self.here_string:
+            return
+
+        raw = line
+        content_no_comment = raw.split("#", 1)[0]
+        indent = len(raw) - len(raw.lstrip(" "))
+
+        if self.in_yaml_pwsh_block:
+            block_indent = self.yaml_pwsh_block_indent
+            if indent <= block_indent and content_no_comment.strip():
+                self.in_yaml_pwsh_block = False
+                self.yaml_prev_pwsh_command = False
+            else:
+                self._inspect_yaml_pwsh_content(line_no, raw, content_no_comment)
+                return
+
+        for depth in list(self.yaml_shell_by_indent.keys()):
+            if depth > indent:
+                del self.yaml_shell_by_indent[depth]
+
+        stripped = content_no_comment.strip()
+        if not stripped:
+            return
+
+        shell_match = re.match(r"^(\s*)shell\s*:\s*([^\s]+)", content_no_comment, re.IGNORECASE)
+        if shell_match:
+            shell_indent = len(shell_match.group(1))
+            shell_value = shell_match.group(2).strip().lower()
+            self.yaml_shell_by_indent[shell_indent] = shell_value
+            return
+
+        run_match = re.match(r"^(\s*)run\s*:\s*\|[-+]?\s*$", content_no_comment, re.IGNORECASE)
+        if run_match:
+            run_indent = len(run_match.group(1))
+            shell_value = self.yaml_shell_by_indent.get(run_indent, "")
+            shell_value = shell_value.lower()
+            if shell_value in {"pwsh", "powershell"}:
+                self.in_yaml_pwsh_block = True
+                self.yaml_pwsh_block_indent = run_indent
+                self.yaml_prev_pwsh_command = False
+            else:
+                self.in_yaml_pwsh_block = False
+                self.yaml_prev_pwsh_command = False
+            return
+
+    def _inspect_yaml_pwsh_content(self, line_no: int, raw: str, content_no_comment: str) -> None:
+        block_indent = self.yaml_pwsh_block_indent
+        segment = content_no_comment[block_indent + 1 :] if len(content_no_comment) > block_indent else ""
+        trimmed = segment.lstrip()
+        if not trimmed:
+            self.yaml_prev_pwsh_command = False
+            return
+
+        lower = trimmed.lower()
+        if lower.startswith("-or") or lower.startswith("-and"):
+            op = "-or" if lower.startswith("-or") else "-and"
+            op_start = raw.lower().find(op, block_indent)
+            if op_start != -1:
+                detail = "cannot begin a continued pwsh run line"
+                if self.yaml_prev_pwsh_command:
+                    detail = "cannot follow a command invocation on the previous line"
+                self.add_issue(
+                    line_no,
+                    op_start + 1,
+                    f"PowerShell boolean operator '{op}' {detail}; wrap it inside an explicit expression.",
+                )
+            self.yaml_prev_pwsh_command = False
+            return
+
+        if lower.endswith("-or") or lower.endswith("-and"):
+            op = "-or" if lower.endswith("-or") else "-and"
+            op_start = raw.lower().rfind(op)
+            if op_start != -1:
+                self.add_issue(
+                    line_no,
+                    op_start + 1,
+                    f"PowerShell boolean operator '{op}' cannot terminate a pwsh run line; complete the expression before wrapping.",
+                )
+
+        begins_command = trimmed.startswith("&") or trimmed.startswith("./") or trimmed.startswith(".\\")
+        self.yaml_prev_pwsh_command = begins_command
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
