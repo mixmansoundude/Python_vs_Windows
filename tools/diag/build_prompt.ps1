@@ -69,10 +69,17 @@ function Clip-Lines {
 
     if ($null -eq $Lines) { return @() }
     if ($Max -le 0) { return @() }
-    if ($Lines.Count -le $Max) { return $Lines }
+
+    # derived requirement: GitHub runner logs showed "$_.Count" failing when PowerShell
+    # collapsed a single line into a scalar string. Materialize an array up front so
+    # downstream count math always uses .Length on a true sequence and avoids the
+    # "property 'Count' cannot be found" regression.
+    $items = @($Lines)
+    $count = $items.Length
+    if ($count -le $Max) { return $items }
 
     if ($Max -le 1) {
-        return @($Lines[0])
+        return @($items[0])
     }
 
     $tailBudget = [Math]::Min(40, [Math]::Max(0, $Max - 21))
@@ -80,25 +87,25 @@ function Clip-Lines {
     if ($headBudget -lt 1) { $headBudget = 1 }
     if ($headBudget -gt 20) { $headBudget = 20 }
 
-    if ($headBudget -gt ($Lines.Count - $tailBudget)) {
-        $headBudget = [Math]::Max(1, $Lines.Count - $tailBudget)
+    if ($headBudget -gt ($count - $tailBudget)) {
+        $headBudget = [Math]::Max(1, $count - $tailBudget)
     }
 
-    $tailBudget = [Math]::Min($tailBudget, [Math]::Max(0, $Lines.Count - $headBudget))
+    $tailBudget = [Math]::Min($tailBudget, [Math]::Max(0, $count - $headBudget))
 
     $buffer = [System.Collections.Generic.List[string]]::new()
     for ($i = 0; $i -lt $headBudget; $i++) {
-        $buffer.Add($Lines[$i]) | Out-Null
+        $buffer.Add($items[$i]) | Out-Null
     }
 
-    if (($headBudget + $tailBudget) -lt $Lines.Count) {
+    if (($headBudget + $tailBudget) -lt $count) {
         $buffer.Add('... [clipped] ...') | Out-Null
     }
 
     if ($tailBudget -gt 0) {
-        $start = $Lines.Count - $tailBudget
-        for ($j = $start; $j -lt $Lines.Count; $j++) {
-            $buffer.Add($Lines[$j]) | Out-Null
+        $start = $count - $tailBudget
+        for ($j = $start; $j -lt $count; $j++) {
+            $buffer.Add($items[$j]) | Out-Null
         }
     }
 
