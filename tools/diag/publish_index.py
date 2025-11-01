@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 try:
     from zoneinfo import ZoneInfo
@@ -66,7 +68,8 @@ class Context:
     inventory_b64: Optional[str]
     batch_run_id: Optional[str]
     batch_run_attempt: Optional[str]
-    site: Optional[Path]
+    site: Optional[Path] = None
+    iterate_artifact_href: Optional[str] = None
 
 
 def _get_env_path(name: str) -> Optional[Path]:
@@ -132,8 +135,47 @@ ITERATE_METADATA_FILENAMES = (
 )
 
 
+def _github_iterate_artifact_href(context: Context, expected_names: Iterable[str]) -> Optional[str]:
+    """Return the GitHub Actions artifacts page when the iterate zip exists remotely."""
+
+    token = os.getenv("GITHUB_TOKEN")
+    repo = context.repo
+    run_id = context.run_id
+    if not token or not repo or not run_id or run_id == "n/a":
+        return None
+
+    api_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts"
+    request = Request(api_url)
+    request.add_header("Accept", "application/vnd.github+json")
+    request.add_header("Authorization", f"Bearer {token}")
+    request.add_header("X-GitHub-Api-Version", "2022-11-28")
+
+    try:
+        with urlopen(request, timeout=10) as response:
+            payload = json.load(response)
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    artifacts = payload.get("artifacts")
+    if not isinstance(artifacts, list):
+        return None
+
+    for name in expected_names:
+        for item in artifacts:
+            if item.get("name") == name:
+                # derived requirement: when the local artifact mirror is empty we still
+                # want the diagnostics bundle to link to the GitHub Actions artifact
+                # list so operators can download the iterate logs without waiting for
+                # another publish cycle.
+                return f"https://github.com/{repo}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
+
+    return None
+
+
 def _iterate_logs_found(context: Context) -> bool:
     """Return True when the iterate-logs artifact actually exists."""
+
+    context.iterate_artifact_href = None
 
     artifacts = context.artifacts
     if not artifacts:
@@ -143,16 +185,12 @@ def _iterate_logs_found(context: Context) -> bool:
     if not iterate_root.exists():
         return False
 
-    expected_name = f"iterate-logs-{context.run_id}-{context.run_attempt}"
-    expected = iterate_root / expected_name
-    expected_zip = iterate_root / f"{expected_name}.zip"
-    if expected.exists() or expected_zip.exists():
-        # derived requirement: CI run 18957425807-1 showed the publisher flagging
-        # "Iterate logs: missing" even though the artifact existed as a zip. Treat
-        # the canonical iterate-logs-* payload as present regardless of whether the
-        # download step unpacked it into a directory or left it zipped in place so
-        # diagnostics stay aligned with the artifact inventory.
-        return True
+    expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    expected_names = [expected_stem, f"{expected_stem}.zip"]
+    for name in expected_names:
+        candidate = iterate_root / name
+        if candidate.exists():
+            return True
 
     # Professional note: actions/download-artifact@v4 can unpack the payload
     # directly under the iterate root instead of a named iterate-logs-*
@@ -168,6 +206,15 @@ def _iterate_logs_found(context: Context) -> bool:
                 return True
     except FileNotFoundError:
         pass
+
+    # derived requirement: CI run 18988034718-1 mirrored an iterate zip to the
+    # Actions artifact inventory but not to the local publish workspace. Confirm
+    # presence via the GitHub REST API so diagnostics still record "found" and
+    # surface a working link even when the download step is skipped.
+    remote_href = _github_iterate_artifact_href(context, expected_names)
+    if remote_href:
+        context.iterate_artifact_href = remote_href
+        return True
 
     return False
 
@@ -1648,7 +1695,12 @@ def _build_markdown(
     lines.append("")
     lines.append("## Quick links")
 
-    for entry in _bundle_links(context):
+    quick_entries = _bundle_links(context)
+    has_local_iterate_link = any(
+        entry.get("label") == "Iterate logs zip" for entry in quick_entries
+    )
+
+    for entry in quick_entries:
         label = entry["label"]
         path_obj: Optional[Path] = entry.get("path")
         if not path_obj:
@@ -1664,6 +1716,14 @@ def _build_markdown(
             )
         else:
             lines.append(f"- {label}: [Download]({original_href})")
+
+    fallback_href = context.iterate_artifact_href
+    if fallback_href and iterate_log_status == "found" and not has_local_iterate_link:
+        # derived requirement: CI surfaced runs where the zip stayed in the GitHub
+        # artifact inventory but never reached the publish workspace. Link to the
+        # Actions artifacts view so operators still have a one-click path to the
+        # iterate logs even when only the remote copy exists.
+        lines.append(f"- Iterate logs (GitHub Actions): [Open]({fallback_href})")
 
     lines.extend(
         [

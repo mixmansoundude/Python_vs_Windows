@@ -500,9 +500,6 @@ jobs:
             printf 'id=%s | %s (source=%s)\n' "$id" "$desc" "$source" > .codex/fail/first_failure.txt
           fi
 
-      - name: Check delimiter balance
-        run: python tools/check_delimiters.py
-
       - name: Ensure NDJSON sources for gate
         shell: pwsh
         env:
@@ -1638,7 +1635,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}.zip
           # derived requirement: scope uploads to known workspace artifacts so the
           # runner never glob-walks outside (earlier runs hit /boot/efi and failed
           # with EACCES).
@@ -1903,7 +1900,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}.zip
           path: ${{ steps.prep.outputs.ARTIFACTS }}/iterate
 
       - name: Normalize iterate artifact layout

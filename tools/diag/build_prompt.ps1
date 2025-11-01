@@ -192,18 +192,25 @@ function Find-DiagRoot {
             $candidate = $entry.Path
             $inputsProbe = Join-Path $candidate '_artifacts/iterate/inputs'
             $batchProbe = Join-Path $candidate '_artifacts/batch-check'
-            if (Test-Path $inputsProbe -or Test-Path $batchProbe) {
+            if (Test-Path $inputsProbe) {
+                return $candidate
+            }
+            if (Test-Path $batchProbe) {
                 return $candidate
             }
 
             try {
                 $match = Get-ChildItem -Path $candidate -Directory -Recurse -Depth 4 -ErrorAction SilentlyContinue |
                     Where-Object {
-                        # derived requirement: compute each probe explicitly so '-or' always lives inside a boolean expression
-                        # and never gets glued onto the preceding command during future refactors.
+                        # derived requirement: compute each probe explicitly so future edits never
+                        # reintroduce '-or' outside a boolean expression and trigger the parser
+                        # regression that blocked build_prompt.ps1 in CI.
                         $hasIterateInputs = Test-Path (Join-Path $_.FullName '_artifacts/iterate/inputs')
                         $hasBatchCheck = Test-Path (Join-Path $_.FullName '_artifacts/batch-check')
-                        if ($hasIterateInputs -or $hasBatchCheck) {
+                        if ($hasIterateInputs) {
+                            return $true
+                        }
+                        if ($hasBatchCheck) {
                             return $true
                         }
                         return $false
@@ -232,7 +239,9 @@ function Get-FailureContextLines {
     $batchRoot = Join-Path $DiagRoot '_artifacts/batch-check'
     $hasInputs = Test-Path $inputsRoot
     $hasBatch = Test-Path $batchRoot
-    if (-not $hasInputs -and -not $hasBatch) { return $block }
+    if (-not $hasInputs) {
+        if (-not $hasBatch) { return $block }
+    }
 
     $remaining = 40
     $block.Add('----- Failure Context -----') | Out-Null
@@ -266,9 +275,12 @@ function Get-FailureContextLines {
                     } catch {
                         continue
                     }
-                    if ($null -ne $obj.pass -and -not [bool]$obj.pass) {
-                        $firstFailLine = $trim
-                        break
+                    $passValue = $obj.pass
+                    if ($null -ne $passValue) {
+                        if (-not [bool]$passValue) {
+                            $firstFailLine = $trim
+                            break
+                        }
                     }
                     if (-not $firstFailLine) { $firstFailLine = $trim }
                 }
@@ -288,42 +300,46 @@ function Get-FailureContextLines {
         }
     }
 
-    if ($hasBatch -and $remaining -gt 0) {
-        $firstFailure = $null
-        try {
-            $firstFailure = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'first_failure.json' -ErrorAction SilentlyContinue | Select-Object -First 1
-        } catch {
+    if ($hasBatch) {
+        if ($remaining -gt 0) {
             $firstFailure = $null
-        }
-        if ($firstFailure -and $remaining -gt 0) {
-            if ($block.Count -gt 1) {
-                $block.Add('') | Out-Null
-                $remaining--
-            }
-
-            $relative = $firstFailure.FullName
             try {
-                $relative = [System.IO.Path]::GetRelativePath($DiagRoot, $firstFailure.FullName)
+                $firstFailure = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'first_failure.json' -ErrorAction SilentlyContinue | Select-Object -First 1
             } catch {
-                $relative = $firstFailure.FullName
+                $firstFailure = $null
             }
-            $block.Add("first_failure.json ($relative):") | Out-Null
-            $remaining--
+            if ($firstFailure) {
+                if ($remaining -gt 0) {
+                    if ($block.Count -gt 1) {
+                        $block.Add('') | Out-Null
+                        $remaining--
+                    }
 
-            if ($remaining -gt 0) {
-                try {
-                    $rawLines = Get-Content -LiteralPath $firstFailure.FullName -Encoding UTF8
-                } catch {
-                    $rawLines = @()
-                }
-                foreach ($line in Sanitize-TextLines $rawLines) {
-                    if ($remaining -le 0) { break }
-                    $block.Add($line) | Out-Null
+                    $relative = $firstFailure.FullName
+                    try {
+                        $relative = [System.IO.Path]::GetRelativePath($DiagRoot, $firstFailure.FullName)
+                    } catch {
+                        $relative = $firstFailure.FullName
+                    }
+                    $block.Add("first_failure.json ($relative):") | Out-Null
                     $remaining--
+
+                    if ($remaining -gt 0) {
+                        try {
+                            $rawLines = Get-Content -LiteralPath $firstFailure.FullName -Encoding UTF8
+                        } catch {
+                            $rawLines = @()
+                        }
+                        foreach ($line in Sanitize-TextLines $rawLines) {
+                            if ($remaining -le 0) { break }
+                            $block.Add($line) | Out-Null
+                            $remaining--
+                        }
+                    }
+
+                    $added = $true
                 }
             }
-
-            $added = $true
         }
     }
 
@@ -359,7 +375,8 @@ function Get-StagedFailureContextLines {
         if ($budget -le 0) { break }
 
         $lines = Read-TextIfExists $source.Path $source.Limit
-        if (-not $lines -or $lines.Count -eq 0) { continue }
+        if (-not $lines) { continue }
+        if ($lines.Count -eq 0) { continue }
 
         if (-not $headerAdded) {
             $result.Add('----- Failure Context (staged) -----') | Out-Null
@@ -451,7 +468,8 @@ function Get-CodeSnippetLines {
         if ($budget -le 0) { break }
 
         $lines = Grep-Context $snippet.Path $snippet.Patterns $snippet.Radius $snippet.Max
-        if (-not $lines -or $lines.Count -eq 0) { continue }
+        if (-not $lines) { continue }
+        if ($lines.Count -eq 0) { continue }
 
         if (-not $headerAdded) {
             $result.Add('----- Candidate code snippets -----') | Out-Null
@@ -477,8 +495,12 @@ function Get-CodeSnippetLines {
         }
     }
 
-    if ($headerAdded -and $result.Count -gt 0 -and $result[$result.Count - 1] -eq '') {
-        $result.RemoveAt($result.Count - 1)
+    if ($headerAdded) {
+        if ($result.Count -gt 0) {
+            if ($result[$result.Count - 1] -eq '') {
+                $result.RemoveAt($result.Count - 1)
+            }
+        }
     }
 
     return $result
@@ -553,7 +575,13 @@ if ($diagRoot) {
     }
 }
 
-if (-not $diagRoot -or $failureContext.Count -eq 0) {
+$hasDiagContext = $false
+if ($diagRoot) {
+    if ($failureContext.Count -gt 0) {
+        $hasDiagContext = $true
+    }
+}
+if (-not $hasDiagContext) {
     $stagedContext = Get-StagedFailureContextLines $workspaceRoot
     if ($stagedContext.Count -gt 0) {
         Add-Lines $lines @('')
