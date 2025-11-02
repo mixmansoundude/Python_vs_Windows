@@ -129,10 +129,15 @@ function Read-TextIfExists {
 
     if ($null -eq $raw) { return @() }
 
-    $lines = $raw -split "`n"
+    $lines = @($raw -split "`n")
     if ($null -eq $lines) { return @() }
 
-    for ($i = 0; $i -lt $lines.Count; $i++) {
+    # derived requirement: PowerShell can collapse a single split result into a
+    # scalar string. Materialize an array and rely on .Length so we never trip
+    # the "property 'Count' cannot be found" regression again.
+    $lineCount = $lines.Length
+
+    for ($i = 0; $i -lt $lineCount; $i++) {
         if ($null -ne $lines[$i]) {
             $lines[$i] = $lines[$i].TrimEnd("`r")
         }
@@ -159,13 +164,19 @@ function Grep-Context {
 
     if ($null -eq $lines) { return @() }
 
+    # derived requirement: keep the failure-context scanner resilient when
+    # PowerShell hands back a lone string instead of an array (mirrors the
+    # runner regression cited in the CI logs).
+    $lines = @($lines)
+    $lineCount = $lines.Length
+
     $hits = [System.Collections.Generic.List[string]]::new()
-    for ($i = 0; $i -lt $lines.Count; $i++) {
+    for ($i = 0; $i -lt $lineCount; $i++) {
         $current = $lines[$i]
         foreach ($pattern in $Patterns) {
             if ($current -match $pattern) {
                 $start = [Math]::Max(0, $i - $Radius)
-                $end = [Math]::Min($lines.Count - 1, $i + $Radius)
+                $end = [Math]::Min($lineCount - 1, $i + $Radius)
                 for ($j = $start; $j -le $end; $j++) {
                     $hits.Add($lines[$j]) | Out-Null
                 }

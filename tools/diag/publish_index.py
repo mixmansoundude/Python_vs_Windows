@@ -177,40 +177,47 @@ def _iterate_logs_found(context: Context) -> bool:
 
     context.iterate_artifact_href = None
 
-    artifacts = context.artifacts
-    if not artifacts:
-        return False
-
-    iterate_root = artifacts / "iterate"
-    if not iterate_root.exists():
-        return False
-
     expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
     expected_names = [expected_stem, f"{expected_stem}.zip"]
-    for name in expected_names:
-        candidate = iterate_root / name
-        if candidate.exists():
-            return True
+    artifacts = context.artifacts
+    iterate_root: Optional[Path] = None
+    local_found = False
 
-    # Professional note: actions/download-artifact@v4 can unpack the payload
-    # directly under the iterate root instead of a named iterate-logs-*
-    # directory. Treat the root as present when metadata files land there so we
-    # continue reporting success for flattened artifacts.
-    if any((iterate_root / name).exists() for name in ITERATE_METADATA_FILENAMES):
+    if artifacts:
+        iterate_root = artifacts / "iterate"
+        if iterate_root.exists():
+            for name in expected_names:
+                candidate = iterate_root / name
+                if candidate.exists():
+                    local_found = True
+                    break
+
+            if not local_found:
+                # Professional note: actions/download-artifact@v4 can unpack the payload
+                # directly under the iterate root instead of a named iterate-logs-*
+                # directory. Treat the root as present when metadata files land there so we
+                # continue reporting success for flattened artifacts.
+                if any((iterate_root / name).exists() for name in ITERATE_METADATA_FILENAMES):
+                    local_found = True
+
+            if not local_found:
+                temp_dir = iterate_root / "_temp"
+                try:
+                    for candidate in temp_dir.rglob("*"):
+                        if candidate.is_file():
+                            local_found = True
+                            break
+                except FileNotFoundError:
+                    pass
+
+    if local_found:
         return True
-
-    temp_dir = iterate_root / "_temp"
-    try:
-        for candidate in temp_dir.rglob("*"):
-            if candidate.is_file():
-                return True
-    except FileNotFoundError:
-        pass
 
     # derived requirement: CI run 18988034718-1 mirrored an iterate zip to the
     # Actions artifact inventory but not to the local publish workspace. Confirm
     # presence via the GitHub REST API so diagnostics still record "found" and
-    # surface a working link even when the download step is skipped.
+    # surface a working link even when the download step is skipped (including
+    # when the local mirror is completely absent).
     remote_href = _github_iterate_artifact_href(context, expected_names)
     if remote_href:
         context.iterate_artifact_href = remote_href
