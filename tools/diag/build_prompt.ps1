@@ -19,6 +19,20 @@ function Add-Lines {
     }
 }
 
+function New-StringList {
+    param([string[]]$Items = @())
+
+    # derived requirement: actions logs showed StrictMode surfacing "property 'Count'"
+    # when a scalar string flowed into callers that later accessed .Count. Marshal
+    # every clipper/sanitizer output through a concrete List[string] so downstream
+    # code can rely on Count existing and avoid the regression entirely.
+    $list = [System.Collections.Generic.List[string]]::new()
+    foreach ($item in $Items) {
+        $list.Add([string]$item) | Out-Null
+    }
+    return $list
+}
+
 # derived requirement: Failure Context must reuse the iterate sanitizer's pattern so prompts never
 # leak secrets when we inline first_failure.json or NDJSON rows.
 $script:RedactRegex = $null
@@ -67,8 +81,8 @@ function Clip-Lines {
         [int]$Max = 60
     )
 
-    if ($null -eq $Lines) { return @() }
-    if ($Max -le 0) { return @() }
+    if ($null -eq $Lines) { return (New-StringList) }
+    if ($Max -le 0) { return (New-StringList) }
 
     # derived requirement: GitHub runner logs showed "$_.Count" failing when PowerShell
     # collapsed a single line into a scalar string. Materialize an array up front so
@@ -76,10 +90,13 @@ function Clip-Lines {
     # "property 'Count' cannot be found" regression.
     $items = @($Lines)
     $count = $items.Length
-    if ($count -le $Max) { return $items }
+    if ($count -le $Max) { return (New-StringList $items) }
 
     if ($Max -le 1) {
-        return @($items[0])
+        if ($count -gt 0) {
+            return (New-StringList @($items[0]))
+        }
+        return (New-StringList)
     }
 
     $tailBudget = [Math]::Min(40, [Math]::Max(0, $Max - 21))
@@ -118,19 +135,19 @@ function Read-TextIfExists {
         [int]$Max = 60
     )
 
-    if ([string]::IsNullOrWhiteSpace($Path)) { return @() }
-    if (-not (Test-Path $Path)) { return @() }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return (New-StringList) }
+    if (-not (Test-Path $Path)) { return (New-StringList) }
 
     try {
         $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
     } catch {
-        return @()
+        return (New-StringList)
     }
 
-    if ($null -eq $raw) { return @() }
+    if ($null -eq $raw) { return (New-StringList) }
 
     $lines = @($raw -split "`n")
-    if ($null -eq $lines) { return @() }
+    if ($null -eq $lines) { return (New-StringList) }
 
     # derived requirement: PowerShell can collapse a single split result into a
     # scalar string. Materialize an array and rely on .Length so we never trip
@@ -154,15 +171,15 @@ function Grep-Context {
         [int]$Max = 80
     )
 
-    if (-not (Test-Path $Path)) { return @() }
+    if (-not (Test-Path $Path)) { return (New-StringList) }
 
     try {
         $lines = Get-Content -LiteralPath $Path -Encoding UTF8
     } catch {
-        return @()
+        return (New-StringList)
     }
 
-    if ($null -eq $lines) { return @() }
+    if ($null -eq $lines) { return (New-StringList) }
 
     # derived requirement: keep the failure-context scanner resilient when
     # PowerShell hands back a lone string instead of an array (mirrors the
@@ -186,7 +203,7 @@ function Grep-Context {
         }
     }
 
-    if ($hits.Count -eq 0) { return @() }
+    if ($hits.Count -eq 0) { return (New-StringList) }
     if ($hits[$hits.Count - 1] -eq '---') {
         $hits.RemoveAt($hits.Count - 1)
     }
