@@ -85,6 +85,16 @@ THEN stop and open/append a PR. One loop = one change set.
 - Be sure to sanity check anything touched before submitting code. Recommended options include:
   - Python: `python -m compileall -q .` and `python -m pyflakes .` (install `pyflakes` if needed).
   - PowerShell: run PSScriptAnalyzer (`Install-Module PSScriptAnalyzer -Force -Scope CurrentUser` then `Invoke-ScriptAnalyzer -Path . -Recurse -EnableExit`).
+    - Install PowerShell in the container with:
+      ```
+      sudo apt-get update
+      sudo apt-get install -y wget apt-transport-https software-properties-common lsb-release
+      wget -q "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb" -O packages-microsoft-prod.deb
+      sudo dpkg -i packages-microsoft-prod.deb && rm packages-microsoft-prod.deb
+      sudo apt-get update
+      sudo apt-get install -y powershell
+      ```
+    - When reproducing workflow behaviour, export the same environment variables the calling YAML provides, then run the script via `pwsh` just like the workflow step. Capture full traces with `Set-PSDebug -Trace 2` and inspect `$Error` afterwards for hidden stack info.
 - YAML (and GitHub Actions): run `python -m yamllint <file>` (or `actionshub/yamllint@v1`) and `actionlint -oneline` for workflow validation.
   - Preferred actionlint install: `curl -sSLO https://github.com/rhysd/actionlint/releases/latest/download/actionlint_linux_amd64.tar.gz && tar -xzf actionlint_linux_amd64.tar.gz actionlint && ./actionlint -oneline .`
   - JSON: `jq -e .` over `*.json`.
