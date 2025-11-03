@@ -604,7 +604,17 @@ Add-Lines $lines @(
 $failureContext = [System.Collections.Generic.List[string]]::new()
 if ($diagRoot) {
     $failureContext = Get-FailureContextLines $diagRoot
-    if ($failureContext.Count -gt 0) {
+
+    if ($null -eq $failureContext) {
+        # derived requirement: run 19005541669-1 still surfaced "property 'Count'"
+        # when Get-FailureContextLines yielded $null under StrictMode. Normalize
+        # back into a concrete List so the Count checks below stay safe.
+        $failureContext = New-StringList
+    } elseif ($failureContext -isnot [System.Collections.Generic.List[string]]) {
+        $failureContext = New-StringList $failureContext
+    }
+
+    if ($failureContext -and ($failureContext.Count -gt 0)) {
         Add-Lines $lines @('')
         Add-Lines $lines $failureContext
     }
@@ -612,13 +622,21 @@ if ($diagRoot) {
 
 $hasDiagContext = $false
 if ($diagRoot) {
-    if ($failureContext.Count -gt 0) {
+    if ($failureContext -and ($failureContext.Count -gt 0)) {
         $hasDiagContext = $true
     }
 }
 if (-not $hasDiagContext) {
     $stagedContext = Get-StagedFailureContextLines $workspaceRoot
-    if ($stagedContext.Count -gt 0) {
+    if ($null -eq $stagedContext) {
+        # derived requirement: keep staged context guards parallel with the
+        # failure context logic so StrictMode never trips Count on $null.
+        $stagedContext = New-StringList
+    } elseif ($stagedContext -isnot [System.Collections.Generic.List[string]]) {
+        $stagedContext = New-StringList $stagedContext
+    }
+
+    if ($stagedContext -and ($stagedContext.Count -gt 0)) {
         Add-Lines $lines @('')
         Add-Lines $lines $stagedContext
     }
@@ -628,7 +646,15 @@ if (-not $hasDiagContext) {
 # only failure metadata. Surface small repo excerpts near helper and NDJSON emitters so the
 # model can jump directly to likely edit points without scanning the full tree.
 $codeSnippets = Get-CodeSnippetLines $workspaceRoot
-if ($codeSnippets.Count -gt 0) {
+if ($null -eq $codeSnippets) {
+    # derived requirement: guard against unexpected nulls bubbling out of the
+    # snippet scanner so downstream Count math always has a List to inspect.
+    $codeSnippets = New-StringList
+} elseif ($codeSnippets -isnot [System.Collections.Generic.List[string]]) {
+    $codeSnippets = New-StringList $codeSnippets
+}
+
+if ($codeSnippets -and ($codeSnippets.Count -gt 0)) {
     Add-Lines $lines @('')
     Add-Lines $lines $codeSnippets
 }
