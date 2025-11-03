@@ -40,6 +40,7 @@ jobs:
       ALLOW_VS_ATTACH_TIMEOUT: 'true'
       VECTOR_STORE_ATTACH_TIMEOUT_PER_FILE_SECONDS: '2'
       VECTOR_STORE_ATTACH_TIMEOUT_CAP_SECONDS: '5400'
+      ALLOW_FILE_SEARCH: 'false'
     steps:
       - name: Debug event
         run: |
@@ -1017,7 +1018,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Ask model for patch (Responses API)
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' && steps.pycount.outputs.py_files != '0' }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' && (env.ALLOW_FILE_SEARCH != 'true' || steps.vs_upload.outputs.vs_id != '') }}
         id: llm
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -1034,7 +1035,7 @@ jobs:
           OUTTXT="$RUNNER_TEMP/llm_content.txt"
           PROMPT_FILE="${{ steps.prompt.outputs.path }}"
           VS_ID="${{ steps.vs_upload.outputs.vs_id }}"
-          if [ -z "$VS_ID" ]; then
+          if [ "${ALLOW_FILE_SEARCH:-false}" = "true" ] && [ -z "$VS_ID" ]; then
             echo "missing vector store id" >&2
             exit 1
           fi
@@ -1047,24 +1048,34 @@ jobs:
           fi
           write_request() {
             local tokens="$1"
+            local allow_search="${ALLOW_FILE_SEARCH:-false}"
+            local want_tools=false
+            if [ "$allow_search" = "true" ] && [ -n "$VS_ID" ]; then
+              want_tools=true
+            fi
             jq -n \
               --arg model "$OPENAI_MODEL" \
               --arg vs "$VS_ID" \
               --arg tokens "$tokens" \
+              --argjson allow "$want_tools" \
               --slurpfile prompt "$RUNNER_TEMP/prompt.json" \
               '{
                 model: $model,
-                # derived requirement: force the model to rely on the vector store corpus via
-                # file_search instead of the deprecated code_interpreter container.
-                tools: [{type:"file_search"}],
-                tool_resources: {file_search:{vector_store_ids:[$vs]}},
-                tool_choice: "required",
                 input: [
                   {role:"system",content:[{type:"input_text",text:"You are an expert software engineer that proposes precise, minimal unified diffs. Use the file_search tool to inspect the uploaded corpus before drafting a diff."}]},
                   {role:"user",content:[{type:"input_text",text:$prompt[0]}]}
                 ],
                 max_output_tokens: ($tokens|tonumber)
-              }' > "$REQ"
+              }
+              # derived requirement: Responses API rejects tool_resources; only attach file_search
+              # knobs when explicitly enabled so we avoid "Unknown parameter" failures downstream.
+              | if $allow then
+                  .tools = [{type:"file_search"}]
+                  | .tool_choice = "required"
+                  | .tool_resources = {file_search:{vector_store_ids:[$vs]}}
+                else
+                  .
+                end' > "$REQ"
           }
           write_request "$MAX_OUTPUT_TOKENS_INITIAL"
           http_code=`curl -sS -o "$RES" -w "%{http_code}" \
@@ -1162,7 +1173,7 @@ jobs:
           fi
 
       - name: Verify file_search usage
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' && steps.pycount.outputs.py_files != '0' }}
+        if: ${{ env.ALLOW_FILE_SEARCH == 'true' && steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' && steps.pycount.outputs.py_files != '0' }}
         run: |
           set -euo pipefail
           RES="$RUNNER_TEMP/llm_res.json"
