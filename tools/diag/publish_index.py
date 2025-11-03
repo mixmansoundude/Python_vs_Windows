@@ -70,6 +70,7 @@ class Context:
     batch_run_attempt: Optional[str]
     site: Optional[Path] = None
     iterate_artifact_href: Optional[str] = None
+    iterate_found_cache: Optional[bool] = None
 
 
 def _get_env_path(name: str) -> Optional[Path]:
@@ -144,11 +145,14 @@ def _github_iterate_artifact_href(context: Context, expected_names: Iterable[str
     if not token or not repo or not run_id or run_id == "n/a":
         return None
 
-    api_url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts"
+    api_url = (
+        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
+    )
     request = Request(api_url)
     request.add_header("Accept", "application/vnd.github+json")
     request.add_header("Authorization", f"Bearer {token}")
     request.add_header("X-GitHub-Api-Version", "2022-11-28")
+    request.add_header("User-Agent", "publish_index.py diagnostics")
 
     try:
         with urlopen(request, timeout=10) as response:
@@ -174,6 +178,9 @@ def _github_iterate_artifact_href(context: Context, expected_names: Iterable[str
 
 def _iterate_logs_found(context: Context) -> bool:
     """Return True when the iterate-logs artifact actually exists."""
+
+    if context.iterate_found_cache is not None:
+        return context.iterate_found_cache
 
     context.iterate_artifact_href = None
 
@@ -211,6 +218,7 @@ def _iterate_logs_found(context: Context) -> bool:
                     pass
 
     if local_found:
+        context.iterate_found_cache = True
         return True
 
     # derived requirement: CI run 18988034718-1 mirrored an iterate zip to the
@@ -221,8 +229,10 @@ def _iterate_logs_found(context: Context) -> bool:
     remote_href = _github_iterate_artifact_href(context, expected_names)
     if remote_href:
         context.iterate_artifact_href = remote_href
+        context.iterate_found_cache = True
         return True
 
+    context.iterate_found_cache = False
     return False
 
 
@@ -1162,25 +1172,47 @@ def _gather_real_lane_summaries(diag: Optional[Path]) -> List[dict]:
     results: List[dict] = []
     seen: set[Path] = set()
     targets = [
-        ("real ci_test_results.ndjson", "ci_test_results.ndjson"),
-        ("real ~test-results.ndjson", "~test-results.ndjson"),
+        "ci_test_results.ndjson",
+        "~test-results.ndjson",
     ]
 
-    for label, filename in targets:
+    for filename in targets:
         path = _find_ndjson_candidate(diag, filename, prefer_real=True)
+        lane = "real"
         if not path:
             path = _find_ndjson_candidate(diag, filename, prefer_real=False)
+            if path:
+                rel = _relative_to_diag(path, diag)
+                if rel and "cache" in rel.lower():
+                    lane = "cache"
+        elif diag:
+            rel = _relative_to_diag(path, diag)
+            if rel and "cache" in rel.lower():
+                lane = "cache"
         if not path or path in seen:
             continue
         summary = _summarize_ndjson_file(path)
         if not summary:
             continue
-        summary["label"] = label
+        label_prefix = lane
+        summary["label"] = f"{label_prefix} {filename}"
         summary["path"] = path
+        summary["lane"] = lane
         results.append(summary)
         seen.add(path)
 
     return results
+
+
+def _lane_selector_label(summaries: List[dict]) -> Optional[str]:
+    lanes = {entry.get("lane") for entry in summaries if entry.get("lane")}
+    if not lanes:
+        return None
+    if lanes == {"real"}:
+        return "real"
+    if lanes == {"cache"}:
+        return "cache"
+    return "+".join(sorted(lanes))
 
 
 def _collect_real_failing_tests(diag: Optional[Path]) -> Optional[dict]:
@@ -1802,7 +1834,11 @@ def _build_markdown(
     real_lane_failures = _collect_real_failing_tests(diag)
     if real_lane_summaries:
         lines.append("")
-        lines.append("## NDJSON (real lane)")
+        lane_selector = _lane_selector_label(real_lane_summaries)
+        if lane_selector and lane_selector != "real":
+            lines.append(f"## NDJSON (selected lane: {lane_selector})")
+        else:
+            lines.append("## NDJSON (real lane)")
         for entry in real_lane_summaries:
             rows = entry.get("rows", 0)
             pass_count = entry.get("pass", 0)
@@ -2096,7 +2132,13 @@ def _write_html(
     real_lane_failures = _collect_real_failing_tests(diag)
     if real_lane_summaries:
         html.append("<section>")
-        html.append("<h2>NDJSON (real lane)</h2>")
+        lane_selector = _lane_selector_label(real_lane_summaries)
+        if lane_selector and lane_selector != "real":
+            html.append(
+                f"<h2>NDJSON (selected lane: {_escape_html(lane_selector)})</h2>"
+            )
+        else:
+            html.append("<h2>NDJSON (real lane)</h2>")
         html.append("<ul>")
         for entry in real_lane_summaries:
             label = _escape_html(entry.get("label", "unknown"))

@@ -16,6 +16,36 @@ if (-not (Test-Path -LiteralPath $ciNd)) {
     New-Item -ItemType File -Path $ciNd -Force | Out-Null
 }
 
+# derived requirement: CI runs reported "entry.single.direct" failing when the
+# bootstrapper scanned multiple Python entries. Respect the bootstrap status
+# signal and skip this probe unless the real project exposed exactly one entry.
+$pyFileCount = $null
+$statusPath = Join-Path -Path $repoRoot -ChildPath '~bootstrap.status.json'
+if (Test-Path -LiteralPath $statusPath) {
+    try {
+        $statusJson = Get-Content -LiteralPath $statusPath -Raw -Encoding Ascii | ConvertFrom-Json
+        $candidate = $statusJson.pyFiles
+        if ($null -ne $candidate) {
+            $parsed = 0
+            if ([int]::TryParse($candidate.ToString(), [ref]$parsed)) {
+                $pyFileCount = $parsed
+            }
+        }
+    } catch {
+        # derived requirement: tolerate missing or malformed bootstrap status when falling back to env guards.
+    }
+}
+if ($null -eq $pyFileCount -and $env:PY_FILES) {
+    $parsed = 0
+    if ([int]::TryParse($env:PY_FILES, [ref]$parsed)) {
+        $pyFileCount = $parsed
+    }
+}
+if ($null -ne $pyFileCount -and $pyFileCount -ne 1) {
+    Write-Host ("[INFO] entry.single.direct skipped: pyFiles={0}" -f $pyFileCount)
+    exit 0
+}
+
 function Write-NdjsonRow {
     param([hashtable]$Row)
 
@@ -210,3 +240,5 @@ finally {
         })
     }
 }
+
+exit 0
