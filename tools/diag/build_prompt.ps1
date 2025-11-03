@@ -641,9 +641,14 @@ if ($diagRoot) {
         } catch {
             $failLines = @()
         }
-        if ($failLines) {
+
+        # derived requirement: CI surfaced "The property 'Count' cannot be found" when
+        # Get-Content -TotalCount collapsed to a scalar string. Normalize to an array
+        # before length checks so downstream Sanitize-TextLines sees a stable sequence.
+        $failArray = @($failLines)
+        if ($failArray.Length -gt 0) {
             Add-Lines $lines @('', '----- Batch-check failing IDs -----')
-            foreach ($entry in Sanitize-TextLines $failLines) {
+            foreach ($entry in Sanitize-TextLines $failArray) {
                 $lines.Add($entry) | Out-Null
             }
         }
@@ -661,9 +666,10 @@ if ($diagRoot) {
             } catch {
                 $ndLines = @()
             }
-            if ($ndLines) {
+            $publicArray = @($ndLines)
+            if ($publicArray.Length -gt 0) {
                 Add-Lines $lines @('', '----- NDJSON head (public diag poller) -----')
-                foreach ($entry in Sanitize-TextLines $ndLines) {
+                foreach ($entry in Sanitize-TextLines $publicArray) {
                     $lines.Add($entry) | Out-Null
                 }
             }
@@ -680,9 +686,10 @@ if ($diagRoot) {
             } catch {
                 $ndLines = @()
             }
-            if ($ndLines) {
+            $batchArray = @($ndLines)
+            if ($batchArray.Length -gt 0) {
                 Add-Lines $lines @('', '----- NDJSON head (batch-check) -----')
-                foreach ($entry in Sanitize-TextLines $ndLines) {
+                foreach ($entry in Sanitize-TextLines $batchArray) {
                     $lines.Add($entry) | Out-Null
                 }
             }
