@@ -217,14 +217,25 @@ def _download_iterate_artifact_zip(context: Context, destination: Path) -> bool:
         )
         context.iterate_found_cache = True
 
-        download_url = item.get("archive_download_url")
-        if not download_url:
-            return False
+        artifact_id = item.get("id")
+        if isinstance(artifact_id, int):
+            download_url = (
+                f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}/zip"
+            )
+            accept_header = "application/vnd.github+json"
+        else:
+            # Professional note: the stable artifact download endpoint requires a numeric
+            # identifier. Fall back to the legacy archive_download_url when the API payload
+            # is missing or malformed so we do not misreport the artifact state.
+            download_url = item.get("archive_download_url")
+            if not download_url:
+                return False
+            accept_header = "application/octet-stream"
 
         download_request = Request(download_url)
         download_request.add_header("Authorization", f"Bearer {token}")
         download_request.add_header("User-Agent", "publish_index.py diagnostics")
-        download_request.add_header("Accept", "application/octet-stream")
+        download_request.add_header("Accept", accept_header)
 
         try:
             with urlopen(download_request, timeout=30) as response:
