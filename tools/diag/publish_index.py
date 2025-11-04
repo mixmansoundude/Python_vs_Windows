@@ -71,6 +71,9 @@ class Context:
     site: Optional[Path] = None
     iterate_artifact_href: Optional[str] = None
     iterate_found_cache: Optional[bool] = None
+    iterate_discovered_dir: Optional[Path] = None
+    iterate_partial: bool = False
+    iterate_partial_note: Optional[str] = None
 
 
 def _get_env_path(name: str) -> Optional[Path]:
@@ -91,12 +94,19 @@ def _isoformat_ct(now: Optional[datetime] = None) -> str:
 def _get_context() -> Context:
     diag = _get_env_path("DIAG")
     artifacts = _get_env_path("ARTIFACTS")
-    repo = os.getenv("REPO", "n/a")
-    branch = os.getenv("BRANCH")
-    sha = os.getenv("SHA", "n/a")
-    run_id = os.getenv("RUN_ID", "n/a")
-    run_attempt = os.getenv("RUN_ATTEMPT", "n/a")
-    run_url = os.getenv("RUN_URL", "n/a")
+    repo = os.getenv("REPO") or os.getenv("GITHUB_REPOSITORY") or "n/a"
+    branch = os.getenv("BRANCH") or os.getenv("GITHUB_REF_NAME")
+    sha = os.getenv("SHA") or os.getenv("GITHUB_SHA") or "n/a"
+    run_id = os.getenv("RUN_ID") or os.getenv("GITHUB_RUN_ID") or "n/a"
+    run_attempt = (
+        os.getenv("RUN_ATTEMPT") or os.getenv("GITHUB_RUN_ATTEMPT") or "n/a"
+    )
+    run_url = os.getenv("RUN_URL")
+    if (not run_url or run_url == "n/a") and repo != "n/a" and run_id != "n/a":
+        # derived requirement: CI bundles may omit RUN_URL; reconstruct it from the
+        # canonical GitHub env variables so artifact discovery can fall back to the
+        # Actions UI when the local mirror is empty.
+        run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
     short_sha = os.getenv("SHORTSHA") or sha[:7]
     inventory_b64 = os.getenv("INVENTORY_B64")
     batch_run_id = os.getenv("BATCH_RUN_ID")
@@ -155,6 +165,56 @@ def _core_iterate_files_present(root: Path) -> bool:
     except OSError:
         return False
     return decision or response
+
+
+def _find_iterate_gate(root: Path) -> Optional[Path]:
+    """Locate iterate_gate.json within *root* if it exists."""
+
+    candidates = [
+        root / "iterate_gate.json",
+        root / "_artifacts" / "iterate" / "iterate_gate.json",
+    ]
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            continue
+
+    try:
+        return next(
+            path
+            for path in root.rglob("iterate_gate.json")
+            if path.is_file()
+        )
+    except (FileNotFoundError, StopIteration, OSError):
+        return None
+
+
+def _partial_iterate_evidence(root: Path) -> bool:
+    """Return True when gate/context artifacts exist without decision/response."""
+
+    if _find_iterate_gate(root):
+        return True
+
+    codex_root = root / ".codex"
+    try:
+        if codex_root.is_dir():
+            noteworthy = [
+                codex_root / "changed_files.txt",
+                codex_root / "context.json",
+                codex_root / "fail" / "failing_job_focus.txt",
+            ]
+            for candidate in noteworthy:
+                try:
+                    if candidate.exists():
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return False
+
+    return False
 
 
 def _github_iterate_artifact_href(context: Context, expected_names: Iterable[str]) -> Optional[str]:
@@ -612,13 +672,61 @@ def _resolve_iterate_payload_root(base: Path, stem: str) -> Path:
     return current
 
 
+def _finalize_iterate_discovery(
+    context: Context, candidate: Optional[Path]
+) -> Optional[Path]:
+    """Record iterate bundle details and surface partial archives as "found".
+
+    Professional note: CI runs such as 19078165388-1 packaged iterate payloads as
+    gate/context-only bundles. Mark them as found so the diagnostics stay truthful
+    even when decision.txt/response.json are absent. Keeping this logic here avoids
+    regressions where future refactors forget to flip iterate_found_cache for
+    partial bundles.
+    """
+
+    context.iterate_discovered_dir = candidate
+    context.iterate_partial = False
+    context.iterate_partial_note = None
+
+    if not candidate:
+        return None
+
+    try:
+        exists = candidate.exists()
+    except OSError:
+        exists = False
+
+    if not exists:
+        return candidate
+
+    if _core_iterate_files_present(candidate):
+        if context.iterate_found_cache is None or context.iterate_found_cache is False:
+            context.iterate_found_cache = True
+        return candidate
+
+    if _partial_iterate_evidence(candidate):
+        context.iterate_partial = True
+        context.iterate_partial_note = "gate present, no decision/response"
+        if context.iterate_found_cache is None or context.iterate_found_cache is False:
+            context.iterate_found_cache = True
+        _log_iterate("partial bundle (gate present, no decision/response)")
+
+    return candidate
+
+
 def _discover_iterate_dir(context: Context) -> Optional[Path]:
     artifacts = context.artifacts
     if not artifacts:
-        return None
+        return _finalize_iterate_discovery(context, None)
     iterate_root = artifacts / "iterate"
     if not iterate_root.exists():
-        return None
+        return _finalize_iterate_discovery(context, None)
+
+    # Professional note: reset discovery hints before probing so callers do not
+    # reuse stale partial flags from previous runs.
+    context.iterate_discovered_dir = None
+    context.iterate_partial = False
+    context.iterate_partial_note = None
 
     if any((iterate_root / name).exists() for name in ITERATE_METADATA_FILENAMES):
         # Professional note: actions/download-artifact@v4 can unpack iterate metadata directly
@@ -627,7 +735,7 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
         _log_iterate(f"using flattened iterate root at {iterate_root}")
         if not _core_iterate_files_present(iterate_root):
             _log_iterate(f"(no decision/response in archive {iterate_root})")
-        return iterate_root
+        return _finalize_iterate_discovery(context, iterate_root)
 
     expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
     expected = iterate_root / expected_stem
@@ -636,11 +744,11 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
         if resolved != expected:
             if not _core_iterate_files_present(resolved):
                 _log_iterate(f"(no decision/response in archive {resolved})")
-            return resolved
+            return _finalize_iterate_discovery(context, resolved)
         _log_iterate(f"using extracted dir at {expected}")
         if not _core_iterate_files_present(expected):
             _log_iterate(f"(no decision/response in archive {expected})")
-        return expected
+        return _finalize_iterate_discovery(context, expected)
 
     zip_candidate = expected.with_suffix(".zip")
     if zip_candidate.exists():
@@ -670,7 +778,7 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
         resolved = _resolve_iterate_payload_root(expected, expected_stem)
         if not _core_iterate_files_present(resolved):
             _log_iterate(f"(no decision/response in archive {resolved})")
-        return resolved
+        return _finalize_iterate_discovery(context, resolved)
 
     if not expected.exists() and not zip_candidate.exists():
         download_info = _download_iterate_artifact_zip(context, zip_candidate)
@@ -700,7 +808,7 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
                 resolved = _resolve_iterate_payload_root(expected, expected_stem)
                 if not _core_iterate_files_present(resolved):
                     _log_iterate(f"(no decision/response in archive {resolved})")
-                return resolved
+                return _finalize_iterate_discovery(context, resolved)
 
     try:
         candidates = sorted(p for p in iterate_root.iterdir() if p.is_dir())
@@ -714,25 +822,25 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
             _log_iterate(f"using fallback iterate dir {candidate}")
             if not _core_iterate_files_present(candidate):
                 _log_iterate(f"(no decision/response in archive {candidate})")
-            return candidate
+            return _finalize_iterate_discovery(context, candidate)
 
     if candidates and all(candidate.name == "_temp" for candidate in candidates):
         _log_iterate(f"using iterate root fallback {iterate_root}")
-        return iterate_root
+        return _finalize_iterate_discovery(context, iterate_root)
 
     preferred = next((c for c in candidates if c.name != "_temp"), None)
     if preferred:
         _log_iterate(f"using iterate dir {preferred}")
         if not _core_iterate_files_present(preferred):
             _log_iterate(f"(no decision/response in archive {preferred})")
-        return preferred
+        return _finalize_iterate_discovery(context, preferred)
 
     fallback = _first_child_directory(iterate_root)
     if fallback:
         _log_iterate(f"using first child iterate dir {fallback}")
         if not _core_iterate_files_present(fallback):
             _log_iterate(f"(no decision/response in archive {fallback})")
-    return fallback
+    return _finalize_iterate_discovery(context, fallback)
 
 
 def _discover_temp_dir(iterate_dir: Optional[Path], context: Context) -> Optional[Path]:
@@ -1887,16 +1995,98 @@ def _write_summary_files(
             except OSError:
                 rationale_lines = []
 
-        summary_lines = [
-            f"Decision: {decision}",
-            f"Outcome: {outcome}",
-            f"Model: {model}",
-            "Tokens: prompt={prompt} completion={completion} total={total}".format(
-                prompt=tokens["prompt"],
-                completion=tokens["completion"],
-                total=tokens["total"],
-            ),
-        ]
+        tokens_line = "Tokens: prompt={prompt} completion={completion} total={total}".format(
+            prompt=tokens["prompt"],
+            completion=tokens["completion"],
+            total=tokens["total"],
+        )
+
+        is_partial_bundle = context.iterate_partial and not _core_iterate_files_present(
+            summary_dir
+        )
+
+        if is_partial_bundle:
+            summary_lines = [
+                "Partial iterate bundle: decision/response not present.",
+                f"Decision: {decision}",
+                f"Outcome: {outcome}",
+                f"Model: {model}",
+                tokens_line,
+            ]
+
+            gate_path = _find_iterate_gate(summary_dir)
+            gate_payload: Optional[dict] = None
+            if gate_path:
+                try:
+                    gate_payload = json.loads(
+                        gate_path.read_text(encoding="utf-8", errors="replace")
+                    )
+                except (OSError, json.JSONDecodeError):
+                    gate_payload = None
+
+            proceed_text = "n/a"
+            missing_text = "unknown"
+            if isinstance(gate_payload, dict):
+                proceed_value = gate_payload.get("proceed")
+                if isinstance(proceed_value, bool):
+                    proceed_text = str(proceed_value).lower()
+                elif proceed_value is not None:
+                    proceed_text = str(proceed_value)
+
+                missing_raw = gate_payload.get("missing_inputs") or gate_payload.get(
+                    "missing"
+                )
+                if isinstance(missing_raw, list):
+                    items = [str(item) for item in missing_raw if str(item)]
+                    missing_text = ", ".join(items) if items else "none"
+                elif missing_raw:
+                    missing_text = str(missing_raw)
+                else:
+                    missing_text = "none"
+
+            summary_lines.append(f"Gate proceed: {proceed_text}")
+            summary_lines.append(f"Gate missing inputs: {missing_text}")
+
+            search_roots = [summary_dir]
+            parent_root = summary_dir.parent
+            if parent_root != summary_dir:
+                search_roots.append(parent_root)
+
+            support_specs = [
+                (".codex", "changed_files.txt"),
+                (".codex", "context.json"),
+                (".codex", "fail", "failing_job_focus.txt"),
+            ]
+            support_entries: List[str] = []
+
+            def _format_summary_path(path: Path) -> str:
+                try:
+                    return path.relative_to(summary_dir).as_posix()
+                except ValueError:
+                    return path.as_posix()
+
+            for parts in support_specs:
+                for root_candidate in search_roots:
+                    candidate = root_candidate.joinpath(*parts)
+                    try:
+                        if candidate.exists():
+                            label = _format_summary_path(candidate)
+                            if label not in support_entries:
+                                support_entries.append(label)
+                            break
+                    except OSError:
+                        continue
+
+            if support_entries:
+                summary_lines.append("Supporting files:")
+                summary_lines.extend(f"  - {entry}" for entry in support_entries)
+        else:
+            summary_lines = [
+                f"Decision: {decision}",
+                f"Outcome: {outcome}",
+                f"Model: {model}",
+                tokens_line,
+            ]
         if rationale_lines:
             summary_lines.append("Rationale excerpt:")
             summary_lines.extend(f"  {line}" for line in rationale_lines if line)

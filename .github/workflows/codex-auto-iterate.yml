@@ -28,6 +28,10 @@ jobs:
   iterate:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      actions: write  # derived requirement: artifact uploads still need write access while satisfying the API fallback guard.
+      contents: read
+      pages: write
     outputs:
       branch: ${{ steps.ctx.outputs.branch }}
     env:
@@ -41,6 +45,7 @@ jobs:
       VECTOR_STORE_ATTACH_TIMEOUT_PER_FILE_SECONDS: '2'
       VECTOR_STORE_ATTACH_TIMEOUT_CAP_SECONDS: '5400'
       ALLOW_FILE_SEARCH: 'false'
+      USE_VECTOR_STORE: 'false'
     steps:
       - name: Debug event
         run: |
@@ -803,7 +808,7 @@ jobs:
           & "$env:GITHUB_WORKSPACE/tools/make_model_repo_corpus.ps1" -OutDir $outDir
 
       - name: Create vector store
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
+        if: ${{ env.USE_VECTOR_STORE == 'true' && steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
         id: vs_create
         shell: bash
         env:
@@ -823,7 +828,7 @@ jobs:
           echo "vs_id=$vs_id" >> "$GITHUB_OUTPUT"
 
       - name: Upload repo corpus files to vector store
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
+        if: ${{ env.USE_VECTOR_STORE == 'true' && steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' }}
         id: vs_upload
         shell: bash
         env:
@@ -1018,7 +1023,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Ask model for patch (Responses API)
-        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' && (env.ALLOW_FILE_SEARCH != 'true' || steps.vs_upload.outputs.vs_id != '') }}
+        if: ${{ steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.pycount.outputs.py_files != '0' && (env.USE_VECTOR_STORE != 'true' || env.ALLOW_FILE_SEARCH != 'true' || steps.vs_upload.outputs.vs_id != '') }}
         id: llm
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -1035,7 +1040,8 @@ jobs:
           OUTTXT="$RUNNER_TEMP/llm_content.txt"
           PROMPT_FILE="${{ steps.prompt.outputs.path }}"
           VS_ID="${{ steps.vs_upload.outputs.vs_id }}"
-          if [ "${ALLOW_FILE_SEARCH:-false}" = "true" ] && [ -z "$VS_ID" ]; then
+          use_vector="${USE_VECTOR_STORE:-false}"
+          if [ "$use_vector" = "true" ] && [ "${ALLOW_FILE_SEARCH:-false}" = "true" ] && [ -z "$VS_ID" ]; then
             echo "missing vector store id" >&2
             exit 1
           fi
@@ -1049,9 +1055,10 @@ jobs:
           write_request() {
             local tokens="$1"
             local allow_search="${ALLOW_FILE_SEARCH:-false}"
-            local want_tools=false
-            if [ "$allow_search" = "true" ] && [ -n "$VS_ID" ]; then
-              want_tools=true
+            local use_vector="${USE_VECTOR_STORE:-false}"
+            local want_tools="false"
+            if [ "$use_vector" = "true" ] && [ "$allow_search" = "true" ] && [ -n "$VS_ID" ]; then
+              want_tools="true"
             fi
             jq -n \
               --arg model "$OPENAI_MODEL" \
@@ -1173,7 +1180,7 @@ jobs:
           fi
 
       - name: Verify file_search usage
-        if: ${{ env.ALLOW_FILE_SEARCH == 'true' && steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' && steps.pycount.outputs.py_files != '0' }}
+        if: ${{ env.USE_VECTOR_STORE == 'true' && env.ALLOW_FILE_SEARCH == 'true' && steps.gate.outputs.should_iterate == 'true' && steps.attempts.outputs.stop != 'true' && steps.auth.outputs.ok == 'true' && steps.vs_upload.outputs.vs_id != '' && steps.pycount.outputs.py_files != '0' }}
         run: |
           set -euo pipefail
           RES="$RUNNER_TEMP/llm_res.json"
