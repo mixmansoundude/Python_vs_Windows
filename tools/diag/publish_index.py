@@ -176,6 +176,74 @@ def _github_iterate_artifact_href(context: Context, expected_names: Iterable[str
     return None
 
 
+def _download_iterate_artifact_zip(context: Context, destination: Path) -> bool:
+    """Download the iterate artifact zip into *destination* when it exists remotely."""
+
+    expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    token = os.getenv("GITHUB_TOKEN")
+    repo = context.repo
+    run_id = context.run_id
+    if not token or not repo or not run_id or run_id == "n/a":
+        return False
+
+    api_url = (
+        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
+    )
+    request = Request(api_url)
+    request.add_header("Accept", "application/vnd.github+json")
+    request.add_header("Authorization", f"Bearer {token}")
+    request.add_header("X-GitHub-Api-Version", "2022-11-28")
+    request.add_header("User-Agent", "publish_index.py diagnostics")
+
+    try:
+        with urlopen(request, timeout=10) as response:
+            payload = json.load(response)
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+        return False
+
+    artifacts = payload.get("artifacts")
+    if not isinstance(artifacts, list):
+        return False
+
+    for item in artifacts:
+        if item.get("name") != expected_stem:
+            continue
+
+        # derived requirement: when only the remote zip is available we still want to
+        # render the diagnostics bundle as "found" and expose the Actions link so the
+        # operators can grab the payload without waiting for another mirror cycle.
+        context.iterate_artifact_href = (
+            f"https://github.com/{repo}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
+        )
+        context.iterate_found_cache = True
+
+        download_url = item.get("archive_download_url")
+        if not download_url:
+            return False
+
+        download_request = Request(download_url)
+        download_request.add_header("Authorization", f"Bearer {token}")
+        download_request.add_header("User-Agent", "publish_index.py diagnostics")
+        download_request.add_header("Accept", "application/octet-stream")
+
+        try:
+            with urlopen(download_request, timeout=30) as response:
+                payload_bytes = response.read()
+        except (HTTPError, URLError, TimeoutError):
+            return False
+
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with destination.open("wb") as handle:
+                handle.write(payload_bytes)
+        except OSError:
+            return False
+
+        return True
+
+    return False
+
+
 def _iterate_logs_found(context: Context) -> bool:
     """Return True when the iterate-logs artifact actually exists."""
 
@@ -423,6 +491,21 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
                 pass
 
         return expected
+
+    if not expected.exists() and not zip_candidate.exists():
+        downloaded = _download_iterate_artifact_zip(context, zip_candidate)
+        if downloaded and zip_candidate.exists():
+            expected.mkdir(parents=True, exist_ok=True)
+            try:
+                with zipfile.ZipFile(zip_candidate, "r") as archive:
+                    archive.extractall(expected)
+            except (OSError, zipfile.BadZipFile):
+                # derived requirement: remote iterate zips can fail to unpack when the
+                # connection drops mid-download; continue so the diagnostics fall back
+                # to the existing lookup heuristics while the status stays truthful.
+                pass
+            if expected.exists():
+                return expected
 
     try:
         candidates = sorted(p for p in iterate_root.iterdir() if p.is_dir())
@@ -1575,6 +1658,54 @@ def _write_summary_files(
         )
     except OSError:
         pass
+
+    decision = _read_iterate_text(iterate_dir, iterate_temp, "decision.txt")
+    summary_dir: Optional[Path] = None
+    if iterate_dir and iterate_dir.exists():
+        summary_dir = iterate_dir
+    else:
+        sample = _find_iterate_file(iterate_dir, iterate_temp, "response.json")
+        if sample:
+            summary_dir = sample.parent
+
+    if summary_dir:
+        rationale_lines: List[str] = []
+        rationale_path = _find_iterate_file(iterate_dir, iterate_temp, "why_no_diff.txt")
+        if rationale_path and rationale_path.exists():
+            try:
+                for line in rationale_path.read_text(encoding="utf-8").splitlines():
+                    rationale_lines.append(line.strip())
+                    if len(rationale_lines) >= 5:
+                        break
+            except OSError:
+                rationale_lines = []
+
+        summary_lines = [
+            f"Decision: {decision}",
+            f"Outcome: {outcome}",
+            f"Model: {model}",
+            "Tokens: prompt={prompt} completion={completion} total={total}".format(
+                prompt=tokens["prompt"],
+                completion=tokens["completion"],
+                total=tokens["total"],
+            ),
+        ]
+        if rationale_lines:
+            summary_lines.append("Rationale excerpt:")
+            summary_lines.extend(f"  {line}" for line in rationale_lines if line)
+        else:
+            summary_lines.append("Rationale excerpt: n/a")
+
+        summary_payload = "\n".join(summary_lines) + "\n"
+        summary_path = summary_dir / "iterate_summary.txt"
+        try:
+            summary_dir.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(summary_payload, encoding="utf-8")
+        except OSError:
+            # derived requirement: keep the diagnostics stable even when the iterate
+            # directory is read-only; failing to emit the helper summary must not stop
+            # the rest of the publisher.
+            pass
 
 
 def _bundle_links(context: Context) -> List[dict]:
