@@ -572,9 +572,7 @@ def _resolve_iterate_payload_root(base: Path, stem: str) -> Path:
     visited: set[Path] = set()
     processed_archives: set[Path] = set()
 
-    while current not in visited:
-        visited.add(current)
-
+    while True:
         if _core_iterate_files_present(current):
             return current
 
@@ -590,8 +588,15 @@ def _resolve_iterate_payload_root(base: Path, stem: str) -> Path:
                 break
             processed_archives.add(inner_zip)
             _log_iterate(f"extracted inner zip {inner_zip} -> {current}")
-            # Loop again so we can evaluate the freshly extracted payload.
+            # Professional note: avoid marking *current* as visited until after we finish
+            # processing freshly extracted content. Earlier builds added the directory to
+            # the visited set before re-evaluating, which returned too early and left
+            # decision.txt hidden inside the inner archive (run 19055916343-1).
             continue
+
+        if current in visited:
+            break
+        visited.add(current)
 
         nested = _single_iterate_child(current)
         if nested and nested not in visited:
