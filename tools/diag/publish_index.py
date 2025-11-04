@@ -136,6 +136,27 @@ ITERATE_METADATA_FILENAMES = (
 )
 
 
+def _log_iterate(message: str) -> None:
+    """Emit a diagnostic breadcrumb for iterate discovery."""
+
+    try:
+        print(f"iterate: {message}")
+    except OSError:
+        # derived requirement: console streams may be closed when the publisher runs
+        # inside a workflow summary capture. Best effort logging keeps the bundle
+        # stable while still emitting breadcrumbs when available.
+        pass
+
+
+def _core_iterate_files_present(root: Path) -> bool:
+    try:
+        decision = (root / "decision.txt").exists()
+        response = (root / "response.json").exists()
+    except OSError:
+        return False
+    return decision or response
+
+
 def _github_iterate_artifact_href(context: Context, expected_names: Iterable[str]) -> Optional[str]:
     """Return the GitHub Actions artifacts page when the iterate zip exists remotely."""
 
@@ -164,19 +185,39 @@ def _github_iterate_artifact_href(context: Context, expected_names: Iterable[str
     if not isinstance(artifacts, list):
         return None
 
-    for name in expected_names:
-        for item in artifacts:
-            if item.get("name") == name:
-                # derived requirement: when the local artifact mirror is empty we still
-                # want the diagnostics bundle to link to the GitHub Actions artifact
-                # list so operators can download the iterate logs without waiting for
-                # another publish cycle.
-                return f"https://github.com/{repo}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
+    names = list(expected_names)
+    expected_stem = names[0] if names else None
+
+    for item in artifacts:
+        candidate = item.get("name")
+        if not isinstance(candidate, str):
+            continue
+        if candidate in names or (
+            expected_stem and _match_iterate_artifact(expected_stem, candidate)
+        ):
+            # derived requirement: when the local artifact mirror is empty we still
+            # want the diagnostics bundle to link to the GitHub Actions artifact
+            # list so operators can download the iterate logs without waiting for
+            # another publish cycle.
+            return f"https://github.com/{repo}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
 
     return None
 
 
-def _download_iterate_artifact_zip(context: Context, destination: Path) -> bool:
+def _match_iterate_artifact(expected_stem: str, name: str) -> bool:
+    base = expected_stem
+    if name == base or name == f"{base}.zip":
+        return True
+    if name.startswith(f"{base}-"):
+        return True
+    if name.endswith(".zip") and base in name:
+        return True
+    return False
+
+
+def _download_iterate_artifact_zip(
+    context: Context, destination: Path
+) -> Optional[Tuple[str, Optional[str], bool]]:
     """Download the iterate artifact zip into *destination* when it exists remotely."""
 
     expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
@@ -205,54 +246,72 @@ def _download_iterate_artifact_zip(context: Context, destination: Path) -> bool:
     if not isinstance(artifacts, list):
         return False
 
+    candidates: List[dict] = []
     for item in artifacts:
-        if item.get("name") != expected_stem:
+        name = item.get("name")
+        if not isinstance(name, str):
             continue
+        if _match_iterate_artifact(expected_stem, name):
+            candidates.append(item)
 
-        # derived requirement: when only the remote zip is available we still want to
-        # render the diagnostics bundle as "found" and expose the Actions link so the
-        # operators can grab the payload without waiting for another mirror cycle.
-        context.iterate_artifact_href = (
-            f"https://github.com/{repo}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
+    if not candidates:
+        return None
+
+    def _candidate_priority(entry: dict) -> Tuple[int, str]:
+        name = str(entry.get("name") or "")
+        if name == expected_stem:
+            return (0, name)
+        if name == f"{expected_stem}.zip":
+            return (1, name)
+        if name.startswith(f"{expected_stem}-"):
+            return (2, name)
+        return (3, name)
+
+    candidates.sort(key=_candidate_priority)
+    item = candidates[0]
+    name = str(item.get("name") or "")
+
+    # derived requirement: when only the remote zip is available we still want to
+    # render the diagnostics bundle as "found" and expose the Actions link so the
+    # operators can grab the payload without waiting for another mirror cycle.
+    context.iterate_artifact_href = (
+        f"https://github.com/{repo}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
+    )
+    context.iterate_found_cache = True
+
+    artifact_id_raw = item.get("id")
+    artifact_id: Optional[str] = None
+    if isinstance(artifact_id_raw, int):
+        artifact_id = str(artifact_id_raw)
+        download_url = (
+            f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id_raw}/zip"
         )
-        context.iterate_found_cache = True
+        accept_header = "application/vnd.github+json"
+    else:
+        download_url = item.get("archive_download_url")
+        if not download_url:
+            return (name, artifact_id, False)
+        accept_header = "application/octet-stream"
 
-        artifact_id = item.get("id")
-        if isinstance(artifact_id, int):
-            download_url = (
-                f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}/zip"
-            )
-            accept_header = "application/vnd.github+json"
-        else:
-            # Professional note: the stable artifact download endpoint requires a numeric
-            # identifier. Fall back to the legacy archive_download_url when the API payload
-            # is missing or malformed so we do not misreport the artifact state.
-            download_url = item.get("archive_download_url")
-            if not download_url:
-                return False
-            accept_header = "application/octet-stream"
+    download_request = Request(download_url)
+    download_request.add_header("Authorization", f"Bearer {token}")
+    download_request.add_header("User-Agent", "publish_index.py diagnostics")
+    download_request.add_header("Accept", accept_header)
 
-        download_request = Request(download_url)
-        download_request.add_header("Authorization", f"Bearer {token}")
-        download_request.add_header("User-Agent", "publish_index.py diagnostics")
-        download_request.add_header("Accept", accept_header)
+    try:
+        with urlopen(download_request, timeout=30) as response:
+            payload_bytes = response.read()
+    except (HTTPError, URLError, TimeoutError):
+        return (name, artifact_id, False)
 
-        try:
-            with urlopen(download_request, timeout=30) as response:
-                payload_bytes = response.read()
-        except (HTTPError, URLError, TimeoutError):
-            return False
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("wb") as handle:
+            handle.write(payload_bytes)
+    except OSError:
+        return (name, artifact_id, False)
 
-        try:
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with destination.open("wb") as handle:
-                handle.write(payload_bytes)
-        except OSError:
-            return False
-
-        return True
-
-    return False
+    return (name, artifact_id, True)
 
 
 def _iterate_logs_found(context: Context) -> bool:
@@ -474,10 +533,16 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
         # Professional note: actions/download-artifact@v4 can unpack iterate metadata directly
         # into the root without an intermediate iterate-logs-* directory. Honor that layout so
         # diagnostics capture the files instead of defaulting to the child _temp directory.
+        _log_iterate(f"using flattened iterate root at {iterate_root}")
+        if not _core_iterate_files_present(iterate_root):
+            _log_iterate(f"(no decision/response in archive {iterate_root})")
         return iterate_root
 
     expected = iterate_root / f"iterate-logs-{context.run_id}-{context.run_attempt}"
     if expected.exists():
+        _log_iterate(f"using extracted dir at {expected}")
+        if not _core_iterate_files_present(expected):
+            _log_iterate(f"(no decision/response in archive {expected})")
         return expected
 
     zip_candidate = expected.with_suffix(".zip")
@@ -501,21 +566,41 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
                 # directory discovery logic if extraction fails.
                 pass
 
+        if should_extract:
+            _log_iterate(f"extracted local zip {zip_candidate} -> {expected}")
+        else:
+            _log_iterate(f"using previously extracted zip at {expected}")
+        if not _core_iterate_files_present(expected):
+            _log_iterate(f"(no decision/response in archive {expected})")
         return expected
 
     if not expected.exists() and not zip_candidate.exists():
-        downloaded = _download_iterate_artifact_zip(context, zip_candidate)
-        if downloaded and zip_candidate.exists():
-            expected.mkdir(parents=True, exist_ok=True)
-            try:
-                with zipfile.ZipFile(zip_candidate, "r") as archive:
-                    archive.extractall(expected)
-            except (OSError, zipfile.BadZipFile):
-                # derived requirement: remote iterate zips can fail to unpack when the
-                # connection drops mid-download; continue so the diagnostics fall back
-                # to the existing lookup heuristics while the status stays truthful.
-                pass
+        download_info = _download_iterate_artifact_zip(context, zip_candidate)
+        if download_info:
+            name, artifact_id, downloaded = download_info
+            if downloaded and zip_candidate.exists():
+                expected.mkdir(parents=True, exist_ok=True)
+                try:
+                    with zipfile.ZipFile(zip_candidate, "r") as archive:
+                        archive.extractall(expected)
+                except (OSError, zipfile.BadZipFile):
+                    # derived requirement: remote iterate zips can fail to unpack when the
+                    # connection drops mid-download; continue so the diagnostics fall back
+                    # to the existing lookup heuristics while the status stays truthful.
+                    pass
+            if downloaded:
+                display_id = artifact_id if artifact_id is not None else "n/a"
+                _log_iterate(
+                    f"downloaded artifact name={name} id={display_id} -> {expected}"
+                )
+            else:
+                display_id = artifact_id if artifact_id is not None else "n/a"
+                _log_iterate(
+                    f"remote artifact name={name} id={display_id} download failed"
+                )
             if expected.exists():
+                if not _core_iterate_files_present(expected):
+                    _log_iterate(f"(no decision/response in archive {expected})")
                 return expected
 
     try:
@@ -527,16 +612,28 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
         if candidate.name == "_temp":
             continue
         if (candidate / "decision.txt").exists() or (candidate / "response.json").exists():
+            _log_iterate(f"using fallback iterate dir {candidate}")
+            if not _core_iterate_files_present(candidate):
+                _log_iterate(f"(no decision/response in archive {candidate})")
             return candidate
 
     if candidates and all(candidate.name == "_temp" for candidate in candidates):
+        _log_iterate(f"using iterate root fallback {iterate_root}")
         return iterate_root
 
     preferred = next((c for c in candidates if c.name != "_temp"), None)
     if preferred:
+        _log_iterate(f"using iterate dir {preferred}")
+        if not _core_iterate_files_present(preferred):
+            _log_iterate(f"(no decision/response in archive {preferred})")
         return preferred
 
-    return _first_child_directory(iterate_root)
+    fallback = _first_child_directory(iterate_root)
+    if fallback:
+        _log_iterate(f"using first child iterate dir {fallback}")
+        if not _core_iterate_files_present(fallback):
+            _log_iterate(f"(no decision/response in archive {fallback})")
+    return fallback
 
 
 def _discover_temp_dir(iterate_dir: Optional[Path], context: Context) -> Optional[Path]:

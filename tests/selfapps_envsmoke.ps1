@@ -101,17 +101,61 @@ if ($setup) {
     }
 }
 
+$displayCommand = if ($smokeCommand) { $smokeCommand } else { '[command unavailable]' }
+
 Check-PipreqsFailure -LogPath $setupLog -LogText $setup
 
 $haveRunOut = Test-Path -LiteralPath $runout
 $tokenFound = $haveRunOut -and (($outxt -match 'hello-from-stub') -or ($outxt -match 'smoke-ok'))
+
+# derived requirement: supervisors consume iterate inputs as plain text. Mirror the
+# smoke transcripts into _artifacts/iterate/inputs so agents on small devices can
+# review failures without downloading large archives.
+$inputsRoot = Join-Path $repo '_artifacts/iterate/inputs'
+try {
+    New-Item -ItemType Directory -Force -Path $inputsRoot | Out-Null
+} catch {
+    # best effort; diagnostics should proceed even if the mirror cannot be written.
+}
+
+$condaMirror = Join-Path $inputsRoot 'env_smoke_conda.log.txt'
+$runMirror = Join-Path $inputsRoot 'env_smoke_run.log.txt'
+
+try {
+    $condaLines = @()
+    if ($setup) {
+        $condaLines += '# ~setup.log'
+        $condaLines += $setup
+    }
+    if ($bltxt) {
+        $condaLines += '# ~envsmoke_bootstrap.log'
+        $condaLines += $bltxt
+    }
+    if (-not $condaLines) { $condaLines = @('(no bootstrap logs captured)') }
+    Set-Content -LiteralPath $condaMirror -Value ($condaLines -join "`n") -Encoding Ascii
+} catch {
+    # keep diagnostics stable if the mirror write fails.
+}
+
+try {
+    $runLines = @()
+    if ($outxt) {
+        $runLines += '# ~run.out.txt'
+        $runLines += $outxt
+    } else {
+        $runLines += '(no run output captured)'
+    }
+    Set-Content -LiteralPath $runMirror -Value ($runLines -join "`n") -Encoding Ascii
+} catch {
+    # keep diagnostics stable if the mirror write fails.
+}
 
 # Record two rows: env setup + app run
 Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.conda'
     pass=($exit -eq 0)
     desc='Miniconda bootstrap + environment creation'
-    details=[ordered]@{ exitCode=$exit; command=$smokeCommand }
+    details=[ordered]@{ exitCode=$exit; command=$displayCommand }
 })
 
 $passRun = ($exit -eq 0) -and $tokenFound
@@ -119,12 +163,12 @@ Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.run'
     pass=$passRun
     desc='App runs in created environment'
-    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut; command=$smokeCommand }
+    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut; command=$displayCommand }
 })
 
 if (($exit -eq 0) -and (-not $tokenFound)) {
     $snippet = Get-LineSnippet -Text $outxt -Pattern 'smoke-ok'
-    $details = [ordered]@{ file = $runout; exitCode = $exit; tokenFound = $tokenFound; haveRunOut = $haveRunOut }
+    $details = [ordered]@{ file = $runout; exitCode = $exit; tokenFound = $tokenFound; haveRunOut = $haveRunOut; command = $displayCommand }
     if ($snippet) { $details.snippet = $snippet }
     Write-NdjsonRow ([ordered]@{
         id='envsmoke.run'
