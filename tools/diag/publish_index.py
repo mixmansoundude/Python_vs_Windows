@@ -521,6 +521,92 @@ def _normalize_repo_zip(context: Context) -> None:
         return
 
 
+def _find_inner_iterate_zip(root: Path, base: str, processed: set[Path]) -> Optional[Path]:
+    """Return a candidate nested iterate zip when exactly one meaningful archive exists."""
+
+    try:
+        children = list(root.iterdir())
+    except FileNotFoundError:
+        return None
+
+    zips: List[Path] = []
+    for child in children:
+        if child in processed:
+            continue
+        if child.is_file() and child.suffix.lower() == ".zip":
+            zips.append(child)
+
+    if not zips:
+        return None
+
+    if len(zips) == 1:
+        return zips[0]
+
+    for candidate in zips:
+        stem = candidate.stem
+        if stem == base or stem.startswith(f"{base}-") or base in stem:
+            return candidate
+
+    return None
+
+
+def _single_iterate_child(root: Path) -> Optional[Path]:
+    """Return the single useful child directory when present."""
+
+    try:
+        directories = [
+            child for child in sorted(root.iterdir()) if child.is_dir() and child.name != "_temp"
+        ]
+    except FileNotFoundError:
+        return None
+
+    if len(directories) == 1:
+        return directories[0]
+    return None
+
+
+def _resolve_iterate_payload_root(base: Path, stem: str) -> Path:
+    """Handle nested zip-or-directory layouts before returning iterate metadata."""
+
+    current = base
+    visited: set[Path] = set()
+    processed_archives: set[Path] = set()
+
+    while current not in visited:
+        visited.add(current)
+
+        if _core_iterate_files_present(current):
+            return current
+
+        inner_zip = _find_inner_iterate_zip(current, stem, processed_archives)
+        if inner_zip:
+            try:
+                with zipfile.ZipFile(inner_zip, "r") as archive:
+                    archive.extractall(current)
+            except (OSError, zipfile.BadZipFile):
+                # derived requirement: the iterate artifact for run 19055916343-1 contained
+                # a zip-inside-a-zip. Continue falling back instead of failing hard so the
+                # diagnostics remain available even when the archive is malformed.
+                break
+            processed_archives.add(inner_zip)
+            _log_iterate(f"extracted inner zip {inner_zip} -> {current}")
+            # Loop again so we can evaluate the freshly extracted payload.
+            continue
+
+        nested = _single_iterate_child(current)
+        if nested and nested not in visited:
+            if _core_iterate_files_present(nested):
+                _log_iterate(f"using nested dir {nested}")
+                return nested
+            _log_iterate(f"using nested dir {nested}")
+            current = nested
+            continue
+
+        break
+
+    return current
+
+
 def _discover_iterate_dir(context: Context) -> Optional[Path]:
     artifacts = context.artifacts
     if not artifacts:
@@ -538,8 +624,14 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
             _log_iterate(f"(no decision/response in archive {iterate_root})")
         return iterate_root
 
-    expected = iterate_root / f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    expected = iterate_root / expected_stem
     if expected.exists():
+        resolved = _resolve_iterate_payload_root(expected, expected_stem)
+        if resolved != expected:
+            if not _core_iterate_files_present(resolved):
+                _log_iterate(f"(no decision/response in archive {resolved})")
+            return resolved
         _log_iterate(f"using extracted dir at {expected}")
         if not _core_iterate_files_present(expected):
             _log_iterate(f"(no decision/response in archive {expected})")
@@ -570,9 +662,10 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
             _log_iterate(f"extracted local zip {zip_candidate} -> {expected}")
         else:
             _log_iterate(f"using previously extracted zip at {expected}")
-        if not _core_iterate_files_present(expected):
-            _log_iterate(f"(no decision/response in archive {expected})")
-        return expected
+        resolved = _resolve_iterate_payload_root(expected, expected_stem)
+        if not _core_iterate_files_present(resolved):
+            _log_iterate(f"(no decision/response in archive {resolved})")
+        return resolved
 
     if not expected.exists() and not zip_candidate.exists():
         download_info = _download_iterate_artifact_zip(context, zip_candidate)
@@ -599,9 +692,10 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
                     f"remote artifact name={name} id={display_id} download failed"
                 )
             if expected.exists():
-                if not _core_iterate_files_present(expected):
-                    _log_iterate(f"(no decision/response in archive {expected})")
-                return expected
+                resolved = _resolve_iterate_payload_root(expected, expected_stem)
+                if not _core_iterate_files_present(resolved):
+                    _log_iterate(f"(no decision/response in archive {resolved})")
+                return resolved
 
     try:
         candidates = sorted(p for p in iterate_root.iterdir() if p.is_dir())
