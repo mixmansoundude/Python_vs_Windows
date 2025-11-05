@@ -800,6 +800,12 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
             _log_iterate(f"(no decision/response in archive {resolved})")
         return _finalize_iterate_discovery(context, resolved)
 
+    # derived requirement: CI run 19078165388-1 mirrored only gate/context assets
+    # under iterate/. Surface those as "found" before we fall back to scanning
+    # arbitrary child directories so downstream status lines stay truthful.
+    if _partial_iterate_evidence(iterate_root):
+        return _finalize_iterate_discovery(context, iterate_root)
+
     if not expected.exists() and not zip_candidate.exists():
         download_info = _download_iterate_artifact_zip(context, zip_candidate)
         if download_info:
