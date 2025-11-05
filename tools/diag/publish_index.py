@@ -129,6 +129,16 @@ def _get_context() -> Context:
     )
 
 
+def _actions_owner_repo(context: Context) -> Optional[Tuple[str, str]]:
+    """Return (owner, repo) using canonical GitHub Actions env variables."""
+
+    repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
+    if not repo_slug or repo_slug == "n/a" or "/" not in repo_slug:
+        return None
+    owner, repo = repo_slug.split("/", 1)
+    return owner, repo
+
+
 def _first_child_directory(root: Path) -> Optional[Path]:
     try:
         return next(item for item in sorted(root.iterdir()) if item.is_dir())
@@ -221,13 +231,14 @@ def _github_iterate_artifact_href(context: Context, expected_names: Iterable[str
     """Return the GitHub Actions artifacts page when the iterate zip exists remotely."""
 
     token = os.getenv("GITHUB_TOKEN")
-    repo = context.repo
-    run_id = context.run_id
-    if not token or not repo or not run_id or run_id == "n/a":
+    owner_repo = _actions_owner_repo(context)
+    run_id = os.getenv("GITHUB_RUN_ID") or context.run_id
+    if not token or not owner_repo or not run_id or run_id == "n/a":
         return None
 
+    owner, repo = owner_repo
     api_url = (
-        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
+        f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
     )
     request = Request(api_url)
     request.add_header("Accept", "application/vnd.github+json")
@@ -259,7 +270,10 @@ def _github_iterate_artifact_href(context: Context, expected_names: Iterable[str
             # want the diagnostics bundle to link to the GitHub Actions artifact
             # list so operators can download the iterate logs without waiting for
             # another publish cycle.
-            return f"https://github.com/{repo}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
+            repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
+            return (
+                f"https://github.com/{repo_slug}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
+            )
 
     return None
 
@@ -282,13 +296,15 @@ def _download_iterate_artifact_zip(
 
     expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
     token = os.getenv("GITHUB_TOKEN")
-    repo = context.repo
-    run_id = context.run_id
-    if not token or not repo or not run_id or run_id == "n/a":
+    owner_repo = _actions_owner_repo(context)
+    run_id = os.getenv("GITHUB_RUN_ID") or context.run_id
+    if not token or not owner_repo or not run_id or run_id == "n/a":
         return False
 
+    owner, repo = owner_repo
+
     api_url = (
-        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
+        f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
     )
     request = Request(api_url)
     request.add_header("Accept", "application/vnd.github+json")
@@ -334,8 +350,9 @@ def _download_iterate_artifact_zip(
     # derived requirement: when only the remote zip is available we still want to
     # render the diagnostics bundle as "found" and expose the Actions link so the
     # operators can grab the payload without waiting for another mirror cycle.
+    repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
     context.iterate_artifact_href = (
-        f"https://github.com/{repo}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
+        f"https://github.com/{repo_slug}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
     )
     context.iterate_found_cache = True
 
@@ -344,7 +361,7 @@ def _download_iterate_artifact_zip(
     if isinstance(artifact_id_raw, int):
         artifact_id = str(artifact_id_raw)
         download_url = (
-            f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id_raw}/zip"
+            f"https://api.github.com/repos/{owner}/{repo}/actions/artifacts/{artifact_id_raw}/zip"
         )
         accept_header = "application/vnd.github+json"
     else:
@@ -720,7 +737,10 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
         return _finalize_iterate_discovery(context, None)
     iterate_root = artifacts / "iterate"
     if not iterate_root.exists():
-        return _finalize_iterate_discovery(context, None)
+        try:
+            iterate_root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return _finalize_iterate_discovery(context, None)
 
     # Professional note: reset discovery hints before probing so callers do not
     # reuse stale partial flags from previous runs.
@@ -2801,9 +2821,6 @@ def _write_latest_json(
     response_data: Optional[dict],
     status_data: Optional[dict],
 ) -> None:
-    if not (context.site and context.diag):
-        return
-
     run_slug = f"{context.run_id}-{context.run_attempt}"
     bundle_relative = f"diag/{run_slug}/index.html"
 
@@ -2826,7 +2843,19 @@ def _write_latest_json(
     # derived requirement: run 18972548512-1 exposed that the published manifest
     # links dropped the '/diag/' prefix, yielding 400s. Keep the canonical files
     # under the diag subtree so the diagnostics page links resolve correctly.
-    diag_site = context.site / "diag"
+    diag_site: Optional[Path]
+    if context.site:
+        diag_site = context.site / "diag"
+    elif context.diag:
+        # derived requirement: some publishes only pass DIAG=<...>/diag/<run>,
+        # so fall back to the run directory's parent to keep latest.* fresh.
+        diag_site = context.diag.parent
+    else:
+        return
+
+    if diag_site is None:
+        return
+
     diag_site.mkdir(parents=True, exist_ok=True)
     latest_path = diag_site / "latest.json"
     latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
