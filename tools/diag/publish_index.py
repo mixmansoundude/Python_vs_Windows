@@ -156,6 +156,29 @@ ITERATE_METADATA_FILENAMES = (
 )
 
 
+_ITERATE_LOG_FILE: Optional[Path] = None
+
+
+def _set_iterate_log_destination(diag: Optional[Path]) -> None:
+    """Route iterate discovery breadcrumbs into the published bundle."""
+
+    global _ITERATE_LOG_FILE
+
+    if not diag:
+        _ITERATE_LOG_FILE = None
+        return
+
+    target = diag / "_artifacts" / "iterate" / "discovery.log.txt"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("", encoding="utf-8")
+    except OSError:
+        _ITERATE_LOG_FILE = None
+        return
+
+    _ITERATE_LOG_FILE = target
+
+
 def _log_iterate(message: str) -> None:
     """Emit a diagnostic breadcrumb for iterate discovery."""
 
@@ -166,6 +189,17 @@ def _log_iterate(message: str) -> None:
         # inside a workflow summary capture. Best effort logging keeps the bundle
         # stable while still emitting breadcrumbs when available.
         pass
+
+    log_path = _ITERATE_LOG_FILE
+    if log_path:
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"{message}\n")
+        except OSError:
+            # derived requirement: diagnostics publication must continue even when the
+            # filesystem disallows writing the breadcrumb log.
+            pass
 
 
 def _core_iterate_files_present(root: Path) -> bool:
@@ -2320,9 +2354,6 @@ def _build_markdown(
     lines.append("## Quick links")
 
     quick_entries = _bundle_links(context)
-    has_local_iterate_link = any(
-        entry.get("label") == "Iterate logs zip" for entry in quick_entries
-    )
 
     for entry in quick_entries:
         label = entry["label"]
@@ -2342,12 +2373,8 @@ def _build_markdown(
             lines.append(f"- {label}: [Download]({original_href})")
 
     fallback_href = context.iterate_artifact_href
-    if fallback_href and iterate_log_status == "found" and not has_local_iterate_link:
-        # derived requirement: CI surfaced runs where the zip stayed in the GitHub
-        # artifact inventory but never reached the publish workspace. Link to the
-        # Actions artifacts view so operators still have a one-click path to the
-        # iterate logs even when only the remote copy exists.
-        lines.append(f"- Iterate logs (GitHub Actions): [Open]({fallback_href})")
+    if fallback_href:
+        lines.append(f"- Iterate artifact (GitHub): [Open]({fallback_href})")
 
     lines.extend(
         [
@@ -2674,6 +2701,11 @@ def _write_html(
             html.append(
                 f"<li><strong>{label}:</strong> <a href=\"{original_href}\">Download</a></li>"
             )
+    fallback_href = context.iterate_artifact_href
+    if fallback_href:
+        html.append(
+            f"<li><strong>Iterate artifact (GitHub):</strong> <a href=\"{_escape_href(fallback_href)}\">Open</a></li>"
+        )
     html.append("</ul>")
     html.append("</section>")
 
@@ -3187,6 +3219,7 @@ def _build_site_overview(
 
 def main() -> None:
     context = _get_context()
+    _set_iterate_log_destination(context.diag)
     _normalize_repo_zip(context)
     _ensure_repo_index(context)
     iterate_dir = _discover_iterate_dir(context)
