@@ -1731,6 +1731,29 @@ jobs:
             cp -a "$src"/. "$dst"/ || true
           fi
 
+      - name: Package iterate logs archive
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="${{ steps.prep.outputs.ARTIFACTS }}/iterate"
+          log_dir="${{ steps.prep.outputs.DIAG }}/logs"
+          mkdir -p "$log_dir"
+          zip_path="$log_dir/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip"
+          rm -f "$zip_path"
+          if [ -d "$src" ]; then
+            shopt -s dotglob nullglob
+            entries=("$src"/*)
+            if [ ${#entries[@]} -gt 0 ]; then
+              # Professional note: diagnostics quick links rely on this archive existing even for
+              # partial iterate payloads; create the zip whenever any staged file is present.
+              (
+                cd "$src"
+                zip -rq "$zip_path" .
+              )
+            fi
+          fi
+
       - name: Mirror iterate logs into site bundle
         if: ${{ always() }}
         shell: pwsh
@@ -1969,18 +1992,26 @@ jobs:
 
           $iterateZip = Join-Path $logDir ("iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip")
           $iterateSentinel = Join-Path $logDir 'iterate.MISSING.txt'
-          # Professional note: log downloads remain optional; when they fail we emit explicit sentinel files so the
-          # published bundle still explains what is missing without failing the workflow.
-          $iterateLogUri = "https://api.github.com/repos/$owner/$repo/actions/runs/${{ github.run_id }}/logs"
-          if (-not (Download-WithRetry -Uri $iterateLogUri -Destination $iterateZip -Headers $headers)) {
-            "iterate log download failed after retries: $iterateLogUri" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'iterate-log-error.txt')
+          # Professional note: prefer the artifact assembled earlier; only fall back to workflow logs when
+          # the archive is absent so unauthenticated users still see an explanation in the published bundle.
+          $needDownload = $true
+          if (Test-Path $iterateZip) {
+            $info = Get-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
+            if ($info -and $info.Length -gt 0) { $needDownload = $false }
           }
-          if (-not (Test-Path $iterateZip)) {
-            'iterate log archive missing' | Set-Content -Encoding UTF8 $iterateSentinel
-          } else {
-            $info = Get-Item -LiteralPath $iterateZip
-            if (-not $info -or $info.Length -eq 0) {
-              'iterate log archive empty' | Set-Content -Encoding UTF8 $iterateSentinel
+          if ($needDownload) {
+            Remove-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
+            $iterateLogUri = "https://api.github.com/repos/$owner/$repo/actions/runs/${{ github.run_id }}/logs"
+            if (-not (Download-WithRetry -Uri $iterateLogUri -Destination $iterateZip -Headers $headers)) {
+              "iterate log download failed after retries: $iterateLogUri" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'iterate-log-error.txt')
+            }
+            if (-not (Test-Path $iterateZip)) {
+              'iterate log archive missing' | Set-Content -Encoding UTF8 $iterateSentinel
+            } else {
+              $info = Get-Item -LiteralPath $iterateZip
+              if (-not $info -or $info.Length -eq 0) {
+                'iterate log archive empty' | Set-Content -Encoding UTF8 $iterateSentinel
+              }
             }
           }
 
