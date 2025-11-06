@@ -74,6 +74,10 @@ class Context:
     iterate_discovered_dir: Optional[Path] = None
     iterate_partial: bool = False
     iterate_partial_note: Optional[str] = None
+    # Professional note: cache the iterate artifact selection so pagination over
+    # the Actions API happens once per publish run even when multiple helpers
+    # consult the remote inventory.
+    iterate_artifact_meta: Optional[Tuple[dict, str, str, str, str]] = None
 
 
 def _get_env_path(name: str) -> Optional[Path]:
@@ -264,52 +268,16 @@ def _partial_iterate_evidence(root: Path) -> bool:
 def _github_iterate_artifact_href(context: Context, expected_names: Iterable[str]) -> Optional[str]:
     """Return the GitHub Actions artifacts page when the iterate zip exists remotely."""
 
-    token = os.getenv("GITHUB_TOKEN")
-    owner_repo = _actions_owner_repo(context)
-    run_id = os.getenv("GITHUB_RUN_ID") or context.run_id
-    if not token or not owner_repo or not run_id or run_id == "n/a":
-        return None
-
-    owner, repo = owner_repo
-    api_url = (
-        f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
-    )
-    request = Request(api_url)
-    request.add_header("Accept", "application/vnd.github+json")
-    request.add_header("Authorization", f"Bearer {token}")
-    request.add_header("X-GitHub-Api-Version", "2022-11-28")
-    request.add_header("User-Agent", "publish_index.py diagnostics")
-
-    try:
-        with urlopen(request, timeout=10) as response:
-            payload = json.load(response)
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
-        return None
-
-    artifacts = payload.get("artifacts")
-    if not isinstance(artifacts, list):
-        return None
-
     names = list(expected_names)
     expected_stem = names[0] if names else None
+    if not expected_stem:
+        return None
 
-    for item in artifacts:
-        candidate = item.get("name")
-        if not isinstance(candidate, str):
-            continue
-        if candidate in names or (
-            expected_stem and _match_iterate_artifact(expected_stem, candidate)
-        ):
-            # derived requirement: when the local artifact mirror is empty we still
-            # want the diagnostics bundle to link to the GitHub Actions artifact
-            # list so operators can download the iterate logs without waiting for
-            # another publish cycle.
-            repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
-            return (
-                f"https://github.com/{repo_slug}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
-            )
+    metadata = _select_iterate_artifact(context, expected_stem)
+    if not metadata:
+        return None
 
-    return None
+    return context.iterate_artifact_href
 
 
 def _match_iterate_artifact(expected_stem: str, name: str) -> bool:
@@ -323,73 +291,106 @@ def _match_iterate_artifact(expected_stem: str, name: str) -> bool:
     return False
 
 
+def _candidate_priority(expected_stem: str, name: str) -> Tuple[int, str]:
+    if name == expected_stem:
+        return (0, name)
+    if name == f"{expected_stem}.zip":
+        return (1, name)
+    if name.startswith(f"{expected_stem}-"):
+        return (2, name)
+    return (3, name)
+
+
+def _select_iterate_artifact(
+    context: Context, expected_stem: str
+) -> Optional[Tuple[dict, str, str, str, str]]:
+    """Return artifact metadata for the iterate payload when present.
+
+    The tuple contains (artifact_json, owner, repo, run_id, repo_slug).
+    """
+
+    if context.iterate_artifact_meta:
+        return context.iterate_artifact_meta
+
+    token = os.getenv("GITHUB_TOKEN")
+    owner_repo = _actions_owner_repo(context)
+    run_id = os.getenv("GITHUB_RUN_ID") or context.run_id
+    if not token or not owner_repo or not run_id or run_id == "n/a":
+        return None
+
+    owner, repo = owner_repo
+    repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
+    per_page = 100
+    page = 1
+
+    while page <= 10:
+        api_url = (
+            f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts"
+            f"?per_page={per_page}&page={page}"
+        )
+        request = Request(api_url)
+        request.add_header("Accept", "application/vnd.github+json")
+        request.add_header("Authorization", f"Bearer {token}")
+        request.add_header("X-GitHub-Api-Version", "2022-11-28")
+        request.add_header("User-Agent", "publish_index.py diagnostics")
+
+        try:
+            with urlopen(request, timeout=10) as response:
+                payload = json.load(response)
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+            break
+
+        artifacts = payload.get("artifacts")
+        if not isinstance(artifacts, list) or not artifacts:
+            break
+
+        candidates: List[dict] = []
+        for item in artifacts:
+            name = item.get("name")
+            if not isinstance(name, str):
+                continue
+            if _match_iterate_artifact(expected_stem, name):
+                candidates.append(item)
+
+        if candidates:
+            candidates.sort(
+                key=lambda entry: _candidate_priority(
+                    expected_stem, str(entry.get("name") or "")
+                )
+            )
+            choice = candidates[0]
+            if repo_slug and repo_slug != "n/a":
+                context.iterate_artifact_href = (
+                    f"https://github.com/{repo_slug}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
+                )
+            context.iterate_found_cache = True
+            context.iterate_artifact_meta = (choice, owner, repo, run_id, repo_slug)
+            return context.iterate_artifact_meta
+
+        if len(artifacts) < per_page:
+            break
+
+        page += 1
+
+    return None
+
+
 def _download_iterate_artifact_zip(
     context: Context, destination: Path
 ) -> Optional[Tuple[str, Optional[str], bool]]:
     """Download the iterate artifact zip into *destination* when it exists remotely."""
 
     expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
-    token = os.getenv("GITHUB_TOKEN")
-    owner_repo = _actions_owner_repo(context)
-    run_id = os.getenv("GITHUB_RUN_ID") or context.run_id
-    if not token or not owner_repo or not run_id or run_id == "n/a":
-        return False
-
-    owner, repo = owner_repo
-
-    api_url = (
-        f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
-    )
-    request = Request(api_url)
-    request.add_header("Accept", "application/vnd.github+json")
-    request.add_header("Authorization", f"Bearer {token}")
-    request.add_header("X-GitHub-Api-Version", "2022-11-28")
-    request.add_header("User-Agent", "publish_index.py diagnostics")
-
-    try:
-        with urlopen(request, timeout=10) as response:
-            payload = json.load(response)
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
-        return False
-
-    artifacts = payload.get("artifacts")
-    if not isinstance(artifacts, list):
-        return False
-
-    candidates: List[dict] = []
-    for item in artifacts:
-        name = item.get("name")
-        if not isinstance(name, str):
-            continue
-        if _match_iterate_artifact(expected_stem, name):
-            candidates.append(item)
-
-    if not candidates:
+    metadata = _select_iterate_artifact(context, expected_stem)
+    if not metadata:
         return None
 
-    def _candidate_priority(entry: dict) -> Tuple[int, str]:
-        name = str(entry.get("name") or "")
-        if name == expected_stem:
-            return (0, name)
-        if name == f"{expected_stem}.zip":
-            return (1, name)
-        if name.startswith(f"{expected_stem}-"):
-            return (2, name)
-        return (3, name)
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        return None
 
-    candidates.sort(key=_candidate_priority)
-    item = candidates[0]
+    item, owner, repo, run_id, _ = metadata
     name = str(item.get("name") or "")
-
-    # derived requirement: when only the remote zip is available we still want to
-    # render the diagnostics bundle as "found" and expose the Actions link so the
-    # operators can grab the payload without waiting for another mirror cycle.
-    repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
-    context.iterate_artifact_href = (
-        f"https://github.com/{repo_slug}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
-    )
-    context.iterate_found_cache = True
-
     artifact_id_raw = item.get("id")
     artifact_id: Optional[str] = None
     if isinstance(artifact_id_raw, int):
@@ -466,6 +467,7 @@ def _ensure_iterate_log_archive(context: Context) -> None:
 
     previous_cache = context.iterate_found_cache
     previous_href = context.iterate_artifact_href
+    previous_meta = context.iterate_artifact_meta
 
     download_info = _download_iterate_artifact_zip(context, iterate_zip)
     downloaded = False
@@ -479,6 +481,7 @@ def _ensure_iterate_log_archive(context: Context) -> None:
         # status when the download failed.
         context.iterate_found_cache = previous_cache
         context.iterate_artifact_href = previous_href
+        context.iterate_artifact_meta = previous_meta
         return
 
     if context.iterate_found_cache in (None, False):
