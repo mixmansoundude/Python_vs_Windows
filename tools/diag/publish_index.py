@@ -740,6 +740,11 @@ def _finalize_iterate_discovery(
     context.iterate_partial_note = None
 
     if not candidate:
+        if context.iterate_found_cache is None:
+            # derived requirement: cache the "missing" probe so later status checks do not
+            # re-scan and clobber breadcrumbs when no iterate payload was mirrored.
+            context.iterate_found_cache = False
+        _log_iterate("no iterate bundle located")
         return None
 
     try:
@@ -748,11 +753,15 @@ def _finalize_iterate_discovery(
         exists = False
 
     if not exists:
+        if context.iterate_found_cache is None:
+            context.iterate_found_cache = False
+        _log_iterate(f"no iterate bundle located at {candidate}")
         return candidate
 
     if _core_iterate_files_present(candidate):
         if context.iterate_found_cache is None or context.iterate_found_cache is False:
             context.iterate_found_cache = True
+        _log_iterate(f"complete bundle detected at {candidate}")
         return candidate
 
     if _partial_iterate_evidence(candidate):

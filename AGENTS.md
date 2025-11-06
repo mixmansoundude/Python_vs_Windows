@@ -97,7 +97,7 @@ THEN stop and open/append a PR. One loop = one change set.
     - When reproducing workflow behaviour, export the same environment variables the calling YAML provides, then run the script via `pwsh` just like the workflow step. Capture full traces with `Set-PSDebug -Trace 2` and inspect `$Error` afterwards for hidden stack info.
 - YAML (and GitHub Actions): run `python -m yamllint <file>` (or `actionshub/yamllint@v1`) and `actionlint -oneline` for workflow validation.
   - Preferred actionlint install: `curl -sSLO https://github.com/rhysd/actionlint/releases/latest/download/actionlint_linux_amd64.tar.gz && tar -xzf actionlint_linux_amd64.tar.gz actionlint && ./actionlint -oneline .`
-  - If the release tarball resolves to "Not Found" due to proxy filtering, install with Go instead: `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.1` and add `/root/.local/share/mise/installs/go/1.24.3/bin` to `PATH` before running `actionlint`.
+  - If the release tarball resolves to "Not Found" due to proxy filtering, install with Go instead: `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.1` and add `/root/.local/share/mise/installs/go/1.24.3/bin` to `PATH` before running `actionlint`. On this runner `go env GOPATH` resolves to `/root/go`, so the compiled binary also lives under `/root/go/bin`—add that directory to `PATH` if the mise shim is absent.
   - JSON: `jq -e .` over `*.json`.
   - Generic paired-delimiter scan for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
     - Provide a helper such as `tools/check_delimiters.py` that validates (), {}, [], and quotes " ' (handle escapes and ignore comments when practical).

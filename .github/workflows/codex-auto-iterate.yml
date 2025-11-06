@@ -1363,67 +1363,62 @@ jobs:
               }
           }
 
-      - name: Collect iterate artifact paths
+      - name: Stage iterate artifact payload
         if: always()
-        id: iter_paths
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE:?}"
-          mkdir -p _artifacts/iterate
-          paths=("_artifacts/iterate")
-          if [ -d ".codex" ]; then
-            paths+=(".codex")
-          fi
-          if [ -d "iterate" ]; then
-            paths+=("iterate")
-          fi
-          if [ -f "codex_exec.log" ]; then
-            paths+=("codex_exec.log")
-          fi
-          {
-            printf 'list<<EOF_ITER\n'
-            for p in "${paths[@]}"; do
-              printf '%s\n' "$p"
-            done
-            printf 'EOF_ITER\n'
-          } >> "$GITHUB_OUTPUT"
 
-      - name: Archive iterate logs payload
-        if: always()
-        run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE:?}"
-          archive_name="iterate-logs-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.zip"
-          archive_tmp="$RUNNER_TEMP/$archive_name"
-          archive_dir="_artifacts/iterate"
-          rm -f "$archive_tmp"
-          mapfile -t include_paths <<< "${{ steps.iter_paths.outputs.list }}"
-          kept=()
-          for entry in "${include_paths[@]}"; do
-            [ -n "$entry" ] || continue
-            if [ -e "$entry" ]; then
-              kept+=("$entry")
+          stage_root="_artifacts/iterate"
+          mkdir -p "$stage_root/_temp"
+
+          copy_tree() {
+            local src="$1"
+            local dest="$2"
+            if [ -d "$src" ]; then
+              mkdir -p "$dest"
+              if command -v rsync >/dev/null 2>&1; then
+                rsync -a "$src"/ "$dest"/
+              else
+                # derived requirement: bash globbing needs nullglob/dotglob so partial bundles
+                # copy without tripping "no such file" errors when iterate/ is empty.
+                shopt -s dotglob nullglob
+                for item in "$src"/*; do
+                  cp -R "$item" "$dest"/
+                done
+                shopt -u dotglob nullglob
+              fi
             fi
-          done
-          if [ "${#kept[@]}" -eq 0 ]; then
-            echo "::error title=iterate-archive::No iterate artifacts found to archive." >&2
-            exit 1
-          fi
-          # derived requirement: expose a deterministic iterate-logs-*.zip so the
-          # diagnostics publisher can detect the artifact without unpack heuristics.
-          zip -r "$archive_tmp" "${kept[@]}"
-          mkdir -p "$archive_dir"
-          mv "$archive_tmp" "$archive_dir/$archive_name"
+          }
+
+          copy_file() {
+            local src="$1"
+            local dest="$2"
+            if [ -f "$src" ]; then
+              mkdir -p "$(dirname "$dest")"
+              cp -f "$src" "$dest"
+            fi
+          }
+
+          copy_tree "iterate" "$stage_root"
+          copy_tree ".codex" "$stage_root/.codex"
+          copy_file "decision.txt" "$stage_root/decision.txt"
+          copy_file "response.json" "$stage_root/response.json"
+          copy_file "iterate_status.json" "$stage_root/iterate_status.json"
+          copy_file "codex_exec.log" "$stage_root/codex_exec.log"
+
+          # derived requirement: keep a sentinel so diagnostics treat the upload as intentional
+          # even when iterate fails before producing metadata.
+          printf 'sentinel: staged by iterate job\n' > "$stage_root/README.txt"
 
       - name: Upload iterate logs artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
-          # derived requirement: scope uploads to known workspace artifacts so the
-          # runner never glob-walks outside (earlier runs hit /boot/efi and failed
-          # with EACCES).
-          path: _artifacts/iterate/iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}.zip
+          # derived requirement: keep the upload unconditional so diagnostics capture
+          # partial bundles and failure breadcrumbs instead of skipping the artifact.
+          path: _artifacts/iterate/**
           if-no-files-found: warn
           retention-days: 7
 
