@@ -193,8 +193,114 @@ if ($Artifacts) {
     $ndjsonSummaries = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue
 }
 
+$logDir = if ($Diag) { Join-Path $Diag 'logs' } else { $null }
+if ($logDir) {
+    try { New-Item -ItemType Directory -Path $logDir -Force | Out-Null } catch {}
+}
+
 $iterateZipName = "iterate-$Run-$Att.zip"
-$iterateZipPath = if ($Diag) { Join-Path $Diag ('logs\' + $iterateZipName) } else { $null }
+$iterateZipPath = if ($logDir) { Join-Path $logDir $iterateZipName } else { $null }
+$iterateSentinelPath = if ($logDir) { Join-Path $logDir 'iterate.MISSING.txt' } else { $null }
+$iterateErrorPath = if ($logDir) { Join-Path $logDir 'iterate-log-error.txt' } else { $null }
+
+$zipReady = $false
+if ($iterateZipPath -and (Test-Path $iterateZipPath)) {
+    try {
+        $info = Get-Item -LiteralPath $iterateZipPath -ErrorAction Stop
+        if ($info -and $info.Length -gt 0) {
+            $zipReady = $true
+            if ($iterateSentinelPath) { Remove-Item -LiteralPath $iterateSentinelPath -ErrorAction SilentlyContinue }
+            if ($iterateErrorPath) { Remove-Item -LiteralPath $iterateErrorPath -ErrorAction SilentlyContinue }
+        }
+    } catch {}
+}
+
+if (-not $zipReady -and $logDir) {
+    $token = $env:GITHUB_TOKEN
+    $repoSlug = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } elseif ($Repo) { $Repo } else { $null }
+    $runId = if ($Run) { $Run } elseif ($env:GITHUB_RUN_ID) { $env:GITHUB_RUN_ID } else { $null }
+    if ($token -and $repoSlug -and $repoSlug.Contains('/') -and $runId) {
+        $parts = $repoSlug.Split('/', 2)
+        $owner = $parts[0]
+        $repoName = $parts[1]
+        $baseName = "iterate-logs-$Run-$Att"
+        $apiUri = "https://api.github.com/repos/$owner/$repoName/actions/runs/$runId/artifacts?per_page=100"
+        $headers = @{
+            Accept                 = 'application/vnd.github+json'
+            Authorization          = "Bearer $token"
+            'User-Agent'           = 'publish_index.ps1 diagnostics'
+            'X-GitHub-Api-Version' = '2022-11-28'
+        }
+        $response = $null
+        try {
+            $response = Invoke-RestMethod -Uri $apiUri -Headers $headers -ErrorAction Stop
+        } catch {}
+
+        if ($response -and $response.artifacts) {
+            $baseLower = $baseName.ToLowerInvariant()
+            $candidates = @()
+            foreach ($artifact in $response.artifacts) {
+                $name = [string]$artifact.name
+                if (-not $name) { continue }
+                $lower = $name.ToLowerInvariant()
+                if ($lower -eq $baseLower -or $lower -eq ($baseLower + '.zip') -or $lower.StartsWith($baseLower + '-')) {
+                    $candidates += $artifact
+                    continue
+                }
+                if ($lower.EndsWith('.zip') -and $lower.Contains($baseLower)) {
+                    $candidates += $artifact
+                }
+            }
+
+            if ($candidates.Count -gt 0) {
+                $candidates = $candidates | Sort-Object -Property @{ Expression = {
+                        $name = [string]$_.name
+                        if ($name -eq $baseName) { return 0 }
+                        if ($name -eq "$baseName.zip") { return 1 }
+                        if ($name -like "$baseName-*") { return 2 }
+                        return 3
+                    } }, @{ Expression = { [string]$_.name } }
+                $choice = $candidates[0]
+                $downloadUri = $null
+                $acceptHeader = 'application/octet-stream'
+                if ($choice.id -is [int]) {
+                    $artifactId = [int]$choice.id
+                    $downloadUri = "https://api.github.com/repos/$owner/$repoName/actions/artifacts/$artifactId/zip"
+                    $acceptHeader = 'application/vnd.github+json'
+                } elseif ($choice.archive_download_url) {
+                    $downloadUri = [string]$choice.archive_download_url
+                }
+
+                if ($downloadUri) {
+                    Remove-Item -LiteralPath $iterateZipPath -ErrorAction SilentlyContinue
+                    try {
+                        Invoke-WebRequest -Uri $downloadUri -Headers @{
+                            Authorization          = "Bearer $token"
+                            'User-Agent'           = 'publish_index.ps1 diagnostics'
+                            Accept                 = $acceptHeader
+                            'X-GitHub-Api-Version' = '2022-11-28'
+                        } -OutFile $iterateZipPath -ErrorAction Stop
+                        $info = Get-Item -LiteralPath $iterateZipPath -ErrorAction Stop
+                        if ($info -and $info.Length -gt 0) {
+                            # Professional note: Runs like 19122439464-1 uploaded the iterate artifact
+                            # successfully, but the prior publisher fell back to the run-log endpoint.
+                            # Clearing the sentinels here keeps the diagnostics page truthful once the
+                            # artifact download succeeds.
+                            if ($iterateSentinelPath) { Remove-Item -LiteralPath $iterateSentinelPath -ErrorAction SilentlyContinue }
+                            if ($iterateErrorPath) { Remove-Item -LiteralPath $iterateErrorPath -ErrorAction SilentlyContinue }
+                            $zipReady = $true
+                        } else {
+                            Remove-Item -LiteralPath $iterateZipPath -ErrorAction SilentlyContinue
+                        }
+                    } catch {
+                        Remove-Item -LiteralPath $iterateZipPath -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+    }
+}
+
 $iterateStatus = 'found'
 if (-not $iterateZipPath -or -not (Test-Path $iterateZipPath)) {
     $iterateStatus = 'missing (see logs/iterate.MISSING.txt)'

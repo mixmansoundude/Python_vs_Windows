@@ -425,6 +425,76 @@ def _download_iterate_artifact_zip(
     return (name, artifact_id, True)
 
 
+def _ensure_iterate_log_archive(context: Context) -> None:
+    """Mirror the iterate artifact zip into the logs directory when available."""
+
+    diag = context.diag
+    if not diag:
+        return
+
+    logs_dir = diag / "logs"
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    iterate_zip = logs_dir / f"iterate-{context.run_id}-{context.run_attempt}.zip"
+    sentinel = logs_dir / "iterate.MISSING.txt"
+    error_log = logs_dir / "iterate-log-error.txt"
+
+    def _zip_ready() -> bool:
+        try:
+            return iterate_zip.exists() and iterate_zip.stat().st_size > 0
+        except OSError:
+            return False
+
+    if _zip_ready():
+        if context.iterate_found_cache in (None, False):
+            # Professional note: Runs like 19122439464-1 uploaded the iterate artifact
+            # successfully, but the previous publisher still reported "Iterate logs:
+            # missing". Mark the cache so downstream status lines stay truthful once the
+            # archive is present on disk.
+            context.iterate_found_cache = True
+        for stale in (sentinel, error_log):
+            try:
+                stale.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+        return
+
+    previous_cache = context.iterate_found_cache
+    previous_href = context.iterate_artifact_href
+
+    download_info = _download_iterate_artifact_zip(context, iterate_zip)
+    downloaded = False
+    if download_info:
+        _, _, downloaded = download_info
+
+    if not download_info or not downloaded or not _zip_ready():
+        # derived requirement: Keep the legacy sentinel/error files when the artifact is
+        # unavailable so the diagnostics continue to explain why Iterate logs are
+        # missing. Restore the cached state so callers do not report a false "found"
+        # status when the download failed.
+        context.iterate_found_cache = previous_cache
+        context.iterate_artifact_href = previous_href
+        return
+
+    if context.iterate_found_cache in (None, False):
+        context.iterate_found_cache = True
+
+    for stale in (sentinel, error_log):
+        try:
+            stale.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+    _log_iterate(f"iterate log archive mirrored to {iterate_zip}")
+
+
 def _iterate_logs_found(context: Context) -> bool:
     """Return True when the iterate-logs artifact actually exists."""
 
@@ -3229,6 +3299,7 @@ def _build_site_overview(
 def main() -> None:
     context = _get_context()
     _set_iterate_log_destination(context.diag)
+    _ensure_iterate_log_archive(context)
     _normalize_repo_zip(context)
     _ensure_repo_index(context)
     iterate_dir = _discover_iterate_dir(context)
