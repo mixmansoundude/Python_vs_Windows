@@ -126,6 +126,68 @@ function Read-Value {
     return 'n/a'
 }
 
+function Get-IterateArtifactForRun {
+    param(
+        [string]$Owner,
+        [string]$RepoName,
+        [string]$TargetRunId,
+        [string[]]$BaseNames,
+        [hashtable]$Headers
+    )
+
+    if (-not $TargetRunId -or -not $BaseNames) { return $null }
+    $filtered = $BaseNames | Where-Object { $_ }
+    if (-not $filtered -or $filtered.Count -eq 0) { return $null }
+
+    $perPage = 100
+    $page = 1
+    $candidates = @()
+
+    while ($page -le 10) {
+        $apiUri = "https://api.github.com/repos/$Owner/$RepoName/actions/runs/$TargetRunId/artifacts?per_page=$perPage&page=$page"
+        $response = $null
+        try {
+            $response = Invoke-RestMethod -Uri $apiUri -Headers $Headers -ErrorAction Stop
+        } catch {}
+
+        if (-not $response -or -not $response.artifacts) { break }
+
+        foreach ($artifact in $response.artifacts) {
+            $name = [string]$artifact.name
+            if (-not $name) { continue }
+            $lower = $name.ToLowerInvariant()
+            foreach ($base in $filtered) {
+                $baseLower = $base.ToLowerInvariant()
+                if ($lower -eq $baseLower -or $lower -eq ($baseLower + '.zip') -or $lower.StartsWith($baseLower + '-')) {
+                    $candidates += [pscustomobject]@{ Artifact = $artifact; Base = $base; Name = $name }
+                    break
+                }
+                if ($lower.EndsWith('.zip') -and $lower.Contains($baseLower)) {
+                    $candidates += [pscustomobject]@{ Artifact = $artifact; Base = $base; Name = $name }
+                    break
+                }
+            }
+        }
+
+        if ($candidates.Count -gt 0) { break }
+        if ($response.artifacts.Count -lt $perPage) { break }
+        $page += 1
+    }
+
+    if ($candidates.Count -eq 0) { return $null }
+
+    $sorted = $candidates | Sort-Object -Property @{ Expression = {
+                $base = $_.Base
+                $candidateName = $_.Name
+                if ($candidateName -eq $base) { return 0 }
+                if ($candidateName -eq "$base.zip") { return 1 }
+                if ($candidateName -like "$base-*") { return 2 }
+                return 3
+            } }, @{ Expression = { $_.Name } }
+
+    return $sorted[0]
+}
+
 $decision   = Read-Value $iterateDir 'decision.txt'
 $model      = Read-Value $iterateDir 'model.txt'
 $endpoint   = Read-Value $iterateDir 'endpoint.txt'
@@ -239,52 +301,41 @@ if (-not $zipReady -and $logDir) {
         $owner = $parts[0]
         $repoName = $parts[1]
         $baseName = "iterate-logs-$Run-$Att"
-        $baseLower = $baseName.ToLowerInvariant()
-        $perPage = 100
-        $page = 1
         $headers = @{
             Accept                 = 'application/vnd.github+json'
             Authorization          = "Bearer $token"
             'User-Agent'           = 'publish_index.ps1 diagnostics'
             'X-GitHub-Api-Version' = '2022-11-28'
         }
-        $candidates = @()
-        while ($page -le 10) {
-            $apiUri = "https://api.github.com/repos/$owner/$repoName/actions/runs/$runId/artifacts?per_page=$perPage&page=$page"
-            $response = $null
+        $downloadSelection = Get-IterateArtifactForRun -Owner $owner -RepoName $repoName -TargetRunId $runId -BaseNames @($baseName) -Headers $headers
+        $downloadRunId = $runId
+        if (-not $downloadSelection -and $SHA -and $SHA -ne 'n/a') {
+            $workflowUri = "https://api.github.com/repos/$owner/$repoName/actions/workflows/codex-auto-iterate.yml/runs?head_sha=$SHA&per_page=10"
+            $workflowResponse = $null
             try {
-                $response = Invoke-RestMethod -Uri $apiUri -Headers $headers -ErrorAction Stop
+                $workflowResponse = Invoke-RestMethod -Uri $workflowUri -Headers $headers -ErrorAction Stop
             } catch {}
-
-            if (-not $response -or -not $response.artifacts) { break }
-
-            foreach ($artifact in $response.artifacts) {
-                $name = [string]$artifact.name
-                if (-not $name) { continue }
-                $lower = $name.ToLowerInvariant()
-                if ($lower -eq $baseLower -or $lower -eq ($baseLower + '.zip') -or $lower.StartsWith($baseLower + '-')) {
-                    $candidates += $artifact
-                    continue
-                }
-                if ($lower.EndsWith('.zip') -and $lower.Contains($baseLower)) {
-                    $candidates += $artifact
+            if ($workflowResponse -and $workflowResponse.workflow_runs) {
+                # Professional note: the iterate bundle originates from codex-auto-iterate.yml,
+                # not the diagnostics workflow. Falling back by head SHA keeps publishing
+                # truthful when the archive lives on a sibling run.
+                foreach ($wfRun in $workflowResponse.workflow_runs) {
+                    $wfId = [string]$wfRun.id
+                    if (-not $wfId) { continue }
+                    $wfAttempt = if ($wfRun.run_attempt) { [string]$wfRun.run_attempt } else { '1' }
+                    $altBase = "iterate-logs-$wfId-$wfAttempt"
+                    $candidateSelection = Get-IterateArtifactForRun -Owner $owner -RepoName $repoName -TargetRunId $wfId -BaseNames @($altBase) -Headers $headers
+                    if ($candidateSelection) {
+                        $downloadSelection = $candidateSelection
+                        $downloadRunId = $wfId
+                        break
+                    }
                 }
             }
-
-            if ($candidates.Count -gt 0) { break }
-            if ($response.artifacts.Count -lt $perPage) { break }
-            $page += 1
         }
 
-        if ($candidates.Count -gt 0) {
-            $candidates = $candidates | Sort-Object -Property @{ Expression = {
-                    $name = [string]$_.name
-                    if ($name -eq $baseName) { return 0 }
-                    if ($name -eq "$baseName.zip") { return 1 }
-                    if ($name -like "$baseName-*") { return 2 }
-                    return 3
-                } }, @{ Expression = { [string]$_.name } }
-            $choice = $candidates[0]
+        if ($downloadSelection) {
+            $choice = $downloadSelection.Artifact
             $downloadUri = $null
             $acceptHeader = 'application/octet-stream'
             if ($choice.id -is [int]) {

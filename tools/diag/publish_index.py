@@ -301,30 +301,22 @@ def _candidate_priority(expected_stem: str, name: str) -> Tuple[int, str]:
     return (3, name)
 
 
-def _select_iterate_artifact(
-    context: Context, expected_stem: str
+def _fetch_iterate_artifact_for_run(
+    context: Context,
+    owner: str,
+    repo: str,
+    run_id: str,
+    repo_slug: Optional[str],
+    token: str,
+    expected_stems: Iterable[str],
 ) -> Optional[Tuple[dict, str, str, str, str]]:
-    """Return artifact metadata for the iterate payload when present.
+    """Return iterate artifact metadata for a specific workflow run."""
 
-    The tuple contains (artifact_json, owner, repo, run_id, repo_slug).
-    """
-
-    if context.iterate_artifact_meta:
-        return context.iterate_artifact_meta
-
-    # Professional note: CI exposes GH_TOKEN for artifact downloads; fall back to
-    # GITHUB_TOKEN so local runs remain functional per "Prefer the Actions
-    # Artifacts API" guidance.
-    token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
-    owner_repo = _actions_owner_repo(context)
-    run_id = os.getenv("GITHUB_RUN_ID") or context.run_id
-    if not token or not owner_repo or not run_id or run_id == "n/a":
-        return None
-
-    owner, repo = owner_repo
-    repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
     per_page = 100
     page = 1
+    stems = [stem for stem in expected_stems if stem]
+    if not stems:
+        return None
 
     while page <= 10:
         api_url = (
@@ -347,33 +339,136 @@ def _select_iterate_artifact(
         if not isinstance(artifacts, list) or not artifacts:
             break
 
-        candidates: List[dict] = []
+        candidates: List[Tuple[dict, str]] = []
         for item in artifacts:
             name = item.get("name")
             if not isinstance(name, str):
                 continue
-            if _match_iterate_artifact(expected_stem, name):
-                candidates.append(item)
+            for stem in stems:
+                if _match_iterate_artifact(stem, name):
+                    candidates.append((item, stem))
+                    break
 
         if candidates:
             candidates.sort(
-                key=lambda entry: _candidate_priority(
-                    expected_stem, str(entry.get("name") or "")
+                key=lambda entry: (
+                    _candidate_priority(entry[1], str(entry[0].get("name") or "")),
+                    str(entry[0].get("name") or ""),
                 )
             )
-            choice = candidates[0]
+            choice, _ = candidates[0]
             if repo_slug and repo_slug != "n/a":
                 context.iterate_artifact_href = (
                     f"https://github.com/{repo_slug}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
                 )
             context.iterate_found_cache = True
-            context.iterate_artifact_meta = (choice, owner, repo, run_id, repo_slug)
-            return context.iterate_artifact_meta
+            return (choice, owner, repo, run_id, repo_slug or context.repo)
 
         if len(artifacts) < per_page:
             break
 
         page += 1
+
+    return None
+
+
+def _select_iterate_artifact_by_head_sha(
+    context: Context,
+    owner: str,
+    repo: str,
+    repo_slug: Optional[str],
+    token: str,
+) -> Optional[Tuple[dict, str, str, str, str]]:
+    """Fallback to the iterate workflow run for the same head SHA when needed."""
+
+    sha = context.sha
+    if not sha or sha == "n/a":
+        return None
+
+    workflow_path = "codex-auto-iterate.yml"
+    api_url = (
+        f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_path}/runs"
+        f"?head_sha={sha}&per_page=10"
+    )
+    request = Request(api_url)
+    request.add_header("Accept", "application/vnd.github+json")
+    request.add_header("Authorization", f"Bearer {token}")
+    request.add_header("X-GitHub-Api-Version", "2022-11-28")
+    request.add_header("User-Agent", "publish_index.py diagnostics")
+
+    try:
+        with urlopen(request, timeout=10) as response:
+            payload = json.load(response)
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    runs = payload.get("workflow_runs")
+    if not isinstance(runs, list):
+        return None
+
+    for run in runs:
+        run_id_raw = run.get("id")
+        if run_id_raw is None:
+            continue
+        run_id = str(run_id_raw)
+        run_attempt_raw = run.get("run_attempt")
+        run_attempt = str(run_attempt_raw) if run_attempt_raw else "1"
+        base = f"iterate-logs-{run_id}-{run_attempt}"
+        metadata = _fetch_iterate_artifact_for_run(
+            context,
+            owner,
+            repo,
+            run_id,
+            repo_slug,
+            token,
+            [base],
+        )
+        if metadata:
+            _log_iterate(
+                "artifact sourced from codex-auto-iterate.yml run "
+                f"{run_id}-{run_attempt}"
+            )
+            return metadata
+
+    return None
+
+
+def _select_iterate_artifact(
+    context: Context, expected_stem: str
+) -> Optional[Tuple[dict, str, str, str, str]]:
+    """Return artifact metadata for the iterate payload when present.
+
+    The tuple contains (artifact_json, owner, repo, run_id, repo_slug).
+    """
+
+    if context.iterate_artifact_meta:
+        return context.iterate_artifact_meta
+
+    # Professional note: CI exposes GH_TOKEN for artifact downloads; fall back to
+    # GITHUB_TOKEN so local runs remain functional per "Prefer the Actions
+    # Artifacts API" guidance.
+    token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    owner_repo = _actions_owner_repo(context)
+    run_id = os.getenv("GITHUB_RUN_ID") or context.run_id
+    if not token or not owner_repo or not run_id or run_id == "n/a":
+        return None
+
+    owner, repo = owner_repo
+    repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
+
+    direct = _fetch_iterate_artifact_for_run(
+        context, owner, repo, run_id, repo_slug, token, [expected_stem]
+    )
+    if direct:
+        context.iterate_artifact_meta = direct
+        return direct
+
+    fallback = _select_iterate_artifact_by_head_sha(
+        context, owner, repo, repo_slug, token
+    )
+    if fallback:
+        context.iterate_artifact_meta = fallback
+        return fallback
 
     return None
 
