@@ -312,7 +312,10 @@ def _select_iterate_artifact(
     if context.iterate_artifact_meta:
         return context.iterate_artifact_meta
 
-    token = os.getenv("GITHUB_TOKEN")
+    # Professional note: CI exposes GH_TOKEN for artifact downloads; fall back to
+    # GITHUB_TOKEN so local runs remain functional per "Prefer the Actions
+    # Artifacts API" guidance.
+    token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
     owner_repo = _actions_owner_repo(context)
     run_id = os.getenv("GITHUB_RUN_ID") or context.run_id
     if not token or not owner_repo or not run_id or run_id == "n/a":
@@ -385,7 +388,9 @@ def _download_iterate_artifact_zip(
     if not metadata:
         return None
 
-    token = os.getenv("GITHUB_TOKEN")
+    # Professional note: keep parity with the PowerShell publisher by honoring
+    # GH_TOKEN first, which the workflow binds to the Actions token.
+    token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
     if not token:
         return None
 

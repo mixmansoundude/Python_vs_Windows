@@ -227,7 +227,9 @@ if ($iterateZipPath -and (Test-Path $iterateZipPath)) {
 }
 
 if (-not $zipReady -and $logDir) {
-    $token = $env:GITHUB_TOKEN
+    # Professional note: the workflow maps the Actions token to GH_TOKEN; fall back
+    # to GITHUB_TOKEN so local runs stay compatible with the published contract.
+    $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
     $repoSlug = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } elseif ($Repo) { $Repo } else { $null }
     $runId = $null
     if ($Run -and $Run -ne 'n/a') { $runId = $Run }
