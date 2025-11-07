@@ -1992,18 +1992,43 @@ jobs:
 
           $iterateZip = Join-Path $logDir ("iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip")
           $iterateSentinel = Join-Path $logDir 'iterate.MISSING.txt'
-          # Professional note: prefer the artifact assembled earlier; only fall back to workflow logs when
-          # the archive is absent so unauthenticated users still see an explanation in the published bundle.
+          $iterateError = Join-Path $logDir 'iterate-log-error.txt'
+          # Professional note: prefer the staged iterate artifact; retain the run-log fallback only when
+          # the archive failed to materialize so unauthenticated readers still see an explanation.
           $needDownload = $true
           if (Test-Path $iterateZip) {
             $info = Get-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
             if ($info -and $info.Length -gt 0) { $needDownload = $false }
           }
           if ($needDownload) {
+            $iterateSource = Join-Path $Diag '_artifacts/iterate'
+            $hasPayload = $false
+            if (Test-Path $iterateSource) {
+              $probe = Get-ChildItem -Path $iterateSource -Recurse -Force -File -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($probe) { $hasPayload = $true }
+            }
+            if ($hasPayload) {
+              try {
+                Remove-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
+                Compress-Archive -Path (Join-Path $iterateSource '*') -DestinationPath $iterateZip -Force
+                $info = Get-Item -LiteralPath $iterateZip -ErrorAction Stop
+                if ($info -and $info.Length -gt 0) {
+                  $needDownload = $false
+                  Remove-Item -LiteralPath $iterateSentinel -ErrorAction SilentlyContinue
+                  Remove-Item -LiteralPath $iterateError -ErrorAction SilentlyContinue
+                } else {
+                  Remove-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
+                }
+              } catch {
+                Remove-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
+              }
+            }
+          }
+          if ($needDownload) {
             Remove-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
             $iterateLogUri = "https://api.github.com/repos/$owner/$repo/actions/runs/${{ github.run_id }}/logs"
             if (-not (Download-WithRetry -Uri $iterateLogUri -Destination $iterateZip -Headers $headers)) {
-              "iterate log download failed after retries: $iterateLogUri" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'iterate-log-error.txt')
+              "iterate log download failed after retries: $iterateLogUri" | Out-File -Encoding UTF8 -FilePath $iterateError
             }
             if (-not (Test-Path $iterateZip)) {
               'iterate log archive missing' | Set-Content -Encoding UTF8 $iterateSentinel
@@ -2011,6 +2036,8 @@ jobs:
               $info = Get-Item -LiteralPath $iterateZip
               if (-not $info -or $info.Length -eq 0) {
                 'iterate log archive empty' | Set-Content -Encoding UTF8 $iterateSentinel
+              } else {
+                Remove-Item -LiteralPath $iterateError -ErrorAction SilentlyContinue
               }
             }
           }

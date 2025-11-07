@@ -6,6 +6,12 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+} catch {
+    # Professional note: extraction helpers rely on System.IO.Compression; ignore failures so diagnostics still publish.
+}
+
 $Diag       = $env:DIAG
 $Artifacts  = $env:ARTIFACTS
 $Repo       = $env:REPO
@@ -312,6 +318,35 @@ if (-not $zipReady -and $logDir) {
                     Remove-Item -LiteralPath $iterateZipPath -ErrorAction SilentlyContinue
                 }
             }
+        }
+    }
+}
+
+$iterateExtracted = $false
+if ($zipReady -and $Artifacts -and $iterateZipPath) {
+    $iterateRoot = Join-Path $Artifacts 'iterate'
+    $expectedDir = Join-Path $iterateRoot ("iterate-logs-$Run-$Att")
+    try {
+        New-Item -ItemType Directory -Path $iterateRoot -Force | Out-Null
+    } catch {}
+    $needsExtract = $true
+    if (Test-Path $expectedDir) {
+        try {
+            $probe = Get-ChildItem -Path $expectedDir -Recurse -Force -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($probe) { $needsExtract = $false }
+        } catch {}
+    }
+    if ($needsExtract) {
+        try {
+            if (Test-Path $expectedDir) {
+                Remove-Item -LiteralPath $expectedDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            New-Item -ItemType Directory -Path $expectedDir -Force | Out-Null
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($iterateZipPath, $expectedDir)
+            $iterateExtracted = $true
+        } catch {
+            # Professional note: partial or corrupted bundles should not block publishing;
+            # keep the archive but skip extraction so fallback logic preserves breadcrumbs.
         }
     }
 }

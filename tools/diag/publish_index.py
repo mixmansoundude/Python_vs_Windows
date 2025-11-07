@@ -409,6 +409,7 @@ def _download_iterate_artifact_zip(
     download_request.add_header("Authorization", f"Bearer {token}")
     download_request.add_header("User-Agent", "publish_index.py diagnostics")
     download_request.add_header("Accept", accept_header)
+    download_request.add_header("X-GitHub-Api-Version", "2022-11-28")
 
     try:
         with urlopen(download_request, timeout=30) as response:
@@ -424,6 +425,49 @@ def _download_iterate_artifact_zip(
         return (name, artifact_id, False)
 
     return (name, artifact_id, True)
+
+
+def _populate_iterate_artifacts_from_zip(context: Context, archive_path: Path) -> None:
+    """Extract the iterate archive into ARTIFACTS/iterate when the mirror is empty."""
+
+    artifacts = context.artifacts
+    if not artifacts or not archive_path.exists():
+        return
+
+    iterate_root = artifacts / "iterate"
+    expected = iterate_root / f"iterate-logs-{context.run_id}-{context.run_attempt}"
+
+    try:
+        iterate_root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    needs_extract = True
+    if expected.exists():
+        try:
+            next(expected.iterdir())
+        except (StopIteration, FileNotFoundError):
+            needs_extract = True
+        else:
+            needs_extract = False
+
+    if not needs_extract:
+        return
+
+    try:
+        if expected.exists():
+            shutil.rmtree(expected, ignore_errors=True)
+        expected.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    try:
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            archive.extractall(expected)
+    except (OSError, zipfile.BadZipFile):
+        return
+
+    _log_iterate(f"extracted iterate log archive {archive_path} -> {expected}")
 
 
 def _ensure_iterate_log_archive(context: Context) -> None:
@@ -496,6 +540,7 @@ def _ensure_iterate_log_archive(context: Context) -> None:
             pass
 
     _log_iterate(f"iterate log archive mirrored to {iterate_zip}")
+    _populate_iterate_artifacts_from_zip(context, iterate_zip)
 
 
 def _iterate_logs_found(context: Context) -> bool:
