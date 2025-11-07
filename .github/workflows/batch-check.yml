@@ -19,6 +19,9 @@ permissions:
 jobs:
   selftest:
     name: Batch syntax/run check (${{ matrix.mode }})
+    permissions:
+      actions: read
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +38,7 @@ jobs:
 
     env:
       HP_PIPREQS_VERSION: 0.5.0
+      GH_TOKEN: ${{ github.token }}
 
     concurrency:
       group: batch-check-${{ github.head_ref || github.ref_name }}
