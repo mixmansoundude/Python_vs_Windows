@@ -32,6 +32,25 @@ def sanitize_text(text: str, limit: int) -> str:
 SUMMARY_BLOCK = re.compile(r"```summary_text\s*\r?\n(?P<body>.*?)(?:\r?\n```|```)", re.DOTALL | re.IGNORECASE)
 
 
+def _strip_responses_payload(obj: object) -> tuple[object, bool]:
+    """Remove Responses-incompatible keys from a serialized payload."""
+
+    if not isinstance(obj, dict):
+        return obj, False
+
+    changed = False
+    sanitized = obj
+
+    for key in ("tool_resources", "attachments"):
+        if key in sanitized:
+            if sanitized is obj:
+                sanitized = dict(obj)
+            sanitized.pop(key, None)
+            changed = True
+
+    return sanitized, changed
+
+
 def _extract_response_text(raw_json: str, response_text_path: Path | None) -> str:
     if response_text_path and response_text_path.exists():
         return response_text_path.read_text(encoding="utf-8", errors="replace")
@@ -253,16 +272,28 @@ def main() -> int:
     pattern = re.compile(args.redact_pattern) if args.redact_pattern else None
     rendered = text
 
+    json_data = None
+    json_changed = False
+    try:
+        json_data = json.loads(text)
+    except json.JSONDecodeError:
+        json_data = None
+
+    if json_data is not None:
+        # derived requirement: the Responses endpoint rejects tool_resources/attachments.
+        # Strip them before any redaction so diagnostics and request mirrors stay valid.
+        json_data, stripped = _strip_responses_payload(json_data)
+        if stripped:
+            json_changed = True
+
     if pattern is not None:
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            data = None
-        if data is not None:
-            redacted = _redact(data, pattern, args.placeholder)
+        if json_data is not None:
+            redacted = _redact(json_data, pattern, args.placeholder)
             rendered = json.dumps(redacted, indent=2, ensure_ascii=False)
         else:
             rendered = pattern.sub(args.placeholder, text)
+    elif json_data is not None and json_changed:
+        rendered = json.dumps(json_data, indent=2, ensure_ascii=False)
 
     rendered = sanitize_text(rendered, args.truncate)
     dest.write_text(rendered, encoding="utf-8")

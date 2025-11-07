@@ -19,6 +19,20 @@ function Add-Lines {
     }
 }
 
+function New-StringList {
+    param([string[]]$Items = @())
+
+    # derived requirement: actions logs showed StrictMode surfacing "property 'Count'"
+    # when a scalar string flowed into callers that later accessed .Count. Marshal
+    # every clipper/sanitizer output through a concrete List[string] so downstream
+    # code can rely on Count existing and avoid the regression entirely.
+    $list = [System.Collections.Generic.List[string]]::new()
+    foreach ($item in $Items) {
+        $list.Add([string]$item) | Out-Null
+    }
+    return $list
+}
+
 # derived requirement: Failure Context must reuse the iterate sanitizer's pattern so prompts never
 # leak secrets when we inline first_failure.json or NDJSON rows.
 $script:RedactRegex = $null
@@ -67,12 +81,22 @@ function Clip-Lines {
         [int]$Max = 60
     )
 
-    if ($null -eq $Lines) { return @() }
-    if ($Max -le 0) { return @() }
-    if ($Lines.Count -le $Max) { return $Lines }
+    if ($null -eq $Lines) { return (New-StringList) }
+    if ($Max -le 0) { return (New-StringList) }
+
+    # derived requirement: GitHub runner logs showed "$_.Count" failing when PowerShell
+    # collapsed a single line into a scalar string. Materialize an array up front so
+    # downstream count math always uses .Length on a true sequence and avoids the
+    # "property 'Count' cannot be found" regression.
+    $items = @($Lines)
+    $count = $items.Length
+    if ($count -le $Max) { return (New-StringList $items) }
 
     if ($Max -le 1) {
-        return @($Lines[0])
+        if ($count -gt 0) {
+            return (New-StringList @($items[0]))
+        }
+        return (New-StringList)
     }
 
     $tailBudget = [Math]::Min(40, [Math]::Max(0, $Max - 21))
@@ -80,25 +104,25 @@ function Clip-Lines {
     if ($headBudget -lt 1) { $headBudget = 1 }
     if ($headBudget -gt 20) { $headBudget = 20 }
 
-    if ($headBudget -gt ($Lines.Count - $tailBudget)) {
-        $headBudget = [Math]::Max(1, $Lines.Count - $tailBudget)
+    if ($headBudget -gt ($count - $tailBudget)) {
+        $headBudget = [Math]::Max(1, $count - $tailBudget)
     }
 
-    $tailBudget = [Math]::Min($tailBudget, [Math]::Max(0, $Lines.Count - $headBudget))
+    $tailBudget = [Math]::Min($tailBudget, [Math]::Max(0, $count - $headBudget))
 
     $buffer = [System.Collections.Generic.List[string]]::new()
     for ($i = 0; $i -lt $headBudget; $i++) {
-        $buffer.Add($Lines[$i]) | Out-Null
+        $buffer.Add($items[$i]) | Out-Null
     }
 
-    if (($headBudget + $tailBudget) -lt $Lines.Count) {
+    if (($headBudget + $tailBudget) -lt $count) {
         $buffer.Add('... [clipped] ...') | Out-Null
     }
 
     if ($tailBudget -gt 0) {
-        $start = $Lines.Count - $tailBudget
-        for ($j = $start; $j -lt $Lines.Count; $j++) {
-            $buffer.Add($Lines[$j]) | Out-Null
+        $start = $count - $tailBudget
+        for ($j = $start; $j -lt $count; $j++) {
+            $buffer.Add($items[$j]) | Out-Null
         }
     }
 
@@ -111,21 +135,26 @@ function Read-TextIfExists {
         [int]$Max = 60
     )
 
-    if ([string]::IsNullOrWhiteSpace($Path)) { return @() }
-    if (-not (Test-Path $Path)) { return @() }
+    if ([string]::IsNullOrWhiteSpace($Path)) { return (New-StringList) }
+    if (-not (Test-Path $Path)) { return (New-StringList) }
 
     try {
         $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
     } catch {
-        return @()
+        return (New-StringList)
     }
 
-    if ($null -eq $raw) { return @() }
+    if ($null -eq $raw) { return (New-StringList) }
 
-    $lines = $raw -split "`n"
-    if ($null -eq $lines) { return @() }
+    $lines = @($raw -split "`n")
+    if ($null -eq $lines) { return (New-StringList) }
 
-    for ($i = 0; $i -lt $lines.Count; $i++) {
+    # derived requirement: PowerShell can collapse a single split result into a
+    # scalar string. Materialize an array and rely on .Length so we never trip
+    # the "property 'Count' cannot be found" regression again.
+    $lineCount = $lines.Length
+
+    for ($i = 0; $i -lt $lineCount; $i++) {
         if ($null -ne $lines[$i]) {
             $lines[$i] = $lines[$i].TrimEnd("`r")
         }
@@ -142,23 +171,29 @@ function Grep-Context {
         [int]$Max = 80
     )
 
-    if (-not (Test-Path $Path)) { return @() }
+    if (-not (Test-Path $Path)) { return (New-StringList) }
 
     try {
         $lines = Get-Content -LiteralPath $Path -Encoding UTF8
     } catch {
-        return @()
+        return (New-StringList)
     }
 
-    if ($null -eq $lines) { return @() }
+    if ($null -eq $lines) { return (New-StringList) }
+
+    # derived requirement: keep the failure-context scanner resilient when
+    # PowerShell hands back a lone string instead of an array (mirrors the
+    # runner regression cited in the CI logs).
+    $lines = @($lines)
+    $lineCount = $lines.Length
 
     $hits = [System.Collections.Generic.List[string]]::new()
-    for ($i = 0; $i -lt $lines.Count; $i++) {
+    for ($i = 0; $i -lt $lineCount; $i++) {
         $current = $lines[$i]
         foreach ($pattern in $Patterns) {
             if ($current -match $pattern) {
                 $start = [Math]::Max(0, $i - $Radius)
-                $end = [Math]::Min($lines.Count - 1, $i + $Radius)
+                $end = [Math]::Min($lineCount - 1, $i + $Radius)
                 for ($j = $start; $j -le $end; $j++) {
                     $hits.Add($lines[$j]) | Out-Null
                 }
@@ -168,7 +203,7 @@ function Grep-Context {
         }
     }
 
-    if ($hits.Count -eq 0) { return @() }
+    if ($hits.Count -eq 0) { return (New-StringList) }
     if ($hits[$hits.Count - 1] -eq '---') {
         $hits.RemoveAt($hits.Count - 1)
     }
@@ -192,15 +227,28 @@ function Find-DiagRoot {
             $candidate = $entry.Path
             $inputsProbe = Join-Path $candidate '_artifacts/iterate/inputs'
             $batchProbe = Join-Path $candidate '_artifacts/batch-check'
-            if (Test-Path $inputsProbe -or Test-Path $batchProbe) {
+            if (Test-Path $inputsProbe) {
+                return $candidate
+            }
+            if (Test-Path $batchProbe) {
                 return $candidate
             }
 
             try {
                 $match = Get-ChildItem -Path $candidate -Directory -Recurse -Depth 4 -ErrorAction SilentlyContinue |
                     Where-Object {
-                        Test-Path (Join-Path $_.FullName '_artifacts/iterate/inputs') -or
-                        Test-Path (Join-Path $_.FullName '_artifacts/batch-check')
+                        # derived requirement: compute each probe explicitly so future edits never
+                        # reintroduce '-or' outside a boolean expression and trigger the parser
+                        # regression that blocked build_prompt.ps1 in CI.
+                        $hasIterateInputs = Test-Path (Join-Path $_.FullName '_artifacts/iterate/inputs')
+                        $hasBatchCheck = Test-Path (Join-Path $_.FullName '_artifacts/batch-check')
+                        if ($hasIterateInputs) {
+                            return $true
+                        }
+                        if ($hasBatchCheck) {
+                            return $true
+                        }
+                        return $false
                     } |
                     Select-Object -First 1
             } catch {
@@ -226,7 +274,9 @@ function Get-FailureContextLines {
     $batchRoot = Join-Path $DiagRoot '_artifacts/batch-check'
     $hasInputs = Test-Path $inputsRoot
     $hasBatch = Test-Path $batchRoot
-    if (-not $hasInputs -and -not $hasBatch) { return $block }
+    if (-not $hasInputs) {
+        if (-not $hasBatch) { return $block }
+    }
 
     $remaining = 40
     $block.Add('----- Failure Context -----') | Out-Null
@@ -260,9 +310,12 @@ function Get-FailureContextLines {
                     } catch {
                         continue
                     }
-                    if ($null -ne $obj.pass -and -not [bool]$obj.pass) {
-                        $firstFailLine = $trim
-                        break
+                    $passValue = $obj.pass
+                    if ($null -ne $passValue) {
+                        if (-not [bool]$passValue) {
+                            $firstFailLine = $trim
+                            break
+                        }
                     }
                     if (-not $firstFailLine) { $firstFailLine = $trim }
                 }
@@ -282,42 +335,46 @@ function Get-FailureContextLines {
         }
     }
 
-    if ($hasBatch -and $remaining -gt 0) {
-        $firstFailure = $null
-        try {
-            $firstFailure = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'first_failure.json' -ErrorAction SilentlyContinue | Select-Object -First 1
-        } catch {
+    if ($hasBatch) {
+        if ($remaining -gt 0) {
             $firstFailure = $null
-        }
-        if ($firstFailure -and $remaining -gt 0) {
-            if ($block.Count -gt 1) {
-                $block.Add('') | Out-Null
-                $remaining--
-            }
-
-            $relative = $firstFailure.FullName
             try {
-                $relative = [System.IO.Path]::GetRelativePath($DiagRoot, $firstFailure.FullName)
+                $firstFailure = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'first_failure.json' -ErrorAction SilentlyContinue | Select-Object -First 1
             } catch {
-                $relative = $firstFailure.FullName
+                $firstFailure = $null
             }
-            $block.Add("first_failure.json ($relative):") | Out-Null
-            $remaining--
+            if ($firstFailure) {
+                if ($remaining -gt 0) {
+                    if ($block.Count -gt 1) {
+                        $block.Add('') | Out-Null
+                        $remaining--
+                    }
 
-            if ($remaining -gt 0) {
-                try {
-                    $rawLines = Get-Content -LiteralPath $firstFailure.FullName -Encoding UTF8
-                } catch {
-                    $rawLines = @()
-                }
-                foreach ($line in Sanitize-TextLines $rawLines) {
-                    if ($remaining -le 0) { break }
-                    $block.Add($line) | Out-Null
+                    $relative = $firstFailure.FullName
+                    try {
+                        $relative = [System.IO.Path]::GetRelativePath($DiagRoot, $firstFailure.FullName)
+                    } catch {
+                        $relative = $firstFailure.FullName
+                    }
+                    $block.Add("first_failure.json ($relative):") | Out-Null
                     $remaining--
+
+                    if ($remaining -gt 0) {
+                        try {
+                            $rawLines = Get-Content -LiteralPath $firstFailure.FullName -Encoding UTF8
+                        } catch {
+                            $rawLines = @()
+                        }
+                        foreach ($line in Sanitize-TextLines $rawLines) {
+                            if ($remaining -le 0) { break }
+                            $block.Add($line) | Out-Null
+                            $remaining--
+                        }
+                    }
+
+                    $added = $true
                 }
             }
-
-            $added = $true
         }
     }
 
@@ -353,7 +410,8 @@ function Get-StagedFailureContextLines {
         if ($budget -le 0) { break }
 
         $lines = Read-TextIfExists $source.Path $source.Limit
-        if (-not $lines -or $lines.Count -eq 0) { continue }
+        if (-not $lines) { continue }
+        if ($lines.Count -eq 0) { continue }
 
         if (-not $headerAdded) {
             $result.Add('----- Failure Context (staged) -----') | Out-Null
@@ -445,7 +503,8 @@ function Get-CodeSnippetLines {
         if ($budget -le 0) { break }
 
         $lines = Grep-Context $snippet.Path $snippet.Patterns $snippet.Radius $snippet.Max
-        if (-not $lines -or $lines.Count -eq 0) { continue }
+        if (-not $lines) { continue }
+        if ($lines.Count -eq 0) { continue }
 
         if (-not $headerAdded) {
             $result.Add('----- Candidate code snippets -----') | Out-Null
@@ -471,8 +530,12 @@ function Get-CodeSnippetLines {
         }
     }
 
-    if ($headerAdded -and $result.Count -gt 0 -and $result[$result.Count - 1] -eq '') {
-        $result.RemoveAt($result.Count - 1)
+    if ($headerAdded) {
+        if ($result.Count -gt 0) {
+            if ($result[$result.Count - 1] -eq '') {
+                $result.RemoveAt($result.Count - 1)
+            }
+        }
     }
 
     return $result
@@ -541,15 +604,39 @@ Add-Lines $lines @(
 $failureContext = [System.Collections.Generic.List[string]]::new()
 if ($diagRoot) {
     $failureContext = Get-FailureContextLines $diagRoot
-    if ($failureContext.Count -gt 0) {
+
+    if ($null -eq $failureContext) {
+        # derived requirement: run 19005541669-1 still surfaced "property 'Count'"
+        # when Get-FailureContextLines yielded $null under StrictMode. Normalize
+        # back into a concrete List so the Count checks below stay safe.
+        $failureContext = New-StringList
+    } elseif ($failureContext -isnot [System.Collections.Generic.List[string]]) {
+        $failureContext = New-StringList $failureContext
+    }
+
+    if ($failureContext -and ($failureContext.Count -gt 0)) {
         Add-Lines $lines @('')
         Add-Lines $lines $failureContext
     }
 }
 
-if (-not $diagRoot -or $failureContext.Count -eq 0) {
+$hasDiagContext = $false
+if ($diagRoot) {
+    if ($failureContext -and ($failureContext.Count -gt 0)) {
+        $hasDiagContext = $true
+    }
+}
+if (-not $hasDiagContext) {
     $stagedContext = Get-StagedFailureContextLines $workspaceRoot
-    if ($stagedContext.Count -gt 0) {
+    if ($null -eq $stagedContext) {
+        # derived requirement: keep staged context guards parallel with the
+        # failure context logic so StrictMode never trips Count on $null.
+        $stagedContext = New-StringList
+    } elseif ($stagedContext -isnot [System.Collections.Generic.List[string]]) {
+        $stagedContext = New-StringList $stagedContext
+    }
+
+    if ($stagedContext -and ($stagedContext.Count -gt 0)) {
         Add-Lines $lines @('')
         Add-Lines $lines $stagedContext
     }
@@ -559,7 +646,15 @@ if (-not $diagRoot -or $failureContext.Count -eq 0) {
 # only failure metadata. Surface small repo excerpts near helper and NDJSON emitters so the
 # model can jump directly to likely edit points without scanning the full tree.
 $codeSnippets = Get-CodeSnippetLines $workspaceRoot
-if ($codeSnippets.Count -gt 0) {
+if ($null -eq $codeSnippets) {
+    # derived requirement: guard against unexpected nulls bubbling out of the
+    # snippet scanner so downstream Count math always has a List to inspect.
+    $codeSnippets = New-StringList
+} elseif ($codeSnippets -isnot [System.Collections.Generic.List[string]]) {
+    $codeSnippets = New-StringList $codeSnippets
+}
+
+if ($codeSnippets -and ($codeSnippets.Count -gt 0)) {
     Add-Lines $lines @('')
     Add-Lines $lines $codeSnippets
 }
@@ -572,9 +667,14 @@ if ($diagRoot) {
         } catch {
             $failLines = @()
         }
-        if ($failLines) {
+
+        # derived requirement: CI surfaced "The property 'Count' cannot be found" when
+        # Get-Content -TotalCount collapsed to a scalar string. Normalize to an array
+        # before length checks so downstream Sanitize-TextLines sees a stable sequence.
+        $failArray = @($failLines)
+        if ($failArray.Length -gt 0) {
             Add-Lines $lines @('', '----- Batch-check failing IDs -----')
-            foreach ($entry in Sanitize-TextLines $failLines) {
+            foreach ($entry in Sanitize-TextLines $failArray) {
                 $lines.Add($entry) | Out-Null
             }
         }
@@ -592,9 +692,10 @@ if ($diagRoot) {
             } catch {
                 $ndLines = @()
             }
-            if ($ndLines) {
+            $publicArray = @($ndLines)
+            if ($publicArray.Length -gt 0) {
                 Add-Lines $lines @('', '----- NDJSON head (public diag poller) -----')
-                foreach ($entry in Sanitize-TextLines $ndLines) {
+                foreach ($entry in Sanitize-TextLines $publicArray) {
                     $lines.Add($entry) | Out-Null
                 }
             }
@@ -611,9 +712,10 @@ if ($diagRoot) {
             } catch {
                 $ndLines = @()
             }
-            if ($ndLines) {
+            $batchArray = @($ndLines)
+            if ($batchArray.Length -gt 0) {
                 Add-Lines $lines @('', '----- NDJSON head (batch-check) -----')
-                foreach ($entry in Sanitize-TextLines $ndLines) {
+                foreach ($entry in Sanitize-TextLines $batchArray) {
                     $lines.Add($entry) | Out-Null
                 }
             }

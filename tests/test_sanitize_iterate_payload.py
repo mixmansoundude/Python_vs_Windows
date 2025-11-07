@@ -138,3 +138,33 @@ First failing NDJSON row: {"password": "abc123"}
     assert any(line.strip() == '***' for line in lines)
     assert 'sk-THISISFAKEBUTLONGENOUGH' not in payload
     assert 'password' not in payload
+
+
+def test_request_payload_strips_responses_extras(tmp_path):
+    request_path = tmp_path / "request.json"
+    payload = {
+        "model": "gpt-5-codex",
+        "tool_resources": {"file_search": {"vector_store_ids": ["vs_123"]}},
+        "attachments": [{"foo": "bar"}],
+        "input": [],
+        "max_output_tokens": 1234,
+    }
+    request_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    sanitized_path = tmp_path / "out.json"
+    cmd = [
+        sys.executable,
+        "tools/sanitize_iterate_payload.py",
+        "--input",
+        str(request_path),
+        "--output",
+        str(sanitized_path),
+        "--truncate",
+        "0",
+    ]
+    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
+
+    sanitized = json.loads(sanitized_path.read_text(encoding="utf-8"))
+    assert "tool_resources" not in sanitized
+    assert "attachments" not in sanitized
+    assert sanitized["model"] == "gpt-5-codex"

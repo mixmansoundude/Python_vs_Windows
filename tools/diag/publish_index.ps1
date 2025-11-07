@@ -6,6 +6,12 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+} catch {
+    # Professional note: extraction helpers rely on System.IO.Compression; ignore failures so diagnostics still publish.
+}
+
 $Diag       = $env:DIAG
 $Artifacts  = $env:ARTIFACTS
 $Repo       = $env:REPO
@@ -23,6 +29,11 @@ if (-not $Short) {
     $Short = $SHA
     if ($Short.Length -gt 7) { $Short = $Short.Substring(0,7) }
 }
+
+if (-not $Run) { $Run = $env:GITHUB_RUN_ID }
+if (-not $Run) { $Run = 'n/a' }
+if (-not $Att) { $Att = $env:GITHUB_RUN_ATTEMPT }
+if (-not $Att) { $Att = 'n/a' }
 
 function Get-FirstDir {
     param([string]$root)
@@ -115,6 +126,68 @@ function Read-Value {
     return 'n/a'
 }
 
+function Get-IterateArtifactForRun {
+    param(
+        [string]$Owner,
+        [string]$RepoName,
+        [string]$TargetRunId,
+        [string[]]$BaseNames,
+        [hashtable]$Headers
+    )
+
+    if (-not $TargetRunId -or -not $BaseNames) { return $null }
+    $filtered = $BaseNames | Where-Object { $_ }
+    if (-not $filtered -or $filtered.Count -eq 0) { return $null }
+
+    $perPage = 100
+    $page = 1
+    $candidates = @()
+
+    while ($page -le 10) {
+        $apiUri = "https://api.github.com/repos/$Owner/$RepoName/actions/runs/$TargetRunId/artifacts?per_page=$perPage&page=$page"
+        $response = $null
+        try {
+            $response = Invoke-RestMethod -Uri $apiUri -Headers $Headers -ErrorAction Stop
+        } catch {}
+
+        if (-not $response -or -not $response.artifacts) { break }
+
+        foreach ($artifact in $response.artifacts) {
+            $name = [string]$artifact.name
+            if (-not $name) { continue }
+            $lower = $name.ToLowerInvariant()
+            foreach ($base in $filtered) {
+                $baseLower = $base.ToLowerInvariant()
+                if ($lower -eq $baseLower -or $lower -eq ($baseLower + '.zip') -or $lower.StartsWith($baseLower + '-')) {
+                    $candidates += [pscustomobject]@{ Artifact = $artifact; Base = $base; Name = $name }
+                    break
+                }
+                if ($lower.EndsWith('.zip') -and $lower.Contains($baseLower)) {
+                    $candidates += [pscustomobject]@{ Artifact = $artifact; Base = $base; Name = $name }
+                    break
+                }
+            }
+        }
+
+        if ($candidates.Count -gt 0) { break }
+        if ($response.artifacts.Count -lt $perPage) { break }
+        $page += 1
+    }
+
+    if ($candidates.Count -eq 0) { return $null }
+
+    $sorted = $candidates | Sort-Object -Property @{ Expression = {
+                $base = $_.Base
+                $candidateName = $_.Name
+                if ($candidateName -eq $base) { return 0 }
+                if ($candidateName -eq "$base.zip") { return 1 }
+                if ($candidateName -like "$base-*") { return 2 }
+                return 3
+            } }, @{ Expression = { $_.Name } }
+
+    return $sorted[0]
+}
+
 $decision   = Read-Value $iterateDir 'decision.txt'
 $model      = Read-Value $iterateDir 'model.txt'
 $endpoint   = Read-Value $iterateDir 'endpoint.txt'
@@ -193,8 +266,144 @@ if ($Artifacts) {
     $ndjsonSummaries = Get-ChildItem -Path $Artifacts -Filter 'ndjson_summary.txt' -File -Recurse -ErrorAction SilentlyContinue
 }
 
+$logDir = if ($Diag) { Join-Path $Diag 'logs' } else { $null }
+if ($logDir) {
+    try { New-Item -ItemType Directory -Path $logDir -Force | Out-Null } catch {}
+}
+
 $iterateZipName = "iterate-$Run-$Att.zip"
-$iterateZipPath = if ($Diag) { Join-Path $Diag ('logs\' + $iterateZipName) } else { $null }
+$iterateZipPath = if ($logDir) { Join-Path $logDir $iterateZipName } else { $null }
+$iterateSentinelPath = if ($logDir) { Join-Path $logDir 'iterate.MISSING.txt' } else { $null }
+$iterateErrorPath = if ($logDir) { Join-Path $logDir 'iterate-log-error.txt' } else { $null }
+
+$zipReady = $false
+if ($iterateZipPath -and (Test-Path $iterateZipPath)) {
+    try {
+        $info = Get-Item -LiteralPath $iterateZipPath -ErrorAction Stop
+        if ($info -and $info.Length -gt 0) {
+            $zipReady = $true
+            if ($iterateSentinelPath) { Remove-Item -LiteralPath $iterateSentinelPath -ErrorAction SilentlyContinue }
+            if ($iterateErrorPath) { Remove-Item -LiteralPath $iterateErrorPath -ErrorAction SilentlyContinue }
+        }
+    } catch {}
+}
+
+if (-not $zipReady -and $logDir) {
+    # Professional note: the workflow maps the Actions token to GH_TOKEN; fall back
+    # to GITHUB_TOKEN so local runs stay compatible with the published contract.
+    $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
+    $repoSlug = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } elseif ($Repo) { $Repo } else { $null }
+    $runId = $null
+    if ($Run -and $Run -ne 'n/a') { $runId = $Run }
+    elseif ($env:GITHUB_RUN_ID) { $runId = $env:GITHUB_RUN_ID }
+    if ($token -and $repoSlug -and $repoSlug.Contains('/') -and $runId) {
+        $parts = $repoSlug.Split('/', 2)
+        $owner = $parts[0]
+        $repoName = $parts[1]
+        $baseName = "iterate-logs-$Run-$Att"
+        $headers = @{
+            Accept                 = 'application/vnd.github+json'
+            Authorization          = "Bearer $token"
+            'User-Agent'           = 'publish_index.ps1 diagnostics'
+            'X-GitHub-Api-Version' = '2022-11-28'
+        }
+        $downloadSelection = Get-IterateArtifactForRun -Owner $owner -RepoName $repoName -TargetRunId $runId -BaseNames @($baseName) -Headers $headers
+        $downloadRunId = $runId
+        if (-not $downloadSelection -and $SHA -and $SHA -ne 'n/a') {
+            $workflowUri = "https://api.github.com/repos/$owner/$repoName/actions/workflows/codex-auto-iterate.yml/runs?head_sha=$SHA&per_page=10"
+            $workflowResponse = $null
+            try {
+                $workflowResponse = Invoke-RestMethod -Uri $workflowUri -Headers $headers -ErrorAction Stop
+            } catch {}
+            if ($workflowResponse -and $workflowResponse.workflow_runs) {
+                # Professional note: the iterate bundle originates from codex-auto-iterate.yml,
+                # not the diagnostics workflow. Falling back by head SHA keeps publishing
+                # truthful when the archive lives on a sibling run.
+                foreach ($wfRun in $workflowResponse.workflow_runs) {
+                    $wfId = [string]$wfRun.id
+                    if (-not $wfId) { continue }
+                    $wfAttempt = if ($wfRun.run_attempt) { [string]$wfRun.run_attempt } else { '1' }
+                    $altBase = "iterate-logs-$wfId-$wfAttempt"
+                    $candidateSelection = Get-IterateArtifactForRun -Owner $owner -RepoName $repoName -TargetRunId $wfId -BaseNames @($altBase) -Headers $headers
+                    if ($candidateSelection) {
+                        $downloadSelection = $candidateSelection
+                        $downloadRunId = $wfId
+                        break
+                    }
+                }
+            }
+        }
+
+        if ($downloadSelection) {
+            $choice = $downloadSelection.Artifact
+            $downloadUri = $null
+            $acceptHeader = 'application/octet-stream'
+            if ($choice.id -is [int]) {
+                $artifactId = [int]$choice.id
+                $downloadUri = "https://api.github.com/repos/$owner/$repoName/actions/artifacts/$artifactId/zip"
+                $acceptHeader = 'application/vnd.github+json'
+            } elseif ($choice.archive_download_url) {
+                $downloadUri = [string]$choice.archive_download_url
+            }
+
+            if ($downloadUri) {
+                Remove-Item -LiteralPath $iterateZipPath -ErrorAction SilentlyContinue
+                try {
+                    Invoke-WebRequest -Uri $downloadUri -Headers @{
+                        Authorization          = "Bearer $token"
+                        'User-Agent'           = 'publish_index.ps1 diagnostics'
+                        Accept                 = $acceptHeader
+                        'X-GitHub-Api-Version' = '2022-11-28'
+                    } -OutFile $iterateZipPath -ErrorAction Stop
+                    $info = Get-Item -LiteralPath $iterateZipPath -ErrorAction Stop
+                    if ($info -and $info.Length -gt 0) {
+                        # Professional note: Runs like 19122439464-1 uploaded the iterate artifact
+                        # successfully, but the prior publisher fell back to the run-log endpoint.
+                        # Clearing the sentinels here keeps the diagnostics page truthful once the
+                        # artifact download succeeds.
+                        if ($iterateSentinelPath) { Remove-Item -LiteralPath $iterateSentinelPath -ErrorAction SilentlyContinue }
+                        if ($iterateErrorPath) { Remove-Item -LiteralPath $iterateErrorPath -ErrorAction SilentlyContinue }
+                        $zipReady = $true
+                    } else {
+                        Remove-Item -LiteralPath $iterateZipPath -ErrorAction SilentlyContinue
+                    }
+                } catch {
+                    Remove-Item -LiteralPath $iterateZipPath -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
+}
+
+$iterateExtracted = $false
+if ($zipReady -and $Artifacts -and $iterateZipPath) {
+    $iterateRoot = Join-Path $Artifacts 'iterate'
+    $expectedDir = Join-Path $iterateRoot ("iterate-logs-$Run-$Att")
+    try {
+        New-Item -ItemType Directory -Path $iterateRoot -Force | Out-Null
+    } catch {}
+    $needsExtract = $true
+    if (Test-Path $expectedDir) {
+        try {
+            $probe = Get-ChildItem -Path $expectedDir -Recurse -Force -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($probe) { $needsExtract = $false }
+        } catch {}
+    }
+    if ($needsExtract) {
+        try {
+            if (Test-Path $expectedDir) {
+                Remove-Item -LiteralPath $expectedDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            New-Item -ItemType Directory -Path $expectedDir -Force | Out-Null
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($iterateZipPath, $expectedDir)
+            $iterateExtracted = $true
+        } catch {
+            # Professional note: partial or corrupted bundles should not block publishing;
+            # keep the archive but skip extraction so fallback logic preserves breadcrumbs.
+        }
+    }
+}
+
 $iterateStatus = 'found'
 if (-not $iterateZipPath -or -not (Test-Path $iterateZipPath)) {
     $iterateStatus = 'missing (see logs/iterate.MISSING.txt)'

@@ -84,9 +84,26 @@ THEN stop and open/append a PR. One loop = one change set.
 - The bootstrapper’s exit code when no Python files are present is not a release contract; guard on the console text instead.
 - Be sure to sanity check anything touched before submitting code. Recommended options include:
   - Python: `python -m compileall -q .` and `python -m pyflakes .` (install `pyflakes` if needed).
-  - PowerShell: run PSScriptAnalyzer (`Install-Module PSScriptAnalyzer -Force -Scope CurrentUser` then `Invoke-ScriptAnalyzer -Path . -Recurse -EnableExit`).
+  - PowerShell:
+    - Install `pwsh` first:
+      ```
+      sudo apt-get update
+      sudo apt-get install -y wget apt-transport-https software-properties-common lsb-release
+      wget -q "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb" -O packages-microsoft-prod.deb
+      sudo dpkg -i packages-microsoft-prod.deb && rm packages-microsoft-prod.deb
+      sudo apt-get update
+      sudo apt-get install -y powershell
+      ```
+    - (Optional) Install PSScriptAnalyzer after PowerShell is present. Prefer PSResourceGet and fall back to other methods when corporate proxies allow traffic:
+      ```
+      pwsh -NoLogo -Command "Import-Module Microsoft.PowerShell.PSResourceGet; Register-PSResourceRepository -PSGallery -ErrorAction SilentlyContinue; Install-PSResource -Name PSScriptAnalyzer -Scope CurrentUser -TrustRepository; Get-Module PSScriptAnalyzer -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1 Name,Version,Path"
+      pwsh -NoLogo -Command "Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force; Register-PSRepository -Default -ErrorAction SilentlyContinue; Install-Module -Name PowerShellGet -Force -Scope CurrentUser; Import-Module PowerShellGet; Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force; Get-Module PSScriptAnalyzer -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1 Name,Version,Path"
+      ```
+      - On these runners both commands currently hit HTTP 403 responses from the proxy; if the gallery stays blocked, download the `.nupkg` manually from an approved mirror (or transfer a cached copy) into `~/.local/share/powershell/Modules/PSScriptAnalyzer/<version>` and import it from disk.
+    - Once PowerShell (and optionally PSScriptAnalyzer) is in place, mirror the workflow environment variables, run the script with `pwsh`, enable traces via `Set-PSDebug -Trace 2`, and inspect `$Error` afterwards for hidden stack info. Finish with `Invoke-ScriptAnalyzer -Path . -Recurse -EnableExit` when the module is available.
 - YAML (and GitHub Actions): run `python -m yamllint <file>` (or `actionshub/yamllint@v1`) and `actionlint -oneline` for workflow validation.
   - Preferred actionlint install: `curl -sSLO https://github.com/rhysd/actionlint/releases/latest/download/actionlint_linux_amd64.tar.gz && tar -xzf actionlint_linux_amd64.tar.gz actionlint && ./actionlint -oneline .`
+  - If the release tarball resolves to "Not Found" due to proxy filtering, install with Go instead: `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.1` and add `/root/.local/share/mise/installs/go/1.24.3/bin` to `PATH` before running `actionlint`. On this runner `go env GOPATH` resolves to `/root/go`, so the compiled binary also lives under `/root/go/bin`—add that directory to `PATH` if the mise shim is absent.
   - JSON: `jq -e .` over `*.json`.
   - Generic paired-delimiter scan for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
     - Provide a helper such as `tools/check_delimiters.py` that validates (), {}, [], and quotes " ' (handle escapes and ignore comments when practical).

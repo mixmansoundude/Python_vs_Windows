@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 try:
     from zoneinfo import ZoneInfo
@@ -66,7 +68,16 @@ class Context:
     inventory_b64: Optional[str]
     batch_run_id: Optional[str]
     batch_run_attempt: Optional[str]
-    site: Optional[Path]
+    site: Optional[Path] = None
+    iterate_artifact_href: Optional[str] = None
+    iterate_found_cache: Optional[bool] = None
+    iterate_discovered_dir: Optional[Path] = None
+    iterate_partial: bool = False
+    iterate_partial_note: Optional[str] = None
+    # Professional note: cache the iterate artifact selection so pagination over
+    # the Actions API happens once per publish run even when multiple helpers
+    # consult the remote inventory.
+    iterate_artifact_meta: Optional[Tuple[dict, str, str, str, str]] = None
 
 
 def _get_env_path(name: str) -> Optional[Path]:
@@ -87,12 +98,19 @@ def _isoformat_ct(now: Optional[datetime] = None) -> str:
 def _get_context() -> Context:
     diag = _get_env_path("DIAG")
     artifacts = _get_env_path("ARTIFACTS")
-    repo = os.getenv("REPO", "n/a")
-    branch = os.getenv("BRANCH")
-    sha = os.getenv("SHA", "n/a")
-    run_id = os.getenv("RUN_ID", "n/a")
-    run_attempt = os.getenv("RUN_ATTEMPT", "n/a")
-    run_url = os.getenv("RUN_URL", "n/a")
+    repo = os.getenv("REPO") or os.getenv("GITHUB_REPOSITORY") or "n/a"
+    branch = os.getenv("BRANCH") or os.getenv("GITHUB_REF_NAME")
+    sha = os.getenv("SHA") or os.getenv("GITHUB_SHA") or "n/a"
+    run_id = os.getenv("RUN_ID") or os.getenv("GITHUB_RUN_ID") or "n/a"
+    run_attempt = (
+        os.getenv("RUN_ATTEMPT") or os.getenv("GITHUB_RUN_ATTEMPT") or "n/a"
+    )
+    run_url = os.getenv("RUN_URL")
+    if (not run_url or run_url == "n/a") and repo != "n/a" and run_id != "n/a":
+        # derived requirement: CI bundles may omit RUN_URL; reconstruct it from the
+        # canonical GitHub env variables so artifact discovery can fall back to the
+        # Actions UI when the local mirror is empty.
+        run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
     short_sha = os.getenv("SHORTSHA") or sha[:7]
     inventory_b64 = os.getenv("INVENTORY_B64")
     batch_run_id = os.getenv("BATCH_RUN_ID")
@@ -115,6 +133,16 @@ def _get_context() -> Context:
     )
 
 
+def _actions_owner_repo(context: Context) -> Optional[Tuple[str, str]]:
+    """Return (owner, repo) using canonical GitHub Actions env variables."""
+
+    repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
+    if not repo_slug or repo_slug == "n/a" or "/" not in repo_slug:
+        return None
+    owner, repo = repo_slug.split("/", 1)
+    return owner, repo
+
+
 def _first_child_directory(root: Path) -> Optional[Path]:
     try:
         return next(item for item in sorted(root.iterdir()) if item.is_dir())
@@ -132,36 +160,546 @@ ITERATE_METADATA_FILENAMES = (
 )
 
 
+_ITERATE_LOG_FILE: Optional[Path] = None
+
+
+def _set_iterate_log_destination(diag: Optional[Path]) -> None:
+    """Route iterate discovery breadcrumbs into the published bundle."""
+
+    global _ITERATE_LOG_FILE
+
+    if not diag:
+        _ITERATE_LOG_FILE = None
+        return
+
+    target = diag / "_artifacts" / "iterate" / "discovery.log.txt"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("", encoding="utf-8")
+    except OSError:
+        _ITERATE_LOG_FILE = None
+        return
+
+    _ITERATE_LOG_FILE = target
+
+
+def _log_iterate(message: str) -> None:
+    """Emit a diagnostic breadcrumb for iterate discovery."""
+
+    try:
+        print(f"iterate: {message}")
+    except OSError:
+        # derived requirement: console streams may be closed when the publisher runs
+        # inside a workflow summary capture. Best effort logging keeps the bundle
+        # stable while still emitting breadcrumbs when available.
+        pass
+
+    log_path = _ITERATE_LOG_FILE
+    if log_path:
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"{message}\n")
+        except OSError:
+            # derived requirement: diagnostics publication must continue even when the
+            # filesystem disallows writing the breadcrumb log.
+            pass
+
+
+def _core_iterate_files_present(root: Path) -> bool:
+    try:
+        decision = (root / "decision.txt").exists()
+        response = (root / "response.json").exists()
+    except OSError:
+        return False
+    return decision or response
+
+
+def _find_iterate_gate(root: Path) -> Optional[Path]:
+    """Locate iterate_gate.json within *root* if it exists."""
+
+    candidates = [
+        root / "iterate_gate.json",
+        root / "_artifacts" / "iterate" / "iterate_gate.json",
+    ]
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            continue
+
+    try:
+        return next(
+            path
+            for path in root.rglob("iterate_gate.json")
+            if path.is_file()
+        )
+    except (FileNotFoundError, StopIteration, OSError):
+        return None
+
+
+def _partial_iterate_evidence(root: Path) -> bool:
+    """Return True when gate/context artifacts exist without decision/response."""
+
+    if _find_iterate_gate(root):
+        return True
+
+    codex_root = root / ".codex"
+    try:
+        if codex_root.is_dir():
+            noteworthy = [
+                codex_root / "changed_files.txt",
+                codex_root / "context.json",
+                codex_root / "fail" / "failing_job_focus.txt",
+            ]
+            for candidate in noteworthy:
+                try:
+                    if candidate.exists():
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        return False
+
+    return False
+
+
+def _github_iterate_artifact_href(context: Context, expected_names: Iterable[str]) -> Optional[str]:
+    """Return the GitHub Actions artifacts page when the iterate zip exists remotely."""
+
+    names = list(expected_names)
+    expected_stem = names[0] if names else None
+    if not expected_stem:
+        return None
+
+    metadata = _select_iterate_artifact(context, expected_stem)
+    if not metadata:
+        return None
+
+    return context.iterate_artifact_href
+
+
+def _match_iterate_artifact(expected_stem: str, name: str) -> bool:
+    base = expected_stem
+    if name == base or name == f"{base}.zip":
+        return True
+    if name.startswith(f"{base}-"):
+        return True
+    if name.endswith(".zip") and base in name:
+        return True
+    return False
+
+
+def _candidate_priority(expected_stem: str, name: str) -> Tuple[int, str]:
+    if name == expected_stem:
+        return (0, name)
+    if name == f"{expected_stem}.zip":
+        return (1, name)
+    if name.startswith(f"{expected_stem}-"):
+        return (2, name)
+    return (3, name)
+
+
+def _fetch_iterate_artifact_for_run(
+    context: Context,
+    owner: str,
+    repo: str,
+    run_id: str,
+    repo_slug: Optional[str],
+    token: str,
+    expected_stems: Iterable[str],
+) -> Optional[Tuple[dict, str, str, str, str]]:
+    """Return iterate artifact metadata for a specific workflow run."""
+
+    per_page = 100
+    page = 1
+    stems = [stem for stem in expected_stems if stem]
+    if not stems:
+        return None
+
+    while page <= 10:
+        api_url = (
+            f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts"
+            f"?per_page={per_page}&page={page}"
+        )
+        request = Request(api_url)
+        request.add_header("Accept", "application/vnd.github+json")
+        request.add_header("Authorization", f"Bearer {token}")
+        request.add_header("X-GitHub-Api-Version", "2022-11-28")
+        request.add_header("User-Agent", "publish_index.py diagnostics")
+
+        try:
+            with urlopen(request, timeout=10) as response:
+                payload = json.load(response)
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+            break
+
+        artifacts = payload.get("artifacts")
+        if not isinstance(artifacts, list) or not artifacts:
+            break
+
+        candidates: List[Tuple[dict, str]] = []
+        for item in artifacts:
+            name = item.get("name")
+            if not isinstance(name, str):
+                continue
+            for stem in stems:
+                if _match_iterate_artifact(stem, name):
+                    candidates.append((item, stem))
+                    break
+
+        if candidates:
+            candidates.sort(
+                key=lambda entry: (
+                    _candidate_priority(entry[1], str(entry[0].get("name") or "")),
+                    str(entry[0].get("name") or ""),
+                )
+            )
+            choice, _ = candidates[0]
+            if repo_slug and repo_slug != "n/a":
+                context.iterate_artifact_href = (
+                    f"https://github.com/{repo_slug}/actions/runs/{run_id}?check_suite_focus=true#artifacts"
+                )
+            context.iterate_found_cache = True
+            return (choice, owner, repo, run_id, repo_slug or context.repo)
+
+        if len(artifacts) < per_page:
+            break
+
+        page += 1
+
+    return None
+
+
+def _select_iterate_artifact_by_head_sha(
+    context: Context,
+    owner: str,
+    repo: str,
+    repo_slug: Optional[str],
+    token: str,
+) -> Optional[Tuple[dict, str, str, str, str]]:
+    """Fallback to the iterate workflow run for the same head SHA when needed."""
+
+    sha = context.sha
+    if not sha or sha == "n/a":
+        return None
+
+    workflow_path = "codex-auto-iterate.yml"
+    api_url = (
+        f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_path}/runs"
+        f"?head_sha={sha}&per_page=10"
+    )
+    request = Request(api_url)
+    request.add_header("Accept", "application/vnd.github+json")
+    request.add_header("Authorization", f"Bearer {token}")
+    request.add_header("X-GitHub-Api-Version", "2022-11-28")
+    request.add_header("User-Agent", "publish_index.py diagnostics")
+
+    try:
+        with urlopen(request, timeout=10) as response:
+            payload = json.load(response)
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    runs = payload.get("workflow_runs")
+    if not isinstance(runs, list):
+        return None
+
+    for run in runs:
+        run_id_raw = run.get("id")
+        if run_id_raw is None:
+            continue
+        run_id = str(run_id_raw)
+        run_attempt_raw = run.get("run_attempt")
+        run_attempt = str(run_attempt_raw) if run_attempt_raw else "1"
+        base = f"iterate-logs-{run_id}-{run_attempt}"
+        metadata = _fetch_iterate_artifact_for_run(
+            context,
+            owner,
+            repo,
+            run_id,
+            repo_slug,
+            token,
+            [base],
+        )
+        if metadata:
+            _log_iterate(
+                "artifact sourced from codex-auto-iterate.yml run "
+                f"{run_id}-{run_attempt}"
+            )
+            return metadata
+
+    return None
+
+
+def _select_iterate_artifact(
+    context: Context, expected_stem: str
+) -> Optional[Tuple[dict, str, str, str, str]]:
+    """Return artifact metadata for the iterate payload when present.
+
+    The tuple contains (artifact_json, owner, repo, run_id, repo_slug).
+    """
+
+    if context.iterate_artifact_meta:
+        return context.iterate_artifact_meta
+
+    # Professional note: CI exposes GH_TOKEN for artifact downloads; fall back to
+    # GITHUB_TOKEN so local runs remain functional per "Prefer the Actions
+    # Artifacts API" guidance.
+    token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    owner_repo = _actions_owner_repo(context)
+    run_id = os.getenv("GITHUB_RUN_ID") or context.run_id
+    if not token or not owner_repo or not run_id or run_id == "n/a":
+        return None
+
+    owner, repo = owner_repo
+    repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
+
+    direct = _fetch_iterate_artifact_for_run(
+        context, owner, repo, run_id, repo_slug, token, [expected_stem]
+    )
+    if direct:
+        context.iterate_artifact_meta = direct
+        return direct
+
+    fallback = _select_iterate_artifact_by_head_sha(
+        context, owner, repo, repo_slug, token
+    )
+    if fallback:
+        context.iterate_artifact_meta = fallback
+        return fallback
+
+    return None
+
+
+def _download_iterate_artifact_zip(
+    context: Context, destination: Path
+) -> Optional[Tuple[str, Optional[str], bool]]:
+    """Download the iterate artifact zip into *destination* when it exists remotely."""
+
+    expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    metadata = _select_iterate_artifact(context, expected_stem)
+    if not metadata:
+        return None
+
+    # Professional note: keep parity with the PowerShell publisher by honoring
+    # GH_TOKEN first, which the workflow binds to the Actions token.
+    token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    if not token:
+        return None
+
+    item, owner, repo, run_id, _ = metadata
+    name = str(item.get("name") or "")
+    artifact_id_raw = item.get("id")
+    artifact_id: Optional[str] = None
+    if isinstance(artifact_id_raw, int):
+        artifact_id = str(artifact_id_raw)
+        download_url = (
+            f"https://api.github.com/repos/{owner}/{repo}/actions/artifacts/{artifact_id_raw}/zip"
+        )
+        accept_header = "application/vnd.github+json"
+    else:
+        download_url = item.get("archive_download_url")
+        if not download_url:
+            return (name, artifact_id, False)
+        accept_header = "application/octet-stream"
+
+    download_request = Request(download_url)
+    download_request.add_header("Authorization", f"Bearer {token}")
+    download_request.add_header("User-Agent", "publish_index.py diagnostics")
+    download_request.add_header("Accept", accept_header)
+    download_request.add_header("X-GitHub-Api-Version", "2022-11-28")
+
+    try:
+        with urlopen(download_request, timeout=30) as response:
+            payload_bytes = response.read()
+    except (HTTPError, URLError, TimeoutError):
+        return (name, artifact_id, False)
+
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("wb") as handle:
+            handle.write(payload_bytes)
+    except OSError:
+        return (name, artifact_id, False)
+
+    return (name, artifact_id, True)
+
+
+def _populate_iterate_artifacts_from_zip(context: Context, archive_path: Path) -> None:
+    """Extract the iterate archive into ARTIFACTS/iterate when the mirror is empty."""
+
+    artifacts = context.artifacts
+    if not artifacts or not archive_path.exists():
+        return
+
+    iterate_root = artifacts / "iterate"
+    expected = iterate_root / f"iterate-logs-{context.run_id}-{context.run_attempt}"
+
+    try:
+        iterate_root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    needs_extract = True
+    if expected.exists():
+        try:
+            next(expected.iterdir())
+        except (StopIteration, FileNotFoundError):
+            needs_extract = True
+        else:
+            needs_extract = False
+
+    if not needs_extract:
+        return
+
+    try:
+        if expected.exists():
+            shutil.rmtree(expected, ignore_errors=True)
+        expected.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    try:
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            archive.extractall(expected)
+    except (OSError, zipfile.BadZipFile):
+        return
+
+    _log_iterate(f"extracted iterate log archive {archive_path} -> {expected}")
+
+
+def _ensure_iterate_log_archive(context: Context) -> None:
+    """Mirror the iterate artifact zip into the logs directory when available."""
+
+    diag = context.diag
+    if not diag:
+        return
+
+    logs_dir = diag / "logs"
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    iterate_zip = logs_dir / f"iterate-{context.run_id}-{context.run_attempt}.zip"
+    sentinel = logs_dir / "iterate.MISSING.txt"
+    error_log = logs_dir / "iterate-log-error.txt"
+
+    def _zip_ready() -> bool:
+        try:
+            return iterate_zip.exists() and iterate_zip.stat().st_size > 0
+        except OSError:
+            return False
+
+    if _zip_ready():
+        if context.iterate_found_cache in (None, False):
+            # Professional note: Runs like 19122439464-1 uploaded the iterate artifact
+            # successfully, but the previous publisher still reported "Iterate logs:
+            # missing". Mark the cache so downstream status lines stay truthful once the
+            # archive is present on disk.
+            context.iterate_found_cache = True
+        for stale in (sentinel, error_log):
+            try:
+                stale.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+        return
+
+    previous_cache = context.iterate_found_cache
+    previous_href = context.iterate_artifact_href
+    previous_meta = context.iterate_artifact_meta
+
+    download_info = _download_iterate_artifact_zip(context, iterate_zip)
+    downloaded = False
+    if download_info:
+        _, _, downloaded = download_info
+
+    if not download_info or not downloaded or not _zip_ready():
+        # derived requirement: Keep the legacy sentinel/error files when the artifact is
+        # unavailable so the diagnostics continue to explain why Iterate logs are
+        # missing. Restore the cached state so callers do not report a false "found"
+        # status when the download failed.
+        context.iterate_found_cache = previous_cache
+        context.iterate_artifact_href = previous_href
+        context.iterate_artifact_meta = previous_meta
+        return
+
+    if context.iterate_found_cache in (None, False):
+        context.iterate_found_cache = True
+
+    for stale in (sentinel, error_log):
+        try:
+            stale.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+    _log_iterate(f"iterate log archive mirrored to {iterate_zip}")
+    _populate_iterate_artifacts_from_zip(context, iterate_zip)
+
+
 def _iterate_logs_found(context: Context) -> bool:
     """Return True when the iterate-logs artifact actually exists."""
 
+    if context.iterate_found_cache is not None:
+        return context.iterate_found_cache
+
+    context.iterate_artifact_href = None
+
+    expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    expected_names = [expected_stem, f"{expected_stem}.zip"]
     artifacts = context.artifacts
-    if not artifacts:
-        return False
+    iterate_root: Optional[Path] = None
+    local_found = False
 
-    iterate_root = artifacts / "iterate"
-    if not iterate_root.exists():
-        return False
+    if artifacts:
+        iterate_root = artifacts / "iterate"
+        if iterate_root.exists():
+            for name in expected_names:
+                candidate = iterate_root / name
+                if candidate.exists():
+                    local_found = True
+                    break
 
-    expected = iterate_root / f"iterate-logs-{context.run_id}-{context.run_attempt}"
-    if expected.exists():
+            if not local_found:
+                # Professional note: actions/download-artifact@v4 can unpack the payload
+                # directly under the iterate root instead of a named iterate-logs-*
+                # directory. Treat the root as present when metadata files land there so we
+                # continue reporting success for flattened artifacts.
+                if any((iterate_root / name).exists() for name in ITERATE_METADATA_FILENAMES):
+                    local_found = True
+
+            if not local_found:
+                temp_dir = iterate_root / "_temp"
+                try:
+                    for candidate in temp_dir.rglob("*"):
+                        if candidate.is_file():
+                            local_found = True
+                            break
+                except FileNotFoundError:
+                    pass
+
+    if local_found:
+        context.iterate_found_cache = True
         return True
 
-    # Professional note: actions/download-artifact@v4 can unpack the payload
-    # directly under the iterate root instead of a named iterate-logs-*
-    # directory. Treat the root as present when metadata files land there so we
-    # continue reporting success for flattened artifacts.
-    if any((iterate_root / name).exists() for name in ITERATE_METADATA_FILENAMES):
+    # derived requirement: CI run 18988034718-1 mirrored an iterate zip to the
+    # Actions artifact inventory but not to the local publish workspace. Confirm
+    # presence via the GitHub REST API so diagnostics still record "found" and
+    # surface a working link even when the download step is skipped (including
+    # when the local mirror is completely absent).
+    remote_href = _github_iterate_artifact_href(context, expected_names)
+    if remote_href:
+        context.iterate_artifact_href = remote_href
+        context.iterate_found_cache = True
         return True
 
-    temp_dir = iterate_root / "_temp"
-    try:
-        for candidate in temp_dir.rglob("*"):
-            if candidate.is_file():
-                return True
-    except FileNotFoundError:
-        pass
-
+    context.iterate_found_cache = False
     return False
 
 
@@ -312,23 +850,252 @@ def _normalize_repo_zip(context: Context) -> None:
         return
 
 
+def _find_inner_iterate_zip(root: Path, base: str, processed: set[Path]) -> Optional[Path]:
+    """Return a candidate nested iterate zip when exactly one meaningful archive exists."""
+
+    try:
+        children = list(root.iterdir())
+    except FileNotFoundError:
+        return None
+
+    zips: List[Path] = []
+    for child in children:
+        if child in processed:
+            continue
+        if child.is_file() and child.suffix.lower() == ".zip":
+            zips.append(child)
+
+    if not zips:
+        return None
+
+    if len(zips) == 1:
+        return zips[0]
+
+    for candidate in zips:
+        stem = candidate.stem
+        if stem == base or stem.startswith(f"{base}-") or base in stem:
+            return candidate
+
+    return None
+
+
+def _single_iterate_child(root: Path) -> Optional[Path]:
+    """Return the single useful child directory when present."""
+
+    try:
+        directories = [
+            child for child in sorted(root.iterdir()) if child.is_dir() and child.name != "_temp"
+        ]
+    except FileNotFoundError:
+        return None
+
+    if len(directories) == 1:
+        return directories[0]
+    return None
+
+
+def _resolve_iterate_payload_root(base: Path, stem: str) -> Path:
+    """Handle nested zip-or-directory layouts before returning iterate metadata."""
+
+    current = base
+    visited: set[Path] = set()
+    processed_archives: set[Path] = set()
+
+    while True:
+        if _core_iterate_files_present(current):
+            return current
+
+        inner_zip = _find_inner_iterate_zip(current, stem, processed_archives)
+        if inner_zip:
+            try:
+                with zipfile.ZipFile(inner_zip, "r") as archive:
+                    archive.extractall(current)
+            except (OSError, zipfile.BadZipFile):
+                # derived requirement: the iterate artifact for run 19055916343-1 contained
+                # a zip-inside-a-zip. Continue falling back instead of failing hard so the
+                # diagnostics remain available even when the archive is malformed.
+                break
+            processed_archives.add(inner_zip)
+            _log_iterate(f"extracted inner zip {inner_zip} -> {current}")
+            # Professional note: avoid marking *current* as visited until after we finish
+            # processing freshly extracted content. Earlier builds added the directory to
+            # the visited set before re-evaluating, which returned too early and left
+            # decision.txt hidden inside the inner archive (run 19055916343-1).
+            continue
+
+        if current in visited:
+            break
+        visited.add(current)
+
+        nested = _single_iterate_child(current)
+        if nested and nested not in visited:
+            if _core_iterate_files_present(nested):
+                _log_iterate(f"using nested dir {nested}")
+                return nested
+            _log_iterate(f"using nested dir {nested}")
+            current = nested
+            continue
+
+        break
+
+    return current
+
+
+def _finalize_iterate_discovery(
+    context: Context, candidate: Optional[Path]
+) -> Optional[Path]:
+    """Record iterate bundle details and surface partial archives as "found".
+
+    Professional note: CI runs such as 19078165388-1 packaged iterate payloads as
+    gate/context-only bundles. Mark them as found so the diagnostics stay truthful
+    even when decision.txt/response.json are absent. Keeping this logic here avoids
+    regressions where future refactors forget to flip iterate_found_cache for
+    partial bundles.
+    """
+
+    context.iterate_discovered_dir = candidate
+    context.iterate_partial = False
+    context.iterate_partial_note = None
+
+    if not candidate:
+        if context.iterate_found_cache is None:
+            # derived requirement: cache the "missing" probe so later status checks do not
+            # re-scan and clobber breadcrumbs when no iterate payload was mirrored.
+            context.iterate_found_cache = False
+        _log_iterate("no iterate bundle located")
+        return None
+
+    try:
+        exists = candidate.exists()
+    except OSError:
+        exists = False
+
+    if not exists:
+        if context.iterate_found_cache is None:
+            context.iterate_found_cache = False
+        _log_iterate(f"no iterate bundle located at {candidate}")
+        return candidate
+
+    if _core_iterate_files_present(candidate):
+        if context.iterate_found_cache is None or context.iterate_found_cache is False:
+            context.iterate_found_cache = True
+        _log_iterate(f"complete bundle detected at {candidate}")
+        return candidate
+
+    if _partial_iterate_evidence(candidate):
+        context.iterate_partial = True
+        context.iterate_partial_note = "gate present, no decision/response"
+        if context.iterate_found_cache is None or context.iterate_found_cache is False:
+            context.iterate_found_cache = True
+        _log_iterate("partial bundle (gate present, no decision/response)")
+
+    return candidate
+
+
 def _discover_iterate_dir(context: Context) -> Optional[Path]:
     artifacts = context.artifacts
     if not artifacts:
-        return None
+        return _finalize_iterate_discovery(context, None)
     iterate_root = artifacts / "iterate"
     if not iterate_root.exists():
-        return None
+        try:
+            iterate_root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return _finalize_iterate_discovery(context, None)
+
+    # Professional note: reset discovery hints before probing so callers do not
+    # reuse stale partial flags from previous runs.
+    context.iterate_discovered_dir = None
+    context.iterate_partial = False
+    context.iterate_partial_note = None
 
     if any((iterate_root / name).exists() for name in ITERATE_METADATA_FILENAMES):
         # Professional note: actions/download-artifact@v4 can unpack iterate metadata directly
         # into the root without an intermediate iterate-logs-* directory. Honor that layout so
         # diagnostics capture the files instead of defaulting to the child _temp directory.
-        return iterate_root
+        _log_iterate(f"using flattened iterate root at {iterate_root}")
+        if not _core_iterate_files_present(iterate_root):
+            _log_iterate(f"(no decision/response in archive {iterate_root})")
+        return _finalize_iterate_discovery(context, iterate_root)
 
-    expected = iterate_root / f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    expected = iterate_root / expected_stem
     if expected.exists():
-        return expected
+        resolved = _resolve_iterate_payload_root(expected, expected_stem)
+        if resolved != expected:
+            if not _core_iterate_files_present(resolved):
+                _log_iterate(f"(no decision/response in archive {resolved})")
+            return _finalize_iterate_discovery(context, resolved)
+        _log_iterate(f"using extracted dir at {expected}")
+        if not _core_iterate_files_present(expected):
+            _log_iterate(f"(no decision/response in archive {expected})")
+        return _finalize_iterate_discovery(context, expected)
+
+    zip_candidate = expected.with_suffix(".zip")
+    if zip_candidate.exists():
+        expected.mkdir(parents=True, exist_ok=True)
+        should_extract = True
+        try:
+            next(expected.iterdir())
+            should_extract = False
+        except (StopIteration, FileNotFoundError):
+            should_extract = True
+
+        if should_extract:
+            try:
+                with zipfile.ZipFile(zip_candidate, "r") as archive:
+                    archive.extractall(expected)
+            except (OSError, zipfile.BadZipFile):
+                # derived requirement: diagnostics run 19035211236-1 mirrored only the
+                # iterate zip. Best effort extraction keeps the page truthful even when
+                # the download step skips unpacking. Fall back to the existing
+                # directory discovery logic if extraction fails.
+                pass
+
+        if should_extract:
+            _log_iterate(f"extracted local zip {zip_candidate} -> {expected}")
+        else:
+            _log_iterate(f"using previously extracted zip at {expected}")
+        resolved = _resolve_iterate_payload_root(expected, expected_stem)
+        if not _core_iterate_files_present(resolved):
+            _log_iterate(f"(no decision/response in archive {resolved})")
+        return _finalize_iterate_discovery(context, resolved)
+
+    # derived requirement: CI run 19078165388-1 mirrored only gate/context assets
+    # under iterate/. Surface those as "found" before we fall back to scanning
+    # arbitrary child directories so downstream status lines stay truthful.
+    if _partial_iterate_evidence(iterate_root):
+        return _finalize_iterate_discovery(context, iterate_root)
+
+    if not expected.exists() and not zip_candidate.exists():
+        download_info = _download_iterate_artifact_zip(context, zip_candidate)
+        if download_info:
+            name, artifact_id, downloaded = download_info
+            if downloaded and zip_candidate.exists():
+                expected.mkdir(parents=True, exist_ok=True)
+                try:
+                    with zipfile.ZipFile(zip_candidate, "r") as archive:
+                        archive.extractall(expected)
+                except (OSError, zipfile.BadZipFile):
+                    # derived requirement: remote iterate zips can fail to unpack when the
+                    # connection drops mid-download; continue so the diagnostics fall back
+                    # to the existing lookup heuristics while the status stays truthful.
+                    pass
+            if downloaded:
+                display_id = artifact_id if artifact_id is not None else "n/a"
+                _log_iterate(
+                    f"downloaded artifact name={name} id={display_id} -> {expected}"
+                )
+            else:
+                display_id = artifact_id if artifact_id is not None else "n/a"
+                _log_iterate(
+                    f"remote artifact name={name} id={display_id} download failed"
+                )
+            if expected.exists():
+                resolved = _resolve_iterate_payload_root(expected, expected_stem)
+                if not _core_iterate_files_present(resolved):
+                    _log_iterate(f"(no decision/response in archive {resolved})")
+                return _finalize_iterate_discovery(context, resolved)
 
     try:
         candidates = sorted(p for p in iterate_root.iterdir() if p.is_dir())
@@ -339,16 +1106,28 @@ def _discover_iterate_dir(context: Context) -> Optional[Path]:
         if candidate.name == "_temp":
             continue
         if (candidate / "decision.txt").exists() or (candidate / "response.json").exists():
-            return candidate
+            _log_iterate(f"using fallback iterate dir {candidate}")
+            if not _core_iterate_files_present(candidate):
+                _log_iterate(f"(no decision/response in archive {candidate})")
+            return _finalize_iterate_discovery(context, candidate)
 
     if candidates and all(candidate.name == "_temp" for candidate in candidates):
-        return iterate_root
+        _log_iterate(f"using iterate root fallback {iterate_root}")
+        return _finalize_iterate_discovery(context, iterate_root)
 
     preferred = next((c for c in candidates if c.name != "_temp"), None)
     if preferred:
-        return preferred
+        _log_iterate(f"using iterate dir {preferred}")
+        if not _core_iterate_files_present(preferred):
+            _log_iterate(f"(no decision/response in archive {preferred})")
+        return _finalize_iterate_discovery(context, preferred)
 
-    return _first_child_directory(iterate_root)
+    fallback = _first_child_directory(iterate_root)
+    if fallback:
+        _log_iterate(f"using first child iterate dir {fallback}")
+        if not _core_iterate_files_present(fallback):
+            _log_iterate(f"(no decision/response in archive {fallback})")
+    return _finalize_iterate_discovery(context, fallback)
 
 
 def _discover_temp_dir(iterate_dir: Optional[Path], context: Context) -> Optional[Path]:
@@ -1101,25 +1880,47 @@ def _gather_real_lane_summaries(diag: Optional[Path]) -> List[dict]:
     results: List[dict] = []
     seen: set[Path] = set()
     targets = [
-        ("real ci_test_results.ndjson", "ci_test_results.ndjson"),
-        ("real ~test-results.ndjson", "~test-results.ndjson"),
+        "ci_test_results.ndjson",
+        "~test-results.ndjson",
     ]
 
-    for label, filename in targets:
+    for filename in targets:
         path = _find_ndjson_candidate(diag, filename, prefer_real=True)
+        lane = "real"
         if not path:
             path = _find_ndjson_candidate(diag, filename, prefer_real=False)
+            if path:
+                rel = _relative_to_diag(path, diag)
+                if rel and "cache" in rel.lower():
+                    lane = "cache"
+        elif diag:
+            rel = _relative_to_diag(path, diag)
+            if rel and "cache" in rel.lower():
+                lane = "cache"
         if not path or path in seen:
             continue
         summary = _summarize_ndjson_file(path)
         if not summary:
             continue
-        summary["label"] = label
+        label_prefix = lane
+        summary["label"] = f"{label_prefix} {filename}"
         summary["path"] = path
+        summary["lane"] = lane
         results.append(summary)
         seen.add(path)
 
     return results
+
+
+def _lane_selector_label(summaries: List[dict]) -> Optional[str]:
+    lanes = {entry.get("lane") for entry in summaries if entry.get("lane")}
+    if not lanes:
+        return None
+    if lanes == {"real"}:
+        return "real"
+    if lanes == {"cache"}:
+        return "cache"
+    return "+".join(sorted(lanes))
 
 
 def _collect_real_failing_tests(diag: Optional[Path]) -> Optional[dict]:
@@ -1460,6 +2261,136 @@ def _write_summary_files(
     except OSError:
         pass
 
+    decision = _read_iterate_text(iterate_dir, iterate_temp, "decision.txt")
+    summary_dir: Optional[Path] = None
+    if iterate_dir and iterate_dir.exists():
+        summary_dir = iterate_dir
+    else:
+        sample = _find_iterate_file(iterate_dir, iterate_temp, "response.json")
+        if sample:
+            summary_dir = sample.parent
+
+    if summary_dir:
+        rationale_lines: List[str] = []
+        rationale_path = _find_iterate_file(iterate_dir, iterate_temp, "why_no_diff.txt")
+        if rationale_path and rationale_path.exists():
+            try:
+                for line in rationale_path.read_text(encoding="utf-8").splitlines():
+                    rationale_lines.append(line.strip())
+                    if len(rationale_lines) >= 5:
+                        break
+            except OSError:
+                rationale_lines = []
+
+        tokens_line = "Tokens: prompt={prompt} completion={completion} total={total}".format(
+            prompt=tokens["prompt"],
+            completion=tokens["completion"],
+            total=tokens["total"],
+        )
+
+        is_partial_bundle = context.iterate_partial and not _core_iterate_files_present(
+            summary_dir
+        )
+
+        if is_partial_bundle:
+            summary_lines = [
+                "Partial iterate bundle: decision/response not present.",
+                f"Decision: {decision}",
+                f"Outcome: {outcome}",
+                f"Model: {model}",
+                tokens_line,
+            ]
+
+            gate_path = _find_iterate_gate(summary_dir)
+            gate_payload: Optional[dict] = None
+            if gate_path:
+                try:
+                    gate_payload = json.loads(
+                        gate_path.read_text(encoding="utf-8", errors="replace")
+                    )
+                except (OSError, json.JSONDecodeError):
+                    gate_payload = None
+
+            proceed_text = "n/a"
+            missing_text = "unknown"
+            if isinstance(gate_payload, dict):
+                proceed_value = gate_payload.get("proceed")
+                if isinstance(proceed_value, bool):
+                    proceed_text = str(proceed_value).lower()
+                elif proceed_value is not None:
+                    proceed_text = str(proceed_value)
+
+                missing_raw = gate_payload.get("missing_inputs") or gate_payload.get(
+                    "missing"
+                )
+                if isinstance(missing_raw, list):
+                    items = [str(item) for item in missing_raw if str(item)]
+                    missing_text = ", ".join(items) if items else "none"
+                elif missing_raw:
+                    missing_text = str(missing_raw)
+                else:
+                    missing_text = "none"
+
+            summary_lines.append(f"Gate proceed: {proceed_text}")
+            summary_lines.append(f"Gate missing inputs: {missing_text}")
+
+            search_roots = [summary_dir]
+            parent_root = summary_dir.parent
+            if parent_root != summary_dir:
+                search_roots.append(parent_root)
+
+            support_specs = [
+                (".codex", "changed_files.txt"),
+                (".codex", "context.json"),
+                (".codex", "fail", "failing_job_focus.txt"),
+            ]
+            support_entries: List[str] = []
+
+            def _format_summary_path(path: Path) -> str:
+                try:
+                    return path.relative_to(summary_dir).as_posix()
+                except ValueError:
+                    return path.as_posix()
+
+            for parts in support_specs:
+                for root_candidate in search_roots:
+                    candidate = root_candidate.joinpath(*parts)
+                    try:
+                        if candidate.exists():
+                            label = _format_summary_path(candidate)
+                            if label not in support_entries:
+                                support_entries.append(label)
+                            break
+                    except OSError:
+                        continue
+
+            if support_entries:
+                summary_lines.append("Supporting files:")
+                summary_lines.extend(f"  - {entry}" for entry in support_entries)
+        else:
+            summary_lines = [
+                f"Decision: {decision}",
+                f"Outcome: {outcome}",
+                f"Model: {model}",
+                tokens_line,
+            ]
+        if rationale_lines:
+            summary_lines.append("Rationale excerpt:")
+            summary_lines.extend(f"  {line}" for line in rationale_lines if line)
+        else:
+            summary_lines.append("Rationale excerpt: n/a")
+
+        summary_payload = "\n".join(summary_lines) + "\n"
+        summary_path = summary_dir / "iterate_summary.txt"
+        try:
+            summary_dir.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(summary_payload, encoding="utf-8")
+        except OSError:
+            # derived requirement: keep the diagnostics stable even when the iterate
+            # directory is read-only; failing to emit the helper summary must not stop
+            # the rest of the publisher.
+            pass
+
 
 def _bundle_links(context: Context) -> List[dict]:
     diag = context.diag
@@ -1485,9 +2416,10 @@ def _bundle_links(context: Context) -> List[dict]:
     if context.site and context.diag:
         # Professional note: surface the site-level manifests so analysts can
         # retrieve the JSON/TXT snapshots directly from the diagnostics page.
+        diag_site = context.site / "diag"
         site_links = [
-            ("Latest manifest (json)", context.site / "latest.json"),
-            ("Latest manifest (txt)", context.site / "latest.txt"),
+            ("Latest manifest (json)", diag_site / "latest.json"),
+            ("Latest manifest (txt)", diag_site / "latest.txt"),
         ]
         for label, site_path in site_links:
             if not site_path.exists():
@@ -1584,6 +2516,14 @@ def _build_markdown(
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
+    if iterate_found and artifact_missing:
+        note = artifact_missing.lower()
+        if "iterate artifact" in note:
+            # derived requirement: runs like 19021225350-1 confirmed the zip existed in
+            # Actions but skipped the local mirror. When the remote check marks the
+            # iterate logs as present, drop the stale sentinel so the diagnostics page
+            # stops claiming the artifact is missing.
+            artifact_missing = None
     batch_status = _batch_status(diag, context)
     gate_data = _load_iterate_gate(context)
     inputs_info = _iterate_inputs_info(context)
@@ -1640,7 +2580,9 @@ def _build_markdown(
     lines.append("")
     lines.append("## Quick links")
 
-    for entry in _bundle_links(context):
+    quick_entries = _bundle_links(context)
+
+    for entry in quick_entries:
         label = entry["label"]
         path_obj: Optional[Path] = entry.get("path")
         if not path_obj:
@@ -1656,6 +2598,10 @@ def _build_markdown(
             )
         else:
             lines.append(f"- {label}: [Download]({original_href})")
+
+    fallback_href = context.iterate_artifact_href
+    if fallback_href:
+        lines.append(f"- Iterate artifact (GitHub): [Open]({fallback_href})")
 
     lines.extend(
         [
@@ -1719,7 +2665,11 @@ def _build_markdown(
     real_lane_failures = _collect_real_failing_tests(diag)
     if real_lane_summaries:
         lines.append("")
-        lines.append("## NDJSON (real lane)")
+        lane_selector = _lane_selector_label(real_lane_summaries)
+        if lane_selector and lane_selector != "real":
+            lines.append(f"## NDJSON (selected lane: {lane_selector})")
+        else:
+            lines.append("## NDJSON (real lane)")
         for entry in real_lane_summaries:
             rows = entry.get("rows", 0)
             pass_count = entry.get("pass", 0)
@@ -1828,6 +2778,10 @@ def _write_html(
         attempt_summary = _compose_attempt_summary(status_data)
 
     artifact_count, artifact_missing = _artifact_stats(artifacts)
+    if iterate_found and artifact_missing:
+        note = artifact_missing.lower()
+        if "iterate artifact" in note:
+            artifact_missing = None
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     batch_status = _batch_status(diag, context)
@@ -1974,6 +2928,11 @@ def _write_html(
             html.append(
                 f"<li><strong>{label}:</strong> <a href=\"{original_href}\">Download</a></li>"
             )
+    fallback_href = context.iterate_artifact_href
+    if fallback_href:
+        html.append(
+            f"<li><strong>Iterate artifact (GitHub):</strong> <a href=\"{_escape_href(fallback_href)}\">Open</a></li>"
+        )
     html.append("</ul>")
     html.append("</section>")
 
@@ -2009,7 +2968,13 @@ def _write_html(
     real_lane_failures = _collect_real_failing_tests(diag)
     if real_lane_summaries:
         html.append("<section>")
-        html.append("<h2>NDJSON (real lane)</h2>")
+        lane_selector = _lane_selector_label(real_lane_summaries)
+        if lane_selector and lane_selector != "real":
+            html.append(
+                f"<h2>NDJSON (selected lane: {_escape_html(lane_selector)})</h2>"
+            )
+        else:
+            html.append("<h2>NDJSON (real lane)</h2>")
         html.append("<ul>")
         for entry in real_lane_summaries:
             label = _escape_html(entry.get("label", "unknown"))
@@ -2121,9 +3086,6 @@ def _write_latest_json(
     response_data: Optional[dict],
     status_data: Optional[dict],
 ) -> None:
-    if not (context.site and context.diag):
-        return
-
     run_slug = f"{context.run_id}-{context.run_attempt}"
     bundle_relative = f"diag/{run_slug}/index.html"
 
@@ -2143,11 +3105,28 @@ def _write_latest_json(
     # can locate the newest diagnostics run without diffing large manifests.
     payload = {"run_id": run_slug, "url": canonical_url}
 
-    latest_path = context.site / "latest.json"
+    # derived requirement: run 18972548512-1 exposed that the published manifest
+    # links dropped the '/diag/' prefix, yielding 400s. Keep the canonical files
+    # under the diag subtree so the diagnostics page links resolve correctly.
+    diag_site: Optional[Path]
+    if context.site:
+        diag_site = context.site / "diag"
+    elif context.diag:
+        # derived requirement: some publishes only pass DIAG=<...>/diag/<run>,
+        # so fall back to the run directory's parent to keep latest.* fresh.
+        diag_site = context.diag.parent
+    else:
+        return
+
+    if diag_site is None:
+        return
+
+    diag_site.mkdir(parents=True, exist_ok=True)
+    latest_path = diag_site / "latest.json"
     latest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     ensure_txt_mirror(latest_path)
 
-    latest_txt_path = context.site / "latest.txt"
+    latest_txt_path = diag_site / "latest.txt"
     latest_txt_path.write_text(canonical_url + "\n", encoding="utf-8")
     ensure_txt_mirror(latest_txt_path)
 
@@ -2467,6 +3446,8 @@ def _build_site_overview(
 
 def main() -> None:
     context = _get_context()
+    _set_iterate_log_destination(context.diag)
+    _ensure_iterate_log_archive(context)
     _normalize_repo_zip(context)
     _ensure_repo_index(context)
     iterate_dir = _discover_iterate_dir(context)

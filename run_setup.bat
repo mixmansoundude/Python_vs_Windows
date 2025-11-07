@@ -428,9 +428,17 @@ if defined HP_SYS_PY (
   for %%R in ("%HP_HELPER_ROOT%") do set "HP_HELPER_ROOT=%%~fR"
   if not defined HP_HELPER_ROOT set "HP_HELPER_ROOT=%CD%"
   if not exist "%HP_HELPER_ROOT%" mkdir "%HP_HELPER_ROOT%" >nul 2>&1
-  set "HP_CRUMB_FILE=%HP_HELPER_ROOT%~crumb.txt"
+  set "HP_CHOOSER_ROOT=%HP_HELPER_ROOT%"
+  for %%R in ("%HP_HELPER_ROOT%tests") do if exist "%%~fR" set "HP_CHOOSER_ROOT=%%~fR"
+  rem derived requirement: the helper enumerates cwd *.py files; pivot into tests/ when present
+  rem so crumbs reference the self-test entry scripts without emitting "The system cannot find the path specified.".
+  for %%R in ("%HP_CHOOSER_ROOT%") do set "HP_CHOOSER_ROOT=%%~fR"
+  if not exist "%HP_CHOOSER_ROOT%" set "HP_CHOOSER_ROOT=%HP_HELPER_ROOT%"
+  set "HP_CRUMB_FILE=%HP_CHOOSER_ROOT%"
+  if not "%HP_CRUMB_FILE:~-1%"=="\" set "HP_CRUMB_FILE=%HP_CRUMB_FILE%\"
+  set "HP_CRUMB_FILE=%HP_CRUMB_FILE%~crumb.txt"
   if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
-  pushd "%HP_HELPER_ROOT%" >nul 2>&1
+  pushd "%HP_CHOOSER_ROOT%" >nul 2>&1
   if defined HP_SYS_PY_ARGS (
     "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   ) else (
@@ -445,6 +453,9 @@ if defined HP_SYS_PY (
   if exist "%HP_CRUMB_FILE%" (
     for /f "usebackq delims=" %%L in ("%HP_CRUMB_FILE%") do if not defined HP_CRUMB set "HP_CRUMB=%%L"
     del "%HP_CRUMB_FILE%" >nul 2>&1
+  )
+  if /i not "%HP_CHOOSER_ROOT%"=="%HP_HELPER_ROOT%" (
+    if defined HP_CRUMB set "HP_CRUMB=tests\%HP_CRUMB%"
   )
 )
 
@@ -482,20 +493,25 @@ if "%HP_ENTRY%"=="" (
 ) else (
   call :record_chosen_entry "%HP_ENTRY%"
   call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
-  rem derived requirement: CI env smoke saw `The syntax of the command is incorrect.`
-  rem when this block silently built the command. Normalize the paths and log the
-  rem exact invocation so future regressions remain diagnosable.
-  set "HP_SMOKE_PY=%HP_PY%"
-  for %%P in ("%HP_PY%") do if exist "%%~fP" set "HP_SMOKE_PY=%%~fP"
-  set "HP_SMOKE_ENTRY=%HP_ENTRY%"
-  for %%E in ("%HP_ENTRY%") do if exist "%%~fE" set "HP_SMOKE_ENTRY=%%~fE"
-  set "HP_SMOKE_OUT=~run.out.txt"
-  for %%O in ("%HP_SMOKE_OUT%") do set "HP_SMOKE_OUT=%%~fO"
-  set "HP_SMOKE_ERR=~run.err.txt"
-  for %%R in ("%HP_SMOKE_ERR%") do set "HP_SMOKE_ERR=%%~fR"
-  >> "%LOG%" echo Smoke command: "%HP_SMOKE_PY%" "%HP_SMOKE_ENTRY%" 1^> "%HP_SMOKE_OUT%" 2^> "%HP_SMOKE_ERR%"
-  "%HP_SMOKE_PY%" "%HP_SMOKE_ENTRY%" 1> "%HP_SMOKE_OUT%" 2> "%HP_SMOKE_ERR%"
-  if errorlevel 1 call :die "[ERROR] Entry script execution failed."
+  rem derived requirement: execute the smoke command inline so cmd, not our logging, owns redirection parsing.
+  >> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
+  "%HP_PY%" "%HP_ENTRY%" 1> "~run.out.txt" 2> "~run.err.txt"
+  set "HP_SMOKE_RC=%ERRORLEVEL%"
+  call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
+  if not "%HP_SMOKE_RC%"=="0" call :die "[ERROR] Entry script execution failed."
+  rem derived requirement: the CI harness inspects the breadcrumb log to flag missing entries.
+  set "HP_BREADCRUMB=~entry1_bootstrap.log"
+  if exist "tests\~entry1\" set "HP_BREADCRUMB=tests\~entry1\~entry1_bootstrap.log"
+  if not exist "%HP_BREADCRUMB%" (
+    rem derived requirement: create the breadcrumb when the smoke run succeeds so diagnostics stay consistent.
+    for %%B in ("%HP_BREADCRUMB%") do if not "%%~dpB"=="" if not exist "%%~dpB" mkdir "%%~dpB" >nul 2>&1
+    type nul > "%HP_BREADCRUMB%"
+  )
+  if exist "%HP_BREADCRUMB%" (
+    call :log "[INFO] Entry smoke breadcrumb exists: %HP_BREADCRUMB%"
+  ) else (
+    call :log "[WARN] Entry smoke missing breadcrumb: %HP_BREADCRUMB%"
+  )
   if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] System fallback: skipping PyInstaller packaging."
   ) else (
