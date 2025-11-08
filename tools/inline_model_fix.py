@@ -1,0 +1,555 @@
+"""Inline model quick-fix helper for batch-check workflow.
+
+This utility orchestrates two phases:
+
+1. ``stage`` — download the current run's logs, locate the first failing step,
+   build ``_ctx`` with ``failpack.log``, ``guide.json``, trimmed attachments,
+   and a manifest describing the staged files.
+2. ``call`` — upload staged attachments to OpenAI's Files API, invoke the
+   Responses API request, persist the raw response, and extract any fenced diff
+   into ``_ctx/fix.patch``.
+
+The script intentionally writes human-readable breadcrumbs to
+``_ctx/notes.txt`` for diagnostics packaging.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import sys
+import textwrap
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, List, Optional
+from zipfile import ZipFile
+
+
+# ``requests`` keeps the HTTP plumbing readable. The workflow installs it
+# explicitly before invoking this helper; fail fast with a friendly message
+# if the dependency is missing so the runner log explains the requirement.
+try:  # pragma: no cover - dependency guard for the workflow runner
+    import requests
+except ImportError as exc:  # pragma: no cover - surfaced in CI logs
+    raise SystemExit(
+        "The requests module is required. Install it with 'python -m pip install requests'."
+    ) from exc
+
+
+FATAL_PATTERNS = [
+    re.compile(r"::error"),
+    re.compile(r"^Error:", re.MULTILINE),
+    re.compile(r"Traceback"),
+    re.compile(r"^Failed tests?", re.MULTILINE),
+    re.compile(r"Process completed with exit code [1-9]", re.MULTILINE),
+]
+
+PRIMARY_HINT_PATTERNS = [
+    re.compile(r"File \"([^\"]+)\", line (\d+)", re.IGNORECASE),
+    re.compile(r"([A-Za-z0-9_/\\.\-]+):(\d+)", re.IGNORECASE),
+    re.compile(r"([A-Za-z0-9_/\\.\-]+) \(line (\d+)\)", re.IGNORECASE),
+]
+
+INCLUDE_GLOBS = [
+    "*.py",
+    "*.ps1",
+    "*.psm1",
+    "*.yml",
+    "*.yaml",
+    "*.sh",
+    "*.bat",
+    "*.cmd",
+    "*.md",
+    "*.txt",
+    "*.json",
+]
+
+EXCLUDED_PARTS = {
+    ".git",
+    ".github/pages",
+    ".venv",
+    "venv",
+    "env",
+    "node_modules",
+    "dist",
+    "build",
+    "_artifacts",
+    "_site",
+    ".pytest_cache",
+    "logs",
+    "_ctx",
+}
+
+
+def debug(msg: str) -> None:
+    print(msg)
+
+
+def read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def path_in_repo(candidate: str, repo_root: Path) -> Optional[Path]:
+    try:
+        normalized = candidate.replace("\\", "/")
+        absolute = Path(normalized)
+        if absolute.is_absolute():
+            try:
+                rel = absolute.relative_to(repo_root)
+            except ValueError:
+                text = str(absolute)
+                root_text = str(repo_root)
+                if root_text in text:
+                    rel_text = text[text.index(root_text) + len(root_text) :]
+                    rel = Path(rel_text.lstrip("/\\"))
+                else:
+                    return None
+            return rel
+        return Path(normalized)
+    except Exception:
+        return None
+
+
+def is_excluded(rel_path: Path) -> bool:
+    parts = rel_path.parts
+    for idx in range(1, len(parts) + 1):
+        segment = "/".join(parts[:idx])
+        segment_no_slash = segment.rstrip("/")
+        if segment in EXCLUDED_PARTS or segment_no_slash in EXCLUDED_PARTS:
+            return True
+    return False
+
+
+def matches_globs(rel_path: Path) -> bool:
+    from fnmatch import fnmatch
+
+    return any(fnmatch(rel_path.name, pattern) for pattern in INCLUDE_GLOBS)
+
+
+def iter_repo_files(repo_root: Path) -> Iterable[Path]:
+    for path in sorted(repo_root.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            rel = path.relative_to(repo_root)
+        except ValueError:
+            continue
+        if is_excluded(rel):
+            continue
+        if matches_globs(rel):
+            yield rel
+
+
+def trim_content(text: str, limit: int) -> str:
+    if len(text.encode("utf-8")) <= limit:
+        return text
+
+    lines = text.splitlines()
+    if not lines:
+        return text[: limit // 2]
+
+    header_count = min(10, len(lines))
+    head_count = min(300, len(lines))
+    tail_count = min(300, len(lines))
+
+    header = lines[:header_count]
+    head = lines[header_count:head_count]
+    tail = lines[-tail_count:]
+
+    segments: List[str] = []
+    segments.extend(header)
+    if head:
+        segments.append("\n# --- head (trimmed) ---\n")
+        segments.extend(head)
+    segments.append("\n# --- trimmed ---\n")
+    segments.extend(tail)
+
+    trimmed = "\n".join(segments)
+    encoded = trimmed.encode("utf-8")
+    if len(encoded) <= limit:
+        return trimmed
+
+    return encoded[:limit].decode("utf-8", errors="ignore")
+
+
+@dataclass
+class StageResult:
+    failpack_path: Path
+    guide_path: Path
+    primary_file: Path
+    primary_line: Optional[int]
+    attachments: List[dict]
+    notes: List[str]
+
+
+def download_logs(repo: str, run_id: str, token: str, dest: Path) -> None:
+    url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/logs"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "inline-model-fix",
+        "Accept": "application/vnd.github+json",
+    }
+    debug(f"Downloading logs from {url}")
+    response = requests.get(url, headers=headers, timeout=60)
+    if response.status_code != 200:
+        raise RuntimeError(f"Failed to download logs: HTTP {response.status_code}")
+    dest.write_bytes(response.content)
+
+
+def extract_zip(zip_path: Path, dest: Path) -> None:
+    with ZipFile(zip_path) as zf:
+        zf.extractall(dest)
+
+
+def find_first_failure(log_root: Path, notes: List[str]) -> Optional[Path]:
+    candidates = sorted(
+        [p for p in log_root.rglob("*") if p.is_file() and p.suffix.lower() in {".txt", ".log"}]
+    )
+    notes.append(f"log_files_scanned={len(candidates)}")
+    for path in candidates:
+        text = read_text(path)
+        for pattern in FATAL_PATTERNS:
+            if pattern.search(text):
+                notes.append(f"fail_marker={pattern.pattern} source={path.relative_to(log_root)}")
+                return path
+    if candidates:
+        notes.append("fail_marker=not_found; using first log file")
+        return candidates[0]
+    notes.append("fail_marker=not_found; no log files located")
+    return None
+
+
+def derive_primary(text: str, repo_root: Path, notes: List[str]) -> tuple[Path, Optional[int]]:
+    for pattern in PRIMARY_HINT_PATTERNS:
+        for match in pattern.finditer(text):
+            raw_path, raw_line = match.group(1), match.group(2)
+            candidate = path_in_repo(raw_path, repo_root)
+            if not candidate:
+                continue
+            rel = candidate
+            if rel.is_absolute():
+                try:
+                    rel = rel.relative_to(repo_root)
+                except ValueError:
+                    continue
+            normalized = Path("/".join(rel.parts))
+            file_path = repo_root / normalized
+            if file_path.exists():
+                try:
+                    line = int(raw_line)
+                except Exception:
+                    line = None
+                notes.append(f"primary_hint={normalized} line={line}")
+                return normalized, line
+    notes.append("primary_hint=not_found; defaulting to README.md")
+    return Path("README.md"), None
+
+
+def stage_attachments(
+    repo_root: Path,
+    ctx_dir: Path,
+    failpack: Path,
+    guide: Path,
+    primary: Path,
+    per_file_cap: int,
+    total_cap: int,
+    notes: List[str],
+) -> List[dict]:
+    attached_dir = ctx_dir / "attached"
+    ensure_dir(attached_dir)
+
+    staged: List[dict] = []
+    total_bytes = 0
+
+    def add_attachment(rel: Path, source: Path, essential: bool = False) -> None:
+        nonlocal total_bytes
+        dest = attached_dir / rel
+        ensure_dir(dest.parent)
+        text = read_text(source)
+        trimmed = text
+        trimmed_flag = False
+        if len(text.encode("utf-8")) > per_file_cap:
+            trimmed = trim_content(text, per_file_cap)
+            trimmed_flag = True
+        size = len(trimmed.encode("utf-8"))
+        if not essential and total_bytes + size > total_cap:
+            notes.append(f"skipped_due_to_cap={rel}")
+            return
+        dest.write_text(trimmed, encoding="utf-8")
+        staged.append({"name": str(rel).replace("\\", "/"), "size": size})
+        total_bytes += size
+        if trimmed_flag:
+            notes.append(f"trimmed_attachment={rel} original_size={len(text.encode('utf-8'))}")
+
+    essentials = [
+        (Path("guide.json"), guide),
+        (Path("failpack.log"), failpack),
+    ]
+
+    for rel, src in essentials:
+        add_attachment(rel, src, essential=True)
+
+    candidate_primary = repo_root / primary
+    if candidate_primary.exists():
+        add_attachment(primary, candidate_primary, essential=True)
+
+    special_paths = [
+        Path(".github/workflows/batch-check.yml"),
+        Path("README.md"),
+        Path("AGENTS.md"),
+    ]
+    for rel in special_paths:
+        src = repo_root / rel
+        if src.exists():
+            add_attachment(rel, src, essential=True)
+
+    for rel in iter_repo_files(repo_root):
+        if rel in {primary, *special_paths}:
+            continue
+        src = repo_root / rel
+        add_attachment(rel, src, essential=False)
+
+    notes.append(f"attachment_total_bytes={total_bytes}")
+    notes.append(f"attachment_count={len(staged)}")
+    return staged
+
+
+def write_manifest(ctx_dir: Path, attachments: List[dict]) -> None:
+    manifest = ctx_dir / "iterate_context_manifest.tsv"
+    with manifest.open("w", encoding="utf-8") as handle:
+        for item in attachments:
+            handle.write(f"{item['name']}\t{item['size']}\n")
+
+    plan = ctx_dir / "upload_plan.json"
+    plan.write_text(json.dumps({"files": attachments}, indent=2) + "\n", encoding="utf-8")
+
+
+def write_notes(ctx_dir: Path, notes: List[str]) -> None:
+    note_path = ctx_dir / "notes.txt"
+    note_path.write_text("\n".join(notes) + "\n", encoding="utf-8")
+
+
+def append_note(ctx_dir: Path, message: str) -> None:
+    note_path = ctx_dir / "notes.txt"
+    with note_path.open("a", encoding="utf-8") as handle:
+        handle.write(message + "\n")
+
+
+def stage_phase(args: argparse.Namespace) -> None:
+    repo_root = Path.cwd()
+    ctx_dir = repo_root / "_ctx"
+    if ctx_dir.exists():
+        shutil.rmtree(ctx_dir)
+    ensure_dir(ctx_dir)
+
+    notes: List[str] = []
+    notes.append(f"run_id={args.run_id}")
+    notes.append(f"run_attempt={args.run_attempt}")
+
+    logs_zip = ctx_dir / "logs.zip"
+    logs_dir = ctx_dir / "logs"
+    ensure_dir(logs_dir)
+
+    try:
+        download_logs(args.repo, args.run_id, args.token, logs_zip)
+        extract_zip(logs_zip, logs_dir)
+    except Exception as exc:
+        notes.append(f"log_download_error={exc}")
+        write_notes(ctx_dir, notes)
+        raise
+
+    failure_path = find_first_failure(logs_dir, notes)
+    if not failure_path:
+        write_notes(ctx_dir, notes)
+        raise SystemExit("No logs found to build failpack.")
+
+    failpack_path = ctx_dir / "failpack.log"
+    failpack_path.write_text(read_text(failure_path), encoding="utf-8")
+    notes.append(f"failpack_source={failure_path.relative_to(logs_dir)}")
+
+    guide = ctx_dir / "guide.json"
+    primary, line = derive_primary(read_text(failpack_path), repo_root, notes)
+    guide.write_text(
+        json.dumps(
+            {
+                "primary_file": str(primary).replace("\\", "/"),
+                "line": line,
+                "run_id": args.run_id,
+                "log_hint": "failpack.log",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    attachments = stage_attachments(
+        repo_root=repo_root,
+        ctx_dir=ctx_dir,
+        failpack=failpack_path,
+        guide=guide,
+        primary=primary,
+        per_file_cap=args.per_file_cap,
+        total_cap=args.total_cap,
+        notes=notes,
+    )
+    write_manifest(ctx_dir, attachments)
+    write_notes(ctx_dir, notes)
+
+
+def upload_file(path: Path, api_key: str) -> str:
+    with path.open("rb") as handle:
+        response = requests.post(
+            "https://api.openai.com/v1/files",
+            headers={"Authorization": f"Bearer {api_key}"},
+            files={"file": (path.name, handle, "text/plain")},
+            data={"purpose": "responses"},
+            timeout=60,
+        )
+    if response.status_code != 200:
+        raise RuntimeError(f"File upload failed ({path}): HTTP {response.status_code} {response.text}")
+    payload = response.json()
+    file_id = payload.get("id")
+    if not file_id:
+        raise RuntimeError(f"File upload missing id for {path}")
+    return file_id
+
+
+def extract_patch(response_json: dict) -> str:
+    outputs = response_json.get("output") or []
+    for item in outputs:
+        content = item.get("content") or []
+        for segment in content:
+            text = segment.get("text")
+            if not text:
+                continue
+            start = text.find("---BEGIN PATCH---")
+            end = text.find("---END PATCH---")
+            if start != -1 and end != -1 and end > start:
+                return text[start : end + len("---END PATCH---")]
+    return ""
+
+
+def call_phase(args: argparse.Namespace) -> None:
+    repo_root = Path.cwd()
+    ctx_dir = repo_root / "_ctx"
+    if not ctx_dir.exists():
+        raise SystemExit("_ctx not found; run the stage phase first.")
+
+    plan_path = ctx_dir / "upload_plan.json"
+    if not plan_path.exists():
+        raise SystemExit("upload_plan.json missing; stage phase did not complete successfully.")
+
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    files = plan.get("files", [])
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        append_note(ctx_dir, "openai_call=skipped_missing_key")
+        return
+
+    file_ids: List[str] = []
+    for entry in files:
+        rel = entry["name"]
+        path = ctx_dir / "attached" / rel
+        if not path.exists():
+            append_note(ctx_dir, f"openai_upload_missing={rel}")
+            continue
+        file_id = upload_file(path, api_key)
+        file_ids.append(file_id)
+        append_note(ctx_dir, f"uploaded={rel} file_id={file_id}")
+
+    if not file_ids:
+        append_note(ctx_dir, "openai_call=skipped_no_files")
+        return
+
+    prompt_text = textwrap.dedent(
+        """
+        Apply the smallest change that resolves the FIRST failing step described in failpack.log. Start at guide.json {primary_file}:{line}; if insufficient, search the attached repo files. Preserve current messaging/labels/structure. Return ONLY a unified diff fenced by ---BEGIN PATCH--- and ---END PATCH---.
+        """
+    ).strip()
+
+    payload = {
+        "model": args.model,
+        "input": [
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": prompt_text}]
+                + [{"type": "input_file", "file_id": fid} for fid in file_ids],
+            }
+        ],
+    }
+
+    response = requests.post(
+        "https://api.openai.com/v1/responses",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        data=json.dumps(payload),
+        timeout=120,
+    )
+
+    if response.status_code != 200:
+        append_note(
+            ctx_dir,
+            f"openai_call_error=HTTP {response.status_code} body={response.text[:400]}",
+        )
+        return
+
+    response_json = response.json()
+    (ctx_dir / "response.json").write_text(
+        json.dumps(response_json, indent=2) + "\n", encoding="utf-8"
+    )
+
+    patch = extract_patch(response_json)
+    patch_path = ctx_dir / "fix.patch"
+    patch_path.write_text(patch, encoding="utf-8")
+    if patch.strip():
+        append_note(ctx_dir, "openai_patch=received")
+    else:
+        append_note(ctx_dir, "openai_patch=empty")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Inline model quick-fix helper")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    stage = sub.add_parser("stage", help="Build _ctx attachments")
+    stage.add_argument("--repo", required=True)
+    stage.add_argument("--run-id", required=True)
+    stage.add_argument("--run-attempt", required=True)
+    stage.add_argument("--token", required=True)
+    stage.add_argument("--per-file-cap", type=int, default=200 * 1024)
+    stage.add_argument(
+        "--total-cap",
+        type=int,
+        default=int(os.environ.get("ATTACH_MAX_TOTAL", 6 * 1024 * 1024)),
+    )
+
+    call = sub.add_parser("call", help="Upload attachments and invoke model")
+    call.add_argument("--model", default="gpt-5-codex")
+
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.command == "stage":
+        stage_phase(args)
+    elif args.command == "call":
+        call_phase(args)
+    else:  # pragma: no cover - defensive
+        parser.error(f"Unknown command: {args.command}")
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    main(sys.argv[1:])
