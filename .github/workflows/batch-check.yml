@@ -365,6 +365,42 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Install requests for inline model helper
+        if: ${{ failure() }}
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests
+
+      - name: Stage inline model context (fail-only)
+        if: ${{ failure() }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python tools/inline_model_fix.py stage `
+            --repo "${{ github.repository }}" `
+            --run-id "${{ github.run_id }}" `
+            --run-attempt "${{ github.run_attempt }}" `
+            --token "${{ github.token }}"
+
+      - name: Call inline model (fail-only)
+        if: ${{ failure() }}
+        shell: pwsh
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python tools/inline_model_fix.py call
+
+      - name: Upload iterate logs (fail-only)
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _ctx/**
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Find and print test logs (tail)
         if: always()
         shell: pwsh
