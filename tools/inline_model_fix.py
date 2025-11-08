@@ -239,6 +239,7 @@ def download_artifact_zip(repo: str, artifact_id: str, token: str, dest: Path) -
 
 
 ARTIFACT_FALLBACK_PREFIXES = [
+    "bootstrapper-tests",
     "selftest-verdict-",
     "ci_test_results-",
     "test-logs-",
@@ -249,16 +250,22 @@ def extract_fallback_artifacts(
     repo: str,
     run_id: str,
     token: str,
-    dest: Path,
+    attached_dir: Path,
     notes: List[str],
-) -> List[str]:
-    ensure_dir(dest)
+) -> tuple[List[str], List[dict]]:
+    ensure_dir(attached_dir)
+    artifacts_root = attached_dir / "artifacts"
+    ensure_dir(artifacts_root)
     artifacts = list_run_artifacts(repo, run_id, token)
     selected: List[str] = []
+    attached_entries: List[dict] = []
     for prefix in ARTIFACT_FALLBACK_PREFIXES:
+        lower_prefix = prefix.lower()
         for item in artifacts:
             name = str(item.get("name", ""))
-            if not name.startswith(prefix):
+            if not name:
+                continue
+            if not str(name).lower().startswith(lower_prefix):
                 continue
             if item.get("expired"):
                 notes.append(f"fallback_artifact_expired={name}")
@@ -267,18 +274,38 @@ def extract_fallback_artifacts(
             if not artifact_id or not artifact_id.isdigit():
                 notes.append(f"fallback_artifact_invalid_id={name}")
                 continue
-            zip_path = dest / f"{name}.zip"
+            safe_name = re.sub(r"[^0-9A-Za-z_.-]", "-", name)
+            zip_path = artifacts_root / f"{safe_name}.zip"
             if download_artifact_zip(repo, artifact_id, token, zip_path):
-                target_dir = dest / f"artifact-{name}"
+                target_dir = artifacts_root / f"artifact-{safe_name}"
                 try:
                     extract_zip(zip_path, target_dir)
                     selected.append(name)
                     notes.append(f"fallback_artifact_downloaded={name}")
+                    for file_path in sorted(target_dir.rglob("*")):
+                        if not file_path.is_file():
+                            continue
+                        try:
+                            size = file_path.stat().st_size
+                        except OSError:
+                            size = 0
+                        rel = file_path.relative_to(attached_dir)
+                        attached_entries.append(
+                            {
+                                "name": str(rel).replace("\\", "/"),
+                                "size": size,
+                            }
+                        )
                 except Exception as exc:
                     notes.append(f"fallback_artifact_extract_error={name} error={exc}")
+                finally:
+                    try:
+                        zip_path.unlink()
+                    except OSError:
+                        pass
             else:
                 notes.append(f"fallback_artifact_download_failed={name}")
-    return selected
+    return selected, attached_entries
 
 
 def extract_zip(zip_path: Path, dest: Path) -> None:
@@ -426,6 +453,10 @@ def stage_phase(args: argparse.Namespace) -> None:
     if ctx_dir.exists():
         shutil.rmtree(ctx_dir)
     ensure_dir(ctx_dir)
+    attached_dir = ctx_dir / "attached"
+    # Professional note: artifact fallbacks must live under _ctx/attached so the iterate zip
+    # always carries the bootstrapper evidence even when GitHub withholds logs.zip.
+    ensure_dir(attached_dir)
 
     notes: List[str] = []
     notes.append(f"run_id={args.run_id}")
@@ -437,13 +468,9 @@ def stage_phase(args: argparse.Namespace) -> None:
 
     logs_available = False
     fallback_names: List[str] = []
+    fallback_entries: List[dict] = []
     current_run = os.environ.get("GITHUB_RUN_ID")
-    current_attempt = os.environ.get("GITHUB_RUN_ATTEMPT")
-    is_current_run = False
-    if current_run and current_run == args.run_id:
-        is_current_run = True
-        if current_attempt and current_attempt != args.run_attempt:
-            is_current_run = False
+    is_current_run = bool(current_run and current_run == args.run_id)
 
     if is_current_run:
         # Professional note: GitHub withholds the current run's logs until the workflow completes;
@@ -455,30 +482,26 @@ def stage_phase(args: argparse.Namespace) -> None:
             extract_zip(logs_zip, logs_dir)
             logs_available = True
         except RuntimeError as exc:
-            if "HTTP 404" in str(exc):
-                # Professional note: prior runs occasionally surface transient 404s while GitHub finalizes logs;
-                # treat them as pending so artifact fallbacks still produce a FailPak.
-                notes.append(f"log_download_pending={exc}")
-            else:
-                notes.append(f"log_download_error={exc}")
-                write_notes(ctx_dir, notes)
-                raise
+            # Professional note: prior runs can 404/403 until GitHub finalizes the archive;
+            # record the failure but continue so artifact packaging still succeeds.
+            notes.append(f"log_download_error={exc}")
         except Exception as exc:
             notes.append(f"log_download_error={exc}")
-            write_notes(ctx_dir, notes)
-            raise
 
-    if not logs_available:
-        fallback_root = logs_dir / "artifact_fallback"
-        fallback_names = extract_fallback_artifacts(
-            args.repo, args.run_id, args.token, fallback_root, notes
-        )
-        if fallback_names:
-            notes.append("fallback_sources=" + ",".join(sorted(fallback_names)))
-        else:
-            notes.append("fallback_sources=none")
+    fallback_root = attached_dir / "artifacts"
+    fallback_names, fallback_entries = extract_fallback_artifacts(
+        args.repo,
+        args.run_id,
+        args.token,
+        attached_dir,
+        notes,
+    )
+    if fallback_names:
+        notes.append("fallback_sources=" + ",".join(sorted(fallback_names)))
+    else:
+        notes.append("fallback_sources=none")
 
-    search_root = logs_dir if logs_available else logs_dir / "artifact_fallback"
+    search_root = logs_dir if logs_available else fallback_root
 
     failure_path: Optional[Path] = None
     if logs_available or fallback_names:
@@ -541,6 +564,9 @@ def stage_phase(args: argparse.Namespace) -> None:
         total_cap=args.total_cap,
         notes=notes,
     )
+    if fallback_entries:
+        attachments.extend(fallback_entries)
+        notes.append(f"fallback_attachment_entries={len(fallback_entries)}")
     write_manifest(ctx_dir, attachments)
     write_notes(ctx_dir, notes)
 

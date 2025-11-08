@@ -314,9 +314,33 @@ jobs:
           SCRIPT: run_tests.bat
         run: |
           $ErrorActionPreference = 'Continue'
+          $outDir = Join-Path $PWD '_out'
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $transcriptPath = Join-Path $outDir 'bootstrapper-transcript.txt'
+          $stdoutPath = Join-Path $outDir 'bootstrapper-stdout.txt'
+          $transcriptStarted = $false
+          try {
+            Start-Transcript -Path $transcriptPath -IncludeInvocationHeader | Out-Null
+            $transcriptStarted = $true
+          } catch {
+            Write-Warning ("Start-Transcript failed: {0}" -f $_.Exception.Message)
+          }
           Write-Host "=== BEGIN $pwd\$env:SCRIPT ==="
-          & cmd /c $env:SCRIPT *>&1
+          & cmd /c $env:SCRIPT *>&1 | Tee-Object -FilePath $stdoutPath
           $rc = $LASTEXITCODE
+          if ($transcriptStarted) {
+            try {
+              Stop-Transcript | Out-Null
+            } catch {
+              Write-Warning ("Stop-Transcript failed: {0}" -f $_.Exception.Message)
+            }
+          } elseif (-not (Test-Path $transcriptPath)) {
+            # Professional note: keep a placeholder so diagnostics always find a transcript payload.
+            New-Item -ItemType File -Path $transcriptPath -Force | Out-Null
+          }
+          if (-not (Test-Path $stdoutPath)) {
+            Set-Content -Path $stdoutPath -Value 'bootstrapper stdout missing' -Encoding Ascii
+          }
           if (Test-Path '~bootstrap.status.json') {
             try {
               $status = Get-Content '~bootstrap.status.json' -Raw | ConvertFrom-Json
@@ -331,6 +355,15 @@ jobs:
             Write-Warning "~bootstrap.status.json missing; keeping rc=$rc"
           }
           exit $rc
+
+      - name: Upload bootstrapper tests artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrapper-tests
+          path: _out/*
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Find and print test logs (tail)
         if: always()
