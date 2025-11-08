@@ -2505,6 +2505,7 @@ jobs:
         env:
           DIAG: ${{ steps.prep.outputs.DIAG }}
           ARTIFACTS: ${{ steps.prep.outputs.ARTIFACTS }}
+          ARTIFACTS_ROOT: ${{ github.workspace }}/_site/diag/${{ github.run_id }}-${{ github.run_attempt }}/_artifacts
           REPO: ${{ github.repository }}
           BRANCH: ${{ needs.model-quick-fix.outputs.branch }}
           SHA: ${{ github.sha }}

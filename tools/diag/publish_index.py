@@ -59,6 +59,7 @@ from tools.diag.ndjson_fail_list import generate_fail_list
 class Context:
     diag: Optional[Path]
     artifacts: Optional[Path]
+    artifacts_override: Optional[Path]
     repo: str
     branch: Optional[str]
     sha: str
@@ -86,6 +87,13 @@ def _get_env_path(name: str) -> Optional[Path]:
     return Path(value) if value else None
 
 
+def _artifacts_override_root(context: Context) -> Optional[Path]:
+    root = context.artifacts_override
+    if root and root.exists():
+        return root
+    return None
+
+
 def _isoformat_ct(now: Optional[datetime] = None) -> str:
     if now is None:
         now = datetime.now(timezone.utc)
@@ -99,6 +107,11 @@ def _isoformat_ct(now: Optional[datetime] = None) -> str:
 def _get_context() -> Context:
     diag = _get_env_path("DIAG")
     artifacts = _get_env_path("ARTIFACTS")
+    artifacts_override = _get_env_path("ARTIFACTS_ROOT")
+    if artifacts_override and not artifacts_override.exists():
+        artifacts_override = None
+    if artifacts_override:
+        artifacts = artifacts_override
     repo = os.getenv("REPO") or os.getenv("GITHUB_REPOSITORY") or "n/a"
     branch = os.getenv("BRANCH") or os.getenv("GITHUB_REF_NAME")
     sha = os.getenv("SHA") or os.getenv("GITHUB_SHA") or "n/a"
@@ -154,6 +167,7 @@ def _get_context() -> Context:
         batch_run_id=batch_run_id,
         batch_run_attempt=batch_run_attempt,
         site=site,
+        artifacts_override=artifacts_override,
     )
 
 
@@ -366,6 +380,43 @@ def _candidate_priority(expected_stem: str, name: str) -> Tuple[int, str]:
     return (3, name)
 
 
+def _iterate_dir_has_payload(root: Path) -> bool:
+    try:
+        for candidate in root.rglob("*"):
+            if candidate.is_file():
+                lowered = candidate.name.lower()
+                if lowered.endswith("missing.txt"):
+                    continue
+                return True
+    except (FileNotFoundError, OSError):
+        return False
+    return False
+
+
+def _local_iterate_source(context: Context, expected_stem: str) -> Optional[Path]:
+    override_root = _artifacts_override_root(context)
+    if not override_root:
+        return None
+
+    iterate_root = override_root / "iterate"
+    candidates = [
+        iterate_root / f"{expected_stem}.zip",
+        iterate_root / expected_stem,
+        iterate_root,
+    ]
+
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                return candidate
+            if candidate.is_dir() and _iterate_dir_has_payload(candidate):
+                return candidate
+        except (FileNotFoundError, OSError):
+            continue
+
+    return None
+
+
 def _fetch_iterate_artifact_for_run(
     context: Context,
     owner: str,
@@ -509,6 +560,35 @@ def _select_iterate_artifact(
     if context.iterate_artifact_meta:
         return context.iterate_artifact_meta
 
+    local_source = _local_iterate_source(context, expected_stem)
+    if local_source:
+        repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
+        owner: str
+        repo_name: str
+        if repo_slug and repo_slug != "n/a" and "/" in repo_slug:
+            owner, repo_name = repo_slug.split("/", 1)
+        else:
+            owner = repo_slug or ""
+            repo_name = repo_slug or ""
+        fake_item = {"name": expected_stem}
+        context.iterate_found_cache = True
+        context.iterate_discovered_dir = (
+            local_source if local_source.is_dir() else local_source.parent
+        )
+        if repo_slug and repo_slug != "n/a" and context.run_id and context.run_id != "n/a":
+            context.iterate_artifact_href = (
+                f"https://github.com/{repo_slug}/actions/runs/{context.run_id}?check_suite_focus=true#artifacts"
+            )
+        context.iterate_artifact_meta = (
+            fake_item,
+            owner,
+            repo_name,
+            context.run_id,
+            repo_slug or context.repo,
+        )
+        _log_iterate(f"using ARTIFACTS_ROOT for iterate artifact {local_source}")
+        return context.iterate_artifact_meta
+
     # Professional note: CI exposes GH_TOKEN for artifact downloads; fall back to
     # GITHUB_TOKEN so local runs remain functional per "Prefer the Actions
     # Artifacts API" guidance.
@@ -544,6 +624,43 @@ def _download_iterate_artifact_zip(
     """Download the iterate artifact zip into *destination* when it exists remotely."""
 
     expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    local_source = _local_iterate_source(context, expected_stem)
+    if local_source:
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return (expected_stem, None, False)
+
+        if local_source.is_file():
+            try:
+                shutil.copy2(local_source, destination)
+            except OSError:
+                return (expected_stem, None, False)
+            _log_iterate(
+                f"copied iterate archive from ARTIFACTS_ROOT {local_source} -> {destination}"
+            )
+            context.iterate_found_cache = True
+            if not context.iterate_artifact_meta:
+                _select_iterate_artifact(context, expected_stem)
+            return (expected_stem, None, True)
+
+        try:
+            with zipfile.ZipFile(destination, "w") as archive:
+                for item in sorted(local_source.rglob("*")):
+                    if not item.is_file():
+                        continue
+                    rel = item.relative_to(local_source)
+                    archive.write(item, arcname=rel.as_posix())
+        except (FileNotFoundError, OSError, zipfile.BadZipFile):
+            return (expected_stem, None, False)
+        _log_iterate(
+            f"zipped iterate payload from ARTIFACTS_ROOT {local_source} -> {destination}"
+        )
+        context.iterate_found_cache = True
+        if not context.iterate_artifact_meta:
+            _select_iterate_artifact(context, expected_stem)
+        return (expected_stem, None, True)
+
     metadata = _select_iterate_artifact(context, expected_stem)
     if not metadata:
         return None
@@ -1736,6 +1853,33 @@ def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
 def _batch_status(diag: Optional[Path], context: Context) -> str:
     run_id = context.batch_run_id
     attempt = context.batch_run_attempt or context.run_attempt or "n/a"
+    override_root = _artifacts_override_root(context)
+    if override_root:
+        batch_override = override_root / "batch-check"
+        try:
+            files = [p for p in batch_override.rglob("*") if p.is_file()]
+        except (FileNotFoundError, OSError):
+            files = []
+        if files:
+            meaningful = [
+                p
+                for p in files
+                if p.name.lower() not in {"status.txt", "missing.txt"}
+            ]
+            if meaningful:
+                status_path = batch_override / "STATUS.txt"
+                try:
+                    # Professional note: per "Add support for optional environment variable
+                    # ARTIFACTS_ROOT", override the API polling sentinel when local artifacts
+                    # already exist so STATUS.txt reflects the current run instead of the
+                    # previous "no completed run" timeout message.
+                    status_path.write_text(
+                        "batch-check artifacts sourced from ARTIFACTS_ROOT (current run)\n",
+                        encoding="utf-8",
+                    )
+                except OSError:
+                    pass
+
     if run_id and diag:
         logs_dir = diag / "logs"
         try:

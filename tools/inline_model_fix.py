@@ -572,14 +572,28 @@ def stage_phase(args: argparse.Namespace) -> None:
 
 
 def upload_file(path: Path, api_key: str) -> str:
-    with path.open("rb") as handle:
-        response = requests.post(
-            "https://api.openai.com/v1/files",
-            headers={"Authorization": f"Bearer {api_key}"},
-            files={"file": (path.name, handle, "text/plain")},
-            data={"purpose": "responses"},
-            timeout=60,
+    def _post(purpose: str) -> requests.Response:
+        with path.open("rb") as handle:
+            return requests.post(
+                "https://api.openai.com/v1/files",
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": (path.name, handle, "text/plain")},
+                data={"purpose": purpose},
+                timeout=60,
+            )
+
+    # Professional note: OpenAI's Files API recently rejected the legacy
+    # ``responses`` purpose. Modern guidance documents ``user_data`` as the
+    # preferred value, but older sandboxes still only recognize
+    # ``assistants``. Try ``user_data`` first and fall back once on the legacy
+    # value when the service explicitly complains about the purpose so future
+    # maintainers do not reintroduce HTTP 400 regressions mid-incident.
+    response = _post("user_data")
+    if response.status_code == 400 and "purpose" in response.text.lower():
+        debug(
+            "OpenAI file upload rejected purpose 'user_data'; retrying with 'assistants'"
         )
+        response = _post("assistants")
     if response.status_code != 200:
         raise RuntimeError(f"File upload failed ({path}): HTTP {response.status_code} {response.text}")
     payload = response.json()
