@@ -907,6 +907,62 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Model quick-fix (inline) — Stage context
+        if: ${{ matrix.mode == 'real' && steps.verdict.outputs.has_failures == 'true' }}
+        id: inline_stage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          python tools/model_quickfix.py stage --run-id '${{ github.run_id }}' --run-attempt '${{ github.run_attempt }}' --repo "$env:GITHUB_WORKSPACE" --ctx '_ctx'
+
+      - name: Model quick-fix (inline) — Upload & request patch
+        if: ${{ matrix.mode == 'real' && steps.verdict.outputs.has_failures == 'true' && steps.inline_stage.outcome == 'success' }}
+        id: inline_request
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          python tools/model_quickfix.py call --ctx '_ctx'
+
+      - name: Model quick-fix (inline) — Apply patch
+        if: ${{ matrix.mode == 'real' && steps.verdict.outputs.has_failures == 'true' && steps.inline_stage.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          python tools/model_quickfix.py extract-patch --ctx '_ctx'
+          if (Test-Path '_ctx/fix.patch' -PathType Leaf -and (Get-Item '_ctx/fix.patch').Length -gt 0) {
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git apply --whitespace=nowarn _ctx/fix.patch
+            if ($LASTEXITCODE -ne 0) { throw 'git apply failed' }
+            git add -A
+            git diff --cached --quiet
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host 'No staged changes after applying patch.'
+            } elseif ($LASTEXITCODE -eq 1) {
+              git commit -am 'codex: inline quick-fix' -m '"Apply the smallest change that resolves the FIRST failing step described in failpack.log."'
+              git push
+            } else {
+              throw 'git diff --cached --quiet returned unexpected status.'
+            }
+          } else {
+            Write-Host 'No fix.patch generated; skipping apply.'
+          }
+
+      - name: Model quick-fix (inline) — Package context
+        if: ${{ always() && steps.inline_stage.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          python tools/model_quickfix.py package --ctx '_ctx' --repo "$env:GITHUB_WORKSPACE" --run-id '${{ github.run_id }}' --run-attempt '${{ github.run_attempt }}'
+
       - name: Preflight OpenAI auth (diagnostics)
         id: openai_auth
         if: ${{ always() }}
@@ -1023,6 +1079,17 @@ jobs:
             if (Test-Path -LiteralPath $p) {
               Copy-Item -LiteralPath $p -Destination $logsDir -Force
             }
+          }
+
+          $iterateZips = @()
+          try {
+            $iterateRoot = Join-Path $cwd.Path 'logs'
+            if (Test-Path -LiteralPath $iterateRoot) {
+              $iterateZips = Get-ChildItem -Path $iterateRoot -Filter 'iterate-*.zip' -File -ErrorAction SilentlyContinue
+            }
+          } catch {}
+          foreach ($zip in $iterateZips) {
+            Copy-Item -LiteralPath $zip.FullName -Destination $logsDir -Force
           }
 
           $iterAuthPath = Join-Path $logsDir 'iterate_auth.json'
@@ -1747,8 +1814,6 @@ jobs:
       - name: Locate diagnostics URL
         if: ${{ always() }}
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $dest = Join-Path $env:RUNNER_TEMP 'codex_nudge_url.txt'
           $summaryHeader = "### Diagnostics site"
@@ -1763,68 +1828,7 @@ jobs:
           $owner = $repoParts[0]
           $repo  = $repoParts[1]
           $pagesBase = "https://$owner.github.io/$repo"
-          $workflowPath = '.github/workflows/codex-auto-iterate.yml'
-          $headers = @{
-            Accept      = 'application/vnd.github+json'
-            'User-Agent' = 'emit-nudge-diag'
-          }
-
-          if ($env:GH_TOKEN) {
-            $headers.Authorization = "Bearer $env:GH_TOKEN"
-          }
-
-          $workflowId = $null
-          try {
-            $workflow = Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$repo/actions/workflows/$workflowPath" -Headers $headers -ErrorAction Stop
-            $workflowId = $workflow.id
-          } catch {
-            Set-Content -LiteralPath $dest -Value 'iterate workflow lookup failed' -Encoding UTF8
-            $summaryHeader | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            "- Iterate workflow lookup failed; no diagnostics link." | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            return
-          }
-
-          if (-not $workflowId) {
-            Set-Content -LiteralPath $dest -Value 'iterate workflow id unavailable' -Encoding UTF8
-            $summaryHeader | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            "- Iterate workflow id unavailable; no diagnostics link." | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            return
-          }
-
-          $pollSeconds = 20
-          $deadline = [DateTime]::UtcNow.AddMinutes(10)
-          $run = $null
-          $attempt = 0
-
-          while ([DateTime]::UtcNow -lt $deadline) {
-            $attempt += 1
-            try {
-              $runs = Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$repo/actions/workflows/$workflowId/runs?per_page=20&head_sha=${{ github.sha }}" -Headers $headers -ErrorAction Stop
-            } catch {
-              Set-Content -LiteralPath $dest -Value 'iterate run poll failed' -Encoding UTF8
-              $summaryHeader | Out-File -Append $env:GITHUB_STEP_SUMMARY
-              "- Iterate workflow polling failed; no diagnostics link." | Out-File -Append $env:GITHUB_STEP_SUMMARY
-              return
-            }
-
-            $candidates = @($runs.workflow_runs | ForEach-Object { $_ }) | Where-Object { $_ -and $_.status -eq 'completed' }
-            if ($candidates.Count -gt 0) {
-              $run = $candidates | Sort-Object run_attempt -Descending | Select-Object -First 1
-              break
-            }
-
-            Start-Sleep -Seconds $pollSeconds
-          }
-
-          if (-not $run) {
-            Set-Content -LiteralPath $dest -Value 'iterate workflow not completed' -Encoding UTF8
-            $summaryHeader | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            "- Iterate workflow has not completed; diagnostics link unavailable." | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            return
-          }
-
-          $runAttempt = if ($run.run_attempt) { [int]$run.run_attempt } else { 1 }
-          $bundle = "$pagesBase/diag/$($run.id)-$runAttempt/"
+          $bundle = "$pagesBase/diag/${{ github.run_id }}-${{ github.run_attempt }}/"
           Set-Content -LiteralPath $dest -Value $bundle -Encoding UTF8
           $summaryHeader | Out-File -Append $env:GITHUB_STEP_SUMMARY
           "- Diagnostics: [$bundle]($bundle)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
