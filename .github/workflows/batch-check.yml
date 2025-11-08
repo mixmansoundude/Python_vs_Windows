@@ -1993,6 +1993,7 @@ jobs:
           $Artifacts = "${{ steps.prep.outputs.ARTIFACTS }}"
           $Iter = Join-Path $Artifacts 'iterate'
           $sentinel = Join-Path $Artifacts 'MISSING.txt'
+          $iterSentinel = Join-Path $Artifacts 'iterate.MISSING.txt'
           # Professional note: _artifacts/ mirrors producer payloads exactly; the sentinel documents gaps for external analysts.
           $files = @()
           if (Test-Path $Iter) {
@@ -2000,6 +2001,7 @@ jobs:
           }
           if (-not $files -or $files.Count -eq 0) {
             "iterate artifact missing or empty" | Out-File -Append -Encoding UTF8 $sentinel
+            "iterate artifact missing or empty" | Out-File -Append -Encoding UTF8 $iterSentinel
           }
 
       - name: Fetch batch-check artifacts

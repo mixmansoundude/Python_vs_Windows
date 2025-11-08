@@ -203,6 +203,84 @@ def download_logs(repo: str, run_id: str, token: str, dest: Path) -> None:
     dest.write_bytes(response.content)
 
 
+def list_run_artifacts(repo: str, run_id: str, token: str) -> List[dict]:
+    url = f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "inline-model-fix",
+        "Accept": "application/vnd.github+json",
+    }
+    debug(f"Listing artifacts from {url}")
+    response = requests.get(url, headers=headers, timeout=60)
+    if response.status_code != 200:
+        debug(f"artifact_list_error=HTTP {response.status_code}")
+        return []
+    payload = response.json()
+    artifacts = payload.get("artifacts")
+    if not isinstance(artifacts, list):
+        return []
+    return artifacts
+
+
+def download_artifact_zip(repo: str, artifact_id: str, token: str, dest: Path) -> bool:
+    url = f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}/zip"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "inline-model-fix",
+        "Accept": "application/vnd.github+json",
+    }
+    debug(f"Downloading artifact {artifact_id} from {url}")
+    response = requests.get(url, headers=headers, timeout=60)
+    if response.status_code != 200:
+        debug(f"artifact_download_error={artifact_id} status={response.status_code}")
+        return False
+    dest.write_bytes(response.content)
+    return True
+
+
+ARTIFACT_FALLBACK_PREFIXES = [
+    "selftest-verdict-",
+    "ci_test_results-",
+    "test-logs-",
+]
+
+
+def extract_fallback_artifacts(
+    repo: str,
+    run_id: str,
+    token: str,
+    dest: Path,
+    notes: List[str],
+) -> List[str]:
+    ensure_dir(dest)
+    artifacts = list_run_artifacts(repo, run_id, token)
+    selected: List[str] = []
+    for prefix in ARTIFACT_FALLBACK_PREFIXES:
+        for item in artifacts:
+            name = str(item.get("name", ""))
+            if not name.startswith(prefix):
+                continue
+            if item.get("expired"):
+                notes.append(f"fallback_artifact_expired={name}")
+                continue
+            artifact_id = str(item.get("id"))
+            if not artifact_id or not artifact_id.isdigit():
+                notes.append(f"fallback_artifact_invalid_id={name}")
+                continue
+            zip_path = dest / f"{name}.zip"
+            if download_artifact_zip(repo, artifact_id, token, zip_path):
+                target_dir = dest / f"artifact-{name}"
+                try:
+                    extract_zip(zip_path, target_dir)
+                    selected.append(name)
+                    notes.append(f"fallback_artifact_downloaded={name}")
+                except Exception as exc:
+                    notes.append(f"fallback_artifact_extract_error={name} error={exc}")
+            else:
+                notes.append(f"fallback_artifact_download_failed={name}")
+    return selected
+
+
 def extract_zip(zip_path: Path, dest: Path) -> None:
     with ZipFile(zip_path) as zf:
         zf.extractall(dest)
@@ -357,22 +435,77 @@ def stage_phase(args: argparse.Namespace) -> None:
     logs_dir = ctx_dir / "logs"
     ensure_dir(logs_dir)
 
+    logs_available = True
+    fallback_names: List[str] = []
     try:
         download_logs(args.repo, args.run_id, args.token, logs_zip)
         extract_zip(logs_zip, logs_dir)
+    except RuntimeError as exc:
+        current_run = os.environ.get("GITHUB_RUN_ID")
+        current_attempt = os.environ.get("GITHUB_RUN_ATTEMPT")
+        is_current = args.run_id == (current_run or args.run_id) and args.run_attempt == (
+            current_attempt or args.run_attempt
+        )
+        if is_current and "HTTP 404" in str(exc):
+            # Professional note: GitHub withholds the current run's logs until the run completes;
+            # treat HTTP 404 as "logs not ready" so we can fall back to the uploaded artifacts.
+            logs_available = False
+            notes.append(f"log_download_pending={exc}")
+        else:
+            notes.append(f"log_download_error={exc}")
+            write_notes(ctx_dir, notes)
+            raise
     except Exception as exc:
         notes.append(f"log_download_error={exc}")
         write_notes(ctx_dir, notes)
         raise
 
-    failure_path = find_first_failure(logs_dir, notes)
+    if not logs_available:
+        fallback_root = logs_dir / "artifact_fallback"
+        fallback_names = extract_fallback_artifacts(
+            args.repo, args.run_id, args.token, fallback_root, notes
+        )
+        if fallback_names:
+            notes.append("fallback_sources=" + ",".join(sorted(fallback_names)))
+        else:
+            notes.append("fallback_sources=none")
+
+    search_root = logs_dir if logs_available else logs_dir / "artifact_fallback"
+
+    failure_path: Optional[Path] = None
+    if logs_available or fallback_names:
+        failure_path = find_first_failure(search_root, notes)
+    if not failure_path:
+        placeholder = search_root / "fallback.log"
+        ensure_dir(placeholder.parent)
+        message_lines = [
+            "Logs for the current run are not yet available from GitHub.",
+            f"run_id={args.run_id} run_attempt={args.run_attempt}",
+        ]
+        if fallback_names:
+            message_lines.append("Fallback artifacts:")
+            message_lines.extend(f"- {name}" for name in sorted(fallback_names))
+        else:
+            message_lines.append("Fallback artifacts: none located")
+        message_lines.append(
+            "Inspect the staged attachments for additional context once artifacts finish uploading."
+        )
+        placeholder.write_text("\n".join(message_lines) + "\n", encoding="utf-8")
+        notes.append("failpack_placeholder=created")
+        failure_path = placeholder
+
     if not failure_path:
         write_notes(ctx_dir, notes)
         raise SystemExit("No logs found to build failpack.")
 
     failpack_path = ctx_dir / "failpack.log"
     failpack_path.write_text(read_text(failure_path), encoding="utf-8")
-    notes.append(f"failpack_source={failure_path.relative_to(logs_dir)}")
+    relative_source = failure_path
+    try:
+        relative_source = failure_path.relative_to(search_root)
+    except ValueError:
+        pass
+    notes.append(f"failpack_source={relative_source}")
 
     guide = ctx_dir / "guide.json"
     primary, line = derive_primary(read_text(failpack_path), repo_root, notes)
