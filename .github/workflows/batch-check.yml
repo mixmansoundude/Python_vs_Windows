@@ -1877,7 +1877,7 @@ jobs:
         run: |
           $RunId = "${{ github.run_id }}"
           $Attempt = "${{ github.run_attempt }}"
-          $SiteRoot = Join-Path $PWD 'site'
+          $SiteRoot = Join-Path $PWD '_site'
           if (Test-Path $SiteRoot) { Remove-Item -Recurse -Force $SiteRoot }
           New-Item -ItemType Directory -Path $SiteRoot | Out-Null
           $DiagRoot = Join-Path $SiteRoot 'diag'
@@ -2448,7 +2448,10 @@ jobs:
           BATCH_RUN_ATTEMPT: ${{ steps.fetch_batch.outputs.run_attempt }}
           SITE: ${{ steps.prep.outputs.SITE }}
         run: |
-          python tools/diag/publish_index.py
+          python tools/diag/publish_index.py \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --out-dir "_site"
 
       - name: Append job summary
         shell: pwsh

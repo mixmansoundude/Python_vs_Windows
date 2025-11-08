@@ -2,6 +2,7 @@
 """Publish diagnostics markdown/html and site overview pages."""
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import os
@@ -130,6 +131,15 @@ def _get_context() -> Context:
         else:
             batch_run_attempt = None
     site = _get_env_path("SITE")
+    if not site:
+        out_dir_env = os.getenv("OUT_DIR")
+        if out_dir_env:
+            site = Path(out_dir_env)
+        else:
+            # Professional note: GitHub Pages expects the generated bundle under _site by
+            # default; honor that when callers omit SITE/OUT_DIR so actions/upload-pages-
+            # artifact can locate the payload without relying on a legacy 'site' folder.
+            site = Path("_site")
     return Context(
         diag=diag,
         artifacts=artifacts,
@@ -145,6 +155,21 @@ def _get_context() -> Context:
         batch_run_attempt=batch_run_attempt,
         site=site,
     )
+
+
+def _parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Publish diagnostics bundle")
+    parser.add_argument("--run-id", dest="run_id", help="override run id")
+    parser.add_argument(
+        "--run-attempt", dest="run_attempt", help="override run attempt"
+    )
+    parser.add_argument(
+        "--out-dir",
+        dest="out_dir",
+        default="_site",
+        help="site root for published artifacts",
+    )
+    return parser.parse_args(list(argv) if argv is not None else None)
 
 
 def _actions_owner_repo(context: Context) -> Optional[Tuple[str, str]]:
@@ -218,6 +243,32 @@ def _log_iterate(message: str) -> None:
             # derived requirement: diagnostics publication must continue even when the
             # filesystem disallows writing the breadcrumb log.
             pass
+
+
+def _ensure_diag_log_placeholders(context: Context) -> None:
+    """Create zero-byte sentinels so missing logs do not crash publishing."""
+
+    diag = context.diag
+    if not diag:
+        return
+
+    logs_dir = diag / "logs"
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    for name in ("batch-check.MISSING.txt", "iterate.MISSING.txt"):
+        path = logs_dir / name
+        if path.exists():
+            continue
+        try:
+            # Professional note: Publishers previously failed when these sentinels were
+            # absent; create empty placeholders so later size/stat checks downgrade to
+            # "missing" without raising FileNotFoundError.
+            path.touch()
+        except OSError:
+            continue
 
 
 def _core_iterate_files_present(root: Path) -> bool:
@@ -1434,6 +1485,17 @@ def _nonempty_file(path: Path) -> bool:
         return False
 
 
+def _safe_file_size(path: Path) -> Optional[int]:
+    """Return the file size or None when missing/inaccessible."""
+
+    try:
+        return path.stat().st_size
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+
+
 MIRROR_TEXT_LIMIT = 64_000
 MIRROR_SIZE_LIMIT = 100 * 1024 * 1024
 
@@ -1682,10 +1744,11 @@ def _batch_status(diag: Optional[Path], context: Context) -> str:
             pass
         ok_path = logs_dir / "batch-check.OK.txt"
         try:
-            ok_payload = [f"run_id={run_id}"]
             if attempt and attempt != "n/a":
-                ok_payload.append(f"run_attempt={attempt}")
-            ok_path.write_text("\n".join(ok_payload) + "\n", encoding="utf-8")
+                payload = f"{run_id}-{attempt}"
+            else:
+                payload = str(run_id)
+            ok_path.write_text(payload + "\n", encoding="utf-8")
         except OSError:
             pass
         missing_path = logs_dir / "batch-check.MISSING.txt"
@@ -2747,7 +2810,8 @@ def _build_markdown(
             rel = _relative_to_diag(file, diag)
             normalized = _normalize_link(rel)
             display_name = Path(rel).name
-            size = f"{file.stat().st_size:,} bytes"
+            size_bytes = _safe_file_size(file)
+            size = f"{size_bytes:,} bytes" if size_bytes is not None else "—"
             mirror_obj = ensure_txt_mirror(file)
             if mirror_obj and mirror_obj.exists():
                 mirror_rel = _relative_to_diag(mirror_obj, diag)
@@ -3066,7 +3130,9 @@ def _write_html(
             normalized = _normalize_link(rel)
             href = _escape_href(normalized)
             text = _escape_html(Path(rel).as_posix())
-            size = _escape_html(f"{file.stat().st_size:,} bytes")
+            size_bytes = _safe_file_size(file)
+            size_text = f"{size_bytes:,} bytes" if size_bytes is not None else "—"
+            size = _escape_html(size_text)
             mirror_obj = ensure_txt_mirror(file)
             if mirror_obj and mirror_obj.exists():
                 mirror_rel = _relative_to_diag(mirror_obj, diag)
@@ -3479,8 +3545,30 @@ def _build_site_overview(
     return markdown, "\n".join(html_lines)
 
 
-def main() -> None:
+def main(argv: Optional[Iterable[str]] = None) -> None:
+    args = _parse_args(argv)
+    if args.run_id:
+        os.environ.setdefault("RUN_ID", args.run_id)
+        os.environ.setdefault("GITHUB_RUN_ID", args.run_id)
+    if args.run_attempt:
+        os.environ.setdefault("RUN_ATTEMPT", args.run_attempt)
+        os.environ.setdefault("GITHUB_RUN_ATTEMPT", args.run_attempt)
+
+    out_dir = Path(args.out_dir or "_site")
+    if not os.getenv("SITE"):
+        os.environ["SITE"] = str(out_dir)
+    if not os.getenv("OUT_DIR"):
+        os.environ["OUT_DIR"] = str(out_dir)
+    try:
+        # Professional note: The Pages deploy step expects the rendered bundle under
+        # _site by default; proactively create it so later writes do not fail even if
+        # the prep step skipped directory creation due to retries.
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
     context = _get_context()
+    _ensure_diag_log_placeholders(context)
     _set_iterate_log_destination(context.diag)
     _ensure_iterate_log_archive(context)
     _normalize_repo_zip(context)
@@ -3547,4 +3635,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
