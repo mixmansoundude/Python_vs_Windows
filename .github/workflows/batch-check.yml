@@ -1794,10 +1794,110 @@ jobs:
             '- No gate summary generated.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
 
+  publish-diag:
+    name: Publish diagnostics site
+    needs: [selftest]
+    if: ${{ always() }}
+    runs-on: windows-latest
+    environment:
+      name: github-pages
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare diagnostics workspace
+        id: prep
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runId = "${{ github.run_id }}"
+          $attempt = "${{ github.run_attempt }}"
+          $siteRoot = Join-Path $PWD '_site'
+          if (Test-Path $siteRoot) { Remove-Item -LiteralPath $siteRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $siteRoot | Out-Null
+          $diagRoot = Join-Path $siteRoot 'diag'
+          New-Item -ItemType Directory -Path $diagRoot -Force | Out-Null
+          $diagRun = Join-Path $diagRoot ("$runId-$attempt")
+          New-Item -ItemType Directory -Path $diagRun -Force | Out-Null
+          New-Item -ItemType File -Path (Join-Path $siteRoot '.nojekyll') -Force | Out-Null
+          New-Item -ItemType File -Path (Join-Path $diagRun '.nojekyll') -Force | Out-Null
+          $artifacts = Join-Path $diagRun '_artifacts'
+          New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
+          $short = "${{ github.sha }}"
+          if ($short.Length -gt 7) { $short = $short.Substring(0,7) }
+          "SITE=$siteRoot"       | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          "DIAG=$diagRun"        | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          "ARTIFACTS=$artifacts" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          "SHORTSHA=$short"      | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
+      - name: Publish diagnostics bundle
+        shell: pwsh
+        env:
+          SITE: ${{ steps.prep.outputs.SITE }}
+          DIAG: ${{ steps.prep.outputs.DIAG }}
+          ARTIFACTS: ${{ steps.prep.outputs.ARTIFACTS }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHORTSHA: ${{ steps.prep.outputs.SHORTSHA }}
+          BATCH_RUN_ID: ${{ github.run_id }}
+          BATCH_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & tools/diag/publish_index.ps1
+
+      - name: Verify diagnostics mirrors
+        shell: pwsh
+        env:
+          SITE: ${{ steps.prep.outputs.SITE }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runPath = "diag/$env:RUN_ID-$env:RUN_ATTEMPT"
+          $root = Join-Path $env:SITE $runPath
+          $indexHtml = Join-Path $root 'index.html'
+          if (-not (Test-Path -LiteralPath $indexHtml)) {
+            throw "Expected diagnostics index missing: $indexHtml"
+          }
+          $indexTxt = Join-Path $root 'index.txt'
+          if (-not (Test-Path -LiteralPath $indexTxt)) {
+            throw "Diagnostics text mirror missing: $indexTxt"
+          }
+          $htmlFiles = Get-ChildItem -Path $root -Filter '*.html' -Recurse -File -ErrorAction SilentlyContinue
+          foreach ($html in $htmlFiles) {
+            $txtPath = [System.IO.Path]::ChangeExtension($html.FullName, '.txt')
+            if (-not (Test-Path -LiteralPath $txtPath)) {
+              throw "Missing .txt mirror for $($html.FullName)"
+            }
+          }
+
+      - uses: actions/configure-pages@v4
+        if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Upload Pages artifact
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.prep.outputs.SITE }}
+
+      - name: Deploy to GitHub Pages
+        if: ${{ github.event_name != 'pull_request' }}
+        id: deployment
+        uses: actions/deploy-pages@v4
+
   emit-nudge:
     name: Emit Codex nudge (on failure)
     needs:
       - selftest-gate
+      - publish-diag
     runs-on: windows-latest
     if: ${{ always() && needs.selftest-gate.outputs.has_failures == 'true' }}
     steps:
