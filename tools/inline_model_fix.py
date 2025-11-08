@@ -435,30 +435,38 @@ def stage_phase(args: argparse.Namespace) -> None:
     logs_dir = ctx_dir / "logs"
     ensure_dir(logs_dir)
 
-    logs_available = True
+    logs_available = False
     fallback_names: List[str] = []
-    try:
-        download_logs(args.repo, args.run_id, args.token, logs_zip)
-        extract_zip(logs_zip, logs_dir)
-    except RuntimeError as exc:
-        current_run = os.environ.get("GITHUB_RUN_ID")
-        current_attempt = os.environ.get("GITHUB_RUN_ATTEMPT")
-        is_current = args.run_id == (current_run or args.run_id) and args.run_attempt == (
-            current_attempt or args.run_attempt
-        )
-        if is_current and "HTTP 404" in str(exc):
-            # Professional note: GitHub withholds the current run's logs until the run completes;
-            # treat HTTP 404 as "logs not ready" so we can fall back to the uploaded artifacts.
-            logs_available = False
-            notes.append(f"log_download_pending={exc}")
-        else:
+    current_run = os.environ.get("GITHUB_RUN_ID")
+    current_attempt = os.environ.get("GITHUB_RUN_ATTEMPT")
+    is_current_run = False
+    if current_run and current_run == args.run_id:
+        is_current_run = True
+        if current_attempt and current_attempt != args.run_attempt:
+            is_current_run = False
+
+    if is_current_run:
+        # Professional note: GitHub withholds the current run's logs until the workflow completes;
+        # skip the logs.zip fetch entirely so same-run staging always falls back to artifacts.
+        notes.append("log_download_skipped=current_run")
+    else:
+        try:
+            download_logs(args.repo, args.run_id, args.token, logs_zip)
+            extract_zip(logs_zip, logs_dir)
+            logs_available = True
+        except RuntimeError as exc:
+            if "HTTP 404" in str(exc):
+                # Professional note: prior runs occasionally surface transient 404s while GitHub finalizes logs;
+                # treat them as pending so artifact fallbacks still produce a FailPak.
+                notes.append(f"log_download_pending={exc}")
+            else:
+                notes.append(f"log_download_error={exc}")
+                write_notes(ctx_dir, notes)
+                raise
+        except Exception as exc:
             notes.append(f"log_download_error={exc}")
             write_notes(ctx_dir, notes)
             raise
-    except Exception as exc:
-        notes.append(f"log_download_error={exc}")
-        write_notes(ctx_dir, notes)
-        raise
 
     if not logs_available:
         fallback_root = logs_dir / "artifact_fallback"

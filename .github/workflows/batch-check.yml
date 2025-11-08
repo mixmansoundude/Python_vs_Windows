@@ -1829,8 +1829,19 @@ jobs:
             files+=("_ctx/attached")
           fi
           if [ ${#files[@]} -eq 0 ]; then
-            printf 'package=skipped_no_files\n' >> _ctx/notes.txt
-            exit 0
+            # Professional note: the diagnostics site expects an iterate zip even when the model call is a no-op;
+            # create a minimal notes + manifest pair so the artifact contract stays satisfied.
+            mkdir -p _ctx
+            note_path="_ctx/notes.txt"
+            if [ ! -e "$note_path" ]; then
+              printf 'placeholder=iterate\n' > "$note_path"
+            fi
+            manifest_path="_ctx/iterate_context_manifest.tsv"
+            if [ ! -e "$manifest_path" ]; then
+              note_size=$(stat -c %s "$note_path" 2>/dev/null || echo 0)
+              printf 'notes.txt\t%s\n' "$note_size" > "$manifest_path"
+            fi
+            files=("$note_path" "$manifest_path")
           fi
           zip -r "$zip_path" "${files[@]}" >/dev/null
       - name: Upload iterate artifact

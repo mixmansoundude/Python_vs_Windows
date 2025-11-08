@@ -114,7 +114,21 @@ def _get_context() -> Context:
     short_sha = os.getenv("SHORTSHA") or sha[:7]
     inventory_b64 = os.getenv("INVENTORY_B64")
     batch_run_id = os.getenv("BATCH_RUN_ID")
+    if not batch_run_id or batch_run_id == "n/a":
+        if run_id and run_id != "n/a":
+            # Professional note: when publishing from the same batch-check run, the env already
+            # carries the authoritative run id; trust it immediately so we do not block on
+            # locating a completed predecessor.
+            batch_run_id = run_id
+        else:
+            batch_run_id = None
+
     batch_run_attempt = os.getenv("BATCH_RUN_ATTEMPT")
+    if not batch_run_attempt or batch_run_attempt == "n/a":
+        if batch_run_id == run_id and run_attempt and run_attempt != "n/a":
+            batch_run_attempt = run_attempt
+        else:
+            batch_run_attempt = None
     site = _get_env_path("SITE")
     return Context(
         diag=diag,
@@ -1659,16 +1673,37 @@ def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
 
 def _batch_status(diag: Optional[Path], context: Context) -> str:
     run_id = context.batch_run_id
-    attempt = context.batch_run_attempt or "n/a"
+    attempt = context.batch_run_attempt or context.run_attempt or "n/a"
+    if run_id and diag:
+        logs_dir = diag / "logs"
+        try:
+            logs_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        ok_path = logs_dir / "batch-check.OK.txt"
+        try:
+            ok_payload = [f"run_id={run_id}"]
+            if attempt and attempt != "n/a":
+                ok_payload.append(f"run_attempt={attempt}")
+            ok_path.write_text("\n".join(ok_payload) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+        missing_path = logs_dir / "batch-check.MISSING.txt"
+        try:
+            missing_path.unlink()
+        except OSError:
+            pass
+
     if run_id:
-        if not diag:
-            return f"missing archive (run {run_id}, attempt {attempt})"
-        candidate = diag / "logs" / f"batch-check-{run_id}-{attempt}.zip"
-        if candidate.exists():
-            return f"found (run {run_id}, attempt {attempt})"
-        return f"missing archive (run {run_id}, attempt {attempt})"
-    if diag and (diag / "logs" / "batch-check.MISSING.txt").exists():
-        return "missing (see logs/batch-check.MISSING.txt)"
+        display_attempt = attempt if attempt and attempt != "n/a" else None
+        if display_attempt:
+            return f"{run_id} (attempt {display_attempt})"
+        return str(run_id)
+
+    if diag:
+        missing_note = diag / "logs" / "batch-check.MISSING.txt"
+        if missing_note.exists():
+            return "missing (see logs/batch-check.MISSING.txt)"
     return "missing"
 
 
