@@ -2450,9 +2450,21 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
     has_files = False
     for temp_dir in temp_dirs:
         for path in temp_dir.rglob("*"):
-            if path.is_file():
-                has_files = True
-                break
+            if not path.is_file():
+                continue
+            name_lower = path.name.lower()
+            if name_lower == "discovery.log.txt":
+                # derived requirement: run 19208683015-1 surfaced a zero-byte
+                # discovery log without any model output; ignore it so the
+                # status banner stays truthful.
+                continue
+            try:
+                if path.stat().st_size == 0:
+                    continue
+            except OSError:
+                continue
+            has_files = True
+            break
         if has_files:
             break
     if not has_files:

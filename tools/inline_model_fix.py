@@ -571,7 +571,7 @@ def stage_phase(args: argparse.Namespace) -> None:
     write_notes(ctx_dir, notes)
 
 
-def upload_file(path: Path, api_key: str) -> str:
+def upload_file(path: Path, api_key: str, ctx_dir: Path) -> str:
     def _post(purpose: str) -> requests.Response:
         with path.open("rb") as handle:
             return requests.post(
@@ -582,18 +582,20 @@ def upload_file(path: Path, api_key: str) -> str:
                 timeout=60,
             )
 
-    # Professional note: OpenAI's Files API recently rejected the legacy
-    # ``responses`` purpose. Modern guidance documents ``user_data`` as the
-    # preferred value, but older sandboxes still only recognize
-    # ``assistants``. Try ``user_data`` first and fall back once on the legacy
-    # value when the service explicitly complains about the purpose so future
-    # maintainers do not reintroduce HTTP 400 regressions mid-incident.
-    response = _post("user_data")
+    # Professional note: Runs like 19197599278-1 confirmed the Files API now
+    # expects the ``assistants`` purpose. Retain a guarded ``user_data``
+    # fallback so sandboxes that lag behind do not regress with HTTP 400
+    # responses mid-incident.
+    purpose = "assistants"
+    response = _post(purpose)
     if response.status_code == 400 and "purpose" in response.text.lower():
         debug(
-            "OpenAI file upload rejected purpose 'user_data'; retrying with 'assistants'"
+            "OpenAI file upload rejected purpose 'assistants'; retrying with 'user_data'"
         )
-        response = _post("assistants")
+        append_note(ctx_dir, "file_upload_purpose_retry=user_data")
+        purpose = "user_data"
+        response = _post(purpose)
+    append_note(ctx_dir, f"file_upload_purpose={purpose}")
     if response.status_code != 200:
         raise RuntimeError(f"File upload failed ({path}): HTTP {response.status_code} {response.text}")
     payload = response.json()
@@ -618,6 +620,51 @@ def extract_patch(response_json: dict) -> str:
     return ""
 
 
+def _record_decision(
+    ctx_dir: Path,
+    *,
+    status: str,
+    reason: Optional[str],
+    response_payload: Optional[dict],
+    patch_text: Optional[str],
+) -> None:
+    # derived requirement: run 19208683015-1 produced discovery-only iterate zips;
+    # keep human-readable breadcrumbs in every outcome to avoid empty artifacts.
+    """Persist iterate breadcrumbs even when the model cannot return a diff."""
+
+    decision_payload = {"status": status}
+    if reason:
+        decision_payload["reason"] = reason
+    decision_path = ctx_dir / "decision.json"
+    decision_path.write_text(
+        json.dumps(decision_payload, indent=2) + "\n", encoding="utf-8"
+    )
+
+    decision_txt = ctx_dir / "decision.txt"
+    decision_lines = [f"status={status}"]
+    if reason:
+        decision_lines.append(f"reason={reason}")
+    decision_txt.write_text("\n".join(decision_lines) + "\n", encoding="utf-8")
+
+    response_path = ctx_dir / "response.json"
+    if response_payload is None:
+        if not response_path.exists():
+            response_path.write_text("{}\n", encoding="utf-8")
+    else:
+        response_path.write_text(
+            json.dumps(response_payload, indent=2) + "\n", encoding="utf-8"
+        )
+
+    patch_path = ctx_dir / "fix.patch"
+    material = patch_text if patch_text is not None else ""
+    patch_path.write_text(material, encoding="utf-8")
+
+    append_note(
+        ctx_dir,
+        f"decision_status={status} reason={reason or 'none'}",
+    )
+
+
 def call_phase(args: argparse.Namespace) -> None:
     repo_root = Path.cwd()
     ctx_dir = repo_root / "_ctx"
@@ -633,6 +680,13 @@ def call_phase(args: argparse.Namespace) -> None:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         append_note(ctx_dir, "openai_call=skipped_missing_key")
+        _record_decision(
+            ctx_dir,
+            status="error",
+            reason="missing_api_key",
+            response_payload=None,
+            patch_text="",
+        )
         return
 
     file_ids: List[str] = []
@@ -642,12 +696,30 @@ def call_phase(args: argparse.Namespace) -> None:
         if not path.exists():
             append_note(ctx_dir, f"openai_upload_missing={rel}")
             continue
-        file_id = upload_file(path, api_key)
+        try:
+            file_id = upload_file(path, api_key, ctx_dir)
+        except RuntimeError as exc:
+            append_note(ctx_dir, f"openai_upload_error={exc}")
+            _record_decision(
+                ctx_dir,
+                status="error",
+                reason="upload_failed",
+                response_payload=None,
+                patch_text="",
+            )
+            return
         file_ids.append(file_id)
         append_note(ctx_dir, f"uploaded={rel} file_id={file_id}")
 
     if not file_ids:
         append_note(ctx_dir, "openai_call=skipped_no_files")
+        _record_decision(
+            ctx_dir,
+            status="error",
+            reason="no_files",  # derived requirement: keep diagnostics truthful when nothing was staged
+            response_payload=None,
+            patch_text="",
+        )
         return
 
     prompt_text = textwrap.dedent(
@@ -667,35 +739,61 @@ def call_phase(args: argparse.Namespace) -> None:
         ],
     }
 
-    response = requests.post(
-        "https://api.openai.com/v1/responses",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        data=json.dumps(payload),
-        timeout=120,
-    )
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            data=json.dumps(payload),
+            timeout=120,
+        )
+    except requests.RequestException as exc:
+        append_note(ctx_dir, f"openai_call_exception={exc}")
+        _record_decision(
+            ctx_dir,
+            status="error",
+            reason="request_exception",
+            response_payload=None,
+            patch_text="",
+        )
+        return
 
     if response.status_code != 200:
         append_note(
             ctx_dir,
             f"openai_call_error=HTTP {response.status_code} body={response.text[:400]}",
         )
+        _record_decision(
+            ctx_dir,
+            status="error",
+            reason=f"http_{response.status_code}",
+            response_payload=None,
+            patch_text="",
+        )
         return
 
     response_json = response.json()
-    (ctx_dir / "response.json").write_text(
-        json.dumps(response_json, indent=2) + "\n", encoding="utf-8"
-    )
-
     patch = extract_patch(response_json)
-    patch_path = ctx_dir / "fix.patch"
-    patch_path.write_text(patch, encoding="utf-8")
     if patch.strip():
         append_note(ctx_dir, "openai_patch=received")
+        _record_decision(
+            ctx_dir,
+            status="success",
+            reason="diff_generated",
+            response_payload=response_json,
+            patch_text=patch,
+        )
     else:
         append_note(ctx_dir, "openai_patch=empty")
+        _record_decision(
+            ctx_dir,
+            status="success",
+            reason="empty_patch",
+            response_payload=response_json,
+            patch_text="",
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
