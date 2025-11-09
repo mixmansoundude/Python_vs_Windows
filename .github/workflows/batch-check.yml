@@ -2096,6 +2096,46 @@ jobs:
             cp -a "$src"/. "$dst"/ || true
           fi
 
+      - name: Download CI NDJSON artifacts
+        if: ${{ always() }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.prep.outputs.ARTIFACTS }}/batch-check/_ci_artifacts
+
+      - name: Mirror NDJSON into diagnostics bundle
+        if: ${{ always() }}
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          ARTIFACTS_DIR: ${{ steps.prep.outputs.ARTIFACTS }}
+          DIAG_DIR: ${{ steps.prep.outputs.DIAG }}
+          SITE_DIR: ${{ steps.prep.outputs.SITE }}
+        run: |
+          set -euo pipefail
+          # Professional note: Quote "Mirror NDJSON locally for the publisher" so diagnostics reuse
+          # current-run evidence without waiting on remote polling.
+          src_root="$ARTIFACTS_DIR/batch-check/_ci_artifacts"
+          artifacts_root="$ARTIFACTS_DIR/batch-check"
+          diag_root="$DIAG_DIR/_artifacts/batch-check"
+          site_root="$SITE_DIR/_artifacts/batch-check"
+          mkdir -p "$artifacts_root" "$diag_root" "$site_root"
+          shopt -s dotglob nullglob
+          for artifact_dir in "$src_root"/*; do
+            [ -d "$artifact_dir" ] || continue
+            ndjson=$(find "$artifact_dir" -type f -name '*.ndjson' -print -quit)
+            [ -n "$ndjson" ] || continue
+            base=$(basename "$artifact_dir")
+            suffix="${base#ci_test_results-}"
+            suffix="${suffix%-${RUN_ATTEMPT}}"
+            suffix="${suffix%-${RUN_ID}}"
+            target="ci_test_results-${suffix}.ndjson"
+            install -D "$ndjson" "$artifacts_root/$target"
+            install -D "$ndjson" "$diag_root/$target"
+            install -D "$ndjson" "$site_root/$target"
+          done
+
       - name: Package iterate logs archive
         if: ${{ always() }}
         shell: bash

@@ -866,6 +866,7 @@ def _iterate_logs_found(context: Context) -> bool:
                 except FileNotFoundError:
                     pass
 
+    discovery_only = False
     if local_found and iterate_root:
         try:
             has_payload = any(
@@ -881,10 +882,15 @@ def _iterate_logs_found(context: Context) -> bool:
             # contained discovery.log breadcrumbs. Treat such archives as missing so the
             # status line stays consistent with the empty payload.
             local_found = False
+            discovery_only = True
 
     if local_found:
         context.iterate_found_cache = True
         return True
+
+    if discovery_only:
+        context.iterate_found_cache = False
+        return False
 
     # derived requirement: CI run 18988034718-1 mirrored an iterate zip to the
     # Actions artifact inventory but not to the local publish workspace. Confirm

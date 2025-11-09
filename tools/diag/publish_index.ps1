@@ -26,11 +26,31 @@ $InventoryB64 = $env:INVENTORY_B64
 $BatchRunId   = $env:BATCH_RUN_ID
 $BatchRunAttempt = $env:BATCH_RUN_ATTEMPT
 $preferLocalArtifacts = $false
+$preferLocalIterate = $false
 $artifactsOverride = $env:ARTIFACTS_ROOT
+$localStatusPath = $null
+$localRunJson = $null
 if ($artifactsOverride -and (Test-Path -LiteralPath $artifactsOverride)) {
-    # Professional note: the diagnostics workflow already staged _artifacts locally; prefer them to avoid redundant API polling.
+    # Professional note: prefer the staged diagnostics tree while giving the local mirrors up to 60 seconds to settle.
     $Artifacts = $artifactsOverride
-    $preferLocalArtifacts = $true
+    $preferLocalIterate = $true
+    $batchDir = Join-Path $Artifacts 'batch-check'
+    $localStatusPath = Join-Path $batchDir 'STATUS.txt'
+    $localRunJson = Join-Path $batchDir 'run.json'
+    $deadline = (Get-Date).AddSeconds(60)
+    $localReady = $false
+    while (-not $localReady -and [DateTime]::UtcNow -lt $deadline) {
+        $statusExists = Test-Path -LiteralPath $localStatusPath
+        $runJsonExists = Test-Path -LiteralPath $localRunJson
+        if ($statusExists -and $runJsonExists) {
+            $localReady = $true
+            break
+        }
+        Start-Sleep -Seconds 5
+    }
+    if ($localReady) {
+        $preferLocalArtifacts = $true
+    }
 }
 
 if ($preferLocalArtifacts) {
@@ -42,7 +62,6 @@ if ($preferLocalArtifacts) {
             $env:BATCH_STATUS_OVERRIDE = $localStatus
         }
     }
-    $localRunJson = Join-Path $batchDir 'run.json'
     if (Test-Path -LiteralPath $localRunJson) {
         try { $meta = Get-Content -Raw -LiteralPath $localRunJson | ConvertFrom-Json } catch { $meta = $null }
         if ($meta) {
@@ -315,7 +334,7 @@ if ($iterateZipPath -and (Test-Path $iterateZipPath)) {
     } catch {}
 }
 
-if (-not $zipReady -and $logDir -and -not $preferLocalArtifacts) {
+if (-not $zipReady -and $logDir -and -not $preferLocalIterate) {
     # Professional note: the workflow maps the Actions token to GH_TOKEN; fall back
     # to GITHUB_TOKEN so local runs stay compatible with the published contract.
     $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
