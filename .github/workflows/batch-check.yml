@@ -176,8 +176,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Upload CI NDJSON (on failure)
-        if: ${{ failure() }}
+      - name: Upload CI NDJSON
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: ci_test_results-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -365,15 +365,76 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Evaluate iterate gate
+        if: ${{ always() }}
+        id: iterate_gate
+        shell: pwsh
+        run: |
+          function Read-Ndjson([string]$path) {
+            if (-not (Test-Path -LiteralPath $path)) { return @() }
+            try {
+              return Get-Content -Raw -LiteralPath $path -ErrorAction Stop |
+                Select-String -AllMatches '^\{.*\}$' |
+                ForEach-Object {
+                  try { $_.Matches.Value | ConvertFrom-Json } catch { $null }
+                }
+            } catch {
+              return @()
+            }
+          }
+
+          $rows = @()
+          $rows += Read-Ndjson 'tests\~test-results.ndjson'
+          if (-not $rows) { $rows += Read-Ndjson 'ci_test_results.ndjson' }
+
+          $shouldRun = $false
+          $hasRows = ($rows -and $rows.Count -gt 0)
+          if (-not $hasRows) {
+            $shouldRun = $true
+          } else {
+            $allowedStates = @('ok','no_python_files','venv_env','degraded_env')
+            foreach ($row in $rows) {
+              if ($null -eq $row) { continue }
+              if ($row.PSObject.Properties.Name -contains 'pass' -and $row.pass -eq $false) {
+                $shouldRun = $true
+                break
+              }
+              if ($row.PSObject.Properties.Name -contains 'status' -and [string]::IsNullOrWhiteSpace($row.status) -eq $false) {
+                if ([string]$row.status -eq 'failed') {
+                  $shouldRun = $true
+                  break
+                }
+              }
+              if ($row.PSObject.Properties.Name -contains 'details' -and $row.details) {
+                $state = $null
+                if ($row.details -is [psobject] -and $row.details.PSObject.Properties.Name -contains 'state') {
+                  $state = [string]$row.details.state
+                }
+                if ($state -and $state -notin $allowedStates -and (
+                    $row.id -eq 'bootstrap.state' -or $row.id -eq 'self.bootstrap.state')) {
+                  $shouldRun = $true
+                  break
+                }
+              }
+            }
+          }
+
+          $value = if ($shouldRun) { 'true' } else { 'false' }
+          "should_run=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          if (-not $hasRows) {
+            # Professional note: missing NDJSON keeps the iterate helper active so diagnostics explain unknown outcomes.
+            "gate_reason=ndjson_missing" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          }
+
       - name: Install requests for inline model helper
-        if: ${{ failure() }}
+        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
           python -m pip install requests
 
       - name: Stage inline model context (fail-only)
-        if: ${{ failure() }}
+        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -385,7 +446,7 @@ jobs:
             --token "${{ github.token }}"
 
       - name: Call inline model (fail-only)
-        if: ${{ failure() }}
+        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
         shell: pwsh
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -393,7 +454,7 @@ jobs:
           python tools/inline_model_fix.py call
 
       - name: Upload iterate logs (fail-only)
-        if: ${{ failure() }}
+        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: iterate-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -679,6 +740,14 @@ jobs:
             if ($hasPass) {
               if ($r.pass -eq $false) { $has = $true }
               continue
+            }
+
+            if ($r.PSObject.Properties.Name -contains 'status') {
+              $statusText = [string]$r.status
+              if ($statusText -eq 'failed') {
+                # derived requirement: some harness rows only expose status=failed; mirror the iterate gate logic so model assist kicks in.
+                $has = $true
+              }
             }
 
             if ($r.id -eq 'bootstrap.state' -and $r.details.state -and $r.details.state -notin $allowedStates) { $has = $true }
@@ -2096,6 +2165,19 @@ jobs:
           New-Item -ItemType Directory -Path $BatchRoot -Force | Out-Null
           $statusPath = Join-Path $BatchRoot 'STATUS.txt'
           $missingPath = Join-Path $ArtifactsRoot 'MISSING.txt'
+          $localRunJson = Join-Path $BatchRoot 'run.json'
+          if ((Test-Path -LiteralPath $localRunJson) -and (Test-Path -LiteralPath $statusPath)) {
+            # derived requirement: when the publisher already mirrored run.json/STATUS locally, skip the GitHub polling loop entirely.
+            try {
+              $meta = Get-Content -Raw -LiteralPath $localRunJson | ConvertFrom-Json
+            } catch { $meta = $null }
+            if ($meta) {
+              if ($meta.run_id) { "run_id=$($meta.run_id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append }
+              if ($meta.run_attempt) { "run_attempt=$($meta.run_attempt)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append }
+              if ($meta.html_url) { "run_url=$($meta.html_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append }
+            }
+            return
+          }
           # Professional note: correlate the batch-check workflow by commit SHA so the diagnostics bundle mirrors
           # the matching self-test run; missing runs append a sentinel entry so downstream readers understand why.
 
@@ -2160,8 +2242,8 @@ jobs:
             return
           }
 
-          $pollSeconds = 20
-          $deadline = [DateTime]::UtcNow.AddMinutes(15)
+          $pollSeconds = 10
+          $deadline = [DateTime]::UtcNow.AddSeconds(60)
           $headSha = "${{ github.event.pull_request.head.sha || github.sha }}"
           $run = $null
           while ([DateTime]::UtcNow -lt $deadline) {

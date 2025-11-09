@@ -2770,8 +2770,6 @@ def _build_markdown(
     # run. Avoid consulting legacy run-log zips so downstream dashboards receive a
     # consistent contract.
     iterate_found = _iterate_logs_found(context)
-    iterate_log_status = "found" if iterate_found else "missing"
-    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
 
     def read_value(name: str) -> str:
         return _read_iterate_text(iterate_dir, iterate_temp, name)
@@ -2799,6 +2797,11 @@ def _build_markdown(
 
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
+    if iterate_found and iterate_file_status == "missing":
+        # derived requirement: Run 19201618363-1 exposed only discovery breadcrumbs; suppress the "found" badge until payload files land.
+        iterate_found = False
+    iterate_log_status = "found" if iterate_found else "missing"
+    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     if iterate_found and artifact_missing:

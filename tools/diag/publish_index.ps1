@@ -25,6 +25,33 @@ $Short      = $env:SHORTSHA
 $InventoryB64 = $env:INVENTORY_B64
 $BatchRunId   = $env:BATCH_RUN_ID
 $BatchRunAttempt = $env:BATCH_RUN_ATTEMPT
+$preferLocalArtifacts = $false
+$artifactsOverride = $env:ARTIFACTS_ROOT
+if ($artifactsOverride -and (Test-Path -LiteralPath $artifactsOverride)) {
+    # Professional note: the diagnostics workflow already staged _artifacts locally; prefer them to avoid redundant API polling.
+    $Artifacts = $artifactsOverride
+    $preferLocalArtifacts = $true
+}
+
+if ($preferLocalArtifacts) {
+    $batchDir = Join-Path $Artifacts 'batch-check'
+    $localStatusPath = Join-Path $batchDir 'STATUS.txt'
+    if (Test-Path -LiteralPath $localStatusPath) {
+        try { $localStatus = (Get-Content -Raw -LiteralPath $localStatusPath).Trim() } catch { $localStatus = $null }
+        if (-not [string]::IsNullOrWhiteSpace($localStatus)) {
+            $env:BATCH_STATUS_OVERRIDE = $localStatus
+        }
+    }
+    $localRunJson = Join-Path $batchDir 'run.json'
+    if (Test-Path -LiteralPath $localRunJson) {
+        try { $meta = Get-Content -Raw -LiteralPath $localRunJson | ConvertFrom-Json } catch { $meta = $null }
+        if ($meta) {
+            if ($meta.run_id) { $BatchRunId = [string]$meta.run_id }
+            if ($meta.run_attempt) { $BatchRunAttempt = [string]$meta.run_attempt }
+            if ($meta.html_url) { $RunUrl = [string]$meta.html_url }
+        }
+    }
+}
 if (-not $Short) {
     $Short = $SHA
     if ($Short.Length -gt 7) { $Short = $Short.Substring(0,7) }
@@ -288,7 +315,7 @@ if ($iterateZipPath -and (Test-Path $iterateZipPath)) {
     } catch {}
 }
 
-if (-not $zipReady -and $logDir) {
+if (-not $zipReady -and $logDir -and -not $preferLocalArtifacts) {
     # Professional note: the workflow maps the Actions token to GH_TOKEN; fall back
     # to GITHUB_TOKEN so local runs stay compatible with the published contract.
     $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
@@ -411,8 +438,11 @@ if (-not $iterateZipPath -or -not (Test-Path $iterateZipPath)) {
 
 $batchRunAttempt = if ($BatchRunAttempt) { $BatchRunAttempt } else { 'n/a' }
 $batchZipName = $null
+$batchStatusOverride = $env:BATCH_STATUS_OVERRIDE
 $batchStatus = 'missing'
-if ($BatchRunId) {
+if ($batchStatusOverride) {
+    $batchStatus = $batchStatusOverride
+} elseif ($BatchRunId) {
     $batchZipName = "batch-check-$BatchRunId-$batchRunAttempt.zip"
     $batchZipPath = if ($Diag) { Join-Path $Diag ('logs\' + $batchZipName) } else { $null }
     if ($batchZipPath -and (Test-Path $batchZipPath)) {
