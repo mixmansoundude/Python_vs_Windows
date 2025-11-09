@@ -1856,27 +1856,54 @@ def _batch_status(diag: Optional[Path], context: Context) -> str:
     override_root = _artifacts_override_root(context)
     if override_root:
         batch_override = override_root / "batch-check"
+        run_meta_path = batch_override / "run.json"
+        meta: Optional[dict] = None
+        if run_meta_path.exists():
+            try:
+                meta = json.loads(run_meta_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                meta = None
         try:
             files = [p for p in batch_override.rglob("*") if p.is_file()]
         except (FileNotFoundError, OSError):
             files = []
+        ndjson_present = any(p.suffix.lower() == ".ndjson" for p in files)
+        if meta:
+            meta_run_id = meta.get("run_id")
+            if meta_run_id:
+                run_id = str(meta_run_id)
+            meta_attempt = meta.get("run_attempt")
+            if meta_attempt not in (None, ""):
+                attempt = str(meta_attempt)
         if files:
             meaningful = [
                 p
                 for p in files
                 if p.name.lower() not in {"status.txt", "missing.txt"}
             ]
-            if meaningful:
-                status_path = batch_override / "STATUS.txt"
+            status_path = batch_override / "STATUS.txt"
+            desired_status: Optional[str] = None
+            if meta:
+                if not ndjson_present:
+                    # Professional note: quote "show 'no failures (success)' instead of a timeout"
+                    # so successful runs without NDJSON keep STATUS.txt aligned with the current run.
+                    desired_status = "no failures (success)\n"
+                else:
+                    status_value = str(meta.get("status") or "").strip()
+                    conclusion = str(meta.get("conclusion") or "").strip()
+                    if status_value and conclusion:
+                        desired_status = f"{status_value} / {conclusion}\n"
+                    elif status_value:
+                        desired_status = f"{status_value}\n"
+                    elif conclusion:
+                        desired_status = f"{conclusion}\n"
+            if not desired_status and meaningful:
+                desired_status = (
+                    "batch-check artifacts sourced from ARTIFACTS_ROOT (current run)\n"
+                )
+            if desired_status:
                 try:
-                    # Professional note: per "Add support for optional environment variable
-                    # ARTIFACTS_ROOT", override the API polling sentinel when local artifacts
-                    # already exist so STATUS.txt reflects the current run instead of the
-                    # previous "no completed run" timeout message.
-                    status_path.write_text(
-                        "batch-check artifacts sourced from ARTIFACTS_ROOT (current run)\n",
-                        encoding="utf-8",
-                    )
+                    status_path.write_text(desired_status, encoding="utf-8")
                 except OSError:
                     pass
 
