@@ -648,8 +648,9 @@ def _record_decision(
 
     response_path = ctx_dir / "response.json"
     if response_payload is None:
-        if not response_path.exists():
-            response_path.write_text("{}\n", encoding="utf-8")
+        # derived requirement: keep response.json deterministic even when the
+        # API call never happens so diagnostics stop surfacing stale payloads.
+        response_path.write_text("{}\n", encoding="utf-8")
     else:
         response_path.write_text(
             json.dumps(response_payload, indent=2) + "\n", encoding="utf-8"
@@ -774,7 +775,18 @@ def call_phase(args: argparse.Namespace) -> None:
         )
         return
 
-    response_json = response.json()
+    try:
+        response_json = response.json()
+    except ValueError as exc:
+        append_note(ctx_dir, f"openai_response_json_error={exc}")
+        _record_decision(
+            ctx_dir,
+            status="error",
+            reason="invalid_json",
+            response_payload=None,
+            patch_text="",
+        )
+        return
     patch = extract_patch(response_json)
     if patch.strip():
         append_note(ctx_dir, "openai_patch=received")
@@ -786,11 +798,13 @@ def call_phase(args: argparse.Namespace) -> None:
             patch_text=patch,
         )
     else:
-        append_note(ctx_dir, "openai_patch=empty")
+        # derived requirement: run 19211170783-1 surfaced a zero-byte iterate bundle;
+        # treat missing fenced diffs as an error so diagnostics capture breadcrumbs.
+        append_note(ctx_dir, "openai_patch=no_fenced_diff")
         _record_decision(
             ctx_dir,
-            status="success",
-            reason="empty_patch",
+            status="error",
+            reason="no_fenced_diff",
             response_payload=response_json,
             patch_text="",
         )

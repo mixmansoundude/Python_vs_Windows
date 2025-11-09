@@ -1292,6 +1292,29 @@ jobs:
             Copy-Item -Path $_.FullName -Destination (Join-Path $repoDir $_.Name) -Recurse -Force -ErrorAction SilentlyContinue
           }
 
+          # derived requirement: run 19211170783-1 produced a non-empty iterate artifact
+          # in Actions but only mirrored a zero-byte discovery log into Pages. Mirror
+          # _ctx directly so diagnostics stay truthful without waiting on remote fetches.
+          $iterateRoot = Join-Path $pub 'iterate'
+          New-Item -Force -ItemType Directory -Path $iterateRoot | Out-Null
+          $iterateDir = Join-Path $iterateRoot ("iterate-logs-{0}-{1}" -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath '_ctx') {
+            New-Item -Force -ItemType Directory -Path $iterateDir | Out-Null
+            Copy-Item -Path (Join-Path '_ctx' '*') -Destination $iterateDir -Recurse -Force
+
+            $summaryPath = Join-Path $iterateRoot 'discovery.log.txt'
+            $copied = Get-ChildItem -Path $iterateDir -Recurse -File | Sort-Object FullName
+            $summaryLines = @()
+            foreach ($item in $copied) {
+              $relative = [System.IO.Path]::GetRelativePath($iterateDir, $item.FullName)
+              $summaryLines += ("{0} {1}" -f ($relative.Replace('\\', '/')), $item.Length)
+            }
+            if (-not $summaryLines) {
+              $summaryLines = @('no iterate files copied')
+            }
+            $summaryLines | Out-File -Encoding UTF8 $summaryPath
+          }
+
           try { $ct = [TimeZoneInfo]::FindSystemTimeZoneById('Central Standard Time') } catch { $ct = $null }
           $utc = [DateTime]::UtcNow
           $ctNow = if ($ct) { [TimeZoneInfo]::ConvertTimeFromUtc($utc, $ct) } else { $utc }

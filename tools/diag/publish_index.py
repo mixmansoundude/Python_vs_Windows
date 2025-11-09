@@ -2447,6 +2447,12 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
             if candidate not in temp_dirs:
                 temp_dirs.append(candidate)
 
+    def _file_size(candidate: Path) -> Optional[int]:
+        try:
+            return candidate.stat().st_size
+        except OSError:
+            return None
+
     has_files = False
     for temp_dir in temp_dirs:
         for path in temp_dir.rglob("*"):
@@ -2458,10 +2464,8 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
                 # discovery log without any model output; ignore it so the
                 # status banner stays truthful.
                 continue
-            try:
-                if path.stat().st_size == 0:
-                    continue
-            except OSError:
+            size = _file_size(path)
+            if size is None or size == 0:
                 continue
             has_files = True
             break
@@ -2505,12 +2509,44 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
                     {
                         "path": match,
                         "mirror": ensure_txt_mirror(match),
+                        "size": _file_size(match),
                     }
                 )
 
     if not found:
         # Professional note: surface that content exists even if the usual
         # prompt/response/why files are missing so analysts know to explore.
+        # derived requirement: run 19211170783-1 mirrored only discovery breadcrumbs;
+        # capture the first real iterate files so analysts can see what landed mid-run.
+        fallback: List[dict] = []
+        for directory in temp_dirs:
+            for candidate in sorted(directory.rglob("*")):
+                if not candidate.is_file():
+                    continue
+                name_lower = candidate.name.lower()
+                if name_lower == "discovery.log.txt":
+                    continue
+                size = _file_size(candidate)
+                if size is None or size == 0:
+                    continue
+                if candidate in seen:
+                    continue
+                fallback.append(
+                    {
+                        "path": candidate,
+                        "mirror": ensure_txt_mirror(candidate),
+                        "size": size,
+                    }
+                )
+                seen.add(candidate)
+                if len(fallback) >= 2:
+                    break
+            if len(fallback) >= 2:
+                break
+        if fallback:
+            found.extend(fallback)
+
+    if not found:
         return "present", []
 
     return "present", found
@@ -3180,22 +3216,29 @@ def _write_html(
                             href_file = _escape_href(normalized)
                             name_html = _escape_html(Path(rel).name)
                             mirror_obj: Optional[Path] = file_entry.get("mirror")
+                            size_value = file_entry.get("size")
+                            size_suffix = ""
+                            if size_value is not None:
+                                size_suffix = f" ({_escape_html(str(size_value))} bytes)"
                             if mirror_obj:
                                 mirror_rel = _relative_to_diag(mirror_obj, diag)
                                 mirror_href = _escape_href(_normalize_link(mirror_rel))
                                 html.append(
                                     "<li><code>{0}</code>: "
                                     "<a href=\"{1}\">Preview (.txt)</a> "
-                                    "(<a href=\"{2}\">Download</a>)</li>".format(
+                                    "(<a href=\"{2}\">Download</a>){3}</li>".format(
                                         name_html,
                                         mirror_href or "",
                                         href_file or "",
+                                        size_suffix,
                                     )
                                 )
                             else:
                                 html.append(
-                                    "<li><code>{0}</code>: <a href=\"{1}\">Download</a></li>".format(
-                                        name_html, href_file or ""
+                                    "<li><code>{0}</code>: <a href=\"{1}\">Download</a>{2}</li>".format(
+                                        name_html,
+                                        href_file or "",
+                                        size_suffix,
                                     )
                                 )
                     else:
