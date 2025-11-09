@@ -866,6 +866,22 @@ def _iterate_logs_found(context: Context) -> bool:
                 except FileNotFoundError:
                     pass
 
+    if local_found and iterate_root:
+        try:
+            has_payload = any(
+                candidate.is_file()
+                and candidate.stat().st_size > 0
+                and not candidate.name.lower().startswith("discovery.log")
+                for candidate in iterate_root.rglob("*")
+            )
+        except OSError:
+            has_payload = True
+        if not has_payload:
+            # derived requirement: Run 19201129721-1 produced an iterate zip that only
+            # contained discovery.log breadcrumbs. Treat such archives as missing so the
+            # status line stays consistent with the empty payload.
+            local_found = False
+
     if local_found:
         context.iterate_found_cache = True
         return True

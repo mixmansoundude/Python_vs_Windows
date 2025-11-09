@@ -396,9 +396,10 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          name: iterate-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: _ctx/**
           if-no-files-found: error
+          overwrite: false
           retention-days: 7
 
       - name: Find and print test logs (tail)
