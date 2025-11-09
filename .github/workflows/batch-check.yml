@@ -1981,8 +1981,10 @@ jobs:
           mkdir -p logs
           zip_path="logs/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip"
           rm -f "$zip_path"
+          # derived requirement: include decision breadcrumbs so diagnostics enumerate
+          # the iterate payload even when the model cannot return a diff mid-run.
           declare -a files
-          for path in _ctx/guide.json _ctx/failpack.log _ctx/iterate_context_manifest.tsv _ctx/response.json _ctx/fix.patch _ctx/notes.txt; do
+          for path in _ctx/guide.json _ctx/failpack.log _ctx/iterate_context_manifest.tsv _ctx/response.json _ctx/decision.json _ctx/decision.txt _ctx/fix.patch _ctx/notes.txt; do
             if [ -e "$path" ]; then
               files+=("$path")
             fi
@@ -2062,21 +2064,32 @@ jobs:
           echo "ARTIFACTS=$Artifacts" >> $env:GITHUB_OUTPUT
           echo "SHORTSHA=$short" >> $env:GITHUB_OUTPUT
 
-      - name: Download iterate artifacts
+      - name: Download iterate logs artifact (if present)
         if: ${{ always() }}
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.prep.outputs.ARTIFACTS }}/iterate
+          path: _iter
 
       - name: Normalize iterate artifact layout
         if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
+          iter_src="_iter"
           iter_root="${{ steps.prep.outputs.ARTIFACTS }}/iterate"
           mkdir -p "$iter_root"
+
+          if [ -d "$iter_src" ]; then
+            shopt -s dotglob nullglob
+            for item in "$iter_src"/*; do
+              base=$(basename "$item")
+              rm -rf "$iter_root/$base"
+              cp -a "$item" "$iter_root/$base"
+            done
+          fi
+
           nested_dir="$iter_root/_artifacts/iterate"
           if [ -d "$nested_dir" ]; then
             echo "Flattening iterate artifact from $nested_dir"
@@ -2088,6 +2101,7 @@ jobs:
             done
             rm -rf "$iter_root/_artifacts"
           fi
+
           shopt -s dotglob nullglob
           entries=("$iter_root"/*)
           if [ "${#entries[@]}" -eq 1 ] && [ -d "${entries[0]}" ]; then
@@ -2099,6 +2113,35 @@ jobs:
             done
             rm -rf "${entries[0]}"
           fi
+
+          # Professional note: ensure the canonical iterate zip lands at the root so the
+          # diagnostics publisher locates it without chasing nested logs/ directories.
+          shopt -s nullglob
+          shopt -s globstar
+          for archive in "$iter_root"/**/*.zip "$iter_root"/*.zip; do
+            [ -f "$archive" ] || continue
+            base=$(basename "$archive")
+            target="$iter_root/$base"
+            if [ "$archive" != "$target" ]; then
+              rm -f "$target"
+              mv "$archive" "$target"
+            fi
+          done
+
+          # derived requirement: unzip iterate-logs-* immediately so diagnostics expose
+          # _ctx breadcrumbs even when downstream fetches are skipped mid-run.
+          for archive in "$iter_root"/iterate-logs-*.zip; do
+            [ -f "$archive" ] || continue
+            stem=$(basename "$archive" .zip)
+            dest="$iter_root/$stem"
+            rm -rf "$dest"
+            mkdir -p "$dest"
+            if ! unzip -oq "$archive" -d "$dest"; then
+              echo "Warning: failed to extract $archive" >&2
+              rm -rf "$dest"
+            fi
+          done
+
           # derived requirement: download-artifact@v4 nests the uploaded
           # _artifacts/iterate payload one directory deeper; flatten it so the
           # diagnostics publisher detects '* Iterate logs: found'.
@@ -2187,7 +2230,11 @@ jobs:
         shell: pwsh
         run: |
           $diagIter = Join-Path "${{ steps.prep.outputs.ARTIFACTS }}" 'iterate'
-          $siteIter = Join-Path "${{ steps.prep.outputs.SITE }}" '_artifacts/iterate'
+          $siteRoot = "${{ steps.prep.outputs.SITE }}"
+          $siteIter = Join-Path $siteRoot '_artifacts/iterate'
+          $publicIterRoot = Join-Path $siteRoot 'iterate'
+          $publicIterDir = Join-Path $publicIterRoot ("iterate-logs-{0}-{1}" -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+
           if (Test-Path -LiteralPath $diagIter) {
             New-Item -ItemType Directory -Path $siteIter -Force | Out-Null
             Get-ChildItem -LiteralPath $diagIter -Force | ForEach-Object {
@@ -2198,7 +2245,36 @@ jobs:
                 Copy-Item -LiteralPath $_.FullName -Destination $target -Force
               }
             }
+
+            New-Item -ItemType Directory -Path $publicIterDir -Force | Out-Null
+            Get-ChildItem -LiteralPath $diagIter -Force | ForEach-Object {
+              $target = Join-Path $publicIterDir $_.Name
+              if ($_.PSIsContainer) {
+                Copy-Item -LiteralPath $_.FullName -Destination $publicIterDir -Recurse -Force
+              } else {
+                Copy-Item -LiteralPath $_.FullName -Destination $target -Force
+              }
+            }
+          } else {
+            New-Item -ItemType Directory -Path $publicIterRoot -Force | Out-Null
           }
+
+          $summaryDir = if (Test-Path -LiteralPath $publicIterDir) { $publicIterDir } else { $publicIterRoot }
+          New-Item -ItemType Directory -Path $publicIterRoot -Force | Out-Null
+          $summaryPath = Join-Path $publicIterRoot 'discovery.log.txt'
+          $entries = @()
+          if (Test-Path -LiteralPath $summaryDir) {
+            $files = Get-ChildItem -LiteralPath $summaryDir -Recurse -File -ErrorAction SilentlyContinue
+            foreach ($file in $files) {
+              $relative = [System.IO.Path]::GetRelativePath($summaryDir, $file.FullName)
+              $normalized = $relative.Replace('\', '/')
+              $entries += ("{0} ({1} bytes)" -f $normalized, $file.Length)
+            }
+          }
+          if (-not $entries -or $entries.Count -eq 0) {
+            $entries = @('no iterate files copied')
+          }
+          Set-Content -LiteralPath $summaryPath -Value $entries -Encoding Ascii
 
       - name: Record iterate artifact status
         shell: pwsh

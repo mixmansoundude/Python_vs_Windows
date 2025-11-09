@@ -3095,8 +3095,6 @@ def _write_html(
     # Professional note: mirror the Markdown status logic here so HTML renders the
     # same parser-facing state derived from the iterate-logs artifact directory.
     iterate_found = _iterate_logs_found(context)
-    iterate_log_status = "found" if iterate_found else "missing"
-    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
 
     def read_value(name: str) -> str:
         return _read_iterate_text(iterate_dir, iterate_temp, name)
@@ -3127,6 +3125,10 @@ def _write_html(
             artifact_missing = None
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
+    if iterate_found and iterate_file_status == "missing":
+        iterate_found = False
+    iterate_log_status = "found" if iterate_found else "missing"
+    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
     batch_status = _batch_status(diag, context)
     diag_files = _diag_files(diag)
     gate_data = _load_iterate_gate(context)

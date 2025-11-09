@@ -443,6 +443,12 @@ def write_notes(ctx_dir: Path, notes: List[str]) -> None:
 
 def append_note(ctx_dir: Path, message: str) -> None:
     note_path = ctx_dir / "notes.txt"
+    if not note_path.exists():
+        # derived requirement: workflows like run 19214772212-1 call append_note during
+        # failure handling before stage writes the initial notes header. Touch the file
+        # so diagnostics always capture at least one breadcrumb per iterate attempt.
+        note_path.parent.mkdir(parents=True, exist_ok=True)
+        note_path.write_text("", encoding="utf-8")
     with note_path.open("a", encoding="utf-8") as handle:
         handle.write(message + "\n")
 
