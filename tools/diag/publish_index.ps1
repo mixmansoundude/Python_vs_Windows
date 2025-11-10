@@ -115,9 +115,25 @@ function Get-FirstDir {
 }
 
 $iterateRoot = $null
+$artifactIterRoot = $null
+if ($downloadedIterReady) {
+    # derived requirement: runs such as 19232295127-1 produced the iterate payload in
+    # the downloaded staging directory while ARTIFACTS_ROOT stayed empty; prefer the
+    # freshly downloaded copy so diagnostics mirror the same evidence analysts see on
+    # the Actions artifacts page.
+    $iterateRoot = $downloadedIterRoot
+}
 if ($Artifacts) {
-    $iterateRoot = Join-Path $Artifacts 'iterate'
-} elseif ($downloadedIterReady) {
+    $artifactIterRoot = Join-Path $Artifacts 'iterate'
+    if (-not $iterateRoot) {
+        $iterateRoot = $artifactIterRoot
+    } elseif ((Test-Path -LiteralPath $artifactIterRoot) -and -not (Test-Path -LiteralPath $iterateRoot)) {
+        # derived requirement: fallback when the downloaded directory vanished between
+        # steps (e.g., manual runs that skip the download-artifact stage).
+        $iterateRoot = $artifactIterRoot
+    }
+}
+if (-not $iterateRoot -and $downloadedIterReady) {
     # derived requirement: fallback to the downloaded payload when the diagnostics
     # artifacts root is unavailable (e.g., local dry runs).
     $iterateRoot = $downloadedIterRoot

@@ -2298,6 +2298,14 @@ def _collect_real_failing_tests(diag: Optional[Path]) -> Optional[dict]:
 
 
 def _locate_iterate_root(context: Context) -> Optional[Path]:
+    downloaded_env = os.getenv("DOWNLOADED_ITER_ROOT")
+    if downloaded_env:
+        downloaded_path = Path(downloaded_env)
+        if downloaded_path.exists():
+            # derived requirement: run 19232295127-1 surfaced the iterate payload via the
+            # download-artifact staging directory while ARTIFACTS_ROOT stayed empty; prefer
+            # the freshly downloaded bundle so diagnostics mirror the Actions artifact.
+            return downloaded_path
     if context.artifacts and (context.artifacts / "iterate").exists():
         return context.artifacts / "iterate"
     if context.diag:
