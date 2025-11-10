@@ -455,11 +455,15 @@ jobs:
 
       - name: Upload iterate logs (fail-only)
         if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
+        # derived requirement: breadcrumbs now exist for empty-model runs, but keep
+        # the workflow tolerant so diagnostics jobs do not fail when the helper
+        # intentionally skips packaging.
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: iterate-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: _ctx/**
-          if-no-files-found: error
+          if-no-files-found: warn
           overwrite: false
           retention-days: 7
 
@@ -2070,6 +2074,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: iterate-logs-*-${{ github.run_id }}-${{ github.run_attempt }}
+          # derived requirement: each matrix leg uploads a unique iterate-logs-* name;
+          # merge so the publisher mirrors every lane without guessing the producer.
+          merge-multiple: true
           path: _iter
 
       - name: Normalize iterate artifact layout

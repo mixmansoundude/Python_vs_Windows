@@ -638,12 +638,13 @@ def _record_decision(
     # keep human-readable breadcrumbs in every outcome to avoid empty artifacts.
     """Persist iterate breadcrumbs even when the model cannot return a diff."""
 
-    decision_payload = {"status": status}
-    if reason:
-        decision_payload["reason"] = reason
+    # derived requirement: runs like 19218551964-1 demanded JSON breadcrumbs so
+    # downstream tooling can parse iterate outcomes deterministically.
+    decision_payload = {"status": status, "reason": reason or "none"}
     decision_path = ctx_dir / "decision.json"
     decision_path.write_text(
-        json.dumps(decision_payload, indent=2) + "\n", encoding="utf-8"
+        json.dumps(decision_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
 
     decision_txt = ctx_dir / "decision.txt"
