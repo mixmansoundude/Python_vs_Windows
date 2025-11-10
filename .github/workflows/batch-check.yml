@@ -362,7 +362,7 @@ jobs:
         with:
           name: bootstrapper-tests
           path: _out/*
-          if-no-files-found: warn
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Evaluate iterate gate
@@ -2000,7 +2000,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d _ctx ]; then
-            exit 0
+            # derived requirement: run 19234337453-1 surfaced a bare iterate zip with no
+            # _ctx folder; create the workspace so downstream packaging always emits
+            # breadcrumbs instead of an empty archive.
+            mkdir -p _ctx
           fi
           mkdir -p logs
           zip_path="logs/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip"
@@ -2086,6 +2089,21 @@ jobs:
       id-token: write
       actions: read
     steps:
+      - name: Disk preflight + gentle cleanup (best effort)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          echo "== disk before =="
+          df -h || true
+          if [ -n "${RUNNER_TEMP:-}" ] && [ -d "$RUNNER_TEMP" ]; then
+            rm -rf "$RUNNER_TEMP"/* 2>/dev/null || true
+          fi
+          if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -d "$GITHUB_WORKSPACE" ]; then
+            find "$GITHUB_WORKSPACE" -maxdepth 2 -type d -name "__pycache__" -prune -exec rm -rf {} + 2>/dev/null || true
+          fi
+          echo "== disk after =="
+          df -h || true
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -2138,7 +2156,7 @@ jobs:
           set -euo pipefail
           if [ -d "_iter" ]; then
             echo "_iter present"
-            find _iter -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
+            find _iter -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort | head -50
           else
             echo "_iter MISSING"
           fi
