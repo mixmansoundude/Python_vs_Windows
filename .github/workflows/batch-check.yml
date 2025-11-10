@@ -2007,6 +2007,25 @@ jobs:
           rm -f "$zip_path"
           # derived requirement: include decision breadcrumbs so diagnostics enumerate
           # the iterate payload even when the model cannot return a diff mid-run.
+          note_path="_ctx/notes.txt"
+          if [ ! -e "$note_path" ]; then
+            # derived requirement: when stage/call short-circuit, still leave a breadcrumb so diagnostics stay truthful.
+            printf 'notes_stub=created_by_packager\n' > "$note_path"
+          fi
+          decision_path="_ctx/decision.json"
+          if [ ! -e "$decision_path" ]; then
+            # derived requirement: prevent "Model rationale: missing" when the inline helper never produced a decision payload.
+            printf '{"status":"error","reason":"not_recorded"}\n' > "$decision_path"
+            printf 'decision_stub=added_by_packager\n' >> "$note_path"
+          fi
+          response_path="_ctx/response.json"
+          if [ ! -e "$response_path" ]; then
+            printf '{}\n' > "$response_path"
+          fi
+          fix_path="_ctx/fix.patch"
+          if [ ! -e "$fix_path" ]; then
+            : > "$fix_path"
+          fi
           declare -a files
           for path in _ctx/guide.json _ctx/failpack.log _ctx/iterate_context_manifest.tsv _ctx/response.json _ctx/decision.json _ctx/decision.txt _ctx/fix.patch _ctx/notes.txt; do
             if [ -e "$path" ]; then
@@ -2106,9 +2125,9 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          pattern: iterate-logs-*-${{ github.run_id }}-${{ github.run_attempt }}
-          # derived requirement: each matrix leg uploads a unique iterate-logs-* name;
-          # merge so the publisher mirrors every lane without guessing the producer.
+          pattern: iterate-logs-*${{ github.run_id }}-${{ github.run_attempt }}
+          # derived requirement: jobs such as 19234337453-1 upload the base iterate-logs-${run}-${attempt}
+          # artifact with no matrix prefix; keep the wildcard adjacent so bare and lane-prefixed names resolve.
           merge-multiple: true
           path: _iter
 
