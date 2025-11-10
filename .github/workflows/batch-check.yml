@@ -436,6 +436,7 @@ jobs:
       - name: Stage inline model context (fail-only)
         if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
         shell: pwsh
+        working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -448,10 +449,25 @@ jobs:
       - name: Call inline model (fail-only)
         if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
         shell: pwsh
+        working-directory: ${{ github.workspace }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python tools/inline_model_fix.py call
+
+      # derived requirement: expose the iterate payload contents inline so field triage
+      # can confirm breadcrumbs exist before upload.
+      - name: List _ctx prior to upload (debug)
+        if: ${{ always() }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "PWD=$(pwd)"
+          if [ -d _ctx ]; then
+            find _ctx -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
+          else
+            echo "_ctx MISSING"
+          fi
 
       - name: Upload iterate logs (fail-only)
         if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
@@ -1936,6 +1952,7 @@ jobs:
           python -m pip install requests
       - name: Stage iterate context
         if: ${{ env.HAS_FAILURES == 'true' }}
+        working-directory: ${{ github.workspace }}
         run: |
           python tools/inline_model_fix.py stage \
             --repo "${{ github.repository }}" \
@@ -1944,6 +1961,7 @@ jobs:
             --token "$GH_TOKEN"
       - name: Call model
         if: ${{ env.HAS_FAILURES == 'true' }}
+        working-directory: ${{ github.workspace }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
@@ -1951,6 +1969,7 @@ jobs:
       - name: Apply model patch
         if: ${{ env.HAS_FAILURES == 'true' }}
         shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           if [ ! -s _ctx/fix.patch ]; then
@@ -1977,6 +1996,7 @@ jobs:
       - name: Package iterate context
         if: ${{ env.HAS_FAILURES == 'true' }}
         shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           if [ ! -d _ctx ]; then
@@ -2012,6 +2032,19 @@ jobs:
             files=("$note_path" "$manifest_path")
           fi
           zip -r "$zip_path" "${files[@]}" >/dev/null
+      # derived requirement: expose the iterate payload contents inline so field triage
+      # can confirm breadcrumbs exist before upload.
+      - name: List _ctx prior to artifact upload (debug)
+        if: ${{ always() }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "PWD=$(pwd)"
+          if [ -d _ctx ]; then
+            find _ctx -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
+          else
+            echo "_ctx MISSING"
+          fi
       - name: Upload iterate artifact
         if: ${{ env.HAS_FAILURES == 'true' }}
         uses: actions/upload-artifact@v4

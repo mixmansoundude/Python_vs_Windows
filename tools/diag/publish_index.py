@@ -2475,9 +2475,14 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
         return "missing", []
 
     key_names = [
-        "prompt.txt",
+        "notes.txt",
+        "decision.json",
+        "decision.txt",
         "response.json",
         "response.txt",
+        "fix.patch",
+        "iterate_context_manifest.tsv",
+        "prompt.txt",
         "iterate_status.json",
         "iterate_status.txt",
         "why_no_diff.txt",

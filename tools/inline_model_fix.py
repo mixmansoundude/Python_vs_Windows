@@ -96,6 +96,14 @@ def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def ensure_ctx(repo_root: Path) -> Path:
+    """Guarantee that the shared _ctx workspace exists."""
+
+    ctx_dir = repo_root / "_ctx"
+    ctx_dir.mkdir(parents=True, exist_ok=True)
+    return ctx_dir
+
+
 def path_in_repo(candidate: str, repo_root: Path) -> Optional[Path]:
     try:
         normalized = candidate.replace("\\", "/")
@@ -675,9 +683,10 @@ def _record_decision(
 
 def call_phase(args: argparse.Namespace) -> None:
     repo_root = Path.cwd()
-    ctx_dir = repo_root / "_ctx"
-    if not ctx_dir.exists():
-        raise SystemExit("_ctx not found; run the stage phase first.")
+    # derived requirement: field reports showed the call phase executing from a
+    # fresh checkout without stage creating _ctx first. Guarantee the workspace
+    # exists so later breadcrumbs survive even when stage bailed out early.
+    ctx_dir = ensure_ctx(repo_root)
 
     # derived requirement: field reports such as run 19218918397-1 invoked the call phase
     # with a partially-initialized _ctx directory. Touch notes.txt up front so subsequent
@@ -689,7 +698,15 @@ def call_phase(args: argparse.Namespace) -> None:
 
     plan_path = ctx_dir / "upload_plan.json"
     if not plan_path.exists():
-        raise SystemExit("upload_plan.json missing; stage phase did not complete successfully.")
+        append_note(ctx_dir, "openai_call=skipped_missing_plan")
+        _record_decision(
+            ctx_dir,
+            status="error",
+            reason="stage_incomplete",
+            response_payload=None,
+            patch_text="",
+        )
+        return
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     files = plan.get("files", [])

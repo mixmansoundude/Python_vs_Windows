@@ -28,6 +28,20 @@ $BatchRunAttempt = $env:BATCH_RUN_ATTEMPT
 $preferLocalArtifacts = $false
 $preferLocalIterate = $false
 $artifactsOverride = $env:ARTIFACTS_ROOT
+$downloadedIterRoot = Join-Path (Get-Location) '_iter'
+# derived requirement: runs such as 19218918397-1 downloaded the iterate artifact
+# earlier in the workflow; reuse that staging area immediately so diagnostics
+# stop waiting for the remote artifact mirrors.
+$downloadedIterReady = $false
+if (Test-Path -LiteralPath $downloadedIterRoot) {
+    $downloadProbe = Get-ChildItem -Path $downloadedIterRoot -Recurse -File -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($downloadProbe) {
+        Write-Host ("Using DOWNLOADED iterate payload from: {0}" -f $downloadedIterRoot)
+        $preferLocalIterate = $true
+        $downloadedIterReady = $true
+    }
+}
 $localStatusPath = $null
 $localRunJson = $null
 if ($artifactsOverride -and (Test-Path -LiteralPath $artifactsOverride)) {
@@ -100,7 +114,14 @@ function Get-FirstDir {
     return Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
 }
 
-$iterateRoot = if ($Artifacts) { Join-Path $Artifacts 'iterate' } else { $null }
+$iterateRoot = $null
+if ($Artifacts) {
+    $iterateRoot = Join-Path $Artifacts 'iterate'
+} elseif ($downloadedIterReady) {
+    # derived requirement: fallback to the downloaded payload when the diagnostics
+    # artifacts root is unavailable (e.g., local dry runs).
+    $iterateRoot = $downloadedIterRoot
+}
 $iterateDir = Get-FirstDir $iterateRoot
 if ($iterateRoot -and (Test-Path $iterateRoot)) {
     $candidateDirs = Get-ChildItem -Path $iterateRoot -Directory -ErrorAction SilentlyContinue
