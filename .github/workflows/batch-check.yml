@@ -2069,7 +2069,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: iterate-logs-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: _iter
 
       - name: Normalize iterate artifact layout

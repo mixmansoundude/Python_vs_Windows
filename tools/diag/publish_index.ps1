@@ -363,8 +363,8 @@ if (-not $zipReady -and $logDir -and -not $preferLocalIterate) {
             } catch {}
             if ($workflowResponse -and $workflowResponse.workflow_runs) {
                 # Professional note: the iterate bundle originates from codex-auto-iterate.yml,
-                # not the diagnostics workflow. Falling back by head SHA keeps publishing
-                # truthful when the archive lives on a sibling run.
+                # not the diagnostics workflow.
+                # Falling back by head SHA keeps publishing truthful when the archive lives on a sibling run.
                 foreach ($wfRun in $workflowResponse.workflow_runs) {
                     $wfId = [string]$wfRun.id
                     if (-not $wfId) { continue }
@@ -516,16 +516,16 @@ if ($artifactMissing) {
 $null = $lines.Add('')
 $null = $lines.Add('## Quick links')
 $bundleLinks = @(
-    @{ Label = 'Inventory (HTML)'; Path = 'inventory.html'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.html')) },
-    @{ Label = 'Inventory (text)'; Path = 'inventory.txt'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.txt')) },
-    @{ Label = 'Inventory (markdown)'; Path = 'inventory.md'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.md')) },
-    @{ Label = 'Inventory (json)'; Path = 'inventory.json'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.json')) },
-    @{ Label = 'Iterate logs zip'; Path = "logs/$iterateZipName"; Exists = ($iterateZipPath -and Test-Path $iterateZipPath) },
+    @{ Label = 'Inventory (HTML)'; Path = 'inventory.html'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'inventory.html'))) },
+    @{ Label = 'Inventory (text)'; Path = 'inventory.txt'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'inventory.txt'))) },
+    @{ Label = 'Inventory (markdown)'; Path = 'inventory.md'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'inventory.md'))) },
+    @{ Label = 'Inventory (json)'; Path = 'inventory.json'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'inventory.json'))) },
+    @{ Label = 'Iterate logs zip'; Path = "logs/$iterateZipName"; Exists = ($iterateZipPath -and (Test-Path $iterateZipPath)) },
     @{ Label = 'Batch-check logs zip'; Path = if ($batchZipName) { "logs/$batchZipName" } else { $null }; Exists = if ($batchZipName -and $Diag) { Test-Path (Join-Path $Diag ('logs\' + $batchZipName)) } else { $false } },
-    @{ Label = 'Batch-check failing tests'; Path = 'batchcheck_failing.txt'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'batchcheck_failing.txt')) },
-    @{ Label = 'Batch-check fail debug'; Path = 'batchcheck_fail-debug.txt'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'batchcheck_fail-debug.txt')) },
-    @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = ($Diag -and Test-Path (Join-Path $Diag ("repo\repo-$Short.zip"))) },
-    @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'repo\files')) }
+    @{ Label = 'Batch-check failing tests'; Path = 'batchcheck_failing.txt'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'batchcheck_failing.txt'))) },
+    @{ Label = 'Batch-check fail debug'; Path = 'batchcheck_fail-debug.txt'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'batchcheck_fail-debug.txt'))) },
+    @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = ($Diag -and (Test-Path (Join-Path $Diag ("repo\repo-$Short.zip")))) },
+    @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'repo\files'))) }
 )
 
 if ($Diag) {

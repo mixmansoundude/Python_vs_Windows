@@ -2549,6 +2549,12 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
     if not found:
         return "present", []
 
+    max_visible = 2
+    if len(found) > max_visible:
+        # derived requirement: keep the iterate files list short so diagnostics stay readable
+        # while still surfacing concrete breadcrumbs for analysts.
+        found = found[:max_visible]
+
     return "present", found
 
 
