@@ -2157,9 +2157,13 @@ jobs:
           if [ -d "$src" ]; then
             # derived requirement: publisher consumers expect the diagnostics bundle to mirror
             # _artifacts/iterate exactly so downstream readers never fall back to the site copy.
-            shopt -s dotglob nullglob
-            rm -rf "$dst"/*
-            cp -a "$src"/. "$dst"/ || true
+            # Guard against the src/dst alias case (they're both ${{ steps.prep.outputs.ARTIFACTS }}/iterate)
+            # so we do not accidentally clear the freshly normalized iterate payload.
+            if [ "$src" != "$dst" ]; then
+              shopt -s dotglob nullglob
+              rm -rf "$dst"/*
+              cp -a "$src"/. "$dst"/ || true
+            fi
           fi
 
       - name: Download CI NDJSON artifacts

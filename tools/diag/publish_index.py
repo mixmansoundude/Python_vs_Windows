@@ -2964,22 +2964,24 @@ def _build_markdown(
 
     if iterate_file_status == "present":
         if iterate_key_files:
-            for file_entry in iterate_key_files:
+            for file_entry in iterate_key_files[:2]:
                 path_obj: Optional[Path] = file_entry.get("path")
                 if not path_obj:
                     continue
                 rel = _relative_to_diag(path_obj, diag)
                 normalized = _normalize_link(rel)
                 label = Path(rel).name
+                size_value = file_entry.get("size")
+                size_hint = f" ({size_value} bytes)" if isinstance(size_value, int) else ""
                 mirror_obj: Optional[Path] = file_entry.get("mirror")
                 if mirror_obj:
                     mirror_rel = _relative_to_diag(mirror_obj, diag)
                     mirror_norm = _normalize_link(mirror_rel)
                     lines.append(
-                        f"  - {label}: [Preview (.txt)]({mirror_norm}) ([Download]({normalized}))"
+                        f"  - {label}{size_hint}: [Preview (.txt)]({mirror_norm}) ([Download]({normalized}))"
                     )
                 else:
-                    lines.append(f"  - {label}: [Download]({normalized})")
+                    lines.append(f"  - {label}{size_hint}: [Download]({normalized})")
         else:
             lines.append("  - (prompt/response/why_no_diff not located)")
     else:
