@@ -2547,7 +2547,10 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
             found.extend(fallback)
 
     if not found:
-        return "present", []
+        # derived requirement: diagnostics must only advertise "Iterate files: present"
+        # when tangible breadcrumbs exist. Treat the directory as missing when discovery
+        # metadata is the sole payload (see run 19218918397-1).
+        return "missing", []
 
     max_visible = 2
     if len(found) > max_visible:

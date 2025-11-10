@@ -39,6 +39,18 @@ if ($artifactsOverride -and (Test-Path -LiteralPath $artifactsOverride)) {
     $localRunJson = Join-Path $batchDir 'run.json'
     $deadline = (Get-Date).AddSeconds(60)
     $localReady = $false
+    $localCiRoot = Join-Path $batchDir '_ci_artifacts'
+    if (Test-Path -LiteralPath $localCiRoot) {
+        $ndjsonProbe = Get-ChildItem -Path $localCiRoot -Filter '*~test-results.ndjson' -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -gt 0 } |
+            Select-Object -First 1
+        if ($ndjsonProbe) {
+            # derived requirement: when the workflow already mirrored NDJSON locally
+            # (e.g., run 19218918397-1), trust the staged payload immediately instead of
+            # waiting the full settle loop intended for remote fetches.
+            $localReady = $true
+        }
+    }
     while (-not $localReady -and [DateTime]::UtcNow -lt $deadline) {
         $statusExists = Test-Path -LiteralPath $localStatusPath
         $runJsonExists = Test-Path -LiteralPath $localRunJson

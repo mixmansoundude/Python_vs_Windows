@@ -679,6 +679,14 @@ def call_phase(args: argparse.Namespace) -> None:
     if not ctx_dir.exists():
         raise SystemExit("_ctx not found; run the stage phase first.")
 
+    # derived requirement: field reports such as run 19218918397-1 invoked the call phase
+    # with a partially-initialized _ctx directory. Touch notes.txt up front so subsequent
+    # breadcrumbs never fail to persist simply because the stage phase exited early.
+    notes_path = ctx_dir / "notes.txt"
+    if not notes_path.exists():
+        notes_path.parent.mkdir(parents=True, exist_ok=True)
+        notes_path.write_text("", encoding="utf-8")
+
     plan_path = ctx_dir / "upload_plan.json"
     if not plan_path.exists():
         raise SystemExit("upload_plan.json missing; stage phase did not complete successfully.")
