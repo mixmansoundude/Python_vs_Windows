@@ -634,6 +634,71 @@ def extract_patch(response_json: dict) -> str:
     return ""
 
 
+def _emit_job_summary(
+    ctx_dir: Path,
+    *,
+    model: Optional[str],
+    status: str,
+    reason: Optional[str],
+    response_payload: Optional[dict],
+    patch_text: Optional[str],
+) -> None:
+    """Append a compact iterate summary to the GitHub job log when available."""
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+    if os.environ.get("HP_ITERATE_SUMMARY_WRITTEN") == "1":
+        return
+
+    tokens: List[str] = []
+    usage = response_payload.get("usage") if isinstance(response_payload, dict) else None
+    if isinstance(usage, dict):
+        for label, key in (
+            ("input", "input_tokens"),
+            ("output", "output_tokens"),
+            ("total", "total_tokens"),
+            ("prompt", "prompt_tokens"),
+            ("completion", "completion_tokens"),
+        ):
+            value = usage.get(key)
+            if value is None:
+                continue
+            text = f"{label}={value}"
+            if text not in tokens:
+                tokens.append(text)
+
+    patch_text = patch_text or ""
+    diff_present = bool(patch_text.strip())
+    patch_lines: List[str] = []
+    if diff_present:
+        patch_lines = patch_text.strip().splitlines()[:15]
+
+    lines: List[str] = ["\n### Iterate summary\n"]
+    lines.append(f"* Status: `{status}`\n")
+    lines.append(f"* Reason: `{(reason or 'n/a')}`\n")
+    if model:
+        lines.append(f"* Model: `{model}`\n")
+    if tokens:
+        lines.append(f"* Tokens: {', '.join(tokens)}\n")
+    else:
+        lines.append("* Tokens: n/a\n")
+    lines.append(f"* Diff produced: {'yes' if diff_present else 'no'}\n")
+
+    if patch_lines:
+        lines.append("\n<details>\n<summary>Patch preview (first 15 lines)</summary>\n\n```diff\n")
+        for snippet in patch_lines:
+            lines.append(f"{snippet}\n")
+        lines.append("```\n</details>\n")
+
+    try:
+        with open(summary_path, "a", encoding="utf-8") as handle:
+            handle.writelines(lines)
+        os.environ["HP_ITERATE_SUMMARY_WRITTEN"] = "1"
+    except OSError as exc:
+        append_note(ctx_dir, f"summary_write_error={exc}")
+
+
 def _record_decision(
     ctx_dir: Path,
     *,
@@ -641,6 +706,7 @@ def _record_decision(
     reason: Optional[str],
     response_payload: Optional[dict],
     patch_text: Optional[str],
+    model: Optional[str] = None,
 ) -> None:
     # derived requirement: run 19208683015-1 produced discovery-only iterate zips;
     # keep human-readable breadcrumbs in every outcome to avoid empty artifacts.
@@ -679,6 +745,16 @@ def _record_decision(
         ctx_dir,
         f"decision_status={status} reason={reason or 'none'}",
     )
+    # derived requirement: the workflow needs a human-readable fallback even when iterate
+    # artifacts are delayed or missing; surface the same breadcrumbs in the job summary.
+    _emit_job_summary(
+        ctx_dir,
+        model=model,
+        status=status,
+        reason=reason,
+        response_payload=response_payload,
+        patch_text=patch_text,
+    )
 
 
 def call_phase(args: argparse.Namespace) -> None:
@@ -705,6 +781,7 @@ def call_phase(args: argparse.Namespace) -> None:
             reason="stage_incomplete",
             response_payload=None,
             patch_text="",
+            model=args.model,
         )
         return
 
@@ -719,6 +796,7 @@ def call_phase(args: argparse.Namespace) -> None:
             reason="missing_api_key",
             response_payload=None,
             patch_text="",
+            model=args.model,
         )
         return
 
@@ -739,6 +817,7 @@ def call_phase(args: argparse.Namespace) -> None:
                 reason="upload_failed",
                 response_payload=None,
                 patch_text="",
+                model=args.model,
             )
             return
         file_ids.append(file_id)
@@ -752,6 +831,7 @@ def call_phase(args: argparse.Namespace) -> None:
             reason="no_files",  # derived requirement: keep diagnostics truthful when nothing was staged
             response_payload=None,
             patch_text="",
+            model=args.model,
         )
         return
 
@@ -790,6 +870,7 @@ def call_phase(args: argparse.Namespace) -> None:
             reason="request_exception",
             response_payload=None,
             patch_text="",
+            model=args.model,
         )
         return
 
@@ -804,6 +885,7 @@ def call_phase(args: argparse.Namespace) -> None:
             reason=f"http_{response.status_code}",
             response_payload=None,
             patch_text="",
+            model=args.model,
         )
         return
 
@@ -817,6 +899,7 @@ def call_phase(args: argparse.Namespace) -> None:
             reason="invalid_json",
             response_payload=None,
             patch_text="",
+            model=args.model,
         )
         return
     patch = extract_patch(response_json)
@@ -828,6 +911,7 @@ def call_phase(args: argparse.Namespace) -> None:
             reason="diff_generated",
             response_payload=response_json,
             patch_text=patch,
+            model=args.model,
         )
     else:
         # derived requirement: run 19211170783-1 surfaced a zero-byte iterate bundle;
@@ -839,6 +923,7 @@ def call_phase(args: argparse.Namespace) -> None:
             reason="no_fenced_diff",
             response_payload=response_json,
             patch_text="",
+            model=args.model,
         )
 
 

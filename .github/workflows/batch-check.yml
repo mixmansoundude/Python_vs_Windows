@@ -2151,9 +2151,11 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          pattern: iterate-logs-*-${{ github.run_id }}-${{ github.run_attempt }}
-          # derived requirement: jobs such as 19234337453-1 upload the base iterate-logs-${run}-${attempt}
-          # artifact with no matrix prefix; keep the wildcard adjacent so bare and lane-prefixed names resolve.
+          pattern: iterate-logs*${{ github.run_id }}-${{ github.run_attempt }}
+          # derived requirement: runs such as 19251877090-1 emit a bare iterate-logs-${run}-${attempt}
+          # artifact; anchor the wildcard directly before the run id so both the bare name and
+          # matrix-prefixed variants (iterate-logs-${job}-${mode}-...) resolve without producing a
+          # double-hyphen that fails to match.
           merge-multiple: true
           path: _iter
 
