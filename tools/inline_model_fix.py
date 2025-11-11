@@ -726,6 +726,26 @@ def extract_patch(response_json: dict) -> str:
             end = text.find("---END PATCH---")
             if start != -1 and end != -1 and end > start:
                 return text[start : end + len("---END PATCH---")]
+    # derived requirement: Assistants messages responses land under "choices";
+    # parse both shapes so diagnostics stay compatible with either endpoint.
+    choices = response_json.get("choices") or []
+    for choice in choices:
+        message = choice.get("message") or {}
+        content = message.get("content")
+        if isinstance(content, list):
+            for segment in content:
+                text = segment.get("text") or segment.get("value")
+                if not isinstance(text, str):
+                    continue
+                start = text.find("---BEGIN PATCH---")
+                end = text.find("---END PATCH---")
+                if start != -1 and end != -1 and end > start:
+                    return text[start : end + len("---END PATCH---")]
+        elif isinstance(content, str):
+            start = content.find("---BEGIN PATCH---")
+            end = content.find("---END PATCH---")
+            if start != -1 and end != -1 and end > start:
+                return content[start : end + len("---END PATCH---")]
     return ""
 
 
@@ -974,19 +994,38 @@ def call_phase(args: argparse.Namespace) -> None:
         """
     ).strip()
 
-    payload = {
-        "model": args.model,
-        "input": [
-            {
-                "role": "user",
-                "content": [{"type": "input_text", "text": prompt_text}]
-                + [{"type": "input_file", "file_id": fid} for fid in file_ids],
-            }
-        ],
-    }
+    def _build_messages_payload() -> dict:
+        """Construct an Assistants-style messages payload with attachments."""
 
-    try:
-        response = requests.post(
+        # derived requirement: run 19252510407-1 surfaced the Responses PDF-only
+        # gate; the Assistants messages+attachments shape sidesteps that limit
+        # while keeping our staged context intact.
+
+        attachments = [{"file_id": fid} for fid in file_ids]
+        user_message = {
+            "role": "user",
+            "content": [{"type": "text", "text": prompt_text}],
+        }
+        if attachments:
+            user_message["attachments"] = attachments
+        return {"model": args.model, "messages": [user_message]}
+
+    def _build_input_payload() -> dict:
+        """Preserve the legacy Responses input format as a fallback."""
+
+        return {
+            "model": args.model,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": prompt_text}]
+                    + [{"type": "input_file", "file_id": fid} for fid in file_ids],
+                }
+            ],
+        }
+
+    def _post_payload(payload: dict) -> requests.Response:
+        return requests.post(
             "https://api.openai.com/v1/responses",
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -995,6 +1034,14 @@ def call_phase(args: argparse.Namespace) -> None:
             data=json.dumps(payload),
             timeout=120,
         )
+
+    try:
+        payload = _build_messages_payload()
+        append_note(ctx_dir, "openai_call_payload=messages")
+        response = _post_payload(payload)
+        if response.status_code == 400 and "expected context stuffing file type" in response.text.lower():
+            append_note(ctx_dir, "openai_call_retry=responses_input_fallback")
+            response = _post_payload(_build_input_payload())
     except requests.RequestException as exc:
         append_note(ctx_dir, f"openai_call_exception={exc}")
         _record_decision(
