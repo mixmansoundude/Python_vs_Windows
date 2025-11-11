@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -24,7 +25,7 @@ import sys
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 from zipfile import ZipFile
 
 
@@ -83,6 +84,45 @@ EXCLUDED_PARTS = {
     "_ctx",
 }
 
+# derived requirement: run 19252219085-1 failed when uploading .log attachments;
+# OpenAI's Files API now enforces this extension allowlist. Keep it in sync with
+# the error payload so iterate never regresses into upload_failed again.
+ALLOWED_FILE_EXTENSIONS = {
+    "c",
+    "cpp",
+    "cs",
+    "css",
+    "csv",
+    "doc",
+    "docx",
+    "gif",
+    "go",
+    "html",
+    "java",
+    "jpeg",
+    "jpg",
+    "js",
+    "json",
+    "md",
+    "pdf",
+    "php",
+    "pkl",
+    "png",
+    "pptx",
+    "py",
+    "rb",
+    "tar",
+    "tex",
+    "ts",
+    "txt",
+    "webp",
+    "xlsx",
+    "xml",
+    "zip",
+}
+
+TEXT_SANITIZE_LIMIT = 1 * 1024 * 1024
+
 
 def debug(msg: str) -> None:
     print(msg)
@@ -102,6 +142,59 @@ def ensure_ctx(repo_root: Path) -> Path:
     ctx_dir = repo_root / "_ctx"
     ctx_dir.mkdir(parents=True, exist_ok=True)
     return ctx_dir
+
+
+def _is_extension_allowed(path: Path) -> bool:
+    suffix = path.suffix.lower().lstrip(".")
+    if not suffix:
+        return True
+    return suffix in ALLOWED_FILE_EXTENSIONS
+
+
+def _is_probably_text(data: bytes) -> bool:
+    if b"\x00" in data:
+        return False
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def _sanitize_attachment(path: Path, ctx_dir: Path) -> Tuple[Path, str]:
+    """Create an allowed-format copy of *path* for OpenAI uploads."""
+
+    sanitized_root = ctx_dir / "_sanitized"
+    sanitized_root.mkdir(parents=True, exist_ok=True)
+
+    size = path.stat().st_size
+    note_reason = "ext not allowed"
+    if size <= TEXT_SANITIZE_LIMIT:
+        data = path.read_bytes()
+        if _is_probably_text(data):
+            target_name = f"{path.name}.txt"
+            sanitized_path = sanitized_root / target_name
+            sanitized_path.write_bytes(data)
+            note = f"upload_sanitized: {path.name} -> {target_name} (reason: {note_reason})"
+            return sanitized_path, note
+
+    # Fallback to zipping the original payload when it's large or binary.
+    # derived requirement: runs with binary failpacks hit the extension wall;
+    # wrapping them in a small zip keeps the evidence intact while satisfying
+    # OpenAI's allowlist.
+    base_name = f"{path.stem or path.name}_sanitized.zip"
+    sanitized_path = sanitized_root / base_name
+    counter = 1
+    while sanitized_path.exists():
+        sanitized_path = sanitized_root / f"{path.stem or path.name}_sanitized_{counter}.zip"
+        counter += 1
+    with ZipFile(sanitized_path, "w") as archive:
+        archive.write(path, arcname=path.name)
+    note = (
+        f"upload_sanitized: {path.name} -> {sanitized_path.name} "
+        f"(reason: {note_reason} zipped)"
+    )
+    return sanitized_path, note
 
 
 def path_in_repo(candidate: str, repo_root: Path) -> Optional[Path]:
@@ -586,12 +679,14 @@ def stage_phase(args: argparse.Namespace) -> None:
 
 
 def upload_file(path: Path, api_key: str, ctx_dir: Path) -> str:
+    mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
     def _post(purpose: str) -> requests.Response:
         with path.open("rb") as handle:
             return requests.post(
                 "https://api.openai.com/v1/files",
                 headers={"Authorization": f"Bearer {api_key}"},
-                files={"file": (path.name, handle, "text/plain")},
+                files={"file": (path.name, handle, mime_type)},
                 data={"purpose": purpose},
                 timeout=60,
             )
@@ -801,30 +896,68 @@ def call_phase(args: argparse.Namespace) -> None:
         return
 
     file_ids: List[str] = []
+    failed_rel_paths: List[str] = []
+
+    def _queue_sanitized(original_path: Path) -> Tuple[Path, Optional[str]]:
+        sanitized_path, sanitize_note = _sanitize_attachment(original_path, ctx_dir)
+        return sanitized_path, sanitize_note
+
+    def _is_invalid_extension_error(message: str) -> bool:
+        lowered = message.lower()
+        return "invalid extension" in lowered or "supported formats" in lowered
+
     for entry in files:
         rel = entry["name"]
         path = ctx_dir / "attached" / rel
         if not path.exists():
             append_note(ctx_dir, f"openai_upload_missing={rel}")
             continue
-        try:
-            file_id = upload_file(path, api_key, ctx_dir)
-        except RuntimeError as exc:
-            append_note(ctx_dir, f"openai_upload_error={exc}")
-            _record_decision(
-                ctx_dir,
-                status="error",
-                reason="upload_failed",
-                response_payload=None,
-                patch_text="",
-                model=args.model,
-            )
-            return
-        file_ids.append(file_id)
-        append_note(ctx_dir, f"uploaded={rel} file_id={file_id}")
+
+        candidate_queue: List[Tuple[Path, Optional[str]]] = []
+        sanitized_generated = False
+        if _is_extension_allowed(path):
+            candidate_queue.append((path, None))
+        else:
+            sanitized_path, sanitize_note = _queue_sanitized(path)
+            candidate_queue.append((sanitized_path, sanitize_note))
+            sanitized_generated = True
+
+        success = False
+        idx = 0
+        while idx < len(candidate_queue):
+            candidate_path, sanitize_note = candidate_queue[idx]
+            if sanitize_note:
+                append_note(ctx_dir, sanitize_note)
+            try:
+                file_id = upload_file(candidate_path, api_key, ctx_dir)
+                file_ids.append(file_id)
+                source_name = candidate_path.name
+                append_note(
+                    ctx_dir,
+                    f"uploaded={rel} file_id={file_id} source={source_name}",
+                )
+                success = True
+                break
+            except RuntimeError as exc:
+                message = str(exc)
+                append_note(ctx_dir, f"openai_upload_error={message}")
+                if not sanitized_generated and _is_invalid_extension_error(message):
+                    sanitized_path, sanitize_note = _queue_sanitized(path)
+                    candidate_queue.append((sanitized_path, sanitize_note))
+                    sanitized_generated = True
+                idx += 1
+
+        if not success:
+            failed_rel_paths.append(rel)
+            append_note(ctx_dir, f"openai_upload_failed={rel}")
 
     if not file_ids:
         append_note(ctx_dir, "openai_call=skipped_no_files")
+        if failed_rel_paths:
+            append_note(
+                ctx_dir,
+                "openai_upload_failed_all=" + ",".join(sorted(failed_rel_paths)),
+            )
         _record_decision(
             ctx_dir,
             status="error",
