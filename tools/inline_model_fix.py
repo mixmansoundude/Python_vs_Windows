@@ -16,6 +16,7 @@ The script intentionally writes human-readable breadcrumbs to
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
@@ -123,6 +124,19 @@ ALLOWED_FILE_EXTENSIONS = {
 
 TEXT_SANITIZE_LIMIT = 1 * 1024 * 1024
 
+CONTEXT_TOTAL_CAP_BYTES = 80 * 1024
+CONTEXT_PER_FILE_BYTES = 12 * 1024
+CONTEXT_MAX_LINES_PER_FILE = 200
+
+CONTEXT_PRIORITY_PATTERNS = [
+    re.compile(r"failpack\.log(\.txt)?$", re.IGNORECASE),
+    re.compile(r"~test-results\.ndjson(\.txt)?$", re.IGNORECASE),
+    re.compile(r"bootstrap.*\.log(\.txt)?$", re.IGNORECASE),
+    re.compile(r"lane_verdict\.json(\.txt)?$", re.IGNORECASE),
+    re.compile(r"publish_index\.ps1(\.txt)?$", re.IGNORECASE),
+    re.compile(r"batch-check\.yml(\.txt)?$", re.IGNORECASE),
+]
+
 
 def debug(msg: str) -> None:
     print(msg)
@@ -195,6 +209,119 @@ def _sanitize_attachment(path: Path, ctx_dir: Path) -> Tuple[Path, str]:
         f"(reason: {note_reason} zipped)"
     )
     return sanitized_path, note
+
+
+def _select_context_candidates(attachments: List[dict]) -> List[str]:
+    remaining = []
+    for item in attachments:
+        name = item.get("name")
+        if not name:
+            continue
+        remaining.append(name)
+
+    ordered: List[str] = []
+    seen = set()
+
+    for pattern in CONTEXT_PRIORITY_PATTERNS:
+        for name in list(remaining):
+            if name in seen:
+                continue
+            if pattern.search(name):
+                ordered.append(name)
+                seen.add(name)
+
+    return ordered
+
+
+def _build_inlined_context(ctx_dir: Path, attachments: List[dict]) -> Tuple[str, int, int]:
+    """Assemble a bounded text bundle for the Responses input field."""
+
+    attached_root = ctx_dir / "attached"
+    manifest_path = ctx_dir / "iterate_context_manifest.tsv"
+
+    candidates = _select_context_candidates(attachments)
+    if manifest_path.exists():
+        # derived requirement: provenance metadata proved critical during
+        # diagnostics triage (run 19234337453-1). Always include the manifest
+        # so analysts can cross-check which files fed the iterate job.
+        candidates.append("iterate_context_manifest.tsv")
+
+    sections: List[str] = []
+    total_bytes = 0
+    inlined = 0
+
+    for rel in candidates:
+        if rel == "iterate_context_manifest.tsv":
+            path = manifest_path
+        else:
+            path = attached_root / Path(rel)
+
+        if not path.exists():
+            append_note(ctx_dir, f"inlined_skip={rel} reason=missing")
+            continue
+
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            append_note(ctx_dir, f"inlined_skip={rel} reason=read_error error={exc}")
+            continue
+
+        is_text = _is_probably_text(data)
+        truncated = False
+        if is_text:
+            text = data.decode("utf-8", errors="replace")
+            lines = text.splitlines()
+            excerpt_lines = lines[:CONTEXT_MAX_LINES_PER_FILE]
+            truncated = len(lines) > len(excerpt_lines)
+            snippet = "\n".join(excerpt_lines)
+            snippet_bytes = snippet.encode("utf-8")
+            while (
+                len(snippet_bytes) > CONTEXT_PER_FILE_BYTES
+                and excerpt_lines
+            ):
+                excerpt_lines = excerpt_lines[:-1]
+                truncated = True
+                snippet = "\n".join(excerpt_lines)
+                snippet_bytes = snippet.encode("utf-8")
+            if truncated:
+                snippet = snippet + "\n...[truncated]..."
+                snippet_bytes = snippet.encode("utf-8")
+            if not snippet:
+                snippet = "[empty file]"
+                snippet_bytes = snippet.encode("utf-8")
+            meta = f"lines={len(excerpt_lines)} bytes={len(snippet_bytes)}"
+            section = (
+                f"=== CONTEXT FILE: {rel} ({meta}) ===\n" + snippet
+            )
+        else:
+            digest = hashlib.sha256(data).hexdigest()
+            summary = f"<binary {len(data)} bytes sha256={digest[:16]}>"
+            section = (
+                f"=== CONTEXT FILE: {rel} (binary summary) ===\n" + summary
+            )
+            append_note(
+                ctx_dir,
+                f"inlined_binary={rel} size={len(data)} sha256={digest[:16]}",
+            )
+
+        section_bytes = len(section.encode("utf-8"))
+        if total_bytes + section_bytes > CONTEXT_TOTAL_CAP_BYTES:
+            append_note(ctx_dir, f"inlined_skip={rel} reason=total_cap")
+            continue
+
+        append_note(
+            ctx_dir,
+            f"inlined_file={rel} bytes={section_bytes}",
+        )
+        if is_text and truncated:
+            append_note(ctx_dir, f"inlined_truncated={rel}")
+
+        sections.append(section)
+        total_bytes += section_bytes
+        inlined += 1
+
+    context_text = "\n\n".join(sections)
+    return context_text, inlined, total_bytes
 
 
 def path_in_repo(candidate: str, repo_root: Path) -> Optional[Path]:
@@ -994,17 +1121,6 @@ def call_phase(args: argparse.Namespace) -> None:
         """
     ).strip()
 
-    def _build_responses_payload() -> dict:
-        """Build a Responses API payload that uses the attachments field."""
-
-        # derived requirement: run 19252510407-1 showed the PDF-only guard when
-        # we relied on ``messages``; the official attachments list keeps our
-        # staged context intact without triggering that constraint.
-        payload = {"model": args.model, "input": prompt_text}
-        if file_ids:
-            payload["attachments"] = [{"file_id": fid} for fid in file_ids]
-        return payload
-
     def _post_payload(payload: dict) -> requests.Response:
         return requests.post(
             "https://api.openai.com/v1/responses",
@@ -1016,11 +1132,28 @@ def call_phase(args: argparse.Namespace) -> None:
             timeout=120,
         )
 
+    context_text, inlined_count, context_bytes = _build_inlined_context(ctx_dir, files)
+    if context_text:
+        full_prompt = (
+            "### TASK\n"
+            f"{prompt_text}\n\n"
+            "### CONTEXT\n"
+            f"{context_text}"
+        )
+    else:
+        append_note(ctx_dir, "inlined_skip=none reason=no_candidates")
+        full_prompt = prompt_text
+
+    payload = {"model": args.model, "input": full_prompt}
+
     try:
-        payload = _build_responses_payload()
         append_note(
             ctx_dir,
-            f"openai_call_payload=responses.input attachments={len(file_ids)}",
+            (
+                "openai_call_payload=responses.input_no_attachments "
+                f"files_inlined={inlined_count} bytes={context_bytes} "
+                f"attachments_uploaded={len(file_ids)}"
+            ),
         )
         response = _post_payload(payload)
     except requests.RequestException as exc:
