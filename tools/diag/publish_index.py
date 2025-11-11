@@ -60,6 +60,7 @@ class Context:
     diag: Optional[Path]
     artifacts: Optional[Path]
     artifacts_override: Optional[Path]
+    downloaded_iter_root: Optional[Path]
     repo: str
     branch: Optional[str]
     sha: str
@@ -112,6 +113,10 @@ def _get_context() -> Context:
         artifacts_override = None
     if artifacts_override:
         artifacts = artifacts_override
+    downloaded_iter_root = _get_env_path("DOWNLOADED_ITER_ROOT")
+    if downloaded_iter_root and not downloaded_iter_root.exists():
+        downloaded_iter_root = None
+
     repo = os.getenv("REPO") or os.getenv("GITHUB_REPOSITORY") or "n/a"
     branch = os.getenv("BRANCH") or os.getenv("GITHUB_REF_NAME")
     sha = os.getenv("SHA") or os.getenv("GITHUB_SHA") or "n/a"
@@ -168,6 +173,7 @@ def _get_context() -> Context:
         batch_run_attempt=batch_run_attempt,
         site=site,
         artifacts_override=artifacts_override,
+        downloaded_iter_root=downloaded_iter_root,
     )
 
 
@@ -394,25 +400,31 @@ def _iterate_dir_has_payload(root: Path) -> bool:
 
 
 def _local_iterate_source(context: Context, expected_stem: str) -> Optional[Path]:
+    candidate_roots: List[Path] = []
+
+    downloaded = context.downloaded_iter_root
+    if downloaded and downloaded.exists():
+        candidate_roots.append(downloaded)
+
     override_root = _artifacts_override_root(context)
-    if not override_root:
-        return None
+    if override_root:
+        candidate_roots.append(override_root / "iterate")
 
-    iterate_root = override_root / "iterate"
-    candidates = [
-        iterate_root / f"{expected_stem}.zip",
-        iterate_root / expected_stem,
-        iterate_root,
-    ]
+    for root in candidate_roots:
+        candidates = [
+            root / f"{expected_stem}.zip",
+            root / expected_stem,
+            root,
+        ]
 
-    for candidate in candidates:
-        try:
-            if candidate.is_file() and candidate.stat().st_size > 0:
-                return candidate
-            if candidate.is_dir() and _iterate_dir_has_payload(candidate):
-                return candidate
-        except (FileNotFoundError, OSError):
-            continue
+        for candidate in candidates:
+            try:
+                if candidate.is_file() and candidate.stat().st_size > 0:
+                    return candidate
+                if candidate.is_dir() and _iterate_dir_has_payload(candidate):
+                    return candidate
+            except (FileNotFoundError, OSError):
+                continue
 
     return None
 
@@ -626,6 +638,17 @@ def _download_iterate_artifact_zip(
     expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
     local_source = _local_iterate_source(context, expected_stem)
     if local_source:
+        source_label = "ARTIFACTS_ROOT"
+        downloaded_root = context.downloaded_iter_root
+        if downloaded_root:
+            try:
+                local_resolved = local_source.resolve()
+                downloaded_resolved = downloaded_root.resolve()
+                if local_resolved.is_relative_to(downloaded_resolved):
+                    source_label = "DOWNLOADED iterate payload"
+            except OSError:
+                pass
+
         try:
             destination.parent.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -637,7 +660,7 @@ def _download_iterate_artifact_zip(
             except OSError:
                 return (expected_stem, None, False)
             _log_iterate(
-                f"copied iterate archive from ARTIFACTS_ROOT {local_source} -> {destination}"
+                f"copied iterate archive from {source_label} {local_source} -> {destination}"
             )
             context.iterate_found_cache = True
             if not context.iterate_artifact_meta:
@@ -654,7 +677,7 @@ def _download_iterate_artifact_zip(
         except (FileNotFoundError, OSError, zipfile.BadZipFile):
             return (expected_stem, None, False)
         _log_iterate(
-            f"zipped iterate payload from ARTIFACTS_ROOT {local_source} -> {destination}"
+            f"zipped iterate payload from {source_label} {local_source} -> {destination}"
         )
         context.iterate_found_cache = True
         if not context.iterate_artifact_meta:
@@ -2298,14 +2321,12 @@ def _collect_real_failing_tests(diag: Optional[Path]) -> Optional[dict]:
 
 
 def _locate_iterate_root(context: Context) -> Optional[Path]:
-    downloaded_env = os.getenv("DOWNLOADED_ITER_ROOT")
-    if downloaded_env:
-        downloaded_path = Path(downloaded_env)
-        if downloaded_path.exists():
-            # derived requirement: run 19232295127-1 surfaced the iterate payload via the
-            # download-artifact staging directory while ARTIFACTS_ROOT stayed empty; prefer
-            # the freshly downloaded bundle so diagnostics mirror the Actions artifact.
-            return downloaded_path
+    downloaded_path = context.downloaded_iter_root
+    if downloaded_path and downloaded_path.exists():
+        # derived requirement: run 19232295127-1 surfaced the iterate payload via the
+        # download-artifact staging directory while ARTIFACTS_ROOT stayed empty; prefer
+        # the freshly downloaded bundle so diagnostics mirror the Actions artifact.
+        return downloaded_path
     if context.artifacts and (context.artifacts / "iterate").exists():
         return context.artifacts / "iterate"
     if context.diag:
