@@ -994,35 +994,16 @@ def call_phase(args: argparse.Namespace) -> None:
         """
     ).strip()
 
-    def _build_messages_payload() -> dict:
-        """Construct an Assistants-style messages payload with attachments."""
+    def _build_responses_payload() -> dict:
+        """Build a Responses API payload that uses the attachments field."""
 
-        # derived requirement: run 19252510407-1 surfaced the Responses PDF-only
-        # gate; the Assistants messages+attachments shape sidesteps that limit
-        # while keeping our staged context intact.
-
-        attachments = [{"file_id": fid} for fid in file_ids]
-        user_message = {
-            "role": "user",
-            "content": [{"type": "text", "text": prompt_text}],
-        }
-        if attachments:
-            user_message["attachments"] = attachments
-        return {"model": args.model, "messages": [user_message]}
-
-    def _build_input_payload() -> dict:
-        """Preserve the legacy Responses input format as a fallback."""
-
-        return {
-            "model": args.model,
-            "input": [
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": prompt_text}]
-                    + [{"type": "input_file", "file_id": fid} for fid in file_ids],
-                }
-            ],
-        }
+        # derived requirement: run 19252510407-1 showed the PDF-only guard when
+        # we relied on ``messages``; the official attachments list keeps our
+        # staged context intact without triggering that constraint.
+        payload = {"model": args.model, "input": prompt_text}
+        if file_ids:
+            payload["attachments"] = [{"file_id": fid} for fid in file_ids]
+        return payload
 
     def _post_payload(payload: dict) -> requests.Response:
         return requests.post(
@@ -1036,12 +1017,12 @@ def call_phase(args: argparse.Namespace) -> None:
         )
 
     try:
-        payload = _build_messages_payload()
-        append_note(ctx_dir, "openai_call_payload=messages")
+        payload = _build_responses_payload()
+        append_note(
+            ctx_dir,
+            f"openai_call_payload=responses.input attachments={len(file_ids)}",
+        )
         response = _post_payload(payload)
-        if response.status_code == 400 and "expected context stuffing file type" in response.text.lower():
-            append_note(ctx_dir, "openai_call_retry=responses_input_fallback")
-            response = _post_payload(_build_input_payload())
     except requests.RequestException as exc:
         append_note(ctx_dir, f"openai_call_exception={exc}")
         _record_decision(
