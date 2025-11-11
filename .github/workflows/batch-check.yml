@@ -2079,6 +2079,13 @@ jobs:
   publish_diag:
     name: Publish diagnostics to Pages
     needs: [selftest, selftest-gate, model-quick-fix]
+    timeout-minutes: 25
+    concurrency:
+      # derived requirement: run 19236437263-1 exhausted the runner disk while a prior
+      # publish was still active; serialize by ref and bound runtime so hanging jobs
+      # cannot overlap and consume the remaining quota.
+      group: pages-${{ github.ref }}
+      cancel-in-progress: true
     if: ${{ always() }}
     runs-on: ubuntu-latest
     environment:
@@ -2101,6 +2108,7 @@ jobs:
           if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -d "$GITHUB_WORKSPACE" ]; then
             find "$GITHUB_WORKSPACE" -maxdepth 2 -type d -name "__pycache__" -prune -exec rm -rf {} + 2>/dev/null || true
           fi
+          rm -rf _site 2>/dev/null || true
           echo "== disk after =="
           df -h || true
 
@@ -2143,7 +2151,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          pattern: iterate-logs-*${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: iterate-logs-*-${{ github.run_id }}-${{ github.run_attempt }}
           # derived requirement: jobs such as 19234337453-1 upload the base iterate-logs-${run}-${attempt}
           # artifact with no matrix prefix; keep the wildcard adjacent so bare and lane-prefixed names resolve.
           merge-multiple: true
