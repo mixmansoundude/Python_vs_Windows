@@ -1388,14 +1388,24 @@ def call_phase(args: argparse.Namespace) -> None:
         full_prompt = prompt_text
 
     payload = {"model": args.model, "input": full_prompt}
+    payload["reasoning"] = {"effort": "low"}
+    text_payload = {"verbosity": "low"}
+    payload["text"] = text_payload
     # NOTE: Do not send ``temperature`` to the Responses API for GPT-5-Codex;
     # runs like 19285065673-1 prove the endpoint rejects it with HTTP 400
     # "Unsupported parameter: 'temperature'". Log the omission so future
     # maintainers understand why the knob is absent here.
-    append_note(ctx_dir, f"omitted_params=temperature;model={args.model}")
-    max_output_tokens = int(os.environ.get("INLINE_MODEL_MAX_OUT", "1500"))
-    if max_output_tokens > 0:
-        payload["max_output_tokens"] = max_output_tokens
+    append_note(
+        ctx_dir,
+        f"omitted_params=temperature;model={args.model};reasoning.effort=low",
+    )
+    try:
+        max_output_tokens = int(os.environ.get("INLINE_MODEL_MAX_OUT", "1500"))
+    except ValueError:
+        max_output_tokens = 1500
+    if max_output_tokens <= 0:
+        max_output_tokens = 1500
+    payload["max_output_tokens"] = max_output_tokens
 
     timeout_sec = int(os.environ.get("INLINE_MODEL_TIMEOUT", "300"))
     retry_delays = [0, 5]
@@ -1408,61 +1418,89 @@ def call_phase(args: argparse.Namespace) -> None:
             f"files_inlined={inlined_count} bytes={context_bytes} "
             f"attachments_uploaded={attachments_uploaded} "
             f"timeout={timeout_sec} retries={len(retry_delays) - 1} "
-            f"max_output_tokens={payload.get('max_output_tokens', 'n/a')}"
+            f"max_output_tokens={payload.get('max_output_tokens', 'n/a')} "
+            "reasoning.effort=low text.verbosity=low"
         ),
     )
 
     def _execute_payload(current_payload: dict) -> Tuple[Optional[dict], Optional[str]]:
-        response: Optional[requests.Response] = None
-        last_error_label: Optional[str] = None
-        last_reason: Optional[str] = "request_exception"
-        for attempt, delay in enumerate(retry_delays):
-            if delay:
-                time.sleep(delay)
+        removed_params: Set[str] = set()
+        while True:
+            response: Optional[requests.Response] = None
+            last_error_label: Optional[str] = None
+            last_reason: Optional[str] = "request_exception"
+            for attempt, delay in enumerate(retry_delays):
+                if delay:
+                    time.sleep(delay)
+                try:
+                    resp = _post_payload(current_payload, timeout_sec)
+                except (
+                    requests.exceptions.ReadTimeout,
+                    requests.exceptions.ConnectTimeout,
+                    requests.exceptions.Timeout,
+                ) as exc:
+                    last_error_label = f"timeout:{type(exc).__name__}"
+                    last_reason = "request_exception"
+                    append_note(
+                        ctx_dir,
+                        f"openai_call_timeout_attempt={attempt} error={exc}",
+                    )
+                    continue
+                except requests.RequestException as exc:
+                    append_note(ctx_dir, f"openai_call_exception={exc}")
+                    return None, "request_exception"
+                if resp.status_code >= 500:
+                    last_error_label = f"http_{resp.status_code}"
+                    last_reason = f"http_{resp.status_code}"
+                    append_note(
+                        ctx_dir,
+                        f"openai_call_retry_http={resp.status_code} attempt={attempt}",
+                    )
+                    continue
+                response = resp
+                break
+            if response is None:
+                append_note(
+                    ctx_dir,
+                    f"openai_call_exception={last_error_label or 'unknown_failure'}",
+                )
+                return None, last_reason or "request_exception"
+
+            if response.status_code == 400:
+                body_snippet = response.text[:400]
+                append_note(
+                    ctx_dir,
+                    f"openai_call_error=HTTP 400 body={body_snippet}",
+                )
+                lowered = body_snippet.lower()
+                dropped = False
+                for param in ("text", "reasoning"):
+                    if (
+                        param not in removed_params
+                        and param in current_payload
+                        and "unknown parameter" in lowered
+                        and f"'{param}'" in lowered
+                    ):
+                        append_note(ctx_dir, f"openai_call_drop_param={param}")
+                        current_payload.pop(param, None)
+                        removed_params.add(param)
+                        dropped = True
+                        break
+                if dropped:
+                    continue
+                return None, "http_400"
+
+            if response.status_code != 200:
+                append_note(
+                    ctx_dir,
+                    f"openai_call_error=HTTP {response.status_code} body={response.text[:400]}",
+                )
+                return None, f"http_{response.status_code}"
             try:
-                resp = _post_payload(current_payload, timeout_sec)
-            except (
-                requests.exceptions.ReadTimeout,
-                requests.exceptions.ConnectTimeout,
-                requests.exceptions.Timeout,
-            ) as exc:
-                last_error_label = f"timeout:{type(exc).__name__}"
-                last_reason = "request_exception"
-                append_note(
-                    ctx_dir,
-                    f"openai_call_timeout_attempt={attempt} error={exc}",
-                )
-                continue
-            except requests.RequestException as exc:
-                append_note(ctx_dir, f"openai_call_exception={exc}")
-                return None, "request_exception"
-            if resp.status_code >= 500:
-                last_error_label = f"http_{resp.status_code}"
-                last_reason = f"http_{resp.status_code}"
-                append_note(
-                    ctx_dir,
-                    f"openai_call_retry_http={resp.status_code} attempt={attempt}",
-                )
-                continue
-            response = resp
-            break
-        if response is None:
-            append_note(
-                ctx_dir,
-                f"openai_call_exception={last_error_label or 'unknown_failure'}",
-            )
-            return None, last_reason or "request_exception"
-        if response.status_code != 200:
-            append_note(
-                ctx_dir,
-                f"openai_call_error=HTTP {response.status_code} body={response.text[:400]}",
-            )
-            return None, f"http_{response.status_code}"
-        try:
-            return response.json(), None
-        except ValueError as exc:
-            append_note(ctx_dir, f"openai_response_json_error={exc}")
-            return None, "invalid_json"
+                return response.json(), None
+            except ValueError as exc:
+                append_note(ctx_dir, f"openai_response_json_error={exc}")
+                return None, "invalid_json"
 
     response_json, error_reason = _execute_payload(payload)
     if response_json is None:
@@ -1483,11 +1521,11 @@ def call_phase(args: argparse.Namespace) -> None:
             append_note(ctx_dir, f"openai_call_incomplete_reason={reason_tag}")
         if (
             reason_tag == "max_output_tokens"
-            and payload.get("max_output_tokens", 0) < 3000
+            and payload.get("max_output_tokens", 0) < 4000
         ):
             payload_retry = dict(payload)
-            payload_retry["max_output_tokens"] = 3000
-            append_note(ctx_dir, "openai_call_retry_max_output_tokens=3000")
+            payload_retry["max_output_tokens"] = 4000
+            append_note(ctx_dir, "openai_call_retry_max_output_tokens=4000")
             response_json_retry, error_reason = _execute_payload(payload_retry)
             if response_json_retry is None:
                 _record_decision(
