@@ -24,6 +24,7 @@ import re
 import shutil
 import sys
 import textwrap
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
@@ -1043,77 +1044,82 @@ def call_phase(args: argparse.Namespace) -> None:
         return
 
     file_ids: List[str] = []
-    failed_rel_paths: List[str] = []
+    upload_enabled = False  # derived requirement: Responses input now inlines context; skip unused uploads to avoid API fatigue.
 
-    def _queue_sanitized(original_path: Path) -> Tuple[Path, Optional[str]]:
-        sanitized_path, sanitize_note = _sanitize_attachment(original_path, ctx_dir)
-        return sanitized_path, sanitize_note
+    if upload_enabled:
+        failed_rel_paths: List[str] = []
 
-    def _is_invalid_extension_error(message: str) -> bool:
-        lowered = message.lower()
-        return "invalid extension" in lowered or "supported formats" in lowered
+        def _queue_sanitized(original_path: Path) -> Tuple[Path, Optional[str]]:
+            sanitized_path, sanitize_note = _sanitize_attachment(original_path, ctx_dir)
+            return sanitized_path, sanitize_note
 
-    for entry in files:
-        rel = entry["name"]
-        path = ctx_dir / "attached" / rel
-        if not path.exists():
-            append_note(ctx_dir, f"openai_upload_missing={rel}")
-            continue
+        def _is_invalid_extension_error(message: str) -> bool:
+            lowered = message.lower()
+            return "invalid extension" in lowered or "supported formats" in lowered
 
-        candidate_queue: List[Tuple[Path, Optional[str]]] = []
-        sanitized_generated = False
-        if _is_extension_allowed(path):
-            candidate_queue.append((path, None))
-        else:
-            sanitized_path, sanitize_note = _queue_sanitized(path)
-            candidate_queue.append((sanitized_path, sanitize_note))
-            sanitized_generated = True
+        for entry in files:
+            rel = entry["name"]
+            path = ctx_dir / "attached" / rel
+            if not path.exists():
+                append_note(ctx_dir, f"openai_upload_missing={rel}")
+                continue
 
-        success = False
-        idx = 0
-        while idx < len(candidate_queue):
-            candidate_path, sanitize_note = candidate_queue[idx]
-            if sanitize_note:
-                append_note(ctx_dir, sanitize_note)
-            try:
-                file_id = upload_file(candidate_path, api_key, ctx_dir)
-                file_ids.append(file_id)
-                source_name = candidate_path.name
+            candidate_queue: List[Tuple[Path, Optional[str]]] = []
+            sanitized_generated = False
+            if _is_extension_allowed(path):
+                candidate_queue.append((path, None))
+            else:
+                sanitized_path, sanitize_note = _queue_sanitized(path)
+                candidate_queue.append((sanitized_path, sanitize_note))
+                sanitized_generated = True
+
+            success = False
+            idx = 0
+            while idx < len(candidate_queue):
+                candidate_path, sanitize_note = candidate_queue[idx]
+                if sanitize_note:
+                    append_note(ctx_dir, sanitize_note)
+                try:
+                    file_id = upload_file(candidate_path, api_key, ctx_dir)
+                    file_ids.append(file_id)
+                    source_name = candidate_path.name
+                    append_note(
+                        ctx_dir,
+                        f"uploaded={rel} file_id={file_id} source={source_name}",
+                    )
+                    success = True
+                    break
+                except RuntimeError as exc:
+                    message = str(exc)
+                    append_note(ctx_dir, f"openai_upload_error={message}")
+                    if not sanitized_generated and _is_invalid_extension_error(message):
+                        sanitized_path, sanitize_note = _queue_sanitized(path)
+                        candidate_queue.append((sanitized_path, sanitize_note))
+                        sanitized_generated = True
+                    idx += 1
+
+            if not success:
+                failed_rel_paths.append(rel)
+                append_note(ctx_dir, f"openai_upload_failed={rel}")
+
+        if not file_ids:
+            append_note(ctx_dir, "openai_call=skipped_no_files")
+            if failed_rel_paths:
                 append_note(
                     ctx_dir,
-                    f"uploaded={rel} file_id={file_id} source={source_name}",
+                    "openai_upload_failed_all=" + ",".join(sorted(failed_rel_paths)),
                 )
-                success = True
-                break
-            except RuntimeError as exc:
-                message = str(exc)
-                append_note(ctx_dir, f"openai_upload_error={message}")
-                if not sanitized_generated and _is_invalid_extension_error(message):
-                    sanitized_path, sanitize_note = _queue_sanitized(path)
-                    candidate_queue.append((sanitized_path, sanitize_note))
-                    sanitized_generated = True
-                idx += 1
-
-        if not success:
-            failed_rel_paths.append(rel)
-            append_note(ctx_dir, f"openai_upload_failed={rel}")
-
-    if not file_ids:
-        append_note(ctx_dir, "openai_call=skipped_no_files")
-        if failed_rel_paths:
-            append_note(
+            _record_decision(
                 ctx_dir,
-                "openai_upload_failed_all=" + ",".join(sorted(failed_rel_paths)),
+                status="error",
+                reason="no_files",  # derived requirement: keep diagnostics truthful when nothing was staged
+                response_payload=None,
+                patch_text="",
+                model=args.model,
             )
-        _record_decision(
-            ctx_dir,
-            status="error",
-            reason="no_files",  # derived requirement: keep diagnostics truthful when nothing was staged
-            response_payload=None,
-            patch_text="",
-            model=args.model,
-        )
-        return
+            return
+    else:
+        append_note(ctx_dir, "openai_upload_skipped=responses_input_inlined_context")
 
     prompt_text = textwrap.dedent(
         """
@@ -1121,7 +1127,7 @@ def call_phase(args: argparse.Namespace) -> None:
         """
     ).strip()
 
-    def _post_payload(payload: dict) -> requests.Response:
+    def _post_payload(payload: dict, timeout: int) -> requests.Response:
         return requests.post(
             "https://api.openai.com/v1/responses",
             headers={
@@ -1129,7 +1135,7 @@ def call_phase(args: argparse.Namespace) -> None:
                 "Content-Type": "application/json",
             },
             data=json.dumps(payload),
-            timeout=120,
+            timeout=timeout,
         )
 
     context_text, inlined_count, context_bytes = _build_inlined_context(ctx_dir, files)
@@ -1145,19 +1151,68 @@ def call_phase(args: argparse.Namespace) -> None:
         full_prompt = prompt_text
 
     payload = {"model": args.model, "input": full_prompt}
+    max_output_tokens = int(os.environ.get("INLINE_MODEL_MAX_OUT", "600"))
+    if max_output_tokens > 0:
+        payload["max_output_tokens"] = max_output_tokens
 
-    try:
-        append_note(
-            ctx_dir,
-            (
-                "openai_call_payload=responses.input_no_attachments "
-                f"files_inlined={inlined_count} bytes={context_bytes} "
-                f"attachments_uploaded={len(file_ids)}"
-            ),
-        )
-        response = _post_payload(payload)
-    except requests.RequestException as exc:
-        append_note(ctx_dir, f"openai_call_exception={exc}")
+    timeout_sec = int(os.environ.get("INLINE_MODEL_TIMEOUT", "300"))
+    retry_delays = [0, 3, 8]
+    attachments_uploaded = len(file_ids)
+
+    append_note(
+        ctx_dir,
+        (
+            "openai_call_payload=responses.input_no_attachments "
+            f"files_inlined={inlined_count} bytes={context_bytes} "
+            f"attachments_uploaded={attachments_uploaded} "
+            f"timeout={timeout_sec} retries={len(retry_delays) - 1}"
+        ),
+    )
+
+    response: Optional[requests.Response] = None
+    last_error_note: Optional[str] = None
+
+    for attempt, delay in enumerate(retry_delays):
+        if delay:
+            time.sleep(delay)
+        try:
+            resp = _post_payload(payload, timeout_sec)
+        except (
+            requests.exceptions.ReadTimeout,
+            requests.exceptions.ConnectTimeout,
+            requests.exceptions.Timeout,
+        ) as exc:
+            last_error_note = f"timeout:{type(exc).__name__}"
+            append_note(
+                ctx_dir,
+                f"openai_call_timeout_attempt={attempt} error={exc}",
+            )
+            continue
+        except requests.RequestException as exc:
+            append_note(ctx_dir, f"openai_call_exception={exc}")
+            _record_decision(
+                ctx_dir,
+                status="error",
+                reason="request_exception",
+                response_payload=None,
+                patch_text="",
+                model=args.model,
+            )
+            return
+
+        if resp.status_code >= 500:
+            last_error_note = f"http_{resp.status_code}"
+            append_note(
+                ctx_dir,
+                f"openai_call_retry_http={resp.status_code} attempt={attempt}",
+            )
+            continue
+
+        response = resp
+        break
+
+    if response is None:
+        append_note(ctx_dir, f"openai_call_exception={last_error_note or 'unknown_failure'}")
         _record_decision(
             ctx_dir,
             status="error",
