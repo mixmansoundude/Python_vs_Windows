@@ -1389,8 +1389,6 @@ def call_phase(args: argparse.Namespace) -> None:
 
     payload = {"model": args.model, "input": full_prompt}
     payload["reasoning"] = {"effort": "low"}
-    text_payload = {"verbosity": "low"}
-    payload["text"] = text_payload
     # NOTE: Do not send ``temperature`` to the Responses API for GPT-5-Codex;
     # runs like 19285065673-1 prove the endpoint rejects it with HTTP 400
     # "Unsupported parameter: 'temperature'". Log the omission so future
@@ -1398,6 +1396,13 @@ def call_phase(args: argparse.Namespace) -> None:
     append_note(
         ctx_dir,
         f"omitted_params=temperature;model={args.model};reasoning.effort=low",
+    )
+    # NOTE: Do not send ``text.verbosity`` either; run 19285065673-1 showed the
+    # API rejects "low" with HTTP 400 "unsupported_value" and only advertises
+    # "medium". We omit the parameter entirely to avoid future breakage.
+    append_note(
+        ctx_dir,
+        f"omitted_params=text.verbosity;model={args.model}",
     )
     try:
         max_output_tokens = int(os.environ.get("INLINE_MODEL_MAX_OUT", "1500"))
@@ -1419,7 +1424,7 @@ def call_phase(args: argparse.Namespace) -> None:
             f"attachments_uploaded={attachments_uploaded} "
             f"timeout={timeout_sec} retries={len(retry_delays) - 1} "
             f"max_output_tokens={payload.get('max_output_tokens', 'n/a')} "
-            "reasoning.effort=low text.verbosity=low"
+            "reasoning.effort=low"
         ),
     )
 
@@ -1502,51 +1507,69 @@ def call_phase(args: argparse.Namespace) -> None:
                 append_note(ctx_dir, f"openai_response_json_error={exc}")
                 return None, "invalid_json"
 
-    response_json, error_reason = _execute_payload(payload)
+    token_caps: List[int] = []
+    seen_caps: Set[int] = set()
+    for candidate in [max_output_tokens, 3000, 6000, 12000]:
+        if candidate <= 0:
+            continue
+        if token_caps and candidate <= token_caps[-1]:
+            continue
+        if candidate in seen_caps:
+            continue
+        token_caps.append(candidate)
+        seen_caps.add(candidate)
+
+    response_json: Optional[dict] = None
+    error_reason: Optional[str] = None
+    escalator_exhausted = False
+
+    for idx, cap in enumerate(token_caps):
+        payload["max_output_tokens"] = cap
+        if idx > 0:
+            append_note(
+                ctx_dir,
+                f"openai_call_retry_max_output_tokens={cap} retry_ix={idx}",
+            )
+        response_json, error_reason = _execute_payload(payload)
+        if response_json is None:
+            break
+
+        incomplete_details = response_json.get("incomplete_details") or {}
+        status_tag = response_json.get("status")
+        reason_tag = incomplete_details.get("reason")
+        if reason_tag:
+            append_note(
+                ctx_dir,
+                f"openai_call_incomplete_reason={reason_tag} "
+                f"retry_ix={idx} max_output_tokens={cap}",
+            )
+        if (
+            status_tag == "incomplete"
+            and reason_tag == "max_output_tokens"
+            and idx + 1 < len(token_caps)
+        ):
+            continue
+        if (
+            status_tag == "incomplete"
+            and reason_tag == "max_output_tokens"
+            and idx + 1 == len(token_caps)
+        ):
+            escalator_exhausted = True
+        break
+
     if response_json is None:
         _record_decision(
             ctx_dir,
             status="error",
-            reason=error_reason,
+            reason=error_reason or "request_exception",
             response_payload=None,
             patch_text="",
             model=args.model,
         )
         return
 
-    incomplete_details = response_json.get("incomplete_details") or {}
-    if response_json.get("status") == "incomplete":
-        reason_tag = incomplete_details.get("reason")
-        if reason_tag:
-            append_note(ctx_dir, f"openai_call_incomplete_reason={reason_tag}")
-        if (
-            reason_tag == "max_output_tokens"
-            and payload.get("max_output_tokens", 0) < 4000
-        ):
-            payload_retry = dict(payload)
-            payload_retry["max_output_tokens"] = 4000
-            append_note(ctx_dir, "openai_call_retry_max_output_tokens=4000")
-            response_json_retry, error_reason = _execute_payload(payload_retry)
-            if response_json_retry is None:
-                _record_decision(
-                    ctx_dir,
-                    status="error",
-                    reason=error_reason,
-                    response_payload=None,
-                    patch_text="",
-                    model=args.model,
-                )
-                return
-            response_json = response_json_retry
-            payload = payload_retry
-            incomplete_details = response_json.get("incomplete_details") or {}
-            if response_json.get("status") == "incomplete":
-                retry_reason = incomplete_details.get("reason")
-                if retry_reason:
-                    append_note(
-                        ctx_dir,
-                        f"openai_call_incomplete_reason={retry_reason}",
-                    )
+    if escalator_exhausted:
+        append_note(ctx_dir, "token_escalator_exhausted=true")
 
     patch, rationale_raw, rationale_json, format_issue = extract_patch(response_json)
 
