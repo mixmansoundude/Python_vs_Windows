@@ -1388,8 +1388,11 @@ def call_phase(args: argparse.Namespace) -> None:
         full_prompt = prompt_text
 
     payload = {"model": args.model, "input": full_prompt}
-    temperature = float(os.environ.get("INLINE_MODEL_TEMPERATURE", "0.2"))
-    payload["temperature"] = temperature
+    # NOTE: Do not send ``temperature`` to the Responses API for GPT-5-Codex;
+    # runs like 19285065673-1 prove the endpoint rejects it with HTTP 400
+    # "Unsupported parameter: 'temperature'". Log the omission so future
+    # maintainers understand why the knob is absent here.
+    append_note(ctx_dir, f"omitted_params=temperature;model={args.model}")
     max_output_tokens = int(os.environ.get("INLINE_MODEL_MAX_OUT", "1500"))
     if max_output_tokens > 0:
         payload["max_output_tokens"] = max_output_tokens
@@ -1405,8 +1408,7 @@ def call_phase(args: argparse.Namespace) -> None:
             f"files_inlined={inlined_count} bytes={context_bytes} "
             f"attachments_uploaded={attachments_uploaded} "
             f"timeout={timeout_sec} retries={len(retry_delays) - 1} "
-            f"max_output_tokens={payload.get('max_output_tokens', 'n/a')} "
-            f"temperature={temperature}"
+            f"max_output_tokens={payload.get('max_output_tokens', 'n/a')}"
         ),
     )
 
