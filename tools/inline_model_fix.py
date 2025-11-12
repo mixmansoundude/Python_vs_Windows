@@ -27,7 +27,7 @@ import textwrap
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Set, Tuple
 from zipfile import ZipFile
 
 
@@ -125,18 +125,34 @@ ALLOWED_FILE_EXTENSIONS = {
 
 TEXT_SANITIZE_LIMIT = 1 * 1024 * 1024
 
-CONTEXT_TOTAL_CAP_BYTES = 80 * 1024
-CONTEXT_PER_FILE_BYTES = 12 * 1024
-CONTEXT_MAX_LINES_PER_FILE = 200
+CONTEXT_TOTAL_CAP_BYTES = 512 * 1024
 
-CONTEXT_PRIORITY_PATTERNS = [
-    re.compile(r"failpack\.log(\.txt)?$", re.IGNORECASE),
-    re.compile(r"~test-results\.ndjson(\.txt)?$", re.IGNORECASE),
-    re.compile(r"bootstrap.*\.log(\.txt)?$", re.IGNORECASE),
-    re.compile(r"lane_verdict\.json(\.txt)?$", re.IGNORECASE),
-    re.compile(r"publish_index\.ps1(\.txt)?$", re.IGNORECASE),
-    re.compile(r"batch-check\.yml(\.txt)?$", re.IGNORECASE),
+# derived requirement: iterate run 19283281951-1 showed the model needs full
+# visibility into the harness stack. Keep these files untrimmed and in this
+# deterministic order so the contract stays stable when future failures arise.
+CONTEXT_PRIMARY_KEEP = [
+    Path("README.md"),
+    Path("AGENTS.md"),
+    Path("run_setup.bat"),
+    Path("run_tests.bat"),
+    Path("tests/harness.ps1"),
+    Path("tests/selfapps_entry.ps1"),
+    Path("tests/selfapps_single.ps1"),
+    Path("tests/selfapps_envsmoke.ps1"),
 ]
+
+# derived requirement: narrow the iterate bundle to failure-relevant sources.
+CONTEXT_EXCLUDED_PATHS = {
+    Path(".github/workflows/batch-check.yml"),
+    Path("tools/diag/publish_index.ps1"),
+    Path("tools/diag/publish_index.py"),
+    Path("tools/diag/build_prompt.ps1"),
+    Path("tools/apply_patch.py"),
+    Path("tools/check_delimiters.py"),
+    Path("scripts/poll_public_diag.ps1"),
+}
+
+REFERENCE_EXTENSIONS = {".bat", ".cmd", ".ps1", ".psm1", ".psd1", ".py", ".json", ".txt"}
 
 
 def debug(msg: str) -> None:
@@ -212,117 +228,266 @@ def _sanitize_attachment(path: Path, ctx_dir: Path) -> Tuple[Path, str]:
     return sanitized_path, note
 
 
-def _select_context_candidates(attachments: List[dict]) -> List[str]:
-    remaining = []
-    for item in attachments:
-        name = item.get("name")
-        if not name:
+BAT_REFERENCE_RE = re.compile(
+    r'"([^"\s]+\.[A-Za-z0-9]+)"|\'([^\'\s]+\.[A-Za-z0-9]+)\'|([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+)'
+)
+
+
+def _normalize_rel(rel: Path) -> Path:
+    text = rel.as_posix().lstrip("./")
+    return Path(text)
+
+
+def _should_exclude_from_context(rel: Path) -> bool:
+    rel_posix = rel.as_posix()
+    for excluded in CONTEXT_EXCLUDED_PATHS:
+        prefix = excluded.as_posix()
+        if rel_posix == prefix or rel_posix.startswith(prefix + "/"):
+            return True
+    return False
+
+
+def _gather_context_file_list(repo_root: Path, ctx_dir: Path) -> List[Path]:
+    ordered: List[Path] = []
+    seen: Set[str] = set()
+
+    def add_candidate(rel: Path) -> None:
+        normalized = _normalize_rel(rel)
+        key = normalized.as_posix()
+        if key in seen:
+            return
+        if _should_exclude_from_context(normalized):
+            append_note(ctx_dir, f"context_excluded={key}")
+            return
+        candidate = repo_root / normalized
+        if not candidate.exists():
+            append_note(ctx_dir, f"context_missing={key}")
+            return
+        seen.add(key)
+        ordered.append(normalized)
+
+    for rel in CONTEXT_PRIMARY_KEEP:
+        add_candidate(rel)
+
+    for bat_path in sorted(repo_root.rglob("*.bat")):
+        try:
+            rel = bat_path.relative_to(repo_root)
+        except ValueError:
             continue
-        remaining.append(name)
+        add_candidate(rel)
 
-    ordered: List[str] = []
-    seen = set()
+    referenced: Set[Path] = set()
+    processed_bats: Set[str] = set()
 
-    for pattern in CONTEXT_PRIORITY_PATTERNS:
-        for name in list(remaining):
-            if name in seen:
+    def process_bat(rel: Path) -> None:
+        key = rel.as_posix()
+        if key in processed_bats:
+            return
+        processed_bats.add(key)
+        abs_path = repo_root / rel
+        try:
+            text = abs_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            append_note(ctx_dir, f"bat_reference_read_error={key} error={exc}")
+            return
+        for match in BAT_REFERENCE_RE.findall(text):
+            candidate = next((item for item in match if item), None)
+            if not candidate:
                 continue
-            if pattern.search(name):
-                ordered.append(name)
-                seen.add(name)
+            candidate = candidate.replace("%~dp0", "")
+            rel_candidate = path_in_repo(candidate, repo_root)
+            if rel_candidate is None:
+                continue
+            abs_candidate = (repo_root / rel_candidate).resolve()
+            try:
+                relative = abs_candidate.relative_to(repo_root.resolve())
+            except ValueError:
+                continue
+            normalized = _normalize_rel(relative)
+            ext = normalized.suffix.lower()
+            if ext and ext not in REFERENCE_EXTENSIONS:
+                continue
+            if _should_exclude_from_context(normalized):
+                append_note(ctx_dir, f"context_excluded={normalized.as_posix()}")
+                continue
+            if normalized.suffix.lower() in {".bat", ".cmd"}:
+                add_candidate(normalized)
+                process_bat(normalized)
+            else:
+                referenced.add(normalized)
+
+    idx = 0
+    while idx < len(ordered):
+        rel = ordered[idx]
+        if rel.suffix.lower() in {".bat", ".cmd"}:
+            process_bat(rel)
+        idx += 1
+
+    for rel in sorted(referenced, key=lambda item: item.as_posix()):
+        add_candidate(rel)
 
     return ordered
 
 
-def _build_inlined_context(ctx_dir: Path, attachments: List[dict]) -> Tuple[str, int, int]:
+def _read_tail_lines(path: Path, count: int) -> List[str]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    if not lines:
+        return []
+    return lines[-count:]
+
+
+def _collect_ndjson_summaries(ctx_dir: Path) -> List[Tuple[str, str]]:
+    summaries: List[Tuple[str, str]] = []
+    failing_ids = {"self.env.smoke.conda", "self.env.smoke.run"}
+    for path in sorted(ctx_dir.glob("attached/**/*test-results*.ndjson*")):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            append_note(ctx_dir, f"ndjson_summary_error={path.relative_to(ctx_dir)} error={exc}")
+            continue
+        lines = text.splitlines()
+        head = lines[:20]
+        tail = lines[-20:] if len(lines) > 20 else []
+        failing_rows = [
+            line
+            for line in lines
+            if any(identifier in line for identifier in failing_ids)
+        ]
+        body_parts: List[str] = []
+        if head:
+            body_parts.append("-- head --")
+            body_parts.extend(head)
+        if tail:
+            body_parts.append("-- tail --")
+            body_parts.extend(tail)
+        body_parts.append("-- failing rows --")
+        body_parts.extend(failing_rows or ["[rows not present]"])
+        body = "\n".join(body_parts)
+        label = path.relative_to(ctx_dir).as_posix()
+        summaries.append((label, body))
+    return summaries
+
+
+def _build_inlined_context(repo_root: Path, ctx_dir: Path) -> Tuple[str, int, int]:
     """Assemble a bounded text bundle for the Responses input field."""
-
-    attached_root = ctx_dir / "attached"
-    manifest_path = ctx_dir / "iterate_context_manifest.tsv"
-
-    candidates = _select_context_candidates(attachments)
-    if manifest_path.exists():
-        # derived requirement: provenance metadata proved critical during
-        # diagnostics triage (run 19234337453-1). Always include the manifest
-        # so analysts can cross-check which files fed the iterate job.
-        candidates.append("iterate_context_manifest.tsv")
 
     sections: List[str] = []
     total_bytes = 0
-    inlined = 0
+    inlined_files = 0
 
-    for rel in candidates:
-        if rel == "iterate_context_manifest.tsv":
-            path = manifest_path
+    keep_paths = _gather_context_file_list(repo_root, ctx_dir)
+    keep_set = {item.as_posix() for item in keep_paths}
+
+    def add_section(label: str, body: str, *, log_prefix: str, file_bytes: Optional[int] = None) -> None:
+        nonlocal total_bytes
+        section = f"=== CONTEXT FILE: {label} ===\n{body}"
+        encoded = section.encode("utf-8")
+        if total_bytes + len(encoded) > CONTEXT_TOTAL_CAP_BYTES:
+            append_note(ctx_dir, f"context_skip={label} reason=total_cap")
+            return
+        sections.append(section)
+        total_bytes += len(encoded)
+        payload_bytes = len(body.encode("utf-8"))
+        if file_bytes is not None and file_bytes > 0:
+            kept_percent = min(100, int(round(payload_bytes * 100 / file_bytes)))
         else:
-            path = attached_root / Path(rel)
-
-        if not path.exists():
-            append_note(ctx_dir, f"inlined_skip={rel} reason=missing")
-            continue
-
-        try:
-            data = path.read_bytes()
-        except OSError as exc:
-            append_note(ctx_dir, f"inlined_skip={rel} reason=read_error error={exc}")
-            continue
-
-        is_text = _is_probably_text(data)
-        truncated = False
-        if is_text:
-            text = data.decode("utf-8", errors="replace")
-            lines = text.splitlines()
-            excerpt_lines = lines[:CONTEXT_MAX_LINES_PER_FILE]
-            truncated = len(lines) > len(excerpt_lines)
-            snippet = "\n".join(excerpt_lines)
-            snippet_bytes = snippet.encode("utf-8")
-            while (
-                len(snippet_bytes) > CONTEXT_PER_FILE_BYTES
-                and excerpt_lines
-            ):
-                excerpt_lines = excerpt_lines[:-1]
-                truncated = True
-                snippet = "\n".join(excerpt_lines)
-                snippet_bytes = snippet.encode("utf-8")
-            if truncated:
-                snippet = snippet + "\n...[truncated]..."
-                snippet_bytes = snippet.encode("utf-8")
-            if not snippet:
-                snippet = "[empty file]"
-                snippet_bytes = snippet.encode("utf-8")
-            meta = f"lines={len(excerpt_lines)} bytes={len(snippet_bytes)}"
-            section = (
-                f"=== CONTEXT FILE: {rel} ({meta}) ===\n" + snippet
-            )
-        else:
-            digest = hashlib.sha256(data).hexdigest()
-            summary = f"<binary {len(data)} bytes sha256={digest[:16]}>"
-            section = (
-                f"=== CONTEXT FILE: {rel} (binary summary) ===\n" + summary
-            )
-            append_note(
-                ctx_dir,
-                f"inlined_binary={rel} size={len(data)} sha256={digest[:16]}",
-            )
-
-        section_bytes = len(section.encode("utf-8"))
-        if total_bytes + section_bytes > CONTEXT_TOTAL_CAP_BYTES:
-            append_note(ctx_dir, f"inlined_skip={rel} reason=total_cap")
-            continue
-
+            kept_percent = 100 if file_bytes == payload_bytes else 0
         append_note(
             ctx_dir,
-            f"inlined_file={rel} bytes={section_bytes}",
+            f"{log_prefix}={label} inlined_bytes={payload_bytes} file_bytes={file_bytes or payload_bytes} kept_percent={kept_percent}",
         )
-        if is_text and truncated:
-            append_note(ctx_dir, f"inlined_truncated={rel}")
 
-        sections.append(section)
-        total_bytes += section_bytes
-        inlined += 1
+    for rel in keep_paths:
+        abs_path = repo_root / rel
+        try:
+            data = abs_path.read_bytes()
+        except OSError as exc:
+            append_note(ctx_dir, f"context_read_error={rel.as_posix()} error={exc}")
+            continue
+
+        if not _is_probably_text(data):
+            digest = hashlib.sha256(data).hexdigest()
+            body = f"<binary {len(data)} bytes sha256={digest[:16]}>"
+            append_note(ctx_dir, f"context_binary_summary={rel.as_posix()} size={len(data)} sha256={digest[:16]}")
+            add_section(rel.as_posix(), body, log_prefix="context_file", file_bytes=len(data))
+            inlined_files += 1
+            continue
+
+        text = data.decode("utf-8", errors="replace")
+        keep_full = rel.as_posix() in keep_set and (
+            rel in CONTEXT_PRIMARY_KEEP or rel.suffix.lower() in {".bat", ".cmd"}
+        )
+        if keep_full:
+            snippet = text
+            truncated = False
+        else:
+            snippet = trim_content(text, 64 * 1024)
+            truncated = len(snippet.encode("utf-8")) < len(data)
+            if truncated:
+                append_note(
+                    ctx_dir,
+                    f"context_truncated={rel.as_posix()} original_bytes={len(data)} kept_bytes={len(snippet.encode('utf-8'))}",
+                )
+        add_section(rel.as_posix(), snippet, log_prefix="context_file", file_bytes=len(data))
+        inlined_files += 1
+
+    notes_tail = _read_tail_lines(ctx_dir / "notes.txt", 60)
+    if notes_tail:
+        add_section(
+            "_ctx/notes.txt tail",
+            "\n".join(notes_tail),
+            log_prefix="context_summary",
+            file_bytes=len("\n".join(notes_tail).encode("utf-8")),
+        )
+
+    failpack_tail = _read_tail_lines(ctx_dir / "attached" / "failpack.log", 120)
+    if failpack_tail:
+        add_section(
+            "failpack.log tail",
+            "\n".join(failpack_tail),
+            log_prefix="context_summary",
+            file_bytes=len("\n".join(failpack_tail).encode("utf-8")),
+        )
+
+    decision_path = ctx_dir / "decision.json"
+    if decision_path.exists():
+        try:
+            decision_data = json.loads(decision_path.read_text(encoding="utf-8"))
+            decision_line = json.dumps(decision_data, sort_keys=True)
+        except (OSError, json.JSONDecodeError):
+            decision_line = decision_path.read_text(encoding="utf-8", errors="replace").splitlines()[0:1]
+            decision_line = "".join(decision_line)
+        add_section(
+            "decision.json one-line",
+            decision_line,
+            log_prefix="context_summary",
+            file_bytes=len(decision_line.encode("utf-8")),
+        )
+
+    lane_verdict = ctx_dir / "attached" / "lane_verdict.json"
+    if lane_verdict.exists():
+        try:
+            verdict_data = json.loads(lane_verdict.read_text(encoding="utf-8"))
+            verdict_line = json.dumps(verdict_data, sort_keys=True)
+        except (OSError, json.JSONDecodeError):
+            verdict_line = lane_verdict.read_text(encoding="utf-8", errors="replace").strip()
+        add_section(
+            "lane_verdict.json one-line",
+            verdict_line,
+            log_prefix="context_summary",
+            file_bytes=len(verdict_line.encode("utf-8")),
+        )
+
+    for label, body in _collect_ndjson_summaries(ctx_dir):
+        add_section(label, body, log_prefix="context_summary", file_bytes=len(body.encode("utf-8")))
 
     context_text = "\n\n".join(sections)
-    return context_text, inlined, total_bytes
+    return context_text, inlined_files, total_bytes
 
 
 def path_in_repo(candidate: str, repo_root: Path) -> Optional[Path]:
@@ -843,19 +1008,16 @@ def upload_file(path: Path, api_key: str, ctx_dir: Path) -> str:
 
 
 def extract_patch(response_json: dict) -> str:
+    segments: List[str] = []
+
     outputs = response_json.get("output") or []
     for item in outputs:
         content = item.get("content") or []
         for segment in content:
             text = segment.get("text")
-            if not text:
-                continue
-            start = text.find("---BEGIN PATCH---")
-            end = text.find("---END PATCH---")
-            if start != -1 and end != -1 and end > start:
-                return text[start : end + len("---END PATCH---")]
-    # derived requirement: Assistants messages responses land under "choices";
-    # parse both shapes so diagnostics stay compatible with either endpoint.
+            if isinstance(text, str):
+                segments.append(text)
+
     choices = response_json.get("choices") or []
     for choice in choices:
         message = choice.get("message") or {}
@@ -863,17 +1025,30 @@ def extract_patch(response_json: dict) -> str:
         if isinstance(content, list):
             for segment in content:
                 text = segment.get("text") or segment.get("value")
-                if not isinstance(text, str):
-                    continue
-                start = text.find("---BEGIN PATCH---")
-                end = text.find("---END PATCH---")
-                if start != -1 and end != -1 and end > start:
-                    return text[start : end + len("---END PATCH---")]
+                if isinstance(text, str):
+                    segments.append(text)
         elif isinstance(content, str):
-            start = content.find("---BEGIN PATCH---")
-            end = content.find("---END PATCH---")
-            if start != -1 and end != -1 and end > start:
-                return content[start : end + len("---END PATCH---")]
+            segments.append(content)
+
+    diff_pattern = re.compile(r"```diff\s*\n([\s\S]*?)\n```", re.IGNORECASE)
+    for text in segments:
+        match = diff_pattern.search(text)
+        if match:
+            body = match.group(1).rstrip()
+            return f"```diff\n{body}\n```"
+
+    # derived requirement: retain compatibility with historical ---BEGIN PATCH---
+    # payloads so older retries do not regress if the upstream contract shifts
+    # again. This path should become dormant once all prompts enforce the fenced
+    # diff contract.
+    legacy_start = "---BEGIN PATCH---"
+    legacy_end = "---END PATCH---"
+    for text in segments:
+        start = text.find(legacy_start)
+        end = text.find(legacy_end)
+        if start != -1 and end != -1 and end > start:
+            return text[start : end + len(legacy_end)]
+
     return ""
 
 
@@ -1030,6 +1205,7 @@ def call_phase(args: argparse.Namespace) -> None:
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     files = plan.get("files", [])
+    append_note(ctx_dir, f"attachments_staged={len(files)}")
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         append_note(ctx_dir, "openai_call=skipped_missing_key")
@@ -1123,7 +1299,7 @@ def call_phase(args: argparse.Namespace) -> None:
 
     prompt_text = textwrap.dedent(
         """
-        Apply the smallest change that resolves the FIRST failing step described in failpack.log. Start at guide.json {primary_file}:{line}; if insufficient, search the attached repo files. Preserve current messaging/labels/structure. Return ONLY a unified diff fenced by ---BEGIN PATCH--- and ---END PATCH---.
+        Apply the smallest change that resolves the FIRST failing step described in failpack.log. Start at guide.json {primary_file}:{line}; if insufficient, search the attached repo files. Preserve current messaging/labels/structure. You MUST return exactly one fenced code block with language 'diff' containing the complete patch. Do not write any prose before or after. If no changes are required, return an empty fenced diff block.
         """
     ).strip()
 
@@ -1138,7 +1314,7 @@ def call_phase(args: argparse.Namespace) -> None:
             timeout=timeout,
         )
 
-    context_text, inlined_count, context_bytes = _build_inlined_context(ctx_dir, files)
+    context_text, inlined_count, context_bytes = _build_inlined_context(repo_root, ctx_dir)
     if context_text:
         full_prompt = (
             "### TASK\n"
@@ -1151,12 +1327,12 @@ def call_phase(args: argparse.Namespace) -> None:
         full_prompt = prompt_text
 
     payload = {"model": args.model, "input": full_prompt}
-    max_output_tokens = int(os.environ.get("INLINE_MODEL_MAX_OUT", "600"))
+    max_output_tokens = int(os.environ.get("INLINE_MODEL_MAX_OUT", "800"))
     if max_output_tokens > 0:
         payload["max_output_tokens"] = max_output_tokens
 
     timeout_sec = int(os.environ.get("INLINE_MODEL_TIMEOUT", "300"))
-    retry_delays = [0, 3, 8]
+    retry_delays = [0, 5]
     attachments_uploaded = len(file_ids)
 
     append_note(
