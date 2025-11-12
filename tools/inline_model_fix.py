@@ -143,7 +143,9 @@ CONTEXT_PRIMARY_KEEP = [
 
 # derived requirement: narrow the iterate bundle to failure-relevant sources.
 CONTEXT_EXCLUDED_PATHS = {
+    Path(".github/workflows"),
     Path(".github/workflows/batch-check.yml"),
+    Path("tools/diag"),
     Path("tools/diag/publish_index.ps1"),
     Path("tools/diag/publish_index.py"),
     Path("tools/diag/build_prompt.ps1"),
@@ -256,6 +258,12 @@ def _gather_context_file_list(repo_root: Path, ctx_dir: Path) -> List[Path]:
         key = normalized.as_posix()
         if key in seen:
             return
+        # derived requirement: run 19285065673-1 surfaced duplicate _ctx/attached
+        # copies in the iterate bundle. Ignore workspace mirrors so the model
+        # only sees canonical repo paths.
+        if normalized.parts and normalized.parts[0] == "_ctx":
+            append_note(ctx_dir, f"context_skip={key} reason=ctx_workspace")
+            return
         if _should_exclude_from_context(normalized):
             append_note(ctx_dir, f"context_excluded={key}")
             return
@@ -270,9 +278,15 @@ def _gather_context_file_list(repo_root: Path, ctx_dir: Path) -> List[Path]:
         add_candidate(rel)
 
     for bat_path in sorted(repo_root.rglob("*.bat")):
+        if "_ctx" in bat_path.parts:
+            continue
         try:
             rel = bat_path.relative_to(repo_root)
         except ValueError:
+            continue
+        # derived requirement: keep batch harness focus narrow — only root-level
+        # launchers and tests/**/*.bat matter for iterate triage.
+        if len(rel.parts) > 1 and rel.parts[0] not in {"tests"}:
             continue
         add_candidate(rel)
 
@@ -295,6 +309,18 @@ def _gather_context_file_list(repo_root: Path, ctx_dir: Path) -> List[Path]:
             if not candidate:
                 continue
             candidate = candidate.replace("%~dp0", "")
+            candidate = candidate.strip()
+            if not candidate:
+                continue
+            # derived requirement: environment placeholders such as %MC% or
+            # $(PATH) surfaced during run 19285065673-1; skip them so we don't
+            # spam context_missing with non-repo tokens.
+            if any(symbol in candidate for symbol in ("%", "!", "$(")):
+                append_note(
+                    ctx_dir,
+                    f"bat_reference_skip={candidate} reason=env_placeholder",
+                )
+                continue
             rel_candidate = path_in_repo(candidate, repo_root)
             if rel_candidate is None:
                 continue
@@ -1007,7 +1033,7 @@ def upload_file(path: Path, api_key: str, ctx_dir: Path) -> str:
     return file_id
 
 
-def extract_patch(response_json: dict) -> str:
+def extract_patch(response_json: dict) -> Tuple[str, Optional[str], Optional[dict], Optional[str]]:
     segments: List[str] = []
 
     outputs = response_json.get("output") or []
@@ -1030,12 +1056,38 @@ def extract_patch(response_json: dict) -> str:
         elif isinstance(content, str):
             segments.append(content)
 
-    diff_pattern = re.compile(r"```diff\s*\n([\s\S]*?)\n```", re.IGNORECASE)
-    for text in segments:
-        match = diff_pattern.search(text)
-        if match:
-            body = match.group(1).rstrip()
-            return f"```diff\n{body}\n```"
+    combined = "\n\n".join(segments)
+    code_block_re = re.compile(r"```(\w+)?\s*\n([\s\S]*?)\n```", re.IGNORECASE)
+    rationale_raw: Optional[str] = None
+    rationale_json: Optional[dict] = None
+    rationale_error: Optional[str] = None
+    diff_body: Optional[str] = None
+    invalid_sequence = False
+
+    for match in code_block_re.finditer(combined):
+        lang = (match.group(1) or "").strip().lower()
+        body = match.group(2).rstrip()
+        if lang == "json" and rationale_raw is None and diff_body is None:
+            rationale_raw = body
+            try:
+                rationale_json = json.loads(body)
+            except json.JSONDecodeError:
+                rationale_error = "invalid_rationale_json"
+            continue
+        if lang == "diff" and diff_body is None:
+            diff_body = body
+            continue
+        invalid_sequence = True
+        break
+
+    if invalid_sequence:
+        return "", rationale_raw, rationale_json, "invalid_sequence"
+
+    if diff_body is not None:
+        return f"```diff\n{diff_body}\n```", rationale_raw, rationale_json, rationale_error
+
+    if rationale_raw is not None:
+        return "", rationale_raw, rationale_json, rationale_error or "json_only"
 
     # derived requirement: retain compatibility with historical ---BEGIN PATCH---
     # payloads so older retries do not regress if the upstream contract shifts
@@ -1047,9 +1099,9 @@ def extract_patch(response_json: dict) -> str:
         start = text.find(legacy_start)
         end = text.find(legacy_end)
         if start != -1 and end != -1 and end > start:
-            return text[start : end + len(legacy_end)]
+            return text[start : end + len(legacy_end)], None, None, None
 
-    return ""
+    return "", rationale_raw, rationale_json, rationale_error
 
 
 def _emit_job_summary(
@@ -1060,6 +1112,7 @@ def _emit_job_summary(
     reason: Optional[str],
     response_payload: Optional[dict],
     patch_text: Optional[str],
+    rationale: Optional[str] = None,
 ) -> None:
     """Append a compact iterate summary to the GitHub job log when available."""
 
@@ -1109,6 +1162,12 @@ def _emit_job_summary(
             lines.append(f"{snippet}\n")
         lines.append("```\n</details>\n")
 
+    if rationale:
+        lines.append("\n<details>\n<summary>Model rationale</summary>\n\n")
+        lines.append("```json\n")
+        lines.extend(f"{line}\n" for line in rationale.splitlines())
+        lines.append("```\n</details>\n")
+
     try:
         with open(summary_path, "a", encoding="utf-8") as handle:
             handle.writelines(lines)
@@ -1125,6 +1184,7 @@ def _record_decision(
     response_payload: Optional[dict],
     patch_text: Optional[str],
     model: Optional[str] = None,
+    rationale: Optional[str] = None,
 ) -> None:
     # derived requirement: run 19208683015-1 produced discovery-only iterate zips;
     # keep human-readable breadcrumbs in every outcome to avoid empty artifacts.
@@ -1172,6 +1232,7 @@ def _record_decision(
         reason=reason,
         response_payload=response_payload,
         patch_text=patch_text,
+        rationale=rationale,
     )
 
 
@@ -1299,7 +1360,7 @@ def call_phase(args: argparse.Namespace) -> None:
 
     prompt_text = textwrap.dedent(
         """
-        Apply the smallest change that resolves the FIRST failing step described in failpack.log. Start at guide.json {primary_file}:{line}; if insufficient, search the attached repo files. Preserve current messaging/labels/structure. You MUST return exactly one fenced code block with language 'diff' containing the complete patch. Do not write any prose before or after. If no changes are required, return an empty fenced diff block.
+        Apply the smallest change that resolves the FIRST failing step described in failpack.log. Start at guide.json {primary_file}:{line}; if insufficient, search the attached repo files. Preserve current messaging/labels/structure. If you cannot safely produce a patch, emit exactly one fenced json block with keys why_no_diff, insights, files_missing, hotspots. If you can produce a patch, you may optionally emit that json block first, then emit exactly one fenced diff block containing the complete patch. Do not write any other prose. If no changes are required, return an empty fenced diff block.
         """
     ).strip()
 
@@ -1327,7 +1388,9 @@ def call_phase(args: argparse.Namespace) -> None:
         full_prompt = prompt_text
 
     payload = {"model": args.model, "input": full_prompt}
-    max_output_tokens = int(os.environ.get("INLINE_MODEL_MAX_OUT", "800"))
+    temperature = float(os.environ.get("INLINE_MODEL_TEMPERATURE", "0.2"))
+    payload["temperature"] = temperature
+    max_output_tokens = int(os.environ.get("INLINE_MODEL_MAX_OUT", "1500"))
     if max_output_tokens > 0:
         payload["max_output_tokens"] = max_output_tokens
 
@@ -1341,93 +1404,129 @@ def call_phase(args: argparse.Namespace) -> None:
             "openai_call_payload=responses.input_no_attachments "
             f"files_inlined={inlined_count} bytes={context_bytes} "
             f"attachments_uploaded={attachments_uploaded} "
-            f"timeout={timeout_sec} retries={len(retry_delays) - 1}"
+            f"timeout={timeout_sec} retries={len(retry_delays) - 1} "
+            f"max_output_tokens={payload.get('max_output_tokens', 'n/a')} "
+            f"temperature={temperature}"
         ),
     )
 
-    response: Optional[requests.Response] = None
-    last_error_note: Optional[str] = None
-
-    for attempt, delay in enumerate(retry_delays):
-        if delay:
-            time.sleep(delay)
+    def _execute_payload(current_payload: dict) -> Tuple[Optional[dict], Optional[str]]:
+        response: Optional[requests.Response] = None
+        last_error_label: Optional[str] = None
+        last_reason: Optional[str] = "request_exception"
+        for attempt, delay in enumerate(retry_delays):
+            if delay:
+                time.sleep(delay)
+            try:
+                resp = _post_payload(current_payload, timeout_sec)
+            except (
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectTimeout,
+                requests.exceptions.Timeout,
+            ) as exc:
+                last_error_label = f"timeout:{type(exc).__name__}"
+                last_reason = "request_exception"
+                append_note(
+                    ctx_dir,
+                    f"openai_call_timeout_attempt={attempt} error={exc}",
+                )
+                continue
+            except requests.RequestException as exc:
+                append_note(ctx_dir, f"openai_call_exception={exc}")
+                return None, "request_exception"
+            if resp.status_code >= 500:
+                last_error_label = f"http_{resp.status_code}"
+                last_reason = f"http_{resp.status_code}"
+                append_note(
+                    ctx_dir,
+                    f"openai_call_retry_http={resp.status_code} attempt={attempt}",
+                )
+                continue
+            response = resp
+            break
+        if response is None:
+            append_note(
+                ctx_dir,
+                f"openai_call_exception={last_error_label or 'unknown_failure'}",
+            )
+            return None, last_reason or "request_exception"
+        if response.status_code != 200:
+            append_note(
+                ctx_dir,
+                f"openai_call_error=HTTP {response.status_code} body={response.text[:400]}",
+            )
+            return None, f"http_{response.status_code}"
         try:
-            resp = _post_payload(payload, timeout_sec)
-        except (
-            requests.exceptions.ReadTimeout,
-            requests.exceptions.ConnectTimeout,
-            requests.exceptions.Timeout,
-        ) as exc:
-            last_error_note = f"timeout:{type(exc).__name__}"
-            append_note(
-                ctx_dir,
-                f"openai_call_timeout_attempt={attempt} error={exc}",
-            )
-            continue
-        except requests.RequestException as exc:
-            append_note(ctx_dir, f"openai_call_exception={exc}")
-            _record_decision(
-                ctx_dir,
-                status="error",
-                reason="request_exception",
-                response_payload=None,
-                patch_text="",
-                model=args.model,
-            )
-            return
+            return response.json(), None
+        except ValueError as exc:
+            append_note(ctx_dir, f"openai_response_json_error={exc}")
+            return None, "invalid_json"
 
-        if resp.status_code >= 500:
-            last_error_note = f"http_{resp.status_code}"
-            append_note(
-                ctx_dir,
-                f"openai_call_retry_http={resp.status_code} attempt={attempt}",
-            )
-            continue
-
-        response = resp
-        break
-
-    if response is None:
-        append_note(ctx_dir, f"openai_call_exception={last_error_note or 'unknown_failure'}")
+    response_json, error_reason = _execute_payload(payload)
+    if response_json is None:
         _record_decision(
             ctx_dir,
             status="error",
-            reason="request_exception",
+            reason=error_reason,
             response_payload=None,
             patch_text="",
             model=args.model,
         )
         return
 
-    if response.status_code != 200:
-        append_note(
-            ctx_dir,
-            f"openai_call_error=HTTP {response.status_code} body={response.text[:400]}",
-        )
-        _record_decision(
-            ctx_dir,
-            status="error",
-            reason=f"http_{response.status_code}",
-            response_payload=None,
-            patch_text="",
-            model=args.model,
-        )
-        return
+    incomplete_details = response_json.get("incomplete_details") or {}
+    if response_json.get("status") == "incomplete":
+        reason_tag = incomplete_details.get("reason")
+        if reason_tag:
+            append_note(ctx_dir, f"openai_call_incomplete_reason={reason_tag}")
+        if (
+            reason_tag == "max_output_tokens"
+            and payload.get("max_output_tokens", 0) < 3000
+        ):
+            payload_retry = dict(payload)
+            payload_retry["max_output_tokens"] = 3000
+            append_note(ctx_dir, "openai_call_retry_max_output_tokens=3000")
+            response_json_retry, error_reason = _execute_payload(payload_retry)
+            if response_json_retry is None:
+                _record_decision(
+                    ctx_dir,
+                    status="error",
+                    reason=error_reason,
+                    response_payload=None,
+                    patch_text="",
+                    model=args.model,
+                )
+                return
+            response_json = response_json_retry
+            payload = payload_retry
+            incomplete_details = response_json.get("incomplete_details") or {}
+            if response_json.get("status") == "incomplete":
+                retry_reason = incomplete_details.get("reason")
+                if retry_reason:
+                    append_note(
+                        ctx_dir,
+                        f"openai_call_incomplete_reason={retry_reason}",
+                    )
 
-    try:
-        response_json = response.json()
-    except ValueError as exc:
-        append_note(ctx_dir, f"openai_response_json_error={exc}")
-        _record_decision(
-            ctx_dir,
-            status="error",
-            reason="invalid_json",
-            response_payload=None,
-            patch_text="",
-            model=args.model,
-        )
-        return
-    patch = extract_patch(response_json)
+    patch, rationale_raw, rationale_json, format_issue = extract_patch(response_json)
+
+    rationale_note: Optional[str] = None
+    rationale_summary: Optional[str] = None
+    if rationale_json is not None:
+        rationale_note = json.dumps(rationale_json, sort_keys=True)
+        rationale_summary = json.dumps(rationale_json, indent=2, sort_keys=True)
+    elif rationale_raw:
+        rationale_note = rationale_raw
+        rationale_summary = rationale_raw
+    if rationale_note:
+        append_note(ctx_dir, f"model_rationale_json={rationale_note}")
+    if format_issue == "invalid_rationale_json":
+        append_note(ctx_dir, "model_rationale_invalid_json=true")
+    if format_issue == "invalid_sequence":
+        append_note(ctx_dir, "openai_patch=invalid_sequence")
+    if format_issue == "json_only":
+        append_note(ctx_dir, "openai_patch=json_only")
+
     if patch.strip():
         append_note(ctx_dir, "openai_patch=received")
         _record_decision(
@@ -1437,6 +1536,7 @@ def call_phase(args: argparse.Namespace) -> None:
             response_payload=response_json,
             patch_text=patch,
             model=args.model,
+            rationale=rationale_summary,
         )
     else:
         # derived requirement: run 19211170783-1 surfaced a zero-byte iterate bundle;
@@ -1449,6 +1549,7 @@ def call_phase(args: argparse.Namespace) -> None:
             response_payload=response_json,
             patch_text="",
             model=args.model,
+            rationale=rationale_summary,
         )
 
 
