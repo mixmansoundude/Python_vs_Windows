@@ -1360,7 +1360,7 @@ def call_phase(args: argparse.Namespace) -> None:
 
     prompt_text = textwrap.dedent(
         """
-        Apply the smallest change that resolves the FIRST failing step described in failpack.log. Start at guide.json {primary_file}:{line}; if insufficient, search the attached repo files. Preserve current messaging/labels/structure. If you cannot safely produce a patch, emit exactly one fenced json block with keys why_no_diff, insights, files_missing, hotspots. If you can produce a patch, you may optionally emit that json block first, then emit exactly one fenced diff block containing the complete patch. Do not write any other prose. If no changes are required, return an empty fenced diff block.
+        Apply the smallest change that resolves the FIRST failing step described in failpack.log. Change as few lines as possible and keep the diff tightly focused on the failing tests described above. Start at guide.json {primary_file}:{line}; if insufficient, search the attached repo files. Preserve current messaging/labels/structure. If you cannot safely produce a patch, emit exactly one fenced json block with keys why_no_diff, insights, files_missing, hotspots. If you can produce a patch, you may optionally emit that json block first, then emit exactly one fenced diff block containing the complete patch. Do not write any other prose. If no changes are required, return an empty fenced diff block.
         """
     ).strip()
 
@@ -1388,14 +1388,13 @@ def call_phase(args: argparse.Namespace) -> None:
         full_prompt = prompt_text
 
     payload = {"model": args.model, "input": full_prompt}
-    payload["reasoning"] = {"effort": "low"}
     # NOTE: Do not send ``temperature`` to the Responses API for GPT-5-Codex;
     # runs like 19285065673-1 prove the endpoint rejects it with HTTP 400
     # "Unsupported parameter: 'temperature'". Log the omission so future
     # maintainers understand why the knob is absent here.
     append_note(
         ctx_dir,
-        f"omitted_params=temperature;model={args.model};reasoning.effort=low",
+        f"omitted_params=temperature;model={args.model}",
     )
     # NOTE: Do not send ``text.verbosity`` either; run 19285065673-1 showed the
     # API rejects "low" with HTTP 400 "unsupported_value" and only advertises
@@ -1404,13 +1403,13 @@ def call_phase(args: argparse.Namespace) -> None:
         ctx_dir,
         f"omitted_params=text.verbosity;model={args.model}",
     )
-    try:
-        max_output_tokens = int(os.environ.get("INLINE_MODEL_MAX_OUT", "1500"))
-    except ValueError:
-        max_output_tokens = 1500
-    if max_output_tokens <= 0:
-        max_output_tokens = 1500
-    payload["max_output_tokens"] = max_output_tokens
+    token_plan = [
+        {"cap": 4000, "effort": "low"},
+        {"cap": 16000, "effort": "low"},
+        {"cap": 48000, "effort": "medium"},
+    ]
+    initial_cap = token_plan[0]["cap"]
+    initial_effort = token_plan[0]["effort"]
 
     timeout_sec = int(os.environ.get("INLINE_MODEL_TIMEOUT", "300"))
     retry_delays = [0, 5]
@@ -1422,9 +1421,9 @@ def call_phase(args: argparse.Namespace) -> None:
             "openai_call_payload=responses.input_no_attachments "
             f"files_inlined={inlined_count} bytes={context_bytes} "
             f"attachments_uploaded={attachments_uploaded} "
-            f"timeout={timeout_sec} retries={len(retry_delays) - 1} "
-            f"max_output_tokens={payload.get('max_output_tokens', 'n/a')} "
-            "reasoning.effort=low"
+            f"timeout={timeout_sec} retries={len(token_plan) - 1} "
+            f"initial_max_output_tokens={initial_cap} "
+            f"initial_reasoning_effort={initial_effort}"
         ),
     )
 
@@ -1507,28 +1506,26 @@ def call_phase(args: argparse.Namespace) -> None:
                 append_note(ctx_dir, f"openai_response_json_error={exc}")
                 return None, "invalid_json"
 
-    token_caps: List[int] = []
-    seen_caps: Set[int] = set()
-    for candidate in [max_output_tokens, 3000, 6000, 12000]:
-        if candidate <= 0:
-            continue
-        if token_caps and candidate <= token_caps[-1]:
-            continue
-        if candidate in seen_caps:
-            continue
-        token_caps.append(candidate)
-        seen_caps.add(candidate)
-
     response_json: Optional[dict] = None
     error_reason: Optional[str] = None
     escalator_exhausted = False
 
-    for idx, cap in enumerate(token_caps):
+    for idx, plan in enumerate(token_plan):
+        cap = plan["cap"]
+        effort = plan["effort"]
         payload["max_output_tokens"] = cap
+        payload["reasoning"] = {"effort": effort}
+        append_note(
+            ctx_dir,
+            f"openai_call_attempt={idx} max_output_tokens={cap} reasoning_effort={effort}",
+        )
         if idx > 0:
             append_note(
                 ctx_dir,
-                f"openai_call_retry_max_output_tokens={cap} retry_ix={idx}",
+                (
+                    "openai_call_retry_max_output_tokens="
+                    f"{cap} retry_ix={idx} reasoning_effort={effort}"
+                ),
             )
         response_json, error_reason = _execute_payload(payload)
         if response_json is None:
@@ -1546,13 +1543,13 @@ def call_phase(args: argparse.Namespace) -> None:
         if (
             status_tag == "incomplete"
             and reason_tag == "max_output_tokens"
-            and idx + 1 < len(token_caps)
+            and idx + 1 < len(token_plan)
         ):
             continue
         if (
             status_tag == "incomplete"
             and reason_tag == "max_output_tokens"
-            and idx + 1 == len(token_caps)
+            and idx + 1 == len(token_plan)
         ):
             escalator_exhausted = True
         break
