@@ -2,6 +2,7 @@
 """Publish diagnostics markdown/html and site overview pages."""
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import os
@@ -58,6 +59,8 @@ from tools.diag.ndjson_fail_list import generate_fail_list
 class Context:
     diag: Optional[Path]
     artifacts: Optional[Path]
+    artifacts_override: Optional[Path]
+    downloaded_iter_root: Optional[Path]
     repo: str
     branch: Optional[str]
     sha: str
@@ -85,6 +88,13 @@ def _get_env_path(name: str) -> Optional[Path]:
     return Path(value) if value else None
 
 
+def _artifacts_override_root(context: Context) -> Optional[Path]:
+    root = context.artifacts_override
+    if root and root.exists():
+        return root
+    return None
+
+
 def _isoformat_ct(now: Optional[datetime] = None) -> str:
     if now is None:
         now = datetime.now(timezone.utc)
@@ -98,6 +108,15 @@ def _isoformat_ct(now: Optional[datetime] = None) -> str:
 def _get_context() -> Context:
     diag = _get_env_path("DIAG")
     artifacts = _get_env_path("ARTIFACTS")
+    artifacts_override = _get_env_path("ARTIFACTS_ROOT")
+    if artifacts_override and not artifacts_override.exists():
+        artifacts_override = None
+    if artifacts_override:
+        artifacts = artifacts_override
+    downloaded_iter_root = _get_env_path("DOWNLOADED_ITER_ROOT")
+    if downloaded_iter_root and not downloaded_iter_root.exists():
+        downloaded_iter_root = None
+
     repo = os.getenv("REPO") or os.getenv("GITHUB_REPOSITORY") or "n/a"
     branch = os.getenv("BRANCH") or os.getenv("GITHUB_REF_NAME")
     sha = os.getenv("SHA") or os.getenv("GITHUB_SHA") or "n/a"
@@ -114,8 +133,31 @@ def _get_context() -> Context:
     short_sha = os.getenv("SHORTSHA") or sha[:7]
     inventory_b64 = os.getenv("INVENTORY_B64")
     batch_run_id = os.getenv("BATCH_RUN_ID")
+    if not batch_run_id or batch_run_id == "n/a":
+        if run_id and run_id != "n/a":
+            # Professional note: when publishing from the same batch-check run, the env already
+            # carries the authoritative run id; trust it immediately so we do not block on
+            # locating a completed predecessor.
+            batch_run_id = run_id
+        else:
+            batch_run_id = None
+
     batch_run_attempt = os.getenv("BATCH_RUN_ATTEMPT")
+    if not batch_run_attempt or batch_run_attempt == "n/a":
+        if batch_run_id == run_id and run_attempt and run_attempt != "n/a":
+            batch_run_attempt = run_attempt
+        else:
+            batch_run_attempt = None
     site = _get_env_path("SITE")
+    if not site:
+        out_dir_env = os.getenv("OUT_DIR")
+        if out_dir_env:
+            site = Path(out_dir_env)
+        else:
+            # Professional note: GitHub Pages expects the generated bundle under _site by
+            # default; honor that when callers omit SITE/OUT_DIR so actions/upload-pages-
+            # artifact can locate the payload without relying on a legacy 'site' folder.
+            site = Path("_site")
     return Context(
         diag=diag,
         artifacts=artifacts,
@@ -130,7 +172,24 @@ def _get_context() -> Context:
         batch_run_id=batch_run_id,
         batch_run_attempt=batch_run_attempt,
         site=site,
+        artifacts_override=artifacts_override,
+        downloaded_iter_root=downloaded_iter_root,
     )
+
+
+def _parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Publish diagnostics bundle")
+    parser.add_argument("--run-id", dest="run_id", help="override run id")
+    parser.add_argument(
+        "--run-attempt", dest="run_attempt", help="override run attempt"
+    )
+    parser.add_argument(
+        "--out-dir",
+        dest="out_dir",
+        default="_site",
+        help="site root for published artifacts",
+    )
+    return parser.parse_args(list(argv) if argv is not None else None)
 
 
 def _actions_owner_repo(context: Context) -> Optional[Tuple[str, str]]:
@@ -204,6 +263,32 @@ def _log_iterate(message: str) -> None:
             # derived requirement: diagnostics publication must continue even when the
             # filesystem disallows writing the breadcrumb log.
             pass
+
+
+def _ensure_diag_log_placeholders(context: Context) -> None:
+    """Create zero-byte sentinels so missing logs do not crash publishing."""
+
+    diag = context.diag
+    if not diag:
+        return
+
+    logs_dir = diag / "logs"
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+
+    for name in ("batch-check.MISSING.txt", "iterate.MISSING.txt"):
+        path = logs_dir / name
+        if path.exists():
+            continue
+        try:
+            # Professional note: Publishers previously failed when these sentinels were
+            # absent; create empty placeholders so later size/stat checks downgrade to
+            # "missing" without raising FileNotFoundError.
+            path.touch()
+        except OSError:
+            continue
 
 
 def _core_iterate_files_present(root: Path) -> bool:
@@ -299,6 +384,49 @@ def _candidate_priority(expected_stem: str, name: str) -> Tuple[int, str]:
     if name.startswith(f"{expected_stem}-"):
         return (2, name)
     return (3, name)
+
+
+def _iterate_dir_has_payload(root: Path) -> bool:
+    try:
+        for candidate in root.rglob("*"):
+            if candidate.is_file():
+                lowered = candidate.name.lower()
+                if lowered.endswith("missing.txt"):
+                    continue
+                return True
+    except (FileNotFoundError, OSError):
+        return False
+    return False
+
+
+def _local_iterate_source(context: Context, expected_stem: str) -> Optional[Path]:
+    candidate_roots: List[Path] = []
+
+    downloaded = context.downloaded_iter_root
+    if downloaded and downloaded.exists():
+        candidate_roots.append(downloaded)
+
+    override_root = _artifacts_override_root(context)
+    if override_root:
+        candidate_roots.append(override_root / "iterate")
+
+    for root in candidate_roots:
+        candidates = [
+            root / f"{expected_stem}.zip",
+            root / expected_stem,
+            root,
+        ]
+
+        for candidate in candidates:
+            try:
+                if candidate.is_file() and candidate.stat().st_size > 0:
+                    return candidate
+                if candidate.is_dir() and _iterate_dir_has_payload(candidate):
+                    return candidate
+            except (FileNotFoundError, OSError):
+                continue
+
+    return None
 
 
 def _fetch_iterate_artifact_for_run(
@@ -444,6 +572,35 @@ def _select_iterate_artifact(
     if context.iterate_artifact_meta:
         return context.iterate_artifact_meta
 
+    local_source = _local_iterate_source(context, expected_stem)
+    if local_source:
+        repo_slug = os.getenv("GITHUB_REPOSITORY") or context.repo
+        owner: str
+        repo_name: str
+        if repo_slug and repo_slug != "n/a" and "/" in repo_slug:
+            owner, repo_name = repo_slug.split("/", 1)
+        else:
+            owner = repo_slug or ""
+            repo_name = repo_slug or ""
+        fake_item = {"name": expected_stem}
+        context.iterate_found_cache = True
+        context.iterate_discovered_dir = (
+            local_source if local_source.is_dir() else local_source.parent
+        )
+        if repo_slug and repo_slug != "n/a" and context.run_id and context.run_id != "n/a":
+            context.iterate_artifact_href = (
+                f"https://github.com/{repo_slug}/actions/runs/{context.run_id}?check_suite_focus=true#artifacts"
+            )
+        context.iterate_artifact_meta = (
+            fake_item,
+            owner,
+            repo_name,
+            context.run_id,
+            repo_slug or context.repo,
+        )
+        _log_iterate(f"using ARTIFACTS_ROOT for iterate artifact {local_source}")
+        return context.iterate_artifact_meta
+
     # Professional note: CI exposes GH_TOKEN for artifact downloads; fall back to
     # GITHUB_TOKEN so local runs remain functional per "Prefer the Actions
     # Artifacts API" guidance.
@@ -479,6 +636,54 @@ def _download_iterate_artifact_zip(
     """Download the iterate artifact zip into *destination* when it exists remotely."""
 
     expected_stem = f"iterate-logs-{context.run_id}-{context.run_attempt}"
+    local_source = _local_iterate_source(context, expected_stem)
+    if local_source:
+        source_label = "ARTIFACTS_ROOT"
+        downloaded_root = context.downloaded_iter_root
+        if downloaded_root:
+            try:
+                local_resolved = local_source.resolve()
+                downloaded_resolved = downloaded_root.resolve()
+                if local_resolved.is_relative_to(downloaded_resolved):
+                    source_label = "DOWNLOADED iterate payload"
+            except OSError:
+                pass
+
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return (expected_stem, None, False)
+
+        if local_source.is_file():
+            try:
+                shutil.copy2(local_source, destination)
+            except OSError:
+                return (expected_stem, None, False)
+            _log_iterate(
+                f"copied iterate archive from {source_label} {local_source} -> {destination}"
+            )
+            context.iterate_found_cache = True
+            if not context.iterate_artifact_meta:
+                _select_iterate_artifact(context, expected_stem)
+            return (expected_stem, None, True)
+
+        try:
+            with zipfile.ZipFile(destination, "w") as archive:
+                for item in sorted(local_source.rglob("*")):
+                    if not item.is_file():
+                        continue
+                    rel = item.relative_to(local_source)
+                    archive.write(item, arcname=rel.as_posix())
+        except (FileNotFoundError, OSError, zipfile.BadZipFile):
+            return (expected_stem, None, False)
+        _log_iterate(
+            f"zipped iterate payload from {source_label} {local_source} -> {destination}"
+        )
+        context.iterate_found_cache = True
+        if not context.iterate_artifact_meta:
+            _select_iterate_artifact(context, expected_stem)
+        return (expected_stem, None, True)
+
     metadata = _select_iterate_artifact(context, expected_stem)
     if not metadata:
         return None
@@ -684,9 +889,31 @@ def _iterate_logs_found(context: Context) -> bool:
                 except FileNotFoundError:
                     pass
 
+    discovery_only = False
+    if local_found and iterate_root:
+        try:
+            has_payload = any(
+                candidate.is_file()
+                and candidate.stat().st_size > 0
+                and not candidate.name.lower().startswith("discovery.log")
+                for candidate in iterate_root.rglob("*")
+            )
+        except OSError:
+            has_payload = True
+        if not has_payload:
+            # derived requirement: Run 19201129721-1 produced an iterate zip that only
+            # contained discovery.log breadcrumbs. Treat such archives as missing so the
+            # status line stays consistent with the empty payload.
+            local_found = False
+            discovery_only = True
+
     if local_found:
         context.iterate_found_cache = True
         return True
+
+    if discovery_only:
+        context.iterate_found_cache = False
+        return False
 
     # derived requirement: CI run 18988034718-1 mirrored an iterate zip to the
     # Actions artifact inventory but not to the local publish workspace. Confirm
@@ -1420,6 +1647,17 @@ def _nonempty_file(path: Path) -> bool:
         return False
 
 
+def _safe_file_size(path: Path) -> Optional[int]:
+    """Return the file size or None when missing/inaccessible."""
+
+    try:
+        return path.stat().st_size
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+
+
 MIRROR_TEXT_LIMIT = 64_000
 MIRROR_SIZE_LIMIT = 100 * 1024 * 1024
 
@@ -1659,16 +1897,92 @@ def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
 
 def _batch_status(diag: Optional[Path], context: Context) -> str:
     run_id = context.batch_run_id
-    attempt = context.batch_run_attempt or "n/a"
+    attempt = context.batch_run_attempt or context.run_attempt or "n/a"
+    override_root = _artifacts_override_root(context)
+    if override_root:
+        batch_override = override_root / "batch-check"
+        run_meta_path = batch_override / "run.json"
+        meta: Optional[dict] = None
+        if run_meta_path.exists():
+            try:
+                meta = json.loads(run_meta_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                meta = None
+        try:
+            files = [p for p in batch_override.rglob("*") if p.is_file()]
+        except (FileNotFoundError, OSError):
+            files = []
+        ndjson_present = any(p.suffix.lower() == ".ndjson" for p in files)
+        if meta:
+            meta_run_id = meta.get("run_id")
+            if meta_run_id:
+                run_id = str(meta_run_id)
+            meta_attempt = meta.get("run_attempt")
+            if meta_attempt not in (None, ""):
+                attempt = str(meta_attempt)
+        if files:
+            meaningful = [
+                p
+                for p in files
+                if p.name.lower() not in {"status.txt", "missing.txt"}
+            ]
+            status_path = batch_override / "STATUS.txt"
+            desired_status: Optional[str] = None
+            if meta:
+                if not ndjson_present:
+                    # Professional note: quote "show 'no failures (success)' instead of a timeout"
+                    # so successful runs without NDJSON keep STATUS.txt aligned with the current run.
+                    desired_status = "no failures (success)\n"
+                else:
+                    status_value = str(meta.get("status") or "").strip()
+                    conclusion = str(meta.get("conclusion") or "").strip()
+                    if status_value and conclusion:
+                        desired_status = f"{status_value} / {conclusion}\n"
+                    elif status_value:
+                        desired_status = f"{status_value}\n"
+                    elif conclusion:
+                        desired_status = f"{conclusion}\n"
+            if not desired_status and meaningful:
+                desired_status = (
+                    "batch-check artifacts sourced from ARTIFACTS_ROOT (current run)\n"
+                )
+            if desired_status:
+                try:
+                    status_path.write_text(desired_status, encoding="utf-8")
+                except OSError:
+                    pass
+
+    if run_id and diag:
+        logs_dir = diag / "logs"
+        try:
+            logs_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        ok_path = logs_dir / "batch-check.OK.txt"
+        try:
+            if attempt and attempt != "n/a":
+                payload = f"{run_id}-{attempt}"
+            else:
+                payload = str(run_id)
+            ok_path.write_text(payload + "\n", encoding="utf-8")
+        except OSError:
+            pass
+        missing_path = logs_dir / "batch-check.MISSING.txt"
+        try:
+            missing_path.unlink()
+        except OSError:
+            pass
+
     if run_id:
-        if not diag:
-            return f"missing archive (run {run_id}, attempt {attempt})"
-        candidate = diag / "logs" / f"batch-check-{run_id}-{attempt}.zip"
-        if candidate.exists():
-            return f"found (run {run_id}, attempt {attempt})"
-        return f"missing archive (run {run_id}, attempt {attempt})"
-    if diag and (diag / "logs" / "batch-check.MISSING.txt").exists():
-        return "missing (see logs/batch-check.MISSING.txt)"
+        display_attempt = attempt if attempt and attempt != "n/a" else None
+        if display_attempt:
+            return f"{run_id} (attempt {display_attempt})"
+        return str(run_id)
+
+    if diag:
+        missing_note = diag / "logs" / "batch-check.MISSING.txt"
+        if missing_note.exists():
+            return "missing (see logs/batch-check.MISSING.txt)"
     return "missing"
 
 
@@ -2007,6 +2321,12 @@ def _collect_real_failing_tests(diag: Optional[Path]) -> Optional[dict]:
 
 
 def _locate_iterate_root(context: Context) -> Optional[Path]:
+    downloaded_path = context.downloaded_iter_root
+    if downloaded_path and downloaded_path.exists():
+        # derived requirement: run 19232295127-1 surfaced the iterate payload via the
+        # download-artifact staging directory while ARTIFACTS_ROOT stayed empty; prefer
+        # the freshly downloaded bundle so diagnostics mirror the Actions artifact.
+        return downloaded_path
     if context.artifacts and (context.artifacts / "iterate").exists():
         return context.artifacts / "iterate"
     if context.diag:
@@ -2156,21 +2476,42 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
             if candidate not in temp_dirs:
                 temp_dirs.append(candidate)
 
+    def _file_size(candidate: Path) -> Optional[int]:
+        try:
+            return candidate.stat().st_size
+        except OSError:
+            return None
+
     has_files = False
     for temp_dir in temp_dirs:
         for path in temp_dir.rglob("*"):
-            if path.is_file():
-                has_files = True
-                break
+            if not path.is_file():
+                continue
+            name_lower = path.name.lower()
+            if name_lower == "discovery.log.txt":
+                # derived requirement: run 19208683015-1 surfaced a zero-byte
+                # discovery log without any model output; ignore it so the
+                # status banner stays truthful.
+                continue
+            size = _file_size(path)
+            if size is None or size == 0:
+                continue
+            has_files = True
+            break
         if has_files:
             break
     if not has_files:
         return "missing", []
 
     key_names = [
-        "prompt.txt",
+        "notes.txt",
+        "decision.json",
+        "decision.txt",
         "response.json",
         "response.txt",
+        "fix.patch",
+        "iterate_context_manifest.tsv",
+        "prompt.txt",
         "iterate_status.json",
         "iterate_status.txt",
         "why_no_diff.txt",
@@ -2202,13 +2543,54 @@ def _summarize_iterate_files(context: Context) -> Tuple[str, List[dict]]:
                     {
                         "path": match,
                         "mirror": ensure_txt_mirror(match),
+                        "size": _file_size(match),
                     }
                 )
 
     if not found:
         # Professional note: surface that content exists even if the usual
         # prompt/response/why files are missing so analysts know to explore.
-        return "present", []
+        # derived requirement: run 19211170783-1 mirrored only discovery breadcrumbs;
+        # capture the first real iterate files so analysts can see what landed mid-run.
+        fallback: List[dict] = []
+        for directory in temp_dirs:
+            for candidate in sorted(directory.rglob("*")):
+                if not candidate.is_file():
+                    continue
+                name_lower = candidate.name.lower()
+                if name_lower == "discovery.log.txt":
+                    continue
+                size = _file_size(candidate)
+                if size is None or size == 0:
+                    continue
+                if candidate in seen:
+                    continue
+                fallback.append(
+                    {
+                        "path": candidate,
+                        "mirror": ensure_txt_mirror(candidate),
+                        "size": size,
+                    }
+                )
+                seen.add(candidate)
+                if len(fallback) >= 2:
+                    break
+            if len(fallback) >= 2:
+                break
+        if fallback:
+            found.extend(fallback)
+
+    if not found:
+        # derived requirement: diagnostics must only advertise "Iterate files: present"
+        # when tangible breadcrumbs exist. Treat the directory as missing when discovery
+        # metadata is the sole payload (see run 19218918397-1).
+        return "missing", []
+
+    max_visible = 2
+    if len(found) > max_visible:
+        # derived requirement: keep the iterate files list short so diagnostics stay readable
+        # while still surfacing concrete breadcrumbs for analysts.
+        found = found[:max_visible]
 
     return "present", found
 
@@ -2485,8 +2867,6 @@ def _build_markdown(
     # run. Avoid consulting legacy run-log zips so downstream dashboards receive a
     # consistent contract.
     iterate_found = _iterate_logs_found(context)
-    iterate_log_status = "found" if iterate_found else "missing"
-    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
 
     def read_value(name: str) -> str:
         return _read_iterate_text(iterate_dir, iterate_temp, name)
@@ -2514,6 +2894,11 @@ def _build_markdown(
 
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
+    if iterate_found and iterate_file_status == "missing":
+        # derived requirement: Run 19201618363-1 exposed only discovery breadcrumbs; suppress the "found" badge until payload files land.
+        iterate_found = False
+    iterate_log_status = "found" if iterate_found else "missing"
+    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     if iterate_found and artifact_missing:
@@ -2622,22 +3007,24 @@ def _build_markdown(
 
     if iterate_file_status == "present":
         if iterate_key_files:
-            for file_entry in iterate_key_files:
+            for file_entry in iterate_key_files[:2]:
                 path_obj: Optional[Path] = file_entry.get("path")
                 if not path_obj:
                     continue
                 rel = _relative_to_diag(path_obj, diag)
                 normalized = _normalize_link(rel)
                 label = Path(rel).name
+                size_value = file_entry.get("size")
+                size_hint = f" ({size_value} bytes)" if isinstance(size_value, int) else ""
                 mirror_obj: Optional[Path] = file_entry.get("mirror")
                 if mirror_obj:
                     mirror_rel = _relative_to_diag(mirror_obj, diag)
                     mirror_norm = _normalize_link(mirror_rel)
                     lines.append(
-                        f"  - {label}: [Preview (.txt)]({mirror_norm}) ([Download]({normalized}))"
+                        f"  - {label}{size_hint}: [Preview (.txt)]({mirror_norm}) ([Download]({normalized}))"
                     )
                 else:
-                    lines.append(f"  - {label}: [Download]({normalized})")
+                    lines.append(f"  - {label}{size_hint}: [Download]({normalized})")
         else:
             lines.append("  - (prompt/response/why_no_diff not located)")
     else:
@@ -2712,7 +3099,8 @@ def _build_markdown(
             rel = _relative_to_diag(file, diag)
             normalized = _normalize_link(rel)
             display_name = Path(rel).name
-            size = f"{file.stat().st_size:,} bytes"
+            size_bytes = _safe_file_size(file)
+            size = f"{size_bytes:,} bytes" if size_bytes is not None else "—"
             mirror_obj = ensure_txt_mirror(file)
             if mirror_obj and mirror_obj.exists():
                 mirror_rel = _relative_to_diag(mirror_obj, diag)
@@ -2752,8 +3140,6 @@ def _write_html(
     # Professional note: mirror the Markdown status logic here so HTML renders the
     # same parser-facing state derived from the iterate-logs artifact directory.
     iterate_found = _iterate_logs_found(context)
-    iterate_log_status = "found" if iterate_found else "missing"
-    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
 
     def read_value(name: str) -> str:
         return _read_iterate_text(iterate_dir, iterate_temp, name)
@@ -2784,6 +3170,10 @@ def _write_html(
             artifact_missing = None
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
+    if iterate_found and iterate_file_status == "missing":
+        iterate_found = False
+    iterate_log_status = "found" if iterate_found else "missing"
+    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
     batch_status = _batch_status(diag, context)
     diag_files = _diag_files(diag)
     gate_data = _load_iterate_gate(context)
@@ -2873,22 +3263,29 @@ def _write_html(
                             href_file = _escape_href(normalized)
                             name_html = _escape_html(Path(rel).name)
                             mirror_obj: Optional[Path] = file_entry.get("mirror")
+                            size_value = file_entry.get("size")
+                            size_suffix = ""
+                            if size_value is not None:
+                                size_suffix = f" ({_escape_html(str(size_value))} bytes)"
                             if mirror_obj:
                                 mirror_rel = _relative_to_diag(mirror_obj, diag)
                                 mirror_href = _escape_href(_normalize_link(mirror_rel))
                                 html.append(
                                     "<li><code>{0}</code>: "
                                     "<a href=\"{1}\">Preview (.txt)</a> "
-                                    "(<a href=\"{2}\">Download</a>)</li>".format(
+                                    "(<a href=\"{2}\">Download</a>){3}</li>".format(
                                         name_html,
                                         mirror_href or "",
                                         href_file or "",
+                                        size_suffix,
                                     )
                                 )
                             else:
                                 html.append(
-                                    "<li><code>{0}</code>: <a href=\"{1}\">Download</a></li>".format(
-                                        name_html, href_file or ""
+                                    "<li><code>{0}</code>: <a href=\"{1}\">Download</a>{2}</li>".format(
+                                        name_html,
+                                        href_file or "",
+                                        size_suffix,
                                     )
                                 )
                     else:
@@ -3031,7 +3428,9 @@ def _write_html(
             normalized = _normalize_link(rel)
             href = _escape_href(normalized)
             text = _escape_html(Path(rel).as_posix())
-            size = _escape_html(f"{file.stat().st_size:,} bytes")
+            size_bytes = _safe_file_size(file)
+            size_text = f"{size_bytes:,} bytes" if size_bytes is not None else "—"
+            size = _escape_html(size_text)
             mirror_obj = ensure_txt_mirror(file)
             if mirror_obj and mirror_obj.exists():
                 mirror_rel = _relative_to_diag(mirror_obj, diag)
@@ -3444,8 +3843,30 @@ def _build_site_overview(
     return markdown, "\n".join(html_lines)
 
 
-def main() -> None:
+def main(argv: Optional[Iterable[str]] = None) -> None:
+    args = _parse_args(argv)
+    if args.run_id:
+        os.environ.setdefault("RUN_ID", args.run_id)
+        os.environ.setdefault("GITHUB_RUN_ID", args.run_id)
+    if args.run_attempt:
+        os.environ.setdefault("RUN_ATTEMPT", args.run_attempt)
+        os.environ.setdefault("GITHUB_RUN_ATTEMPT", args.run_attempt)
+
+    out_dir = Path(args.out_dir or "_site")
+    if not os.getenv("SITE"):
+        os.environ["SITE"] = str(out_dir)
+    if not os.getenv("OUT_DIR"):
+        os.environ["OUT_DIR"] = str(out_dir)
+    try:
+        # Professional note: The Pages deploy step expects the rendered bundle under
+        # _site by default; proactively create it so later writes do not fail even if
+        # the prep step skipped directory creation due to retries.
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
     context = _get_context()
+    _ensure_diag_log_placeholders(context)
     _set_iterate_log_destination(context.diag)
     _ensure_iterate_log_archive(context)
     _normalize_repo_zip(context)
@@ -3512,4 +3933,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

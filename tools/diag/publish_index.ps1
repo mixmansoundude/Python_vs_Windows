@@ -25,6 +25,78 @@ $Short      = $env:SHORTSHA
 $InventoryB64 = $env:INVENTORY_B64
 $BatchRunId   = $env:BATCH_RUN_ID
 $BatchRunAttempt = $env:BATCH_RUN_ATTEMPT
+$preferLocalArtifacts = $false
+$preferLocalIterate = $false
+$artifactsOverride = $env:ARTIFACTS_ROOT
+$downloadedIterRoot = Join-Path (Get-Location) '_iter'
+# derived requirement: runs such as 19218918397-1 downloaded the iterate artifact
+# earlier in the workflow; reuse that staging area immediately so diagnostics
+# stop waiting for the remote artifact mirrors.
+$downloadedIterReady = $false
+if (Test-Path -LiteralPath $downloadedIterRoot) {
+    $downloadProbe = Get-ChildItem -Path $downloadedIterRoot -Recurse -File -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($downloadProbe) {
+        Write-Host ("Using DOWNLOADED iterate payload from: {0}" -f $downloadedIterRoot)
+        $preferLocalIterate = $true
+        $downloadedIterReady = $true
+    }
+}
+$localStatusPath = $null
+$localRunJson = $null
+if ($artifactsOverride -and (Test-Path -LiteralPath $artifactsOverride)) {
+    # Professional note: prefer the staged diagnostics tree while giving the local mirrors up to 60 seconds to settle.
+    $Artifacts = $artifactsOverride
+    $preferLocalIterate = $true
+    $batchDir = Join-Path $Artifacts 'batch-check'
+    $localStatusPath = Join-Path $batchDir 'STATUS.txt'
+    $localRunJson = Join-Path $batchDir 'run.json'
+    $deadline = (Get-Date).AddSeconds(60)
+    $localReady = $false
+    $localCiRoot = Join-Path $batchDir '_ci_artifacts'
+    if (Test-Path -LiteralPath $localCiRoot) {
+        $ndjsonProbe = Get-ChildItem -Path $localCiRoot -Filter '*~test-results.ndjson' -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -gt 0 } |
+            Select-Object -First 1
+        if ($ndjsonProbe) {
+            # derived requirement: when the workflow already mirrored NDJSON locally
+            # (e.g., run 19218918397-1), trust the staged payload immediately instead of
+            # waiting the full settle loop intended for remote fetches.
+            $localReady = $true
+        }
+    }
+    while (-not $localReady -and [DateTime]::UtcNow -lt $deadline) {
+        $statusExists = Test-Path -LiteralPath $localStatusPath
+        $runJsonExists = Test-Path -LiteralPath $localRunJson
+        if ($statusExists -and $runJsonExists) {
+            $localReady = $true
+            break
+        }
+        Start-Sleep -Seconds 5
+    }
+    if ($localReady) {
+        $preferLocalArtifacts = $true
+    }
+}
+
+if ($preferLocalArtifacts) {
+    $batchDir = Join-Path $Artifacts 'batch-check'
+    $localStatusPath = Join-Path $batchDir 'STATUS.txt'
+    if (Test-Path -LiteralPath $localStatusPath) {
+        try { $localStatus = (Get-Content -Raw -LiteralPath $localStatusPath).Trim() } catch { $localStatus = $null }
+        if (-not [string]::IsNullOrWhiteSpace($localStatus)) {
+            $env:BATCH_STATUS_OVERRIDE = $localStatus
+        }
+    }
+    if (Test-Path -LiteralPath $localRunJson) {
+        try { $meta = Get-Content -Raw -LiteralPath $localRunJson | ConvertFrom-Json } catch { $meta = $null }
+        if ($meta) {
+            if ($meta.run_id) { $BatchRunId = [string]$meta.run_id }
+            if ($meta.run_attempt) { $BatchRunAttempt = [string]$meta.run_attempt }
+            if ($meta.html_url) { $RunUrl = [string]$meta.html_url }
+        }
+    }
+}
 if (-not $Short) {
     $Short = $SHA
     if ($Short.Length -gt 7) { $Short = $Short.Substring(0,7) }
@@ -42,7 +114,30 @@ function Get-FirstDir {
     return Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
 }
 
-$iterateRoot = if ($Artifacts) { Join-Path $Artifacts 'iterate' } else { $null }
+$iterateRoot = $null
+$artifactIterRoot = $null
+if ($downloadedIterReady) {
+    # derived requirement: runs such as 19232295127-1 produced the iterate payload in
+    # the downloaded staging directory while ARTIFACTS_ROOT stayed empty; prefer the
+    # freshly downloaded copy so diagnostics mirror the same evidence analysts see on
+    # the Actions artifacts page.
+    $iterateRoot = $downloadedIterRoot
+}
+if ($Artifacts) {
+    $artifactIterRoot = Join-Path $Artifacts 'iterate'
+    if (-not $iterateRoot) {
+        $iterateRoot = $artifactIterRoot
+    } elseif ((Test-Path -LiteralPath $artifactIterRoot) -and -not (Test-Path -LiteralPath $iterateRoot)) {
+        # derived requirement: fallback when the downloaded directory vanished between
+        # steps (e.g., manual runs that skip the download-artifact stage).
+        $iterateRoot = $artifactIterRoot
+    }
+}
+if (-not $iterateRoot -and $downloadedIterReady) {
+    # derived requirement: fallback to the downloaded payload when the diagnostics
+    # artifacts root is unavailable (e.g., local dry runs).
+    $iterateRoot = $downloadedIterRoot
+}
 $iterateDir = Get-FirstDir $iterateRoot
 if ($iterateRoot -and (Test-Path $iterateRoot)) {
     $candidateDirs = Get-ChildItem -Path $iterateRoot -Directory -ErrorAction SilentlyContinue
@@ -288,7 +383,7 @@ if ($iterateZipPath -and (Test-Path $iterateZipPath)) {
     } catch {}
 }
 
-if (-not $zipReady -and $logDir) {
+if (-not $zipReady -and $logDir -and -not $preferLocalIterate) {
     # Professional note: the workflow maps the Actions token to GH_TOKEN; fall back
     # to GITHUB_TOKEN so local runs stay compatible with the published contract.
     $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
@@ -317,8 +412,8 @@ if (-not $zipReady -and $logDir) {
             } catch {}
             if ($workflowResponse -and $workflowResponse.workflow_runs) {
                 # Professional note: the iterate bundle originates from codex-auto-iterate.yml,
-                # not the diagnostics workflow. Falling back by head SHA keeps publishing
-                # truthful when the archive lives on a sibling run.
+                # not the diagnostics workflow.
+                # Falling back by head SHA keeps publishing truthful when the archive lives on a sibling run.
                 foreach ($wfRun in $workflowResponse.workflow_runs) {
                     $wfId = [string]$wfRun.id
                     if (-not $wfId) { continue }
@@ -411,8 +506,11 @@ if (-not $iterateZipPath -or -not (Test-Path $iterateZipPath)) {
 
 $batchRunAttempt = if ($BatchRunAttempt) { $BatchRunAttempt } else { 'n/a' }
 $batchZipName = $null
+$batchStatusOverride = $env:BATCH_STATUS_OVERRIDE
 $batchStatus = 'missing'
-if ($BatchRunId) {
+if ($batchStatusOverride) {
+    $batchStatus = $batchStatusOverride
+} elseif ($BatchRunId) {
     $batchZipName = "batch-check-$BatchRunId-$batchRunAttempt.zip"
     $batchZipPath = if ($Diag) { Join-Path $Diag ('logs\' + $batchZipName) } else { $null }
     if ($batchZipPath -and (Test-Path $batchZipPath)) {
@@ -467,16 +565,16 @@ if ($artifactMissing) {
 $null = $lines.Add('')
 $null = $lines.Add('## Quick links')
 $bundleLinks = @(
-    @{ Label = 'Inventory (HTML)'; Path = 'inventory.html'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.html')) },
-    @{ Label = 'Inventory (text)'; Path = 'inventory.txt'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.txt')) },
-    @{ Label = 'Inventory (markdown)'; Path = 'inventory.md'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.md')) },
-    @{ Label = 'Inventory (json)'; Path = 'inventory.json'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'inventory.json')) },
-    @{ Label = 'Iterate logs zip'; Path = "logs/$iterateZipName"; Exists = ($iterateZipPath -and Test-Path $iterateZipPath) },
+    @{ Label = 'Inventory (HTML)'; Path = 'inventory.html'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'inventory.html'))) },
+    @{ Label = 'Inventory (text)'; Path = 'inventory.txt'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'inventory.txt'))) },
+    @{ Label = 'Inventory (markdown)'; Path = 'inventory.md'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'inventory.md'))) },
+    @{ Label = 'Inventory (json)'; Path = 'inventory.json'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'inventory.json'))) },
+    @{ Label = 'Iterate logs zip'; Path = "logs/$iterateZipName"; Exists = ($iterateZipPath -and (Test-Path $iterateZipPath)) },
     @{ Label = 'Batch-check logs zip'; Path = if ($batchZipName) { "logs/$batchZipName" } else { $null }; Exists = if ($batchZipName -and $Diag) { Test-Path (Join-Path $Diag ('logs\' + $batchZipName)) } else { $false } },
-    @{ Label = 'Batch-check failing tests'; Path = 'batchcheck_failing.txt'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'batchcheck_failing.txt')) },
-    @{ Label = 'Batch-check fail debug'; Path = 'batchcheck_fail-debug.txt'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'batchcheck_fail-debug.txt')) },
-    @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = ($Diag -and Test-Path (Join-Path $Diag ("repo\repo-$Short.zip"))) },
-    @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = ($Diag -and Test-Path (Join-Path $Diag 'repo\files')) }
+    @{ Label = 'Batch-check failing tests'; Path = 'batchcheck_failing.txt'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'batchcheck_failing.txt'))) },
+    @{ Label = 'Batch-check fail debug'; Path = 'batchcheck_fail-debug.txt'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'batchcheck_fail-debug.txt'))) },
+    @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = ($Diag -and (Test-Path (Join-Path $Diag ("repo\repo-$Short.zip")))) },
+    @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'repo\files'))) }
 )
 
 if ($Diag) {

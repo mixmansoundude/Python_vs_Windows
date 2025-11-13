@@ -176,8 +176,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Upload CI NDJSON (on failure)
-        if: ${{ failure() }}
+      - name: Upload CI NDJSON
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: ci_test_results-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -314,9 +314,33 @@ jobs:
           SCRIPT: run_tests.bat
         run: |
           $ErrorActionPreference = 'Continue'
+          $outDir = Join-Path $PWD '_out'
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $transcriptPath = Join-Path $outDir 'bootstrapper-transcript.txt'
+          $stdoutPath = Join-Path $outDir 'bootstrapper-stdout.txt'
+          $transcriptStarted = $false
+          try {
+            Start-Transcript -Path $transcriptPath -IncludeInvocationHeader | Out-Null
+            $transcriptStarted = $true
+          } catch {
+            Write-Warning ("Start-Transcript failed: {0}" -f $_.Exception.Message)
+          }
           Write-Host "=== BEGIN $pwd\$env:SCRIPT ==="
-          & cmd /c $env:SCRIPT *>&1
+          & cmd /c $env:SCRIPT *>&1 | Tee-Object -FilePath $stdoutPath
           $rc = $LASTEXITCODE
+          if ($transcriptStarted) {
+            try {
+              Stop-Transcript | Out-Null
+            } catch {
+              Write-Warning ("Stop-Transcript failed: {0}" -f $_.Exception.Message)
+            }
+          } elseif (-not (Test-Path $transcriptPath)) {
+            # Professional note: keep a placeholder so diagnostics always find a transcript payload.
+            New-Item -ItemType File -Path $transcriptPath -Force | Out-Null
+          }
+          if (-not (Test-Path $stdoutPath)) {
+            Set-Content -Path $stdoutPath -Value 'bootstrapper stdout missing' -Encoding Ascii
+          }
           if (Test-Path '~bootstrap.status.json') {
             try {
               $status = Get-Content '~bootstrap.status.json' -Raw | ConvertFrom-Json
@@ -331,6 +355,133 @@ jobs:
             Write-Warning "~bootstrap.status.json missing; keeping rc=$rc"
           }
           exit $rc
+
+      - name: Upload bootstrapper tests artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrapper-tests
+          path: _out/*
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Evaluate iterate gate
+        if: ${{ always() }}
+        id: iterate_gate
+        shell: pwsh
+        run: |
+          function Read-Ndjson([string]$path) {
+            if (-not (Test-Path -LiteralPath $path)) { return @() }
+            try {
+              return Get-Content -Raw -LiteralPath $path -ErrorAction Stop |
+                Select-String -AllMatches '^\{.*\}$' |
+                ForEach-Object {
+                  try { $_.Matches.Value | ConvertFrom-Json } catch { $null }
+                }
+            } catch {
+              return @()
+            }
+          }
+
+          $rows = @()
+          $rows += Read-Ndjson 'tests\~test-results.ndjson'
+          if (-not $rows) { $rows += Read-Ndjson 'ci_test_results.ndjson' }
+
+          $shouldRun = $false
+          $hasRows = ($rows -and $rows.Count -gt 0)
+          if (-not $hasRows) {
+            $shouldRun = $true
+          } else {
+            $allowedStates = @('ok','no_python_files','venv_env','degraded_env')
+            foreach ($row in $rows) {
+              if ($null -eq $row) { continue }
+              if ($row.PSObject.Properties.Name -contains 'pass' -and $row.pass -eq $false) {
+                $shouldRun = $true
+                break
+              }
+              if ($row.PSObject.Properties.Name -contains 'status' -and [string]::IsNullOrWhiteSpace($row.status) -eq $false) {
+                if ([string]$row.status -eq 'failed') {
+                  $shouldRun = $true
+                  break
+                }
+              }
+              if ($row.PSObject.Properties.Name -contains 'details' -and $row.details) {
+                $state = $null
+                if ($row.details -is [psobject] -and $row.details.PSObject.Properties.Name -contains 'state') {
+                  $state = [string]$row.details.state
+                }
+                if ($state -and $state -notin $allowedStates -and (
+                    $row.id -eq 'bootstrap.state' -or $row.id -eq 'self.bootstrap.state')) {
+                  $shouldRun = $true
+                  break
+                }
+              }
+            }
+          }
+
+          $value = if ($shouldRun) { 'true' } else { 'false' }
+          "should_run=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          if (-not $hasRows) {
+            # Professional note: missing NDJSON keeps the iterate helper active so diagnostics explain unknown outcomes.
+            "gate_reason=ndjson_missing" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          }
+
+      - name: Install requests for inline model helper
+        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests
+
+      - name: Stage inline model context (fail-only)
+        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python tools/inline_model_fix.py stage `
+            --repo "${{ github.repository }}" `
+            --run-id "${{ github.run_id }}" `
+            --run-attempt "${{ github.run_attempt }}" `
+            --token "${{ github.token }}"
+
+      - name: Call inline model (fail-only)
+        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python tools/inline_model_fix.py call
+
+      # derived requirement: expose the iterate payload contents inline so field triage
+      # can confirm breadcrumbs exist before upload.
+      - name: List _ctx prior to upload (debug)
+        if: ${{ always() }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "PWD=$(pwd)"
+          if [ -d _ctx ]; then
+            find _ctx -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
+          else
+            echo "_ctx MISSING"
+          fi
+
+      - name: Upload iterate logs (fail-only)
+        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
+        # derived requirement: breadcrumbs now exist for empty-model runs, but keep
+        # the workflow tolerant so diagnostics jobs do not fail when the helper
+        # intentionally skips packaging.
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: iterate-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _ctx/**
+          if-no-files-found: warn
+          overwrite: false
+          retention-days: 7
 
       - name: Find and print test logs (tail)
         if: always()
@@ -609,6 +760,14 @@ jobs:
             if ($hasPass) {
               if ($r.pass -eq $false) { $has = $true }
               continue
+            }
+
+            if ($r.PSObject.Properties.Name -contains 'status') {
+              $statusText = [string]$r.status
+              if ($statusText -eq 'failed') {
+                # derived requirement: some harness rows only expose status=failed; mirror the iterate gate logic so model assist kicks in.
+                $has = $true
+              }
             }
 
             if ($r.id -eq 'bootstrap.state' -and $r.details.state -and $r.details.state -notin $allowedStates) { $has = $true }
@@ -1151,6 +1310,29 @@ jobs:
 
           Get-ChildItem -LiteralPath . -Force | Where-Object { $_.Name -notin @('.', '..', '.git', 'site') } | ForEach-Object {
             Copy-Item -Path $_.FullName -Destination (Join-Path $repoDir $_.Name) -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          # derived requirement: run 19211170783-1 produced a non-empty iterate artifact
+          # in Actions but only mirrored a zero-byte discovery log into Pages. Mirror
+          # _ctx directly so diagnostics stay truthful without waiting on remote fetches.
+          $iterateRoot = Join-Path $pub 'iterate'
+          New-Item -Force -ItemType Directory -Path $iterateRoot | Out-Null
+          $iterateDir = Join-Path $iterateRoot ("iterate-logs-{0}-{1}" -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath '_ctx') {
+            New-Item -Force -ItemType Directory -Path $iterateDir | Out-Null
+            Copy-Item -Path (Join-Path '_ctx' '*') -Destination $iterateDir -Recurse -Force
+
+            $summaryPath = Join-Path $iterateRoot 'discovery.log.txt'
+            $copied = Get-ChildItem -Path $iterateDir -Recurse -File | Sort-Object FullName
+            $summaryLines = @()
+            foreach ($item in $copied) {
+              $relative = [System.IO.Path]::GetRelativePath($iterateDir, $item.FullName)
+              $summaryLines += ("{0} {1}" -f ($relative.Replace('\\', '/')), $item.Length)
+            }
+            if (-not $summaryLines) {
+              $summaryLines = @('no iterate files copied')
+            }
+            $summaryLines | Out-File -Encoding UTF8 $summaryPath
           }
 
           try { $ct = [TimeZoneInfo]::FindSystemTimeZoneById('Central Standard Time') } catch { $ct = $null }
@@ -1770,6 +1952,7 @@ jobs:
           python -m pip install requests
       - name: Stage iterate context
         if: ${{ env.HAS_FAILURES == 'true' }}
+        working-directory: ${{ github.workspace }}
         run: |
           python tools/inline_model_fix.py stage \
             --repo "${{ github.repository }}" \
@@ -1778,6 +1961,7 @@ jobs:
             --token "$GH_TOKEN"
       - name: Call model
         if: ${{ env.HAS_FAILURES == 'true' }}
+        working-directory: ${{ github.workspace }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
@@ -1785,6 +1969,7 @@ jobs:
       - name: Apply model patch
         if: ${{ env.HAS_FAILURES == 'true' }}
         shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           if [ ! -s _ctx/fix.patch ]; then
@@ -1811,16 +1996,41 @@ jobs:
       - name: Package iterate context
         if: ${{ env.HAS_FAILURES == 'true' }}
         shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           if [ ! -d _ctx ]; then
-            exit 0
+            # derived requirement: run 19234337453-1 surfaced a bare iterate zip with no
+            # _ctx folder; create the workspace so downstream packaging always emits
+            # breadcrumbs instead of an empty archive.
+            mkdir -p _ctx
           fi
           mkdir -p logs
           zip_path="logs/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip"
           rm -f "$zip_path"
+          # derived requirement: include decision breadcrumbs so diagnostics enumerate
+          # the iterate payload even when the model cannot return a diff mid-run.
+          note_path="_ctx/notes.txt"
+          if [ ! -e "$note_path" ]; then
+            # derived requirement: when stage/call short-circuit, still leave a breadcrumb so diagnostics stay truthful.
+            printf 'notes_stub=created_by_packager\n' > "$note_path"
+          fi
+          decision_path="_ctx/decision.json"
+          if [ ! -e "$decision_path" ]; then
+            # derived requirement: prevent "Model rationale: missing" when the inline helper never produced a decision payload.
+            printf '{"status":"error","reason":"not_recorded"}\n' > "$decision_path"
+            printf 'decision_stub=added_by_packager\n' >> "$note_path"
+          fi
+          response_path="_ctx/response.json"
+          if [ ! -e "$response_path" ]; then
+            printf '{}\n' > "$response_path"
+          fi
+          fix_path="_ctx/fix.patch"
+          if [ ! -e "$fix_path" ]; then
+            : > "$fix_path"
+          fi
           declare -a files
-          for path in _ctx/guide.json _ctx/failpack.log _ctx/iterate_context_manifest.tsv _ctx/response.json _ctx/fix.patch _ctx/notes.txt; do
+          for path in _ctx/guide.json _ctx/failpack.log _ctx/iterate_context_manifest.tsv _ctx/response.json _ctx/decision.json _ctx/decision.txt _ctx/fix.patch _ctx/notes.txt; do
             if [ -e "$path" ]; then
               files+=("$path")
             fi
@@ -1829,10 +2039,34 @@ jobs:
             files+=("_ctx/attached")
           fi
           if [ ${#files[@]} -eq 0 ]; then
-            printf 'package=skipped_no_files\n' >> _ctx/notes.txt
-            exit 0
+            # Professional note: the diagnostics site expects an iterate zip even when the model call is a no-op;
+            # create a minimal notes + manifest pair so the artifact contract stays satisfied.
+            mkdir -p _ctx
+            note_path="_ctx/notes.txt"
+            if [ ! -e "$note_path" ]; then
+              printf 'placeholder=iterate\n' > "$note_path"
+            fi
+            manifest_path="_ctx/iterate_context_manifest.tsv"
+            if [ ! -e "$manifest_path" ]; then
+              note_size=$(stat -c %s "$note_path" 2>/dev/null || echo 0)
+              printf 'notes.txt\t%s\n' "$note_size" > "$manifest_path"
+            fi
+            files=("$note_path" "$manifest_path")
           fi
           zip -r "$zip_path" "${files[@]}" >/dev/null
+      # derived requirement: expose the iterate payload contents inline so field triage
+      # can confirm breadcrumbs exist before upload.
+      - name: List _ctx prior to artifact upload (debug)
+        if: ${{ always() }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "PWD=$(pwd)"
+          if [ -d _ctx ]; then
+            find _ctx -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
+          else
+            echo "_ctx MISSING"
+          fi
       - name: Upload iterate artifact
         if: ${{ env.HAS_FAILURES == 'true' }}
         uses: actions/upload-artifact@v4
@@ -1845,6 +2079,13 @@ jobs:
   publish_diag:
     name: Publish diagnostics to Pages
     needs: [selftest, selftest-gate, model-quick-fix]
+    timeout-minutes: 25
+    concurrency:
+      # derived requirement: run 19236437263-1 exhausted the runner disk while a prior
+      # publish was still active; serialize by ref and bound runtime so hanging jobs
+      # cannot overlap and consume the remaining quota.
+      group: pages-${{ github.ref }}
+      cancel-in-progress: true
     if: ${{ always() }}
     runs-on: ubuntu-latest
     environment:
@@ -1855,6 +2096,22 @@ jobs:
       id-token: write
       actions: read
     steps:
+      - name: Disk preflight + gentle cleanup (best effort)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          echo "== disk before =="
+          df -h || true
+          if [ -n "${RUNNER_TEMP:-}" ] && [ -d "$RUNNER_TEMP" ]; then
+            rm -rf "$RUNNER_TEMP"/* 2>/dev/null || true
+          fi
+          if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -d "$GITHUB_WORKSPACE" ]; then
+            find "$GITHUB_WORKSPACE" -maxdepth 2 -type d -name "__pycache__" -prune -exec rm -rf {} + 2>/dev/null || true
+          fi
+          rm -rf _site 2>/dev/null || true
+          echo "== disk after =="
+          df -h || true
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -1866,7 +2123,7 @@ jobs:
         run: |
           $RunId = "${{ github.run_id }}"
           $Attempt = "${{ github.run_attempt }}"
-          $SiteRoot = Join-Path $PWD 'site'
+          $SiteRoot = Join-Path $PWD '_site'
           if (Test-Path $SiteRoot) { Remove-Item -Recurse -Force $SiteRoot }
           New-Item -ItemType Directory -Path $SiteRoot | Out-Null
           $DiagRoot = Join-Path $SiteRoot 'diag'
@@ -1889,21 +2146,49 @@ jobs:
           echo "ARTIFACTS=$Artifacts" >> $env:GITHUB_OUTPUT
           echo "SHORTSHA=$short" >> $env:GITHUB_OUTPUT
 
-      - name: Download iterate artifacts
+      - name: Download iterate logs artifact (if present)
         if: ${{ always() }}
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.prep.outputs.ARTIFACTS }}/iterate
+          pattern: iterate-logs*${{ github.run_id }}-${{ github.run_attempt }}
+          # derived requirement: runs such as 19251877090-1 emit a bare iterate-logs-${run}-${attempt}
+          # artifact; anchor the wildcard directly before the run id so both the bare name and
+          # matrix-prefixed variants (iterate-logs-${job}-${mode}-...) resolve without producing a
+          # double-hyphen that fails to match.
+          merge-multiple: true
+          path: _iter
+
+      - name: Show downloaded iterate payload (debug)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "_iter" ]; then
+            echo "_iter present"
+            find _iter -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort | head -50
+          else
+            echo "_iter MISSING"
+          fi
 
       - name: Normalize iterate artifact layout
         if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
+          iter_src="_iter"
           iter_root="${{ steps.prep.outputs.ARTIFACTS }}/iterate"
           mkdir -p "$iter_root"
+
+          if [ -d "$iter_src" ]; then
+            shopt -s dotglob nullglob
+            for item in "$iter_src"/*; do
+              base=$(basename "$item")
+              rm -rf "$iter_root/$base"
+              cp -a "$item" "$iter_root/$base"
+            done
+          fi
+
           nested_dir="$iter_root/_artifacts/iterate"
           if [ -d "$nested_dir" ]; then
             echo "Flattening iterate artifact from $nested_dir"
@@ -1915,6 +2200,7 @@ jobs:
             done
             rm -rf "$iter_root/_artifacts"
           fi
+
           shopt -s dotglob nullglob
           entries=("$iter_root"/*)
           if [ "${#entries[@]}" -eq 1 ] && [ -d "${entries[0]}" ]; then
@@ -1926,9 +2212,48 @@ jobs:
             done
             rm -rf "${entries[0]}"
           fi
+
+          # Professional note: ensure the canonical iterate zip lands at the root so the
+          # diagnostics publisher locates it without chasing nested logs/ directories.
+          shopt -s nullglob
+          shopt -s globstar
+          for archive in "$iter_root"/**/*.zip "$iter_root"/*.zip; do
+            [ -f "$archive" ] || continue
+            base=$(basename "$archive")
+            target="$iter_root/$base"
+            if [ "$archive" != "$target" ]; then
+              rm -f "$target"
+              mv "$archive" "$target"
+            fi
+          done
+
+          # derived requirement: unzip iterate-logs-* immediately so diagnostics expose
+          # _ctx breadcrumbs even when downstream fetches are skipped mid-run.
+          for archive in "$iter_root"/iterate-logs-*.zip; do
+            [ -f "$archive" ] || continue
+            stem=$(basename "$archive" .zip)
+            dest="$iter_root/$stem"
+            rm -rf "$dest"
+            mkdir -p "$dest"
+            if ! unzip -oq "$archive" -d "$dest"; then
+              echo "Warning: failed to extract $archive" >&2
+              rm -rf "$dest"
+            fi
+          done
+
           # derived requirement: download-artifact@v4 nests the uploaded
           # _artifacts/iterate payload one directory deeper; flatten it so the
           # diagnostics publisher detects '* Iterate logs: found'.
+
+          if [ -d "$iter_src" ]; then
+            # derived requirement: run 19232295127-1 proved the workspace copy can
+            # remain empty when normalization short-circuits; fall back to the
+            # freshly downloaded payload so diagnostics mirror the real iterate bundle.
+            if ! find "$iter_root" -mindepth 1 -type f -print -quit | grep -q .; then
+              echo "Mirroring raw iterate download because $iter_root is still empty"
+              cp -a "$iter_src"/. "$iter_root"/
+            fi
+          fi
 
       - name: Mirror iterate logs into diagnostics root
         if: ${{ always() }}
@@ -1941,10 +2266,54 @@ jobs:
           if [ -d "$src" ]; then
             # derived requirement: publisher consumers expect the diagnostics bundle to mirror
             # _artifacts/iterate exactly so downstream readers never fall back to the site copy.
-            shopt -s dotglob nullglob
-            rm -rf "$dst"/*
-            cp -a "$src"/. "$dst"/ || true
+            # Guard against the src/dst alias case (they're both ${{ steps.prep.outputs.ARTIFACTS }}/iterate)
+            # so we do not accidentally clear the freshly normalized iterate payload.
+            if [ "$src" != "$dst" ]; then
+              shopt -s dotglob nullglob
+              rm -rf "$dst"/*
+              cp -a "$src"/. "$dst"/ || true
+            fi
           fi
+
+      - name: Download CI NDJSON artifacts
+        if: ${{ always() }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.prep.outputs.ARTIFACTS }}/batch-check/_ci_artifacts
+
+      - name: Mirror NDJSON into diagnostics bundle
+        if: ${{ always() }}
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          ARTIFACTS_DIR: ${{ steps.prep.outputs.ARTIFACTS }}
+          DIAG_DIR: ${{ steps.prep.outputs.DIAG }}
+          SITE_DIR: ${{ steps.prep.outputs.SITE }}
+        run: |
+          set -euo pipefail
+          # Professional note: Quote "Mirror NDJSON locally for the publisher" so diagnostics reuse
+          # current-run evidence without waiting on remote polling.
+          src_root="$ARTIFACTS_DIR/batch-check/_ci_artifacts"
+          artifacts_root="$ARTIFACTS_DIR/batch-check"
+          diag_root="$DIAG_DIR/_artifacts/batch-check"
+          site_root="$SITE_DIR/_artifacts/batch-check"
+          mkdir -p "$artifacts_root" "$diag_root" "$site_root"
+          shopt -s dotglob nullglob
+          for artifact_dir in "$src_root"/*; do
+            [ -d "$artifact_dir" ] || continue
+            ndjson=$(find "$artifact_dir" -type f -name '*.ndjson' -print -quit)
+            [ -n "$ndjson" ] || continue
+            base=$(basename "$artifact_dir")
+            suffix="${base#ci_test_results-}"
+            suffix="${suffix%-${RUN_ATTEMPT}}"
+            suffix="${suffix%-${RUN_ID}}"
+            target="ci_test_results-${suffix}.ndjson"
+            install -D "$ndjson" "$artifacts_root/$target"
+            install -D "$ndjson" "$diag_root/$target"
+            install -D "$ndjson" "$site_root/$target"
+          done
 
       - name: Package iterate logs archive
         if: ${{ always() }}
@@ -1974,7 +2343,11 @@ jobs:
         shell: pwsh
         run: |
           $diagIter = Join-Path "${{ steps.prep.outputs.ARTIFACTS }}" 'iterate'
-          $siteIter = Join-Path "${{ steps.prep.outputs.SITE }}" '_artifacts/iterate'
+          $siteRoot = "${{ steps.prep.outputs.SITE }}"
+          $siteIter = Join-Path $siteRoot '_artifacts/iterate'
+          $publicIterRoot = Join-Path $siteRoot 'iterate'
+          $publicIterDir = Join-Path $publicIterRoot ("iterate-logs-{0}-{1}" -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+
           if (Test-Path -LiteralPath $diagIter) {
             New-Item -ItemType Directory -Path $siteIter -Force | Out-Null
             Get-ChildItem -LiteralPath $diagIter -Force | ForEach-Object {
@@ -1985,7 +2358,36 @@ jobs:
                 Copy-Item -LiteralPath $_.FullName -Destination $target -Force
               }
             }
+
+            New-Item -ItemType Directory -Path $publicIterDir -Force | Out-Null
+            Get-ChildItem -LiteralPath $diagIter -Force | ForEach-Object {
+              $target = Join-Path $publicIterDir $_.Name
+              if ($_.PSIsContainer) {
+                Copy-Item -LiteralPath $_.FullName -Destination $publicIterDir -Recurse -Force
+              } else {
+                Copy-Item -LiteralPath $_.FullName -Destination $target -Force
+              }
+            }
+          } else {
+            New-Item -ItemType Directory -Path $publicIterRoot -Force | Out-Null
           }
+
+          $summaryDir = if (Test-Path -LiteralPath $publicIterDir) { $publicIterDir } else { $publicIterRoot }
+          New-Item -ItemType Directory -Path $publicIterRoot -Force | Out-Null
+          $summaryPath = Join-Path $publicIterRoot 'discovery.log.txt'
+          $entries = @()
+          if (Test-Path -LiteralPath $summaryDir) {
+            $files = Get-ChildItem -LiteralPath $summaryDir -Recurse -File -ErrorAction SilentlyContinue
+            foreach ($file in $files) {
+              $relative = [System.IO.Path]::GetRelativePath($summaryDir, $file.FullName)
+              $normalized = $relative.Replace('\', '/')
+              $entries += ("{0} ({1} bytes)" -f $normalized, $file.Length)
+            }
+          }
+          if (-not $entries -or $entries.Count -eq 0) {
+            $entries = @('no iterate files copied')
+          }
+          Set-Content -LiteralPath $summaryPath -Value $entries -Encoding Ascii
 
       - name: Record iterate artifact status
         shell: pwsh
@@ -1993,6 +2395,7 @@ jobs:
           $Artifacts = "${{ steps.prep.outputs.ARTIFACTS }}"
           $Iter = Join-Path $Artifacts 'iterate'
           $sentinel = Join-Path $Artifacts 'MISSING.txt'
+          $iterSentinel = Join-Path $Artifacts 'iterate.MISSING.txt'
           # Professional note: _artifacts/ mirrors producer payloads exactly; the sentinel documents gaps for external analysts.
           $files = @()
           if (Test-Path $Iter) {
@@ -2000,6 +2403,7 @@ jobs:
           }
           if (-not $files -or $files.Count -eq 0) {
             "iterate artifact missing or empty" | Out-File -Append -Encoding UTF8 $sentinel
+            "iterate artifact missing or empty" | Out-File -Append -Encoding UTF8 $iterSentinel
           }
 
       - name: Fetch batch-check artifacts
@@ -2013,6 +2417,19 @@ jobs:
           New-Item -ItemType Directory -Path $BatchRoot -Force | Out-Null
           $statusPath = Join-Path $BatchRoot 'STATUS.txt'
           $missingPath = Join-Path $ArtifactsRoot 'MISSING.txt'
+          $localRunJson = Join-Path $BatchRoot 'run.json'
+          if ((Test-Path -LiteralPath $localRunJson) -and (Test-Path -LiteralPath $statusPath)) {
+            # derived requirement: when the publisher already mirrored run.json/STATUS locally, skip the GitHub polling loop entirely.
+            try {
+              $meta = Get-Content -Raw -LiteralPath $localRunJson | ConvertFrom-Json
+            } catch { $meta = $null }
+            if ($meta) {
+              if ($meta.run_id) { "run_id=$($meta.run_id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append }
+              if ($meta.run_attempt) { "run_attempt=$($meta.run_attempt)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append }
+              if ($meta.html_url) { "run_url=$($meta.html_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append }
+            }
+            return
+          }
           # Professional note: correlate the batch-check workflow by commit SHA so the diagnostics bundle mirrors
           # the matching self-test run; missing runs append a sentinel entry so downstream readers understand why.
 
@@ -2077,8 +2494,8 @@ jobs:
             return
           }
 
-          $pollSeconds = 20
-          $deadline = [DateTime]::UtcNow.AddMinutes(15)
+          $pollSeconds = 10
+          $deadline = [DateTime]::UtcNow.AddSeconds(60)
           $headSha = "${{ github.event.pull_request.head.sha || github.sha }}"
           $run = $null
           while ([DateTime]::UtcNow -lt $deadline) {
@@ -2418,11 +2835,39 @@ jobs:
             "inventory_b64=$_" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           }
 
+      - name: Write batch-check metadata
+        if: ${{ always() }}
+        shell: bash
+        env:
+          ARTIFACTS_ROOT: ${{ steps.prep.outputs.ARTIFACTS }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_CONCLUSION: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          root="${ARTIFACTS_ROOT}/batch-check"
+          mkdir -p "$root"
+          # Professional note: per "add a final always() step that writes ... STATUS.txt = 'completed'",
+          # keep the sentinel truthful for the current run rather than leaving the remote timeout.
+          printf 'completed\n' > "$root/STATUS.txt"
+          cat > "$root/run.json" <<EOF
+          {
+            "run_id": "${RUN_ID}",
+            "run_attempt": "${RUN_ATTEMPT}",
+            "html_url": "${RUN_URL}",
+            "status": "completed",
+            "conclusion": "${JOB_CONCLUSION}"
+          }
+          EOF
+
       - name: Publish diagnostics index
         shell: bash
         env:
           DIAG: ${{ steps.prep.outputs.DIAG }}
           ARTIFACTS: ${{ steps.prep.outputs.ARTIFACTS }}
+          ARTIFACTS_ROOT: ${{ github.workspace }}/_site/diag/${{ github.run_id }}-${{ github.run_attempt }}/_artifacts
+          DOWNLOADED_ITER_ROOT: ${{ github.workspace }}/_iter
           REPO: ${{ github.repository }}
           BRANCH: ${{ needs.model-quick-fix.outputs.branch }}
           SHA: ${{ github.sha }}
@@ -2435,7 +2880,10 @@ jobs:
           BATCH_RUN_ATTEMPT: ${{ steps.fetch_batch.outputs.run_attempt }}
           SITE: ${{ steps.prep.outputs.SITE }}
         run: |
-          python tools/diag/publish_index.py
+          python tools/diag/publish_index.py \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --out-dir "_site"
 
       - name: Append job summary
         shell: pwsh

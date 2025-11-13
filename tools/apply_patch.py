@@ -1,4 +1,5 @@
 from enum import Enum
+import re
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -336,6 +337,83 @@ def text_to_patch(text: str, orig: dict[str, str]) -> tuple[Patch, int]:
     return parser.patch, parser.fuzz
 
 
+def convert_unified_diff_to_legacy(text: str) -> str:
+    """Translate a unified diff into the legacy *** Begin Patch format."""
+
+    lines = text.strip().split("\n")
+    if not lines:
+        raise DiffError("Invalid patch text")
+
+    def _norm(path: str) -> str:
+        path = path.strip()
+        if path.startswith("a/") or path.startswith("b/"):
+            return path[2:]
+        return path
+
+    out: list[str] = ["*** Begin Patch"]
+    i = 0
+    saw_section = False
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("diff --git ") or line.startswith("index "):
+            i += 1
+            continue
+        if line.startswith("--- "):
+            old_path = line[4:].strip()
+            i += 1
+            if i >= len(lines) or not lines[i].startswith("+++ "):
+                raise DiffError("Unified diff missing +++ line")
+            new_path = lines[i][4:].strip()
+            i += 1
+            old_norm = _norm(old_path)
+            new_norm = _norm(new_path)
+            if new_path == "/dev/null":
+                out.append(f"*** Delete File: {old_norm}")
+                while i < len(lines) and not lines[i].startswith(("diff --git ", "index ", "--- ")):
+                    i += 1
+                saw_section = True
+                continue
+            if old_path == "/dev/null":
+                out.append(f"*** Add File: {new_norm}")
+                while i < len(lines) and not lines[i].startswith(("diff --git ", "index ", "--- ")):
+                    current = lines[i]
+                    if current.startswith("@@"):
+                        out.append(current)
+                    elif current.startswith("+"):
+                        out.append(current)
+                    elif current.startswith(" "):
+                        out.append("+" + current[1:])
+                    elif current.startswith("-"):
+                        # deletions against /dev/null are meaningless; skip
+                        pass
+                    elif current.startswith("\\ No newline at end of file"):
+                        pass
+                    else:
+                        raise DiffError(f"Unsupported diff line: {current}")
+                    i += 1
+                saw_section = True
+                continue
+            out.append(f"*** Update File: {new_norm}")
+            while i < len(lines) and not lines[i].startswith(("diff --git ", "index ", "--- ")):
+                current = lines[i]
+                if current.startswith("\\ No newline at end of file"):
+                    i += 1
+                    continue
+                if current.startswith("diff --git "):
+                    break
+                out.append(current)
+                i += 1
+            saw_section = True
+            continue
+        i += 1
+
+    if not saw_section:
+        raise DiffError("Unified diff missing file sections")
+
+    out.append("*** End Patch")
+    return "\n".join(out)
+
+
 def identify_files_needed(text: str) -> list[str]:
     lines = text.strip().split("\n")
     result = set()
@@ -434,11 +512,30 @@ def apply_commit(commit: Commit, write_fn: Callable, remove_fn: Callable) -> Non
                 write_fn(path, change.new_content)
 
 
+def _strip_fenced_diff(text: str) -> str:
+    match = re.fullmatch(r"\s*```diff\s*\n([\s\S]*?)\n```\s*", text)
+    if match:
+        return match.group(1)
+    return text
+
+
+def _normalize_patch_text(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        raise DiffError("Empty patch text")
+    stripped = _strip_fenced_diff(stripped)
+    if stripped.startswith("*** Begin Patch"):
+        return stripped
+    return convert_unified_diff_to_legacy(stripped)
+
+
 def process_patch(text: str, open_fn: Callable, write_fn: Callable, remove_fn: Callable) -> str:
-    assert text.startswith("*** Begin Patch")
-    paths = identify_files_needed(text)
+    normalized = _normalize_patch_text(text)
+    if not normalized.startswith("*** Begin Patch"):
+        raise DiffError("Invalid patch text")
+    paths = identify_files_needed(normalized)
     orig = load_files(paths, open_fn)
-    patch, fuzz = text_to_patch(text, orig)
+    patch, fuzz = text_to_patch(normalized, orig)
     commit = patch_to_commit(patch, orig)
     apply_commit(commit, write_fn, remove_fn)
     return "Done!"
