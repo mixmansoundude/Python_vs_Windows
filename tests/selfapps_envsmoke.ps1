@@ -64,6 +64,26 @@ function Check-PipreqsFailure {
     }
 }
 
+# Non-Windows runners cannot exercise the Windows bootstrap; Windows CI still
+# covers the real envsmoke flow, so explicitly mark these checks as skipped.
+if (-not $IsWindows) {
+    $platform = [System.Environment]::OSVersion.Platform.ToString()
+    $details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.env.smoke.conda'
+        pass    = $true
+        desc    = 'Miniconda bootstrap skipped on non-Windows host'
+        details = $details
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.env.smoke.run'
+        pass    = $true
+        desc    = 'App run skipped on non-Windows host'
+        details = $details
+    })
+    exit 0
+}
+
 # Emit a tiny app that imports a small conda-forge package and prints a token
 $app = Join-Path $here '~envsmoke'
 $setupLog = Join-Path $app '~setup.log'

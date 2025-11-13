@@ -1407,6 +1407,7 @@ def call_phase(args: argparse.Namespace) -> None:
         {"cap": 4000, "effort": "low"},
         {"cap": 16000, "effort": "low"},
         {"cap": 48000, "effort": "medium"},
+        {"cap": None, "effort": None},  # final attempt: unbounded tokens with default reasoning
     ]
     initial_cap = token_plan[0]["cap"]
     initial_effort = token_plan[0]["effort"]
@@ -1423,7 +1424,8 @@ def call_phase(args: argparse.Namespace) -> None:
             f"attachments_uploaded={attachments_uploaded} "
             f"timeout={timeout_sec} retries={len(token_plan) - 1} "
             f"initial_max_output_tokens={initial_cap} "
-            f"initial_reasoning_effort={initial_effort}"
+            f"initial_reasoning_effort={initial_effort} "
+            f"final_max_output_tokens={token_plan[-1]['cap'] or 'unbounded'}"
         ),
     )
 
@@ -1513,18 +1515,28 @@ def call_phase(args: argparse.Namespace) -> None:
     for idx, plan in enumerate(token_plan):
         cap = plan["cap"]
         effort = plan["effort"]
-        payload["max_output_tokens"] = cap
-        payload["reasoning"] = {"effort": effort}
+        cap_desc = str(cap) if cap is not None else "unbounded"
+        effort_desc = effort if effort is not None else "default"
+        if cap is None:
+            payload.pop("max_output_tokens", None)
+        else:
+            payload["max_output_tokens"] = cap
+        if effort is None:
+            if "reasoning" in payload:
+                payload.pop("reasoning", None)
+                append_note(ctx_dir, "openai_call_reasoning_reset=default")
+        else:
+            payload["reasoning"] = {"effort": effort}
         append_note(
             ctx_dir,
-            f"openai_call_attempt={idx} max_output_tokens={cap} reasoning_effort={effort}",
+            f"openai_call_attempt={idx} max_output_tokens={cap_desc} reasoning_effort={effort_desc}",
         )
         if idx > 0:
             append_note(
                 ctx_dir,
                 (
                     "openai_call_retry_max_output_tokens="
-                    f"{cap} retry_ix={idx} reasoning_effort={effort}"
+                    f"{cap_desc} retry_ix={idx} reasoning_effort={effort_desc}"
                 ),
             )
         response_json, error_reason = _execute_payload(payload)
@@ -1538,7 +1550,7 @@ def call_phase(args: argparse.Namespace) -> None:
             append_note(
                 ctx_dir,
                 f"openai_call_incomplete_reason={reason_tag} "
-                f"retry_ix={idx} max_output_tokens={cap}",
+                f"retry_ix={idx} max_output_tokens={cap_desc}",
             )
         if (
             status_tag == "incomplete"
