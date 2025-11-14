@@ -1084,7 +1084,7 @@ def extract_patch(response_json: dict) -> Tuple[str, Optional[str], Optional[dic
         return "", rationale_raw, rationale_json, "invalid_sequence"
 
     if diff_body is not None:
-        return f"```diff\n{diff_body}\n```", rationale_raw, rationale_json, rationale_error
+        return diff_body, rationale_raw, rationale_json, rationale_error
 
     if rationale_raw is not None:
         return "", rationale_raw, rationale_json, rationale_error or "json_only"
@@ -1217,6 +1217,11 @@ def _record_decision(
 
     patch_path = ctx_dir / "fix.patch"
     material = patch_text if patch_text is not None else ""
+    if material and not material.endswith("\n"):
+        # derived requirement: the CI workflow applies _ctx/fix.patch using
+        # tools/apply_patch.py, which expects raw unified diff content with
+        # a trailing newline and no markdown fences.
+        material += "\n"
     patch_path.write_text(material, encoding="utf-8")
 
     append_note(

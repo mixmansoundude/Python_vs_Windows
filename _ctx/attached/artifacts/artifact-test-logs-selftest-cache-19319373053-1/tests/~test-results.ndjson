@@ -1,5 +1,0 @@
-{"desc":"harness init","pass":true,"id":"self.harness.started"}
-{"desc":"state=no_python_files","details":{"path":"D:\\a\\Python_vs_Windows\\Python_vs_Windows\\tests\\~selftest_empty\\~bootstrap.status.json","state":"no_python_files","exitCode":0,"pyFiles":0},"pass":true,"id":"self.bootstrap.state"}
-{"desc":"Empty repo emits the no-python console lines","details":{"logExists":true,"missing":[]},"pass":true,"id":"self.empty_repo.msg"}
-{"details":{"exitCode":255,"command":"[command unavailable]"},"id":"self.env.smoke.conda","desc":"Miniconda bootstrap + environment creation","pass":false}
-{"details":{"exitCode":255,"tokenFound":false,"haveRunOut":false,"command":"[command unavailable]"},"id":"self.env.smoke.run","desc":"App runs in created environment","pass":false}

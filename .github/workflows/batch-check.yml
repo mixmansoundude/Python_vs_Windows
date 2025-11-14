@@ -1978,16 +1978,54 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git apply --whitespace=nowarn _ctx/fix.patch; then
-            git add -A
-            if git diff --staged --quiet; then
+          # derived requirement: keep CI aligned with the shared patch engine in tools/apply_patch.py.
+          if python tools/apply_patch.py < _ctx/fix.patch; then
+            staged=0
+            # derived requirement: limit staging to actual repository edits so scratch context
+            # workspaces (_ctx, _iter) remain ephemeral and never pollute commits.
+            while IFS= read -r line; do
+              path="${line:3}"
+              if [[ "$path" == *" -> "* ]]; then
+                old="${path%% -> *}"
+                new="${path##* -> }"
+                skip=0
+                for candidate in "$old" "$new"; do
+                  if [[ -z "$candidate" ]]; then
+                    continue
+                  fi
+                  if [[ "$candidate" == _ctx/* || "$candidate" == _iter/* ]]; then
+                    skip=1
+                    break
+                  fi
+                done
+                if [[ "$skip" -eq 1 ]]; then
+                  continue
+                fi
+                git add -- "$old" "$new"
+                staged=1
+                continue
+              fi
+              if [[ -z "$path" ]]; then
+                continue
+              fi
+              if [[ "$path" == _ctx/* || "$path" == _iter/* ]]; then
+                continue
+              fi
+              git add -- "$path"
+              staged=1
+            done < <(git status --porcelain)
+            if [ "$staged" -eq 0 ]; then
               printf 'patch_apply=no_changes\n' >> _ctx/notes.txt
             else
-              if git commit -am "codex: inline quick-fix"; then
-                git push
-                printf 'patch_apply=success\n' >> _ctx/notes.txt
+              if git diff --staged --quiet; then
+                printf 'patch_apply=no_changes\n' >> _ctx/notes.txt
               else
-                printf 'patch_commit=failed\n' >> _ctx/notes.txt
+                if git commit -m "codex: inline quick-fix"; then
+                  git push
+                  printf 'patch_apply=success\n' >> _ctx/notes.txt
+                else
+                  printf 'patch_commit=failed\n' >> _ctx/notes.txt
+                fi
               fi
             fi
           else
