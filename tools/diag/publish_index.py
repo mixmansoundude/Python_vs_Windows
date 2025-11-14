@@ -2820,6 +2820,14 @@ def _bundle_links(context: Context) -> List[dict]:
     if entry:
         entries.append(entry)
 
+    iterate_dir = context.iterate_discovered_dir
+    if iterate_dir:
+        ci_logs = iterate_dir / "logs.zip"
+        # derived requirement: mirror the GitHub Actions run logs next to other quick links so analysts can fetch them directly.
+        entry = _link_entry(diag, "CI job logs", ci_logs)
+        if entry:
+            entries.append(entry)
+
     entries.extend(_collect_batch_ndjson_links(diag))
 
     for label, relative in [

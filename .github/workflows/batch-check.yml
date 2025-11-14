@@ -1949,7 +1949,8 @@ jobs:
         if: ${{ env.HAS_FAILURES == 'true' }}
         run: |
           python -m pip install --upgrade pip
-          python -m pip install requests
+          # derived requirement: tools/apply_patch.py imports pydantic; preinstall it so inline commits do not fail mid-run.
+          python -m pip install requests pydantic
       - name: Stage iterate context
         if: ${{ env.HAS_FAILURES == 'true' }}
         working-directory: ${{ github.workspace }}
