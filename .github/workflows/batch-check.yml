@@ -1914,6 +1914,9 @@ jobs:
     needs:
       - selftest
       - selftest-gate
+    # derived requirement: publish_diag needs this job present in the dependency graph even
+    # when upstream work is cancelled; guard the inline helper at the step level so
+    # manual cancellations skip the model call without breaking downstream diagnostics.
     if: ${{ always() }}
     runs-on: ubuntu-latest
     permissions:
@@ -1946,13 +1949,13 @@ jobs:
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "branch_slug=$slug" >> "$GITHUB_OUTPUT"
       - name: Install Python dependencies
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
         run: |
           python -m pip install --upgrade pip
           # derived requirement: tools/apply_patch.py imports pydantic; preinstall it so inline commits do not fail mid-run.
           python -m pip install requests pydantic
       - name: Stage iterate context
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
         working-directory: ${{ github.workspace }}
         run: |
           python tools/inline_model_fix.py stage \
@@ -1961,14 +1964,14 @@ jobs:
             --run-attempt "${{ github.run_attempt }}" \
             --token "$GH_TOKEN"
       - name: Call model
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
         working-directory: ${{ github.workspace }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python tools/inline_model_fix.py call --model gpt-5-codex
       - name: Apply model patch
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |
@@ -2033,7 +2036,7 @@ jobs:
             printf 'patch_apply=failed\n' >> _ctx/notes.txt
           fi
       - name: Package iterate context
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |
@@ -2107,7 +2110,7 @@ jobs:
             echo "_ctx MISSING"
           fi
       - name: Upload iterate artifact
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
@@ -2117,7 +2120,7 @@ jobs:
 
   publish_diag:
     name: Publish diagnostics to Pages
-    needs: [selftest, selftest-gate, model-quick-fix]
+    needs: [selftest, selftest-gate]
     timeout-minutes: 25
     concurrency:
       # derived requirement: run 19236437263-1 exhausted the runner disk while a prior
@@ -2190,11 +2193,9 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          pattern: iterate-logs*${{ github.run_id }}-${{ github.run_attempt }}
-          # derived requirement: runs such as 19251877090-1 emit a bare iterate-logs-${run}-${attempt}
-          # artifact; anchor the wildcard directly before the run id so both the bare name and
-          # matrix-prefixed variants (iterate-logs-${job}-${mode}-...) resolve without producing a
-          # double-hyphen that fails to match.
+          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          # derived requirement: match the inline helper's artifact name exactly so diagnostics always
+          # fetch the iterate payload and avoid wildcard drift when job/mode prefixes change again.
           merge-multiple: true
           path: _iter
 
@@ -2908,7 +2909,7 @@ jobs:
           ARTIFACTS_ROOT: ${{ github.workspace }}/_site/diag/${{ github.run_id }}-${{ github.run_attempt }}/_artifacts
           DOWNLOADED_ITER_ROOT: ${{ github.workspace }}/_iter
           REPO: ${{ github.repository }}
-          BRANCH: ${{ needs.model-quick-fix.outputs.branch }}
+          BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
           SHA: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
