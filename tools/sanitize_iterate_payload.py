@@ -51,6 +51,28 @@ def _strip_responses_payload(obj: object) -> tuple[object, bool]:
     return sanitized, changed
 
 
+def _deduplicate_entries(items: list, key_func) -> tuple[list, bool]:
+    """Return (*items* without duplicates, whether any entries were dropped)."""
+
+    if not isinstance(items, list):
+        return items, False
+
+    seen: set[str] = set()
+    deduped: list = []
+    changed = False
+    for entry in items:
+        key = key_func(entry)
+        if key is None:
+            deduped.append(entry)
+            continue
+        if key in seen:
+            changed = True
+            continue
+        seen.add(key)
+        deduped.append(entry)
+    return deduped, changed
+
+
 def _extract_response_text(raw_json: str, response_text_path: Path | None) -> str:
     if response_text_path and response_text_path.exists():
         return response_text_path.read_text(encoding="utf-8", errors="replace")
@@ -186,6 +208,41 @@ def _redact_rationale_lines(
     return redacted
 
 
+
+
+def _write_envsmoke_tail(diag_root: Path | None, anchor: Path) -> None:
+    """Emit a trimmed envsmoke bootstrap summary next to *anchor* when available."""
+
+    if not diag_root:
+        return
+    try:
+        base = diag_root.resolve()
+    except OSError:
+        base = diag_root
+    sections: list[str] = []
+    for name, label in (("~envsmoke_bootstrap.log", "envsmoke bootstrap tail"), ("~setup.log", "setup.log tail")):
+        try:
+            path = next(base.rglob(name))
+        except StopIteration:
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        if not lines:
+            continue
+        tail = lines[-80:]
+        sections.append(f"# {label}\n" + "\n".join(tail))
+    if not sections:
+        return
+    dest = anchor.with_name("envsmoke_bootstrap_tail.txt")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _maybe_write_why(
     raw_json: str,
     why_path: Path,
@@ -263,6 +320,7 @@ def main() -> int:
     src = Path(args.input)
     dest = Path(args.output)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    diag_root = Path(args.diag_root) if args.diag_root else None
 
     if not src.exists():
         dest.write_text("missing\n", encoding="utf-8")
@@ -286,6 +344,38 @@ def main() -> int:
         if stripped:
             json_changed = True
 
+        if isinstance(json_data, dict):
+            mutated = False
+
+            files_inlined = json_data.get("files_inlined")
+            if isinstance(files_inlined, list):
+                deduped, changed = _deduplicate_entries(
+                    files_inlined,
+                    lambda entry: entry if isinstance(entry, str) else None,
+                )
+                if changed:
+                    # derived requirement: repeated ~test-results.ndjson attachments bloat
+                    # the iterate payload and drive the model past token limits. Drop
+                    # duplicates while keeping the canonical entry for diagnostics parity.
+                    if not mutated:
+                        json_data = dict(json_data)
+                        mutated = True
+                    json_data["files_inlined"] = deduped
+                    json_changed = True
+
+            attachments = json_data.get("attachments_staged")
+            if isinstance(attachments, list):
+                deduped, changed = _deduplicate_entries(
+                    attachments,
+                    lambda entry: entry.get("name") if isinstance(entry, dict) else None,
+                )
+                if changed:
+                    if not mutated:
+                        json_data = dict(json_data)
+                        mutated = True
+                    json_data["attachments_staged"] = deduped
+                    json_changed = True
+
     if pattern is not None:
         if json_data is not None:
             redacted = _redact(json_data, pattern, args.placeholder)
@@ -297,12 +387,13 @@ def main() -> int:
 
     rendered = sanitize_text(rendered, args.truncate)
     dest.write_text(rendered, encoding="utf-8")
+    # derived requirement: envsmoke triage needs a lightweight tail next to the sanitized payload
+    _write_envsmoke_tail(diag_root, dest)
 
     if args.why_output:
         why_path = Path(args.why_output)
         diff_path = Path(args.diff_path) if args.diff_path else None
         response_path = Path(args.response_text) if args.response_text else None
-        diag_root = Path(args.diag_root) if args.diag_root else None
         _maybe_write_why(
             text,
             why_path,

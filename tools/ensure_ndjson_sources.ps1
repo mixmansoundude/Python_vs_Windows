@@ -221,6 +221,28 @@ foreach ($name in $requiredNames) {
     Write-Info ("Located {0} at {1}" -f $name, $sourceCanonical)
 }
 
+# derived requirement: envsmoke investigations need the bootstrap transcript mirrored
+$envsmokeRelPaths = @('tests/~envsmoke/~envsmoke_bootstrap.log', 'tests/~envsmoke/~setup.log')
+foreach ($relPath in $envsmokeRelPaths) {
+    if (-not $relPath) { continue }
+    $sourcePath = Join-Path -Path $ws -ChildPath $relPath
+    if (-not (Test-Path -LiteralPath $sourcePath)) { continue }
+    $targetRoot = if ($workspaceInputsRoot) { $workspaceInputsRoot } else { Join-Path -Path $ws -ChildPath '_artifacts/iterate/inputs' }
+    try {
+        New-Item -ItemType Directory -Path $targetRoot -Force | Out-Null
+    } catch {
+        continue
+    }
+    $targetPath = Join-Path -Path $targetRoot -ChildPath $relPath
+    try {
+        $targetDir = Split-Path -Path $targetPath -Parent
+        if ($targetDir) { New-Item -ItemType Directory -Path $targetDir -Force | Out-Null }
+        Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
+    } catch {
+        # keep diagnostics resilient if the mirror write fails
+    }
+}
+
 $uniqueRoots = @($searchedReport | Select-Object -Unique)
 $preview = $uniqueRoots
 if ($preview.Count -gt 12) {

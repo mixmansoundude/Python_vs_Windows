@@ -25,6 +25,7 @@ import shutil
 import sys
 import textwrap
 import time
+from http.client import RemoteDisconnected
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Set, Tuple
@@ -365,6 +366,27 @@ def _read_tail_lines(path: Path, count: int) -> List[str]:
     return lines[-count:]
 
 
+def _collect_envsmoke_summaries(ctx_dir: Path) -> List[Tuple[str, str]]:
+    """Return trimmed envsmoke log tails when available."""
+
+    summaries: List[Tuple[str, str]] = []
+    targets = [
+        ("~envsmoke_bootstrap.log", 120),
+        ("~setup.log", 80),
+    ]
+    for suffix, limit in targets:
+        for path in sorted(ctx_dir.glob(f"attached/**/*{suffix}")):
+            if not path.is_file():
+                continue
+            tail = _read_tail_lines(path, limit)
+            if not tail:
+                continue
+            label = path.relative_to(ctx_dir).as_posix() + " tail"
+            body = "\n".join(tail)
+            summaries.append((label, body))
+    return summaries
+
+
 def _collect_ndjson_summaries(ctx_dir: Path) -> List[Tuple[str, str]]:
     summaries: List[Tuple[str, str]] = []
     failing_ids = {"self.env.smoke.conda", "self.env.smoke.run"}
@@ -510,6 +532,9 @@ def _build_inlined_context(repo_root: Path, ctx_dir: Path) -> Tuple[str, int, in
         )
 
     for label, body in _collect_ndjson_summaries(ctx_dir):
+        add_section(label, body, log_prefix="context_summary", file_bytes=len(body.encode("utf-8")))
+    for label, body in _collect_envsmoke_summaries(ctx_dir):
+        # derived requirement: envsmoke triage depends on bootstrap tails for exit code 255 failures
         add_section(label, body, log_prefix="context_summary", file_bytes=len(body.encode("utf-8")))
 
     context_text = "\n\n".join(sections)
@@ -1084,7 +1109,7 @@ def extract_patch(response_json: dict) -> Tuple[str, Optional[str], Optional[dic
         return "", rationale_raw, rationale_json, "invalid_sequence"
 
     if diff_body is not None:
-        return f"```diff\n{diff_body}\n```", rationale_raw, rationale_json, rationale_error
+        return diff_body, rationale_raw, rationale_json, rationale_error
 
     if rationale_raw is not None:
         return "", rationale_raw, rationale_json, rationale_error or "json_only"
@@ -1217,6 +1242,11 @@ def _record_decision(
 
     patch_path = ctx_dir / "fix.patch"
     material = patch_text if patch_text is not None else ""
+    if material and not material.endswith("\n"):
+        # derived requirement: the CI workflow applies _ctx/fix.patch using
+        # tools/apply_patch.py, which expects raw unified diff content with
+        # a trailing newline and no markdown fences.
+        material += "\n"
     patch_path.write_text(material, encoding="utf-8")
 
     append_note(
@@ -1360,7 +1390,7 @@ def call_phase(args: argparse.Namespace) -> None:
 
     prompt_text = textwrap.dedent(
         """
-        Apply the smallest change that resolves the FIRST failing step described in failpack.log. Change as few lines as possible and keep the diff tightly focused on the failing tests described above. Start at guide.json {primary_file}:{line}; if insufficient, search the attached repo files. Preserve current messaging/labels/structure. If you cannot safely produce a patch, emit exactly one fenced json block with keys why_no_diff, insights, files_missing, hotspots. If you can produce a patch, you may optionally emit that json block first, then emit exactly one fenced diff block containing the complete patch. Do not write any other prose. If no changes are required, return an empty fenced diff block.
+        Apply the smallest change that resolves the FIRST failing step described in failpack.log. Change as few lines as possible and keep the diff tightly focused on the failing tests described above. Start at guide.json {primary_file}:{line}; if insufficient, search the attached repo files. Preserve current messaging/labels/structure and do not rewrite unrelated sections or stylistic details. If you cannot safely produce a patch, emit exactly one fenced json block with keys why_no_diff, insights, files_missing, hotspots. If you can produce a patch, you may optionally emit that json block first, then emit exactly one fenced diff block containing the complete patch. Do not write any other prose. If no changes are required, return an empty fenced diff block.
         """
     ).strip()
 
@@ -1453,6 +1483,14 @@ def call_phase(args: argparse.Namespace) -> None:
                     )
                     continue
                 except requests.RequestException as exc:
+                    # Professional note: transient disconnects (RemoteDisconnected) are common when
+                    # the Responses API trims connections under load. Treat them as a soft error so
+                    # diagnostics encourage a retry instead of marking the run as a hard failure.
+                    if isinstance(exc, requests.exceptions.ConnectionError) and isinstance(
+                        getattr(exc, "__cause__", None), RemoteDisconnected
+                    ):
+                        append_note(ctx_dir, "openai_call_exception=remote_disconnected")
+                        return None, "remote_disconnected"
                     append_note(ctx_dir, f"openai_call_exception={exc}")
                     return None, "request_exception"
                 if resp.status_code >= 500:
@@ -1511,6 +1549,7 @@ def call_phase(args: argparse.Namespace) -> None:
     response_json: Optional[dict] = None
     error_reason: Optional[str] = None
     escalator_exhausted = False
+    accepted_patch_details: Optional[Tuple[str, Optional[str], Optional[dict], Optional[str]]] = None
 
     for idx, plan in enumerate(token_plan):
         cap = plan["cap"]
@@ -1552,25 +1591,40 @@ def call_phase(args: argparse.Namespace) -> None:
                 f"openai_call_incomplete_reason={reason_tag} "
                 f"retry_ix={idx} max_output_tokens={cap_desc}",
             )
-        if (
-            status_tag == "incomplete"
-            and reason_tag == "max_output_tokens"
-            and idx + 1 < len(token_plan)
-        ):
-            continue
-        if (
-            status_tag == "incomplete"
-            and reason_tag == "max_output_tokens"
-            and idx + 1 == len(token_plan)
-        ):
+        if status_tag == "incomplete" and reason_tag == "max_output_tokens":
+            candidate = extract_patch(response_json)
+            candidate_patch = candidate[0].strip()
+            if candidate_patch:
+                # derived requirement: iterate run 19331718491 proved that useful diffs can
+                # surface even when the Responses API reports an incomplete status because
+                # the token cap was reached. Accept the salvaged diff instead of forcing a
+                # retry so we avoid unnecessary context escalation loops.
+                append_note(
+                    ctx_dir,
+                    "openai_call_incomplete_salvaged=diff_present",
+                )
+                accepted_patch_details = candidate
+                break
+            if idx + 1 < len(token_plan):
+                continue
             escalator_exhausted = True
+            break
         break
 
     if response_json is None:
+        status_value = "error"
+        reason_value = error_reason or "request_exception"
+        if error_reason == "remote_disconnected":
+            # derived requirement: intermittent RemoteDisconnected responses should not poison
+            # the diagnostics summary with a hard error; mark them as a soft miss so CI
+            # operators know a rerun is sufficient.
+            append_note(ctx_dir, "decision_soft_failure=remote_disconnected")
+            status_value = "error_soft"
+            reason_value = "remote_disconnected"
         _record_decision(
             ctx_dir,
-            status="error",
-            reason=error_reason or "request_exception",
+            status=status_value,
+            reason=reason_value,
             response_payload=None,
             patch_text="",
             model=args.model,
@@ -1580,7 +1634,10 @@ def call_phase(args: argparse.Namespace) -> None:
     if escalator_exhausted:
         append_note(ctx_dir, "token_escalator_exhausted=true")
 
-    patch, rationale_raw, rationale_json, format_issue = extract_patch(response_json)
+    if accepted_patch_details is not None:
+        patch, rationale_raw, rationale_json, format_issue = accepted_patch_details
+    else:
+        patch, rationale_raw, rationale_json, format_issue = extract_patch(response_json)
 
     rationale_note: Optional[str] = None
     rationale_summary: Optional[str] = None
@@ -1611,18 +1668,31 @@ def call_phase(args: argparse.Namespace) -> None:
             rationale=rationale_summary,
         )
     else:
-        # derived requirement: run 19211170783-1 surfaced a zero-byte iterate bundle;
-        # treat missing fenced diffs as an error so diagnostics capture breadcrumbs.
-        append_note(ctx_dir, "openai_patch=no_fenced_diff")
-        _record_decision(
-            ctx_dir,
-            status="error",
-            reason="no_fenced_diff",
-            response_payload=response_json,
-            patch_text="",
-            model=args.model,
-            rationale=rationale_summary,
-        )
+        if format_issue == "json_only":
+            # derived requirement: explanation-only responses should not surface as hard errors
+            append_note(ctx_dir, "openai_patch=explanation_only")
+            _record_decision(
+                ctx_dir,
+                status="skipped",
+                reason="explanation_only",
+                response_payload=response_json,
+                patch_text="",
+                model=args.model,
+                rationale=rationale_summary,
+            )
+        else:
+            # derived requirement: run 19211170783-1 surfaced a zero-byte iterate bundle;
+            # treat missing fenced diffs as an error so diagnostics capture breadcrumbs.
+            append_note(ctx_dir, "openai_patch=no_fenced_diff")
+            _record_decision(
+                ctx_dir,
+                status="error",
+                reason="no_fenced_diff",
+                response_payload=response_json,
+                patch_text="",
+                model=args.model,
+                rationale=rationale_summary,
+            )
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -121,7 +121,9 @@ if ($setup) {
     }
 }
 
-$displayCommand = if ($smokeCommand) { $smokeCommand } else { '[command unavailable]' }
+# derived requirement: envsmoke failures must surface the bootstrap command
+$bootstrapCommand = 'cmd /c .\run_setup.bat (envsmoke bootstrap)'
+$displayCommand = if ($smokeCommand) { $smokeCommand } else { $bootstrapCommand }
 
 Check-PipreqsFailure -LogPath $setupLog -LogText $setup
 

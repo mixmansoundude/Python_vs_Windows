@@ -123,8 +123,7 @@ if not defined CONDA_BAT (
   "} catch {"
   "  Write-Host ('[WARN] Miniconda download failed: {0}' -f $_.Exception.Message)"
   "  exit 1"
-  "}"
-    >> "%LOG%" 2>&1
+  "}" >> "%LOG%" 2>&1
   if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
   if not exist "%TEMP%\miniconda.exe" set "HP_CONDA_DL_RC=1"
   if "%HP_CONDA_DL_RC%"=="0" (

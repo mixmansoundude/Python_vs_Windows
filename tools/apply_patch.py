@@ -572,7 +572,12 @@ def main():
         result = process_patch(patch_text, open_file, write_file, remove_file)
     except DiffError as e:
         print(str(e))
-        return
+        # derived requirement: CI needs a non-zero exit when the shared patch
+        # engine rejects a diff so the workflow can record patch_apply=failed.
+        sys.exit(1)
+    except Exception as exc:
+        print(f"Unexpected error: {exc}")
+        sys.exit(1)
     print(result)
 
 

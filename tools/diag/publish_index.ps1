@@ -577,6 +577,20 @@ $bundleLinks = @(
     @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'repo\files'))) }
 )
 
+if ($iterateDir) {
+    $ciLogsCandidate = Join-Path $iterateDir 'logs.zip'
+    if (Test-Path $ciLogsCandidate) {
+        try { $ciInfo = Get-Item -LiteralPath $ciLogsCandidate -ErrorAction Stop } catch { $ciInfo = $null }
+        if ($ciInfo -and $ciInfo.Length -gt 0) {
+            $ciRelative = Get-Relative $ciLogsCandidate
+            if ($ciRelative) {
+                # derived requirement: surface GitHub Actions run logs so analysts do not need to re-download them from the UI.
+                $bundleLinks += @{ Label = 'CI job logs'; Path = $ciRelative; Exists = $true }
+            }
+        }
+    }
+}
+
 if ($Diag) {
     $wfTxts = Get-ChildItem -Path (Join-Path $Diag 'wf') -Filter '*.yml.txt' -File -ErrorAction SilentlyContinue
     foreach ($w in $wfTxts) {
