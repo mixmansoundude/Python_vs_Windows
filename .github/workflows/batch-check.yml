@@ -1914,10 +1914,10 @@ jobs:
     needs:
       - selftest
       - selftest-gate
-    # derived requirement: when a run is manually cancelled the upstream jobs report a
-    # "cancelled" result; guard the inline model to respect the cancellation so the
-    # workflow truly halts without invoking the model helper.
-    if: ${{ always() && needs.selftest.result != 'cancelled' && needs['selftest-gate'].result != 'cancelled' }}
+    # derived requirement: publish_diag needs this job present in the dependency graph even
+    # when upstream work is cancelled; guard the inline helper at the step level so
+    # manual cancellations skip the model call without breaking downstream diagnostics.
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1949,13 +1949,13 @@ jobs:
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "branch_slug=$slug" >> "$GITHUB_OUTPUT"
       - name: Install Python dependencies
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ env.HAS_FAILURES == 'true' && needs.selftest.result != 'cancelled' && needs['selftest-gate'].result != 'cancelled' }}
         run: |
           python -m pip install --upgrade pip
           # derived requirement: tools/apply_patch.py imports pydantic; preinstall it so inline commits do not fail mid-run.
           python -m pip install requests pydantic
       - name: Stage iterate context
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ env.HAS_FAILURES == 'true' && needs.selftest.result != 'cancelled' && needs['selftest-gate'].result != 'cancelled' }}
         working-directory: ${{ github.workspace }}
         run: |
           python tools/inline_model_fix.py stage \
@@ -1964,14 +1964,14 @@ jobs:
             --run-attempt "${{ github.run_attempt }}" \
             --token "$GH_TOKEN"
       - name: Call model
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ env.HAS_FAILURES == 'true' && needs.selftest.result != 'cancelled' && needs['selftest-gate'].result != 'cancelled' }}
         working-directory: ${{ github.workspace }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python tools/inline_model_fix.py call --model gpt-5-codex
       - name: Apply model patch
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ env.HAS_FAILURES == 'true' && needs.selftest.result != 'cancelled' && needs['selftest-gate'].result != 'cancelled' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |
@@ -2036,7 +2036,7 @@ jobs:
             printf 'patch_apply=failed\n' >> _ctx/notes.txt
           fi
       - name: Package iterate context
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ env.HAS_FAILURES == 'true' && needs.selftest.result != 'cancelled' && needs['selftest-gate'].result != 'cancelled' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |
@@ -2110,7 +2110,7 @@ jobs:
             echo "_ctx MISSING"
           fi
       - name: Upload iterate artifact
-        if: ${{ env.HAS_FAILURES == 'true' }}
+        if: ${{ env.HAS_FAILURES == 'true' && needs.selftest.result != 'cancelled' && needs['selftest-gate'].result != 'cancelled' }}
         uses: actions/upload-artifact@v4
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
