@@ -102,27 +102,27 @@ if not defined CONDA_BAT (
   echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
   set "HP_CONDA_DL_RC=0"
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "try {"
-  "  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12"
-  "  $ProgressPreference = 'SilentlyContinue'"
-  "  $uri = [Environment]::GetEnvironmentVariable('HP_MINICONDA_URL');"
-  "  if (-not $uri) { throw 'HP_MINICONDA_URL not set' }"
-  "  $target = Join-Path $env:TEMP 'miniconda.exe'"
-  "  $max = 3"
-  "  for ($i = 1; $i -le $max; $i++) {"
-  "    try {"
-  "      Invoke-WebRequest -Uri $uri -OutFile $target -UseBasicParsing -MaximumRedirection 5"
-  "      if ((Test-Path $target) -and ((Get-Item $target).Length -gt 0)) { break }"
-  "      throw 'Zero-length download'"
-  "    } catch {"
-  "      if ($i -eq $max) { throw }"
-  "      Write-Host ('[WARN] Miniconda download retry {0}: {1}' -f $i, $_.Exception.Message)"
-  "      Start-Sleep -Seconds ([int][Math]::Min(3 * $i, 15))"
-  "    }"
-  "  }"
-  "} catch {"
-  "  Write-Host ('[WARN] Miniconda download failed: {0}' -f $_.Exception.Message)"
-  "  exit 1"
+    "try {" ^
+  "  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12" ^
+  "  $ProgressPreference = 'SilentlyContinue'" ^
+  "  $uri = [Environment]::GetEnvironmentVariable('HP_MINICONDA_URL');" ^
+  "  if (-not $uri) { throw 'HP_MINICONDA_URL not set' }" ^
+  "  $target = Join-Path $env:TEMP 'miniconda.exe'" ^
+  "  $max = 3" ^
+  "  for ($i = 1; $i -le $max; $i++) {" ^
+  "    try {" ^
+  "      Invoke-WebRequest -Uri $uri -OutFile $target -UseBasicParsing -MaximumRedirection 5" ^
+  "      if ((Test-Path $target) -and ((Get-Item $target).Length -gt 0)) { break }" ^
+  "      throw 'Zero-length download'" ^
+  "    } catch {" ^
+  "      if ($i -eq $max) { throw }" ^
+  "      Write-Host ('[WARN] Miniconda download retry {0}: {1}' -f $i, $_.Exception.Message)" ^
+  "      Start-Sleep -Seconds ([int][Math]::Min(3 * $i, 15))" ^
+  "    }" ^
+  "  }" ^
+  "} catch {" ^
+  "  Write-Host ('[WARN] Miniconda download failed: {0}' -f $_.Exception.Message)" ^
+  "  exit 1" ^
   "}" >> "%LOG%" 2>&1
   if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
   if not exist "%TEMP%\miniconda.exe" set "HP_CONDA_DL_RC=1"
