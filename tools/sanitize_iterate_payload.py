@@ -51,6 +51,28 @@ def _strip_responses_payload(obj: object) -> tuple[object, bool]:
     return sanitized, changed
 
 
+def _deduplicate_entries(items: list, key_func) -> tuple[list, bool]:
+    """Return (*items* without duplicates, whether any entries were dropped)."""
+
+    if not isinstance(items, list):
+        return items, False
+
+    seen: set[str] = set()
+    deduped: list = []
+    changed = False
+    for entry in items:
+        key = key_func(entry)
+        if key is None:
+            deduped.append(entry)
+            continue
+        if key in seen:
+            changed = True
+            continue
+        seen.add(key)
+        deduped.append(entry)
+    return deduped, changed
+
+
 def _extract_response_text(raw_json: str, response_text_path: Path | None) -> str:
     if response_text_path and response_text_path.exists():
         return response_text_path.read_text(encoding="utf-8", errors="replace")
@@ -285,6 +307,38 @@ def main() -> int:
         json_data, stripped = _strip_responses_payload(json_data)
         if stripped:
             json_changed = True
+
+        if isinstance(json_data, dict):
+            mutated = False
+
+            files_inlined = json_data.get("files_inlined")
+            if isinstance(files_inlined, list):
+                deduped, changed = _deduplicate_entries(
+                    files_inlined,
+                    lambda entry: entry if isinstance(entry, str) else None,
+                )
+                if changed:
+                    # derived requirement: repeated ~test-results.ndjson attachments bloat
+                    # the iterate payload and drive the model past token limits. Drop
+                    # duplicates while keeping the canonical entry for diagnostics parity.
+                    if not mutated:
+                        json_data = dict(json_data)
+                        mutated = True
+                    json_data["files_inlined"] = deduped
+                    json_changed = True
+
+            attachments = json_data.get("attachments_staged")
+            if isinstance(attachments, list):
+                deduped, changed = _deduplicate_entries(
+                    attachments,
+                    lambda entry: entry.get("name") if isinstance(entry, dict) else None,
+                )
+                if changed:
+                    if not mutated:
+                        json_data = dict(json_data)
+                        mutated = True
+                    json_data["attachments_staged"] = deduped
+                    json_changed = True
 
     if pattern is not None:
         if json_data is not None:

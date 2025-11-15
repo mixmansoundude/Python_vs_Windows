@@ -2911,11 +2911,12 @@ def _build_markdown(
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     if iterate_found and artifact_missing:
         note = artifact_missing.lower()
-        if "iterate artifact" in note:
+        if "iterate artifact" in note or "no completed run" in note:
             # derived requirement: runs like 19021225350-1 confirmed the zip existed in
             # Actions but skipped the local mirror. When the remote check marks the
             # iterate logs as present, drop the stale sentinel so the diagnostics page
-            # stops claiming the artifact is missing.
+            # stops claiming the artifact is missing. Likewise, treat historical
+            # "no completed run" sentinels as stale once iterate evidence is available.
             artifact_missing = None
     batch_status = _batch_status(diag, context)
     gate_data = _load_iterate_gate(context)
@@ -3174,7 +3175,7 @@ def _write_html(
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     if iterate_found and artifact_missing:
         note = artifact_missing.lower()
-        if "iterate artifact" in note:
+        if "iterate artifact" in note or "no completed run" in note:
             artifact_missing = None
     ndjson_summaries = _gather_ndjson_summaries(artifacts)
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)

@@ -25,6 +25,7 @@ import shutil
 import sys
 import textwrap
 import time
+from http.client import RemoteDisconnected
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Set, Tuple
@@ -1365,7 +1366,7 @@ def call_phase(args: argparse.Namespace) -> None:
 
     prompt_text = textwrap.dedent(
         """
-        Apply the smallest change that resolves the FIRST failing step described in failpack.log. Change as few lines as possible and keep the diff tightly focused on the failing tests described above. Start at guide.json {primary_file}:{line}; if insufficient, search the attached repo files. Preserve current messaging/labels/structure. If you cannot safely produce a patch, emit exactly one fenced json block with keys why_no_diff, insights, files_missing, hotspots. If you can produce a patch, you may optionally emit that json block first, then emit exactly one fenced diff block containing the complete patch. Do not write any other prose. If no changes are required, return an empty fenced diff block.
+        Apply the smallest change that resolves the FIRST failing step described in failpack.log. Change as few lines as possible and keep the diff tightly focused on the failing tests described above. Start at guide.json {primary_file}:{line}; if insufficient, search the attached repo files. Preserve current messaging/labels/structure and do not rewrite unrelated sections or stylistic details. If you cannot safely produce a patch, emit exactly one fenced json block with keys why_no_diff, insights, files_missing, hotspots. If you can produce a patch, you may optionally emit that json block first, then emit exactly one fenced diff block containing the complete patch. Do not write any other prose. If no changes are required, return an empty fenced diff block.
         """
     ).strip()
 
@@ -1458,6 +1459,14 @@ def call_phase(args: argparse.Namespace) -> None:
                     )
                     continue
                 except requests.RequestException as exc:
+                    # Professional note: transient disconnects (RemoteDisconnected) are common when
+                    # the Responses API trims connections under load. Treat them as a soft error so
+                    # diagnostics encourage a retry instead of marking the run as a hard failure.
+                    if isinstance(exc, requests.exceptions.ConnectionError) and isinstance(
+                        getattr(exc, "__cause__", None), RemoteDisconnected
+                    ):
+                        append_note(ctx_dir, "openai_call_exception=remote_disconnected")
+                        return None, "remote_disconnected"
                     append_note(ctx_dir, f"openai_call_exception={exc}")
                     return None, "request_exception"
                 if resp.status_code >= 500:
@@ -1516,6 +1525,7 @@ def call_phase(args: argparse.Namespace) -> None:
     response_json: Optional[dict] = None
     error_reason: Optional[str] = None
     escalator_exhausted = False
+    accepted_patch_details: Optional[Tuple[str, Optional[str], Optional[dict], Optional[str]]] = None
 
     for idx, plan in enumerate(token_plan):
         cap = plan["cap"]
@@ -1557,25 +1567,40 @@ def call_phase(args: argparse.Namespace) -> None:
                 f"openai_call_incomplete_reason={reason_tag} "
                 f"retry_ix={idx} max_output_tokens={cap_desc}",
             )
-        if (
-            status_tag == "incomplete"
-            and reason_tag == "max_output_tokens"
-            and idx + 1 < len(token_plan)
-        ):
-            continue
-        if (
-            status_tag == "incomplete"
-            and reason_tag == "max_output_tokens"
-            and idx + 1 == len(token_plan)
-        ):
+        if status_tag == "incomplete" and reason_tag == "max_output_tokens":
+            candidate = extract_patch(response_json)
+            candidate_patch = candidate[0].strip()
+            if candidate_patch:
+                # derived requirement: iterate run 19331718491 proved that useful diffs can
+                # surface even when the Responses API reports an incomplete status because
+                # the token cap was reached. Accept the salvaged diff instead of forcing a
+                # retry so we avoid unnecessary context escalation loops.
+                append_note(
+                    ctx_dir,
+                    "openai_call_incomplete_salvaged=diff_present",
+                )
+                accepted_patch_details = candidate
+                break
+            if idx + 1 < len(token_plan):
+                continue
             escalator_exhausted = True
+            break
         break
 
     if response_json is None:
+        status_value = "error"
+        reason_value = error_reason or "request_exception"
+        if error_reason == "remote_disconnected":
+            # derived requirement: intermittent RemoteDisconnected responses should not poison
+            # the diagnostics summary with a hard error; mark them as a soft miss so CI
+            # operators know a rerun is sufficient.
+            append_note(ctx_dir, "decision_soft_failure=remote_disconnected")
+            status_value = "error_soft"
+            reason_value = "remote_disconnected"
         _record_decision(
             ctx_dir,
-            status="error",
-            reason=error_reason or "request_exception",
+            status=status_value,
+            reason=reason_value,
             response_payload=None,
             patch_text="",
             model=args.model,
@@ -1585,7 +1610,10 @@ def call_phase(args: argparse.Namespace) -> None:
     if escalator_exhausted:
         append_note(ctx_dir, "token_escalator_exhausted=true")
 
-    patch, rationale_raw, rationale_json, format_issue = extract_patch(response_json)
+    if accepted_patch_details is not None:
+        patch, rationale_raw, rationale_json, format_issue = accepted_patch_details
+    else:
+        patch, rationale_raw, rationale_json, format_issue = extract_patch(response_json)
 
     rationale_note: Optional[str] = None
     rationale_summary: Optional[str] = None
