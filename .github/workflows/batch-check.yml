@@ -1914,7 +1914,10 @@ jobs:
     needs:
       - selftest
       - selftest-gate
-    if: ${{ always() }}
+    # derived requirement: when a run is manually cancelled the upstream jobs report a
+    # "cancelled" result; guard the inline model to respect the cancellation so the
+    # workflow truly halts without invoking the model helper.
+    if: ${{ always() && needs.selftest.result != 'cancelled' && needs['selftest-gate'].result != 'cancelled' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
