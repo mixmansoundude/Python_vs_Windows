@@ -208,6 +208,41 @@ def _redact_rationale_lines(
     return redacted
 
 
+
+
+def _write_envsmoke_tail(diag_root: Path | None, anchor: Path) -> None:
+    """Emit a trimmed envsmoke bootstrap summary next to *anchor* when available."""
+
+    if not diag_root:
+        return
+    try:
+        base = diag_root.resolve()
+    except OSError:
+        base = diag_root
+    sections: list[str] = []
+    for name, label in (("~envsmoke_bootstrap.log", "envsmoke bootstrap tail"), ("~setup.log", "setup.log tail")):
+        try:
+            path = next(base.rglob(name))
+        except StopIteration:
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        if not lines:
+            continue
+        tail = lines[-80:]
+        sections.append(f"# {label}\n" + "\n".join(tail))
+    if not sections:
+        return
+    dest = anchor.with_name("envsmoke_bootstrap_tail.txt")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _maybe_write_why(
     raw_json: str,
     why_path: Path,
@@ -285,6 +320,7 @@ def main() -> int:
     src = Path(args.input)
     dest = Path(args.output)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    diag_root = Path(args.diag_root) if args.diag_root else None
 
     if not src.exists():
         dest.write_text("missing\n", encoding="utf-8")
@@ -351,12 +387,13 @@ def main() -> int:
 
     rendered = sanitize_text(rendered, args.truncate)
     dest.write_text(rendered, encoding="utf-8")
+    # derived requirement: envsmoke triage needs a lightweight tail next to the sanitized payload
+    _write_envsmoke_tail(diag_root, dest)
 
     if args.why_output:
         why_path = Path(args.why_output)
         diff_path = Path(args.diff_path) if args.diff_path else None
         response_path = Path(args.response_text) if args.response_text else None
-        diag_root = Path(args.diag_root) if args.diag_root else None
         _maybe_write_why(
             text,
             why_path,

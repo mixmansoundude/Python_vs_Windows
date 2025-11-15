@@ -366,6 +366,27 @@ def _read_tail_lines(path: Path, count: int) -> List[str]:
     return lines[-count:]
 
 
+def _collect_envsmoke_summaries(ctx_dir: Path) -> List[Tuple[str, str]]:
+    """Return trimmed envsmoke log tails when available."""
+
+    summaries: List[Tuple[str, str]] = []
+    targets = [
+        ("~envsmoke_bootstrap.log", 120),
+        ("~setup.log", 80),
+    ]
+    for suffix, limit in targets:
+        for path in sorted(ctx_dir.glob(f"attached/**/*{suffix}")):
+            if not path.is_file():
+                continue
+            tail = _read_tail_lines(path, limit)
+            if not tail:
+                continue
+            label = path.relative_to(ctx_dir).as_posix() + " tail"
+            body = "\n".join(tail)
+            summaries.append((label, body))
+    return summaries
+
+
 def _collect_ndjson_summaries(ctx_dir: Path) -> List[Tuple[str, str]]:
     summaries: List[Tuple[str, str]] = []
     failing_ids = {"self.env.smoke.conda", "self.env.smoke.run"}
@@ -511,6 +532,9 @@ def _build_inlined_context(repo_root: Path, ctx_dir: Path) -> Tuple[str, int, in
         )
 
     for label, body in _collect_ndjson_summaries(ctx_dir):
+        add_section(label, body, log_prefix="context_summary", file_bytes=len(body.encode("utf-8")))
+    for label, body in _collect_envsmoke_summaries(ctx_dir):
+        # derived requirement: envsmoke triage depends on bootstrap tails for exit code 255 failures
         add_section(label, body, log_prefix="context_summary", file_bytes=len(body.encode("utf-8")))
 
     context_text = "\n\n".join(sections)
@@ -1644,18 +1668,31 @@ def call_phase(args: argparse.Namespace) -> None:
             rationale=rationale_summary,
         )
     else:
-        # derived requirement: run 19211170783-1 surfaced a zero-byte iterate bundle;
-        # treat missing fenced diffs as an error so diagnostics capture breadcrumbs.
-        append_note(ctx_dir, "openai_patch=no_fenced_diff")
-        _record_decision(
-            ctx_dir,
-            status="error",
-            reason="no_fenced_diff",
-            response_payload=response_json,
-            patch_text="",
-            model=args.model,
-            rationale=rationale_summary,
-        )
+        if format_issue == "json_only":
+            # derived requirement: explanation-only responses should not surface as hard errors
+            append_note(ctx_dir, "openai_patch=explanation_only")
+            _record_decision(
+                ctx_dir,
+                status="skipped",
+                reason="explanation_only",
+                response_payload=response_json,
+                patch_text="",
+                model=args.model,
+                rationale=rationale_summary,
+            )
+        else:
+            # derived requirement: run 19211170783-1 surfaced a zero-byte iterate bundle;
+            # treat missing fenced diffs as an error so diagnostics capture breadcrumbs.
+            append_note(ctx_dir, "openai_patch=no_fenced_diff")
+            _record_decision(
+                ctx_dir,
+                status="error",
+                reason="no_fenced_diff",
+                response_payload=response_json,
+                patch_text="",
+                model=args.model,
+                rationale=rationale_summary,
+            )
 
 
 def build_parser() -> argparse.ArgumentParser:
