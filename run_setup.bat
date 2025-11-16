@@ -272,15 +272,18 @@ if defined HP_SKIP_PIPREQS (
   goto :after_pipreqs_run
 )
 
-if defined HP_PIPREQS_IGNORE (
-  :: pipreqs flags are locked by CI (pipreqs.flags gate).
-  :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-  "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
-) else (
-  :: pipreqs flags are locked by CI (pipreqs.flags gate).
-  :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
+rem pipreqs flags are locked by CI (pipreqs.flags gate).
+rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
+if defined HP_PIPREQS_IGNORE goto :pipreqs_direct_with_ignore
+rem pipreqs flags are locked by CI (pipreqs.flags gate).
+rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
   "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
-)
+goto :pipreqs_direct_done
+:pipreqs_direct_with_ignore
+rem pipreqs flags are locked by CI (pipreqs.flags gate).
+rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
+"%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+:pipreqs_direct_done
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
 set "HP_PIPREQS_RC=%errorlevel%"
 if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_TARGET_WORK%" (
