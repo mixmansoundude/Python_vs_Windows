@@ -630,10 +630,16 @@ if not defined HP_SYS_CMD (
   where py >nul 2>&1 && (set "HP_SYS_CMD=py" & set "HP_SYS_ARGS=-3")
 )
 if not defined HP_SYS_CMD exit /b 1
+set "HP_SYS_TMP=~sys_exe.txt"
+if exist "%HP_SYS_TMP%" del "%HP_SYS_TMP%" >nul 2>&1
 if defined HP_SYS_ARGS (
-  for /f "usebackq delims=" %%I in (`"%HP_SYS_CMD%" %HP_SYS_ARGS% -c "import sys;print(sys.executable)"`) do set "HP_SYS_EXE=%%I"
+  "%HP_SYS_CMD%" %HP_SYS_ARGS% -c "import sys;print(sys.executable)" > "%HP_SYS_TMP%" 2>nul
 ) else (
-  for /f "usebackq delims=" %%I in (`"%HP_SYS_CMD%" -c "import sys;print(sys.executable)"`) do set "HP_SYS_EXE=%%I"
+  "%HP_SYS_CMD%" -c "import sys;print(sys.executable)" > "%HP_SYS_TMP%" 2>nul
+)
+if exist "%HP_SYS_TMP%" (
+  set /p HP_SYS_EXE=<"%HP_SYS_TMP%"
+  del "%HP_SYS_TMP%" >nul 2>&1
 )
 if not defined HP_SYS_EXE exit /b 1
 exit /b 0
