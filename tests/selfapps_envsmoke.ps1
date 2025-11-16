@@ -103,10 +103,14 @@ $env:HP_ALLOW_VENV_FALLBACK = '1'
 
 Push-Location -LiteralPath $app
 try {
+    $env:HP_ALLOW_VENV_FALLBACK = '1'
+    $env:HP_ALLOW_SYSTEM_FALLBACK = '1'
     # FULL bootstrap here: do NOT set HP_CI_SKIP_ENV
     cmd /c .\run_setup.bat *> '~envsmoke_bootstrap.log'
     $exit = $LASTEXITCODE
 } finally {
+    Remove-Item Env:HP_ALLOW_VENV_FALLBACK -ErrorAction SilentlyContinue
+    Remove-Item Env:HP_ALLOW_SYSTEM_FALLBACK -ErrorAction SilentlyContinue
     Pop-Location
     if ($null -eq $prevVenvFallback) {
         Remove-Item Env:HP_ALLOW_VENV_FALLBACK -ErrorAction SilentlyContinue

@@ -5,6 +5,8 @@ cd /d "%~dp0"
 set "HP_SCRIPT_ROOT=%~dp0"
 for %%R in ("%HP_SCRIPT_ROOT%") do set "HP_SCRIPT_ROOT=%%~fR"
 if not "%HP_SCRIPT_ROOT:~-1%"=="\\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"
+set "HP_CI_MARKER=.ci_bootstrap_marker"
+type nul > "%HP_CI_MARKER%" 2>nul
 set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
@@ -243,7 +245,7 @@ set "HP_PIPREQS_TARGET_WORK=%CD%\requirements.auto.txt"
 set "HP_PIPREQS_TARGET=%HP_PIPREQS_TARGET_WORK%"
 set "HP_PIPREQS_IGNORE=.git,.github,.venv,venv,env,build,dist,__pycache__,tests"
 set "HP_PIPREQS_IGNORE_DISPLAY="
-if defined HP_PIPREQS_IGNORE set "HP_PIPREQS_IGNORE_DISPLAY= --ignore %HP_PIPREQS_IGNORE%"
+if defined HP_PIPREQS_IGNORE set "HP_PIPREQS_IGNORE_DISPLAY= --ignore \"%HP_PIPREQS_IGNORE%\""
 set "HP_PIPREQS_SUMMARY_PHASE="
 set "HP_PIPREQS_SUMMARY_NOTE="
 set "HP_PIPREQS_SUMMARY_CMD_PATH=%HP_PIPREQS_TARGET_WORK%"
@@ -273,7 +275,7 @@ if defined HP_SKIP_PIPREQS (
 if defined HP_PIPREQS_IGNORE (
   :: pipreqs flags are locked by CI (pipreqs.flags gate).
   :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-  "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore %HP_PIPREQS_IGNORE% > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+  "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
 ) else (
   :: pipreqs flags are locked by CI (pipreqs.flags gate).
   :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).

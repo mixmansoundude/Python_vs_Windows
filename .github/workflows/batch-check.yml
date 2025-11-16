@@ -1963,8 +1963,22 @@ jobs:
             --run-id "${{ github.run_id }}" \
             --run-attempt "${{ github.run_attempt }}" \
             --token "$GH_TOKEN"
+      # derived requirement: when cancellations short-circuit the inline helper, leave
+      # breadcrumbs so diagnostics explain why no model diff exists.
+      - name: Note cancellation before model call
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' && cancelled() }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          mkdir -p _ctx
+          note_path="_ctx/notes.txt"
+          {
+            printf 'final_status=no_commit\n'
+            printf 'final_reason=workflow_cancelled\n'
+          } >> "$note_path"
       - name: Call model
-        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        if: ${{ success() && needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' && !cancelled() }}
         working-directory: ${{ github.workspace }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -2963,7 +2977,7 @@ jobs:
       - selftest-gate
       - publish_diag
     runs-on: windows-latest
-    if: ${{ always() && needs.selftest-gate.outputs.has_failures == 'true' }}
+    if: ${{ always() && needs.selftest-gate.outputs.has_failures == 'true' && !cancelled() }}
     steps:
       - name: Build Codex nudge
         shell: pwsh
