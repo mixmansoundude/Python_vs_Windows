@@ -2120,7 +2120,10 @@ jobs:
 
   publish_diag:
     name: Publish diagnostics to Pages
-    needs: [selftest, selftest-gate]
+    # derived requirement: keep diagnostics serialized behind model-quick-fix so iterate
+    # artifacts are definitely uploaded before the publisher attempts to fetch them,
+    # otherwise Pages may ship an empty _iter if publish_diag races ahead.
+    needs: [selftest, selftest-gate, model-quick-fix]
     timeout-minutes: 25
     concurrency:
       # derived requirement: run 19236437263-1 exhausted the runner disk while a prior
