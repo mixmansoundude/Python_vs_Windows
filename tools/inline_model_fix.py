@@ -470,6 +470,61 @@ def _collect_ndjson_summaries(ctx_dir: Path) -> List[Tuple[str, str]]:
     return summaries
 
 
+def _first_failing_check(search_root: Path, notes: List[str]) -> Optional[dict]:
+    """Locate the first failing NDJSON entry and surface enough detail for triage.
+
+    Professional note: runs like 19411179602-1 produced NDJSON summaries that
+    captured the real envsmoke failures while the generic failpack log only
+    mentioned the missing Python heuristic. Keep this parser minimal to avoid
+    disturbing the existing attachment contract while still extracting a single
+    failing check for the guide and log hint.
+    """
+
+    def _is_ndjson_candidate(path: Path) -> bool:
+        name = path.name.lower()
+        return "ndjson" in name or path.suffix.lower() == ".ndjson"
+
+    for path in sorted(search_root.rglob("*")):
+        if not path.is_file() or not _is_ndjson_candidate(path):
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as exc:
+            notes.append(f"ndjson_scan_error={path.relative_to(search_root)} error={exc}")
+            continue
+        for line in lines:
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("pass") is not False:
+                continue
+            failing_id = payload.get("id")
+            if failing_id:
+                notes.append(
+                    "first_failing_check="
+                    + str(failing_id)
+                    + f" source={path.relative_to(search_root)}"
+                )
+            return {
+                "id": payload.get("id"),
+                "desc": payload.get("desc"),
+                "command": payload.get("command") or payload.get("cmd"),
+                "exit_code": payload.get("exitCode") or payload.get("exit_code"),
+                "source": path,
+            }
+    notes.append("first_failing_check=not_found")
+    return None
+
+
+def _map_failing_check_to_hints(failing_id: Optional[str]) -> tuple[Optional[Path], Optional[str]]:
+    if failing_id in {"self.env.smoke.conda", "self.env.smoke.run"}:
+        return Path("tests/selfapps_envsmoke.ps1"), "tests/~envsmoke/~envsmoke_bootstrap.log"
+    return None, None
+
+
 def _build_inlined_context(repo_root: Path, ctx_dir: Path) -> Tuple[str, int, int]:
     """Assemble a bounded text bundle for the Responses input field."""
 
@@ -1003,6 +1058,8 @@ def stage_phase(args: argparse.Namespace) -> None:
 
     search_root = logs_dir if logs_available else fallback_root
 
+    failing_check = _first_failing_check(search_root, notes)
+
     failure_path: Optional[Path] = None
     if logs_available or fallback_names:
         failure_path = find_first_failure(search_root, notes)
@@ -1030,7 +1087,21 @@ def stage_phase(args: argparse.Namespace) -> None:
         raise SystemExit("No logs found to build failpack.")
 
     failpack_path = ctx_dir / "failpack.log"
-    failpack_path.write_text(read_text(failure_path), encoding="utf-8")
+    failpack_body = read_text(failure_path)
+    if failing_check:
+        summary_lines = ["First failing check (from ci_test_results NDJSON):"]
+        if failing_check.get("id"):
+            summary_lines.append(f"id: {failing_check['id']}")
+        if failing_check.get("desc"):
+            summary_lines.append(f"desc: {failing_check['desc']}")
+        if failing_check.get("command"):
+            summary_lines.append(f"command: {failing_check['command']}")
+        if failing_check.get("exit_code") is not None:
+            summary_lines.append(f"exitCode: {failing_check['exit_code']}")
+        summary_lines.append("")
+        summary_lines.append("-- failpack.log follows --")
+        failpack_body = "\n".join(summary_lines) + "\n\n" + failpack_body
+    failpack_path.write_text(failpack_body, encoding="utf-8")
     relative_source = failure_path
     try:
         relative_source = failure_path.relative_to(search_root)
@@ -1039,14 +1110,23 @@ def stage_phase(args: argparse.Namespace) -> None:
     notes.append(f"failpack_source={relative_source}")
 
     guide = ctx_dir / "guide.json"
-    primary, line = derive_primary(read_text(failpack_path), repo_root, notes)
+    primary_override, log_hint_override = _map_failing_check_to_hints(
+        failing_check.get("id") if failing_check else None
+    )
+    if primary_override:
+        # Professional note: envsmoke failures need to point at the harness that actually
+        # runs the check, otherwise the model can loop on why_no_diff replies. Keep the
+        # existing guide schema intact while steering the primary file to the failing lane.
+        primary, line = primary_override, None
+    else:
+        primary, line = derive_primary(failpack_body, repo_root, notes)
     guide.write_text(
         json.dumps(
             {
                 "primary_file": str(primary).replace("\\", "/"),
                 "line": line,
                 "run_id": args.run_id,
-                "log_hint": "failpack.log",
+                "log_hint": log_hint_override or "failpack.log",
             },
             indent=2,
         )
@@ -1716,8 +1796,11 @@ def call_phase(args: argparse.Namespace) -> None:
             final_reason_note = "patch_apply_failed_after_escalation"
             break
 
+        escalate_reason = "no_diff"
         attempt_status = "no_diff"
         log_attempt(attempt_no, cap_desc, escalate_reason, attempt_status)
+        if idx + 1 < len(token_plan):
+            continue
         accepted_patch_details = candidate
         break
 
