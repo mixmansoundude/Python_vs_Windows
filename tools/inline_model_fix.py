@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import mimetypes
 import os
@@ -28,7 +29,8 @@ import time
 from http.client import RemoteDisconnected
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Set, Tuple
+from types import ModuleType
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 from zipfile import ZipFile
 
 
@@ -176,6 +178,53 @@ def ensure_ctx(repo_root: Path) -> Path:
     ctx_dir = repo_root / "_ctx"
     ctx_dir.mkdir(parents=True, exist_ok=True)
     return ctx_dir
+
+
+_APPLY_PATCH_MODULE: Optional[ModuleType] = None
+
+
+def _load_apply_patch_module() -> ModuleType:
+    """Dynamically load tools/apply_patch.py for dry-run validation."""
+
+    global _APPLY_PATCH_MODULE
+    if _APPLY_PATCH_MODULE is None:
+        module_path = Path(__file__).with_name("apply_patch.py")
+        spec = importlib.util.spec_from_file_location("inline_apply_patch", module_path)
+        if spec is None or spec.loader is None:  # pragma: no cover - defensive guard
+            raise RuntimeError("Unable to load apply_patch module for inline validation")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        _APPLY_PATCH_MODULE = module
+    return _APPLY_PATCH_MODULE
+
+
+def dry_run_patch_apply(patch_text: str, repo_root: Path) -> Tuple[bool, Optional[str]]:
+    """Validate *patch_text* using the shared patch engine without mutating the repo."""
+
+    module = _load_apply_patch_module()
+    overlay: Dict[str, Optional[str]] = {}
+
+    def _open(path: str) -> str:
+        target = repo_root / path
+        return target.read_text(encoding="utf-8")
+
+    def _write(path: str, content: str) -> None:
+        overlay[path] = content
+
+    def _remove(path: str) -> None:
+        overlay[path] = None
+
+    try:
+        module.process_patch(patch_text, _open, _write, _remove)
+    except module.DiffError as exc:
+        return False, f"diff_error:{exc}"
+    except FileNotFoundError as exc:
+        # derived requirement: staged artifacts can lag repo updates; surface missing context
+        # as a deterministic diff_error so the escalator retries instead of mutating the tree.
+        return False, f"diff_missing:{exc}"
+    except Exception as exc:  # pragma: no cover - mirrors apply_patch CLI behavior
+        return False, f"unexpected:{exc}"
+    return True, None
 
 
 def _is_extension_allowed(path: Path) -> bool:
@@ -1546,16 +1595,34 @@ def call_phase(args: argparse.Namespace) -> None:
                 append_note(ctx_dir, f"openai_response_json_error={exc}")
                 return None, "invalid_json"
 
+    def log_attempt(idx: int, level: str, reason: str, status: str) -> None:
+        append_note(
+            ctx_dir,
+            f"attempt={idx} escalator_level={level} escalate_reason={reason} attempt_status={status}",
+        )
+
     response_json: Optional[dict] = None
     error_reason: Optional[str] = None
     escalator_exhausted = False
     accepted_patch_details: Optional[Tuple[str, Optional[str], Optional[dict], Optional[str]]] = None
+    final_status_note: Optional[str] = None
+    final_reason_note: Optional[str] = None
+
+    def record_final_status() -> None:
+        if final_status_note and final_reason_note:
+            append_note(
+                ctx_dir,
+                f"final_status={final_status_note} final_reason={final_reason_note}",
+            )
 
     for idx, plan in enumerate(token_plan):
+        attempt_no = idx + 1
         cap = plan["cap"]
         effort = plan["effort"]
         cap_desc = str(cap) if cap is not None else "unbounded"
         effort_desc = effort if effort is not None else "default"
+        escalate_reason = "none"
+        attempt_status = "pending"
         if cap is None:
             payload.pop("max_output_tokens", None)
         else:
@@ -1580,7 +1647,16 @@ def call_phase(args: argparse.Namespace) -> None:
             )
         response_json, error_reason = _execute_payload(payload)
         if response_json is None:
+            escalate_reason = error_reason or "request_exception"
+            attempt_status = "aborted"
+            log_attempt(attempt_no, cap_desc, escalate_reason, attempt_status)
+            final_status_note = "no_commit"
+            final_reason_note = escalate_reason
             break
+
+        candidate = extract_patch(response_json)
+        candidate_patch_raw = candidate[0]
+        candidate_patch = candidate_patch_raw.strip()
 
         incomplete_details = response_json.get("incomplete_details") or {}
         status_tag = response_json.get("status")
@@ -1592,8 +1668,6 @@ def call_phase(args: argparse.Namespace) -> None:
                 f"retry_ix={idx} max_output_tokens={cap_desc}",
             )
         if status_tag == "incomplete" and reason_tag == "max_output_tokens":
-            candidate = extract_patch(response_json)
-            candidate_patch = candidate[0].strip()
             if candidate_patch:
                 # derived requirement: iterate run 19331718491 proved that useful diffs can
                 # surface even when the Responses API reports an incomplete status because
@@ -1604,11 +1678,47 @@ def call_phase(args: argparse.Namespace) -> None:
                     "openai_call_incomplete_salvaged=diff_present",
                 )
                 accepted_patch_details = candidate
+                attempt_status = "accepted"
+                final_status_note = "diff_ready"
+                final_reason_note = "patch_ready"
+                log_attempt(attempt_no, cap_desc, escalate_reason, attempt_status)
                 break
             if idx + 1 < len(token_plan):
+                escalate_reason = "truncation"
+                attempt_status = "retrying"
+                log_attempt(attempt_no, cap_desc, escalate_reason, attempt_status)
                 continue
             escalator_exhausted = True
+            escalate_reason = "truncation"
+            attempt_status = "failed"
+            log_attempt(attempt_no, cap_desc, escalate_reason, attempt_status)
+            final_status_note = "no_commit"
+            final_reason_note = "token_cap_exhausted"
             break
+
+        if candidate_patch:
+            ok, failure_label = dry_run_patch_apply(candidate_patch_raw, repo_root)
+            if ok:
+                accepted_patch_details = candidate
+                attempt_status = "accepted"
+                final_status_note = "diff_ready"
+                final_reason_note = "patch_ready"
+                log_attempt(attempt_no, cap_desc, escalate_reason, attempt_status)
+                break
+            escalate_reason = "patch_apply_failed"
+            attempt_status = "retrying" if idx + 1 < len(token_plan) else "failed"
+            detail = failure_label or "unknown"
+            append_note(ctx_dir, f"patch_apply_dry_run_error={detail}")
+            log_attempt(attempt_no, cap_desc, escalate_reason, attempt_status)
+            if idx + 1 < len(token_plan):
+                continue
+            final_status_note = "no_commit"
+            final_reason_note = "patch_apply_failed_after_escalation"
+            break
+
+        attempt_status = "no_diff"
+        log_attempt(attempt_no, cap_desc, escalate_reason, attempt_status)
+        accepted_patch_details = candidate
         break
 
     if response_json is None:
@@ -1629,6 +1739,7 @@ def call_phase(args: argparse.Namespace) -> None:
             patch_text="",
             model=args.model,
         )
+        record_final_status()
         return
 
     if escalator_exhausted:
@@ -1693,6 +1804,8 @@ def call_phase(args: argparse.Namespace) -> None:
                 model=args.model,
                 rationale=rationale_summary,
             )
+
+    record_final_status()
 
 
 def build_parser() -> argparse.ArgumentParser:

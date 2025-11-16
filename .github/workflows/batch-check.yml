@@ -2120,7 +2120,10 @@ jobs:
 
   publish_diag:
     name: Publish diagnostics to Pages
-    needs: [selftest, selftest-gate]
+    # derived requirement: keep diagnostics serialized behind model-quick-fix so iterate
+    # artifacts are definitely uploaded before the publisher attempts to fetch them,
+    # otherwise Pages may ship an empty _iter if publish_diag races ahead.
+    needs: [selftest, selftest-gate, model-quick-fix]
     timeout-minutes: 25
     concurrency:
       # derived requirement: run 19236437263-1 exhausted the runner disk while a prior
@@ -2193,11 +2196,9 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          pattern: iterate-logs*${{ github.run_id }}-${{ github.run_attempt }}
-          # derived requirement: runs such as 19251877090-1 emit a bare iterate-logs-${run}-${attempt}
-          # artifact; anchor the wildcard directly before the run id so both the bare name and
-          # matrix-prefixed variants (iterate-logs-${job}-${mode}-...) resolve without producing a
-          # double-hyphen that fails to match.
+          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          # derived requirement: match the inline helper's artifact name exactly so diagnostics always
+          # fetch the iterate payload and avoid wildcard drift when job/mode prefixes change again.
           merge-multiple: true
           path: _iter
 

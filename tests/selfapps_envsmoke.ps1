@@ -98,6 +98,9 @@ if (Test-Path -LiteralPath $setupLog) {
     Remove-Item -LiteralPath $setupLog -Force
 }
 
+$prevVenvFallback = if (Test-Path Env:HP_ALLOW_VENV_FALLBACK) { $env:HP_ALLOW_VENV_FALLBACK } else { $null }
+$env:HP_ALLOW_VENV_FALLBACK = '1'
+
 Push-Location -LiteralPath $app
 try {
     $env:HP_ALLOW_VENV_FALLBACK = '1'
@@ -109,6 +112,11 @@ try {
     Remove-Item Env:HP_ALLOW_VENV_FALLBACK -ErrorAction SilentlyContinue
     Remove-Item Env:HP_ALLOW_SYSTEM_FALLBACK -ErrorAction SilentlyContinue
     Pop-Location
+    if ($null -eq $prevVenvFallback) {
+        Remove-Item Env:HP_ALLOW_VENV_FALLBACK -ErrorAction SilentlyContinue
+    } else {
+        $env:HP_ALLOW_VENV_FALLBACK = $prevVenvFallback
+    }
 }
 
 $blog   = Join-Path $app '~envsmoke_bootstrap.log'
