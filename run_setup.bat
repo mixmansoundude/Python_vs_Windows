@@ -825,6 +825,31 @@ exit /b 0
 rem %~1 is the RELATIVE crumb (what we want to show users and tests)
 set "HP_CRUMB=%~1"
 if "%HP_CRUMB%"=="" exit /b 0
+set "HP_CRUMB_SHOW=%HP_CRUMB%"
+set "HP_CRUMB_DRIVE="
+for %%A in ("%HP_CRUMB_SHOW%") do (
+  if not "%%~dA"=="" set "HP_CRUMB_DRIVE=%%~dA"
+)
+if not defined HP_CRUMB_DRIVE (
+  set "HP_CRUMB_FIRST=%HP_CRUMB_SHOW:~0,1%"
+  if not "%HP_CRUMB_FIRST%"=="\" (
+    if not "%HP_CRUMB_FIRST%"=="/" (
+      set "HP_CRUMB_PREFIX2=%HP_CRUMB_SHOW:~0,2%"
+      if /I not "%HP_CRUMB_PREFIX2%"==".\" (
+        if not "%HP_CRUMB_PREFIX2%"=="./" (
+          if not "%HP_CRUMB_PREFIX2%"==".." (
+            set "HP_CRUMB_SHOW=.\%HP_CRUMB_SHOW%"
+          )
+        )
+      )
+    )
+  )
+)
+set "HP_CRUMB=%HP_CRUMB_SHOW%"
+set "HP_CRUMB_DRIVE="
+set "HP_CRUMB_FIRST="
+set "HP_CRUMB_PREFIX2="
+set "HP_CRUMB_SHOW="
 
 rem Echo to console (no punctuation at end)
 echo Chosen entry: %HP_CRUMB%
