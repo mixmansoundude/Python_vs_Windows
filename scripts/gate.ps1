@@ -9,6 +9,70 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $logsDir = Join-Path $repoRoot 'logs'
 New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
 
+function Get-FailingTests {
+  param(
+    [Parameter(Mandatory = $true)][string]$WorkspaceRoot
+  )
+
+  $candidates = New-Object System.Collections.Generic.List[System.String]
+  $diagEnv = $env:DIAG
+  if (-not [string]::IsNullOrWhiteSpace($diagEnv)) { $candidates.Add($diagEnv) | Out-Null }
+  $runnerTemp = $env:RUNNER_TEMP
+  if (-not [string]::IsNullOrWhiteSpace($runnerTemp)) { $candidates.Add($runnerTemp) | Out-Null }
+
+  foreach ($suffix in @('diag', '_mirrors', '_artifacts', '.')) {
+    $candidates.Add((Join-Path -Path $WorkspaceRoot -ChildPath $suffix)) | Out-Null
+  }
+
+  $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+  foreach ($candidate in $candidates) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+    try {
+      $resolved = (Resolve-Path -LiteralPath $candidate -ErrorAction Stop).Path
+    } catch {
+      continue
+    }
+    if (-not $seen.Add($resolved)) { continue }
+    $direct = Join-Path -Path $resolved -ChildPath 'batchcheck_failing.txt'
+    if (Test-Path -LiteralPath $direct) {
+      return $direct
+    }
+    try {
+      $probe = Get-ChildItem -LiteralPath $resolved -Filter 'batchcheck_failing.txt' -File -Recurse -ErrorAction Stop | Select-Object -First 1
+      if ($probe -and $probe.FullName) { return $probe.FullName }
+    } catch {
+      continue
+    }
+  }
+  return $null
+}
+
+function Get-BatchStatus {
+  param(
+    [Parameter(Mandatory = $true)][string]$WorkspaceRoot
+  )
+
+  $candidates = @(
+    (Join-Path -Path $WorkspaceRoot -ChildPath 'STATUS.txt'),
+    (Join-Path -Path $WorkspaceRoot -ChildPath 'batch-check/STATUS.txt'),
+    (Join-Path -Path $WorkspaceRoot -ChildPath '_mirrors/STATUS.txt'),
+    (Join-Path -Path $WorkspaceRoot -ChildPath '_mirrors/batch-check/STATUS.txt')
+  )
+  foreach ($candidate in $candidates) {
+    if (-not (Test-Path -LiteralPath $candidate)) { continue }
+    try {
+      $lines = Get-Content -LiteralPath $candidate -ErrorAction Stop
+      foreach ($line in $lines) {
+        $trimmed = [string]::IsNullOrWhiteSpace($line) ? $null : $line.Trim()
+        if ($trimmed) { return $trimmed }
+      }
+    } catch {
+      continue
+    }
+  }
+  return $null
+}
+
 $apiKey = $env:OPENAI_API_KEY
 $baseUri = $env:OPENAI_API_BASE
 if ([string]::IsNullOrWhiteSpace($baseUri)) {
@@ -21,6 +85,30 @@ $state = [ordered]@{
   chat_ok = $false
   models_status = '000'
   chat_status = '000'
+}
+
+$failListPath = Get-FailingTests -WorkspaceRoot $repoRoot
+$statusText = Get-BatchStatus -WorkspaceRoot $repoRoot
+if ($failListPath) {
+  $state.failing_tests_path = $failListPath
+  try {
+    $failEntries = Get-Content -LiteralPath $failListPath -ErrorAction Stop | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $failEntries = $failEntries | Where-Object { $_ -and $_.ToLowerInvariant() -ne 'none' }
+  } catch {
+    $failEntries = @()
+  }
+  $state.failing_tests_count = $failEntries.Count
+  if ($failEntries.Count -eq 0) {
+    $state.skip_reason = 'no_failing_tests'
+    if ($statusText) { $state.batch_status = $statusText }
+    $state | ConvertTo-Json -Compress | Out-File -LiteralPath (Join-Path $logsDir 'iterate_auth.json') -Encoding ascii
+    $statusLabel = if ($statusText) { $statusText } else { 'n/a' }
+    Write-Host ("gate: no failing tests detected (status: {0}); skipping iterate." -f $statusLabel)
+    return
+  }
+}
+if ($statusText) {
+  $state.batch_status = $statusText
 }
 
 if (-not [string]::IsNullOrWhiteSpace($apiKey)) {

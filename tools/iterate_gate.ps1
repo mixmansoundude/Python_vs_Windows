@@ -66,6 +66,41 @@ $requiredFiles = @('tests~test-results.ndjson', 'ci_test_results.ndjson')
 $checkedPatterns = New-Object System.Collections.Generic.List[string]
 $missing = New-Object System.Collections.Generic.List[string]
 $found = [ordered]@{}
+$failListPath = $null
+$failEntries = @()
+
+function Find-FailList {
+    param([string]$Workspace)
+
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $diagEnv = $env:DIAG
+    if (-not [string]::IsNullOrWhiteSpace($diagEnv)) { $candidates.Add($diagEnv) | Out-Null }
+    $runnerTemp = $env:RUNNER_TEMP
+    if (-not [string]::IsNullOrWhiteSpace($runnerTemp)) { $candidates.Add($runnerTemp) | Out-Null }
+    foreach ($suffix in @('diag', '_mirrors', '.')) {
+        $candidates.Add((Join-Path -Path $Workspace -ChildPath $suffix)) | Out-Null
+    }
+
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        try {
+            $resolved = (Resolve-Path -LiteralPath $candidate -ErrorAction Stop).Path
+        } catch {
+            continue
+        }
+        if (-not $seen.Add($resolved)) { continue }
+        $direct = Join-Path -Path $resolved -ChildPath 'batchcheck_failing.txt'
+        if (Test-Path -LiteralPath $direct) { return $direct }
+        try {
+            $probe = Get-ChildItem -LiteralPath $resolved -Filter 'batchcheck_failing.txt' -File -Recurse -ErrorAction Stop | Select-Object -First 1
+            if ($probe -and $probe.FullName) { return $probe.FullName }
+        } catch {
+            continue
+        }
+    }
+    return $null
+}
 
 function Find-Ndjson {
     param([string]$Name)
@@ -164,15 +199,35 @@ foreach ($name in $requiredFiles) {
     }
 }
 
+$failListPath = Find-FailList -Workspace $workspaceRoot
+if ($failListPath) {
+    Write-Info "located batchcheck_failing.txt at $failListPath"
+    try {
+        $failEntries = Get-Content -LiteralPath $failListPath -ErrorAction Stop | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $failEntries = $failEntries | Where-Object { $_ -and $_.ToLowerInvariant() -ne 'none' }
+    } catch {
+        Write-Warn ("unable to read fail list {0}: {1}" -f $failListPath, $_.Exception.Message)
+        $failEntries = @()
+    }
+}
+
+$hasFailingTests = ($failEntries.Count -gt 0)
+$skipIterate = ($failListPath -and -not $hasFailingTests)
+if ($skipIterate) {
+    Write-Info "no failing tests detected; skipping iterate."
+}
+
 $gate = [ordered]@{
     stage = 'iterate-gate'
-    proceed = $true
-    has_failures = ($missing.Count -gt 0)
+    proceed = -not $skipIterate
+    has_failures = $hasFailingTests
     missing_inputs = @($missing)
     found_inputs = $found
     checked_patterns = @($checkedPatterns)
-    note = 'Gate is fail-open by design; iterate proceeds with warnings.'
+    note = if ($skipIterate) { 'Fail list reported no failing tests; iterate skipped.' } else { 'Gate is fail-open by design; iterate proceeds with warnings.' }
+    failing_tests = @($failEntries)
 }
+if ($failListPath) { $gate.fail_list_path = $failListPath }
 
 $gatePath = Join-Path -Path $OutDir -ChildPath 'iterate_gate.json'
 $gate | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $gatePath -Encoding UTF8
