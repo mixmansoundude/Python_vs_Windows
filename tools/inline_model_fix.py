@@ -180,6 +180,7 @@ def ensure_ctx(repo_root: Path) -> Path:
     return ctx_dir
 
 
+
 def _load_fail_list_from_candidates(candidates: Iterable[Path]) -> Tuple[Optional[Path], List[str]]:
     seen: Set[Path] = set()
     for base in candidates:
@@ -1057,6 +1058,28 @@ def append_note(ctx_dir: Path, message: str) -> None:
         handle.write(message + "\n")
 
 
+def _load_patch_state(ctx_dir: Path) -> Tuple[int, int]:
+    """Return (current_patch_count, patch_limit) for this workflow run."""
+
+    limit_raw = os.environ.get("PATCHES_PER_RUN_LIMIT", "1")
+    try:
+        patch_limit = int(limit_raw)
+    except ValueError:
+        patch_limit = 1
+    patch_limit = max(patch_limit, 1)
+
+    count = 0
+    decision_path = ctx_dir / "decision.json"
+    if decision_path.exists():
+        try:
+            prior = json.loads(decision_path.read_text(encoding="utf-8"))
+            count = int(prior.get("patches_applied_count", 0))
+        except Exception as exc:  # pragma: no cover - defensive against corrupt artifacts
+            append_note(ctx_dir, f"patch_count_read_error={exc}")
+            count = 0
+    return max(count, 0), patch_limit
+
+
 def stage_phase(args: argparse.Namespace) -> None:
     repo_root = Path.cwd()
     ctx_dir = repo_root / "_ctx"
@@ -1470,6 +1493,29 @@ def call_phase(args: argparse.Namespace) -> None:
         notes_path.parent.mkdir(parents=True, exist_ok=True)
         notes_path.write_text("", encoding="utf-8")
 
+    current_patch_count, patch_limit = _load_patch_state(ctx_dir)
+    append_note(
+        ctx_dir,
+        (
+            "patch_limit_state="
+            f"applied={current_patch_count};limit={patch_limit}"
+        ),
+    )
+    existing_response: Optional[dict] = None
+    existing_patch_text: Optional[str] = None
+    response_path = ctx_dir / "response.json"
+    if response_path.exists():
+        try:
+            existing_response = json.loads(response_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing_response = None
+    patch_path = ctx_dir / "fix.patch"
+    if patch_path.exists():
+        try:
+            existing_patch_text = patch_path.read_text(encoding="utf-8")
+        except OSError:
+            existing_patch_text = None
+
     fail_list_path, fail_entries = discover_fail_list(repo_root)
     if fail_list_path:
         append_note(ctx_dir, f"fail_list_path={fail_list_path}")
@@ -1483,7 +1529,23 @@ def call_phase(args: argparse.Namespace) -> None:
             response_payload=None,
             patch_text="",
             model=args.model,
-            patch_count=0,
+            patch_count=current_patch_count,
+        )
+        return
+
+    if current_patch_count >= patch_limit:
+        # derived requirement: CI currently permits exactly one applied patch per run;
+        # short-circuit additional model calls so follow-up failures remain manual until
+        # the limit increases.
+        append_note(ctx_dir, "iterate_skip=patch_limit_reached")
+        _record_decision(
+            ctx_dir,
+            status="skipped",
+            reason="patch_limit_reached",
+            response_payload=existing_response,
+            patch_text=existing_patch_text or "",
+            model=args.model,
+            patch_count=current_patch_count,
         )
         return
 
@@ -1497,7 +1559,7 @@ def call_phase(args: argparse.Namespace) -> None:
             response_payload=None,
             patch_text="",
             model=args.model,
-            patch_count=0,
+            patch_count=current_patch_count,
         )
         return
 
@@ -1514,7 +1576,7 @@ def call_phase(args: argparse.Namespace) -> None:
             response_payload=None,
             patch_text="",
             model=args.model,
-            patch_count=0,
+            patch_count=current_patch_count,
         )
         return
 
@@ -1591,7 +1653,7 @@ def call_phase(args: argparse.Namespace) -> None:
                 response_payload=None,
                 patch_text="",
                 model=args.model,
-                patch_count=0,
+                patch_count=current_patch_count,
             )
             return
     else:
@@ -1901,7 +1963,7 @@ def call_phase(args: argparse.Namespace) -> None:
             response_payload=None,
             patch_text="",
             model=args.model,
-            patch_count=0,
+            patch_count=current_patch_count,
         )
         record_final_status()
         return
@@ -1932,6 +1994,7 @@ def call_phase(args: argparse.Namespace) -> None:
         append_note(ctx_dir, "openai_patch=json_only")
 
     patch_count = 1 if patch.strip() else 0
+    total_patch_count = current_patch_count + patch_count
 
     if patch.strip():
         append_note(ctx_dir, "openai_patch=received")
@@ -1943,7 +2006,7 @@ def call_phase(args: argparse.Namespace) -> None:
             patch_text=patch,
             model=args.model,
             rationale=rationale_summary,
-            patch_count=patch_count,
+            patch_count=total_patch_count,
         )
     else:
         if format_issue == "json_only":
@@ -1957,7 +2020,7 @@ def call_phase(args: argparse.Namespace) -> None:
                 patch_text="",
                 model=args.model,
                 rationale=rationale_summary,
-                patch_count=patch_count,
+                patch_count=total_patch_count,
             )
         else:
             # derived requirement: run 19211170783-1 surfaced a zero-byte iterate bundle;
@@ -1971,7 +2034,7 @@ def call_phase(args: argparse.Namespace) -> None:
                 patch_text="",
                 model=args.model,
                 rationale=rationale_summary,
-                patch_count=patch_count,
+                patch_count=total_patch_count,
             )
 
     record_final_status()

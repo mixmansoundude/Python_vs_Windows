@@ -59,8 +59,50 @@ function New-Directory {
     }
 }
 
+function Get-PatchLimit {
+    param([string]$RawLimit)
+
+    $limitValue = 1
+    if ([string]::IsNullOrWhiteSpace($RawLimit)) { return $limitValue }
+
+    if ([int]::TryParse($RawLimit, [ref]$limitValue)) {
+        if ($limitValue -lt 1) { $limitValue = 1 }
+        return $limitValue
+    }
+
+    return 1
+}
+
+function Get-PatchesAppliedCount {
+    param([string]$Workspace, [string]$OutDir)
+
+    $candidates = @(
+        (Join-Path -Path $Workspace -ChildPath '_ctx/decision.json'),
+        (Join-Path -Path $OutDir -ChildPath 'decision.json')
+    )
+
+    foreach ($candidate in $candidates) {
+        if (-not (Test-Path -LiteralPath $candidate)) { continue }
+        try {
+            $content = Get-Content -LiteralPath $candidate -Raw -ErrorAction Stop
+            $parsed = $content | ConvertFrom-Json -ErrorAction Stop
+            if ($parsed -and $parsed.patches_applied_count -ne $null) {
+                return [int]$parsed.patches_applied_count
+            }
+        } catch {
+            Write-Warn ("unable to read patches_applied_count from {0}: {1}" -f $candidate, $_.Exception.Message)
+        }
+    }
+
+    return 0
+}
+
 New-Directory -Path $ArtifactsRoot
 New-Directory -Path $OutDir
+
+$patchLimit = Get-PatchLimit -RawLimit $env:PATCHES_PER_RUN_LIMIT
+$patchesApplied = Get-PatchesAppliedCount -Workspace $workspaceRoot -OutDir $OutDir
+$limitReached = ($patchesApplied -ge $patchLimit)
 
 $requiredFiles = @('tests~test-results.ndjson', 'ci_test_results.ndjson')
 $checkedPatterns = New-Object System.Collections.Generic.List[string]
@@ -205,6 +247,7 @@ if ($failListPath) {
     try {
         $failEntries = Get-Content -LiteralPath $failListPath -ErrorAction Stop | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
         $failEntries = $failEntries | Where-Object { $_ -and $_.ToLowerInvariant() -ne 'none' }
+        $failEntries = @($failEntries)
     } catch {
         Write-Warn ("unable to read fail list {0}: {1}" -f $failListPath, $_.Exception.Message)
         $failEntries = @()
@@ -217,6 +260,13 @@ if ($skipIterate) {
     Write-Info "no failing tests detected; skipping iterate."
 }
 
+if (-not $skipIterate -and $limitReached) {
+    # derived requirement: CI currently allows one autopatch per workflow run; avoid
+    # subsequent model calls until the limit is raised.
+    Write-Info ("patch limit reached; applied={0} limit={1}; skipping iterate." -f $patchesApplied, $patchLimit)
+    $skipIterate = $true
+}
+
 $gate = [ordered]@{
     stage = 'iterate-gate'
     proceed = -not $skipIterate
@@ -224,8 +274,12 @@ $gate = [ordered]@{
     missing_inputs = @($missing)
     found_inputs = $found
     checked_patterns = @($checkedPatterns)
-    note = if ($skipIterate) { 'Fail list reported no failing tests; iterate skipped.' } else { 'Gate is fail-open by design; iterate proceeds with warnings.' }
+    note = if ($skipIterate) {
+        if ($limitReached -and $hasFailingTests) { 'Patch limit reached; iterate skipped.' } elseif ($failListPath -and -not $hasFailingTests) { 'Fail list reported no failing tests; iterate skipped.' } else { 'Gate is fail-open by design; iterate proceeds with warnings.' }
+    } else { 'Gate is fail-open by design; iterate proceeds with warnings.' }
     failing_tests = @($failEntries)
+    patch_limit = $patchLimit
+    patches_applied_count = $patchesApplied
 }
 if ($failListPath) { $gate.fail_list_path = $failListPath }
 
