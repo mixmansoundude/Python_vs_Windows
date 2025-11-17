@@ -33,15 +33,17 @@ function Get-FailingTests {
       continue
     }
     if (-not $seen.Add($resolved)) { continue }
-    $direct = Join-Path -Path $resolved -ChildPath 'batchcheck_failing.txt'
-    if (Test-Path -LiteralPath $direct) {
-      return $direct
-    }
-    try {
-      $probe = Get-ChildItem -LiteralPath $resolved -Filter 'batchcheck_failing.txt' -File -Recurse -ErrorAction Stop | Select-Object -First 1
-      if ($probe -and $probe.FullName) { return $probe.FullName }
-    } catch {
-      continue
+    foreach ($fileName in @('batchcheck_failing.txt', 'failing-tests.txt')) {
+      $direct = Join-Path -Path $resolved -ChildPath $fileName
+      if (Test-Path -LiteralPath $direct) {
+        return $direct
+      }
+      try {
+        $probe = Get-ChildItem -LiteralPath $resolved -Filter $fileName -File -Recurse -ErrorAction Stop | Select-Object -First 1
+        if ($probe -and $probe.FullName) { return $probe.FullName }
+      } catch {
+        continue
+      }
     }
   }
   return $null

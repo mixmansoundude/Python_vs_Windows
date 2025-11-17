@@ -119,7 +119,7 @@ function Find-FailList {
     if (-not [string]::IsNullOrWhiteSpace($diagEnv)) { $candidates.Add($diagEnv) | Out-Null }
     $runnerTemp = $env:RUNNER_TEMP
     if (-not [string]::IsNullOrWhiteSpace($runnerTemp)) { $candidates.Add($runnerTemp) | Out-Null }
-    foreach ($suffix in @('diag', '_mirrors', '.')) {
+    foreach ($suffix in @('diag', '_mirrors', '_artifacts', '.')) {
         $candidates.Add((Join-Path -Path $Workspace -ChildPath $suffix)) | Out-Null
     }
 
@@ -132,13 +132,15 @@ function Find-FailList {
             continue
         }
         if (-not $seen.Add($resolved)) { continue }
-        $direct = Join-Path -Path $resolved -ChildPath 'batchcheck_failing.txt'
-        if (Test-Path -LiteralPath $direct) { return $direct }
-        try {
-            $probe = Get-ChildItem -LiteralPath $resolved -Filter 'batchcheck_failing.txt' -File -Recurse -ErrorAction Stop | Select-Object -First 1
-            if ($probe -and $probe.FullName) { return $probe.FullName }
-        } catch {
-            continue
+        foreach ($fileName in @('batchcheck_failing.txt', 'failing-tests.txt')) {
+            $direct = Join-Path -Path $resolved -ChildPath $fileName
+            if (Test-Path -LiteralPath $direct) { return $direct }
+            try {
+                $probe = Get-ChildItem -LiteralPath $resolved -Filter $fileName -File -Recurse -ErrorAction Stop | Select-Object -First 1
+                if ($probe -and $probe.FullName) { return $probe.FullName }
+            } catch {
+                continue
+            }
         }
     }
     return $null
