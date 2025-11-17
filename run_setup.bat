@@ -502,36 +502,7 @@ if errorlevel 1 call :die "[ERROR] Could not determine entry point"
 if "%HP_ENTRY%"=="" (
   call :log "[INFO] No entry script detected; skipping PyInstaller packaging."
 ) else (
-  call :record_chosen_entry "%HP_ENTRY%"
-  call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
-  rem derived requirement: execute the smoke command inline so cmd, not our logging, owns redirection parsing.
-  >> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
-  "%HP_PY%" "%HP_ENTRY%" 1> "~run.out.txt" 2> "~run.err.txt"
-  set "HP_SMOKE_RC=%ERRORLEVEL%"
-  call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
-  if not "%HP_SMOKE_RC%"=="0" call :die "[ERROR] Entry script execution failed."
-  rem derived requirement: the CI harness inspects the breadcrumb log to flag missing entries.
-  set "HP_BREADCRUMB=~entry1_bootstrap.log"
-  if exist "tests\~entry1\" set "HP_BREADCRUMB=tests\~entry1\~entry1_bootstrap.log"
-  if not exist "%HP_BREADCRUMB%" (
-    rem derived requirement: create the breadcrumb when the smoke run succeeds so diagnostics stay consistent.
-    for %%B in ("%HP_BREADCRUMB%") do if not "%%~dpB"=="" if not exist "%%~dpB" mkdir "%%~dpB" >nul 2>&1
-    type nul > "%HP_BREADCRUMB%"
-  )
-  if exist "%HP_BREADCRUMB%" (
-    call :log "[INFO] Entry smoke breadcrumb exists: %HP_BREADCRUMB%"
-  ) else (
-    call :log "[WARN] Entry smoke missing breadcrumb: %HP_BREADCRUMB%"
-  )
-  if "%HP_ENV_MODE%"=="system" (
-    call :log "[INFO] System fallback: skipping PyInstaller packaging."
-  ) else (
-    "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
-    "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
-    if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
-    if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
-    call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
-  )
+  call :run_entry_smoke
 )
 
 if /i "%HP_BOOTSTRAP_STATE%"=="ok" (
@@ -862,6 +833,38 @@ rem Append same line to setup log
 
 rem If we also need an absolute path for execution, set HP_ENTRY elsewhere
 rem and keep the echo outside any ( ... ) block.
+exit /b 0
+:run_entry_smoke
+call :record_chosen_entry "%HP_ENTRY%"
+call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
+rem derived requirement: execute the smoke command inline so cmd, not our logging, owns redirection parsing.
+>> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
+"%HP_PY%" "%HP_ENTRY%" 1> "~run.out.txt" 2> "~run.err.txt"
+set "HP_SMOKE_RC=%ERRORLEVEL%"
+call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
+if not "%HP_SMOKE_RC%"=="0" call :die "[ERROR] Entry script execution failed."
+rem derived requirement: the CI harness inspects the breadcrumb log to flag missing entries.
+set "HP_BREADCRUMB=~entry1_bootstrap.log"
+if exist "tests\~entry1\" set "HP_BREADCRUMB=tests\~entry1\~entry1_bootstrap.log"
+if not exist "%HP_BREADCRUMB%" (
+  rem derived requirement: create the breadcrumb when the smoke run succeeds so diagnostics stay consistent.
+  for %%B in ("%HP_BREADCRUMB%") do if not "%%~dpB"=="" if not exist "%%~dpB" mkdir "%%~dpB" >nul 2>&1
+  type nul > "%HP_BREADCRUMB%"
+)
+if exist "%HP_BREADCRUMB%" (
+  call :log "[INFO] Entry smoke breadcrumb exists: %HP_BREADCRUMB%"
+) else (
+  call :log "[WARN] Entry smoke missing breadcrumb: %HP_BREADCRUMB%"
+)
+if "%HP_ENV_MODE%"=="system" (
+  call :log "[INFO] System fallback: skipping PyInstaller packaging."
+) else (
+  "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
+  "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
+  if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
+  call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+)
 exit /b 0
 :write_pipreqs_summary
 if "%HP_JOB_SUMMARY%"=="" exit /b 0

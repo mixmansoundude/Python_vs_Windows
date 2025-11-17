@@ -16,6 +16,10 @@ permissions:
   pull-requests: write
   issues: write
 
+concurrency:
+  group: batch-check-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   selftest:
     name: Batch syntax/run check (${{ matrix.mode }})
@@ -39,10 +43,6 @@ jobs:
     env:
       HP_PIPREQS_VERSION: 0.5.0
       GH_TOKEN: ${{ github.token }}
-
-    concurrency:
-      group: batch-check-${{ github.head_ref || github.ref_name }}
-      cancel-in-progress: true
 
     steps:
       - uses: actions/checkout@v4
