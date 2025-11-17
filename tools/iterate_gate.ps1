@@ -112,9 +112,17 @@ $failListPath = $null
 $failEntries = @()
 
 function Find-FailList {
-    param([string]$Workspace)
+    param([string]$Workspace, [string]$ArtifactsRoot)
 
     $candidates = New-Object System.Collections.Generic.List[string]
+    $explicitBatchCheck = @(
+        (Join-Path -Path $ArtifactsRoot -ChildPath 'batch-check'),
+        (Join-Path -Path $Workspace -ChildPath '_artifacts/batch-check'),
+        (Join-Path -Path $Workspace -ChildPath '_mirrors')
+    )
+    foreach ($batchRoot in $explicitBatchCheck) {
+        if (-not [string]::IsNullOrWhiteSpace($batchRoot)) { $candidates.Add($batchRoot) | Out-Null }
+    }
     $diagEnv = $env:DIAG
     if (-not [string]::IsNullOrWhiteSpace($diagEnv)) { $candidates.Add($diagEnv) | Out-Null }
     $runnerTemp = $env:RUNNER_TEMP
@@ -243,7 +251,7 @@ foreach ($name in $requiredFiles) {
     }
 }
 
-$failListPath = Find-FailList -Workspace $workspaceRoot
+$failListPath = Find-FailList -Workspace $workspaceRoot -ArtifactsRoot $ArtifactsRoot
 if ($failListPath) {
     Write-Info "located batchcheck_failing.txt at $failListPath"
     try {

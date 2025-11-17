@@ -15,6 +15,13 @@ function Get-FailingTests {
   )
 
   $candidates = New-Object System.Collections.Generic.List[System.String]
+  $explicitBatchCheck = @(
+    (Join-Path -Path $WorkspaceRoot -ChildPath '_artifacts/batch-check'),
+    (Join-Path -Path $WorkspaceRoot -ChildPath '_mirrors')
+  )
+  foreach ($batchRoot in $explicitBatchCheck) {
+    if (-not [string]::IsNullOrWhiteSpace($batchRoot)) { $candidates.Add($batchRoot) | Out-Null }
+  }
   $diagEnv = $env:DIAG
   if (-not [string]::IsNullOrWhiteSpace($diagEnv)) { $candidates.Add($diagEnv) | Out-Null }
   $runnerTemp = $env:RUNNER_TEMP
