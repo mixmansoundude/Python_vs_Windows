@@ -224,6 +224,11 @@ def discover_fail_list(repo_root: Path) -> Tuple[Optional[Path], List[str]]:
         candidates.append(Path(diag_env))
     for rel in ("diag", "_mirrors", "_ctx", "_ctx/attached", "_ctx/attached/_mirrors"):
         candidates.append(repo_root / rel)
+    for rel in ("_artifacts", "_artifacts/batch-check"):
+        # derived requirement: runs like 19451761905-1 mirrored an empty fail list
+        # into the batch-check artifact root; include it so the call phase can honor
+        # the authoritative "none" sentinel before any model traffic occurs.
+        candidates.append(repo_root / rel)
     candidates.append(repo_root)
     workspace_env = os.environ.get("GITHUB_WORKSPACE")
     if workspace_env:

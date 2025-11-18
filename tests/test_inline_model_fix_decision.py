@@ -74,3 +74,30 @@ def test_call_phase_skips_when_patch_limit_hit(tmp_path, monkeypatch):
 
     patch_text = (ctx_dir / "fix.patch").read_text(encoding="utf-8")
     assert "diff-content" in patch_text
+
+
+def test_call_phase_skips_when_fail_list_none(tmp_path, monkeypatch):
+    repo_root = tmp_path
+    monkeypatch.chdir(repo_root)
+
+    artifacts_root = repo_root / "_artifacts" / "batch-check"
+    artifacts_root.mkdir(parents=True)
+    (artifacts_root / "batchcheck_failing.txt").write_text("none\n", encoding="utf-8")
+
+    ctx_dir = imf.ensure_ctx(repo_root)
+
+    args = argparse.Namespace(model="gpt-5-codex")
+    imf.call_phase(args)
+
+    decision = json.loads((ctx_dir / "decision.json").read_text(encoding="utf-8"))
+    assert decision == {
+        "patches_applied_count": 0,
+        "reason": "no_failing_tests",
+        "status": "skipped",
+    }
+
+    response_payload = json.loads((ctx_dir / "response.json").read_text(encoding="utf-8"))
+    assert response_payload == {}
+
+    patch_text = (ctx_dir / "fix.patch").read_text(encoding="utf-8")
+    assert patch_text == ""
