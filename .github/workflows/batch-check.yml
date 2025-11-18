@@ -1862,7 +1862,6 @@ jobs:
                 }
 
                 if ($null -eq $value) {
-                  $has = $true
                   $record | Add-Member -NotePropertyName parse_warning -NotePropertyValue 'has_failures missing or unparseable' -Force
                 } elseif ($value) {
                   $has = $true
@@ -1871,7 +1870,6 @@ jobs:
                 $lanes += $record
               }
             } catch {
-              $has = $true
               $lanes += [ordered]@{
                 lane = $file.BaseName
                 error = $_.Exception.Message
