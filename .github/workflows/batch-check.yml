@@ -1946,6 +1946,22 @@ jobs:
           slug=$(echo "$branch" | tr ':/ ' '---')
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "branch_slug=$slug" >> "$GITHUB_OUTPUT"
+      - name: Download CI NDJSON for inline helper
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _artifacts/batch-check/_ci_artifacts
+      - name: Aggregate batch-check fail list
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        env:
+          DIAG: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python tools/diag/ndjson_fail_list.py
+          mkdir -p _artifacts/batch-check
+          install -D batchcheck_failing.txt _artifacts/batch-check/batchcheck_failing.txt
+          install -D batchcheck_fail-debug.txt _artifacts/batch-check/batchcheck_fail-debug.txt
       - name: Install Python dependencies
         if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
         run: |
