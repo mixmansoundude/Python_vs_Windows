@@ -14,6 +14,16 @@ function Get-FailingTests {
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot
   )
 
+  $directRoots = @(
+    (Join-Path -Path $WorkspaceRoot -ChildPath '_artifacts/batch-check/batchcheck_failing.txt'),
+    (Join-Path -Path $WorkspaceRoot -ChildPath '_mirrors/batchcheck_failing.txt')
+  )
+  foreach ($direct in $directRoots) {
+    if (Test-Path -LiteralPath $direct) {
+      return $direct
+    }
+  }
+
   $candidates = New-Object System.Collections.Generic.List[System.String]
   $explicitBatchCheck = @(
     (Join-Path -Path $WorkspaceRoot -ChildPath '_artifacts/batch-check'),

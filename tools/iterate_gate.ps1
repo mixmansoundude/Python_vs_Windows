@@ -110,6 +110,8 @@ $missing = New-Object System.Collections.Generic.List[string]
 $found = [ordered]@{}
 $failListPath = $null
 $failEntries = @()
+$hasFailingTests = $false
+$skipIterate = $false
 
 function Find-FailList {
     param([string]$Workspace, [string]$ArtifactsRoot)
@@ -235,6 +237,25 @@ function Find-Ndjson {
     return $null
 }
 
+$failListPath = Find-FailList -Workspace $workspaceRoot -ArtifactsRoot $ArtifactsRoot
+if ($failListPath) {
+    Write-Info "located batchcheck_failing.txt at $failListPath"
+    try {
+        $failEntries = Get-Content -LiteralPath $failListPath -ErrorAction Stop | ForEach-Object { $_.Trim() } | Where-Object {-not [string]::IsNullOrWhiteSpace($_) }
+        $failEntries = $failEntries | Where-Object { $_ -and $_.ToLowerInvariant() -ne 'none' }
+        $failEntries = @($failEntries)
+    } catch {
+        Write-Warn ("unable to read fail list {0}: {1}" -f $failListPath, $_.Exception.Message)
+        $failEntries = @()
+    }
+}
+
+$hasFailingTests = ($failEntries.Count -gt 0)
+$skipIterate = ($failListPath -and -not $hasFailingTests)
+if ($skipIterate) {
+    Write-Info "no failing tests detected; skipping iterate."
+}
+
 foreach ($name in $requiredFiles) {
     try {
         $hit = Find-Ndjson -Name $name
@@ -249,25 +270,6 @@ foreach ($name in $requiredFiles) {
         $missing.Add($name) | Out-Null
         Write-Warn ("Exception while probing {0}: {1}" -f $name, $_.Exception.Message)
     }
-}
-
-$failListPath = Find-FailList -Workspace $workspaceRoot -ArtifactsRoot $ArtifactsRoot
-if ($failListPath) {
-    Write-Info "located batchcheck_failing.txt at $failListPath"
-    try {
-        $failEntries = Get-Content -LiteralPath $failListPath -ErrorAction Stop | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-        $failEntries = $failEntries | Where-Object { $_ -and $_.ToLowerInvariant() -ne 'none' }
-        $failEntries = @($failEntries)
-    } catch {
-        Write-Warn ("unable to read fail list {0}: {1}" -f $failListPath, $_.Exception.Message)
-        $failEntries = @()
-    }
-}
-
-$hasFailingTests = ($failEntries.Count -gt 0)
-$skipIterate = ($failListPath -and -not $hasFailingTests)
-if ($skipIterate) {
-    Write-Info "no failing tests detected; skipping iterate."
 }
 
 if (-not $skipIterate -and $limitReached) {
