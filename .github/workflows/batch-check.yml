@@ -357,7 +357,7 @@ jobs:
           exit $rc
 
       - name: Upload bootstrapper tests artifact
-        if: always()
+        if: ${{ always() && matrix.mode == 'real' }}
         uses: actions/upload-artifact@v4
         with:
           name: bootstrapper-tests
