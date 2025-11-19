@@ -59,13 +59,102 @@ function New-Directory {
     }
 }
 
+function Get-PatchLimit {
+    param([string]$RawLimit)
+
+    $limitValue = 1
+    if ([string]::IsNullOrWhiteSpace($RawLimit)) { return $limitValue }
+
+    if ([int]::TryParse($RawLimit, [ref]$limitValue)) {
+        if ($limitValue -lt 1) { $limitValue = 1 }
+        return $limitValue
+    }
+
+    return 1
+}
+
+function Get-PatchesAppliedCount {
+    param([string]$Workspace, [string]$OutDir)
+
+    $candidates = @(
+        (Join-Path -Path $Workspace -ChildPath '_ctx/decision.json'),
+        (Join-Path -Path $OutDir -ChildPath 'decision.json')
+    )
+
+    foreach ($candidate in $candidates) {
+        if (-not (Test-Path -LiteralPath $candidate)) { continue }
+        try {
+            $content = Get-Content -LiteralPath $candidate -Raw -ErrorAction Stop
+            $parsed = $content | ConvertFrom-Json -ErrorAction Stop
+            if ($parsed -and $parsed.patches_applied_count -ne $null) {
+                return [int]$parsed.patches_applied_count
+            }
+        } catch {
+            Write-Warn ("unable to read patches_applied_count from {0}: {1}" -f $candidate, $_.Exception.Message)
+        }
+    }
+
+    return 0
+}
+
 New-Directory -Path $ArtifactsRoot
 New-Directory -Path $OutDir
+
+$patchLimit = Get-PatchLimit -RawLimit $env:PATCHES_PER_RUN_LIMIT
+$patchesApplied = Get-PatchesAppliedCount -Workspace $workspaceRoot -OutDir $OutDir
+$limitReached = ($patchesApplied -ge $patchLimit)
 
 $requiredFiles = @('tests~test-results.ndjson', 'ci_test_results.ndjson')
 $checkedPatterns = New-Object System.Collections.Generic.List[string]
 $missing = New-Object System.Collections.Generic.List[string]
 $found = [ordered]@{}
+$failListPath = $null
+$failEntries = @()
+$hasFailingTests = $false
+$skipIterate = $false
+
+function Find-FailList {
+    param([string]$Workspace, [string]$ArtifactsRoot)
+
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $explicitBatchCheck = @(
+        (Join-Path -Path $ArtifactsRoot -ChildPath 'batch-check'),
+        (Join-Path -Path $Workspace -ChildPath '_artifacts/batch-check'),
+        (Join-Path -Path $Workspace -ChildPath '_mirrors')
+    )
+    foreach ($batchRoot in $explicitBatchCheck) {
+        if (-not [string]::IsNullOrWhiteSpace($batchRoot)) { $candidates.Add($batchRoot) | Out-Null }
+    }
+    $diagEnv = $env:DIAG
+    if (-not [string]::IsNullOrWhiteSpace($diagEnv)) { $candidates.Add($diagEnv) | Out-Null }
+    $runnerTemp = $env:RUNNER_TEMP
+    if (-not [string]::IsNullOrWhiteSpace($runnerTemp)) { $candidates.Add($runnerTemp) | Out-Null }
+    foreach ($suffix in @('diag', '_mirrors', '_artifacts', '.')) {
+        $candidates.Add((Join-Path -Path $Workspace -ChildPath $suffix)) | Out-Null
+    }
+
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        try {
+            $resolved = (Resolve-Path -LiteralPath $candidate -ErrorAction Stop).Path
+        } catch {
+            continue
+        }
+        if (-not $seen.Add($resolved)) { continue }
+        foreach ($fileName in @('batchcheck_failing.txt', 'failing-tests.txt')) {
+            $direct = Join-Path -Path $resolved -ChildPath $fileName
+            if (Test-Path -LiteralPath $direct) { return $direct }
+            try {
+                $probe = Get-ChildItem -LiteralPath $resolved -Filter $fileName -File -Recurse -ErrorAction Stop | Select-Object -First 1
+                if ($probe -and $probe.FullName) { return $probe.FullName }
+            } catch {
+                continue
+            }
+        }
+    }
+    return $null
+}
 
 function Find-Ndjson {
     param([string]$Name)
@@ -148,6 +237,25 @@ function Find-Ndjson {
     return $null
 }
 
+$failListPath = Find-FailList -Workspace $workspaceRoot -ArtifactsRoot $ArtifactsRoot
+if ($failListPath) {
+    Write-Info "located batchcheck_failing.txt at $failListPath"
+    try {
+        $failEntries = Get-Content -LiteralPath $failListPath -ErrorAction Stop | ForEach-Object { $_.Trim() } | Where-Object {-not [string]::IsNullOrWhiteSpace($_) }
+        $failEntries = $failEntries | Where-Object { $_ -and $_.ToLowerInvariant() -ne 'none' }
+        $failEntries = @($failEntries)
+    } catch {
+        Write-Warn ("unable to read fail list {0}: {1}" -f $failListPath, $_.Exception.Message)
+        $failEntries = @()
+    }
+}
+
+$hasFailingTests = ($failEntries.Count -gt 0)
+$skipIterate = ($failListPath -and -not $hasFailingTests)
+if ($skipIterate) {
+    Write-Info "no failing tests detected; skipping iterate."
+}
+
 foreach ($name in $requiredFiles) {
     try {
         $hit = Find-Ndjson -Name $name
@@ -164,15 +272,28 @@ foreach ($name in $requiredFiles) {
     }
 }
 
+if (-not $skipIterate -and $limitReached) {
+    # derived requirement: CI currently allows one autopatch per workflow run; avoid
+    # subsequent model calls until the limit is raised.
+    Write-Info ("patch limit reached; applied={0} limit={1}; skipping iterate." -f $patchesApplied, $patchLimit)
+    $skipIterate = $true
+}
+
 $gate = [ordered]@{
     stage = 'iterate-gate'
-    proceed = $true
-    has_failures = ($missing.Count -gt 0)
+    proceed = -not $skipIterate
+    has_failures = $hasFailingTests
     missing_inputs = @($missing)
     found_inputs = $found
     checked_patterns = @($checkedPatterns)
-    note = 'Gate is fail-open by design; iterate proceeds with warnings.'
+    note = if ($skipIterate) {
+        if ($limitReached -and $hasFailingTests) { 'Patch limit reached; iterate skipped.' } elseif ($failListPath -and -not $hasFailingTests) { 'Fail list reported no failing tests; iterate skipped.' } else { 'Gate is fail-open by design; iterate proceeds with warnings.' }
+    } else { 'Gate is fail-open by design; iterate proceeds with warnings.' }
+    failing_tests = @($failEntries)
+    patch_limit = $patchLimit
+    patches_applied_count = $patchesApplied
 }
+if ($failListPath) { $gate.fail_list_path = $failListPath }
 
 $gatePath = Join-Path -Path $OutDir -ChildPath 'iterate_gate.json'
 $gate | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $gatePath -Encoding UTF8

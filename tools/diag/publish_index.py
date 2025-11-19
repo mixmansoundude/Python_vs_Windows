@@ -2829,6 +2829,12 @@ def _bundle_links(context: Context) -> List[dict]:
     if entry:
         entries.append(entry)
 
+    if context.batch_run_id and context.batch_run_attempt:
+        batch_zip = diag / "logs" / f"batch-check-{context.batch_run_id}-{context.batch_run_attempt}.zip"
+        entry = _link_entry(diag, "Batch-check logs zip", batch_zip)
+        if entry:
+            entries.append(entry)
+
     iterate_dir = context.iterate_discovered_dir
     if iterate_dir:
         ci_logs = iterate_dir / "logs.zip"

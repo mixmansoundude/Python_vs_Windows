@@ -370,6 +370,25 @@ $iterateZipName = "iterate-$Run-$Att.zip"
 $iterateZipPath = if ($logDir) { Join-Path $logDir $iterateZipName } else { $null }
 $iterateSentinelPath = if ($logDir) { Join-Path $logDir 'iterate.MISSING.txt' } else { $null }
 $iterateErrorPath = if ($logDir) { Join-Path $logDir 'iterate-log-error.txt' } else { $null }
+$batchRunAttempt = if ($BatchRunAttempt) { $BatchRunAttempt } else { 'n/a' }
+$batchZipName = $null
+$batchZipPath = $null
+$batchZipReady = $false
+$batchSentinelPath = if ($logDir) { Join-Path $logDir 'batch-check.MISSING.txt' } else { $null }
+
+if ($BatchRunId) {
+    $batchZipName = "batch-check-$BatchRunId-$batchRunAttempt.zip"
+    if ($logDir) { $batchZipPath = Join-Path $logDir $batchZipName }
+    if ($batchZipPath -and (Test-Path $batchZipPath)) {
+        try {
+            $info = Get-Item -LiteralPath $batchZipPath -ErrorAction Stop
+            if ($info -and $info.Length -gt 0) {
+                $batchZipReady = $true
+                if ($batchSentinelPath) { Remove-Item -LiteralPath $batchSentinelPath -ErrorAction SilentlyContinue }
+            }
+        } catch {}
+    }
+}
 
 $zipReady = $false
 if ($iterateZipPath -and (Test-Path $iterateZipPath)) {
@@ -470,6 +489,38 @@ if (-not $zipReady -and $logDir -and -not $preferLocalIterate) {
     }
 }
 
+$batchDownloadAttempt = if ($batchRunAttempt -and $batchRunAttempt -ne 'n/a') { $batchRunAttempt } else { '1' }
+if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a' -and $batchZipPath) {
+    $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
+    $repoSlug = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } elseif ($Repo) { $Repo } else { $null }
+    if ($token -and $repoSlug -and $repoSlug.Contains('/')) {
+        $parts = $repoSlug.Split('/', 2)
+        $owner = $parts[0]
+        $repoName = $parts[1]
+        $downloadUri = "https://api.github.com/repos/$owner/$repoName/actions/runs/$BatchRunId/attempts/$batchDownloadAttempt/logs"
+
+        Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
+        try {
+            Invoke-WebRequest -Uri $downloadUri -Headers @{
+                Authorization          = "Bearer $token"
+                'User-Agent'           = 'publish_index.ps1 diagnostics'
+                Accept                 = 'application/vnd.github+json'
+                'X-GitHub-Api-Version' = '2022-11-28'
+            } -OutFile $batchZipPath -ErrorAction Stop
+
+            $info = Get-Item -LiteralPath $batchZipPath -ErrorAction Stop
+            if ($info -and $info.Length -gt 0) {
+                $batchZipReady = $true
+                if ($batchSentinelPath) { Remove-Item -LiteralPath $batchSentinelPath -ErrorAction SilentlyContinue }
+            } else {
+                Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
+            }
+        } catch {
+            Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 $iterateExtracted = $false
 if ($zipReady -and $Artifacts -and $iterateZipPath) {
     $iterateRoot = Join-Path $Artifacts 'iterate'
@@ -504,21 +555,19 @@ if (-not $iterateZipPath -or -not (Test-Path $iterateZipPath)) {
     $iterateStatus = 'missing (see logs/iterate.MISSING.txt)'
 }
 
-$batchRunAttempt = if ($BatchRunAttempt) { $BatchRunAttempt } else { 'n/a' }
-$batchZipName = $null
 $batchStatusOverride = $env:BATCH_STATUS_OVERRIDE
 $batchStatus = 'missing'
 if ($batchStatusOverride) {
     $batchStatus = $batchStatusOverride
 } elseif ($BatchRunId) {
-    $batchZipName = "batch-check-$BatchRunId-$batchRunAttempt.zip"
-    $batchZipPath = if ($Diag) { Join-Path $Diag ('logs\' + $batchZipName) } else { $null }
+    if (-not $batchZipName) { $batchZipName = "batch-check-$BatchRunId-$batchRunAttempt.zip" }
+    if (-not $batchZipPath -and $Diag -and $batchZipName) { $batchZipPath = Join-Path $Diag ('logs\' + $batchZipName) }
     if ($batchZipPath -and (Test-Path $batchZipPath)) {
         $batchStatus = "found (run $BatchRunId, attempt $batchRunAttempt)"
     } else {
         $batchStatus = "missing archive (run $BatchRunId, attempt $batchRunAttempt)"
     }
-} elseif ($Diag -and (Test-Path (Join-Path $Diag 'logs\batch-check.MISSING.txt'))) {
+} elseif ($Diag -and $batchSentinelPath -and (Test-Path $batchSentinelPath)) {
     $batchStatus = 'missing (see logs/batch-check.MISSING.txt)'
 }
 

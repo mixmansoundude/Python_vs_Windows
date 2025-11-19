@@ -47,6 +47,37 @@ def _collect_from_artifacts(batch_root: Path, collected: List[str], debug_lines:
         debug_lines.append("")
 
 
+def _sync_lane_verdict(batch_root: Path, has_failures: bool, debug_lines: List[str]) -> None:
+    if not batch_root.is_dir():
+        return
+
+    for verdict in batch_root.rglob("lane_verdict.json"):
+        try:
+            text = verdict.read_text(encoding="utf-8")
+            data = json.loads(text)
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        current = data.get("has_failures")
+        if current is not None and bool(current) == has_failures:
+            continue
+
+        data["has_failures"] = has_failures
+        try:
+            verdict.write_text(
+                json.dumps(data, ensure_ascii=False, separators=(',', ':')),
+                encoding="utf-8",
+            )
+        except OSError:
+            continue
+
+        try:
+            rel = verdict.relative_to(batch_root).as_posix()
+        except ValueError:
+            rel = verdict.as_posix()
+        debug_lines.append(f"lane_verdict:{rel}\thas_failures={has_failures}")
+
+
 def _extract_failure_id(root: object) -> Optional[str]:
     if root is None:
         return None
@@ -232,6 +263,7 @@ def generate_fail_list(diag_root: Path) -> None:
     unique = sorted({item for item in collected if item})
     real_items = [item for item in unique if item.lower() != _PLACEHOLDER]
     final = real_items or (unique if unique else [_PLACEHOLDER])
+    has_failures = bool(real_items)
 
     target.parent.mkdir(parents=True, exist_ok=True)
     text = "\n".join(final)
@@ -241,6 +273,8 @@ def generate_fail_list(diag_root: Path) -> None:
         existing = None
     if existing != text:
         target.write_text(text, encoding="utf-8")
+
+    _sync_lane_verdict(batch_root, has_failures, debug_lines)
 
     # Professional note: CI can drop placeholder "none" files into artifacts before
     # this publisher reruns the extractor. Synchronizing the staged copies keeps the
