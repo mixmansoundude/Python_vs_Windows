@@ -1622,7 +1622,19 @@ def _diff_produced(iterate_dir: Optional[Path], iterate_temp: Optional[Path]) ->
 def _gather_ndjson_summaries(artifacts: Optional[Path]) -> List[Path]:
     if not artifacts or not artifacts.exists():
         return []
-    return sorted(artifacts.rglob("ndjson_summary.txt"))
+
+    summaries = sorted(artifacts.rglob("ndjson_summary.txt"))
+    if not summaries:
+        return []
+
+    real_lanes = [path for path in summaries if "real" in path.as_posix().lower()]
+    if real_lanes:
+        # derived requirement: cache and real lanes emit identical assertion rows; prefer the real
+        # lane for the main table so diagnostics avoid double-listing the same checks when both
+        # lanes succeed.
+        return real_lanes
+
+    return summaries
 
 def _diag_files(diag: Optional[Path]) -> List[Path]:
     if not diag or not diag.exists():
@@ -2192,36 +2204,33 @@ def _summarize_ndjson_file(path: Path) -> Optional[dict]:
 
 def _gather_real_lane_summaries(diag: Optional[Path]) -> List[dict]:
     results: List[dict] = []
-    seen: set[Path] = set()
+    if not diag:
+        return results
+
     targets = [
         "ci_test_results.ndjson",
         "~test-results.ndjson",
     ]
+    search_roots = [diag / "_artifacts" / "batch-check", diag / "logs"]
 
     for filename in targets:
-        path = _find_ndjson_candidate(diag, filename, prefer_real=True)
-        lane = "real"
-        if not path:
-            path = _find_ndjson_candidate(diag, filename, prefer_real=False)
-            if path:
+        per_lane: dict[str, Path] = {}
+        for root in search_roots:
+            if not root or not root.exists():
+                continue
+            for path in sorted(root.rglob(filename)):
                 rel = _relative_to_diag(path, diag)
-                if rel and "cache" in rel.lower():
-                    lane = "cache"
-        elif diag:
-            rel = _relative_to_diag(path, diag)
-            if rel and "cache" in rel.lower():
-                lane = "cache"
-        if not path or path in seen:
-            continue
-        summary = _summarize_ndjson_file(path)
-        if not summary:
-            continue
-        label_prefix = lane
-        summary["label"] = f"{label_prefix} {filename}"
-        summary["path"] = path
-        summary["lane"] = lane
-        results.append(summary)
-        seen.add(path)
+                lane = "cache" if rel and "cache" in rel.lower() else "real"
+                per_lane.setdefault(lane, path)
+
+        for lane, path in per_lane.items():
+            summary = _summarize_ndjson_file(path)
+            if not summary:
+                continue
+            summary["label"] = f"{lane} {filename}"
+            summary["path"] = path
+            summary["lane"] = lane
+            results.append(summary)
 
     return results
 
@@ -2819,6 +2828,12 @@ def _bundle_links(context: Context) -> List[dict]:
     entry = _link_entry(diag, "Iterate logs zip", iterate_zip)
     if entry:
         entries.append(entry)
+
+    if context.batch_run_id and context.batch_run_attempt:
+        batch_zip = diag / "logs" / f"batch-check-{context.batch_run_id}-{context.batch_run_attempt}.zip"
+        entry = _link_entry(diag, "Batch-check logs zip", batch_zip)
+        if entry:
+            entries.append(entry)
 
     iterate_dir = context.iterate_discovered_dir
     if iterate_dir:

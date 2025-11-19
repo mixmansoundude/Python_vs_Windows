@@ -272,15 +272,18 @@ if defined HP_SKIP_PIPREQS (
   goto :after_pipreqs_run
 )
 
-if defined HP_PIPREQS_IGNORE (
-  :: pipreqs flags are locked by CI (pipreqs.flags gate).
-  :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-  "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
-) else (
-  :: pipreqs flags are locked by CI (pipreqs.flags gate).
-  :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
+rem pipreqs flags are locked by CI (pipreqs.flags gate).
+rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
+if defined HP_PIPREQS_IGNORE goto :pipreqs_direct_with_ignore
+rem pipreqs flags are locked by CI (pipreqs.flags gate).
+rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
   "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
-)
+goto :pipreqs_direct_done
+:pipreqs_direct_with_ignore
+rem pipreqs flags are locked by CI (pipreqs.flags gate).
+rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
+"%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+:pipreqs_direct_done
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
 set "HP_PIPREQS_RC=%errorlevel%"
 if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_TARGET_WORK%" (
@@ -499,36 +502,7 @@ if errorlevel 1 call :die "[ERROR] Could not determine entry point"
 if "%HP_ENTRY%"=="" (
   call :log "[INFO] No entry script detected; skipping PyInstaller packaging."
 ) else (
-  call :record_chosen_entry "%HP_ENTRY%"
-  call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
-  rem derived requirement: execute the smoke command inline so cmd, not our logging, owns redirection parsing.
-  >> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
-  "%HP_PY%" "%HP_ENTRY%" 1> "~run.out.txt" 2> "~run.err.txt"
-  set "HP_SMOKE_RC=%ERRORLEVEL%"
-  call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
-  if not "%HP_SMOKE_RC%"=="0" call :die "[ERROR] Entry script execution failed."
-  rem derived requirement: the CI harness inspects the breadcrumb log to flag missing entries.
-  set "HP_BREADCRUMB=~entry1_bootstrap.log"
-  if exist "tests\~entry1\" set "HP_BREADCRUMB=tests\~entry1\~entry1_bootstrap.log"
-  if not exist "%HP_BREADCRUMB%" (
-    rem derived requirement: create the breadcrumb when the smoke run succeeds so diagnostics stay consistent.
-    for %%B in ("%HP_BREADCRUMB%") do if not "%%~dpB"=="" if not exist "%%~dpB" mkdir "%%~dpB" >nul 2>&1
-    type nul > "%HP_BREADCRUMB%"
-  )
-  if exist "%HP_BREADCRUMB%" (
-    call :log "[INFO] Entry smoke breadcrumb exists: %HP_BREADCRUMB%"
-  ) else (
-    call :log "[WARN] Entry smoke missing breadcrumb: %HP_BREADCRUMB%"
-  )
-  if "%HP_ENV_MODE%"=="system" (
-    call :log "[INFO] System fallback: skipping PyInstaller packaging."
-  ) else (
-    "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
-    "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
-    if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
-    if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
-    call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
-  )
+  call :run_entry_smoke
 )
 
 if /i "%HP_BOOTSTRAP_STATE%"=="ok" (
@@ -851,6 +825,31 @@ exit /b 0
 rem %~1 is the RELATIVE crumb (what we want to show users and tests)
 set "HP_CRUMB=%~1"
 if "%HP_CRUMB%"=="" exit /b 0
+set "HP_CRUMB_SHOW=%HP_CRUMB%"
+set "HP_CRUMB_DRIVE="
+for %%A in ("%HP_CRUMB_SHOW%") do (
+  if not "%%~dA"=="" set "HP_CRUMB_DRIVE=%%~dA"
+)
+if not defined HP_CRUMB_DRIVE (
+  set "HP_CRUMB_FIRST=%HP_CRUMB_SHOW:~0,1%"
+  if not "%HP_CRUMB_FIRST%"=="\" (
+    if not "%HP_CRUMB_FIRST%"=="/" (
+      set "HP_CRUMB_PREFIX2=%HP_CRUMB_SHOW:~0,2%"
+      if /I not "%HP_CRUMB_PREFIX2%"==".\" (
+        if not "%HP_CRUMB_PREFIX2%"=="./" (
+          if not "%HP_CRUMB_PREFIX2%"==".." (
+            set "HP_CRUMB_SHOW=.\%HP_CRUMB_SHOW%"
+          )
+        )
+      )
+    )
+  )
+)
+set "HP_CRUMB=%HP_CRUMB_SHOW%"
+set "HP_CRUMB_DRIVE="
+set "HP_CRUMB_FIRST="
+set "HP_CRUMB_PREFIX2="
+set "HP_CRUMB_SHOW="
 
 rem Echo to console (no punctuation at end)
 echo Chosen entry: %HP_CRUMB%
@@ -859,6 +858,38 @@ rem Append same line to setup log
 
 rem If we also need an absolute path for execution, set HP_ENTRY elsewhere
 rem and keep the echo outside any ( ... ) block.
+exit /b 0
+:run_entry_smoke
+call :record_chosen_entry "%HP_ENTRY%"
+call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
+rem derived requirement: execute the smoke command inline so cmd, not our logging, owns redirection parsing.
+>> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
+"%HP_PY%" "%HP_ENTRY%" 1> "~run.out.txt" 2> "~run.err.txt"
+set "HP_SMOKE_RC=%ERRORLEVEL%"
+call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
+if not "%HP_SMOKE_RC%"=="0" call :die "[ERROR] Entry script execution failed."
+rem derived requirement: the CI harness inspects the breadcrumb log to flag missing entries.
+set "HP_BREADCRUMB=~entry1_bootstrap.log"
+if exist "tests\~entry1\" set "HP_BREADCRUMB=tests\~entry1\~entry1_bootstrap.log"
+if not exist "%HP_BREADCRUMB%" (
+  rem derived requirement: create the breadcrumb when the smoke run succeeds so diagnostics stay consistent.
+  for %%B in ("%HP_BREADCRUMB%") do if not "%%~dpB"=="" if not exist "%%~dpB" mkdir "%%~dpB" >nul 2>&1
+  type nul > "%HP_BREADCRUMB%"
+)
+if exist "%HP_BREADCRUMB%" (
+  call :log "[INFO] Entry smoke breadcrumb exists: %HP_BREADCRUMB%"
+) else (
+  call :log "[WARN] Entry smoke missing breadcrumb: %HP_BREADCRUMB%"
+)
+if "%HP_ENV_MODE%"=="system" (
+  call :log "[INFO] System fallback: skipping PyInstaller packaging."
+) else (
+  "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
+  "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
+  if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
+  call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+)
 exit /b 0
 :write_pipreqs_summary
 if "%HP_JOB_SUMMARY%"=="" exit /b 0

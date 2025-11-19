@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -105,6 +106,24 @@ class NdjsonFailListScriptTest(unittest.TestCase):
                 sorted(lines),
             )
 
+    def test_lane_verdict_is_normalized_by_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp)
+            batch_root = diag_root / "_artifacts" / "batch-check"
+            batch_root.mkdir(parents=True, exist_ok=True)
+            (batch_root / "failing-tests.txt").write_text("none\n", encoding="utf-8")
+
+            lane_verdict = batch_root / "lane_verdict.json"
+            lane_verdict.write_text(
+                json.dumps({"lane": "cache", "has_failures": True}),
+                encoding="utf-8",
+            )
+
+            self._run_script(diag_root)
+
+            updated = json.loads(lane_verdict.read_text(encoding="utf-8"))
+            self.assertFalse(updated.get("has_failures", True))
+
 
 class GenerateFailListHelperTest(unittest.TestCase):
     def _read_lines(self, diag_root: Path) -> list[str]:
@@ -169,6 +188,24 @@ class GenerateFailListHelperTest(unittest.TestCase):
             self.assertEqual(["none"], lines)
             debug_lines = self._read_debug(diag_root)
             self.assertEqual(["none"], debug_lines)
+
+    def test_lane_verdict_is_normalized_when_placeholder_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp)
+            batch_root = diag_root / "_artifacts" / "batch-check"
+            batch_root.mkdir(parents=True, exist_ok=True)
+            (batch_root / "failing-tests.txt").write_text("none\n", encoding="utf-8")
+
+            lane_verdict = batch_root / "lane_verdict.json"
+            lane_verdict.write_text(
+                json.dumps({"lane": "real", "has_failures": True}),
+                encoding="utf-8",
+            )
+
+            generate_fail_list(diag_root)
+
+            updated = json.loads(lane_verdict.read_text(encoding="utf-8"))
+            self.assertFalse(updated.get("has_failures", True))
 
 
 if __name__ == "__main__":

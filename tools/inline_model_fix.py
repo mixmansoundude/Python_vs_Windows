@@ -180,6 +180,67 @@ def ensure_ctx(repo_root: Path) -> Path:
     return ctx_dir
 
 
+
+def _load_fail_list_from_candidates(candidates: Iterable[Path]) -> Tuple[Optional[Path], List[str]]:
+    seen: Set[Path] = set()
+    for base in candidates:
+        try:
+            resolved = base.resolve()
+        except OSError:
+            continue
+        if resolved in seen or not resolved.exists():
+            continue
+        seen.add(resolved)
+
+        direct = resolved / "batchcheck_failing.txt"
+        target: Optional[Path] = None
+        if direct.exists():
+            target = direct
+        else:
+            try:
+                target = next(resolved.rglob("batchcheck_failing.txt"))
+            except StopIteration:
+                target = None
+        if not target:
+            continue
+
+        try:
+            lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return target, []
+        entries = [
+            line.strip()
+            for line in lines
+            if line.strip() and line.strip().lower() != "none"
+        ]
+        return target, entries
+    return None, []
+
+
+def discover_fail_list(repo_root: Path) -> Tuple[Optional[Path], List[str]]:
+    candidates: List[Path] = []
+    diag_env = os.environ.get("DIAG")
+    if diag_env:
+        candidates.append(Path(diag_env))
+    for rel in ("diag", "_mirrors", "_ctx", "_ctx/attached", "_ctx/attached/_mirrors"):
+        candidates.append(repo_root / rel)
+    for rel in ("_artifacts", "_artifacts/batch-check"):
+        # derived requirement: runs like 19451761905-1 mirrored an empty fail list
+        # into the batch-check artifact root; include it so the call phase can honor
+        # the authoritative "none" sentinel before any model traffic occurs.
+        candidates.append(repo_root / rel)
+    candidates.append(repo_root)
+    workspace_env = os.environ.get("GITHUB_WORKSPACE")
+    if workspace_env:
+        workspace_path = Path(workspace_env)
+        candidates.append(workspace_path)
+        candidates.append(workspace_path / "diag")
+    runner_temp = os.environ.get("RUNNER_TEMP")
+    if runner_temp:
+        candidates.append(Path(runner_temp))
+    return _load_fail_list_from_candidates(candidates)
+
+
 _APPLY_PATCH_MODULE: Optional[ModuleType] = None
 
 
@@ -468,6 +529,61 @@ def _collect_ndjson_summaries(ctx_dir: Path) -> List[Tuple[str, str]]:
         label = path.relative_to(ctx_dir).as_posix()
         summaries.append((label, body))
     return summaries
+
+
+def _first_failing_check(search_root: Path, notes: List[str]) -> Optional[dict]:
+    """Locate the first failing NDJSON entry and surface enough detail for triage.
+
+    Professional note: runs like 19411179602-1 produced NDJSON summaries that
+    captured the real envsmoke failures while the generic failpack log only
+    mentioned the missing Python heuristic. Keep this parser minimal to avoid
+    disturbing the existing attachment contract while still extracting a single
+    failing check for the guide and log hint.
+    """
+
+    def _is_ndjson_candidate(path: Path) -> bool:
+        name = path.name.lower()
+        return "ndjson" in name or path.suffix.lower() == ".ndjson"
+
+    for path in sorted(search_root.rglob("*")):
+        if not path.is_file() or not _is_ndjson_candidate(path):
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as exc:
+            notes.append(f"ndjson_scan_error={path.relative_to(search_root)} error={exc}")
+            continue
+        for line in lines:
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("pass") is not False:
+                continue
+            failing_id = payload.get("id")
+            if failing_id:
+                notes.append(
+                    "first_failing_check="
+                    + str(failing_id)
+                    + f" source={path.relative_to(search_root)}"
+                )
+            return {
+                "id": payload.get("id"),
+                "desc": payload.get("desc"),
+                "command": payload.get("command") or payload.get("cmd"),
+                "exit_code": payload.get("exitCode") or payload.get("exit_code"),
+                "source": path,
+            }
+    notes.append("first_failing_check=not_found")
+    return None
+
+
+def _map_failing_check_to_hints(failing_id: Optional[str]) -> tuple[Optional[Path], Optional[str]]:
+    if failing_id in {"self.env.smoke.conda", "self.env.smoke.run"}:
+        return Path("tests/selfapps_envsmoke.ps1"), "tests/~envsmoke/~envsmoke_bootstrap.log"
+    return None, None
 
 
 def _build_inlined_context(repo_root: Path, ctx_dir: Path) -> Tuple[str, int, int]:
@@ -947,6 +1063,28 @@ def append_note(ctx_dir: Path, message: str) -> None:
         handle.write(message + "\n")
 
 
+def _load_patch_state(ctx_dir: Path) -> Tuple[int, int]:
+    """Return (current_patch_count, patch_limit) for this workflow run."""
+
+    limit_raw = os.environ.get("PATCHES_PER_RUN_LIMIT", "1")
+    try:
+        patch_limit = int(limit_raw)
+    except ValueError:
+        patch_limit = 1
+    patch_limit = max(patch_limit, 1)
+
+    count = 0
+    decision_path = ctx_dir / "decision.json"
+    if decision_path.exists():
+        try:
+            prior = json.loads(decision_path.read_text(encoding="utf-8"))
+            count = int(prior.get("patches_applied_count", 0))
+        except Exception as exc:  # pragma: no cover - defensive against corrupt artifacts
+            append_note(ctx_dir, f"patch_count_read_error={exc}")
+            count = 0
+    return max(count, 0), patch_limit
+
+
 def stage_phase(args: argparse.Namespace) -> None:
     repo_root = Path.cwd()
     ctx_dir = repo_root / "_ctx"
@@ -1003,6 +1141,8 @@ def stage_phase(args: argparse.Namespace) -> None:
 
     search_root = logs_dir if logs_available else fallback_root
 
+    failing_check = _first_failing_check(search_root, notes)
+
     failure_path: Optional[Path] = None
     if logs_available or fallback_names:
         failure_path = find_first_failure(search_root, notes)
@@ -1030,7 +1170,21 @@ def stage_phase(args: argparse.Namespace) -> None:
         raise SystemExit("No logs found to build failpack.")
 
     failpack_path = ctx_dir / "failpack.log"
-    failpack_path.write_text(read_text(failure_path), encoding="utf-8")
+    failpack_body = read_text(failure_path)
+    if failing_check:
+        summary_lines = ["First failing check (from ci_test_results NDJSON):"]
+        if failing_check.get("id"):
+            summary_lines.append(f"id: {failing_check['id']}")
+        if failing_check.get("desc"):
+            summary_lines.append(f"desc: {failing_check['desc']}")
+        if failing_check.get("command"):
+            summary_lines.append(f"command: {failing_check['command']}")
+        if failing_check.get("exit_code") is not None:
+            summary_lines.append(f"exitCode: {failing_check['exit_code']}")
+        summary_lines.append("")
+        summary_lines.append("-- failpack.log follows --")
+        failpack_body = "\n".join(summary_lines) + "\n\n" + failpack_body
+    failpack_path.write_text(failpack_body, encoding="utf-8")
     relative_source = failure_path
     try:
         relative_source = failure_path.relative_to(search_root)
@@ -1039,14 +1193,23 @@ def stage_phase(args: argparse.Namespace) -> None:
     notes.append(f"failpack_source={relative_source}")
 
     guide = ctx_dir / "guide.json"
-    primary, line = derive_primary(read_text(failpack_path), repo_root, notes)
+    primary_override, log_hint_override = _map_failing_check_to_hints(
+        failing_check.get("id") if failing_check else None
+    )
+    if primary_override:
+        # Professional note: envsmoke failures need to point at the harness that actually
+        # runs the check, otherwise the model can loop on why_no_diff replies. Keep the
+        # existing guide schema intact while steering the primary file to the failing lane.
+        primary, line = primary_override, None
+    else:
+        primary, line = derive_primary(failpack_body, repo_root, notes)
     guide.write_text(
         json.dumps(
             {
                 "primary_file": str(primary).replace("\\", "/"),
                 "line": line,
                 "run_id": args.run_id,
-                "log_hint": "failpack.log",
+                "log_hint": log_hint_override or "failpack.log",
             },
             indent=2,
         )
@@ -1259,6 +1422,7 @@ def _record_decision(
     patch_text: Optional[str],
     model: Optional[str] = None,
     rationale: Optional[str] = None,
+    patch_count: int = 0,
 ) -> None:
     # derived requirement: run 19208683015-1 produced discovery-only iterate zips;
     # keep human-readable breadcrumbs in every outcome to avoid empty artifacts.
@@ -1266,7 +1430,11 @@ def _record_decision(
 
     # derived requirement: runs like 19218551964-1 demanded JSON breadcrumbs so
     # downstream tooling can parse iterate outcomes deterministically.
-    decision_payload = {"status": status, "reason": reason or "none"}
+    decision_payload = {
+        "patches_applied_count": max(patch_count, 0),
+        "reason": reason or "none",
+        "status": status,
+    }
     decision_path = ctx_dir / "decision.json"
     decision_path.write_text(
         json.dumps(decision_payload, indent=2, sort_keys=True) + "\n",
@@ -1330,6 +1498,62 @@ def call_phase(args: argparse.Namespace) -> None:
         notes_path.parent.mkdir(parents=True, exist_ok=True)
         notes_path.write_text("", encoding="utf-8")
 
+    current_patch_count, patch_limit = _load_patch_state(ctx_dir)
+    append_note(
+        ctx_dir,
+        (
+            "patch_limit_state="
+            f"applied={current_patch_count};limit={patch_limit}"
+        ),
+    )
+    existing_response: Optional[dict] = None
+    existing_patch_text: Optional[str] = None
+    response_path = ctx_dir / "response.json"
+    if response_path.exists():
+        try:
+            existing_response = json.loads(response_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing_response = None
+    patch_path = ctx_dir / "fix.patch"
+    if patch_path.exists():
+        try:
+            existing_patch_text = patch_path.read_text(encoding="utf-8")
+        except OSError:
+            existing_patch_text = None
+
+    fail_list_path, fail_entries = discover_fail_list(repo_root)
+    if fail_list_path:
+        append_note(ctx_dir, f"fail_list_path={fail_list_path}")
+        append_note(ctx_dir, f"fail_list_entries={len(fail_entries)}")
+    if fail_list_path and not fail_entries:
+        append_note(ctx_dir, "iterate_skip=no_failing_tests")
+        _record_decision(
+            ctx_dir,
+            status="skipped",
+            reason="no_failing_tests",
+            response_payload=None,
+            patch_text="",
+            model=args.model,
+            patch_count=current_patch_count,
+        )
+        return
+
+    if current_patch_count >= patch_limit:
+        # derived requirement: CI currently permits exactly one applied patch per run;
+        # short-circuit additional model calls so follow-up failures remain manual until
+        # the limit increases.
+        append_note(ctx_dir, "iterate_skip=patch_limit_reached")
+        _record_decision(
+            ctx_dir,
+            status="skipped",
+            reason="patch_limit_reached",
+            response_payload=existing_response,
+            patch_text=existing_patch_text or "",
+            model=args.model,
+            patch_count=current_patch_count,
+        )
+        return
+
     plan_path = ctx_dir / "upload_plan.json"
     if not plan_path.exists():
         append_note(ctx_dir, "openai_call=skipped_missing_plan")
@@ -1340,6 +1564,7 @@ def call_phase(args: argparse.Namespace) -> None:
             response_payload=None,
             patch_text="",
             model=args.model,
+            patch_count=current_patch_count,
         )
         return
 
@@ -1356,6 +1581,7 @@ def call_phase(args: argparse.Namespace) -> None:
             response_payload=None,
             patch_text="",
             model=args.model,
+            patch_count=current_patch_count,
         )
         return
 
@@ -1432,6 +1658,7 @@ def call_phase(args: argparse.Namespace) -> None:
                 response_payload=None,
                 patch_text="",
                 model=args.model,
+                patch_count=current_patch_count,
             )
             return
     else:
@@ -1716,8 +1943,11 @@ def call_phase(args: argparse.Namespace) -> None:
             final_reason_note = "patch_apply_failed_after_escalation"
             break
 
+        escalate_reason = "no_diff"
         attempt_status = "no_diff"
         log_attempt(attempt_no, cap_desc, escalate_reason, attempt_status)
+        if idx + 1 < len(token_plan):
+            continue
         accepted_patch_details = candidate
         break
 
@@ -1738,6 +1968,7 @@ def call_phase(args: argparse.Namespace) -> None:
             response_payload=None,
             patch_text="",
             model=args.model,
+            patch_count=current_patch_count,
         )
         record_final_status()
         return
@@ -1767,6 +1998,9 @@ def call_phase(args: argparse.Namespace) -> None:
     if format_issue == "json_only":
         append_note(ctx_dir, "openai_patch=json_only")
 
+    patch_count = 1 if patch.strip() else 0
+    total_patch_count = current_patch_count + patch_count
+
     if patch.strip():
         append_note(ctx_dir, "openai_patch=received")
         _record_decision(
@@ -1777,6 +2011,7 @@ def call_phase(args: argparse.Namespace) -> None:
             patch_text=patch,
             model=args.model,
             rationale=rationale_summary,
+            patch_count=total_patch_count,
         )
     else:
         if format_issue == "json_only":
@@ -1790,6 +2025,7 @@ def call_phase(args: argparse.Namespace) -> None:
                 patch_text="",
                 model=args.model,
                 rationale=rationale_summary,
+                patch_count=total_patch_count,
             )
         else:
             # derived requirement: run 19211170783-1 surfaced a zero-byte iterate bundle;
@@ -1803,6 +2039,7 @@ def call_phase(args: argparse.Namespace) -> None:
                 patch_text="",
                 model=args.model,
                 rationale=rationale_summary,
+                patch_count=total_patch_count,
             )
 
     record_final_status()

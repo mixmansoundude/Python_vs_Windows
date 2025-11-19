@@ -118,6 +118,8 @@ class QuickLinksRenderingTest(unittest.TestCase):
         return Context(
             diag=self.diag,
             artifacts=None,
+            artifacts_override=None,
+            downloaded_iter_root=None,
             repo="owner/repo",
             branch="main",
             sha="deadbeef",
@@ -259,18 +261,77 @@ class QuickLinksRenderingTest(unittest.TestCase):
         self.assertIn("failure.two", html)
         self.assertIn("failing-tests.txt", html)
 
+    def test_two_lane_ndjson_prefers_real_table_and_reports_both(self) -> None:
+        real_root = self.diag / "_artifacts" / "batch-check" / "diag-selftest-real-1"
+        real_logs = real_root / "logs"
+        real_logs.mkdir(parents=True, exist_ok=True)
+        (real_logs / "ci_test_results.ndjson").write_text(
+            '{"id":"real.a","pass":true}\n{"id":"real.b","pass":false}\n',
+            encoding="utf-8",
+        )
+
+        cache_root = self.diag / "_artifacts" / "batch-check" / "diag-selftest-cache-1"
+        cache_logs = cache_root / "logs"
+        cache_logs.mkdir(parents=True, exist_ok=True)
+        (cache_logs / "ci_test_results.ndjson").write_text(
+            '{"id":"cache.a","pass":true}\n{"id":"cache.b","pass":true}\n',
+            encoding="utf-8",
+        )
+
+        artifacts_root = self.diag / "_artifacts"
+        real_summary = real_root / "ndjson_summary.txt"
+        cache_summary = cache_root / "ndjson_summary.txt"
+        real_summary.write_text("REAL_SUMMARY_LINE\n", encoding="utf-8")
+        cache_summary.write_text("CACHE_SUMMARY_LINE\n", encoding="utf-8")
+
+        context = self._make_context()
+        context.artifacts = artifacts_root
+
+        markdown = _build_markdown(
+            context,
+            iterate_dir=None,
+            iterate_temp=None,
+            built_utc="2024-01-01T00:00:00Z",
+            built_ct="2023-12-31T18:00:00-06:00",
+            response_data=None,
+            status_data=None,
+            why_outcome=None,
+        )
+
+        self.assertIn("## NDJSON (selected lane: cache+real)", markdown)
+        self.assertIn("- real ci_test_results.ndjson: rows=2 pass=1 fail=1", markdown)
+        self.assertIn("- cache ci_test_results.ndjson: rows=2 pass=2 fail=0", markdown)
+        self.assertIn("REAL_SUMMARY_LINE", markdown)
+        self.assertNotIn("CACHE_SUMMARY_LINE", markdown)
+
+        html = _write_html(
+            context,
+            iterate_dir=None,
+            iterate_temp=None,
+            built_utc="2024-01-01T00:00:00Z",
+            built_ct="2023-12-31T18:00:00-06:00",
+            response_data=None,
+            status_data=None,
+            why_outcome=None,
+        )
+
+        self.assertIn("<h2>NDJSON (selected lane: cache+real)</h2>", html)
+        self.assertIn("cache ci_test_results.ndjson", html)
+        self.assertIn("REAL_SUMMARY_LINE", html)
+        self.assertNotIn("CACHE_SUMMARY_LINE", html)
+
     def test_latest_manifest_pointer_files(self) -> None:
         context = self._make_context()
         _write_latest_json(context, None, None, None, None)
 
-        latest_json = self.site / "latest.json"
+        latest_json = self.site / "diag" / "latest.json"
         payload = json.loads(latest_json.read_text(encoding="utf-8"))
         self.assertEqual(
             payload,
             {"run_id": "1234-1", "url": "/repo/diag/1234-1/index.html"},
         )
 
-        latest_txt = (self.site / "latest.txt").read_text(encoding="utf-8")
+        latest_txt = (self.site / "diag" / "latest.txt").read_text(encoding="utf-8")
         self.assertEqual(latest_txt, "/repo/diag/1234-1/index.html\n")
 
     def test_run_index_txt_mirrors_prompt_and_rationale(self) -> None:

@@ -168,3 +168,84 @@ def test_request_payload_strips_responses_extras(tmp_path):
     assert "tool_resources" not in sanitized
     assert "attachments" not in sanitized
     assert sanitized["model"] == "gpt-5-codex"
+
+
+def test_iterate_gate_enforces_patch_limit(tmp_path):
+    workspace = tmp_path
+    ctx_dir = workspace / "_ctx"
+    ctx_dir.mkdir()
+
+    decision_payload = {
+        "patches_applied_count": 1,
+        "reason": "diff_generated",
+        "status": "success",
+    }
+    (ctx_dir / "decision.json").write_text(
+        json.dumps(decision_payload), encoding="utf-8"
+    )
+
+    diag_root = workspace / "diag"
+    diag_root.mkdir()
+    (diag_root / "batchcheck_failing.txt").write_text("case-1\n", encoding="utf-8")
+
+    artifacts_root = workspace / "_artifacts"
+    out_dir = artifacts_root / "iterate"
+
+    cmd = [
+        "pwsh",
+        "-NoLogo",
+        "-NoProfile",
+        "-File",
+        "tools/iterate_gate.ps1",
+        "-Workspace",
+        str(workspace),
+        "-ArtifactsRoot",
+        str(artifacts_root),
+        "-OutDir",
+        str(out_dir),
+    ]
+    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
+
+    gate_path = out_dir / "iterate_gate.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+
+    assert gate["patches_applied_count"] == 1
+    assert gate["patch_limit"] >= 1
+    assert gate["proceed"] is False
+    assert "patch limit" in gate["note"].lower()
+
+
+def test_iterate_gate_skips_when_fail_list_is_none(tmp_path):
+    workspace = tmp_path
+    artifacts_root = workspace / "_artifacts"
+    out_dir = artifacts_root / "iterate"
+
+    batch_root = artifacts_root / "batch-check"
+    batch_root.mkdir(parents=True, exist_ok=True)
+    (batch_root / "failing-tests.txt").write_text("none\n", encoding="utf-8")
+    (batch_root / "lane_verdict.json").write_text(
+        json.dumps({"lane": "cache", "has_failures": True}),
+        encoding="utf-8",
+    )
+
+    cmd = [
+        "pwsh",
+        "-NoLogo",
+        "-NoProfile",
+        "-File",
+        "tools/iterate_gate.ps1",
+        "-Workspace",
+        str(workspace),
+        "-ArtifactsRoot",
+        str(artifacts_root),
+        "-OutDir",
+        str(out_dir),
+    ]
+    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
+
+    gate_path = out_dir / "iterate_gate.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+
+    assert gate["proceed"] is False
+    assert gate["has_failures"] is False
+    assert "no failing tests" in gate["note"].lower()

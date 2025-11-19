@@ -254,7 +254,36 @@ if ($collected.Count -gt 0) {
 }
 
 if (-not $final -or $final.Count -eq 0) { $final = @('none') }
+$hasFailures = (@($final | Where-Object { $_ -and -not ($_ -ieq 'none') })).Count -gt 0
 $final | Set-Content -Encoding UTF8 $target
+
+if (Test-Path $batchRoot) {
+    $laneVerdicts = Get-ChildItem -Path $batchRoot -Recurse -File -Filter 'lane_verdict.json' -ErrorAction SilentlyContinue
+    foreach ($verdict in $laneVerdicts) {
+        try {
+            $raw = Get-Content -LiteralPath $verdict.FullName -Raw -Encoding UTF8 -ErrorAction Stop
+            $data = $raw | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            continue
+        }
+
+        $current = $data.PSObject.Properties["has_failures"]
+        if ($current -and ($current.Value -eq $hasFailures)) { continue }
+
+        # derived requirement: keep lane verdict mirrors aligned with the aggregated fail list
+        # so "has_failures" cannot contradict a placeholder-only fail list.
+        $data | Add-Member -NotePropertyName 'has_failures' -NotePropertyValue $hasFailures -Force
+        try {
+            $json = $data | ConvertTo-Json -Depth 10 -Compress
+            $json | Set-Content -LiteralPath $verdict.FullName -Encoding UTF8
+        } catch {
+            continue
+        }
+
+        $rel = [System.IO.Path]::GetRelativePath($batchRoot, $verdict.FullName)
+        $debugLines.Add([string]::Format('lane_verdict:{0}`thas_failures={1}', $rel, $hasFailures)) | Out-Null
+    }
+}
 
 if ($debugLines.Count -eq 0) {
     $debugLines.Add('none') | Out-Null
