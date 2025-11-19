@@ -113,6 +113,8 @@ if ($preferLocalArtifacts) {
 }
 if (-not $Short) {
     $Short = $SHA
+}
+if ($Short) {
     if ($Short.Length -gt 7) { $Short = $Short.Substring(0,7) }
 }
 
@@ -132,10 +134,14 @@ if (-not $BatchRunId -or $BatchRunId -eq 'n/a') {
     }
 }
 
+$batchRunMatchesCurrent = $false
+if ($BatchRunId -and $BatchRunId -ne 'n/a' -and $Run -and $Run -ne 'n/a' -and $BatchRunId -eq $Run) {
+    $batchRunMatchesCurrent = $true
+}
 if (-not $BatchRunAttempt -or $BatchRunAttempt -eq 'n/a') {
-    if ($BatchRunId -and $BatchRunId -ne 'n/a' -and $Att -and $Att -ne 'n/a') {
+    if ($batchRunMatchesCurrent -and $Att -and $Att -ne 'n/a') {
         $BatchRunAttempt = $Att
-    } elseif ($env:GITHUB_RUN_ATTEMPT) {
+    } elseif ($BatchRunId -and $BatchRunId -ne 'n/a' -and $env:GITHUB_RUN_ID -and [string]$env:GITHUB_RUN_ID -eq $BatchRunId -and $env:GITHUB_RUN_ATTEMPT) {
         $BatchRunAttempt = [string]$env:GITHUB_RUN_ATTEMPT
     }
 }
