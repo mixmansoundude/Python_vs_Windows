@@ -10,25 +10,69 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
   actions: read
   pull-requests: write
   issues: write
 
+concurrency:
+  group: batch-check-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
-  check:
+  selftest:
+    name: Batch syntax/run check (${{ matrix.mode }})
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: cache
+            continue-on-error: true
+          - mode: real
+            continue-on-error: false
+    continue-on-error: ${{ matrix.continue-on-error }}
     runs-on: windows-latest
 
-    concurrency:
-      group: batch-check-${{ github.head_ref || github.ref_name }}
-      cancel-in-progress: true
+    outputs:
+      has_failures: ${{ steps.verdict.outputs.has_failures }}
+
+    env:
+      HP_PIPREQS_VERSION: 0.5.0
+      GH_TOKEN: ${{ github.token }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Restore Miniconda cache
+        if: ${{ matrix.mode == 'cache' }}
+        uses: actions/cache@v4
+        with:
+          path: C:\Users\Public\Documents\Miniconda3
+          key: win-${{ runner.os }}-py311-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
+          restore-keys: |
+            win-${{ runner.os }}-py311-conda-
+
+      - name: Enable Miniconda probe (real mode)
+        if: ${{ matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          'HP_CI_TEST_CONDA_DL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
+      - name: Ensure CI fallbacks are off
+        shell: pwsh
+        run: |
+          echo "HP_ALLOW_VENV_FALLBACK=" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          echo "HP_ALLOW_SYSTEM_FALLBACK=" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       - name: Show environment
         shell: cmd
         run: |
           ver
+          echo Mode: ${{ matrix.mode }}
           echo %COMSPEC%
           echo Workspace: %CD%
           git rev-parse HEAD
@@ -87,6 +131,16 @@ jobs:
             exit /b %RC%
           )
           echo bootstrapped> .ci_bootstrap_marker
+      - name: Append pipreqs summary
+        if: always()
+        shell: pwsh
+        run: |
+          $summary = Join-Path $PWD '~pipreqs.summary.txt'
+          if (Test-Path $summary) {
+            Get-Content -LiteralPath $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          } else {
+            'pipreqs summary not generated.' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
 
       - name: "Self-test: empty repo behavior"
         shell: pwsh
@@ -112,6 +166,24 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_envsmoke.ps1
+
+      - name: Upload CI summary (on failure)
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci_test_summary-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tests/~test-summary.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload CI NDJSON
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci_test_results-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tests/~test-results.ndjson
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Run dynamic tests (if present)
         shell: pwsh
@@ -242,9 +314,33 @@ jobs:
           SCRIPT: run_tests.bat
         run: |
           $ErrorActionPreference = 'Continue'
+          $outDir = Join-Path $PWD '_out'
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $transcriptPath = Join-Path $outDir 'bootstrapper-transcript.txt'
+          $stdoutPath = Join-Path $outDir 'bootstrapper-stdout.txt'
+          $transcriptStarted = $false
+          try {
+            Start-Transcript -Path $transcriptPath -IncludeInvocationHeader | Out-Null
+            $transcriptStarted = $true
+          } catch {
+            Write-Warning ("Start-Transcript failed: {0}" -f $_.Exception.Message)
+          }
           Write-Host "=== BEGIN $pwd\$env:SCRIPT ==="
-          & cmd /c $env:SCRIPT *>&1
+          & cmd /c $env:SCRIPT *>&1 | Tee-Object -FilePath $stdoutPath
           $rc = $LASTEXITCODE
+          if ($transcriptStarted) {
+            try {
+              Stop-Transcript | Out-Null
+            } catch {
+              Write-Warning ("Stop-Transcript failed: {0}" -f $_.Exception.Message)
+            }
+          } elseif (-not (Test-Path $transcriptPath)) {
+            # Professional note: keep a placeholder so diagnostics always find a transcript payload.
+            New-Item -ItemType File -Path $transcriptPath -Force | Out-Null
+          }
+          if (-not (Test-Path $stdoutPath)) {
+            Set-Content -Path $stdoutPath -Value 'bootstrapper stdout missing' -Encoding Ascii
+          }
           if (Test-Path '~bootstrap.status.json') {
             try {
               $status = Get-Content '~bootstrap.status.json' -Raw | ConvertFrom-Json
@@ -259,6 +355,104 @@ jobs:
             Write-Warning "~bootstrap.status.json missing; keeping rc=$rc"
           }
           exit $rc
+
+      - name: Upload bootstrapper tests artifact
+        if: ${{ always() && matrix.mode == 'real' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrapper-tests
+          path: _out/*
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Evaluate iterate gate
+        if: ${{ always() }}
+        id: iterate_gate
+        shell: pwsh
+        run: |
+          function Read-Ndjson([string]$path) {
+            if (-not (Test-Path -LiteralPath $path)) { return @() }
+            try {
+              return Get-Content -Raw -LiteralPath $path -ErrorAction Stop |
+                Select-String -AllMatches '^\{.*\}$' |
+                ForEach-Object {
+                  try { $_.Matches.Value | ConvertFrom-Json } catch { $null }
+                }
+            } catch {
+              return @()
+            }
+          }
+
+          $rows = @()
+          $rows += Read-Ndjson 'tests\~test-results.ndjson'
+          if (-not $rows) { $rows += Read-Ndjson 'ci_test_results.ndjson' }
+
+          $shouldRun = $false
+          $hasRows = ($rows -and $rows.Count -gt 0)
+          if (-not $hasRows) {
+            $shouldRun = $true
+          } else {
+            $allowedStates = @('ok','no_python_files','venv_env','degraded_env')
+            foreach ($row in $rows) {
+              if ($null -eq $row) { continue }
+              if ($row.PSObject.Properties.Name -contains 'pass' -and $row.pass -eq $false) {
+                $shouldRun = $true
+                break
+              }
+              if ($row.PSObject.Properties.Name -contains 'status' -and [string]::IsNullOrWhiteSpace($row.status) -eq $false) {
+                if ([string]$row.status -eq 'failed') {
+                  $shouldRun = $true
+                  break
+                }
+              }
+              if ($row.PSObject.Properties.Name -contains 'details' -and $row.details) {
+                $state = $null
+                if ($row.details -is [psobject] -and $row.details.PSObject.Properties.Name -contains 'state') {
+                  $state = [string]$row.details.state
+                }
+                if ($state -and $state -notin $allowedStates -and (
+                    $row.id -eq 'bootstrap.state' -or $row.id -eq 'self.bootstrap.state')) {
+                  $shouldRun = $true
+                  break
+                }
+              }
+            }
+          }
+
+          $value = if ($shouldRun) { 'true' } else { 'false' }
+          "should_run=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          if (-not $hasRows) {
+            # Professional note: missing NDJSON keeps the iterate helper active so diagnostics explain unknown outcomes.
+            "gate_reason=ndjson_missing" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          }
+
+      # derived requirement: expose the iterate payload contents inline so field triage
+      # can confirm breadcrumbs exist before upload.
+      - name: List _ctx prior to upload (debug)
+        if: ${{ always() }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "PWD=$(pwd)"
+          if [ -d _ctx ]; then
+            find _ctx -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
+          else
+            echo "_ctx MISSING"
+          fi
+
+      - name: Upload iterate logs (fail-only)
+        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
+        # derived requirement: breadcrumbs now exist for empty-model runs, but keep
+        # the workflow tolerant so diagnostics jobs do not fail when the helper
+        # intentionally skips packaging.
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: iterate-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _ctx/**
+          if-no-files-found: warn
+          overwrite: false
+          retention-days: 7
 
       - name: Find and print test logs (tail)
         if: always()
@@ -313,7 +507,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs
+          name: test-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             bootstrap.log
             ~setup.log
@@ -333,7 +527,7 @@ jobs:
             tests/~test-summary.txt
             tests/~test-results.ndjson
             tests/extracted/**
-          if-no-files-found: warn
+          if-no-files-found: ignore
           retention-days: 14
 
       - name: Summarize bootstrap result
@@ -464,6 +658,765 @@ jobs:
               }
             }
 
+      - name: Append diagnostics to Summary (public)
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          function Read-Optional($title, $paths, $max=6000) {
+            $found = $null
+            foreach ($p in $paths) {
+              if (Test-Path -LiteralPath $p) { $found = $p; break }
+            }
+            if (-not $found) {
+              "### $title (missing)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+              return
+            }
+            $text = Get-Content -Raw -LiteralPath $found
+            if ($null -eq $text) { $text = "" }
+            if ($text.Length -eq 0) {
+              "### $title ($found — empty)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+              return
+            }
+            if ($text.Length -gt $max) { $text = $text.Substring(0,$max) + "`n... [truncated]" }
+            "### $title ($found)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```text'              | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            $text                  | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```'                  | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+          Read-Optional 'NDJSON (head/tail)' @('tests\~test-results.ndjson','ci_test_results.ndjson') 8000
+          Read-Optional 'Self-test summary.txt' @('tests\~test-summary.txt') 6000
+          Read-Optional 'Empty bootstrap (tail)' @('tests\~selftest_empty\~empty_bootstrap.log') 4000
+          Read-Optional 'Single-entry bootstrap (tail)' @('tests\~entry1\~entry1_bootstrap.log') 4000
+          Read-Optional 'Env smoke bootstrap (tail)' @('tests\~envsmoke\~envsmoke_bootstrap.log') 4000
+
+      - name: Append matrix mode meta row
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $row = [ordered]@{
+            id  = 'meta.env.mode'
+            pass = $true
+            desc = 'matrix lane'
+            details = [ordered]@{ mode = '${{ matrix.mode }}' }
+          }
+          $json = $row | ConvertTo-Json -Compress -Depth 8
+          Add-Content -LiteralPath tests\~test-results.ndjson -Value $json -Encoding Ascii
+          Add-Content -LiteralPath ci_test_results.ndjson -Value $json -Encoding Ascii
+
+      - name: Verdict from NDJSON
+        id: verdict
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          function Read-Ndjson([string]$p) {
+            if (Test-Path $p) {
+              Get-Content -Raw $p | Select-String -AllMatches '^\{.*\}$' | ForEach-Object {
+                try { $_.Matches.Value | ConvertFrom-Json } catch {}
+              }
+            }
+          }
+
+          $rows = @()
+          $rows += Read-Ndjson 'tests\~test-results.ndjson'
+          if (-not $rows) { $rows += Read-Ndjson 'ci_test_results.ndjson' }
+
+          $has = (-not $rows)
+          $allowedStates = @('ok','no_python_files','venv_env','degraded_env')
+          foreach ($r in $rows) {
+            $hasPass = $false
+            if ($r -is [psobject]) {
+              $hasPass = $r.PSObject.Properties.Name -contains 'pass'
+            }
+
+            if ($hasPass) {
+              if ($r.pass -eq $false) { $has = $true }
+              continue
+            }
+
+            if ($r.PSObject.Properties.Name -contains 'status') {
+              $statusText = [string]$r.status
+              if ($statusText -eq 'failed') {
+                # derived requirement: some harness rows only expose status=failed; mirror the iterate gate logic so model assist kicks in.
+                $has = $true
+              }
+            }
+
+            if ($r.id -eq 'bootstrap.state' -and $r.details.state -and $r.details.state -notin $allowedStates) { $has = $true }
+            if ($r.id -eq 'self.bootstrap.state' -and $r.details.state -and $r.details.state -notin $allowedStates) { $has = $true }
+          }
+
+          $verdict = @{ has_failures = $has; sources = @('tests~test-results.ndjson','ci_test_results.ndjson') }
+          if (-not $rows) { $verdict.missing = @('tests~test-results.ndjson','ci_test_results.ndjson') }
+
+          $value = $has.ToString().ToLowerInvariant()
+          "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          $verdict | ConvertTo-Json -Compress -Depth 8 | Out-File -Encoding UTF8 'iterate_gate.json'
+
+      - name: Append iterate gate to Summary
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $flag = '${{ steps.verdict.outputs.has_failures }}'
+          "### Iterate gate" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "- has_failures: $flag" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          if (Test-Path 'iterate_gate.json') {
+            '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            Get-Content -Raw 'iterate_gate.json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Persist iterate gate verdict
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $flag = '${{ steps.verdict.outputs.has_failures }}'
+          if (-not $flag) { $flag = 'false' }
+          $has = $false
+          if ($flag -eq 'true') { $has = $true }
+          $record = [ordered]@{
+            lane = '${{ matrix.mode }}'
+            has_failures = $has
+            raw = $flag
+            run_id = $env:GITHUB_RUN_ID
+            run_attempt = $env:GITHUB_RUN_ATTEMPT
+            sources = @('tests~test-results.ndjson','ci_test_results.ndjson')
+          }
+          $record | ConvertTo-Json -Compress -Depth 8 | Out-File -FilePath lane_verdict.json -Encoding ascii
+
+      - name: Upload iterate gate verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-verdict-${{ matrix.mode }}
+          path: lane_verdict.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Collect failing test IDs
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $root = Get-Location
+          $basePath = $root.Path
+          $diagDir = Join-Path $basePath 'diag'
+          if (-not (Test-Path -LiteralPath $diagDir)) {
+            New-Item -ItemType Directory -Path $diagDir -Force | Out-Null
+          }
+
+          $outPath = Join-Path $diagDir 'failing-tests.txt'
+          $debugPath = Join-Path $diagDir 'fail-debug.txt'
+
+          $allFailures = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+          $perFile = [ordered]@{}
+
+          function Get-RelativePath {
+            param(
+              [Parameter(Mandatory = $true)][string]$Base,
+              [Parameter(Mandatory = $true)][string]$Path
+            )
+
+            return [System.IO.Path]::GetRelativePath($Base, $Path)
+          }
+
+          function Ensure-PerFileEntry {
+            param([string]$Key)
+
+            if (-not $perFile.Contains($Key)) {
+              $perFile[$Key] = [pscustomobject]@{
+                Set  = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+                Hits = 0
+              }
+            }
+
+            return $perFile[$Key]
+          }
+
+          function Get-CandidateFiles {
+            param([string]$BasePath)
+
+            if (-not $BasePath) { return @() }
+
+            # Professional note: Requirement "search under the job workspace using broad globs" —
+            # scan the entire workspace instead of the packaged artifact layout so we detect
+            # freshly written NDJSON before diagnostics copies them elsewhere.
+            $patterns = @('*~test-results.ndjson', 'ci_test_results*.ndjson')
+            $files = foreach ($pattern in $patterns) {
+              Get-ChildItem -Path $BasePath -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue
+            }
+
+            return $files |
+              Where-Object {
+                ($_.FullName -notmatch '(?i)\.zip$') -and
+                ($_.FullName -notmatch '(?i)\.gz$')
+              } |
+              Sort-Object -Property FullName -Unique
+          }
+
+          function Test-OutcomeFailed {
+            param([object]$Root)
+
+            if ($null -eq $Root) { return $false }
+
+            $stack = [System.Collections.Stack]::new()
+            $stack.Push($Root)
+
+            while ($stack.Count -gt 0) {
+              $current = $stack.Pop()
+              if ($null -eq $current) { continue }
+
+              if ($current -is [System.Collections.IDictionary] -or $current -is [PSCustomObject]) {
+                foreach ($prop in $current.PSObject.Properties) {
+                  $name = $prop.Name
+                  if ([string]::IsNullOrEmpty($name)) { continue }
+
+                  $value = $prop.Value
+                  if ($name -ieq 'outcome' -and $value -is [string] -and $value -ieq 'failed') {
+                    return $true
+                  }
+
+                  if ($value -ne $null -and -not ($value -is [string])) {
+                    if ($value -is [System.Collections.IDictionary] -or $value -is [PSCustomObject]) {
+                      $stack.Push($value)
+                      continue
+                    }
+
+                    if ($value -is [System.Collections.IEnumerable]) {
+                      foreach ($item in $value) { $stack.Push($item) }
+                    }
+                  }
+                }
+              } elseif ($current -is [System.Collections.IEnumerable] -and -not ($current -is [string])) {
+                foreach ($item in $current) { $stack.Push($item) }
+              }
+            }
+
+            return $false
+          }
+
+          function Get-FirstId {
+            param([object]$Root)
+
+            if ($null -eq $Root) { return $null }
+
+            $preferred = $null
+            $fallback = $null
+            $stack = [System.Collections.Stack]::new()
+            $stack.Push($Root)
+
+            while ($stack.Count -gt 0) {
+              $current = $stack.Pop()
+              if ($null -eq $current) { continue }
+
+              if ($current -is [System.Collections.IDictionary] -or $current -is [PSCustomObject]) {
+                foreach ($prop in $current.PSObject.Properties) {
+                  $name = $prop.Name
+                  if ([string]::IsNullOrEmpty($name)) { continue }
+
+                  $value = $prop.Value
+                  if ($value -is [string]) {
+                    if (-not $preferred -and $name -ieq 'nodeid') {
+                      $preferred = $value
+                    } elseif (-not $fallback -and $name -ieq 'name') {
+                      $fallback = $value
+                    }
+                  }
+
+                  if ($value -ne $null -and -not ($value -is [string])) {
+                    if ($value -is [System.Collections.IDictionary] -or $value -is [PSCustomObject]) {
+                      $stack.Push($value)
+                      continue
+                    }
+
+                    if ($value -is [System.Collections.IEnumerable]) {
+                      foreach ($item in $value) { $stack.Push($item) }
+                    }
+                  }
+                }
+              } elseif ($current -is [System.Collections.IEnumerable] -and -not ($current -is [string])) {
+                foreach ($item in $current) { $stack.Push($item) }
+              }
+
+              if ($preferred) { break }
+            }
+
+            if ($preferred) { return $preferred }
+            return $fallback
+          }
+
+          function Get-FallbackId {
+            param([string]$Line)
+
+            if (-not $Line) { return $null }
+
+            foreach ($pattern in @('"nodeid"\s*:\s*"((?:[^"\\]|\\.)*)"', '"name"\s*:\s*"((?:[^"\\]|\\.)*)"')) {
+              $m = [regex]::Match($Line, $pattern)
+              if ($m.Success) {
+                $capture = $m.Groups[1].Value
+                try {
+                  return ('"' + $capture + '"') | ConvertFrom-Json -ErrorAction Stop
+                } catch {
+                  return $capture
+                }
+              }
+            }
+
+            return $null
+          }
+
+          $files = @(Get-CandidateFiles -BasePath $basePath)
+
+          foreach ($file in $files) {
+            $rel = Get-RelativePath -Base $basePath -Path $file.FullName
+            $entry = Ensure-PerFileEntry -Key $rel
+
+            $lines = Get-Content -LiteralPath $file.FullName -Encoding UTF8
+            foreach ($line in $lines) {
+              if ([string]::IsNullOrWhiteSpace($line)) { continue }
+
+              $failed = $false
+              $id = $null
+
+              try {
+                $obj = $line | ConvertFrom-Json -ErrorAction Stop
+              } catch {
+                $obj = $null
+              }
+
+              if ($obj -ne $null -and (Test-OutcomeFailed -Root $obj)) {
+                $failed = $true
+                $id = Get-FirstId -Root $obj
+              }
+
+              if (-not $failed -and $line -match '"outcome"\s*:\s*"failed"') {
+                $failed = $true
+                if (-not $id) {
+                  $id = Get-FallbackId -Line $line
+                }
+              }
+
+              if (-not $failed -or -not $id) { continue }
+
+              # Professional note: log total failing rows per file so fail-debug verifies coverage at a glance.
+              $entry.Hits++
+              $null = $entry.Set.Add($id)
+              $null = $allFailures.Add($id)
+            }
+          }
+
+          if ($allFailures.Count -eq 0) {
+            Set-Content -Encoding UTF8 -LiteralPath $outPath -Value 'none'
+          } else {
+            $sorted = $allFailures.ToArray() | Sort-Object
+            $sorted | Set-Content -Encoding UTF8 -LiteralPath $outPath
+          }
+
+          $debugLines = [System.Collections.Generic.List[string]]::new()
+          foreach ($kvp in $perFile.GetEnumerator() | Sort-Object Key) {
+            $hits = 0
+            if ($kvp.Value -and $kvp.Value.PSObject.Properties['Hits']) {
+              $hits = [int]$kvp.Value.Hits
+            }
+
+            $debugLines.Add([string]::Format('{0}`t{1}', $kvp.Key, $hits)) | Out-Null
+          }
+
+          if ($debugLines.Count -eq 0) {
+            $debugLines.Add('none') | Out-Null
+          }
+
+          $debugLines | Set-Content -Encoding UTF8 -LiteralPath $debugPath
+
+      - name: Upload failing test IDs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: batchcheck-failures-${{ matrix.mode }}
+          path: |
+            diag/failing-tests.txt
+            diag/fail-debug.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Preflight OpenAI auth (diagnostics)
+        id: openai_auth
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "present=true" >> "$GITHUB_OUTPUT"
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.OPENAI_API_KEY }}" \
+            https://api.openai.com/v1/models || echo 000)
+          if [ "$status" = "200" ]; then
+            echo "auth_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=OpenAI auth failed::HTTP $status from /v1/models (will skip Codex iteration)"
+            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Iterate auth summary
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $present = '${{ steps.openai_auth.outputs.present }}'
+          if (-not $present) { $present = 'false' }
+          $auth = '${{ steps.openai_auth.outputs.auth_ok }}'
+          if (-not $auth) { $auth = 'false' }
+          "### Iterate auth" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "- api_key_present: $present" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "- auth_ok: $auth" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+      - name: Build public diagnostics tree
+        if: ${{ always() }}
+        id: build_public
+        shell: pwsh
+        run: |
+          $pub = Join-Path $env:RUNNER_TEMP 'public'
+          New-Item -Force -ItemType Directory -Path $pub | Out-Null
+          $logsDir = Join-Path $pub 'logs'
+          $srcDirPath = Join-Path $pub 'sources'
+          $repoDir = Join-Path $pub 'repo'
+          New-Item -Force -ItemType Directory -Path $logsDir | Out-Null
+          New-Item -Force -ItemType Directory -Path $srcDirPath | Out-Null
+          New-Item -Force -ItemType Directory -Path $repoDir | Out-Null
+
+          $cwd = Get-Location
+          Write-Host ("DIAG CWD: {0}" -f $cwd.Path)
+          $rootPath = $null
+          try {
+            $rootPath = (Resolve-Path -LiteralPath .).Path
+            Write-Host ("DIAG ROOT: {0}" -f $rootPath)
+          } catch {}
+
+          try {
+            $treeBase = if ($rootPath) { $rootPath } else { $cwd.Path }
+            $tree = Get-ChildItem -Path $treeBase -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 200
+            if ($tree) {
+              Write-Host 'DIAG TREE (first 200 within depth 2):'
+              foreach ($item in $tree) { Write-Host ("  {0}" -f $item.FullName) }
+            } else {
+              Write-Host 'DIAG TREE: no entries found within depth 2.'
+            }
+          } catch {
+            Write-Host ("DIAG TREE: failed to enumerate - {0}" -f $_.Exception.Message)
+          }
+
+          $targets = @(
+            @{ Label = 'tests~test-results.ndjson'; Pattern = 'tests\~test-results.ndjson'; Literal = $true },
+            @{ Label = 'ci_test_results.ndjson'; Pattern = 'ci_test_results.ndjson'; Literal = $true },
+            @{ Label = 'tests~test-summary.txt'; Pattern = 'tests\~test-summary.txt'; Literal = $true },
+            @{ Label = '*~*_bootstrap.log'; Pattern = '*~*bootstrap.log'; Literal = $false }
+          )
+          foreach ($target in $targets) {
+            if ($target.Literal) {
+              if (Test-Path -LiteralPath $target.Pattern) {
+                Resolve-Path -LiteralPath $target.Pattern | ForEach-Object { Write-Host ("FOUND {0} -> {1}" -f $target.Label, $_) }
+              } else {
+                Write-Host ("MISSING {0}" -f $target.Pattern)
+              }
+            } else {
+              $matches = Get-ChildItem -Path . -Recurse -Include $target.Pattern -File -ErrorAction SilentlyContinue
+              if ($matches) {
+                foreach ($m in $matches) { Write-Host ("FOUND {0} -> {1}" -f $target.Label, $m.FullName) }
+              } else {
+                Write-Host ("MISSING {0}" -f $target.Pattern)
+              }
+            }
+          }
+
+          $ndjsonCandidates = @('tests\~test-results.ndjson','ci_test_results.ndjson')
+
+          $wantLogs = @(
+            'tests\~test-results.ndjson',
+            'ci_test_results.ndjson',
+            'tests\~entry1\~entry1_bootstrap.log',
+            'tests\~entryA\~entryA_bootstrap.log',
+            'tests\~entryB\~entryB_bootstrap.log',
+            'tests\~envsmoke\~envsmoke_bootstrap.log',
+            'tests\~selftest_empty\~empty_bootstrap.log',
+            'tests\~selftest_stub\~setup.log',
+            'dynamic_tests.log',
+            'tests\~test-summary.txt',
+            'iterate_gate.json',
+            'iterate_auth.json',
+            'ndjson_stats.json',
+            'first_failure.json',
+            'codex_nudge.txt',
+            'codex_exec.log'
+          )
+          foreach ($p in $wantLogs) {
+            if (Test-Path -LiteralPath $p) {
+              Copy-Item -LiteralPath $p -Destination $logsDir -Force
+            }
+          }
+
+          $iterAuthPath = Join-Path $logsDir 'iterate_auth.json'
+          $iterPresent = '${{ steps.openai_auth.outputs.present }}'
+          if (-not $iterPresent) { $iterPresent = 'false' }
+          $iterAuthOk = '${{ steps.openai_auth.outputs.auth_ok }}'
+          if (-not $iterAuthOk) { $iterAuthOk = 'false' }
+          @{ api_key_present = $iterPresent; auth_ok = $iterAuthOk } |
+            ConvertTo-Json -Compress -Depth 8 | Out-File -Encoding UTF8 $iterAuthPath
+
+          $existingNd = @()
+          foreach ($cand in $ndjsonCandidates) {
+            if (Test-Path -LiteralPath $cand) {
+              $existingNd += (Resolve-Path -LiteralPath $cand).Path
+            }
+          }
+          $uniqueNd = $existingNd | Sort-Object -Unique
+          if (-not $uniqueNd) {
+            $note = @{ cwd = $cwd.Path; tried = $ndjsonCandidates; found = @() } | ConvertTo-Json -Compress -Depth 8
+            $note | Out-File -Encoding UTF8 (Join-Path $logsDir 'ndjson_missing.json')
+          }
+
+          $passCount = 0
+          $failCount = 0
+          $skipCount = 0
+          $firstFail = $null
+          $firstSource = $null
+
+          foreach ($path in $uniqueNd) {
+            foreach ($line in Get-Content -LiteralPath $path -Encoding UTF8) {
+              $trim = $line.Trim()
+              if (-not $trim) { continue }
+              try {
+                $row = $trim | ConvertFrom-Json
+              } catch {
+                continue
+              }
+              $value = $null
+              if ($row.PSObject.Properties['pass']) { $value = $row.pass }
+              if ($value -is [bool]) {
+                if ($value) {
+                  $passCount++
+                } else {
+                  $failCount++
+                  if (-not $firstFail) { $firstFail = $row; $firstSource = $path }
+                }
+              } elseif ($value -is [string]) {
+                $lower = $value.ToLowerInvariant()
+                switch ($lower) {
+                  'pass' { $passCount++ }
+                  'fail' { $failCount++; if (-not $firstFail) { $firstFail = $row; $firstSource = $path } }
+                  'skip' { $skipCount++ }
+                  default { $skipCount++ }
+                }
+              } else {
+                $skipCount++
+              }
+            }
+          }
+
+          $stats = [ordered]@{
+            pass    = $passCount
+            fail    = $failCount
+            skip    = $skipCount
+            sources = $uniqueNd
+          }
+          $stats | ConvertTo-Json -Compress -Depth 8 | Out-File -Encoding UTF8 'ndjson_stats.json'
+          if ($firstFail) {
+            $firstFail | ConvertTo-Json -Compress -Depth 8 | Out-File -Encoding UTF8 'first_failure.json'
+          } elseif (Test-Path -LiteralPath 'first_failure.json') {
+            Remove-Item -LiteralPath 'first_failure.json' -Force
+          }
+
+          $zipNames = @()
+          foreach ($path in $uniqueNd) {
+            $leaf = Split-Path -Leaf $path
+            $safeLeaf = ($leaf -replace '[^0-9A-Za-z_.-]', '-')
+            $zipName = "ci_test_results-$safeLeaf.zip"
+            $zipPath = Join-Path $logsDir $zipName
+            if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+            try {
+              Compress-Archive -LiteralPath $path -DestinationPath $zipPath -Force
+              $zipNames += $zipName
+            } catch {
+              Write-Host ("DIAG export failed for {0}: {1}" -f $path, $_.Exception.Message)
+            }
+          }
+
+          '### NDJSON totals' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          ("- PASS: {0}" -f $passCount) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          ("- FAIL: {0}" -f $failCount) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          ("- SKIP: {0}" -f $skipCount) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+          if ($failCount -gt 0 -and $firstFail) {
+            $firstInfo = [ordered]@{
+              id     = $firstFail.id
+              desc   = $firstFail.desc
+              source = $firstSource
+            }
+            if ($firstFail.PSObject.Properties['details']) {
+              $details = $firstFail.details
+              if ($details -and $details.PSObject.Properties['file']) { $firstInfo.file = $details.file }
+              if ($details -and $details.PSObject.Properties['line']) { $firstInfo.line = $details.line }
+              if ($details -and $details.PSObject.Properties['snippet']) { $firstInfo.snippet = $details.snippet }
+            }
+            if ($firstFail.PSObject.Properties['message']) { $firstInfo.message = $firstFail.message }
+            '### First failure' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            ($firstInfo | ConvertTo-Json -Compress -Depth 8) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          } else {
+            '- First failure: none (all rows passed)' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+
+          $wantSrc = @(
+            '.github\workflows\batch-check.yml',
+            'run_setup.bat',
+            'tests\selftests.ps1',
+            'tests\harness.ps1'
+          )
+          foreach ($s in $wantSrc) {
+            if (Test-Path -LiteralPath $s) {
+              Copy-Item -LiteralPath $s -Destination $srcDirPath -Force
+            }
+          }
+
+          Get-ChildItem -LiteralPath . -Force | Where-Object { $_.Name -notin @('.', '..', '.git', 'site') } | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination (Join-Path $repoDir $_.Name) -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          # derived requirement: run 19211170783-1 produced a non-empty iterate artifact
+          # in Actions but only mirrored a zero-byte discovery log into Pages. Mirror
+          # _ctx directly so diagnostics stay truthful without waiting on remote fetches.
+          $iterateRoot = Join-Path $pub 'iterate'
+          New-Item -Force -ItemType Directory -Path $iterateRoot | Out-Null
+          $iterateDir = Join-Path $iterateRoot ("iterate-logs-{0}-{1}" -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath '_ctx') {
+            New-Item -Force -ItemType Directory -Path $iterateDir | Out-Null
+            Copy-Item -Path (Join-Path '_ctx' '*') -Destination $iterateDir -Recurse -Force
+
+            $summaryPath = Join-Path $iterateRoot 'discovery.log.txt'
+            $copied = Get-ChildItem -Path $iterateDir -Recurse -File | Sort-Object FullName
+            $summaryLines = @()
+            foreach ($item in $copied) {
+              $relative = [System.IO.Path]::GetRelativePath($iterateDir, $item.FullName)
+              $summaryLines += ("{0} {1}" -f ($relative.Replace('\\', '/')), $item.Length)
+            }
+            if (-not $summaryLines) {
+              $summaryLines = @('no iterate files copied')
+            }
+            $summaryLines | Out-File -Encoding UTF8 $summaryPath
+          }
+
+          try { $ct = [TimeZoneInfo]::FindSystemTimeZoneById('Central Standard Time') } catch { $ct = $null }
+          $utc = [DateTime]::UtcNow
+          $ctNow = if ($ct) { [TimeZoneInfo]::ConvertTimeFromUtc($utc, $ct) } else { $utc }
+
+          $header = @(
+            '# CI Diagnostics',
+            '',
+            "* Repo: ${{ github.repository }}",
+            "* Commit: ${{ github.sha }}",
+            "* Run: ${{ github.run_id }}",
+            "* Built (UTC): " + $utc.ToString('o'),
+            "* Built (CT): " + $ctNow.ToString('o'),
+            ''
+          )
+
+          $idx = @()
+
+          $keyArtifacts = @()
+          $keyTargets = @(
+            @{ Name = 'ci_test_results.ndjson'; Path = Join-Path $logsDir 'ci_test_results.ndjson' },
+            @{ Name = 'tests~test-results.ndjson'; Path = Join-Path $logsDir 'tests~test-results.ndjson' },
+            @{ Name = 'tests~test-summary.txt'; Path = Join-Path $logsDir 'tests~test-summary.txt' }
+          )
+          foreach ($entry in $keyTargets) {
+            if (Test-Path -LiteralPath $entry.Path) {
+              $keyArtifacts += "- [logs/$($entry.Name)](logs/$($entry.Name))"
+            }
+          }
+          if ($keyArtifacts) {
+            $idx += '## Key artifacts'
+            $idx += $keyArtifacts
+            $idx += ''
+          }
+
+          $idx += '## NDJSON totals'
+          $idx += ("- PASS: {0}" -f $passCount)
+          $idx += ("- FAIL: {0}" -f $failCount)
+          $idx += ("- SKIP: {0}" -f $skipCount)
+          if ($failCount -gt 0 -and $firstFail) {
+            $idx += ''
+            $idx += '## NDJSON first failure'
+            $idx += ("* Source: {0}" -f $firstSource)
+            $idx += '```json'
+            $idx += ($firstFail | ConvertTo-Json -Compress -Depth 8)
+            $idx += '```'
+          }
+
+          if ($zipNames) {
+            $idx += ''
+            $idx += '## NDJSON exports'
+            foreach ($zip in $zipNames) { $idx += "- [logs/$zip](logs/$zip)" }
+          }
+
+          $idx += ''
+          $idx += '## Raw NDJSON / logs'
+          $logItems = Get-ChildItem -Name $logsDir -ErrorAction SilentlyContinue
+          if ($logItems) {
+            foreach ($name in $logItems) { $idx += "- [logs/$name](logs/$name)" }
+          } else {
+            $idx += '- (no logs captured)'
+          }
+          $idx += ''
+          $idx += '## Sources (what code ran)'
+          $srcItems = Get-ChildItem -Name $srcDirPath -ErrorAction SilentlyContinue
+          if ($srcItems) {
+            foreach ($name in $srcItems) { $idx += "- [sources/$name](sources/$name)" }
+          } else {
+            $idx += '- (no sources captured)'
+          }
+          $idx += ''
+          $idx += '## Repository snapshot'
+          $repoItems = Get-ChildItem -Path $repoDir -Recurse -File -ErrorAction SilentlyContinue
+          if ($repoItems) {
+            foreach ($item in $repoItems) {
+              $rel = $item.FullName.Substring($repoDir.Length + 1) -replace '\\','/'
+              $idx += "- [repo/$rel](repo/$rel)"
+            }
+          } else {
+            $idx += '- (repo snapshot empty)'
+          }
+
+          ($header + $idx) -join "`n" | Out-File -Encoding UTF8 (Join-Path $pub 'index.md')
+
+          $html = @"
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>CI Diagnostics — run ${{ github.run_id }}</title>
+          <style>
+            body{font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;margin:24px}
+            h1,h2{font-family:ui-sans-serif,system-ui}
+            code,pre{white-space:pre-wrap}
+            .muted{color:#666}
+            a{color:#0366d6}
+          </style>
+          <h1>CI Diagnostics</h1>
+          <p class="muted"><b>Repo:</b> ${{ github.repository }}<br><b>Commit:</b> ${{ github.sha }}<br><b>Run:</b> ${{ github.run_id }}<br><b>Built (UTC):</b> $($utc.ToString('o'))<br><b>Built (CT):</b> $($ctNow.ToString('o'))</p>
+          <p>See <a href="index.md">index.md</a> for the Markdown listing.</p>
+          "@
+          Set-Content -LiteralPath (Join-Path $pub 'index.html') -Value $html -Encoding UTF8
+
+          "public_dir=$pub" | Out-File -Append $env:GITHUB_OUTPUT
+
+      - name: Upload diagnostics bundle
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-selftest-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.build_public.outputs.public_dir }}
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Gate on NDJSON results
         if: ${{ always() }}
         uses: actions/github-script@v7
@@ -516,11 +1469,159 @@ jobs:
               core.setFailed('NDJSON failures: ' + failing.join(', '));
             }
 
+      - name: Summarize NDJSON diagnostics payload
+        if: always()
+        shell: pwsh
+        run: |
+          function Read-NdjsonFile {
+            param(
+              [string]$Label,
+              [string]$Path
+            )
+
+            $result = [ordered]@{
+              label      = $Label
+              path       = $Path
+              present    = $false
+              rows       = 0
+              passCount  = 0
+              failCount  = 0
+              hasConda   = 0
+              hasEnvMode = 0
+            }
+
+            if (-not (Test-Path -LiteralPath $Path)) {
+              return $result
+            }
+
+            $lines = Get-Content -LiteralPath $Path | Where-Object { $_ -match '\S' }
+            $result.present = $true
+            $result.rows = $lines.Count
+
+            foreach ($line in $lines) {
+              try {
+                $row = $line | ConvertFrom-Json -ErrorAction Stop
+              } catch {
+                continue
+              }
+
+              if ($row -is [psobject]) {
+                if ($row.PSObject.Properties.Name -contains 'pass') {
+                  $value = $row.pass
+                  if ($value -eq $false -or ($value -is [string] -and $value.ToLowerInvariant() -eq 'false')) {
+                    $result.failCount++
+                  } elseif ($value -eq $true -or ($value -is [string] -and $value.ToLowerInvariant() -eq 'true')) {
+                    $result.passCount++
+                  }
+                }
+                if ($row.id -eq 'conda.url') { $result.hasConda++ }
+                if ($row.id -eq 'env.mode') { $result.hasEnvMode++ }
+              }
+            }
+
+            return $result
+          }
+
+          New-Item -ItemType Directory -Force -Path 'diag' | Out-Null
+
+          $targets = @(
+            @{ Label = 'real ci_test_results.ndjson'; Path = 'ci_test_results.ndjson' },
+            @{ Label = 'filtered tests~test-results.ndjson'; Path = (Join-Path 'tests' '~test-results.ndjson') }
+          )
+
+          $lines = [System.Collections.Generic.List[string]]::new()
+          $anyPresent = $false
+
+          foreach ($target in $targets) {
+            $summary = Read-NdjsonFile -Label $target.Label -Path $target.Path
+            if (-not $summary.present) {
+              $null = $lines.Add(("{0}: missing ({1})" -f $summary.label, $summary.path))
+              continue
+            }
+
+            $anyPresent = $true
+            $null = $lines.Add(("{0}:" -f $summary.label))
+            $null = $lines.Add(("  rows: {0}" -f $summary.rows))
+            $null = $lines.Add(("  pass: {0}" -f $summary.passCount))
+            $null = $lines.Add(("  fail: {0}" -f $summary.failCount))
+            $null = $lines.Add(("  has_conda_url: {0}" -f $summary.hasConda))
+            $null = $lines.Add(("  has_env_mode: {0}" -f $summary.hasEnvMode))
+            $null = $lines.Add("")
+          }
+
+          if (-not $anyPresent) {
+            $lines.Clear()
+            $null = $lines.Add('missing')
+            Write-Host 'NDJSON summary missing; wrote placeholder summary.'
+          } else {
+            Write-Host 'NDJSON summary written to diag/ndjson_summary.txt'
+          }
+
+          $lines | Out-File -Encoding utf8 'diag/ndjson_summary.txt'
+
+      - name: Stage self-test diagnostics payload
+        if: always()
+        shell: pwsh
+        run: |
+          $stage = Join-Path $PWD ('selftest-diag-${{ matrix.mode }}')
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+
+          $testsDir = Join-Path $stage 'tests'
+          New-Item -ItemType Directory -Path $testsDir -Force | Out-Null
+
+          $diagDir = Join-Path $stage 'diag'
+          New-Item -ItemType Directory -Path $diagDir -Force | Out-Null
+
+          $pairs = @(
+            @{ Source = (Join-Path 'tests' '~test-results.ndjson'); Destination = (Join-Path $testsDir '~test-results.ndjson') }
+            @{ Source = (Join-Path 'tests' '~test-summary.txt');    Destination = (Join-Path $testsDir '~test-summary.txt') }
+            @{ Source = 'dynamic_tests.log';                        Destination = (Join-Path $stage 'dynamic_tests.log') }
+          )
+
+          foreach ($pair in $pairs) {
+            if (Test-Path $pair.Source) {
+              New-Item -ItemType Directory -Force -Path (Split-Path $pair.Destination -Parent) | Out-Null
+              Copy-Item -LiteralPath $pair.Source -Destination $pair.Destination -Force
+            }
+          }
+
+          $ndjsonSummary = 'diag/ndjson_summary.txt'
+          if (Test-Path $ndjsonSummary) {
+            Copy-Item -LiteralPath $ndjsonSummary -Destination (Join-Path $diagDir 'ndjson_summary.txt') -Force
+          }
+
+          $summaryTargets = Get-ChildItem -Path $PWD -Filter 'summary_raw.*' -File -ErrorAction SilentlyContinue
+          if ($summaryTargets) {
+            $summaryDir = Join-Path $stage 'summary_raw'
+            New-Item -ItemType Directory -Path $summaryDir -Force | Out-Null
+            foreach ($file in $summaryTargets) {
+              Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $summaryDir $file.Name) -Force
+            }
+          }
+
+          $ndjsonDynamic = Join-Path 'tests' '~dynamic-results.ndjson'
+          if (Test-Path $ndjsonDynamic) {
+            $dynDir = Join-Path $testsDir 'dynamic'
+            New-Item -ItemType Directory -Path $dynDir -Force | Out-Null
+            Copy-Item -LiteralPath $ndjsonDynamic -Destination (Join-Path $dynDir '~dynamic-results.ndjson') -Force
+          }
+
+      - name: Upload self-test artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.mode }}
+          path: selftest-diag-${{ matrix.mode }}
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Summarize prep_requirements helper
         if: always()
         shell: pwsh
         run: |
-          $helper = '.\tests\extracted\~prep_requirements.py'
+          $helperBase = Join-Path (Join-Path '.' 'tests') 'extracted'
+          $helper = Join-Path $helperBase '~prep_requirements.py'
           if (Test-Path $helper) {
             Add-Content $env:GITHUB_STEP_SUMMARY -Value "### ~prep_requirements.py (first 3 non-comment lines)"
             Add-Content $env:GITHUB_STEP_SUMMARY -Value '```python'
@@ -548,7 +1649,8 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $helper = '.\tests\extracted\~detect_python.py'
+          $helperBase = Join-Path (Join-Path '.' 'tests') 'extracted'
+          $helper = Join-Path $helperBase '~detect_python.py'
           if (Test-Path $helper) {
             Add-Content $env:GITHUB_STEP_SUMMARY -Value "### ~detect_python.py (first 3 non-comment lines)"
             Add-Content $env:GITHUB_STEP_SUMMARY -Value '```python'
@@ -581,194 +1683,6 @@ jobs:
           if ($text -match '(?i)\b0\s+tests?\b') {
             Write-Host "WARNING: Detected 0 tests executed - investigate harness/test discovery."
           }
-
-      - name: Extract first failure (machine-readable and snippet)
-        if: always()
-        id: extract_failure
-        shell: pwsh
-        run: |
-          $patterns = @('*.log','*install_log*.txt','~*.txt','*.out','*.ndjson')
-          $files = @()
-          foreach ($p in $patterns) {
-            $files += Get-ChildItem -Path . -Recurse -Include $p -File -ErrorAction SilentlyContinue
-          }
-          $files += Get-ChildItem -Path .\tests -Recurse -Include *.txt,*.log,*.ndjson -File -ErrorAction SilentlyContinue
-          $files = $files | Sort-Object LastWriteTime -Descending -Unique
-          $files = $files | Where-Object { $_.Name -ne 'README_TESTS.txt' }
-
-          function FirstNonEmpty {
-            param([object]$o,[string[]]$names)
-            foreach ($n in $names) {
-              if ($o.PSObject.Properties.Match($n)) {
-                $v = $o.$n
-                if ($null -ne $v -and "$v" -ne "") { return $v }
-              }
-            }
-            return ""
-          }
-
-          function IsFail {
-            param([object]$o)
-            if (-not $o) { return $false }
-            if ($o.ok -is [bool]       -and -not $o.ok)       { return $true }
-            if ($o.pass -is [bool]     -and -not $o.pass)     { return $true }
-            if ($o.passed -is [bool]   -and -not $o.passed)   { return $true }
-            if ($o.success -is [bool]  -and -not $o.success)  { return $true }
-            $candidates = @($o.result,$o.status,$o.outcome,$o.level,$o.severity) | Where-Object { $_ }
-            foreach ($v in $candidates) {
-              if ($v -match '^(fail|error|fatal)$') { return $true }
-            }
-            return $false
-          }
-
-          function TruncateText {
-            param([string]$text,[int]$limit)
-            if ($null -eq $text) { return "" }
-            $s = [string]$text
-            if ($s.Length -le $limit) { return $s }
-            return $s.Substring(0,$limit)
-          }
-
-          $firstFail = $null
-          $snippet = ""
-
-          $nd = $files | Where-Object { $_.Extension -eq '.ndjson' } | Select-Object -First 8
-          foreach ($f in $nd) {
-            $lineNo = 0
-            Get-Content -Path $f.FullName | ForEach-Object {
-              $lineNo++
-              $raw = $_
-              try { $o = $raw | ConvertFrom-Json -ErrorAction Stop } catch { $o = $null }
-              if (IsFail $o) {
-                $firstFail = [pscustomobject]@{
-                  source  = $f.FullName
-                  line    = FirstNonEmpty $o @('line','lineno','row')
-                  file    = FirstNonEmpty $o @('file','path','target')
-                  check   = FirstNonEmpty $o @('check','id','name','rule','test','key')
-                  message = FirstNonEmpty $o @('message','msg','error','reason','note','details')
-                }
-                if (-not $firstFail.message) { $firstFail.message = $raw }
-                if (-not $firstFail.line)    { $firstFail.line    = $lineNo }
-                $snippet = (Get-Content -Path $f.FullName | Select-Object -Skip ([Math]::Max(0,$lineNo-3)) | Select-Object -First 10) -join "`n"
-                break
-              }
-            }
-            if ($firstFail) { break }
-          }
-
-          if (-not $firstFail) {
-            foreach ($f in $files) {
-              $lines = Get-Content -Path $f.FullName -Tail 400
-              $m = $lines | Select-String -Pattern '^(ERROR|FAIL|Failed|Exception|Traceback|ModuleNotFoundError).*' | Select-Object -First 1
-              if ($m) {
-                $firstFail = [pscustomobject]@{
-                  source  = $f.FullName
-                  line    = ""
-                  file    = ""
-                  check   = ""
-                  message = $m.Line
-                }
-                $idx = ($lines | ForEach-Object { $_ }).IndexOf($m.Line)
-                $start = [Math]::Max(0,$idx-2); $count = 10
-                $snippet = ($lines | Select-Object -Skip $start -First $count) -join "`n"
-                break
-              }
-            }
-          }
-
-          if (-not $firstFail) {
-            $firstFail = [pscustomobject]@{ source='dynamic-tests'; line=''; file=''; check=''; message='SKIPPED or SUCCESS (no fingerprint)' }
-            $snippet = 'SKIPPED or SUCCESS (no fingerprint)'
-          }
-
-          $firstFail.source  = TruncateText $firstFail.source 150
-          $firstFail.file    = TruncateText $firstFail.file 150
-          $firstFail.check   = TruncateText $firstFail.check 120
-          $firstFail.message = TruncateText $firstFail.message 300
-
-          if ($firstFail.line -ne $null -and -not ($firstFail.line -is [string]) -and -not ($firstFail.line -is [ValueType])) {
-            $firstFail.line = "$($firstFail.line)"
-          }
-
-          $snippet = $snippet -replace "`r",""
-          $snippet = TruncateText $snippet 500
-
-          $firstFailJson = $firstFail | ConvertTo-Json -Compress
-          if ($firstFailJson.Length -gt 800) {
-            $needed = $firstFailJson.Length - 800
-            $newLimit = [Math]::Max(0, $firstFail.message.Length - $needed)
-            $firstFail.message = TruncateText $firstFail.message $newLimit
-            $firstFailJson = $firstFail | ConvertTo-Json -Compress
-          }
-          if ($firstFailJson.Length -gt 800) {
-            $firstFail.source = TruncateText $firstFail.source 120
-            $firstFail.file   = TruncateText $firstFail.file 120
-            $firstFailJson = $firstFail | ConvertTo-Json -Compress
-          }
-
-          $branch = if ($env:GITHUB_HEAD_REF -and $env:GITHUB_HEAD_REF -ne "") { $env:GITHUB_HEAD_REF } else { $env:GITHUB_REF -replace '^refs/heads/','' }
-          $runUrl = "$($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/actions/runs/$($env:GITHUB_RUN_ID)"
-          if ($branch) {
-            $encodedBranch = [System.Uri]::EscapeDataString($branch)
-            $runsUrl = "$($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/actions?query=branch%3A$encodedBranch"
-          } else {
-            $runsUrl = "$($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/actions"
-          }
-
-          [System.IO.File]::WriteAllText('first_failure.json',$firstFailJson,[System.Text.Encoding]::ASCII)
-          [System.IO.File]::WriteAllText('snippet.txt',$snippet,[System.Text.Encoding]::ASCII)
-
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (machine-readable)"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $firstFailJson
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### First failure (snippet)"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```text'
-          foreach ($line in $snippet -split "`n") {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $line
-          }
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '```'
-
-          $summaryPath = '.\tests\~test-summary.txt'
-          $passFailLine = 'PASS/FAIL: unavailable'
-          if (Test-Path $summaryPath) {
-            $pf = Get-Content $summaryPath -Encoding Ascii | Where-Object { $_ -match '^PASS:' } | Select-Object -First 1
-            if ($pf) { $passFailLine = $pf.Trim() }
-          }
-
-          $statusPath = '.\~bootstrap.status.json'
-          $bootstrapLine = 'Bootstrap status: <missing>'
-          if (Test-Path $statusPath) {
-            try {
-              $status = Get-Content $statusPath -Raw -Encoding Ascii | ConvertFrom-Json
-              $bootstrapLine = "Bootstrap status: state={0}, exitCode={1}, pyFiles={2}" -f $status.state, $status.exitCode, $status.pyFiles
-            } catch {
-              $bootstrapLine = "Bootstrap status: <invalid JSON>"
-            }
-          }
-
-          $artifactLink = $runUrl + '#artifacts'
-
-          $commentLines = @(
-            '@codex',
-            '',
-            'Summary:',
-            $passFailLine,
-            $bootstrapLine,
-            '',
-            'Snippet:',
-            '```text',
-            $snippet,
-            '```',
-            '',
-            'Machine-readable:',
-            '```json',
-            $firstFailJson,
-            '```',
-            '',
-            'Run: ' + $runUrl,
-            'tests/~test-results.ndjson: ' + $artifactLink,
-            'Branch runs: ' + $runsUrl
-          )
-          [System.IO.File]::WriteAllText('codex_body.txt', ($commentLines -join "`n"), [System.Text.Encoding]::ASCII)
 
       - name: Summarize bootstrap self-tests
         if: always()
@@ -837,11 +1751,1218 @@ jobs:
               body
             });
 
+  selftest-gate:
+    name: Aggregate self-test verdicts
+    needs: [selftest]
+    if: ${{ always() }}
+    runs-on: windows-latest
+    outputs:
+      has_failures: ${{ steps.aggregate.outputs.has_failures }}
+    steps:
+      - name: Download lane verdicts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: selftest-verdict-*
+          path: ${{ runner.temp }}/selftest-verdicts
+          merge-multiple: true
+
+      - name: Aggregate verdicts
+        id: aggregate
+        shell: pwsh
+        run: |
+          $fallback = '${{ needs.selftest.result }}'
+          $dir = Join-Path $env:RUNNER_TEMP 'selftest-verdicts'
+          $files = @()
+          if (Test-Path $dir) {
+            $files = Get-ChildItem -Path $dir -Filter '*.json' -File -Recurse -ErrorAction SilentlyContinue
+          }
+
+          $has = $false
+          $lanes = @()
+
+          function Convert-ToBooleanOrNull {
+            param(
+              [Parameter(Mandatory = $false)]
+              $Value
+            )
+
+            if ($null -eq $Value) { return $null }
+            if ($Value -is [bool]) { return $Value }
+            if ($Value -is [string]) {
+              $text = $Value.Trim().ToLowerInvariant()
+              switch ($text) {
+                'true' { return $true }
+                't' { return $true }
+                'yes' { return $true }
+                'y' { return $true }
+                '1' { return $true }
+                'false' { return $false }
+                'f' { return $false }
+                'no' { return $false }
+                'n' { return $false }
+                '0' { return $false }
+              }
+              return $null
+            }
+            if ($Value -is [int] -or $Value -is [long]) {
+              if ($Value -eq 0) { return $false }
+              if ($Value -eq 1) { return $true }
+            }
+            return $null
+          }
+
+          foreach ($file in $files) {
+            try {
+              $content = Get-Content -Raw -LiteralPath $file.FullName
+              if ([string]::IsNullOrWhiteSpace($content)) { continue }
+              $data = $content | ConvertFrom-Json -Depth 16
+              if ($null -eq $data) { continue }
+
+              $records = if ($data -is [array]) { $data } else { @($data) }
+              foreach ($record in $records) {
+                if ($null -eq $record) { continue }
+
+                $value = $null
+                if ($record.PSObject.Properties.Name -contains 'has_failures') {
+                  $value = Convert-ToBooleanOrNull -Value $record.has_failures
+                }
+
+                if ($record.PSObject.Properties.Name -notcontains 'source_file') {
+                  $record | Add-Member -NotePropertyName source_file -NotePropertyValue $file.FullName -Force
+                }
+
+                if ($null -eq $value) {
+                  $record | Add-Member -NotePropertyName parse_warning -NotePropertyValue 'has_failures missing or unparseable' -Force
+                } elseif ($value) {
+                  $has = $true
+                }
+
+                $lanes += $record
+              }
+            } catch {
+              $lanes += [ordered]@{
+                lane = $file.BaseName
+                error = $_.Exception.Message
+                source_file = $file.FullName
+              }
+            }
+          }
+
+          if (-not $files -and $fallback -and $fallback -ne 'success') {
+            $has = $true
+          }
+
+          $value = if ($has) { 'true' } else { 'false' }
+          "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
+          $report = [ordered]@{
+            fallback_result = $fallback
+            has_failures = $has
+            lanes = @($lanes)
+            verdict_files = if ($files) { $files.FullName } else { @() }
+          }
+          $report | ConvertTo-Json -Depth 6 | Out-File -FilePath (Join-Path $env:RUNNER_TEMP 'selftest-gate.json') -Encoding utf8
+
+      - name: Append gate summary
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'selftest-gate.json'
+          "### Self-test gate" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          if (Test-Path $path) {
+            '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            Get-Content -Raw $path | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          } else {
+            '- No gate summary generated.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+
+  model-quick-fix:
+    name: Model quick-fix (inline)
+    needs:
+      - selftest
+      - selftest-gate
+    # derived requirement: publish_diag needs this job present in the dependency graph even
+    # when upstream work is cancelled; guard the inline helper at the step level so
+    # manual cancellations skip the model call without breaking downstream diagnostics.
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      branch: ${{ steps.branch.outputs.branch }}
+      branch_slug: ${{ steps.branch.outputs.branch_slug }}
+    env:
+      HAS_FAILURES: ${{ needs.selftest-gate.outputs.has_failures }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Determine branch context
+        id: branch
+        shell: bash
+        env:
+          BRANCH_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          FALLBACK_REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          branch="$BRANCH_REF"
+          if [ -z "$branch" ]; then
+            branch="$FALLBACK_REF"
+          fi
+          slug=$(echo "$branch" | tr ':/ ' '---')
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "branch_slug=$slug" >> "$GITHUB_OUTPUT"
+      - name: Download CI NDJSON for inline helper
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _artifacts/batch-check/_ci_artifacts
+      - name: Aggregate batch-check fail list
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        env:
+          DIAG: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python tools/diag/ndjson_fail_list.py
+          mkdir -p _artifacts/batch-check
+          install -D batchcheck_failing.txt _artifacts/batch-check/batchcheck_failing.txt
+          install -D batchcheck_fail-debug.txt _artifacts/batch-check/batchcheck_fail-debug.txt
+      - name: Install Python dependencies
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        run: |
+          python -m pip install --upgrade pip
+          # derived requirement: tools/apply_patch.py imports pydantic; preinstall it so inline commits do not fail mid-run.
+          python -m pip install requests pydantic
+      - name: Stage iterate context
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          python tools/inline_model_fix.py stage \
+            --repo "${{ github.repository }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --token "$GH_TOKEN"
+      # derived requirement: when cancellations short-circuit the inline helper, leave
+      # breadcrumbs so diagnostics explain why no model diff exists.
+      - name: Note cancellation before model call
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' && cancelled() }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          mkdir -p _ctx
+          note_path="_ctx/notes.txt"
+          {
+            printf 'final_status=no_commit\n'
+            printf 'final_reason=workflow_cancelled\n'
+          } >> "$note_path"
+      - name: Call model
+        if: ${{ success() && needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' && !cancelled() }}
+        working-directory: ${{ github.workspace }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python tools/inline_model_fix.py call --model gpt-5-codex
+      - name: Apply model patch
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          if [ ! -s _ctx/fix.patch ]; then
+            echo "No patch produced."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # derived requirement: keep CI aligned with the shared patch engine in tools/apply_patch.py.
+          if python tools/apply_patch.py < _ctx/fix.patch; then
+            staged=0
+            # derived requirement: limit staging to actual repository edits so scratch context
+            # workspaces (_ctx, _iter) remain ephemeral and never pollute commits.
+            while IFS= read -r line; do
+              path="${line:3}"
+              if [[ "$path" == *" -> "* ]]; then
+                old="${path%% -> *}"
+                new="${path##* -> }"
+                skip=0
+                for candidate in "$old" "$new"; do
+                  if [[ -z "$candidate" ]]; then
+                    continue
+                  fi
+                  if [[ "$candidate" == _ctx/* || "$candidate" == _iter/* ]]; then
+                    skip=1
+                    break
+                  fi
+                done
+                if [[ "$skip" -eq 1 ]]; then
+                  continue
+                fi
+                git add -- "$old" "$new"
+                staged=1
+                continue
+              fi
+              if [[ -z "$path" ]]; then
+                continue
+              fi
+              if [[ "$path" == _ctx/* || "$path" == _iter/* ]]; then
+                continue
+              fi
+              git add -- "$path"
+              staged=1
+            done < <(git status --porcelain)
+            if [ "$staged" -eq 0 ]; then
+              printf 'patch_apply=no_changes\n' >> _ctx/notes.txt
+            else
+              if git diff --staged --quiet; then
+                printf 'patch_apply=no_changes\n' >> _ctx/notes.txt
+              else
+                if git commit -m "codex: inline quick-fix"; then
+                  git push
+                  printf 'patch_apply=success\n' >> _ctx/notes.txt
+                else
+                  printf 'patch_commit=failed\n' >> _ctx/notes.txt
+                fi
+              fi
+            fi
+          else
+            printf 'patch_apply=failed\n' >> _ctx/notes.txt
+          fi
+      - name: Package iterate context
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          if [ ! -d _ctx ]; then
+            # derived requirement: run 19234337453-1 surfaced a bare iterate zip with no
+            # _ctx folder; create the workspace so downstream packaging always emits
+            # breadcrumbs instead of an empty archive.
+            mkdir -p _ctx
+          fi
+          mkdir -p logs
+          zip_path="logs/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip"
+          rm -f "$zip_path"
+          # derived requirement: include decision breadcrumbs so diagnostics enumerate
+          # the iterate payload even when the model cannot return a diff mid-run.
+          note_path="_ctx/notes.txt"
+          if [ ! -e "$note_path" ]; then
+            # derived requirement: when stage/call short-circuit, still leave a breadcrumb so diagnostics stay truthful.
+            printf 'notes_stub=created_by_packager\n' > "$note_path"
+          fi
+          decision_path="_ctx/decision.json"
+          if [ ! -e "$decision_path" ]; then
+            # derived requirement: prevent "Model rationale: missing" when the inline helper never produced a decision payload.
+            printf '{"status":"error","reason":"not_recorded"}\n' > "$decision_path"
+            printf 'decision_stub=added_by_packager\n' >> "$note_path"
+          fi
+          response_path="_ctx/response.json"
+          if [ ! -e "$response_path" ]; then
+            printf '{}\n' > "$response_path"
+          fi
+          fix_path="_ctx/fix.patch"
+          if [ ! -e "$fix_path" ]; then
+            : > "$fix_path"
+          fi
+          declare -a files
+          for path in _ctx/guide.json _ctx/failpack.log _ctx/iterate_context_manifest.tsv _ctx/response.json _ctx/decision.json _ctx/decision.txt _ctx/fix.patch _ctx/notes.txt; do
+            if [ -e "$path" ]; then
+              files+=("$path")
+            fi
+          done
+          if [ -d _ctx/attached ]; then
+            files+=("_ctx/attached")
+          fi
+          if [ ${#files[@]} -eq 0 ]; then
+            # Professional note: the diagnostics site expects an iterate zip even when the model call is a no-op;
+            # create a minimal notes + manifest pair so the artifact contract stays satisfied.
+            mkdir -p _ctx
+            note_path="_ctx/notes.txt"
+            if [ ! -e "$note_path" ]; then
+              printf 'placeholder=iterate\n' > "$note_path"
+            fi
+            manifest_path="_ctx/iterate_context_manifest.tsv"
+            if [ ! -e "$manifest_path" ]; then
+              note_size=$(stat -c %s "$note_path" 2>/dev/null || echo 0)
+              printf 'notes.txt\t%s\n' "$note_size" > "$manifest_path"
+            fi
+            files=("$note_path" "$manifest_path")
+          fi
+          zip -r "$zip_path" "${files[@]}" >/dev/null
+      # derived requirement: expose the iterate payload contents inline so field triage
+      # can confirm breadcrumbs exist before upload.
+      - name: List _ctx prior to artifact upload (debug)
+        if: ${{ always() }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "PWD=$(pwd)"
+          if [ -d _ctx ]; then
+            find _ctx -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort
+          else
+            echo "_ctx MISSING"
+          fi
+      - name: Upload iterate artifact
+        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: logs/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip
+          if-no-files-found: warn
+          retention-days: 30
+
+  publish_diag:
+    name: Publish diagnostics to Pages
+    # derived requirement: keep diagnostics serialized behind model-quick-fix so iterate
+    # artifacts are definitely uploaded before the publisher attempts to fetch them,
+    # otherwise Pages may ship an empty _iter if publish_diag races ahead.
+    needs: [selftest, selftest-gate, model-quick-fix]
+    timeout-minutes: 25
+    concurrency:
+      # derived requirement: run 19236437263-1 exhausted the runner disk while a prior
+      # publish was still active; serialize by ref and bound runtime so hanging jobs
+      # cannot overlap and consume the remaining quota.
+      group: pages-${{ github.ref }}
+      cancel-in-progress: true
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Disk preflight + gentle cleanup (best effort)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          echo "== disk before =="
+          df -h || true
+          if [ -n "${RUNNER_TEMP:-}" ] && [ -d "$RUNNER_TEMP" ]; then
+            rm -rf "$RUNNER_TEMP"/* 2>/dev/null || true
+          fi
+          if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -d "$GITHUB_WORKSPACE" ]; then
+            find "$GITHUB_WORKSPACE" -maxdepth 2 -type d -name "__pycache__" -prune -exec rm -rf {} + 2>/dev/null || true
+          fi
+          rm -rf _site 2>/dev/null || true
+          echo "== disk after =="
+          df -h || true
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prep site directories
+        id: prep
+        shell: pwsh
+        run: |
+          $RunId = "${{ github.run_id }}"
+          $Attempt = "${{ github.run_attempt }}"
+          $SiteRoot = Join-Path $PWD '_site'
+          if (Test-Path $SiteRoot) { Remove-Item -Recurse -Force $SiteRoot }
+          New-Item -ItemType Directory -Path $SiteRoot | Out-Null
+          $DiagRoot = Join-Path $SiteRoot 'diag'
+          New-Item -ItemType Directory -Path $DiagRoot | Out-Null
+          $Diag = Join-Path $DiagRoot "$RunId-$Attempt"
+          New-Item -ItemType Directory -Path $Diag | Out-Null
+          $Artifacts = Join-Path $Diag '_artifacts'
+          New-Item -ItemType Directory -Path $Artifacts | Out-Null
+          # Professional note: .nojekyll keeps GitHub Pages from stripping the leading underscore
+          # directories that we rely on to surface raw diagnostics.
+          New-Item -ItemType File -Path (Join-Path $SiteRoot '.nojekyll') -Force | Out-Null
+          # Professional note: duplicate .nojekyll at the per-run diag root so direct links into
+          # underscore-prefixed folders (e.g., _artifacts) stay browsable when users open the
+          # diagnostics bundle without hitting the site root first.
+          New-Item -ItemType File -Path (Join-Path $Diag '.nojekyll') -Force | Out-Null
+          $short = "${{ github.sha }}"
+          if ($short.Length -gt 7) { $short = $short.Substring(0,7) }
+          echo "SITE=$SiteRoot" >> $env:GITHUB_OUTPUT
+          echo "DIAG=$Diag" >> $env:GITHUB_OUTPUT
+          echo "ARTIFACTS=$Artifacts" >> $env:GITHUB_OUTPUT
+          echo "SHORTSHA=$short" >> $env:GITHUB_OUTPUT
+
+      - name: Download iterate logs artifact (if present)
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          # derived requirement: match the inline helper's artifact name exactly so diagnostics always
+          # fetch the iterate payload and avoid wildcard drift when job/mode prefixes change again.
+          merge-multiple: true
+          path: _iter
+
+      - name: Show downloaded iterate payload (debug)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "_iter" ]; then
+            echo "_iter present"
+            find _iter -maxdepth 2 -type f -printf "%p (%s bytes)\n" | sort | head -50
+          else
+            echo "_iter MISSING"
+          fi
+
+      - name: Normalize iterate artifact layout
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          iter_src="_iter"
+          iter_root="${{ steps.prep.outputs.ARTIFACTS }}/iterate"
+          mkdir -p "$iter_root"
+
+          if [ -d "$iter_src" ]; then
+            shopt -s dotglob nullglob
+            for item in "$iter_src"/*; do
+              base=$(basename "$item")
+              rm -rf "$iter_root/$base"
+              cp -a "$item" "$iter_root/$base"
+            done
+          fi
+
+          nested_dir="$iter_root/_artifacts/iterate"
+          if [ -d "$nested_dir" ]; then
+            echo "Flattening iterate artifact from $nested_dir"
+            shopt -s dotglob nullglob
+            for item in "$nested_dir"/*; do
+              base=$(basename "$item")
+              rm -rf "$iter_root/$base"
+              mv "$item" "$iter_root/"
+            done
+            rm -rf "$iter_root/_artifacts"
+          fi
+
+          shopt -s dotglob nullglob
+          entries=("$iter_root"/*)
+          if [ "${#entries[@]}" -eq 1 ] && [ -d "${entries[0]}" ]; then
+            echo "Flattening iterate artifact wrapper ${entries[0]}"
+            for item in "${entries[0]}"/*; do
+              base=$(basename "$item")
+              rm -rf "$iter_root/$base"
+              mv "$item" "$iter_root/"
+            done
+            rm -rf "${entries[0]}"
+          fi
+
+          # Professional note: ensure the canonical iterate zip lands at the root so the
+          # diagnostics publisher locates it without chasing nested logs/ directories.
+          shopt -s nullglob
+          shopt -s globstar
+          for archive in "$iter_root"/**/*.zip "$iter_root"/*.zip; do
+            [ -f "$archive" ] || continue
+            base=$(basename "$archive")
+            target="$iter_root/$base"
+            if [ "$archive" != "$target" ]; then
+              rm -f "$target"
+              mv "$archive" "$target"
+            fi
+          done
+
+          # derived requirement: unzip iterate-logs-* immediately so diagnostics expose
+          # _ctx breadcrumbs even when downstream fetches are skipped mid-run.
+          for archive in "$iter_root"/iterate-logs-*.zip; do
+            [ -f "$archive" ] || continue
+            stem=$(basename "$archive" .zip)
+            dest="$iter_root/$stem"
+            rm -rf "$dest"
+            mkdir -p "$dest"
+            if ! unzip -oq "$archive" -d "$dest"; then
+              echo "Warning: failed to extract $archive" >&2
+              rm -rf "$dest"
+            fi
+          done
+
+          # derived requirement: download-artifact@v4 nests the uploaded
+          # _artifacts/iterate payload one directory deeper; flatten it so the
+          # diagnostics publisher detects '* Iterate logs: found'.
+
+          if [ -d "$iter_src" ]; then
+            # derived requirement: run 19232295127-1 proved the workspace copy can
+            # remain empty when normalization short-circuits; fall back to the
+            # freshly downloaded payload so diagnostics mirror the real iterate bundle.
+            if ! find "$iter_root" -mindepth 1 -type f -print -quit | grep -q .; then
+              echo "Mirroring raw iterate download because $iter_root is still empty"
+              cp -a "$iter_src"/. "$iter_root"/
+            fi
+          fi
+
+      - name: Mirror iterate logs into diagnostics root
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="${{ steps.prep.outputs.ARTIFACTS }}/iterate"
+          dst="${{ steps.prep.outputs.DIAG }}/_artifacts/iterate"
+          mkdir -p "$dst"
+          if [ -d "$src" ]; then
+            # derived requirement: publisher consumers expect the diagnostics bundle to mirror
+            # _artifacts/iterate exactly so downstream readers never fall back to the site copy.
+            # Guard against the src/dst alias case (they're both ${{ steps.prep.outputs.ARTIFACTS }}/iterate)
+            # so we do not accidentally clear the freshly normalized iterate payload.
+            if [ "$src" != "$dst" ]; then
+              shopt -s dotglob nullglob
+              rm -rf "$dst"/*
+              cp -a "$src"/. "$dst"/ || true
+            fi
+          fi
+
+      - name: Download CI NDJSON artifacts
+        if: ${{ always() }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.prep.outputs.ARTIFACTS }}/batch-check/_ci_artifacts
+
+      - name: Mirror NDJSON into diagnostics bundle
+        if: ${{ always() }}
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          ARTIFACTS_DIR: ${{ steps.prep.outputs.ARTIFACTS }}
+          DIAG_DIR: ${{ steps.prep.outputs.DIAG }}
+          SITE_DIR: ${{ steps.prep.outputs.SITE }}
+        run: |
+          set -euo pipefail
+          # Professional note: Quote "Mirror NDJSON locally for the publisher" so diagnostics reuse
+          # current-run evidence without waiting on remote polling.
+          src_root="$ARTIFACTS_DIR/batch-check/_ci_artifacts"
+          artifacts_root="$ARTIFACTS_DIR/batch-check"
+          diag_root="$DIAG_DIR/_artifacts/batch-check"
+          site_root="$SITE_DIR/_artifacts/batch-check"
+          mkdir -p "$artifacts_root" "$diag_root" "$site_root"
+          shopt -s dotglob nullglob
+          for artifact_dir in "$src_root"/*; do
+            [ -d "$artifact_dir" ] || continue
+            ndjson=$(find "$artifact_dir" -type f -name '*.ndjson' -print -quit)
+            [ -n "$ndjson" ] || continue
+            base=$(basename "$artifact_dir")
+            suffix="${base#ci_test_results-}"
+            suffix="${suffix%-${RUN_ATTEMPT}}"
+            suffix="${suffix%-${RUN_ID}}"
+            target="ci_test_results-${suffix}.ndjson"
+            install -D "$ndjson" "$artifacts_root/$target"
+            install -D "$ndjson" "$diag_root/$target"
+            install -D "$ndjson" "$site_root/$target"
+          done
+
+      - name: Package iterate logs archive
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="${{ steps.prep.outputs.ARTIFACTS }}/iterate"
+          log_dir="${{ steps.prep.outputs.DIAG }}/logs"
+          mkdir -p "$log_dir"
+          zip_path="$log_dir/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip"
+          rm -f "$zip_path"
+          if [ -d "$src" ]; then
+            shopt -s dotglob nullglob
+            entries=("$src"/*)
+            if [ ${#entries[@]} -gt 0 ]; then
+              # Professional note: diagnostics quick links rely on this archive existing even for
+              # partial iterate payloads; create the zip whenever any staged file is present.
+              (
+                cd "$src"
+                zip -rq "$zip_path" .
+              )
+            fi
+          fi
+
+      - name: Mirror iterate logs into site bundle
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $diagIter = Join-Path "${{ steps.prep.outputs.ARTIFACTS }}" 'iterate'
+          $siteRoot = "${{ steps.prep.outputs.SITE }}"
+          $siteIter = Join-Path $siteRoot '_artifacts/iterate'
+          $publicIterRoot = Join-Path $siteRoot 'iterate'
+          $publicIterDir = Join-Path $publicIterRoot ("iterate-logs-{0}-{1}" -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+
+          if (Test-Path -LiteralPath $diagIter) {
+            New-Item -ItemType Directory -Path $siteIter -Force | Out-Null
+            Get-ChildItem -LiteralPath $diagIter -Force | ForEach-Object {
+              $target = Join-Path $siteIter $_.Name
+              if ($_.PSIsContainer) {
+                Copy-Item -LiteralPath $_.FullName -Destination $siteIter -Recurse -Force
+              } else {
+                Copy-Item -LiteralPath $_.FullName -Destination $target -Force
+              }
+            }
+
+            New-Item -ItemType Directory -Path $publicIterDir -Force | Out-Null
+            Get-ChildItem -LiteralPath $diagIter -Force | ForEach-Object {
+              $target = Join-Path $publicIterDir $_.Name
+              if ($_.PSIsContainer) {
+                Copy-Item -LiteralPath $_.FullName -Destination $publicIterDir -Recurse -Force
+              } else {
+                Copy-Item -LiteralPath $_.FullName -Destination $target -Force
+              }
+            }
+          } else {
+            New-Item -ItemType Directory -Path $publicIterRoot -Force | Out-Null
+          }
+
+          $summaryDir = if (Test-Path -LiteralPath $publicIterDir) { $publicIterDir } else { $publicIterRoot }
+          New-Item -ItemType Directory -Path $publicIterRoot -Force | Out-Null
+          $summaryPath = Join-Path $publicIterRoot 'discovery.log.txt'
+          $entries = @()
+          if (Test-Path -LiteralPath $summaryDir) {
+            $files = Get-ChildItem -LiteralPath $summaryDir -Recurse -File -ErrorAction SilentlyContinue
+            foreach ($file in $files) {
+              $relative = [System.IO.Path]::GetRelativePath($summaryDir, $file.FullName)
+              $normalized = $relative.Replace('\', '/')
+              $entries += ("{0} ({1} bytes)" -f $normalized, $file.Length)
+            }
+          }
+          if (-not $entries -or $entries.Count -eq 0) {
+            $entries = @('no iterate files copied')
+          }
+          Set-Content -LiteralPath $summaryPath -Value $entries -Encoding Ascii
+
+      - name: Record iterate artifact status
+        shell: pwsh
+        run: |
+          $Artifacts = "${{ steps.prep.outputs.ARTIFACTS }}"
+          $Iter = Join-Path $Artifacts 'iterate'
+          $sentinel = Join-Path $Artifacts 'MISSING.txt'
+          $iterSentinel = Join-Path $Artifacts 'iterate.MISSING.txt'
+          # Professional note: _artifacts/ mirrors producer payloads exactly; the sentinel documents gaps for external analysts.
+          $files = @()
+          if (Test-Path $Iter) {
+            $files = Get-ChildItem -Path $Iter -Recurse -File -ErrorAction SilentlyContinue
+          }
+          if (-not $files -or $files.Count -eq 0) {
+            "iterate artifact missing or empty" | Out-File -Append -Encoding UTF8 $sentinel
+            "iterate artifact missing or empty" | Out-File -Append -Encoding UTF8 $iterSentinel
+          }
+
+      - name: Fetch batch-check artifacts
+        id: fetch_batch
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ArtifactsRoot = "${{ steps.prep.outputs.ARTIFACTS }}"
+          $BatchRoot = Join-Path $ArtifactsRoot 'batch-check'
+          New-Item -ItemType Directory -Path $BatchRoot -Force | Out-Null
+          $statusPath = Join-Path $BatchRoot 'STATUS.txt'
+          $missingPath = Join-Path $ArtifactsRoot 'MISSING.txt'
+          $localRunJson = Join-Path $BatchRoot 'run.json'
+          if ((Test-Path -LiteralPath $localRunJson) -and (Test-Path -LiteralPath $statusPath)) {
+            # derived requirement: when the publisher already mirrored run.json/STATUS locally, skip the GitHub polling loop entirely.
+            try {
+              $meta = Get-Content -Raw -LiteralPath $localRunJson | ConvertFrom-Json
+            } catch { $meta = $null }
+            if ($meta) {
+              if ($meta.run_id) { "run_id=$($meta.run_id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append }
+              if ($meta.run_attempt) { "run_attempt=$($meta.run_attempt)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append }
+              if ($meta.html_url) { "run_url=$($meta.html_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append }
+            }
+            return
+          }
+          # Professional note: correlate the batch-check workflow by commit SHA so the diagnostics bundle mirrors
+          # the matching self-test run; missing runs append a sentinel entry so downstream readers understand why.
+
+          $repoParts = "${{ github.repository }}".Split('/')
+          if ($repoParts.Count -ne 2) {
+            'repository parsing failed' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: repository parse error' | Out-File -Append -Encoding UTF8 $missingPath
+            return
+          }
+
+          if (-not $env:GH_TOKEN) {
+            'GH_TOKEN unavailable; batch-check artifacts skipped.' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: GH_TOKEN unavailable' | Out-File -Append -Encoding UTF8 $missingPath
+            return
+          }
+
+          $owner = $repoParts[0]
+          $repo  = $repoParts[1]
+          $base = "https://api.github.com/repos/$owner/$repo"
+          $headers = @{
+            Accept      = 'application/vnd.github+json'
+            Authorization = "Bearer $env:GH_TOKEN"
+            'User-Agent' = 'iterate-publish'
+          }
+
+          $workflow = $null
+          try {
+            $workflow = Invoke-RestMethod -Uri "$base/actions/workflows/batch-check.yml" -Headers $headers -ErrorAction Stop
+          } catch {
+            $response = $_.Exception.Response
+            $statusCode = $null
+            if ($response -and $response.StatusCode) {
+              $statusCode = [int]$response.StatusCode.value__
+            }
+
+            if ($statusCode -eq 404) {
+              # Professional note: fall back to enumerating the workflow catalog so forks with relocated files still resolve batch-check.
+              try {
+                $catalog = Invoke-RestMethod -Uri "$base/actions/workflows" -Headers $headers -ErrorAction Stop
+                $workflow = @($catalog.workflows | Where-Object { $_.path -and $_.path.ToLower().EndsWith('batch-check.yml') })[0]
+              } catch {
+                "workflow lookup failed (fallback enumeration): $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
+                "batch-check artifact lookup failed: fallback enumeration error: $($_.Exception.Message)" | Out-File -Append -Encoding UTF8 $missingPath
+                return
+              }
+            } else {
+              "workflow lookup failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
+              "batch-check artifact lookup failed: $($_.Exception.Message)" | Out-File -Append -Encoding UTF8 $missingPath
+              return
+            }
+          }
+
+          if (-not $workflow) {
+            'workflow lookup failed: batch-check workflow not found' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: batch-check workflow not found' | Out-File -Append -Encoding UTF8 $missingPath
+            return
+          }
+
+          if (-not $workflow.id) {
+            'workflow id missing' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: workflow id missing' | Out-File -Append -Encoding UTF8 $missingPath
+            return
+          }
+
+          $pollSeconds = 10
+          $deadline = [DateTime]::UtcNow.AddSeconds(60)
+          $headSha = "${{ github.event.pull_request.head.sha || github.sha }}"
+          $run = $null
+          while ([DateTime]::UtcNow -lt $deadline) {
+            try {
+              $runs = Invoke-RestMethod -Uri "$base/actions/workflows/$($workflow.id)/runs?per_page=20&head_sha=$headSha" -Headers $headers -ErrorAction Stop
+            } catch {
+              "list runs failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
+              return
+            }
+
+            $candidates = @($runs.workflow_runs | ForEach-Object { $_ }) | Where-Object { $_ -and $_.status -eq 'completed' }
+            if ($candidates.Count -gt 0) {
+              $run = $candidates | Sort-Object run_attempt -Descending | Select-Object -First 1
+              break
+            }
+
+            Start-Sleep -Seconds $pollSeconds
+          }
+
+          if (-not $run) {
+            'no completed run found before timeout' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: no completed run for this commit' | Out-File -Append -Encoding UTF8 $missingPath
+            return
+          }
+
+          $meta = [ordered]@{
+            workflow_id = $workflow.id
+            run_id = $run.id
+            run_attempt = $run.run_attempt
+            status = $run.status
+            conclusion = $run.conclusion
+            html_url = $run.html_url
+          }
+          $meta | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 (Join-Path $BatchRoot 'run.json')
+          "run_id=$($run.id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          "run_attempt=$($run.run_attempt)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          if ($run.html_url) {
+            "run_url=$($run.html_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          }
+
+          try {
+            $artifacts = Invoke-RestMethod -Uri "$base/actions/runs/$($run.id)/artifacts?per_page=100" -Headers $headers -ErrorAction Stop
+          } catch {
+            "artifact list failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $statusPath
+            return
+          }
+
+          if (-not $artifacts.artifacts) {
+            'no artifacts published by batch-check' | Set-Content -Encoding UTF8 $statusPath
+            'batch-check artifact lookup failed: no artifacts in run' | Out-File -Append -Encoding UTF8 $missingPath
+            return
+          }
+
+          Remove-Item -LiteralPath $statusPath -ErrorAction SilentlyContinue
+
+          foreach ($artifact in $artifacts.artifacts) {
+            if (-not $artifact -or $artifact.expired) { continue }
+            $safeName = ($artifact.name -replace '[^A-Za-z0-9_.-]', '_')
+            $dest = Join-Path $BatchRoot $safeName
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            $zipPath = Join-Path $env:RUNNER_TEMP ("batch-" + $artifact.id + '.zip')
+            try {
+              Invoke-WebRequest -Uri $artifact.archive_download_url -Headers $headers -OutFile $zipPath -ErrorAction Stop
+              Expand-Archive -LiteralPath $zipPath -DestinationPath $dest -Force
+            } catch {
+              "download failed: $($artifact.name) -> $($_.Exception.Message)" | Out-File -Append -Encoding UTF8 $statusPath
+            } finally {
+              Remove-Item -LiteralPath $zipPath -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Summarize failing tests
+        shell: bash
+        env:
+          DIAG: ${{ steps.prep.outputs.DIAG }}
+        run: |
+          python tools/diag/ndjson_fail_list.py
+
+      - name: Download workflow logs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $Diag = "${{ steps.prep.outputs.DIAG }}"
+          $repoParts = "${{ github.repository }}".Split('/')
+          if ($repoParts.Count -ne 2) { return }
+          if (-not $env:GH_TOKEN) {
+            'GH_TOKEN unavailable; workflow logs skipped.' | Set-Content -Encoding UTF8 (Join-Path $Diag 'logs-note.txt')
+            return
+          }
+
+          $owner = $repoParts[0]
+          $repo  = $repoParts[1]
+          $headers = @{
+            Accept      = 'application/vnd.github+json'
+            Authorization = "Bearer $env:GH_TOKEN"
+            'User-Agent' = 'iterate-publish'
+          }
+
+          # Professional note: maintainers requested "add a short retry loop ... before writing
+          # the missing sentinel", so we wrap Invoke-WebRequest with a bounded retry helper.
+          function Download-WithRetry {
+            param(
+              [Parameter(Mandatory=$true)][string]$Uri,
+              [Parameter(Mandatory=$true)][string]$Destination,
+              [Parameter(Mandatory=$true)][hashtable]$Headers,
+              [int]$Attempts = 3,
+              [int]$DelaySeconds = 5
+            )
+
+            for ($i = 1; $i -le $Attempts; $i++) {
+              try {
+                Invoke-WebRequest -Uri $Uri -Headers $Headers -OutFile $Destination -ErrorAction Stop
+                return $true
+              } catch {
+                if ($i -ge $Attempts) {
+                  return $false
+                }
+                Start-Sleep -Seconds $DelaySeconds
+              }
+            }
+          }
+
+          $logDir = Join-Path $Diag 'logs'
+          New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+
+          $iterateZip = Join-Path $logDir ("iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip")
+          $iterateSentinel = Join-Path $logDir 'iterate.MISSING.txt'
+          $iterateError = Join-Path $logDir 'iterate-log-error.txt'
+          # Professional note: prefer the staged iterate artifact; retain the run-log fallback only when
+          # the archive failed to materialize so unauthenticated readers still see an explanation.
+          $needDownload = $true
+          if (Test-Path $iterateZip) {
+            $info = Get-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
+            if ($info -and $info.Length -gt 0) { $needDownload = $false }
+          }
+          if ($needDownload) {
+            $iterateSource = Join-Path $Diag '_artifacts/iterate'
+            $hasPayload = $false
+            if (Test-Path $iterateSource) {
+              $probe = Get-ChildItem -Path $iterateSource -Recurse -Force -File -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($probe) { $hasPayload = $true }
+            }
+            if ($hasPayload) {
+              try {
+                Remove-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
+                Compress-Archive -Path (Join-Path $iterateSource '*') -DestinationPath $iterateZip -Force
+                $info = Get-Item -LiteralPath $iterateZip -ErrorAction Stop
+                if ($info -and $info.Length -gt 0) {
+                  $needDownload = $false
+                  Remove-Item -LiteralPath $iterateSentinel -ErrorAction SilentlyContinue
+                  Remove-Item -LiteralPath $iterateError -ErrorAction SilentlyContinue
+                } else {
+                  Remove-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
+                }
+              } catch {
+                Remove-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
+              }
+            }
+          }
+          if ($needDownload) {
+            Remove-Item -LiteralPath $iterateZip -ErrorAction SilentlyContinue
+            $iterateLogUri = "https://api.github.com/repos/$owner/$repo/actions/runs/${{ github.run_id }}/logs"
+            if (-not (Download-WithRetry -Uri $iterateLogUri -Destination $iterateZip -Headers $headers)) {
+              "iterate log download failed after retries: $iterateLogUri" | Out-File -Encoding UTF8 -FilePath $iterateError
+            }
+            if (-not (Test-Path $iterateZip)) {
+              'iterate log archive missing' | Set-Content -Encoding UTF8 $iterateSentinel
+            } else {
+              $info = Get-Item -LiteralPath $iterateZip
+              if (-not $info -or $info.Length -eq 0) {
+                'iterate log archive empty' | Set-Content -Encoding UTF8 $iterateSentinel
+              } else {
+                Remove-Item -LiteralPath $iterateError -ErrorAction SilentlyContinue
+              }
+            }
+          }
+
+          $batchRunId = "${{ steps.fetch_batch.outputs.run_id }}"
+          if ($batchRunId) {
+            $batchAttempt = "${{ steps.fetch_batch.outputs.run_attempt }}"
+            if (-not $batchAttempt) { $batchAttempt = '1' }
+            $batchZip = Join-Path $logDir ("batch-check-$batchRunId-$batchAttempt.zip")
+            $batchSentinel = Join-Path $logDir 'batch-check.MISSING.txt'
+            $batchLogUri = "https://api.github.com/repos/$owner/$repo/actions/runs/$batchRunId/logs"
+            if (-not (Download-WithRetry -Uri $batchLogUri -Destination $batchZip -Headers $headers)) {
+              "batch-check log download failed after retries: $batchLogUri" | Out-File -Encoding UTF8 -FilePath (Join-Path $logDir 'batch-check-log-error.txt')
+            }
+            if (-not (Test-Path $batchZip)) {
+              'batch-check log archive missing' | Set-Content -Encoding UTF8 $batchSentinel
+            } else {
+              $bInfo = Get-Item -LiteralPath $batchZip
+              if (-not $bInfo -or $bInfo.Length -eq 0) {
+                'batch-check log archive empty' | Set-Content -Encoding UTF8 $batchSentinel
+              }
+            }
+          } else {
+            $missing = Join-Path $logDir 'batch-check.MISSING.txt'
+            'batch-check logs not located for this commit' | Set-Content -Encoding UTF8 $missing
+          }
+
+      - name: Capture repository snapshot
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $Diag = "${{ steps.prep.outputs.DIAG }}"
+          $short = "${{ steps.prep.outputs.SHORTSHA }}"
+          if (-not $short) {
+            $short = "${{ github.sha }}"
+            if ($short.Length -gt 7) { $short = $short.Substring(0,7) }
+          }
+          git ls-tree -r --name-only HEAD | Set-Content -Encoding UTF8 (Join-Path $Diag 'repo-tree.txt')
+          $repoDir = Join-Path $Diag 'repo'
+          New-Item -ItemType Directory -Path $repoDir -Force | Out-Null
+          $repoZip = Join-Path $repoDir ("repo-$short.zip")
+          $repoMissing = Join-Path $repoDir 'repo.MISSING.txt'
+          # Professional note: the repo/ folder mirrors GitHub's zipball for this commit so analysts can download
+          # an authenticated snapshot without signing into Actions.
+          $parts = "${{ github.repository }}".Split('/')
+          if ($parts.Count -eq 2 -and $env:GH_TOKEN) {
+            $owner = $parts[0]
+            $repo = $parts[1]
+            $headers = @{
+              Accept       = 'application/vnd.github+json'
+              Authorization = "Bearer $env:GH_TOKEN"
+              'User-Agent'  = 'iterate-publish'
+            }
+            $zipUrl = "https://api.github.com/repos/$owner/$repo/zipball/${{ github.sha }}"
+            try {
+              Invoke-WebRequest -Uri $zipUrl -Headers $headers -OutFile $repoZip -ErrorAction Stop
+            } catch {
+              "repo zip download failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 $repoMissing
+            }
+          } else {
+            'repo zip download skipped: missing GH token or repo metadata' | Set-Content -Encoding UTF8 $repoMissing
+          }
+          if (Test-Path $repoZip) {
+            $repoExtract = Join-Path $repoDir 'files'
+            if (Test-Path $repoExtract) { Remove-Item -LiteralPath $repoExtract -Recurse -Force -ErrorAction SilentlyContinue }
+            New-Item -ItemType Directory -Path $repoExtract -Force | Out-Null
+            try {
+              # Professional note: maintainers asked for "an unzipped set alongside/sub page" so analysts can
+              # browse without downloading the archive; we unpack the commit zip alongside the original bundle.
+              Expand-Archive -LiteralPath $repoZip -DestinationPath $repoExtract -Force
+            } catch {
+              "repo unzip failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 (Join-Path $repoDir 'repo-unpack-error.txt')
+            }
+          }
+          Get-ChildItem Env: | Sort-Object Name | ForEach-Object {
+            if ($_.Name -notmatch 'TOKEN|SECRET|KEY|PASSWORD|COOKIE') {
+              '{0}={1}' -f $_.Name, $_.Value
+            }
+          } | Set-Content -Encoding UTF8 (Join-Path $Diag 'env.txt')
+          if (Test-Path '.github\workflows') {
+            $wfDest = Join-Path $Diag '.github\workflows'
+            New-Item -ItemType Directory -Path $wfDest -Force | Out-Null
+            Copy-Item -Recurse -Force '.github\workflows\*' $wfDest
+            $wfCopyDir = Join-Path $Diag 'wf'
+            New-Item -ItemType Directory -Path $wfCopyDir -Force | Out-Null
+            Get-ChildItem -Path '.github\workflows' -Filter *.yml -File -ErrorAction SilentlyContinue | ForEach-Object {
+              Copy-Item -Force $_.FullName (Join-Path $wfCopyDir $_.Name)
+              Copy-Item -Force $_.FullName (Join-Path $wfCopyDir ($_.Name + '.txt'))
+            }
+          }
+
+      - name: Inventory collected files
+        id: inventory
+        shell: pwsh
+        run: |
+          $Diag = "${{ steps.prep.outputs.DIAG }}"
+          $items = Get-ChildItem -Path $Diag -Recurse -File -Force -ErrorAction SilentlyContinue
+          if (-not $items) { $items = @() }
+          $manifestFiles = @()
+          foreach ($item in $items) {
+            $relative = $item.FullName.Substring($Diag.Length + 1).Replace('\','/')
+            $manifestFiles += [PSCustomObject]@{
+              path         = $relative
+              size         = $item.Length
+              sha256       = (Get-FileHash -Algorithm SHA256 -LiteralPath $item.FullName).Hash
+              modified_utc = $item.LastWriteTimeUtc.ToString('o')
+            }
+          }
+          $manifest = [PSCustomObject]@{
+            run_id        = '${{ github.run_id }}'
+            run_attempt   = '${{ github.run_attempt }}'
+            sha           = '${{ github.sha }}'
+            generated_utc = (Get-Date).ToUniversalTime().ToString('o')
+            files         = $manifestFiles
+          }
+          $json = $manifest | ConvertTo-Json -Depth 6
+          $json | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.json')
+          try {
+            $manifestObj = $json | ConvertFrom-Json -Depth 6
+          } catch {
+            $manifestObj = $manifest
+          }
+          if (-not $manifestObj) { $manifestObj = $manifest }
+          $filesForRender = @()
+          if ($manifestObj -and $manifestObj.files) {
+            $filesForRender = @($manifestObj.files)
+          }
+          # derived requirement: inventory.json went blank while HTML/TXT stayed populated; derive the mirrors from the parsed
+          # JSON payload so all formats stay in sync with the canonical manifest.
+          $bulletLines = [System.Collections.Generic.List[string]]::new()
+          $plainLines = [System.Collections.Generic.List[string]]::new()
+          $htmlLines = [System.Collections.Generic.List[string]]::new()
+          foreach ($seed in @('<!doctype html>', '<meta charset="utf-8">', '<title>Artifact inventory</title>', '<body><main><h1>Artifact inventory</h1><ul>')) {
+            $null = $htmlLines.Add($seed)
+          }
+
+          foreach ($entry in ($filesForRender | Sort-Object path)) {
+            $relative = $entry.path
+            if (-not $relative) { continue }
+            $sizeValue = 0
+            if ($entry.size -ne $null) { [void][int64]::TryParse($entry.size.ToString(), [ref]$sizeValue) }
+            $sizeText = ('{0:N0}' -f $sizeValue)
+            $safe = $relative -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;' -replace '"', '&quot;'
+            $null = $bulletLines.Add(('- {0} bytes - `{1}`' -f $sizeText, $relative))
+            $null = $plainLines.Add(('{0} bytes{1}{2}' -f $sizeText, [char]9, $relative))
+            $null = $htmlLines.Add("<li><code>$safe</code> <span>($sizeText bytes)</span></li>")
+          }
+
+          if ($bulletLines.Count -eq 0) {
+            $null = $bulletLines.Add('- (no files captured)')
+            $null = $plainLines.Add('no files captured')
+            $null = $htmlLines.Add('<li>(no files captured)</li>')
+          }
+
+          $null = $htmlLines.Add('</ul></main></body>')
+
+          $joined = $bulletLines.ToArray() -join "`n"
+          $joined | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.md')
+          ($plainLines.ToArray() -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.txt')
+          ($htmlLines.ToArray() -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.html')
+          [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($joined)) | ForEach-Object {
+            "inventory_b64=$_" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          }
+
+      - name: Write batch-check metadata
+        if: ${{ always() }}
+        shell: bash
+        env:
+          ARTIFACTS_ROOT: ${{ steps.prep.outputs.ARTIFACTS }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_CONCLUSION: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          root="${ARTIFACTS_ROOT}/batch-check"
+          mkdir -p "$root"
+          # Professional note: per "add a final always() step that writes ... STATUS.txt = 'completed'",
+          # keep the sentinel truthful for the current run rather than leaving the remote timeout.
+          printf 'completed\n' > "$root/STATUS.txt"
+          cat > "$root/run.json" <<EOF
+          {
+            "run_id": "${RUN_ID}",
+            "run_attempt": "${RUN_ATTEMPT}",
+            "html_url": "${RUN_URL}",
+            "status": "completed",
+            "conclusion": "${JOB_CONCLUSION}"
+          }
+          EOF
+
+      - name: Publish diagnostics index
+        shell: bash
+        env:
+          DIAG: ${{ steps.prep.outputs.DIAG }}
+          ARTIFACTS: ${{ steps.prep.outputs.ARTIFACTS }}
+          ARTIFACTS_ROOT: ${{ github.workspace }}/_site/diag/${{ github.run_id }}-${{ github.run_attempt }}/_artifacts
+          DOWNLOADED_ITER_ROOT: ${{ github.workspace }}/_iter
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHORTSHA: ${{ steps.prep.outputs.SHORTSHA }}
+          INVENTORY_B64: ${{ steps.inventory.outputs.inventory_b64 }}
+          BATCH_RUN_ID: ${{ steps.fetch_batch.outputs.run_id }}
+          BATCH_RUN_ATTEMPT: ${{ steps.fetch_batch.outputs.run_attempt }}
+          SITE: ${{ steps.prep.outputs.SITE }}
+        run: |
+          python tools/diag/publish_index.py \
+            --run-id "${{ github.run_id }}" \
+            --run-attempt "${{ github.run_attempt }}" \
+            --out-dir "_site"
+
+      - name: Append job summary
+        shell: pwsh
+        run: |
+          $Run = "${{ github.run_id }}"
+          $Att = "${{ github.run_attempt }}"
+          $ownerRepo = "${{ github.repository }}"
+          $parts = $ownerRepo.Split('/')
+          if ($parts.Count -eq 2) {
+            $bundle = "https://$($parts[0]).github.io/$($parts[1])/diag/$Run-$Att/"
+            "### Diagnostics bundle" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            "- [$bundle]($bundle)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+
+      - uses: actions/configure-pages@v4
+        if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Upload Pages artifact
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.prep.outputs.SITE }}
+
+      - name: Deploy to GitHub Pages
+        if: ${{ github.event_name != 'pull_request' }}
+        id: deploy
+        uses: actions/deploy-pages@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   emit-nudge:
     name: Emit Codex nudge (on failure)
-    needs: check
+    needs:
+      - selftest-gate
+      - publish_diag
     runs-on: windows-latest
-    if: ${{ always() && needs.check.result == 'failure' }}
+    if: ${{ always() && needs.selftest-gate.outputs.has_failures == 'true' && !cancelled() }}
     steps:
       - name: Build Codex nudge
         shell: pwsh
@@ -853,9 +2974,53 @@ jobs:
           "@
           Set-Content -LiteralPath "$env:RUNNER_TEMP\codex_nudge.txt" -Value $body -Encoding Ascii
 
+      - name: Locate diagnostics URL
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP 'codex_nudge_url.txt'
+          $summaryHeader = "### Diagnostics site"
+          $repoParts = "${{ github.repository }}".Split('/')
+          if ($repoParts.Count -ne 2) {
+            Set-Content -LiteralPath $dest -Value 'repository name parsing failed' -Encoding UTF8
+            $summaryHeader | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            "- Repository parsing failed; no diagnostics link." | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            return
+          }
+
+          $owner = $repoParts[0]
+          $repo  = $repoParts[1]
+          $bundle = "https://$owner.github.io/$repo/diag/${{ github.run_id }}-${{ github.run_attempt }}/"
+          Set-Content -LiteralPath $dest -Value $bundle -Encoding UTF8
+          $summaryHeader | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "- Diagnostics: [$bundle]($bundle)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+      - name: Combine nudges
+        shell: pwsh
+        run: |
+          $target = "$env:RUNNER_TEMP\codex_nudge.txt"
+          if (-not (Test-Path $target)) { return }
+          $urlItem = Get-ChildItem -Path $env:RUNNER_TEMP -Filter 'codex_nudge_url.txt' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -ne $urlItem) {
+            $url = Get-Content -Raw -LiteralPath $urlItem.FullName
+            if ($url) {
+              Add-Content -Path $target -Value "`nDiagnostics: $url`n"
+            }
+          }
+
       - name: Upload Codex nudge artifact
         uses: actions/upload-artifact@v4
         with:
-          name: codex_nudge.txt
+          name: codex_nudge-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/codex_nudge.txt
+          if-no-files-found: ignore
+          retention-days: 3
+
+      - name: Upload diagnostics URL artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex_nudge_url-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/codex_nudge_url.txt
+          if-no-files-found: warn
           retention-days: 3

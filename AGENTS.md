@@ -16,6 +16,14 @@ Operating policy for automated agents (Codex, Copilot, others).
 - Do not delete or skip checks to obtain a green build.
 - Do not change workflow triggers, permissions, or retention.
 
+## Interface contract with CI
+- CI asserts on the exact bootstrapper messages emitted by `run_setup.bat` and related helpers.
+- When adjusting bootstrap log text or status summaries, update the workflow checks that parse them at the same time.
+- Likewise, when tightening CI parsing or summaries, ensure `run_setup.bat` keeps emitting the expected phrases.
+- Always validate both sides together so the message contract stays synchronized and avoids false regressions.
+- The only parser-facing signal for iterate presence is the single line '* Iterate logs: {found|missing}'. Any additional iterate-related details are advisory and must not change consumer logic.
+- The diagnostics publisher expects the iterate job to upload a single artifact named `iterate-logs-${run_id}-${run_attempt}` that contains the `iterate/_temp/` payload plus the job summary. Missing that artifact yields '* Iterate logs: missing'.
+
 ## Conda policy (mandatory)
 - Enforce conda-forge only.
 - Before any update/install:
@@ -31,6 +39,36 @@ Operating policy for automated agents (Codex, Copilot, others).
   - Trigger CI by push (or an empty commit) and wait for completion.
 - Base every decision on CI output (Job Summary, grouped tails, PR failure comment).
 
+# Iteration Contract (Agent)
+
+You MUST follow this order every loop:
+Always run yml lint on workflow.
+
+IF scope change requested → create backlog item; DO NOT edit current requirements unless explicitly told to do so.
+
+IF CI red → fix CI.
+
+IF tests error (crash/invalid) → fix tests/harness. Run yml lint, python compile, install and run pyflakes, do other self checks/tests.
+
+IF tests fail (assert red) → fix product code at root cause.
+
+IF all green → verify no false passes (hunt flakiness/missing checks).
+
+ELSE IF unmet requirement exists → implement ONE slice.
+
+ELSE IF implemented behavior lacks a test → add ONE test.
+
+IF any code is untraceable to a requirement → add comment:
+`derived requirement: <why needed>` and propose a requirement.
+
+THEN stop and open/append a PR. One loop = one change set.
+
+- Canonical pipreqs invocation (locked by CI gates):
+
+  `pipreqs . --force --mode compat --savepath requirements.auto.txt`
+
+  compat mode ensures cross-runner determinism; --force overwrites stale output; --savepath keeps the generated file separate from the source-of-truth requirements.
+
 ## Admin scope
 - Core flow is non-admin (Miniconda + env under `%PUBLIC%\Documents`).
 - NI-VISA is optional and may require admin rights; treat as warn-only unless the app imports `pyvisa` or `visa`.
@@ -41,26 +79,34 @@ Operating policy for automated agents (Codex, Copilot, others).
 - Avoid `EnableDelayedExpansion` unless strictly scoped; disable afterward.
 - Batch file syntax has been a critical source of failures. Especially for escaping special characters.
   - Since batch file syntax is tricky, and there is not an easy checker, if you cannot run it on a windows environment then utilize the CI workflow actions that run on every push so wait for the results to appear and recheck after the push.
-- Use LF endings in the repository.
-- Only Windows scripts (.bat .cmd .ps1 .psm1 .psd1) should check out as CRLF.
 - Do not change line endings manually; follow .gitattributes.
 - If you change the bootstrapper’s console text or these entry rules in a future PR, update the self-test and any entry-selection tests accordingly.
 - The bootstrapper’s exit code when no Python files are present is not a release contract; guard on the console text instead.
-- Keep core.autocrlf=false and let .gitattributes control endings.
-- Be sure to sanity check anything touched before submitting code. Here are some methods:
-  - Python syntax errors and name errors: use `python -m compileall -q .` and `python -m pyflakes .` (or `pip install pyflakes`).
-  - PowerShell lint: run PSScriptAnalyzer (`Install-Module PSScriptAnalyzer -Force -Scope CurrentUser` then `Invoke-ScriptAnalyzer -Path . -Recurse -EnableExit`).
-  - YAML lint: use `pip install yamllint` (or `actionshub/yamllint@v1`) and run over `*.yml`/`*.yaml`.
-  - JSON lint: use `jq -e .` over `*.json`.
-  - Generic **paired-delimiter** scanner for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
-     - Implement a kind of `tools/check_delimiters.py` that reads text files and validates balanced/ordered pairs: (), {}, [], and quotes " ' (handle escapes and ignore inside comments where feasible).
-     - For `.bat/.cmd`, be conservative: treat `^` (escape) and `REM`/`::` as comment starts; don’t over-parse redirection `<` `>`; just count (), quotes, and braces/brackets. For `.ps1`, respect `#` comments and here-strings (@'…'@, @"…"@).
+- Be sure to sanity check anything touched before submitting code. Recommended options include:
+  - Python: `python -m compileall -q .` and `python -m pyflakes .` (install `pyflakes` if needed).
+- PowerShell:
+    - Install `pwsh` first (works on these runners as of 2025-11-09):
+      ```
+      sudo apt-get update
+      sudo apt-get install -y wget apt-transport-https software-properties-common lsb-release
+      wget -q "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb" -O packages-microsoft-prod.deb
+      sudo dpkg -i packages-microsoft-prod.deb && rm packages-microsoft-prod.deb
+      sudo apt-get update
+      sudo apt-get install -y powershell
+      ```
+      Verify with `pwsh --version` (7.5.4 installs cleanly).
+    - PowerShell Gallery downloads (PSResourceGet / PSScriptAnalyzer) are still blocked by proxy 403 responses. When linting is required, prefer executing the scripts directly under `pwsh` with realistic environment variables instead of relying on ScriptAnalyzer.
+    - After installing `pwsh`, sanity-check modified scripts by invoking them directly. For example, populate temporary directories for `DIAG`/`ARTIFACTS` and run `pwsh -NoLogo -File tools/diag/publish_index.ps1` to catch syntax errors.
+    - Use `pwsh -NoLogo -NoProfile -File tools/ps-compileall.ps1` for syntax-only sweeps across `.ps1`/`.psm1`/`.psd1` files when you need a lightweight pre-commit check without PSGallery access.
+- YAML (and GitHub Actions): run `python -m yamllint <file>` (or `actionshub/yamllint@v1`) and `actionlint -oneline` for workflow validation.
+  - Preferred actionlint install: `curl -sSLO https://github.com/rhysd/actionlint/releases/latest/download/actionlint_linux_amd64.tar.gz && tar -xzf actionlint_linux_amd64.tar.gz actionlint && ./actionlint -oneline .`
+  - If the release tarball resolves to "Not Found" due to proxy filtering, install with Go instead: `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.1` and add `/root/.local/share/mise/installs/go/1.24.3/bin` to `PATH` before running `actionlint`. On this runner `go env GOPATH` resolves to `/root/go`, so the compiled binary also lives under `/root/go/bin`—add that directory to `PATH` if the mise shim is absent.
+  - JSON: `jq -e .` over `*.json`.
+  - Generic paired-delimiter scan for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
+    - Provide a helper such as `tools/check_delimiters.py` that validates (), {}, [], and quotes " ' (handle escapes and ignore comments when practical).
+    - For `.bat/.cmd`, treat `^` as escape and `REM`/`::` as comment starts; avoid over-parsing redirection symbols.
+    - For `.ps1`, respect `#` comments and here-strings (@'…'@, @"…"@) when counting delimiters.
 
-
-## Headless Codex Iteration (CI)
-- Trigger: Workflow_run completion of **Batch syntax/run check**.
-- Requires repository secret **OPENAI_API_KEY** (used by the Codex CLI).
-- Model pin: `gpt-4o-mini` via `codex exec` headless mode.
-- Attempt cap: 20 commits per source branch (tracked by commit prefix).
-- Branch naming: `codex/ci-fix-<failing head branch>` for automated fixes.
-- Disable by commenting out the workflow job or forcing an always-false condition in `.github/workflows/codex-auto-iterate.yml`.
+- Work in an explicit loop: **Plan → Check the plan → Execute → Self-check/tests**. Document the plan before coding, verify it against requirements, act, then rerun the listed sanity checks.
+- When fixing bugs, leave professional comments that explain why the change is structured the way it is so future readers understand the constraint.
+- You may add helper utilities under `tools/` (preferred over embedding long scripts inside YAML/PowerShell/batch files). Run helpers from there freely, but update existing tools carefully to avoid regressions.

@@ -1,14 +1,33 @@
 $ErrorActionPreference = 'Continue'
 
 $here = $PSScriptRoot
+$repoRoot = Split-Path -Parent $here
 $resultsPath = Join-Path -Path $here -ChildPath '~test-results.ndjson'
+$ciResultsPath = Join-Path -Path $repoRoot -ChildPath 'ci_test_results.ndjson'
 $summaryPath = Join-Path -Path $here -ChildPath '~selftests-summary.txt'
 $summary = New-Object System.Collections.Generic.List[string]
 $summary.Add('=== Console Self-test ===')
 if (Test-Path -LiteralPath $summaryPath) {
     Remove-Item -LiteralPath $summaryPath -Force
 }
-$repoRoot = Split-Path -Parent $here
+
+if (-not (Test-Path -LiteralPath $resultsPath)) {
+    New-Item -ItemType File -Force -Path $resultsPath | Out-Null
+}
+if (-not (Test-Path -LiteralPath $ciResultsPath)) {
+    New-Item -ItemType File -Force -Path $ciResultsPath | Out-Null
+}
+
+function Write-NdjsonRow {
+    param([hashtable]$Row)
+
+    if (-not $Row) { return }
+    $json = $Row | ConvertTo-Json -Compress
+    Add-Content -LiteralPath $resultsPath -Value $json -Encoding Ascii
+    Add-Content -LiteralPath $ciResultsPath -Value $json -Encoding Ascii
+}
+
+Write-NdjsonRow ([ordered]@{ id = 'self.harness.started'; pass = $true; desc = 'harness init' })
 
 $record = [ordered]@{
     id = 'self.empty_repo.msg'
@@ -37,6 +56,32 @@ try {
         }
 
         cmd.exe /d /c "run_setup.bat *> ~empty_bootstrap.log" | Out-Null
+
+        $statusPath = Join-Path -Path $selfTestDir -ChildPath '~bootstrap.status.json'
+        $stateRow = [ordered]@{
+            id = 'self.bootstrap.state'
+            pass = $false
+            desc = 'status json missing'
+            details = [ordered]@{ path = $statusPath }
+        }
+        if (Test-Path -LiteralPath $statusPath) {
+            try {
+                $status = Get-Content -LiteralPath $statusPath -Raw -Encoding Ascii | ConvertFrom-Json
+                $stateRow.desc = "state=$($status.state)"
+                $stateRow.details.state = $status.state
+                $stateRow.details.exitCode = $status.exitCode
+                $stateRow.details.pyFiles = $status.pyFiles
+                if ($status.state -eq 'no_python_files') {
+                    $stateRow.pass = $true
+                } else {
+                    $stateRow.pass = $false
+                }
+            } catch {
+                $stateRow.desc = 'invalid bootstrap status json'
+                $stateRow.details.error = $_.Exception.Message
+            }
+        }
+        Write-NdjsonRow $stateRow
 
         $record.details.logExists = Test-Path -LiteralPath $logPath
         if ($record.details.logExists) {
@@ -72,8 +117,7 @@ catch {
     $record.error = $_.Exception.Message
 }
 finally {
-    $json = $record | ConvertTo-Json -Compress
-    Add-Content -LiteralPath $resultsPath -Value $json -Encoding Ascii
+    Write-NdjsonRow $record
 }
 if ($record.pass) {
     $summary.Add('Empty repo bootstrap message: PASS')

@@ -4,6 +4,8 @@
 [![Batch syntax/run check](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml)
 [![CodeQL](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml)
 
+**Live diagnostics bundle:** https://mixmansoundude.github.io/Python_vs_Windows/
+
 Prime Directive: With only one or more Python files on a clean Windows 10+ machine with internet, get at least one to run, with all imports installed.
 
 ---
@@ -71,6 +73,11 @@ This repository serves as a proof of concept of this new approach.
 
 - Environment naming: env name equals the **current folder name**.
 
+- Miniconda is the primary environment provider and the CI contract expects it. When conda is unavailable (for example,
+  local networks blocking downloads) you may opt into the scripted fallbacks: first a local `python -m venv`
+  (`HP_ALLOW_VENV_FALLBACK=1`) and, as a last resort, a system Python run-only mode (`HP_ALLOW_SYSTEM_FALLBACK=1`). These
+  keep the Prime Directive intact by doing whatever it takes to run your `.py` entry point, and `env.mode` rows in the
+  NDJSON log record which path executed.
 - Channels policy (determinism and legal-friction avoidance):
   - Before any updates or installs, force **community conda-forge only**:
     ```
@@ -88,8 +95,12 @@ This repository serves as a proof of concept of this new approach.
   - If bulk fails, fall back per-package via conda. For `~=` (compatible release), convert to `>=X.Y,<X.(Y+1)` (PEP 440) before feeding conda. Handle this carefully.
 
 - Always run:
-pipreqs . --force --mode compat --savepath requirements.auto.txt
-and log a **diff vs `requirements.txt`**.
+
+  `pipreqs . --force --mode compat --savepath requirements.auto.txt`
+
+  compat mode ensures cross-runner determinism; --force overwrites stale output; --savepath keeps the generated file separate from the source-of-truth requirements.
+
+  and log a **diff vs `requirements.txt`**.
 
 - If there is no usable `requirements.txt`, adopt `requirements.auto.txt` as canonical.
 
@@ -180,7 +191,41 @@ Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` w
 
 ## How CI decides pass/fail
 
-See [docs/ci_contract.md](docs/ci_contract.md) for the GitHub Actions contract covering the bootstrap status JSON, dynamic test skip rules, summary layout, and archived artifacts.
+### Bootstrap status JSON
+- CI enforces the `run_setup.bat` status contract described above: every run writes `~bootstrap.status.json` (ASCII) with `state`, `exitCode`, and `pyFiles` fields.
+- `state` is one of `ok`, `no_python_files`, or `error`; `exitCode` mirrors the batch exit code; `pyFiles` records how many `.py` files were detected before bootstrapping.
+- When tightening CI parsing or changing the bootstrap log text, update both sides together so the JSON and logs stay in sync.
+
+### Dynamic test rules
+- The dynamic test step reads `~bootstrap.status.json` before running optional tests.
+- `state == "no_python_files"` skips the dynamic tests and logs `SKIPPED: no_python_files` while exiting 0.
+- `state == "ok"` searches for `tests/dynamic_tests.bat` or `tests/dynamic_tests.py` and runs whichever exists; missing runners count as skips, not failures.
+- `state == "error"` or a missing/invalid status file surfaces the bootstrap logs and fails immediately.
+
+### Summary layout
+The GitHub Actions job summary always lists information in this order:
+1. Bootstrap status one-liner.
+2. `Bootstrap (tail)` code block (last ~120 lines of `bootstrap.log`).
+3. Dynamic test note (skip or run) followed by `Dynamic tests (tail)`.
+4. Static test PASS/FAIL counts and a short code block from `tests/~test-summary.txt`.
+5. First three non-comment lines from `tests/extracted/~prep_requirements.py` and `tests/extracted/~detect_python.py`.
+6. Machine-readable first failure JSON and a matching snippet when any static check fails.
+
+### Artifacts
+The workflow uploads a single artifact bundle named `test-logs` containing:
+- `bootstrap.log` – full bootstrap transcript.
+- `~setup.log` – rolling setup log from the batch.
+- `tests/~dynamic-run.log` – canonical dynamic test status line.
+- `tests/~test-summary.txt` – condensed static harness output.
+- `tests/~test-results.ndjson` – machine-readable check results.
+- `tests/extracted/**` – helper scripts decoded from the bootstrapper for inspection.
+
+### Green on empty repositories
+A branch with zero Python files still counts as healthy when:
+- `~bootstrap.status.json` reports `state=no_python_files`, `exitCode=0`, and `pyFiles=0`.
+- Dynamic tests log `SKIPPED: no_python_files` and exit 0.
+- Static checks succeed (PASS count equals total checks, FAIL 0).
+- `tests/selftests.ps1` confirms the bootstrap log still prints `Python file count: 0` and `No Python files detected; skipping environment bootstrap.` so CI never relies on exit-code remapping to spot regressions.
 
 ---
 

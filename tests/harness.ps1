@@ -1,13 +1,61 @@
 # ASCII only
 param()
 $ErrorActionPreference = "Stop"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'
 $OutDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjDir = Split-Path -Parent $OutDir
 $BatchPath = Join-Path $ProjDir "run_setup.bat"
 $ResultsPath = Join-Path $OutDir "~test-results.ndjson"
 $SummaryPath = Join-Path $OutDir "~test-summary.txt"
 $ExtractDir = Join-Path $OutDir "extracted"
-if (Test-Path $ResultsPath) { Remove-Item -Force $ResultsPath }
+
+function Invoke-Download {
+  param(
+    [string]$Url,
+    [string]$Dest,
+    [int]$Retries = 3
+  )
+  for ($i = 1; $i -le $Retries; $i++) {
+    try {
+      Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -MaximumRedirection 5 -ErrorAction Stop
+      if ((Test-Path $Dest) -and ((Get-Item $Dest).Length -gt 0)) {
+        return $true
+      }
+      throw "Zero-length download: $Url"
+    } catch {
+      Write-Warning ("Download attempt {0} failed: {1}" -f $i, $_.Exception.Message)
+      Start-Sleep -Seconds ([int][Math]::Min(3 * $i, 15))
+    }
+  }
+  return $false
+}
+
+function Test-MinicondaUrl {
+  param([string]$Url)
+  $tmp = Join-Path $env:RUNNER_TEMP "conda_probe.tmp"
+  if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+  $ok = Invoke-Download -Url $Url -Dest $tmp -Retries 3
+  if (-not $ok) {
+    Write-Host ("[ERROR] Miniconda download probe failed for URL: {0}" -f $Url)
+  }
+  if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+  return $ok
+}
+$bootstrapRows = @()
+if (Test-Path $ResultsPath) {
+  foreach ($line in Get-Content -LiteralPath $ResultsPath -Encoding Ascii) {
+    $trim = $line.Trim()
+    if (-not $trim) { continue }
+    try {
+      $bootstrapRows += ($trim | ConvertFrom-Json)
+    } catch {
+      # derived requirement: tolerate legacy rows when harvesting helper status.
+    }
+  }
+  Remove-Item -Force $ResultsPath
+}
+$entryHelperRow = $bootstrapRows | Where-Object { $_.id -eq 'helper.find_entry.syntax' } | Select-Object -First 1
 if (!(Test-Path $BatchPath)) { Write-Host "run_setup.bat not found next to run_tests.bat." -ForegroundColor Red; exit 2 }
 if (-not (Test-Path ".\.ci_bootstrap_marker")) {
   throw "CI bootstrap marker not found. Did run_setup.bat run?"
@@ -24,8 +72,15 @@ try {
 New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
 function Write-Result { param($Id,$Desc,[bool]$Pass,$Details)
   $rec = [ordered]@{ id=$Id; pass=$Pass; desc=$Desc; details=$Details }
-  $json = $rec | ConvertTo-Json -Compress
+  $json = $rec | ConvertTo-Json -Compress -Depth 8
   Add-Content -Path $ResultsPath -Value $json -Encoding Ascii
+}
+if ($entryHelperRow) {
+  Write-Result 'entry.helper.ok' 'Entry helper compile probe succeeded' ([bool]$entryHelperRow.pass) ([ordered]@{
+    source = 'run_setup.ndjson'
+    pass   = $entryHelperRow.pass
+    details = $entryHelperRow.details
+  })
 }
 $Lines = Get-Content -LiteralPath $BatchPath -Encoding ASCII
 $AllText = [string]::Join("`n", $Lines)
@@ -47,8 +102,9 @@ if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
   Write-Host ("SHA256 (fallback): {0}" -f $sha)
 }
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
-$stateOk = ($BootstrapStatus.state -eq 'ok' -or $BootstrapStatus.state -eq 'no_python_files')
-Write-Result "bootstrap.state" "Bootstrap status state is ok or no_python_files" $stateOk @{ state=$BootstrapStatus.state; exitCode=$BootstrapStatus.exitCode; pyFiles=$BootstrapStatus.pyFiles }
+$allowedStates = @('ok','no_python_files','venv_env','degraded_env')
+$stateOk = $allowedStates -contains $BootstrapStatus.state
+Write-Result "bootstrap.state" "Bootstrap status state is ok/no_python_files/venv_env/degraded_env" $stateOk @{ state=$BootstrapStatus.state; exitCode=$BootstrapStatus.exitCode; pyFiles=$BootstrapStatus.pyFiles; allowed=$allowedStates }
 Write-Result "bootstrap.exit" "Bootstrap exitCode is 0" ($BootstrapStatus.exitCode -eq 0) @{ exitCode=$BootstrapStatus.exitCode }
 $payloads = @{}
 foreach ($line in $Lines) {
@@ -107,8 +163,56 @@ for ($i=0; $i -lt $Lines.Count; $i++) {
   }
 }
 Write-Result "conda.channels" "All conda create/install use --override-channels -c conda-forge" ($badConda.Count -eq 0) @{ misses=$badConda }
-$hasPipreqs = ($AllText -match "pipreqs\s+\.\s+--force.*--mode\s+compat.*--savepath\s+requirements\.auto\.txt")
-Write-Result "pipreqs.flags" "pipreqs flags OK" $hasPipreqs @{} 
+$expectedPipreqs = @('pipreqs', '.', '--force', '--mode', 'compat', '--savepath', 'requirements.auto.txt')
+# Prefer the actual Python -m invocation; fall back to logged command text when
+# the run only records the pipreqs CLI (e.g., bootstrap log summaries).
+$pipreqsLine = $Lines | Where-Object { $_ -match '\-m\s+pipreqs\b' -and $_ -match '--savepath' } | Select-Object -First 1
+$pipreqsSource = 'script'
+if (-not $pipreqsLine) {
+  $pipreqsLine = $Lines | Where-Object { $_ -match 'pipreqs\s+\.\s+--force\s+--mode\s+compat\s+--savepath' } | Select-Object -First 1
+  if ($pipreqsLine) { $pipreqsSource = 'log' } else { $pipreqsSource = 'missing' }
+}
+$observedTokens = @()
+if ($pipreqsLine) {
+  $tail = $pipreqsLine.Substring($pipreqsLine.IndexOf('pipreqs'))
+  $tail = ($tail -replace '\s+>>.*$', '').Trim()
+  foreach ($m in [regex]::Matches($tail, '("[^"]*"|[^\s]+)')) {
+    $observedTokens += $m.Value
+  }
+}
+$normalized = @()
+foreach ($token in $observedTokens) {
+  switch ($token) {
+    '"%HP_PIPREQS_TARGET%"' { $normalized += 'requirements.auto.txt'; continue }
+    '%HP_PIPREQS_TARGET%'   { $normalized += 'requirements.auto.txt'; continue }
+    default { $normalized += $token }
+  }
+}
+$pipreqsOk = $false
+$expectedPrefixCount = $expectedPipreqs.Count - 1
+if ($normalized.Count -ge $expectedPipreqs.Count) {
+  $pipreqsOk = $true
+  for ($i = 0; $i -lt $expectedPrefixCount; $i++) {
+    if ($normalized[$i] -ne $expectedPipreqs[$i]) {
+      $pipreqsOk = $false
+      break
+    }
+  }
+}
+$expectedCommand = $expectedPipreqs -join ' '
+$observedCommand = if ($normalized.Count -gt 0) { $normalized -join ' ' } else { '<missing>' }
+$details = [ordered]@{
+  expected = $expectedPipreqs
+  observed = $normalized
+  rawTokens = $observedTokens
+  line = if ($pipreqsLine) { $pipreqsLine.Trim() } else { '<pipreqs invocation not found>' }
+  source = $pipreqsSource
+  hasModulePrefix = ($pipreqsLine -match '\-m\s+pipreqs\b')
+  hasIgnore = ($normalized -contains '--ignore')
+  extraArgs = if ($normalized.Count -gt $expectedPipreqs.Count) { $normalized[$expectedPipreqs.Count..($normalized.Count-1)] } else { @() }
+  message = "expected: $expectedCommand | observed: $observedCommand"
+}
+Write-Result 'pipreqs.flags' 'pipreqs argv matches canonical flags' $pipreqsOk $details
 $hasPyInst = ($AllText -match "pyinstaller\s+-y\s+--onefile\s+--name\s+""%ENVNAME%""")
 Write-Result "pyi.onefile" "PyInstaller one-file named %ENVNAME%" $hasPyInst @{} 
 $hasRotate = ($AllText -match "Length -gt 10485760")

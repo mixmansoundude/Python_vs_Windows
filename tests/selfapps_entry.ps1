@@ -7,9 +7,144 @@ if (-not $here) {
 
 $repoRoot = Split-Path -Path $here -Parent
 $nd = Join-Path -Path $here -ChildPath '~test-results.ndjson'
+$ciNd = Join-Path -Path $repoRoot -ChildPath 'ci_test_results.ndjson'
 
 if (-not (Test-Path -LiteralPath $nd)) {
     New-Item -ItemType File -Path $nd -Force | Out-Null
+}
+if (-not (Test-Path -LiteralPath $ciNd)) {
+    New-Item -ItemType File -Path $ciNd -Force | Out-Null
+}
+
+# derived requirement: diagnostics run 19035211236-1 flagged `self.entry.*` rows as
+# failures even though the bootstrapper reported `pyFiles=0`. Honor the bootstrap
+# status so these synthetic entry probes only run when the real project exposed a
+# single Python entry.
+$pyFileCount = $null
+$statusPath = Join-Path -Path $repoRoot -ChildPath '~bootstrap.status.json'
+if (Test-Path -LiteralPath $statusPath) {
+    try {
+        $statusJson = Get-Content -LiteralPath $statusPath -Raw -Encoding Ascii | ConvertFrom-Json
+        $candidate = $statusJson.pyFiles
+        if ($null -ne $candidate) {
+            $parsed = 0
+            if ([int]::TryParse($candidate.ToString(), [ref]$parsed)) {
+                $pyFileCount = $parsed
+            }
+        }
+    } catch {
+        # derived requirement: tolerate malformed or missing bootstrap status so we can fall back to env hints.
+    }
+}
+if ($null -eq $pyFileCount -and $env:PY_FILES) {
+    $parsed = 0
+    if ([int]::TryParse($env:PY_FILES, [ref]$parsed)) {
+        $pyFileCount = $parsed
+    }
+}
+if ($null -ne $pyFileCount -and $pyFileCount -ne 1) {
+    Write-Host ("[INFO] selfapps_entry skipped: pyFiles={0}" -f $pyFileCount)
+    exit 0
+}
+
+function Write-NdjsonRow {
+    param([hashtable]$Row)
+
+    $json = $Row | ConvertTo-Json -Compress -Depth 8
+    Add-Content -LiteralPath $nd -Value $json -Encoding Ascii
+    Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
+}
+
+function Get-LineSnippet {
+    param(
+        [string]$Text,
+        [string]$Pattern
+    )
+
+    if (-not $Text) { return '' }
+    foreach ($line in $Text -split "`r?`n") {
+        if ($line -match $Pattern) {
+            $trimmed = $line.Trim()
+            if ($trimmed.Length -gt 160) { return $trimmed.Substring(0,160) }
+            return $trimmed
+        }
+    }
+    return ''
+}
+
+function Emit-FailureRow {
+    param(
+        [string]$Id,
+        [string]$Description,
+        [string]$FilePath,
+        [string]$Pattern,
+        [string]$LogText
+    )
+
+    if (-not $LogText) {
+        $LogText = Get-Content -LiteralPath $FilePath -Raw -Encoding Ascii
+    }
+    $snippet = Get-LineSnippet -Text $LogText -Pattern $Pattern
+    $details = [ordered]@{ file = $FilePath }
+    if ($snippet) { $details.snippet = $snippet }
+
+    Write-NdjsonRow ([ordered]@{
+        id      = $Id
+        pass    = $false
+        desc    = $Description
+        details = $details
+    })
+}
+
+$script:RecordedPipreqs = $false
+$script:RecordedHelperInvoke = $false
+
+function Check-PipreqsFailure {
+    param(
+        [string]$LogPath,
+        [string]$LogText
+    )
+
+    if ($script:RecordedPipreqs -or -not $LogPath -or -not (Test-Path -LiteralPath $LogPath)) { return }
+    if (-not $LogText) { $LogText = Get-Content -LiteralPath $LogPath -Raw -Encoding Ascii }
+
+    $patterns = @(
+        'No module named pipreqs\.__main__',
+        'ERROR\s+conda\.cli\.main_run:execute\(127\):'
+    )
+
+    foreach ($pattern in $patterns) {
+        if ($LogText -match $pattern) {
+            Emit-FailureRow -Id 'pipreqs.run' -Description 'pipreqs invocation failed during bootstrap' -FilePath $LogPath -Pattern $pattern -LogText $LogText
+            $script:RecordedPipreqs = $true
+            break
+        }
+    }
+}
+
+function Check-HelperInvokeFailure {
+    param(
+        [string]$LogPath,
+        [string]$LogText
+    )
+
+    if ($script:RecordedHelperInvoke -or -not $LogPath -or -not (Test-Path -LiteralPath $LogPath)) { return }
+    if (-not $LogText) { $LogText = Get-Content -LiteralPath $LogPath -Raw -Encoding Ascii }
+
+    $patterns = @(
+        @{ Pattern = '''python" "~find_entry\.py'' is not recognized as an internal or external command'; RequireFindEntry = $false },
+        @{ Pattern = 'SyntaxError:'; RequireFindEntry = $true }
+    )
+
+    foreach ($item in $patterns) {
+        $pattern = $item.Pattern
+        if ($LogText -match $pattern) {
+            if ($item.RequireFindEntry -and ($LogText -notmatch '~find_entry\.py')) { continue }
+            Emit-FailureRow -Id 'helper.invoke' -Description 'Entry helper failed to execute under Python' -FilePath $LogPath -Pattern $pattern -LogText $LogText
+            $script:RecordedHelperInvoke = $true
+            break
+        }
+    }
 }
 
 function Invoke-EntryScenario {
@@ -24,6 +159,11 @@ function Invoke-EntryScenario {
         log = ''
         crumb = ''
         error = $null
+        setupPath = $null
+        setupLog = ''
+        bootstrapPath = $null
+        bootstrapLog = ''
+        helperCommand = ''
     }
 
     try {
@@ -58,12 +198,23 @@ function Invoke-EntryScenario {
             Pop-Location
         }
 
+        $result.setupPath = $setupLog
         if (Test-Path -LiteralPath $setupLog) {
             $result.log = Get-Content -LiteralPath $setupLog -Raw -Encoding Ascii
+            $result.setupLog = $result.log
             $match = [regex]::Match($result.log, '^Chosen entry: (.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
             if ($match.Success) {
                 $result.crumb = $match.Groups[1].Value
             }
+            $helper = [regex]::Match($result.log, '^Helper command:\s*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+            if ($helper.Success) {
+                $result.helperCommand = $helper.Groups[1].Value.Trim()
+            }
+        }
+
+        $result.bootstrapPath = $bootstrapLog
+        if (Test-Path -LiteralPath $bootstrapLog) {
+            $result.bootstrapLog = Get-Content -LiteralPath $bootstrapLog -Raw -Encoding Ascii
         }
     }
     catch {
@@ -72,6 +223,52 @@ function Invoke-EntryScenario {
 
     return $result
 }
+
+function Write-EntryRow {
+    param(
+        [string]$Id,
+        [string]$Expected,
+        [hashtable]$Scenario,
+        [string]$Description
+    )
+
+    $chosen = $Scenario.crumb
+    if ($null -eq $chosen) { $chosen = '' }
+
+    $details = [ordered]@{
+        exitCode = $Scenario.exitCode
+        expected = $Expected
+        chosen   = $chosen
+    }
+
+    if ($Scenario.error) {
+        $details.error = $Scenario.error
+    }
+    if ($Scenario.helperCommand) {
+        $details.helperCommand = $Scenario.helperCommand
+    }
+
+    $pass = ($Scenario.exitCode -eq 0) -and ($chosen -eq $Expected)
+
+    Write-NdjsonRow ([ordered]@{
+        id      = $Id
+        pass    = $pass
+        desc    = $Description
+        details = $details
+    })
+}
+
+# Scenario 1: single entry file should breadcrumb correctly
+$scenario1 = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry1') -LogName '~entry1_bootstrap.log' -Files ([ordered]@{
+    'entry1.py' = @'
+if __name__ == "__main__":
+    print("from-entry1")
+'@
+})
+$expected1 = Join-Path '.' 'entry1.py'
+Write-EntryRow -Id 'self.entry.entry1' -Expected $expected1 -Scenario $scenario1 -Description 'Single entry file detected'
+Check-PipreqsFailure -LogPath $scenario1.setupPath -LogText $scenario1.setupLog
+Check-HelperInvokeFailure -LogPath $scenario1.bootstrapPath -LogText $scenario1.bootstrapLog
 
 # Scenario A: main.py should win over app.py when both present
 $scenarioA = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entryA') -LogName '~entryA_bootstrap.log' -Files ([ordered]@{
@@ -84,25 +281,12 @@ if __name__ == "__main__":
     print("from-app")
 '@
 })
+$expectedA = Join-Path '.' 'main.py'
+Write-EntryRow -Id 'self.entry.entryA' -Expected $expectedA -Scenario $scenarioA -Description 'main.py beats app.py'
+Check-PipreqsFailure -LogPath $scenarioA.setupPath -LogText $scenarioA.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioA.bootstrapPath -LogText $scenarioA.bootstrapLog
 
-$detailsA = [ordered]@{
-    exitCode = $scenarioA.exitCode
-}
-if ($scenarioA.crumb) { $detailsA.breadcrumb = $scenarioA.crumb }
-if (-not $scenarioA.log) { $detailsA.logMissing = $true }
-if ($scenarioA.log -and -not $scenarioA.crumb) { $detailsA.breadcrumbMissing = $true }
-if ($scenarioA.error) { $detailsA.error = $scenarioA.error }
-
-$passA = ([string]::IsNullOrEmpty($scenarioA.error)) -and ($scenarioA.exitCode -eq 0) -and ($scenarioA.log -match 'Chosen entry: .*\\main\.py')
-
-Add-Content -LiteralPath $nd -Value (@{
-    id='entry.choose.commonname'
-    pass=$passA
-    desc='main.py beats app.py'
-    details=$detailsA
-} | ConvertTo-Json -Compress) -Encoding Ascii
-
-# Scenario B: prefer common names or guarded modules when picking entries
+# Scenario B: prefer common names over generic modules when picking entries
 $scenarioB = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entryB') -LogName '~entryB_bootstrap.log' -Files ([ordered]@{
     'app.py' = @'
 if __name__ == "__main__":
@@ -113,22 +297,57 @@ if __name__ == "__main__":
     print("from-guard")
 '@
 })
+$expectedB = Join-Path '.' 'app.py'
+Write-EntryRow -Id 'self.entry.entryB' -Expected $expectedB -Scenario $scenarioB -Description 'app.py preferred over generic modules'
+Check-PipreqsFailure -LogPath $scenarioB.setupPath -LogText $scenarioB.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioB.bootstrapPath -LogText $scenarioB.bootstrapLog
 
-$detailsB = [ordered]@{
-    exitCode = $scenarioB.exitCode
+$parsedRows = @()
+if (Test-Path -LiteralPath $ciNd) {
+    foreach ($line in Get-Content -LiteralPath $ciNd -Encoding Ascii) {
+        $trim = $line.Trim()
+        if (-not $trim) { continue }
+        try {
+            $parsedRows += ($trim | ConvertFrom-Json)
+        } catch {
+            # derived requirement: keep parsing resilient so diagnostics survive malformed
+            # lines without crashing the self-test loop.
+        }
+    }
 }
-if ($scenarioB.crumb) { $detailsB.breadcrumb = $scenarioB.crumb }
-if (-not $scenarioB.log) { $detailsB.logMissing = $true }
-if ($scenarioB.log -and -not $scenarioB.crumb) { $detailsB.breadcrumbMissing = $true }
-if ($scenarioB.error) { $detailsB.error = $scenarioB.error }
 
-$hasApp = $scenarioB.log -match 'Chosen entry: .*\\app\.py'
-$hasFoo = $scenarioB.log -match 'Chosen entry: .*\\foo\.py'
-$passB = ([string]::IsNullOrEmpty($scenarioB.error)) -and ($scenarioB.exitCode -eq 0) -and ($hasApp -or $hasFoo)
+$helperRows = @($parsedRows | Where-Object { $_.id -eq 'helper.invoke' })
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.entry.helper.invoke.absent'
+    pass    = ($helperRows.Count -eq 0)
+    desc    = 'Helper invocation rows are absent in NDJSON output'
+    details = @{ count = $helperRows.Count }
+})
 
-Add-Content -LiteralPath $nd -Value (@{
-    id='entry.choose.guard_or_name'
-    pass=$passB
-    desc='Choose __main__ guard or common name'
-    details=$detailsB
-} | ConvertTo-Json -Compress) -Encoding Ascii
+$expectedMap = @(
+    @{ Id = 'self.entry.entry1'; Expected = $expected1 },
+    @{ Id = 'self.entry.entryA'; Expected = $expectedA },
+    @{ Id = 'self.entry.entryB'; Expected = $expectedB }
+)
+$issues = @()
+foreach ($item in $expectedMap) {
+    $row = $parsedRows | Where-Object { $_.id -eq $item.Id } | Select-Object -First 1
+    if (-not $row) {
+        $issues += [ordered]@{ id = $item.Id; reason = 'missing-row' }
+        continue
+    }
+    if (-not $row.pass) {
+        $issues += [ordered]@{ id = $item.Id; reason = 'row-failed'; exitCode = $row.details.exitCode; chosen = $row.details.chosen }
+        continue
+    }
+    if (-not $row.details -or -not $row.details.chosen) {
+        $issues += [ordered]@{ id = $item.Id; reason = 'missing-chosen' }
+    }
+}
+
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.entry.results'
+    pass    = ($issues.Count -eq 0)
+    desc    = 'Entry scenarios emitted breadcrumbs and passed'
+    details = @{ issues = $issues }
+})

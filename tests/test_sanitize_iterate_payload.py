@@ -1,0 +1,251 @@
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _write_common_files(tmp_path: Path) -> tuple[Path, Path, Path]:
+    diff_path = tmp_path / "diff.txt"
+    diff_path.write_text("# no changes\n", encoding="utf-8")
+
+    raw_json_path = tmp_path / "response.json"
+    raw_json_path.write_text(json.dumps({"output": []}), encoding="utf-8")
+
+    diag_root = tmp_path / "diag"
+    diag_root.mkdir()
+    (diag_root / "batchcheck_failing.txt").write_text(
+        "case-1\ncase-2\n", encoding="utf-8"
+    )
+
+    return raw_json_path, diff_path, diag_root
+
+
+def _run_sanitizer(
+    tmp_path: Path,
+    raw_json_path: Path,
+    diff_path: Path,
+    response_text: str,
+    diag_root: Path,
+    pattern: str,
+    placeholder: str,
+) -> Path:
+    response_text_path = tmp_path / "response.txt"
+    response_text_path.write_text(response_text, encoding="utf-8")
+
+    why_path = tmp_path / "why_no_diff.txt"
+    output_path = tmp_path / "out.json"
+
+    cmd = [
+        sys.executable,
+        "tools/sanitize_iterate_payload.py",
+        "--input",
+        str(raw_json_path),
+        "--output",
+        str(output_path),
+        "--why-output",
+        str(why_path),
+        "--diff-path",
+        str(diff_path),
+        "--response-text",
+        str(response_text_path),
+        "--diag-root",
+        str(diag_root),
+        "--redact-pattern",
+        pattern,
+        "--placeholder",
+        placeholder,
+    ]
+    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
+    return why_path
+
+
+def test_summary_text_rationale_is_redacted(tmp_path):
+    raw_json_path, diff_path, diag_root = _write_common_files(tmp_path)
+    response_text = """```summary_text
+Line 1
+Contains token: sk-THISISFAKEBUTLONGENOUGH
+password=abc123
+secret hint
+```
+"""
+    why_path = _run_sanitizer(
+        tmp_path,
+        raw_json_path,
+        diff_path,
+        response_text,
+        diag_root,
+        "(?i)(secret|token|password|apikey|key|sk-[A-Za-z0-9]{20,})",
+        "***",
+    )
+    payload = why_path.read_text(encoding="utf-8")
+    lines = payload.splitlines()
+
+    assert lines[0] == "Model rationale (summary_text):"
+    assert any(line == "***" for line in lines)
+    assert "sk-THISISFAKEBUTLONGENOUGH" not in payload
+    assert "password=abc123" not in payload
+    assert "***=abc123" not in payload
+
+
+def test_fallback_rationale_uses_fail_ids_and_redacts(tmp_path):
+    raw_json_path, diff_path, diag_root = _write_common_files(tmp_path)
+    (diag_root / "batchcheck_failing.txt").write_text(
+        "run-1\ncontains token sk-THISISFAKEBUTLONGENOUGH\n",
+        encoding="utf-8",
+    )
+    response_text = "No summary block here."
+    why_path = _run_sanitizer(
+        tmp_path,
+        raw_json_path,
+        diff_path,
+        response_text,
+        diag_root,
+        "(?i)(secret|token|password|apikey|key|sk-[A-Za-z0-9]{20,})",
+        "***",
+    )
+    payload = why_path.read_text(encoding="utf-8")
+    lines = payload.splitlines()
+
+    assert "Model returned # no changes" in lines[0]
+    assert any(line.endswith("***") for line in lines)
+    assert "- ***" in lines
+    assert "sk-THISISFAKEBUTLONGENOUGH" not in payload
+    assert "contains token" not in payload
+
+
+def test_failure_context_lines_are_redacted(tmp_path):
+    raw_json_path, diff_path, diag_root = _write_common_files(tmp_path)
+    response_text = """```summary_text
+----- Failure Context -----
+first_failure.json: {"token": "sk-THISISFAKEBUTLONGENOUGH"}
+First failing NDJSON row: {"password": "abc123"}
+```"""
+    why_path = _run_sanitizer(
+        tmp_path,
+        raw_json_path,
+        diff_path,
+        response_text,
+        diag_root,
+        "(?i)(secret|token|password|apikey|key|sk-[A-Za-z0-9]{20,})",
+        "***",
+    )
+    payload = why_path.read_text(encoding="utf-8")
+    lines = payload.splitlines()
+
+    assert any(line.strip() == '***' for line in lines)
+    assert 'sk-THISISFAKEBUTLONGENOUGH' not in payload
+    assert 'password' not in payload
+
+
+def test_request_payload_strips_responses_extras(tmp_path):
+    request_path = tmp_path / "request.json"
+    payload = {
+        "model": "gpt-5-codex",
+        "tool_resources": {"file_search": {"vector_store_ids": ["vs_123"]}},
+        "attachments": [{"foo": "bar"}],
+        "input": [],
+        "max_output_tokens": 1234,
+    }
+    request_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    sanitized_path = tmp_path / "out.json"
+    cmd = [
+        sys.executable,
+        "tools/sanitize_iterate_payload.py",
+        "--input",
+        str(request_path),
+        "--output",
+        str(sanitized_path),
+        "--truncate",
+        "0",
+    ]
+    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
+
+    sanitized = json.loads(sanitized_path.read_text(encoding="utf-8"))
+    assert "tool_resources" not in sanitized
+    assert "attachments" not in sanitized
+    assert sanitized["model"] == "gpt-5-codex"
+
+
+def test_iterate_gate_enforces_patch_limit(tmp_path):
+    workspace = tmp_path
+    ctx_dir = workspace / "_ctx"
+    ctx_dir.mkdir()
+
+    decision_payload = {
+        "patches_applied_count": 1,
+        "reason": "diff_generated",
+        "status": "success",
+    }
+    (ctx_dir / "decision.json").write_text(
+        json.dumps(decision_payload), encoding="utf-8"
+    )
+
+    diag_root = workspace / "diag"
+    diag_root.mkdir()
+    (diag_root / "batchcheck_failing.txt").write_text("case-1\n", encoding="utf-8")
+
+    artifacts_root = workspace / "_artifacts"
+    out_dir = artifacts_root / "iterate"
+
+    cmd = [
+        "pwsh",
+        "-NoLogo",
+        "-NoProfile",
+        "-File",
+        "tools/iterate_gate.ps1",
+        "-Workspace",
+        str(workspace),
+        "-ArtifactsRoot",
+        str(artifacts_root),
+        "-OutDir",
+        str(out_dir),
+    ]
+    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
+
+    gate_path = out_dir / "iterate_gate.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+
+    assert gate["patches_applied_count"] == 1
+    assert gate["patch_limit"] >= 1
+    assert gate["proceed"] is False
+    assert "patch limit" in gate["note"].lower()
+
+
+def test_iterate_gate_skips_when_fail_list_is_none(tmp_path):
+    workspace = tmp_path
+    artifacts_root = workspace / "_artifacts"
+    out_dir = artifacts_root / "iterate"
+
+    batch_root = artifacts_root / "batch-check"
+    batch_root.mkdir(parents=True, exist_ok=True)
+    (batch_root / "failing-tests.txt").write_text("none\n", encoding="utf-8")
+    (batch_root / "lane_verdict.json").write_text(
+        json.dumps({"lane": "cache", "has_failures": True}),
+        encoding="utf-8",
+    )
+
+    cmd = [
+        "pwsh",
+        "-NoLogo",
+        "-NoProfile",
+        "-File",
+        "tools/iterate_gate.ps1",
+        "-Workspace",
+        str(workspace),
+        "-ArtifactsRoot",
+        str(artifacts_root),
+        "-OutDir",
+        str(out_dir),
+    ]
+    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
+
+    gate_path = out_dir / "iterate_gate.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+
+    assert gate["proceed"] is False
+    assert gate["has_failures"] is False
+    assert "no failing tests" in gate["note"].lower()
