@@ -426,35 +426,6 @@ jobs:
             "gate_reason=ndjson_missing" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           }
 
-      - name: Install requests for inline model helper
-        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install requests
-
-      - name: Stage inline model context (fail-only)
-        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
-        shell: pwsh
-        working-directory: ${{ github.workspace }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python tools/inline_model_fix.py stage `
-            --repo "${{ github.repository }}" `
-            --run-id "${{ github.run_id }}" `
-            --run-attempt "${{ github.run_attempt }}" `
-            --token "${{ github.token }}"
-
-      - name: Call inline model (fail-only)
-        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
-        shell: pwsh
-        working-directory: ${{ github.workspace }}
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          python tools/inline_model_fix.py call
-
       # derived requirement: expose the iterate payload contents inline so field triage
       # can confirm breadcrumbs exist before upload.
       - name: List _ctx prior to upload (debug)
