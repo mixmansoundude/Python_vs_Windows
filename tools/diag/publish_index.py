@@ -2786,14 +2786,24 @@ def _write_summary_files(
 def _bundle_links(context: Context) -> List[dict]:
     diag = context.diag
     entries: List[dict] = []
+    seen_paths: set[Path] = set()
 
     if not diag:
         return entries
 
     def add(label: str, relative: str) -> None:
         entry = _link_entry(diag, label, diag / relative)
-        if entry:
-            entries.append(entry)
+        append(entry)
+
+    def append(entry: Optional[dict]) -> None:
+        if not entry:
+            return
+        path_obj = entry.get("path")
+        if isinstance(path_obj, Path):
+            if path_obj in seen_paths:
+                return
+            seen_paths.add(path_obj)
+        entries.append(entry)
 
     inventory_entries = [
         ("Inventory (HTML)", "inventory.html"),
@@ -2826,22 +2836,31 @@ def _bundle_links(context: Context) -> List[dict]:
 
     iterate_zip = diag / "logs" / f"iterate-{context.run_id}-{context.run_attempt}.zip"
     entry = _link_entry(diag, "Iterate logs zip", iterate_zip)
-    if entry:
-        entries.append(entry)
+    append(entry)
 
     if context.batch_run_id and context.batch_run_attempt:
         batch_zip = diag / "logs" / f"batch-check-{context.batch_run_id}-{context.batch_run_attempt}.zip"
         entry = _link_entry(diag, "Batch-check logs zip", batch_zip)
+        append(entry)
+
+    batch_log_dir = diag / "logs"
+    try:
+        batch_logs = sorted(batch_log_dir.glob("batch-check-*.zip"))
+    except FileNotFoundError:
+        batch_logs = []
+
+    for candidate in batch_logs:
+        entry = _link_entry(diag, "Batch-check logs zip", candidate)
+        append(entry)
         if entry:
-            entries.append(entry)
+            break
 
     iterate_dir = context.iterate_discovered_dir
     if iterate_dir:
         ci_logs = iterate_dir / "logs.zip"
         # derived requirement: mirror the GitHub Actions run logs next to other quick links so analysts can fetch them directly.
         entry = _link_entry(diag, "CI job logs", ci_logs)
-        if entry:
-            entries.append(entry)
+        append(entry)
 
     entries.extend(_collect_batch_ndjson_links(diag))
 
@@ -2853,12 +2872,10 @@ def _bundle_links(context: Context) -> List[dict]:
 
     repo_zip = diag / "repo.zip"
     entry = _link_entry(diag, "Repository (zip)", repo_zip)
-    if entry:
-        entries.append(entry)
+    append(entry)
     repo_index = diag / "repo" / "index.html"
     entry = _link_entry(diag, "Repository (unzipped)", repo_index)
-    if entry:
-        entries.append(entry)
+    append(entry)
 
     wf_dir = diag / "wf"
     if wf_dir.exists():

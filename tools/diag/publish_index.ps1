@@ -79,6 +79,20 @@ if ($artifactsOverride -and (Test-Path -LiteralPath $artifactsOverride)) {
     }
 }
 
+if (-not $BatchRunId -and $Artifacts) {
+    $batchRunJson = Join-Path (Join-Path $Artifacts 'batch-check') 'run.json'
+    if (Test-Path -LiteralPath $batchRunJson) {
+        try { $batchMeta = Get-Content -Raw -LiteralPath $batchRunJson | ConvertFrom-Json } catch { $batchMeta = $null }
+        if ($batchMeta) {
+            # derived requirement: the diagnostics publisher must mirror batch-check logs even when
+            # the workflow omits BATCH_RUN_ID/BATCH_RUN_ATTEMPT; harvest run.json so the download path
+            # remains stable when analysts rely on the diag bundle alone.
+            if (-not $BatchRunId -or $BatchRunId -eq 'n/a') { $BatchRunId = [string]$batchMeta.run_id }
+            if (-not $BatchRunAttempt -or $BatchRunAttempt -eq 'n/a') { $BatchRunAttempt = [string]$batchMeta.run_attempt }
+        }
+    }
+}
+
 if ($preferLocalArtifacts) {
     $batchDir = Join-Path $Artifacts 'batch-check'
     $localStatusPath = Join-Path $batchDir 'STATUS.txt'
