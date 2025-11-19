@@ -113,6 +113,8 @@ if ($preferLocalArtifacts) {
 }
 if (-not $Short) {
     $Short = $SHA
+}
+if ($Short) {
     if ($Short.Length -gt 7) { $Short = $Short.Substring(0,7) }
 }
 
@@ -120,6 +122,29 @@ if (-not $Run) { $Run = $env:GITHUB_RUN_ID }
 if (-not $Run) { $Run = 'n/a' }
 if (-not $Att) { $Att = $env:GITHUB_RUN_ATTEMPT }
 if (-not $Att) { $Att = 'n/a' }
+
+if (-not $BatchRunId -or $BatchRunId -eq 'n/a') {
+    if ($Run -and $Run -ne 'n/a') {
+        # derived requirement: when diagnostics publish from the batch-check workflow itself,
+        # reuse the current run id so the log download path stays populated even when inputs
+        # omit BATCH_RUN_ID.
+        $BatchRunId = $Run
+    } elseif ($env:GITHUB_RUN_ID) {
+        $BatchRunId = [string]$env:GITHUB_RUN_ID
+    }
+}
+
+$batchRunMatchesCurrent = $false
+if ($BatchRunId -and $BatchRunId -ne 'n/a' -and $Run -and $Run -ne 'n/a' -and $BatchRunId -eq $Run) {
+    $batchRunMatchesCurrent = $true
+}
+if (-not $BatchRunAttempt -or $BatchRunAttempt -eq 'n/a') {
+    if ($batchRunMatchesCurrent -and $Att -and $Att -ne 'n/a') {
+        $BatchRunAttempt = $Att
+    } elseif ($BatchRunId -and $BatchRunId -ne 'n/a' -and $env:GITHUB_RUN_ID -and [string]$env:GITHUB_RUN_ID -eq $BatchRunId -and $env:GITHUB_RUN_ATTEMPT) {
+        $BatchRunAttempt = [string]$env:GITHUB_RUN_ATTEMPT
+    }
+}
 
 function Get-FirstDir {
     param([string]$root)
@@ -390,6 +415,19 @@ $batchZipPath = $null
 $batchZipReady = $false
 $batchSentinelPath = if ($logDir) { Join-Path $logDir 'batch-check.MISSING.txt' } else { $null }
 
+function Write-BatchSentinel {
+    param([string]$Reason)
+
+    if (-not $batchSentinelPath) { return }
+    $message = 'batch-check logs not located for this commit'
+    if (-not [string]::IsNullOrWhiteSpace($Reason)) { $message = $Reason }
+    try { $message | Set-Content -Encoding UTF8 -LiteralPath $batchSentinelPath } catch {}
+}
+
+if (-not $BatchRunId -or $BatchRunId -eq 'n/a') {
+    Write-BatchSentinel 'batch-check logs not located for this commit'
+}
+
 if ($BatchRunId) {
     $batchZipName = "batch-check-$BatchRunId-$batchRunAttempt.zip"
     if ($logDir) { $batchZipPath = Join-Path $logDir $batchZipName }
@@ -528,11 +566,17 @@ if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a'
                 if ($batchSentinelPath) { Remove-Item -LiteralPath $batchSentinelPath -ErrorAction SilentlyContinue }
             } else {
                 Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
+                Write-BatchSentinel ("batch-check log download returned empty archive: {0}" -f $downloadUri)
             }
         } catch {
             Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
+            Write-BatchSentinel ("batch-check log download failed: {0}" -f $downloadUri)
         }
+    } else {
+        Write-BatchSentinel 'batch-check log download prerequisites missing (token/repository)'
     }
+} elseif (-not $batchZipReady -and $BatchRunId -and $BatchRunId -ne 'n/a' -and -not $batchZipPath) {
+    Write-BatchSentinel 'batch-check log download prerequisites missing (log path unavailable)'
 }
 
 $iterateExtracted = $false
