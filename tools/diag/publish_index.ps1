@@ -424,6 +424,147 @@ function Write-BatchSentinel {
     try { $message | Set-Content -Encoding UTF8 -LiteralPath $batchSentinelPath } catch {}
 }
 
+function ConvertTo-MirrorText {
+    param(
+        [string]$SourcePath,
+        [int]$BinaryThreshold = 4096
+    )
+
+    # derived requirement: the supervisor needs text-friendly mirrors without
+    # forcing GitHub-auth; keep mirrors resilient even when the source is
+    # binary or oversized.
+    if (-not (Test-Path -LiteralPath $SourcePath)) { return $null }
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($SourcePath)
+    } catch {
+        return $null
+    }
+    $length = $bytes.Length
+    $probeLength = [Math]::Min($BinaryThreshold, $length)
+    $probe = $bytes[0..($probeLength - 1)]
+    $binaryCount = 0
+    foreach ($b in $probe) {
+        if ($b -lt 9 -or $b -eq 11 -or $b -eq 12 -or ($b -gt 13 -and $b -lt 32)) {
+            $binaryCount += 1
+        }
+    }
+    if ($binaryCount -gt ($probeLength / 8)) {
+        return "binary file stub ({0:N0} bytes)" -f $length
+    }
+
+    $limit = 128KB
+    if ($length -gt $limit) {
+        $prefix = [Math]::Min($limit, $length)
+        $bytes = $bytes[0..($prefix - 1)]
+    }
+    try {
+        $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+    } catch {
+        return "binary file stub ({0:N0} bytes)" -f $length
+    }
+    if (-not $text.EndsWith("`n")) { $text += "`n" }
+    if ($length -gt $bytes.Length) {
+        $text += "... [truncated from {0:N0} bytes]`n" -f $length
+    }
+    return $text
+}
+
+function Write-MirrorFile {
+    param(
+        [string]$SourcePath,
+        [string]$MirrorPath,
+        [System.Collections.Generic.List[object]]$Registry
+    )
+
+    if (-not $SourcePath -or -not (Test-Path -LiteralPath $SourcePath)) { return }
+    if (-not $MirrorPath) { return }
+    try { $null = New-Item -ItemType Directory -Path (Split-Path -Parent $MirrorPath) -Force } catch { return }
+
+    $text = ConvertTo-MirrorText -SourcePath $SourcePath
+    if ($null -eq $text) { return }
+
+    try {
+        $text | Set-Content -LiteralPath $MirrorPath -Encoding UTF8
+        if ($Registry -ne $null) {
+            $Registry.Add([pscustomobject]@{ Source = $SourcePath; Mirror = $MirrorPath }) | Out-Null
+        }
+    } catch {}
+}
+
+function Mirror-RepoFiles {
+    param(
+        [string]$SourceRoot,
+        [string]$MirrorRoot
+    )
+
+    $created = [System.Collections.Generic.List[object]]::new()
+    if (-not $SourceRoot -or -not (Test-Path -LiteralPath $SourceRoot)) { return $created }
+    if (-not $MirrorRoot) { return $created }
+
+    $files = Get-ChildItem -Path $SourceRoot -File -Recurse -ErrorAction SilentlyContinue
+    foreach ($file in $files) {
+        try {
+            $relative = $file.FullName.Substring($SourceRoot.Length).TrimStart('\\','/')
+        } catch {
+            continue
+        }
+        $target = Join-Path $MirrorRoot $relative
+        if (-not $target.EndsWith('.txt')) { $target += '.txt' }
+        # derived requirement: only mirror the branch payload staged for this run;
+        # skip other branches by following the extracted repo/files tree the
+        # workflow prepared for the current commit.
+        Write-MirrorFile -SourcePath $file.FullName -MirrorPath $target -Registry $created
+    }
+    return $created
+}
+
+function Mirror-LogZip {
+    param(
+        [string]$ZipPath,
+        [string]$MirrorRoot
+    )
+
+    $created = [System.Collections.Generic.List[object]]::new()
+    if (-not $ZipPath -or -not (Test-Path -LiteralPath $ZipPath)) { return $created }
+    if (-not $MirrorRoot) { return $created }
+
+    try {
+        $null = New-Item -ItemType Directory -Path $MirrorRoot -Force
+    } catch {}
+
+    try {
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    } catch {
+        return $created
+    }
+
+    foreach ($entry in $archive.Entries) {
+        if (-not $entry) { continue }
+        if (-not $entry.Name) { continue }
+        $safeName = $entry.FullName.Replace('\\','/').TrimStart('/')
+        if ($safeName.StartsWith('..')) { continue }
+        $targetPath = Join-Path $MirrorRoot $safeName
+        if (-not $targetPath.EndsWith('.txt')) { $targetPath += '.txt' }
+        try {
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $targetPath) -Force
+        } catch {}
+        try {
+            $reader = New-Object System.IO.StreamReader($entry.Open(), [System.Text.Encoding]::UTF8, $true)
+            $content = $reader.ReadToEnd()
+            $reader.Close()
+            if ($null -eq $content) { continue }
+            if (-not $content.EndsWith("`n")) { $content += "`n" }
+            $content | Set-Content -LiteralPath $targetPath -Encoding UTF8
+            $created.Add([pscustomobject]@{ Source = $ZipPath; Mirror = $targetPath }) | Out-Null
+        } catch {
+            continue
+        }
+    }
+
+    try { $archive.Dispose() } catch {}
+    return $created
+}
+
 if (-not $BatchRunId -or $BatchRunId -eq 'n/a') {
     Write-BatchSentinel 'batch-check logs not located for this commit'
 }
@@ -629,12 +770,63 @@ if ($batchStatusOverride) {
     $batchStatus = 'missing (see logs/batch-check.MISSING.txt)'
 }
 
+$mirrorRoot = if ($Diag) { Join-Path $Diag '_mirrors' } else { $null }
+$mirrorRegistry = [System.Collections.Generic.List[object]]::new()
+if ($mirrorRoot) {
+    try { New-Item -ItemType Directory -Path $mirrorRoot -Force | Out-Null } catch {}
+
+    $repoSource = $null
+    if ($Diag) {
+        $candidateRepo = Join-Path $Diag 'repo/files'
+        if (Test-Path $candidateRepo) { $repoSource = $candidateRepo }
+        if (-not $repoSource) {
+            $candidateRepo = Join-Path $Diag 'repo'
+            if (Test-Path $candidateRepo) { $repoSource = $candidateRepo }
+        }
+    }
+    if ($repoSource) {
+        $repoMirrorRoot = Join-Path $mirrorRoot 'repo'
+        foreach ($entry in (Mirror-RepoFiles -SourceRoot $repoSource -MirrorRoot $repoMirrorRoot)) { $mirrorRegistry.Add($entry) | Out-Null }
+    }
+
+    $logsMirrorRoot = Join-Path $mirrorRoot 'logs'
+    if ($iterateZipPath -and (Test-Path $iterateZipPath)) {
+        $iterateMirror = Join-Path $logsMirrorRoot 'iterate'
+        foreach ($entry in (Mirror-LogZip -ZipPath $iterateZipPath -MirrorRoot $iterateMirror)) { $mirrorRegistry.Add($entry) | Out-Null }
+    }
+    if ($batchZipReady -and $batchZipPath -and (Test-Path $batchZipPath)) {
+        $batchMirror = Join-Path $logsMirrorRoot 'batch-check'
+        foreach ($entry in (Mirror-LogZip -ZipPath $batchZipPath -MirrorRoot $batchMirror)) { $mirrorRegistry.Add($entry) | Out-Null }
+    }
+    if ($logDir -and (Test-Path $logDir)) {
+        foreach ($logFile in Get-ChildItem -Path $logDir -File -Recurse -ErrorAction SilentlyContinue) {
+            $relative = Get-Relative $logFile.FullName
+            if (-not $relative) { continue }
+            $relative = $relative.TrimStart('./')
+            $target = Join-Path (Join-Path $logsMirrorRoot 'bundle') $relative
+            if (-not $target.EndsWith('.txt')) { $target += '.txt' }
+            Write-MirrorFile -SourcePath $logFile.FullName -MirrorPath $target -Registry $mirrorRegistry
+        }
+    }
+
+    $mirrorInventory = Join-Path $mirrorRoot 'inventory.txt'
+    $mirrorFiles = Get-ChildItem -Path $mirrorRoot -File -Recurse -ErrorAction SilentlyContinue
+    if ($mirrorFiles) {
+        $inventoryLines = @()
+        foreach ($mf in $mirrorFiles) {
+            $rel = Get-Relative $mf.FullName
+            $inventoryLines += ('{0} bytes {1}' -f $mf.Length, $rel)
+        }
+        try { $inventoryLines | Set-Content -LiteralPath $mirrorInventory -Encoding UTF8 } catch {}
+    }
+}
+
 $artifactFiles = @()
 if ($Artifacts) {
     $artifactFiles = Get-ChildItem -Path $Artifacts -Recurse -File -ErrorAction SilentlyContinue
 }
 $artifactCount = 0
-if ($artifactFiles) { $artifactCount = $artifactFiles.Count }
+if ($artifactFiles) { $artifactCount = (@($artifactFiles)).Count }
 $artifactMissing = $null
 $artifactMissingPath = if ($Artifacts) { Join-Path $Artifacts 'MISSING.txt' } else { $null }
 if ($artifactMissingPath -and (Test-Path $artifactMissingPath)) {
