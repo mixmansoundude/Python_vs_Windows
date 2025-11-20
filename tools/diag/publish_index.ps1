@@ -412,6 +412,9 @@ $iterateZipPath = if ($logDir) { Join-Path $logDir $iterateZipName } else { $nul
 $iterateSentinelPath = if ($logDir) { Join-Path $logDir 'iterate.MISSING.txt' } else { $null }
 $iterateErrorPath = if ($logDir) { Join-Path $logDir 'iterate-log-error.txt' } else { $null }
 $batchRunAttempt = if ($BatchRunAttempt) { $BatchRunAttempt } else { 'n/a' }
+$batchDownloadAttempt = if ($batchRunAttempt -and $batchRunAttempt -ne 'n/a') { $batchRunAttempt } else { '1' }
+# derived requirement: fall back to the download attempt when the run attempt is missing so status text and filenames stay aligned.
+if ($batchRunAttempt -eq 'n/a' -and $batchDownloadAttempt) { $batchRunAttempt = $batchDownloadAttempt }
 $batchZipName = $null
 $batchZipPath = $null
 $batchZipReady = $false
@@ -596,7 +599,7 @@ if (-not $BatchRunId -or $BatchRunId -eq 'n/a') {
 }
 
 if ($BatchRunId) {
-    $batchZipName = "batch-check-$BatchRunId-$batchRunAttempt.zip"
+    $batchZipName = "batch-check-$BatchRunId-$batchDownloadAttempt.zip"
     if ($logDir) { $batchZipPath = Join-Path $logDir $batchZipName }
     if ($batchZipPath -and (Test-Path $batchZipPath)) {
         try {
@@ -708,8 +711,7 @@ if (-not $zipReady -and $logDir -and -not $preferLocalIterate) {
     }
 }
 
-$batchDownloadAttempt = if ($batchRunAttempt -and $batchRunAttempt -ne 'n/a') { $batchRunAttempt } else { '1' }
-if (-not $batchZipName -and $BatchRunId -and $BatchRunId -ne 'n/a') { $batchZipName = "batch-check-$BatchRunId-$batchDownloadAttempt.zip" }
+$batchZipName = if ($batchZipName) { $batchZipName } elseif ($BatchRunId -and $BatchRunId -ne 'n/a') { "batch-check-$BatchRunId-$batchDownloadAttempt.zip" } else { $null }
 if (-not $batchZipPath -and $logDir -and $batchZipName) { $batchZipPath = Join-Path $logDir $batchZipName }
 if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a' -and $batchZipPath) {
     $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
@@ -718,28 +720,42 @@ if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a'
         $parts = $repoSlug.Split('/', 2)
         $owner = $parts[0]
         $repoName = $parts[1]
-        $downloadUri = "https://api.github.com/repos/$owner/$repoName/actions/runs/$BatchRunId/attempts/$batchDownloadAttempt/logs"
+        $downloadTargets = @()
+        $downloadTargets += @([pscustomobject]@{ Uri = "https://api.github.com/repos/$owner/$repoName/actions/runs/$BatchRunId/attempts/$batchDownloadAttempt/logs"; Label = "attempt $batchDownloadAttempt" })
+        # derived requirement: some runs expose log downloads only at the attempt-less endpoint (or when attempts mismatch);
+        # fall back to the generic path so diagnostics keep publishing a usable archive instead of leaving only the sentinel.
+        $downloadTargets += @([pscustomobject]@{ Uri = "https://api.github.com/repos/$owner/$repoName/actions/runs/$BatchRunId/logs"; Label = 'attemptless' })
 
-        Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
-        try {
-            Invoke-WebRequest -Uri $downloadUri -Headers @{
-                Authorization          = "Bearer $token"
-                'User-Agent'           = 'publish_index.ps1 diagnostics'
-                Accept                 = 'application/zip'
-                'X-GitHub-Api-Version' = '2022-11-28'
-            } -OutFile $batchZipPath -ErrorAction Stop
-
-            $info = Get-Item -LiteralPath $batchZipPath -ErrorAction Stop
-            if ($info -and $info.Length -gt 0) {
-                $batchZipReady = $true
-                if ($batchSentinelPath) { Remove-Item -LiteralPath $batchSentinelPath -ErrorAction SilentlyContinue }
-            } else {
-                Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
-                Write-BatchSentinel ("batch-check log download returned empty archive: {0}" -f $downloadUri)
-            }
-        } catch {
+        $downloadErrors = @()
+        foreach ($target in $downloadTargets) {
             Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
-            Write-BatchSentinel ("batch-check log download failed: {0}" -f $downloadUri)
+            try {
+                Invoke-WebRequest -Uri $target.Uri -Headers @{
+                    Authorization          = "Bearer $token"
+                    'User-Agent'           = 'publish_index.ps1 diagnostics'
+                    Accept                 = 'application/zip'
+                    'X-GitHub-Api-Version' = '2022-11-28'
+                } -OutFile $batchZipPath -ErrorAction Stop
+
+                $info = Get-Item -LiteralPath $batchZipPath -ErrorAction Stop
+                if ($info -and $info.Length -gt 0) {
+                    $batchZipReady = $true
+                    if ($batchSentinelPath) { Remove-Item -LiteralPath $batchSentinelPath -ErrorAction SilentlyContinue }
+                    break
+                }
+
+                Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
+                $downloadErrors += "batch-check log download returned empty archive: $($target.Uri)"
+            } catch {
+                Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
+                $downloadErrors += "batch-check log download failed ($($target.Label)): $($target.Uri)"
+            }
+        }
+
+        if (-not $batchZipReady -and $downloadErrors) {
+            Write-BatchSentinel ($downloadErrors -join '; ')
+        } elseif (-not $batchZipReady) {
+            Write-BatchSentinel 'batch-check log download failed (no targets succeeded)'
         }
     } else {
         Write-BatchSentinel 'batch-check log download prerequisites missing (token/repository)'
