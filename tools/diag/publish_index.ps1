@@ -535,9 +535,16 @@ function Mirror-LogZip {
     if (-not $ZipPath -or -not (Test-Path -LiteralPath $ZipPath)) { return $created }
     if (-not $MirrorRoot) { return $created }
 
+    $mirrorRootFull = $null
     try {
         $null = New-Item -ItemType Directory -Path $MirrorRoot -Force
-    } catch {}
+        $mirrorRootFull = [System.IO.Path]::GetFullPath($MirrorRoot)
+        if (-not $mirrorRootFull.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+            $mirrorRootFull += [System.IO.Path]::DirectorySeparatorChar
+        }
+    } catch {
+        return $created
+    }
 
     try {
         $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
@@ -549,9 +556,19 @@ function Mirror-LogZip {
         if (-not $entry) { continue }
         if (-not $entry.Name) { continue }
         $safeName = $entry.FullName.Replace('\\','/').TrimStart('/')
-        if ($safeName.StartsWith('..')) { continue }
+        if (-not $safeName) { continue }
         $targetPath = Join-Path $MirrorRoot $safeName
         if (-not $targetPath.EndsWith('.txt')) { $targetPath += '.txt' }
+
+        $resolved = $null
+        try {
+            $resolved = [System.IO.Path]::GetFullPath($targetPath)
+        } catch {
+            continue
+        }
+        # derived requirement: log mirrors must never escape their root; skip any crafted
+        # entries that traverse upward so diagnostics cannot be overwritten by malformed zips.
+        if (-not $resolved.StartsWith($mirrorRootFull, [StringComparison]::OrdinalIgnoreCase)) { continue }
         try {
             $null = New-Item -ItemType Directory -Path (Split-Path -Parent $targetPath) -Force
         } catch {}
@@ -690,6 +707,8 @@ if (-not $zipReady -and $logDir -and -not $preferLocalIterate) {
 }
 
 $batchDownloadAttempt = if ($batchRunAttempt -and $batchRunAttempt -ne 'n/a') { $batchRunAttempt } else { '1' }
+if (-not $batchZipName -and $BatchRunId -and $BatchRunId -ne 'n/a') { $batchZipName = "batch-check-$BatchRunId-$batchDownloadAttempt.zip" }
+if (-not $batchZipPath -and $logDir -and $batchZipName) { $batchZipPath = Join-Path $logDir $batchZipName }
 if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a' -and $batchZipPath) {
     $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
     $repoSlug = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } elseif ($Repo) { $Repo } else { $null }
@@ -704,7 +723,7 @@ if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a'
             Invoke-WebRequest -Uri $downloadUri -Headers @{
                 Authorization          = "Bearer $token"
                 'User-Agent'           = 'publish_index.ps1 diagnostics'
-                Accept                 = 'application/vnd.github+json'
+                Accept                 = 'application/zip'
                 'X-GitHub-Api-Version' = '2022-11-28'
             } -OutFile $batchZipPath -ErrorAction Stop
 
