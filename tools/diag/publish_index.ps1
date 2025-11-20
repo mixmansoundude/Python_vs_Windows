@@ -439,13 +439,20 @@ function ConvertTo-MirrorText {
     } catch {
         return $null
     }
+    if ($null -eq $bytes -or $bytes.Length -eq 0) {
+        # derived requirement: zero-byte files (e.g., .nojekyll, empty sentinels) must not
+        # fault diagnostics; return an empty preview so mirrors stay stable without slicing.
+        return ""
+    }
     $length = $bytes.Length
     $probeLength = [Math]::Min($BinaryThreshold, $length)
-    $probe = $bytes[0..($probeLength - 1)]
     $binaryCount = 0
-    foreach ($b in $probe) {
-        if ($b -lt 9 -or $b -eq 11 -or $b -eq 12 -or ($b -gt 13 -and $b -lt 32)) {
-            $binaryCount += 1
+    if ($probeLength -gt 0) {
+        $probe = $bytes[0..($probeLength - 1)]
+        foreach ($b in $probe) {
+            if ($b -lt 9 -or $b -eq 11 -or $b -eq 12 -or ($b -gt 13 -and $b -lt 32)) {
+                $binaryCount += 1
+            }
         }
     }
     if ($binaryCount -gt ($probeLength / 8)) {
