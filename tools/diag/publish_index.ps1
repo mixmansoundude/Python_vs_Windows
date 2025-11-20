@@ -3,6 +3,8 @@ param()
 
 # Implements the prior inline "Write diagnostics index" logic as a reusable script in tools/diag
 # per the request to "Create repo scripts under tools/diag".
+# Quick self-test reference (avoids PSGallery dependencies):
+#   DIAG=$(mktemp -d) ARTIFACTS=$(mktemp -d) REPO=example/repo SHA=deadbeef RUN_ID=1 RUN_ATTEMPT=1 RUN_URL=http://example.com SHORTSHA=deadbee pwsh -NoLogo -NoProfile -NonInteractive -File tools/diag/publish_index.ps1
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
