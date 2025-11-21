@@ -743,10 +743,14 @@ if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a'
         foreach ($target in $downloadTargets) {
             Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
             try {
+                # derived requirement: GitHub's run-log endpoint responds with a redirect when the
+                # Accept header matches the documented vnd.github+json media type; avoid 406s that
+                # previously yielded generic "not located" sentinels by using the canonical header
+                # while still saving the redirected zip payload locally.
                 Invoke-WebRequest -Uri $target.Uri -Headers @{
                     Authorization          = "Bearer $token"
                     'User-Agent'           = 'publish_index.ps1 diagnostics'
-                    Accept                 = 'application/zip'
+                    Accept                 = 'application/vnd.github+json'
                     'X-GitHub-Api-Version' = '2022-11-28'
                 } -OutFile $batchZipPath -ErrorAction Stop
 
@@ -761,7 +765,17 @@ if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a'
                 $downloadErrors += "batch-check log download returned empty archive: $($target.Uri)"
             } catch {
                 Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
-                $downloadErrors += "batch-check log download failed ($($target.Label)): $($target.Uri)"
+                $statusCode = $null
+                $statusText = $null
+                try { if ($_.Exception.Response -and $_.Exception.Response.StatusCode) { $statusCode = [int]$_.Exception.Response.StatusCode } } catch {}
+                try { if ($_.Exception.Response -and $_.Exception.Response.StatusDescription) { $statusText = [string]$_.Exception.Response.StatusDescription } } catch {}
+                $detail = $_.Exception.Message
+                if (-not [string]::IsNullOrWhiteSpace($statusText)) { $detail = "$detail ($statusText)" }
+                if ($statusCode) {
+                    $downloadErrors += "batch-check log download failed ($($target.Label)): HTTP $statusCode $detail"
+                } else {
+                    $downloadErrors += "batch-check log download failed ($($target.Label)): $detail"
+                }
             }
         }
 
