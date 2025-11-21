@@ -609,7 +609,32 @@ function Mirror-LogZip {
 }
 
 if (-not $BatchRunId -or $BatchRunId -eq 'n/a') {
-    Write-BatchSentinel 'batch-check logs not located for this commit'
+    $artifactRoot = $Artifacts
+    if (-not $artifactRoot -and $Diag) {
+        $diagArtifacts = Join-Path $Diag '_artifacts'
+        if (Test-Path -LiteralPath $diagArtifacts) {
+            # Professional note: some diagnostics bundles only plumb _artifacts via DIAG;
+            # harvest run.json from that path before writing sentinels so batch-check logs
+            # are not marked missing when metadata is present in the published tree.
+            $artifactRoot = $diagArtifacts
+            if (-not $Artifacts) { $Artifacts = $diagArtifacts }
+        }
+    }
+
+    if ($artifactRoot) {
+        $fallbackRunJson = Join-Path (Join-Path $artifactRoot 'batch-check') 'run.json'
+        if (Test-Path -LiteralPath $fallbackRunJson) {
+            try { $fallbackMeta = Get-Content -Raw -LiteralPath $fallbackRunJson | ConvertFrom-Json } catch { $fallbackMeta = $null }
+            if ($fallbackMeta) {
+                if (-not $BatchRunId -or $BatchRunId -eq 'n/a') { $BatchRunId = [string]$fallbackMeta.run_id }
+                if (-not $BatchRunAttempt -or $BatchRunAttempt -eq 'n/a') { $BatchRunAttempt = [string]$fallbackMeta.run_attempt }
+            }
+        }
+    }
+
+    if (-not $BatchRunId -or $BatchRunId -eq 'n/a') {
+        Write-BatchSentinel 'batch-check logs not located for this commit'
+    }
 }
 
 if ($BatchRunId) {

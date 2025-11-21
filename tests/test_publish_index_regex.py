@@ -9,6 +9,7 @@ from tools.diag.publish_index import (
     Context,
     _build_markdown,
     _build_site_overview,
+    _batch_status,
     _validate_iterate_status_line,
     _write_global_txt_mirrors,
     _write_html,
@@ -132,6 +133,31 @@ class QuickLinksRenderingTest(unittest.TestCase):
             batch_run_attempt=None,
             site=self.site,
         )
+
+    def test_batch_status_prefers_run_json_when_env_missing(self) -> None:
+        batch_root = self.diag / "_artifacts" / "batch-check"
+        batch_root.mkdir(parents=True, exist_ok=True)
+        run_json = batch_root / "run.json"
+        run_json.write_text(
+            '{"run_id": "42", "run_attempt": 2, "status": "completed", "conclusion": "success"}',
+            encoding="utf-8",
+        )
+
+        logs_dir = self.diag / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        (logs_dir / "batch-check-42-2.zip").write_bytes(b"PK")
+
+        context = self._make_context()
+        meta = json.loads(run_json.read_text(encoding="utf-8"))
+        context.batch_run_id = meta["run_id"]
+        context.batch_run_attempt = str(meta["run_attempt"])
+
+        status = _batch_status(self.diag, context)
+
+        self.assertEqual(status, "42 (attempt 2)")
+        ok_marker = logs_dir / "batch-check.OK.txt"
+        self.assertTrue(ok_marker.exists(), "OK marker should be created when the zip is present")
+        self.assertIn("42-2", ok_marker.read_text(encoding="utf-8"))
 
     @patch("tools.diag.publish_index._has_file", return_value=False)
     @patch("tools.diag.publish_index._bundle_links", return_value=[])
