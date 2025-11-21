@@ -188,6 +188,31 @@ class QuickLinksRenderingTest(unittest.TestCase):
         missing_path = logs_dir / "batch-check.MISSING.txt"
         self.assertFalse(missing_path.exists())
 
+    def test_batch_status_reuses_iterate_zip_for_current_run(self) -> None:
+        batch_root = self.diag / "_artifacts" / "batch-check"
+        batch_root.mkdir(parents=True, exist_ok=True)
+        run_json = batch_root / "run.json"
+        run_json.write_text(
+            '{"run_id": "1234", "run_attempt": 1, "status": "completed", "conclusion": "success"}',
+            encoding="utf-8",
+        )
+
+        logs_dir = self.diag / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        iterate_zip = logs_dir / "iterate-1234-1.zip"
+        iterate_zip.write_bytes(b"PK")
+
+        context = self._make_context()
+        context.batch_run_id = None
+        context.batch_run_attempt = None
+        context.artifacts_override = self.diag / "_artifacts"
+
+        status = _batch_status(self.diag, context)
+
+        self.assertEqual(status, "1234 (attempt 1)")
+        missing_path = logs_dir / "batch-check.MISSING.txt"
+        self.assertFalse(missing_path.exists())
+
     def test_batch_status_reports_missing_with_sentinel_reason(self) -> None:
         batch_root = self.diag / "_artifacts" / "batch-check"
         batch_root.mkdir(parents=True, exist_ok=True)

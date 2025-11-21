@@ -751,6 +751,17 @@ if (-not $zipReady -and $logDir -and -not $preferLocalIterate) {
     }
 }
 
+# derived requirement: iterate and batch-check share the same workflow run; when the
+# iterate logs zip already exists for this run/attempt, reuse it as the batch logs
+# source instead of emitting a missing sentinel or downloading a duplicate archive.
+if (-not $batchZipReady -and $batchRunMatchesCurrent -and $zipReady -and $iterateZipPath -and (Test-Path $iterateZipPath)) {
+    $batchZipName = $iterateZipName
+    $batchZipPath = $iterateZipPath
+    $batchZipReady = $true
+    $batchAttemptUsed = $batchDownloadAttempt
+    Write-BatchOk
+}
+
 $batchZipName = if ($batchZipName) { $batchZipName } elseif ($BatchRunId -and $BatchRunId -ne 'n/a') { "batch-check-$BatchRunId-$batchDownloadAttempt.zip" } else { $null }
 if (-not $batchZipPath -and $logDir -and $batchZipName) { $batchZipPath = Join-Path $logDir $batchZipName }
 if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a' -and $batchZipPath) {

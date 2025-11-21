@@ -1977,6 +1977,16 @@ def _batch_status(diag: Optional[Path], context: Context) -> str:
         zip_path = logs_dir / zip_name
         ok_path = logs_dir / "batch-check.OK.txt"
         missing_path = logs_dir / "batch-check.MISSING.txt"
+        iterate_attempt = context.run_attempt or "n/a"
+        if context.run_id and context.run_id == run_id:
+            iterate_name = f"iterate-{context.run_id}-{iterate_attempt}.zip"
+            candidate = logs_dir / iterate_name
+            if candidate.exists():
+                if not zip_path.exists():
+                    zip_path = candidate
+                    if attempt in (None, "", "n/a") and iterate_attempt not in ("", "n/a"):
+                        attempt = iterate_attempt
+
         if missing_path.exists():
             try:
                 sentinel_reason = missing_path.read_text(encoding="utf-8").strip()
