@@ -81,7 +81,7 @@ if ($artifactsOverride -and (Test-Path -LiteralPath $artifactsOverride)) {
     }
 }
 
-if (-not $BatchRunId -and $Artifacts) {
+if (((-not $BatchRunId) -or $BatchRunId -eq 'n/a') -and $Artifacts) {
     $batchRunJson = Join-Path (Join-Path $Artifacts 'batch-check') 'run.json'
     if (Test-Path -LiteralPath $batchRunJson) {
         try { $batchMeta = Get-Content -Raw -LiteralPath $batchRunJson | ConvertFrom-Json } catch { $batchMeta = $null }
@@ -798,6 +798,13 @@ if (-not $iterateZipPath -or -not (Test-Path $iterateZipPath)) {
     $iterateStatus = 'missing (see logs/iterate.MISSING.txt)'
 }
 
+# Professional note: propagate the sentinel text into status so unauthenticated readers
+# understand why batch-check logs are missing without spelunking the archive.
+$batchSentinelReason = $null
+if ($Diag -and $batchSentinelPath -and (Test-Path $batchSentinelPath)) {
+    try { $batchSentinelReason = (Get-Content -Raw -LiteralPath $batchSentinelPath).Trim() } catch {}
+}
+
 $batchStatusOverride = $env:BATCH_STATUS_OVERRIDE
 $batchStatus = 'missing'
 if ($batchStatusOverride) {
@@ -807,9 +814,13 @@ if ($batchStatusOverride) {
     if (-not $batchZipPath -and $Diag -and $batchZipName) { $batchZipPath = Join-Path $Diag ('logs\' + $batchZipName) }
     if ($batchZipPath -and (Test-Path $batchZipPath)) {
         $batchStatus = "found (run $BatchRunId, attempt $batchRunAttempt)"
+    } elseif ($batchSentinelReason) {
+        $batchStatus = "missing archive (run $BatchRunId, attempt $batchRunAttempt; reason: $batchSentinelReason)"
     } else {
         $batchStatus = "missing archive (run $BatchRunId, attempt $batchRunAttempt)"
     }
+} elseif ($batchSentinelReason) {
+    $batchStatus = "missing (see logs/batch-check.MISSING.txt: $batchSentinelReason)"
 } elseif ($Diag -and $batchSentinelPath -and (Test-Path $batchSentinelPath)) {
     $batchStatus = 'missing (see logs/batch-check.MISSING.txt)'
 }
