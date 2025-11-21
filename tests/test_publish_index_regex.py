@@ -159,6 +159,64 @@ class QuickLinksRenderingTest(unittest.TestCase):
         self.assertTrue(ok_marker.exists(), "OK marker should be created when the zip is present")
         self.assertIn("42-2", ok_marker.read_text(encoding="utf-8"))
 
+    def test_batch_status_infers_run_json_when_env_na_and_zip_present(self) -> None:
+        batch_root = self.diag / "_artifacts" / "batch-check"
+        batch_root.mkdir(parents=True, exist_ok=True)
+        run_json = batch_root / "run.json"
+        run_json.write_text(
+            '{"run_id": "77", "run_attempt": 3, "status": "completed", "conclusion": "success"}',
+            encoding="utf-8",
+        )
+
+        logs_dir = self.diag / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = logs_dir / "batch-check-77-3.zip"
+        zip_path.write_bytes(b"PK")
+
+        context = self._make_context()
+        context.batch_run_id = None
+        context.batch_run_attempt = None
+        context.run_attempt = None
+        context.artifacts_override = self.diag / "_artifacts"
+
+        status = _batch_status(self.diag, context)
+
+        self.assertEqual(status, "77 (attempt 3)")
+        ok_marker = logs_dir / "batch-check.OK.txt"
+        self.assertTrue(ok_marker.exists(), "OK marker should be created when the zip is present")
+        self.assertNotIn("MISSING", "".join(p.name for p in logs_dir.iterdir()))
+        missing_path = logs_dir / "batch-check.MISSING.txt"
+        self.assertFalse(missing_path.exists())
+
+    def test_batch_status_reports_missing_with_sentinel_reason(self) -> None:
+        batch_root = self.diag / "_artifacts" / "batch-check"
+        batch_root.mkdir(parents=True, exist_ok=True)
+        run_json = batch_root / "run.json"
+        run_json.write_text(
+            '{"run_id": "88", "run_attempt": 4, "status": "completed", "conclusion": "success"}',
+            encoding="utf-8",
+        )
+
+        logs_dir = self.diag / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        missing_path = logs_dir / "batch-check.MISSING.txt"
+        missing_path.write_text("download failed", encoding="utf-8")
+
+        context = self._make_context()
+        context.batch_run_id = None
+        context.batch_run_attempt = None
+        context.run_attempt = None
+        context.artifacts_override = self.diag / "_artifacts"
+
+        status = _batch_status(self.diag, context)
+
+        self.assertEqual(
+            status,
+            "missing archive (run 88, attempt 4; reason: download failed)",
+        )
+        ok_marker = logs_dir / "batch-check.OK.txt"
+        self.assertFalse(ok_marker.exists(), "OK marker should not be present when logs are missing")
+
     @patch("tools.diag.publish_index._has_file", return_value=False)
     @patch("tools.diag.publish_index._bundle_links", return_value=[])
     def test_site_overview_handles_zero_bundle_entries(

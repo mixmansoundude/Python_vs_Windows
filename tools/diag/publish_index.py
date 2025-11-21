@@ -1908,6 +1908,7 @@ def _artifact_stats(artifacts: Optional[Path]) -> tuple[int, Optional[str]]:
 
 
 def _batch_status(diag: Optional[Path], context: Context) -> str:
+    zip_path: Optional[Path] = None
     run_id = context.batch_run_id
     attempt = context.batch_run_attempt or context.run_attempt or "n/a"
     override_root = _artifacts_override_root(context)
@@ -1964,6 +1965,7 @@ def _batch_status(diag: Optional[Path], context: Context) -> str:
                 except OSError:
                     pass
 
+    sentinel_reason: Optional[str] = None
     if run_id and diag:
         logs_dir = diag / "logs"
         try:
@@ -1975,6 +1977,11 @@ def _batch_status(diag: Optional[Path], context: Context) -> str:
         zip_path = logs_dir / zip_name
         ok_path = logs_dir / "batch-check.OK.txt"
         missing_path = logs_dir / "batch-check.MISSING.txt"
+        if missing_path.exists():
+            try:
+                sentinel_reason = missing_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                sentinel_reason = None
         if zip_path.exists():
             try:
                 if attempt and attempt != "n/a":
@@ -1996,9 +2003,17 @@ def _batch_status(diag: Optional[Path], context: Context) -> str:
 
     if run_id:
         display_attempt = attempt if attempt and attempt != "n/a" else None
+        if zip_path and zip_path.exists():
+            if display_attempt:
+                return f"{run_id} (attempt {display_attempt})"
+            return str(run_id)
         if display_attempt:
-            return f"{run_id} (attempt {display_attempt})"
-        return str(run_id)
+            if sentinel_reason:
+                return f"missing archive (run {run_id}, attempt {display_attempt}; reason: {sentinel_reason})"
+            return f"missing archive (run {run_id}, attempt {display_attempt})"
+        if sentinel_reason:
+            return f"missing archive (run {run_id}; reason: {sentinel_reason})"
+        return f"missing archive (run {run_id})"
 
     if diag:
         missing_note = diag / "logs" / "batch-check.MISSING.txt"
