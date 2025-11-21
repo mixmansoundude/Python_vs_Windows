@@ -419,14 +419,27 @@ $batchZipName = $null
 $batchZipPath = $null
 $batchZipReady = $false
 $batchSentinelPath = if ($logDir) { Join-Path $logDir 'batch-check.MISSING.txt' } else { $null }
+$batchOkPath = if ($logDir) { Join-Path $logDir 'batch-check.OK.txt' } else { $null }
 
 function Write-BatchSentinel {
     param([string]$Reason)
 
     if (-not $batchSentinelPath) { return }
+    if ($batchOkPath) { try { Remove-Item -LiteralPath $batchOkPath -ErrorAction SilentlyContinue } catch {} }
     $message = 'batch-check logs not located for this commit'
     if (-not [string]::IsNullOrWhiteSpace($Reason)) { $message = $Reason }
     try { $message | Set-Content -Encoding UTF8 -LiteralPath $batchSentinelPath } catch {}
+}
+
+function Write-BatchOk {
+    if (-not $batchOkPath) { return }
+    $payload = $BatchRunId
+    if ($batchRunAttempt -and $batchRunAttempt -ne 'n/a') { $payload = "${payload}-${batchRunAttempt}" }
+    if (-not $payload) { $payload = 'batch-check logs downloaded' }
+    try {
+        $payload | Set-Content -Encoding UTF8 -LiteralPath $batchOkPath
+        if ($batchSentinelPath) { Remove-Item -LiteralPath $batchSentinelPath -ErrorAction SilentlyContinue }
+    } catch {}
 }
 
 function ConvertTo-MirrorText {
@@ -606,7 +619,7 @@ if ($BatchRunId) {
             $info = Get-Item -LiteralPath $batchZipPath -ErrorAction Stop
             if ($info -and $info.Length -gt 0) {
                 $batchZipReady = $true
-                if ($batchSentinelPath) { Remove-Item -LiteralPath $batchSentinelPath -ErrorAction SilentlyContinue }
+                Write-BatchOk
             }
         } catch {}
     }
@@ -740,7 +753,7 @@ if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a'
                 $info = Get-Item -LiteralPath $batchZipPath -ErrorAction Stop
                 if ($info -and $info.Length -gt 0) {
                     $batchZipReady = $true
-                    if ($batchSentinelPath) { Remove-Item -LiteralPath $batchSentinelPath -ErrorAction SilentlyContinue }
+                    Write-BatchOk
                     break
                 }
 

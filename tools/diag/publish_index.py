@@ -1970,20 +1970,29 @@ def _batch_status(diag: Optional[Path], context: Context) -> str:
             logs_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             pass
+        download_attempt = attempt if attempt and attempt != "n/a" else "1"
+        zip_name = f"batch-check-{run_id}-{download_attempt}.zip"
+        zip_path = logs_dir / zip_name
         ok_path = logs_dir / "batch-check.OK.txt"
-        try:
-            if attempt and attempt != "n/a":
-                payload = f"{run_id}-{attempt}"
-            else:
-                payload = str(run_id)
-            ok_path.write_text(payload + "\n", encoding="utf-8")
-        except OSError:
-            pass
         missing_path = logs_dir / "batch-check.MISSING.txt"
-        try:
-            missing_path.unlink()
-        except OSError:
-            pass
+        if zip_path.exists():
+            try:
+                if attempt and attempt != "n/a":
+                    payload = f"{run_id}-{attempt}"
+                else:
+                    payload = str(run_id)
+                ok_path.write_text(payload + "\n", encoding="utf-8")
+                try:
+                    missing_path.unlink()
+                except OSError:
+                    pass
+            except OSError:
+                pass
+        else:
+            try:
+                ok_path.unlink()
+            except OSError:
+                pass
 
     if run_id:
         display_attempt = attempt if attempt and attempt != "n/a" else None
