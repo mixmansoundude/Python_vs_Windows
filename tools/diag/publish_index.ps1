@@ -415,6 +415,7 @@ $batchRunAttempt = if ($BatchRunAttempt) { $BatchRunAttempt } else { 'n/a' }
 $batchDownloadAttempt = if ($batchRunAttempt -and $batchRunAttempt -ne 'n/a') { $batchRunAttempt } else { '1' }
 # derived requirement: fall back to the download attempt when the run attempt is missing so status text and filenames stay aligned.
 if ($batchRunAttempt -eq 'n/a' -and $batchDownloadAttempt) { $batchRunAttempt = $batchDownloadAttempt }
+$batchAttemptUsed = $batchDownloadAttempt
 $batchZipName = $null
 $batchZipPath = $null
 $batchZipReady = $false
@@ -434,7 +435,7 @@ function Write-BatchSentinel {
 function Write-BatchOk {
     if (-not $batchOkPath) { return }
     $payload = $BatchRunId
-    if ($batchRunAttempt -and $batchRunAttempt -ne 'n/a') { $payload = "${payload}-${batchRunAttempt}" }
+    if ($batchAttemptUsed -and $batchAttemptUsed -ne 'n/a') { $payload = "${payload}-${batchAttemptUsed}" }
     if (-not $payload) { $payload = 'batch-check logs downloaded' }
     try {
         $payload | Set-Content -Encoding UTF8 -LiteralPath $batchOkPath
@@ -741,42 +742,47 @@ if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a'
 
         $downloadErrors = @()
         foreach ($target in $downloadTargets) {
-            Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
-            try {
-                # derived requirement: GitHub's run-log endpoint responds with a redirect when the
-                # Accept header matches the documented vnd.github+json media type; avoid 406s that
-                # previously yielded generic "not located" sentinels by using the canonical header
-                # while still saving the redirected zip payload locally.
-                Invoke-WebRequest -Uri $target.Uri -Headers @{
-                    Authorization          = "Bearer $token"
-                    'User-Agent'           = 'publish_index.ps1 diagnostics'
-                    Accept                 = 'application/vnd.github+json'
-                    'X-GitHub-Api-Version' = '2022-11-28'
-                } -OutFile $batchZipPath -ErrorAction Stop
-
-                $info = Get-Item -LiteralPath $batchZipPath -ErrorAction Stop
-                if ($info -and $info.Length -gt 0) {
-                    $batchZipReady = $true
-                    Write-BatchOk
-                    break
-                }
-
+            $acceptCandidates = @('application/vnd.github+json', 'application/zip')
+            foreach ($acceptHeader in $acceptCandidates) {
                 Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
-                $downloadErrors += "batch-check log download returned empty archive: $($target.Uri)"
-            } catch {
-                Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
-                $statusCode = $null
-                $statusText = $null
-                try { if ($_.Exception.Response -and $_.Exception.Response.StatusCode) { $statusCode = [int]$_.Exception.Response.StatusCode } } catch {}
-                try { if ($_.Exception.Response -and $_.Exception.Response.StatusDescription) { $statusText = [string]$_.Exception.Response.StatusDescription } } catch {}
-                $detail = $_.Exception.Message
-                if (-not [string]::IsNullOrWhiteSpace($statusText)) { $detail = "$detail ($statusText)" }
-                if ($statusCode) {
-                    $downloadErrors += "batch-check log download failed ($($target.Label)): HTTP $statusCode $detail"
-                } else {
-                    $downloadErrors += "batch-check log download failed ($($target.Label)): $detail"
+                try {
+                    # Professional note: some GitHub deployments still require the documented vnd.github+json media
+                    # type while others tolerate an explicit zip Accept. Try both so batch-check logs zip reliably
+                    # materializes instead of leaving only a sentinel when the first header yields a 406.
+                    Invoke-WebRequest -Uri $target.Uri -Headers @{
+                        Authorization          = "Bearer $token"
+                        'User-Agent'           = 'publish_index.ps1 diagnostics'
+                        Accept                 = $acceptHeader
+                        'X-GitHub-Api-Version' = '2022-11-28'
+                    } -OutFile $batchZipPath -ErrorAction Stop
+
+                    $info = Get-Item -LiteralPath $batchZipPath -ErrorAction Stop
+                    if ($info -and $info.Length -gt 0) {
+                        $batchAttemptUsed = $batchDownloadAttempt
+                        $batchZipReady = $true
+                        Write-BatchOk
+                        break
+                    }
+
+                    Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
+                    $downloadErrors += "batch-check log download returned empty archive: $($target.Uri) (Accept=$acceptHeader)"
+                } catch {
+                    Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
+                    $statusCode = $null
+                    $statusText = $null
+                    try { if ($_.Exception.Response -and $_.Exception.Response.StatusCode) { $statusCode = [int]$_.Exception.Response.StatusCode } } catch {}
+                    try { if ($_.Exception.Response -and $_.Exception.Response.StatusDescription) { $statusText = [string]$_.Exception.Response.StatusDescription } } catch {}
+                    $detail = $_.Exception.Message
+                    if (-not [string]::IsNullOrWhiteSpace($statusText)) { $detail = "$detail ($statusText)" }
+                    if ($statusCode) {
+                        $downloadErrors += "batch-check log download failed ($($target.Label), Accept=$acceptHeader): HTTP $statusCode $detail"
+                    } else {
+                        $downloadErrors += "batch-check log download failed ($($target.Label), Accept=$acceptHeader): $detail"
+                    }
                 }
+                if ($batchZipReady) { break }
             }
+            if ($batchZipReady) { break }
         }
 
         if (-not $batchZipReady -and $downloadErrors) {
@@ -837,14 +843,14 @@ $batchStatus = 'missing'
 if ($batchStatusOverride) {
     $batchStatus = $batchStatusOverride
 } elseif ($BatchRunId) {
-    if (-not $batchZipName) { $batchZipName = "batch-check-$BatchRunId-$batchRunAttempt.zip" }
+    if (-not $batchZipName) { $batchZipName = "batch-check-$BatchRunId-$batchAttemptUsed.zip" }
     if (-not $batchZipPath -and $Diag -and $batchZipName) { $batchZipPath = Join-Path $Diag ('logs\' + $batchZipName) }
     if ($batchZipPath -and (Test-Path $batchZipPath)) {
-        $batchStatus = "found (run $BatchRunId, attempt $batchRunAttempt)"
+        $batchStatus = "found (run $BatchRunId, attempt $batchAttemptUsed)"
     } elseif ($batchSentinelReason) {
-        $batchStatus = "missing archive (run $BatchRunId, attempt $batchRunAttempt; reason: $batchSentinelReason)"
+        $batchStatus = "missing archive (run $BatchRunId, attempt $batchAttemptUsed; reason: $batchSentinelReason)"
     } else {
-        $batchStatus = "missing archive (run $BatchRunId, attempt $batchRunAttempt)"
+        $batchStatus = "missing archive (run $BatchRunId, attempt $batchAttemptUsed)"
     }
 } elseif ($batchSentinelReason) {
     $batchStatus = "missing (see logs/batch-check.MISSING.txt: $batchSentinelReason)"
