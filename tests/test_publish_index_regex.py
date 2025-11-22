@@ -51,6 +51,48 @@ class IterateStatusLineTest(unittest.TestCase):
             _validate_iterate_status_line(sample)
 
 
+class ReloadLinkTest(unittest.TestCase):
+    def test_markdown_includes_reload_cache_buster(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp) / "diag"
+            diag_root.mkdir(parents=True, exist_ok=True)
+
+            context = Context(
+                diag=diag_root,
+                artifacts=None,
+                artifacts_override=None,
+                downloaded_iter_root=None,
+                repo="owner/repo",
+                branch="main",
+                sha="deadbeef",
+                run_id="1234",
+                run_attempt="2",
+                run_url="https://example.invalid/run",
+                short_sha="deadbee",
+                inventory_b64=None,
+                batch_run_id=None,
+                batch_run_attempt=None,
+                site=None,
+            )
+
+            markdown = _build_markdown(
+                context,
+                None,
+                None,
+                "2025-01-02T03:04:05Z",
+                "2025-01-01T21:04:05-06:00",
+                None,
+                None,
+                None,
+            )
+
+            lines = markdown.splitlines()
+            self.assertGreaterEqual(len(lines), 2)
+            self.assertRegex(
+                lines[1], r"^Reload: \[Reload with cache-buster\]\(\?v=1234-2\)$"
+            )
+
+
 class MirrorGenerationTest(unittest.TestCase):
     def test_global_mirror_tree_captures_previews(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

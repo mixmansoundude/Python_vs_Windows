@@ -963,9 +963,31 @@ if ($Diag) {
     $allFiles = Get-ChildItem -Path $Diag -Recurse -File -ErrorAction SilentlyContinue | Sort-Object FullName
 }
 
+$cacheBusterToken = $null
+if ($Run -and $Run -ne 'n/a') {
+    if ($Att -and $Att -ne 'n/a') {
+        $cacheBusterToken = '{0}-{1}' -f $Run, $Att
+    } else {
+        $cacheBusterToken = $Run
+    }
+} elseif ($BatchRunId -and $BatchRunId -ne 'n/a') {
+    if ($BatchRunAttempt -and $BatchRunAttempt -ne 'n/a') {
+        $cacheBusterToken = '{0}-{1}' -f $BatchRunId, $BatchRunAttempt
+    } else {
+        $cacheBusterToken = $BatchRunId
+    }
+} elseif ($UTC) {
+    # Professional note: fall back to the build timestamp so the link stays deterministic when run metadata is unavailable.
+    $cacheBusterToken = [DateTime]::Parse($UTC).ToString('yyyyMMddHHmmss')
+} else {
+    $cacheBusterToken = [DateTime]::UtcNow.ToString('yyyyMMddHHmmss')
+}
+$cacheBusterHref = [string]::Format('?v={0}', [uri]::EscapeDataString($cacheBusterToken))
+
 $lines = [System.Collections.Generic.List[string]]::new()
 foreach ($seed in @(
         '# CI Diagnostics',
+        [string]::Format('Reload: [Reload with cache-buster]({0})', $cacheBusterHref),
         "Repo: $Repo",
         "Commit: $SHA",
         "Run: $Run (attempt $Att)",
@@ -1178,27 +1200,6 @@ $iteratePairs = @(
 if (-not $responseData -and $attemptSummary) {
     $iteratePairs += @{ Label = 'Attempt summary'; Value = $attemptSummary }
 }
-
-$cacheBusterToken = $null
-if ($Run -and $Run -ne 'n/a') {
-    if ($Att -and $Att -ne 'n/a') {
-        $cacheBusterToken = '{0}-{1}' -f $Run, $Att
-    } else {
-        $cacheBusterToken = $Run
-    }
-} elseif ($BatchRunId -and $BatchRunId -ne 'n/a') {
-    if ($BatchRunAttempt -and $BatchRunAttempt -ne 'n/a') {
-        $cacheBusterToken = '{0}-{1}' -f $BatchRunId, $BatchRunAttempt
-    } else {
-        $cacheBusterToken = $BatchRunId
-    }
-} elseif ($UTC) {
-    # Professional note: fall back to the build timestamp so the link stays deterministic when run metadata is unavailable.
-    $cacheBusterToken = [DateTime]::Parse($UTC).ToString('yyyyMMddHHmmss')
-} else {
-    $cacheBusterToken = [DateTime]::UtcNow.ToString('yyyyMMddHHmmss')
-}
-$cacheBusterHref = [string]::Format('?v={0}', [uri]::EscapeDataString($cacheBusterToken))
 
 $html = [System.Collections.Generic.List[string]]::new()
 $html.Add('<!doctype html>') | Out-Null
