@@ -1380,3 +1380,58 @@ if ($site -and $Diag -and $Run -and $Att -and $Repo -and $SHA) {
     }
     $obj | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 (Join-Path $site 'latest.json')
 }
+
+if ($site) {
+    $diagRoot = Join-Path $site 'diag'
+    if (Test-Path -LiteralPath $diagRoot) {
+        $runDirs = Get-ChildItem -Path $diagRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^[0-9]+-[0-9]+$' } |
+            Sort-Object -Property Name -Descending
+
+        if ($runDirs) {
+            $runEntries = @()
+            foreach ($dir in $runDirs) {
+                $runName = $dir.Name
+                $cacheToken = $runName.Split('-')[0]
+                # Professional note: preserve the longstanding cache-busted entry format so
+                # existing deep links into diag/<run>/index.html?v=<run-id> remain stable.
+                $href = '{0}/index.html?v={1}' -f $runName, $cacheToken
+                $runEntries += [pscustomobject]@{ Name = $runName; Href = $href }
+            }
+
+            $latestEntry = $runEntries[0]
+            $rootHtml = [System.Collections.Generic.List[string]]::new()
+            $rootHtml.Add('<!doctype html>') | Out-Null
+            $rootHtml.Add('<html lang="en">') | Out-Null
+            $rootHtml.Add('<head>') | Out-Null
+            $rootHtml.Add('<meta charset="utf-8">') | Out-Null
+            $rootHtml.Add('<meta name="color-scheme" content="light dark">') | Out-Null
+            $rootHtml.Add('<title>Diagnostics index</title>') | Out-Null
+            $rootHtml.Add('<style>') | Out-Null
+            $rootHtml.Add(':root { color-scheme: light dark; }') | Out-Null
+            $rootHtml.Add('body { font-family: "Segoe UI", Arial, sans-serif; margin: 16px; line-height: 1.6; background-color: #f6f8fa; color: #0f172a; }') | Out-Null
+            $rootHtml.Add('a { color: #0b5ed7; }') | Out-Null
+            $rootHtml.Add('a:visited { color: #6f42c1; }') | Out-Null
+            $rootHtml.Add('@media (prefers-color-scheme: dark) { body { background-color: #0d1117; color: #e6edf3; } a { color: #8ab4f8; } a:visited { color: #c7a0ff; } }') | Out-Null
+            $rootHtml.Add('</style>') | Out-Null
+            $rootHtml.Add('</head>') | Out-Null
+            $rootHtml.Add('<body>') | Out-Null
+            $rootHtml.Add('<h1>Diagnostics index</h1>') | Out-Null
+            $rootHtml.Add([string]::Format('<h2>Latest run (cache-busted): <a href="{0}">Open diagnostics</a></h2>', $(Escape-Href $latestEntry.Href))) | Out-Null
+            $rootHtml.Add('<section>') | Out-Null
+            $rootHtml.Add('<h3>Run bundles</h3>') | Out-Null
+            $rootHtml.Add('<ul>') | Out-Null
+            foreach ($entry in $runEntries) {
+                $href = Escape-Href $entry.Href
+                $name = Escape-Html $entry.Name
+                $rootHtml.Add([string]::Format('<li><a href="{0}">{1}</a></li>', $href, $name)) | Out-Null
+            }
+            $rootHtml.Add('</ul>') | Out-Null
+            $rootHtml.Add('</section>') | Out-Null
+            $rootHtml.Add('</body>') | Out-Null
+            $rootHtml.Add('</html>') | Out-Null
+
+            ($rootHtml -join "`n") | Set-Content -Encoding UTF8 -NoNewline (Join-Path $diagRoot 'index.html')
+        }
+    }
+}
