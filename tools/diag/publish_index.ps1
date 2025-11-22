@@ -1417,7 +1417,9 @@ if ($site) {
             $rootHtml.Add('</head>') | Out-Null
             $rootHtml.Add('<body>') | Out-Null
             $rootHtml.Add('<h1>Diagnostics index</h1>') | Out-Null
-            $rootHtml.Add([string]::Format('<h2>Latest run (cache-busted): <a href="{0}">Open diagnostics</a></h2>', $(Escape-Href $latestEntry.Href))) | Out-Null
+            $latestHref = Escape-Href $latestEntry.Href
+            $rootHtml.Add([string]::Format('<h2>Latest run (cache-busted): <a href="{0}">Open diagnostics</a></h2>', $latestHref)) | Out-Null
+            $rootHtml.Add([string]::Format('<div><button type="button" id="copy-cache-buster" data-href="{0}" style="display:none;">Copy cache-buster link</button><span id="copy-cache-status" aria-live="polite" style="margin-left:8px; font-size:0.9em;"></span></div>', $latestHref)) | Out-Null
             $rootHtml.Add('<section>') | Out-Null
             $rootHtml.Add('<h3>Run bundles</h3>') | Out-Null
             $rootHtml.Add('<ul>') | Out-Null
@@ -1428,6 +1430,30 @@ if ($site) {
             }
             $rootHtml.Add('</ul>') | Out-Null
             $rootHtml.Add('</section>') | Out-Null
+            $rootHtml.Add('<script>') | Out-Null
+            $rootHtml.Add(@'
+(function () {
+    var copyButton = document.getElementById("copy-cache-buster");
+    var status = document.getElementById("copy-cache-status");
+    if (!copyButton) { return; }
+    var href = copyButton.getAttribute("data-href");
+    if (!href || !navigator.clipboard || !navigator.clipboard.writeText) {
+        return;
+    }
+    copyButton.style.display = "inline-block";
+    copyButton.addEventListener("click", function () {
+        navigator.clipboard.writeText(href).then(function () {
+            if (status) {
+                status.textContent = "Link copied";
+                setTimeout(function () { status.textContent = ""; }, 2000);
+            }
+        }).catch(function () {
+            if (status) { status.textContent = "Copy failed"; }
+        });
+    });
+})();
+'@) | Out-Null
+            $rootHtml.Add('</script>') | Out-Null
             $rootHtml.Add('</body>') | Out-Null
             $rootHtml.Add('</html>') | Out-Null
 
