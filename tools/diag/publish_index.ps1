@@ -1179,15 +1179,48 @@ if (-not $responseData -and $attemptSummary) {
     $iteratePairs += @{ Label = 'Attempt summary'; Value = $attemptSummary }
 }
 
+$cacheBusterToken = $null
+if ($Run -and $Run -ne 'n/a') {
+    if ($Att -and $Att -ne 'n/a') {
+        $cacheBusterToken = '{0}-{1}' -f $Run, $Att
+    } else {
+        $cacheBusterToken = $Run
+    }
+} elseif ($BatchRunId -and $BatchRunId -ne 'n/a') {
+    if ($BatchRunAttempt -and $BatchRunAttempt -ne 'n/a') {
+        $cacheBusterToken = '{0}-{1}' -f $BatchRunId, $BatchRunAttempt
+    } else {
+        $cacheBusterToken = $BatchRunId
+    }
+} elseif ($UTC) {
+    # Professional note: fall back to the build timestamp so the link stays deterministic when run metadata is unavailable.
+    $cacheBusterToken = [DateTime]::Parse($UTC).ToString('yyyyMMddHHmmss')
+} else {
+    $cacheBusterToken = [DateTime]::UtcNow.ToString('yyyyMMddHHmmss')
+}
+$cacheBusterHref = [string]::Format('?v={0}', [uri]::EscapeDataString($cacheBusterToken))
+
 $html = [System.Collections.Generic.List[string]]::new()
 $html.Add('<!doctype html>') | Out-Null
 $html.Add('<html lang="en">') | Out-Null
 $html.Add('<head>') | Out-Null
 $html.Add('<meta charset="utf-8">') | Out-Null
 $html.Add('<title>CI Diagnostics</title>') | Out-Null
+$html.Add('<style>') | Out-Null
+$html.Add(':root { color-scheme: light dark; }') | Out-Null
+$html.Add('body { font-family: "Segoe UI", Arial, sans-serif; margin: 16px; line-height: 1.6; background-color: #f6f8fa; color: #0f172a; }') | Out-Null
+$html.Add('a { color: #0b5ed7; }') | Out-Null
+$html.Add('a:visited { color: #6f42c1; }') | Out-Null
+$html.Add('section { margin-bottom: 18px; padding: 8px 0; }') | Out-Null
+$html.Add('.cta-row { margin: 12px 0 20px; }') | Out-Null
+$html.Add('.cta { display: inline-block; padding: 10px 16px; border-radius: 10px; border: 1px solid #bfd2ff; background: #e8f0ff; font-weight: 700; text-decoration: none; color: #0b1224; }') | Out-Null
+$html.Add('.cta:hover { background: #dce7ff; }') | Out-Null
+$html.Add('@media (prefers-color-scheme: dark) { body { background-color: #0d1117; color: #e6edf3; } a { color: #8ab4f8; } a:visited { color: #c7a0ff; } section { border-color: #30363d; } .cta { background: #1f6feb; border-color: #30363d; color: #f0f6fc; } .cta:hover { background: #2764d6; } }') | Out-Null
+$html.Add('</style>') | Out-Null
 $html.Add('</head>') | Out-Null
 $html.Add('<body>') | Out-Null
 $html.Add('<h1>CI Diagnostics</h1>') | Out-Null
+$html.Add([string]::Format('<p class="cta-row"><a class="cta" href="{0}">Reload with cache-buster</a></p>', $(Escape-Href $cacheBusterHref))) | Out-Null
 $html.Add('<section>') | Out-Null
 $html.Add('<h2>Metadata</h2>') | Out-Null
 $html.Add('<ul>') | Out-Null
