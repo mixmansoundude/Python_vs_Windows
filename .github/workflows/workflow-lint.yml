@@ -6,9 +6,9 @@
 name: Workflow Lint (actionlint)
 
 on:
-  push:
-    branches: ["**"]
-    # Restricted to push events to avoid duplicate runs with other workflows per operator request.
+  workflow_dispatch:
+    # Manual-only precheck entry point; removed from automatic push/PR paths per operator request to avoid
+    # confusing the live diagnostics pipeline (which is driven by tools/diag/publish_index.ps1).
 
 permissions:
   contents: read
