@@ -3802,6 +3802,8 @@ def _build_site_overview(
     lines = [
         "# Diagnostics overview",
         "",
+        f"## Latest run (cache-busted): [Open diagnostics]({_normalize_link(bundle_index_href)})",
+        "",
         f"Latest run: [{run_id} (attempt {run_attempt})]({_normalize_link(bundle_index_href)})",
         "",
         "## Metadata",
@@ -3871,10 +3873,27 @@ def _build_site_overview(
     html_lines.append('<html lang="en">')
     html_lines.append("<head>")
     html_lines.append('<meta charset="utf-8">')
+    html_lines.append('<meta name="color-scheme" content="light dark">')
     html_lines.append("<title>Diagnostics overview</title>")
+    html_lines.append("<style>")
+    html_lines.append(":root { color-scheme: light dark; }")
+    html_lines.append(
+        "body { font-family: 'Segoe UI', Arial, sans-serif; margin: 16px; line-height: 1.6; "
+        "background-color: #f6f8fa; color: #0f172a; }"
+    )
+    html_lines.append("a { color: #0b5ed7; }")
+    html_lines.append("a:visited { color: #6f42c1; }")
+    html_lines.append(
+        "@media (prefers-color-scheme: dark) { body { background-color: #0d1117; color: #e6edf3; } "
+        "a { color: #8ab4f8; } a:visited { color: #c7a0ff; } }"
+    )
+    html_lines.append("</style>")
     html_lines.append("</head>")
     html_lines.append("<body>")
     html_lines.append("<h1>Diagnostics overview</h1>")
+    html_lines.append(
+        f"<h2>Latest run (cache-busted): <a href=\"{_escape_href(_normalize_link(bundle_index_href))}\">Open diagnostics</a></h2>"
+    )
     html_lines.append(
         f"<p>Latest run: <a href=\"{_escape_href(_normalize_link(bundle_index_href))}\">{_escape_html(f'{run_id} (attempt {run_attempt})')}</a></p>"
     )
