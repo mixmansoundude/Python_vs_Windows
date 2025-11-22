@@ -441,7 +441,9 @@ jobs:
           fi
 
       - name: Upload iterate logs (fail-only)
-        if: ${{ steps.iterate_gate.outputs.should_run == 'true' }}
+        # derived requirement: only upload when _ctx exists so cache/real self-tests
+        # do not emit warn-only artifacts.
+        if: ${{ steps.iterate_gate.outputs.should_run == 'true' && hashFiles('_ctx/**') != '' }}
         # derived requirement: breadcrumbs now exist for empty-model runs, but keep
         # the workflow tolerant so diagnostics jobs do not fail when the helper
         # intentionally skips packaging.
