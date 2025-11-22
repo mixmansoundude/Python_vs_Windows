@@ -94,14 +94,14 @@ $checkedPatterns = [System.Collections.Generic.List[string]]::new()
 $checkedPatterns.Add('public-diag-html:real-ndjson-links') | Out-Null
 $checkedPatterns.Add("CI_DIAG_URL:$($diagUri.AbsoluteUri)") | Out-Null
 
-[int]$maxAttempts = 14
+[int]$maxAttempts = 8  # tuned to keep worst-case default polling under ~12s without env overrides
 $parsedInt = 0
 if ([int]::TryParse($env:MAX_ATTEMPTS, [ref]$parsedInt)) {
     $maxAttempts = $parsedInt
 }
 if ($maxAttempts -lt 1) { $maxAttempts = 1 }
 
-[double]$baseDelay = 0.6
+[double]$baseDelay = 0.4
 $parsedDouble = 0.0
 if ([double]::TryParse($env:BASE_DELAY_SEC, [ref]$parsedDouble)) {
     $baseDelay = $parsedDouble
@@ -186,7 +186,7 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     }
 
     if ($attempt -ge $maxAttempts) { break }
-    $delay = [Math]::Min($baseDelay * [Math]::Pow(1.6, $attempt - 1), 6.0)
+    $delay = [Math]::Min($baseDelay * [Math]::Pow(1.6, $attempt - 1), 2.0)
     Start-Sleep -Seconds $delay
 }
 
