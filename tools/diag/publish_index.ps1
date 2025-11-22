@@ -958,6 +958,81 @@ if ($artifactMissingPath -and (Test-Path $artifactMissingPath)) {
     $artifactMissing = (Get-Content -Raw -LiteralPath $artifactMissingPath).Trim()
 }
 
+$site = $env:SITE
+$diagRoot = $null
+$runEntries = @()
+$latestEntry = $null
+$latestManifestRoot = $null
+$latestManifestJsonPath = $null
+$latestManifestTxtPath = $null
+$latestRunIdForManifest = $Run
+$latestRunAttemptForManifest = $Att
+
+if ($site) {
+    $diagRoot = Join-Path $site 'diag'
+    if (Test-Path -LiteralPath $diagRoot) {
+        $latestManifestRoot = $diagRoot
+        $runDirs = Get-ChildItem -Path $diagRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^[0-9]+-[0-9]+$' } |
+            Sort-Object -Property Name -Descending
+
+        if ($runDirs) {
+            $runEntries = @()
+            foreach ($dir in $runDirs) {
+                $runName = $dir.Name
+                $cacheToken = $runName.Split('-')[0]
+                # Professional note: preserve the longstanding cache-busted entry format so
+                # existing deep links into diag/<run>/index.html?v=<run-id> remain stable.
+                $href = '{0}/index.html?v={1}' -f $runName, $cacheToken
+                $runEntries += [pscustomobject]@{ Name = $runName; Href = $href }
+            }
+
+            $latestEntry = $runEntries[0]
+            if ($latestEntry -and $latestEntry.Name -match '^([0-9]+)-([0-9]+)$') {
+                $latestRunIdForManifest = $matches[1]
+                $latestRunAttemptForManifest = $matches[2]
+            }
+
+            $latestManifestJsonPath = Join-Path $latestManifestRoot 'latest.json'
+            $latestManifestTxtPath = Join-Path $latestManifestRoot 'latest.txt'
+            $latestRunName = if ($latestEntry) { $latestEntry.Name } else { $null }
+            if ($latestRunName) {
+                $latestBundleRelative = "diag/$latestRunName/index.html"
+                $latestInventoryRelative = "diag/$latestRunName/inventory.json"
+                $latestWorkflowRelative = "diag/$latestRunName/wf/codex-auto-iterate.yml.txt"
+                $latestIterRoot = "diag/$latestRunName/_artifacts/iterate/iterate"
+
+                $manifestPayload = [pscustomobject]@{
+                    repo        = $Repo
+                    run_id      = $latestRunIdForManifest
+                    run_attempt = $latestRunAttemptForManifest
+                    sha         = $SHA
+                    bundle_url  = $latestBundleRelative
+                    inventory   = $latestInventoryRelative
+                    workflow    = $latestWorkflowRelative
+                    iterate     = @{
+                        prompt   = "$latestIterRoot/prompt.txt"
+                        response = "$latestIterRoot/response.json"
+                        diff     = "$latestIterRoot/patch.diff"
+                        log      = "$latestIterRoot/exec.log"
+                    }
+                }
+
+                # Professional note: refresh the site-level manifest pointers using the newest
+                # diagnostics bundle so Quick links stay in sync with the published index.
+                try { $manifestPayload | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 $latestManifestJsonPath } catch {}
+
+                $repoName = $null
+                if ($Repo -match '^[^/]+/(?<name>[^/]+)$') { $repoName = $matches['name'] }
+                elseif ($Repo) { $repoName = $Repo }
+
+                $latestTxtPayload = "/$latestBundleRelative"
+                if ($repoName) { $latestTxtPayload = '/{0}/{1}' -f $repoName, $latestBundleRelative }
+                try { $latestTxtPayload | Set-Content -Encoding UTF8 -LiteralPath $latestManifestTxtPath } catch {}
+            }
+        }
+    }
+
 $allFiles = @()
 if ($Diag) {
     $allFiles = Get-ChildItem -Path $Diag -Recurse -File -ErrorAction SilentlyContinue | Sort-Object FullName
@@ -1010,6 +1085,24 @@ if ($artifactMissing) {
 
 $null = $lines.Add('')
 $null = $lines.Add('## Quick links')
+$latestJsonLink = $null
+$latestTxtLink = $null
+$latestJsonExists = $false
+$latestTxtExists = $false
+if ($latestManifestJsonPath) {
+    $latestJsonExists = Test-Path -LiteralPath $latestManifestJsonPath
+    if ($Diag) {
+        try { $latestJsonLink = [System.IO.Path]::GetRelativePath($Diag, $latestManifestJsonPath) } catch {}
+    }
+    if (-not $latestJsonLink) { $latestJsonLink = 'latest.json' }
+}
+if ($latestManifestTxtPath) {
+    $latestTxtExists = Test-Path -LiteralPath $latestManifestTxtPath
+    if ($Diag) {
+        try { $latestTxtLink = [System.IO.Path]::GetRelativePath($Diag, $latestManifestTxtPath) } catch {}
+    }
+    if (-not $latestTxtLink) { $latestTxtLink = 'latest.txt' }
+}
 $bundleLinks = @(
     @{ Label = 'Inventory (HTML)'; Path = 'inventory.html'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'inventory.html'))) },
     @{ Label = 'Inventory (text)'; Path = 'inventory.txt'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'inventory.txt'))) },
@@ -1022,6 +1115,11 @@ $bundleLinks = @(
     @{ Label = 'Repository zip'; Path = "repo/repo-$Short.zip"; Exists = ($Diag -and (Test-Path (Join-Path $Diag ("repo\repo-$Short.zip")))) },
     @{ Label = 'Repository files (unzipped)'; Path = 'repo/files/'; Exists = ($Diag -and (Test-Path (Join-Path $Diag 'repo\files'))) }
 )
+
+if ($latestManifestRoot) {
+    $bundleLinks += @{ Label = 'Latest manifest (json)'; Path = $latestJsonLink; Exists = $latestJsonExists }
+    $bundleLinks += @{ Label = 'Latest manifest (txt)'; Path = $latestTxtLink; Exists = $latestTxtExists }
+}
 
 if ($iterateDir) {
     $ciLogsCandidate = Join-Path $iterateDir 'logs.zip'
@@ -1361,29 +1459,8 @@ if ($Diag) {
     ($html -join "`n") | Set-Content -Encoding UTF8 -NoNewline (Join-Path $Diag 'index.html')
 }
 
-$site = $env:SITE
-if ($site -and $Diag -and $Run -and $Att -and $Repo -and $SHA) {
-    $obj = [pscustomobject]@{
-        repo        = $Repo
-        run_id      = $Run
-        run_attempt = $Att
-        sha         = $SHA
-        bundle_url  = "diag/$Run-$Att/index.html"
-        inventory   = "diag/$Run-$Att/inventory.json"
-        workflow    = "diag/$Run-$Att/wf/codex-auto-iterate.yml.txt"
-        iterate = @{
-            prompt   = "diag/$Run-$Att/_artifacts/iterate/iterate/prompt.txt"
-            response = "diag/$Run-$Att/_artifacts/iterate/iterate/response.json"
-            diff     = "diag/$Run-$Att/_artifacts/iterate/iterate/patch.diff"
-            log      = "diag/$Run-$Att/_artifacts/iterate/iterate/exec.log"
-        }
-    }
-    $obj | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 (Join-Path $site 'latest.json')
-}
-
-if ($site) {
-    $diagRoot = Join-Path $site 'diag'
-    if (Test-Path -LiteralPath $diagRoot) {
+if ($site -and $diagRoot -and (Test-Path -LiteralPath $diagRoot)) {
+    if (-not $runEntries -or $runEntries.Count -eq 0) {
         $runDirs = Get-ChildItem -Path $diagRoot -Directory -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match '^[0-9]+-[0-9]+$' } |
             Sort-Object -Property Name -Descending
@@ -1399,7 +1476,12 @@ if ($site) {
                 $runEntries += [pscustomobject]@{ Name = $runName; Href = $href }
             }
 
-            $latestEntry = $runEntries[0]
+            if (-not $latestEntry -and $runEntries.Count -gt 0) { $latestEntry = $runEntries[0] }
+        }
+    }
+
+    if ($runEntries -and $runEntries.Count -gt 0) {
+        $latestEntry = $runEntries[0]
             $rootHtml = [System.Collections.Generic.List[string]]::new()
             $rootHtml.Add('<!doctype html>') | Out-Null
             $rootHtml.Add('<html lang="en">') | Out-Null
