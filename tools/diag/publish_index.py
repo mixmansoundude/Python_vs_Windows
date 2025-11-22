@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from urllib.parse import quote
 
 try:
     from zoneinfo import ZoneInfo
@@ -1522,11 +1523,35 @@ def _escape_href(value: Optional[str]) -> Optional[str]:
     if not value:
         return value
     try:
-        from urllib.parse import quote
-
         return quote(value, safe="/:?=&%#")
     except Exception:
         return value
+
+
+def _cache_buster_token(context: Context, built_utc: str) -> str:
+    if context.run_id:
+        if context.run_attempt:
+            return f"{context.run_id}-{context.run_attempt}"
+        return str(context.run_id)
+
+    if context.batch_run_id:
+        if context.batch_run_attempt:
+            return f"{context.batch_run_id}-{context.batch_run_attempt}"
+        return str(context.batch_run_id)
+
+    if built_utc:
+        try:
+            parsed = datetime.fromisoformat(built_utc.replace("Z", "+00:00"))
+            return parsed.strftime("%Y%m%d%H%M%S")
+        except ValueError:
+            pass
+
+    return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+
+
+def _cache_buster_href(context: Context, built_utc: str) -> str:
+    token = _cache_buster_token(context, built_utc)
+    return f"?v={quote(token, safe='')}"
 
 
 def _relative_to_diag(path: Path, diag: Optional[Path]) -> str:
@@ -2994,9 +3019,12 @@ def _build_markdown(
         iterate_file_status = "missing"
         iterate_key_files = []
 
+    cache_buster_href = _cache_buster_href(context, built_utc)
+
     lines.extend(
         [
             "# CI Diagnostics",
+            f"Reload: [Reload with cache-buster]({cache_buster_href})",
             f"Repo: {context.repo}",
             f"Commit: {context.sha}",
             f"Run: {context.run_id} (attempt {context.run_attempt})",
@@ -3238,6 +3266,8 @@ def _write_html(
     if not response_data:
         attempt_summary = _compose_attempt_summary(status_data)
 
+    cache_buster_href = _cache_buster_href(context, built_utc)
+
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     if iterate_found and artifact_missing:
         note = artifact_missing.lower()
@@ -3305,9 +3335,32 @@ def _write_html(
     html.append("<head>")
     html.append('<meta charset="utf-8">')
     html.append("<title>CI Diagnostics</title>")
+    html.append("<style>")
+    html.append(":root { color-scheme: light dark; }")
+    html.append(
+        "body { font-family: 'Segoe UI', Arial, sans-serif; margin: 16px; line-height: 1.6; "
+        "background-color: #f6f8fa; color: #0f172a; }"
+    )
+    html.append("a { color: #0b5ed7; }")
+    html.append("a:visited { color: #6f42c1; }")
+    html.append(".cta-row { margin: 12px 0 20px; }")
+    html.append(
+        ".cta { display: inline-block; padding: 10px 16px; border-radius: 10px; border: 1px solid #bfd2ff; "
+        "background: #e8f0ff; font-weight: 700; text-decoration: none; color: #0b1224; }"
+    )
+    html.append(".cta:hover { background: #dce7ff; }")
+    html.append(
+        "@media (prefers-color-scheme: dark) { body { background-color: #0d1117; color: #e6edf3; } "
+        "a { color: #8ab4f8; } a:visited { color: #c7a0ff; } .cta { background: #1f6feb; border-color: #30363d; color: #f0f6fc; } "
+        ".cta:hover { background: #2764d6; } }"
+    )
+    html.append("</style>")
     html.append("</head>")
     html.append("<body>")
     html.append("<h1>CI Diagnostics</h1>")
+    html.append(
+        f'<p class="cta-row"><a class="cta" href="{_escape_href(cache_buster_href)}">Reload with cache-buster</a></p>'
+    )
 
     def render_pairs(title: str, pairs: Iterable[dict]) -> None:
         html.append("<section>")
