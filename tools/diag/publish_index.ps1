@@ -3,6 +3,8 @@ param()
 
 # Implements the prior inline "Write diagnostics index" logic as a reusable script in tools/diag
 # per the request to "Create repo scripts under tools/diag".
+# Quick self-test reference (avoids PSGallery dependencies):
+#   DIAG=$(mktemp -d) ARTIFACTS=$(mktemp -d) REPO=example/repo SHA=deadbeef RUN_ID=1 RUN_ATTEMPT=1 RUN_URL=http://example.com SHORTSHA=deadbee pwsh -NoLogo -NoProfile -NonInteractive -File tools/diag/publish_index.ps1
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -79,7 +81,7 @@ if ($artifactsOverride -and (Test-Path -LiteralPath $artifactsOverride)) {
     }
 }
 
-if (-not $BatchRunId -and $Artifacts) {
+if (((-not $BatchRunId) -or $BatchRunId -eq 'n/a') -and $Artifacts) {
     $batchRunJson = Join-Path (Join-Path $Artifacts 'batch-check') 'run.json'
     if (Test-Path -LiteralPath $batchRunJson) {
         try { $batchMeta = Get-Content -Raw -LiteralPath $batchRunJson | ConvertFrom-Json } catch { $batchMeta = $null }
@@ -410,33 +412,241 @@ $iterateZipPath = if ($logDir) { Join-Path $logDir $iterateZipName } else { $nul
 $iterateSentinelPath = if ($logDir) { Join-Path $logDir 'iterate.MISSING.txt' } else { $null }
 $iterateErrorPath = if ($logDir) { Join-Path $logDir 'iterate-log-error.txt' } else { $null }
 $batchRunAttempt = if ($BatchRunAttempt) { $BatchRunAttempt } else { 'n/a' }
+$batchDownloadAttempt = if ($batchRunAttempt -and $batchRunAttempt -ne 'n/a') { $batchRunAttempt } else { '1' }
+# derived requirement: fall back to the download attempt when the run attempt is missing so status text and filenames stay aligned.
+if ($batchRunAttempt -eq 'n/a' -and $batchDownloadAttempt) { $batchRunAttempt = $batchDownloadAttempt }
+$batchAttemptUsed = $batchDownloadAttempt
 $batchZipName = $null
 $batchZipPath = $null
 $batchZipReady = $false
 $batchSentinelPath = if ($logDir) { Join-Path $logDir 'batch-check.MISSING.txt' } else { $null }
+$batchOkPath = if ($logDir) { Join-Path $logDir 'batch-check.OK.txt' } else { $null }
 
 function Write-BatchSentinel {
     param([string]$Reason)
 
     if (-not $batchSentinelPath) { return }
+    if ($batchOkPath) { try { Remove-Item -LiteralPath $batchOkPath -ErrorAction SilentlyContinue } catch {} }
     $message = 'batch-check logs not located for this commit'
     if (-not [string]::IsNullOrWhiteSpace($Reason)) { $message = $Reason }
     try { $message | Set-Content -Encoding UTF8 -LiteralPath $batchSentinelPath } catch {}
 }
 
+function Write-BatchOk {
+    if (-not $batchOkPath) { return }
+    $payload = $BatchRunId
+    if ($batchAttemptUsed -and $batchAttemptUsed -ne 'n/a') { $payload = "${payload}-${batchAttemptUsed}" }
+    if (-not $payload) { $payload = 'batch-check logs downloaded' }
+    try {
+        $payload | Set-Content -Encoding UTF8 -LiteralPath $batchOkPath
+        if ($batchSentinelPath) { Remove-Item -LiteralPath $batchSentinelPath -ErrorAction SilentlyContinue }
+    } catch {}
+}
+
+function ConvertTo-MirrorText {
+    param(
+        [string]$SourcePath,
+        [int]$BinaryThreshold = 4096
+    )
+
+    # derived requirement: the supervisor needs text-friendly mirrors without
+    # forcing GitHub-auth; keep mirrors resilient even when the source is
+    # binary or oversized.
+    if (-not (Test-Path -LiteralPath $SourcePath)) { return $null }
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($SourcePath)
+    } catch {
+        return $null
+    }
+    if ($null -eq $bytes -or $bytes.Length -eq 0) {
+        # derived requirement: zero-byte files (e.g., .nojekyll, empty sentinels) must not
+        # fault diagnostics; return an empty preview so mirrors stay stable without slicing.
+        return ""
+    }
+    $length = $bytes.Length
+    $probeLength = [Math]::Min($BinaryThreshold, $length)
+    $binaryCount = 0
+    if ($probeLength -gt 0) {
+        $probe = $bytes[0..($probeLength - 1)]
+        foreach ($b in $probe) {
+            if ($b -lt 9 -or $b -eq 11 -or $b -eq 12 -or ($b -gt 13 -and $b -lt 32)) {
+                $binaryCount += 1
+            }
+        }
+    }
+    if ($binaryCount -gt ($probeLength / 8)) {
+        return "binary file stub ({0:N0} bytes)" -f $length
+    }
+
+    $limit = 128KB
+    if ($length -gt $limit) {
+        $prefix = [Math]::Min($limit, $length)
+        $bytes = $bytes[0..($prefix - 1)]
+    }
+    try {
+        $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+    } catch {
+        return "binary file stub ({0:N0} bytes)" -f $length
+    }
+    if (-not $text.EndsWith("`n")) { $text += "`n" }
+    if ($length -gt $bytes.Length) {
+        $text += "... [truncated from {0:N0} bytes]`n" -f $length
+    }
+    return $text
+}
+
+function Write-MirrorFile {
+    param(
+        [string]$SourcePath,
+        [string]$MirrorPath,
+        [System.Collections.Generic.List[object]]$Registry
+    )
+
+    if (-not $SourcePath -or -not (Test-Path -LiteralPath $SourcePath)) { return }
+    if (-not $MirrorPath) { return }
+    try { $null = New-Item -ItemType Directory -Path (Split-Path -Parent $MirrorPath) -Force } catch { return }
+
+    $text = ConvertTo-MirrorText -SourcePath $SourcePath
+    if ($null -eq $text) { return }
+
+    try {
+        $text | Set-Content -LiteralPath $MirrorPath -Encoding UTF8
+        if ($Registry -ne $null) {
+            $Registry.Add([pscustomobject]@{ Source = $SourcePath; Mirror = $MirrorPath }) | Out-Null
+        }
+    } catch {}
+}
+
+function Mirror-RepoFiles {
+    param(
+        [string]$SourceRoot,
+        [string]$MirrorRoot
+    )
+
+    $created = [System.Collections.Generic.List[object]]::new()
+    if (-not $SourceRoot -or -not (Test-Path -LiteralPath $SourceRoot)) { return $created }
+    if (-not $MirrorRoot) { return $created }
+
+    $files = Get-ChildItem -Path $SourceRoot -File -Recurse -ErrorAction SilentlyContinue
+    foreach ($file in $files) {
+        try {
+            $relative = $file.FullName.Substring($SourceRoot.Length).TrimStart('\\','/')
+        } catch {
+            continue
+        }
+        $target = Join-Path $MirrorRoot $relative
+        if (-not $target.EndsWith('.txt')) { $target += '.txt' }
+        # derived requirement: only mirror the branch payload staged for this run;
+        # skip other branches by following the extracted repo/files tree the
+        # workflow prepared for the current commit.
+        Write-MirrorFile -SourcePath $file.FullName -MirrorPath $target -Registry $created
+    }
+    return $created
+}
+
+function Mirror-LogZip {
+    param(
+        [string]$ZipPath,
+        [string]$MirrorRoot
+    )
+
+    $created = [System.Collections.Generic.List[object]]::new()
+    if (-not $ZipPath -or -not (Test-Path -LiteralPath $ZipPath)) { return $created }
+    if (-not $MirrorRoot) { return $created }
+
+    $mirrorRootFull = $null
+    try {
+        $null = New-Item -ItemType Directory -Path $MirrorRoot -Force
+        $mirrorRootFull = [System.IO.Path]::GetFullPath($MirrorRoot)
+        if (-not $mirrorRootFull.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+            $mirrorRootFull += [System.IO.Path]::DirectorySeparatorChar
+        }
+    } catch {
+        return $created
+    }
+
+    try {
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    } catch {
+        return $created
+    }
+
+    foreach ($entry in $archive.Entries) {
+        if (-not $entry) { continue }
+        if (-not $entry.Name) { continue }
+        $safeName = $entry.FullName.Replace('\\','/').TrimStart('/')
+        if (-not $safeName) { continue }
+        $targetPath = Join-Path $MirrorRoot $safeName
+        if (-not $targetPath.EndsWith('.txt')) { $targetPath += '.txt' }
+
+        $resolved = $null
+        try {
+            $resolved = [System.IO.Path]::GetFullPath($targetPath)
+        } catch {
+            continue
+        }
+        # derived requirement: log mirrors must never escape their root; skip any crafted
+        # entries that traverse upward so diagnostics cannot be overwritten by malformed zips.
+        if (-not $resolved.StartsWith($mirrorRootFull, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        try {
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $targetPath) -Force
+        } catch {}
+        try {
+            $reader = New-Object System.IO.StreamReader($entry.Open(), [System.Text.Encoding]::UTF8, $true)
+            $content = $reader.ReadToEnd()
+            $reader.Close()
+            if ($null -eq $content) { continue }
+            if (-not $content.EndsWith("`n")) { $content += "`n" }
+            $content | Set-Content -LiteralPath $targetPath -Encoding UTF8
+            $created.Add([pscustomobject]@{ Source = $ZipPath; Mirror = $targetPath }) | Out-Null
+        } catch {
+            continue
+        }
+    }
+
+    try { $archive.Dispose() } catch {}
+    return $created
+}
+
 if (-not $BatchRunId -or $BatchRunId -eq 'n/a') {
-    Write-BatchSentinel 'batch-check logs not located for this commit'
+    $candidateRoots = @()
+    if ($Artifacts) { $candidateRoots += $Artifacts }
+    if ($Diag) { $candidateRoots += (Join-Path $Diag '_artifacts') }
+
+    foreach ($root in $candidateRoots) {
+        if (-not $root) { continue }
+        $fallbackRunJson = Join-Path (Join-Path $root 'batch-check') 'run.json'
+        if (-not (Test-Path -LiteralPath $fallbackRunJson)) { continue }
+        try { $fallbackMeta = Get-Content -Raw -LiteralPath $fallbackRunJson | ConvertFrom-Json } catch { $fallbackMeta = $null }
+        if (-not $fallbackMeta) { continue }
+
+        # Professional note: prefer the published run.json over empty env inputs so batch-check
+        # logs still download when ARTIFACTS lacks metadata but the diagnostics tree provides it.
+        if (-not $BatchRunId -or $BatchRunId -eq 'n/a') { $BatchRunId = [string]$fallbackMeta.run_id }
+        if (-not $BatchRunAttempt -or $BatchRunAttempt -eq 'n/a') { $BatchRunAttempt = [string]$fallbackMeta.run_attempt }
+        break
+    }
+
+    if (-not $BatchRunId -or $BatchRunId -eq 'n/a') {
+        Write-BatchSentinel 'batch-check logs not located for this commit'
+    }
+}
+
+if ($BatchRunAttempt -and $BatchRunAttempt -ne 'n/a') {
+    $batchRunAttempt = [string]$BatchRunAttempt
+    $batchDownloadAttempt = $batchRunAttempt
+    $batchAttemptUsed = $batchDownloadAttempt
 }
 
 if ($BatchRunId) {
-    $batchZipName = "batch-check-$BatchRunId-$batchRunAttempt.zip"
+    $batchZipName = "batch-check-$BatchRunId-$batchDownloadAttempt.zip"
     if ($logDir) { $batchZipPath = Join-Path $logDir $batchZipName }
     if ($batchZipPath -and (Test-Path $batchZipPath)) {
         try {
             $info = Get-Item -LiteralPath $batchZipPath -ErrorAction Stop
             if ($info -and $info.Length -gt 0) {
                 $batchZipReady = $true
-                if ($batchSentinelPath) { Remove-Item -LiteralPath $batchSentinelPath -ErrorAction SilentlyContinue }
+                Write-BatchOk
             }
         } catch {}
     }
@@ -541,7 +751,19 @@ if (-not $zipReady -and $logDir -and -not $preferLocalIterate) {
     }
 }
 
-$batchDownloadAttempt = if ($batchRunAttempt -and $batchRunAttempt -ne 'n/a') { $batchRunAttempt } else { '1' }
+# derived requirement: iterate and batch-check share the same workflow run; when the
+# iterate logs zip already exists for this run/attempt, reuse it as the batch logs
+# source instead of emitting a missing sentinel or downloading a duplicate archive.
+if (-not $batchZipReady -and $batchRunMatchesCurrent -and $zipReady -and $iterateZipPath -and (Test-Path $iterateZipPath)) {
+    $batchZipName = $iterateZipName
+    $batchZipPath = $iterateZipPath
+    $batchZipReady = $true
+    $batchAttemptUsed = $batchDownloadAttempt
+    Write-BatchOk
+}
+
+$batchZipName = if ($batchZipName) { $batchZipName } elseif ($BatchRunId -and $BatchRunId -ne 'n/a') { "batch-check-$BatchRunId-$batchDownloadAttempt.zip" } else { $null }
+if (-not $batchZipPath -and $logDir -and $batchZipName) { $batchZipPath = Join-Path $logDir $batchZipName }
 if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a' -and $batchZipPath) {
     $token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
     $repoSlug = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } elseif ($Repo) { $Repo } else { $null }
@@ -549,28 +771,61 @@ if (-not $batchZipReady -and $logDir -and $BatchRunId -and $BatchRunId -ne 'n/a'
         $parts = $repoSlug.Split('/', 2)
         $owner = $parts[0]
         $repoName = $parts[1]
-        $downloadUri = "https://api.github.com/repos/$owner/$repoName/actions/runs/$BatchRunId/attempts/$batchDownloadAttempt/logs"
+        $downloadTargets = @()
+        $downloadTargets += @([pscustomobject]@{ Uri = "https://api.github.com/repos/$owner/$repoName/actions/runs/$BatchRunId/attempts/$batchDownloadAttempt/logs"; Label = "attempt $batchDownloadAttempt" })
+        # derived requirement: some runs expose log downloads only at the attempt-less endpoint (or when attempts mismatch);
+        # fall back to the generic path so diagnostics keep publishing a usable archive instead of leaving only the sentinel.
+        $downloadTargets += @([pscustomobject]@{ Uri = "https://api.github.com/repos/$owner/$repoName/actions/runs/$BatchRunId/logs"; Label = 'attemptless' })
 
-        Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
-        try {
-            Invoke-WebRequest -Uri $downloadUri -Headers @{
-                Authorization          = "Bearer $token"
-                'User-Agent'           = 'publish_index.ps1 diagnostics'
-                Accept                 = 'application/vnd.github+json'
-                'X-GitHub-Api-Version' = '2022-11-28'
-            } -OutFile $batchZipPath -ErrorAction Stop
-
-            $info = Get-Item -LiteralPath $batchZipPath -ErrorAction Stop
-            if ($info -and $info.Length -gt 0) {
-                $batchZipReady = $true
-                if ($batchSentinelPath) { Remove-Item -LiteralPath $batchSentinelPath -ErrorAction SilentlyContinue }
-            } else {
+        $downloadErrors = @()
+        foreach ($target in $downloadTargets) {
+            $acceptCandidates = @('application/vnd.github+json', 'application/zip')
+            foreach ($acceptHeader in $acceptCandidates) {
                 Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
-                Write-BatchSentinel ("batch-check log download returned empty archive: {0}" -f $downloadUri)
+                try {
+                    # Professional note: some GitHub deployments still require the documented vnd.github+json media
+                    # type while others tolerate an explicit zip Accept. Try both so batch-check logs zip reliably
+                    # materializes instead of leaving only a sentinel when the first header yields a 406.
+                    Invoke-WebRequest -Uri $target.Uri -Headers @{
+                        Authorization          = "Bearer $token"
+                        'User-Agent'           = 'publish_index.ps1 diagnostics'
+                        Accept                 = $acceptHeader
+                        'X-GitHub-Api-Version' = '2022-11-28'
+                    } -OutFile $batchZipPath -ErrorAction Stop
+
+                    $info = Get-Item -LiteralPath $batchZipPath -ErrorAction Stop
+                    if ($info -and $info.Length -gt 0) {
+                        $batchAttemptUsed = $batchDownloadAttempt
+                        $batchZipReady = $true
+                        Write-BatchOk
+                        break
+                    }
+
+                    Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
+                    $downloadErrors += "batch-check log download returned empty archive: $($target.Uri) (Accept=$acceptHeader)"
+                } catch {
+                    Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
+                    $statusCode = $null
+                    $statusText = $null
+                    try { if ($_.Exception.Response -and $_.Exception.Response.StatusCode) { $statusCode = [int]$_.Exception.Response.StatusCode } } catch {}
+                    try { if ($_.Exception.Response -and $_.Exception.Response.StatusDescription) { $statusText = [string]$_.Exception.Response.StatusDescription } } catch {}
+                    $detail = $_.Exception.Message
+                    if (-not [string]::IsNullOrWhiteSpace($statusText)) { $detail = "$detail ($statusText)" }
+                    if ($statusCode) {
+                        $downloadErrors += "batch-check log download failed ($($target.Label), Accept=$acceptHeader): HTTP $statusCode $detail"
+                    } else {
+                        $downloadErrors += "batch-check log download failed ($($target.Label), Accept=$acceptHeader): $detail"
+                    }
+                }
+                if ($batchZipReady) { break }
             }
-        } catch {
-            Remove-Item -LiteralPath $batchZipPath -ErrorAction SilentlyContinue
-            Write-BatchSentinel ("batch-check log download failed: {0}" -f $downloadUri)
+            if ($batchZipReady) { break }
+        }
+
+        if (-not $batchZipReady -and $downloadErrors) {
+            Write-BatchSentinel ($downloadErrors -join '; ')
+        } elseif (-not $batchZipReady) {
+            Write-BatchSentinel 'batch-check log download failed (no targets succeeded)'
         }
     } else {
         Write-BatchSentinel 'batch-check log download prerequisites missing (token/repository)'
@@ -613,20 +868,82 @@ if (-not $iterateZipPath -or -not (Test-Path $iterateZipPath)) {
     $iterateStatus = 'missing (see logs/iterate.MISSING.txt)'
 }
 
+# Professional note: propagate the sentinel text into status so unauthenticated readers
+# understand why batch-check logs are missing without spelunking the archive.
+$batchSentinelReason = $null
+if ($Diag -and $batchSentinelPath -and (Test-Path $batchSentinelPath)) {
+    try { $batchSentinelReason = (Get-Content -Raw -LiteralPath $batchSentinelPath).Trim() } catch {}
+}
+
 $batchStatusOverride = $env:BATCH_STATUS_OVERRIDE
 $batchStatus = 'missing'
 if ($batchStatusOverride) {
     $batchStatus = $batchStatusOverride
 } elseif ($BatchRunId) {
-    if (-not $batchZipName) { $batchZipName = "batch-check-$BatchRunId-$batchRunAttempt.zip" }
+    if (-not $batchZipName) { $batchZipName = "batch-check-$BatchRunId-$batchAttemptUsed.zip" }
     if (-not $batchZipPath -and $Diag -and $batchZipName) { $batchZipPath = Join-Path $Diag ('logs\' + $batchZipName) }
     if ($batchZipPath -and (Test-Path $batchZipPath)) {
-        $batchStatus = "found (run $BatchRunId, attempt $batchRunAttempt)"
+        $batchStatus = "found (run $BatchRunId, attempt $batchAttemptUsed)"
+    } elseif ($batchSentinelReason) {
+        $batchStatus = "missing archive (run $BatchRunId, attempt $batchAttemptUsed; reason: $batchSentinelReason)"
     } else {
-        $batchStatus = "missing archive (run $BatchRunId, attempt $batchRunAttempt)"
+        $batchStatus = "missing archive (run $BatchRunId, attempt $batchAttemptUsed)"
     }
+} elseif ($batchSentinelReason) {
+    $batchStatus = "missing (see logs/batch-check.MISSING.txt: $batchSentinelReason)"
 } elseif ($Diag -and $batchSentinelPath -and (Test-Path $batchSentinelPath)) {
     $batchStatus = 'missing (see logs/batch-check.MISSING.txt)'
+}
+
+$mirrorRoot = if ($Diag) { Join-Path $Diag '_mirrors' } else { $null }
+$mirrorRegistry = [System.Collections.Generic.List[object]]::new()
+if ($mirrorRoot) {
+    try { New-Item -ItemType Directory -Path $mirrorRoot -Force | Out-Null } catch {}
+
+    $repoSource = $null
+    if ($Diag) {
+        $candidateRepo = Join-Path $Diag 'repo/files'
+        if (Test-Path $candidateRepo) { $repoSource = $candidateRepo }
+        if (-not $repoSource) {
+            $candidateRepo = Join-Path $Diag 'repo'
+            if (Test-Path $candidateRepo) { $repoSource = $candidateRepo }
+        }
+    }
+    if ($repoSource) {
+        $repoMirrorRoot = Join-Path $mirrorRoot 'repo'
+        foreach ($entry in (Mirror-RepoFiles -SourceRoot $repoSource -MirrorRoot $repoMirrorRoot)) { $mirrorRegistry.Add($entry) | Out-Null }
+    }
+
+    $logsMirrorRoot = Join-Path $mirrorRoot 'logs'
+    if ($iterateZipPath -and (Test-Path $iterateZipPath)) {
+        $iterateMirror = Join-Path $logsMirrorRoot 'iterate'
+        foreach ($entry in (Mirror-LogZip -ZipPath $iterateZipPath -MirrorRoot $iterateMirror)) { $mirrorRegistry.Add($entry) | Out-Null }
+    }
+    if ($batchZipReady -and $batchZipPath -and (Test-Path $batchZipPath)) {
+        $batchMirror = Join-Path $logsMirrorRoot 'batch-check'
+        foreach ($entry in (Mirror-LogZip -ZipPath $batchZipPath -MirrorRoot $batchMirror)) { $mirrorRegistry.Add($entry) | Out-Null }
+    }
+    if ($logDir -and (Test-Path $logDir)) {
+        foreach ($logFile in Get-ChildItem -Path $logDir -File -Recurse -ErrorAction SilentlyContinue) {
+            $relative = Get-Relative $logFile.FullName
+            if (-not $relative) { continue }
+            $relative = $relative.TrimStart('./')
+            $target = Join-Path (Join-Path $logsMirrorRoot 'bundle') $relative
+            if (-not $target.EndsWith('.txt')) { $target += '.txt' }
+            Write-MirrorFile -SourcePath $logFile.FullName -MirrorPath $target -Registry $mirrorRegistry
+        }
+    }
+
+    $mirrorInventory = Join-Path $mirrorRoot 'inventory.txt'
+    $mirrorFiles = Get-ChildItem -Path $mirrorRoot -File -Recurse -ErrorAction SilentlyContinue
+    if ($mirrorFiles) {
+        $inventoryLines = @()
+        foreach ($mf in $mirrorFiles) {
+            $rel = Get-Relative $mf.FullName
+            $inventoryLines += ('{0} bytes {1}' -f $mf.Length, $rel)
+        }
+        try { $inventoryLines | Set-Content -LiteralPath $mirrorInventory -Encoding UTF8 } catch {}
+    }
 }
 
 $artifactFiles = @()
@@ -634,7 +951,7 @@ if ($Artifacts) {
     $artifactFiles = Get-ChildItem -Path $Artifacts -Recurse -File -ErrorAction SilentlyContinue
 }
 $artifactCount = 0
-if ($artifactFiles) { $artifactCount = $artifactFiles.Count }
+if ($artifactFiles) { $artifactCount = (@($artifactFiles)).Count }
 $artifactMissing = $null
 $artifactMissingPath = if ($Artifacts) { Join-Path $Artifacts 'MISSING.txt' } else { $null }
 if ($artifactMissingPath -and (Test-Path $artifactMissingPath)) {
