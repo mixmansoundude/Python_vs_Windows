@@ -1049,7 +1049,7 @@ if ($site) {
     }
 }
 
-if (-not $latestEntry -or ($diagRunName -and -not $siteContainsDiagRun)) {
+if ($diagRunName -or -not $latestEntry -or -not $siteContainsDiagRun) {
     $latestManifestRoot = $diagRootFromEnv
     if ($latestManifestRoot) {
         $latestManifestJsonPath = Join-Path $latestManifestRoot 'latest.json'
@@ -1066,8 +1066,8 @@ if (-not $latestEntry -or ($diagRunName -and -not $siteContainsDiagRun)) {
             $latestWorkflowRelative = "diag/$latestRunName/wf/codex-auto-iterate.yml.txt"
             $latestIterRoot = "diag/$latestRunName/_artifacts/iterate/iterate"
 
-            # Professional note: fall back to the current DIAG run when the site-level enumeration
-            # has not yet picked up the newest diagnostics bundle so latest.* stays fresh.
+            # Professional note: always let the active DIAG run drive latest.* so the manifest
+            # tracks the freshest bundle even when the site listing lags by one publication.
             $manifestPayload = [pscustomobject]@{
                 repo        = $Repo
                 run_id      = $latestRunIdForManifest
