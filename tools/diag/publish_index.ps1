@@ -959,6 +959,15 @@ if ($artifactMissingPath -and (Test-Path $artifactMissingPath)) {
 }
 
 $site = $env:SITE
+$diagRunName = $null
+$diagRootFromEnv = $null
+if ($Diag) {
+    $diagRootFromEnv = Split-Path -Parent $Diag
+    $diagRunCandidate = Split-Path -Leaf $Diag
+    if ($diagRunCandidate -match '^[0-9]+-[0-9]+$') {
+        $diagRunName = $diagRunCandidate
+    }
+}
 $diagRoot = $null
 $runEntries = @()
 $latestEntry = $null
@@ -967,6 +976,7 @@ $latestManifestJsonPath = $null
 $latestManifestTxtPath = $null
 $latestRunIdForManifest = $Run
 $latestRunAttemptForManifest = $Att
+$siteContainsDiagRun = $false
 
 if ($site) {
     $diagRoot = Join-Path $site 'diag'
@@ -985,6 +995,7 @@ if ($site) {
                 # existing deep links into diag/<run>/index.html?v=<run-id> remain stable.
                 $href = '{0}/index.html?v={1}' -f $runName, $cacheToken
                 $runEntries += [pscustomobject]@{ Name = $runName; Href = $href }
+                if ($diagRunName -and $runName -eq $diagRunName) { $siteContainsDiagRun = $true }
             }
 
             $latestEntry = $runEntries[0]
@@ -1030,8 +1041,56 @@ if ($site) {
                 if ($repoName) { $latestTxtPayload = '/{0}/{1}' -f $repoName, $latestBundleRelative }
                 try { $latestTxtPayload | Set-Content -Encoding UTF8 -LiteralPath $latestManifestTxtPath } catch {}
             }
+    }
+}
+
+if (-not $latestEntry -or ($diagRunName -and -not $siteContainsDiagRun)) {
+    $latestManifestRoot = $diagRootFromEnv
+    if ($latestManifestRoot) {
+        $latestManifestJsonPath = Join-Path $latestManifestRoot 'latest.json'
+        $latestManifestTxtPath = Join-Path $latestManifestRoot 'latest.txt'
+        $latestRunName = $diagRunName
+        if ($latestRunName -match '^([0-9]+)-([0-9]+)$') {
+            $latestRunIdForManifest = $matches[1]
+            $latestRunAttemptForManifest = $matches[2]
+        }
+
+        if ($latestRunName) {
+            $latestBundleRelative = "diag/$latestRunName/index.html"
+            $latestInventoryRelative = "diag/$latestRunName/inventory.json"
+            $latestWorkflowRelative = "diag/$latestRunName/wf/codex-auto-iterate.yml.txt"
+            $latestIterRoot = "diag/$latestRunName/_artifacts/iterate/iterate"
+
+            # Professional note: fall back to the current DIAG run when the site-level enumeration
+            # has not yet picked up the newest diagnostics bundle so latest.* stays fresh.
+            $manifestPayload = [pscustomobject]@{
+                repo        = $Repo
+                run_id      = $latestRunIdForManifest
+                run_attempt = $latestRunAttemptForManifest
+                sha         = $SHA
+                bundle_url  = $latestBundleRelative
+                inventory   = $latestInventoryRelative
+                workflow    = $latestWorkflowRelative
+                iterate     = @{
+                    prompt   = "$latestIterRoot/prompt.txt"
+                    response = "$latestIterRoot/response.json"
+                    diff     = "$latestIterRoot/patch.diff"
+                    log      = "$latestIterRoot/exec.log"
+                }
+            }
+
+            try { $manifestPayload | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 $latestManifestJsonPath } catch {}
+
+            $repoName = $null
+            if ($Repo -match '^[^/]+/(?<name>[^/]+)$') { $repoName = $matches['name'] }
+            elseif ($Repo) { $repoName = $Repo }
+
+            $latestTxtPayload = "/$latestBundleRelative"
+            if ($repoName) { $latestTxtPayload = '/{0}/{1}' -f $repoName, $latestBundleRelative }
+            try { $latestTxtPayload | Set-Content -Encoding UTF8 -LiteralPath $latestManifestTxtPath } catch {}
         }
     }
+}
 
 $allFiles = @()
 if ($Diag) {
