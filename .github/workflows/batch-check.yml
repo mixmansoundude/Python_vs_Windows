@@ -1147,9 +1147,7 @@ jobs:
             'iterate_gate.json',
             'iterate_auth.json',
             'ndjson_stats.json',
-            'first_failure.json',
-            'codex_nudge.txt',
-            'codex_exec.log'
+            'first_failure.json'
           )
           foreach ($p in $wantLogs) {
             if (Test-Path -LiteralPath $p) {
@@ -2957,72 +2955,3 @@ jobs:
         uses: actions/deploy-pages@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
-  emit-nudge:
-    name: Emit Codex nudge (on failure)
-    needs:
-      - selftest-gate
-      - publish_diag
-    runs-on: windows-latest
-    if: ${{ always() && needs.selftest-gate.outputs.has_failures == 'true' && !cancelled() }}
-    steps:
-      - name: Build Codex nudge
-        shell: pwsh
-        run: |
-          $body = @"
-          CI failed on $env:GITHUB_REF_NAME (run $env:GITHUB_RUN_ID).
-          Summarize the failure and apply the smallest safe change set to make our Windows CI pass.
-          Preserve CRLF; ASCII where practical; keep run_setup.bat robust; avoid sweeping refactors; minimal diagnostics only if required.
-          "@
-          Set-Content -LiteralPath "$env:RUNNER_TEMP\codex_nudge.txt" -Value $body -Encoding Ascii
-
-      - name: Locate diagnostics URL
-        if: ${{ always() }}
-        shell: pwsh
-        run: |
-          $dest = Join-Path $env:RUNNER_TEMP 'codex_nudge_url.txt'
-          $summaryHeader = "### Diagnostics site"
-          $repoParts = "${{ github.repository }}".Split('/')
-          if ($repoParts.Count -ne 2) {
-            Set-Content -LiteralPath $dest -Value 'repository name parsing failed' -Encoding UTF8
-            $summaryHeader | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            "- Repository parsing failed; no diagnostics link." | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            return
-          }
-
-          $owner = $repoParts[0]
-          $repo  = $repoParts[1]
-          $bundle = "https://$owner.github.io/$repo/diag/${{ github.run_id }}-${{ github.run_attempt }}/"
-          Set-Content -LiteralPath $dest -Value $bundle -Encoding UTF8
-          $summaryHeader | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          "- Diagnostics: [$bundle]($bundle)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-
-      - name: Combine nudges
-        shell: pwsh
-        run: |
-          $target = "$env:RUNNER_TEMP\codex_nudge.txt"
-          if (-not (Test-Path $target)) { return }
-          $urlItem = Get-ChildItem -Path $env:RUNNER_TEMP -Filter 'codex_nudge_url.txt' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($null -ne $urlItem) {
-            $url = Get-Content -Raw -LiteralPath $urlItem.FullName
-            if ($url) {
-              Add-Content -Path $target -Value "`nDiagnostics: $url`n"
-            }
-          }
-
-      - name: Upload Codex nudge artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex_nudge-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/codex_nudge.txt
-          if-no-files-found: ignore
-          retention-days: 3
-
-      - name: Upload diagnostics URL artifact
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex_nudge_url-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/codex_nudge_url.txt
-          if-no-files-found: warn
-          retention-days: 3
