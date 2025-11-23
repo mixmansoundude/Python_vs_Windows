@@ -961,9 +961,14 @@ if ($artifactMissingPath -and (Test-Path $artifactMissingPath)) {
 $site = $env:SITE
 $diagRunName = $null
 $diagRootFromEnv = $null
-if ($Diag) {
-    $diagRootFromEnv = Split-Path -Parent $Diag
-    $diagRunCandidate = Split-Path -Leaf $Diag
+$diagPathNormalized = $Diag
+if ($diagPathNormalized) {
+    # Professional note: normalize trailing separators so DIAG paths such as
+    # ".../diag/19603623347-1/" still resolve the run directory for manifest
+    # fallbacks when the site root lags behind the newest bundle.
+    $diagPathNormalized = $diagPathNormalized.TrimEnd([char]92,[char]'/')
+    $diagRootFromEnv = Split-Path -Parent $diagPathNormalized
+    $diagRunCandidate = Split-Path -Leaf $diagPathNormalized
     if ($diagRunCandidate -match '^[0-9]+-[0-9]+$') {
         $diagRunName = $diagRunCandidate
     }
