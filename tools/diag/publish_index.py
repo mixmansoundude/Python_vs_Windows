@@ -3225,6 +3225,9 @@ def _build_markdown(
         lines.append("## Inventory (raw)")
         lines.extend(inventory_lines)
 
+    lines.append("")
+    lines.append("Publisher: tools/diag/publish_index.py (Python)")
+
     return "\n".join(lines)
 
 
@@ -3988,6 +3991,9 @@ def _build_site_overview(
 
     html_lines.append(
         "<p>Artifacts from the self-test workflow and iterate job are merged under the bundle directory above.</p>"
+    )
+    html_lines.append(
+        "<p class=\"publisher-note\">Publisher: tools/diag/publish_index.py (Python)</p>"
     )
     html_lines.append("</body>")
     html_lines.append("</html>")
