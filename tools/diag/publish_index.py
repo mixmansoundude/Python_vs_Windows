@@ -6,6 +6,12 @@ publisher now drives the live GitHub Pages diagnostics site.
 """
 from __future__ import annotations
 
+# Professional note: ``tools/diag/publish_index.py`` is the authoritative
+# diagnostics publisher. The PowerShell predecessor
+# (``tools/diag/publish_index.ps1``) was removed after commit
+# 54217c00cadd546c12b7db8588e0a1e2e9b22c18; consult that snapshot if the
+# legacy PS1 behavior ever needs to be restored.
+
 import argparse
 import base64
 import json
