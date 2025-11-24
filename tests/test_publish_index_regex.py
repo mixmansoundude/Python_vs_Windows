@@ -12,6 +12,7 @@ from tools.diag.publish_index import (
     _build_markdown,
     _build_site_overview,
     _batch_status,
+    _ensure_repo_index,
     _validate_iterate_status_line,
     _write_global_txt_mirrors,
     _write_html,
@@ -147,6 +148,56 @@ class MirrorGenerationTest(unittest.TestCase):
             for _, mirror_path in pairs:
                 self.assertTrue(mirror_path.is_file())
                 self.assertTrue(str(mirror_path).startswith(str(mirrors_root)))
+
+    def test_repo_index_links_target_mirrored_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp) / "diag"
+            repo_root = (
+                diag_root / "repo" / "files" / "owner-repo-deadbee" / "src"
+            )
+            repo_root.mkdir(parents=True, exist_ok=True)
+            script_path = repo_root / "example.py"
+            script_path.write_text("print('hello')\n", encoding="utf-8")
+
+            context = Context(
+                diag=diag_root,
+                artifacts=None,
+                artifacts_override=None,
+                downloaded_iter_root=None,
+                repo="owner/repo",
+                branch="main",
+                sha="deadbeefdeadbeef",
+                run_id="99",
+                run_attempt="1",
+                run_url="https://example.invalid/run",
+                short_sha="deadbee",
+                inventory_b64=None,
+                batch_run_id=None,
+                batch_run_attempt=None,
+                site=None,
+            )
+
+            _ensure_repo_index(context)
+            mirrors_root = diag_root / "_mirrors"
+            _write_global_txt_mirrors(diag_root, mirrors_root)
+
+            index_mirror = mirrors_root / "repo" / "index.html.txt"
+            self.assertTrue(index_mirror.exists())
+
+            expected_href = "./files/owner-repo-deadbee/src/example.py.txt"
+            index_preview = index_mirror.read_text(encoding="utf-8")
+            self.assertIn(expected_href, index_preview)
+            self.assertIn("example.py</a>", index_preview)
+
+            mirrored_file = (
+                mirrors_root
+                / "repo"
+                / "files"
+                / "owner-repo-deadbee"
+                / "src"
+                / "example.py.txt"
+            )
+            self.assertTrue(mirrored_file.exists())
 
 
 class QuickLinksRenderingTest(unittest.TestCase):
