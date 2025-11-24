@@ -15,6 +15,11 @@ The script intentionally writes human-readable breadcrumbs to
 
 from __future__ import annotations
 
+# Professional note: inline model prompt/context handling now lives here.
+# The earlier PowerShell helper (``tools/diag/build_prompt.ps1``) last
+# shipped in commit 54217c00cadd546c12b7db8588e0a1e2e9b22c18; use that
+# revision if the legacy PS1 flow ever needs to be resurrected.
+
 import argparse
 import hashlib
 import importlib.util
