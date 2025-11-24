@@ -2102,7 +2102,12 @@ def _ensure_repo_index(context: Context) -> None:
         # assets so "Repository (unzipped): Preview (.txt)" resolves to readable
         # content instead of the binary payload.
         href_target = _escape_href(relative) or relative
-        mirror_href = f"{href_target}.txt"
+        if relative.endswith(".txt"):
+            # Professional note: .txt files are already mirrored as-is; avoid a
+            # double .txt suffix that would point at a non-existent payload.
+            mirror_href = href_target
+        else:
+            mirror_href = f"{href_target}.txt"
         rows.append(
             f'<li><a href="./{mirror_href}">{_escape_html(relative)}</a></li>'
         )
