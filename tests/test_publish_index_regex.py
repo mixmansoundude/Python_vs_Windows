@@ -184,7 +184,11 @@ class MirrorGenerationTest(unittest.TestCase):
             index_mirror = mirrors_root / "repo" / "index.html.txt"
             self.assertTrue(index_mirror.exists())
 
-            expected_href = "./files/owner-repo-deadbee/src/example.py.txt"
+            # Professional note: the offline repo index must link to the extracted
+            # payload, not the mirrored previews, so the downloaded bundle stays
+            # navigable. The mirrors still exist under ``_mirrors`` but are exposed
+            # elsewhere in the diagnostics UI.
+            expected_href = "./files/owner-repo-deadbee/src/example.py"
             index_preview = index_mirror.read_text(encoding="utf-8")
             self.assertIn(expected_href, index_preview)
             self.assertIn("example.py</a>", index_preview)

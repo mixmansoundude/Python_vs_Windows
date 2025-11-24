@@ -2097,19 +2097,16 @@ def _ensure_repo_index(context: Context) -> None:
             continue
         if relative == "index.html":
             continue
-        # Professional note: the diagnostics UI renders this page via the text
-        # mirror under ``_mirrors/repo``. Point links at the mirrored ``.txt``
-        # assets so "Repository (unzipped): Preview (.txt)" resolves to readable
-        # content instead of the binary payload.
+        # Professional note: ``repo/index.html`` is downloaded directly from the
+        # diagnostics bundle. Keep its links pointed at the extracted tree so the
+        # offline archive stays navigable; the text mirrors under ``_mirrors``
+        # are surfaced elsewhere. Avoid injecting ``.txt`` targets here because
+        # those files do not live alongside the extracted repo. This prevents the
+        # "Repository (unzipped)" download from advertising broken links while
+        # preserving the existing mirror layout.
         href_target = _escape_href(relative) or relative
-        if relative.endswith(".txt"):
-            # Professional note: .txt files are already mirrored as-is; avoid a
-            # double .txt suffix that would point at a non-existent payload.
-            mirror_href = href_target
-        else:
-            mirror_href = f"{href_target}.txt"
         rows.append(
-            f'<li><a href="./{mirror_href}">{_escape_html(relative)}</a></li>'
+            f'<li><a href="./{href_target}">{_escape_html(relative)}</a></li>'
         )
 
     if not rows:
