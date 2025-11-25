@@ -19,6 +19,10 @@ from __future__ import annotations
 # The earlier PowerShell helper (``tools/diag/build_prompt.ps1``) last
 # shipped in commit 54217c00cadd546c12b7db8588e0a1e2e9b22c18; use that
 # revision if the legacy PS1 flow ever needs to be resurrected.
+# Legacy note: tools/focus_logs.py, tools/make_model_repo_bundle.ps1, and
+# tools/make_model_repo_corpus.ps1 were removed after commit
+# 6779602bcc98cbc8e2acd4e03d02579a86b73538. This module consumes the live
+# diagnostics artifacts and repo snapshots for model context.
 
 import argparse
 import hashlib

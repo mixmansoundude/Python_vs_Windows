@@ -1,4 +1,7 @@
 [CmdletBinding()]
+# Legacy note: scripts/gate.ps1 was the prior gating entry point and was removed
+# after commit 6779602bcc98cbc8e2acd4e03d02579a86b73538. This script is the
+# active gate used by CI.
 param(
     [string]$Workspace = $env:GITHUB_WORKSPACE,
     [string]$ArtifactsRoot,
