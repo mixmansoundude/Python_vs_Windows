@@ -3208,6 +3208,51 @@ def _build_markdown(
             lines.extend(file.read_text(encoding="utf-8").splitlines())
             lines.append("```")
 
+    lines.append("")
+    lines.append("## Diagnostics navigation notes (for Supervisor/model)")
+    lines.append("")
+    lines.append("<details>")
+    lines.append("<summary>Where to find code, mirrors, and logs</summary>")
+    lines.append("")
+    lines.append("- **Repo snapshot (raw files)**  ")
+    lines.append(
+        "  Use **Repository (zip)** from Quick links for the full commit tree, or browse"
+    )
+    lines.append(
+        "  `repo/files/...` entries in the File listing; each has a **Preview (.txt)** link"
+    )
+    lines.append("")
+    lines.append("- **Text mirrors for code**  ")
+    lines.append(
+        "  Open **Repository (unzipped): Preview (.txt)** to view `_mirrors/repo/index.html.txt`,"
+    )
+    lines.append(
+        "  then follow `files/...` entries via **Preview (.txt)**; these live at"
+    )
+    lines.append("  `_mirrors/repo/files/...*.txt`")
+    lines.append("")
+    lines.append("- **Batch-check results**  ")
+    lines.append(
+        "  Prefer the **Batch-check NDJSON** quick links (`~test-results.ndjson`) and the"
+    )
+    lines.append("  summary rows on this page instead of scraping logs")
+    lines.append("")
+    lines.append("- **Iterate context**  ")
+    lines.append(
+        "  Use `_artifacts/iterate/iterate-logs-<run id>-<attempt>/_ctx/...` and the"
+    )
+    lines.append(
+        "  corresponding `_mirrors/...*.txt` entries to inspect attached workflows, tests,"
+    )
+    lines.append("  and helpers")
+    lines.append("")
+    lines.append("- **Troubleshooting missing files**  ")
+    lines.append("  1. Check `_mirrors/repo.zip.txt` for the expected path.")
+    lines.append("  2. Check the `repo/files/...` entry and its **Preview (.txt)** link.")
+    lines.append("  3. Only treat a file as missing if absent from both the snapshot and mirrors.")
+    lines.append("")
+    lines.append("</details>")
+
     if diag_files:
         lines.append("")
         lines.append("## File listing")
@@ -3562,6 +3607,45 @@ def _write_html(
                 html.append(_escape_html(line))
             html.append("</pre>")
         html.append("</section>")
+
+    html.append("<section>")
+    html.append("<h2>Diagnostics navigation notes (for Supervisor/model)</h2>")
+    html.append("<details>")
+    html.append("<summary>Where to find code, mirrors, and logs</summary>")
+    html.append("<ul>")
+    html.append(
+        "<li><strong>Repo snapshot (raw files)</strong>  "
+        "Use <strong>Repository (zip)</strong> from Quick links for the full commit tree, or browse "
+        "<code>repo/files/...</code> entries in the File listing; each has a <strong>Preview (.txt)</strong> link"
+        "</li>"
+    )
+    html.append(
+        "<li><strong>Text mirrors for code</strong>  "
+        "Open <strong>Repository (unzipped): Preview (.txt)</strong> to view "
+        "<code>_mirrors/repo/index.html.txt</code>, then follow <code>files/...</code> entries via "
+        "<strong>Preview (.txt)</strong>; these live at <code>_mirrors/repo/files/...*.txt</code>"
+        "</li>"
+    )
+    html.append(
+        "<li><strong>Batch-check results</strong>  "
+        "Prefer the <strong>Batch-check NDJSON</strong> quick links (<code>~test-results.ndjson</code>) and the summary rows on this page instead of scraping logs"
+        "</li>"
+    )
+    html.append(
+        "<li><strong>Iterate context</strong>  "
+        "Use <code>_artifacts/iterate/iterate-logs-&lt;run id&gt;-&lt;attempt&gt;/_ctx/...</code> and the corresponding <code>_mirrors/...*.txt</code> entries to inspect attached workflows, tests, and helpers"
+        "</li>"
+    )
+    html.append(
+        "<li><strong>Troubleshooting missing files</strong>  "
+        "1. Check <code>_mirrors/repo.zip.txt</code> for the expected path. "
+        "2. Check the <code>repo/files/...</code> entry and its <strong>Preview (.txt)</strong> link. "
+        "3. Only treat a file as missing if absent from both the snapshot and mirrors."
+        "</li>"
+    )
+    html.append("</ul>")
+    html.append("</details>")
+    html.append("</section>")
 
     if diag_files:
         html.append("<section>")
