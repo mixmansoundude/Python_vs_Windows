@@ -293,7 +293,36 @@ def _ensure_diag_log_placeholders(context: Context) -> None:
     except OSError:
         return
 
+    batch_root = diag / "_artifacts" / "batch-check"
+    status_path = batch_root / "STATUS.txt"
+    batch_complete = False
+    if status_path.exists():
+        try:
+            batch_complete = any(
+                candidate.suffix.lower() == ".ndjson"
+                for candidate in batch_root.rglob("*")
+                if candidate.is_file()
+            )
+        except OSError:
+            batch_complete = False
+    ok_path = logs_dir / "batch-check.OK.txt"
+    missing_log = logs_dir / "batch-check.MISSING.txt"
+    if ok_path.exists() or batch_complete:
+        try:
+            missing_log.unlink()
+        except OSError:
+            # Professional note: keep publishing even if cleanup fails; a stale sentinel
+            # is safer than aborting diagnostics generation.
+            pass
+        artifacts_missing = diag / "_artifacts" / "MISSING.txt"
+        try:
+            artifacts_missing.unlink()
+        except OSError:
+            pass
+
     for name in ("batch-check.MISSING.txt", "iterate.MISSING.txt"):
+        if name == "batch-check.MISSING.txt" and (ok_path.exists() or batch_complete):
+            continue
         path = logs_dir / name
         if path.exists():
             continue
