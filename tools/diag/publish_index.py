@@ -11,6 +11,10 @@ from __future__ import annotations
 # (``tools/diag/publish_index.ps1``) was removed after commit
 # 54217c00cadd546c12b7db8588e0a1e2e9b22c18; consult that snapshot if the
 # legacy PS1 behavior ever needs to be restored.
+# Legacy note: NDJSON helpers (such as tools/ensure_ndjson_sources.ps1) and the
+# older gate/model-context utilities were removed after commit
+# 6779602bcc98cbc8e2acd4e03d02579a86b73538 in favor of the inline/iterate gate
+# and this publisher.
 
 import argparse
 import base64

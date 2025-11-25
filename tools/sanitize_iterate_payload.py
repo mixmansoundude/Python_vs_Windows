@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Redact and truncate iterate payload files per diagnostics contract."""
+# Legacy note: tools/ensure_ndjson_sources.ps1 was retired after commit
+# 6779602bcc98cbc8e2acd4e03d02579a86b73538. This sanitizer and the iterate
+# gate tooling define the current NDJSON expectations.
 from __future__ import annotations
 
 import argparse

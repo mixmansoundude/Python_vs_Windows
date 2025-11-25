@@ -1,4 +1,6 @@
 [CmdletBinding()]
+# Helper note: manual precheck runner for local use, not invoked by CI workflows
+# as of commit 6779602bcc98cbc8e2acd4e03d02579a86b73538.
 param(
     [string]$ReportPath = "precheck_report.md",
     [string]$JsonPath = "precheck_results.json"
