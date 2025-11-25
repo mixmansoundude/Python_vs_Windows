@@ -12,6 +12,7 @@ from tools.diag.publish_index import (
     _build_markdown,
     _build_site_overview,
     _batch_status,
+    _ensure_repo_index,
     _validate_iterate_status_line,
     _write_global_txt_mirrors,
     _write_html,
@@ -94,6 +95,44 @@ class ReloadLinkTest(unittest.TestCase):
                 lines[1], r"^Reload: \[Reload with cache-buster\]\(\?v=1234-2\)$"
             )
 
+    def test_markdown_includes_navigation_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp) / "diag"
+            diag_root.mkdir(parents=True, exist_ok=True)
+
+            context = Context(
+                diag=diag_root,
+                artifacts=None,
+                artifacts_override=None,
+                downloaded_iter_root=None,
+                repo="owner/repo",
+                branch="main",
+                sha="deadbeef",
+                run_id="1234",
+                run_attempt="2",
+                run_url="https://example.invalid/run",
+                short_sha="deadbee",
+                inventory_b64=None,
+                batch_run_id=None,
+                batch_run_attempt=None,
+                site=None,
+            )
+
+            markdown = _build_markdown(
+                context,
+                None,
+                None,
+                "2025-01-02T03:04:05Z",
+                "2025-01-01T21:04:05-06:00",
+                None,
+                None,
+                None,
+            )
+
+            self.assertIn("## Diagnostics navigation notes (for Supervisor/model)", markdown)
+            self.assertIn("Repository (zip)", markdown)
+            self.assertIn("_mirrors/repo/files/...*.txt", markdown)
+
 
 class MirrorGenerationTest(unittest.TestCase):
     def test_global_mirror_tree_captures_previews(self) -> None:
@@ -147,6 +186,60 @@ class MirrorGenerationTest(unittest.TestCase):
             for _, mirror_path in pairs:
                 self.assertTrue(mirror_path.is_file())
                 self.assertTrue(str(mirror_path).startswith(str(mirrors_root)))
+
+    def test_repo_index_links_target_mirrored_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp) / "diag"
+            repo_root = (
+                diag_root / "repo" / "files" / "owner-repo-deadbee" / "src"
+            )
+            repo_root.mkdir(parents=True, exist_ok=True)
+            script_path = repo_root / "example.py"
+            script_path.write_text("print('hello')\n", encoding="utf-8")
+
+            context = Context(
+                diag=diag_root,
+                artifacts=None,
+                artifacts_override=None,
+                downloaded_iter_root=None,
+                repo="owner/repo",
+                branch="main",
+                sha="deadbeefdeadbeef",
+                run_id="99",
+                run_attempt="1",
+                run_url="https://example.invalid/run",
+                short_sha="deadbee",
+                inventory_b64=None,
+                batch_run_id=None,
+                batch_run_attempt=None,
+                site=None,
+            )
+
+            _ensure_repo_index(context)
+            mirrors_root = diag_root / "_mirrors"
+            _write_global_txt_mirrors(diag_root, mirrors_root)
+
+            index_mirror = mirrors_root / "repo" / "index.html.txt"
+            self.assertTrue(index_mirror.exists())
+
+            # Professional note: the offline repo index must link to the extracted
+            # payload, not the mirrored previews, so the downloaded bundle stays
+            # navigable. The mirrors still exist under ``_mirrors`` but are exposed
+            # elsewhere in the diagnostics UI.
+            expected_href = "./files/owner-repo-deadbee/src/example.py"
+            index_preview = index_mirror.read_text(encoding="utf-8")
+            self.assertIn(expected_href, index_preview)
+            self.assertIn("example.py</a>", index_preview)
+
+            mirrored_file = (
+                mirrors_root
+                / "repo"
+                / "files"
+                / "owner-repo-deadbee"
+                / "src"
+                / "example.py.txt"
+            )
+            self.assertTrue(mirrored_file.exists())
 
 
 class QuickLinksRenderingTest(unittest.TestCase):
