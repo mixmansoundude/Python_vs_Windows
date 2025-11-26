@@ -4189,6 +4189,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         # Professional note: populate the global preview mirrors before rendering
         # markdown/HTML so all link helpers can point at the shared _mirrors tree.
         _write_global_txt_mirrors(context.diag, context.diag / "_mirrors")
+        # Professional note: rerun placeholder cleanup after staging artifacts and mirrors
+        # so stale MISSING sentinels generated earlier in publish_index.py do not linger
+        # in the final diagnostics bundle once batch-check evidence exists.
+        _ensure_diag_log_placeholders(context)
 
     if context.site:
         _write_latest_json(context, iterate_dir, iterate_temp, response_data, status_data)
