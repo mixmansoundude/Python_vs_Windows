@@ -320,8 +320,31 @@ def _ensure_diag_log_placeholders(context: Context) -> None:
         except OSError:
             pass
 
+    iterate_present = bool(context.iterate_found_cache)
+    if not iterate_present:
+        iterate_zip = logs_dir / f"iterate-{context.run_id}-{context.run_attempt}.zip"
+        try:
+            iterate_present = iterate_zip.exists() and iterate_zip.stat().st_size > 0
+        except OSError:
+            iterate_present = False
+
+    iterate_missing = logs_dir / "iterate.MISSING.txt"
+    if iterate_present:
+        try:
+            iterate_missing.unlink()
+        except OSError:
+            # Professional note: The placeholder recreation earlier in main() can rerun
+            # after iterate logs have already been mirrored. Keep publishing even if the
+            # cleanup cannot delete the stale marker.
+            pass
+
     for name in ("batch-check.MISSING.txt", "iterate.MISSING.txt"):
         if name == "batch-check.MISSING.txt" and (ok_path.exists() or batch_complete):
+            continue
+        if name == "iterate.MISSING.txt" and iterate_present:
+            # Professional note: ensure placeholder cleanup remains idempotent when the
+            # iterate archive has already been mirrored so later invocations do not
+            # resurrect stale sentinels.
             continue
         path = logs_dir / name
         if path.exists():
