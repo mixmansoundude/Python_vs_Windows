@@ -2063,11 +2063,39 @@ def _batch_status(diag: Optional[Path], context: Context) -> str:
             logs_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             pass
+
+        batch_root = diag / "_artifacts" / "batch-check"
+        status_path = batch_root / "STATUS.txt"
+        batch_complete = False
+        if status_path.exists():
+            try:
+                batch_complete = any(
+                    candidate.suffix.lower() == ".ndjson"
+                    for candidate in batch_root.rglob("*")
+                    if candidate.is_file()
+                )
+            except OSError:
+                batch_complete = False
+
         download_attempt = attempt if attempt and attempt != "n/a" else "1"
         zip_name = f"batch-check-{run_id}-{download_attempt}.zip"
         zip_path = logs_dir / zip_name
         ok_path = logs_dir / "batch-check.OK.txt"
         missing_path = logs_dir / "batch-check.MISSING.txt"
+        if batch_complete or ok_path.exists():
+            try:
+                missing_path.unlink()
+            except OSError:
+                # Professional note: Once batch-check evidence exists (STATUS + NDJSON or
+                # the OK marker), leave the bundle without a stale MISSING placeholder so
+                # repeated publishes cannot reintroduce it after cleanup.
+                pass
+            artifacts_missing = diag / "_artifacts" / "MISSING.txt"
+            try:
+                artifacts_missing.unlink()
+            except OSError:
+                pass
+
         iterate_attempt = context.run_attempt or "n/a"
         if context.run_id and context.run_id == run_id:
             iterate_name = f"iterate-{context.run_id}-{iterate_attempt}.zip"
