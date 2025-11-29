@@ -13,6 +13,7 @@ from tools.diag.publish_index import (
     _build_site_overview,
     _batch_status,
     _ensure_diag_log_placeholders,
+    _ensure_iterate_log_archive,
     _ensure_repo_index,
     _validate_iterate_status_line,
     _write_global_txt_mirrors,
@@ -408,6 +409,65 @@ class QuickLinksRenderingTest(unittest.TestCase):
         )
         iterate_placeholder = logs_dir / "iterate.MISSING.txt"
         self.assertTrue(iterate_placeholder.exists(), "Iterate placeholder should still be created")
+
+    def test_iterate_placeholder_not_recreated_once_logs_exist(self) -> None:
+        context = self._make_context()
+
+        logs_dir = self.diag / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        iterate_zip = logs_dir / f"iterate-{context.run_id}-{context.run_attempt}.zip"
+        with zipfile.ZipFile(iterate_zip, "w") as archive:
+            archive.writestr("payload.txt", "ok")
+
+        missing_placeholder = logs_dir / "iterate.MISSING.txt"
+        missing_placeholder.write_text("stale\n", encoding="utf-8")
+
+        _ensure_iterate_log_archive(context)
+        self.assertFalse(
+            missing_placeholder.exists(),
+            "Iterate log mirroring should clear stale placeholders once the archive is present",
+        )
+
+        _ensure_diag_log_placeholders(context)
+
+        self.assertFalse(
+            missing_placeholder.exists(),
+            "Placeholder cleanup should remain idempotent when iterate logs are available",
+        )
+
+    def test_batch_placeholders_stay_cleared_when_artifacts_exist(self) -> None:
+        context = self._make_context()
+        context.batch_run_id = context.run_id
+
+        batch_root = self.diag / "_artifacts" / "batch-check"
+        batch_root.mkdir(parents=True, exist_ok=True)
+        (batch_root / "STATUS.txt").write_text("completed\n", encoding="utf-8")
+        (batch_root / "ci_test_results.ndjson").write_text("{}\n", encoding="utf-8")
+
+        missing_artifact = self.diag / "_artifacts" / "MISSING.txt"
+        missing_artifact.write_text(
+            "batch artifacts were missing before NDJSON arrived\n", encoding="utf-8"
+        )
+
+        logs_dir = self.diag / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        missing_log = logs_dir / "batch-check.MISSING.txt"
+        missing_log.write_text("stale\n", encoding="utf-8")
+
+        archive_path = logs_dir / f"batch-check-{context.run_id}-{context.run_attempt}.zip"
+        archive_path.write_bytes(b"PK")
+
+        _batch_status(self.diag, context)
+
+        self.assertFalse(
+            missing_log.exists(),
+            "Batch status should not leave a stale batch-check placeholder when NDJSON is present",
+        )
+        self.assertFalse(
+            missing_artifact.exists(),
+            "_artifacts/MISSING.txt should be cleared once batch-check evidence exists",
+        )
 
     @patch("tools.diag.publish_index._has_file", return_value=False)
     @patch("tools.diag.publish_index._bundle_links", return_value=[])
