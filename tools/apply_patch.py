@@ -513,7 +513,9 @@ def apply_commit(commit: Commit, write_fn: Callable, remove_fn: Callable) -> Non
 
 
 def _strip_fenced_diff(text: str) -> str:
-    match = re.fullmatch(r"\s*```diff\s*\n([\s\S]*?)\n```\s*", text)
+    # Accept common code fences (```diff/```patch/plain ```) that LLMs emit so
+    # callers do not need to retry when the patch is already well-formed.
+    match = re.fullmatch(r"\s*```(?:diff|patch)?\s*\n([\s\S]*?)\n```\s*", text)
     if match:
         return match.group(1)
     return text
