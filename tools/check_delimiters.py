@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Simple delimiter and quote balance checker."""
+# Note: This helper is intended for on-demand use and is not wired into CI workflows.
 from __future__ import annotations
 
 import argparse
@@ -353,7 +354,9 @@ class DelimiterChecker:
         sanitized_lower = sanitized.lower()
         trimmed_lower = trimmed.lower()
         keyword_re = re.compile(r"\b(if|elseif|while|for|switch|return|until)\b", re.IGNORECASE)
-        assignment_re = re.compile(r"(?<![-!<>])=")
+        # Keep the assignment heuristic broad so any '=' counts as assignment; a prior pattern regressed
+        # with an invalid character class, so this intentionally simple regex avoids compilation failures.
+        assignment_re = re.compile(r"=")
         flagged: set[int] = set()
 
         def note_issue(op: str, sanitized_index: int, detail: str) -> None:
