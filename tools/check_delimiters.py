@@ -340,7 +340,9 @@ class DelimiterChecker:
 
     def _check_ps1_boolean_operators(self, line_no: int, line: str) -> None:
         # derived requirement: Windows runners surfaced "parameter name 'or'" faults whenever -or/-and sat
-        # outside a boolean expression. These heuristics stay intentionally simple per the latest CI spec.
+        # outside a boolean expression.
+        # These heuristics stay intentionally simple per the latest CI spec; keep this comment to avoid
+        # reintroducing syntax regressions when adjusting the PowerShell parsing rules.
         if self.here_string or self.in_block_comment:
             self.prev_ps1_backtick = False
             return
