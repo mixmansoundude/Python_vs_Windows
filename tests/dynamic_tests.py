@@ -3,7 +3,10 @@ import base64
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import importlib.util
 
 BASE = os.path.dirname(__file__)
@@ -94,6 +97,7 @@ def main():
 
     dp = import_from(os.path.join(EXTRACT, "~detect_python.py"), "dp")
     pr = import_from(os.path.join(EXTRACT, "~prep_requirements.py"), "pr")
+    fe_path = os.path.join(EXTRACT, "~find_entry.py")
 
     for s, exp in [
         ("~=3.10", "python>=3.10,<4.0"),
@@ -157,6 +161,34 @@ def main():
     serial_hit = bool(re.search(r'(?m)^\s*import\s+serial\b', app_text))
     record({"id":"app.visa.detect","pass":visa_hit})
     record({"id":"app.pyserial.detect","pass":serial_hit})
+
+    def run_entry(files):
+        tmp = tempfile.mkdtemp(prefix="entry.", dir=BASE)
+        try:
+            for name, content in files.items():
+                path = os.path.join(tmp, name)
+                with open(path, "w", encoding="ascii") as fh:
+                    fh.write(content)
+            proc = subprocess.run([sys.executable, fe_path], cwd=tmp, capture_output=True, text=True, encoding="utf-8", errors="ignore")
+            stdout_lines = proc.stdout.splitlines()
+            crumb = stdout_lines[-1].strip() if stdout_lines else ""
+            return {
+                "exit": proc.returncode,
+                "stdout": proc.stdout.strip(),
+                "stderr": proc.stderr.strip(),
+                "crumb": crumb,
+                "files": sorted(files),
+            }
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    for rec_id, expected, files in [
+        ("entry.select.single", "entry1.py", {"entry1.py": "print('hi')\n"}),
+        ("entry.select.main_vs_app", "main.py", {"main.py": "print('main')\n", "app.py": "print('app')\n", "extra.py": "print('extra')\n"}),
+        ("entry.select.common_vs_generic", "app.py", {"foo.py": "print('foo')\n", "app.py": "print('app')\n"}),
+    ]:
+        result = run_entry(files)
+        record({"id":rec_id,"pass":result["crumb"]==expected,"expected":expected,"actual":result["crumb"],"exit":result["exit"],"files":result["files"],"stdout":result["stdout"],"stderr":result["stderr"]})
 
 if __name__ == "__main__":
     if os.path.exists(OUT): os.remove(OUT)

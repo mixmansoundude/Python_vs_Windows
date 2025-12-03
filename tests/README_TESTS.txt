@@ -16,6 +16,7 @@ Optional dynamic pass (needs any Python: Miniconda base, py.exe, or system pytho
   1) Double-click tests\dynamic_tests.bat
   2) Send me: tests\~dynamic-results.ndjson
      - Also exercises Python version detection precedence (`runtime.txt` overrides `pyproject.toml`)
+     - Also exercises entry selection precedence via the decoded `~find_entry.py` helper (e.g., `main.py` beats `app.py`)
 
 Bootstrap self-tests:
   * `tests\selftest.ps1` creates throwaway folders (`~selftest_empty`, `~selftest_stub`), runs `run_setup.bat`,
