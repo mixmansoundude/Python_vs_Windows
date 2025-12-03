@@ -11,6 +11,8 @@ EXTRACT = os.path.join(BASE, "extracted")
 OUT = os.path.join(BASE, "~dynamic-results.ndjson")
 RUN_SETUP = os.path.join(os.path.dirname(BASE), "run_setup.bat")
 STATUS_PATH = os.path.join(os.path.dirname(BASE), "~bootstrap.status.json")
+RUNTIME_PATH = os.path.join(BASE, "runtime.txt")
+PYPROJECT_PATH = os.path.join(BASE, "pyproject.toml")
 
 FAILED = False
 
@@ -103,6 +105,30 @@ def main():
     ]:
         got = dp.pep440_to_conda(s)
         record({"id":"dp.pep440","spec":s,"expected":exp,"actual":got,"pass": got==exp})
+
+    def cleanup_temp_specs():
+        for path in (RUNTIME_PATH, PYPROJECT_PATH):
+            if os.path.exists(path):
+                os.remove(path)
+
+    cleanup_temp_specs()
+    try:
+        with open(RUNTIME_PATH, "w", encoding="ascii") as fh:
+            fh.write("python-3.10.5\n")
+        with open(PYPROJECT_PATH, "w", encoding="ascii") as fh:
+            fh.write("[project]\nrequires-python = \"~=3.11\"\n")
+        got = dp.detect_requires_python()
+        record({"id":"dp.detect.runtime","expected":"python=3.10","actual":got,"pass": got=="python=3.10"})
+    finally:
+        cleanup_temp_specs()
+
+    try:
+        with open(PYPROJECT_PATH, "w", encoding="ascii") as fh:
+            fh.write("[project]\nrequires-python = \">=3.11\"\n")
+        got = dp.detect_requires_python()
+        record({"id":"dp.detect.pyproject","expected":"python>=3.11","actual":got,"pass": got=="python>=3.11"})
+    finally:
+        cleanup_temp_specs()
 
     for s, exp in [
         ("pyvisa~=1.14", ["pyvisa >=1.14,<2.0"]),
