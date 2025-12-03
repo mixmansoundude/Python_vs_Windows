@@ -320,8 +320,31 @@ def _ensure_diag_log_placeholders(context: Context) -> None:
         except OSError:
             pass
 
+    iterate_present = bool(context.iterate_found_cache)
+    if not iterate_present:
+        iterate_zip = logs_dir / f"iterate-{context.run_id}-{context.run_attempt}.zip"
+        try:
+            iterate_present = iterate_zip.exists() and iterate_zip.stat().st_size > 0
+        except OSError:
+            iterate_present = False
+
+    iterate_missing = logs_dir / "iterate.MISSING.txt"
+    if iterate_present:
+        try:
+            iterate_missing.unlink()
+        except OSError:
+            # Professional note: The placeholder recreation earlier in main() can rerun
+            # after iterate logs have already been mirrored. Keep publishing even if the
+            # cleanup cannot delete the stale marker.
+            pass
+
     for name in ("batch-check.MISSING.txt", "iterate.MISSING.txt"):
         if name == "batch-check.MISSING.txt" and (ok_path.exists() or batch_complete):
+            continue
+        if name == "iterate.MISSING.txt" and iterate_present:
+            # Professional note: ensure placeholder cleanup remains idempotent when the
+            # iterate archive has already been mirrored so later invocations do not
+            # resurrect stale sentinels.
             continue
         path = logs_dir / name
         if path.exists():
@@ -2040,11 +2063,39 @@ def _batch_status(diag: Optional[Path], context: Context) -> str:
             logs_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             pass
+
+        batch_root = diag / "_artifacts" / "batch-check"
+        status_path = batch_root / "STATUS.txt"
+        batch_complete = False
+        if status_path.exists():
+            try:
+                batch_complete = any(
+                    candidate.suffix.lower() == ".ndjson"
+                    for candidate in batch_root.rglob("*")
+                    if candidate.is_file()
+                )
+            except OSError:
+                batch_complete = False
+
         download_attempt = attempt if attempt and attempt != "n/a" else "1"
         zip_name = f"batch-check-{run_id}-{download_attempt}.zip"
         zip_path = logs_dir / zip_name
         ok_path = logs_dir / "batch-check.OK.txt"
         missing_path = logs_dir / "batch-check.MISSING.txt"
+        if batch_complete or ok_path.exists():
+            try:
+                missing_path.unlink()
+            except OSError:
+                # Professional note: Once batch-check evidence exists (STATUS + NDJSON or
+                # the OK marker), leave the bundle without a stale MISSING placeholder so
+                # repeated publishes cannot reintroduce it after cleanup.
+                pass
+            artifacts_missing = diag / "_artifacts" / "MISSING.txt"
+            try:
+                artifacts_missing.unlink()
+            except OSError:
+                pass
+
         iterate_attempt = context.run_attempt or "n/a"
         if context.run_id and context.run_id == run_id:
             iterate_name = f"iterate-{context.run_id}-{iterate_attempt}.zip"
@@ -4189,6 +4240,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         # Professional note: populate the global preview mirrors before rendering
         # markdown/HTML so all link helpers can point at the shared _mirrors tree.
         _write_global_txt_mirrors(context.diag, context.diag / "_mirrors")
+        # Professional note: rerun placeholder cleanup after staging artifacts and mirrors
+        # so stale MISSING sentinels generated earlier in publish_index.py do not linger
+        # in the final diagnostics bundle once batch-check evidence exists.
+        _ensure_diag_log_placeholders(context)
 
     if context.site:
         _write_latest_json(context, iterate_dir, iterate_temp, response_data, status_data)
