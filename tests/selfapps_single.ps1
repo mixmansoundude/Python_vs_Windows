@@ -1,3 +1,8 @@
+# Windows-only template that validates the "single .py entry" path.
+# Emits the entry.single.direct NDJSON row after synthesizing a one-entry app
+# and only runs when ~bootstrap.status.json or PY_FILES reports pyFiles==1.
+# In the bootstrapper repo it usually skips; in consumer repos it checks the
+# entry selection breadcrumbs when exactly one Python file is present.
 $ErrorActionPreference = 'Continue'
 
 $here = $PSScriptRoot

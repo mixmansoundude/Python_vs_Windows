@@ -1,3 +1,10 @@
+"""Windows-only CI guardrail for bootstrapper entry selection.
+
+Forces a simulated pyFiles=1 via environment, drives tests/selfapps_entry.ps1,
+and asserts the NDJSON and bootstrap log capture the expected main.py breadcrumb
+when the harness fabricates two candidate entries. Stays dormant outside the
+Windows runner unless the repo explicitly invokes it.
+"""
 import json
 import os
 import shutil

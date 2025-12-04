@@ -1,3 +1,8 @@
+# Windows-only entry-selection probe for consumer apps.
+# Synthesizes tiny app roots, writes self.entry.* NDJSON rows (entry1/entryA/entryB),
+# and is gated by ~bootstrap.status.json or PY_FILES so it only runs when exactly
+# one Python entry was detected. In this bootstrapper repo it normally stays
+# dormant unless CI forces a single-entry simulation.
 $ErrorActionPreference = 'Continue'
 
 $here = $PSScriptRoot

@@ -1,4 +1,8 @@
-# ASCII only
+# ASCII only. Dynamic harness for consumer repos that decodes helpers from
+# run_setup.bat, exercises detect_python/prep_requirements, and reuses
+# ~find_entry.py to verify entry precedence. Only expected to run when
+# ~bootstrap.status.json reports state=="ok"; in this bootstrapper repo CI
+# often skips it when state=="no_python_files".
 import base64
 import json
 import os

@@ -1,5 +1,13 @@
 Test Harness (fast cycle)
 
+Two worlds, one folder:
+  * Bootstrapper repo CI: the selftest harness always runs and can wake the
+    model through tests\~test-results.ndjson even when there are no Python
+    files. It validates the bootstrapper messages and empty-repo behavior.
+  * Real app repo: the same files act as templates. selfapps_*.ps1 and
+    dynamic_tests.* only run when ~bootstrap.status.json reports state=="ok"
+    with at least one Python entry; when pyFiles==0 they skip by design.
+
 Place these files in your app folder:
   run_setup.bat            (bootstrapper)
   run_tests.bat            (static checks)
@@ -32,3 +40,5 @@ Artifacts written:
   tests\~selftest_empty\~empty_bootstrap.log (empty-folder bootstrap log)
   tests\~selftest_stub\~stub_bootstrap.log (stub bootstrap log)
   tests\~selftest_stub\~stub_run.log (hello_stub.py execution log)
+  tests\~test-results.ndjson (core harness NDJSON; model-facing CI summaries)
+  tests\~dynamic-results.ndjson (only written when consumer repos enable dynamic tests)
