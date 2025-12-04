@@ -20,6 +20,9 @@ echo Using Python: %PY% >> "%LOG%"
 "%PY%" dynamic_tests.py > "~dynamic-results.ndjson" 2>> "%LOG%"
 set ERR=%ERRORLEVEL%
 type "~dynamic-results.ndjson"
+echo Running Python unit tests for entry selection...
+"%PY%" -m unittest test_entry_selection test_entry_single
+if errorlevel 1 set ERR=1
 echo Exit code: %ERR%
 echo To bootstrap the app, double-click: ..\run_setup.bat
 exit /b %ERR%
