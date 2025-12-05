@@ -81,12 +81,20 @@ if (-not $IsWindows) {
         desc    = 'App run skipped on non-Windows host'
         details = $details
     })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.env.fastpath.secondRun'
+        pass    = $true
+        desc    = 'EXE fast path skipped on non-Windows host'
+        details = $details
+    })
     exit 0
 }
 
 # Emit a tiny app that imports a small conda-forge package and prints a token
 $app = Join-Path $here '~envsmoke'
 $setupLog = Join-Path $app '~setup.log'
+$bootstrapLog = Join-Path $app '~envsmoke_bootstrap.log'
+$runOutPath = Join-Path $app '~run.out.txt'
 New-Item -ItemType Directory -Force -Path $app | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $app -Force
 Set-Content -LiteralPath (Join-Path $app 'app.py') -Value @'
@@ -97,17 +105,47 @@ print("smoke-ok")
 if (Test-Path -LiteralPath $setupLog) {
     Remove-Item -LiteralPath $setupLog -Force
 }
+if (Test-Path -LiteralPath $bootstrapLog) {
+    Remove-Item -LiteralPath $bootstrapLog -Force
+}
+if (Test-Path -LiteralPath $runOutPath) {
+    Remove-Item -LiteralPath $runOutPath -Force
+}
 
 $prevVenvFallback = if (Test-Path Env:HP_ALLOW_VENV_FALLBACK) { $env:HP_ALLOW_VENV_FALLBACK } else { $null }
 $env:HP_ALLOW_VENV_FALLBACK = '1'
 
 Push-Location -LiteralPath $app
+$firstExit = $null
+$secondExit = $null
+$firstSetup = ''
+$firstBootstrap = ''
+$combinedBootstrap = ''
+$firstRunOut = ''
+$firstHaveRunOut = $false
+$firstTokenFound = $false
+$fastPathFound = $false
+$pyInstallerLines = 0
 try {
     $env:HP_ALLOW_VENV_FALLBACK = '1'
     $env:HP_ALLOW_SYSTEM_FALLBACK = '1'
     # FULL bootstrap here: do NOT set HP_CI_SKIP_ENV
     cmd /c .\run_setup.bat *> '~envsmoke_bootstrap.log'
-    $exit = $LASTEXITCODE
+    $firstExit = $LASTEXITCODE
+
+    $firstSetup = (Test-Path $setupLog) ? (Get-Content -LiteralPath $setupLog -Raw -Encoding Ascii) : ''
+    $firstBootstrap = (Test-Path $bootstrapLog) ? (Get-Content -LiteralPath $bootstrapLog -Raw -Encoding Ascii) : ''
+    $firstRunOut = (Test-Path $runOutPath) ? (Get-Content -LiteralPath $runOutPath -Raw -Encoding Ascii) : ''
+    $firstHaveRunOut = Test-Path -LiteralPath $runOutPath
+    $firstTokenFound = $firstHaveRunOut -and (($firstRunOut -match 'hello-from-stub') -or ($firstRunOut -match 'smoke-ok'))
+
+    # Second run for EXE fast path coverage; append logs to preserve the first run transcript.
+    cmd /c .\run_setup.bat *>> '~envsmoke_bootstrap.log'
+    $secondExit = $LASTEXITCODE
+
+    $combinedBootstrap = (Test-Path $bootstrapLog) ? (Get-Content -LiteralPath $bootstrapLog -Raw -Encoding Ascii) : ''
+    $fastPathFound = $combinedBootstrap -match '\[INFO\]\s+Fast path:'
+    $pyInstallerLines = ([regex]::Matches($combinedBootstrap, 'PyInstaller produced dist\\_envsmoke.exe')).Count
 } finally {
     Remove-Item Env:HP_ALLOW_VENV_FALLBACK -ErrorAction SilentlyContinue
     Remove-Item Env:HP_ALLOW_SYSTEM_FALLBACK -ErrorAction SilentlyContinue
@@ -119,11 +157,11 @@ try {
     }
 }
 
-$blog   = Join-Path $app '~envsmoke_bootstrap.log'
-$runout = Join-Path $app '~run.out.txt'
-$setup  = (Test-Path $setupLog) ? (Get-Content -LiteralPath $setupLog -Raw -Encoding Ascii) : ''
-$bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw -Encoding Ascii) : ''
-$outxt  = (Test-Path $runout) ? (Get-Content -LiteralPath $runout -Raw -Encoding Ascii) : ''
+$setup  = $firstSetup
+$blog   = $bootstrapLog
+$runout = $runOutPath
+$bltxt  = if ($combinedBootstrap) { $combinedBootstrap } else { $firstBootstrap }
+$outxt  = $firstRunOut
 
 $smokeCommand = ''
 if ($setup) {
@@ -139,8 +177,8 @@ $displayCommand = if ($smokeCommand) { $smokeCommand } else { $bootstrapCommand 
 
 Check-PipreqsFailure -LogPath $setupLog -LogText $setup
 
-$haveRunOut = Test-Path -LiteralPath $runout
-$tokenFound = $haveRunOut -and (($outxt -match 'hello-from-stub') -or ($outxt -match 'smoke-ok'))
+$haveRunOut = $firstHaveRunOut
+$tokenFound = $firstTokenFound
 
 # derived requirement: supervisors consume iterate inputs as plain text. Mirror the
 # smoke transcripts into _artifacts/iterate/inputs so agents on small devices can
@@ -187,22 +225,30 @@ try {
 # Record two rows: env setup + app run
 Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.conda'
-    pass=($exit -eq 0)
+    pass=($firstExit -eq 0)
     desc='Miniconda bootstrap + environment creation'
-    details=[ordered]@{ exitCode=$exit; command=$displayCommand }
+    details=[ordered]@{ exitCode=$firstExit; command=$displayCommand }
 })
 
-$passRun = ($exit -eq 0) -and $tokenFound
+$passRun = ($firstExit -eq 0) -and $tokenFound
 Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.run'
     pass=$passRun
     desc='App runs in created environment'
-    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut; command=$displayCommand }
+    details=[ordered]@{ exitCode=$firstExit; tokenFound=$tokenFound; haveRunOut=$haveRunOut; command=$displayCommand }
 })
 
-if (($exit -eq 0) -and (-not $tokenFound)) {
+$fastPathPass = ($secondExit -eq 0) -and $fastPathFound -and ($pyInstallerLines -eq 1)
+Write-NdjsonRow ([ordered]@{
+    id='self.env.fastpath.secondRun'
+    pass=$fastPathPass
+    desc='Second run reuses existing EXE (fast path)'
+    details=[ordered]@{ exitCode=$secondExit; fastPath=$fastPathFound; pyInstallerLines=$pyInstallerLines; command=$bootstrapCommand }
+})
+
+if (($firstExit -eq 0) -and (-not $tokenFound)) {
     $snippet = Get-LineSnippet -Text $outxt -Pattern 'smoke-ok'
-    $details = [ordered]@{ file = $runout; exitCode = $exit; tokenFound = $tokenFound; haveRunOut = $haveRunOut; command = $displayCommand }
+    $details = [ordered]@{ file = $runout; exitCode = $firstExit; tokenFound = $tokenFound; haveRunOut = $haveRunOut; command = $displayCommand }
     if ($snippet) { $details.snippet = $snippet }
     Write-NdjsonRow ([ordered]@{
         id='envsmoke.run'
