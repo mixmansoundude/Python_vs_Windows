@@ -26,6 +26,11 @@ Optional dynamic pass (needs any Python: Miniconda base, py.exe, or system pytho
      - Also exercises Python version detection precedence (`runtime.txt` overrides `pyproject.toml`)
      - Also exercises entry selection precedence via the decoded `~find_entry.py` helper (e.g., `main.py` beats `app.py`)
 
+Diagnostics and iterate gate behavior:
+  - tools/diag/publish_index.py renders the CI diagnostics page, including iterate metadata and NDJSON summaries.
+  - The iterate gate is a pre-flight check that treats missing NDJSON inputs as a failure; the diagnostics page should surface that state clearly instead of hiding it.
+  - Once NDJSON arrives (cache and real lanes), the later NDJSON summary rows represent the real verdict that governs model triggering.
+
 Bootstrap self-tests:
   * `tests\selftest.ps1` creates throwaway folders (`~selftest_empty`, `~selftest_stub`), runs `run_setup.bat`,
     and verifies both the no-Python and stub bootstrap paths while capturing logs for CI summaries.
