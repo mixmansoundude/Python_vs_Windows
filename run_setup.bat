@@ -900,7 +900,6 @@ rem derived requirement: execute the smoke command inline so cmd, not our loggin
 set "HP_SMOKE_RC=%ERRORLEVEL%"
 call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
 if not "%HP_SMOKE_RC%"=="0" call :die "[ERROR] Entry script execution failed."
-set "HP_FASTPATH_USED="
 :after_entry_smoke
 rem derived requirement: the CI harness inspects the breadcrumb log to flag missing entries.
 set "HP_BREADCRUMB=~entry1_bootstrap.log"
