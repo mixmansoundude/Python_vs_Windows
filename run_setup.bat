@@ -866,11 +866,14 @@ if not exist "%HP_FAST_EXE%" exit /b 0
 set "HP_FASTPATH_READY="
 for /f "usebackq delims=" %%T in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$exe = '%HP_FAST_EXE%';" ^
-  "$src = Get-ChildItem -File -Filter '*.py' ^| Sort-Object LastWriteTimeUtc -Descending ^| Select-Object -First 1;" ^
-  "if (-not $src) { exit 1 }" ^
+  "$items = Get-ChildItem -File -Filter '*.py';" ^
+  "if (-not $items) { exit 1 }" ^
+  "$latest = $null;" ^
+  "foreach ($item in $items) { if (-not $latest -or $item.LastWriteTimeUtc -gt $latest.LastWriteTimeUtc) { $latest = $item } }" ^
+  "if (-not $latest) { exit 1 }" ^
   "if (-not (Test-Path $exe)) { exit 1 }" ^
   "$exeTime = (Get-Item $exe).LastWriteTimeUtc;" ^
-  "if ($exeTime -ge $src.LastWriteTimeUtc) { Write-Host 'fresh' }" ^
+  "if ($exeTime -ge $latest.LastWriteTimeUtc) { Write-Host 'fresh' }" ^
   ""`) do if not defined HP_FASTPATH_READY set "HP_FASTPATH_READY=%%T"
 if /I "%HP_FASTPATH_READY%"=="fresh" (
   call :log "[INFO] Fast path: reusing %HP_FAST_EXE%"
