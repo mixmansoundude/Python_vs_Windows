@@ -866,7 +866,7 @@ if not exist "%HP_FAST_EXE%" exit /b 0
 set "HP_FASTPATH_READY="
 for /f "usebackq delims=" %%T in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$exe = '%HP_FAST_EXE%';" ^
-  "$items = Get-ChildItem -File -Filter '*.py';" ^
+  "$items = Get-ChildItem -File -Filter '*.py' | Where-Object { `$_.Name -notlike '~*.py' };" ^
   "if (-not $items) { exit 1 }" ^
   "$latest = $null;" ^
   "foreach ($item in $items) { if (-not $latest -or $item.LastWriteTimeUtc -gt $latest.LastWriteTimeUtc) { $latest = $item } }" ^
