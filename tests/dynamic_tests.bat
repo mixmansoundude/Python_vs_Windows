@@ -20,6 +20,8 @@ echo Using Python: %PY% >> "%LOG%"
 "%PY%" dynamic_tests.py > "~dynamic-results.ndjson" 2>> "%LOG%"
 set ERR=%ERRORLEVEL%
 type "~dynamic-results.ndjson"
+REM Entry-selection guardrail unittests (tests.test_entry_selection / tests.test_entry_single)
+REM are developer-only and should be run manually via "python -m unittest".
 echo Exit code: %ERR%
 echo To bootstrap the app, double-click: ..\run_setup.bat
 exit /b %ERR%
