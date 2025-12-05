@@ -23,6 +23,7 @@ Operating policy for automated agents (Codex, Copilot, others).
 - Always validate both sides together so the message contract stays synchronized and avoids false regressions.
 - The only parser-facing signal for iterate presence is the single line '* Iterate logs: {found|missing}'. Any additional iterate-related details are advisory and must not change consumer logic.
 - The diagnostics publisher expects the iterate job to upload a single artifact named `iterate-logs-${run_id}-${run_attempt}` that contains the `iterate/_temp/` payload plus the job summary. Missing that artifact yields '* Iterate logs: missing'.
+- The pre-flight iterate gate intentionally fails when NDJSON inputs are missing; do not "fix" that failure. The later NDJSON summary (cache+real) is the real verdict once results land.
 
 ## Conda policy (mandatory)
 - Enforce conda-forge only.

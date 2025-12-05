@@ -55,6 +55,48 @@ class IterateStatusLineTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _validate_iterate_status_line(sample)
 
+    def test_markdown_explains_pre_flight_iterate_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp) / "diag"
+            gate_root = diag_root / "_artifacts" / "iterate"
+            gate_root.mkdir(parents=True, exist_ok=True)
+            gate_path = gate_root / "iterate_gate.json"
+            gate_path.write_text(
+                '{"stage": "iterate-gate", "proceed": false, "missing_inputs": ["tests~test-results.ndjson"]}',
+                encoding="utf-8",
+            )
+
+            context = Context(
+                diag=diag_root,
+                artifacts=diag_root / "_artifacts",
+                artifacts_override=None,
+                downloaded_iter_root=None,
+                repo="owner/repo",
+                branch="main",
+                sha="abc123",
+                run_id="555",
+                run_attempt="1",
+                run_url="https://example.invalid/run",
+                short_sha="abc1234",
+                inventory_b64=None,
+                batch_run_id=None,
+                batch_run_attempt=None,
+                site=None,
+            )
+
+            markdown = _build_markdown(
+                context,
+                None,
+                None,
+                "2025-01-02T03:04:05Z",
+                "2025-01-01T21:04:05-06:00",
+                None,
+                None,
+                None,
+            )
+
+            self.assertIn("Pre-flight iterate gate fails when NDJSON inputs are missing", markdown)
+
 
 class ReloadLinkTest(unittest.TestCase):
     def test_markdown_includes_reload_cache_buster(self) -> None:

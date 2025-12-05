@@ -3146,6 +3146,9 @@ def _build_markdown(
         missing_inputs = gate_data.get("missing_inputs") or []
         missing_line = ", ".join(str(item) for item in missing_inputs) if missing_inputs else "none"
         lines.append(f"- Gate missing inputs: {missing_line}")
+        lines.append(
+            "  - Pre-flight iterate gate fails when NDJSON inputs are missing; the NDJSON summary below is the real verdict once rows exist."
+        )
 
     if inputs_info:
         inputs_root, input_files = inputs_info
