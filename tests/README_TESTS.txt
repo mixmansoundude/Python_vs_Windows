@@ -29,6 +29,7 @@ Optional dynamic pass (needs any Python: Miniconda base, py.exe, or system pytho
 Diagnostics and iterate gate behavior:
   - tools/diag/publish_index.py renders the CI diagnostics page, including iterate metadata and NDJSON summaries.
   - The iterate gate is a pre-flight check that treats missing NDJSON inputs as a failure; the diagnostics page should surface that state clearly instead of hiding it.
+  - The pre-flight iterate snapshot is represented by a stable, expected-failing row that ensures "no NDJSON yet" counts as a failure instead of a silent pass.
   - Once NDJSON arrives (cache and real lanes), the later NDJSON summary rows represent the real verdict that governs model triggering.
 
 Bootstrap self-tests:
