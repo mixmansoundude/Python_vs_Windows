@@ -78,6 +78,14 @@ This repository serves as a proof of concept of this new approach.
   (`HP_ALLOW_VENV_FALLBACK=1`) and, as a last resort, a system Python run-only mode (`HP_ALLOW_SYSTEM_FALLBACK=1`). These
   keep the Prime Directive intact by doing whatever it takes to run your `.py` entry point, and `env.mode` rows in the
   NDJSON log record which path executed.
+- Why Miniconda instead of only venv?
+  - Conda/Miniconda is the primary, tested path used in CI with pinned channels and reproducible solver behavior.
+  - venv is a pragmatic fallback for networks or hosts where Conda cannot be installed or downloaded; it is not the main
+    contract.
+  - Many users already have a Conda installer cached, so exercising the Miniconda path keeps the real-world fast path
+    healthy.
+  - The fast path (reusing `dist/<envname>.exe` when non-helper sources are unchanged) sits on top of either provider,
+    whether the env originated from Conda or venv.
 - Channels policy (determinism and legal-friction avoidance):
   - Before any updates or installs, force **community conda-forge only**:
     ```

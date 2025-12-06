@@ -759,8 +759,9 @@ jobs:
         shell: pwsh
         run: |
           $flag = '${{ steps.verdict.outputs.has_failures }}'
-          "### Iterate gate" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "### Iterate gate (pre-flight snapshot - expected has_failures:true while NDJSONs are missing)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
           "- has_failures: $flag" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "This snapshot ensures missing tests~test-results.ndjson / ci_test_results.ndjson are treated as failures so empty streams never pass; later gates reflect the real NDJSON rows." | Out-File -Append $env:GITHUB_STEP_SUMMARY
           if (Test-Path 'iterate_gate.json') {
             '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
             Get-Content -Raw 'iterate_gate.json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
@@ -2938,6 +2939,8 @@ jobs:
             $bundle = "https://$($parts[0]).github.io/$($parts[1])/diag/$Run-$Att/"
             "### Diagnostics bundle" | Out-File -Append $env:GITHUB_STEP_SUMMARY
             "- [$bundle]($bundle)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            $cacheBusted = "${bundle}index.html?v=$Run"
+            "- Diagnostics site (cache-busted): $cacheBusted" | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
 
       - uses: actions/configure-pages@v4
