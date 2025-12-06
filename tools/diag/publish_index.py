@@ -3147,7 +3147,7 @@ def _build_markdown(
         missing_line = ", ".join(str(item) for item in missing_inputs) if missing_inputs else "none"
         lines.append(f"- Gate missing inputs: {missing_line}")
         lines.append(
-            "  - Pre-flight iterate gate fails when NDJSON inputs are missing; the NDJSON summary below is the real verdict once rows exist."
+            "  - Pre-flight iterate gate intentionally fails with has_failures:true while NDJSON inputs are empty so blank snapshots never pass; the later Iterate gate once NDJSON rows exist is the real verdict."
         )
 
     if inputs_info:
@@ -3580,8 +3580,16 @@ def _write_html(
         html.append("</ul>")
         html.append("</section>")
 
+    preflight_gate_note = None
+    if gate_data:
+        preflight_gate_note = (
+            "Pre-flight iterate gate intentionally fails with has_failures:true while NDJSON inputs are empty so blank snapshots never pass; the later Iterate gate once NDJSON rows exist is the real verdict."
+        )
+
     render_pairs("Metadata", metadata_pairs)
     render_pairs("Status", status_pairs)
+    if preflight_gate_note:
+        html.append(f"<p><em>{_escape_html(preflight_gate_note)}</em></p>")
 
     html.append("<section>")
     html.append("<h2>Quick links</h2>")
