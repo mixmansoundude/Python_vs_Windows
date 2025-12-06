@@ -1985,6 +1985,22 @@ jobs:
           # derived requirement: keep CI aligned with the shared patch engine in tools/apply_patch.py.
           if python tools/apply_patch.py < _ctx/fix.patch; then
             staged=0
+            staged_list=()
+            skipped_list=()
+            note_path="_ctx/notes.txt"
+            mkdir -p "$(dirname "$note_path")"
+            if [ ! -e "$note_path" ]; then
+              : > "$note_path"
+            fi
+
+            should_stage() {
+              case "$1" in
+                _ctx/*|_iter/*|_artifacts/*|_mirrors/*|__pycache__/*|.pytest_cache/*) return 1 ;;
+                *.log|~*.log|*.ndjson|~*.ndjson|*.html) return 1 ;;
+              esac
+              return 0
+            }
+
             # derived requirement: limit staging to actual repository edits so scratch context
             # workspaces (_ctx, _iter) remain ephemeral and never pollute commits.
             while IFS= read -r line; do
@@ -1997,27 +2013,44 @@ jobs:
                   if [[ -z "$candidate" ]]; then
                     continue
                   fi
-                  if [[ "$candidate" == _ctx/* || "$candidate" == _iter/* ]]; then
+                  if ! should_stage "$candidate"; then
                     skip=1
                     break
                   fi
                 done
                 if [[ "$skip" -eq 1 ]]; then
+                  skipped_list+=("$old -> $new")
                   continue
                 fi
                 git add -- "$old" "$new"
+                staged_list+=("$old" "$new")
                 staged=1
                 continue
               fi
               if [[ -z "$path" ]]; then
                 continue
               fi
-              if [[ "$path" == _ctx/* || "$path" == _iter/* ]]; then
+              if ! should_stage "$path"; then
+                skipped_list+=("$path")
                 continue
               fi
               git add -- "$path"
+              staged_list+=("$path")
               staged=1
             done < <(git status --porcelain)
+
+            if [ ${#staged_list[@]} -eq 0 ]; then
+              printf 'staged_paths=none\n' >> "$note_path"
+            else
+              printf 'staged_paths=%s\n' "$(printf '%s;' "${staged_list[@]}" | sed 's/;$//')" >> "$note_path"
+            fi
+
+            if [ ${#skipped_list[@]} -eq 0 ]; then
+              printf 'skipped_paths=none\n' >> "$note_path"
+            else
+              printf 'skipped_paths=%s\n' "$(printf '%s;' "${skipped_list[@]}" | sed 's/;$//')" >> "$note_path"
+            fi
+
             if [ "$staged" -eq 0 ]; then
               printf 'patch_apply=no_changes\n' >> _ctx/notes.txt
             else
