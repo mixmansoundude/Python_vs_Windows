@@ -1,0 +1,6 @@
+{"pass":true,"desc":"harness init","id":"self.harness.started"}
+{"pass":true,"desc":"state=no_python_files","id":"self.bootstrap.state","details":{"path":"D:\\a\\Python_vs_Windows\\Python_vs_Windows\\tests\\~selftest_empty\\~bootstrap.status.json","state":"no_python_files","exitCode":0,"pyFiles":0}}
+{"pass":true,"desc":"Empty repo emits the no-python console lines","id":"self.empty_repo.msg","details":{"logExists":true,"missing":[]}}
+{"details":{"exitCode":0,"command":"\"D:\\a\\Python_vs_Windows\\Python_vs_Windows\\tests\\~envsmoke\\.venv\\Scripts\\python.exe\" \"app.py\" > \"~run.out.txt\" 2> \"~run.err.txt\""},"desc":"Miniconda bootstrap + environment creation","id":"self.env.smoke.conda","pass":true}
+{"details":{"exitCode":0,"tokenFound":true,"haveRunOut":true,"command":"\"D:\\a\\Python_vs_Windows\\Python_vs_Windows\\tests\\~envsmoke\\.venv\\Scripts\\python.exe\" \"app.py\" > \"~run.out.txt\" 2> \"~run.err.txt\""},"desc":"App runs in created environment","id":"self.env.smoke.run","pass":true}
+{"details":{"exitCode":0,"fastPath":false,"pyInstallerLines":2,"command":"cmd /c .\\run_setup.bat (envsmoke bootstrap)"},"desc":"Second run reuses existing EXE (fast path)","id":"self.env.fastpath.secondRun","pass":false}

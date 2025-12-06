@@ -868,7 +868,7 @@ rem derived requirement: helper payloads (~*.py) update frequently; exclude them
 rem from the fast path freshness check so existing EXEs can still be reused.
 for /f "usebackq delims=" %%T in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$exe = '%HP_FAST_EXE%';" ^
-  "$src = Get-ChildItem -File -Filter '*.py' ^| Where-Object { $_.Name -notlike '~*.py' } ^| Sort-Object LastWriteTimeUtc -Descending ^| Select-Object -First 1;" ^
+  "$src = Get-ChildItem -File -Filter '*.py' | Where-Object { $_.Name -notlike '~*.py' } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1;" ^
   "if (-not $src) { exit 1 }" ^
   "if (-not (Test-Path $exe)) { exit 1 }" ^
   "$exeTime = (Get-Item $exe).LastWriteTimeUtc;" ^
