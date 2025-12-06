@@ -36,6 +36,9 @@ Bootstrap self-tests:
     and verifies both the no-Python and stub bootstrap paths while capturing logs for CI summaries.
   * `tests\selftests.ps1` replays the empty-repo bootstrap log to confirm the console prints `Python file count: 0`
     and `No Python files detected; skipping environment bootstrap.`; CI fails if these lines disappear.
+  * `tests\selfapps_envsmoke.ps1` now runs `run_setup.bat` twice in the same `tests\~envsmoke` folder: the first pass
+    builds the environment and EXE, and the second pass exercises the EXE fast path (unchanged sources reuse the
+    existing `dist\_envsmoke.exe`).
 
 Artifacts written:
   tests\extracted\~*.py   (helpers extracted from run_setup.bat)
