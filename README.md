@@ -227,6 +227,10 @@ A branch with zero Python files still counts as healthy when:
 - Static checks succeed (PASS count equals total checks, FAIL 0).
 - `tests/selftests.ps1` confirms the bootstrap log still prints `Python file count: 0` and `No Python files detected; skipping environment bootstrap.` so CI never relies on exit-code remapping to spot regressions.
 
+### Diagnostics and Iterate gate snapshots
+- The diagnostics run-summary page shows a **pre-flight Iterate gate** entry that snapshots the NDJSON inputs before iterate runs. That snapshot is expected to report `has_failures: true` while `tests~test-results.ndjson` and `ci_test_results.ndjson` are still empty so blank inputs cannot pass silently.
+- The later Iterate gate summary (after iterate has produced NDJSON rows) is the real gate verdict; use it to judge pass/fail once results exist.
+
 ---
 
 ## Contributing
