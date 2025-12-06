@@ -127,7 +127,7 @@ to fill remaining gaps quickly.
 
 - Attempt to produce a **PyInstaller one-file EXE** after setup.
 - Name the EXE exactly the env name (equals the folder name).
-- Fast path: if sources are unchanged since the last EXE build, detect early and run the existing EXE.
+- Fast path: if sources are unchanged since the last EXE build, detect early and run the existing EXE. Fast path freshness is determined by comparing the EXE timestamp against non-helper *.py files under the working directory (recursively), ignoring infrastructure directories like .git, .github, dist, .venv, __pycache__, etc.
 
 ---
 

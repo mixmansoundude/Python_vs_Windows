@@ -859,8 +859,42 @@ rem Append same line to setup log
 rem If we also need an absolute path for execution, set HP_ENTRY elsewhere
 rem and keep the echo outside any ( ... ) block.
 exit /b 0
+:try_fast_exe
+set "HP_FASTPATH_USED="
+set "HP_FAST_EXE="
+set "HP_FAST_EXE_PATH="
+if "%PYCOUNT%"=="0" exit /b 0
+set "HP_FAST_EXE=dist\%ENVNAME%.exe"
+if not exist "%HP_FAST_EXE%" exit /b 0
+set "HP_FAST_EXE_PATH=%HP_FAST_EXE%"
+set "HP_FASTPATH_TOKEN="
+rem derived requirement: verify the existing EXE is fresher than any non-helper source under the working directory.
+for /f "usebackq delims=" %%T in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$exe = '%HP_FAST_EXE_PATH%';" ^
+  "$infraPattern = '(?i)(^|[\\/])(\.git|\.github|dist|\.venv|__pycache__|\.conda)([\\/]|$)';" ^
+  "$sources = Get-ChildItem -Recurse -File -Filter '*.py' | Where-Object { $_.FullName -notmatch $infraPattern -and $_.Name -notlike '~*.py' };" ^
+  "if (-not $sources) { exit 1 }" ^
+  "$latest = ($sources | Sort-Object -Property LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc;" ^
+  "$exeTime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc;" ^
+  "if ($exeTime -ge $latest) { 'fresh' }"`)
+do set "HP_FASTPATH_TOKEN=%%T"
+if /I "%HP_FASTPATH_TOKEN%"=="fresh" (
+  set "HP_FASTPATH_USED=1"
+)
+if not defined HP_FASTPATH_USED exit /b 0
+call :log "[INFO] Fast path: reusing %HP_FAST_EXE%"
+>> "%LOG%" echo Fast path command: "%HP_FAST_EXE%" ^> "~run.out.txt" 2^> "~run.err.txt"
+"%HP_FAST_EXE%" 1> "~run.out.txt" 2> "~run.err.txt"
+set "HP_SMOKE_RC=%ERRORLEVEL%"
+call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
+if not "%HP_SMOKE_RC%"=="0" call :die "[ERROR] Fast path EXE execution failed."
+exit /b 0
 :run_entry_smoke
 call :record_chosen_entry "%HP_ENTRY%"
+set "HP_FASTPATH_USED="
+set "HP_SMOKE_RC="
+call :try_fast_exe
+if defined HP_FASTPATH_USED goto :run_entry_after_smoke
 call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
 rem derived requirement: execute the smoke command inline so cmd, not our logging, owns redirection parsing.
 >> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
@@ -868,6 +902,7 @@ rem derived requirement: execute the smoke command inline so cmd, not our loggin
 set "HP_SMOKE_RC=%ERRORLEVEL%"
 call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
 if not "%HP_SMOKE_RC%"=="0" call :die "[ERROR] Entry script execution failed."
+:run_entry_after_smoke
 rem derived requirement: the CI harness inspects the breadcrumb log to flag missing entries.
 set "HP_BREADCRUMB=~entry1_bootstrap.log"
 if exist "tests\~entry1\" set "HP_BREADCRUMB=tests\~entry1\~entry1_bootstrap.log"
@@ -884,12 +919,20 @@ if exist "%HP_BREADCRUMB%" (
 if "%HP_ENV_MODE%"=="system" (
   call :log "[INFO] System fallback: skipping PyInstaller packaging."
 ) else (
-  "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
-  "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
-  if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
-  if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
-  call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+  if defined HP_FASTPATH_USED (
+    call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
+  ) else (
+    "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
+    "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+    if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
+    if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
+    call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+  )
 )
+set "HP_FAST_EXE="
+set "HP_FAST_EXE_PATH="
+set "HP_FASTPATH_USED="
+set "HP_FASTPATH_TOKEN="
 exit /b 0
 :write_pipreqs_summary
 if "%HP_JOB_SUMMARY%"=="" exit /b 0
