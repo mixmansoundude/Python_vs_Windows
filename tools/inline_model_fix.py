@@ -1,5 +1,9 @@
 """Inline model quick-fix helper for batch-check workflow.
 
+Invoked only by `.github/workflows/batch-check.yml` job "Model quick-fix
+(inline)" using the `gpt-codex-5` inline call path; no alternate model flows
+remain.
+
 This utility orchestrates two phases:
 
 1. ``stage`` — download the current run's logs, locate the first failing step,
