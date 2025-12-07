@@ -58,13 +58,20 @@ New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
 Copy-Item -Path $BatchPath -Destination $stubDir -Force
 $stubScriptPath = Join-Path $stubDir 'hello_stub.py'
 Set-Content -Path $stubScriptPath -Value 'print("hello-from-stub")' -Encoding ASCII
-Push-Location $stubDir
-try {
-  cmd /c "call run_setup.bat > ~stub_bootstrap.log 2>&1"
-  $stubExit = $LASTEXITCODE
-} finally {
-  Pop-Location
+function Invoke-StubSetup {
+  param(
+    [string]$LogName
+  )
+  Push-Location $stubDir
+  try {
+    cmd /c "call run_setup.bat > $LogName 2>&1"
+    return $LASTEXITCODE
+  } finally {
+    Pop-Location
+  }
 }
+$stubBootstrapLog = '~stub_bootstrap.log'
+$stubExit = Invoke-StubSetup -LogName $stubBootstrapLog
 if ($stubExit -ne 0) {
   throw "Stub bootstrap failed with exit code $stubExit"
 }
@@ -83,7 +90,62 @@ if ($stubStatus.exitCode -ne 0) {
   throw "Expected exitCode 0 for stub bootstrap"
 }
 $stubEnvName = Split-Path -Leaf $stubDir
-$stubPython = Join-Path $MiniRoot ("envs\$stubEnvName\python.exe")
+$stubExePath = Join-Path $stubDir ("dist\\$stubEnvName.exe")
+if (-not (Test-Path $stubExePath)) {
+  throw "Stub bootstrap missing dist/$stubEnvName.exe after initial build"
+}
+$stubFastLogName = '~stub_fastpath.log'
+$fastExit = Invoke-StubSetup -LogName $stubFastLogName
+if ($fastExit -ne 0) {
+  throw "Stub fast-path bootstrap failed with exit code $fastExit"
+}
+$fastLogPath = Join-Path $stubDir $stubFastLogName
+$fastLog = Get-Content -LiteralPath $fastLogPath -Encoding ASCII
+$fastReuseTag = "Fast path: reusing dist\\$stubEnvName.exe"
+$fastSkipTag = "Fast path: skipping PyInstaller rebuild for existing dist\\$stubEnvName.exe"
+if (-not ($fastLog | Where-Object { $_ -like "*${fastReuseTag}*" })) {
+  throw "Fast-path run did not report EXE reuse"
+}
+if (-not ($fastLog | Where-Object { $_ -like "*${fastSkipTag}*" })) {
+  throw "Fast-path run did not report PyInstaller skip"
+}
+$pyInstallerProducedTag = "PyInstaller produced dist\\$stubEnvName.exe"
+$firstTwoLogs = @(
+  (Join-Path $stubDir $stubBootstrapLog),
+  $fastLogPath
+)
+$pyInstallerHits = 0
+foreach ($path in $firstTwoLogs) {
+  if (Test-Path $path) {
+    $pyInstallerHits += (Select-String -Path $path -SimpleMatch $pyInstallerProducedTag -AllMatches).Matches.Count
+  }
+}
+if ($pyInstallerHits -ne 1) {
+  throw "Expected exactly one PyInstaller build across initial + fast-path runs"
+}
+Add-Content -Path $stubScriptPath -Value '# touched to force rebuild' -Encoding ASCII
+[System.IO.File]::SetLastWriteTimeUtc($stubScriptPath, [DateTime]::UtcNow)
+$stubRebuildLog = '~stub_rebuild.log'
+$rebuildExit = Invoke-StubSetup -LogName $stubRebuildLog
+if ($rebuildExit -ne 0) {
+  throw "Stub rebuild bootstrap failed with exit code $rebuildExit"
+}
+$rebuildLogPath = Join-Path $stubDir $stubRebuildLog
+$rebuildProducedHits = (Select-String -Path $rebuildLogPath -SimpleMatch $pyInstallerProducedTag -AllMatches).Matches.Count
+if ($rebuildProducedHits -lt 1) {
+  throw "Rebuild run did not report PyInstaller producing the EXE"
+}
+$totalProducedHits = 0
+foreach ($path in $firstTwoLogs + $rebuildLogPath) {
+  if (Test-Path $path) {
+    $totalProducedHits += (Select-String -Path $path -SimpleMatch $pyInstallerProducedTag -AllMatches).Matches.Count
+  }
+}
+if ($totalProducedHits -ne 2) {
+  throw "Expected exactly two PyInstaller builds after touching hello_stub.py"
+}
+$summary.Add('stub fast path + rebuild: PASS')
+$stubPython = Join-Path $MiniRoot ("envs\\$stubEnvName\\python.exe")
 $pythonCmd = $null
 $pythonArgs = @('-u','hello_stub.py')
 if (Test-Path $stubPython) {
