@@ -35,6 +35,7 @@ Diagnostics and iterate gate behavior:
 Bootstrap self-tests:
   * `tests\selftest.ps1` creates throwaway folders (`~selftest_empty`, `~selftest_stub`), runs `run_setup.bat`,
     and verifies both the no-Python and stub bootstrap paths while capturing logs for CI summaries.
+    - The stub path exercises the EXE fast path across initial build, unchanged reuse, and a rebuild after touching hello_stub.py.
   * `tests\selftests.ps1` replays the empty-repo bootstrap log to confirm the console prints `Python file count: 0`
     and `No Python files detected; skipping environment bootstrap.`; CI fails if these lines disappear.
 
