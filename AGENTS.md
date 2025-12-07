@@ -11,6 +11,11 @@ Operating policy for automated agents (Codex, Copilot, others).
 - Enforce the single-bootstrapper Prime Directive: `run_setup.bat` must work when dropped next to the app with no committed helper files.
 - The CI harness may use additional scripts or assets under `tests/` to inspect the bootstrapper, but those files cannot be required for the real bootstrap flow.
 
+### Current agents
+- One CI auto-patcher exists: `.github/workflows/batch-check.yml` job **Model quick-fix (inline)** calling `tools/inline_model_fix.py` with the `gpt-codex-5` model via the inline Models.OpenAI request.
+- Iterate and the diagnostics publisher consume NDJSON/git results only; they do not invoke models directly.
+- Older “online model” or extra inline experiments were removed; extend this single path for any future model work.
+
 ## Do not
 - Do not weaken tests or remove logging/artifacts.
 - Do not delete or skip checks to obtain a green build.

@@ -14,7 +14,8 @@ from __future__ import annotations
 # Legacy note: NDJSON helpers (such as tools/ensure_ndjson_sources.ps1) and the
 # older gate/model-context utilities were removed after commit
 # 6779602bcc98cbc8e2acd4e03d02579a86b73538 in favor of the inline/iterate gate
-# and this publisher.
+# and this publisher. It now expects iterate artifacts and the inline quick-fix
+# outputs only; no other model gates remain.
 
 import argparse
 import base64
