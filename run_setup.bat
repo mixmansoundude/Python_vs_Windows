@@ -54,6 +54,22 @@ call :log "[INFO] Python file count: %PYCOUNT%"
 set "HP_CONDA_PROBE_STATUS=skipped"
 set "HP_CONDA_PROBE_REASON=not-requested"
 
+rem --- Very top EXE fast path: reuse dist\%ENVNAME%.exe when sources are unchanged ---
+set "HP_FASTPATH_USED="
+if not "%PYCOUNT%"=="0" (
+  call :try_fast_exe
+)
+if defined HP_FASTPATH_USED (
+  rem derived requirement: if the EXE fast path succeeds, treat bootstrap as complete without touching Conda/venv.
+  call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
+  if /I "%HP_BOOTSTRAP_STATE%"=="ok" (
+    call :write_status ok 0 %PYCOUNT%
+  ) else (
+    call :write_status "%HP_BOOTSTRAP_STATE%" 0 %PYCOUNT%
+  )
+  goto :success
+)
+
 if "%PYCOUNT%"=="0" (
   rem derived requirement: CI observed the Miniconda probe firing before the
   rem empty-repo fast path, so keep this guard ahead of any network/bootstrap
