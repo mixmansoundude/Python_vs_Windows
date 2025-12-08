@@ -89,6 +89,8 @@ if ($stubStatus.pyFiles -lt 1) {
 if ($stubStatus.exitCode -ne 0) {
   throw "Expected exitCode 0 for stub bootstrap"
 }
+$condaOnlyFlag = [Environment]::GetEnvironmentVariable('HP_FORCE_CONDA_ONLY')
+$condaOnly = -not [string]::IsNullOrWhiteSpace($condaOnlyFlag)
 $stubEnvName = Split-Path -Leaf $stubDir
 $stubExePath = Join-Path $stubDir ("dist\\$stubEnvName.exe")
 if (-not (Test-Path $stubExePath)) {
@@ -146,17 +148,46 @@ if ($totalProducedHits -ne 2) {
 }
 $summary.Add('stub fast path + rebuild: PASS')
 $stubPython = Join-Path $MiniRoot ("envs\\$stubEnvName\\python.exe")
+$stubBootstrapLogPath = Join-Path $stubDir $stubBootstrapLog
+$condaLogLines = @()
+if (Test-Path $stubBootstrapLogPath) {
+  $condaLogLines = Get-Content -LiteralPath $stubBootstrapLogPath -Encoding ASCII
+}
+if ($condaOnly) {
+  if (-not (Test-Path $stubPython)) {
+    throw "Conda-only lane expected interpreter at $stubPython"
+  }
+  if (-not $condaLogLines) {
+    throw "Conda-only lane missing stub bootstrap log for validation"
+  }
+  $condaOnlySignal = $condaLogLines | Where-Object { $_ -match 'Conda-only flag active: fallbacks disabled' }
+  if (-not $condaOnlySignal) {
+    throw "Conda-only lane did not log fallbacks-disabled marker"
+  }
+  $venvFallbackNoise = $condaLogLines | Where-Object { $_ -match 'venv fallback' -or $_ -match 'system fallback' }
+  if ($venvFallbackNoise) {
+    throw "Conda-only lane should not report venv/system fallback attempts"
+  }
+  $interpLine = $condaLogLines | Where-Object { $_ -match '^Interpreter:' }
+  if (-not ($interpLine | Where-Object { $_ -like "*${stubPython}*" })) {
+    throw "Conda-only lane expected Interpreter line to reference $stubPython"
+  }
+}
 $pythonCmd = $null
 $pythonArgs = @('-u','hello_stub.py')
-if (Test-Path $stubPython) {
+if ($condaOnly) {
   $pythonCmd = $stubPython
-}
-if (-not $pythonCmd) {
-  if (Get-Command python -ErrorAction SilentlyContinue) {
-    $pythonCmd = 'python'
-  } elseif (Get-Command py -ErrorAction SilentlyContinue) {
-    $pythonCmd = 'py'
-    $pythonArgs = @('-3','-u','hello_stub.py')
+} else {
+  if (Test-Path $stubPython) {
+    $pythonCmd = $stubPython
+  }
+  if (-not $pythonCmd) {
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+      $pythonCmd = 'python'
+    } elseif (Get-Command py -ErrorAction SilentlyContinue) {
+      $pythonCmd = 'py'
+      $pythonArgs = @('-3','-u','hello_stub.py')
+    }
   }
 }
 if (-not $pythonCmd) {
@@ -181,4 +212,7 @@ if (-not ($runLog | Where-Object { $_ -match 'hello-from-stub' })) {
   throw "Stub python execution did not emit hello-from-stub"
 }
 $summary.Add('stub bootstrap + python run: PASS')
+if ($condaOnly) {
+  $summary.Add('stub bootstrap Conda-only lane: PASS')
+}
 $summary | Set-Content -Path $summaryPath -Encoding ASCII

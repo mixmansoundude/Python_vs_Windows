@@ -86,6 +86,8 @@ This repository serves as a proof of concept of this new approach.
     healthy.
   - The fast path (reusing `dist/<envname>.exe` when non-helper sources are unchanged) sits on top of either provider,
     whether the env originated from Conda or venv.
+  - CI includes a dedicated Conda-only self-test slice to surface Conda regressions early while keeping the opt-in venv
+    fallback available for local networks that need it.
 - Channels policy (determinism and legal-friction avoidance):
   - Before any updates or installs, force **community conda-forge only**:
     ```

@@ -27,6 +27,14 @@ if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
 set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
 if not defined HP_MINICONDA_MIN_BYTES set "HP_MINICONDA_MIN_BYTES=5000000"
 set "HP_MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
+rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
+set "HP_FORCE_CONDA_ONLY=%HP_FORCE_CONDA_ONLY%"
+if "%HP_FORCE_CONDA_ONLY%"=="" set "HP_FORCE_CONDA_ONLY="
+if "%HP_FORCE_CONDA_ONLY%"=="1" (
+  set "HP_ALLOW_VENV_FALLBACK="
+  set "HP_ALLOW_SYSTEM_FALLBACK="
+  call :log "[INFO] Conda-only flag active: fallbacks disabled."
+)
 if not defined HP_NDJSON if exist "%CD%\tests" set "HP_NDJSON=%CD%\tests\~test-results.ndjson"
 if defined HP_NDJSON (
   for %%F in ("%HP_NDJSON%") do (
@@ -551,6 +559,11 @@ exit /b 0
 :handle_conda_failure
 set "HP_FAIL_MSG=%~1"
 if not "%HP_FAIL_MSG%"=="" call :log "%HP_FAIL_MSG%"
+if "%HP_FORCE_CONDA_ONLY%"=="1" (
+  rem derived requirement: the dedicated conda CI slice must surface conda failures instead of hiding behind venv/system fallbacks.
+  call :log "[INFO] Conda-only mode: skipping fallback attempts."
+  exit /b 0
+)
 if "%HP_ALLOW_VENV_FALLBACK%"=="1" (
   call :try_venv_fallback
   if not errorlevel 1 (
