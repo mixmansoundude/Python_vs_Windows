@@ -83,6 +83,11 @@ $stubStatus = Get-Content -LiteralPath $stubStatusPath -Encoding ASCII -Raw | Co
 if ($stubStatus.state -ne 'ok') {
   throw "Expected ok state for stub bootstrap"
 }
+$stubEnvName = Split-Path -Leaf $stubDir
+$stubEnvNameNormalized = $stubEnvName -replace '[^A-Za-z0-9_-]', '_'
+if ([string]::IsNullOrWhiteSpace($stubEnvNameNormalized) -or $stubEnvNameNormalized.Trim('_').Length -eq 0) {
+  $stubEnvNameNormalized = 'env'
+}
 if ($stubStatus.pyFiles -lt 1) {
   throw "Expected at least one python file for stub bootstrap"
 }
@@ -91,10 +96,9 @@ if ($stubStatus.exitCode -ne 0) {
 }
 $condaOnlyFlag = [Environment]::GetEnvironmentVariable('HP_FORCE_CONDA_ONLY')
 $condaOnly = -not [string]::IsNullOrWhiteSpace($condaOnlyFlag)
-$stubEnvName = Split-Path -Leaf $stubDir
-$stubExePath = Join-Path $stubDir ("dist\\$stubEnvName.exe")
+$stubExePath = Join-Path $stubDir ("dist\\$stubEnvNameNormalized.exe")
 if (-not (Test-Path $stubExePath)) {
-  throw "Stub bootstrap missing dist/$stubEnvName.exe after initial build"
+  throw "Stub bootstrap missing dist/$stubEnvNameNormalized.exe after initial build"
 }
 $stubFastLogName = '~stub_fastpath.log'
 $fastExit = Invoke-StubSetup -LogName $stubFastLogName
@@ -103,15 +107,15 @@ if ($fastExit -ne 0) {
 }
 $fastLogPath = Join-Path $stubDir $stubFastLogName
 $fastLog = Get-Content -LiteralPath $fastLogPath -Encoding ASCII
-$fastReuseTag = "Fast path: reusing dist\\$stubEnvName.exe"
-$fastSkipTag = "Fast path: skipping PyInstaller rebuild for existing dist\\$stubEnvName.exe"
+$fastReuseTag = "Fast path: reusing dist\\$stubEnvNameNormalized.exe"
+$fastSkipTag = "Fast path: skipping PyInstaller rebuild for existing dist\\$stubEnvNameNormalized.exe"
 if (-not ($fastLog | Where-Object { $_ -like "*${fastReuseTag}*" })) {
   throw "Fast-path run did not report EXE reuse"
 }
 if (-not ($fastLog | Where-Object { $_ -like "*${fastSkipTag}*" })) {
   throw "Fast-path run did not report PyInstaller skip"
 }
-$pyInstallerProducedTag = "PyInstaller produced dist\\$stubEnvName.exe"
+$pyInstallerProducedTag = "PyInstaller produced dist\\$stubEnvNameNormalized.exe"
 $firstTwoLogs = @(
   (Join-Path $stubDir $stubBootstrapLog),
   $fastLogPath
@@ -148,6 +152,7 @@ if ($totalProducedHits -ne 2) {
 }
 $summary.Add('stub fast path + rebuild: PASS')
 $stubPython = Join-Path $MiniRoot ("envs\\$stubEnvName\\python.exe")
+$stubPython = Join-Path $MiniRoot ("envs\\$stubEnvNameNormalized\\python.exe")
 $stubBootstrapLogPath = Join-Path $stubDir $stubBootstrapLog
 $condaLogLines = @()
 if (Test-Path $stubBootstrapLogPath) {
