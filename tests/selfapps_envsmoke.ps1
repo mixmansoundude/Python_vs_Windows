@@ -9,6 +9,12 @@ if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-N
 function Write-NdjsonRow {
     param([hashtable]$Row)
 
+    $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
+    if ($lane -and -not $Row.ContainsKey('lane')) {
+        # derived requirement: add the CI lane to envsmoke NDJSON rows so conda-full diagnostics wake iterate reliably.
+        $Row['lane'] = $lane
+    }
+
     $json = $Row | ConvertTo-Json -Compress -Depth 8
     Add-Content -LiteralPath $nd -Value $json -Encoding Ascii
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii

@@ -1731,7 +1731,8 @@ def call_phase(args: argparse.Namespace) -> None:
     initial_cap = token_plan[0]["cap"]
     initial_effort = token_plan[0]["effort"]
 
-    timeout_sec = int(os.environ.get("INLINE_MODEL_TIMEOUT", "300"))
+    # derived requirement: give the inline model a ~10 minute budget so conda-full wakeups are not cut off by short timeouts.
+    timeout_sec = int(os.environ.get("INLINE_MODEL_TIMEOUT", "600"))
     retry_delays = [0, 5]
     attachments_uploaded = len(file_ids)
 
@@ -1797,7 +1798,12 @@ def call_phase(args: argparse.Namespace) -> None:
                     ctx_dir,
                     f"openai_call_exception={last_error_label or 'unknown_failure'}",
                 )
-                return None, last_reason or "request_exception"
+                if last_error_label and "timeout" in last_error_label:
+                    print(
+                        f"[WARN] Inline model call timed out after {timeout_sec} seconds; giving up for this run.",
+                        file=sys.stderr,
+                    )
+                return None, last_reason or last_error_label or "request_exception"
 
             if response.status_code == 400:
                 body_snippet = response.text[:400]

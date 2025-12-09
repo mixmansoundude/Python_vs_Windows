@@ -45,6 +45,7 @@ jobs:
     env:
       HP_PIPREQS_VERSION: 0.5.0
       GH_TOKEN: ${{ github.token }}
+      HP_CI_LANE: ${{ matrix.mode }}
 
     steps:
       - uses: actions/checkout@v4
@@ -1868,6 +1869,7 @@ jobs:
           $report = [ordered]@{
             fallback_result = $fallback
             has_failures = $has
+            lane_names = @($lanes | Where-Object { $_ -and $_.lane } | ForEach-Object { [string]$_.lane } | Sort-Object -Unique)
             lanes = @($lanes)
             verdict_files = if ($files) { $files.FullName } else { @() }
           }
@@ -1883,6 +1885,14 @@ jobs:
             '```json' | Out-File -Append $env:GITHUB_STEP_SUMMARY
             Get-Content -Raw $path | Out-File -Append $env:GITHUB_STEP_SUMMARY
             '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            try {
+              $data = Get-Content -Raw $path | ConvertFrom-Json -ErrorAction Stop
+              if ($data -and $data.lane_names) {
+                "- lanes: $($data.lane_names -join ', ')" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+              }
+            } catch {
+              Write-Host ("WARN: unable to parse selftest-gate.json for lane list: {0}" -f $_.Exception.Message)
+            }
           } else {
             '- No gate summary generated.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
@@ -1976,6 +1986,8 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          INLINE_MODEL_TIMEOUT: 600
+        timeout-minutes: 10
         run: |
           python tools/inline_model_fix.py call --model gpt-5-codex
       - name: Apply model patch

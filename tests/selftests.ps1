@@ -22,6 +22,11 @@ function Write-NdjsonRow {
     param([hashtable]$Row)
 
     if (-not $Row) { return }
+    $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
+    if ($lane -and -not $Row.ContainsKey('lane')) {
+        # derived requirement: keep the conda-full diagnostic lane visible to iterate by tagging NDJSON rows with the lane name.
+        $Row['lane'] = $lane
+    }
     $json = $Row | ConvertTo-Json -Compress
     Add-Content -LiteralPath $resultsPath -Value $json -Encoding Ascii
     Add-Content -LiteralPath $ciResultsPath -Value $json -Encoding Ascii

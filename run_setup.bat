@@ -31,6 +31,7 @@ rem derived requirement: CI's conda-only lane must surface conda regressions ins
 set "HP_FORCE_CONDA_ONLY=%HP_FORCE_CONDA_ONLY%"
 if "%HP_FORCE_CONDA_ONLY%"=="" set "HP_FORCE_CONDA_ONLY="
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
+  rem derived requirement: conda-full diagnostics must avoid venv/system fallbacks so iterate can flag real conda regressions.
   set "HP_ALLOW_VENV_FALLBACK="
   set "HP_ALLOW_SYSTEM_FALLBACK="
   call :log "[INFO] Conda-only flag active: fallbacks disabled."

@@ -55,6 +55,12 @@ if ($null -ne $pyFileCount -and $pyFileCount -ne 1) {
 function Write-NdjsonRow {
     param([hashtable]$Row)
 
+    $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
+    if ($lane -and -not $Row.ContainsKey('lane')) {
+        # derived requirement: keep lane attribution (cache/real/conda-full) inside the NDJSON rows for iterate visibility.
+        $Row['lane'] = $lane
+    }
+
     $json = $Row | ConvertTo-Json -Compress -Depth 8
     Add-Content -LiteralPath $nd -Value $json -Encoding Ascii
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
