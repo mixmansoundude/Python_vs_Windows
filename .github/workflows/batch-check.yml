@@ -1987,7 +1987,9 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           INLINE_MODEL_TIMEOUT: 600
-        timeout-minutes: 10
+        # derived requirement: keep the outer workflow ceiling above the per-request timeout so
+        # the token escalator can run multiple attempts without hanging the job indefinitely.
+        timeout-minutes: 30
         run: |
           python tools/inline_model_fix.py call --model gpt-5-codex
       - name: Apply model patch

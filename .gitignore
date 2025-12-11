@@ -11,6 +11,8 @@ __pycache__/
 *.tmp
 *.bak
 *.swp
+batchcheck_failing.txt
+batchcheck_fail-debug.txt
 
 # Virtual environments
 .env/

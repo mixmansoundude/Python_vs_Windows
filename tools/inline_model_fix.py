@@ -1731,7 +1731,8 @@ def call_phase(args: argparse.Namespace) -> None:
     initial_cap = token_plan[0]["cap"]
     initial_effort = token_plan[0]["effort"]
 
-    # derived requirement: give the inline model a ~10 minute budget so conda-full wakeups are not cut off by short timeouts.
+    # derived requirement: give the inline model a ~10 minute budget so conda-full wakeups are not cut off by short timeouts;
+    # the workflow step keeps a wider ceiling (~30 minutes) so the token escalator can run without hanging forever.
     timeout_sec = int(os.environ.get("INLINE_MODEL_TIMEOUT", "600"))
     retry_delays = [0, 5]
     attachments_uploaded = len(file_ids)
@@ -1780,9 +1781,13 @@ def call_phase(args: argparse.Namespace) -> None:
                         getattr(exc, "__cause__", None), RemoteDisconnected
                     ):
                         append_note(ctx_dir, "openai_call_exception=remote_disconnected")
-                        return None, "remote_disconnected"
+                        last_error_label = "remote_disconnected"
+                        last_reason = "remote_disconnected"
+                        continue
                     append_note(ctx_dir, f"openai_call_exception={exc}")
-                    return None, "request_exception"
+                    last_error_label = "request_exception"
+                    last_reason = "request_exception"
+                    continue
                 if resp.status_code >= 500:
                     last_error_label = f"http_{resp.status_code}"
                     last_reason = f"http_{resp.status_code}"
@@ -1853,6 +1858,7 @@ def call_phase(args: argparse.Namespace) -> None:
     accepted_patch_details: Optional[Tuple[str, Optional[str], Optional[dict], Optional[str]]] = None
     final_status_note: Optional[str] = None
     final_reason_note: Optional[str] = None
+    transient_exhausted_reason: Optional[str] = None
 
     def record_final_status() -> None:
         if final_status_note and final_reason_note:
@@ -1895,6 +1901,22 @@ def call_phase(args: argparse.Namespace) -> None:
         if response_json is None:
             escalate_reason = error_reason or "request_exception"
             attempt_status = "aborted"
+            transient_failure = escalate_reason in {"remote_disconnected", "request_exception"}
+            if transient_failure:
+                # derived requirement: transient network issues should not short-circuit the token
+                # escalator; continue through the remaining tiers before giving up.
+                attempt_status = "retrying" if idx + 1 < len(token_plan) else "aborted"
+                append_note(
+                    ctx_dir,
+                    (
+                        "openai_call_transient_error="
+                        f"{escalate_reason} plan_index={idx} max_output_tokens={cap_desc}"
+                    ),
+                )
+                if idx + 1 < len(token_plan):
+                    log_attempt(attempt_no, cap_desc, escalate_reason, attempt_status)
+                    continue
+                transient_exhausted_reason = escalate_reason
             log_attempt(attempt_no, cap_desc, escalate_reason, attempt_status)
             final_status_note = "no_commit"
             final_reason_note = escalate_reason
@@ -1971,6 +1993,11 @@ def call_phase(args: argparse.Namespace) -> None:
         break
 
     if response_json is None:
+        if transient_exhausted_reason:
+            append_note(
+                ctx_dir,
+                f"openai_call_transient_failures_exhausted={transient_exhausted_reason}",
+            )
         status_value = "error"
         reason_value = error_reason or "request_exception"
         if error_reason == "remote_disconnected":
