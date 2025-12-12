@@ -524,6 +524,17 @@ goto :after_env_bootstrap
 if defined HP_CI_SKIP_ENV goto :after_env_skip
 call :determine_entry
 if errorlevel 1 call :die "[ERROR] Could not determine entry point"
+set "HP_ENTRY_FALLBACK="
+if "%HP_ENTRY%"=="" if "%PYCOUNT%"=="1" (
+  rem derived requirement: the conda-only CI lane was skipping PyInstaller when the helper crumb failed in stub runs.
+  rem Keep a minimal single-source fallback so ~selftest_stub still builds dist\%ENVNAME%.exe even if the helper output is blank.
+  for /f "delims=" %%E in ('dir /b /a-d *.py 2^>nul ^| findstr /V /B "~"') do if not defined HP_ENTRY set "HP_ENTRY=%%E"
+  if defined HP_ENTRY set "HP_ENTRY_FALLBACK=1"
+)
+if defined HP_ENTRY_FALLBACK (
+  set "HP_ENTRY_FALLBACK="
+  call :log "[INFO] Helper crumb missing; using single-source fallback entry: %HP_ENTRY%"
+)
 if "%HP_ENTRY%"=="" (
   call :log "[INFO] No entry script detected; skipping PyInstaller packaging."
 ) else (
