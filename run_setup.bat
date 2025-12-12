@@ -156,6 +156,7 @@ if not defined CONDA_BAT (
   if "%HP_CONDA_DL_RC%"=="0" (
     "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D="%MINICONDA_ROOT%"
     if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
+    if "%HP_CONDA_DL_RC%"=="0" call :wait_for_conda_ready
   )
   if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
   call :select_conda_bat
@@ -566,6 +567,19 @@ set "CONDA_BAT="
 if exist "%CONDA_MAIN%" set "CONDA_BAT=%CONDA_MAIN%"
 if not defined CONDA_BAT if exist "%CONDA_ALT%" set "CONDA_BAT=%CONDA_ALT%"
 if defined CONDA_BAT if not exist "%CONDA_BAT%" set "CONDA_BAT="
+exit /b 0
+
+:wait_for_conda_ready
+if exist "%CONDA_MAIN%" exit /b 0
+if exist "%CONDA_ALT%" exit /b 0
+set "HP_CONDA_WAIT_MAX=%HP_CONDA_WAIT_MAX%"
+if not defined HP_CONDA_WAIT_MAX set "HP_CONDA_WAIT_MAX=30"
+call :log "[INFO] Waiting for Miniconda install to finish..."
+for /l %%W in (1,1,%HP_CONDA_WAIT_MAX%) do (
+  ping -n 2 127.0.0.1 >nul
+  if exist "%CONDA_MAIN%" exit /b 0
+  if exist "%CONDA_ALT%" exit /b 0
+)
 exit /b 0
 
 :handle_conda_failure
