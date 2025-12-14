@@ -156,7 +156,10 @@ if not defined CONDA_BAT (
   if "%HP_CONDA_DL_RC%"=="0" (
     "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D="%MINICONDA_ROOT%"
     if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
-    if "%HP_CONDA_DL_RC%"=="0" call :wait_for_conda_ready
+    if "%HP_CONDA_DL_RC%"=="0" (
+      call :wait_for_conda_ready
+      if errorlevel 1 set "HP_CONDA_DL_RC=1"
+    )
   )
   if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
   call :select_conda_bat
@@ -573,14 +576,18 @@ exit /b 0
 if exist "%CONDA_MAIN%" exit /b 0
 if exist "%CONDA_ALT%" exit /b 0
 set "HP_CONDA_WAIT_MAX=%HP_CONDA_WAIT_MAX%"
-if not defined HP_CONDA_WAIT_MAX set "HP_CONDA_WAIT_MAX=30"
+if not defined HP_CONDA_WAIT_MAX set "HP_CONDA_WAIT_MAX=600"
+rem derived requirement: some Windows CI runs spend many minutes finalizing Miniconda;
+rem keep polling conda.bat before treating the install as failed.
 call :log "[INFO] Waiting for Miniconda install to finish..."
 for /l %%W in (1,1,%HP_CONDA_WAIT_MAX%) do (
-  ping -n 2 127.0.0.1 >nul
   if exist "%CONDA_MAIN%" exit /b 0
   if exist "%CONDA_ALT%" exit /b 0
+  timeout /t 2 /nobreak >nul
 )
-exit /b 0
+rem derived requirement: treat a missing conda.bat after the wait as an install failure
+call :log "[INFO] conda.bat still missing after wait; treating install as failed."
+exit /b 1
 
 :handle_conda_failure
 set "HP_FAIL_MSG=%~1"
