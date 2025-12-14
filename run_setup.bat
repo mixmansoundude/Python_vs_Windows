@@ -126,6 +126,12 @@ call :select_conda_bat
 
 rem Install Miniconda if conda.bat is missing
 if not defined CONDA_BAT (
+  if exist "%MINICONDA_ROOT%" (
+    if not exist "%CONDA_MAIN%" if not exist "%CONDA_ALT%" (
+      call :log "[INFO] Removing stale Miniconda root: %MINICONDA_ROOT%"
+      rd /s /q "%MINICONDA_ROOT%" >nul 2>&1
+    )
+  )
   echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
   set "HP_CONDA_DL_RC=0"
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -1071,8 +1077,12 @@ if "%RC%"=="" set "RC=1"
 echo %date% %time% %MSG%
 >> "%LOG%" echo [%date% %time%] %MSG%
 call :write_status "error" %RC% %PYCOUNT%
-exit /b %RC%
+set "HP_FATAL_RC=%RC%"
+goto :fatal_exit
 :rotate_log
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 "if (Test-Path '%LOG%') { if ((Get-Item '%LOG%').Length -gt 10485760) { Move-Item -Force '%LOG%' '%LOGPREV%' } }"
 exit /b 0
+:fatal_exit
+if "%HP_FATAL_RC%"=="" set "HP_FATAL_RC=1"
+exit /b %HP_FATAL_RC%
