@@ -160,8 +160,12 @@ if not defined CONDA_BAT (
   if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
   if not exist "%TEMP%\miniconda.exe" set "HP_CONDA_DL_RC=1"
   if "%HP_CONDA_DL_RC%"=="0" (
-    "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D="%MINICONDA_ROOT%"
+  "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D="%MINICONDA_ROOT%"
     if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
+    if "%HP_CONDA_DL_RC%"=="3010" (
+      call :log "[INFO] Miniconda installer returned 3010 (reboot requested); treating as success."
+      set "HP_CONDA_DL_RC=0"
+    )
     if "%HP_CONDA_DL_RC%"=="0" (
       call :wait_for_conda_ready
       if errorlevel 1 set "HP_CONDA_DL_RC=1"
