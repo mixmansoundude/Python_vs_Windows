@@ -168,7 +168,12 @@ if not defined CONDA_BAT (
     )
   )
   if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
-  call :select_conda_bat
+  if "%HP_CONDA_DL_RC%"=="0" (
+    call :select_conda_bat
+  ) else (
+    rem derived requirement: surface a timed-out Miniconda install instead of racing into env creation.
+    set "CONDA_BAT="
+  )
 )
 
 if not defined CONDA_BAT (
@@ -579,6 +584,7 @@ if defined CONDA_BAT if not exist "%CONDA_BAT%" set "CONDA_BAT="
 exit /b 0
 
 :wait_for_conda_ready
+set "HP_CONDA_WAIT_RC=1"
 if exist "%CONDA_MAIN%" exit /b 0
 if exist "%CONDA_ALT%" exit /b 0
 set "HP_CONDA_WAIT_MAX=%HP_CONDA_WAIT_MAX%"
@@ -593,7 +599,7 @@ for /l %%W in (1,1,%HP_CONDA_WAIT_MAX%) do (
 )
 rem derived requirement: treat a missing conda.bat after the wait as an install failure
 call :log "[INFO] conda.bat still missing after wait; treating install as failed."
-exit /b 1
+exit /b %HP_CONDA_WAIT_RC%
 
 :handle_conda_failure
 set "HP_FAIL_MSG=%~1"
