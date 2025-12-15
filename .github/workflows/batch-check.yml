@@ -763,6 +763,13 @@ jobs:
           "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           $verdict | ConvertTo-Json -Compress -Depth 8 | Out-File -Encoding UTF8 'iterate_gate.json'
 
+      - name: Enforce NDJSON failures for gated lanes
+        if: ${{ always() && (matrix.mode == 'real' || matrix.mode == 'conda-full') && steps.verdict.outputs.has_failures == 'true' }}
+        shell: bash
+        run: |
+          echo "NDJSON indicates failures; failing gated lane."
+          exit 1
+
       - name: Append iterate gate to Summary
         if: ${{ always() }}
         shell: pwsh
