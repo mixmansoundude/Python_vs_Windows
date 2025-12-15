@@ -99,10 +99,13 @@ Set-Content -LiteralPath (Join-Path $app 'app.py') -Value @'
 import colorama
 print("smoke-ok")
 '@ -NoNewline
-
-if (Test-Path -LiteralPath $setupLog) {
-    Remove-Item -LiteralPath $setupLog -Force
-}
+Set-Content -LiteralPath (Join-Path $app 'app.py') -Value @'
+try:
+    import colorama
+except ModuleNotFoundError:
+    colorama = None
+print("smoke-ok")
+'@ -NoNewline
 
 $prevVenvFallback = if (Test-Path Env:HP_ALLOW_VENV_FALLBACK) { $env:HP_ALLOW_VENV_FALLBACK } else { $null }
 $env:HP_ALLOW_VENV_FALLBACK = '1'
