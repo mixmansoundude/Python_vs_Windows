@@ -182,12 +182,7 @@ if not defined CONDA_BAT (
   )
 )
 
-if not defined CONDA_BAT (
-  set "HP_ENV_READY="
-  call :handle_conda_failure "conda.bat not found after bootstrap."
-  if defined HP_ENV_READY goto :after_env_mode_selection
-  call :die "[ERROR] conda.bat not found after bootstrap."
-)
+if not defined CONDA_BAT goto :conda_missing_after_bootstrap
 
 set "PATH=%MINICONDA_ROOT%\condabin;%MINICONDA_ROOT%\Scripts;%MINICONDA_ROOT%\Library\bin;%MINICONDA_ROOT%;%PATH%"
 where conda >> "%LOG%" 2>&1 || (
@@ -208,6 +203,17 @@ python -V >> "%LOG%" 2>&1 || (
   if defined HP_ENV_READY goto :after_env_mode_selection
   call :die "[ERROR] 'python -V' failed after bootstrap."
 )
+
+goto :after_conda_check
+
+:conda_missing_after_bootstrap
+rem derived requirement: fail closed when conda.bat stays missing after the installer wait to avoid misleading success states.
+set "HP_ENV_READY="
+call :handle_conda_failure "conda.bat not found after bootstrap."
+if defined HP_ENV_READY goto :after_env_mode_selection
+call :die "[ERROR] conda.bat not found after bootstrap."
+
+:after_conda_check
 
 rem === Channel policy (determinism & legal) ===================================
 call "%CONDA_BAT%" config --name base --add channels conda-forge
@@ -607,7 +613,7 @@ for /l %%W in (1,1,%HP_CONDA_WAIT_MAX%) do (
 )
 rem derived requirement: treat a missing conda.bat after the wait as an install failure
 call :log "[INFO] conda.bat still missing after wait; treating install as failed."
-exit /b %HP_CONDA_WAIT_RC%
+exit /b 1
 
 :handle_conda_failure
 set "HP_FAIL_MSG=%~1"
