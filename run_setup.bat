@@ -119,6 +119,8 @@ rem === Miniconda location (non-admin) =========================================
 set "MC=%PUBLIC%\Documents\Miniconda3"
 set "CONDA_MAIN=%MC%\condabin\conda.bat"
 set "CONDA_ALT=%MC%\Scripts\conda.bat"
+set "CONDA_MAIN_EXE=%MC%\condabin\conda.exe"
+set "CONDA_ALT_EXE=%MC%\Scripts\conda.exe"
 set "MINICONDA_ROOT=%MC%"
 set "CONDA_BASE_PY=%MINICONDA_ROOT%\python.exe"
 
@@ -584,6 +586,8 @@ exit /b 0
 set "CONDA_BAT="
 if exist "%CONDA_MAIN%" set "CONDA_BAT=%CONDA_MAIN%"
 if not defined CONDA_BAT if exist "%CONDA_ALT%" set "CONDA_BAT=%CONDA_ALT%"
+if not defined CONDA_BAT if defined CONDA_MAIN_EXE if exist "%CONDA_MAIN_EXE%" set "CONDA_BAT=%CONDA_MAIN_EXE%"
+if not defined CONDA_BAT if defined CONDA_ALT_EXE if exist "%CONDA_ALT_EXE%" set "CONDA_BAT=%CONDA_ALT_EXE%"
 if defined CONDA_BAT if not exist "%CONDA_BAT%" set "CONDA_BAT="
 exit /b 0
 
