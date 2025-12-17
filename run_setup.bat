@@ -162,7 +162,7 @@ if not defined CONDA_BAT (
   if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
   if not exist "%TEMP%\miniconda.exe" set "HP_CONDA_DL_RC=1"
   if "%HP_CONDA_DL_RC%"=="0" (
-  "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D="%MINICONDA_ROOT%"
+    start "" /wait "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D="%MINICONDA_ROOT%"
     if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
     if "%HP_CONDA_DL_RC%"=="3010" (
       call :log "[INFO] Miniconda installer returned 3010 (reboot requested); treating as success."
@@ -558,6 +558,12 @@ if "%HP_ENTRY%"=="" if "%PYCOUNT%"=="1" (
   for /f "delims=" %%E in ('dir /b /a-d *.py 2^>nul ^| findstr /V /B "~"') do if not defined HP_ENTRY set "HP_ENTRY=%%E"
   if defined HP_ENTRY set "HP_ENTRY_FALLBACK=1"
 )
+if not "%HP_ENTRY%"=="" if "%PYCOUNT%"=="1" if not exist "%HP_ENTRY%" (
+  rem derived requirement: stub self-tests must always build an EXE even when the helper crumb is missing or invalid.
+  set "HP_ENTRY="
+  for /f "delims=" %%E in ('dir /b /a-d *.py 2^>nul ^| findstr /V /B "~"') do if not defined HP_ENTRY set "HP_ENTRY=%%E"
+  if defined HP_ENTRY set "HP_ENTRY_FALLBACK=1"
+)
 if defined HP_ENTRY_FALLBACK (
   set "HP_ENTRY_FALLBACK="
   call :log "[INFO] Helper crumb missing; using single-source fallback entry: %HP_ENTRY%"
@@ -598,22 +604,25 @@ if defined CONDA_BAT if not exist "%CONDA_BAT%" set "CONDA_BAT="
 exit /b 0
 
 :wait_for_conda_ready
-set "HP_CONDA_WAIT_RC=1"
-if exist "%CONDA_MAIN%" exit /b 0
-if exist "%CONDA_ALT%" exit /b 0
+if exist "%CONDA_MAIN%" goto :conda_wait_ready
+if exist "%CONDA_ALT%" goto :conda_wait_ready
 set "HP_CONDA_WAIT_MAX=%HP_CONDA_WAIT_MAX%"
 if not defined HP_CONDA_WAIT_MAX set "HP_CONDA_WAIT_MAX=600"
 rem derived requirement: some Windows CI runs spend many minutes finalizing Miniconda;
 rem keep polling conda.bat before treating the install as failed.
 call :log "[INFO] Waiting for Miniconda install to finish..."
 for /l %%W in (1,1,%HP_CONDA_WAIT_MAX%) do (
-  if exist "%CONDA_MAIN%" exit /b 0
-  if exist "%CONDA_ALT%" exit /b 0
+  if exist "%CONDA_MAIN%" goto :conda_wait_ready
+  if exist "%CONDA_ALT%" goto :conda_wait_ready
   timeout /t 2 /nobreak >nul
 )
 rem derived requirement: treat a missing conda.bat after the wait as an install failure
+rem derived requirement: use an explicit non-zero exit here to avoid masking install timeouts.
 call :log "[INFO] conda.bat still missing after wait; treating install as failed."
 exit /b 1
+
+:conda_wait_ready
+exit /b 0
 
 :handle_conda_failure
 set "HP_FAIL_MSG=%~1"

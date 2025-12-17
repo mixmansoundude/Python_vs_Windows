@@ -2005,6 +2005,12 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
+          note_path="_ctx/notes.txt"
+          if [ -f "$note_path" ] && grep -q "openai_patch=invalid_unified_diff_missing_file_headers" "$note_path"; then
+            echo "Skipping patch apply due to invalid unified diff format."
+            printf 'patch_apply=skipped_invalid_patch_format\n' >> "$note_path"
+            exit 0
+          fi
           if [ ! -s _ctx/fix.patch ]; then
             echo "No patch produced."
             exit 0
