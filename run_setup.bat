@@ -26,7 +26,7 @@ set "HP_PIPREQS_VERSION=%HP_PIPREQS_VERSION%"
 if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
 set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
 if not defined HP_MINICONDA_MIN_BYTES set "HP_MINICONDA_MIN_BYTES=5000000"
-set "HP_MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
+set "HP_MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-py311_24.5.0-0-Windows-x86_64.exe"
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 set "HP_FORCE_CONDA_ONLY=%HP_FORCE_CONDA_ONLY%"
 if "%HP_FORCE_CONDA_ONLY%"=="" set "HP_FORCE_CONDA_ONLY="
@@ -162,7 +162,7 @@ if not defined CONDA_BAT (
   if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
   if not exist "%TEMP%\miniconda.exe" set "HP_CONDA_DL_RC=1"
   if "%HP_CONDA_DL_RC%"=="0" (
-  "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D="%MINICONDA_ROOT%"
+    start "" /wait "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D="%MINICONDA_ROOT%"
     if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
     if "%HP_CONDA_DL_RC%"=="3010" (
       call :log "[INFO] Miniconda installer returned 3010 (reboot requested); treating as success."
@@ -555,6 +555,12 @@ set "HP_ENTRY_FALLBACK="
 if "%HP_ENTRY%"=="" if "%PYCOUNT%"=="1" (
   rem derived requirement: the conda-only CI lane was skipping PyInstaller when the helper crumb failed in stub runs.
   rem Keep a minimal single-source fallback so ~selftest_stub still builds dist\%ENVNAME%.exe even if the helper output is blank.
+  for /f "delims=" %%E in ('dir /b /a-d *.py 2^>nul ^| findstr /V /B "~"') do if not defined HP_ENTRY set "HP_ENTRY=%%E"
+  if defined HP_ENTRY set "HP_ENTRY_FALLBACK=1"
+)
+if not "%HP_ENTRY%"=="" if "%PYCOUNT%"=="1" if not exist "%HP_ENTRY%" (
+  rem derived requirement: stub self-tests must always build an EXE even when the helper crumb is missing or invalid.
+  set "HP_ENTRY="
   for /f "delims=" %%E in ('dir /b /a-d *.py 2^>nul ^| findstr /V /B "~"') do if not defined HP_ENTRY set "HP_ENTRY=%%E"
   if defined HP_ENTRY set "HP_ENTRY_FALLBACK=1"
 )
