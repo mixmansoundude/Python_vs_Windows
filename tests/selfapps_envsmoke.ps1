@@ -95,10 +95,8 @@ $app = Join-Path $here '~envsmoke'
 $setupLog = Join-Path $app '~setup.log'
 New-Item -ItemType Directory -Force -Path $app | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $app -Force
-Set-Content -LiteralPath (Join-Path $app 'app.py') -Value @'
-import colorama
-print("smoke-ok")
-'@ -NoNewline
+# derived requirement: keep envsmoke tolerant of missing optional deps while still
+# emitting the expected token for downstream parsers.
 Set-Content -LiteralPath (Join-Path $app 'app.py') -Value @'
 try:
     import colorama

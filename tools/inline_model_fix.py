@@ -1706,6 +1706,13 @@ def call_phase(args: argparse.Namespace) -> None:
         append_note(ctx_dir, "inlined_skip=none reason=no_candidates")
         full_prompt = prompt_text
 
+    # derived requirement: persist the exact prompt text seen by the model so diagnostics
+    # can surface the final input without relying on remote logs.
+    try:
+        (ctx_dir / "model_prompt.txt").write_text(full_prompt, encoding="utf-8")
+    except OSError:
+        append_note(ctx_dir, "model_prompt_write_failed=true")
+
     payload = {"model": args.model, "input": full_prompt}
     # NOTE: Do not send ``temperature`` to the Responses API for GPT-5-Codex;
     # runs like 19285065673-1 prove the endpoint rejects it with HTTP 400
@@ -2067,6 +2074,13 @@ def call_phase(args: argparse.Namespace) -> None:
         rationale_summary = rationale_raw
     if rationale_note:
         append_note(ctx_dir, f"model_rationale_json={rationale_note}")
+    if rationale_summary:
+        # derived requirement: surface the model's reasoning alongside the prompt so future
+        # diagnostics do not rely on parsing response.json in the field.
+        try:
+            (ctx_dir / "model_rationale.txt").write_text(rationale_summary, encoding="utf-8")
+        except OSError:
+            append_note(ctx_dir, "model_rationale_write_failed=true")
     if format_issue == "invalid_rationale_json":
         append_note(ctx_dir, "model_rationale_invalid_json=true")
     if format_issue == "invalid_sequence":

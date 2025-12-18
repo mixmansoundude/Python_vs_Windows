@@ -329,6 +329,15 @@ def _ensure_diag_log_placeholders(context: Context) -> None:
         except OSError:
             iterate_present = False
 
+    if not iterate_present:
+        try:
+            for candidate in logs_dir.glob(f"iterate*-{context.run_id}-*.zip"):
+                if candidate.is_file() and candidate.stat().st_size > 0:
+                    iterate_present = True
+                    break
+        except OSError:
+            iterate_present = False
+
     iterate_missing = logs_dir / "iterate.MISSING.txt"
     if iterate_present:
         try:
@@ -1763,8 +1772,8 @@ def _safe_file_size(path: Path) -> Optional[int]:
 
 
 # Professional note: raise the mirror cap so current repo files (e.g., batch-check.yml)
-# publish without truncation while keeping a bounded 512 KiB ceiling for safety.
-MIRROR_TEXT_LIMIT = 512 * 1024
+# publish without truncation while keeping a bounded 1 MiB ceiling for safety.
+MIRROR_TEXT_LIMIT = 1024 * 1024
 MIRROR_SIZE_LIMIT = 100 * 1024 * 1024
 
 _MIRROR_REGISTRY: Dict[Path, Path] = {}
