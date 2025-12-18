@@ -2044,6 +2044,34 @@ def call_phase(args: argparse.Namespace) -> None:
     if format_issue == "json_only":
         append_note(ctx_dir, "openai_patch=json_only")
 
+    patch = patch or ""
+    invalid_unified = False
+    if patch.strip():
+        lines = patch.splitlines()
+        has_from = any(line.startswith("--- ") for line in lines)
+        has_to = any(line.startswith("+++ ") for line in lines)
+        if not (has_from and has_to):
+            # derived requirement: CI logs captured iterate emitting hunk-only diffs that
+            # tools/apply_patch.py cannot consume. Treat missing file headers as an invalid
+            # unified diff so downstream steps can skip apply/commit cleanly instead of
+            # failing late without breadcrumbs.
+            invalid_unified = True
+
+    if invalid_unified:
+        append_note(ctx_dir, "openai_patch=invalid_unified_diff_missing_file_headers")
+        _record_decision(
+            ctx_dir,
+            status="error",
+            reason="invalid_patch_format",
+            response_payload=response_json,
+            patch_text="",
+            model=args.model,
+            rationale=rationale_summary,
+            patch_count=current_patch_count,
+        )
+        record_final_status()
+        return
+
     patch_count = 1 if patch.strip() else 0
     total_patch_count = current_patch_count + patch_count
 

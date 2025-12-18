@@ -26,7 +26,7 @@ set "HP_PIPREQS_VERSION=%HP_PIPREQS_VERSION%"
 if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
 set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
 if not defined HP_MINICONDA_MIN_BYTES set "HP_MINICONDA_MIN_BYTES=5000000"
-set "HP_MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-py311_24.5.0-0-Windows-x86_64.exe"
+set "HP_MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 set "HP_FORCE_CONDA_ONLY=%HP_FORCE_CONDA_ONLY%"
 if "%HP_FORCE_CONDA_ONLY%"=="" set "HP_FORCE_CONDA_ONLY="
