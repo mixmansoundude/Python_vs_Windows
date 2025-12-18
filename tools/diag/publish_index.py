@@ -1762,7 +1762,9 @@ def _safe_file_size(path: Path) -> Optional[int]:
         return None
 
 
-MIRROR_TEXT_LIMIT = 64_000
+# Professional note: raise the mirror cap so current repo files (e.g., batch-check.yml)
+# publish without truncation while keeping a bounded 512 KiB ceiling for safety.
+MIRROR_TEXT_LIMIT = 512 * 1024
 MIRROR_SIZE_LIMIT = 100 * 1024 * 1024
 
 _MIRROR_REGISTRY: Dict[Path, Path] = {}

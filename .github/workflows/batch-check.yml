@@ -459,7 +459,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: iterate-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: iterate-logs-${{ github.run_id }}-${{ matrix.mode }}
           path: _ctx/**
           if-no-files-found: warn
           overwrite: false
@@ -1305,7 +1305,7 @@ jobs:
           # _ctx directly so diagnostics stay truthful without waiting on remote fetches.
           $iterateRoot = Join-Path $pub 'iterate'
           New-Item -Force -ItemType Directory -Path $iterateRoot | Out-Null
-          $iterateDir = Join-Path $iterateRoot ("iterate-logs-{0}-{1}" -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+          $iterateDir = Join-Path $iterateRoot ("iterate-logs-{0}-{1}" -f $env:GITHUB_RUN_ID, $env:HP_CI_LANE)
           if (Test-Path -LiteralPath '_ctx') {
             New-Item -Force -ItemType Directory -Path $iterateDir | Out-Null
             Copy-Item -Path (Join-Path '_ctx' '*') -Destination $iterateDir -Recurse -Force
@@ -1996,7 +1996,7 @@ jobs:
           INLINE_MODEL_TIMEOUT: 600
         # derived requirement: keep the outer workflow ceiling above the per-request timeout so
         # the token escalator can run multiple attempts without hanging the job indefinitely.
-        timeout-minutes: 30
+        timeout-minutes: 45
         run: |
           python tools/inline_model_fix.py call --model gpt-5-codex
       - name: Apply model patch
@@ -2116,7 +2116,7 @@ jobs:
             mkdir -p _ctx
           fi
           mkdir -p logs
-          zip_path="logs/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip"
+          zip_path="logs/iterate-logs-${{ github.run_id }}-inline.zip"
           rm -f "$zip_path"
           # derived requirement: include decision breadcrumbs so diagnostics enumerate
           # the iterate payload even when the model cannot return a diff mid-run.
@@ -2178,11 +2178,11 @@ jobs:
             echo "_ctx MISSING"
           fi
       - name: Upload iterate artifact
-        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        if: ${{ always() && needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
-          path: logs/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip
+          name: iterate-logs-${{ github.run_id }}-inline
+          path: logs/iterate-logs-${{ github.run_id }}-inline.zip
           if-no-files-found: warn
           retention-days: 30
 
@@ -2264,7 +2264,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          name: iterate-logs-${{ github.run_id }}-inline
           # derived requirement: match the inline helper's artifact name exactly so diagnostics always
           # fetch the iterate payload and avoid wildcard drift when job/mode prefixes change again.
           merge-multiple: true
@@ -2434,7 +2434,7 @@ jobs:
           src="${{ steps.prep.outputs.ARTIFACTS }}/iterate"
           log_dir="${{ steps.prep.outputs.DIAG }}/logs"
           mkdir -p "$log_dir"
-          zip_path="$log_dir/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip"
+          zip_path="$log_dir/iterate-logs-${{ github.run_id }}-inline.zip"
           rm -f "$zip_path"
           if [ -d "$src" ]; then
             shopt -s dotglob nullglob
@@ -2457,7 +2457,7 @@ jobs:
           $siteRoot = "${{ steps.prep.outputs.SITE }}"
           $siteIter = Join-Path $siteRoot '_artifacts/iterate'
           $publicIterRoot = Join-Path $siteRoot 'iterate'
-          $publicIterDir = Join-Path $publicIterRoot ("iterate-logs-{0}-{1}" -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+          $publicIterDir = Join-Path $publicIterRoot ("iterate-logs-{0}-inline" -f $env:GITHUB_RUN_ID)
 
           if (Test-Path -LiteralPath $diagIter) {
             New-Item -ItemType Directory -Path $siteIter -Force | Out-Null

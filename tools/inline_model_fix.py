@@ -1732,8 +1732,13 @@ def call_phase(args: argparse.Namespace) -> None:
     initial_effort = token_plan[0]["effort"]
 
     # derived requirement: give the inline model a ~10 minute budget so conda-full wakeups are not cut off by short timeouts;
-    # the workflow step keeps a wider ceiling (~30 minutes) so the token escalator can run without hanging forever.
+    # the workflow step keeps a wider ceiling so the token escalator can run without hanging forever.
     timeout_sec = int(os.environ.get("INLINE_MODEL_TIMEOUT", "600"))
+    # Professional note: iterate run 20307402896-1 showed the outer workflow timed out before the
+    # Responses API call finished. Impose a separate wall timeout to fail fast and still upload
+    # diagnostics instead of letting the step hit the job ceiling.
+    wall_timeout_sec = int(os.environ.get("INLINE_MODEL_WALL_TIMEOUT", "720"))
+    deadline = time.monotonic() + wall_timeout_sec
     retry_delays = [0, 5]
     attachments_uploaded = len(file_ids)
 
@@ -1743,7 +1748,7 @@ def call_phase(args: argparse.Namespace) -> None:
             "openai_call_payload=responses.input_no_attachments "
             f"files_inlined={inlined_count} bytes={context_bytes} "
             f"attachments_uploaded={attachments_uploaded} "
-            f"timeout={timeout_sec} retries={len(token_plan) - 1} "
+            f"timeout={timeout_sec} wall_timeout={wall_timeout_sec} retries={len(token_plan) - 1} "
             f"initial_max_output_tokens={initial_cap} "
             f"initial_reasoning_effort={initial_effort} "
             f"final_max_output_tokens={token_plan[-1]['cap'] or 'unbounded'}"
@@ -1757,10 +1762,35 @@ def call_phase(args: argparse.Namespace) -> None:
             last_error_label: Optional[str] = None
             last_reason: Optional[str] = "request_exception"
             for attempt, delay in enumerate(retry_delays):
+                remaining_wall = deadline - time.monotonic()
+                if remaining_wall <= 0:
+                    append_note(
+                        ctx_dir,
+                        f"openai_call_timeout_wall={wall_timeout_sec}",
+                    )
+                    print(
+                        f"[WARN] Inline model call exceeded {wall_timeout_sec} seconds; returning without a patch.",
+                        file=sys.stderr,
+                    )
+                    return None, "wall_timeout"
                 if delay:
-                    time.sleep(delay)
+                    time.sleep(min(delay, max(0.0, remaining_wall)))
+                remaining_wall = deadline - time.monotonic()
+                if remaining_wall <= 0:
+                    append_note(
+                        ctx_dir,
+                        f"openai_call_timeout_wall={wall_timeout_sec}",
+                    )
+                    print(
+                        f"[WARN] Inline model call exceeded {wall_timeout_sec} seconds; returning without a patch.",
+                        file=sys.stderr,
+                    )
+                    return None, "wall_timeout"
                 try:
-                    resp = _post_payload(current_payload, timeout_sec)
+                    resp = _post_payload(
+                        current_payload,
+                        timeout=min(timeout_sec, max(1, int(remaining_wall))),
+                    )
                 except (
                     requests.exceptions.ReadTimeout,
                     requests.exceptions.ConnectTimeout,
