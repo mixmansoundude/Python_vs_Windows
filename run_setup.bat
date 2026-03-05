@@ -741,8 +741,8 @@ exit /b 0
 set "HP_DL_PATH=~miniconda.exe"
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12" ^
-  "$ProgressPreference = 'SilentlyContinue'" ^
+  "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
+  "$ProgressPreference = 'SilentlyContinue';" ^
   "$uri = [Environment]::GetEnvironmentVariable('HP_MINICONDA_URL');" ^
   "if (-not $uri) { Write-Host '[ERROR] HP_MINICONDA_URL not set'; exit 1 }" ^
   "$out = Join-Path (Get-Location) '%HP_DL_PATH%';" ^
