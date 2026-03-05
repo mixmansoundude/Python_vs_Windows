@@ -1014,17 +1014,16 @@ if exist "%HP_BREADCRUMB%" (
   call :log "[WARN] Entry smoke missing breadcrumb: %HP_BREADCRUMB%"
 )
 if "%HP_ENV_MODE%"=="system" (
-  call :log "[INFO] System fallback: skipping PyInstaller packaging."
+  call :log "[INFO] System fallback: attempting PyInstaller packaging with system interpreter."
+)
+if defined HP_FASTPATH_USED (
+  call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
 ) else (
-  if defined HP_FASTPATH_USED (
-    call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
-  ) else (
-    "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
-    "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
-    if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
-    if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
-    call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
-  )
+  "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
+  "%HP_P_-" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+  if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
+  if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
+  call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
 )
 set "HP_FAST_EXE="
 set "HP_FAST_EXE_PATH="
