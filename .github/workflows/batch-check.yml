@@ -38,8 +38,6 @@ jobs:
           - mode: conda-full
             continue-on-error: false
     continue-on-error: ${{ matrix.continue-on-error }}
-
-    continue-on-error: ${{ matrix.continue-on-error }}
     runs-on: windows-latest
 
     outputs:
