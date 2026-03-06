@@ -34,6 +34,11 @@ jobs:
             continue-on-error: true
           - mode: real
             continue-on-error: false
+          # conda-full: third lane - no fallbacks, proves real Miniconda path works
+          - mode: conda-full
+            continue-on-error: false
+    continue-on-error: ${{ matrix.continue-on-error }}
+
     continue-on-error: ${{ matrix.continue-on-error }}
     runs-on: windows-latest
 
@@ -43,6 +48,8 @@ jobs:
     env:
       HP_PIPREQS_VERSION: 0.5.0
       GH_TOKEN: ${{ github.token }}
+      # HP_CI_LANE: tags every NDJSON row so diagnostics can filter by lane
+      HP_CI_LANE: ${{ matrix.mode }}
 
     steps:
       - uses: actions/checkout@v4
@@ -56,11 +63,19 @@ jobs:
           restore-keys: |
             win-${{ runner.os }}-py311-conda-
 
-      - name: Enable Miniconda probe (real mode)
-        if: ${{ matrix.mode == 'real' }}
+      # probe fires in both real and conda-full; cache lane skips it intentionally
+      - name: Enable Miniconda probe (real/conda-full mode)
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh
         run: |
           'HP_CI_TEST_CONDA_DL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
+      # conda-full only: clears venv/system fallbacks so a conda failure can't hide as a venv pass
+      - name: Force conda-only bootstrap
+        if: ${{ matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          'HP_FORCE_CONDA_ONLY=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       - name: Ensure CI fallbacks are off
         shell: pwsh
@@ -522,6 +537,9 @@ jobs:
             tests\~entryB\~entryB_bootstrap.log
             tests/~envsmoke/~envsmoke_bootstrap.log
             tests\~envsmoke\~envsmoke_bootstrap.log
+            # ~setup.log captures probe errors and bootstrap path (conda vs venv)
+            tests/~envsmoke/~setup.log
+            tests\~envsmoke\~setup.log
             tests/~envsmoke/~run.out.txt
             tests\~envsmoke\~run.out.txt
             tests/~setup.log
@@ -753,6 +771,14 @@ jobs:
           $value = $has.ToString().ToLowerInvariant()
           "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           $verdict | ConvertTo-Json -Compress -Depth 8 | Out-File -Encoding UTF8 'iterate_gate.json'
+
+      # closes the false-pass gap: has_failures=true was computed but never actually failed the job
+      - name: Enforce NDJSON failures for gated lanes
+        if: ${{ always() && (matrix.mode == 'real' || matrix.mode == 'conda-full') && steps.verdict.outputs.has_failures == 'true' }}
+        shell: bash
+        run: |
+          echo "NDJSON indicates failures; failing gated lane."
+          exit 1
 
       - name: Append iterate gate to Summary
         if: ${{ always() }}
