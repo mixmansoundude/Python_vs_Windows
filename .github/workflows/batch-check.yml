@@ -1988,7 +1988,9 @@ jobs:
             printf 'final_reason=workflow_cancelled\n'
           } >> "$note_path"
       - name: Call model
-        if: ${{ success() && needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' && !cancelled() }}
+        # toggle comments on these two lines to enable or disable the model.
+        # if: ${{ always() && needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        if: false
         working-directory: ${{ github.workspace }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
