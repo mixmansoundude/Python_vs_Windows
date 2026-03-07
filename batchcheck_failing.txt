@@ -1,2 +1,0 @@
-envsmoke.run
-self.env.smoke.run

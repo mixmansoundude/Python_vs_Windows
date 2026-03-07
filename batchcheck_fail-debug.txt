@@ -1,3 +1,0 @@
-fallback:_ci_artifacts/ci_test_results-selftest-cache-22757359147-1/~test-results.ndjson	0
-fallback:_ci_artifacts/ci_test_results-selftest-conda-full-22757359147-1/~test-results.ndjson	2
-fallback:_ci_artifacts/ci_test_results-selftest-real-22757359147-1/~test-results.ndjson	0
