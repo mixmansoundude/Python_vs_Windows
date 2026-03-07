@@ -1903,6 +1903,13 @@ jobs:
             '- No gate summary generated.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
 
+      - name: Fail workflow on test failures
+        if: ${{ always() && steps.aggregate.outputs.has_failures == 'true' }}
+        shell: pwsh
+        run: |
+          Write-Host "selftest-gate: has_failures=true -- failing workflow so the badge reflects real test failures"
+          exit 1
+
   model-quick-fix:
     name: Model quick-fix (inline)
     needs:
@@ -1943,13 +1950,13 @@ jobs:
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           echo "branch_slug=$slug" >> "$GITHUB_OUTPUT"
       - name: Download CI NDJSON for inline helper
-        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
         uses: actions/download-artifact@v4
         with:
           pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: _artifacts/batch-check/_ci_artifacts
       - name: Aggregate batch-check fail list
-        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
         env:
           DIAG: ${{ github.workspace }}
         run: |
@@ -1959,13 +1966,13 @@ jobs:
           install -D batchcheck_failing.txt _artifacts/batch-check/batchcheck_failing.txt
           install -D batchcheck_fail-debug.txt _artifacts/batch-check/batchcheck_fail-debug.txt
       - name: Install Python dependencies
-        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
         run: |
           python -m pip install --upgrade pip
           # derived requirement: tools/apply_patch.py imports pydantic; preinstall it so inline commits do not fail mid-run.
           python -m pip install requests pydantic
       - name: Stage iterate context
-        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
         working-directory: ${{ github.workspace }}
         run: |
           python tools/inline_model_fix.py stage \
@@ -1976,7 +1983,7 @@ jobs:
       # derived requirement: when cancellations short-circuit the inline helper, leave
       # breadcrumbs so diagnostics explain why no model diff exists.
       - name: Note cancellation before model call
-        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' && cancelled() }}
+        if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' && cancelled() }}
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |
@@ -1989,7 +1996,7 @@ jobs:
           } >> "$note_path"
       - name: Call model
         # toggle comments on these two lines to enable or disable the model.
-        # if: ${{ always() && needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        # if: ${{ always() && (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
         if: false
         working-directory: ${{ github.workspace }}
         env:
@@ -1997,7 +2004,7 @@ jobs:
         run: |
           python tools/inline_model_fix.py call --model gpt-5-codex
       - name: Apply model patch
-        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |
@@ -2095,7 +2102,7 @@ jobs:
             printf 'patch_apply=failed\n' >> _ctx/notes.txt
           fi
       - name: Package iterate context
-        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |
@@ -2169,7 +2176,7 @@ jobs:
             echo "_ctx MISSING"
           fi
       - name: Upload iterate artifact
-        if: ${{ needs['selftest-gate'].result == 'success' && needs['selftest-gate'].outputs.has_failures == 'true' }}
+        if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
