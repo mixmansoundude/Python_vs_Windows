@@ -27,6 +27,15 @@ if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
 set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
 if not defined HP_MINICONDA_MIN_BYTES set "HP_MINICONDA_MIN_BYTES=5000000"
 set "HP_MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
+
+rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
+if "%HP_FORCE_CONDA_ONLY%"=="1" (
+  rem derived requirement: conda-full diagnostics must avoid venv/system fallbacks so iterate can flag real conda regressions.
+  set "HP_ALLOW_VENV_FALLBACK="
+  set "HP_ALLOW_SYSTEM_FALLBACK="
+  call :log "[INFO] Conda-only flag active: fallbacks disabled."
+)
+
 if not defined HP_NDJSON if exist "%CD%\tests" set "HP_NDJSON=%CD%\tests\~test-results.ndjson"
 if defined HP_NDJSON (
   for %%F in ("%HP_NDJSON%") do (
@@ -145,7 +154,8 @@ if not defined CONDA_BAT (
   if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
   if not exist "%TEMP%\miniconda.exe" set "HP_CONDA_DL_RC=1"
   if "%HP_CONDA_DL_RC%"=="0" (
-    start /wait "" "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
+    REM start "" / wait "quoted\exe" is proper syntax here for strict windows runs. 
+    start "" /wait "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D="%MINICONDA_ROOT%"
     if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
   )
   if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
@@ -551,6 +561,13 @@ exit /b 0
 :handle_conda_failure
 set "HP_FAIL_MSG=%~1"
 if not "%HP_FAIL_MSG%"=="" call :log "%HP_FAIL_MSG%"
+
+if "%HP_FORCE_CONDA_ONLY%"=="1" (
+  rem derived requirement: the dedicated conda CI slice must surface conda failures instead of hiding behind venv/system fallbacks.
+  call :log "[INFO] Conda-only mode: skipping fallback attempts."
+  exit /b 0
+)
+
 if "%HP_ALLOW_VENV_FALLBACK%"=="1" (
   call :try_venv_fallback
   if not errorlevel 1 (
@@ -741,8 +758,8 @@ exit /b 0
 set "HP_DL_PATH=~miniconda.exe"
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12" ^
-  "$ProgressPreference = 'SilentlyContinue'" ^
+  "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;" ^
+  "$ProgressPreference = 'SilentlyContinue';" ^
   "$uri = [Environment]::GetEnvironmentVariable('HP_MINICONDA_URL');" ^
   "if (-not $uri) { Write-Host '[ERROR] HP_MINICONDA_URL not set'; exit 1 }" ^
   "$out = Join-Path (Get-Location) '%HP_DL_PATH%';" ^
