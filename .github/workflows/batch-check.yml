@@ -31,13 +31,10 @@ jobs:
       matrix:
         include:
           - mode: cache
-            continue-on-error: true
           - mode: real
-            continue-on-error: false
           # conda-full: third lane - no fallbacks, proves real Miniconda path works
           - mode: conda-full
-            continue-on-error: false
-    continue-on-error: ${{ matrix.continue-on-error }}
+    continue-on-error: ${{ matrix.mode == 'cache' }}
     runs-on: windows-latest
 
     outputs:
@@ -1903,11 +1900,11 @@ jobs:
             '- No gate summary generated.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
 
-      - name: Fail workflow on test failures
+      - name: Fail gate on detected test failures
         if: ${{ always() && steps.aggregate.outputs.has_failures == 'true' }}
-        shell: pwsh
+        shell: bash
         run: |
-          Write-Host "selftest-gate: has_failures=true -- failing workflow so the badge reflects real test failures"
+          echo "selftest-gate: has_failures=true -- failing workflow so badge reflects real failures."
           exit 1
 
   model-quick-fix:
