@@ -106,10 +106,11 @@ if (Test-Path -LiteralPath $setupLog) {
     Remove-Item -LiteralPath $setupLog -Force
 }
 
-# Delete stale token file before bootstrap so a leftover from a prior run cannot
-# produce a false-positive tokenFound=true if Python fails this run.
+# Delete stale files before bootstrap so leftovers from a prior run cannot
+# produce false-positive results or stale diagnostic data.
 $tokenFile = Join-Path $app '~smoke_token.txt'
 Remove-Item -LiteralPath $tokenFile -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $app '~run.err.txt') -Force -ErrorAction SilentlyContinue
 
 $prevVenvFallback = if (Test-Path Env:HP_ALLOW_VENV_FALLBACK) { $env:HP_ALLOW_VENV_FALLBACK } else { $null }
 $env:HP_ALLOW_VENV_FALLBACK = '1'
@@ -154,32 +155,77 @@ $displayCommand = if ($smokeCommand) { $smokeCommand } else { $bootstrapCommand 
 
 Check-PipreqsFailure -LogPath $setupLog -LogText $setup
 
-# TOKEN DETECTION - file-based approach (replaces all stdout-based attempts)
+# TOKEN DETECTION - history of failed approaches:
+# v1-v4: print() / flush=True / os.write() in app.py under cmd.exe 1> -> empty file
+# v8:    PowerShell & operator capturing stdout -> empty (stdout still lost)
+# v9:    app.py writes ~smoke_token.txt; run_setup.bat invokes python via cmd.exe
+# Result: STILL failed. pyStderr revealed the real cause: cmd.exe error
+# '"C:...\python.exe"' is not recognized - HP_PY has embedded quotes.
+# Python never ran. Token file never written.
 #
-# History of failed approaches, kept here so future sessions don't retry them:
-#   v1-v4: print() / flush=True in app.py under cmd.exe 1> redirect -> empty file
-#   v5:    os.write(1, b"smoke-ok\n") under cmd.exe 1> redirect -> empty file
-#   v6-v7: same under various app.py rewrites -> same result
-#   v8:    PowerShell & operator to run conda Python directly -> still empty
-#          ALSO introduced regression: guard `Test-Path $condaPy` fires in BOTH
-#          conda-full AND real lanes (both have conda via HP_CI_TEST_CONDA_DL=1),
-#          which discarded real lane's working venv-based ~run.out.txt check.
+# Root cause of v9 failure (confirmed): run_setup.bat sets HP_PY from the conda
+# env path using `set "HP_PY=%CONDA_PREFIX%\python.exe"`. Somehow HP_PY acquires
+# embedded double-quotes in the variable VALUE (not just the cmd.exe quoting
+# wrapper), causing `"%HP_PY%"` to expand to `""C:\...\python.exe""`.
+# The exact source of the embedded quotes is unknown without the bootstrap log.
 #
-# Root cause (high confidence): On Miniconda Python on GitHub Actions windows-latest,
-# the CRT fd->Windows HANDLE mapping doesn't properly inherit redirected handles
-# (from cmd.exe OR PowerShell pipes). os.write(1,...) and sys.stdout both go to
-# the original CONOUT$ console handle. Venv Python does not have this problem.
+# Also confirmed: run_setup.bat's :die uses `exit /b` (exits subroutine only,
+# not the whole cmd.exe process). So $exit is always 0 even when python fails.
 #
-# Fix: app.py writes token to ~smoke_token.txt via Python file I/O (CreateFile/
-# WriteFile - no stdout involved). We delete the file before bootstrap to prevent
-# stale-run false positives, then check for it after bootstrap succeeds.
+# FIX: After run_setup.bat exits, PS1 derives the conda Python path independently
+# using PowerShell's Join-Path (no cmd.exe quoting). If that python.exe exists,
+# PS1 runs app.py DIRECTLY via the & operator. app.py writes ~smoke_token.txt.
+# PS1 reads the token file. No cmd.exe involved in the token verification step.
+#
+# This correctly fails if: conda env was not created (Test-Path $condaPy = false)
+# OR if colorama was not installed (import colorama raises ImportError, Python
+# exits non-zero before writing the token file).
 
 $haveRunOut = Test-Path -LiteralPath $runout
-$haveToken  = (Test-Path -LiteralPath $tokenFile) -and `
-              ((Get-Content -LiteralPath $tokenFile -Raw -Encoding Ascii) -match 'smoke-ok')
 
-# Belt-and-suspenders: also accept the ~run.out.txt token (covers venv/system
-# Python which writes stdout reliably, and any future Python that fixes the issue).
+# Derive conda Python path via PowerShell (immune to cmd.exe quoting issues).
+# ~envsmoke -> _envsmoke matches conda's own sanitization of the env name.
+$envLeaf      = Split-Path $app -Leaf
+$condaEnvName = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
+$publicRoot   = [Environment]::GetEnvironmentVariable('PUBLIC')
+$condaPy      = if ($publicRoot) {
+    Join-Path $publicRoot "Documents\Miniconda3\envs\$condaEnvName\python.exe"
+} else { '' }
+
+$directRunUsed   = $false
+$directRunStderr = ''
+if ($condaPy -and (Test-Path -LiteralPath $condaPy)) {
+    # Run app.py directly via PowerShell & - bypasses cmd.exe quoting entirely.
+    # We run it for the SIDE EFFECT (writing ~smoke_token.txt), not to capture stdout.
+    # 2>&1 captures both streams; assigned to $directCapture for diagnostics only.
+    try {
+        $directCapture = & $condaPy (Join-Path $app 'app.py') 2>&1
+        $directRunUsed = $true
+        # Collect stderr lines for NDJSON diagnostics (helps catch colorama ImportError etc.)
+        $directRunStderr = ($directCapture |
+            Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } |
+            ForEach-Object { $_.Exception.Message }) -join ' '
+        if (-not $directRunStderr) {
+            # Fallback: look for Python-style traceback lines in combined output
+            $asStr = ($directCapture | Where-Object { $_ -is [string] }) -join ' '
+            if ($asStr -match 'Traceback|Error:|ImportError') {
+                $directRunStderr = $asStr.Substring(0, [Math]::Min(200, $asStr.Length))
+            }
+        }
+    } catch {
+        $directRunUsed = $true
+        $directRunStderr = $_.Exception.Message
+    }
+}
+
+# Read the token file (may have been written by run_setup.bat's cmd.exe run,
+# OR by the PS1 direct run above - either path proves the env works).
+$tokenTxt = if (Test-Path -LiteralPath $tokenFile) {
+    Get-Content -LiteralPath $tokenFile -Raw -Encoding Ascii
+} else { '' }
+$haveToken = $tokenTxt -match 'smoke-ok'
+
+# Belt-and-suspenders: also accept the ~run.out.txt token (works for venv/system Python).
 $tokenFound = $haveToken -or ($haveRunOut -and (($outxt -match 'hello-from-stub') -or ($outxt -match 'smoke-ok')))
 
 # derived requirement: supervisors consume iterate inputs as plain text. Mirror the
@@ -248,6 +294,9 @@ if (($exit -eq 0) -and (-not $tokenFound)) {
     # import errors (e.g. colorama not installed, ImportError) that are otherwise invisible.
     $errSnippet = Get-LineSnippet -Text $errtxt -Pattern '.'
     if ($errSnippet) { $details.pyStderr = $errSnippet }
+    # Include info from the PS1 direct run (added v10: bypasses cmd.exe HP_PY quoting issue).
+    if ($directRunUsed) { $details.directRunUsed = $true }
+    if ($directRunStderr) { $details.directRunStderr = $directRunStderr }
     Write-NdjsonRow ([ordered]@{
         id='envsmoke.run'
         pass=$false
