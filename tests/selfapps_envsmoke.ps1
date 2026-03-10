@@ -191,13 +191,32 @@ $envLeaf      = Split-Path $app -Leaf
 $condaEnvName = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
 $publicRoot   = [Environment]::GetEnvironmentVariable('PUBLIC')
 
-# conda bat paths in priority order: same as run_setup.bat's :select_conda_bat.
+# conda bat search paths - priority order mirrors run_setup.bat's :select_conda_bat,
+# then falls back to common GitHub Actions runner locations.
+# Note: $publicRoot may be null/empty if the PUBLIC env var is unset in this context;
+# fallback paths handle that case and also cover runner-provided Miniconda installs.
+$publicRootClean = if ($publicRoot) { $publicRoot.Trim().Trim('"') } else { '' }
 $condaBatCandidates = @()
-if ($publicRoot) {
-    $condaBatCandidates += Join-Path $publicRoot 'Documents\Miniconda3\condabin\conda.bat'
-    $condaBatCandidates += Join-Path $publicRoot 'Documents\Miniconda3\Scripts\conda.bat'
+if ($publicRootClean) {
+    $condaBatCandidates += Join-Path $publicRootClean 'Documents\Miniconda3\condabin\conda.bat'
+    $condaBatCandidates += Join-Path $publicRootClean 'Documents\Miniconda3\Scripts\conda.bat'
 }
+
+# GitHub Actions windows-latest runner pre-installs Miniconda at these paths:
+$condaBatCandidates += 'C:\Miniconda3\condabin\conda.bat'
+$condaBatCandidates += 'C:\Miniconda3\Scripts\conda.bat'
+$condaBatCandidates += 'C:\ProgramData\Miniconda3\condabin\conda.bat'
+$condaBatCandidates += 'C:\ProgramData\Miniconda3\Scripts\conda.bat'
+$condaBatCandidates += 'C:\Users\Public\Documents\Miniconda3\condabin\conda.bat'
+$condaBatCandidates += 'C:\Users\Public\Documents\Miniconda3\Scripts\conda.bat'
+
+# Try `where.exe conda` as last resort (finds conda if it's on PATH somehow)
 $condaBat = $condaBatCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $condaBat) {
+    # where.exe searches PATH; conda.bat may be there if the runner pre-activated conda
+    $whereResult = where.exe conda 2>$null
+    if ($whereResult) { $condaBat = ($whereResult -split "`n")[0].Trim() }
+}
 
 $condaRunUsed   = $false
 $condaRunStderr = ''
@@ -302,9 +321,15 @@ if (($exit -eq 0) -and (-not $tokenFound)) {
     # import errors (e.g. colorama not installed, ImportError) that are otherwise invisible.
     $errSnippet = Get-LineSnippet -Text $errtxt -Pattern '.'
     if ($errSnippet) { $details.pyStderr = $errSnippet }
-    # Include info from the PS1 conda run (v11: uses conda run -n instead of direct python.exe).
-    if ($condaRunUsed)   { $details.condaRunUsed   = $true }
-    if ($condaBatUsed)   { $details.condaBatUsed   = $condaBatUsed }
+    # Conda-run diagnostics: always written so future runs show what PS1 searched for.
+    # condaBatFound=false means conda.bat was not at any searched path (Miniconda
+    # not installed, or PUBLIC env var empty/wrong). condaBatFound=true +
+    # condaRunUsed=false means cmd /c conda run threw before try completed.
+    $details.publicRoot = if ($publicRoot) { $publicRoot } else { '(empty)' }
+    $details.condaBatCandidates = $condaBatCandidates -join '; '
+    $details.condaBatFound = [bool]$condaBat
+    if ($condaBat) { $details.condaBatPath = $condaBat }
+    if ($condaRunUsed) { $details.condaRunUsed = $true }
     if ($condaRunStderr) { $details.condaRunStderr = $condaRunStderr }
     Write-NdjsonRow ([ordered]@{
         id='envsmoke.run'
