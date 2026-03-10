@@ -90,14 +90,26 @@ $setupLog = Join-Path $app '~setup.log'
 New-Item -ItemType Directory -Force -Path $app | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $app -Force
 Set-Content -LiteralPath (Join-Path $app 'app.py') -Value @'
-import colorama
-import os
-os.write(1, b"smoke-ok\n")
+import colorama  # Prime Directive: proves pipreqs scanned app.py, conda installed it
+import os as _os
+
+# Write token to a sidecar file. stdout-based approaches (print, os.write) are
+# unreliable through cmd.exe redirects on some Windows Python distributions due
+# to CRT file-descriptor/HANDLE mismatch (see history in selfapps_envsmoke.ps1).
+# File I/O uses Win32 CreateFile/WriteFile directly - no stdout involved.
+_here = _os.path.dirname(_os.path.abspath(__file__))
+with open(_os.path.join(_here, '~smoke_token.txt'), 'w') as _f:
+    _f.write('smoke-ok\n')
 '@ -NoNewline
 
 if (Test-Path -LiteralPath $setupLog) {
     Remove-Item -LiteralPath $setupLog -Force
 }
+
+# Delete stale token file before bootstrap so a leftover from a prior run cannot
+# produce a false-positive tokenFound=true if Python fails this run.
+$tokenFile = Join-Path $app '~smoke_token.txt'
+Remove-Item -LiteralPath $tokenFile -Force -ErrorAction SilentlyContinue
 
 $prevVenvFallback = if (Test-Path Env:HP_ALLOW_VENV_FALLBACK) { $env:HP_ALLOW_VENV_FALLBACK } else { $null }
 $env:HP_ALLOW_VENV_FALLBACK = '1'
@@ -125,6 +137,8 @@ $runout = Join-Path $app '~run.out.txt'
 $setup  = (Test-Path $setupLog) ? (Get-Content -LiteralPath $setupLog -Raw -Encoding Ascii) : ''
 $bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw -Encoding Ascii) : ''
 $outxt  = (Test-Path $runout) ? (Get-Content -LiteralPath $runout -Raw -Encoding Ascii) : ''
+$runerr = Join-Path $app '~run.err.txt'
+$errtxt = (Test-Path $runerr) ? (Get-Content -LiteralPath $runerr -Raw -Encoding Ascii) : ''
 
 $smokeCommand = ''
 if ($setup) {
@@ -140,44 +154,33 @@ $displayCommand = if ($smokeCommand) { $smokeCommand } else { $bootstrapCommand 
 
 Check-PipreqsFailure -LogPath $setupLog -LogText $setup
 
-# Derive the conda env Python path from the app directory name using the same
-# sanitization logic run_setup.bat applies: replace non-[A-Za-z0-9_-] with '_'.
-# ~envsmoke -> _envsmoke, which matches the env name conda actually creates.
-$envLeaf      = Split-Path $app -Leaf
-$condaEnvName = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
-$publicRoot   = [Environment]::GetEnvironmentVariable('PUBLIC')
-$condaPy      = if ($publicRoot) {
-    Join-Path $publicRoot "Documents\Miniconda3\envs\$condaEnvName\python.exe"
-} else { '' }
+# TOKEN DETECTION - file-based approach (replaces all stdout-based attempts)
+#
+# History of failed approaches, kept here so future sessions don't retry them:
+#   v1-v4: print() / flush=True in app.py under cmd.exe 1> redirect -> empty file
+#   v5:    os.write(1, b"smoke-ok\n") under cmd.exe 1> redirect -> empty file
+#   v6-v7: same under various app.py rewrites -> same result
+#   v8:    PowerShell & operator to run conda Python directly -> still empty
+#          ALSO introduced regression: guard `Test-Path $condaPy` fires in BOTH
+#          conda-full AND real lanes (both have conda via HP_CI_TEST_CONDA_DL=1),
+#          which discarded real lane's working venv-based ~run.out.txt check.
+#
+# Root cause (high confidence): On Miniconda Python on GitHub Actions windows-latest,
+# the CRT fd->Windows HANDLE mapping doesn't properly inherit redirected handles
+# (from cmd.exe OR PowerShell pipes). os.write(1,...) and sys.stdout both go to
+# the original CONOUT$ console handle. Venv Python does not have this problem.
+#
+# Fix: app.py writes token to ~smoke_token.txt via Python file I/O (CreateFile/
+# WriteFile - no stdout involved). We delete the file before bootstrap to prevent
+# stale-run false positives, then check for it after bootstrap succeeds.
 
-# NOTE: import colorama stays in app.py intentionally. Its presence proves that
-# pipreqs scanned app.py, detected colorama, and conda installed it - the Prime
-# Directive requires showing imports get resolved, not just that Python runs.
-# The colorama import does NOT cause the failure (os.write also failed); the
-# issue is Miniconda Python's stdout behavior under cmd.exe 1> redirect on the
-# GitHub Actions windows-latest runner, which is a runner-specific quirk.
 $haveRunOut = Test-Path -LiteralPath $runout
-if ($exit -eq 0 -and $condaPy -and (Test-Path $condaPy)) {
-    # Re-run app.py via PowerShell's & operator to capture stdout directly.
-    # PowerShell's pipeline bypasses cmd.exe file handle inheritance, which is
-    # what causes Miniconda Python stdout to vanish in the ~run.out.txt path.
-    # The venv Python (real lane) does not have this problem; this branch is
-    # only reached when the conda env Python is present and bootstrap succeeded.
-    try {
-        $directOut = & $condaPy (Join-Path $app 'app.py') 2>$null
-        $directStr = if ($directOut -is [array]) { $directOut -join "`n" } else { [string]$directOut }
-        $tokenFound = ($directStr -match 'smoke-ok') -or ($directStr -match 'hello-from-stub')
-        # Populate outxt so the mirror log reflects what was actually captured
-        if ($tokenFound -and -not $outxt) { $outxt = $directStr }
-    } catch {
-        # Direct run failed; fall back to the file-based check
-        $tokenFound = $haveRunOut -and (($outxt -match 'hello-from-stub') -or ($outxt -match 'smoke-ok'))
-    }
-} else {
-    # Conda Python not present (venv/system fallback ran) or bootstrap failed.
-    # Read token from ~run.out.txt as before. Works reliably for venv Python.
-    $tokenFound = $haveRunOut -and (($outxt -match 'hello-from-stub') -or ($outxt -match 'smoke-ok'))
-}
+$haveToken  = (Test-Path -LiteralPath $tokenFile) -and `
+              ((Get-Content -LiteralPath $tokenFile -Raw -Encoding Ascii) -match 'smoke-ok')
+
+# Belt-and-suspenders: also accept the ~run.out.txt token (covers venv/system
+# Python which writes stdout reliably, and any future Python that fixes the issue).
+$tokenFound = $haveToken -or ($haveRunOut -and (($outxt -match 'hello-from-stub') -or ($outxt -match 'smoke-ok')))
 
 # derived requirement: supervisors consume iterate inputs as plain text. Mirror the
 # smoke transcripts into _artifacts/iterate/inputs so agents on small devices can
@@ -241,6 +244,10 @@ if (($exit -eq 0) -and (-not $tokenFound)) {
     $snippet = Get-LineSnippet -Text $outxt -Pattern 'smoke-ok'
     $details = [ordered]@{ file = $runout; exitCode = $exit; tokenFound = $tokenFound; haveRunOut = $haveRunOut; command = $displayCommand }
     if ($snippet) { $details.snippet = $snippet }
+    # Include Python stderr from the original cmd.exe run - critical for diagnosing
+    # import errors (e.g. colorama not installed, ImportError) that are otherwise invisible.
+    $errSnippet = Get-LineSnippet -Text $errtxt -Pattern '.'
+    if ($errSnippet) { $details.pyStderr = $errSnippet }
     Write-NdjsonRow ([ordered]@{
         id='envsmoke.run'
         pass=$false
