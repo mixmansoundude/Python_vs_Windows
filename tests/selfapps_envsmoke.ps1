@@ -155,77 +155,85 @@ $displayCommand = if ($smokeCommand) { $smokeCommand } else { $bootstrapCommand 
 
 Check-PipreqsFailure -LogPath $setupLog -LogText $setup
 
-# TOKEN DETECTION - history of failed approaches:
-# v1-v4: print() / flush=True / os.write() in app.py under cmd.exe 1> -> empty file
-# v8:    PowerShell & operator capturing stdout -> empty (stdout still lost)
-# v9:    app.py writes ~smoke_token.txt; run_setup.bat invokes python via cmd.exe
-# Result: STILL failed. pyStderr revealed the real cause: cmd.exe error
-# '"C:...\python.exe"' is not recognized - HP_PY has embedded quotes.
-# Python never ran. Token file never written.
+# TOKEN DETECTION - full history of failed approaches (do not retry these):
 #
-# Root cause of v9 failure (confirmed): run_setup.bat sets HP_PY from the conda
-# env path using `set "HP_PY=%CONDA_PREFIX%\python.exe"`. Somehow HP_PY acquires
-# embedded double-quotes in the variable VALUE (not just the cmd.exe quoting
-# wrapper), causing `"%HP_PY%"` to expand to `""C:\...\python.exe""`.
-# The exact source of the embedded quotes is unknown without the bootstrap log.
+# v1-v4: print() / flush=True / os.write() under cmd.exe 1> redirect -> ~run.out.txt empty
+# v8:    PowerShell direct conda python capture to stdout -> still empty
+# v9:    app.py writes ~smoke_token.txt via file I/O (not stdout)
+#        -> pyStderr revealed '"C:...\python.exe"' is not recognized
+#        -> Python never ran at all; token file never written
+# v10:   PS1 derives conda python path via Join-Path; guards with Test-Path
+#        -> Test-Path returned false; direct-run field absent from NDJSON
+#        -> python.exe does not exist at expected path
 #
-# Also confirmed: run_setup.bat's :die uses `exit /b` (exits subroutine only,
-# not the whole cmd.exe process). So $exit is always 0 even when python fails.
+# Root cause (confirmed after v10): run_setup.bat derives ENVNAME from:
+# for /f "usebackq delims=" %%I in (`powershell ... Write-Output $san`)
+# PowerShell's Write-Output emits `_envsmoke<CR><LF>`. for /f strips <LF> but
+# NOT <CR>. ENVNAME becomes `_envsmoke<CR>`. conda create -y -n "_envsmoke<CR>"
+# either fails or creates an unusable env. python.exe never lands at the clean
+# path. :die uses exit /b (subroutine return, NOT process exit), so run_setup.bat
+# exits 0 regardless. HP_PY is set to the broken path with embedded <CR>, which
+# produces the "not recognized" cmd.exe error seen in pyStderr.
 #
-# FIX: After run_setup.bat exits, PS1 derives the conda Python path independently
-# using PowerShell's Join-Path (no cmd.exe quoting). If that python.exe exists,
-# PS1 runs app.py DIRECTLY via the & operator. app.py writes ~smoke_token.txt.
-# PS1 reads the token file. No cmd.exe involved in the token verification step.
+# FIX: use `conda run -n $condaEnvName python app.py` instead of direct python.exe.
+# conda run finds the env via conda's own registry (immune to path derivation
+# bugs), activates it properly (handles DLL paths on Windows), and runs the
+# script. We use it for its SIDE EFFECT: writing ~smoke_token.txt. We do NOT
+# capture stdout (all stdout approaches failed; see history above).
 #
-# This correctly fails if: conda env was not created (Test-Path $condaPy = false)
-# OR if colorama was not installed (import colorama raises ImportError, Python
-# exits non-zero before writing the token file).
-
+# conda bat location: run_setup.bat always installs its own Miniconda to
+# $PUBLIC\Documents\Miniconda3 (it does NOT use C:\Miniconda from the runner).
+# After bootstrap, conda.bat is at that location.
 $haveRunOut = Test-Path -LiteralPath $runout
 
-# Derive conda Python path via PowerShell (immune to cmd.exe quoting issues).
-# ~envsmoke -> _envsmoke matches conda's own sanitization of the env name.
+# Derive env name and locate the conda bat that run_setup.bat installed.
 $envLeaf      = Split-Path $app -Leaf
 $condaEnvName = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
 $publicRoot   = [Environment]::GetEnvironmentVariable('PUBLIC')
-$condaPy      = if ($publicRoot) {
-    Join-Path $publicRoot "Documents\Miniconda3\envs\$condaEnvName\python.exe"
-} else { '' }
 
-$directRunUsed   = $false
-$directRunStderr = ''
-if ($condaPy -and (Test-Path -LiteralPath $condaPy)) {
-    # Run app.py directly via PowerShell & - bypasses cmd.exe quoting entirely.
-    # We run it for the SIDE EFFECT (writing ~smoke_token.txt), not to capture stdout.
-    # 2>&1 captures both streams; assigned to $directCapture for diagnostics only.
+# conda bat paths in priority order: same as run_setup.bat's :select_conda_bat.
+$condaBatCandidates = @()
+if ($publicRoot) {
+    $condaBatCandidates += Join-Path $publicRoot 'Documents\Miniconda3\condabin\conda.bat'
+    $condaBatCandidates += Join-Path $publicRoot 'Documents\Miniconda3\Scripts\conda.bat'
+}
+$condaBat = $condaBatCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+$condaRunUsed   = $false
+$condaRunStderr = ''
+$condaBatUsed   = $condaBat  # captured for diagnostics
+if ($condaBat) {
+    # Run app.py via conda run - finds env by name via conda registry, activates
+    # it (sets DLL paths), then runs python. We care only about the token file side
+    # effect, not stdout. 2>&1 captures error output for diagnostics.
     try {
-        $directCapture = & $condaPy (Join-Path $app 'app.py') 2>&1
-        $directRunUsed = $true
-        # Collect stderr lines for NDJSON diagnostics (helps catch colorama ImportError etc.)
-        $directRunStderr = ($directCapture |
+        # cmd /c is required because conda.bat is a batch file, not an executable.
+        $condaCmd = "`"$condaBat`" run -n $condaEnvName python `"$(Join-Path $app 'app.py')`""
+        $condaCapture = cmd /c $condaCmd 2>&1
+        $condaRunUsed = $true
+        $condaRunStderr = ($condaCapture |
             Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } |
             ForEach-Object { $_.Exception.Message }) -join ' '
-        if (-not $directRunStderr) {
-            # Fallback: look for Python-style traceback lines in combined output
-            $asStr = ($directCapture | Where-Object { $_ -is [string] }) -join ' '
-            if ($asStr -match 'Traceback|Error:|ImportError') {
-                $directRunStderr = $asStr.Substring(0, [Math]::Min(200, $asStr.Length))
+        if (-not $condaRunStderr) {
+            $asStr = ($condaCapture | Where-Object { $_ -is [string] }) -join ' '
+            if ($asStr -match 'EnvironmentLocationNotFound|CommandNotFoundError|Error|Traceback|ImportError') {
+                $condaRunStderr = $asStr.Substring(0, [Math]::Min(300, $asStr.Length))
             }
         }
     } catch {
-        $directRunUsed = $true
-        $directRunStderr = $_.Exception.Message
+        $condaRunUsed   = $true
+        $condaRunStderr = $_.Exception.Message
     }
 }
 
-# Read the token file (may have been written by run_setup.bat's cmd.exe run,
-# OR by the PS1 direct run above - either path proves the env works).
+# Read the token file written by app.py (side effect of conda run above,
+# or of run_setup.bat's own cmd.exe run if that ever works).
 $tokenTxt = if (Test-Path -LiteralPath $tokenFile) {
     Get-Content -LiteralPath $tokenFile -Raw -Encoding Ascii
 } else { '' }
 $haveToken = $tokenTxt -match 'smoke-ok'
 
-# Belt-and-suspenders: also accept the ~run.out.txt token (works for venv/system Python).
+# Belt-and-suspenders: also accept the ~run.out.txt token (venv/system Python path).
 $tokenFound = $haveToken -or ($haveRunOut -and (($outxt -match 'hello-from-stub') -or ($outxt -match 'smoke-ok')))
 
 # derived requirement: supervisors consume iterate inputs as plain text. Mirror the
@@ -294,9 +302,10 @@ if (($exit -eq 0) -and (-not $tokenFound)) {
     # import errors (e.g. colorama not installed, ImportError) that are otherwise invisible.
     $errSnippet = Get-LineSnippet -Text $errtxt -Pattern '.'
     if ($errSnippet) { $details.pyStderr = $errSnippet }
-    # Include info from the PS1 direct run (added v10: bypasses cmd.exe HP_PY quoting issue).
-    if ($directRunUsed) { $details.directRunUsed = $true }
-    if ($directRunStderr) { $details.directRunStderr = $directRunStderr }
+    # Include info from the PS1 conda run (v11: uses conda run -n instead of direct python.exe).
+    if ($condaRunUsed)   { $details.condaRunUsed   = $true }
+    if ($condaBatUsed)   { $details.condaBatUsed   = $condaBatUsed }
+    if ($condaRunStderr) { $details.condaRunStderr = $condaRunStderr }
     Write-NdjsonRow ([ordered]@{
         id='envsmoke.run'
         pass=$false
