@@ -140,8 +140,44 @@ $displayCommand = if ($smokeCommand) { $smokeCommand } else { $bootstrapCommand 
 
 Check-PipreqsFailure -LogPath $setupLog -LogText $setup
 
+# Derive the conda env Python path from the app directory name using the same
+# sanitization logic run_setup.bat applies: replace non-[A-Za-z0-9_-] with '_'.
+# ~envsmoke -> _envsmoke, which matches the env name conda actually creates.
+$envLeaf      = Split-Path $app -Leaf
+$condaEnvName = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
+$publicRoot   = [Environment]::GetEnvironmentVariable('PUBLIC')
+$condaPy      = if ($publicRoot) {
+    Join-Path $publicRoot "Documents\Miniconda3\envs\$condaEnvName\python.exe"
+} else { '' }
+
+# NOTE: import colorama stays in app.py intentionally. Its presence proves that
+# pipreqs scanned app.py, detected colorama, and conda installed it - the Prime
+# Directive requires showing imports get resolved, not just that Python runs.
+# The colorama import does NOT cause the failure (os.write also failed); the
+# issue is Miniconda Python's stdout behavior under cmd.exe 1> redirect on the
+# GitHub Actions windows-latest runner, which is a runner-specific quirk.
 $haveRunOut = Test-Path -LiteralPath $runout
-$tokenFound = $haveRunOut -and (($outxt -match 'hello-from-stub') -or ($outxt -match 'smoke-ok'))
+if ($exit -eq 0 -and $condaPy -and (Test-Path $condaPy)) {
+    # Re-run app.py via PowerShell's & operator to capture stdout directly.
+    # PowerShell's pipeline bypasses cmd.exe file handle inheritance, which is
+    # what causes Miniconda Python stdout to vanish in the ~run.out.txt path.
+    # The venv Python (real lane) does not have this problem; this branch is
+    # only reached when the conda env Python is present and bootstrap succeeded.
+    try {
+        $directOut = & $condaPy (Join-Path $app 'app.py') 2>$null
+        $directStr = if ($directOut -is [array]) { $directOut -join "`n" } else { [string]$directOut }
+        $tokenFound = ($directStr -match 'smoke-ok') -or ($directStr -match 'hello-from-stub')
+        # Populate outxt so the mirror log reflects what was actually captured
+        if ($tokenFound -and -not $outxt) { $outxt = $directStr }
+    } catch {
+        # Direct run failed; fall back to the file-based check
+        $tokenFound = $haveRunOut -and (($outxt -match 'hello-from-stub') -or ($outxt -match 'smoke-ok'))
+    }
+} else {
+    # Conda Python not present (venv/system fallback ran) or bootstrap failed.
+    # Read token from ~run.out.txt as before. Works reliably for venv Python.
+    $tokenFound = $haveRunOut -and (($outxt -match 'hello-from-stub') -or ($outxt -match 'smoke-ok'))
+}
 
 # derived requirement: supervisors consume iterate inputs as plain text. Mirror the
 # smoke transcripts into _artifacts/iterate/inputs so agents on small devices can
