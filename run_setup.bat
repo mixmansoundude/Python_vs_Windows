@@ -210,7 +210,7 @@ if exist "%CONDA_BASE_PY%" (
 set "PYSPEC="
 for /f "usebackq delims=" %%A in ("~py_spec.txt") do set "PYSPEC=%%A"
 if "%PYSPEC%"=="" (
-  call "%CONDA_BAT%" create -y -n "%ENVNAME%" --override-channels -c conda-forge >> "%LOG%" 2>&1
+  call "%CONDA_BAT%" create -y -n "%ENVNAME%" python --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% --override-channels -c conda-forge >> "%LOG%" 2>&1
 )
