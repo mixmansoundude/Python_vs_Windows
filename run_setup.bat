@@ -131,10 +131,9 @@ if not defined CONDA_BAT (
   curl -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
   if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
   if not exist "%TEMP%\miniconda.exe" set "HP_CONDA_DL_RC=1"
-  if "%HP_CONDA_DL_RC%"=="0" (
+  if exist "%TEMP%\miniconda.exe" (
     REM start "" / wait "quoted\exe" is proper syntax here for strict windows runs. 
-    start "" /wait "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D="%MINICONDA_ROOT%"
-    if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
+    start "" /wait "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
   )
   if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
   call :select_conda_bat
