@@ -189,6 +189,8 @@ $haveRunOut = Test-Path -LiteralPath $runout
 # Derive env name and locate the conda bat that run_setup.bat installed.
 $envLeaf      = Split-Path $app -Leaf
 $condaEnvName = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
+if (-not $condaEnvName) { $condaEnvName = '_envsmoke' }
+$appPath = Join-Path $app 'app.py'
 $publicRoot   = [Environment]::GetEnvironmentVariable('PUBLIC')
 
 # conda bat search paths - priority order mirrors run_setup.bat's :select_conda_bat,
@@ -222,12 +224,13 @@ $condaRunUsed   = $false
 $condaRunStderr = ''
 $condaBatUsed   = $condaBat  # captured for diagnostics
 if ($condaBat) {
-    # Run app.py via conda run - finds env by name via conda registry, activates
-    # it (sets DLL paths), then runs python. We care only about the token file side
-    # effect, not stdout. 2>&1 captures error output for diagnostics.
+    # derived requirement: always pass -n to conda run so envsmoke executes in
+    # the created test env instead of inheriting base when no activation occurred.
+    # Keep CWD pinned to $app so app.py side effects land in tests/~envsmoke.
+    Push-Location -LiteralPath $app
     try {
         # cmd /c is required because conda.bat is a batch file, not an executable.
-        $condaCmd = "`"$condaBat`" run -n $condaEnvName python `"$(Join-Path $app 'app.py')`""
+        $condaCmd = "`"$condaBat`" run -n $condaEnvName python `"$appPath`""
         $condaCapture = cmd /c $condaCmd 2>&1
         $condaRunUsed = $true
         $condaRunStderr = ($condaCapture |
@@ -242,6 +245,8 @@ if ($condaBat) {
     } catch {
         $condaRunUsed   = $true
         $condaRunStderr = $_.Exception.Message
+    } finally {
+        Pop-Location
     }
 }
 
