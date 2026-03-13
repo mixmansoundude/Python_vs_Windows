@@ -212,8 +212,8 @@ jobs:
         run: |
           function Read-Ndjson([string]$p) {
             if (Test-Path $p) {
-              Get-Content -Raw $p | Select-String -AllMatches '^\{.*\}$' | ForEach-Object {
-                try { $_.Matches.Value | ConvertFrom-Json } catch {}
+              Get-Content $p | Where-Object { $_ -match '^\{.*\}$' } | ForEach-Object {
+                try { $_ | ConvertFrom-Json } catch {}
               }
             }
           }
@@ -491,10 +491,10 @@ jobs:
           function Read-Ndjson([string]$path) {
             if (-not (Test-Path -LiteralPath $path)) { return @() }
             try {
-              return Get-Content -Raw -LiteralPath $path -ErrorAction Stop |
-                Select-String -AllMatches '^\{.*\}$' |
+              return Get-Content -LiteralPath $path -ErrorAction Stop |
+                Where-Object { $_ -match '^\{.*\}$' } |
                 ForEach-Object {
-                  try { $_.Matches.Value | ConvertFrom-Json } catch { $null }
+                  try { $_ | ConvertFrom-Json } catch { $null }
                 }
             } catch {
               return @()
