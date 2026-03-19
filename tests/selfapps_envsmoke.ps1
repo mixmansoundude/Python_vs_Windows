@@ -392,7 +392,7 @@ Push-Location -LiteralPath $app
 try {
     $env:HP_ALLOW_VENV_FALLBACK = '1'
     $env:HP_ALLOW_SYSTEM_FALLBACK = '1'
-    cmd /c .\run_setup.bat *> '~envsmoke_fastpath.log'
+    cmd /c "call .\run_setup.bat > ~envsmoke_fastpath.log 2>&1"
     $fastExit = $LASTEXITCODE
 } catch {
     $fastExit = -1
