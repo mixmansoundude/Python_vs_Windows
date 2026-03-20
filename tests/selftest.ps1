@@ -70,6 +70,7 @@ if (Test-Path $stubDir) { Remove-Item -Recurse -Force $stubDir }
 New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
 Copy-Item -Path $BatchPath -Destination $stubDir -Force
 $stubScriptPath = Join-Path $stubDir 'hello_stub.py'
+# hello_stub.py intentionally has no imports to test the zero-requirements bootstrap path.
 Set-Content -Path $stubScriptPath -Value 'print("hello-from-stub")' -Encoding ASCII
 function Invoke-StubSetup {
   param(
