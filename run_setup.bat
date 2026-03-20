@@ -862,10 +862,10 @@ set "HP_FASTPATH_TOKEN="
 rem derived requirement: verify the existing EXE is fresher than any non-helper source under the working directory.
 for /f "usebackq delims=" %%T in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$exe = '%HP_FAST_EXE_PATH%';" ^
-  "$infraPattern = '(?i)(^|[\\/])(\.git|\.github|dist|\.venv|__pycache__|\.conda)([\\/]|$)';" ^
-  "$sources = Get-ChildItem -Recurse -File -Filter '*.py' | Where-Object { $_.FullName -notmatch $infraPattern -and $_.Name -notlike '~*.py' };" ^
+  "$infraPattern = '(?i)(^|[\\/])(\.git^|\.github^|dist^|\.venv^|__pycache__^|\.conda)([\\/]^|$)';" ^
+  "$sources = Get-ChildItem -Recurse -File -Filter '*.py' ^| Where-Object { $_.FullName -notmatch $infraPattern -and $_.Name -notlike '~*.py' };" ^
   "if (-not $sources) { exit 1 }" ^
-  "$latest = ($sources | Sort-Object -Property LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc;" ^
+  "$latest = ($sources ^| Sort-Object -Property LastWriteTimeUtc -Descending ^| Select-Object -First 1).LastWriteTimeUtc;" ^
   "$exeTime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc;" ^
   "if ($exeTime -ge $latest) { 'fresh' }"`)
 do set "HP_FASTPATH_TOKEN=%%T"
