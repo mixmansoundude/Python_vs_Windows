@@ -2394,6 +2394,15 @@ jobs:
           pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prep.outputs.ARTIFACTS }}/batch-check/_ci_artifacts
 
+      - name: Download CI test logs artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-logs-selftest-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.prep.outputs.ARTIFACTS }}/batch-check/test-logs
+          merge-multiple: true
+
       - name: Mirror NDJSON into diagnostics bundle
         if: ${{ always() }}
         shell: bash
@@ -2426,6 +2435,14 @@ jobs:
             install -D "$ndjson" "$diag_root/$target"
             install -D "$ndjson" "$site_root/$target"
           done
+          test_logs_src="$ARTIFACTS_DIR/batch-check/test-logs"
+          if find "$test_logs_src" -type f -print -quit >/dev/null 2>&1; then
+            for target_root in "$DIAG_DIR/_artifacts/batch-check/test-logs" "$SITE_DIR/_artifacts/batch-check/test-logs"; do
+              mkdir -p "$target_root"
+              rm -rf "$target_root"/*
+              cp -a "$test_logs_src"/. "$target_root"/
+            done
+          fi
 
       - name: Package iterate logs archive
         if: ${{ always() }}

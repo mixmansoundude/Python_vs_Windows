@@ -16,6 +16,19 @@ $emptyDir = Join-Path $TestsDir '~selftest_empty'
 $stubDir = Join-Path $TestsDir '~selftest_stub'
 $summaryPath = Join-Path $TestsDir '~selftest-summary.txt'
 if (Test-Path $summaryPath) { Remove-Item -Force $summaryPath }
+$nd   = Join-Path $TestsDir '~test-results.ndjson'
+$ciNd = Join-Path $RepoDir  'ci_test_results.ndjson'
+if (-not (Test-Path $nd))   { New-Item -ItemType File -Path $nd   -Force | Out-Null }
+if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
+
+function Write-NdjsonRow {
+    param([hashtable]$Row)
+    $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
+    if ($lane -and -not $Row.ContainsKey('lane')) { $Row['lane'] = $lane }
+    $json = $Row | ConvertTo-Json -Compress -Depth 8
+    Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii
+    Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
+}
 $summary = New-Object System.Collections.Generic.List[string]
 $summary.Add('=== Bootstrap Self-tests ===')
 function Invoke-Setup {
@@ -181,4 +194,23 @@ if (-not ($runLog | Where-Object { $_ -match 'hello-from-stub' })) {
   throw "Stub python execution did not emit hello-from-stub"
 }
 $summary.Add('stub bootstrap + python run: PASS')
+$stubEnvNameNormalized = $stubEnvName
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.fastpath'
+  pass = ($pyInstallerHits -eq 1)
+  desc = 'Stub bootstrap: fast path reuses EXE without rebuilding'
+  details = [ordered]@{
+    stubEnvName = $stubEnvNameNormalized
+    pyInstallerBuilds = $pyInstallerHits
+  }
+})
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.rebuild'
+  pass = ($totalProducedHits -eq 2)
+  desc = 'Stub rebuild: source change triggers new EXE, subsequent run takes fast path'
+  details = [ordered]@{
+    totalBuilds = $totalProducedHits
+    rebuildBuilds = $rebuildProducedHits
+  }
+})
 $summary | Set-Content -Path $summaryPath -Encoding ASCII
