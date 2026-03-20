@@ -640,6 +640,8 @@ jobs:
             tests\~entryB\~entryB_bootstrap.log
             tests/~envsmoke/~envsmoke_bootstrap.log
             tests\~envsmoke\~envsmoke_bootstrap.log
+            tests/~envsmoke/~envsmoke_fastpath.log
+            tests\~envsmoke\~envsmoke_fastpath.log
             # ~setup.log captures probe errors and bootstrap path (conda vs venv)
             tests/~envsmoke/~setup.log
             tests\~envsmoke\~setup.log

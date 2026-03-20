@@ -136,6 +136,7 @@ class DelimiterChecker:
         self.in_yaml_pwsh_block = False
         self.yaml_pwsh_block_indent = 0
         self.yaml_prev_pwsh_command = False
+        self._bat_in_backtick = False
 
     def add_issue(self, line: int, column: int, message: str) -> None:
         self.issues.append(Issue(self.path, line, column, message))
@@ -336,7 +337,52 @@ class DelimiterChecker:
             for item in self.stack:
                 self.add_issue(item.line, item.column, f"Unclosed '{item.char}'")
 
+        if lower_suffix in {".bat", ".cmd"}:
+            self._bat_in_backtick = False
+            for line_no, raw_line in enumerate(lines, start=1):
+                line = raw_line.rstrip("\n\r")
+                stripped = line.lstrip()
+                upper = stripped.upper()
+                if upper.startswith("REM ") or upper == "REM" or stripped.startswith("::"):
+                    continue
+                scan_from = None
+                if not self._bat_in_backtick:
+                    if re.search(r"\bfor\s+/f\b", line, re.IGNORECASE):
+                        if line.count("`") % 2 == 1:
+                            self._bat_in_backtick = True
+                            scan_from = line.index("`") + 1
+                if self._bat_in_backtick:
+                    segment = line[scan_from:] if scan_from is not None else line
+                    self._check_bat_forloop_pipes(line_no, segment)
+                    if scan_from is None and not line.rstrip().endswith("^"):
+                        self._bat_in_backtick = False
+
         return self.issues
+
+    def _check_bat_forloop_pipes(self, line_no: int, segment: str) -> None:
+        """Flag unescaped '|' inside a for /f backtick block in .bat/.cmd files.
+
+        CMD interprets '|' as a pipe before passing content to the subshell,
+        even inside double-quoted strings. Bare '|' causes 'The syntax of the
+        command is incorrect.' and the for /f yields no iterations.
+        All such pipes must be written as '^|'.
+        """
+        i = 0
+        length = len(segment)
+        while i < length:
+            ch = segment[i]
+            if ch == "^":
+                i += 2
+                continue
+            if ch == "|":
+                self.add_issue(
+                    line_no,
+                    i + 1,
+                    "Unescaped '|' inside for /f backtick block; CMD interprets '|' as a "
+                    "pipe before the subshell runs, causing 'The syntax of the command is "
+                    "incorrect.' Use '^|' instead.",
+                )
+            i += 1
 
     def _check_ps1_boolean_operators(self, line_no: int, line: str) -> None:
         # derived requirement: Windows runners surfaced "parameter name 'or'" faults whenever -or/-and sat

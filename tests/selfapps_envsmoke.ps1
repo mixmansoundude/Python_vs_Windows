@@ -343,3 +343,80 @@ if (($exit -eq 0) -and (-not $tokenFound)) {
         details=$details
     })
 }
+
+
+# derived requirement: envsmoke must verify the packaged EXE exists, runs standalone,
+# and is reused on the second bootstrap so CI can detect PyInstaller or fast-path regressions.
+$exeEnvName = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
+if (-not $exeEnvName) { $exeEnvName = '_envsmoke' }
+$exePath = Join-Path $app ("dist\\$exeEnvName.exe")
+$exeExists = Test-Path -LiteralPath $exePath
+Write-NdjsonRow ([ordered]@{
+    id='self.exe.build'
+    pass=$exeExists
+    desc='PyInstaller produced standalone EXE'
+    details=[ordered]@{ exePath=$exePath; exists=$exeExists }
+})
+
+$exeExit = -1
+$exeTokenPath = Join-Path $app 'dist\~smoke_token.txt'
+$exeTokenFound = $false
+if ($exeExists) {
+    try {
+        Remove-Item -LiteralPath $exeTokenPath -Force -ErrorAction SilentlyContinue
+        Push-Location -LiteralPath $app
+        try {
+            cmd /c "`"$exePath`"" *> '~envsmoke_exe.log'
+            $exeExit = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+        $exeTokenFound = Test-Path -LiteralPath $exeTokenPath
+    } catch {
+        $exeExit = -1
+        $exeTokenFound = Test-Path -LiteralPath $exeTokenPath
+    }
+}
+Write-NdjsonRow ([ordered]@{
+    id='self.exe.run'
+    pass=($exeExists -and ($exeExit -eq 0))
+    desc='Standalone EXE runs successfully'
+    details=[ordered]@{ exitCode=$exeExit; tokenFound=$exeTokenFound }
+})
+
+$fastExit = -1
+$fastPathDetected = $false
+$prevVenvFallback = if (Test-Path Env:HP_ALLOW_VENV_FALLBACK) { $env:HP_ALLOW_VENV_FALLBACK } else { $null }
+$prevSystemFallback = if (Test-Path Env:HP_ALLOW_SYSTEM_FALLBACK) { $env:HP_ALLOW_SYSTEM_FALLBACK } else { $null }
+Push-Location -LiteralPath $app
+try {
+    $env:HP_ALLOW_VENV_FALLBACK = '1'
+    $env:HP_ALLOW_SYSTEM_FALLBACK = '1'
+    cmd /c "call .\run_setup.bat > ~envsmoke_fastpath.log 2>&1"
+    $fastExit = $LASTEXITCODE
+} catch {
+    $fastExit = -1
+} finally {
+    if ($null -eq $prevVenvFallback) {
+        Remove-Item Env:HP_ALLOW_VENV_FALLBACK -ErrorAction SilentlyContinue
+    } else {
+        $env:HP_ALLOW_VENV_FALLBACK = $prevVenvFallback
+    }
+    if ($null -eq $prevSystemFallback) {
+        Remove-Item Env:HP_ALLOW_SYSTEM_FALLBACK -ErrorAction SilentlyContinue
+    } else {
+        $env:HP_ALLOW_SYSTEM_FALLBACK = $prevSystemFallback
+    }
+    Pop-Location
+}
+
+$fastSetupText = if (Test-Path -LiteralPath $setupLog) {
+    Get-Content -LiteralPath $setupLog -Raw -Encoding Ascii
+} else { '' }
+$fastPathDetected = ($fastSetupText -match 'Fast path: reusing')
+Write-NdjsonRow ([ordered]@{
+    id='self.fastpath'
+    pass=(($fastExit -eq 0) -and $fastPathDetected)
+    desc='Second run reuses existing EXE via fast path'
+    details=[ordered]@{ exitCode=$fastExit; fastPathDetected=$fastPathDetected }
+})
