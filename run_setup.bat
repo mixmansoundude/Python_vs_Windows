@@ -859,16 +859,25 @@ set "HP_FAST_EXE=dist\%ENVNAME%.exe"
 if not exist "%HP_FAST_EXE%" exit /b 0
 set "HP_FAST_EXE_PATH=%HP_FAST_EXE%"
 set "HP_FASTPATH_TOKEN="
-rem derived requirement: verify the existing EXE is fresher than any non-helper source under the working directory.
-for /f "usebackq delims=" %%T in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$exe = '%HP_FAST_EXE_PATH%';" ^
-  "$infraPattern = '(?i)(^|[\\/])(\.git^|\.github^|dist^|\.venv^|__pycache__^|\.conda)([\\/]^|$)';" ^
-  "$sources = Get-ChildItem -Recurse -File -Filter '*.py' ^| Where-Object { $_.FullName -notmatch $infraPattern -and $_.Name -notlike '~*.py' };" ^
-  "if (-not $sources) { exit 1 }" ^
-  "$latest = ($sources ^| Sort-Object -Property LastWriteTimeUtc -Descending ^| Select-Object -First 1).LastWriteTimeUtc;" ^
-  "$exeTime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc;" ^
-  "if ($exeTime -ge $latest) { 'fresh' }"`)
-do set "HP_FASTPATH_TOKEN=%%T"
+rem Write the freshness-check script to a temp file to avoid for/f backtick pipe issues.
+set "HP_FAST_CHECK_PS=~fast_check.ps1"
+set "HP_FAST_CHECK_OUT=~fast_check.txt"
+if exist "%HP_FAST_CHECK_PS%" del "%HP_FAST_CHECK_PS%" >nul 2>&1
+if exist "%HP_FAST_CHECK_OUT%" del "%HP_FAST_CHECK_OUT%" >nul 2>&1
+(
+  echo $exe = '%HP_FAST_EXE_PATH%'
+  echo $infraPattern = '(?i)(^|[\\/])(\.git|\.github|dist|\.venv|__pycache__|\.conda)([\\/]|$)'
+  echo $sources = Get-ChildItem -Recurse -File -Filter '*.py' ^| Where-Object { $_.FullName -notmatch $infraPattern -and $_.Name -notlike '~*.py' }
+  echo if (-not $sources) { exit 1 }
+  echo $latest = ($sources ^| Sort-Object -Property LastWriteTimeUtc -Descending ^| Select-Object -First 1).LastWriteTimeUtc
+  echo $exeTime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
+  echo if ($exeTime -ge $latest) { 'fresh' }
+) > "%HP_FAST_CHECK_PS%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%HP_FAST_CHECK_PS%" > "%HP_FAST_CHECK_OUT%" 2>> "%LOG%"
+set "HP_FASTPATH_TOKEN="
+for /f "usebackq delims=" %%T in ("%HP_FAST_CHECK_OUT%") do set "HP_FASTPATH_TOKEN=%%T"
+if exist "%HP_FAST_CHECK_PS%" del "%HP_FAST_CHECK_PS%" >nul 2>&1
+if exist "%HP_FAST_CHECK_OUT%" del "%HP_FAST_CHECK_OUT%" >nul 2>&1
 if /I "%HP_FASTPATH_TOKEN%"=="fresh" (
   set "HP_FASTPATH_USED=1"
 )
