@@ -647,8 +647,22 @@ jobs:
             tests\~envsmoke\~setup.log
             tests/~envsmoke/~run.out.txt
             tests\~envsmoke\~run.out.txt
+            tests/~selftest_stub/~stub_bootstrap.log
+            tests\~selftest_stub\~stub_bootstrap.log
+            tests/~selftest_stub/~stub_fastpath.log
+            tests\~selftest_stub\~stub_fastpath.log
+            tests/~selftest_stub/~stub_rebuild.log
+            tests\~selftest_stub\~stub_rebuild.log
+            tests/~selftest_stub/~stub_run.log
+            tests\~selftest_stub\~stub_run.log
+            tests/~selftest_stub/~setup.log
+            tests\~selftest_stub\~setup.log
+            tests/~selftest_stub/~bootstrap.status.json
+            tests\~selftest_stub\~bootstrap.status.json
             tests/~setup.log
             tests\~setup.log
+            tests/~selftest-summary.txt
+            tests\~selftest-summary.txt
             tests/~test-summary.txt
             tests/~test-results.ndjson
             tests/extracted/**

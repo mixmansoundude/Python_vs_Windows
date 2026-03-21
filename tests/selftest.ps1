@@ -119,15 +119,15 @@ if ($fastExit -ne 0) {
 }
 $fastLogPath = Join-Path $stubDir $stubFastLogName
 $fastLog = Get-Content -LiteralPath $fastLogPath -Encoding ASCII
-$fastReuseTag = "Fast path: reusing dist\\$stubEnvNameNormalized.exe"
-$fastSkipTag = "Fast path: skipping PyInstaller rebuild for existing dist\\$stubEnvNameNormalized.exe"
+$fastReuseTag = "Fast path: reusing dist\$stubEnvNameNormalized.exe"
+$fastSkipTag = "Fast path: skipping PyInstaller rebuild for existing dist\$stubEnvNameNormalized.exe"
 if (-not ($fastLog | Where-Object { $_ -like "*${fastReuseTag}*" })) {
   throw "Fast-path run did not report EXE reuse"
 }
 if (-not ($fastLog | Where-Object { $_ -like "*${fastSkipTag}*" })) {
   throw "Fast-path run did not report PyInstaller skip"
 }
-$pyInstallerProducedTag = "PyInstaller produced dist\\$stubEnvNameNormalized.exe"
+$pyInstallerProducedTag = "PyInstaller produced dist\$stubEnvNameNormalized.exe"
 $firstTwoLogs = @(
   (Join-Path $stubDir $stubBootstrapLog),
   $fastLogPath
