@@ -135,7 +135,8 @@ $firstTwoLogs = @(
 $pyInstallerHits = 0
 foreach ($path in $firstTwoLogs) {
   if (Test-Path $path) {
-    $pyInstallerHits += (Select-String -Path $path -SimpleMatch $pyInstallerProducedTag -AllMatches).Matches.Count
+    $lines = Get-Content -LiteralPath $path -Encoding ASCII
+    $pyInstallerHits += @($lines | Where-Object { $_ -like "*$pyInstallerProducedTag*" }).Count
   }
 }
 if ($pyInstallerHits -ne 1) {
@@ -149,14 +150,16 @@ if ($rebuildExit -ne 0) {
   throw "Stub rebuild bootstrap failed with exit code $rebuildExit"
 }
 $rebuildLogPath = Join-Path $stubDir $stubRebuildLog
-$rebuildProducedHits = (Select-String -Path $rebuildLogPath -SimpleMatch $pyInstallerProducedTag -AllMatches).Matches.Count
+$rebuildLines = Get-Content -LiteralPath $rebuildLogPath -Encoding ASCII
+$rebuildProducedHits = @($rebuildLines | Where-Object { $_ -like "*$pyInstallerProducedTag*" }).Count
 if ($rebuildProducedHits -lt 1) {
   throw "Rebuild run did not report PyInstaller producing the EXE"
 }
 $totalProducedHits = 0
 foreach ($path in $firstTwoLogs + $rebuildLogPath) {
   if (Test-Path $path) {
-    $totalProducedHits += (Select-String -Path $path -SimpleMatch $pyInstallerProducedTag -AllMatches).Matches.Count
+    $lines = Get-Content -LiteralPath $path -Encoding ASCII
+    $totalProducedHits += @($lines | Where-Object { $_ -like "*$pyInstallerProducedTag*" }).Count
   }
 }
 if ($totalProducedHits -ne 2) {

@@ -1005,6 +1005,9 @@ set "MSG=%~1"
 echo %date% %time% %MSG%
 >> "%LOG%" echo [%date% %time%] %MSG%
 exit /b 0
+rem :die signals a fatal error but uses exit /b so the caller (CI orchestration,
+rem harness, or run_tests.bat) can continue collecting artifacts and gate results.
+rem Do NOT change to a bare `exit` here - that would terminate the entire job.
 :die
 set "MSG=%~1"
 set "RC=%~2"
