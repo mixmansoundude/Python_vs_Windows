@@ -16,6 +16,19 @@ $emptyDir = Join-Path $TestsDir '~selftest_empty'
 $stubDir = Join-Path $TestsDir '~selftest_stub'
 $summaryPath = Join-Path $TestsDir '~selftest-summary.txt'
 if (Test-Path $summaryPath) { Remove-Item -Force $summaryPath }
+$nd   = Join-Path $TestsDir '~test-results.ndjson'
+$ciNd = Join-Path $RepoDir  'ci_test_results.ndjson'
+if (-not (Test-Path $nd))   { New-Item -ItemType File -Path $nd   -Force | Out-Null }
+if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
+
+function Write-NdjsonRow {
+    param([hashtable]$Row)
+    $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
+    if ($lane -and -not $Row.ContainsKey('lane')) { $Row['lane'] = $lane }
+    $json = $Row | ConvertTo-Json -Compress -Depth 8
+    Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii
+    Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
+}
 $summary = New-Object System.Collections.Generic.List[string]
 $summary.Add('=== Bootstrap Self-tests ===')
 function Invoke-Setup {
@@ -57,6 +70,7 @@ if (Test-Path $stubDir) { Remove-Item -Recurse -Force $stubDir }
 New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
 Copy-Item -Path $BatchPath -Destination $stubDir -Force
 $stubScriptPath = Join-Path $stubDir 'hello_stub.py'
+# hello_stub.py intentionally has no imports to test the zero-requirements bootstrap path.
 Set-Content -Path $stubScriptPath -Value 'print("hello-from-stub")' -Encoding ASCII
 function Invoke-StubSetup {
   param(
@@ -90,9 +104,13 @@ if ($stubStatus.exitCode -ne 0) {
   throw "Expected exitCode 0 for stub bootstrap"
 }
 $stubEnvName = Split-Path -Leaf $stubDir
-$stubExePath = Join-Path $stubDir ("dist\\$stubEnvName.exe")
+$stubEnvNameNormalized = $stubEnvName -replace '[^A-Za-z0-9_-]', '_'
+if ([string]::IsNullOrWhiteSpace($stubEnvNameNormalized) -or $stubEnvNameNormalized.Trim('_').Length -eq 0) {
+  $stubEnvNameNormalized = 'env'
+}
+$stubExePath = Join-Path $stubDir ("dist\\$stubEnvNameNormalized.exe")
 if (-not (Test-Path $stubExePath)) {
-  throw "Stub bootstrap missing dist/$stubEnvName.exe after initial build"
+  throw "Stub bootstrap missing dist/$stubEnvNameNormalized.exe after initial build"
 }
 $stubFastLogName = '~stub_fastpath.log'
 $fastExit = Invoke-StubSetup -LogName $stubFastLogName
@@ -101,15 +119,15 @@ if ($fastExit -ne 0) {
 }
 $fastLogPath = Join-Path $stubDir $stubFastLogName
 $fastLog = Get-Content -LiteralPath $fastLogPath -Encoding ASCII
-$fastReuseTag = "Fast path: reusing dist\\$stubEnvName.exe"
-$fastSkipTag = "Fast path: skipping PyInstaller rebuild for existing dist\\$stubEnvName.exe"
+$fastReuseTag = "Fast path: reusing dist\$stubEnvNameNormalized.exe"
+$fastSkipTag = "Fast path: skipping PyInstaller rebuild for existing dist\$stubEnvNameNormalized.exe"
 if (-not ($fastLog | Where-Object { $_ -like "*${fastReuseTag}*" })) {
   throw "Fast-path run did not report EXE reuse"
 }
 if (-not ($fastLog | Where-Object { $_ -like "*${fastSkipTag}*" })) {
   throw "Fast-path run did not report PyInstaller skip"
 }
-$pyInstallerProducedTag = "PyInstaller produced dist\\$stubEnvName.exe"
+$pyInstallerProducedTag = "PyInstaller produced dist\$stubEnvNameNormalized.exe"
 $firstTwoLogs = @(
   (Join-Path $stubDir $stubBootstrapLog),
   $fastLogPath
@@ -117,7 +135,8 @@ $firstTwoLogs = @(
 $pyInstallerHits = 0
 foreach ($path in $firstTwoLogs) {
   if (Test-Path $path) {
-    $pyInstallerHits += (Select-String -Path $path -SimpleMatch $pyInstallerProducedTag -AllMatches).Matches.Count
+    $lines = Get-Content -LiteralPath $path -Encoding ASCII
+    $pyInstallerHits += @($lines | Where-Object { $_ -like "*$pyInstallerProducedTag*" }).Count
   }
 }
 if ($pyInstallerHits -ne 1) {
@@ -131,21 +150,23 @@ if ($rebuildExit -ne 0) {
   throw "Stub rebuild bootstrap failed with exit code $rebuildExit"
 }
 $rebuildLogPath = Join-Path $stubDir $stubRebuildLog
-$rebuildProducedHits = (Select-String -Path $rebuildLogPath -SimpleMatch $pyInstallerProducedTag -AllMatches).Matches.Count
+$rebuildLines = Get-Content -LiteralPath $rebuildLogPath -Encoding ASCII
+$rebuildProducedHits = @($rebuildLines | Where-Object { $_ -like "*$pyInstallerProducedTag*" }).Count
 if ($rebuildProducedHits -lt 1) {
   throw "Rebuild run did not report PyInstaller producing the EXE"
 }
 $totalProducedHits = 0
 foreach ($path in $firstTwoLogs + $rebuildLogPath) {
   if (Test-Path $path) {
-    $totalProducedHits += (Select-String -Path $path -SimpleMatch $pyInstallerProducedTag -AllMatches).Matches.Count
+    $lines = Get-Content -LiteralPath $path -Encoding ASCII
+    $totalProducedHits += @($lines | Where-Object { $_ -like "*$pyInstallerProducedTag*" }).Count
   }
 }
 if ($totalProducedHits -ne 2) {
   throw "Expected exactly two PyInstaller builds after touching hello_stub.py"
 }
 $summary.Add('stub fast path + rebuild: PASS')
-$stubPython = Join-Path $MiniRoot ("envs\\$stubEnvName\\python.exe")
+$stubPython = Join-Path $MiniRoot ("envs\\$stubEnvNameNormalized\\python.exe")
 $pythonCmd = $null
 $pythonArgs = @('-u','hello_stub.py')
 if (Test-Path $stubPython) {
@@ -181,4 +202,22 @@ if (-not ($runLog | Where-Object { $_ -match 'hello-from-stub' })) {
   throw "Stub python execution did not emit hello-from-stub"
 }
 $summary.Add('stub bootstrap + python run: PASS')
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.fastpath'
+  pass = ($pyInstallerHits -eq 1)
+  desc = 'Stub bootstrap: fast path reuses EXE without rebuilding'
+  details = [ordered]@{
+    stubEnvName = $stubEnvNameNormalized
+    pyInstallerBuilds = $pyInstallerHits
+  }
+})
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.rebuild'
+  pass = ($totalProducedHits -eq 2)
+  desc = 'Stub rebuild: source change triggers new EXE, subsequent run takes fast path'
+  details = [ordered]@{
+    totalBuilds = $totalProducedHits
+    rebuildBuilds = $rebuildProducedHits
+  }
+})
 $summary | Set-Content -Path $summaryPath -Encoding ASCII

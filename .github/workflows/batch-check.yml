@@ -647,8 +647,22 @@ jobs:
             tests\~envsmoke\~setup.log
             tests/~envsmoke/~run.out.txt
             tests\~envsmoke\~run.out.txt
+            tests/~selftest_stub/~stub_bootstrap.log
+            tests\~selftest_stub\~stub_bootstrap.log
+            tests/~selftest_stub/~stub_fastpath.log
+            tests\~selftest_stub\~stub_fastpath.log
+            tests/~selftest_stub/~stub_rebuild.log
+            tests\~selftest_stub\~stub_rebuild.log
+            tests/~selftest_stub/~stub_run.log
+            tests\~selftest_stub\~stub_run.log
+            tests/~selftest_stub/~setup.log
+            tests\~selftest_stub\~setup.log
+            tests/~selftest_stub/~bootstrap.status.json
+            tests\~selftest_stub\~bootstrap.status.json
             tests/~setup.log
             tests\~setup.log
+            tests/~selftest-summary.txt
+            tests\~selftest-summary.txt
             tests/~test-summary.txt
             tests/~test-results.ndjson
             tests/extracted/**
@@ -2394,6 +2408,14 @@ jobs:
           pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prep.outputs.ARTIFACTS }}/batch-check/_ci_artifacts
 
+      - name: Download CI test logs artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-logs-selftest-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.prep.outputs.ARTIFACTS }}/batch-check/test-logs
+
       - name: Mirror NDJSON into diagnostics bundle
         if: ${{ always() }}
         shell: bash
@@ -2426,6 +2448,19 @@ jobs:
             install -D "$ndjson" "$diag_root/$target"
             install -D "$ndjson" "$site_root/$target"
           done
+          test_logs_src="$ARTIFACTS_DIR/batch-check/test-logs"
+          if find "$test_logs_src" -type f -print -quit >/dev/null 2>&1; then
+            for target_root in "$DIAG_DIR/_artifacts/batch-check/test-logs" "$SITE_DIR/_artifacts/batch-check/test-logs"; do
+              # derived requirement: publish_diag may mirror back into the artifacts tree, so
+              # skip the copy when source and destination resolve to the same directory.
+              real_src=$(realpath "$test_logs_src" 2>/dev/null || echo "$test_logs_src")
+              real_dst=$(realpath "$target_root" 2>/dev/null || echo "$target_root")
+              [ "$real_src" = "$real_dst" ] && continue
+              mkdir -p "$target_root"
+              rm -rf "$target_root"/*
+              cp -a "$test_logs_src"/. "$target_root"/
+            done
+          fi
 
       - name: Package iterate logs archive
         if: ${{ always() }}

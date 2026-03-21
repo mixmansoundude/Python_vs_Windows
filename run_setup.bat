@@ -290,11 +290,10 @@ rem Rationale: compat mode for deterministic output; force overwrite; write to r
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
 set "HP_PIPREQS_RC=%errorlevel%"
 if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_TARGET_WORK%" (
-  for %%S in ("%HP_PIPREQS_TARGET_WORK%") do if %%~zS GTR 0 (
-    set "HP_PIPREQS_PHASE_RESULT=ok"
-    set "HP_PIPREQS_SUMMARY_PHASE=direct"
-    goto :after_pipreqs_run
-  )
+  rem Zero imports are valid: pipreqs exits 0 and may intentionally leave requirements.auto.txt empty.
+  set "HP_PIPREQS_PHASE_RESULT=ok"
+  set "HP_PIPREQS_SUMMARY_PHASE=direct"
+  goto :after_pipreqs_run
 )
 
 set "HP_TEMP_ROOT=%RUNNER_TEMP%"
@@ -325,18 +324,17 @@ set "HP_PIPREQS_RC=%errorlevel%"
 popd
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_STAGE_LOG%"
 if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_STAGE_TARGET%" (
-  for %%S in ("%HP_PIPREQS_STAGE_TARGET%") do if %%~zS GTR 0 (
-    copy /y "%HP_PIPREQS_STAGE_TARGET%" "%HP_PIPREQS_TARGET_WORK%" >nul 2>&1
-    if errorlevel 1 (
-      set "HP_PIPREQS_PHASE_RESULT=fail"
-      set "HP_PIPREQS_SUMMARY_NOTE=(failed to copy staging output)"
-      goto :after_pipreqs_run
-    )
-    set "HP_PIPREQS_PHASE_RESULT=ok"
-    set "HP_PIPREQS_SUMMARY_PHASE=staging"
-    set "HP_PIPREQS_SUMMARY_NOTE=(fallback after direct failure)"
+  rem Zero imports are valid: copy the staging file even when pipreqs produced an empty requirements list.
+  copy /y "%HP_PIPREQS_STAGE_TARGET%" "%HP_PIPREQS_TARGET_WORK%" >nul 2>&1
+  if errorlevel 1 (
+    set "HP_PIPREQS_PHASE_RESULT=fail"
+    set "HP_PIPREQS_SUMMARY_NOTE=(failed to copy staging output)"
     goto :after_pipreqs_run
   )
+  set "HP_PIPREQS_PHASE_RESULT=ok"
+  set "HP_PIPREQS_SUMMARY_PHASE=staging"
+  set "HP_PIPREQS_SUMMARY_NOTE=(fallback after direct failure)"
+  goto :after_pipreqs_run
 )
 if not defined HP_PIPREQS_SUMMARY_NOTE set "HP_PIPREQS_SUMMARY_NOTE=(staging pipreqs failed)"
 set "HP_PIPREQS_PHASE_RESULT=fail"
@@ -1007,6 +1005,9 @@ set "MSG=%~1"
 echo %date% %time% %MSG%
 >> "%LOG%" echo [%date% %time%] %MSG%
 exit /b 0
+rem :die signals a fatal error but uses exit /b so the caller (CI orchestration,
+rem harness, or run_tests.bat) can continue collecting artifacts and gate results.
+rem Do NOT change to a bare `exit` here - that would terminate the entire job.
 :die
 set "MSG=%~1"
 set "RC=%~2"
