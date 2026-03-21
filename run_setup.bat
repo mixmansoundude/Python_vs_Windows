@@ -311,7 +311,7 @@ rem -------------------------------------------------------------------------
 rem Debug: log rc + file size so future diagnosis is trivial
 set "HP_PIPREQS_SIZE=missing"
 if exist "%HP_PIPREQS_TARGET_WORK%" for %%A in ("%HP_PIPREQS_TARGET_WORK%") do set "HP_PIPREQS_SIZE=%%~zA"
-call :log [DEBUG] pipreqs (direct) rc=%HP_PIPREQS_RC% size=%HP_PIPREQS_SIZE%
+call :log "[DEBUG] pipreqs (direct) rc=%HP_PIPREQS_RC% size=%HP_PIPREQS_SIZE%"
 rem Zero-requirements guard: accept non-zero exit only when output is absent or empty
 if not "%HP_PIPREQS_RC%"=="0" (
   if not exist "%HP_PIPREQS_TARGET_WORK%" (
@@ -372,7 +372,7 @@ if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_STAGE_TARGET%" (
 rem Debug: log rc + file size for staging path
 set "HP_PIPREQS_SIZE=missing"
 if exist "%HP_PIPREQS_STAGE_TARGET%" for %%A in ("%HP_PIPREQS_STAGE_TARGET%") do set "HP_PIPREQS_SIZE=%%~zA"
-call :log [DEBUG] pipreqs (staging) rc=%HP_PIPREQS_RC% size=%HP_PIPREQS_SIZE%
+call :log "[DEBUG] pipreqs (staging) rc=%HP_PIPREQS_RC% size=%HP_PIPREQS_SIZE%"
 rem Zero-requirements guard for staging path
 if not "%HP_PIPREQS_RC%"=="0" (
   if not exist "%HP_PIPREQS_STAGE_TARGET%" (
