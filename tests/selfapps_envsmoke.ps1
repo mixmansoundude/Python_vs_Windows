@@ -92,12 +92,15 @@ Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $app -Forc
 Set-Content -LiteralPath (Join-Path $app 'app.py') -Value @'
 import colorama  # Prime Directive: proves pipreqs scanned app.py, conda installed it
 import os as _os
+import sys as _sys
 
 # Write token to a sidecar file. stdout-based approaches (print, os.write) are
 # unreliable through cmd.exe redirects on some Windows Python distributions due
 # to CRT file-descriptor/HANDLE mismatch (see history in selfapps_envsmoke.ps1).
 # File I/O uses Win32 CreateFile/WriteFile directly - no stdout involved.
-_here = _os.path.dirname(_os.path.abspath(__file__))
+# Use sys.argv[0] so normal Python runs write next to app.py while PyInstaller
+# --onefile runs write next to the EXE instead of the transient _MEI temp tree.
+_here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
 with open(_os.path.join(_here, '~smoke_token.txt'), 'w') as _f:
     _f.write('smoke-ok\n')
 '@ -NoNewline
@@ -379,7 +382,7 @@ if ($exeExists) {
 }
 Write-NdjsonRow ([ordered]@{
     id='self.exe.run'
-    pass=($exeExists -and ($exeExit -eq 0))
+    pass=($exeExists -and ($exeExit -eq 0) -and $exeTokenFound)
     desc='Standalone EXE runs successfully'
     details=[ordered]@{ exitCode=$exeExit; tokenFound=$exeTokenFound }
 })
