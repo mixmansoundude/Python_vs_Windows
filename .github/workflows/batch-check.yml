@@ -51,7 +51,8 @@ jobs:
 
       - name: Restore Miniconda cache
         if: ${{ matrix.mode == 'cache' }}
-        uses: actions/cache@v4
+        id: conda_cache_restore
+        uses: actions/cache/restore@v4
         with:
           path: C:\Users\Public\Documents\Miniconda3
           key: win-${{ runner.os }}-py311-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
@@ -668,6 +669,29 @@ jobs:
             tests/extracted/**
           if-no-files-found: ignore
           retention-days: 14
+
+      # Professional note: cache/save runs separately so failed bootstrap attempts do not persist a partial Miniconda tree.
+      - name: Validate Miniconda before cache save
+        if: ${{ matrix.mode == 'cache' && steps.conda_cache_restore.outputs.cache-hit != 'true' }}
+        id: conda_validate
+        shell: pwsh
+        run: |
+          $condaMain = 'C:\Users\Public\Documents\Miniconda3\condabin\conda.bat'
+          $condaAlt  = 'C:\Users\Public\Documents\Miniconda3\Scripts\conda.bat'
+          if ((Test-Path $condaMain) -or (Test-Path $condaAlt)) {
+            echo "conda_ok=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+            Write-Host "Miniconda validated: conda.bat present"
+          } else {
+            echo "conda_ok=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+            Write-Host "Miniconda not found: skipping cache save"
+          }
+
+      - name: Save Miniconda cache
+        if: ${{ matrix.mode == 'cache' && steps.conda_cache_restore.outputs.cache-hit != 'true' && steps.conda_validate.outputs.conda_ok == 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: C:\Users\Public\Documents\Miniconda3
+          key: win-${{ runner.os }}-py311-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
 
       - name: Summarize bootstrap result
         if: always()
