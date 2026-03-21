@@ -3067,7 +3067,7 @@ jobs:
             $bundle = "https://$($parts[0]).github.io/$($parts[1])/diag/$Run-$Att/"
             "### Diagnostics bundle" | Out-File -Append $env:GITHUB_STEP_SUMMARY
             "- [$bundle]($bundle)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-            $cacheBusted = "${bundle}index.html?v=$Run"
+            $cacheBusted = "${bundle}index.html?v=$Run-$Att"
             "- Diagnostics site (cache-busted): $cacheBusted" | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
 
