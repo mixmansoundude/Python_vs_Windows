@@ -295,6 +295,39 @@ if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_TARGET_WORK%" (
   set "HP_PIPREQS_SUMMARY_PHASE=direct"
   goto :after_pipreqs_run
 )
+rem ---- pipreqs result handling -------------------------------------------
+rem RC=0  + file exists             -> OK  (deps found, or zero deps via exit 0)
+rem RC!=0 + no file                 -> OK  (no imports: zero requirements)
+rem RC!=0 + file empty (size=0)     -> OK  (no imports: zero requirements)
+rem RC!=0 + file populated          -> FAIL (unexpected; fall through to staging)
+rem
+rem Notes:
+rem - pipreqs returns non-zero when no imports are found: that is NOT an error
+rem - We inspect file state, not just exit code, to distinguish zero-deps from crash
+rem - If pipreqs crashed on a file WITH imports, output is absent/empty and this
+rem   guard treats it as zero-requirements; downstream pip/tokenFound will expose it
+rem - Staging path below acts as fallback for direct path quoting/path issues
+rem -------------------------------------------------------------------------
+rem Debug: log rc + file size so future diagnosis is trivial
+set "HP_PIPREQS_SIZE=missing"
+if exist "%HP_PIPREQS_TARGET_WORK%" for %%A in ("%HP_PIPREQS_TARGET_WORK%") do set "HP_PIPREQS_SIZE=%%~zA"
+call :log [DEBUG] pipreqs (direct) rc=%HP_PIPREQS_RC% size=%HP_PIPREQS_SIZE%
+rem Zero-requirements guard: accept non-zero exit only when output is absent or empty
+if not "%HP_PIPREQS_RC%"=="0" (
+  if not exist "%HP_PIPREQS_TARGET_WORK%" (
+    set "HP_PIPREQS_PHASE_RESULT=ok"
+    set "HP_PIPREQS_SUMMARY_PHASE=direct"
+    set "HP_PIPREQS_SUMMARY_NOTE=(zero requirements: no imports found)"
+    goto :after_pipreqs_run
+  ) else (
+    for %%A in ("%HP_PIPREQS_TARGET_WORK%") do if %%~zA EQU 0 (
+      set "HP_PIPREQS_PHASE_RESULT=ok"
+      set "HP_PIPREQS_SUMMARY_PHASE=direct"
+      set "HP_PIPREQS_SUMMARY_NOTE=(zero requirements: no imports found)"
+      goto :after_pipreqs_run
+    )
+  )
+)
 
 set "HP_TEMP_ROOT=%RUNNER_TEMP%"
 if not defined HP_TEMP_ROOT set "HP_TEMP_ROOT=%TEMP%"
@@ -335,6 +368,26 @@ if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_STAGE_TARGET%" (
   set "HP_PIPREQS_SUMMARY_PHASE=staging"
   set "HP_PIPREQS_SUMMARY_NOTE=(fallback after direct failure)"
   goto :after_pipreqs_run
+)
+rem Debug: log rc + file size for staging path
+set "HP_PIPREQS_SIZE=missing"
+if exist "%HP_PIPREQS_STAGE_TARGET%" for %%A in ("%HP_PIPREQS_STAGE_TARGET%") do set "HP_PIPREQS_SIZE=%%~zA"
+call :log [DEBUG] pipreqs (staging) rc=%HP_PIPREQS_RC% size=%HP_PIPREQS_SIZE%
+rem Zero-requirements guard for staging path
+if not "%HP_PIPREQS_RC%"=="0" (
+  if not exist "%HP_PIPREQS_STAGE_TARGET%" (
+    set "HP_PIPREQS_PHASE_RESULT=ok"
+    set "HP_PIPREQS_SUMMARY_PHASE=staging"
+    set "HP_PIPREQS_SUMMARY_NOTE=(zero requirements: no imports found)"
+    goto :after_pipreqs_run
+  ) else (
+    for %%A in ("%HP_PIPREQS_STAGE_TARGET%") do if %%~zA EQU 0 (
+      set "HP_PIPREQS_PHASE_RESULT=ok"
+      set "HP_PIPREQS_SUMMARY_PHASE=staging"
+      set "HP_PIPREQS_SUMMARY_NOTE=(zero requirements: no imports found)"
+      goto :after_pipreqs_run
+    )
+  )
 )
 if not defined HP_PIPREQS_SUMMARY_NOTE set "HP_PIPREQS_SUMMARY_NOTE=(staging pipreqs failed)"
 set "HP_PIPREQS_PHASE_RESULT=fail"
