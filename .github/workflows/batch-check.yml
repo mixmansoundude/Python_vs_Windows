@@ -178,6 +178,11 @@ jobs:
         run: |
           & tests\selfapps_envsmoke.ps1
 
+      - name: "Self-test: requirements specifier coverage"
+        shell: pwsh
+        run: |
+          & tests\selfapps_reqspec.ps1
+
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
@@ -648,6 +653,8 @@ jobs:
             tests\~envsmoke\~setup.log
             tests/~envsmoke/~run.out.txt
             tests\~envsmoke\~run.out.txt
+            tests/~reqspec/~reqspec_run.log
+            tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log
             tests\~selftest_stub\~stub_bootstrap.log
             tests/~selftest_stub/~stub_fastpath.log
