@@ -30,7 +30,9 @@ function Write-ReqspecRows {
         [ordered]@{ id = 'reqspec.translate.gte'; desc = 'six>=1.16 translates to conda >= syntax'; specifier = 'six>=1.16'; expected = 'six >=1.16' },
         [ordered]@{ id = 'reqspec.translate.eq'; desc = 'colorama==0.4.6 translates to conda == syntax'; specifier = 'colorama==0.4.6'; expected = 'colorama ==0.4.6' },
         [ordered]@{ id = 'reqspec.translate.compat'; desc = 'packaging~=24.0 translates to conda compatible range'; specifier = 'packaging~=24.0'; expected = 'packaging >=24.0,<25' },
-        [ordered]@{ id = 'reqspec.translate.gt'; desc = 'attrs>22.0 translates to conda > syntax'; specifier = 'attrs>22.0'; expected = 'attrs >22.0' }
+        [ordered]@{ id = 'reqspec.translate.gt'; desc = 'attrs>22.0 translates to conda > syntax'; specifier = 'attrs>22.0'; expected = 'attrs >22.0' },
+        [ordered]@{ id = 'reqspec.translate.neq'; desc = 'six!=1.15 translates to conda != syntax'; specifier = 'six!=1.15'; expected = 'six !=1.15' },
+        [ordered]@{ id = 'reqspec.translate.lte'; desc = 'attrs<=23.0 translates to conda <= syntax'; specifier = 'attrs<=23.0'; expected = 'attrs <=23.0' }
     )
 
     foreach ($row in $rows) {
@@ -58,7 +60,7 @@ function Write-ReqspecRows {
         })
     }
 
-    $dry = if ($DryRunDetails) { $DryRunDetails } else { [ordered]@{ exitCode = -1; packages = @('six>=1.16', 'colorama==0.4.6', 'packaging~=24.0', 'attrs>22.0') } }
+    $dry = if ($DryRunDetails) { $DryRunDetails } else { [ordered]@{ exitCode = -1; packages = @('six>=1.16', 'colorama==0.4.6', 'packaging~=24.0', 'attrs>22.0', 'six!=1.15', 'attrs<=23.0') } }
     if ($Skip) {
         $dry.skip = $true
         if ($Reason) { $dry.reason = $Reason }
@@ -177,7 +179,9 @@ if (-not $condaBat) {
         @{ id = 'reqspec.translate.gte'; specifier = 'six>=1.16'; expected = 'six >=1.16' },
         @{ id = 'reqspec.translate.eq'; specifier = 'colorama==0.4.6'; expected = 'colorama ==0.4.6' },
         @{ id = 'reqspec.translate.compat'; specifier = 'packaging~=24.0'; expected = 'packaging >=24.0,<25' },
-        @{ id = 'reqspec.translate.gt'; specifier = 'attrs>22.0'; expected = 'attrs >22.0' }
+        @{ id = 'reqspec.translate.gt'; specifier = 'attrs>22.0'; expected = 'attrs >22.0' },
+        @{ id = 'reqspec.translate.neq'; specifier = 'six!=1.15'; expected = 'six !=1.15' },
+        @{ id = 'reqspec.translate.lte'; specifier = 'attrs<=23.0'; expected = 'attrs <=23.0' }
     )) {
         $translationChecks[$pair.id] = [ordered]@{
             specifier = $pair.specifier
@@ -190,7 +194,7 @@ if (-not $condaBat) {
     }
     $dryRunDetails = [ordered]@{
         exitCode = -1
-        packages = @('six>=1.16', 'colorama==0.4.6', 'packaging~=24.0', 'attrs>22.0')
+        packages = @('six>=1.16', 'colorama==0.4.6', 'packaging~=24.0', 'attrs>22.0', 'six!=1.15', 'attrs<=23.0')
         reason = 'conda-not-found'
         condaBatCandidates = $condaInfo.candidates
         publicRoot = $condaInfo.publicRoot
@@ -211,14 +215,16 @@ $prepPath = Join-Path $work '~prep_requirements.py'
 $reqPath = Join-Path $work 'requirements.txt'
 $condaReqPath = Join-Path $work '~reqs_conda.txt'
 $translationChecks = @{}
-$dryRunDetails = [ordered]@{ exitCode = -1; packages = @('six>=1.16', 'colorama==0.4.6', 'packaging~=24.0', 'attrs>22.0'); condaBat = $condaBat }
+$dryRunDetails = [ordered]@{ exitCode = -1; packages = @('six>=1.16', 'colorama==0.4.6', 'packaging~=24.0', 'attrs>22.0', 'six!=1.15', 'attrs<=23.0'); condaBat = $condaBat }
 $installDetails = [ordered]@{ package = 'six'; importable = $false; condaBat = $condaBat; environment = '_envsmoke' }
 
 Set-Content -LiteralPath $reqPath -Encoding Ascii -Value @(
     'six>=1.16',
     'colorama==0.4.6',
     'packaging~=24.0',
-    'attrs>22.0'
+    'attrs>22.0',
+    'six!=1.15',
+    'attrs<=23.0'
 )
 
 $overallPass = $true
@@ -266,7 +272,9 @@ foreach ($pair in @(
     @{ id = 'reqspec.translate.gte'; specifier = 'six>=1.16'; expected = 'six >=1.16' },
     @{ id = 'reqspec.translate.eq'; specifier = 'colorama==0.4.6'; expected = 'colorama ==0.4.6' },
     @{ id = 'reqspec.translate.compat'; specifier = 'packaging~=24.0'; expected = 'packaging >=24.0,<25' },
-    @{ id = 'reqspec.translate.gt'; specifier = 'attrs>22.0'; expected = 'attrs >22.0' }
+    @{ id = 'reqspec.translate.gt'; specifier = 'attrs>22.0'; expected = 'attrs >22.0' },
+    @{ id = 'reqspec.translate.neq'; specifier = 'six!=1.15'; expected = 'six !=1.15' },
+    @{ id = 'reqspec.translate.lte'; specifier = 'attrs<=23.0'; expected = 'attrs <=23.0' }
 )) {
     $found = $false
     if ($condaText) { $found = $condaText.Contains($pair.expected) }
