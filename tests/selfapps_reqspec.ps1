@@ -22,6 +22,7 @@ function Write-ReqspecRows {
         [hashtable]$TranslationChecks,
         [hashtable]$DryRunDetails,
         [hashtable]$InstallDetails,
+        [hashtable]$FailcaseDetails,
         [bool]$Skip = $false,
         [string]$Reason = ''
     )
@@ -74,6 +75,22 @@ function Write-ReqspecRows {
         pass = $dryPass
         desc = 'conda dry-run accepts translated requirement specifiers'
         details = $dry
+    })
+
+    $failcase = if ($FailcaseDetails) { $FailcaseDetails } else { [ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0' } }
+    if ($Skip) {
+        $failcase.skip = $true
+        if ($Reason) { $failcase.reason = $Reason }
+    }
+    $failcasePass = $true
+    if (-not $Skip) {
+        $failcasePass = ($failcase.exitCode -ne 0)
+    }
+    Write-NdjsonRow ([ordered]@{
+        id = 'reqspec.conda.dryrun.failcase'
+        pass = $failcasePass
+        desc = 'conda dry-run rejects invalid requirement constraints'
+        details = $failcase
     })
 
     $install = if ($InstallDetails) { $InstallDetails } else { [ordered]@{ package = 'six'; importable = $false } }
@@ -162,7 +179,7 @@ function Export-PrepRequirementsHelper {
 }
 
 if (-not $IsWindows) {
-    Write-ReqspecRows -Pass $true -TranslationChecks @{} -DryRunDetails @{} -InstallDetails @{} -Skip $true -Reason 'non-windows-host'
+    Write-ReqspecRows -Pass $true -TranslationChecks @{} -DryRunDetails @{} -InstallDetails @{} -FailcaseDetails @{} -Skip $true -Reason 'non-windows-host'
     exit 0
 }
 
@@ -206,17 +223,19 @@ if (-not $condaBat) {
         condaBatCandidates = $condaInfo.candidates
         publicRoot = $condaInfo.publicRoot
     }
-    Write-ReqspecRows -Pass $false -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails
+    Write-ReqspecRows -Pass $false -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails ([ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0'; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot })
     exit 0
 }
 
 $condaPython = Get-CondaPythonPath -CondaBat $condaBat
 $prepPath = Join-Path $work '~prep_requirements.py'
 $reqPath = Join-Path $work 'requirements.txt'
+$badReqPath = Join-Path $work 'requirements.bad.txt'
 $condaReqPath = Join-Path $work '~reqs_conda.txt'
 $translationChecks = @{}
 $dryRunDetails = [ordered]@{ exitCode = -1; packages = @('six>=1.16', 'colorama==0.4.6', 'packaging~=24.0', 'attrs>22.0', 'six!=1.15', 'attrs<=23.0'); condaBat = $condaBat }
 $installDetails = [ordered]@{ package = 'six'; importable = $false; condaBat = $condaBat; environment = '_envsmoke' }
+$failcaseDetails = [ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0'; condaBat = $condaBat }
 
 Set-Content -LiteralPath $reqPath -Encoding Ascii -Value @(
     'six>=1.16',
@@ -225,6 +244,9 @@ Set-Content -LiteralPath $reqPath -Encoding Ascii -Value @(
     'attrs>22.0',
     'six!=1.15',
     'attrs<=23.0'
+)
+Set-Content -LiteralPath $badReqPath -Encoding Ascii -Value @(
+    'six<1.0'
 )
 
 $overallPass = $true
@@ -286,6 +308,7 @@ foreach ($pair in @(
 }
 
 $dryRunCommand = "`"$condaBat`" install --dry-run -n base --override-channels -c conda-forge --file `"$condaReqPath`""
+$badDryRunCommand = "`"$condaBat`" install --dry-run -n base --override-channels -c conda-forge --file `"$badReqPath`""
 
 $condaConfigCommands = @(
     "`"$condaBat`" config --env --add channels conda-forge",
@@ -328,6 +351,22 @@ try {
     Add-Content -LiteralPath $logPath -Value ("conda dry-run exception: {0}" -f $_.Exception.Message) -Encoding Ascii
 }
 
+try {
+    $badDryOutput = cmd /c $badDryRunCommand 2>&1
+    $exitCodeBad = $LASTEXITCODE
+    $failcaseDetails.exitCode = $exitCodeBad
+    if ($badDryOutput) {
+        Add-Content -LiteralPath $logPath -Value 'conda failure-case dry-run output:' -Encoding Ascii
+        Add-Content -LiteralPath $logPath -Value ($badDryOutput | Out-String) -Encoding Ascii
+    }
+    Add-Content -LiteralPath $logPath -Value ("[INFO] failure-case dry-run exitCode={0} (expected non-zero)" -f $exitCodeBad) -Encoding Ascii
+} catch {
+    $failcaseDetails.exitCode = -1
+    $failcaseDetails.error = $_.Exception.Message
+    Add-Content -LiteralPath $logPath -Value ("failure-case dry-run exception: {0}" -f $_.Exception.Message) -Encoding Ascii
+    Add-Content -LiteralPath $logPath -Value '[INFO] failure-case dry-run exitCode=-1 (expected non-zero)' -Encoding Ascii
+}
+
 # derived requirement: reuse the _envsmoke environment that the earlier self-test
 # already created so this probe proves translated specifiers install end-to-end in
 # the same real bootstrap environment instead of a synthetic throwaway env.
@@ -367,4 +406,4 @@ try {
     Add-Content -LiteralPath $logPath -Value ("conda import exception: {0}" -f $_.Exception.Message) -Encoding Ascii
 }
 
-Write-ReqspecRows -Pass $overallPass -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails
+Write-ReqspecRows -Pass $overallPass -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails $failcaseDetails
