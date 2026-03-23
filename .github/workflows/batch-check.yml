@@ -127,6 +127,12 @@ jobs:
             }
           }
 
+      - name: "Pre-bootstrap: ensure Python file exists"
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path tests\~bootstrap | Out-Null
+          Set-Content -Path tests\~bootstrap\bootstrap_stub.py -Value "print('bootstrap trigger')"
+
       - name: Bootstrap environment (run_setup.bat)
         shell: cmd
         run: |
