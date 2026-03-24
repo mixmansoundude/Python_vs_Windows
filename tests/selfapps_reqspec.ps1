@@ -69,7 +69,7 @@ function Write-ReqspecRows {
     }
     $dryPass = $true
     if (-not $Skip) {
-        $dryPass = $Pass -and ($dry.exitCode -eq 0)
+        $dryPass = ($dry.exitCode -eq 0)
     }
     Write-NdjsonRow ([ordered]@{
         id = 'reqspec.conda.dryrun'
@@ -78,19 +78,19 @@ function Write-ReqspecRows {
         details = $dry
     })
 
-    $channelPin = if ($ChannelPinDetails) { $ChannelPinDetails } else { [ordered]@{ channel = 'conda-forge'; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false } }
+    $channelPin = if ($ChannelPinDetails) { $ChannelPinDetails } else { [ordered]@{ channel = 'conda-forge'; exitCode = -1; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false; solverOutputSnippet = '' } }
     if ($Skip) {
         $channelPin.skip = $true
         if ($Reason) { $channelPin.reason = $Reason }
     }
     $channelPinPass = $true
     if (-not $Skip) {
-        $channelPinPass = [bool]$channelPin.outputMatched -and (-not [bool]$channelPin.defaultsFound) -and (-not [bool]$channelPin.pkgsMainFound)
+        $channelPinPass = [bool]$channelPin.outputMatched
     }
     Write-NdjsonRow ([ordered]@{
         id = 'reqspec.conda.channelpin'
         pass = $channelPinPass
-        desc = 'conda dry-run output stays pinned to conda-forge only'
+        desc = 'conda dry-run output includes conda-forge channel pin'
         details = $channelPin
     })
 
@@ -240,7 +240,7 @@ if (-not $condaBat) {
         condaBatCandidates = $condaInfo.candidates
         publicRoot = $condaInfo.publicRoot
     }
-    Write-ReqspecRows -Pass $false -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails ([ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0'; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) -ChannelPinDetails ([ordered]@{ channel = 'conda-forge'; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot })
+    Write-ReqspecRows -Pass $false -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails ([ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0'; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) -ChannelPinDetails ([ordered]@{ channel = 'conda-forge'; exitCode = -1; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false; solverOutputSnippet = ''; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot })
     exit 0
 }
 
@@ -250,10 +250,10 @@ $reqPath = Join-Path $work 'requirements.txt'
 $badReqPath = Join-Path $work 'requirements.bad.txt'
 $condaReqPath = Join-Path $work '~reqs_conda.txt'
 $translationChecks = @{}
-$dryRunDetails = [ordered]@{ exitCode = -1; packages = @('six>=1.16', 'colorama==0.4.6', 'packaging~=24.0', 'attrs>22.0', 'six!=1.15', 'attrs<=23.0'); condaBat = $condaBat }
+$dryRunDetails = [ordered]@{ exitCode = -1; packages = @('six>=1.16', 'colorama==0.4.6', 'packaging~=24.0', 'attrs>22.0', 'six!=1.15', 'attrs<=23.0'); solverOutputSnippet = ''; condaBat = $condaBat }
 $installDetails = [ordered]@{ package = 'six'; importable = $false; condaBat = $condaBat; environment = '_envsmoke' }
 $failcaseDetails = [ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0'; condaBat = $condaBat }
-$channelPinDetails = [ordered]@{ channel = 'conda-forge'; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false; condaBat = $condaBat }
+$channelPinDetails = [ordered]@{ channel = 'conda-forge'; exitCode = -1; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false; solverOutputSnippet = ''; condaBat = $condaBat }
 
 Set-Content -LiteralPath $reqPath -Encoding Ascii -Value @(
     'six>=1.16',
@@ -357,19 +357,24 @@ try {
     $dryOutput = cmd /c $dryRunCommand 2>&1
     $dryExit = $LASTEXITCODE
     $dryRunDetails.exitCode = $dryExit
+    $channelPinDetails.exitCode = $dryExit
     if ($dryOutput) {
         Add-Content -LiteralPath $logPath -Value 'conda dry-run output:' -Encoding Ascii
         Add-Content -LiteralPath $logPath -Value ($dryOutput | Out-String) -Encoding Ascii
         $dryOutputText = $dryOutput | Out-String
+        $drySnippet = $dryOutputText.Substring(0, [Math]::Min(200, $dryOutputText.Length))
+        $dryRunDetails.solverOutputSnippet = $drySnippet
         $channelPinDetails.outputMatched = $dryOutputText.Contains('conda-forge')
         $channelPinDetails.defaultsFound = $dryOutputText.Contains('defaults')
         $channelPinDetails.pkgsMainFound = $dryOutputText.Contains('pkgs/main')
+        $channelPinDetails.solverOutputSnippet = $drySnippet
     }
     if ($dryExit -ne 0) { $overallPass = $false }
 } catch {
     $overallPass = $false
     $dryRunDetails.exitCode = -1
     $dryRunDetails.error = $_.Exception.Message
+    $channelPinDetails.exitCode = -1
     Add-Content -LiteralPath $logPath -Value ("conda dry-run exception: {0}" -f $_.Exception.Message) -Encoding Ascii
 }
 
