@@ -23,6 +23,7 @@ function Write-ReqspecRows {
         [hashtable]$DryRunDetails,
         [hashtable]$InstallDetails,
         [hashtable]$FailcaseDetails,
+        [hashtable]$ChannelPinDetails,
         [bool]$Skip = $false,
         [string]$Reason = ''
     )
@@ -75,6 +76,22 @@ function Write-ReqspecRows {
         pass = $dryPass
         desc = 'conda dry-run accepts translated requirement specifiers'
         details = $dry
+    })
+
+    $channelPin = if ($ChannelPinDetails) { $ChannelPinDetails } else { [ordered]@{ channel = 'conda-forge'; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false } }
+    if ($Skip) {
+        $channelPin.skip = $true
+        if ($Reason) { $channelPin.reason = $Reason }
+    }
+    $channelPinPass = $true
+    if (-not $Skip) {
+        $channelPinPass = [bool]$channelPin.outputMatched -and (-not [bool]$channelPin.defaultsFound) -and (-not [bool]$channelPin.pkgsMainFound)
+    }
+    Write-NdjsonRow ([ordered]@{
+        id = 'reqspec.conda.channelpin'
+        pass = $channelPinPass
+        desc = 'conda dry-run output stays pinned to conda-forge only'
+        details = $channelPin
     })
 
     $failcase = if ($FailcaseDetails) { $FailcaseDetails } else { [ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0' } }
@@ -179,7 +196,7 @@ function Export-PrepRequirementsHelper {
 }
 
 if (-not $IsWindows) {
-    Write-ReqspecRows -Pass $true -TranslationChecks @{} -DryRunDetails @{} -InstallDetails @{} -FailcaseDetails @{} -Skip $true -Reason 'non-windows-host'
+    Write-ReqspecRows -Pass $true -TranslationChecks @{} -DryRunDetails @{} -InstallDetails @{} -FailcaseDetails @{} -ChannelPinDetails @{} -Skip $true -Reason 'non-windows-host'
     exit 0
 }
 
@@ -223,7 +240,7 @@ if (-not $condaBat) {
         condaBatCandidates = $condaInfo.candidates
         publicRoot = $condaInfo.publicRoot
     }
-    Write-ReqspecRows -Pass $false -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails ([ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0'; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot })
+    Write-ReqspecRows -Pass $false -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails ([ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0'; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) -ChannelPinDetails ([ordered]@{ channel = 'conda-forge'; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot })
     exit 0
 }
 
@@ -236,6 +253,7 @@ $translationChecks = @{}
 $dryRunDetails = [ordered]@{ exitCode = -1; packages = @('six>=1.16', 'colorama==0.4.6', 'packaging~=24.0', 'attrs>22.0', 'six!=1.15', 'attrs<=23.0'); condaBat = $condaBat }
 $installDetails = [ordered]@{ package = 'six'; importable = $false; condaBat = $condaBat; environment = '_envsmoke' }
 $failcaseDetails = [ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0'; condaBat = $condaBat }
+$channelPinDetails = [ordered]@{ channel = 'conda-forge'; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false; condaBat = $condaBat }
 
 Set-Content -LiteralPath $reqPath -Encoding Ascii -Value @(
     'six>=1.16',
@@ -342,6 +360,10 @@ try {
     if ($dryOutput) {
         Add-Content -LiteralPath $logPath -Value 'conda dry-run output:' -Encoding Ascii
         Add-Content -LiteralPath $logPath -Value ($dryOutput | Out-String) -Encoding Ascii
+        $dryOutputText = $dryOutput | Out-String
+        $channelPinDetails.outputMatched = $dryOutputText.Contains('conda-forge')
+        $channelPinDetails.defaultsFound = $dryOutputText.Contains('defaults')
+        $channelPinDetails.pkgsMainFound = $dryOutputText.Contains('pkgs/main')
     }
     if ($dryExit -ne 0) { $overallPass = $false }
 } catch {
@@ -406,4 +428,4 @@ try {
     Add-Content -LiteralPath $logPath -Value ("conda import exception: {0}" -f $_.Exception.Message) -Encoding Ascii
 }
 
-Write-ReqspecRows -Pass $overallPass -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails $failcaseDetails
+Write-ReqspecRows -Pass $overallPass -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails $failcaseDetails -ChannelPinDetails $channelPinDetails
