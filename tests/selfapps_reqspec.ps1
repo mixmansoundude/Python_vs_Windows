@@ -127,6 +127,55 @@ function Write-ReqspecRows {
     })
 }
 
+function Write-ReqspecIngestRows {
+    param(
+        [hashtable]$TranslateDetails,
+        [hashtable]$DryRunDetails,
+        [hashtable]$ImportDetails,
+        [bool]$Skip = $false,
+        [string]$Reason = ''
+    )
+
+    $translate = if ($TranslateDetails) { $TranslateDetails } else { [ordered]@{ source = 'requirements.txt'; translated = $false } }
+    if ($Skip) {
+        $translate.skip = $true
+        if ($Reason) { $translate.reason = $Reason }
+    }
+    $translatePass = if ($Skip) { $true } else { [bool]$translate.translated }
+    Write-NdjsonRow ([ordered]@{
+        id = 'reqspec.ingest.translate'
+        pass = $translatePass
+        desc = 'existing requirements.txt translates via prep_requirements.py'
+        details = $translate
+    })
+
+    $dry = if ($DryRunDetails) { $DryRunDetails } else { [ordered]@{ exitCode = -1; source = 'requirements.txt' } }
+    if ($Skip) {
+        $dry.skip = $true
+        if ($Reason) { $dry.reason = $Reason }
+    }
+    $dryPass = if ($Skip) { $true } else { ($dry.exitCode -eq 0) }
+    Write-NdjsonRow ([ordered]@{
+        id = 'reqspec.ingest.conda.dryrun'
+        pass = $dryPass
+        desc = 'conda dry-run accepts translated existing requirements.txt'
+        details = $dry
+    })
+
+    $ingestImport = if ($ImportDetails) { $ImportDetails } else { [ordered]@{ package = 'six'; importable = $false; exitCode = -1 } }
+    if ($Skip) {
+        $ingestImport.skip = $true
+        if ($Reason) { $ingestImport.reason = $Reason }
+    }
+    $importPass = if ($Skip) { $true } else { ($ingestImport.exitCode -eq 0) }
+    Write-NdjsonRow ([ordered]@{
+        id = 'reqspec.ingest.install.import'
+        pass = $importPass
+        desc = 'existing requirements path installs and imports in _envsmoke'
+        details = $ingestImport
+    })
+}
+
 function Get-CondaBatPath {
     $publicRoot = [Environment]::GetEnvironmentVariable('PUBLIC')
     $publicRootClean = if ($publicRoot) { $publicRoot.Trim().Trim('"') } else { '' }
@@ -197,6 +246,7 @@ function Export-PrepRequirementsHelper {
 
 if (-not $IsWindows) {
     Write-ReqspecRows -Pass $true -TranslationChecks @{} -DryRunDetails @{} -InstallDetails @{} -FailcaseDetails @{} -ChannelPinDetails @{} -Skip $true -Reason 'non-windows-host'
+    Write-ReqspecIngestRows -TranslateDetails @{} -DryRunDetails @{} -ImportDetails @{} -Skip $true -Reason 'non-windows-host'
     exit 0
 }
 
@@ -241,6 +291,7 @@ if (-not $condaBat) {
         publicRoot = $condaInfo.publicRoot
     }
     Write-ReqspecRows -Pass $false -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails ([ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0'; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) -ChannelPinDetails ([ordered]@{ channel = 'conda-forge'; exitCode = -1; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false; solverOutputSnippet = ''; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot })
+    Write-ReqspecIngestRows -TranslateDetails ([ordered]@{ source = 'requirements.txt'; translated = $false; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) -DryRunDetails ([ordered]@{ exitCode = -1; source = 'requirements.txt'; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) -ImportDetails ([ordered]@{ package = 'six'; importable = $false; exitCode = -1; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot })
     exit 0
 }
 
@@ -254,6 +305,19 @@ $dryRunDetails = [ordered]@{ exitCode = -1; packages = @('six>=1.16', 'colorama=
 $installDetails = [ordered]@{ package = 'six'; importable = $false; condaBat = $condaBat; environment = '_envsmoke' }
 $failcaseDetails = [ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0'; condaBat = $condaBat }
 $channelPinDetails = [ordered]@{ channel = 'conda-forge'; exitCode = -1; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false; solverOutputSnippet = ''; condaBat = $condaBat }
+$reqIngestDir = Join-Path $PSScriptRoot '~req_ingest'
+$reqFile = Join-Path $reqIngestDir 'requirements.txt'
+$ingestCondaReqPath = Join-Path $reqIngestDir '~reqs_conda.txt'
+$ingestTranslateDetails = [ordered]@{ source = 'requirements.txt'; translated = $false }
+$ingestDryRunDetails = [ordered]@{ exitCode = -1; source = 'requirements.txt' }
+$ingestImportDetails = [ordered]@{ package = 'six'; importable = $false; exitCode = -1 }
+
+New-Item -ItemType Directory -Force -Path $reqIngestDir | Out-Null
+Set-Content -LiteralPath $reqFile -Encoding Ascii -Value @(
+    'six>=1.16',
+    'colorama==0.4.6',
+    'packaging~=24.0'
+)
 
 Set-Content -LiteralPath $reqPath -Encoding Ascii -Value @(
     'six>=1.16',
@@ -433,4 +497,77 @@ try {
     Add-Content -LiteralPath $logPath -Value ("conda import exception: {0}" -f $_.Exception.Message) -Encoding Ascii
 }
 
+try {
+    Push-Location -LiteralPath $reqIngestDir
+    try {
+        $ingestPrepOutput = & $condaPython $prepPath $reqFile 2>&1
+        $ingestPrepExit = $LASTEXITCODE
+        if ($ingestPrepOutput) { Add-Content -LiteralPath $logPath -Value ($ingestPrepOutput | Out-String) -Encoding Ascii }
+        Add-Content -LiteralPath $logPath -Value ("ingest prep exit code: {0}" -f $ingestPrepExit) -Encoding Ascii
+    } finally {
+        Pop-Location
+    }
+} catch {
+    $ingestTranslateDetails.error = $_.Exception.Message
+    Add-Content -LiteralPath $logPath -Value ("ingest prep exception: {0}" -f $_.Exception.Message) -Encoding Ascii
+}
+
+if (Test-Path -LiteralPath $ingestCondaReqPath) {
+    $ingestText = Get-Content -LiteralPath $ingestCondaReqPath -Raw -Encoding Ascii
+    $ingestTranslated = $ingestText.Contains('six >=1.16') -and $ingestText.Contains('colorama ==0.4.6') -and $ingestText.Contains('packaging >=24.0,<25')
+    $ingestTranslateDetails.translated = $ingestTranslated
+    Add-Content -LiteralPath $logPath -Value 'ingest translated requirements:' -Encoding Ascii
+    Add-Content -LiteralPath $logPath -Value $ingestText -Encoding Ascii
+} else {
+    Add-Content -LiteralPath $logPath -Value ("missing ingest translated requirements file: {0}" -f $ingestCondaReqPath) -Encoding Ascii
+}
+
+$ingestDryRunCommand = "`"$condaBat`" install --dry-run -n base --override-channels -c conda-forge --file `"$ingestCondaReqPath`""
+try {
+    $ingestDryRunOutput = cmd /c $ingestDryRunCommand 2>&1
+    $ingestDryRunExit = $LASTEXITCODE
+    $ingestDryRunDetails.exitCode = $ingestDryRunExit
+    if ($ingestDryRunOutput) {
+        Add-Content -LiteralPath $logPath -Value 'ingest conda dry-run output:' -Encoding Ascii
+        Add-Content -LiteralPath $logPath -Value ($ingestDryRunOutput | Out-String) -Encoding Ascii
+    }
+} catch {
+    $ingestDryRunDetails.exitCode = -1
+    $ingestDryRunDetails.error = $_.Exception.Message
+    Add-Content -LiteralPath $logPath -Value ("ingest conda dry-run exception: {0}" -f $_.Exception.Message) -Encoding Ascii
+}
+
+$ingestInstallCommand = "`"$condaBat`" install -y -n _envsmoke --override-channels -c conda-forge `"six`""
+try {
+    $ingestInstallOutput = cmd /c $ingestInstallCommand 2>&1
+    $ingestInstallExit = $LASTEXITCODE
+    $ingestImportDetails.installExitCode = $ingestInstallExit
+    if ($ingestInstallOutput) {
+        Add-Content -LiteralPath $logPath -Value 'ingest conda install output:' -Encoding Ascii
+        Add-Content -LiteralPath $logPath -Value ($ingestInstallOutput | Out-String) -Encoding Ascii
+    }
+} catch {
+    $ingestImportDetails.installExitCode = -1
+    $ingestImportDetails.installError = $_.Exception.Message
+    Add-Content -LiteralPath $logPath -Value ("ingest conda install exception: {0}" -f $_.Exception.Message) -Encoding Ascii
+}
+
+$ingestImportCommand = "`"$condaBat`" run -n _envsmoke python -c `"import six`""
+try {
+    $ingestImportOutput = cmd /c $ingestImportCommand 2>&1
+    $ingestImportExit = $LASTEXITCODE
+    $ingestImportDetails.exitCode = $ingestImportExit
+    $ingestImportDetails.importable = ($ingestImportExit -eq 0)
+    if ($ingestImportOutput) {
+        Add-Content -LiteralPath $logPath -Value 'ingest conda import output:' -Encoding Ascii
+        Add-Content -LiteralPath $logPath -Value ($ingestImportOutput | Out-String) -Encoding Ascii
+    }
+} catch {
+    $ingestImportDetails.exitCode = -1
+    $ingestImportDetails.importable = $false
+    $ingestImportDetails.importError = $_.Exception.Message
+    Add-Content -LiteralPath $logPath -Value ("ingest conda import exception: {0}" -f $_.Exception.Message) -Encoding Ascii
+}
+
 Write-ReqspecRows -Pass $overallPass -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails $failcaseDetails -ChannelPinDetails $channelPinDetails
+Write-ReqspecIngestRows -TranslateDetails $ingestTranslateDetails -DryRunDetails $ingestDryRunDetails -ImportDetails $ingestImportDetails
