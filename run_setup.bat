@@ -433,6 +433,16 @@ if exist "requirements.txt" (
     call :log "[WARN] System fallback: skipping requirement installation."
   )
 )
+rem --- Capture resolved environment snapshot ---
+if "%HP_ENV_MODE%"=="conda" (
+  call :log "[INFO] Capturing environment snapshot..."
+  call "%CONDA_BAT%" list -n "%ENVNAME%" --export > "~environment.lock.txt" 2>> "%LOG%"
+  if exist "~environment.lock.txt" (
+    call :log "[INFO] Environment snapshot written: ~environment.lock.txt"
+  ) else (
+    call :log "[WARN] Environment snapshot failed to write."
+  )
+)
 rem Detect pyvisa/visa usage so harness sees NI-VISA requirements
 
 call :emit_from_base64 "~detect_visa.py" HP_DETECT_VISA
