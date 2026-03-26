@@ -8,6 +8,8 @@
 
 Prime Directive: With only one or more Python files on a clean Windows 10+ machine with internet, get at least one to run, with all imports installed.
 
+This tool is for beginners or unfamiliar users who have been given Python code and want to get it running, not for maintaining production repositories. It brute-forces a working environment: it discovers dependencies, installs them via conda, and produces a standalone EXE. Getting the code to run takes priority over preserving outdated constraints.
+
 ---
 
 ### 🌟 Armchair Vibe Coding
@@ -120,6 +122,16 @@ to fill remaining gaps quickly.
 - Heuristic extras:
 - If `pandas` is present, ensure `openpyxl` is included.
 - On `ModuleNotFoundError`, extract the missing module, append to `requirements.txt`, merge with `requirements.auto.txt`, then perform a **one-time env rebuild** (guard loop).
+
+---
+
+### Dependency strategy
+
+- `pipreqs` is used for discovery only -- it is not authoritative for versions or completeness.
+- An existing `requirements.txt` is treated as input (hints), not as the authoritative specification.
+- conda performs final resolution from conda-forge; what it installs is the truth.
+- Implicit and plugin dependencies (for example, `pandas` needing `openpyxl` for `read_excel`) cannot be detected statically -- `pipreqs` only sees `import pandas`, not the runtime method call. These surface as `ImportError` at runtime.
+- The bootstrapper attempts a one-time env rebuild on `ModuleNotFoundError`, but it cannot map all error module names to conda package names (for example, `PIL` maps to `pillow`, `cv2` maps to `opencv`). This is a known limitation, not a bug.
 
 ---
 
@@ -240,6 +252,15 @@ A branch with zero Python files still counts as healthy when:
 - The later Iterate gate summary (after iterate has produced NDJSON rows) is the real gate verdict; use it to judge pass/fail once results exist.
 
 The only CI auto-patching agent is the **Model quick-fix (inline)** job in `.github/workflows/batch-check.yml`, which invokes `tools/inline_model_fix.py` against the `gpt-codex-5` model. It only runs when the NDJSON harness reports failures and must respect the git hygiene rules that forbid committing artifacts (tilde-prefixed logs, NDJSON outputs, etc.). See **AGENTS.md** for the full agent policy.
+
+---
+
+## Known Limitations
+
+- **Implicit/plugin dependencies**: Dependencies that are not detected via static import analysis (for example, `pandas` needing `openpyxl` for `read_excel`) will surface as `ImportError` at runtime. See [Dependency strategy](#dependency-strategy) for detail.
+- **`requirements.txt` is input only**: The resolved conda environment may differ from the original author's intent. This is intentional -- getting the code to run takes priority over preserving outdated constraints.
+- **Windows only**: There is no macOS or Linux support.
+- **NI-VISA may require admin rights**: The NI-VISA optional install may require an elevated shell on machines where non-admin installs are blocked by policy.
 
 ---
 
