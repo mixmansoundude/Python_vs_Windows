@@ -30,3 +30,8 @@ Thumbs.db
 # Scratch context directories
 _ctx/
 _iter/
+
+# Downloaded CI tools (actionlint, etc.)
+actionlint
+actionlint_linux_amd64.tar.gz
+actionlint_*.tar.gz
