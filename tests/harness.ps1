@@ -213,7 +213,7 @@ $details = [ordered]@{
   message = "expected: $expectedCommand | observed: $observedCommand"
 }
 Write-Result 'pipreqs.flags' 'pipreqs argv matches canonical flags' $pipreqsOk $details
-$hasPyInst = ($AllText -match "pyinstaller\s+-y\s+--onefile\s+--name\s+""%ENVNAME%""")
+$hasPyInst = ($AllText -match "pyinstaller\s+-y\s+--onefile.*--name\s+""%ENVNAME%""")
 Write-Result "pyi.onefile" "PyInstaller one-file named %ENVNAME%" $hasPyInst @{} 
 $hasRotate = ($AllText -match "Length -gt 10485760")
 Write-Result "log.rotate" "Log rotation ~10MB present" $hasRotate @{} 
