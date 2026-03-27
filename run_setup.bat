@@ -989,10 +989,14 @@ if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
   ) else (
     "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
-    "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+    "%HP_PY%" -m PyInstaller -y --onefile --clean --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
     if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
     if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
     call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+    rem Clean up PyInstaller build artifacts (build dir and spec file are not needed after --onefile build)
+    if exist "build\%ENVNAME%" rd /s /q "build\%ENVNAME%" >nul 2>&1
+    if exist "%ENVNAME%.spec" del "%ENVNAME%.spec" >nul 2>&1
+    call :log "[INFO] PyInstaller build artifacts cleaned up."
   )
 )
 set "HP_FAST_EXE="
