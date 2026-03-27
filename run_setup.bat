@@ -177,6 +177,26 @@ call :log "[INFO] Workspace: %CD%"
 call :log "[INFO] Env name: %ENVNAME%"
 call :log "[INFO] Log: %LOG%"
 
+rem --- Env-state fast path: skip conda create+install if env is still valid ---
+rem derived requirement: ~env.state.json records envMode/envName/envPath/lockSize from
+rem the last successful run. If the conda env python.exe still exists and the lock
+rem file is unchanged we can jump straight to pipreqs, saving conda create/install.
+set "HP_ENV_STATE_RESULT="
+call :emit_from_base64 "~env_state.py" HP_ENV_STATE
+if errorlevel 1 goto :env_state_check_done
+if exist "%CONDA_BASE_PY%" (
+  "%CONDA_BASE_PY%" "~env_state.py" --check > "~env_state.txt" 2>> "%LOG%"
+) else (
+  call "%CONDA_BAT%" run -n base python "~env_state.py" --check > "~env_state.txt" 2>> "%LOG%"
+)
+for /f "usebackq delims=" %%E in ("~env_state.txt") do set "HP_ENV_STATE_RESULT=%%E"
+if exist "~env_state.txt" del "~env_state.txt" >nul 2>&1
+if exist "~env_state.py" del "~env_state.py" >nul 2>&1
+if /I "%HP_ENV_STATE_RESULT%"=="skip" (
+  call :log "[INFO] Env-state fast path: reusing conda env %ENVNAME%."
+  goto :env_state_fast_path
+)
+:env_state_check_done
 call :emit_from_base64 "~detect_python.py" HP_DETECT_PY
 if errorlevel 1 call :die "[ERROR] Could not write ~detect_python.py"
 if exist "%CONDA_BASE_PY%" (
@@ -220,8 +240,19 @@ if errorlevel 1 call :die "[ERROR] Could not stage ~condarc"
 if not exist "%ENV_PATH%" mkdir "%ENV_PATH%"
 copy /y "~condarc" "%ENV_PATH%\.condarc" >> "%LOG%" 2>&1
 if errorlevel 1 call :die "[ERROR] Could not write %ENV_PATH%\.condarc"
+goto :after_env_mode_selection
 
-
+:env_state_fast_path
+rem derived requirement: env exists from prior run; set interpreter, skip create+install.
+set "CONDA_PREFIX=%ENV_PATH%"
+set "HP_PY=%CONDA_PREFIX%\python.exe"
+if not exist "%HP_PY%" goto :after_env_mode_selection
+call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
+if not errorlevel 1 (
+  "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
+  for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
+  if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
+)
 
 :after_env_mode_selection
 call :emit_from_base64 "~prep_requirements.py" HP_PREP_REQUIREMENTS
@@ -468,6 +499,13 @@ if "%NEED_VISA%"=="1" (
   call :log "[INFO] No pyvisa/visa imports detected."
 )
 if exist "~visa.flag" del "~visa.flag"
+
+rem --- Write env state for fast path on next run ---
+call :emit_from_base64 "~env_state.py" HP_ENV_STATE
+if not errorlevel 1 (
+  "%HP_PY%" "~env_state.py" --write >> "%LOG%" 2>&1
+  if exist "~env_state.py" del "~env_state.py" >nul 2>&1
+)
 
 goto :after_env_bootstrap
 
@@ -989,10 +1027,13 @@ if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
   ) else (
     "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
+    if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
     "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
     if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
     if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
     call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+    if not defined HP_SPEC_PREEXIST if exist "%ENVNAME%.spec" del "%ENVNAME%.spec" >nul 2>&1
+    set "HP_SPEC_PREEXIST="
   )
 )
 set "HP_FAST_EXE="
@@ -1073,6 +1114,10 @@ set "HP_PREP_REQUIREMENTS=IyBoZWxwZXI6IHByZXBfcmVxdWlyZW1lbnRzIHYyICgyMDI1LTA5LT
 set "HP_DETECT_VISA=aW1wb3J0IG9zLCByZSwgc3lzCgpST09UID0gb3MuZ2V0Y3dkKCkKUEFUVEVSTlMgPSBbCiAgICByIig/bSleXHMqKD86ZnJvbVxzK3B5dmlzfGltcG9ydFxzK3B5dmlzKSIsCiAgICByIig/bSleXHMqaW1wb3J0XHMrdmlzIiwKXQoKZGVmIG5lZWRzX3Zpc2EoKToKICAgIGZvciBjdXJyZW50LCBkaXJzLCBmaWxlcyBpbiBvcy53YWxrKFJPT1QpOgogICAgICAgIGRpcnNbOl0gPSBbaXRlbSBmb3IgaXRlbSBpbiBkaXJzIGlmIG5vdCBpdGVtLnN0YXJ0c3dpdGgoKCd+JywgJy4nKSldCiAgICAgICAgZm9yIG5hbWUgaW4gZmlsZXM6CiAgICAgICAgICAgIGlmIG5vdCBuYW1lLmVuZHN3aXRoKCcucHknKSBvciBuYW1lLnN0YXJ0c3dpdGgoJ34nKToKICAgICAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgICAgIHBhdGggPSBvcy5wYXRoLmpvaW4oY3VycmVudCwgbmFtZSkKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgd2l0aCBvcGVuKHBhdGgsICdyJywgZW5jb2Rpbmc9J3V0Zi04JywgZXJyb3JzPSdpZ25vcmUnKSBhcyBoYW5kbGU6CiAgICAgICAgICAgICAgICAgICAgdGV4dCA9IGhhbmRsZS5yZWFkKCkKICAgICAgICAgICAgZXhjZXB0IE9TRXJyb3I6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICBmb3IgcGF0dGVybiBpbiBQQVRURVJOUzoKICAgICAgICAgICAgICAgIGlmIHJlLnNlYXJjaChwYXR0ZXJuLCB0ZXh0KToKICAgICAgICAgICAgICAgICAgICByZXR1cm4gVHJ1ZQogICAgcmV0dXJuIEZhbHNlCgpkZWYgbWFpbigpOgogICAgc3lzLnN0ZG91dC53cml0ZSgnMScgaWYgbmVlZHNfdmlzYSgpIGVsc2UgJzAnKQoKaWYgX19uYW1lX18gPT0gJ19fbWFpbl9fJzoKICAgIG1haW4oKQo="
 rem ~find_entry.py emits a normalized crumb, logs it for tests, and skip mode reads its stdout
 set "HP_FIND_ENTRY=aW1wb3J0IG9zCmltcG9ydCBzeXMKClBSRUZFUlJFRCA9ICgibWFpbi5weSIsICJhcHAucHkiLCAicnVuLnB5IikKCmRlZiBpc19weShuYW1lOiBzdHIpIC0+IGJvb2w6CiAgICBsb3dlciA9IG5hbWUubG93ZXIoKQogICAgcmV0dXJuIGxvd2VyLmVuZHN3aXRoKCIucHkiKSBhbmQgbm90IGxvd2VyLnN0YXJ0c3dpdGgoIn4iKSBhbmQgb3MucGF0aC5pc2ZpbGUobmFtZSkKCmRlZiBoYXNfbWFpbihwYXRoOiBzdHIpIC0+IGJvb2w6CiAgICB0cnk6CiAgICAgICAgd2l0aCBvcGVuKHBhdGgsICJyIiwgZW5jb2Rpbmc9InV0Zi04IiwgZXJyb3JzPSJpZ25vcmUiKSBhcyBoYW5kbGU6CiAgICAgICAgICAgIHRleHQgPSBoYW5kbGUucmVhZCgpCiAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgIHJldHVybiBGYWxzZQogICAgcmV0dXJuICJfX21haW5fXyIgaW4gdGV4dAoKZGVmIGVtaXQocGF0aDogc3RyKSAtPiBOb25lOgogICAgY3J1bWIgPSBvcy5wYXRoLm5vcm1wYXRoKHBhdGgpCiAgICBwcmludChjcnVtYikKCmZpbGVzID0gW25hbWUgZm9yIG5hbWUgaW4gb3MubGlzdGRpcigiLiIpIGlmIGlzX3B5KG5hbWUpXQoKZm9yIGNhbmRpZGF0ZSBpbiBQUkVGRVJSRUQ6CiAgICBpZiBjYW5kaWRhdGUgaW4gZmlsZXM6CiAgICAgICAgZW1pdChjYW5kaWRhdGUpCiAgICAgICAgc3lzLmV4aXQoMCkKCmlmIGxlbihmaWxlcykgPT0gMToKICAgIGVtaXQoZmlsZXNbMF0pCiAgICBzeXMuZXhpdCgwKQoKY2FuZGlkYXRlcyA9IFtuYW1lIGZvciBuYW1lIGluIGZpbGVzIGlmIGhhc19tYWluKG5hbWUpXQppZiBsZW4oY2FuZGlkYXRlcykgPT0gMToKICAgIGVtaXQoY2FuZGlkYXRlc1swXSkKICAgIHN5cy5leGl0KDApCg=="
+rem ~env_state.py records envMode/envName/envPath/lockSize after a successful
+rem conda bootstrap; prints 'skip' on --check when the env is still valid,
+rem 'run' otherwise. Writes ~env.state.json on --write.
+set "HP_ENV_STATE=IiIiZW52X3N0YXRlIHYxICgyMDI2LTAzLTI3KQpXcml0ZXMgYW5kIHZhbGlkYXRlcyB+ZW52LnN0YXRlLmpzb24gZm9yIHRoZSBydW5fc2V0dXAuYmF0IGJvb3RzdHJhcCBmYXN0IHBhdGguClVzYWdlOgogIHB5dGhvbiB+ZW52X3N0YXRlLnB5IC0tY2hlY2sgIDogcHJpbnQgJ3NraXAnIGlmIHRoZSBzYXZlZCBlbnYgc3RhdGUgaXMgc3RpbGwgdmFsaWQKICBweXRob24gfmVudl9zdGF0ZS5weSAtLXdyaXRlICA6IHdyaXRlIGN1cnJlbnQgZW52IHN0YXRlIHRvIH5lbnYuc3RhdGUuanNvbgoiIiIKX192ZXJzaW9uX18gPSAiZW52X3N0YXRlIHYxICgyMDI2LTAzLTI3KSIKX19hbGxfXyA9IFsicmVhZF9zdGF0ZSIsICJ3cml0ZV9zdGF0ZSIsICJjaGVja19zdGF0ZSJdCgppbXBvcnQganNvbgppbXBvcnQgb3MKaW1wb3J0IHN5cwoKU1RBVEVfRklMRSA9ICJ+ZW52LnN0YXRlLmpzb24iCkxPQ0tfRklMRSA9ICJ+ZW52aXJvbm1lbnQubG9jay50eHQiCgoKZGVmIF9sb2NrX3NpemUoKToKICAgIHRyeToKICAgICAgICByZXR1cm4gb3MucGF0aC5nZXRzaXplKExPQ0tfRklMRSkKICAgIGV4Y2VwdCBPU0Vycm9yOgogICAgICAgIHJldHVybiAwCgoKZGVmIHJlYWRfc3RhdGUoKToKICAgIHRyeToKICAgICAgICB3aXRoIG9wZW4oU1RBVEVfRklMRSwgInIiLCBlbmNvZGluZz0idXRmLTgiLCBlcnJvcnM9Imlnbm9yZSIpIGFzIGZoOgogICAgICAgICAgICByZXR1cm4ganNvbi5sb2FkKGZoKQogICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICByZXR1cm4ge30KCgpkZWYgd3JpdGVfc3RhdGUoKToKICAgIGVudl9tb2RlID0gb3MuZW52aXJvbi5nZXQoIkhQX0VOVl9NT0RFIiwgIiIpCiAgICBlbnZfbmFtZSA9IG9zLmVudmlyb24uZ2V0KCJFTlZOQU1FIiwgIiIpCiAgICBlbnZfcGF0aCA9IG9zLmVudmlyb24uZ2V0KCJFTlZfUEFUSCIsICIiKQogICAgbG9ja19zaXplID0gX2xvY2tfc2l6ZSgpCiAgICBzdGF0ZSA9IHsKICAgICAgICAiZW52TW9kZSI6IGVudl9tb2RlLAogICAgICAgICJlbnZOYW1lIjogZW52X25hbWUsCiAgICAgICAgImVudlBhdGgiOiBlbnZfcGF0aCwKICAgICAgICAibG9ja1NpemUiOiBsb2NrX3NpemUsCiAgICB9CiAgICB0cnk6CiAgICAgICAgd2l0aCBvcGVuKFNUQVRFX0ZJTEUsICJ3IiwgZW5jb2Rpbmc9InV0Zi04IikgYXMgZmg6CiAgICAgICAgICAgIGpzb24uZHVtcChzdGF0ZSwgZmgpCiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgib2tcbiIpCiAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICBzeXMuc3Rkb3V0LndyaXRlKCJlcnJcbiIpCgoKZGVmIGNoZWNrX3N0YXRlKCk6CiAgICBzdGF0ZSA9IHJlYWRfc3RhdGUoKQogICAgaWYgbm90IHN0YXRlOgogICAgICAgIHN5cy5zdGRvdXQud3JpdGUoInJ1blxuIikKICAgICAgICByZXR1cm4KICAgIGVudl9uYW1lID0gb3MuZW52aXJvbi5nZXQoIkVOVk5BTUUiLCAiIikKICAgIGlmIG5vdCBlbnZfbmFtZSBvciBzdGF0ZS5nZXQoImVudk5hbWUiKSAhPSBlbnZfbmFtZToKICAgICAgICBzeXMuc3Rkb3V0LndyaXRlKCJydW5cbiIpCiAgICAgICAgcmV0dXJuCiAgICBpZiBzdGF0ZS5nZXQoImVudk1vZGUiKSAhPSAiY29uZGEiOgogICAgICAgIHN5cy5zdGRvdXQud3JpdGUoInJ1blxuIikKICAgICAgICByZXR1cm4KICAgIGVudl9wYXRoID0gc3RhdGUuZ2V0KCJlbnZQYXRoIiwgIiIpCiAgICBpZiBub3QgZW52X3BhdGg6CiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgicnVuXG4iKQogICAgICAgIHJldHVybgogICAgcHlfZXhlID0gb3MucGF0aC5qb2luKGVudl9wYXRoLCAicHl0aG9uLmV4ZSIpCiAgICBpZiBub3Qgb3MucGF0aC5leGlzdHMocHlfZXhlKToKICAgICAgICBzeXMuc3Rkb3V0LndyaXRlKCJydW5cbiIpCiAgICAgICAgcmV0dXJuCiAgICBsb2NrX3NpemUgPSBfbG9ja19zaXplKCkKICAgIGlmIGxvY2tfc2l6ZSA9PSAwIG9yIGxvY2tfc2l6ZSAhPSBzdGF0ZS5nZXQoImxvY2tTaXplIiwgLTEpOgogICAgICAgIHN5cy5zdGRvdXQud3JpdGUoInJ1blxuIikKICAgICAgICByZXR1cm4KICAgIHN5cy5zdGRvdXQud3JpdGUoInNraXBcbiIpCgoKZGVmIG1haW4oKToKICAgIGFyZ3MgPSBzeXMuYXJndlsxOl0KICAgIGlmICItLXdyaXRlIiBpbiBhcmdzOgogICAgICAgIHdyaXRlX3N0YXRlKCkKICAgIGVsaWYgIi0tY2hlY2siIGluIGFyZ3M6CiAgICAgICAgY2hlY2tfc3RhdGUoKQogICAgZWxzZToKICAgICAgICBzeXMuc3Rkb3V0LndyaXRlKCJydW5cbiIpCgoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIG1haW4oKQo="
 exit /b 0
 :log
 set "MSG=%~1"

@@ -221,9 +221,13 @@ $tildeCount = ([regex]::Matches($AllText, "~setup\.log|~reqs_conda\.txt|~pipreqs
 Write-Result "tilde.naming" "Tilde prefix used for crashable artifacts" ($tildeCount -ge 3) @{ count=$tildeCount }
 $visa = ($AllText -match "pyvisa" -or $AllText -match "import[ ]*visa")
 Write-Result "visa.detect" "NI-VISA import detection present" $visa @{} 
-$need = @("~detect_python.py","~prep_requirements.py","~print_pyver.py","~find_entry.py")
+$need = @("~detect_python.py","~prep_requirements.py","~print_pyver.py","~find_entry.py","~env_state.py")
 $missing = $need | Where-Object { $_ -notin $emitted }
 Write-Result "emit.helpers" "All helper scripts extractable from run_setup.bat" ($missing.Count -eq 0) @{ missing=$missing }
+$esPath = Join-Path $ExtractDir "~env_state.py"
+$esHasWrite = $false
+if (Test-Path $esPath) { $esHasWrite = ((Get-Content $esPath -Encoding ASCII) | Select-String -SimpleMatch 'write_state').Count -gt 0 }
+Write-Result "env.state.write" "env_state has write_state function" $esHasWrite @{}
 $dpPath = Join-Path $ExtractDir "~detect_python.py"
 $dpHasCompat = $false
 if (Test-Path $dpPath) { $dpHasCompat = ((Get-Content $dpPath -Encoding ASCII) | Select-String -SimpleMatch 'op == "~="').Count -gt 0 }
