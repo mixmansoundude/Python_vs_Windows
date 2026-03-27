@@ -220,4 +220,16 @@ Write-NdjsonRow ([ordered]@{
     rebuildBuilds = $rebuildProducedHits
   }
 })
+$stateSkipPhrase = 'Env-state fast path: reusing conda env'
+$stateSkipFound = ($rebuildLines | Where-Object { $_ -like "*$stateSkipPhrase*" }).Count -gt 0
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.state_skip'
+  pass = $stateSkipFound
+  desc = 'Stub rebuild: state fast path skips conda create when deps unchanged'
+  details = [ordered]@{
+    found = $stateSkipFound
+    log = $stubRebuildLog
+  }
+})
+if ($stateSkipFound) { $summary.Add('stub state skip: PASS') } else { $summary.Add('stub state skip: FAIL') }
 $summary | Set-Content -Path $summaryPath -Encoding ASCII
