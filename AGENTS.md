@@ -21,6 +21,12 @@ Operating policy for automated agents (Codex, Copilot, others).
 - Do not delete or skip checks to obtain a green build.
 - Do not change workflow triggers, permissions, or retention.
 
+## No silent features
+If something new is observable in logs or produces an artifact, it needs an NDJSON row AND the
+artifact path must be added to the test-logs upload in batch-check.yml (both slash-style variants
+per existing convention). Observable = any new log line, new file written to disk, or new behavior
+detectable by an assertion. Silent features are forbidden.
+
 ## Interface contract with CI
 - CI asserts on the exact bootstrapper messages emitted by `run_setup.bat` and related helpers.
 - When adjusting bootstrap log text or status summaries, update the workflow checks that parse them at the same time.
