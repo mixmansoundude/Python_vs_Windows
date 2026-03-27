@@ -177,6 +177,9 @@ call :log "[INFO] Workspace: %CD%"
 call :log "[INFO] Env name: %ENVNAME%"
 call :log "[INFO] Log: %LOG%"
 
+rem --- Detect required Python version (must run before env-state check) ---
+rem derived requirement: PYSPEC must be known before the env-state skip decision
+rem so a runtime.txt / pyproject.toml change triggers a full env rebuild.
 call :emit_from_base64 "~detect_python.py" HP_DETECT_PY
 if errorlevel 1 call :die "[ERROR] Could not write ~detect_python.py"
 if exist "%CONDA_BASE_PY%" (
@@ -186,6 +189,27 @@ if exist "%CONDA_BASE_PY%" (
 )
 set "PYSPEC="
 for /f "usebackq delims=" %%A in ("~py_spec.txt") do set "PYSPEC=%%A"
+
+rem --- Env-state fast path: skip conda create+install if env is still valid ---
+rem derived requirement: ~env.state.json records envMode/envName/envPath/pySpec/lockSize
+rem from the last successful run. Fast path fires only when PYSPEC, envName, lock size,
+rem and python.exe all match the stored snapshot.
+set "HP_ENV_STATE_RESULT="
+call :emit_from_base64 "~env_state.py" HP_ENV_STATE
+if errorlevel 1 goto :env_state_check_done
+if exist "%CONDA_BASE_PY%" (
+  "%CONDA_BASE_PY%" "~env_state.py" --check > "~env_state.txt" 2>> "%LOG%"
+) else (
+  call "%CONDA_BAT%" run -n base python "~env_state.py" --check > "~env_state.txt" 2>> "%LOG%"
+)
+for /f "usebackq delims=" %%E in ("~env_state.txt") do set "HP_ENV_STATE_RESULT=%%E"
+if exist "~env_state.txt" del "~env_state.txt" >nul 2>&1
+if exist "~env_state.py" del "~env_state.py" >nul 2>&1
+if /I "%HP_ENV_STATE_RESULT%"=="skip" (
+  call :log "[INFO] Env-state fast path: reusing conda env %ENVNAME%."
+  goto :env_state_fast_path
+)
+:env_state_check_done
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" "python<3.13" --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
@@ -220,8 +244,23 @@ if errorlevel 1 call :die "[ERROR] Could not stage ~condarc"
 if not exist "%ENV_PATH%" mkdir "%ENV_PATH%"
 copy /y "~condarc" "%ENV_PATH%\.condarc" >> "%LOG%" 2>&1
 if errorlevel 1 call :die "[ERROR] Could not write %ENV_PATH%\.condarc"
+goto :after_env_mode_selection
 
-
+:env_state_fast_path
+rem derived requirement: env exists from prior run; set interpreter, skip create+install.
+set "CONDA_PREFIX=%ENV_PATH%"
+set "HP_PY=%CONDA_PREFIX%\python.exe"
+if not exist "%HP_PY%" (
+  call :log "[WARN] Env-state fast path: %HP_PY% not found; falling back to full env rebuild."
+  set "HP_ENV_STATE_RESULT=stale"
+  goto :env_state_check_done
+)
+call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
+if not errorlevel 1 (
+  "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
+  for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
+  if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
+)
 
 :after_env_mode_selection
 call :emit_from_base64 "~prep_requirements.py" HP_PREP_REQUIREMENTS
@@ -412,6 +451,24 @@ if "%HP_PIPREQS_PHASE_RESULT%"=="ok" (
 )
 if not exist "%REQ%" if exist "requirements.auto.txt" ( copy /y "requirements.auto.txt" "requirements.txt" >> "%LOG%" 2>&1 )
 if exist "requirements.txt" if exist "requirements.auto.txt" ( fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1 )
+rem --- Dep-check fast path: skip conda install when all pipreqs packages are in the lock ---
+rem derived requirement: skip the slow conda solver on repeat runs when the
+rem environment lock file already contains every package pipreqs detected.
+rem goto is used to avoid %errorlevel% parse-time expansion inside parenthesized blocks.
+set "HP_DEP_SKIP="
+set "HP_DEP_RESULT="
+if not "%HP_ENV_MODE%"=="conda" goto :dep_check_done
+call :emit_from_base64 "~dep_check.py" HP_DEP_CHECK
+if errorlevel 1 goto :dep_check_done
+"%HP_PY%" "~dep_check.py" > "~dep_check.txt" 2>> "%LOG%"
+set "HP_DEP_RC=%errorlevel%"
+for /f "usebackq delims=" %%D in ("~dep_check.txt") do set "HP_DEP_RESULT=%%D"
+if exist "~dep_check.txt" del "~dep_check.txt" >nul 2>&1
+if exist "~dep_check.py" del "~dep_check.py" >nul 2>&1
+if not "%HP_DEP_RC%"=="0" goto :dep_check_done
+if /I "%HP_DEP_RESULT%"=="skip" set "HP_DEP_SKIP=1"
+if defined HP_DEP_SKIP call :log "[INFO] Dep-check: all pipreqs packages satisfied in lock; skipping conda install."
+:dep_check_done
 if exist "requirements.txt" (
   if exist "~reqs_conda.txt" del "~reqs_conda.txt"
   if "%HP_ENV_MODE%"=="conda" (
@@ -420,10 +477,12 @@ if exist "requirements.txt" (
     "%HP_PY%" "~prep_requirements.py" "requirements.txt" >nul 2>> "%LOG%"
   )
   if "%HP_ENV_MODE%"=="conda" (
-    call "%CONDA_BAT%" install -y -n "%ENVNAME%" --file "~reqs_conda.txt" --override-channels -c conda-forge >> "%LOG%" 2>&1
-    if errorlevel 1 (
-      for /f "usebackq delims=" %%P in ("~reqs_conda.txt") do (
-        call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%P >> "%LOG%" 2>&1
+    if not defined HP_DEP_SKIP (
+      call "%CONDA_BAT%" install -y -n "%ENVNAME%" --file "~reqs_conda.txt" --override-channels -c conda-forge >> "%LOG%" 2>&1
+      if errorlevel 1 (
+        for /f "usebackq delims=" %%P in ("~reqs_conda.txt") do (
+          call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%P >> "%LOG%" 2>&1
+        )
       )
     )
     "%HP_PY%" -m pip install -r requirements.txt >> "%LOG%" 2>&1
@@ -469,6 +528,18 @@ if "%NEED_VISA%"=="1" (
 )
 if exist "~visa.flag" del "~visa.flag"
 
+rem --- Write env state for fast path on next run ---
+rem derived requirement: goto avoids %errorlevel% parse-time expansion inside
+rem parenthesized if-blocks; same pattern as dep-check and lock-capture blocks.
+call :emit_from_base64 "~env_state.py" HP_ENV_STATE
+if errorlevel 1 goto :env_state_write_done
+"%HP_PY%" "~env_state.py" --write >> "%LOG%" 2>&1
+set "HP_ENV_STATE_WRITE_RC=%errorlevel%"
+if exist "~env_state.py" del "~env_state.py" >nul 2>&1
+if "%HP_ENV_STATE_WRITE_RC%"=="0" call :log "[INFO] Env state written: ~env.state.json"
+if not "%HP_ENV_STATE_WRITE_RC%"=="0" call :log "[WARN] Env state write failed (rc=%HP_ENV_STATE_WRITE_RC%)."
+set "HP_ENV_STATE_WRITE_RC="
+:env_state_write_done
 goto :after_env_bootstrap
 
 :ci_skip_entry
@@ -989,10 +1060,13 @@ if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
   ) else (
     "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
+    if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
     "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
     if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
     if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
     call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+    if not defined HP_SPEC_PREEXIST if exist "%ENVNAME%.spec" del "%ENVNAME%.spec" >nul 2>&1
+    set "HP_SPEC_PREEXIST="
   )
 )
 set "HP_FAST_EXE="
@@ -1073,6 +1147,13 @@ set "HP_PREP_REQUIREMENTS=IyBoZWxwZXI6IHByZXBfcmVxdWlyZW1lbnRzIHYyICgyMDI1LTA5LT
 set "HP_DETECT_VISA=aW1wb3J0IG9zLCByZSwgc3lzCgpST09UID0gb3MuZ2V0Y3dkKCkKUEFUVEVSTlMgPSBbCiAgICByIig/bSleXHMqKD86ZnJvbVxzK3B5dmlzfGltcG9ydFxzK3B5dmlzKSIsCiAgICByIig/bSleXHMqaW1wb3J0XHMrdmlzIiwKXQoKZGVmIG5lZWRzX3Zpc2EoKToKICAgIGZvciBjdXJyZW50LCBkaXJzLCBmaWxlcyBpbiBvcy53YWxrKFJPT1QpOgogICAgICAgIGRpcnNbOl0gPSBbaXRlbSBmb3IgaXRlbSBpbiBkaXJzIGlmIG5vdCBpdGVtLnN0YXJ0c3dpdGgoKCd+JywgJy4nKSldCiAgICAgICAgZm9yIG5hbWUgaW4gZmlsZXM6CiAgICAgICAgICAgIGlmIG5vdCBuYW1lLmVuZHN3aXRoKCcucHknKSBvciBuYW1lLnN0YXJ0c3dpdGgoJ34nKToKICAgICAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgICAgIHBhdGggPSBvcy5wYXRoLmpvaW4oY3VycmVudCwgbmFtZSkKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgd2l0aCBvcGVuKHBhdGgsICdyJywgZW5jb2Rpbmc9J3V0Zi04JywgZXJyb3JzPSdpZ25vcmUnKSBhcyBoYW5kbGU6CiAgICAgICAgICAgICAgICAgICAgdGV4dCA9IGhhbmRsZS5yZWFkKCkKICAgICAgICAgICAgZXhjZXB0IE9TRXJyb3I6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICBmb3IgcGF0dGVybiBpbiBQQVRURVJOUzoKICAgICAgICAgICAgICAgIGlmIHJlLnNlYXJjaChwYXR0ZXJuLCB0ZXh0KToKICAgICAgICAgICAgICAgICAgICByZXR1cm4gVHJ1ZQogICAgcmV0dXJuIEZhbHNlCgpkZWYgbWFpbigpOgogICAgc3lzLnN0ZG91dC53cml0ZSgnMScgaWYgbmVlZHNfdmlzYSgpIGVsc2UgJzAnKQoKaWYgX19uYW1lX18gPT0gJ19fbWFpbl9fJzoKICAgIG1haW4oKQo="
 rem ~find_entry.py emits a normalized crumb, logs it for tests, and skip mode reads its stdout
 set "HP_FIND_ENTRY=aW1wb3J0IG9zCmltcG9ydCBzeXMKClBSRUZFUlJFRCA9ICgibWFpbi5weSIsICJhcHAucHkiLCAicnVuLnB5IikKCmRlZiBpc19weShuYW1lOiBzdHIpIC0+IGJvb2w6CiAgICBsb3dlciA9IG5hbWUubG93ZXIoKQogICAgcmV0dXJuIGxvd2VyLmVuZHN3aXRoKCIucHkiKSBhbmQgbm90IGxvd2VyLnN0YXJ0c3dpdGgoIn4iKSBhbmQgb3MucGF0aC5pc2ZpbGUobmFtZSkKCmRlZiBoYXNfbWFpbihwYXRoOiBzdHIpIC0+IGJvb2w6CiAgICB0cnk6CiAgICAgICAgd2l0aCBvcGVuKHBhdGgsICJyIiwgZW5jb2Rpbmc9InV0Zi04IiwgZXJyb3JzPSJpZ25vcmUiKSBhcyBoYW5kbGU6CiAgICAgICAgICAgIHRleHQgPSBoYW5kbGUucmVhZCgpCiAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgIHJldHVybiBGYWxzZQogICAgcmV0dXJuICJfX21haW5fXyIgaW4gdGV4dAoKZGVmIGVtaXQocGF0aDogc3RyKSAtPiBOb25lOgogICAgY3J1bWIgPSBvcy5wYXRoLm5vcm1wYXRoKHBhdGgpCiAgICBwcmludChjcnVtYikKCmZpbGVzID0gW25hbWUgZm9yIG5hbWUgaW4gb3MubGlzdGRpcigiLiIpIGlmIGlzX3B5KG5hbWUpXQoKZm9yIGNhbmRpZGF0ZSBpbiBQUkVGRVJSRUQ6CiAgICBpZiBjYW5kaWRhdGUgaW4gZmlsZXM6CiAgICAgICAgZW1pdChjYW5kaWRhdGUpCiAgICAgICAgc3lzLmV4aXQoMCkKCmlmIGxlbihmaWxlcykgPT0gMToKICAgIGVtaXQoZmlsZXNbMF0pCiAgICBzeXMuZXhpdCgwKQoKY2FuZGlkYXRlcyA9IFtuYW1lIGZvciBuYW1lIGluIGZpbGVzIGlmIGhhc19tYWluKG5hbWUpXQppZiBsZW4oY2FuZGlkYXRlcykgPT0gMToKICAgIGVtaXQoY2FuZGlkYXRlc1swXSkKICAgIHN5cy5leGl0KDApCg=="
+rem ~env_state.py records envMode/envName/envPath/lockSize after a successful
+rem conda bootstrap; prints 'skip' on --check when the env is still valid,
+rem 'run' otherwise. Writes ~env.state.json on --write.
+set "HP_ENV_STATE=IiIiZW52X3N0YXRlIHYzICgyMDI2LTAzLTI3KQpXcml0ZXMgYW5kIHZhbGlkYXRlcyB+ZW52LnN0YXRlLmpzb24gZm9yIHRoZSBydW5fc2V0dXAuYmF0IGJvb3RzdHJhcCBmYXN0IHBhdGguClVzYWdlOgogIHB5dGhvbiB+ZW52X3N0YXRlLnB5IC0tY2hlY2sgIDogcHJpbnQgJ3NraXAnIGlmIHRoZSBzYXZlZCBlbnYgc3RhdGUgaXMgc3RpbGwgdmFsaWQKICBweXRob24gfmVudl9zdGF0ZS5weSAtLXdyaXRlICA6IHdyaXRlIGN1cnJlbnQgZW52IHN0YXRlIHRvIH5lbnYuc3RhdGUuanNvbgpOb3RlOiBweVNwZWMgaXMgaW50ZW50aW9uYWxseSBvbWl0dGVkIGZyb20gdGhlIHN0YXRlIGNoZWNrIGJlY2F1c2UgcnVuX3NldHVwLmJhdAp3cml0ZXMgcnVudGltZS50eHQgKmR1cmluZyogdGhlIGZpcnN0IGJvb3RzdHJhcCwgc28gdGhlIGRldGVjdGVkIHNwZWMgb24gcnVuIDIKZGlmZmVycyBmcm9tIHRoZSBlbXB0eSBzcGVjIG9uIHJ1biAxLCBjYXVzaW5nIGEgc3B1cmlvdXMgY2FjaGUgbWlzcy4KIiIiCl9fdmVyc2lvbl9fID0gImVudl9zdGF0ZSB2MyAoMjAyNi0wMy0yNykiCl9fYWxsX18gPSBbInJlYWRfc3RhdGUiLCAid3JpdGVfc3RhdGUiLCAiY2hlY2tfc3RhdGUiXQoKaW1wb3J0IGpzb24KaW1wb3J0IG9zCmltcG9ydCBzeXMKClNUQVRFX0ZJTEUgPSAifmVudi5zdGF0ZS5qc29uIgpMT0NLX0ZJTEUgPSAifmVudmlyb25tZW50LmxvY2sudHh0IgoKCmRlZiBfbG9ja19zaXplKCk6CiAgICB0cnk6CiAgICAgICAgcmV0dXJuIG9zLnBhdGguZ2V0c2l6ZShMT0NLX0ZJTEUpCiAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICByZXR1cm4gMAoKCmRlZiByZWFkX3N0YXRlKCk6CiAgICB0cnk6CiAgICAgICAgd2l0aCBvcGVuKFNUQVRFX0ZJTEUsICJyIiwgZW5jb2Rpbmc9InV0Zi04IiwgZXJyb3JzPSJpZ25vcmUiKSBhcyBmaDoKICAgICAgICAgICAgcmV0dXJuIGpzb24ubG9hZChmaCkKICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgcmV0dXJuIHt9CgoKZGVmIHdyaXRlX3N0YXRlKCk6CiAgICBlbnZfbW9kZSA9IG9zLmVudmlyb24uZ2V0KCJIUF9FTlZfTU9ERSIsICIiKQogICAgZW52X25hbWUgPSBvcy5lbnZpcm9uLmdldCgiRU5WTkFNRSIsICIiKQogICAgZW52X3BhdGggPSBvcy5lbnZpcm9uLmdldCgiRU5WX1BBVEgiLCAiIikKICAgIGxvY2tfc2l6ZSA9IF9sb2NrX3NpemUoKQogICAgc3RhdGUgPSB7CiAgICAgICAgImVudk1vZGUiOiBlbnZfbW9kZSwKICAgICAgICAiZW52TmFtZSI6IGVudl9uYW1lLAogICAgICAgICJlbnZQYXRoIjogZW52X3BhdGgsCiAgICAgICAgImxvY2tTaXplIjogbG9ja19zaXplLAogICAgfQogICAgdHJ5OgogICAgICAgIHdpdGggb3BlbihTVEFURV9GSUxFLCAidyIsIGVuY29kaW5nPSJ1dGYtOCIpIGFzIGZoOgogICAgICAgICAgICBqc29uLmR1bXAoc3RhdGUsIGZoKQogICAgZXhjZXB0IE9TRXJyb3I6CiAgICAgICAgc3lzLmV4aXQoMSkKCgpkZWYgY2hlY2tfc3RhdGUoKToKICAgIHN0YXRlID0gcmVhZF9zdGF0ZSgpCiAgICBpZiBub3Qgc3RhdGU6CiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgicnVuXG4iKQogICAgICAgIHJldHVybgogICAgZW52X25hbWUgPSBvcy5lbnZpcm9uLmdldCgiRU5WTkFNRSIsICIiKQogICAgaWYgbm90IGVudl9uYW1lIG9yIHN0YXRlLmdldCgiZW52TmFtZSIpICE9IGVudl9uYW1lOgogICAgICAgIHN5cy5zdGRvdXQud3JpdGUoInJ1blxuIikKICAgICAgICByZXR1cm4KICAgIGlmIHN0YXRlLmdldCgiZW52TW9kZSIpICE9ICJjb25kYSI6CiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgicnVuXG4iKQogICAgICAgIHJldHVybgogICAgZW52X3BhdGggPSBzdGF0ZS5nZXQoImVudlBhdGgiLCAiIikKICAgIGlmIG5vdCBlbnZfcGF0aDoKICAgICAgICBzeXMuc3Rkb3V0LndyaXRlKCJydW5cbiIpCiAgICAgICAgcmV0dXJuCiAgICBweV9leGUgPSBvcy5wYXRoLmpvaW4oZW52X3BhdGgsICJweXRob24uZXhlIikKICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhweV9leGUpOgogICAgICAgIHN5cy5zdGRvdXQud3JpdGUoInJ1blxuIikKICAgICAgICByZXR1cm4KICAgIGxvY2tfc2l6ZSA9IF9sb2NrX3NpemUoKQogICAgaWYgbG9ja19zaXplID09IDAgb3IgbG9ja19zaXplICE9IHN0YXRlLmdldCgibG9ja1NpemUiLCAtMSk6CiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgicnVuXG4iKQogICAgICAgIHJldHVybgogICAgc3lzLnN0ZG91dC53cml0ZSgic2tpcFxuIikKCgpkZWYgbWFpbigpOgogICAgYXJncyA9IHN5cy5hcmd2WzE6XQogICAgaWYgIi0td3JpdGUiIGluIGFyZ3M6CiAgICAgICAgd3JpdGVfc3RhdGUoKQogICAgZWxpZiAiLS1jaGVjayIgaW4gYXJnczoKICAgICAgICBjaGVja19zdGF0ZSgpCiAgICBlbHNlOgogICAgICAgIHN5cy5zdGRvdXQud3JpdGUoInJ1blxuIikKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgbWFpbigpCg=="
+rem ~dep_check.py compares requirements.auto.txt against ~environment.lock.txt;
+rem prints 'skip' when all pipreqs packages are already installed, 'run' otherwise.
+set "HP_DEP_CHECK=IiIiZGVwX2NoZWNrIHYxICgyMDI2LTAzLTI3KQpDb21wYXJlcyByZXF1aXJlbWVudHMuYXV0by50eHQgKHBpcHJlcXMgb3V0cHV0KSBhZ2FpbnN0IH5lbnZpcm9ubWVudC5sb2NrLnR4dAooY29uZGEgbGlzdCAtLWV4cG9ydCBzbmFwc2hvdCkuIFByaW50cyAnc2tpcCcgd2hlbiBldmVyeSBwYWNrYWdlIGRldGVjdGVkIGJ5CnBpcHJlcXMgaXMgYWxyZWFkeSBwcmVzZW50IGluIHRoZSBsb2NrOyBwcmludHMgJ3J1bicgb3RoZXJ3aXNlIHNvIHRoZSBjYWxsZXIKcHJvY2VlZHMgd2l0aCBjb25kYSBpbnN0YWxsLgoiIiIKX192ZXJzaW9uX18gPSAiZGVwX2NoZWNrIHYxICgyMDI2LTAzLTI3KSIKX19hbGxfXyA9IFsicGFyc2VfbG9jayIsICJwYXJzZV9yZXFzIiwgIm1haW4iXQoKaW1wb3J0IG9zCmltcG9ydCByZQppbXBvcnQgc3lzCgpSRVFfRklMRSA9ICJyZXF1aXJlbWVudHMuYXV0by50eHQiCkxPQ0tfRklMRSA9ICJ+ZW52aXJvbm1lbnQubG9jay50eHQiCgoKZGVmIHBhcnNlX2xvY2socGF0aCk6CiAgICAiIiJSZXR1cm4gZnJvemVuc2V0IG9mIGxvd2VyY2FzZSBwYWNrYWdlIG5hbWVzIGZyb20gY29uZGEgbGlzdCAtLWV4cG9ydC4iIiIKICAgIG5hbWVzID0gc2V0KCkKICAgIHRyeToKICAgICAgICB3aXRoIG9wZW4ocGF0aCwgInIiLCBlbmNvZGluZz0idXRmLTgiLCBlcnJvcnM9Imlnbm9yZSIpIGFzIGZoOgogICAgICAgICAgICBmb3IgbGluZSBpbiBmaDoKICAgICAgICAgICAgICAgIGxpbmUgPSBsaW5lLnN0cmlwKCkKICAgICAgICAgICAgICAgIGlmIG5vdCBsaW5lIG9yIGxpbmUuc3RhcnRzd2l0aCgiIyIpOgogICAgICAgICAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgICAgICAgICAjIGNvbmRhIGxpc3QgLS1leHBvcnQ6IG5hbWU9dmVyc2lvbj1idWlsZFs9Y2hhbm5lbF0KICAgICAgICAgICAgICAgIG5hbWUgPSBsaW5lLnNwbGl0KCI9IilbMF0uc3RyaXAoKS5sb3dlcigpCiAgICAgICAgICAgICAgICBpZiBuYW1lOgogICAgICAgICAgICAgICAgICAgIG5hbWVzLmFkZChuYW1lKQogICAgZXhjZXB0IE9TRXJyb3I6CiAgICAgICAgcGFzcwogICAgcmV0dXJuIGZyb3plbnNldChuYW1lcykKCgpkZWYgcGFyc2VfcmVxcyhwYXRoKToKICAgICIiIlJldHVybiBsaXN0IG9mIGxvd2VyY2FzZSBwYWNrYWdlIG5hbWVzIGZyb20gcGlwLXN0eWxlIHJlcXVpcmVtZW50cyBmaWxlLiIiIgogICAgbmFtZXMgPSBbXQogICAgdHJ5OgogICAgICAgIHdpdGggb3BlbihwYXRoLCAiciIsIGVuY29kaW5nPSJ1dGYtOCIsIGVycm9ycz0iaWdub3JlIikgYXMgZmg6CiAgICAgICAgICAgIGZvciBsaW5lIGluIGZoOgogICAgICAgICAgICAgICAgbGluZSA9IGxpbmUuc3RyaXAoKQogICAgICAgICAgICAgICAgaWYgbm90IGxpbmUgb3IgbGluZS5zdGFydHN3aXRoKCIjIik6CiAgICAgICAgICAgICAgICAgICAgY29udGludWUKICAgICAgICAgICAgICAgICMgU3RyaXAgdmVyc2lvbiBzcGVjaWZpZXI6IG51bXB5Pj0xLjIwIC0+IG51bXB5CiAgICAgICAgICAgICAgICBuYW1lID0gcmUuc3BsaXQociJbPj08IX4sO1xzXFtdIiwgbGluZSwgbWF4c3BsaXQ9MSlbMF0uc3RyaXAoKS5sb3dlcigpCiAgICAgICAgICAgICAgICBpZiBuYW1lOgogICAgICAgICAgICAgICAgICAgIG5hbWVzLmFwcGVuZChuYW1lKQogICAgZXhjZXB0IE9TRXJyb3I6CiAgICAgICAgcGFzcwogICAgcmV0dXJuIG5hbWVzCgoKZGVmIG1haW4oKToKICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhMT0NLX0ZJTEUpOgogICAgICAgIHN5cy5zdGRvdXQud3JpdGUoInJ1blxuIikKICAgICAgICByZXR1cm4KICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhSRVFfRklMRSk6CiAgICAgICAgIyBObyBwaXByZXFzIG91dHB1dDsgbm90aGluZyByZXF1aXJlcyBpbnN0YWxsYXRpb24KICAgICAgICBzeXMuc3Rkb3V0LndyaXRlKCJza2lwXG4iKQogICAgICAgIHJldHVybgogICAgbG9ja19uYW1lcyA9IHBhcnNlX2xvY2soTE9DS19GSUxFKQogICAgaWYgbm90IGxvY2tfbmFtZXM6CiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgicnVuXG4iKQogICAgICAgIHJldHVybgogICAgcmVxX25hbWVzID0gcGFyc2VfcmVxcyhSRVFfRklMRSkKICAgIGlmIG5vdCByZXFfbmFtZXM6CiAgICAgICAgIyBFbXB0eSByZXF1aXJlbWVudHMgZmlsZTsgY29uZGEgaW5zdGFsbCB3b3VsZCBiZSBhIG5vLW9wCiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgic2tpcFxuIikKICAgICAgICByZXR1cm4KICAgIG1pc3NpbmcgPSBbbmFtZSBmb3IgbmFtZSBpbiByZXFfbmFtZXMgaWYgbmFtZSBub3QgaW4gbG9ja19uYW1lc10KICAgIGlmIG1pc3Npbmc6CiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgicnVuXG4iKQogICAgZWxzZToKICAgICAgICBzeXMuc3Rkb3V0LndyaXRlKCJza2lwXG4iKQoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBtYWluKCkK"
 exit /b 0
 :log
 set "MSG=%~1"

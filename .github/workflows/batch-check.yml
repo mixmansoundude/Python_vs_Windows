@@ -189,6 +189,12 @@ jobs:
         run: |
           & tests\selfapps_reqspec.ps1
 
+      - name: "Self-test: dep-check skip scenario (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_depcheck.ps1
+
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
@@ -675,8 +681,22 @@ jobs:
             tests\~selftest_stub\~setup.log
             tests/~selftest_stub/~bootstrap.status.json
             tests\~selftest_stub\~bootstrap.status.json
+            tests/~selftest_stub/~env.state.json
+            tests\~selftest_stub\~env.state.json
+            tests/~envsmoke/~env.state.json
+            tests\~envsmoke\~env.state.json
             tests/~setup.log
             tests\~setup.log
+            tests/~selftest_depcheck/~depcheck_bootstrap.log
+            tests\~selftest_depcheck\~depcheck_bootstrap.log
+            tests/~selftest_depcheck/~depcheck_rebuild.log
+            tests\~selftest_depcheck\~depcheck_rebuild.log
+            tests/~selftest_depcheck/~dep_check.txt
+            tests\~selftest_depcheck\~dep_check.txt
+            tests/~selftest_depcheck/~environment.lock.txt
+            tests\~selftest_depcheck\~environment.lock.txt
+            tests/~selftest_depcheck/~env.state.json
+            tests\~selftest_depcheck\~env.state.json
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
