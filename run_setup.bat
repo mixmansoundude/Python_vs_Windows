@@ -433,6 +433,27 @@ if exist "requirements.txt" (
     call :log "[WARN] System fallback: skipping requirement installation."
   )
 )
+rem --- Capture resolved environment snapshot ---
+rem derived requirement: goto avoids %errorlevel% parse-time expansion that
+rem would occur inside a parenthesized if-block (cmd.exe expands %var% for
+rem the whole block at parse time, so set HP_LOCK_RC=%errorlevel% inside
+rem if (...) always captures the pre-block errorlevel, not conda list's exit code).
+if not "%HP_ENV_MODE%"=="conda" goto :lock_done
+call :log "[INFO] Capturing environment snapshot..."
+call "%CONDA_BAT%" list -n "%ENVNAME%" --export > "~environment.lock.txt" 2>> "%LOG%"
+set "HP_LOCK_RC=%errorlevel%"
+if "%HP_LOCK_RC%"=="0" (
+  for %%Z in ("~environment.lock.txt") do if %%~zZ GTR 0 (
+    call :log "[INFO] Environment snapshot written: ~environment.lock.txt"
+    goto :lock_done
+  )
+  call :log "[WARN] Environment snapshot: conda list succeeded but output is empty."
+  if exist "~environment.lock.txt" del "~environment.lock.txt" >nul 2>&1
+) else (
+  call :log "[WARN] Environment snapshot failed (conda list rc=%HP_LOCK_RC%)."
+  if exist "~environment.lock.txt" del "~environment.lock.txt" >nul 2>&1
+)
+:lock_done
 rem Detect pyvisa/visa usage so harness sees NI-VISA requirements
 
 call :emit_from_base64 "~detect_visa.py" HP_DETECT_VISA

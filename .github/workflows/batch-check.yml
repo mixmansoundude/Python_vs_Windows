@@ -659,6 +659,8 @@ jobs:
             tests\~envsmoke\~setup.log
             tests/~envsmoke/~run.out.txt
             tests\~envsmoke\~run.out.txt
+            tests/~envsmoke/~environment.lock.txt
+            tests\~envsmoke\~environment.lock.txt
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log
