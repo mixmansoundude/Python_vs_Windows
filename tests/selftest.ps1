@@ -225,7 +225,7 @@ $stateSkipFound = ($rebuildLines | Where-Object { $_ -like "*$stateSkipPhrase*" 
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.state_skip'
   pass = $stateSkipFound
-  desc = 'Stub rebuild: state fast path skips conda create when deps unchanged'
+  desc = 'Stub rebuild: env-state fast path skips conda create when deps unchanged'
   details = [ordered]@{
     found = $stateSkipFound
     log = $stubRebuildLog
