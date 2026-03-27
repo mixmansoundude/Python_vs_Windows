@@ -535,7 +535,7 @@ call :emit_from_base64 "~env_state.py" HP_ENV_STATE
 if errorlevel 1 goto :env_state_write_done
 "%HP_PY%" "~env_state.py" --write >> "%LOG%" 2>&1
 set "HP_ENV_STATE_WRITE_RC=%errorlevel%"
-if exist "~env_state.py" del "~env_state.py" >/dev/null 2>&1
+if exist "~env_state.py" del "~env_state.py" >nul 2>&1
 if "%HP_ENV_STATE_WRITE_RC%"=="0" call :log "[INFO] Env state written: ~env.state.json"
 if not "%HP_ENV_STATE_WRITE_RC%"=="0" call :log "[WARN] Env state write failed (rc=%HP_ENV_STATE_WRITE_RC%)."
 set "HP_ENV_STATE_WRITE_RC="
