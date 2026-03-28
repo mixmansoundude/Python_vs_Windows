@@ -122,3 +122,34 @@ THEN stop and open/append a PR. One loop = one change set.
 - Work in an explicit loop: **Plan → Check the plan → Execute → Self-check/tests**. Document the plan before coding, verify it against requirements, act, then rerun the listed sanity checks.
 - When fixing bugs, leave professional comments that explain why the change is structured the way it is so future readers understand the constraint.
 - You may add helper utilities under `tools/` (preferred over embedding long scripts inside YAML/PowerShell/batch files). Run helpers from there freely, but update existing tools carefully to avoid regressions.
+
+## Embedded payload inventory (run_setup.bat)
+
+All helpers are base64-encoded inside `run_setup.bat` under `:define_helper_payloads`.
+Adding or changing a payload requires re-encoding and updating the matching `set "HP_*"=...` line.
+Run the delimiter check after every payload change.
+
+| Variable | Decoded filename | Purpose |
+|----------|-----------------|---------|
+| `HP_FAST_CHECK` | `~fast_check.py` | Pre-bootstrap sanity checks (Python files present, etc.) |
+| `HP_DEP_CHECK` | `~dep_check.py` | Compares pipreqs output against `~environment.lock.txt`; exits 0 (skip install) or 1 (install needed). SHIPPED Loop 2. |
+| `HP_ENV_STATE` | `~env_state.py` | Reads/writes `~env.state.json`; validates env cache across runs. SHIPPED Loop 3. |
+
+## Runtime artifact paths
+
+Files written by `run_setup.bat` during a bootstrap run. All use the tilde prefix so they
+are gitignored and survive crashes. Do not remove tilde prefixes.
+
+| File | When written | Used by |
+|------|-------------|---------|
+| `~bootstrap.status.json` | Every run | CI harness, selftest.ps1 |
+| `~setup.log` | Every run | CI test-logs artifact, diagnostics previews |
+| `~environment.lock.txt` | After successful conda install (errorlevel=0, non-empty) | HP_DEP_CHECK (dep-skip fast path) |
+| `~env.state.json` | After successful full bootstrap | HP_ENV_STATE (env-state fast path) |
+
+Schema for `~env.state.json` (schema=1):
+```json
+{"schema": 1, "env_name": "...", "env_path": "...", "python_version": "...",
+ "req_hash": "...", "runtime_hash": "...", "lock_hash": "..."}
+```
+Unknown schema is treated as stale (triggers full rebuild, not error).
