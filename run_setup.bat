@@ -1067,6 +1067,8 @@ if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
     if not defined HP_SPEC_PREEXIST if exist "%ENVNAME%.spec" del "%ENVNAME%.spec" >nul 2>&1
     set "HP_SPEC_PREEXIST="
+    if exist "build\%ENVNAME%" rd /s /q "build\%ENVNAME%" >nul 2>&1
+    call :log "[INFO] PyInstaller build artifacts cleaned up."
   )
 )
 set "HP_FAST_EXE="
