@@ -2307,8 +2307,8 @@ def _collect_setup_log_links(diag: Optional[Path]) -> List[dict]:
     # other depcheck logs so it must be surfaced here too.
     scenario_specs = [
         ("~envsmoke", "~envsmoke setup log (full)"),
-        ("~selftest_stub", "~selftest_stub setup log"),
-        ("~selftest_depcheck", "~selftest_depcheck setup log"),
+        ("~selftest_stub", "Stub setup log (full)"),
+        ("~selftest_depcheck", "Depcheck setup log (full)"),
     ]
 
     results: List[dict] = []
