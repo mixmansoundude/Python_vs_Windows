@@ -58,7 +58,7 @@ tools/
   batch-check.yml              Main CI pipeline (3-lane Windows matrix, ~40 KB)
   codeql.yml                   CodeQL security analysis
   workflow-lint.yml            YAML/workflow lint (actionlint + PyYAML)
-  pr-auto-enable-codex.yml     Auto-merge handler for PRs labeled 'codex'
+  pr-automerge.yml             Auto-merge handler for all non-draft same-repo PRs (blocks on 'no-automerge' label)
 
 scripts/
   poll_public_diag.ps1         Diagnostics polling helper
