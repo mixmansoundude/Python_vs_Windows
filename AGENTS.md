@@ -51,6 +51,54 @@ detectable by an assertion. Silent features are forbidden.
   - Trigger CI by push (or an empty commit) and wait for completion.
 - Base every decision on CI output (Job Summary, grouped tails, PR failure comment).
 
+## CI Polling and Verification
+
+### 1. After every push, poll CI before proceeding
+
+After each `git push`, wait for CI to complete before making any further commits or opening a PR.
+Poll using the diagnostics site latest.txt:
+
+```bash
+for i in $(seq 1 9); do
+  LATEST=$(curl -s "https://mixmansoundude.github.io/Python_vs_Windows/diag/latest.txt" \
+    | tr -d '[:space:]')
+  RUN=$(echo "$LATEST" | grep -oE '[0-9]+-[0-9]+')
+  [ -n "$RUN" ] && echo "Run: $RUN" && break
+  sleep 60
+done
+```
+
+Poll interval: 1-9 minutes. Max wait: under 10 minutes in practice.
+If CI is red, self-heal before proceeding to the next commit.
+
+### 2. After CI is green, verify outputs via the diag site
+
+Green NDJSON rows are necessary but not sufficient. Also:
+
+- Fetch the relevant ~setup.log.txt from the diag site and confirm expected log lines are
+  present for the change made.
+- Check that new artifact files appear in the inventory if the change was supposed to produce them.
+- Confirm NDJSON row count matches expectations (23 conda-full, 21 cache).
+
+URL pattern for setup logs:
+
+```
+https://mixmansoundude.github.io/Python_vs_Windows/diag/<RUN>/_mirrors/_artifacts/batch-check/test-logs/test-logs-selftest-conda-full-<RUN>/tests/~envsmoke/~setup.log.txt
+```
+
+### 3. Opening a PR
+
+After all commits are pushed and CI is confirmed green with diag verification, open a PR with:
+
+```
+gh pr create --title "<descriptive title>" --body "<summary of changes>"
+```
+
+No label is required. Auto-merge fires automatically for all non-draft PRs unless the
+'no-automerge' label is present.
+
+Do NOT open a PR before CI is green on the final commit.
+
 # Iteration Contract (Agent)
 
 You MUST follow this order every loop:
