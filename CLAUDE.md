@@ -366,8 +366,19 @@ See **AGENTS.md** §Iteration Contract for the full policy. Key points:
 
 Items deferred to future loops:
 
-- **Conda `justme` fallback**: if AllUsers Miniconda install fails, retry with
-  `/InstallationType=JustMe`.
 - **Runtime import-error retry loop**: run EXE, catch ModuleNotFoundError, extract module
   name, reinstall, retry with cap.
 - **EXE skip on hard Python import errors**: deferred -- needs sandbox work.
+
+## Closed Backlog
+
+Items completed and shipped:
+
+- **Conda `justme` fallback**: if AllUsers Miniconda install fails, retry with
+  `/InstallationType=JustMe`. CLOSED by feat: retry Miniconda install with JustMe if AllUsers fails.
+- **Diag index clickable links for stub/depcheck setup logs**: add Quick Links on the
+  diagnostics index page for ~selftest_stub/~setup.log and ~selftest_depcheck/~setup.log.
+  CLOSED by diag: add clickable preview links for stub and depcheck setup logs.
+- **Auto-merge on PR creation**: ensure auto-merge is enabled when a PR is opened after
+  commits are pushed (pull_request:opened trigger). CLOSED by ci: enable auto-merge when
+  PR is opened, not just on push.
