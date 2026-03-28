@@ -697,6 +697,8 @@ jobs:
             tests\~selftest_depcheck\~environment.lock.txt
             tests/~selftest_depcheck/~env.state.json
             tests\~selftest_depcheck\~env.state.json
+            tests/~selftest_depcheck/~setup.log
+            tests\~selftest_depcheck\~setup.log
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt

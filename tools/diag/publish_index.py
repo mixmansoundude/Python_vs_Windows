@@ -1840,10 +1840,19 @@ def _maybe_append_truncation_footer(
 
 
 def _as_text_preview(path: Path, max_bytes: int = MIRROR_TEXT_LIMIT) -> str:
-    """Return a human-readable preview for *path* within *max_bytes*."""
+    """Return a human-readable preview for *path* within *max_bytes*.
+
+    Log files (.log) are always returned in full regardless of max_bytes --
+    truncated logs are useless for diagnosis.
+    """
 
     size = path.stat().st_size
     suffix = path.suffix.lower()
+
+    # derived requirement: ~setup.log and other .log files must not be truncated;
+    # a partial log is worse than no log when debugging CI failures.
+    if suffix == ".log":
+        max_bytes = size
     lines: List[str]
 
     if suffix == ".json" and size <= max_bytes:
@@ -2277,6 +2286,64 @@ def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
 
     return results
 
+
+def _collect_setup_log_links(diag: Optional[Path]) -> List[dict]:
+    """Return quick-link entries for ~setup.log files from each test scenario and lane.
+
+    The test-logs artifact is extracted under diag/_artifacts/batch-check/test-logs/
+    with one subdirectory per artifact (named test-logs-selftest-{lane}-{run_id}-{attempt}).
+    Each subdirectory contains paths like tests/~envsmoke/~setup.log.  Surface these as
+    preview links so analysts can inspect them without downloading the full zip.
+    """
+    if not diag:
+        return []
+
+    test_logs_root = diag / "_artifacts" / "batch-check" / "test-logs"
+    if not test_logs_root.exists():
+        return []
+
+    # Ordered list: (scenario_dir_name, display_label)
+    # derived requirement: ~selftest_depcheck/~setup.log is now uploaded alongside the
+    # other depcheck logs so it must be surfaced here too.
+    scenario_specs = [
+        ("~envsmoke", "~envsmoke setup log (full)"),
+        ("~selftest_stub", "~selftest_stub setup log"),
+        ("~selftest_depcheck", "~selftest_depcheck setup log"),
+    ]
+
+    results: List[dict] = []
+    seen_paths: set[Path] = set()
+
+    try:
+        artifact_dirs = sorted(
+            p for p in test_logs_root.iterdir() if p.is_dir()
+        )
+    except OSError:
+        return []
+
+    for artifact_dir in artifact_dirs:
+        # Derive lane label from artifact directory name.
+        # Directory names follow the pattern: test-logs-selftest-{lane}-{run_id}-{attempt}
+        dir_name = artifact_dir.name.lower()
+        if "conda-full" in dir_name:
+            lane = "conda-full"
+        elif "cache" in dir_name:
+            lane = "cache"
+        else:
+            lane = "real"
+
+        for scenario_dir, base_label in scenario_specs:
+            candidate = artifact_dir / "tests" / scenario_dir / "~setup.log"
+            if not candidate.exists() or candidate in seen_paths:
+                continue
+            if not _nonempty_file(candidate):
+                continue
+            seen_paths.add(candidate)
+            label = f"{base_label} ({lane})"
+            mirror = ensure_txt_mirror(candidate)
+            results.append({"label": label, "path": candidate, "mirror": mirror})
+
+    return results
 
 
 def _find_ndjson_candidate(diag: Optional[Path], filename: str, *, prefer_real: bool) -> Optional[Path]:
@@ -3024,6 +3091,8 @@ def _bundle_links(context: Context) -> List[dict]:
         append(entry)
 
     entries.extend(_collect_batch_ndjson_links(diag))
+    for entry in _collect_setup_log_links(diag):
+        append(entry)
 
     for label, relative in [
         ("Batch-check failing tests", "batchcheck_failing.txt"),
