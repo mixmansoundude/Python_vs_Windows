@@ -1,10 +1,11 @@
 # yamllint disable rule:line-length
 # yamllint disable rule:truthy
 # Rationale: GitHub requires `status: {}` to subscribe broadly, and the embedded GraphQL/script blocks exceed 80 columns.
-# The pull_request:opened type ensures auto-merge is enabled even when a PR is created after all commits are pushed
-# (i.e., when the push-time check_suite/status events fired before any PR existed).
+# Auto-merge fires for all open, non-draft, same-repo PRs unless
+# labeled 'no-automerge'. On PR open, waits 10 minutes to allow
+# automated code reviews to post first.
 ---
-name: PR Auto-Enable Auto-merge (codex label)
+name: PR Auto-merge
 
 on:
   pull_request:
@@ -18,11 +19,20 @@ permissions:
   contents: write
 
 jobs:
-  auto_enable_codex:
+  auto_merge:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       AUTOMERGE_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
     steps:
+      - name: Wait for automated reviews (PR opened only)
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'opened' }}
+        shell: bash
+        run: |
+          echo "Waiting 10 minutes for automated code reviews to post..."
+          sleep 600
+          echo "Done waiting, proceeding with auto-merge enable."
+
       - name: Resolve candidate PR numbers for this event
         id: prs
         uses: actions/github-script@v7
@@ -52,7 +62,7 @@ jobs:
             const nums = await numbersFromEvent();
             core.setOutput('numbers', JSON.stringify(nums));
 
-      - name: Enable Auto-merge (codex) via PAT
+      - name: Enable Auto-merge via PAT
         if: ${{ steps.prs.outputs.numbers != '[]' && env.AUTOMERGE_TOKEN }}
         uses: actions/github-script@v7
         with:
@@ -87,7 +97,6 @@ jobs:
 
               if (prRest.state !== 'open' || prRest.draft) { core.info(`#${number}: skip (closed/draft)`); continue; }
               if (!isSameRepo) { core.info(`#${number}: skip (fork PR)`); continue; }
-              if (!labels.includes('codex')) { core.info(`#${number}: skip (missing 'codex' label)`); continue; }
               if (labels.includes('no-automerge')) { core.info(`#${number}: skip (has 'no-automerge')`); continue; }
               if (prRest.auto_merge) { core.info(`#${number}: already armed (REST)`); continue; }
 
@@ -114,7 +123,7 @@ jobs:
         env:
           numbers: ${{ steps.prs.outputs.numbers }}
 
-      - name: Enable Auto-merge (codex) via GITHUB_TOKEN
+      - name: Enable Auto-merge via GITHUB_TOKEN
         if: ${{ steps.prs.outputs.numbers != '[]' && !env.AUTOMERGE_TOKEN }}
         uses: actions/github-script@v7
         with:
@@ -138,7 +147,6 @@ jobs:
 
               if (prRest.state !== 'open' || prRest.draft) { core.info(`#${number}: skip (closed/draft)`); continue; }
               if (!isSameRepo) { core.info(`#${number}: skip (fork PR)`); continue; }
-              if (!labels.includes('codex')) { core.info(`#${number}: skip (missing 'codex' label)`); continue; }
               if (labels.includes('no-automerge')) { core.info(`#${number}: skip (has 'no-automerge')`); continue; }
               if (prRest.auto_merge) { core.info(`#${number}: already armed (REST)`); continue; }
 
@@ -238,6 +246,6 @@ jobs:
           script: |
             const pr = context.payload.pull_request;
             const labels = (pr.labels || []).map(l => (l.name||'').toLowerCase());
-            const armed = labels.includes('codex') && !labels.includes('no-automerge') && !pr.draft && pr.head.repo?.full_name === pr.base.repo?.full_name;
+            const armed = !labels.includes('no-automerge') && !pr.draft && pr.head.repo?.full_name === pr.base.repo?.full_name;
             const line = armed ? `Auto-merge: **armed** for #${pr.number} (Squash)` : `Auto-merge: **not armed** for #${pr.number}`;
             await core.summary.addRaw(line).write()
