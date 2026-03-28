@@ -129,6 +129,12 @@ This is the deliverable. Treat changes carefully.
    ```
    Paste output into the matching `set "HP_*"=...` line.
 
+   Current embedded payloads (in addition to legacy HP_FAST_CHECK):
+   - `HP_DEP_CHECK` -- decodes to `~dep_check.py`; compares pipreqs output against
+     `~environment.lock.txt` and exits 0 (skip) or 1 (install needed).
+   - `HP_ENV_STATE` -- decodes to `~env_state.py`; reads/writes `~env.state.json` to
+     cache conda env validity across runs.
+
 2. **Delimiter-check after every edit**:
    ```bash
    python tools/check_delimiters.py run_setup.bat
@@ -142,6 +148,62 @@ This is the deliverable. Treat changes carefully.
    {"state":"ok|no_python_files|error","exitCode":0,"pyFiles":0}
    ```
    CI harnesses and `tests/selftest.ps1` read this. See README.md for full contract.
+
+---
+
+## Edit Detection Sprint (Loops 1-3) -- SHIPPED
+
+All three loops are complete and live in `run_setup.bat`.
+
+### Loop 1 -- PyInstaller build artifact cleanup
+
+After a successful PyInstaller build, `run_setup.bat` now:
+- Deletes the `build\%ENVNAME%\` directory.
+- Deletes `%ENVNAME%.spec` **unless** a spec file pre-existed (guarded by
+  `HP_SPEC_PREEXIST` set before PyInstaller runs).
+- Logs: `[INFO] PyInstaller build artifacts cleaned up.`
+
+### Loop 2 -- Dependency skip (HP_DEP_CHECK / ~dep_check.py)
+
+After `pipreqs` generates `requirements.auto.txt`, `run_setup.bat` compares the
+output against `~environment.lock.txt` (written on first successful conda install).
+If every package listed by pipreqs is already present in the lock file, conda install
+is skipped entirely.
+- Log line: `Dep-check: all pipreqs packages satisfied in lock; skipping conda install.`
+- The lock file is written via `conda list --export` gated on errorlevel=0 AND
+  non-empty output.
+- Skip is conservative: if package name normalization is uncertain, falls through to
+  `conda install`.
+
+### Loop 3 -- Env-state fast path (HP_ENV_STATE / ~env_state.py)
+
+After a successful bootstrap, `run_setup.bat` writes `~env.state.json`:
+```json
+{
+  "schema": 1,
+  "env_name": "...",
+  "env_path": "...",
+  "python_version": "...",
+  "req_hash": "...",
+  "runtime_hash": "...",
+  "lock_hash": "..."
+}
+```
+On the next run, if state is valid and `python.exe` is present in the env, `conda create`
+is skipped entirely.
+- Log line: `Env-state fast path: reusing conda env <ENVNAME>.`
+- Schema field = 1. If schema is unknown or missing, treated as stale (not error).
+- State file is not backwards compatible before it was introduced -- first run after
+  upgrade does a full rebuild (expected behavior).
+
+### Runtime artifacts written by the bootstrapper
+
+| File | When written |
+|------|-------------|
+| `~bootstrap.status.json` | Every run (state, exitCode, pyFiles) |
+| `~setup.log` | Every run (probe errors, bootstrap path) |
+| `~environment.lock.txt` | After successful conda install (errorlevel=0, non-empty) |
+| `~env.state.json` | After successful full bootstrap |
 
 ---
 
@@ -164,6 +226,35 @@ Key outputs: `tests/~test-results.ndjson` (machine-readable), `~bootstrap.status
 in `batch-check.yml`. No other agent or job may commit auto-fixes. See AGENTS.md.
 
 **Diagnostics site**: https://mixmansoundude.github.io/Python_vs_Windows/
+
+---
+
+## NDJSON Surface (current)
+
+CI-artifacts NDJSON (from selfapps tests, 23 rows in conda-full lane):
+
+```
+self.harness.started, self.bootstrap.state, self.empty_repo.msg,
+self.env.smoke.conda, self.env.smoke.run, self.exe.build, self.exe.run,
+self.fastpath,
+reqspec.translate.{gte,eq,compat,gt,neq,lte}, reqspec.conda.dryrun,
+reqspec.conda.channelpin, reqspec.conda.dryrun.failcase,
+reqspec.install.import, reqspec.ingest.translate,
+reqspec.ingest.conda.dryrun, reqspec.ingest.install.import,
+self.depcheck.install, self.depcheck.skip
+```
+
+Test-logs NDJSON (from harness/selftest, additional rows):
+
+```
+file.hash, bootstrap.state, bootstrap.exit, emit.extract (x many),
+batch.delayed.off, batch.delayed.enable_absent, batch.bang.scan,
+conda.channels, pipreqs.flags, pyi.onefile, log.rotate, tilde.naming,
+visa.detect, emit.helpers, env.state.write, dep.check.parse_lock,
+dp.compat, prep.multi.constraint, batch.paren.balance, env.foldername,
+conda.path,
+self.stub.fastpath, self.stub.rebuild, self.stub.state_skip
+```
 
 ---
 
@@ -245,6 +336,9 @@ Responses API, extracts a fenced diff, and applies it via `tools/apply_patch.py`
   risks pulling from defaults, which violates the repo policy.
 - **Tilde-prefixed files in gitignore**: `~setup.log`, `~bootstrap.status.json`, etc. are
   never committed. Do not remove the tilde prefix.
+- **Extra packages after requirements.txt edits**: packages removed from requirements.txt
+  are NOT uninstalled from the conda env (harmless, documented). Only affects the lock/state
+  fast paths.
 
 ---
 
@@ -265,3 +359,15 @@ See **AGENTS.md** §Iteration Contract for the full policy. Key points:
 3. After going green, verify no false positives.
 4. Implement exactly ONE missing feature slice per loop.
 5. Add exactly ONE missing test per loop.
+
+---
+
+## Active Backlog
+
+Items deferred to future loops:
+
+- **Conda `justme` fallback**: if AllUsers Miniconda install fails, retry with
+  `/InstallationType=JustMe`.
+- **Runtime import-error retry loop**: run EXE, catch ModuleNotFoundError, extract module
+  name, reinstall, retry with cap.
+- **EXE skip on hard Python import errors**: deferred -- needs sandbox work.
