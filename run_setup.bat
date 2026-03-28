@@ -1061,7 +1061,7 @@ if "%HP_ENV_MODE%"=="system" (
   ) else (
     "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
     if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
-    "%HP_PY%" -m PyInstaller -y --onefile --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+    "%HP_PY%" -m PyInstaller -y --onefile --clean --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
     if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
     if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
     call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
