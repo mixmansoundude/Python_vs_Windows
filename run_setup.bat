@@ -132,8 +132,8 @@ if not defined CONDA_BAT (
   if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
   if not exist "%TEMP%\miniconda.exe" set "HP_CONDA_DL_RC=1"
   if exist "%TEMP%\miniconda.exe" (
-    REM start "" / wait "quoted\exe" is proper syntax here for strict windows runs. 
-    start "" /wait "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
+    REM Attempt AllUsers install with JustMe fallback; see :try_conda_install.
+    call :try_conda_install
   )
   if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
   call :select_conda_bat
@@ -1177,3 +1177,23 @@ exit /b %RC%
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 "if (Test-Path '%LOG%') { if ((Get-Item '%LOG%').Length -gt 10485760) { Move-Item -Force '%LOG%' '%LOGPREV%' } }"
 exit /b 0
+:try_conda_install
+rem derived requirement: AllUsers install can fail when UAC rejects elevation even for admin accounts.
+rem JustMe is the non-admin fallback that installs under the user profile instead.
+rem Both attempts reuse the already-downloaded installer at %TEMP%\miniconda.exe (no re-download).
+start "" /wait "%TEMP%\miniconda.exe" /InstallationType=AllUsers /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
+if errorlevel 1 goto :tci_justme
+set "HP_CONDA_INSTALL_MODE=AllUsers"
+call :log "[INFO] Miniconda installed successfully."
+goto :eof
+:tci_justme
+call :log "[WARN] Miniconda AllUsers install failed; retrying with JustMe."
+if exist "%MINICONDA_ROOT%" rd /s /q "%MINICONDA_ROOT%" >nul 2>&1
+start "" /wait "%TEMP%\miniconda.exe" /InstallationType=JustMe /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
+if errorlevel 1 goto :tci_both_failed
+set "HP_CONDA_INSTALL_MODE=JustMe"
+call :log "[INFO] Miniconda installed (JustMe fallback)."
+goto :eof
+:tci_both_failed
+call :die "[ERROR] Miniconda install failed (both AllUsers and JustMe)."
+goto :eof
