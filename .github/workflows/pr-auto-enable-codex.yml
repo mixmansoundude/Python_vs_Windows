@@ -1,6 +1,8 @@
 # yamllint disable rule:line-length
 # yamllint disable rule:truthy
 # Rationale: GitHub requires `status: {}` to subscribe broadly, and the embedded GraphQL/script blocks exceed 80 columns.
+# The pull_request:opened type ensures auto-merge is enabled even when a PR is created after all commits are pushed
+# (i.e., when the push-time check_suite/status events fired before any PR existed).
 ---
 name: PR Auto-Enable Auto-merge (codex label)
 
