@@ -726,6 +726,8 @@ jobs:
             tests\~selftest_warnfix\~setup.log
             tests/~selftest_warnfix/dist/~warnfix_token.txt
             tests\~selftest_warnfix\dist\~warnfix_token.txt
+            tests/~selftest_warnfix/build/**
+            tests\~selftest_warnfix\build\**
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt

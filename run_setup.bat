@@ -15,7 +15,7 @@ if exist "%STATUS_FILE%" del "%STATUS_FILE%"
 set "HP_BOOTSTRAP_STATE=ok"
 set "HP_ENV_MODE=conda"
 set "HP_ENV_READY="
-set "HP_SKIP_PIPREQS="
+set "HP_SKIP_PIPREQS=%HP_SKIP_PIPREQS%"
 set "HP_PY="
 set "HP_FIND_ENTRY_SYNTAX_OK="
 set "HP_HELPER_SYNTAX_EMITTED="
@@ -1067,9 +1067,20 @@ if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
     rem parse_warn: check PyInstaller warn file for missing modules before cleanup
     rem derived requirement: build\ must still exist when ~parse_warn.py runs.
+    set "HP_WARNFILE=build\%ENVNAME%\warn-%ENVNAME%.txt"
+    if exist "%HP_WARNFILE%" (
+      call :log "[DEBUG] warnfix: warn file found"
+      type "%HP_WARNFILE%" >> "%LOG%"
+    ) else (
+      call :log "[DEBUG] warnfix: warn file not found"
+    )
+    set "HP_WARNFILE="
     if exist "~missing_modules.txt" del "~missing_modules.txt" >nul 2>&1
     call :emit_from_base64 "~parse_warn.py" HP_PARSE_WARN
     "%HP_PY%" ~parse_warn.py "%ENVNAME%" > "~missing_modules.txt" 2>> "%LOG%"
+    set "HP_PARSE_WARN_RC=%errorlevel%"
+    call :log "[DEBUG] warnfix: parse_warn rc=%HP_PARSE_WARN_RC%"
+    set "HP_PARSE_WARN_RC="
     if exist "~parse_warn.py" del "~parse_warn.py" >nul 2>&1
     set "HP_WARNFIX_NEEDED="
     for /f "usebackq delims=" %%M in ("~missing_modules.txt") do set "HP_WARNFIX_NEEDED=1"
