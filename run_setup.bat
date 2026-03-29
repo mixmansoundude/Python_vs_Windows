@@ -1067,20 +1067,19 @@ if "%HP_ENV_MODE%"=="system" (
     call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
     rem parse_warn: check PyInstaller warn file for missing modules before cleanup
     rem derived requirement: build\ must still exist when ~parse_warn.py runs.
-    set "HP_WARNFILE=build\%ENVNAME%\warn-%ENVNAME%.txt"
-    if exist "%HP_WARNFILE%" (
+    rem derived requirement: use %ENVNAME% (set before this block) as the inline
+    rem path, not a variable set inside the same else-block; cmd.exe expands
+    rem %VAR% at parse time for the whole block, so HP_WARNFILE would be empty.
+    if exist "build\%ENVNAME%\warn-%ENVNAME%.txt" (
       call :log "[DEBUG] warnfix: warn file found"
-      type "%HP_WARNFILE%" >> "%LOG%"
+      type "build\%ENVNAME%\warn-%ENVNAME%.txt" >> "%LOG%"
+      copy "build\%ENVNAME%\warn-%ENVNAME%.txt" "~warnfile.txt" >nul 2>&1
     ) else (
       call :log "[DEBUG] warnfix: warn file not found"
     )
-    set "HP_WARNFILE="
     if exist "~missing_modules.txt" del "~missing_modules.txt" >nul 2>&1
     call :emit_from_base64 "~parse_warn.py" HP_PARSE_WARN
     "%HP_PY%" ~parse_warn.py "%ENVNAME%" > "~missing_modules.txt" 2>> "%LOG%"
-    set "HP_PARSE_WARN_RC=%errorlevel%"
-    call :log "[DEBUG] warnfix: parse_warn rc=%HP_PARSE_WARN_RC%"
-    set "HP_PARSE_WARN_RC="
     if exist "~parse_warn.py" del "~parse_warn.py" >nul 2>&1
     set "HP_WARNFIX_NEEDED="
     for /f "usebackq delims=" %%M in ("~missing_modules.txt") do set "HP_WARNFIX_NEEDED=1"
