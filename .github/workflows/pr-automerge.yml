@@ -117,7 +117,17 @@ jobs:
                 }
               } catch (e) {
                 const msg = e?.errors ? JSON.stringify(e.errors[0]) : String(e.message||e);
-                core.info(`#${number}: enable failed via PAT (GraphQL): ${msg}`);
+                core.info(`#${number}: enable failed via PAT (GraphQL): ${msg}; checking for immediate merge`);
+                // Direct merge fallback: enablePullRequestAutoMerge fails when all required checks
+                // have already passed (PR immediately mergeable). Fall back to REST merge in that case.
+                if (pr.mergeable === 'MERGEABLE') {
+                  try {
+                    await github.rest.pulls.merge({ owner, repo, pull_number: number, merge_method: 'squash' });
+                    core.info(`#${number}: Merged directly (PR was immediately mergeable) ✅`);
+                  } catch (mergeErr) {
+                    core.info(`#${number}: Direct merge failed: ${mergeErr.message || String(mergeErr)}`);
+                  }
+                }
               }
             }
         env:
@@ -152,17 +162,25 @@ jobs:
 
               try {
                 await github.graphql(enable, { id: prRest.node_id || prRest.id /* node_id expected */ });
+                const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                if (after.auto_merge) {
+                  core.info(`#${number}: Auto-merge enabled (Squash) via GITHUB_TOKEN ✅`);
+                } else {
+                  core.info(`#${number}: enable via GITHUB_TOKEN reported success, but REST auto_merge is null (permissions likely).`);
+                }
               } catch (e) {
                 const msg = e?.errors ? JSON.stringify(e.errors[0]) : String(e.message||e);
-                core.info(`#${number}: enable failed via GITHUB_TOKEN (GraphQL): ${msg}`);
-                continue;
-              }
-
-              const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: number });
-              if (after.auto_merge) {
-                core.info(`#${number}: Auto-merge enabled (Squash) via GITHUB_TOKEN ✅`);
-              } else {
-                core.info(`#${number}: enable via GITHUB_TOKEN reported success, but REST auto_merge is null (permissions likely).`);
+                core.info(`#${number}: enable failed via GITHUB_TOKEN (GraphQL): ${msg}; checking for immediate merge`);
+                // Direct merge fallback: enablePullRequestAutoMerge fails when all required checks
+                // have already passed (PR immediately mergeable). Fall back to REST merge in that case.
+                if (prRest.mergeable === true) {
+                  try {
+                    await github.rest.pulls.merge({ owner, repo, pull_number: number, merge_method: 'squash' });
+                    core.info(`#${number}: Merged directly (PR was immediately mergeable) ✅`);
+                  } catch (mergeErr) {
+                    core.info(`#${number}: Direct merge failed: ${mergeErr.message || String(mergeErr)}`);
+                  }
+                }
               }
             }
         env:
