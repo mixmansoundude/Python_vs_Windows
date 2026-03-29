@@ -1,7 +1,11 @@
 # ASCII only
 # selfapps_warnfix.ps1 - Test PyInstaller warn-file driven missing-module install + rebuild.
-# Creates an app that uses importlib.import_module('openpyxl') so pipreqs misses the dep
-# but PyInstaller flags it in the warn file. Verifies that the warn-driven rebuild fires.
+#
+# Design: HP_SKIP_PIPREQS=1 prevents conda install from running so openpyxl is not
+# pre-installed. App uses a direct "import openpyxl" so PyInstaller's static analysis
+# detects the reference and flags it in warn-<envname>.txt as a missing module.
+# The warnfix step then installs openpyxl via conda and rebuilds the EXE.
+#
 # Lane: conda-full and real only.
 param()
 $ErrorActionPreference = 'Continue'
@@ -56,15 +60,17 @@ if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 Copy-Item -Path $batchPath -Destination $workDir -Force
 
-# derived requirement: use importlib.import_module so pipreqs cannot see the dep
-# statically, but PyInstaller's analysis flags it in the warn file. openpyxl is
-# available on conda-forge and the translation table maps it to 'openpyxl' (identity).
+# derived requirement: use a direct "import openpyxl" so PyInstaller's static analysis
+# can find the reference and include it in warn-<envname>.txt when the module is absent.
+# HP_SKIP_PIPREQS=1 prevents conda install from running, ensuring openpyxl is not
+# installed before PyInstaller runs. The warnfix step then installs it and rebuilds.
+# The smoke test will fail (exit=1) because openpyxl is missing, but run_setup.bat
+# continues to PyInstaller after a smoke failure.
 $appCode = @'
-import importlib
+import openpyxl
 import os as _os
 import sys as _sys
 
-openpyxl = importlib.import_module('openpyxl')
 wb = openpyxl.Workbook()
 wb.active['A1'] = 'warnfix-ok'
 wb.save('out.xlsx')
@@ -77,11 +83,21 @@ Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
 
 $bootstrapLog = '~warnfix_bootstrap.log'
 
+# Set HP_SKIP_PIPREQS=1 so pipreqs does not run and openpyxl is not pre-installed.
+# This ensures openpyxl shows up in the PyInstaller warn file as a missing module.
+$prev = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
+$env:HP_SKIP_PIPREQS = '1'
+
 Push-Location $workDir
 try {
     cmd /c "call run_setup.bat > $bootstrapLog 2>&1"
     $run1Exit = $LASTEXITCODE
 } finally {
+    if ($null -eq $prev) {
+        Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue
+    } else {
+        $env:HP_SKIP_PIPREQS = $prev
+    }
     Pop-Location
 }
 
@@ -92,25 +108,24 @@ $setupText = if (Test-Path $setupLog) { Get-Content -LiteralPath $setupLog -Raw 
 $combined  = ($logLines -join "`n") + "`n" + $setupText
 
 # derived requirement: exact log phrases from run_setup.bat warnfix block.
-$warnInstallPhrase  = 'PyInstaller flagged missing modules; installing and rebuilding.'
-$warnRebuildPhrase  = 'PyInstaller rebuild after missing module install complete.'
-$warnInstallFired   = $combined -match [regex]::Escape($warnInstallPhrase)
-$warnRebuildFired   = $combined -match [regex]::Escape($warnRebuildPhrase)
+$warnInstallPhrase = 'PyInstaller flagged missing modules; installing and rebuilding.'
+$warnRebuildPhrase = 'PyInstaller rebuild after missing module install complete.'
+$warnInstallFired  = $combined -match [regex]::Escape($warnInstallPhrase)
+$warnRebuildFired  = $combined -match [regex]::Escape($warnRebuildPhrase)
 
-# Token file is written by the EXE next to itself (in dist/)
-$distDir   = Join-Path $workDir 'dist'
-$tokenPath = Join-Path $distDir '~warnfix_token.txt'
-$tokenFound = Test-Path -LiteralPath $tokenPath
+# installPass: warnfix fired (exitCode not checked since smoke test is expected to fail)
+$installPass = $warnInstallFired -and $warnRebuildFired
 
-# Run the EXE if it exists
-$exeName   = 'app'  # ENVNAME is derived from the workdir folder name
-# derive envname the same way run_setup.bat does (alphanum + underscore only)
-$envLeaf   = Split-Path $workDir -Leaf
-$envName   = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
+# EXE run: verify the rebuilt EXE has openpyxl bundled and succeeds
+$envLeaf  = Split-Path $workDir -Leaf
+$envName  = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
 if (-not $envName) { $envName = '_warnfix' }
-$exePath   = Join-Path $distDir "$envName.exe"
+$distDir  = Join-Path $workDir 'dist'
+$exePath  = Join-Path $distDir "$envName.exe"
 $exeExists = Test-Path -LiteralPath $exePath
 $exeExit   = -1
+$tokenPath = Join-Path $distDir '~warnfix_token.txt'
+$tokenFound = $false
 
 if ($exeExists) {
     try {
@@ -127,18 +142,17 @@ if ($exeExists) {
     }
 }
 
-$installPass = ($run1Exit -eq 0) -and $warnInstallFired -and $warnRebuildFired
-$successPass = ($run1Exit -eq 0) -and $exeExists -and ($exeExit -eq 0) -and $tokenFound
+$successPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.warnfix.install'
     pass    = $installPass
     desc    = 'PyInstaller warn file had missing modules; conda install ran'
     details = [ordered]@{
-        exitCode           = $run1Exit
-        warnInstallFired   = $warnInstallFired
-        warnRebuildFired   = $warnRebuildFired
-        log                = $bootstrapLog
+        exitCode          = $run1Exit
+        warnInstallFired  = $warnInstallFired
+        warnRebuildFired  = $warnRebuildFired
+        log               = $bootstrapLog
     }
 })
 
