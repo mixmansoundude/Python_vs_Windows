@@ -103,7 +103,15 @@ jobs:
               const pre = await github.graphql(ql, { owner, repo, num: number });
               const pr = pre.repository.pullRequest;
               if (!pr.viewerCanEnableAutoMerge) {
-                core.info(`#${number}: PAT viewer cannot enable auto-merge (viewerCanEnable=false). Check PAT scopes (public_repo for public repo).`);
+                core.info(`#${number}: viewerCanEnable=false (PR likely immediately mergeable); trying direct merge`);
+                if (pr.mergeable === 'MERGEABLE') {
+                  try {
+                    await github.rest.pulls.merge({ owner, repo, pull_number: number, merge_method: 'squash' });
+                    core.info(`#${number}: Merged directly (viewerCanEnable=false path) ✅`);
+                  } catch (mergeErr) {
+                    core.info(`#${number}: Direct merge failed: ${mergeErr.message || String(mergeErr)}`);
+                  }
+                }
                 continue;
               }
 
