@@ -200,7 +200,7 @@ Run the delimiter check after every payload change.
 | `HP_FAST_CHECK` | `~fast_check.py` | Pre-bootstrap sanity checks (Python files present, etc.) |
 | `HP_DEP_CHECK` | `~dep_check.py` | Compares pipreqs output against `~environment.lock.txt`; exits 0 (skip install) or 1 (install needed). SHIPPED Loop 2. |
 | `HP_ENV_STATE` | `~env_state.py` | Reads/writes `~env.state.json`; validates env cache across runs. SHIPPED Loop 3. |
-| `HP_PARSE_WARN` | `~parse_warn.py` | Reads PyInstaller warn file, extracts missing module names, applies import-to-conda translation table. Prints one package per line. |
+| `HP_PARSE_WARN` | `~parse_warn.py` | Reads PyInstaller warn file, extracts missing module names, applies import-to-conda translation table. Supports PyInstaller 5.x (W: no module named 'foo') and 6.x (missing module named foo - imported by ... (top-level)) formats. Prints one package per line. |
 
 ## Runtime artifact paths
 
