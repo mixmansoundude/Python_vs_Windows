@@ -34,7 +34,9 @@ jobs:
           - mode: real
           # conda-full: third lane - no fallbacks, proves real Miniconda path works
           - mode: conda-full
-    continue-on-error: ${{ matrix.mode == 'cache' }}
+          # justme-test: forces JustMe install path via HP_TEST_JUSTME_FALLBACK=1 (informational)
+          - mode: justme-test
+    continue-on-error: ${{ matrix.mode == 'cache' || matrix.mode == 'justme-test' }}
     runs-on: windows-latest
 
     outputs:
@@ -72,6 +74,13 @@ jobs:
         shell: pwsh
         run: |
           'HP_FORCE_CONDA_ONLY=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
+      # justme-test only: skips AllUsers install so the JustMe fallback path runs
+      - name: Force JustMe install path
+        if: ${{ matrix.mode == 'justme-test' }}
+        shell: pwsh
+        run: |
+          'HP_TEST_JUSTME_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       - name: Ensure CI fallbacks are off
         shell: pwsh
@@ -184,6 +193,12 @@ jobs:
         run: |
           & tests\selfapps_envsmoke.ps1
 
+      - name: "Self-test: JustMe install path (justme-test only)"
+        if: ${{ matrix.mode == 'justme-test' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_justme.ps1
+
       - name: "Self-test: requirements specifier coverage"
         shell: pwsh
         run: |
@@ -194,6 +209,12 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_depcheck.ps1
+
+      - name: "Self-test: PyInstaller warn-file driven rebuild (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_warnfix.ps1
 
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
@@ -699,6 +720,14 @@ jobs:
             tests\~selftest_depcheck\~env.state.json
             tests/~selftest_depcheck/~setup.log
             tests\~selftest_depcheck\~setup.log
+            tests/~selftest_warnfix/~warnfix_bootstrap.log
+            tests\~selftest_warnfix\~warnfix_bootstrap.log
+            tests/~selftest_warnfix/~setup.log
+            tests\~selftest_warnfix\~setup.log
+            tests/~selftest_warnfix/dist/~warnfix_token.txt
+            tests\~selftest_warnfix\dist\~warnfix_token.txt
+            tests/~selftest_warnfix/~warnfile.txt
+            tests\~selftest_warnfix\~warnfile.txt
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
