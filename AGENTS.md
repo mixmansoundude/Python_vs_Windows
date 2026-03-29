@@ -27,6 +27,24 @@ artifact path must be added to the test-logs upload in batch-check.yml (both sla
 per existing convention). Observable = any new log line, new file written to disk, or new behavior
 detectable by an assertion. Silent features are forbidden.
 
+## Branch coverage policy
+
+Every code branch added to run_setup.bat or related helpers must have a
+corresponding test that exercises that branch in CI. This includes:
+
+- Feature flags and fallback paths (e.g. HP_TEST_JUSTME_FALLBACK)
+- Error recovery paths (e.g. retry logic, warn-file driven installs)
+- Fast path vs full path branches (e.g. env-state fast path, dep-check skip)
+
+When adding a new branch or fallback:
+
+1. Add an NDJSON row that asserts the branch fired (pass=true when the
+   specific log line or artifact is present)
+2. If the branch cannot be triggered by the normal CI flow, add a dedicated
+   test lane or HP_* flag to force it
+3. Do not ship a branch without a test that would catch it being silently
+   deleted or bypassed
+
 ## Interface contract with CI
 - CI asserts on the exact bootstrapper messages emitted by `run_setup.bat` and related helpers.
 - When adjusting bootstrap log text or status summaries, update the workflow checks that parse them at the same time.
@@ -182,6 +200,7 @@ Run the delimiter check after every payload change.
 | `HP_FAST_CHECK` | `~fast_check.py` | Pre-bootstrap sanity checks (Python files present, etc.) |
 | `HP_DEP_CHECK` | `~dep_check.py` | Compares pipreqs output against `~environment.lock.txt`; exits 0 (skip install) or 1 (install needed). SHIPPED Loop 2. |
 | `HP_ENV_STATE` | `~env_state.py` | Reads/writes `~env.state.json`; validates env cache across runs. SHIPPED Loop 3. |
+| `HP_PARSE_WARN` | `~parse_warn.py` | Reads PyInstaller warn file, extracts missing module names, applies import-to-conda translation table. Prints one package per line. |
 
 ## Runtime artifact paths
 
