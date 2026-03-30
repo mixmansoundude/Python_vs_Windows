@@ -235,11 +235,11 @@ jobs:
             Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii
             Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
           }
-          $rawOut = & python -m pytest tests/test_parse_warn.py -v 2>&1
+          $rawOut = & python -m unittest tests.test_parse_warn -v 2>&1
           $exitCode = $LASTEXITCODE
           $outStr = ($rawOut -join "`n")
           $pass = ($exitCode -eq 0)
-          $summary = ($rawOut | Select-String -Pattern '(passed|failed|error)' | Select-Object -Last 1)
+          $summary = ($rawOut | Select-String -Pattern '(OK|FAILED|ERROR|Ran \d+)' | Select-Object -Last 1)
           if ($summary) { $summaryStr = $summary.Line.Trim() } else { $summaryStr = "exit=$exitCode" }
           Write-NdjsonRow ([ordered]@{
             id      = 'self.parse_warn.pytest'
