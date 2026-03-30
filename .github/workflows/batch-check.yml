@@ -221,6 +221,34 @@ jobs:
         run: |
           & tests\selfapps_parse_warn_table.ps1
 
+      - name: "Self-test: parse_warn pytest (test_parse_warn.py)"
+        shell: pwsh
+        run: |
+          $nd   = "tests\~test-results.ndjson"
+          $ciNd = "ci_test_results.ndjson"
+          if (-not (Test-Path $nd))   { New-Item -ItemType File -Path $nd   -Force | Out-Null }
+          if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
+          function Write-NdjsonRow { param([hashtable]$Row)
+            $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
+            if ($lane -and -not $Row.ContainsKey('lane')) { $Row['lane'] = $lane }
+            $json = $Row | ConvertTo-Json -Compress -Depth 8
+            Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii
+            Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
+          }
+          $rawOut = & python -m unittest tests.test_parse_warn -v 2>&1
+          $exitCode = $LASTEXITCODE
+          $outStr = ($rawOut -join "`n")
+          $pass = ($exitCode -eq 0)
+          $summary = ($rawOut | Select-String -Pattern '(OK|FAILED|ERROR|Ran \d+)' | Select-Object -Last 1)
+          if ($summary) { $summaryStr = $summary.Line.Trim() } else { $summaryStr = "exit=$exitCode" }
+          Write-NdjsonRow ([ordered]@{
+            id      = 'self.parse_warn.pytest'
+            pass    = $pass
+            desc    = 'parse_warn pytest: test_parse_warn.py all tests pass'
+            details = [ordered]@{ summary = $summaryStr; exit = $exitCode }
+          })
+          if (-not $pass) { Write-Host $outStr; exit 1 }
+
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4

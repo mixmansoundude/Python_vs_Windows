@@ -152,4 +152,52 @@ Write-NdjsonRow ([ordered]@{
 })
 
 if (-not $pass) { exit 1 }
+
+# Second loop: PyInstaller 6.x format
+# Format: missing module named <import> - imported by <importer> (top-level)
+$failures6 = [System.Collections.Generic.List[object]]::new()
+
+foreach ($kv in $mappings.GetEnumerator()) {
+    $importName  = $kv.Key
+    $expectedPkg = $kv.Value
+
+    # Write synthetic 6.x warn line
+    "missing module named $importName - imported by app (top-level)" | Set-Content -LiteralPath $warnFile -Encoding ASCII
+
+    Push-Location $workDir
+    try {
+        $rawOut6  = & $pyExe '~parse_warn_tbl.py' $envname 2>$null
+        $exitCode6 = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+
+    $lines6 = @()
+    if ($rawOut6) {
+        $lines6 = ($rawOut6 -split "`n") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+    }
+
+    if ($expectedPkg -notin $lines6) {
+        $failures6.Add([ordered]@{
+            import   = $importName
+            expected = $expectedPkg
+            got      = ($lines6 -join ',')
+            exit     = $exitCode6
+        })
+    }
+}
+
+$pass6 = ($failures6.Count -eq 0)
+
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.parse_warn.table.v6'
+    pass    = $pass6
+    desc    = 'parse_warn TRANSLATIONS table: all import->conda mappings resolve correctly (PyInstaller 6.x format)'
+    details = [ordered]@{
+        tested   = $mappings.Count
+        failures = $failures6.ToArray()
+    }
+})
+
+if (-not $pass6) { exit 1 }
 exit 0
