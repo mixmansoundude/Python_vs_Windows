@@ -231,7 +231,7 @@ in `batch-check.yml`. No other agent or job may commit auto-fixes. See AGENTS.md
 
 ## NDJSON Surface (current)
 
-CI-artifacts NDJSON (from selfapps tests, 23 rows in conda-full lane):
+CI-artifacts NDJSON (from selfapps tests, 24 rows in conda-full lane):
 
 ```
 self.harness.started, self.bootstrap.state, self.empty_repo.msg,
@@ -241,7 +241,8 @@ reqspec.translate.{gte,eq,compat,gt,neq,lte}, reqspec.conda.dryrun,
 reqspec.conda.channelpin, reqspec.conda.dryrun.failcase,
 reqspec.install.import, reqspec.ingest.translate,
 reqspec.ingest.conda.dryrun, reqspec.ingest.install.import,
-self.depcheck.install, self.depcheck.skip
+self.depcheck.install, self.depcheck.skip,
+self.parse_warn.table
 ```
 
 Test-logs NDJSON (from harness/selftest, additional rows):

@@ -216,6 +216,11 @@ jobs:
         run: |
           & tests\selfapps_warnfix.ps1
 
+      - name: "Self-test: parse_warn TRANSLATIONS table coverage"
+        shell: pwsh
+        run: |
+          & tests\selfapps_parse_warn_table.ps1
+
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
@@ -728,6 +733,8 @@ jobs:
             tests\~selftest_warnfix\dist\~warnfix_token.txt
             tests/~selftest_warnfix/~warnfile.txt
             tests\~selftest_warnfix\~warnfile.txt
+            tests/~selftest_parse_warn_table/
+            tests\~selftest_parse_warn_table\
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
