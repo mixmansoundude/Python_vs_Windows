@@ -96,7 +96,7 @@ Green NDJSON rows are necessary but not sufficient. Also:
 - Fetch the relevant ~setup.log.txt from the diag site and confirm expected log lines are
   present for the change made.
 - Check that new artifact files appear in the inventory if the change was supposed to produce them.
-- Confirm NDJSON row count matches expectations (23 conda-full, 21 cache).
+- Confirm NDJSON row count matches expectations (24 conda-full, 22 cache).
 
 URL pattern for setup logs:
 
