@@ -89,6 +89,8 @@ if (-not $IsWindows) {
     Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate'; pass = $true; desc = 'translation skipped on non-Windows host'; details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install'; pass = $true; desc = 'conda install skipped on non-Windows host'; details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.runtime'; pass = $true; desc = 'runtime execution skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.install'; pass = $true; desc = 'env list check skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.import'; pass = $true; desc = 'import check skipped on non-Windows host'; details = $skipDetails })
     exit 0
 }
 
@@ -228,3 +230,21 @@ $runtimePass = ($runtimeDetails.exitCode -eq 0) -and [bool]$runtimeDetails.outEx
 Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate'; pass = $translatePass; desc = 'prep_requirements translates pandas and openpyxl'; details = $translationDetails })
 Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install'; pass = $installPass; desc = 'conda installs translated pandas/openpyxl requirements'; details = $installDetails })
 Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.runtime'; pass = $runtimePass; desc = 'runtime writes out.xlsx using pandas+openpyxl'; details = $runtimeDetails })
+
+# Verify both packages are present in the conda env after install
+$envListDetails = [ordered]@{ pandasPresent = $false; openpyxlPresent = $false }
+$importDetails  = [ordered]@{ exitCode = -1 }
+if ($installPass -and $condaBat) {
+    $listOut = cmd /c "`"$condaBat`" list -n _envsmoke 2>&1"
+    $listStr = ($listOut | Out-String)
+    $envListDetails.pandasPresent  = ($listStr -match '(?m)^pandas\b')
+    $envListDetails.openpyxlPresent = ($listStr -match '(?m)^openpyxl\b')
+
+    $importOut = cmd /c "`"$condaBat`" run -n _envsmoke python -c `"import pandas; import openpyxl`" 2>&1"
+    $importDetails.exitCode = $LASTEXITCODE
+}
+$envListPass  = [bool]$envListDetails.pandasPresent -and [bool]$envListDetails.openpyxlPresent
+$importPass   = ($importDetails.exitCode -eq 0)
+
+Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.install'; pass = $envListPass;  desc = 'pandas and openpyxl both present in conda env after install'; details = $envListDetails })
+Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.import';  pass = $importPass;   desc = 'import pandas; import openpyxl succeeds in conda env'; details = $importDetails })
