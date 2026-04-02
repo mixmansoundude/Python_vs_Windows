@@ -231,7 +231,9 @@ in `batch-check.yml`. No other agent or job may commit auto-fixes. See AGENTS.md
 
 ## NDJSON Surface (current)
 
-CI-artifacts NDJSON (from selfapps tests, 24 rows in conda-full lane):
+The diag site is the source of truth for row counts. Listed below are known rows by lane.
+
+CI-artifacts NDJSON (from selfapps tests, conda-full lane):
 
 ```
 self.harness.started, self.bootstrap.state, self.empty_repo.msg,
@@ -242,7 +244,17 @@ reqspec.conda.channelpin, reqspec.conda.dryrun.failcase,
 reqspec.install.import, reqspec.ingest.translate,
 reqspec.ingest.conda.dryrun, reqspec.ingest.install.import,
 self.depcheck.install, self.depcheck.skip,
-self.parse_warn.table
+self.parse_warn.table,
+self.exe.warnfix.install, self.exe.warnfix.success,
+self.parse_warn.table.v6, self.parse_warn.pytest,
+self.runtime.writeback,
+self.pandas.openpyxl.install, self.pandas.openpyxl.import
+```
+
+justme-test lane rows (subset, flag-triggered):
+
+```
+conda.install.justme
 ```
 
 Test-logs NDJSON (from harness/selftest, additional rows):
@@ -367,13 +379,29 @@ See **AGENTS.md** §Iteration Contract for the full policy. Key points:
 
 Items deferred to future loops:
 
-- **Runtime import-error retry loop**: run EXE, catch ModuleNotFoundError, extract module
-  name, reinstall, retry with cap.
-- **EXE skip on hard Python import errors**: deferred -- needs sandbox work.
+- **Python version detection Tier 2 (pyproject.toml)**: README.md requires reading
+  `pyproject.toml` `requires-python` when no `runtime.txt` exists. (not yet fully
+  implemented end-to-end; HP_DETECT_PY handles requires-python detection but CI coverage
+  of the pyproject.toml path is pending.)
+
+- **Python version detection Tier 3 write-back**: README.md requires: "Otherwise let conda
+  pick the latest supported Python. After the environment is created, write runtime.txt with
+  the resolved version and log `[INFO] runtime.txt written: python-X.Y.Z`. This ensures
+  subsequent runs hit Tier 1."
+
+- **Conda base periodic update**: README.md requires updating conda base periodically
+  (~30 days), skipping on first install. Conda update can be slow and needs a workaround
+  (checking install date or download hash before running) to avoid unnecessary long waits.
+  Timing data from CI logs will be needed once implemented. Deferred.
 
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Warn-file driven missing-import install**: after PyInstaller build, read the warn file,
+  extract flagged missing modules, apply the import-to-conda translation table, install via
+  conda, and rebuild once. Supersedes the earlier runtime retry-loop design. CLOSED by
+  (warn-file feature PR).
 
 - **Conda `justme` fallback**: if AllUsers Miniconda install fails, retry with
   `/InstallationType=JustMe`. CLOSED by feat: retry Miniconda install with JustMe if AllUsers fails.
