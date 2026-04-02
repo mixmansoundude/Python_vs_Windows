@@ -1061,6 +1061,10 @@ if "%HP_ENV_MODE%"=="system" (
   if defined HP_FASTPATH_USED (
     call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
   ) else (
+    :: derived requirement: ~parse_warn.py was written against PyInstaller 5.x and 6.x warn-file formats.
+    :: Version is intentionally unpinned so future PyInstaller releases are adopted automatically.
+    :: If CI starts failing parse_warn tests after a PyInstaller update, review ~parse_warn.py
+    :: against the new warn-file format and update the translation table as needed.
     "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
     if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
     "%HP_PY%" -m PyInstaller -y --onefile --clean --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
