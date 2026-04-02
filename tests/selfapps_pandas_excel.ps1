@@ -210,7 +210,7 @@ try {
 $installPass = ($installDetails.exitCode -eq 0)
 
 if (Test-Path -LiteralPath $outPath) { Remove-Item -LiteralPath $outPath -Force -ErrorAction SilentlyContinue }
-$runtimeCommand = "`"$condaBat`" run -n _envsmoke python `"$appPath`""
+$runtimeCommand = "`"$condaBat`" run -n _envsmoke --cwd `"$work`" python `"$appPath`""
 try {
     $runtimeOutput = cmd /c $runtimeCommand 2>&1
     $runtimeExit = $LASTEXITCODE

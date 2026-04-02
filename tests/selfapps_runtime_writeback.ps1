@@ -60,8 +60,8 @@ $runtimeContent = if ($runtimeExists) {
     (Get-Content -LiteralPath $runtimeTxtPath -Encoding ASCII -Raw).Trim()
 } else { '' }
 
-# Content should match python-X.Y.Z (e.g. python-3.11.9)
-$runtimeValid = $runtimeContent -match '^python-\d+\.\d+\.\d+'
+# Content should match python-X.Y (e.g. python-3.11) or python-X.Y.Z
+$runtimeValid = $runtimeContent -match '^python-\d+\.\d+'
 
 $logContainsWriteback = $false
 if (Test-Path -LiteralPath $setupLogPath) {
