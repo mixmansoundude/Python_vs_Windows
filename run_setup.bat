@@ -236,6 +236,7 @@ if errorlevel 1 call :die "[ERROR] Could not write ~print_pyver.py"
 "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
 for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
 if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
+if not "%PYVER%"=="" call :log "[INFO] runtime.txt written: %PYVER%"
 
 rem README.md documents the conda-forge policy for this project and why .condarc is required.
 rem Emit the .condarc payload from base64 so quoting stays robust on Windows CMD.
@@ -261,6 +262,7 @@ if not errorlevel 1 (
   for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
   if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
 )
+if not "%PYVER%"=="" call :log "[INFO] runtime.txt written: %PYVER%"
 
 :after_env_mode_selection
 call :emit_from_base64 "~prep_requirements.py" HP_PREP_REQUIREMENTS
