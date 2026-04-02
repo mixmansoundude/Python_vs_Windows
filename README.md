@@ -75,11 +75,10 @@ This repository serves as a proof of concept of this new approach.
 
 - Environment naming: env name equals the **current folder name**.
 
-- Miniconda is the primary environment provider and the CI contract expects it. When conda is unavailable (for example,
-  local networks blocking downloads) you may opt into the scripted fallbacks: first a local `python -m venv`
-  (`HP_ALLOW_VENV_FALLBACK=1`) and, as a last resort, a system Python run-only mode (`HP_ALLOW_SYSTEM_FALLBACK=1`). These
-  keep the Prime Directive intact by doing whatever it takes to run your `.py` entry point, and `env.mode` rows in the
-  NDJSON log record which path executed.
+- Miniconda is the primary environment provider and the CI contract expects it. When Miniconda cannot be installed or
+  downloaded, the bootstrapper falls back first to a Python venv and, as a last resort, runs the entry point under any
+  available system Python. Either fallback preserves the Prime Directive -- at least one .py file runs with its imports
+  satisfied.
 - Why Miniconda instead of only venv?
   - Conda/Miniconda is the primary, tested path used in CI with pinned channels and reproducible solver behavior.
   - venv is a pragmatic fallback for networks or hosts where Conda cannot be installed or downloaded; it is not the main
@@ -121,7 +120,7 @@ to fill remaining gaps quickly.
 
 - Heuristic extras:
 - If `pandas` is present, ensure `openpyxl` is included.
-- On `ModuleNotFoundError`, extract the missing module, append to `requirements.txt`, merge with `requirements.auto.txt`, then perform a **one-time env rebuild** (guard loop).
+- When imports are missing at any point -- such as detected during dependency installation or during EXE build -- the bootstrapper must attempt to identify the missing packages by any available means and install them before retrying. Getting the code to run takes priority.
 
 ---
 
@@ -131,7 +130,10 @@ to fill remaining gaps quickly.
 - An existing `requirements.txt` is treated as input (hints), not as the authoritative specification.
 - conda performs final resolution from conda-forge; what it installs is the truth.
 - Implicit and plugin dependencies (for example, `pandas` needing `openpyxl` for `read_excel`) cannot be detected statically -- `pipreqs` only sees `import pandas`, not the runtime method call. These surface as `ImportError` at runtime.
-- The bootstrapper attempts a one-time env rebuild on `ModuleNotFoundError`, but it cannot map all error module names to conda package names (for example, `PIL` maps to `pillow`, `cv2` maps to `opencv`). This is a known limitation, not a bug.
+- When missing imports are detected (for example from build-time warn files or installation output), the bootstrapper
+  attempts to identify and install the missing packages using whatever signal is available. It cannot map all module
+  names to conda package names (for example, `PIL` maps to `pillow`, `cv2` maps to `opencv`). This is a known
+  limitation, not a bug.
 
 ---
 

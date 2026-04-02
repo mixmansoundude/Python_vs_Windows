@@ -216,6 +216,12 @@ jobs:
         run: |
           & tests\selfapps_warnfix.ps1
 
+      - name: "Test pandas/openpyxl heuristic (conda-full only)"
+        if: ${{ matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_pandas_excel.ps1
+
       - name: "Self-test: parse_warn TRANSLATIONS table coverage"
         shell: pwsh
         run: |
@@ -248,6 +254,12 @@ jobs:
             details = [ordered]@{ summary = $summaryStr; exit = $exitCode }
           })
           if (-not $pass) { Write-Host $outStr; exit 1 }
+
+      - name: "Self-test: runtime.txt write-back (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_runtime_writeback.ps1
 
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
@@ -703,6 +715,7 @@ jobs:
           path: |
             bootstrap.log
             ~setup.log
+            runtime.txt
             tests/~dynamic-run.log
             tests/~entry1/~entry1_bootstrap.log
             tests\~entry1\~entry1_bootstrap.log
@@ -761,8 +774,16 @@ jobs:
             tests\~selftest_warnfix\dist\~warnfix_token.txt
             tests/~selftest_warnfix/~warnfile.txt
             tests\~selftest_warnfix\~warnfile.txt
+            tests/~pandas_excel/~pandas_excel.log
+            tests\~pandas_excel\~pandas_excel.log
             tests/~selftest_parse_warn_table/
             tests\~selftest_parse_warn_table\
+            tests/~selftest_runtime_writeback/~runtime_writeback_bootstrap.log
+            tests\~selftest_runtime_writeback\~runtime_writeback_bootstrap.log
+            tests/~selftest_runtime_writeback/~setup.log
+            tests\~selftest_runtime_writeback\~setup.log
+            tests/~selftest_runtime_writeback/runtime.txt
+            tests\~selftest_runtime_writeback\runtime.txt
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt

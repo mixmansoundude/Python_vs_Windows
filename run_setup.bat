@@ -236,6 +236,7 @@ if errorlevel 1 call :die "[ERROR] Could not write ~print_pyver.py"
 "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
 for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
 if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
+if not "%PYVER%"=="" call :log "[INFO] runtime.txt written: %PYVER%"
 
 rem README.md documents the conda-forge policy for this project and why .condarc is required.
 rem Emit the .condarc payload from base64 so quoting stays robust on Windows CMD.
@@ -261,6 +262,7 @@ if not errorlevel 1 (
   for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
   if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
 )
+if not "%PYVER%"=="" call :log "[INFO] runtime.txt written: %PYVER%"
 
 :after_env_mode_selection
 call :emit_from_base64 "~prep_requirements.py" HP_PREP_REQUIREMENTS
@@ -1059,6 +1061,10 @@ if "%HP_ENV_MODE%"=="system" (
   if defined HP_FASTPATH_USED (
     call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
   ) else (
+    :: derived requirement: ~parse_warn.py was written against PyInstaller 5.x and 6.x warn-file formats.
+    :: Version is intentionally unpinned so future PyInstaller releases are adopted automatically.
+    :: If CI starts failing parse_warn tests after a PyInstaller update, review ~parse_warn.py
+    :: against the new warn-file format and update the translation table as needed.
     "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
     if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
     "%HP_PY%" -m PyInstaller -y --onefile --clean --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
