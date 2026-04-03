@@ -95,7 +95,7 @@ class IterateStatusLineTest(unittest.TestCase):
                 None,
             )
 
-            self.assertIn("Pre-flight iterate gate fails when NDJSON inputs are missing", markdown)
+            self.assertIn("Pre-flight iterate gate intentionally fails", markdown)
 
 
 class ReloadLinkTest(unittest.TestCase):
@@ -739,7 +739,7 @@ class QuickLinksRenderingTest(unittest.TestCase):
         )
 
         latest_txt = (self.site / "diag" / "latest.txt").read_text(encoding="utf-8")
-        self.assertEqual(latest_txt, "/repo/diag/1234-1/index.html\n")
+        self.assertEqual(latest_txt, "run_id=1234-1\n")
 
     def test_latest_manifest_and_txt_stay_in_sync(self) -> None:
         context = self._make_context()
@@ -755,7 +755,7 @@ class QuickLinksRenderingTest(unittest.TestCase):
         self.assertEqual(payload["url"], "/repo/diag/5678-3/index.html")
 
         latest_txt = (self.site / "diag" / "latest.txt").read_text(encoding="utf-8")
-        self.assertEqual(latest_txt, payload["url"] + "\n")
+        self.assertEqual(latest_txt, f"run_id={payload['run_id']}\n")
         self.assertIn(payload["run_id"], latest_txt)
 
     def test_run_index_txt_mirrors_prompt_and_rationale(self) -> None:

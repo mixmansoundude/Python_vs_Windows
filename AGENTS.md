@@ -80,7 +80,7 @@ Poll using the diagnostics site latest.txt:
 for i in $(seq 1 9); do
   LATEST=$(curl -s "https://mixmansoundude.github.io/Python_vs_Windows/diag/latest.txt" \
     | tr -d '[:space:]')
-  RUN=$(echo "$LATEST" | grep -oE '[0-9]+-[0-9]+')
+  RUN=$(echo "$LATEST" | grep -oE '[0-9]+-[0-9]+' | head -1)
   [ -n "$RUN" ] && echo "Run: $RUN" && break
   sleep 60
 done

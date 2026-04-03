@@ -2861,6 +2861,7 @@ jobs:
           }
 
       - name: Summarize failing tests
+        if: ${{ always() }}
         shell: bash
         env:
           DIAG: ${{ steps.prep.outputs.DIAG }}
@@ -2868,6 +2869,7 @@ jobs:
           python tools/diag/ndjson_fail_list.py
 
       - name: Download workflow logs
+        if: ${{ always() }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2991,6 +2993,7 @@ jobs:
           }
 
       - name: Capture repository snapshot
+        if: ${{ always() }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -3056,6 +3059,7 @@ jobs:
           }
 
       - name: Inventory collected files
+        if: ${{ always() }}
         id: inventory
         shell: pwsh
         run: |
@@ -3155,6 +3159,7 @@ jobs:
           EOF
 
       - name: Publish diagnostics index
+        if: ${{ always() }}
         shell: bash
         env:
           DIAG: ${{ steps.prep.outputs.DIAG }}
