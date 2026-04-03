@@ -1988,7 +1988,14 @@ def _write_global_txt_mirrors(root: Optional[Path], mirrors_root: Path) -> List[
         except ValueError:
             continue
         mirror_name = relative.name if relative.suffix == ".txt" else relative.name + ".txt"
-        mirror_path = mirrors_root / relative.parent / mirror_name
+        # derived requirement: GitHub Pages does not serve dot-directories, so
+        # mirror output rewrites dot-prefixed path components to underscore-
+        # prefixed names while preserving all non-dot components verbatim.
+        safe_parts = [
+            "_" + part[1:] if part.startswith(".") else part for part in relative.parent.parts
+        ]
+        safe_name = "_" + mirror_name[1:] if mirror_name.startswith(".") else mirror_name
+        mirror_path = mirrors_root.joinpath(*safe_parts, safe_name)
         try:
             mirror_path.parent.mkdir(parents=True, exist_ok=True)
         except OSError:
