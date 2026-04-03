@@ -1799,6 +1799,11 @@ TEXT_COPY_EXTENSIONS = {
     ".md",
     ".html",
     ".htm",
+    ".py",
+    ".ps1",
+    ".bat",
+    ".sh",
+    ".cmd",
 }
 
 BINARY_OR_LARGE_EXTENSIONS = {
@@ -1851,7 +1856,9 @@ def _as_text_preview(path: Path, max_bytes: int = MIRROR_TEXT_LIMIT) -> str:
 
     # derived requirement: ~setup.log and other .log files must not be truncated;
     # a partial log is worse than no log when debugging CI failures.
-    if suffix == ".log":
+    # Source code files (.py, .ps1, .bat, .sh, .cmd) also get full content --
+    # truncated source is as useless as a truncated log for diagnosis.
+    if suffix in {".log", ".py", ".ps1", ".bat", ".sh", ".cmd"}:
         max_bytes = size
     lines: List[str]
 
@@ -3932,7 +3939,11 @@ def _write_latest_json(
     # Professional note: keep latest.json and latest.txt in lockstep so
     # downstream consumers do not observe mixed pointers when legacy publishers
     # are retired.
-    latest_txt_path.write_text(payload["url"] + "\n", encoding="utf-8")
+    # Format: run_id=<slug>\nurl=<path>\n -- unambiguous for pollers; run slug
+    # still matches grep -oE '[0-9]+-[0-9]+' so existing poll scripts work.
+    latest_txt_path.write_text(
+        f"run_id={payload['run_id']}\nurl={payload['url']}\n", encoding="utf-8"
+    )
     ensure_txt_mirror(latest_txt_path)
 
 
