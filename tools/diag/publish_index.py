@@ -21,6 +21,7 @@ import argparse
 import base64
 import json
 import os
+import posixpath
 import re
 import shutil
 import sys
@@ -31,7 +32,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 try:
     from zoneinfo import ZoneInfo
@@ -1576,6 +1577,58 @@ def _normalize_link(value: Optional[str]) -> Optional[str]:
     return value.replace("\\", "/")
 
 
+def _published_site_base(context: Context) -> Optional[str]:
+    pages_url = os.getenv("GITHUB_PAGES_URL")
+    if pages_url:
+        return pages_url.rstrip("/")
+
+    repo_slug = context.repo
+    if not repo_slug or "/" not in repo_slug:
+        return None
+    owner, repo_name = repo_slug.split("/", 1)
+    if not owner or not repo_name:
+        return None
+    if repo_name.endswith(".github.io"):
+        return f"https://{repo_name}".rstrip("/")
+    return f"https://{owner}.github.io/{repo_name}".rstrip("/")
+
+
+def _absolute_site_href(
+    context: Context, href: Optional[str], *, run_scoped: bool = False
+) -> Optional[str]:
+    normalized = _normalize_link(href)
+    if not normalized:
+        return normalized
+    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", normalized):
+        return normalized
+    if normalized.startswith("#"):
+        return normalized
+
+    base = _published_site_base(context)
+    if not base:
+        return normalized
+
+    split = urlsplit(normalized)
+    path = split.path
+    if run_scoped and path and not path.startswith("/"):
+        path = f"diag/{context.run_id}-{context.run_attempt}/{path}"
+    elif run_scoped and not path and (split.query or split.fragment):
+        path = f"diag/{context.run_id}-{context.run_attempt}/index.html"
+
+    if path.startswith("/"):
+        path = path.lstrip("/")
+    path = posixpath.normpath(path) if path else ""
+    if path == ".":
+        path = ""
+
+    absolute = base if not path else f"{base}/{path}"
+    if split.query:
+        absolute = f"{absolute}?{split.query}"
+    if split.fragment:
+        absolute = f"{absolute}#{split.fragment}"
+    return absolute
+
+
 def _escape_html(value: Optional[str]) -> str:
     if value is None:
         return ""
@@ -1847,19 +1900,15 @@ def _maybe_append_truncation_footer(
 def _as_text_preview(path: Path, max_bytes: int = MIRROR_TEXT_LIMIT) -> str:
     """Return a human-readable preview for *path* within *max_bytes*.
 
-    Log files (.log) are always returned in full regardless of max_bytes --
-    truncated logs are useless for diagnosis.
+    Mirror previews always emit full file contents.
     """
 
     size = path.stat().st_size
     suffix = path.suffix.lower()
 
-    # derived requirement: ~setup.log and other .log files must not be truncated;
-    # a partial log is worse than no log when debugging CI failures.
-    # Source code files (.py, .ps1, .bat, .sh, .cmd) also get full content --
-    # truncated source is as useless as a truncated log for diagnosis.
-    if suffix in {".log", ".py", ".ps1", ".bat", ".sh", ".cmd"}:
-        max_bytes = size
+    # derived requirement: diagnostic mirrors must expose full content for every
+    # file type so reviewers and tools can inspect complete artifacts.
+    max_bytes = size
     lines: List[str]
 
     if suffix == ".json" and size <= max_bytes:
@@ -3265,10 +3314,10 @@ def _build_markdown(
             continue
         mirror_obj: Optional[Path] = entry.get("mirror")
         original_rel = _relative_to_diag(path_obj, diag)
-        original_href = _normalize_link(original_rel)
+        original_href = _absolute_site_href(context, original_rel, run_scoped=True)
         if mirror_obj:
             mirror_rel = _relative_to_diag(mirror_obj, diag)
-            mirror_href = _normalize_link(mirror_rel)
+            mirror_href = _absolute_site_href(context, mirror_rel, run_scoped=True)
             lines.append(
                 f"- {label}: [Preview (.txt)]({mirror_href}) ([Download]({original_href}))"
             )
@@ -3303,14 +3352,14 @@ def _build_markdown(
                 if not path_obj:
                     continue
                 rel = _relative_to_diag(path_obj, diag)
-                normalized = _normalize_link(rel)
+                normalized = _absolute_site_href(context, rel, run_scoped=True)
                 label = Path(rel).name
                 size_value = file_entry.get("size")
                 size_hint = f" ({size_value} bytes)" if isinstance(size_value, int) else ""
                 mirror_obj: Optional[Path] = file_entry.get("mirror")
                 if mirror_obj:
                     mirror_rel = _relative_to_diag(mirror_obj, diag)
-                    mirror_norm = _normalize_link(mirror_rel)
+                    mirror_norm = _absolute_site_href(context, mirror_rel, run_scoped=True)
                     lines.append(
                         f"  - {label}{size_hint}: [Preview (.txt)]({mirror_norm}) ([Download]({normalized}))"
                     )
@@ -3433,14 +3482,14 @@ def _build_markdown(
                 if candidate.exists():
                     continue
             rel = _relative_to_diag(file, diag)
-            normalized = _normalize_link(rel)
+            normalized = _absolute_site_href(context, rel, run_scoped=True)
             display_name = Path(rel).name
             size_bytes = _safe_file_size(file)
             size = f"{size_bytes:,} bytes" if size_bytes is not None else "—"
             mirror_obj = ensure_txt_mirror(file)
             if mirror_obj and mirror_obj.exists():
                 mirror_rel = _relative_to_diag(mirror_obj, diag)
-                mirror_link = _normalize_link(mirror_rel)
+                mirror_link = _absolute_site_href(context, mirror_rel, run_scoped=True)
                 lines.append(
                     f"- {display_name}: [Preview (.txt)]({mirror_link}) ([Download]({normalized})) — {size}"
                 )
@@ -3595,7 +3644,7 @@ def _write_html(
     html.append("<body>")
     html.append("<h1>CI Diagnostics</h1>")
     html.append(
-        f'<p class="cta-row"><a class="cta" href="{_escape_href(cache_buster_href)}">Reload with cache-buster</a></p>'
+        f'<p class="cta-row"><a class="cta" href="{_escape_href(_absolute_site_href(context, cache_buster_href, run_scoped=True))}">Reload with cache-buster</a></p>'
     )
 
     def render_pairs(title: str, pairs: Iterable[dict]) -> None:
@@ -3623,7 +3672,7 @@ def _write_html(
                             if not path_obj:
                                 continue
                             rel = _relative_to_diag(path_obj, diag)
-                            normalized = _normalize_link(rel)
+                            normalized = _absolute_site_href(context, rel, run_scoped=True)
                             href_file = _escape_href(normalized)
                             name_html = _escape_html(Path(rel).name)
                             mirror_obj: Optional[Path] = file_entry.get("mirror")
@@ -3633,7 +3682,9 @@ def _write_html(
                                 size_suffix = f" ({_escape_html(str(size_value))} bytes)"
                             if mirror_obj:
                                 mirror_rel = _relative_to_diag(mirror_obj, diag)
-                                mirror_href = _escape_href(_normalize_link(mirror_rel))
+                                mirror_href = _escape_href(
+                                    _absolute_site_href(context, mirror_rel, run_scoped=True)
+                                )
                                 html.append(
                                     "<li><code>{0}</code>: "
                                     "<a href=\"{1}\">Preview (.txt)</a> "
@@ -3685,10 +3736,14 @@ def _write_html(
             continue
         mirror_obj: Optional[Path] = entry.get("mirror")
         original_rel = _relative_to_diag(path_obj, diag)
-        original_href = _escape_href(_normalize_link(original_rel))
+        original_href = _escape_href(
+            _absolute_site_href(context, original_rel, run_scoped=True)
+        )
         if mirror_obj:
             mirror_rel = _relative_to_diag(mirror_obj, diag)
-            mirror_href = _escape_href(_normalize_link(mirror_rel))
+            mirror_href = _escape_href(
+                _absolute_site_href(context, mirror_rel, run_scoped=True)
+            )
             html.append(
                 f"<li><strong>{label}:</strong> <a href=\"{mirror_href}\">Preview (.txt)</a> "
                 f"(<a href=\"{original_href}\">Download</a>)</li>"
@@ -3754,7 +3809,9 @@ def _write_html(
             rel_path = _relative_to_diag(path_obj, diag) if path_obj else None
             details = _escape_html(f"rows={rows} pass={pass_count} fail={fail_count}")
             if rel_path:
-                href = _escape_href(_normalize_link(rel_path))
+                href = _escape_href(
+                    _absolute_site_href(context, rel_path, run_scoped=True)
+                )
                 html.append(f'<li>{label}: {details} (source: <a href="{href}">{_escape_html(rel_path)}</a>)</li>')
             else:
                 html.append(f"<li>{label}: {details}</li>")
@@ -3836,7 +3893,7 @@ def _write_html(
                 if candidate.exists():
                     continue
             rel = _relative_to_diag(file, diag)
-            normalized = _normalize_link(rel)
+            normalized = _absolute_site_href(context, rel, run_scoped=True)
             href = _escape_href(normalized)
             text = _escape_html(Path(rel).as_posix())
             size_bytes = _safe_file_size(file)
@@ -3845,7 +3902,7 @@ def _write_html(
             mirror_obj = ensure_txt_mirror(file)
             if mirror_obj and mirror_obj.exists():
                 mirror_rel = _relative_to_diag(mirror_obj, diag)
-                mirror_norm = _normalize_link(mirror_rel)
+                mirror_norm = _absolute_site_href(context, mirror_rel, run_scoped=True)
                 mirror_href = _escape_href(mirror_norm)
                 html.append(
                     "<li>{0}: <a href=\"{1}\">Preview (.txt)</a> "
@@ -4096,9 +4153,9 @@ def _build_site_overview(
     lines = [
         "# Diagnostics overview",
         "",
-        f"## Latest run (cache-busted): [Open diagnostics]({_normalize_link(bundle_index_href)})",
+        f"## Latest run (cache-busted): [Open diagnostics]({_absolute_site_href(context, bundle_index_href)})",
         "",
-        f"Latest run: [{run_id} (attempt {run_attempt})]({_normalize_link(bundle_index_href)})",
+        f"Latest run: [{run_id} (attempt {run_attempt})]({_absolute_site_href(context, bundle_index_href)})",
         "",
         "## Metadata",
         f"- Repo: {context.repo}",
@@ -4114,7 +4171,7 @@ def _build_site_overview(
         if not path:
             return
         if _has_file(site, path.split("?", 1)[0]):
-            lines.append(f"- [{label}]({_normalize_link(path)})")
+            lines.append(f"- [{label}]({_absolute_site_href(context, path)})")
 
     quick_link("Bundle index", bundle_index_href)
     quick_link("Open latest (cache-busted)", bundle_index_href)
@@ -4139,15 +4196,15 @@ def _build_site_overview(
             mirror_url = f"{bundle_prefix}/{mirror_rel}"
             if _has_file(site, mirror_url.split("?", 1)[0]):
                 lines.append(
-                    f"- {entry['label']}: [Preview (.txt)]({_normalize_link(mirror_url)}) "
-                    f"([Download]({_normalize_link(original_url)}))"
+                    f"- {entry['label']}: [Preview (.txt)]({_absolute_site_href(context, mirror_url)}) "
+                    f"([Download]({_absolute_site_href(context, original_url)}))"
                 )
                 continue
         # Professional note: keep the download link within the loop so each bundle entry
         # renders even when a mirror is unavailable; the previous tail-position fallback
         # dropped earlier links and triggered UnboundLocalError when the loop never ran.
         lines.append(
-            f"- {entry['label']}: [Download]({_normalize_link(original_url)})"
+            f"- {entry['label']}: [Download]({_absolute_site_href(context, original_url)})"
         )
 
     if summary_preview:
@@ -4186,10 +4243,10 @@ def _build_site_overview(
     html_lines.append("<body>")
     html_lines.append("<h1>Diagnostics overview</h1>")
     html_lines.append(
-        f"<h2>Latest run (cache-busted): <a href=\"{_escape_href(_normalize_link(bundle_index_href))}\">Open diagnostics</a></h2>"
+        f"<h2>Latest run (cache-busted): <a href=\"{_escape_href(_absolute_site_href(context, bundle_index_href))}\">Open diagnostics</a></h2>"
     )
     html_lines.append(
-        f"<p>Latest run: <a href=\"{_escape_href(_normalize_link(bundle_index_href))}\">{_escape_html(f'{run_id} (attempt {run_attempt})')}</a></p>"
+        f"<p>Latest run: <a href=\"{_escape_href(_absolute_site_href(context, bundle_index_href))}\">{_escape_html(f'{run_id} (attempt {run_attempt})')}</a></p>"
     )
 
     metadata_items = [
@@ -4225,7 +4282,7 @@ def _build_site_overview(
     ]:
         if path and _has_file(site, path.split("?", 1)[0]):
             html_lines.append(
-                f"<li><a href=\"{_escape_href(_normalize_link(path))}\">{_escape_html(label)}</a></li>"
+                f"<li><a href=\"{_escape_href(_absolute_site_href(context, path))}\">{_escape_html(label)}</a></li>"
             )
 
     if not bundle_entries:
@@ -4242,13 +4299,13 @@ def _build_site_overview(
         original_url = f"{bundle_prefix}/{original_rel}"
         if not _has_file(site, original_url.split("?", 1)[0]):
             continue
-        original_href = _escape_href(_normalize_link(original_url))
+        original_href = _escape_href(_absolute_site_href(context, original_url))
         mirror_obj: Optional[Path] = entry.get("mirror")
         if mirror_obj:
             mirror_rel = _relative_to_diag(mirror_obj, context.diag)
             mirror_url = f"{bundle_prefix}/{mirror_rel}"
             if _has_file(site, mirror_url.split("?", 1)[0]):
-                mirror_href = _escape_href(_normalize_link(mirror_url))
+                mirror_href = _escape_href(_absolute_site_href(context, mirror_url))
                 html_lines.append(
                     f"<li><strong>{_escape_html(entry['label'])}:</strong> "
                     f"<a href=\"{mirror_href}\">Preview (.txt)</a> "
