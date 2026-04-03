@@ -1859,6 +1859,20 @@ TEXT_COPY_EXTENSIONS = {
     ".cmd",
 }
 
+FULL_COPY_EXTENSIONS = {
+    ".py",
+    ".ps1",
+    ".bat",
+    ".sh",
+    ".cmd",
+    ".yml",
+    ".yaml",
+    ".json",
+    ".ndjson",
+    ".txt",
+    ".md",
+}
+
 BINARY_OR_LARGE_EXTENSIONS = {
     ".zip",
     ".tar",
@@ -1906,9 +1920,11 @@ def _as_text_preview(path: Path, max_bytes: int = MIRROR_TEXT_LIMIT) -> str:
     size = path.stat().st_size
     suffix = path.suffix.lower()
 
-    # derived requirement: diagnostic mirrors must expose full content for every
-    # file type so reviewers and tools can inspect complete artifacts.
-    max_bytes = size
+    # derived requirement: keep critical text formats fully readable across all
+    # mirror lanes (repo/files and wf) while preserving truncation safeguards
+    # for large non-critical artifacts.
+    if suffix in FULL_COPY_EXTENSIONS:
+        max_bytes = size
     lines: List[str]
 
     if suffix == ".json" and size <= max_bytes:
