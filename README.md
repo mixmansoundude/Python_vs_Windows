@@ -40,11 +40,11 @@ This repository serves as a proof of concept of this new approach.
 
 # Software Requirements Directive
 
-## Prime Directive Expanded
+## [REQ-001] Prime Directive Expanded
 
 - From only one or more `.py` files on a clean Windows 10+ machine with internet, a **single batch file** (double-clicked) must bootstrap everything to run the Python app **with all imports installed**.
 
-### Entry selection (current behavior)
+### [REQ-002] Entry selection (current behavior)
 - **0 Python files**: the bootstrapper reports no Python files and skips environment bootstrap. It prints:
   - `Python file count: 0`
   - `No Python files detected; skipping environment bootstrap.`
@@ -56,7 +56,7 @@ This repository serves as a proof of concept of this new approach.
 
 ---
 
-## Platform & Locations
+## [REQ-003] Platform & Locations
 
 - Platform: Windows 10 (1809+) or newer to leverage built-in `curl` and PowerShell.
 - Conda environments: use **Miniconda** (non-admin).
@@ -68,7 +68,7 @@ This repository serves as a proof of concept of this new approach.
 
 ## Python & Environment
 
-- Python version detection precedence:
+- [REQ-004] Python version detection precedence:
   1. `runtime.txt` (`python-3.x.y` or `3.x[.y]`)
   2. `pyproject.toml` `requires-python`
   3. Otherwise let **conda pick latest** (no hard-coded fallback); then **write back `runtime.txt`**.
@@ -87,7 +87,7 @@ This repository serves as a proof of concept of this new approach.
     healthy.
   - The fast path (reusing `dist/<envname>.exe` when non-helper sources are unchanged) sits on top of either provider,
     whether the env originated from Conda or venv.
-- Channels policy (determinism and legal-friction avoidance):
+- [REQ-006] Channels policy (determinism and legal-friction avoidance):
   - Before any updates or installs, force **community conda-forge only**:
     ```
     conda config --env --add channels conda-forge
@@ -96,7 +96,7 @@ This repository serves as a proof of concept of this new approach.
 
 ---
 
-## Dependencies
+## [REQ-005] Dependencies
 
 - If `requirements.txt` exists and is non-empty:
   - First try bulk install:  
@@ -137,7 +137,7 @@ to fill remaining gaps quickly.
 
 ---
 
-## NI-VISA (optional external)
+## [REQ-008] NI-VISA (optional external)
 
 - If the app imports `pyvisa` or `visa`, attempt **NI-VISA** Windows driver install if not present (system install, not just a Python package).
 - Leave option to disable for debugging purposes.
@@ -145,7 +145,7 @@ to fill remaining gaps quickly.
 
 ---
 
-## Executable
+## [REQ-007] Executable
 
 - Attempt to produce a **PyInstaller one-file EXE** after setup.
 - Name the EXE exactly the env name (equals the folder name).

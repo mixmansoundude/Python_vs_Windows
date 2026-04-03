@@ -261,6 +261,12 @@ jobs:
         run: |
           & tests\selfapps_runtime_writeback.ps1
 
+      - name: "Self-test: pyvisa NI-VISA detection (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_pyvisa.ps1
+
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
