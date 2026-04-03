@@ -16,6 +16,26 @@ from __future__ import annotations
 # 6779602bcc98cbc8e2acd4e03d02579a86b73538 in favor of the inline/iterate gate
 # and this publisher. It now expects iterate artifacts and the inline quick-fix
 # outputs only; no other model gates remain.
+# Accepted limitations/risk notes (Codex review bot + maintainer decision):
+# - Truncation policy: initial tight limits hid needed diagnostics, but zero
+#   truncation for every file type risks artifact bloat. Current middle ground:
+#   FULL_COPY_EXTENSIONS are full-copy, others still use MIRROR_TEXT_LIMIT.
+#   Reversion snippet (previous behavior):
+#       max_bytes = size
+# - Dot-path rewrite: replacing leading "." with "_" can collide with pre-
+#   existing underscore paths, but GitHub Pages does not serve dot-directories.
+#   Reversion snippet (pre-rewrite behavior):
+#       mirror_path = mirrors_root / relative.parent / mirror_name
+# - Absolute links: absolute hrefs reduce portability across arbitrary repo/site
+#   layouts, but relative links were not traversable by all tools consuming the
+#   diagnostics pages. The primary consumer is chat AI assistants, so absolute
+#   links are accepted to keep automated review reliable.
+#   Reversion snippets (relative-link behavior):
+#       original_href = _normalize_link(original_rel)
+#       mirror_href = _normalize_link(mirror_rel)
+#       normalized = _normalize_link(rel)
+#       mirror_norm = _normalize_link(mirror_rel)
+#       f'<p class="cta-row"><a class="cta" href="{_escape_href(cache_buster_href)}">Reload with cache-buster</a></p>'
 
 import argparse
 import base64
