@@ -798,6 +798,8 @@ jobs:
             tests\~selftest_runtime_writeback\runtime.txt
             tests/~pyvisa/~pyvisa_bootstrap.log
             tests\~pyvisa\~pyvisa_bootstrap.log
+            tests/~pyvisa/~setup.log
+            tests\~pyvisa\~setup.log
             tests/~pyproject_prec/~pyproject_prec_bootstrap.log
             tests\~pyproject_prec\~pyproject_prec_bootstrap.log
             tests/~pyproject_prec/~setup.log

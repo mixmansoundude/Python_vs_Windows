@@ -103,8 +103,8 @@ requires-python = ">=3.10,<3.11"
         $detectOutStr = ($detectOut | Out-String).Trim()
         $detectDetails.output   = $detectOutStr
         $detectDetails.exitCode = $detectExit
-        # HP_DETECT_PY outputs conda spec like "python>=3.10,<3.11"
-        $detectPass = ($detectOutStr -match '3\.10')
+        # Assert exact conda spec and successful exit to guard REQ-004 parse precision
+        $detectPass = ($detectExit -eq 0) -and ($detectOutStr -eq 'python>=3.10,<3.11')
     } catch {
         $detectDetails.error = $_.Exception.Message
     }
