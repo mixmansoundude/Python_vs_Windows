@@ -134,18 +134,24 @@ Set-Content -LiteralPath (Join-Path $work 'main.py') -Value 'print("hello")' -En
 
 # derived requirement: use a loose constraint so conda picks a cached Python
 # version and avoids a slow resolver round-trip for Python 3.10 packages.
-# The detect test above already validates constraint parsing; here we only
-# need to confirm that a pyproject.toml is present and runtime.txt is written.
+# The detect test (Test 1) above validates the actual constraint-parse path in
+# isolation; this test validates the end-to-end bootstrap path (Tier 2/3 fires,
+# runtime.txt is written, and the resolved version satisfies the constraint).
+# Knownn limitation: run_setup.bat does not emit the PYSPEC value to ~setup.log
+# so we cannot grep for ">=3.9" in the log; instead we assert the resolved
+# version in runtime.txt satisfies the constraint (major.minor >= 3.9).
 Set-Content -LiteralPath (Join-Path $work 'pyproject.toml') -Encoding Ascii -Value '[project]
 requires-python = ">=3.9"
 '
 # derived requirement: runtime.txt must not pre-exist so Tier 1 is bypassed.
 if (Test-Path -LiteralPath $runtimeTxt) { Remove-Item -LiteralPath $runtimeTxt -Force }
 
-$exitCode      = $null
-$runtimeExists = $false
-$logContains   = $false
-$errorMessage  = $null
+$exitCode         = $null
+$runtimeExists    = $false
+$logContains      = $false
+$versionSatisfied = $false
+$runtimeVersion   = ''
+$errorMessage     = $null
 
 try {
     Push-Location -LiteralPath $work
@@ -160,15 +166,26 @@ try {
         $setupLogText = Get-Content -LiteralPath $setupLog -Encoding Ascii -Raw
         $logContains  = $setupLogText -match '\[INFO\] runtime\.txt written:'
     }
+    # Assert the resolved version in runtime.txt satisfies requires-python = ">=3.9"
+    if ($runtimeExists) {
+        $rtText = (Get-Content -LiteralPath $runtimeTxt -Encoding Ascii -Raw).Trim()
+        $runtimeVersion = $rtText
+        if ($rtText -match '(\d+)\.(\d+)') {
+            $major = [int]$Matches[1]; $minor = [int]$Matches[2]
+            $versionSatisfied = ($major -gt 3) -or ($major -eq 3 -and $minor -ge 9)
+        }
+    }
 } catch {
     $errorMessage = $_.Exception.Message
 }
 
-$writebackPass = ($exitCode -eq 0) -and $runtimeExists -and $logContains
+$writebackPass = ($exitCode -eq 0) -and $runtimeExists -and $logContains -and $versionSatisfied
 $writebackDetails = [ordered]@{
-    exitCode       = $exitCode
-    runtimeExists  = $runtimeExists
-    logContains    = $logContains
+    exitCode         = $exitCode
+    runtimeExists    = $runtimeExists
+    logContains      = $logContains
+    versionSatisfied = $versionSatisfied
+    runtimeVersion   = $runtimeVersion
 }
 if ($errorMessage) { $writebackDetails.error = $errorMessage }
 
