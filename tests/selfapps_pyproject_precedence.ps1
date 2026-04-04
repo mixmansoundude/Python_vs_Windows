@@ -137,7 +137,7 @@ Set-Content -LiteralPath (Join-Path $work 'main.py') -Value 'print("hello")' -En
 # The detect test (Test 1) above validates the actual constraint-parse path in
 # isolation; this test validates the end-to-end bootstrap path (Tier 2/3 fires,
 # runtime.txt is written, and the resolved version satisfies the constraint).
-# Knownn limitation: run_setup.bat does not emit the PYSPEC value to ~setup.log
+# Known limitation: run_setup.bat does not emit the PYSPEC value to ~setup.log
 # so we cannot grep for ">=3.9" in the log; instead we assert the resolved
 # version in runtime.txt satisfies the constraint (major.minor >= 3.9).
 Set-Content -LiteralPath (Join-Path $work 'pyproject.toml') -Encoding Ascii -Value '[project]
