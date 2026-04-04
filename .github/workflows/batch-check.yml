@@ -261,6 +261,18 @@ jobs:
         run: |
           & tests\selfapps_runtime_writeback.ps1
 
+      - name: "Self-test: pyvisa NI-VISA detection (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_pyvisa.ps1
+
+      - name: "Self-test: pyproject.toml Python version precedence (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_pyproject_precedence.ps1
+
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
@@ -784,6 +796,16 @@ jobs:
             tests\~selftest_runtime_writeback\~setup.log
             tests/~selftest_runtime_writeback/runtime.txt
             tests\~selftest_runtime_writeback\runtime.txt
+            tests/~pyvisa/~pyvisa_bootstrap.log
+            tests\~pyvisa\~pyvisa_bootstrap.log
+            tests/~pyvisa/~setup.log
+            tests\~pyvisa\~setup.log
+            tests/~pyproject_prec/~pyproject_prec_bootstrap.log
+            tests\~pyproject_prec\~pyproject_prec_bootstrap.log
+            tests/~pyproject_prec/~setup.log
+            tests\~pyproject_prec\~setup.log
+            tests/~pyproject_prec/runtime.txt
+            tests\~pyproject_prec\runtime.txt
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
