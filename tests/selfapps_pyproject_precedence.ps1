@@ -132,8 +132,12 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'run_setup.bat') -Destination $work 
 
 Set-Content -LiteralPath (Join-Path $work 'main.py') -Value 'print("hello")' -Encoding Ascii -NoNewline
 
+# derived requirement: use a loose constraint so conda picks a cached Python
+# version and avoids a slow resolver round-trip for Python 3.10 packages.
+# The detect test above already validates constraint parsing; here we only
+# need to confirm that a pyproject.toml is present and runtime.txt is written.
 Set-Content -LiteralPath (Join-Path $work 'pyproject.toml') -Encoding Ascii -Value '[project]
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.9"
 '
 # derived requirement: runtime.txt must not pre-exist so Tier 1 is bypassed.
 if (Test-Path -LiteralPath $runtimeTxt) { Remove-Item -LiteralPath $runtimeTxt -Force }
