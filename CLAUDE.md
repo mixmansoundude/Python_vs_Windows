@@ -248,7 +248,9 @@ self.parse_warn.table,
 self.exe.warnfix.install, self.exe.warnfix.success,
 self.parse_warn.table.v6, self.parse_warn.pytest,
 self.runtime.writeback,
-self.pandas.openpyxl.install, self.pandas.openpyxl.import
+self.pandas.openpyxl.install, self.pandas.openpyxl.import,
+pyvisa.detect, pyvisa.nivisa.branch,
+pyproject.precedence.detect, pyproject.precedence.writeback
 ```
 
 justme-test lane rows (subset, flag-triggered):
@@ -379,11 +381,6 @@ See **AGENTS.md** §Iteration Contract for the full policy. Key points:
 
 Items deferred to future loops:
 
-- **Python version detection Tier 2 (pyproject.toml)**: README.md requires reading
-  `pyproject.toml` `requires-python` when no `runtime.txt` exists. (not yet fully
-  implemented end-to-end; HP_DETECT_PY handles requires-python detection but CI coverage
-  of the pyproject.toml path is pending.)
-
 - **Python version detection Tier 3 write-back**: README.md requires: "Otherwise let conda
   pick the latest supported Python. After the environment is created, write runtime.txt with
   the resolved version and log `[INFO] runtime.txt written: python-X.Y.Z`. This ensures
@@ -411,3 +408,5 @@ Items completed and shipped:
 - **Auto-merge on PR creation**: ensure auto-merge is enabled when a PR is opened after
   commits are pushed (pull_request:opened trigger). CLOSED by ci: enable auto-merge when
   PR is opened, not just on push.
+- **Python version detection Tier 2 (pyproject.toml) CI coverage**: end-to-end CI
+  coverage of the pyproject.toml `requires-python` parse path. CLOSED by #192.
