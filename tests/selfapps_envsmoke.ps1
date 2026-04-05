@@ -77,10 +77,38 @@ if (-not $IsWindows) {
         details = $details
     })
     Write-NdjsonRow ([ordered]@{
+        id      = 'self.prime.bootstrap'
+        req     = 'REQ-001'
+        pass    = $true
+        desc    = 'Prime directive bootstrap skipped on non-Windows host'
+        details = $details
+    })
+    Write-NdjsonRow ([ordered]@{
         id      = 'self.env.smoke.run'
         req     = 'REQ-003'
         pass    = $true
         desc    = 'App run skipped on non-Windows host'
+        details = $details
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.prime.run'
+        req     = 'REQ-001'
+        pass    = $true
+        desc    = 'Prime directive app run skipped on non-Windows host'
+        details = $details
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.prime.exe.build'
+        req     = 'REQ-001'
+        pass    = $true
+        desc    = 'Prime directive EXE build skipped on non-Windows host'
+        details = $details
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.prime.exe.run'
+        req     = 'REQ-001'
+        pass    = $true
+        desc    = 'Prime directive EXE run skipped on non-Windows host'
         details = $details
     })
     exit 0
@@ -315,6 +343,13 @@ Write-NdjsonRow ([ordered]@{
     desc='Miniconda bootstrap + environment creation'
     details=[ordered]@{ exitCode=$exit; command=$displayCommand }
 })
+Write-NdjsonRow ([ordered]@{
+    id='self.prime.bootstrap'
+    req='REQ-001'
+    pass=($exit -eq 0)
+    desc='Prime directive: batch file bootstraps Python environment from scratch'
+    details=[ordered]@{ exitCode=$exit; command=$displayCommand }
+})
 
 $passRun = ($exit -eq 0) -and $tokenFound
 Write-NdjsonRow ([ordered]@{
@@ -323,6 +358,13 @@ Write-NdjsonRow ([ordered]@{
     pass=$passRun
     desc='App runs in created environment'
     details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut; command=$displayCommand }
+})
+Write-NdjsonRow ([ordered]@{
+    id='self.prime.run'
+    req='REQ-001'
+    pass=$passRun
+    desc='Prime directive: app runs successfully after bootstrap'
+    details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound }
 })
 
 if (($exit -eq 0) -and (-not $tokenFound)) {
@@ -366,6 +408,13 @@ Write-NdjsonRow ([ordered]@{
     desc='PyInstaller produced standalone EXE'
     details=[ordered]@{ exePath=$exePath; exists=$exeExists }
 })
+Write-NdjsonRow ([ordered]@{
+    id='self.prime.exe.build'
+    req='REQ-001'
+    pass=$exeExists
+    desc='Prime directive: bootstrapper produces standalone EXE'
+    details=[ordered]@{ exePath=$exePath; exists=$exeExists }
+})
 
 $exeExit = -1
 $exeTokenPath = Join-Path $app 'dist\~smoke_token.txt'
@@ -391,6 +440,13 @@ Write-NdjsonRow ([ordered]@{
     req='REQ-003'
     pass=($exeExists -and ($exeExit -eq 0) -and $exeTokenFound)
     desc='Standalone EXE runs successfully'
+    details=[ordered]@{ exitCode=$exeExit; tokenFound=$exeTokenFound }
+})
+Write-NdjsonRow ([ordered]@{
+    id='self.prime.exe.run'
+    req='REQ-001'
+    pass=($exeExists -and ($exeExit -eq 0) -and $exeTokenFound)
+    desc='Prime directive: standalone EXE runs end-to-end'
     details=[ordered]@{ exitCode=$exeExit; tokenFound=$exeTokenFound }
 })
 

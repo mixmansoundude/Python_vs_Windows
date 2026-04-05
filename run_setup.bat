@@ -167,7 +167,7 @@ python -V >> "%LOG%" 2>&1 || (
 )
 
 rem === Channel policy (determinism & legal) ===================================
-call "%CONDA_BAT%" config --name base --add channels conda-forge
+call "%CONDA_BAT%" config --name base --add channels conda-forge >> "%LOG%" 2>&1
 
 rem NOTE: every 'conda create' or 'conda install' call below MUST include:
 rem       --override-channels -c conda-forge
@@ -388,6 +388,12 @@ if %HP_PIPREQS_STAGE_COPY_RC% GEQ 8 (
 )
 set "HP_PIPREQS_SUMMARY_CMD_PATH=%HP_PIPREQS_STAGE_TARGET%"
 set "HP_PIPREQS_SUMMARY_IGNORE="
+if not exist "%HP_PIPREQS_STAGE_ROOT%\" (
+    echo [WARN] pushd skipped, stage root missing: %HP_PIPREQS_STAGE_ROOT%
+    set "HP_PIPREQS_PHASE_RESULT=fail"
+    set "HP_PIPREQS_SUMMARY_NOTE=(stage root missing)"
+    goto :after_pipreqs_run
+)
 pushd "%HP_PIPREQS_STAGE_ROOT%"
 call :log "[INFO] pipreqs (staging) command: pipreqs . --force --mode compat --savepath ""%HP_PIPREQS_STAGE_TARGET%"""
 echo Pipreqs command (staging): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%"
@@ -597,7 +603,13 @@ if defined HP_SYS_PY (
   if not "%HP_CRUMB_FILE:~-1%"=="\" set "HP_CRUMB_FILE=%HP_CRUMB_FILE%\"
   set "HP_CRUMB_FILE=%HP_CRUMB_FILE%~crumb.txt"
   if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
-  pushd "%HP_CHOOSER_ROOT%" >nul 2>&1
+  set "HP_CHOOSER_PUSHD="
+  if exist "%HP_CHOOSER_ROOT%" (
+    pushd "%HP_CHOOSER_ROOT%" >nul 2>&1
+    set "HP_CHOOSER_PUSHD=1"
+  ) else (
+    echo [WARN] pushd skipped, chooser root missing: %HP_CHOOSER_ROOT%
+  )
   if defined HP_SYS_PY_ARGS (
     "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   ) else (
@@ -608,7 +620,10 @@ if defined HP_SYS_PY (
   ) else (
     "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
   )
-  popd >nul 2>&1
+  if defined HP_CHOOSER_PUSHD (
+    popd >nul 2>&1
+    set "HP_CHOOSER_PUSHD="
+  )
   if exist "%HP_CRUMB_FILE%" (
     for /f "usebackq delims=" %%L in ("%HP_CRUMB_FILE%") do if not defined HP_CRUMB set "HP_CRUMB=%%L"
     del "%HP_CRUMB_FILE%" >nul 2>&1
@@ -1067,7 +1082,7 @@ if "%HP_ENV_MODE%"=="system" (
     :: against the new warn-file format and update the translation table as needed.
     "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
     if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
-    "%HP_PY%" -m PyInstaller -y --onefile --clean --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+    "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
     if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
     if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
     call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
@@ -1096,7 +1111,7 @@ if "%HP_ENV_MODE%"=="system" (
           call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%M >> "%LOG%" 2>&1
         )
       )
-      "%HP_PY%" -m PyInstaller -y --onefile --clean --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+      "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
       call :log "[INFO] PyInstaller rebuild after missing module install complete."
     )
     if exist "~missing_modules.txt" del "~missing_modules.txt" >nul 2>&1
