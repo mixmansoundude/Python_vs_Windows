@@ -19,8 +19,9 @@ function Write-NdjsonRow {
 
 if (-not $IsWindows) {
     $skipDetails = [ordered]@{ skip = $true; reason = 'non-windows-host' }
-    Write-NdjsonRow ([ordered]@{ id = 'pyvisa.detect';        pass = $true; desc = 'pyvisa detection skipped on non-Windows host';  details = $skipDetails })
-    Write-NdjsonRow ([ordered]@{ id = 'pyvisa.nivisa.branch'; pass = $true; desc = 'NI-VISA branch skipped on non-Windows host';    details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pyvisa.detect';         req = 'REQ-008'; pass = $true; desc = 'pyvisa detection skipped on non-Windows host';  details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pyvisa.nivisa.branch';  req = 'REQ-008'; pass = $true; desc = 'NI-VISA branch skipped on non-Windows host';    details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pyvisa.nivisa.outcome'; req = 'REQ-008'; pass = $true; desc = 'NI-VISA outcome skipped on non-Windows host';   details = $skipDetails })
     exit 0
 }
 
@@ -57,8 +58,9 @@ try {
     $errorMessage = $_.Exception.Message
 }
 
-$detectPass = ($log -match 'Detected pyvisa')
-$nisaPass   = ($log -match 'NI-VISA')
+$detectPass      = ($log -match 'Detected pyvisa')
+$nisaPass        = ($log -match 'NI-VISA')
+$nisaOutcomePass = ($log -match 'NI-VISA already installed') -or ($log -match 'Installing NI-VISA') -or ($log -match 'Skipping NI-VISA')
 
 $detectDetails = [ordered]@{ exitCode = $exitCode; detectFound = $detectPass }
 if (-not $log)      { $detectDetails.logMissing = $true }
@@ -70,6 +72,7 @@ if ($errorMessage)  { $nisaDetails.error = $errorMessage }
 
 Write-NdjsonRow ([ordered]@{
     id      = 'pyvisa.detect'
+    req     = 'REQ-008'
     pass    = $detectPass
     desc    = 'pyvisa import detected and logged by bootstrapper'
     details = $detectDetails
@@ -77,9 +80,18 @@ Write-NdjsonRow ([ordered]@{
 
 Write-NdjsonRow ([ordered]@{
     id      = 'pyvisa.nivisa.branch'
+    req     = 'REQ-008'
     pass    = $nisaPass
     desc    = 'NI-VISA branch taken when pyvisa import detected'
     details = $nisaDetails
+})
+
+Write-NdjsonRow ([ordered]@{
+    id      = 'pyvisa.nivisa.outcome'
+    req     = 'REQ-008'
+    pass    = $nisaOutcomePass
+    desc    = 'NI-VISA branch outcome logged (already installed / installing / skipping)'
+    details = [ordered]@{ exitCode = $exitCode; outcomeFound = $nisaOutcomePass }
 })
 
 exit 0

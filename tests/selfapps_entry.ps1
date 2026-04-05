@@ -257,6 +257,7 @@ function Write-EntryRow {
 
     Write-NdjsonRow ([ordered]@{
         id      = $Id
+        req     = 'REQ-002'
         pass    = $pass
         desc    = $Description
         details = $details
@@ -324,6 +325,7 @@ if (Test-Path -LiteralPath $ciNd) {
 $helperRows = @($parsedRows | Where-Object { $_.id -eq 'helper.invoke' })
 Write-NdjsonRow ([ordered]@{
     id      = 'self.entry.helper.invoke.absent'
+    req     = 'REQ-002'
     pass    = ($helperRows.Count -eq 0)
     desc    = 'Helper invocation rows are absent in NDJSON output'
     details = @{ count = $helperRows.Count }
@@ -352,6 +354,7 @@ foreach ($item in $expectedMap) {
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.entry.results'
+    req     = 'REQ-002'
     pass    = ($issues.Count -eq 0)
     desc    = 'Entry scenarios emitted breadcrumbs and passed'
     details = @{ issues = $issues }

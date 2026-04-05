@@ -23,6 +23,7 @@ if (-not $IsWindows) {
     foreach ($id in @('self.depcheck.install','self.depcheck.skip')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
+            req     = 'REQ-005'
             pass    = $true
             desc    = if ($id -eq 'self.depcheck.install') {
                           'Dep check: first run installs colorama into depcheck env'
@@ -39,7 +40,7 @@ $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     foreach ($id in @('self.depcheck.install','self.depcheck.skip')) {
         Write-NdjsonRow ([ordered]@{
-            id = $id; pass = $false
+            id = $id; req = 'REQ-005'; pass = $false
             desc = 'Dep check: run_setup.bat not found'
             details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
         })
@@ -84,6 +85,7 @@ $installPass  = ($run1Exit -eq 0) -and $lockWritten -and (-not $run1DepSkip)
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.depcheck.install'
+    req     = 'REQ-005'
     pass    = $installPass
     desc    = 'Dep check: first run installs colorama into depcheck env'
     details = [ordered]@{
@@ -117,6 +119,7 @@ $depSkipPass  = ($run2Exit -eq 0) -and $depSkipFound
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.depcheck.skip'
+    req     = 'REQ-005'
     pass    = $depSkipPass
     desc    = 'Dep check: second run skips conda install (deps unchanged)'
     details = [ordered]@{

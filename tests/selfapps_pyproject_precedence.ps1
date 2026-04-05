@@ -19,8 +19,8 @@ function Write-NdjsonRow {
 
 if (-not $IsWindows) {
     $skipDetails = [ordered]@{ skip = $true; reason = 'non-windows-host' }
-    Write-NdjsonRow ([ordered]@{ id = 'pyproject.precedence.detect';    pass = $true; desc = 'pyproject precedence detect skipped on non-Windows host';   details = $skipDetails })
-    Write-NdjsonRow ([ordered]@{ id = 'pyproject.precedence.writeback'; pass = $true; desc = 'pyproject precedence writeback skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pyproject.precedence.detect';    req = 'REQ-004'; pass = $true; desc = 'pyproject precedence detect skipped on non-Windows host';   details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pyproject.precedence.writeback'; req = 'REQ-004'; pass = $true; desc = 'pyproject precedence writeback skipped on non-Windows host'; details = $skipDetails })
     exit 0
 }
 
@@ -112,6 +112,7 @@ requires-python = ">=3.10,<3.11"
 
 Write-NdjsonRow ([ordered]@{
     id      = 'pyproject.precedence.detect'
+    req     = 'REQ-004'
     pass    = $detectPass
     desc    = 'HP_DETECT_PY reads pyproject.toml requires-python when runtime.txt absent'
     details = $detectDetails
@@ -191,6 +192,7 @@ if ($errorMessage) { $writebackDetails.error = $errorMessage }
 
 Write-NdjsonRow ([ordered]@{
     id      = 'pyproject.precedence.writeback'
+    req     = 'REQ-004'
     pass    = $writebackPass
     desc    = 'runtime.txt written after bootstrap when pyproject.toml present and runtime.txt absent'
     details = $writebackDetails

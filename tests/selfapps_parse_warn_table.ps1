@@ -60,6 +60,7 @@ foreach ($cand in @('python', 'python3')) {
 if (-not $pyExe) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.parse_warn.table'
+        req     = 'REQ-007'
         pass    = $false
         desc    = 'parse_warn TRANSLATIONS table: python not in PATH'
         details = [ordered]@{ error = 'python not found' }
@@ -72,6 +73,7 @@ $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.parse_warn.table'
+        req     = 'REQ-007'
         pass    = $false
         desc    = 'parse_warn TRANSLATIONS table: run_setup.bat not found'
         details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
@@ -83,6 +85,7 @@ $varMatch  = [regex]::Match($batchText, 'set "HP_PARSE_WARN=([A-Za-z0-9+/=]+)"')
 if (-not $varMatch.Success) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.parse_warn.table'
+        req     = 'REQ-007'
         pass    = $false
         desc    = 'parse_warn TRANSLATIONS table: HP_PARSE_WARN not found in run_setup.bat'
         details = [ordered]@{ error = 'HP_PARSE_WARN set line not found' }
@@ -143,6 +146,7 @@ $pass = ($failures.Count -eq 0)
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.parse_warn.table'
+    req     = 'REQ-007'
     pass    = $pass
     desc    = 'parse_warn TRANSLATIONS table: all import->conda mappings resolve correctly'
     details = [ordered]@{
@@ -191,6 +195,7 @@ $pass6 = ($failures6.Count -eq 0)
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.parse_warn.table.v6'
+    req     = 'REQ-007'
     pass    = $pass6
     desc    = 'parse_warn TRANSLATIONS table: all import->conda mappings resolve correctly (PyInstaller 6.x format)'
     details = [ordered]@{

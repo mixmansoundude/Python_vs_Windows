@@ -24,6 +24,7 @@ if (-not $IsWindows) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-NdjsonRow ([ordered]@{
         id      = 'conda.install.justme'
+        req     = 'REQ-003'
         pass    = $true
         desc    = 'Miniconda JustMe install path executed successfully'
         details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
@@ -60,6 +61,7 @@ $pass = $justmeInstalled -and $justmeForced
 
 Write-NdjsonRow ([ordered]@{
     id      = 'conda.install.justme'
+    req     = 'REQ-003'
     pass    = $pass
     desc    = 'Miniconda JustMe install path executed successfully'
     details = [ordered]@{
