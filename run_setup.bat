@@ -1082,7 +1082,7 @@ if "%HP_ENV_MODE%"=="system" (
     :: against the new warn-file format and update the translation table as needed.
     "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
     if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
-    "%HP_PY%" -m PyInstaller -y --onefile --clean --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+    "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
     if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
     if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
     call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
@@ -1111,7 +1111,7 @@ if "%HP_ENV_MODE%"=="system" (
           call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%M >> "%LOG%" 2>&1
         )
       )
-      "%HP_PY%" -m PyInstaller -y --onefile --clean --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+      "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
       call :log "[INFO] PyInstaller rebuild after missing module install complete."
     )
     if exist "~missing_modules.txt" del "~missing_modules.txt" >nul 2>&1
