@@ -60,7 +60,7 @@ try {
 
 $detectPass      = ($log -match 'Detected pyvisa')
 $nisaPass        = ($log -match 'NI-VISA')
-$nisaOutcomePass = ($log -match 'NI-VISA already installed') -or ($log -match 'Installing NI-VISA') -or ($log -match 'Skipping NI-VISA')
+$nisaOutcomePass = ($log -match 'NI-VISA install may be required') -or ($log -match 'NI-VISA already installed') -or ($log -match 'Installing NI-VISA') -or ($log -match 'Skipping NI-VISA')
 
 $detectDetails = [ordered]@{ exitCode = $exitCode; detectFound = $detectPass }
 if (-not $log)      { $detectDetails.logMissing = $true }
@@ -90,7 +90,7 @@ Write-NdjsonRow ([ordered]@{
     id      = 'pyvisa.nivisa.outcome'
     req     = 'REQ-008'
     pass    = $nisaOutcomePass
-    desc    = 'NI-VISA branch outcome logged (already installed / installing / skipping)'
+    desc    = 'NI-VISA branch outcome logged (install required / already installed / installing / skipping)'
     details = [ordered]@{ exitCode = $exitCode; outcomeFound = $nisaOutcomePass }
 })
 
