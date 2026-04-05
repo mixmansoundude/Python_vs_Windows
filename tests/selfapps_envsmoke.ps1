@@ -71,12 +71,14 @@ if (-not $IsWindows) {
     $details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.env.smoke.conda'
+        req     = 'REQ-003'
         pass    = $true
         desc    = 'Miniconda bootstrap skipped on non-Windows host'
         details = $details
     })
     Write-NdjsonRow ([ordered]@{
         id      = 'self.env.smoke.run'
+        req     = 'REQ-003'
         pass    = $true
         desc    = 'App run skipped on non-Windows host'
         details = $details
@@ -308,6 +310,7 @@ try {
 # Record two rows: env setup + app run
 Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.conda'
+    req='REQ-003'
     pass=($exit -eq 0)
     desc='Miniconda bootstrap + environment creation'
     details=[ordered]@{ exitCode=$exit; command=$displayCommand }
@@ -316,6 +319,7 @@ Write-NdjsonRow ([ordered]@{
 $passRun = ($exit -eq 0) -and $tokenFound
 Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.run'
+    req='REQ-003'
     pass=$passRun
     desc='App runs in created environment'
     details=[ordered]@{ exitCode=$exit; tokenFound=$tokenFound; haveRunOut=$haveRunOut; command=$displayCommand }
@@ -341,6 +345,7 @@ if (($exit -eq 0) -and (-not $tokenFound)) {
     if ($condaRunStderr) { $details.condaRunStderr = $condaRunStderr }
     Write-NdjsonRow ([ordered]@{
         id='envsmoke.run'
+        req='REQ-003'
         pass=$false
         desc='Environment smoke run missing expected output token after success'
         details=$details
@@ -356,6 +361,7 @@ $exePath = Join-Path $app ("dist\\$exeEnvName.exe")
 $exeExists = Test-Path -LiteralPath $exePath
 Write-NdjsonRow ([ordered]@{
     id='self.exe.build'
+    req='REQ-003'
     pass=$exeExists
     desc='PyInstaller produced standalone EXE'
     details=[ordered]@{ exePath=$exePath; exists=$exeExists }
@@ -382,6 +388,7 @@ if ($exeExists) {
 }
 Write-NdjsonRow ([ordered]@{
     id='self.exe.run'
+    req='REQ-003'
     pass=($exeExists -and ($exeExit -eq 0) -and $exeTokenFound)
     desc='Standalone EXE runs successfully'
     details=[ordered]@{ exitCode=$exeExit; tokenFound=$exeTokenFound }
@@ -419,6 +426,7 @@ $fastSetupText = if (Test-Path -LiteralPath $setupLog) {
 $fastPathDetected = ($fastSetupText -match 'Fast path: reusing')
 Write-NdjsonRow ([ordered]@{
     id='self.fastpath'
+    req='REQ-003'
     pass=(($fastExit -eq 0) -and $fastPathDetected)
     desc='Second run reuses existing EXE via fast path'
     details=[ordered]@{ exitCode=$fastExit; fastPathDetected=$fastPathDetected }

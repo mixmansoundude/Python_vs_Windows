@@ -90,6 +90,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tools.diag.ndjson_fail_list import generate_fail_list
+from tools.req_coverage import compute_coverage
 
 
 @dataclass
@@ -3463,6 +3464,20 @@ def _build_markdown(
             lines.append("```text")
             lines.extend(file.read_text(encoding="utf-8").splitlines())
             lines.append("```")
+
+    if artifacts and artifacts.exists():
+        try:
+            coverage = compute_coverage(artifacts)
+        except Exception:
+            coverage = {}
+        if coverage:
+            lines.append("")
+            lines.append("## Requirement Coverage")
+            _COVERAGE_EMOJI = {"pass": "\u2705", "fail": "\u274c", "missing": "\u26a0"}
+            for req in sorted(coverage):
+                status = coverage[req]
+                emoji = _COVERAGE_EMOJI.get(status, "\u26a0")
+                lines.append(f"- {req} {emoji}")
 
     lines.append("")
     lines.append("## Diagnostics navigation notes (for Supervisor/model)")

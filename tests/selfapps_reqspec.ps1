@@ -56,6 +56,7 @@ function Write-ReqspecRows {
         }
         Write-NdjsonRow ([ordered]@{
             id = $row.id
+            req = 'REQ-005'
             pass = $rowPass
             desc = $row.desc
             details = $details
@@ -73,6 +74,7 @@ function Write-ReqspecRows {
     }
     Write-NdjsonRow ([ordered]@{
         id = 'reqspec.conda.dryrun'
+        req = 'REQ-005'
         pass = $dryPass
         desc = 'conda dry-run accepts translated requirement specifiers'
         details = $dry
@@ -89,6 +91,7 @@ function Write-ReqspecRows {
     }
     Write-NdjsonRow ([ordered]@{
         id = 'reqspec.conda.channelpin'
+        req = 'REQ-005'
         pass = $channelPinPass
         desc = 'conda dry-run output includes conda-forge channel pin'
         details = $channelPin
@@ -105,6 +108,7 @@ function Write-ReqspecRows {
     }
     Write-NdjsonRow ([ordered]@{
         id = 'reqspec.conda.dryrun.failcase'
+        req = 'REQ-005'
         pass = $failcasePass
         desc = 'conda dry-run rejects invalid requirement constraints'
         details = $failcase
@@ -121,6 +125,7 @@ function Write-ReqspecRows {
     }
     Write-NdjsonRow ([ordered]@{
         id = 'reqspec.install.import'
+        req = 'REQ-005'
         pass = $installPass
         desc = 'translated requirement installs into _envsmoke and imports successfully'
         details = $install
@@ -144,6 +149,7 @@ function Write-ReqspecIngestRows {
     $translatePass = if ($Skip) { $true } else { [bool]$translate.translated }
     Write-NdjsonRow ([ordered]@{
         id = 'reqspec.ingest.translate'
+        req = 'REQ-005'
         pass = $translatePass
         desc = 'existing requirements.txt translates via prep_requirements.py'
         details = $translate
@@ -157,6 +163,7 @@ function Write-ReqspecIngestRows {
     $dryPass = if ($Skip) { $true } else { ($dry.exitCode -eq 0) }
     Write-NdjsonRow ([ordered]@{
         id = 'reqspec.ingest.conda.dryrun'
+        req = 'REQ-005'
         pass = $dryPass
         desc = 'conda dry-run accepts translated existing requirements.txt'
         details = $dry
@@ -170,6 +177,7 @@ function Write-ReqspecIngestRows {
     $importPass = if ($Skip) { $true } else { ($ingestImport.exitCode -eq 0) }
     Write-NdjsonRow ([ordered]@{
         id = 'reqspec.ingest.install.import'
+        req = 'REQ-005'
         pass = $importPass
         desc = 'existing requirements path installs and imports in _envsmoke'
         details = $ingestImport

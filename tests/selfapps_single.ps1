@@ -224,6 +224,7 @@ finally {
 
     Write-NdjsonRow ([ordered]@{
         id='entry.single.direct'
+        req='REQ-002'
         pass=$pass
         desc='Exactly one .py chosen and run'
         details=$details
@@ -239,6 +240,7 @@ finally {
         if ($snippet) { $details.snippet = $snippet }
         Write-NdjsonRow ([ordered]@{
             id='entry.expected'
+            req='REQ-002'
             pass=$false
             desc='Single .py project should have produced a breadcrumb'
             details=$details

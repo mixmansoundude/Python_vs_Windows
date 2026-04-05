@@ -86,11 +86,11 @@ function Export-PrepRequirementsHelper {
 
 if (-not $IsWindows) {
     $skipDetails = [ordered]@{ skip = $true; reason = 'non-windows-host' }
-    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate'; pass = $true; desc = 'translation skipped on non-Windows host'; details = $skipDetails })
-    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install'; pass = $true; desc = 'conda install skipped on non-Windows host'; details = $skipDetails })
-    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.runtime'; pass = $true; desc = 'runtime execution skipped on non-Windows host'; details = $skipDetails })
-    Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.install'; pass = $true; desc = 'env list check skipped on non-Windows host'; details = $skipDetails })
-    Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.import'; pass = $true; desc = 'import check skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate';      req = 'REQ-005'; pass = $true; desc = 'translation skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install';  req = 'REQ-005'; pass = $true; desc = 'conda install skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.runtime';        req = 'REQ-005'; pass = $true; desc = 'runtime execution skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.install'; req = 'REQ-005'; pass = $true; desc = 'env list check skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.import';  req = 'REQ-005'; pass = $true; desc = 'import check skipped on non-Windows host'; details = $skipDetails })
     exit 0
 }
 
@@ -134,9 +134,9 @@ if (-not $condaBat) {
     $runtimeDetails.reason = 'conda-not-found'
     $runtimeDetails.condaBatCandidates = $condaInfo.candidates
     $runtimeDetails.publicRoot = $condaInfo.publicRoot
-    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate'; pass = $false; desc = 'prep_requirements translates pandas and openpyxl'; details = $translationDetails })
-    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install'; pass = $false; desc = 'conda installs translated pandas/openpyxl requirements'; details = $installDetails })
-    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.runtime'; pass = $false; desc = 'runtime writes out.xlsx using pandas+openpyxl'; details = $runtimeDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate';     req = 'REQ-005'; pass = $false; desc = 'prep_requirements translates pandas and openpyxl'; details = $translationDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install'; req = 'REQ-005'; pass = $false; desc = 'conda installs translated pandas/openpyxl requirements'; details = $installDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.runtime';       req = 'REQ-005'; pass = $false; desc = 'runtime writes out.xlsx using pandas+openpyxl'; details = $runtimeDetails })
     exit 0
 }
 
@@ -227,9 +227,9 @@ try {
 $runtimeDetails.outExists = (Test-Path -LiteralPath $outPath)
 $runtimePass = ($runtimeDetails.exitCode -eq 0) -and [bool]$runtimeDetails.outExists
 
-Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate'; pass = $translatePass; desc = 'prep_requirements translates pandas and openpyxl'; details = $translationDetails })
-Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install'; pass = $installPass; desc = 'conda installs translated pandas/openpyxl requirements'; details = $installDetails })
-Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.runtime'; pass = $runtimePass; desc = 'runtime writes out.xlsx using pandas+openpyxl'; details = $runtimeDetails })
+Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate';     req = 'REQ-005'; pass = $translatePass; desc = 'prep_requirements translates pandas and openpyxl'; details = $translationDetails })
+Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install'; req = 'REQ-005'; pass = $installPass;   desc = 'conda installs translated pandas/openpyxl requirements'; details = $installDetails })
+Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.runtime';       req = 'REQ-005'; pass = $runtimePass;   desc = 'runtime writes out.xlsx using pandas+openpyxl'; details = $runtimeDetails })
 
 # Verify both packages are present in the conda env after install
 $envListDetails = [ordered]@{ pandasPresent = $false; openpyxlPresent = $false }
@@ -246,5 +246,5 @@ if ($installPass -and $condaBat) {
 $envListPass  = [bool]$envListDetails.pandasPresent -and [bool]$envListDetails.openpyxlPresent
 $importPass   = ($importDetails.exitCode -eq 0)
 
-Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.install'; pass = $envListPass;  desc = 'pandas and openpyxl both present in conda env after install'; details = $envListDetails })
-Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.import';  pass = $importPass;   desc = 'import pandas; import openpyxl succeeds in conda env'; details = $importDetails })
+Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.install'; req = 'REQ-005'; pass = $envListPass; desc = 'pandas and openpyxl both present in conda env after install'; details = $envListDetails })
+Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.import';  req = 'REQ-005'; pass = $importPass;  desc = 'import pandas; import openpyxl succeeds in conda env'; details = $importDetails })

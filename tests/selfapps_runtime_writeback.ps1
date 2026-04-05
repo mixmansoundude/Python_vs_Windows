@@ -24,6 +24,7 @@ function Write-NdjsonRow {
 if (-not $IsWindows) {
     Write-NdjsonRow ([ordered]@{
         id   = 'self.runtime.writeback'
+        req  = 'REQ-004'
         pass = $true
         desc = 'runtime.txt write-back skipped on non-Windows host'
         details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
@@ -73,6 +74,7 @@ $pass = ($exitCode -eq 0) -and $runtimeExists -and $runtimeValid -and $logContai
 
 Write-NdjsonRow ([ordered]@{
     id   = 'self.runtime.writeback'
+    req  = 'REQ-004'
     pass = $pass
     desc = 'runtime.txt written with resolved python version and log line emitted'
     details = [ordered]@{

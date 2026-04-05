@@ -31,6 +31,7 @@ if (-not $IsWindows) {
     foreach ($id in @('self.exe.warnfix.install','self.exe.warnfix.success')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
+            req     = 'REQ-007'
             pass    = $true
             desc    = if ($id -eq 'self.exe.warnfix.install') {
                           'PyInstaller warn file had missing modules; conda install ran'
@@ -47,7 +48,7 @@ $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     foreach ($id in @('self.exe.warnfix.install','self.exe.warnfix.success')) {
         Write-NdjsonRow ([ordered]@{
-            id = $id; pass = $false
+            id = $id; req = 'REQ-007'; pass = $false
             desc = 'Warnfix: run_setup.bat not found'
             details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
         })
@@ -146,6 +147,7 @@ $successPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.warnfix.install'
+    req     = 'REQ-007'
     pass    = $installPass
     desc    = 'PyInstaller warn file had missing modules; conda install ran'
     details = [ordered]@{
@@ -158,6 +160,7 @@ Write-NdjsonRow ([ordered]@{
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.warnfix.success'
+    req     = 'REQ-007'
     pass    = $successPass
     desc    = 'EXE succeeded after warn-driven rebuild'
     details = [ordered]@{
