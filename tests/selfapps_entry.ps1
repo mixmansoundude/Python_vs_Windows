@@ -48,23 +48,19 @@ if ($null -eq $pyFileCount -and $env:PY_FILES) {
     }
 }
 if ($null -ne $pyFileCount -and $pyFileCount -ne 1) {
-    if ($env:HP_CI_FORCE_ENTRY_PROBE -eq '1') {
-        Write-Host ("[INFO] selfapps_entry: HP_CI_FORCE_ENTRY_PROBE set; running probe despite pyFiles={0}" -f $pyFileCount)
-    } else {
-        # Emit an explicit REQ-002 skip row so coverage is present even when skipped.
-        $skipRow = [ordered]@{
-            id      = 'self.entry.results'
-            req     = 'REQ-002'
-            pass    = $true
-            desc    = 'Entry selection skipped: pyFiles count is not 1'
-            details = [ordered]@{ skip = $true; pyFiles = $pyFileCount; reason = 'pyfiles-not-1' }
-        }
-        $skipJson = $skipRow | ConvertTo-Json -Compress -Depth 8
-        Add-Content -LiteralPath $nd -Value $skipJson -Encoding Ascii
-        Add-Content -LiteralPath $ciNd -Value $skipJson -Encoding Ascii
-        Write-Host ("[INFO] selfapps_entry skipped: pyFiles={0}" -f $pyFileCount)
-        exit 0
+    # Emit an explicit REQ-002 skip row so coverage is present even when skipped.
+    $skipRow = [ordered]@{
+        id      = 'self.entry.results'
+        req     = 'REQ-002'
+        pass    = $true
+        desc    = 'Entry selection skipped: pyFiles count is not 1'
+        details = [ordered]@{ skip = $true; pyFiles = $pyFileCount; reason = 'pyfiles-not-1' }
     }
+    $skipJson = $skipRow | ConvertTo-Json -Compress -Depth 8
+    Add-Content -LiteralPath $nd -Value $skipJson -Encoding Ascii
+    Add-Content -LiteralPath $ciNd -Value $skipJson -Encoding Ascii
+    Write-Host ("[INFO] selfapps_entry skipped: pyFiles={0}" -f $pyFileCount)
+    exit 0
 }
 
 function Write-NdjsonRow {

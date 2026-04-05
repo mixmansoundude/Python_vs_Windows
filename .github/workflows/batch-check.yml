@@ -184,7 +184,6 @@ jobs:
       - name: "Self-test: entry selection (CI-only)"
         env:
           HP_CI_SKIP_ENV: '1'
-          HP_CI_FORCE_ENTRY_PROBE: '1'
         shell: pwsh
         run: |
           & tests\selfapps_entry.ps1
