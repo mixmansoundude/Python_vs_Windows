@@ -3219,6 +3219,16 @@ jobs:
             $cacheBusted = "${bundle}index.html?v=$Run-$Att"
             "- Diagnostics site (cache-busted): $cacheBusted" | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
+          $coveragePath = Join-Path $PWD "_site" "diag" "$Run-$Att" "_artifacts" "req_coverage.json"
+          if (Test-Path $coveragePath) {
+            "## Requirement Coverage" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            $cov = Get-Content -Raw $coveragePath | ConvertFrom-Json
+            $emojiMap = @{ pass = ([char]0x2705).ToString(); fail = ([char]0x274C).ToString() }
+            foreach ($prop in ($cov.PSObject.Properties | Sort-Object Name)) {
+              $emoji = if ($emojiMap.ContainsKey($prop.Value)) { $emojiMap[$prop.Value] } else { ([char]0x26A0).ToString() }
+              "- $($prop.Name) $emoji" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            }
+          }
 
       - uses: actions/configure-pages@v4
         if: ${{ github.event_name != 'pull_request' }}
