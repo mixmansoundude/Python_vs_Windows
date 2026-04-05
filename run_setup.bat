@@ -167,7 +167,7 @@ python -V >> "%LOG%" 2>&1 || (
 )
 
 rem === Channel policy (determinism & legal) ===================================
-call "%CONDA_BAT%" config --name base --add channels conda-forge
+call "%CONDA_BAT%" config --name base --add channels conda-forge >> "%LOG%" 2>&1
 
 rem NOTE: every 'conda create' or 'conda install' call below MUST include:
 rem       --override-channels -c conda-forge
