@@ -79,6 +79,13 @@ function Write-ReqspecRows {
         desc = 'conda dry-run accepts translated requirement specifiers'
         details = $dry
     })
+    Write-NdjsonRow ([ordered]@{
+        id = 'reqspec.conda.dryrun.req006'
+        req = 'REQ-006'
+        pass = $dryPass
+        desc = 'conda dry-run uses --override-channels -c conda-forge'
+        details = $dry
+    })
 
     $channelPin = if ($ChannelPinDetails) { $ChannelPinDetails } else { [ordered]@{ channel = 'conda-forge'; exitCode = -1; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false; solverOutputSnippet = '' } }
     if ($Skip) {
@@ -94,6 +101,13 @@ function Write-ReqspecRows {
         req = 'REQ-005'
         pass = $channelPinPass
         desc = 'conda dry-run output includes conda-forge channel pin'
+        details = $channelPin
+    })
+    Write-NdjsonRow ([ordered]@{
+        id = 'reqspec.conda.channelpin.req006'
+        req = 'REQ-006'
+        pass = $channelPinPass
+        desc = 'conda installs use conda-forge exclusively (no defaults channel)'
         details = $channelPin
     })
 
