@@ -388,6 +388,12 @@ if %HP_PIPREQS_STAGE_COPY_RC% GEQ 8 (
 )
 set "HP_PIPREQS_SUMMARY_CMD_PATH=%HP_PIPREQS_STAGE_TARGET%"
 set "HP_PIPREQS_SUMMARY_IGNORE="
+if not exist "%HP_PIPREQS_STAGE_ROOT%\" (
+    echo [WARN] pushd skipped, stage root missing: %HP_PIPREQS_STAGE_ROOT%
+    set "HP_PIPREQS_PHASE_RESULT=fail"
+    set "HP_PIPREQS_SUMMARY_NOTE=(stage root missing)"
+    goto :after_pipreqs_run
+)
 pushd "%HP_PIPREQS_STAGE_ROOT%"
 call :log "[INFO] pipreqs (staging) command: pipreqs . --force --mode compat --savepath ""%HP_PIPREQS_STAGE_TARGET%"""
 echo Pipreqs command (staging): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%"
