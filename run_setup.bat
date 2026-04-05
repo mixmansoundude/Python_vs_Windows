@@ -603,7 +603,13 @@ if defined HP_SYS_PY (
   if not "%HP_CRUMB_FILE:~-1%"=="\" set "HP_CRUMB_FILE=%HP_CRUMB_FILE%\"
   set "HP_CRUMB_FILE=%HP_CRUMB_FILE%~crumb.txt"
   if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
-  pushd "%HP_CHOOSER_ROOT%" >nul 2>&1
+  set "HP_CHOOSER_PUSHD="
+  if exist "%HP_CHOOSER_ROOT%" (
+    pushd "%HP_CHOOSER_ROOT%" >nul 2>&1
+    set "HP_CHOOSER_PUSHD=1"
+  ) else (
+    echo [WARN] pushd skipped, chooser root missing: %HP_CHOOSER_ROOT%
+  )
   if defined HP_SYS_PY_ARGS (
     "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
   ) else (
@@ -614,7 +620,10 @@ if defined HP_SYS_PY (
   ) else (
     "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
   )
-  popd >nul 2>&1
+  if defined HP_CHOOSER_PUSHD (
+    popd >nul 2>&1
+    set "HP_CHOOSER_PUSHD="
+  )
   if exist "%HP_CRUMB_FILE%" (
     for /f "usebackq delims=" %%L in ("%HP_CRUMB_FILE%") do if not defined HP_CRUMB set "HP_CRUMB=%%L"
     del "%HP_CRUMB_FILE%" >nul 2>&1
