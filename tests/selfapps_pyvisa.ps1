@@ -94,4 +94,8 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ exitCode = $exitCode; outcomeFound = $nisaOutcomePass }
 })
 
+if (-not $nisaOutcomePass) {
+    Write-Host "NI-VISA branch outcome not detected"
+    exit 1
+}
 exit 0

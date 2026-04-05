@@ -3471,6 +3471,12 @@ def _build_markdown(
         except Exception:
             coverage = {}
         if coverage:
+            try:
+                (artifacts / "req_coverage.json").write_text(
+                    json.dumps(coverage, indent=2), encoding="utf-8"
+                )
+            except OSError:
+                pass
             lines.append("")
             lines.append("## Requirement Coverage")
             _COVERAGE_EMOJI = {"pass": "\u2705", "fail": "\u274c", "missing": "\u26a0"}
