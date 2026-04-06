@@ -144,6 +144,33 @@ function Write-ReqspecRows {
         desc = 'translated requirement installs into _envsmoke and imports successfully'
         details = $install
     })
+
+    $gteDetails = [ordered]@{
+        specifier = 'six>=1.16'
+        expected = 'six >=1.16'
+        preserved = $false
+        installExitCode = if ($install.ContainsKey('installExitCode')) { $install.installExitCode } else { -1 }
+        importExitCode = if ($install.ContainsKey('importExitCode')) { $install.importExitCode } else { -1 }
+        importable = [bool]$install.importable
+    }
+    if ($TranslationChecks -and $TranslationChecks.ContainsKey('reqspec.translate.gte')) {
+        $gteDetails.preserved = [bool]$TranslationChecks['reqspec.translate.gte'].found
+    }
+    if ($Skip) {
+        $gteDetails.skip = $true
+        if ($Reason) { $gteDetails.reason = $Reason }
+    }
+    $gtePass = $true
+    if (-not $Skip) {
+        $gtePass = [bool]$gteDetails.preserved -and [bool]$gteDetails.importable
+    }
+    Write-NdjsonRow ([ordered]@{
+        id = 'reqspec.gte.explicit'
+        req = 'REQ-005'
+        pass = $gtePass
+        desc = '>= specifier is preserved in translated conda requirements and remains installable/importable'
+        details = $gteDetails
+    })
 }
 
 function Write-ReqspecIngestRows {
