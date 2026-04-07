@@ -487,3 +487,93 @@ Write-NdjsonRow ([ordered]@{
     desc='Second run reuses existing EXE via fast path'
     details=[ordered]@{ exitCode=$fastExit; fastPathDetected=$fastPathDetected }
 })
+
+# derived requirement: bootstrap must remain reliable when invoked from deep
+# directories that include spaces; this guards quoting regressions in cmd/batch.
+$spaceRoot = Join-Path $here '~envsmoke path space'
+$spaceApp = Join-Path $spaceRoot 'level one\level two\test space path'
+$spaceSetupLog = Join-Path $spaceApp '~setup.log'
+$spaceBootstrapLog = Join-Path $spaceApp '~envsmoke_space_bootstrap.log'
+$spaceToken = Join-Path $spaceApp '~smoke_token.txt'
+
+New-Item -ItemType Directory -Force -Path $spaceApp | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $spaceApp -Force
+Set-Content -LiteralPath (Join-Path $spaceApp 'app.py') -Value @'
+import os as _os
+import sys as _sys
+
+_here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
+with open(_os.path.join(_here, '~smoke_token.txt'), 'w') as _f:
+    _f.write('space-path-ok\n')
+'@ -NoNewline
+
+Remove-Item -LiteralPath $spaceToken -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $spaceBootstrapLog -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $spaceSetupLog -Force -ErrorAction SilentlyContinue
+
+$spaceExit = -1
+$prevSpaceVenvFallback = if (Test-Path Env:HP_ALLOW_VENV_FALLBACK) { $env:HP_ALLOW_VENV_FALLBACK } else { $null }
+$prevSpaceSystemFallback = if (Test-Path Env:HP_ALLOW_SYSTEM_FALLBACK) { $env:HP_ALLOW_SYSTEM_FALLBACK } else { $null }
+Push-Location -LiteralPath $spaceApp
+try {
+    $env:HP_ALLOW_VENV_FALLBACK = '1'
+    $env:HP_ALLOW_SYSTEM_FALLBACK = '1'
+    cmd /c .\run_setup.bat *> '~envsmoke_space_bootstrap.log'
+    $spaceExit = $LASTEXITCODE
+} catch {
+    $spaceExit = -1
+} finally {
+    if ($null -eq $prevSpaceVenvFallback) {
+        Remove-Item Env:HP_ALLOW_VENV_FALLBACK -ErrorAction SilentlyContinue
+    } else {
+        $env:HP_ALLOW_VENV_FALLBACK = $prevSpaceVenvFallback
+    }
+    if ($null -eq $prevSpaceSystemFallback) {
+        Remove-Item Env:HP_ALLOW_SYSTEM_FALLBACK -ErrorAction SilentlyContinue
+    } else {
+        $env:HP_ALLOW_SYSTEM_FALLBACK = $prevSpaceSystemFallback
+    }
+    Pop-Location
+}
+
+$spaceSetupText = if (Test-Path -LiteralPath $spaceSetupLog) {
+    Get-Content -LiteralPath $spaceSetupLog -Raw -Encoding Ascii
+} else { '' }
+$spaceBootstrapText = if (Test-Path -LiteralPath $spaceBootstrapLog) {
+    Get-Content -LiteralPath $spaceBootstrapLog -Raw -Encoding Ascii
+} else { '' }
+$spaceTokenText = if (Test-Path -LiteralPath $spaceToken) {
+    Get-Content -LiteralPath $spaceToken -Raw -Encoding Ascii
+} else { '' }
+$spaceEnvLeaf = Split-Path $spaceApp -Leaf
+$spaceEnvName = ($spaceEnvLeaf -replace '[^A-Za-z0-9_-]', '_')
+if (-not $spaceEnvName) { $spaceEnvName = '_space_path' }
+$spaceExePath = Join-Path $spaceApp ("dist\\$spaceEnvName.exe")
+
+$spacePathErrorPattern = 'The system cannot find the path specified|is not recognized as an internal or external command'
+$spaceHasPathErrors = (($spaceSetupText -match $spacePathErrorPattern) -or ($spaceBootstrapText -match $spacePathErrorPattern))
+$spacePass = (($spaceExit -eq 0) -and ($spaceTokenText -match 'space-path-ok') -and (Test-Path -LiteralPath $spaceExePath) -and (-not $spaceHasPathErrors))
+
+Write-NdjsonRow ([ordered]@{
+    id='self.prime.spaced-path'
+    req='REQ-001'
+    pass=$spacePass
+    desc='Prime directive bootstrap succeeds from deep directory path containing spaces'
+    details=[ordered]@{
+        exitCode=$spaceExit
+        workspace=$spaceApp
+        tokenFound=($spaceTokenText -match 'space-path-ok')
+        exeExists=(Test-Path -LiteralPath $spaceExePath)
+        noPathErrors=(-not $spaceHasPathErrors)
+    }
+})
+Write-NdjsonRow ([ordered]@{
+    id='self.entry.spaced-path'
+    req='REQ-002'
+    pass=$spacePass
+    desc='Entry script discovery/execution succeeds from deep directory path containing spaces'
+    details=[ordered]@{
+        workspace=$spaceApp
+        tokenFound=($spaceTokenText -match 'space-path-ok')
+    }
+})
