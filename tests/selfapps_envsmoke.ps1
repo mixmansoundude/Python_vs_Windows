@@ -173,6 +173,11 @@ $bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw -Encoding
 $outxt  = (Test-Path $runout) ? (Get-Content -LiteralPath $runout -Raw -Encoding Ascii) : ''
 $runerr = Join-Path $app '~run.err.txt'
 $errtxt = (Test-Path $runerr) ? (Get-Content -LiteralPath $runerr -Raw -Encoding Ascii) : ''
+$bootstrapText = @($setup, $bltxt) -join "`n"
+$hasEntryRun = ($bootstrapText -match 'Running entry script smoke test')
+$hasEntryExit = ($bootstrapText -match 'Entry smoke exit=0')
+$hasPyInstaller = ($bootstrapText -match 'PyInstaller produced')
+$bootstrapPass = (($exit -eq 0) -and $hasEntryRun -and $hasEntryExit -and $hasPyInstaller)
 
 $smokeCommand = ''
 if ($setup) {
@@ -339,19 +344,31 @@ try {
 Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.conda'
     req='REQ-003'
-    pass=($exit -eq 0)
+    pass=$bootstrapPass
     desc='Miniconda bootstrap + environment creation'
-    details=[ordered]@{ exitCode=$exit; command=$displayCommand }
+    details=[ordered]@{
+        exitCode=$exit
+        command=$displayCommand
+        hasEntryRun=$hasEntryRun
+        hasEntryExit=$hasEntryExit
+        hasPyInstaller=$hasPyInstaller
+    }
 })
 Write-NdjsonRow ([ordered]@{
     id='self.prime.bootstrap'
     req='REQ-001'
-    pass=($exit -eq 0)
+    pass=$bootstrapPass
     desc='Prime directive: batch file bootstraps Python environment from scratch'
-    details=[ordered]@{ exitCode=$exit; command=$displayCommand }
+    details=[ordered]@{
+        exitCode=$exit
+        command=$displayCommand
+        hasEntryRun=$hasEntryRun
+        hasEntryExit=$hasEntryExit
+        hasPyInstaller=$hasPyInstaller
+    }
 })
 
-$passRun = ($exit -eq 0) -and $tokenFound
+$passRun = $bootstrapPass -and $tokenFound
 Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.run'
     req='REQ-003'
@@ -552,7 +569,19 @@ $spaceExePath = Join-Path $spaceApp ("dist\\$spaceEnvName.exe")
 
 $spacePathErrorPattern = 'The system cannot find the path specified|is not recognized as an internal or external command'
 $spaceHasPathErrors = (($spaceSetupText -match $spacePathErrorPattern) -or ($spaceBootstrapText -match $spacePathErrorPattern))
-$spacePass = (($spaceExit -eq 0) -and ($spaceTokenText -match 'space-path-ok') -and (Test-Path -LiteralPath $spaceExePath) -and (-not $spaceHasPathErrors))
+$spaceCombinedBootstrapText = @($spaceSetupText, $spaceBootstrapText) -join "`n"
+$spaceHasEntryRun = ($spaceCombinedBootstrapText -match 'Running entry script smoke test')
+$spaceHasEntryExit = ($spaceCombinedBootstrapText -match 'Entry smoke exit=0')
+$spaceHasPyInstaller = ($spaceCombinedBootstrapText -match 'PyInstaller produced')
+$spacePass = (
+    ($spaceExit -eq 0) -and
+    ($spaceTokenText -match 'space-path-ok') -and
+    (Test-Path -LiteralPath $spaceExePath) -and
+    (-not $spaceHasPathErrors) -and
+    $spaceHasEntryRun -and
+    $spaceHasEntryExit -and
+    $spaceHasPyInstaller
+)
 
 Write-NdjsonRow ([ordered]@{
     id='self.prime.spaced-path'
@@ -565,6 +594,9 @@ Write-NdjsonRow ([ordered]@{
         tokenFound=($spaceTokenText -match 'space-path-ok')
         exeExists=(Test-Path -LiteralPath $spaceExePath)
         noPathErrors=(-not $spaceHasPathErrors)
+        hasEntryRun=$spaceHasEntryRun
+        hasEntryExit=$spaceHasEntryExit
+        hasPyInstaller=$spaceHasPyInstaller
     }
 })
 Write-NdjsonRow ([ordered]@{
@@ -575,5 +607,8 @@ Write-NdjsonRow ([ordered]@{
     details=[ordered]@{
         workspace=$spaceApp
         tokenFound=($spaceTokenText -match 'space-path-ok')
+        hasEntryRun=$spaceHasEntryRun
+        hasEntryExit=$spaceHasEntryExit
+        hasPyInstaller=$spaceHasPyInstaller
     }
 })
