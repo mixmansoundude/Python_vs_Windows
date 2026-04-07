@@ -1,7 +1,15 @@
 @echo off
 setlocal DisableDelayedExpansion
 rem Boot strap renamed to run_setup.bat
+if not exist "%~dp0" (
+  echo [ERROR] Workspace path invalid: %~dp0
+  exit /b 1
+)
 cd /d "%~dp0"
+if errorlevel 1 (
+  echo [ERROR] Workspace path invalid: %~dp0
+  exit /b 1
+)
 set "HP_SCRIPT_ROOT=%~dp0"
 for %%R in ("%HP_SCRIPT_ROOT%") do set "HP_SCRIPT_ROOT=%%~fR"
 if not "%HP_SCRIPT_ROOT:~-1%"=="\\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"
@@ -167,6 +175,9 @@ python -V >> "%LOG%" 2>&1 || (
 )
 
 rem === Channel policy (determinism & legal) ===================================
+if not exist "%CONDA_BAT%" (
+  call :die "[ERROR] Conda not found at: %CONDA_BAT%"
+)
 call "%CONDA_BAT%" config --name base --add channels conda-forge >> "%LOG%" 2>&1
 
 rem NOTE: every 'conda create' or 'conda install' call below MUST include:
