@@ -177,7 +177,14 @@ $bootstrapText = @($setup, $bltxt) -join "`n"
 $hasEntryRun = ($bootstrapText -match 'Running entry script smoke test')
 $hasEntryExit = ($bootstrapText -match 'Entry smoke exit=0')
 $hasPyInstaller = ($bootstrapText -match 'PyInstaller produced')
-$bootstrapPass = (($exit -eq 0) -and $hasEntryRun -and $hasEntryExit -and $hasPyInstaller)
+$envLeaf = Split-Path $app -Leaf
+$condaEnvName = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
+if (-not $condaEnvName) { $condaEnvName = '_envsmoke' }
+$interpreterMatch = [regex]::Match($bootstrapText, '^Interpreter:\s*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+$interpreterPath = if ($interpreterMatch.Success) { $interpreterMatch.Groups[1].Value.Trim() } else { '' }
+$hasInterpreter = [bool]$interpreterMatch.Success
+$hasExpectedEnv = ($hasInterpreter -and ($interpreterPath -match [regex]::Escape($condaEnvName)))
+$bootstrapPass = (($exit -eq 0) -and $hasEntryRun -and $hasEntryExit -and $hasPyInstaller -and $hasInterpreter -and $hasExpectedEnv)
 
 $smokeCommand = ''
 if ($setup) {
@@ -225,9 +232,6 @@ Check-PipreqsFailure -LogPath $setupLog -LogText $setup
 $haveRunOut = Test-Path -LiteralPath $runout
 
 # Derive env name and locate the conda bat that run_setup.bat installed.
-$envLeaf      = Split-Path $app -Leaf
-$condaEnvName = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
-if (-not $condaEnvName) { $condaEnvName = '_envsmoke' }
 $appPath = Join-Path $app 'app.py'
 $publicRoot   = [Environment]::GetEnvironmentVariable('PUBLIC')
 
@@ -352,6 +356,9 @@ Write-NdjsonRow ([ordered]@{
         hasEntryRun=$hasEntryRun
         hasEntryExit=$hasEntryExit
         hasPyInstaller=$hasPyInstaller
+        interpreterDetected=$hasInterpreter
+        expectedEnvUsed=$hasExpectedEnv
+        interpreterPath=$interpreterPath
     }
 })
 Write-NdjsonRow ([ordered]@{
@@ -365,6 +372,9 @@ Write-NdjsonRow ([ordered]@{
         hasEntryRun=$hasEntryRun
         hasEntryExit=$hasEntryExit
         hasPyInstaller=$hasPyInstaller
+        interpreterDetected=$hasInterpreter
+        expectedEnvUsed=$hasExpectedEnv
+        interpreterPath=$interpreterPath
     }
 })
 
@@ -573,6 +583,10 @@ $spaceCombinedBootstrapText = @($spaceSetupText, $spaceBootstrapText) -join "`n"
 $spaceHasEntryRun = ($spaceCombinedBootstrapText -match 'Running entry script smoke test')
 $spaceHasEntryExit = ($spaceCombinedBootstrapText -match 'Entry smoke exit=0')
 $spaceHasPyInstaller = ($spaceCombinedBootstrapText -match 'PyInstaller produced')
+$spaceInterpreterMatch = [regex]::Match($spaceCombinedBootstrapText, '^Interpreter:\s*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
+$spaceInterpreterPath = if ($spaceInterpreterMatch.Success) { $spaceInterpreterMatch.Groups[1].Value.Trim() } else { '' }
+$spaceHasInterpreter = [bool]$spaceInterpreterMatch.Success
+$spaceHasExpectedEnv = ($spaceHasInterpreter -and ($spaceInterpreterPath -match [regex]::Escape($spaceEnvName)))
 $spacePass = (
     ($spaceExit -eq 0) -and
     ($spaceTokenText -match 'space-path-ok') -and
@@ -580,7 +594,9 @@ $spacePass = (
     (-not $spaceHasPathErrors) -and
     $spaceHasEntryRun -and
     $spaceHasEntryExit -and
-    $spaceHasPyInstaller
+    $spaceHasPyInstaller -and
+    $spaceHasInterpreter -and
+    $spaceHasExpectedEnv
 )
 
 Write-NdjsonRow ([ordered]@{
@@ -597,6 +613,9 @@ Write-NdjsonRow ([ordered]@{
         hasEntryRun=$spaceHasEntryRun
         hasEntryExit=$spaceHasEntryExit
         hasPyInstaller=$spaceHasPyInstaller
+        interpreterDetected=$spaceHasInterpreter
+        expectedEnvUsed=$spaceHasExpectedEnv
+        interpreterPath=$spaceInterpreterPath
     }
 })
 Write-NdjsonRow ([ordered]@{
@@ -610,5 +629,8 @@ Write-NdjsonRow ([ordered]@{
         hasEntryRun=$spaceHasEntryRun
         hasEntryExit=$spaceHasEntryExit
         hasPyInstaller=$spaceHasPyInstaller
+        interpreterDetected=$spaceHasInterpreter
+        expectedEnvUsed=$spaceHasExpectedEnv
+        interpreterPath=$spaceInterpreterPath
     }
 })
