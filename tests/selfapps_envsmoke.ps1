@@ -173,7 +173,7 @@ $bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw -Encoding
 $outxt  = (Test-Path $runout) ? (Get-Content -LiteralPath $runout -Raw -Encoding Ascii) : ''
 $runerr = Join-Path $app '~run.err.txt'
 $errtxt = (Test-Path $runerr) ? (Get-Content -LiteralPath $runerr -Raw -Encoding Ascii) : ''
-$bootstrapText = @($setup, $bltxt) -join "`n"
+$bootstrapText = $bltxt
 $hasEntryRun = ($bootstrapText -match 'Running entry script smoke test')
 $hasEntryExit = ($bootstrapText -match 'Entry smoke exit=0')
 $hasPyInstaller = ($bootstrapText -match 'PyInstaller produced')
