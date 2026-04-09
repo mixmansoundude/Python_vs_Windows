@@ -173,10 +173,32 @@ $bltxt  = (Test-Path $blog)   ? (Get-Content -LiteralPath $blog   -Raw -Encoding
 $outxt  = (Test-Path $runout) ? (Get-Content -LiteralPath $runout -Raw -Encoding Ascii) : ''
 $runerr = Join-Path $app '~run.err.txt'
 $errtxt = (Test-Path $runerr) ? (Get-Content -LiteralPath $runerr -Raw -Encoding Ascii) : ''
-$bootstrapText = @($setup, $bltxt) -join "`n"
+$bootstrapText = $bltxt
 $hasEntryRun = ($bootstrapText -match 'Running entry script smoke test')
 $hasEntryExit = ($bootstrapText -match 'Entry smoke exit=0')
 $hasPyInstaller = ($bootstrapText -match 'PyInstaller produced')
+# derived requirement: REQ-001/REQ-003 are success-path checks; keep them green
+# only when bootstrap has no explicit [ERROR] markers and no raw system errors.
+$explicitErrorLine = Get-LineSnippet -Text $bootstrapText -Pattern '\[ERROR\]'
+$hasExplicitError = [bool]$explicitErrorLine
+$noExplicitError = -not $hasExplicitError
+$unexpectedSystemErrorLine = Get-LineSnippet -Text $bootstrapText -Pattern 'The system cannot find|is not recognized as an internal or external command'
+$hasUnexpectedSystemError = [bool]$unexpectedSystemErrorLine
+$unexpectedSystemErrorIgnored = ''
+if ($hasUnexpectedSystemError -and ($unexpectedSystemErrorLine -match '^The system cannot find the drive specified\.?$')) {
+    # derived requirement: current Windows CI intermittently emits this line as
+    # a non-fatal side effect before a successful PyInstaller artifact is produced.
+    # Keep it visible in diagnostics, but do not fail REQ-001/REQ-003 for it.
+    $hasUnexpectedSystemError = $false
+    $unexpectedSystemErrorIgnored = 'drive-specified-nonfatal'
+}
+if ($hasExplicitError -or $unexpectedSystemErrorLine) {
+    $matchLines = @()
+    if ($hasExplicitError) { $matchLines += "[DEBUG] explicitErrorMatchLine: $explicitErrorLine" }
+    if ($unexpectedSystemErrorLine) { $matchLines += "[DEBUG] unexpectedSystemErrorMatchLine: $unexpectedSystemErrorLine" }
+    if ($unexpectedSystemErrorIgnored) { $matchLines += "[DEBUG] unexpectedSystemErrorIgnored: $unexpectedSystemErrorIgnored" }
+    Add-Content -LiteralPath $blog -Value ($matchLines -join "`n") -Encoding Ascii
+}
 $envLeaf = Split-Path $app -Leaf
 $condaEnvName = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
 if (-not $condaEnvName) { $condaEnvName = '_envsmoke' }
@@ -184,7 +206,8 @@ $interpreterMatch = [regex]::Match($bootstrapText, '^Interpreter:\s*(.+)$', [Sys
 $interpreterPath = if ($interpreterMatch.Success) { $interpreterMatch.Groups[1].Value.Trim() } else { '' }
 $hasInterpreter = [bool]$interpreterMatch.Success
 $hasExpectedEnv = ($hasInterpreter -and ($interpreterPath -match [regex]::Escape($condaEnvName)))
-$bootstrapPass = (($exit -eq 0) -and $hasEntryRun -and $hasEntryExit -and $hasPyInstaller -and $hasInterpreter -and $hasExpectedEnv)
+$bootstrapPass = (($exit -eq 0) -and $hasEntryRun -and $hasEntryExit -and $hasPyInstaller -and $hasInterpreter -and $hasExpectedEnv -and $noExplicitError)
+$errorSignalPass = (-not $hasUnexpectedSystemError)
 
 $smokeCommand = ''
 if ($setup) {
@@ -348,7 +371,7 @@ try {
 Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.conda'
     req='REQ-003'
-    pass=$bootstrapPass
+    pass=($bootstrapPass -and $errorSignalPass)
     desc='Miniconda bootstrap + environment creation'
     details=[ordered]@{
         exitCode=$exit
@@ -359,12 +382,18 @@ Write-NdjsonRow ([ordered]@{
         interpreterDetected=$hasInterpreter
         expectedEnvUsed=$hasExpectedEnv
         interpreterPath=$interpreterPath
+        explicitErrorPresent=$hasExplicitError
+        explicitErrorLine=$explicitErrorLine
+        unexpectedSystemErrorPresent=$hasUnexpectedSystemError
+        unexpectedSystemErrorLine=$unexpectedSystemErrorLine
+        unexpectedSystemErrorIgnored=$unexpectedSystemErrorIgnored
+        errorSignalPass=$errorSignalPass
     }
 })
 Write-NdjsonRow ([ordered]@{
     id='self.prime.bootstrap'
     req='REQ-001'
-    pass=$bootstrapPass
+    pass=($bootstrapPass -and $errorSignalPass)
     desc='Prime directive: batch file bootstraps Python environment from scratch'
     details=[ordered]@{
         exitCode=$exit
@@ -375,6 +404,12 @@ Write-NdjsonRow ([ordered]@{
         interpreterDetected=$hasInterpreter
         expectedEnvUsed=$hasExpectedEnv
         interpreterPath=$interpreterPath
+        explicitErrorPresent=$hasExplicitError
+        explicitErrorLine=$explicitErrorLine
+        unexpectedSystemErrorPresent=$hasUnexpectedSystemError
+        unexpectedSystemErrorLine=$unexpectedSystemErrorLine
+        unexpectedSystemErrorIgnored=$unexpectedSystemErrorIgnored
+        errorSignalPass=$errorSignalPass
     }
 })
 
