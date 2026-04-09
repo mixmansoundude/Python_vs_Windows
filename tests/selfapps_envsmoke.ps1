@@ -177,6 +177,13 @@ $bootstrapText = @($setup, $bltxt) -join "`n"
 $hasEntryRun = ($bootstrapText -match 'Running entry script smoke test')
 $hasEntryExit = ($bootstrapText -match 'Entry smoke exit=0')
 $hasPyInstaller = ($bootstrapText -match 'PyInstaller produced')
+# derived requirement: failure lanes must emit explicit [ERROR] guidance, while
+# success lanes must not rely on raw cmd.exe/system errors for operator context.
+$hasExplicitError = ($bootstrapText -match '\[ERROR\]')
+$hasUnexpectedSystemError = (
+    ($bootstrapText -match 'The system cannot find') -or
+    ($bootstrapText -match 'is not recognized as an internal or external command')
+)
 $envLeaf = Split-Path $app -Leaf
 $condaEnvName = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
 if (-not $condaEnvName) { $condaEnvName = '_envsmoke' }
@@ -185,6 +192,7 @@ $interpreterPath = if ($interpreterMatch.Success) { $interpreterMatch.Groups[1].
 $hasInterpreter = [bool]$interpreterMatch.Success
 $hasExpectedEnv = ($hasInterpreter -and ($interpreterPath -match [regex]::Escape($condaEnvName)))
 $bootstrapPass = (($exit -eq 0) -and $hasEntryRun -and $hasEntryExit -and $hasPyInstaller -and $hasInterpreter -and $hasExpectedEnv)
+$errorSignalPass = if ($bootstrapPass) { -not $hasUnexpectedSystemError } else { $hasExplicitError }
 
 $smokeCommand = ''
 if ($setup) {
@@ -348,7 +356,7 @@ try {
 Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.conda'
     req='REQ-003'
-    pass=$bootstrapPass
+    pass=($bootstrapPass -and $errorSignalPass)
     desc='Miniconda bootstrap + environment creation'
     details=[ordered]@{
         exitCode=$exit
@@ -359,12 +367,15 @@ Write-NdjsonRow ([ordered]@{
         interpreterDetected=$hasInterpreter
         expectedEnvUsed=$hasExpectedEnv
         interpreterPath=$interpreterPath
+        explicitErrorPresent=$hasExplicitError
+        unexpectedSystemErrorPresent=$hasUnexpectedSystemError
+        errorSignalPass=$errorSignalPass
     }
 })
 Write-NdjsonRow ([ordered]@{
     id='self.prime.bootstrap'
     req='REQ-001'
-    pass=$bootstrapPass
+    pass=($bootstrapPass -and $errorSignalPass)
     desc='Prime directive: batch file bootstraps Python environment from scratch'
     details=[ordered]@{
         exitCode=$exit
@@ -375,6 +386,9 @@ Write-NdjsonRow ([ordered]@{
         interpreterDetected=$hasInterpreter
         expectedEnvUsed=$hasExpectedEnv
         interpreterPath=$interpreterPath
+        explicitErrorPresent=$hasExplicitError
+        unexpectedSystemErrorPresent=$hasUnexpectedSystemError
+        errorSignalPass=$errorSignalPass
     }
 })
 
