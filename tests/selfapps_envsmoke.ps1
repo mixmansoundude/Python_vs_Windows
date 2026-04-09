@@ -177,9 +177,10 @@ $bootstrapText = @($setup, $bltxt) -join "`n"
 $hasEntryRun = ($bootstrapText -match 'Running entry script smoke test')
 $hasEntryExit = ($bootstrapText -match 'Entry smoke exit=0')
 $hasPyInstaller = ($bootstrapText -match 'PyInstaller produced')
-# derived requirement: failure lanes must emit explicit [ERROR] guidance, while
-# success lanes must not rely on raw cmd.exe/system errors for operator context.
+# derived requirement: REQ-001/REQ-003 are success-path checks; keep them green
+# only when bootstrap has no explicit [ERROR] markers and no raw system errors.
 $hasExplicitError = ($bootstrapText -match '\[ERROR\]')
+$noExplicitError = -not $hasExplicitError
 $hasUnexpectedSystemError = (
     ($bootstrapText -match 'The system cannot find') -or
     ($bootstrapText -match 'is not recognized as an internal or external command')
@@ -191,8 +192,8 @@ $interpreterMatch = [regex]::Match($bootstrapText, '^Interpreter:\s*(.+)$', [Sys
 $interpreterPath = if ($interpreterMatch.Success) { $interpreterMatch.Groups[1].Value.Trim() } else { '' }
 $hasInterpreter = [bool]$interpreterMatch.Success
 $hasExpectedEnv = ($hasInterpreter -and ($interpreterPath -match [regex]::Escape($condaEnvName)))
-$bootstrapPass = (($exit -eq 0) -and $hasEntryRun -and $hasEntryExit -and $hasPyInstaller -and $hasInterpreter -and $hasExpectedEnv)
-$errorSignalPass = if ($bootstrapPass) { -not $hasUnexpectedSystemError } else { $hasExplicitError }
+$bootstrapPass = (($exit -eq 0) -and $hasEntryRun -and $hasEntryExit -and $hasPyInstaller -and $hasInterpreter -and $hasExpectedEnv -and $noExplicitError)
+$errorSignalPass = (-not $hasUnexpectedSystemError)
 
 $smokeCommand = ''
 if ($setup) {
