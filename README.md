@@ -64,6 +64,11 @@ This repository serves as a proof of concept of this new approach.
   - Miniconda root: `%PUBLIC%\Documents\Miniconda3`
   - App workspace: current folder (where the batch runs)
 
+### Limitations
+
+- UNC/network paths (`\\server\share`) are not supported for reliable bootstrap behavior. Map the share to a drive letter before running `run_setup.bat`.
+- Unicode/high-bit characters in key paths are not guaranteed to work across all bootstrap steps.
+
 ---
 
 ## Python & Environment

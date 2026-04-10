@@ -13,6 +13,13 @@ if errorlevel 1 (
 set "HP_SCRIPT_ROOT=%~dp0"
 for %%R in ("%HP_SCRIPT_ROOT%") do set "HP_SCRIPT_ROOT=%%~fR"
 if not "%HP_SCRIPT_ROOT:~-1%"=="\\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"
+echo(%~dp0| findstr /R /C:"^\\\\" >nul
+if not errorlevel 1 (
+  echo *** WARNING: UNC/network paths detected (\\server\share).
+  echo *** This script may fail in this environment.
+  echo *** Recommended: Map the network path to a drive letter and re-run.
+  echo ***
+)
 set "HP_CI_MARKER=.ci_bootstrap_marker"
 type nul > "%HP_CI_MARKER%" 2>nul
 set "LOG=~setup.log"
