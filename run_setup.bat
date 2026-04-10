@@ -405,14 +405,14 @@ if not exist "%HP_PIPREQS_STAGE_ROOT%\" (
     set "HP_PIPREQS_SUMMARY_NOTE=(stage root missing)"
     goto :after_pipreqs_run
 )
-pushd "%HP_PIPREQS_STAGE_ROOT%"
+pushd "%HP_PIPREQS_STAGE_ROOT%" >nul 2>&1
 call :log "[INFO] pipreqs (staging) command: pipreqs . --force --mode compat --savepath ""%HP_PIPREQS_STAGE_TARGET%"""
 echo Pipreqs command (staging): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%"
 :: pipreqs flags are locked by CI (pipreqs.flags gate).
 :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
 "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" > "%HP_PIPREQS_STAGE_LOG%" 2>&1
 set "HP_PIPREQS_RC=%errorlevel%"
-popd
+popd >nul 2>&1
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_STAGE_LOG%"
 if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_STAGE_TARGET%" (
   rem Zero imports are valid: copy the staging file even when pipreqs produced an empty requirements list.
