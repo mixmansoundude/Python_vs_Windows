@@ -406,6 +406,11 @@ if not exist "%HP_PIPREQS_STAGE_ROOT%\" (
     goto :after_pipreqs_run
 )
 pushd "%HP_PIPREQS_STAGE_ROOT%" >nul 2>&1
+if errorlevel 1 (
+    set "HP_PIPREQS_PHASE_RESULT=fail"
+    set "HP_PIPREQS_SUMMARY_NOTE=(pushd to staging root failed)"
+    goto :after_pipreqs_run
+)
 call :log "[INFO] pipreqs (staging) command: pipreqs . --force --mode compat --savepath ""%HP_PIPREQS_STAGE_TARGET%"""
 echo Pipreqs command (staging): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%"
 :: pipreqs flags are locked by CI (pipreqs.flags gate).
@@ -413,6 +418,7 @@ echo Pipreqs command (staging): pipreqs . --force --mode compat --savepath "%HP_
 "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" > "%HP_PIPREQS_STAGE_LOG%" 2>&1
 set "HP_PIPREQS_RC=%errorlevel%"
 popd >nul 2>&1
+if errorlevel 1 call :log "[WARN] pipreqs staging: popd failed; CWD may not be restored."
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_STAGE_LOG%"
 if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_STAGE_TARGET%" (
   rem Zero imports are valid: copy the staging file even when pipreqs produced an empty requirements list.
