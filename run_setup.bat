@@ -1,6 +1,14 @@
 @echo off
 setlocal DisableDelayedExpansion
 rem Boot strap renamed to run_setup.bat
+set "HP_SCRIPT_LAUNCH_DIR=%~dp0"
+if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\" (
+  rem derived requirement: parentheses must be escaped inside IF (...) blocks in CMD or parsing breaks.
+  echo *** WARNING: UNC/network paths detected ^(\\server\share^).
+  echo *** This script may fail in this environment.
+  echo *** Recommended: Map the network path to a drive letter and re-run.
+  echo ***
+)
 if not exist "%~dp0" (
   echo [ERROR] Workspace path invalid: %~dp0
   exit /b 1
