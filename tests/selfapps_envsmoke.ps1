@@ -188,7 +188,10 @@ $unexpectedSystemErrorIgnored = ''
 if ($hasUnexpectedSystemError -and ($unexpectedSystemErrorLine -match '^The system cannot find the drive specified\.?$')) {
     # derived requirement: current Windows CI intermittently emits this line as
     # a non-fatal side effect before a successful PyInstaller artifact is produced.
-    # Keep it visible in diagnostics, but do not fail REQ-001/REQ-003 for it.
+    # The pipreqs staging pushd/popd is suppressed (>nul 2>&1), but another source
+    # (likely inside pip install pyinstaller or conda operations) bypasses the
+    # >> log redirect and writes directly to the console.  Keep it visible in
+    # diagnostics, but do not fail REQ-001/REQ-003 for it.
     $hasUnexpectedSystemError = $false
     $unexpectedSystemErrorIgnored = 'drive-specified-nonfatal'
 }
