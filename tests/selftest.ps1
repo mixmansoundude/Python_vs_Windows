@@ -305,13 +305,13 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($odWarnFound -and ($odExit -eq 0)) { $summary.Add('OneDrive path warning: PASS') } else { $summary.Add('OneDrive path warning: FAIL') }
 
-# --- Long-path (>=200 chars) warning test ---
-# Arrange: run from a directory whose full path exceeds the 200-char guardrail threshold.
+# --- Long-path (>260 chars / MAX_PATH) warning test ---
+# Arrange: run from a directory whose full path exceeds 260 chars (Windows MAX_PATH).
 # Assert:  "[WARN] Script path is N chars" appears in log and bootstrap exits 0.
 $longBase = Join-Path $TestsDir '~selftest_longpath'
-$longSub  = 'pad_' + ('a' * 47)
-$longSub2 = 'b' * 50
-$longSub3 = 'c' * 50
+$longSub  = 'pad_' + ('a' * 80)
+$longSub2 = 'b' * 80
+$longSub3 = 'c' * 80
 $longDir  = Join-Path $longBase "$longSub\$longSub2\$longSub3"
 if (Test-Path $longBase) { Remove-Item -Recurse -Force $longBase }
 New-Item -ItemType Directory -Force -Path $longDir | Out-Null
@@ -333,7 +333,7 @@ $lpActualLen = $longDir.Length
 Write-NdjsonRow ([ordered]@{
   id = 'self.warn.longpath'
   pass = ($lpWarnFound -and ($lpExit -eq 0))
-  desc = 'Bootstrap emits long-path warning and exits 0 when script path is >=200 chars'
+  desc = 'Bootstrap emits long-path warning and exits 0 when script path exceeds 260 chars (MAX_PATH)'
   details = [ordered]@{
     warnFound = $lpWarnFound
     exitCode = $lpExit
