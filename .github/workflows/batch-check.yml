@@ -806,6 +806,20 @@ jobs:
             tests\~pyproject_prec\~setup.log
             tests/~pyproject_prec/runtime.txt
             tests\~pyproject_prec\runtime.txt
+            tests/~selftest_pip_warn/~pip_warn_bootstrap.log
+            tests\~selftest_pip_warn\~pip_warn_bootstrap.log
+            tests/~selftest_pip_warn/~setup.log
+            tests\~selftest_pip_warn\~setup.log
+            tests/~selftest_pip_warn/~bootstrap.status.json
+            tests\~selftest_pip_warn\~bootstrap.status.json
+            tests/~selftest_OneDrive/~onedrive_bootstrap.log
+            tests\~selftest_OneDrive\~onedrive_bootstrap.log
+            tests/~selftest_OneDrive/~setup.log
+            tests\~selftest_OneDrive\~setup.log
+            tests/~selftest_OneDrive/~bootstrap.status.json
+            tests\~selftest_OneDrive\~bootstrap.status.json
+            tests/~selftest_longpath/
+            tests\~selftest_longpath\
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt

@@ -134,6 +134,34 @@ if ($record.pass) {
         $summary.Add("Error: Expected console lines weren't found")
     }
 }
+
+# Assert: guardrail warning messages must NOT fire in an empty-repo (no .py files) bootstrap.
+# This ensures the new pip-install and requirements-copy guardrails don't emit spuriously.
+$noSpurious = $true
+$spuriousPatterns = @(
+    'Some requirements may have failed to install',
+    'Could not generate requirements.txt'
+)
+if ($record.details.logExists -and ($null -ne $logContent)) {
+    foreach ($pat in $spuriousPatterns) {
+        if ($logContent -match [regex]::Escape($pat)) {
+            $noSpurious = $false
+            $summary.Add("Unexpected warning in empty-repo log: $pat")
+        }
+    }
+}
+Write-NdjsonRow ([ordered]@{
+    id = 'self.empty_repo.no_spurious_warn'
+    pass = $noSpurious
+    desc = 'Empty-repo bootstrap does not emit spurious requirement-install warnings'
+    details = [ordered]@{ checked = $spuriousPatterns }
+})
+if ($noSpurious) {
+    $summary.Add('No spurious warnings in empty-repo: PASS')
+} else {
+    $summary.Add('No spurious warnings in empty-repo: FAIL')
+}
+
 $summary | Set-Content -LiteralPath $summaryPath -Encoding Ascii
 if ($record.pass) {
     exit 0

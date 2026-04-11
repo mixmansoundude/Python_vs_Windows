@@ -232,4 +232,114 @@ Write-NdjsonRow ([ordered]@{
   }
 })
 if ($stateSkipFound) { $summary.Add('stub state skip: PASS') } else { $summary.Add('stub state skip: FAIL') }
+
+# --- pip-install warning test ---
+# Arrange: stub .py + a requirements.txt containing a nonexistent package so pip install fails.
+# Assert:  the "*** Warning: Some requirements..." line appears and bootstrap still exits 0.
+$pipWarnDir = Join-Path $TestsDir '~selftest_pip_warn'
+if (Test-Path $pipWarnDir) { Remove-Item -Recurse -Force $pipWarnDir }
+New-Item -ItemType Directory -Force -Path $pipWarnDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $pipWarnDir -Force
+Set-Content -Path (Join-Path $pipWarnDir 'hello_stub.py') -Value 'print("hello-from-stub")' -Encoding ASCII
+Set-Content -Path (Join-Path $pipWarnDir 'requirements.txt') -Value '_fake_pkg_pipwarn_xyz_' -Encoding ASCII
+$pipWarnLogName = '~pip_warn_bootstrap.log'
+Push-Location $pipWarnDir
+try {
+  cmd /c "call run_setup.bat > $pipWarnLogName 2>&1"
+  $pipWarnExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+$pipWarnLogPath = Join-Path $pipWarnDir $pipWarnLogName
+$pipWarnLines = @()
+if (Test-Path $pipWarnLogPath) { $pipWarnLines = Get-Content -LiteralPath $pipWarnLogPath -Encoding ASCII }
+$pipWarnTag = '*** Warning: Some requirements may have failed to install.'
+$pipWarnFound = ($pipWarnLines | Where-Object { $_ -like "*$pipWarnTag*" }).Count -gt 0
+$pipWarnStatusPath = Join-Path $pipWarnDir '~bootstrap.status.json'
+$pipWarnContinued = $false
+if (Test-Path $pipWarnStatusPath) {
+  try {
+    $pipWarnStatus = Get-Content -LiteralPath $pipWarnStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $pipWarnContinued = ($pipWarnStatus.exitCode -eq 0)
+  } catch { }
+}
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.pip_warn'
+  pass = ($pipWarnFound -and $pipWarnContinued)
+  desc = 'Bootstrap emits pip install warning and continues when a requirement fails to install'
+  details = [ordered]@{
+    warnFound = $pipWarnFound
+    continued = $pipWarnContinued
+  }
+})
+if ($pipWarnFound -and $pipWarnContinued) { $summary.Add('pip install warn + continue: PASS') } else { $summary.Add('pip install warn + continue: FAIL') }
+
+# --- OneDrive/synced-folder path warning test ---
+# Arrange: run from a directory whose name contains "OneDrive" so the guardrail fires.
+# Assert:  "[WARN] OneDrive path detected" appears in log and bootstrap exits 0.
+$oneDriveDir = Join-Path $TestsDir '~selftest_OneDrive'
+if (Test-Path $oneDriveDir) { Remove-Item -Recurse -Force $oneDriveDir }
+New-Item -ItemType Directory -Force -Path $oneDriveDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $oneDriveDir -Force
+$odLogName = '~onedrive_bootstrap.log'
+Push-Location $oneDriveDir
+try {
+  cmd /c "call run_setup.bat > $odLogName 2>&1"
+  $odExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+$odLogPath = Join-Path $oneDriveDir $odLogName
+$odLines = @()
+if (Test-Path $odLogPath) { $odLines = Get-Content -LiteralPath $odLogPath -Encoding ASCII }
+$odWarnTag = 'OneDrive path detected'
+$odWarnFound = ($odLines | Where-Object { $_ -like "*$odWarnTag*" }).Count -gt 0
+Write-NdjsonRow ([ordered]@{
+  id = 'self.warn.onedrive'
+  pass = ($odWarnFound -and ($odExit -eq 0))
+  desc = 'Bootstrap emits OneDrive warning and exits 0 when script path contains OneDrive'
+  details = [ordered]@{
+    warnFound = $odWarnFound
+    exitCode = $odExit
+  }
+})
+if ($odWarnFound -and ($odExit -eq 0)) { $summary.Add('OneDrive path warning: PASS') } else { $summary.Add('OneDrive path warning: FAIL') }
+
+# --- Long-path (>=200 chars) warning test ---
+# Arrange: run from a directory whose full path exceeds the 200-char guardrail threshold.
+# Assert:  "[WARN] Script path is N chars" appears in log and bootstrap exits 0.
+$longBase = Join-Path $TestsDir '~selftest_longpath'
+$longSub  = 'pad_' + ('a' * 47)
+$longSub2 = 'b' * 50
+$longSub3 = 'c' * 50
+$longDir  = Join-Path $longBase "$longSub\$longSub2\$longSub3"
+if (Test-Path $longBase) { Remove-Item -Recurse -Force $longBase }
+New-Item -ItemType Directory -Force -Path $longDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $longDir -Force
+$lpLogName = '~longpath_bootstrap.log'
+Push-Location $longDir
+try {
+  cmd /c "call run_setup.bat > $lpLogName 2>&1"
+  $lpExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+$lpLogPath = Join-Path $longDir $lpLogName
+$lpLines = @()
+if (Test-Path $lpLogPath) { $lpLines = Get-Content -LiteralPath $lpLogPath -Encoding ASCII }
+$lpWarnTag = 'Script path is'
+$lpWarnFound = ($lpLines | Where-Object { $_ -like "*$lpWarnTag*chars*" }).Count -gt 0
+$lpActualLen = $longDir.Length
+Write-NdjsonRow ([ordered]@{
+  id = 'self.warn.longpath'
+  pass = ($lpWarnFound -and ($lpExit -eq 0))
+  desc = 'Bootstrap emits long-path warning and exits 0 when script path is >=200 chars'
+  details = [ordered]@{
+    warnFound = $lpWarnFound
+    exitCode = $lpExit
+    pathLen = $lpActualLen
+  }
+})
+if ($lpWarnFound -and ($lpExit -eq 0)) { $summary.Add('Long-path warning: PASS') } else { $summary.Add("Long-path warning: FAIL (len=$lpActualLen, found=$lpWarnFound, exit=$lpExit)") }
+
 $summary | Set-Content -Path $summaryPath -Encoding ASCII
