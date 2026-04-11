@@ -27,6 +27,18 @@ set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
+rem --- Path-length guard: warn if script root path approaches the 260-char cmd.exe limit ---
+for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:HP_SCRIPT_ROOT.Length" 2^>nul`) do set "HP_PATH_LEN=%%L"
+if defined HP_PATH_LEN if %HP_PATH_LEN% GEQ 200 (
+  echo *** WARNING: Script path is %HP_PATH_LEN% chars. Paths near 260 chars may cause cmd.exe failures.
+  call :log "[WARN] Script path is %HP_PATH_LEN% chars; paths near 260 chars may cause failures."
+)
+set "HP_PATH_LEN="
+rem --- Synced-folder guard: warn when running from a OneDrive or similar sync folder ---
+if /I not "%HP_SCRIPT_ROOT:OneDrive=%"=="%HP_SCRIPT_ROOT%" (
+  echo *** WARNING: Script appears to be in a OneDrive folder. File locking may cause failures.
+  call :log "[WARN] OneDrive path detected; file locking may cause failures."
+)
 if exist "%STATUS_FILE%" del "%STATUS_FILE%"
 set "HP_BOOTSTRAP_STATE=ok"
 set "HP_ENV_MODE=conda"
@@ -229,6 +241,11 @@ if /I "%HP_ENV_STATE_RESULT%"=="skip" (
   goto :env_state_fast_path
 )
 :env_state_check_done
+rem --- ENVNAME guard: default to 'env' if sanitization yielded an empty name ---
+if "%ENVNAME%"=="" (
+  call :log "[WARN] Conda env name resolved to empty; defaulting to 'env'."
+  set "ENVNAME=env"
+)
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" "python<3.13" --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
@@ -482,7 +499,13 @@ if "%HP_PIPREQS_PHASE_RESULT%"=="ok" (
     call :die "[ERROR] pipreqs generation failed."
   )
 )
-if not exist "%REQ%" if exist "requirements.auto.txt" ( copy /y "requirements.auto.txt" "requirements.txt" >> "%LOG%" 2>&1 )
+if not exist "%REQ%" if exist "requirements.auto.txt" (
+  copy /y "requirements.auto.txt" "requirements.txt" >> "%LOG%" 2>&1
+  if errorlevel 1 (
+    echo *** Could not generate requirements.txt. Continuing without dependencies...
+    call :log "[WARN] Failed to copy requirements.auto.txt to requirements.txt; continuing without dependency installation."
+  )
+)
 if exist "requirements.txt" if exist "requirements.auto.txt" ( fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1 )
 rem --- Dep-check fast path: skip conda install when all pipreqs packages are in the lock ---
 rem derived requirement: skip the slow conda solver on repeat runs when the
@@ -519,8 +542,16 @@ if exist "requirements.txt" (
       )
     )
     "%HP_PY%" -m pip install -r requirements.txt >> "%LOG%" 2>&1
+    if errorlevel 1 (
+      echo *** Warning: Some requirements may have failed to install.
+      call :log "[WARN] pip install -r requirements.txt failed; some packages may be missing."
+    )
   ) else if "%HP_ENV_MODE%"=="venv" (
     "%HP_PY%" -m pip install -r requirements.txt >> "%LOG%" 2>&1
+    if errorlevel 1 (
+      echo *** Warning: Some requirements may have failed to install.
+      call :log "[WARN] pip install -r requirements.txt failed; some packages may be missing."
+    )
   ) else (
     call :log "[WARN] System fallback: skipping requirement installation."
   )
