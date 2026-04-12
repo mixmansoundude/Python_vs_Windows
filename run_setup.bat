@@ -158,6 +158,11 @@ if not defined CONDA_BAT (
   set "HP_CONDA_DL_RC=0"
   curl -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
   if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
+  if not exist "%TEMP%\miniconda.exe" (
+    echo *** curl download failed, trying PowerShell...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri '%HP_MINICONDA_URL%' -OutFile '%TEMP%\miniconda.exe' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
+    if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
+  )
   if not exist "%TEMP%\miniconda.exe" set "HP_CONDA_DL_RC=1"
   if exist "%TEMP%\miniconda.exe" (
     REM Attempt AllUsers install with JustMe fallback; see :try_conda_install.
@@ -315,8 +320,21 @@ echo Interpreter: %HP_PY%
 >> "%LOG%" echo Interpreter: %HP_PY%
 call :append_env_mode_row
 "%HP_PY%" -c "print('py_ok')" 1>nul 2>nul || call :log "[WARN] Interpreter smoke test failed (continuing)."
+set "PEP723_ACTIVE="
+set "PEP723_REQ=~requirements.pep723.txt"
+if exist "%PEP723_REQ%" del "%PEP723_REQ%" >nul 2>&1
+call :determine_entry "%~1"
+if errorlevel 1 call :die "[ERROR] Could not determine entry point"
+if defined HP_ENTRY if exist "%HP_ENTRY%" (
+  findstr /c:"# /// script" "%HP_ENTRY%" >nul 2>&1
+  if not errorlevel 1 (
+    echo *** PEP 723 metadata detected
+    call :extract_pep723_requirements "%HP_ENTRY%" "%PEP723_REQ%"
+    if exist "%PEP723_REQ%" for %%S in ("%PEP723_REQ%") do if %%~zS GTR 0 set "PEP723_ACTIVE=1"
+  )
+)
 
-if not defined HP_SKIP_PIPREQS (
+if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
   "%HP_PY%" -m pip install -q --disable-pip-version-check pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
   if errorlevel 1 call :die "[ERROR] pipreqs install failed."
 )
@@ -348,6 +366,17 @@ if defined HP_SKIP_PIPREQS (
   set "HP_PIPREQS_PHASE_RESULT=skipped"
   set "HP_PIPREQS_SUMMARY_PHASE=skipped"
   set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs skipped for %HP_ENV_MODE% mode)"
+  set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
+  goto :after_pipreqs_run
+)
+if defined PEP723_ACTIVE (
+  echo *** Using dependencies from PEP 723 metadata
+  copy /y "%PEP723_REQ%" "requirements.txt" >nul 2>&1
+  if errorlevel 1 call :die "[ERROR] Could not stage PEP 723 requirements."
+  copy /y "%PEP723_REQ%" "requirements.auto.txt" >nul 2>&1
+  set "HP_PIPREQS_PHASE_RESULT=skipped"
+  set "HP_PIPREQS_SUMMARY_PHASE=skipped"
+  set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs skipped: PEP 723 metadata)"
   set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
   goto :after_pipreqs_run
 )
@@ -716,7 +745,7 @@ goto :after_env_bootstrap
 
 :after_env_bootstrap
 if defined HP_CI_SKIP_ENV goto :after_env_skip
-call :determine_entry
+call :determine_entry "%~1"
 if errorlevel 1 call :die "[ERROR] Could not determine entry point"
 if "%HP_ENTRY%"=="" (
   call :log "[INFO] No entry script detected; skipping PyInstaller packaging."
@@ -991,10 +1020,37 @@ if defined HP_NDJSON (
 if exist "%HP_DL_PATH%" del "%HP_DL_PATH%" >nul 2>&1
 exit /b 1
 
+:extract_pep723_requirements
+set "HP_PEP723_IN=%~1"
+set "HP_PEP723_OUT=%~2"
+if exist "%HP_PEP723_OUT%" del "%HP_PEP723_OUT%" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$inside = $false; $deps = $false;" ^
+  "Get-Content -LiteralPath '%HP_PEP723_IN%' | ForEach-Object {" ^
+  "  $line = $_;" ^
+  "  if (-not $inside) { if ($line -eq '# /// script') { $inside = $true }; return }" ^
+  "  if ($line -eq '# ///') { $inside = $false; $deps = $false; return }" ^
+  "  $trim = $line.Trim();" ^
+  "  $compact = ($trim -replace '\s','');" ^
+  "  if ($compact -like '#dependencies=*[') { $deps = $true; return }" ^
+  "  if ($deps -and $compact -eq '#]') { $deps = $false; return }" ^
+  "  if ($deps -and $trim.StartsWith('# ""')) { $item = $trim.Substring(3).Trim(); if ($item.EndsWith('""')) { $item = $item.Substring(0, $item.Length - 1) }; $item }" ^
+  "} | Set-Content -LiteralPath '%HP_PEP723_OUT%' -Encoding ASCII" >> "%LOG%" 2>&1
+exit /b %errorlevel%
+
 :determine_entry
 set "HP_ENTRY="
 set "HP_ENTRY_CMD="
 set "HP_ENTRY_ARGS="
+if not "%~1"=="" if exist "%~1" (
+  set "MAIN_FILE=%~1"
+  set "HP_ENTRY=%MAIN_FILE%"
+  if not defined HP_DRAG_MSG_EMITTED (
+    echo *** Using drag-and-drop file: %MAIN_FILE%
+    set "HP_DRAG_MSG_EMITTED=1"
+  )
+  exit /b 0
+)
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 exit /b 1
 call :update_find_entry_abs
