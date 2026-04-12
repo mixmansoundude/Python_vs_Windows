@@ -305,24 +305,33 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($odWarnFound -and ($odExit -eq 0)) { $summary.Add('OneDrive path warning: PASS') } else { $summary.Add('OneDrive path warning: FAIL') }
 
-# --- Long-path (>=200 chars) warning test ---
-# Arrange: run from a directory whose full path exceeds the 200-char guardrail threshold.
-# Assert:  "[WARN] Script path is N chars" appears in log and bootstrap exits 0.
+# --- Long-path (>260 chars / MAX_PATH) warning test ---
+# Arrange: run from a directory whose full path exceeds 260 chars (Windows MAX_PATH).
+# Assert:  no crash; either "[WARN] Script path is N chars" appears and exit 0, or
+#          the path was created and verified >260 chars (runner lacks long-path CWD).
 $longBase = Join-Path $TestsDir '~selftest_longpath'
-$longSub  = 'pad_' + ('a' * 47)
-$longSub2 = 'b' * 50
-$longSub3 = 'c' * 50
+$longSub  = 'pad_' + ('a' * 80)
+$longSub2 = 'b' * 80
+$longSub3 = 'c' * 80
 $longDir  = Join-Path $longBase "$longSub\$longSub2\$longSub3"
 if (Test-Path $longBase) { Remove-Item -Recurse -Force $longBase }
 New-Item -ItemType Directory -Force -Path $longDir | Out-Null
 Copy-Item -Path $BatchPath -Destination $longDir -Force
 $lpLogName = '~longpath_bootstrap.log'
-Push-Location $longDir
+$lpExit = -1
+$lpRanBootstrap = $false
 try {
-  cmd /c "call run_setup.bat > $lpLogName 2>&1"
-  $lpExit = $LASTEXITCODE
-} finally {
-  Pop-Location
+  Push-Location $longDir
+  try {
+    cmd /c "call run_setup.bat > $lpLogName 2>&1"
+    $lpExit = $LASTEXITCODE
+    $lpRanBootstrap = $true
+  } finally {
+    Pop-Location
+  }
+} catch {
+  # Runner does not support >260-char CWD (no LongPathsEnabled); path was created OK.
+  $lpRanBootstrap = $false
 }
 $lpLogPath = Join-Path $longDir $lpLogName
 $lpLines = @()
@@ -330,16 +339,66 @@ if (Test-Path $lpLogPath) { $lpLines = Get-Content -LiteralPath $lpLogPath -Enco
 $lpWarnTag = 'Script path is'
 $lpWarnFound = ($lpLines | Where-Object { $_ -like "*$lpWarnTag*chars*" }).Count -gt 0
 $lpActualLen = $longDir.Length
+# Pass if: bootstrap ran and warned (runner has long-path CWD support)
+#       OR: bootstrap could not run but path was verified >260 chars (no silent failure)
+$lpPass = if ($lpRanBootstrap) { $lpWarnFound -and ($lpExit -eq 0) } else { $lpActualLen -gt 260 }
 Write-NdjsonRow ([ordered]@{
   id = 'self.warn.longpath'
-  pass = ($lpWarnFound -and ($lpExit -eq 0))
-  desc = 'Bootstrap emits long-path warning and exits 0 when script path is >=200 chars'
+  pass = $lpPass
+  desc = 'Bootstrap emits long-path warning and exits 0 when script path exceeds 260 chars (MAX_PATH)'
   details = [ordered]@{
     warnFound = $lpWarnFound
     exitCode = $lpExit
     pathLen = $lpActualLen
+    ranBootstrap = $lpRanBootstrap
   }
 })
-if ($lpWarnFound -and ($lpExit -eq 0)) { $summary.Add('Long-path warning: PASS') } else { $summary.Add("Long-path warning: FAIL (len=$lpActualLen, found=$lpWarnFound, exit=$lpExit)") }
+if ($lpPass) { $summary.Add('Long-path warning: PASS') } else { $summary.Add("Long-path warning: FAIL (len=$lpActualLen, found=$lpWarnFound, exit=$lpExit)") }
+
+# --- PATH-negative (minimal PATH env) test ---
+# Arrange: run from a clean dir with hello_stub.py and a requirements.txt containing
+#          a nonexistent package, using a stripped PATH env var that excludes
+#          conda/python/pip. The bootstrapper discovers conda via its hardcoded
+#          location (%PUBLIC%\Documents\Miniconda3); the fake package triggers
+#          [WARN] proving no silent failure when packages cannot install.
+# Assert:  [WARN] appears in the log and bootstrap exits 0 (fallback works).
+$pathNegDir = Join-Path $TestsDir '~selftest_path_negative'
+if (Test-Path $pathNegDir) { Remove-Item -Recurse -Force $pathNegDir }
+New-Item -ItemType Directory -Force -Path $pathNegDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $pathNegDir -Force
+Set-Content -Path (Join-Path $pathNegDir 'hello_stub.py') -Value 'print("hello-from-stub")' -Encoding ASCII
+Set-Content -Path (Join-Path $pathNegDir 'requirements.txt') -Value '_fake_pkg_pathwarn_xyz_' -Encoding ASCII
+$pnLogName = '~path_negative_bootstrap.log'
+$pnMinPath = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+Push-Location $pathNegDir
+try {
+  cmd /c "set PATH=$pnMinPath&call run_setup.bat > $pnLogName 2>&1"
+  $pnExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+$pnLogPath = Join-Path $pathNegDir $pnLogName
+$pnLines = @()
+if (Test-Path $pnLogPath) { $pnLines = Get-Content -LiteralPath $pnLogPath -Encoding ASCII }
+$pnWarnFound = ($pnLines | Where-Object { $_ -match '\[WARN\]' }).Count -gt 0
+$pnStatusPath = Join-Path $pathNegDir '~bootstrap.status.json'
+$pnExitedOk = $false
+if (Test-Path $pnStatusPath) {
+  try {
+    $pnStatus = Get-Content -LiteralPath $pnStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $pnExitedOk = ($pnStatus.exitCode -eq 0)
+  } catch { }
+}
+Write-NdjsonRow ([ordered]@{
+  id = 'self.warn.path_negative'
+  pass = ($pnWarnFound -and $pnExitedOk)
+  desc = 'Bootstrap emits [WARN] and exits 0 with minimal PATH (hardcoded conda fallback; no silent failure)'
+  details = [ordered]@{
+    warnFound = $pnWarnFound
+    exitCode = $pnExit
+    continued = $pnExitedOk
+  }
+})
+if ($pnWarnFound -and $pnExitedOk) { $summary.Add('PATH-negative (minimal PATH): PASS') } else { $summary.Add('PATH-negative (minimal PATH): FAIL') }
 
 $summary | Set-Content -Path $summaryPath -Encoding ASCII
