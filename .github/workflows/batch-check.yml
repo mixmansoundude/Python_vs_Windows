@@ -820,6 +820,12 @@ jobs:
             tests\~selftest_OneDrive\~bootstrap.status.json
             tests/~selftest_longpath/
             tests\~selftest_longpath\
+            tests/~selftest_path_negative/~path_negative_bootstrap.log
+            tests\~selftest_path_negative\~path_negative_bootstrap.log
+            tests/~selftest_path_negative/~setup.log
+            tests\~selftest_path_negative\~setup.log
+            tests/~selftest_path_negative/~bootstrap.status.json
+            tests\~selftest_path_negative\~bootstrap.status.json
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt

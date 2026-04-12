@@ -355,4 +355,50 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($lpPass) { $summary.Add('Long-path warning: PASS') } else { $summary.Add("Long-path warning: FAIL (len=$lpActualLen, found=$lpWarnFound, exit=$lpExit)") }
 
+# --- PATH-negative (minimal PATH env) test ---
+# Arrange: run from a clean dir with hello_stub.py and a requirements.txt containing
+#          a nonexistent package, using a stripped PATH env var that excludes
+#          conda/python/pip. The bootstrapper discovers conda via its hardcoded
+#          location (%PUBLIC%\Documents\Miniconda3); the fake package triggers
+#          [WARN] proving no silent failure when packages cannot install.
+# Assert:  [WARN] appears in the log and bootstrap exits 0 (fallback works).
+$pathNegDir = Join-Path $TestsDir '~selftest_path_negative'
+if (Test-Path $pathNegDir) { Remove-Item -Recurse -Force $pathNegDir }
+New-Item -ItemType Directory -Force -Path $pathNegDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $pathNegDir -Force
+Set-Content -Path (Join-Path $pathNegDir 'hello_stub.py') -Value 'print("hello-from-stub")' -Encoding ASCII
+Set-Content -Path (Join-Path $pathNegDir 'requirements.txt') -Value '_fake_pkg_pathwarn_xyz_' -Encoding ASCII
+$pnLogName = '~path_negative_bootstrap.log'
+$pnMinPath = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+Push-Location $pathNegDir
+try {
+  cmd /c "set PATH=$pnMinPath&call run_setup.bat > $pnLogName 2>&1"
+  $pnExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+$pnLogPath = Join-Path $pathNegDir $pnLogName
+$pnLines = @()
+if (Test-Path $pnLogPath) { $pnLines = Get-Content -LiteralPath $pnLogPath -Encoding ASCII }
+$pnWarnFound = ($pnLines | Where-Object { $_ -match '\[WARN\]' }).Count -gt 0
+$pnStatusPath = Join-Path $pathNegDir '~bootstrap.status.json'
+$pnExitedOk = $false
+if (Test-Path $pnStatusPath) {
+  try {
+    $pnStatus = Get-Content -LiteralPath $pnStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $pnExitedOk = ($pnStatus.exitCode -eq 0)
+  } catch { }
+}
+Write-NdjsonRow ([ordered]@{
+  id = 'self.warn.path_negative'
+  pass = ($pnWarnFound -and $pnExitedOk)
+  desc = 'Bootstrap emits [WARN] and exits 0 with minimal PATH (hardcoded conda fallback; no silent failure)'
+  details = [ordered]@{
+    warnFound = $pnWarnFound
+    exitCode = $pnExit
+    continued = $pnExitedOk
+  }
+})
+if ($pnWarnFound -and $pnExitedOk) { $summary.Add('PATH-negative (minimal PATH): PASS') } else { $summary.Add('PATH-negative (minimal PATH): FAIL') }
+
 $summary | Set-Content -Path $summaryPath -Encoding ASCII
