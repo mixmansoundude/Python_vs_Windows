@@ -1,5 +1,6 @@
 @echo off
 setlocal DisableDelayedExpansion
+set "DEP_SOURCE=unknown"
 rem Boot strap renamed to run_setup.bat
 set "HP_SCRIPT_LAUNCH_DIR=%~dp0"
 if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\" (
@@ -310,6 +311,11 @@ call :emit_from_base64 "~prep_requirements.py" HP_PREP_REQUIREMENTS
 if errorlevel 1 call :die "[ERROR] Could not write ~prep_requirements.py"
 set "REQ=requirements.txt"
 if exist "%REQ%" ( for %%S in ("%REQ%") do if %%~zS EQU 0 del "%REQ%" )
+if exist "%REQ%" (
+  echo *** [INFO] Using requirements.txt for dependencies
+  echo *** [INFO] Dependency accuracy depends on file correctness
+  set "DEP_SOURCE=requirements.txt"
+)
 set "HP_JOB_SUMMARY=~pipreqs.summary.txt"
 if exist "%HP_JOB_SUMMARY%" del "%HP_JOB_SUMMARY%"
 if not defined HP_PY (
@@ -371,6 +377,9 @@ if defined HP_SKIP_PIPREQS (
 )
 if defined PEP723_ACTIVE (
   echo *** Using dependencies from PEP 723 metadata
+  echo *** [INFO] Using PEP 723 inline dependency metadata
+  echo *** [INFO] Dependency accuracy depends on script metadata correctness
+  set "DEP_SOURCE=pep723"
   copy /y "%PEP723_REQ%" "requirements.txt" >nul 2>&1
   if errorlevel 1 call :die "[ERROR] Could not stage PEP 723 requirements."
   copy /y "%PEP723_REQ%" "requirements.auto.txt" >nul 2>&1
@@ -380,6 +389,10 @@ if defined PEP723_ACTIVE (
   set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
   goto :after_pipreqs_run
 )
+echo *** [WARN] Dependencies were auto-detected (pipreqs)
+echo *** [WARN] Auto-detection may be incomplete or incorrect
+echo *** [INFO] Consider adding requirements.txt or PEP 723 metadata for reliability
+if not "%DEP_SOURCE%"=="requirements.txt" set "DEP_SOURCE=pipreqs"
 
 rem pipreqs flags are locked by CI (pipreqs.flags gate).
 rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
@@ -765,6 +778,8 @@ call :write_status ok 0 %PYCOUNT%
 goto :success
 
 :success
+echo dependency_source=%DEP_SOURCE%> "dependency_source.txt"
+echo *** [INFO] Dependency source logged to dependency_source.txt
 exit /b 0
 :count_python
 set "NAME=%~1"
