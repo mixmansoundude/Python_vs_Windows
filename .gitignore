@@ -35,3 +35,6 @@ _iter/
 actionlint
 actionlint_linux_amd64.tar.gz
 actionlint_*.tar.gz
+
+# Dependency source diagnostics artifact (written by run_setup.bat)
+dependency_source.txt
