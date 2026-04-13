@@ -728,6 +728,7 @@ jobs:
             bootstrap.log
             ~setup.log
             runtime.txt
+            dependency_source.txt
             tests/~dynamic-run.log
             tests/~entry1/~entry1_bootstrap.log
             tests\~entry1\~entry1_bootstrap.log
