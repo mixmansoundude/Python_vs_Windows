@@ -131,7 +131,7 @@ to fill remaining gaps quickly.
 
 ### Dependency strategy
 
-- `pipreqs` is used for discovery only -- it is not authoritative for versions or completeness.
+- `pipreqs` is used for discovery only -- it is not authoritative for versions or completeness. If pipreqs fails, bootstrap continues on available requirements rather than stopping; getting the code to run takes priority.
 - An existing `requirements.txt` is treated as input (hints), not as the authoritative specification.
 - conda performs final resolution from conda-forge; what it installs is the truth.
 - Implicit and plugin dependencies (for example, `pandas` needing `openpyxl` for `read_excel`) cannot be detected statically -- `pipreqs` only sees `import pandas`, not the runtime method call. These surface as `ImportError` at runtime.
