@@ -79,10 +79,16 @@ call :define_helper_payloads
 for %%I in ("%CD%") do set "ENVNAME=%%~nI"
 rem derived requirement: conda env names reject characters like '~'; self env smoke
 rem scenarios run from tests\~envsmoke so normalize to ASCII word chars/_/-.
+set "ENVNAME_ORIG=%ENVNAME%"
 set "ENVNAME_SANITIZED="
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = $env:ENVNAME; if (-not $name) { $name = 'env'; } $san = ($name -replace '[^A-Za-z0-9_-]', '_'); if ([string]::IsNullOrWhiteSpace($san) -or ($san.Trim('_').Length -eq 0)) { $san = 'env'; } [Console]::Write($san)"` ) do set "ENVNAME_SANITIZED=%%I"
 if defined ENVNAME_SANITIZED set "ENVNAME=%ENVNAME_SANITIZED%"
 set "ENVNAME_SANITIZED="
+rem G1 guardrail: warn when folder name contained only non-word chars and defaulted to 'env'
+if "%ENVNAME%"=="env" if not "%ENVNAME_ORIG%"=="env" (
+  call :log "[WARN] Env name could not be derived from '%ENVNAME_ORIG%'; defaulting to 'env'."
+)
+set "ENVNAME_ORIG="
 
 
 set "PYCOUNT=0"
@@ -145,6 +151,8 @@ if "%HP_CONDA_PROBE_STATUS%"=="skipped" (
 if defined HP_CI_SKIP_ENV goto :ci_skip_entry
 
 rem === Miniconda location (non-admin) =========================================
+rem G2 guardrail: warn if PUBLIC is absent so path failures are observable
+if not defined PUBLIC call :log "[WARN] PUBLIC env var not defined; Miniconda path may be invalid."
 set "MC=%PUBLIC%\Documents\Miniconda3"
 set "CONDA_MAIN=%MC%\condabin\conda.bat"
 set "CONDA_ALT=%MC%\Scripts\conda.bat"
@@ -252,6 +260,8 @@ if "%ENVNAME%"=="" (
   call :log "[WARN] Conda env name resolved to empty; defaulting to 'env'."
   set "ENVNAME=env"
 )
+rem Recalculate ENV_PATH so it is always consistent with the guarded ENVNAME value
+set "ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%"
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" "python<3.13" --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
@@ -538,7 +548,8 @@ if "%HP_PIPREQS_PHASE_RESULT%"=="ok" (
     if not defined HP_PIPREQS_SUMMARY_NOTE set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs run failed)"
     set "HP_PIPREQS_FAILURE_LOG=%HP_PIPREQS_LAST_LOG%"
     call :write_pipreqs_summary
-    call :die "[ERROR] pipreqs generation failed."
+    rem G3 guardrail: pipreqs is discovery only; a failed scan must not block bootstrap.
+    call :log "[WARN] pipreqs generation failed; continuing without auto-detected requirements."
   )
 )
 if not exist "%REQ%" if exist "requirements.auto.txt" (

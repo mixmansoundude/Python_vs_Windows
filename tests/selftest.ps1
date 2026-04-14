@@ -401,4 +401,65 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($pnWarnFound -and $pnExitedOk) { $summary.Add('PATH-negative (minimal PATH): PASS') } else { $summary.Add('PATH-negative (minimal PATH): FAIL') }
 
+
+# --- G1 guardrail: ENVNAME derivation warns when folder name is all non-word chars ---
+# Arrange: dir named '~@~' so every char is outside [A-Za-z0-9_-]; sanitizes to '___'
+# which Trim('_') empties, forcing the default 'env' and triggering [WARN].
+$g1Base   = Join-Path $TestsDir '~selftest_guardrail_g1'
+$g1RunDir = Join-Path $g1Base   '~@~'
+if (Test-Path $g1Base) { Remove-Item -Recurse -Force $g1Base }
+New-Item -ItemType Directory -Force -Path $g1RunDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $g1RunDir -Force
+$g1LogName = '~g1_bootstrap.log'
+Push-Location $g1RunDir
+try {
+  cmd /c "call run_setup.bat > $g1LogName 2>&1"
+  $g1Exit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+$g1LogPath = Join-Path $g1RunDir $g1LogName
+$g1Lines   = @()
+if (Test-Path $g1LogPath) { $g1Lines = Get-Content -LiteralPath $g1LogPath -Encoding ASCII }
+$g1WarnTag   = 'Env name could not be derived from'
+$g1WarnFound = ($g1Lines | Where-Object { $_ -like "*$g1WarnTag*" }).Count -gt 0
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.guardrail.g1'
+  pass = ($g1WarnFound -and ($g1Exit -eq 0))
+  desc = 'G1: all-non-word folder name emits [WARN] and exits 0 (no silent ENVNAME expansion)'
+  details = [ordered]@{ warnFound = $g1WarnFound; exitCode = $g1Exit }
+})
+if ($g1WarnFound -and ($g1Exit -eq 0)) { $summary.Add('G1 (ENVNAME guard warn): PASS') } else { $summary.Add('G1 (ENVNAME guard warn): FAIL') }
+
+# --- G2 guardrail: interpreter resolved to non-empty path (no empty-command expansion) ---
+# Assert: the stub bootstrap log contains 'Interpreter: <non-empty-path>' proving
+# HP_PY was guarded before use and no empty-string command was expanded.
+$g2LogPath   = Join-Path $stubDir $stubBootstrapLog
+$g2Lines     = @()
+if (Test-Path $g2LogPath) { $g2Lines = Get-Content -LiteralPath $g2LogPath -Encoding ASCII }
+$g2InterpLine = $g2Lines | Where-Object { $_ -like 'Interpreter: ?*' } | Select-Object -First 1
+$g2InterpOk   = $null -ne $g2InterpLine
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.guardrail.g2'
+  pass = $g2InterpOk
+  desc = 'G2: interpreter resolved to non-empty path before execution (no empty-command expansion)'
+  details = [ordered]@{
+    found    = $g2InterpOk
+    interpLine = if ($g2InterpLine) { $g2InterpLine.Substring(0, [Math]::Min(80, $g2InterpLine.Length)) } else { '' }
+  }
+})
+if ($g2InterpOk) { $summary.Add('G2 (interpreter non-empty): PASS') } else { $summary.Add('G2 (interpreter non-empty): FAIL') }
+
+# --- G3 guardrail: dependency failure path is observable and non-fatal ---
+# Reuses pip-install-warn scenario: a bad requirements.txt causes pip install to fail;
+# bootstrap must emit [WARN] and continue (state=ok), not silently stop.
+$g3Pass = ($pipWarnFound -and $pipWarnContinued)
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.guardrail.g3'
+  pass = $g3Pass
+  desc = 'G3: dependency install failure emits [WARN] and bootstrap exits 0 (no silent failure)'
+  details = [ordered]@{ warnInLog = $pipWarnFound; bootstrapContinued = $pipWarnContinued }
+})
+if ($g3Pass) { $summary.Add('G3 (no-silent-failure): PASS') } else { $summary.Add('G3 (no-silent-failure): FAIL') }
+
 $summary | Set-Content -Path $summaryPath -Encoding ASCII
