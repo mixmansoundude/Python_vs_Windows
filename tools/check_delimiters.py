@@ -356,6 +356,7 @@ class DelimiterChecker:
                     self._check_bat_forloop_pipes(line_no, segment)
                     if scan_from is None and not line.rstrip().endswith("^"):
                         self._bat_in_backtick = False
+                self._check_bat_ps_like_brackets(line_no, line)
 
         return self.issues
 
@@ -383,6 +384,35 @@ class DelimiterChecker:
                     "incorrect.' Use '^|' instead.",
                 )
             i += 1
+
+    def _check_bat_ps_like_brackets(self, line_no: int, line: str) -> None:
+        """Flag unmatched '[' inside PowerShell -like pattern strings embedded in .bat files.
+
+        PS wildcard patterns treat '[' as a character-class opener (like regex). An
+        unmatched '[' (no closing ']') causes the -like operator to silently return
+        False or throw, depending on the PS version. This is invisible to the outer
+        delimiter checker because the pattern sits inside a quoted batch string.
+        """
+        # derived requirement: the -like '#dependencies=*[' bug (unmatched bracket in
+        # PS wildcard pattern inside a batch double-quoted string) was undetectable by the
+        # standard delimiter pass. This targeted scan prevents the same class of regression.
+        for match in re.finditer(r"-like\s+'([^']*)'", line, re.IGNORECASE):
+            pattern = match.group(1)
+            depth = 0
+            for ch in pattern:
+                if ch == "[":
+                    depth += 1
+                elif ch == "]":
+                    depth -= 1
+            if depth != 0:
+                col = match.start(1) + 1
+                self.add_issue(
+                    line_no,
+                    col,
+                    f"Unmatched '[' in PowerShell -like pattern '{pattern}'; "
+                    "PS wildcard treats '[' as a character-class opener -- "
+                    "use .StartsWith()/.EndsWith() or escape as '`[' instead.",
+                )
 
     def _check_ps1_boolean_operators(self, line_no: int, line: str) -> None:
         # derived requirement: Windows runners surfaced "parameter name 'or'" faults whenever -or/-and sat

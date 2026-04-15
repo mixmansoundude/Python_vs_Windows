@@ -337,18 +337,27 @@ echo Interpreter: %HP_PY%
 call :append_env_mode_row
 "%HP_PY%" -c "print('py_ok')" 1>nul 2>nul || call :log "[WARN] Interpreter smoke test failed (continuing)."
 set "PEP723_ACTIVE="
+set "PEP723_BLOCK_FOUND="
 set "PEP723_REQ=~requirements.pep723.txt"
 if exist "%PEP723_REQ%" del "%PEP723_REQ%" >nul 2>&1
 call :determine_entry "%~1"
 if errorlevel 1 call :die "[ERROR] Could not determine entry point"
-if defined HP_ENTRY if exist "%HP_ENTRY%" (
-  findstr /c:"# /// script" "%HP_ENTRY%" >nul 2>&1
-  if not errorlevel 1 (
-    echo *** PEP 723 metadata detected
-    call :extract_pep723_requirements "%HP_ENTRY%" "%PEP723_REQ%"
-    if exist "%PEP723_REQ%" for %%S in ("%PEP723_REQ%") do if %%~zS GTR 0 set "PEP723_ACTIVE=1"
+if not "%DEP_SOURCE%"=="requirements.txt" (
+  if defined HP_ENTRY if exist "%HP_ENTRY%" (
+    findstr /c:"# /// script" "%HP_ENTRY%" >nul 2>&1
+    if not errorlevel 1 (
+      set "PEP723_BLOCK_FOUND=1"
+      echo *** PEP 723 metadata detected
+      call :extract_pep723_requirements "%HP_ENTRY%" "%PEP723_REQ%"
+      if exist "%PEP723_REQ%" for %%S in ("%PEP723_REQ%") do if %%~zS GTR 0 set "PEP723_ACTIVE=1"
+    )
+  )
+  if defined PEP723_BLOCK_FOUND if not defined PEP723_ACTIVE (
+    echo *** [WARN] PEP 723 block found but dependency list is empty or malformed; falling back
+    call :log "[WARN] PEP 723 block found but no valid dependencies extracted; pipreqs fallback."
   )
 )
+set "PEP723_BLOCK_FOUND="
 
 if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
   "%HP_PY%" -m pip install -q --disable-pip-version-check pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
@@ -1058,7 +1067,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "  if ($line -eq '# ///') { $inside = $false; $deps = $false; return }" ^
   "  $trim = $line.Trim();" ^
   "  $compact = ($trim -replace '\s','');" ^
-  "  if ($compact -like '#dependencies=*[') { $deps = $true; return }" ^
+  "  if ($compact.StartsWith('#dependencies=') -and $compact.EndsWith('[')) { $deps = $true; return }" ^
   "  if ($deps -and $compact -eq '#]') { $deps = $false; return }" ^
   "  if ($deps -and $trim.StartsWith('# ""')) { $item = $trim.Substring(3).Trim(); if ($item.EndsWith('""')) { $item = $item.Substring(0, $item.Length - 1) }; $item }" ^
   "} | Set-Content -LiteralPath '%HP_PEP723_OUT%' -Encoding ASCII" >> "%LOG%" 2>&1
