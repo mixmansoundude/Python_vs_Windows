@@ -1067,7 +1067,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "  if ($line -eq '# ///') { $inside = $false; $deps = $false; return }" ^
   "  $trim = $line.Trim();" ^
   "  $compact = ($trim -replace '\s','');" ^
-  "  if ($compact -like '#dependencies=*[') { $deps = $true; return }" ^
+  "  if ($compact.StartsWith('#dependencies=') -and $compact.EndsWith('[')) { $deps = $true; return }" ^
   "  if ($deps -and $compact -eq '#]') { $deps = $false; return }" ^
   "  if ($deps -and $trim.StartsWith('# ""')) { $item = $trim.Substring(3).Trim(); if ($item.EndsWith('""')) { $item = $item.Substring(0, $item.Length - 1) }; $item }" ^
   "} | Set-Content -LiteralPath '%HP_PEP723_OUT%' -Encoding ASCII" >> "%LOG%" 2>&1
