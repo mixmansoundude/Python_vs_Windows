@@ -462,4 +462,97 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($g3Pass) { $summary.Add('G3 (no-silent-failure): PASS') } else { $summary.Add('G3 (no-silent-failure): FAIL') }
 
+# --- PEP 723 valid block test ---
+# Arrange: script with a well-formed PEP 723 inline dependency block.
+# Assert:  bootstrap log contains "Using PEP 723 inline dependency metadata" and exits 0.
+$pep723ValidDir = Join-Path $TestsDir '~selftest_pep723_valid'
+if (Test-Path $pep723ValidDir) { Remove-Item -Recurse -Force $pep723ValidDir }
+New-Item -ItemType Directory -Force -Path $pep723ValidDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $pep723ValidDir -Force
+$pep723ValidScript = @'
+# /// script
+# dependencies = [
+# "packaging"
+# ]
+# ///
+print("pep723-valid")
+'@
+Set-Content -Path (Join-Path $pep723ValidDir 'app_pep723.py') -Value $pep723ValidScript -Encoding ASCII
+$pep723ValidLogName = '~pep723_valid_bootstrap.log'
+Push-Location $pep723ValidDir
+try {
+  cmd /c "call run_setup.bat > $pep723ValidLogName 2>&1"
+  $pep723ValidExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+$pep723ValidLogPath = Join-Path $pep723ValidDir $pep723ValidLogName
+$pep723ValidLines = @()
+if (Test-Path $pep723ValidLogPath) { $pep723ValidLines = Get-Content -LiteralPath $pep723ValidLogPath -Encoding ASCII }
+$pep723ValidTag = 'Using PEP 723 inline dependency metadata'
+$pep723ValidFound = ($pep723ValidLines | Where-Object { $_ -like "*$pep723ValidTag*" }).Count -gt 0
+$pep723ValidStatusPath = Join-Path $pep723ValidDir '~bootstrap.status.json'
+$pep723ValidContinued = $false
+if (Test-Path $pep723ValidStatusPath) {
+  try {
+    $pep723ValidStatus = Get-Content -LiteralPath $pep723ValidStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $pep723ValidContinued = ($pep723ValidStatus.exitCode -eq 0)
+  } catch { }
+}
+Write-NdjsonRow ([ordered]@{
+  id = 'self.pep723.valid'
+  pass = ($pep723ValidFound -and $pep723ValidContinued)
+  desc = 'PEP 723 valid block: bootstrap uses inline metadata as dep source and exits 0'
+  details = [ordered]@{
+    metadataFound = $pep723ValidFound
+    continued = $pep723ValidContinued
+  }
+})
+if ($pep723ValidFound -and $pep723ValidContinued) { $summary.Add('PEP 723 valid block: PASS') } else { $summary.Add('PEP 723 valid block: FAIL') }
+
+# --- PEP 723 malformed block test ---
+# Arrange: script with "# /// script" present but no valid dependencies block.
+# Assert:  bootstrap log contains "[WARN] PEP 723 block found but no valid" and exits 0 (pipreqs fallback).
+$pep723MalDir = Join-Path $TestsDir '~selftest_pep723_mal'
+if (Test-Path $pep723MalDir) { Remove-Item -Recurse -Force $pep723MalDir }
+New-Item -ItemType Directory -Force -Path $pep723MalDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $pep723MalDir -Force
+$pep723MalScript = @'
+# /// script
+# malformed: missing dependencies array and no closing marker
+print("pep723-mal")
+'@
+Set-Content -Path (Join-Path $pep723MalDir 'app_pep723_mal.py') -Value $pep723MalScript -Encoding ASCII
+$pep723MalLogName = '~pep723_mal_bootstrap.log'
+Push-Location $pep723MalDir
+try {
+  cmd /c "call run_setup.bat > $pep723MalLogName 2>&1"
+  $pep723MalExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+$pep723MalLogPath = Join-Path $pep723MalDir $pep723MalLogName
+$pep723MalLines = @()
+if (Test-Path $pep723MalLogPath) { $pep723MalLines = Get-Content -LiteralPath $pep723MalLogPath -Encoding ASCII }
+$pep723MalWarnTag = 'PEP 723 block found but no valid dependencies extracted'
+$pep723MalWarnFound = ($pep723MalLines | Where-Object { $_ -like "*$pep723MalWarnTag*" }).Count -gt 0
+$pep723MalStatusPath = Join-Path $pep723MalDir '~bootstrap.status.json'
+$pep723MalContinued = $false
+if (Test-Path $pep723MalStatusPath) {
+  try {
+    $pep723MalStatus = Get-Content -LiteralPath $pep723MalStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $pep723MalContinued = ($pep723MalStatus.exitCode -eq 0)
+  } catch { }
+}
+Write-NdjsonRow ([ordered]@{
+  id = 'self.pep723.malformed'
+  pass = ($pep723MalWarnFound -and $pep723MalContinued)
+  desc = 'PEP 723 malformed block: bootstrap emits [WARN] and exits 0 (pipreqs fallback, no hard failure)'
+  details = [ordered]@{
+    warnFound = $pep723MalWarnFound
+    continued = $pep723MalContinued
+  }
+})
+if ($pep723MalWarnFound -and $pep723MalContinued) { $summary.Add('PEP 723 malformed block: PASS') } else { $summary.Add('PEP 723 malformed block: FAIL') }
+
 $summary | Set-Content -Path $summaryPath -Encoding ASCII
