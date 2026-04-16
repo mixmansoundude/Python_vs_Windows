@@ -3,6 +3,8 @@ setlocal DisableDelayedExpansion
 set "DEP_SOURCE=unknown"
 rem Boot strap renamed to run_setup.bat
 set "HP_SCRIPT_LAUNCH_DIR=%~dp0"
+echo %~dp0 | findstr /C:"\\\\" >nul
+if not errorlevel 1 echo [WARN] UNC paths not supported
 if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\" (
   rem derived requirement: parentheses must be escaped inside IF (...) blocks in CMD or parsing breaks.
   echo *** WARNING: UNC/network paths detected ^(\\server\share^).
