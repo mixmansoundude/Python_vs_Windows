@@ -400,6 +400,9 @@ if defined PEP723_ACTIVE (
   echo *** Using dependencies from PEP 723 metadata
   echo *** [INFO] Using PEP 723 inline dependency metadata
   echo *** [INFO] Dependency accuracy depends on script metadata correctness
+  call :log "[INFO] Using PEP 723 inline dependency metadata"
+  call :log "[INFO] DEP_SOURCE=pep723"
+  call :log "[INFO] PEP723_USED=1"
   set "DEP_SOURCE=pep723"
   copy /y "%PEP723_REQ%" "requirements.txt" >nul 2>&1
   if errorlevel 1 call :die "[ERROR] Could not stage PEP 723 requirements."
