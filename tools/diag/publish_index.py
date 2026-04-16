@@ -2409,6 +2409,8 @@ def _collect_setup_log_links(diag: Optional[Path]) -> List[dict]:
         ("~envsmoke", "~envsmoke setup log (full)"),
         ("~selftest_stub", "Stub setup log (full)"),
         ("~selftest_depcheck", "Depcheck setup log (full)"),
+        ("~selftest_pep723_valid", "PEP 723 valid setup log (full)"),
+        ("~selftest_pep723_mal", "PEP 723 malformed setup log (full)"),
     ]
 
     results: List[dict] = []
@@ -3193,6 +3195,19 @@ def _bundle_links(context: Context) -> List[dict]:
     entries.extend(_collect_batch_ndjson_links(diag))
     for entry in _collect_setup_log_links(diag):
         append(entry)
+
+    # Surface ~selftest-summary.txt so per-scenario PASS/FAIL labels (including PEP 723)
+    # are visible without opening the full NDJSON file.
+    _tl_root = diag / "_artifacts" / "batch-check" / "test-logs"
+    if _tl_root.exists():
+        try:
+            for _ad in sorted(p for p in _tl_root.iterdir() if p.is_dir()):
+                _cand = _ad / "tests" / "~selftest-summary.txt"
+                if _cand.exists() and _nonempty_file(_cand):
+                    append(_link_entry(diag, "Selftest scenario summary", _cand))
+                    break
+        except OSError:
+            pass
 
     for label, relative in [
         ("Batch-check failing tests", "batchcheck_failing.txt"),
