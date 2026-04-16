@@ -827,6 +827,18 @@ jobs:
             tests\~selftest_path_negative\~setup.log
             tests/~selftest_path_negative/~bootstrap.status.json
             tests\~selftest_path_negative\~bootstrap.status.json
+            tests/~selftest_pep723_valid/~pep723_valid_bootstrap.log
+            tests\~selftest_pep723_valid\~pep723_valid_bootstrap.log
+            tests/~selftest_pep723_valid/~setup.log
+            tests\~selftest_pep723_valid\~setup.log
+            tests/~selftest_pep723_valid/~bootstrap.status.json
+            tests\~selftest_pep723_valid\~bootstrap.status.json
+            tests/~selftest_pep723_mal/~pep723_mal_bootstrap.log
+            tests\~selftest_pep723_mal\~pep723_mal_bootstrap.log
+            tests/~selftest_pep723_mal/~setup.log
+            tests\~selftest_pep723_mal\~setup.log
+            tests/~selftest_pep723_mal/~bootstrap.status.json
+            tests\~selftest_pep723_mal\~bootstrap.status.json
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
