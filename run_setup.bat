@@ -1272,12 +1272,37 @@ if "%HP_ENV_MODE%"=="system" (
     set "HP_SPEC_PREEXIST="
     if exist "build\%ENVNAME%" rd /s /q "build\%ENVNAME%" >nul 2>&1
     call :log "[INFO] PyInstaller build artifacts cleaned up."
+    call :run_exe_smokerun
   )
 )
 set "HP_FAST_EXE="
 set "HP_FAST_EXE_PATH="
 set "HP_FASTPATH_USED="
 set "HP_FASTPATH_TOKEN="
+exit /b 0
+:run_exe_smokerun
+if not exist "dist\%ENVNAME%.exe" (
+  call :log "[WARN] EXE smokerun: dist\%ENVNAME%.exe not found; skipping"
+  exit /b 0
+)
+call :log "[INFO] EXE smokerun: testing dist\%ENVNAME%.exe"
+set "HP_EXE_EXIT=-1"
+pushd dist
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%ENVNAME%.exe';$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
+popd
+if not defined HP_EXE_EXIT set "HP_EXE_EXIT=-1"
+if "%HP_EXE_EXIT%"=="0" (
+  call :log "[INFO] EXE smokerun: exited 0 (ok)"
+) else (
+  call :log "[WARN] EXE smokerun: exited %HP_EXE_EXIT% (non-zero)"
+)
+if defined HP_NDJSON (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$c=[int]'%HP_EXE_EXIT%';" ^
+    "$r=[ordered]@{id='self.exe.smokerun';pass=($c -eq 0);details=[ordered]@{exitCode=$c}}|ConvertTo-Json -Compress -Depth 8;" ^
+    "Add-Content -Path '%HP_NDJSON%' -Value $r -Encoding ASCII" >> "%LOG%" 2>&1
+)
+set "HP_EXE_EXIT="
 exit /b 0
 :write_pipreqs_summary
 if "%HP_JOB_SUMMARY%"=="" exit /b 0
