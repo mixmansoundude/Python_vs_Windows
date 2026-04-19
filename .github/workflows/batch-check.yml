@@ -228,6 +228,12 @@ jobs:
         run: |
           & tests\selfapps_exedata_fail.ps1
 
+      - name: "Self-test: EXE smokerun XFAIL dynamic import not bundled (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_exedyn_fail.ps1
+
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
         if: ${{ matrix.mode == 'conda-full' }}
         shell: pwsh
@@ -807,6 +813,10 @@ jobs:
             tests\~selftest_exedata_fail\~exedata_bootstrap.log
             tests/~selftest_exedata_fail/~setup.log
             tests\~selftest_exedata_fail\~setup.log
+            tests/~selftest_exedyn_fail/~exedyn_bootstrap.log
+            tests\~selftest_exedyn_fail\~exedyn_bootstrap.log
+            tests/~selftest_exedyn_fail/~setup.log
+            tests\~selftest_exedyn_fail\~setup.log
             tests/~pandas_excel/~pandas_excel.log
             tests\~pandas_excel\~pandas_excel.log
             tests/~selftest_parse_warn_table/
