@@ -216,6 +216,12 @@ jobs:
         run: |
           & tests\selfapps_warnfix.ps1
 
+      - name: "Self-test: EXE smokerun XFAIL bad import (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_exefail.ps1
+
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
         if: ${{ matrix.mode == 'conda-full' }}
         shell: pwsh
@@ -787,6 +793,10 @@ jobs:
             tests\~selftest_warnfix\dist\~warnfix_token.txt
             tests/~selftest_warnfix/~warnfile.txt
             tests\~selftest_warnfix\~warnfile.txt
+            tests/~selftest_exefail/~exefail_bootstrap.log
+            tests\~selftest_exefail\~exefail_bootstrap.log
+            tests/~selftest_exefail/~setup.log
+            tests\~selftest_exefail\~setup.log
             tests/~pandas_excel/~pandas_excel.log
             tests\~pandas_excel\~pandas_excel.log
             tests/~selftest_parse_warn_table/
