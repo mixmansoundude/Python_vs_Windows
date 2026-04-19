@@ -1295,6 +1295,7 @@ if "%HP_EXE_EXIT%"=="0" (
   call :log "[INFO] EXE smokerun: exited 0 (ok)"
 ) else (
   call :log "[WARN] EXE smokerun: exited %HP_EXE_EXIT% (non-zero)"
+  call :exe_smokerun_hints
 )
 if defined HP_NDJSON (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -1303,6 +1304,39 @@ if defined HP_NDJSON (
     "Add-Content -Path '%HP_NDJSON%' -Value $r -Encoding ASCII" >> "%LOG%" 2>&1
 )
 set "HP_EXE_EXIT="
+exit /b 0
+:exe_smokerun_hints
+rem derived requirement: re-run EXE briefly to capture stderr for pattern-based hints
+rem only. EXE exits immediately on ModuleNotFoundError/FileNotFoundError so no timeout
+rem is needed for hint capture. Existing success/failure logic is not changed.
+if not exist "dist\%ENVNAME%.exe" exit /b 0
+pushd dist
+"%ENVNAME%.exe" > "~exe_out.txt" 2>&1
+popd
+set "HP_HINT_FILE=dist\~exe_out.txt"
+set "HP_HINT_FILE_NAME=<file>"
+set "HP_HINT_MOD=<module>"
+findstr /i /c:"FileNotFoundError" /c:"No such file or directory" "%HP_HINT_FILE%" >nul 2>&1
+if not errorlevel 1 goto :hint_data_file
+goto :hint_check_mod
+:hint_data_file
+for /f "usebackq delims=" %%F in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText('%HP_HINT_FILE%');$m=[regex]::Match($t,'No such file or directory: ''([^'']+)''');if($m.Success){$m.Groups[1].Value}else{'<file>'}"`) do set "HP_HINT_FILE_NAME=%%F"
+call :log "[HINT] Missing data file detected: %HP_HINT_FILE_NAME%"
+call :log "[HINT] Consider adding: --add-data %HP_HINT_FILE_NAME%;."
+:hint_check_mod
+findstr /i /c:"ModuleNotFoundError" /c:"No module named" "%HP_HINT_FILE%" >nul 2>&1
+if not errorlevel 1 goto :hint_hidden_import
+goto :hint_packaging
+:hint_hidden_import
+for /f "usebackq delims=" %%M in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText('%HP_HINT_FILE%');$m=[regex]::Match($t,'No module named ''([^'']+)''');if($m.Success){$m.Groups[1].Value}else{'<module>'}"`) do set "HP_HINT_MOD=%%M"
+call :log "[HINT] Hidden import likely missing: %HP_HINT_MOD%"
+call :log "[HINT] Consider adding: --hidden-import=%HP_HINT_MOD%"
+:hint_packaging
+call :log "[HINT] EXE behavior differs from Python runtime (possible packaging issue)"
+if exist "%HP_HINT_FILE%" del "%HP_HINT_FILE%" >nul 2>&1
+set "HP_HINT_FILE="
+set "HP_HINT_FILE_NAME="
+set "HP_HINT_MOD="
 exit /b 0
 :write_pipreqs_summary
 if "%HP_JOB_SUMMARY%"=="" exit /b 0
