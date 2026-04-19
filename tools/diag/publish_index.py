@@ -3283,7 +3283,7 @@ def _build_markdown(
         # derived requirement: Run 19201618363-1 exposed only discovery breadcrumbs; suppress the "found" badge until payload files land.
         iterate_found = False
     iterate_log_status = "found" if iterate_found else "missing"
-    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
+    iterate_hint = None if iterate_found else "missing is OK on green CI (no failures = patcher did not run); see logs/iterate.MISSING.txt"
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     if iterate_found and artifact_missing:
@@ -3635,7 +3635,7 @@ def _write_html(
     if iterate_found and iterate_file_status == "missing":
         iterate_found = False
     iterate_log_status = "found" if iterate_found else "missing"
-    iterate_hint = None if iterate_found else "see logs/iterate.MISSING.txt"
+    iterate_hint = None if iterate_found else "missing is OK on green CI (no failures = patcher did not run); see logs/iterate.MISSING.txt"
     batch_status = _batch_status(diag, context)
     diag_files = _diag_files(diag)
     gate_data = _load_iterate_gate(context)
