@@ -134,6 +134,9 @@ This is the deliverable. Treat changes carefully.
      `~environment.lock.txt` and exits 0 (skip) or 1 (install needed).
    - `HP_ENV_STATE` -- decodes to `~env_state.py`; reads/writes `~env.state.json` to
      cache conda env validity across runs.
+   - `HP_PYPROJ_DEPS` -- decodes to `~pyproj_deps.py`; parses pyproject.toml
+     `[project].dependencies` and writes one dep per line; exit 0 on success, 1 on
+     not-found/error. Used by the layered dep resolution block (step 2 of 3).
 
 2. **Delimiter-check after every edit**:
    ```bash
@@ -250,7 +253,8 @@ self.parse_warn.table.v6, self.parse_warn.pytest,
 self.runtime.writeback,
 self.pandas.openpyxl.install, self.pandas.openpyxl.import,
 pyvisa.detect, pyvisa.nivisa.branch,
-pyproject.precedence.detect, pyproject.precedence.writeback
+pyproject.precedence.detect, pyproject.precedence.writeback,
+pyproject.dep.detect
 ```
 
 justme-test lane rows (subset, flag-triggered):
