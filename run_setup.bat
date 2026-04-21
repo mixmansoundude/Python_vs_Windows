@@ -327,6 +327,8 @@ if exist "%REQ%" (
   echo *** [INFO] Using requirements.txt for dependencies
   echo *** [INFO] Dependency accuracy depends on file correctness
   set "DEP_SOURCE=requirements.txt"
+  set "DEP_LAYER_REQUIREMENTS=1"
+  call :log "[INFO] DEP_LAYER_REQUIREMENTS=1"
 )
 set "HP_JOB_SUMMARY=~pipreqs.summary.txt"
 if exist "%HP_JOB_SUMMARY%" del "%HP_JOB_SUMMARY%"
@@ -344,20 +346,43 @@ set "PEP723_REQ=~requirements.pep723.txt"
 if exist "%PEP723_REQ%" del "%PEP723_REQ%" >nul 2>&1
 call :determine_entry "%~1"
 if errorlevel 1 call :die "[ERROR] Could not determine entry point"
-if not "%DEP_SOURCE%"=="requirements.txt" (
-  if defined HP_ENTRY if exist "%HP_ENTRY%" (
-    findstr /c:"# /// script" "%HP_ENTRY%" >nul 2>&1
+set "HP_PYPROJ_REQ=~requirements.pyproject.txt"
+if exist "%HP_PYPROJ_REQ%" del "%HP_PYPROJ_REQ%" >nul 2>&1
+set "HP_PYPROJ_ACTIVE="
+if exist "pyproject.toml" (
+  call :emit_from_base64 "~pyproj_deps.py" HP_PYPROJ_DEPS
+  if not errorlevel 1 (
+    "%HP_PY%" "~pyproj_deps.py" "%HP_PYPROJ_REQ%" >nul 2>&1
     if not errorlevel 1 (
-      set "PEP723_BLOCK_FOUND=1"
-      echo *** PEP 723 metadata detected
-      call :extract_pep723_requirements "%HP_ENTRY%" "%PEP723_REQ%"
-      if exist "%PEP723_REQ%" for %%S in ("%PEP723_REQ%") do if %%~zS GTR 0 set "PEP723_ACTIVE=1"
+      if exist "%HP_PYPROJ_REQ%" for %%S in ("%HP_PYPROJ_REQ%") do if %%~zS GTR 0 set "HP_PYPROJ_ACTIVE=1"
     )
+    if exist "~pyproj_deps.py" del "~pyproj_deps.py" >nul 2>&1
   )
-  if defined PEP723_BLOCK_FOUND if not defined PEP723_ACTIVE (
-    echo *** [WARN] PEP 723 block found but dependency list is empty or malformed; falling back
-    call :log "[WARN] PEP 723 block found but no valid dependencies extracted; pipreqs fallback."
+)
+if defined HP_PYPROJ_ACTIVE (
+  echo *** [INFO] pyproject.toml [project].dependencies found; overrides requirements.txt
+  call :log "[INFO] pyproject.toml [project].dependencies detected"
+  call :log "[INFO] DEP_SOURCE=pyproject"
+  call :log "[INFO] DEP_LAYER_PYPROJECT=1"
+  set "DEP_SOURCE=pyproject"
+  set "DEP_LAYER_PYPROJECT=1"
+  copy /y "%HP_PYPROJ_REQ%" "requirements.txt" >nul 2>&1
+)
+if exist "%HP_PYPROJ_REQ%" del "%HP_PYPROJ_REQ%" >nul 2>&1
+set "HP_PYPROJ_REQ="
+set "HP_PYPROJ_ACTIVE="
+if defined HP_ENTRY if exist "%HP_ENTRY%" (
+  findstr /c:"# /// script" "%HP_ENTRY%" >nul 2>&1
+  if not errorlevel 1 (
+    set "PEP723_BLOCK_FOUND=1"
+    echo *** PEP 723 metadata detected
+    call :extract_pep723_requirements "%HP_ENTRY%" "%PEP723_REQ%"
+    if exist "%PEP723_REQ%" for %%S in ("%PEP723_REQ%") do if %%~zS GTR 0 set "PEP723_ACTIVE=1"
   )
+)
+if defined PEP723_BLOCK_FOUND if not defined PEP723_ACTIVE (
+  echo *** [WARN] PEP 723 block found but dependency list is empty or malformed; falling back
+  call :log "[WARN] PEP 723 block found but no valid dependencies extracted; pipreqs fallback."
 )
 set "PEP723_BLOCK_FOUND="
 
@@ -403,7 +428,9 @@ if defined PEP723_ACTIVE (
   call :log "[INFO] Using PEP 723 inline dependency metadata"
   call :log "[INFO] DEP_SOURCE=pep723"
   call :log "[INFO] PEP723_USED=1"
+  call :log "[INFO] DEP_LAYER_PEP723=1"
   set "DEP_SOURCE=pep723"
+  set "DEP_LAYER_PEP723=1"
   copy /y "%PEP723_REQ%" "requirements.txt" >nul 2>&1
   if errorlevel 1 call :die "[ERROR] Could not stage PEP 723 requirements."
   copy /y "%PEP723_REQ%" "requirements.auto.txt" >nul 2>&1
@@ -548,6 +575,11 @@ if not defined HP_PIPREQS_SUMMARY_NOTE set "HP_PIPREQS_SUMMARY_NOTE=(staging pip
 set "HP_PIPREQS_PHASE_RESULT=fail"
 
 :after_pipreqs_run
+set "DEP_FINAL_COUNT=0"
+if exist "requirements.txt" for /f "usebackq eol=# tokens=*" %%L in ("requirements.txt") do if not "%%L"=="" set /a DEP_FINAL_COUNT+=1
+call :log "[INFO] DEP_RESOLUTION_STRATEGY=layered"
+call :log "[INFO] DEP_FINAL_COUNT=%DEP_FINAL_COUNT%"
+set "DEP_FINAL_COUNT="
 if exist "%HP_PIPREQS_STAGE_ROOT%" rd /s /q "%HP_PIPREQS_STAGE_ROOT%"
 set "HP_PIPREQS_TARGET=%HP_PIPREQS_TARGET_WORK%"
 if "%HP_PIPREQS_PHASE_RESULT%"=="ok" (
@@ -1321,18 +1353,21 @@ if not errorlevel 1 goto :hint_data_file
 goto :hint_check_mod
 :hint_data_file
 for /f "usebackq delims=" %%F in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText('%HP_HINT_FILE%');$m=[regex]::Match($t,'No such file or directory: ''([^'']+)''');if($m.Success){$m.Groups[1].Value}else{'<file>'}"`) do set "HP_HINT_FILE_NAME=%%F"
-call :log "[HINT] Missing data file detected: %HP_HINT_FILE_NAME%"
-call :log "[HINT] Consider adding: --add-data %HP_HINT_FILE_NAME%;."
+call :log "[HINT][DATA_FILE] Missing data file detected: %HP_HINT_FILE_NAME%"
+call :log "[HINT][DATA_FILE] Consider adding: --add-data %HP_HINT_FILE_NAME%;."
+if defined HINT_JSON powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host ([PSCustomObject]@{hint_type='DATA_FILE';file=$env:HP_HINT_FILE_NAME}|ConvertTo-Json -Compress)"
 :hint_check_mod
 findstr /i /c:"ModuleNotFoundError" /c:"No module named" "%HP_HINT_FILE%" >nul 2>&1
 if not errorlevel 1 goto :hint_hidden_import
 goto :hint_packaging
 :hint_hidden_import
 for /f "usebackq delims=" %%M in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText('%HP_HINT_FILE%');$m=[regex]::Match($t,'No module named ''([^'']+)''');if($m.Success){$m.Groups[1].Value}else{'<module>'}"`) do set "HP_HINT_MOD=%%M"
-call :log "[HINT] Hidden import likely missing: %HP_HINT_MOD%"
-call :log "[HINT] Consider adding: --hidden-import=%HP_HINT_MOD%"
+call :log "[HINT][HIDDEN_IMPORT] Hidden import likely missing: %HP_HINT_MOD%"
+call :log "[HINT][HIDDEN_IMPORT] Consider adding: --hidden-import=%HP_HINT_MOD%"
+if defined HINT_JSON powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host ([PSCustomObject]@{hint_type='HIDDEN_IMPORT';module=$env:HP_HINT_MOD}|ConvertTo-Json -Compress)"
 :hint_packaging
-call :log "[HINT] EXE behavior differs from Python runtime (possible packaging issue)"
+call :log "[HINT][RUNTIME_MISMATCH] EXE behavior differs from Python runtime (possible packaging issue)"
+if defined HINT_JSON powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host ([PSCustomObject]@{hint_type='RUNTIME_MISMATCH'}|ConvertTo-Json -Compress)"
 if exist "%HP_HINT_FILE%" del "%HP_HINT_FILE%" >nul 2>&1
 set "HP_HINT_FILE="
 set "HP_HINT_FILE_NAME="
@@ -1393,6 +1428,7 @@ exit /b %errorlevel%
 :define_helper_payloads
 rem Helper payloads are base64-encoded so run_setup.bat stays self-contained.
 rem Regenerate with python - <<'PY' snippets as noted in README.md (base64 docs: https://docs.python.org/3/library/base64.html).
+set "HP_PYPROJ_DEPS=IyBkZXJpdmVkIHJlcXVpcmVtZW50OiBwYXJzZSBweXByb2plY3QudG9tbCBbcHJvamVjdF0uZGVwZW5kZW5jaWVzIHdpdGhvdXQgdG9tbGxpYgojIEZhbGxzIGJhY2sgdG8gcmVnZXg7IGV4aXRzIDAgYW5kIHdyaXRlcyBmaWxlIG9uIHN1Y2Nlc3MsIDEgb24gbm90LWZvdW5kL2Vycm9yLgppbXBvcnQgcmUsIHN5cywgcGF0aGxpYgoKb3V0ID0gc3lzLmFyZ3ZbMV0gaWYgbGVuKHN5cy5hcmd2KSA+IDEgZWxzZSAnfnJlcXVpcmVtZW50cy5weXByb2plY3QudHh0Jwp0cnk6CiAgICB0eHQgPSBwYXRobGliLlBhdGgoJ3B5cHJvamVjdC50b21sJykucmVhZF90ZXh0KGVuY29kaW5nPSd1dGYtOCcsIGVycm9ycz0ncmVwbGFjZScpCiAgICBtID0gcmUuc2VhcmNoKHInXlxbcHJvamVjdFxdJywgdHh0LCByZS5NVUxUSUxJTkUpCiAgICBpZiBub3QgbToKICAgICAgICBzeXMuZXhpdCgxKQogICAgc2VjID0gdHh0W20uZW5kKCk6XQogICAgc3RvcCA9IHJlLnNlYXJjaChyJ15cWycsIHNlYywgcmUuTVVMVElMSU5FKQogICAgaWYgc3RvcDoKICAgICAgICBzZWMgPSBzZWNbOnN0b3Auc3RhcnQoKV0KICAgIGRtID0gcmUuc2VhcmNoKHInXlxzKmRlcGVuZGVuY2llc1xzKj1ccypcWyhbXlxdXSopXF0nLCBzZWMsIHJlLk1VTFRJTElORSB8IHJlLkRPVEFMTCkKICAgIGlmIG5vdCBkbToKICAgICAgICBzeXMuZXhpdCgxKQogICAgZGVwc19yYXcgPSBkbS5ncm91cCgxKQogICAgZGVwcyA9IFtdCiAgICBmb3IgY2h1bmsgaW4gcmUuc3BsaXQocidbLFxuXScsIGRlcHNfcmF3KToKICAgICAgICB2YWwgPSBjaHVuay5zdHJpcCgpLnN0cmlwKCciJykuc3RyaXAoIiciKQogICAgICAgIGlmIHZhbDoKICAgICAgICAgICAgZGVwcy5hcHBlbmQodmFsKQogICAgaWYgbm90IGRlcHM6CiAgICAgICAgc3lzLmV4aXQoMSkKICAgIHBhdGhsaWIuUGF0aChvdXQpLndyaXRlX3RleHQoJ1xuJy5qb2luKGRlcHMpICsgJ1xuJywgZW5jb2Rpbmc9J2FzY2lpJywgZXJyb3JzPSdyZXBsYWNlJykKICAgIHN5cy5leGl0KDApCmV4Y2VwdCBFeGNlcHRpb246CiAgICBzeXMuZXhpdCgxKQo="
 set "HP_CONDARC=Y2hhbm5lbHM6CiAgLSBjb25kYS1mb3JnZQpjaGFubmVsX3ByaW9yaXR5OiBzdHJpY3QKc2hvd19jaGFubmVsX3VybHM6IHRydWUK"
 set "HP_DETECT_PY=X192ZXJzaW9uX18gPSAiZGV0ZWN0X3B5dGhvbiB2MiAoMjAyNS0wOS0yNCkiCl9fYWxsX18gPSBbInBlcDQ0MF90b19jb25kYSIsICJkZXRlY3RfcmVxdWlyZXNfcHl0aG9uIiwgIm1haW4iXQpPUkRFUiA9IHsiPT0iOiAwLCAiIT0iOiAxLCAiPj0iOiAyLCAiPiI6IDMsICI8PSI6IDQsICI8IjogNX0KCmltcG9ydCBvcwppbXBvcnQgcmUKaW1wb3J0IHN5cwoKIyBIZWxwZXIgaW1wbGVtZW50cyB0aGUgUkVBRE1FIGJvb3RzdHJhcCBjb250cmFjdC4gUEVQIDQ0MCBkZXRhaWxzOgojIGh0dHBzOi8vcGVwcy5weXRob24ub3JnL3BlcC0wNDQwLwoKQ0QgPSBvcy5nZXRjd2QoKQpSVU5USU1FX1BBVEggPSBvcy5wYXRoLmpvaW4oQ0QsICJydW50aW1lLnR4dCIpClBZUFJPSkVDVF9QQVRIID0gb3MucGF0aC5qb2luKENELCAicHlwcm9qZWN0LnRvbWwiKQpQWVBST0pFQ1RfUkUgPSByZS5jb21waWxlKCJyZXF1aXJlcy1weXRob25cXHMqPVxccypbJ1wiXShbXidcIl0rKVsnXCJdIiwgcmUuSUdOT1JFQ0FTRSkKU1BFQ19QQVRURVJOID0gcmUuY29tcGlsZShyJyh+PXw9PXwhPXw+PXw8PXw+fDwpXHMqKFswLTldKyg/OlwuWzAtOV0rKSopJykKCgpkZWYgdmVyc2lvbl9rZXkodGV4dDogc3RyKToKICAgICIiIlJldHVybiBhIHR1cGxlIHVzYWJsZSBmb3IgbnVtZXJpYyBvcmRlcmluZyBvZiBkb3R0ZWQgdmVyc2lvbnMuIiIiCiAgICBwYXJ0cyA9IFtdCiAgICBmb3IgY2h1bmsgaW4gdGV4dC5zcGxpdCgnLicpOgogICAgICAgIHRyeToKICAgICAgICAgICAgcGFydHMuYXBwZW5kKGludChjaHVuaykpCiAgICAgICAgZXhjZXB0IFZhbHVlRXJyb3I6CiAgICAgICAgICAgIHBhcnRzLmFwcGVuZCgwKQogICAgcmV0dXJuIHR1cGxlKHBhcnRzKQoKCmRlZiBidW1wX2Zvcl9jb21wYXRpYmxlKHZlcnNpb246IHN0cikgLT4gc3RyOgogICAgIiIiVHJhbnNsYXRlIHRoZSBQRVAgNDQwIGNvbXBhdGlibGUgcmVsZWFzZSB1cHBlciBib3VuZC4iIiIKICAgIHBpZWNlcyA9IFtpbnQoaXRlbSkgZm9yIGl0ZW0gaW4gdmVyc2lvbi5zcGxpdCgnLicpIGlmIGl0ZW0uaXNkaWdpdCgpXQogICAgaWYgbm90IHBpZWNlczoKICAgICAgICByZXR1cm4gdmVyc2lvbgogICAgaWYgbGVuKHBpZWNlcykgPj0gMzoKICAgICAgICByZXR1cm4gZiJ7cGllY2VzWzBdfS57cGllY2VzWzFdICsgMX0iCiAgICBpZiBsZW4ocGllY2VzKSA9PSAyOgogICAgICAgIHJldHVybiBmIntwaWVjZXNbMF0gKyAxfS4wIgogICAgcmV0dXJuIHN0cihwaWVjZXNbMF0gKyAxKQoKCmRlZiBleHBhbmRfY2xhdXNlKG9wOiBzdHIsIHZlcnNpb246IHN0cik6CiAgICBpZiBvcCA9PSAifj0iOgogICAgICAgIHVwcGVyID0gYnVtcF9mb3JfY29tcGF0aWJsZSh2ZXJzaW9uKQogICAgICAgIHJldHVybiBbKCI+PSIsIHZlcnNpb24pLCAoIjwiLCB1cHBlcildCiAgICByZXR1cm4gWyhvcCwgdmVyc2lvbildCgoKZGVmIHBlcDQ0MF90b19jb25kYShzcGVjOiBzdHIpIC0+IHN0cjoKICAgICIiIlJldHVybiAicHl0aG9uIiBjb25zdHJhaW50cyBleHBhbmRlZCBmcm9tIGEgcmVxdWlyZXMtcHl0aG9uIHNwZWMuIiIiCiAgICBjbGF1c2VzID0gW10KICAgIGZvciByYXcgaW4gc3BlYy5zcGxpdCgnLCcpOgogICAgICAgIHJhdyA9IHJhdy5zdHJpcCgpCiAgICAgICAgaWYgbm90IHJhdzoKICAgICAgICAgICAgY29udGludWUKICAgICAgICBtYXRjaCA9IFNQRUNfUEFUVEVSTi5tYXRjaChyYXcpCiAgICAgICAgaWYgbm90IG1hdGNoOgogICAgICAgICAgICBjb250aW51ZQogICAgICAgIG9wLCB2ZXJzaW9uID0gbWF0Y2guZ3JvdXBzKCkKICAgICAgICBjbGF1c2VzLmV4dGVuZChleHBhbmRfY2xhdXNlKG9wLCB2ZXJzaW9uKSkKICAgIGlmIG5vdCBjbGF1c2VzOgogICAgICAgIHJldHVybiAiIgogICAgZGVkdXAgPSB7fQogICAgZm9yIG9wLCB2ZXJzaW9uIGluIGNsYXVzZXM6CiAgICAgICAgZGVkdXBbKG9wLCB2ZXJzaW9uKV0gPSAob3AsIHZlcnNpb24pCiAgICBvcmRlcmVkID0gc29ydGVkKGRlZHVwLnZhbHVlcygpLCBrZXk9bGFtYmRhIGl0ZW06IChPUkRFUi5nZXQoaXRlbVswXSwgOTkpLCB2ZXJzaW9uX2tleShpdGVtWzFdKSkpCiAgICByZXR1cm4gInB5dGhvbiIgKyAiLCIuam9pbihmIntvcH17dmVyc2lvbn0iIGZvciBvcCwgdmVyc2lvbiBpbiBvcmRlcmVkKQoKCmRlZiByZWFkX3J1bnRpbWVfc3BlYygpIC0+IHN0cjoKICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhSVU5USU1FX1BBVEgpOgogICAgICAgIHJldHVybiAiIgogICAgd2l0aCBvcGVuKFJVTlRJTUVfUEFUSCwgJ3InLCBlbmNvZGluZz0ndXRmLTgnLCBlcnJvcnM9J2lnbm9yZScpIGFzIGhhbmRsZToKICAgICAgICB0ZXh0ID0gaGFuZGxlLnJlYWQoKQogICAgbWF0Y2ggPSByZS5zZWFyY2gocicoPzpweXRob25bLT1dKT9ccyooWzAtOV0rKD86XC5bMC05XSspezAsMn0pJywgdGV4dCkKICAgIGlmIG5vdCBtYXRjaDoKICAgICAgICByZXR1cm4gIiIKICAgIHBhcnRzID0gbWF0Y2guZ3JvdXAoMSkuc3BsaXQoJy4nKQogICAgbWFqb3JfbWlub3IgPSAnLicuam9pbihwYXJ0c1s6Ml0pCiAgICByZXR1cm4gZidweXRob249e21ham9yX21pbm9yfScKCgpkZWYgcmVhZF9weXByb2plY3Rfc3BlYygpIC0+IHN0cjoKICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhQWVBST0pFQ1RfUEFUSCk6CiAgICAgICAgcmV0dXJuICIiCiAgICB3aXRoIG9wZW4oUFlQUk9KRUNUX1BBVEgsICdyJywgZW5jb2Rpbmc9J3V0Zi04JywgZXJyb3JzPSdpZ25vcmUnKSBhcyBoYW5kbGU6CiAgICAgICAgdGV4dCA9IGhhbmRsZS5yZWFkKCkKICAgIG1hdGNoID0gUFlQUk9KRUNUX1JFLnNlYXJjaCh0ZXh0KQogICAgaWYgbm90IG1hdGNoOgogICAgICAgIHJldHVybiAiIgogICAgcmV0dXJuIHBlcDQ0MF90b19jb25kYShtYXRjaC5ncm91cCgxKSkKCgpkZWYgZGV0ZWN0X3JlcXVpcmVzX3B5dGhvbigpIC0+IHN0cjoKICAgICIiIlJldHVybiBiZXN0LWVmZm9ydCByZXF1aXJlcy1weXRob24gY29uc3RyYWludCBmb3IgdGhlIGN1cnJlbnQgcHJvamVjdC4iIiIKICAgIHJ1bnRpbWVfc3BlYyA9IHJlYWRfcnVudGltZV9zcGVjKCkKICAgIGlmIHJ1bnRpbWVfc3BlYzoKICAgICAgICByZXR1cm4gcnVudGltZV9zcGVjCiAgICByZXR1cm4gcmVhZF9weXByb2plY3Rfc3BlYygpCgoKZGVmIG1haW4oYXJndj1Ob25lKSAtPiBOb25lOgogICAgIiIiQ0xJIGVudHJ5IHBvaW50IHRoYXQgcHJpbnRzIG5vcm1hbGl6ZWQgcmVxdWlyZXMtcHl0aG9uIGNvbnN0cmFpbnRzLiIiIgogICAgYXJncyA9IGxpc3Qoc3lzLmFyZ3ZbMTpdIGlmIGFyZ3YgaXMgTm9uZSBlbHNlIGFyZ3YpCiAgICBpZiBhcmdzIGFuZCBhcmdzWzBdID09ICItLXNlbGYtdGVzdCI6CiAgICAgICAgZm9yIHNhbXBsZSBpbiAoIn49My4xMCIsICJ+PTMuOC4xIik6CiAgICAgICAgICAgIHN5cy5zdGRvdXQud3JpdGUocGVwNDQwX3RvX2NvbmRhKHNhbXBsZSkgKyAiXG4iKQoKICAgICAgICByZXR1cm4KICAgIGlmIGFyZ3M6CiAgICAgICAgZm9yIGl0ZW0gaW4gYXJnczoKICAgICAgICAgICAgc3lzLnN0ZG91dC53cml0ZShwZXA0NDBfdG9fY29uZGEoaXRlbSkgKyAiXG4iKQoKICAgICAgICByZXR1cm4KICAgIHN5cy5zdGRvdXQud3JpdGUoZGV0ZWN0X3JlcXVpcmVzX3B5dGhvbigpICsgIlxuIikKCgoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIG1haW4oKQo="
 set "HP_PRINT_PYVER=aW1wb3J0IHN5cwoKcHJpbnQoZiJweXRob24te3N5cy52ZXJzaW9uX2luZm9bMF19LntzeXMudmVyc2lvbl9pbmZvWzFdfSIpCg=="

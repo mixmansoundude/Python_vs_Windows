@@ -21,6 +21,7 @@ if (-not $IsWindows) {
     $skipDetails = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     Write-NdjsonRow ([ordered]@{ id = 'pyproject.precedence.detect';    req = 'REQ-004'; pass = $true; desc = 'pyproject precedence detect skipped on non-Windows host';   details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pyproject.precedence.writeback'; req = 'REQ-004'; pass = $true; desc = 'pyproject precedence writeback skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pyproject.dep.detect';           req = 'REQ-004'; pass = $true; desc = 'pyproject dep detect skipped on non-Windows host';           details = $skipDetails })
     exit 0
 }
 
@@ -196,6 +197,71 @@ Write-NdjsonRow ([ordered]@{
     pass    = $writebackPass
     desc    = 'runtime.txt written after bootstrap when pyproject.toml present and runtime.txt absent'
     details = $writebackDetails
+})
+
+# --- Test 3: pyproject.dep.detect ---
+# derived requirement: validate HP_PYPROJ_DEPS helper parses [project].dependencies
+# from pyproject.toml and writes one dep per line; runs without the full bootstrapper.
+function Export-PyprojectDepsHelper {
+    param([string]$BatchPath, [string]$OutPath)
+    if (-not (Test-Path -LiteralPath $BatchPath)) { throw "run_setup.bat not found: $BatchPath" }
+    $payload = $null
+    foreach ($line in Get-Content -LiteralPath $BatchPath -Encoding Ascii) {
+        if ($line -match '^set "HP_PYPROJ_DEPS=([^\"]+)"$') {
+            $payload = $Matches[1]
+            break
+        }
+    }
+    if (-not $payload) { throw 'HP_PYPROJ_DEPS payload not found in run_setup.bat' }
+    $bytes = [Convert]::FromBase64String($payload)
+    [IO.File]::WriteAllBytes($OutPath, $bytes)
+}
+
+$depDetectDir  = Join-Path $here '~pyproject_dep_detect'
+$depHelperPath = Join-Path $depDetectDir '~pyproj_deps.py'
+$depOutPath    = Join-Path $depDetectDir '~out.txt'
+$depPass       = $false
+$depDetails    = [ordered]@{}
+
+if (-not $condaPython -or -not (Test-Path -LiteralPath $condaPython)) {
+    $depDetails.reason = "conda python missing: $condaPython"
+    $depDetails.condaBatCandidates = $condaInfo.candidates
+} else {
+    if (Test-Path -LiteralPath $depDetectDir) { Remove-Item -LiteralPath $depDetectDir -Recurse -Force -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Force -Path $depDetectDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $depDetectDir 'pyproject.toml') -Encoding Ascii -Value '[project]
+name = "myapp"
+dependencies = [
+    "requests>=2.28",
+    "colorama",
+]
+'
+    try {
+        Export-PyprojectDepsHelper -BatchPath (Join-Path $repoRoot 'run_setup.bat') -OutPath $depHelperPath
+        Push-Location -LiteralPath $depDetectDir
+        try {
+            & $condaPython $depHelperPath $depOutPath 2>&1 | Out-Null
+            $depExit = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+        $depDetails.exitCode = $depExit
+        if ($depExit -eq 0 -and (Test-Path -LiteralPath $depOutPath)) {
+            $content = Get-Content -LiteralPath $depOutPath -Encoding Ascii -Raw
+            $depDetails.output = $content.Trim()
+            $depPass = ($content -match 'requests') -and ($content -match 'colorama')
+        }
+    } catch {
+        $depDetails.error = $_.Exception.Message
+    }
+}
+
+Write-NdjsonRow ([ordered]@{
+    id      = 'pyproject.dep.detect'
+    req     = 'REQ-004'
+    pass    = $depPass
+    desc    = 'HP_PYPROJ_DEPS helper parses pyproject.toml [project].dependencies and writes deps'
+    details = $depDetails
 })
 
 exit 0
