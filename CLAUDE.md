@@ -60,8 +60,8 @@ tools/
   workflow-lint.yml            YAML/workflow lint (actionlint + PyYAML)
   pr-automerge.yml             Auto-merge handler for all non-draft same-repo PRs (blocks on 'no-automerge' label)
 
-scripts/
-  poll_public_diag.ps1         Diagnostics polling helper
+tools/ (continued)
+  poll_public_diag.ps1         Diagnostics polling helper (moved from scripts/)
 ```
 
 ---
