@@ -624,12 +624,17 @@ if not "%HP_DEP_RC%"=="0" goto :dep_check_done
 if /I "%HP_DEP_RESULT%"=="skip" set "HP_DEP_SKIP=1"
 if defined HP_DEP_SKIP call :log "[INFO] Dep-check: all pipreqs packages satisfied in lock; skipping conda install."
 :dep_check_done
+rem IMPORTANT: requirements.txt must always reflect the final dependency set passed to installer.
+rem All source layers (PEP 723, pyproject, pipreqs) overwrite requirements.txt in-place above.
+rem Do not bypass requirements.txt without updating the snapshot and installed-state logic below.
 rem --- Snapshot resolved dependency input before install ---
 if exist "~dependency_resolved.txt" del "~dependency_resolved.txt" >nul 2>&1
 if exist "requirements.txt" (
   copy /y "requirements.txt" "~dependency_resolved.txt" >nul 2>&1
   if not errorlevel 1 call :log "[INFO] DEP_RESOLVED_FILE written: ~dependency_resolved.txt"
 )
+call :log "[INFO] DEP_RESOLVED_FROM=requirements.txt"
+call :log "[INFO] DEP_INSTALL_SOURCE=requirements.txt"
 if exist "requirements.txt" (
   if exist "~reqs_conda.txt" del "~reqs_conda.txt"
   if "%HP_ENV_MODE%"=="conda" (
@@ -661,6 +666,16 @@ if exist "requirements.txt" (
     call :log "[WARN] System fallback: skipping requirement installation."
   )
 )
+rem --- Capture installed package state via pip freeze ---
+if exist "~dependency_installed.txt" del "~dependency_installed.txt" >nul 2>&1
+"%HP_PY%" -m pip freeze > "~dependency_installed.txt" 2>nul
+set "HP_DEP_INST_RC=%errorlevel%"
+if "%HP_DEP_INST_RC%"=="0" call :log "[INFO] DEP_INSTALLED_CAPTURED=1"
+if not "%HP_DEP_INST_RC%"=="0" (
+  if exist "~dependency_installed.txt" del "~dependency_installed.txt" >nul 2>&1
+  call :log "[WARN] DEP_INSTALLED_CAPTURE_FAILED=1"
+)
+set "HP_DEP_INST_RC="
 rem --- Capture resolved environment snapshot ---
 rem derived requirement: goto avoids %errorlevel% parse-time expansion that
 rem would occur inside a parenthesized if-block (cmd.exe expands %var% for
