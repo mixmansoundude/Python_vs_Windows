@@ -167,7 +167,7 @@ CONTEXT_EXCLUDED_PATHS = {
     Path("tools/diag/build_prompt.ps1"),
     Path("tools/apply_patch.py"),
     Path("tools/check_delimiters.py"),
-    Path("scripts/poll_public_diag.ps1"),
+    Path("tools/poll_public_diag.ps1"),
 }
 
 REFERENCE_EXTENSIONS = {".bat", ".cmd", ".ps1", ".psm1", ".psd1", ".py", ".json", ".txt"}

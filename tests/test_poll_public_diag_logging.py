@@ -27,7 +27,7 @@ def test_poll_public_diag_handles_colon_logging(tmp_path: Path) -> None:
     env["GITHUB_ENV"] = str(tmp_path / "env.txt")
 
     proc = subprocess.run(
-        ["pwsh", "-NoLogo", "-File", str(REPO_ROOT / "scripts" / "poll_public_diag.ps1")],
+        ["pwsh", "-NoLogo", "-File", str(REPO_ROOT / "tools" / "poll_public_diag.ps1")],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -57,7 +57,7 @@ def test_poll_public_diag_default_budget(tmp_path: Path) -> None:
     env.pop("BASE_DELAY_SEC", None)
 
     proc = subprocess.run(
-        ["pwsh", "-NoLogo", "-File", str(REPO_ROOT / "scripts" / "poll_public_diag.ps1")],
+        ["pwsh", "-NoLogo", "-File", str(REPO_ROOT / "tools" / "poll_public_diag.ps1")],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
