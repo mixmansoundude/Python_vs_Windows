@@ -835,8 +835,12 @@ call :write_status ok 0 %PYCOUNT%
 goto :success
 
 :success
-echo dependency_source=%DEP_SOURCE%> "dependency_source.txt"
-echo *** [INFO] Dependency source logged to dependency_source.txt
+rem derived requirement: skip write when DEP_SOURCE=unknown (EXE fast path / no-python-files paths
+rem fire before dep resolution; preserve any existing dependency_source.txt from previous run).
+if not "%DEP_SOURCE%"=="unknown" (
+  echo dependency_source=%DEP_SOURCE%> "dependency_source.txt"
+  echo *** [INFO] Dependency source logged to dependency_source.txt
+)
 exit /b 0
 :count_python
 set "NAME=%~1"
