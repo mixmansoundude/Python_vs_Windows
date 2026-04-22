@@ -624,6 +624,12 @@ if not "%HP_DEP_RC%"=="0" goto :dep_check_done
 if /I "%HP_DEP_RESULT%"=="skip" set "HP_DEP_SKIP=1"
 if defined HP_DEP_SKIP call :log "[INFO] Dep-check: all pipreqs packages satisfied in lock; skipping conda install."
 :dep_check_done
+rem --- Snapshot resolved dependency input before install ---
+if exist "~dependency_resolved.txt" del "~dependency_resolved.txt" >nul 2>&1
+if exist "requirements.txt" (
+  copy /y "requirements.txt" "~dependency_resolved.txt" >nul 2>&1
+  if not errorlevel 1 call :log "[INFO] DEP_RESOLVED_FILE written: ~dependency_resolved.txt"
+)
 if exist "requirements.txt" (
   if exist "~reqs_conda.txt" del "~reqs_conda.txt"
   if "%HP_ENV_MODE%"=="conda" (
