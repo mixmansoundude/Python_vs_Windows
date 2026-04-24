@@ -77,6 +77,13 @@ if (-not $IsWindows) {
         details = $details
     })
     Write-NdjsonRow ([ordered]@{
+        id      = 'self.env.smoke.uv'
+        req     = 'REQ-003'
+        pass    = $true
+        desc    = 'uv env smoke skipped on non-Windows host'
+        details = $details
+    })
+    Write-NdjsonRow ([ordered]@{
         id      = 'self.prime.bootstrap'
         req     = 'REQ-001'
         pass    = $true
@@ -208,7 +215,13 @@ if (-not $condaEnvName) { $condaEnvName = '_envsmoke' }
 $interpreterMatch = [regex]::Match($bootstrapText, '^Interpreter:\s*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
 $interpreterPath = if ($interpreterMatch.Success) { $interpreterMatch.Groups[1].Value.Trim() } else { '' }
 $hasInterpreter = [bool]$interpreterMatch.Success
-$hasExpectedEnv = ($hasInterpreter -and ($interpreterPath -match [regex]::Escape($condaEnvName)))
+$uvEnvPy = Join-Path $app '.uv_env\Scripts\python.exe'
+$isUvMode = Test-Path -LiteralPath $uvEnvPy
+$hasExpectedEnv = if ($isUvMode) {
+    ($hasInterpreter -and ($interpreterPath -match [regex]::Escape('.uv_env')))
+} else {
+    ($hasInterpreter -and ($interpreterPath -match [regex]::Escape($condaEnvName)))
+}
 $bootstrapPass = (($exit -eq 0) -and $hasEntryRun -and $hasEntryExit -and $hasPyInstaller -and $hasInterpreter -and $hasExpectedEnv -and $noExplicitError)
 $errorSignalPass = (-not $hasUnexpectedSystemError)
 
@@ -291,7 +304,7 @@ if (-not $condaBat) {
 $condaRunUsed   = $false
 $condaRunStderr = ''
 $condaBatUsed   = $condaBat  # captured for diagnostics
-if ($condaBat) {
+if ($condaBat -and -not $isUvMode) {
     # derived requirement: always pass -n to conda run so envsmoke executes in
     # the created test env instead of inheriting base when no activation occurred.
     # Keep CWD pinned to $app so app.py side effects land in tests/~envsmoke.
@@ -316,6 +329,16 @@ if ($condaBat) {
     } finally {
         Pop-Location
     }
+} elseif ($isUvMode) {
+    # derived requirement: when uv created the env, run app.py via the uv python
+    # to verify the env works; the bootstrap smoke test should have already written
+    # the token, but an explicit re-run guards against edge cases.
+    Push-Location -LiteralPath $app
+    try {
+        & $uvEnvPy $appPath 2>&1 | Out-Null
+        $condaRunUsed = $true
+    } catch { }
+    Pop-Location
 }
 
 # Read the token file written by app.py (side effect of conda run above,
@@ -392,6 +415,20 @@ Write-NdjsonRow ([ordered]@{
         unexpectedSystemErrorIgnored=$unexpectedSystemErrorIgnored
         errorSignalPass=$errorSignalPass
     }
+})
+$uvSmokeForceSkip = ($env:HP_FORCE_CONDA_ONLY -eq '1')
+$uvSmokePass = if ($uvSmokeForceSkip) { $true } else { $isUvMode -and $bootstrapPass -and $errorSignalPass }
+$uvSmokeDetails = if ($uvSmokeForceSkip) {
+    [ordered]@{ skip=$true; reason='HP_FORCE_CONDA_ONLY' }
+} else {
+    [ordered]@{ isUvMode=$isUvMode; bootstrapPass=$bootstrapPass; interpreterPath=$interpreterPath }
+}
+Write-NdjsonRow ([ordered]@{
+    id='self.env.smoke.uv'
+    req='REQ-003'
+    pass=$uvSmokePass
+    desc='uv env creation and dependency install'
+    details=$uvSmokeDetails
 })
 Write-NdjsonRow ([ordered]@{
     id='self.prime.bootstrap'
@@ -624,7 +661,13 @@ $spaceHasPyInstaller = ($spaceCombinedBootstrapText -match 'PyInstaller produced
 $spaceInterpreterMatch = [regex]::Match($spaceCombinedBootstrapText, '^Interpreter:\s*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
 $spaceInterpreterPath = if ($spaceInterpreterMatch.Success) { $spaceInterpreterMatch.Groups[1].Value.Trim() } else { '' }
 $spaceHasInterpreter = [bool]$spaceInterpreterMatch.Success
-$spaceHasExpectedEnv = ($spaceHasInterpreter -and ($spaceInterpreterPath -match [regex]::Escape($spaceEnvName)))
+$spaceUvEnvPy = Join-Path $spaceApp '.uv_env\Scripts\python.exe'
+$spaceIsUvMode = Test-Path -LiteralPath $spaceUvEnvPy
+$spaceHasExpectedEnv = if ($spaceIsUvMode) {
+    ($spaceHasInterpreter -and ($spaceInterpreterPath -match [regex]::Escape('.uv_env')))
+} else {
+    ($spaceHasInterpreter -and ($spaceInterpreterPath -match [regex]::Escape($spaceEnvName)))
+}
 $spacePass = (
     ($spaceExit -eq 0) -and
     ($spaceTokenText -match 'space-path-ok') -and
