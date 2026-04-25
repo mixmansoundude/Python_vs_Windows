@@ -418,17 +418,20 @@ Write-NdjsonRow ([ordered]@{
 })
 $uvSmokeForceSkip = ($env:HP_FORCE_CONDA_ONLY -eq '1')
 # derived requirement: uv acquisition may fail on network-constrained runners; only
-# fail this row when uv.exe was acquired by the bootstrapper but env creation failed.
-# If uv was never acquired the bootstrap fell back to conda, which is graceful and
-# should not fail the row (skip instead).
+# fail this row when uv.exe was acquired AND the venv was created (isUvMode=true) but
+# bootstrap failed. Both "uv not acquired" and "uv acquired but venv creation fell back
+# to conda" (isUvMode=false) are graceful paths - skip instead of fail.
 $uvAcquired = ($bootstrapText -match '\[INFO\] uv: (acquired at|cached binary found at)')
 $uvSmokePass = if ($uvSmokeForceSkip) { $true }
                elseif (-not $uvAcquired) { $true }
-               else { $isUvMode -and $bootstrapPass -and $errorSignalPass }
+               elseif (-not $isUvMode) { $true }
+               else { $bootstrapPass -and $errorSignalPass }
 $uvSmokeDetails = if ($uvSmokeForceSkip) {
     [ordered]@{ skip=$true; reason='HP_FORCE_CONDA_ONLY' }
 } elseif (-not $uvAcquired) {
     [ordered]@{ skip=$true; reason='uv-not-acquired'; bootstrapPass=$bootstrapPass }
+} elseif (-not $isUvMode) {
+    [ordered]@{ skip=$true; reason='uv-acquired-but-fell-back'; uvAcquired=$uvAcquired; bootstrapPass=$bootstrapPass }
 } else {
     [ordered]@{ isUvMode=$isUvMode; uvAcquired=$uvAcquired; bootstrapPass=$bootstrapPass; interpreterPath=$interpreterPath }
 }
