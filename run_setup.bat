@@ -1418,7 +1418,11 @@ if "%HP_ENV_MODE%"=="system" (
     for /f "usebackq delims=" %%M in ("~missing_modules.txt") do set "HP_WARNFIX_NEEDED=1"
     if defined HP_WARNFIX_NEEDED (
       call :log "[INFO] PyInstaller flagged missing modules; installing and rebuilding."
-      if defined CONDA_BAT (
+      if "%HP_ENV_MODE%"=="uv" (
+        for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
+          "%HP_UV_EXE%" pip install --python "%HP_PY%" %%M >> "%LOG%" 2>&1
+        )
+      ) else if defined CONDA_BAT (
         for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
           call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%M >> "%LOG%" 2>&1
         )
