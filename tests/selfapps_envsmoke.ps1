@@ -417,11 +417,20 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 $uvSmokeForceSkip = ($env:HP_FORCE_CONDA_ONLY -eq '1')
-$uvSmokePass = if ($uvSmokeForceSkip) { $true } else { $isUvMode -and $bootstrapPass -and $errorSignalPass }
+# derived requirement: uv acquisition may fail on network-constrained runners; only
+# fail this row when uv.exe was acquired by the bootstrapper but env creation failed.
+# If uv was never acquired the bootstrap fell back to conda, which is graceful and
+# should not fail the row (skip instead).
+$uvAcquired = ($bootstrapText -match '\[INFO\] uv: (acquired at|cached binary found at)')
+$uvSmokePass = if ($uvSmokeForceSkip) { $true }
+               elseif (-not $uvAcquired) { $true }
+               else { $isUvMode -and $bootstrapPass -and $errorSignalPass }
 $uvSmokeDetails = if ($uvSmokeForceSkip) {
     [ordered]@{ skip=$true; reason='HP_FORCE_CONDA_ONLY' }
+} elseif (-not $uvAcquired) {
+    [ordered]@{ skip=$true; reason='uv-not-acquired'; bootstrapPass=$bootstrapPass }
 } else {
-    [ordered]@{ isUvMode=$isUvMode; bootstrapPass=$bootstrapPass; interpreterPath=$interpreterPath }
+    [ordered]@{ isUvMode=$isUvMode; uvAcquired=$uvAcquired; bootstrapPass=$bootstrapPass; interpreterPath=$interpreterPath }
 }
 Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.uv'
