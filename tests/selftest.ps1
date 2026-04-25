@@ -221,7 +221,9 @@ Write-NdjsonRow ([ordered]@{
   }
 })
 $stateSkipPhrase = 'Env-state fast path: reusing conda env'
-$stateSkipFound = ($rebuildLines | Where-Object { $_ -like "*$stateSkipPhrase*" }).Count -gt 0
+$uvReusePhrase = 'uv: reusing existing .uv_env'
+$stateSkipFound = (($rebuildLines | Where-Object { $_ -like "*$stateSkipPhrase*" }).Count -gt 0) -or
+                  (($rebuildLines | Where-Object { $_ -like "*$uvReusePhrase*" }).Count -gt 0)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.state_skip'
   pass = $stateSkipFound
