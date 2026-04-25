@@ -210,6 +210,37 @@ python -V >> "%LOG%" 2>&1 || (
   call :die "[ERROR] 'python -V' failed after bootstrap."
 )
 
+rem === uv acquisition (preferred env+dep installer; falls back to conda) =======
+rem derived requirement: uv is gated by HP_FORCE_CONDA_ONLY (same gate used for
+rem venv/system fallbacks) so the conda-full CI lane exercises the pure conda path.
+rem The binary is cached under ~uv_bin\ (tilde-prefix keeps it gitignored).
+set "HP_UV_EXE="
+set "HP_UV_BIN=%HP_SCRIPT_ROOT%~uv_bin"
+set "HP_UV_ZIP=%TEMP%\~uv_setup.zip"
+if "%HP_FORCE_CONDA_ONLY%"=="1" (
+  call :log "[INFO] uv: skipped (HP_FORCE_CONDA_ONLY=1)."
+  goto :uv_acquire_done
+)
+if exist "%HP_UV_BIN%\uv.exe" (
+  set "HP_UV_EXE=%HP_UV_BIN%\uv.exe"
+  call :log "[INFO] uv: cached binary found at ~uv_bin\uv.exe"
+  goto :uv_acquire_done
+)
+call :log "[INFO] uv: downloading to ~uv_bin..."
+if not exist "%HP_UV_BIN%" mkdir "%HP_UV_BIN%" >nul 2>&1
+curl -L --retry 3 --retry-delay 5 --max-time 120 "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip" -o "%HP_UV_ZIP%" >> "%LOG%" 2>&1
+if exist "%HP_UV_ZIP%" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Expand-Archive -LiteralPath '%HP_UV_ZIP%' -DestinationPath '%HP_UV_BIN%' -Force } catch { exit 1 }" >> "%LOG%" 2>&1
+  del "%HP_UV_ZIP%" >nul 2>&1
+)
+if exist "%HP_UV_BIN%\uv.exe" (
+  set "HP_UV_EXE=%HP_UV_BIN%\uv.exe"
+  call :log "[INFO] uv: acquired at ~uv_bin\uv.exe"
+) else (
+  call :log "[WARN] uv: acquisition failed; will use conda for env creation."
+)
+:uv_acquire_done
+
 rem === Channel policy (determinism & legal) ===================================
 if not exist "%CONDA_BAT%" (
   call :die "[ERROR] Conda not found at: %CONDA_BAT%"
@@ -264,6 +295,44 @@ if "%ENVNAME%"=="" (
 )
 rem Recalculate ENV_PATH so it is always consistent with the guarded ENVNAME value
 set "ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%"
+rem === uv venv creation (primary path when uv was acquired) ====================
+rem derived requirement: uv creates a pip-native venv at .uv_env in the project
+rem folder, short-circuiting conda create. On failure, :try_conda_create runs the
+rem existing conda path unchanged. Python version from PYSPEC is not yet forwarded
+rem to uv (version-pinning deferred; uv picks the system default Python).
+if not defined HP_UV_EXE goto :try_conda_create
+set "HP_UV_ENV_PATH=%HP_SCRIPT_ROOT%.uv_env"
+if exist "%HP_UV_ENV_PATH%\Scripts\python.exe" (
+  "%HP_UV_ENV_PATH%\Scripts\python.exe" -c "import pip;exit(0)" >nul 2>&1
+  if not errorlevel 1 (
+    set "HP_ENV_MODE=uv"
+    set "HP_PY=%HP_UV_ENV_PATH%\Scripts\python.exe"
+    set "ENV_PATH=%HP_UV_ENV_PATH%"
+    call :log "[INFO] uv: reusing existing .uv_env"
+    goto :uv_venv_ready
+  )
+)
+call :log "[INFO] uv: creating venv at .uv_env..."
+"%HP_UV_EXE%" venv --seed "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
+if errorlevel 1 goto :uv_venv_fail
+if not exist "%HP_UV_ENV_PATH%\Scripts\python.exe" goto :uv_venv_fail
+set "HP_ENV_MODE=uv"
+set "HP_PY=%HP_UV_ENV_PATH%\Scripts\python.exe"
+set "ENV_PATH=%HP_UV_ENV_PATH%"
+call :log "[INFO] uv: venv created at .uv_env"
+:uv_venv_ready
+call :log "[INFO] HP_ENV_MODE=uv"
+call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
+if not errorlevel 1 (
+  "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
+  for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
+  call :write_runtime_txt
+)
+goto :after_env_mode_selection
+:uv_venv_fail
+call :log "[WARN] uv: venv creation failed; falling back to conda create."
+set "HP_UV_EXE="
+:try_conda_create
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" "python<3.13" --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
@@ -387,7 +456,13 @@ if defined PEP723_BLOCK_FOUND if not defined PEP723_ACTIVE (
 set "PEP723_BLOCK_FOUND="
 
 if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
-  "%HP_PY%" -m pip install -q --disable-pip-version-check pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
+  if "%HP_ENV_MODE%"=="uv" (
+    rem derived requirement: uv pip install bypasses python -m pip so pip need not
+    rem be a module inside the uv venv; uv's own resolver handles the installation.
+    "%HP_UV_EXE%" pip install --python "%HP_PY%" -q pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
+  ) else (
+    "%HP_PY%" -m pip install -q --disable-pip-version-check pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
+  )
   if errorlevel 1 call :die "[ERROR] pipreqs install failed."
 )
 
@@ -612,7 +687,7 @@ rem environment lock file already contains every package pipreqs detected.
 rem goto is used to avoid %errorlevel% parse-time expansion inside parenthesized blocks.
 set "HP_DEP_SKIP="
 set "HP_DEP_RESULT="
-if not "%HP_ENV_MODE%"=="conda" goto :dep_check_done
+if not "%HP_ENV_MODE%"=="conda" if not "%HP_ENV_MODE%"=="uv" goto :dep_check_done
 call :emit_from_base64 "~dep_check.py" HP_DEP_CHECK
 if errorlevel 1 goto :dep_check_done
 "%HP_PY%" "~dep_check.py" > "~dep_check.txt" 2>> "%LOG%"
@@ -662,13 +737,29 @@ if exist "requirements.txt" (
       echo *** Warning: Some requirements may have failed to install.
       call :log "[WARN] pip install -r requirements.txt failed; some packages may be missing."
     )
+  ) else if "%HP_ENV_MODE%"=="uv" (
+    rem derived requirement: uv pip install targets the uv venv explicitly via --python.
+    rem HP_DEP_SKIP is set by dep_check before this block; 'if not defined' evaluates at
+    rem runtime so there is no block-parse-time expansion issue.
+    if not defined HP_DEP_SKIP (
+      "%HP_UV_EXE%" pip install --python "%HP_PY%" -r requirements.txt >> "%LOG%" 2>&1
+      if errorlevel 1 (
+        echo *** Warning: Some requirements may have failed to install.
+        call :log "[WARN] uv pip install -r requirements.txt failed; some packages may be missing."
+      )
+    )
+    call :log "[INFO] UV_USED=1"
   ) else (
     call :log "[WARN] System fallback: skipping requirement installation."
   )
 )
 rem --- Capture installed package state via pip freeze ---
 if exist "~dependency_installed.txt" del "~dependency_installed.txt" >nul 2>&1
-"%HP_PY%" -m pip freeze > "~dependency_installed.txt" 2>nul
+if "%HP_ENV_MODE%"=="uv" (
+  "%HP_UV_EXE%" pip freeze --python "%HP_PY%" > "~dependency_installed.txt" 2>nul
+) else (
+  "%HP_PY%" -m pip freeze > "~dependency_installed.txt" 2>nul
+)
 set "HP_DEP_INST_RC=%errorlevel%"
 if "%HP_DEP_INST_RC%"=="0" call :log "[INFO] DEP_INSTALLED_CAPTURED=1"
 if not "%HP_DEP_INST_RC%"=="0" (
@@ -681,6 +772,14 @@ rem derived requirement: goto avoids %errorlevel% parse-time expansion that
 rem would occur inside a parenthesized if-block (cmd.exe expands %var% for
 rem the whole block at parse time, so set HP_LOCK_RC=%errorlevel% inside
 rem if (...) always captures the pre-block errorlevel, not conda list's exit code).
+if "%HP_ENV_MODE%"=="uv" (
+  rem derived requirement: dep_check.py and selfapps_depcheck.ps1 expect
+  rem ~environment.lock.txt regardless of env mode; reuse the pip freeze output
+  rem already captured in ~dependency_installed.txt to avoid a second freeze call.
+  if exist "~dependency_installed.txt" copy /y "~dependency_installed.txt" "~environment.lock.txt" >nul 2>&1
+  if exist "~environment.lock.txt" call :log "[INFO] Environment snapshot written: ~environment.lock.txt"
+  goto :lock_done
+)
 if not "%HP_ENV_MODE%"=="conda" goto :lock_done
 call :log "[INFO] Capturing environment snapshot..."
 call "%CONDA_BAT%" list -n "%ENVNAME%" --export > "~environment.lock.txt" 2>> "%LOG%"
@@ -1289,7 +1388,11 @@ if "%HP_ENV_MODE%"=="system" (
     :: Version is intentionally unpinned so future PyInstaller releases are adopted automatically.
     :: If CI starts failing parse_warn tests after a PyInstaller update, review ~parse_warn.py
     :: against the new warn-file format and update the translation table as needed.
-    "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
+    if "%HP_ENV_MODE%"=="uv" (
+      "%HP_UV_EXE%" pip install --python "%HP_PY%" -q pyinstaller >> "%LOG%" 2>&1
+    ) else (
+      "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
+    )
     if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
     "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
     if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
@@ -1315,7 +1418,11 @@ if "%HP_ENV_MODE%"=="system" (
     for /f "usebackq delims=" %%M in ("~missing_modules.txt") do set "HP_WARNFIX_NEEDED=1"
     if defined HP_WARNFIX_NEEDED (
       call :log "[INFO] PyInstaller flagged missing modules; installing and rebuilding."
-      if defined CONDA_BAT (
+      if "%HP_ENV_MODE%"=="uv" (
+        for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
+          "%HP_UV_EXE%" pip install --python "%HP_PY%" %%M >> "%LOG%" 2>&1
+        )
+      ) else if defined CONDA_BAT (
         for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
           call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%M >> "%LOG%" 2>&1
         )
@@ -1487,6 +1594,13 @@ exit /b 0
 set "MSG=%~1"
 echo %date% %time% %MSG%
 >> "%LOG%" echo [%date% %time%] %MSG%
+exit /b 0
+:write_runtime_txt
+rem derived requirement: called from inside a parenthesized if-block so %PYVER%
+rem would expand at block-parse time (empty) if inlined. Subroutine body is
+rem re-parsed at call time, so %PYVER% correctly reflects the for/f result.
+if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
+if not "%PYVER%"=="" call :log "[INFO] runtime.txt written: %PYVER%"
 exit /b 0
 rem :die signals a fatal error but uses exit /b so the caller (CI orchestration,
 rem harness, or run_tests.bat) can continue collecting artifacts and gate results.

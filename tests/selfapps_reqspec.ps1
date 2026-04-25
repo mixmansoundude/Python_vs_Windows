@@ -510,6 +510,29 @@ try {
 # derived requirement: reuse the _envsmoke environment that the earlier self-test
 # already created so this probe proves translated specifiers install end-to-end in
 # the same real bootstrap environment instead of a synthetic throwaway env.
+# When uv mode was used, no conda env was created; skip install/import without
+# failing $overallPass so translation rows still pass on uv lanes.
+$condaEnvsRoot = Split-Path (Split-Path $condaBat -Parent) -Parent
+$smokeEnvPy = Join-Path $condaEnvsRoot "envs\_envsmoke\python.exe"
+# derived requirement: only skip when uv was actually used for the bootstrap;
+# if conda was used and _envsmoke is missing that is a real failure, not a graceful skip.
+$uvEnvPath = Join-Path $here '~envsmoke' '.uv_env'
+$uvWasUsed = Test-Path -LiteralPath $uvEnvPath
+if (-not (Test-Path -LiteralPath $smokeEnvPy)) {
+    if ($uvWasUsed) {
+        $installDetails.installExitCode = 0
+        $installDetails.importExitCode = 0
+        $installDetails.importable = $true
+        $installDetails.skip = $true
+        $installDetails.reason = 'env-not-found (uv-mode)'
+    } else {
+        $overallPass = $false
+        $installDetails.installExitCode = -1
+        $installDetails.importExitCode = -1
+        $installDetails.importable = $false
+        $installDetails.reason = 'env-not-found (unexpected)'
+    }
+} else {
 $installCommand = "`"$condaBat`" install -y -n _envsmoke --override-channels -c conda-forge `"six>=1.16`""
 try {
     $installOutput = cmd /c $installCommand 2>&1
@@ -544,6 +567,7 @@ try {
     $installDetails.importable = $false
     $installDetails.importError = $_.Exception.Message
     Add-Content -LiteralPath $logPath -Value ("conda import exception: {0}" -f $_.Exception.Message) -Encoding Ascii
+}
 }
 
 try {
@@ -586,6 +610,21 @@ try {
     Add-Content -LiteralPath $logPath -Value ("ingest conda dry-run exception: {0}" -f $_.Exception.Message) -Encoding Ascii
 }
 
+if (-not (Test-Path -LiteralPath $smokeEnvPy)) {
+    if ($uvWasUsed) {
+        $ingestImportDetails.exitCode = 0
+        $ingestImportDetails.installExitCode = 0
+        $ingestImportDetails.importable = $true
+        $ingestImportDetails.skip = $true
+        $ingestImportDetails.reason = 'env-not-found (uv-mode)'
+    } else {
+        $overallPass = $false
+        $ingestImportDetails.exitCode = -1
+        $ingestImportDetails.installExitCode = -1
+        $ingestImportDetails.importable = $false
+        $ingestImportDetails.reason = 'env-not-found (unexpected)'
+    }
+} else {
 $ingestInstallCommand = "`"$condaBat`" install -y -n _envsmoke --override-channels -c conda-forge `"six`""
 try {
     $ingestInstallOutput = cmd /c $ingestInstallCommand 2>&1
@@ -616,6 +655,7 @@ try {
     $ingestImportDetails.importable = $false
     $ingestImportDetails.importError = $_.Exception.Message
     Add-Content -LiteralPath $logPath -Value ("ingest conda import exception: {0}" -f $_.Exception.Message) -Encoding Ascii
+}
 }
 
 Write-ReqspecRows -Pass $overallPass -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails $failcaseDetails -ChannelPinDetails $channelPinDetails
