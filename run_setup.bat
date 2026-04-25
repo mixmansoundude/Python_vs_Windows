@@ -303,7 +303,7 @@ rem to uv (version-pinning deferred; uv picks the system default Python).
 if not defined HP_UV_EXE goto :try_conda_create
 set "HP_UV_ENV_PATH=%HP_SCRIPT_ROOT%.uv_env"
 if exist "%HP_UV_ENV_PATH%\Scripts\python.exe" (
-  "%HP_UV_ENV_PATH%\Scripts\python.exe" -c "exit(0)" >nul 2>&1
+  "%HP_UV_ENV_PATH%\Scripts\python.exe" -c "import pip;exit(0)" >nul 2>&1
   if not errorlevel 1 (
     set "HP_ENV_MODE=uv"
     set "HP_PY=%HP_UV_ENV_PATH%\Scripts\python.exe"
@@ -313,7 +313,7 @@ if exist "%HP_UV_ENV_PATH%\Scripts\python.exe" (
   )
 )
 call :log "[INFO] uv: creating venv at .uv_env..."
-"%HP_UV_EXE%" venv "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
+"%HP_UV_EXE%" venv --seed "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
 if errorlevel 1 goto :uv_venv_fail
 if not exist "%HP_UV_ENV_PATH%\Scripts\python.exe" goto :uv_venv_fail
 set "HP_ENV_MODE=uv"

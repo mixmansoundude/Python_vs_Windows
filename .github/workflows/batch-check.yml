@@ -36,7 +36,9 @@ jobs:
           - mode: conda-full
           # justme-test: forces JustMe install path via HP_TEST_JUSTME_FALLBACK=1 (informational)
           - mode: justme-test
-    continue-on-error: ${{ matrix.mode == 'cache' || matrix.mode == 'justme-test' }}
+          # uv: explicit lane for uv env+dep installer path (no HP_FORCE_CONDA_ONLY)
+          - mode: uv
+    continue-on-error: ${{ matrix.mode == 'cache' || matrix.mode == 'justme-test' || matrix.mode == 'uv' }}
     runs-on: windows-latest
 
     outputs:
@@ -61,9 +63,9 @@ jobs:
           restore-keys: |
             win-${{ runner.os }}-py311-conda-
 
-      # probe fires in both real and conda-full; cache lane skips it intentionally
-      - name: Enable Miniconda probe (real/conda-full mode)
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+      # probe fires in real, conda-full, and uv; cache lane skips it intentionally
+      - name: Enable Miniconda probe (real/conda-full/uv mode)
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' || matrix.mode == 'uv' }}
         shell: pwsh
         run: |
           'HP_CI_TEST_CONDA_DL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
