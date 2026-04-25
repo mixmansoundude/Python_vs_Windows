@@ -457,7 +457,13 @@ if defined PEP723_BLOCK_FOUND if not defined PEP723_ACTIVE (
 set "PEP723_BLOCK_FOUND="
 
 if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
-  "%HP_PY%" -m pip install -q --disable-pip-version-check pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
+  if "%HP_ENV_MODE%"=="uv" (
+    rem derived requirement: uv pip install bypasses python -m pip so pip need not
+    rem be a module inside the uv venv; uv's own resolver handles the installation.
+    "%HP_UV_EXE%" pip install --python "%HP_PY%" -q pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
+  ) else (
+    "%HP_PY%" -m pip install -q --disable-pip-version-check pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
+  )
   if errorlevel 1 call :die "[ERROR] pipreqs install failed."
 )
 
@@ -746,7 +752,11 @@ if exist "requirements.txt" (
 )
 rem --- Capture installed package state via pip freeze ---
 if exist "~dependency_installed.txt" del "~dependency_installed.txt" >nul 2>&1
-"%HP_PY%" -m pip freeze > "~dependency_installed.txt" 2>nul
+if "%HP_ENV_MODE%"=="uv" (
+  "%HP_UV_EXE%" pip freeze --python "%HP_PY%" > "~dependency_installed.txt" 2>nul
+) else (
+  "%HP_PY%" -m pip freeze > "~dependency_installed.txt" 2>nul
+)
 set "HP_DEP_INST_RC=%errorlevel%"
 if "%HP_DEP_INST_RC%"=="0" call :log "[INFO] DEP_INSTALLED_CAPTURED=1"
 if not "%HP_DEP_INST_RC%"=="0" (
@@ -1367,7 +1377,11 @@ if "%HP_ENV_MODE%"=="system" (
     :: Version is intentionally unpinned so future PyInstaller releases are adopted automatically.
     :: If CI starts failing parse_warn tests after a PyInstaller update, review ~parse_warn.py
     :: against the new warn-file format and update the translation table as needed.
-    "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
+    if "%HP_ENV_MODE%"=="uv" (
+      "%HP_UV_EXE%" pip install --python "%HP_PY%" -q pyinstaller >> "%LOG%" 2>&1
+    ) else (
+      "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
+    )
     if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
     "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
     if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
