@@ -687,7 +687,7 @@ rem environment lock file already contains every package pipreqs detected.
 rem goto is used to avoid %errorlevel% parse-time expansion inside parenthesized blocks.
 set "HP_DEP_SKIP="
 set "HP_DEP_RESULT="
-if not "%HP_ENV_MODE%"=="conda" goto :dep_check_done
+if not "%HP_ENV_MODE%"=="conda" if not "%HP_ENV_MODE%"=="uv" goto :dep_check_done
 call :emit_from_base64 "~dep_check.py" HP_DEP_CHECK
 if errorlevel 1 goto :dep_check_done
 "%HP_PY%" "~dep_check.py" > "~dep_check.txt" 2>> "%LOG%"
@@ -739,10 +739,14 @@ if exist "requirements.txt" (
     )
   ) else if "%HP_ENV_MODE%"=="uv" (
     rem derived requirement: uv pip install targets the uv venv explicitly via --python.
-    "%HP_UV_EXE%" pip install --python "%HP_PY%" -r requirements.txt >> "%LOG%" 2>&1
-    if errorlevel 1 (
-      echo *** Warning: Some requirements may have failed to install.
-      call :log "[WARN] uv pip install -r requirements.txt failed; some packages may be missing."
+    rem HP_DEP_SKIP is set by dep_check before this block; 'if not defined' evaluates at
+    rem runtime so there is no block-parse-time expansion issue.
+    if not defined HP_DEP_SKIP (
+      "%HP_UV_EXE%" pip install --python "%HP_PY%" -r requirements.txt >> "%LOG%" 2>&1
+      if errorlevel 1 (
+        echo *** Warning: Some requirements may have failed to install.
+        call :log "[WARN] uv pip install -r requirements.txt failed; some packages may be missing."
+      )
     )
     call :log "[INFO] UV_USED=1"
   ) else (
@@ -768,6 +772,14 @@ rem derived requirement: goto avoids %errorlevel% parse-time expansion that
 rem would occur inside a parenthesized if-block (cmd.exe expands %var% for
 rem the whole block at parse time, so set HP_LOCK_RC=%errorlevel% inside
 rem if (...) always captures the pre-block errorlevel, not conda list's exit code).
+if "%HP_ENV_MODE%"=="uv" (
+  rem derived requirement: dep_check.py and selfapps_depcheck.ps1 expect
+  rem ~environment.lock.txt regardless of env mode; reuse the pip freeze output
+  rem already captured in ~dependency_installed.txt to avoid a second freeze call.
+  if exist "~dependency_installed.txt" copy /y "~dependency_installed.txt" "~environment.lock.txt" >nul 2>&1
+  if exist "~environment.lock.txt" call :log "[INFO] Environment snapshot written: ~environment.lock.txt"
+  goto :lock_done
+)
 if not "%HP_ENV_MODE%"=="conda" goto :lock_done
 call :log "[INFO] Capturing environment snapshot..."
 call "%CONDA_BAT%" list -n "%ENVNAME%" --export > "~environment.lock.txt" 2>> "%LOG%"
