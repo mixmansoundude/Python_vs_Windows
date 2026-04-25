@@ -326,8 +326,7 @@ call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
 if not errorlevel 1 (
   "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
   for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
-  if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
-  if not "%PYVER%"=="" call :log "[INFO] runtime.txt written: %PYVER%"
+  call :write_runtime_txt
 )
 goto :after_env_mode_selection
 :uv_venv_fail
@@ -1579,6 +1578,13 @@ exit /b 0
 set "MSG=%~1"
 echo %date% %time% %MSG%
 >> "%LOG%" echo [%date% %time%] %MSG%
+exit /b 0
+:write_runtime_txt
+rem derived requirement: called from inside a parenthesized if-block so %PYVER%
+rem would expand at block-parse time (empty) if inlined. Subroutine body is
+rem re-parsed at call time, so %PYVER% correctly reflects the for/f result.
+if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
+if not "%PYVER%"=="" call :log "[INFO] runtime.txt written: %PYVER%"
 exit /b 0
 rem :die signals a fatal error but uses exit /b so the caller (CI orchestration,
 rem harness, or run_tests.bat) can continue collecting artifacts and gate results.
