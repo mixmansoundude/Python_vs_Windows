@@ -238,6 +238,8 @@ if exist "%HP_UV_BIN%\uv.exe" (
   call :log "[INFO] uv: acquired at ~uv_bin\uv.exe"
 ) else (
   call :log "[WARN] uv: acquisition failed; will use conda for env creation."
+  set "UV_FALLBACK_REASON=acquire_failed"
+  call :log "[WARN] UV_FALLBACK reason=acquire_failed"
 )
 :uv_acquire_done
 
@@ -331,8 +333,11 @@ if not errorlevel 1 (
 goto :after_env_mode_selection
 :uv_venv_fail
 call :log "[WARN] uv: venv creation failed; falling back to conda create."
+set "UV_FALLBACK_REASON=venv_create_failed"
+call :log "[WARN] UV_FALLBACK reason=venv_create_failed"
 set "HP_UV_EXE="
 :try_conda_create
+call :log "[INFO] HP_ENV_MODE=conda"
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" "python<3.13" --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
