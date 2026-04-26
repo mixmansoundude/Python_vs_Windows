@@ -751,6 +751,8 @@ if exist "requirements.txt" (
       if errorlevel 1 (
         echo *** Warning: Some requirements may have failed to install.
         call :log "[WARN] uv pip install -r requirements.txt failed; some packages may be missing."
+        set "UV_FALLBACK_REASON=dep_install_failed"
+        call :log "[WARN] UV_FALLBACK reason=dep_install_failed"
       )
     )
     call :log "[INFO] UV_USED=1"
@@ -783,6 +785,10 @@ if "%HP_ENV_MODE%"=="uv" (
   rem already captured in ~dependency_installed.txt to avoid a second freeze call.
   if exist "~dependency_installed.txt" copy /y "~dependency_installed.txt" "~environment.lock.txt" >nul 2>&1
   if exist "~environment.lock.txt" call :log "[INFO] Environment snapshot written: ~environment.lock.txt"
+  if not exist "~environment.lock.txt" (
+    set "UV_FALLBACK_REASON=lock_failed"
+    call :log "[WARN] UV_FALLBACK reason=lock_failed"
+  )
   goto :lock_done
 )
 if not "%HP_ENV_MODE%"=="conda" goto :lock_done
