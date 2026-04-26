@@ -15,6 +15,7 @@ from tools.diag.publish_index import (
     _ensure_diag_log_placeholders,
     _ensure_iterate_log_archive,
     _ensure_repo_index,
+    _extract_uv_signals,
     _validate_iterate_status_line,
     _write_global_txt_mirrors,
     _write_html,
@@ -795,6 +796,59 @@ class QuickLinksRenderingTest(unittest.TestCase):
         self.assertIn("  reason1", index_txt)
         self.assertIn("Prompt (head):", index_txt)
         self.assertIn("  line1", index_txt)
+
+
+class ExtractUvSignalsTest(unittest.TestCase):
+    def _make_setup_log(self, tmpdir: Path, lane: str, log_text: str, *, lock_text: str = "") -> Path:
+        diag = tmpdir / "diag"
+        scenario = (
+            diag
+            / "_artifacts"
+            / "batch-check"
+            / "test-logs"
+            / f"test-logs-selftest-{lane}-1234-1"
+            / "tests"
+            / "~envsmoke"
+        )
+        scenario.mkdir(parents=True)
+        (scenario / "~setup.log").write_text(log_text, encoding="utf-8")
+        if lock_text:
+            (scenario / "~environment.lock.txt").write_text(lock_text, encoding="utf-8")
+        return diag
+
+    def test_returns_default_when_diag_missing(self) -> None:
+        sig = _extract_uv_signals(None)
+        self.assertEqual(sig["env_provider"], "unknown")
+        self.assertEqual(sig["uv_used"], "0")
+        self.assertEqual(sig["uv_fallback_reason"], "none")
+        self.assertEqual(sig["lock_present"], "no")
+
+    def test_acquired_used_signals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag = self._make_setup_log(
+                Path(tmp),
+                "real",
+                "[INFO] HP_ENV_MODE=uv\n[INFO] UV_USED=1\n",
+                lock_text="pkg==1.0\n",
+            )
+            sig = _extract_uv_signals(diag)
+            self.assertEqual(sig["env_provider"], "uv")
+            self.assertEqual(sig["uv_used"], "1")
+            self.assertEqual(sig["uv_fallback_reason"], "none")
+            self.assertEqual(sig["lock_present"], "yes")
+
+    def test_fallback_reason_captured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag = self._make_setup_log(
+                Path(tmp),
+                "real",
+                "[INFO] HP_ENV_MODE=uv\n[WARN] UV_FALLBACK reason=venv_create_failed\n[INFO] HP_ENV_MODE=conda\n",
+            )
+            sig = _extract_uv_signals(diag)
+            self.assertEqual(sig["env_provider"], "conda")
+            self.assertEqual(sig["uv_fallback_reason"], "venv_create_failed")
+            self.assertEqual(sig["lock_present"], "no")
+            self.assertEqual(sig["uv_used"], "0")
 
 
 if __name__ == "__main__":

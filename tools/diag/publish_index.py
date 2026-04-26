@@ -2387,6 +2387,76 @@ def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
     return results
 
 
+def _extract_uv_signals(diag: Optional[Path]) -> dict:
+    """Extract uv-related signals from the most informative ~setup.log.
+
+    Returns a dict with: env_provider, uv_used, uv_fallback_reason, lock_present.
+    Prefers the real lane's ~envsmoke setup log; falls back to whichever lane is found.
+    """
+    default = {
+        "env_provider": "unknown",
+        "uv_used": "0",
+        "uv_fallback_reason": "none",
+        "lock_present": "no",
+    }
+    if not diag:
+        return default
+    test_logs_root = diag / "_artifacts" / "batch-check" / "test-logs"
+    if not test_logs_root.exists():
+        return default
+    candidates: List[Tuple[str, Path, Path]] = []
+    try:
+        artifact_dirs = sorted(p for p in test_logs_root.iterdir() if p.is_dir())
+    except OSError:
+        return default
+    for artifact_dir in artifact_dirs:
+        dir_name = artifact_dir.name.lower()
+        if "conda-full" in dir_name:
+            lane = "conda-full"
+        elif "cache" in dir_name:
+            lane = "cache"
+        elif "uv" in dir_name and "selftest-uv" in dir_name:
+            lane = "uv"
+        else:
+            lane = "real"
+        scenario_dir = artifact_dir / "tests" / "~envsmoke"
+        log_path = scenario_dir / "~setup.log"
+        if log_path.exists():
+            candidates.append((lane, log_path, scenario_dir))
+    if not candidates:
+        return default
+    chosen: Optional[Tuple[str, Path, Path]] = None
+    for preferred in ("real", "uv", "conda-full", "cache"):
+        for entry in candidates:
+            if entry[0] == preferred:
+                chosen = entry
+                break
+        if chosen:
+            break
+    if not chosen:
+        chosen = candidates[0]
+    _, log_path, scenario_dir = chosen
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return default
+    env_provider = "unknown"
+    for match in re.finditer(r"HP_ENV_MODE=(\w+)", text):
+        env_provider = match.group(1)
+    uv_used = "1" if "UV_USED=1" in text else "0"
+    fallback_reason = "none"
+    for match in re.finditer(r"UV_FALLBACK reason=(\w+)", text):
+        fallback_reason = match.group(1)
+    lock_path = scenario_dir / "~environment.lock.txt"
+    lock_present = "yes" if lock_path.exists() and _nonempty_file(lock_path) else "no"
+    return {
+        "env_provider": env_provider,
+        "uv_used": uv_used,
+        "uv_fallback_reason": fallback_reason,
+        "lock_present": lock_present,
+    }
+
+
 def _collect_setup_log_links(diag: Optional[Path]) -> List[dict]:
     """Return quick-link entries for ~setup.log files from each test scenario and lane.
 
@@ -3324,6 +3394,11 @@ def _build_markdown(
             f"- Artifact files enumerated: {artifact_count}",
         ]
     )
+    uv_signals = _extract_uv_signals(diag)
+    lines.append(f"- ENV_PROVIDER: {uv_signals['env_provider']}")
+    lines.append(f"- UV_USED: {uv_signals['uv_used']}")
+    lines.append(f"- UV_FALLBACK_REASON: {uv_signals['uv_fallback_reason']}")
+    lines.append(f"- environment.lock.txt: {uv_signals['lock_present']}")
     if gate_data:
         stage_value = gate_data.get("stage", "n/a")
         lines.append(f"- Gate stage: {stage_value}")
@@ -3659,6 +3734,11 @@ def _write_html(
         {"label": "Batch-check run id", "value": batch_status},
         {"label": "Artifact files enumerated", "value": str(artifact_count)},
     ]
+    uv_signals = _extract_uv_signals(diag)
+    status_pairs.append({"label": "ENV_PROVIDER", "value": uv_signals["env_provider"]})
+    status_pairs.append({"label": "UV_USED", "value": uv_signals["uv_used"]})
+    status_pairs.append({"label": "UV_FALLBACK_REASON", "value": uv_signals["uv_fallback_reason"]})
+    status_pairs.append({"label": "environment.lock.txt", "value": uv_signals["lock_present"]})
     if gate_data:
         status_pairs.append({"label": "Gate stage", "value": gate_data.get("stage", "n/a")})
         status_pairs.append({"label": "Gate proceed", "value": str(gate_data.get("proceed", True)).lower()})
