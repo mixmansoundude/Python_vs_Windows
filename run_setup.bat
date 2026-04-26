@@ -303,6 +303,10 @@ rem folder, short-circuiting conda create. On failure, :try_conda_create runs th
 rem existing conda path unchanged. Python version from PYSPEC is not yet forwarded
 rem to uv (version-pinning deferred; uv picks the system default Python).
 if not defined HP_UV_EXE goto :try_conda_create
+if "%HP_TEST_UV_FAIL%"=="1" (
+  call :log "[TEST] Injecting uv failure"
+  goto :uv_venv_fail
+)
 set "HP_UV_ENV_PATH=%HP_SCRIPT_ROOT%.uv_env"
 if exist "%HP_UV_ENV_PATH%\Scripts\python.exe" (
   "%HP_UV_ENV_PATH%\Scripts\python.exe" -c "import pip;exit(0)" >nul 2>&1
