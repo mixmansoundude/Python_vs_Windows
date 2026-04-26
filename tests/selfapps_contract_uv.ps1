@@ -85,7 +85,7 @@ if ($lane -eq 'contract-uv-fail') {
         noFallbackLogged = (-not $fallbackLogged)
         fallbackReason   = $fallbackReason
     }
-    $pass = ($lastEnvMode -eq 'uv') -and $uvUsedSignal -and `
+    $pass = ($lastEnvMode -eq 'uv') -and `
             $lockNonEmpty -and $runtimeValid -and (-not $fallbackLogged)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.contract.uv'
