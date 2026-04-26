@@ -15,6 +15,7 @@ from tools.diag.publish_index import (
     _ensure_diag_log_placeholders,
     _ensure_iterate_log_archive,
     _ensure_repo_index,
+    _iterate_status_display,
     _validate_iterate_status_line,
     _write_global_txt_mirrors,
     _write_html,
@@ -96,6 +97,61 @@ class IterateStatusLineTest(unittest.TestCase):
             )
 
             self.assertIn("Pre-flight iterate gate intentionally fails", markdown)
+
+    def test_markdown_reassures_when_iterate_logs_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag_root = Path(tmp) / "diag"
+            diag_root.mkdir(parents=True, exist_ok=True)
+
+            context = Context(
+                diag=diag_root,
+                artifacts=diag_root / "_artifacts",
+                artifacts_override=None,
+                downloaded_iter_root=None,
+                repo="owner/repo",
+                branch="main",
+                sha="abc123",
+                run_id="555",
+                run_attempt="1",
+                run_url="https://example.invalid/run",
+                short_sha="abc1234",
+                inventory_b64=None,
+                batch_run_id=None,
+                batch_run_attempt=None,
+                site=None,
+            )
+
+            markdown = _build_markdown(
+                context,
+                None,
+                None,
+                "2025-01-02T03:04:05Z",
+                "2025-01-01T21:04:05-06:00",
+                None,
+                None,
+                None,
+            )
+
+            self.assertIn("* Iterate logs: missing", markdown)
+            self.assertIn("- Iterate logs (human): not produced yet (check batch-check run)", markdown)
+            self.assertIn("if CI is green, iterate logs were not needed", markdown)
+
+
+class IterateStatusDisplayTest(unittest.TestCase):
+    def test_found_status_is_available(self) -> None:
+        self.assertEqual(_iterate_status_display("found", "no failures (success)"), "available")
+
+    def test_missing_status_with_green_batch_is_not_needed(self) -> None:
+        self.assertEqual(
+            _iterate_status_display("missing", "no failures (success)"),
+            "not needed (all checks passing)",
+        )
+
+    def test_missing_status_without_green_batch_is_not_produced(self) -> None:
+        self.assertEqual(
+            _iterate_status_display("missing", "missing"),
+            "not produced yet (check batch-check run)",
+        )
 
 
 class ReloadLinkTest(unittest.TestCase):
