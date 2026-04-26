@@ -258,6 +258,7 @@ A branch with zero Python files still counts as healthy when:
 ### Diagnostics and Iterate gate snapshots
 - The diagnostics run-summary page shows a **pre-flight Iterate gate** entry that snapshots the NDJSON inputs before iterate runs. That snapshot is expected to report `has_failures: true` while `tests~test-results.ndjson` and `ci_test_results.ndjson` are still empty so blank inputs cannot pass silently.
 - The later Iterate gate summary (after iterate has produced NDJSON rows) is the real gate verdict; use it to judge pass/fail once results exist.
+- Diagnostics keeps a parser-facing machine line `* Iterate logs: found|missing` in the markdown source, but the human-facing status now reports either `available`, `not needed (all checks passing)`, or `not produced yet (check batch-check run)` to avoid false alarms from the raw word `missing` alone.
 
 The only CI auto-patching agent is the **Model quick-fix (inline)** job in `.github/workflows/batch-check.yml`, which invokes `tools/inline_model_fix.py` against the `gpt-codex-5` model. It only runs when the NDJSON harness reports failures and must respect the git hygiene rules that forbid committing artifacts (tilde-prefixed logs, NDJSON outputs, etc.). See **AGENTS.md** for the full agent policy.
 
