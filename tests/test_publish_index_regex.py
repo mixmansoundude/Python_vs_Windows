@@ -850,6 +850,42 @@ class ExtractUvSignalsTest(unittest.TestCase):
             self.assertEqual(sig["lock_present"], "no")
             self.assertEqual(sig["uv_used"], "0")
 
+    def test_contract_lanes_do_not_stomp_real_lane(self) -> None:
+        # Regression: contract-uv and contract-uv-fail artifact dirs must be
+        # classified separately so they cannot be picked when the chooser
+        # prefers "real". Reproduce by giving the contract lane a sentinel
+        # value (UV_FALLBACK reason=acquire_failed) and the real lane the
+        # canonical happy-path log; the helper must return the real lane data.
+        with tempfile.TemporaryDirectory() as tmp:
+            diag = Path(tmp) / "diag"
+            test_logs = diag / "_artifacts" / "batch-check" / "test-logs"
+            for lane_dir, log_text, lock_text in [
+                (
+                    "test-logs-selftest-contract-uv-1234-1",
+                    "[INFO] HP_ENV_MODE=conda\n[WARN] UV_FALLBACK reason=acquire_failed\n",
+                    "",
+                ),
+                (
+                    "test-logs-selftest-contract-uv-fail-1234-1",
+                    "[INFO] HP_ENV_MODE=conda\n[WARN] UV_FALLBACK reason=venv_create_failed\n",
+                    "",
+                ),
+                (
+                    "test-logs-selftest-real-1234-1",
+                    "[INFO] uv: venv created at .uv_env\n[INFO] HP_ENV_MODE=uv\n",
+                    "pkg==1.0\n",
+                ),
+            ]:
+                scenario = test_logs / lane_dir / "tests" / "~envsmoke"
+                scenario.mkdir(parents=True)
+                (scenario / "~setup.log").write_text(log_text, encoding="utf-8")
+                if lock_text:
+                    (scenario / "~environment.lock.txt").write_text(lock_text, encoding="utf-8")
+            sig = _extract_uv_signals(diag)
+            self.assertEqual(sig["env_provider"], "uv")
+            self.assertEqual(sig["uv_fallback_reason"], "none")
+            self.assertEqual(sig["lock_present"], "yes")
+
     def test_uv_used_reflects_env_provider_when_no_install_logged(self) -> None:
         # Stub apps with no requirements.txt take uv end-to-end (HP_ENV_MODE=uv,
         # .uv_env created) but the [INFO] UV_USED=1 line never fires because the

@@ -2415,10 +2415,26 @@ def _extract_uv_signals(diag: Optional[Path]) -> dict:
             lane = "conda-full"
         elif "cache" in dir_name:
             lane = "cache"
-        elif "uv" in dir_name and "selftest-uv" in dir_name:
+        # derived requirement: more-specific lane names must be tested before
+        # broader ones. The contract-uv* names contain "uv" and would otherwise
+        # match the bare "uv" lane (or fall through to "real") and stomp on the
+        # canonical real-lane signals on the diag page.
+        elif "contract-uv-fail" in dir_name:
+            lane = "contract-uv-fail"
+        elif "contract-uv" in dir_name:
+            lane = "contract-uv"
+        elif "justme-test" in dir_name:
+            lane = "justme-test"
+        elif "selftest-uv-" in dir_name:
             lane = "uv"
-        else:
+        elif "real" in dir_name:
             lane = "real"
+        else:
+            # Unknown lane name; do not silently bucket as "real" -- record the
+            # artifact dir name so the chooser cannot pick it and so any
+            # mislabeling is visible in the (rare) downstream consumer that
+            # iterates raw lane values.
+            lane = f"unknown:{artifact_dir.name}"
         scenario_dir = artifact_dir / "tests" / "~envsmoke"
         log_path = scenario_dir / "~setup.log"
         if log_path.exists():
