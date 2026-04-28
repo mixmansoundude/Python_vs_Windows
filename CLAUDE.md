@@ -263,6 +263,18 @@ justme-test lane rows (subset, flag-triggered):
 conda.install.justme
 ```
 
+contract-uv lane rows (flag-triggered):
+
+```
+self.contract.uv
+```
+
+contract-uv-fail lane rows (HP_TEST_UV_FAIL=1, flag-triggered):
+
+```
+self.contract.uv.fail
+```
+
 Test-logs NDJSON (from harness/selftest, additional rows):
 
 ```

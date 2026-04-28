@@ -427,13 +427,13 @@ $uvSmokePass = if ($uvSmokeForceSkip) { $true }
                elseif (-not $isUvMode) { $true }
                else { $bootstrapPass -and $errorSignalPass }
 $uvSmokeDetails = if ($uvSmokeForceSkip) {
-    [ordered]@{ skip=$true; reason='HP_FORCE_CONDA_ONLY' }
+    [ordered]@{ state='force-skip'; skip=$true; reason='HP_FORCE_CONDA_ONLY' }
 } elseif (-not $uvAcquired) {
-    [ordered]@{ skip=$true; reason='uv-not-acquired'; bootstrapPass=$bootstrapPass }
+    [ordered]@{ state='not-acquired'; skip=$true; reason='uv-not-acquired'; bootstrapPass=$bootstrapPass }
 } elseif (-not $isUvMode) {
-    [ordered]@{ skip=$true; reason='uv-acquired-but-fell-back'; uvAcquired=$uvAcquired; bootstrapPass=$bootstrapPass }
+    [ordered]@{ state='acquired-but-fell-back'; skip=$true; reason='uv-acquired-but-fell-back'; uvAcquired=$uvAcquired; bootstrapPass=$bootstrapPass }
 } else {
-    [ordered]@{ isUvMode=$isUvMode; uvAcquired=$uvAcquired; bootstrapPass=$bootstrapPass; interpreterPath=$interpreterPath }
+    [ordered]@{ state='acquired-used'; isUvMode=$isUvMode; uvAcquired=$uvAcquired; bootstrapPass=$bootstrapPass; interpreterPath=$interpreterPath }
 }
 Write-NdjsonRow ([ordered]@{
     id='self.env.smoke.uv'
