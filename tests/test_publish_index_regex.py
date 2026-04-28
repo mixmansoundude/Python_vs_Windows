@@ -147,6 +147,12 @@ class IterateStatusDisplayTest(unittest.TestCase):
             "not needed (all checks passing)",
         )
 
+    def test_missing_status_with_run_id_batch_is_not_needed(self) -> None:
+        self.assertEqual(
+            _iterate_status_display("missing", "1234 (attempt 1)"),
+            "not needed (all checks passing)",
+        )
+
     def test_missing_status_without_green_batch_is_not_produced(self) -> None:
         self.assertEqual(
             _iterate_status_display("missing", "missing"),

@@ -1596,8 +1596,14 @@ def _iterate_status_display(iterate_log_status: str, batch_status: str) -> str:
     if iterate_log_status == "found":
         return "available"
 
-    lowered = (batch_status or "").strip().lower()
-    if "no failures (success)" in lowered or lowered.endswith("/ success"):
+    normalized = (batch_status or "").strip()
+    lowered = normalized.lower()
+    green_batch = (
+        "no failures (success)" in lowered
+        or lowered.endswith("/ success")
+        or bool(re.fullmatch(r"\d+(?:\s*\(attempt\s*\d+\))?", normalized))
+    )
+    if green_batch:
         # derived requirement: people and agents routinely escalated on the word
         # "missing" when CI was actually green and iterate intentionally skipped.
         # Keep parser-facing found|missing intact, but show a human-facing status
