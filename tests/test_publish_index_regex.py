@@ -850,6 +850,26 @@ class ExtractUvSignalsTest(unittest.TestCase):
             self.assertEqual(sig["lock_present"], "no")
             self.assertEqual(sig["uv_used"], "0")
 
+    def test_uv_used_reflects_env_provider_when_no_install_logged(self) -> None:
+        # Stub apps with no requirements.txt take uv end-to-end (HP_ENV_MODE=uv,
+        # .uv_env created) but the [INFO] UV_USED=1 line never fires because the
+        # requirements.txt install path is skipped. The diag display must still
+        # report UV_USED=1 so it matches user intent ("uv was used").
+        with tempfile.TemporaryDirectory() as tmp:
+            diag = self._make_setup_log(
+                Path(tmp),
+                "real",
+                "[INFO] uv: acquired at ~uv_bin\\uv.exe\n"
+                "[INFO] uv: venv created at .uv_env\n"
+                "[INFO] HP_ENV_MODE=uv\n",
+                lock_text="pkg==1.0\n",
+            )
+            sig = _extract_uv_signals(diag)
+            self.assertEqual(sig["env_provider"], "uv")
+            self.assertEqual(sig["uv_used"], "1")
+            self.assertEqual(sig["uv_fallback_reason"], "none")
+            self.assertEqual(sig["lock_present"], "yes")
+
 
 if __name__ == "__main__":
     unittest.main()

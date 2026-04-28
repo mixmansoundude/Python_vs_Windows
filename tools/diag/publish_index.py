@@ -2443,7 +2443,20 @@ def _extract_uv_signals(diag: Optional[Path]) -> dict:
     env_provider = "unknown"
     for match in re.finditer(r"HP_ENV_MODE=(\w+)", text):
         env_provider = match.group(1)
-    uv_used = "1" if "UV_USED=1" in text else "0"
+    # derived requirement: UV_USED=1 in run_setup.bat only fires from inside the
+    # requirements.txt install path; stub apps with no requirements.txt still take
+    # uv end-to-end (env_provider=uv) but never emit UV_USED=1. Treat env_provider
+    # uv OR the explicit log line OR the venv-created/reused signal as evidence
+    # that uv was used so the diag display matches user intent.
+    uv_used = (
+        "1"
+        if (
+            env_provider == "uv"
+            or "UV_USED=1" in text
+            or re.search(r"\[INFO\] uv: (venv created|reusing existing)", text)
+        )
+        else "0"
+    )
     fallback_reason = "none"
     for match in re.finditer(r"UV_FALLBACK reason=(\w+)", text):
         fallback_reason = match.group(1)
