@@ -38,7 +38,11 @@ jobs:
           - mode: justme-test
           # uv: explicit lane for uv env+dep installer path (no HP_FORCE_CONDA_ONLY)
           - mode: uv
-    continue-on-error: ${{ matrix.mode == 'cache' || matrix.mode == 'justme-test' || matrix.mode == 'uv' }}
+          # contract-uv: enforces uv contract on the happy path (informational while shaking out)
+          - mode: contract-uv
+          # contract-uv-fail: HP_TEST_UV_FAIL=1 forces uv venv to fail; asserts explicit conda fallback
+          - mode: contract-uv-fail
+    continue-on-error: ${{ matrix.mode == 'cache' || matrix.mode == 'justme-test' || matrix.mode == 'uv' || matrix.mode == 'contract-uv' || matrix.mode == 'contract-uv-fail' }}
     runs-on: windows-latest
 
     outputs:
@@ -63,12 +67,21 @@ jobs:
           restore-keys: |
             win-${{ runner.os }}-py311-conda-
 
-      # probe fires in real, conda-full, and uv; cache lane skips it intentionally
-      - name: Enable Miniconda probe (real/conda-full/uv mode)
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' || matrix.mode == 'uv' }}
+      # probe fires in real, conda-full, uv, and contract-uv* lanes; cache lane skips it intentionally
+      - name: Enable Miniconda probe (real/conda-full/uv/contract-uv mode)
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' || matrix.mode == 'uv' || matrix.mode == 'contract-uv' || matrix.mode == 'contract-uv-fail' }}
         shell: pwsh
         run: |
           'HP_CI_TEST_CONDA_DL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
+      # contract-uv-fail only: HP_TEST_UV_FAIL=1 forces uv venv creation to fail so the
+      # bootstrapper takes the existing conda fallback path. The contract assertion then
+      # verifies UV_FALLBACK reason=venv_create_failed and HP_ENV_MODE=conda were logged.
+      - name: Force uv failure (contract-uv-fail only)
+        if: ${{ matrix.mode == 'contract-uv-fail' }}
+        shell: pwsh
+        run: |
+          'HP_TEST_UV_FAIL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       # conda-full only: clears venv/system fallbacks so a conda failure can't hide as a venv pass
       - name: Force conda-only bootstrap
@@ -194,6 +207,12 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_envsmoke.ps1
+
+      - name: "Self-test: uv contract assertions (contract-uv* only)"
+        if: ${{ matrix.mode == 'contract-uv' || matrix.mode == 'contract-uv-fail' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_contract_uv.ps1
 
       - name: "Self-test: JustMe install path (justme-test only)"
         if: ${{ matrix.mode == 'justme-test' }}
