@@ -74,9 +74,9 @@ jobs:
         run: |
           'HP_CI_TEST_CONDA_DL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
-      # contract-uv-fail only: HP_TEST_UV_FAIL=1 forces uv venv creation to fail so the
-      # bootstrapper takes the existing conda fallback path. The contract assertion then
-      # verifies UV_FALLBACK reason=venv_create_failed and HP_ENV_MODE=conda were logged.
+      # contract-uv-fail only: HP_TEST_UV_FAIL=1 lets uv venv creation succeed, then forces
+      # uv dep install to fail (injected bad package). The contract assertion verifies
+      # UV_FALLBACK reason=dep_install_failed and that uv venv creation succeeded first.
       - name: Force uv failure (contract-uv-fail only)
         if: ${{ matrix.mode == 'contract-uv-fail' }}
         shell: pwsh

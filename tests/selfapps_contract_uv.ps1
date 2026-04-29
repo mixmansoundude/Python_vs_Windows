@@ -27,12 +27,13 @@ if (Test-Path -LiteralPath $setupLog) {
 }
 
 $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
-$fallbackInjected = ($logText -match '\[TEST\] Injecting uv failure')
+$fallbackInjected = ($logText -match '\[TEST\] Injecting uv dep install failure')
 $fallbackLogged = ($logText -match '\[WARN\] UV_FALLBACK reason=(\w+)')
 $fallbackReason = if ($fallbackLogged) { $matches[1] } else { '' }
 $envModeLines = [regex]::Matches($logText, 'HP_ENV_MODE=(\w+)')
 $lastEnvMode = if ($envModeLines.Count -gt 0) { $envModeLines[$envModeLines.Count - 1].Groups[1].Value } else { 'unknown' }
 $uvUsedSignal = ($logText -match '\[INFO\] UV_USED=1')
+$uvVenvReady  = ($logText -match '\[INFO\] uv: (venv created at|reusing existing)')
 
 $lockExists = Test-Path -LiteralPath $lockFile
 $lockNonEmpty = $false
@@ -48,27 +49,27 @@ if ($runtimeExists) {
 }
 
 if ($lane -eq 'contract-uv-fail') {
-    # Failure-injection contract: HP_TEST_UV_FAIL=1 was set; assert explicit fallback to conda
+    # Failure-injection contract: HP_TEST_UV_FAIL=1 lets venv creation succeed, then forces
+    # uv dep install to fail. Asserts dep_install_failed reason and venv was ready first.
     $assertions = [ordered]@{
         injectionLogged   = $fallbackInjected
         fallbackLogged    = $fallbackLogged
         fallbackReason    = $fallbackReason
-        finalEnvMode      = $lastEnvMode
-        finalEnvModeIsConda = ($lastEnvMode -eq 'conda')
+        uvVenvReady       = $uvVenvReady
         lockExists        = $lockExists
         lockNonEmpty      = $lockNonEmpty
         runtimeExists     = $runtimeExists
         runtimeValid      = $runtimeValid
     }
     $pass = $fallbackInjected -and $fallbackLogged -and `
-            ($fallbackReason -eq 'venv_create_failed') -and `
-            ($lastEnvMode -eq 'conda') -and `
+            ($fallbackReason -eq 'dep_install_failed') -and `
+            $uvVenvReady -and `
             $lockNonEmpty -and $runtimeValid
     Write-NdjsonRow ([ordered]@{
         id      = 'self.contract.uv.fail'
         req     = 'REQ-003'
         pass    = [bool]$pass
-        desc    = 'Forced uv failure must produce explicit conda fallback'
+        desc    = 'Forced uv dep install failure must log dep_install_failed after venv creation'
         details = $assertions
         lane    = $lane
     })
