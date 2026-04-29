@@ -343,9 +343,9 @@ set "HP_UV_EXE="
 :try_conda_create
 call :log "[INFO] HP_ENV_MODE=conda"
 if "%PYSPEC%"=="" (
-  call "%CONDA_BAT%" create -y -n "%ENVNAME%" "python<3.13" --override-channels -c conda-forge >> "%LOG%" 2>&1
+  call "%CONDA_BAT%" create -y -n "%ENVNAME%" "python<3.13" pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
-  call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% --override-channels -c conda-forge >> "%LOG%" 2>&1
+  call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 )
 if errorlevel 1 (
   set "HP_ENV_READY="
