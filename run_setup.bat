@@ -330,6 +330,13 @@ if not errorlevel 1 (
   for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
   call :write_runtime_txt
 )
+if "%HP_TEST_UV_FAIL%"=="1" (
+  call :log "[TEST] Injecting uv dep install failure"
+  "%HP_UV_EXE%" pip install --python "%HP_PY%" __hp_test_nonexistent_pkg_0xdeadbeef__ >> "%LOG%" 2>&1
+  call :log "[WARN] uv pip install -r requirements.txt failed; some packages may be missing."
+  set "UV_FALLBACK_REASON=dep_install_failed"
+  call :log "[WARN] UV_FALLBACK reason=dep_install_failed"
+)
 goto :after_env_mode_selection
 :uv_venv_fail
 call :log "[WARN] uv: venv creation failed; falling back to conda create."
@@ -746,14 +753,6 @@ if exist "requirements.txt" (
     rem derived requirement: uv pip install targets the uv venv explicitly via --python.
     rem HP_DEP_SKIP is set by dep_check before this block; 'if not defined' evaluates at
     rem runtime so there is no block-parse-time expansion issue.
-    if "%HP_TEST_UV_FAIL%"=="1" (
-      call :log "[TEST] Injecting uv dep install failure"
-      "%HP_UV_EXE%" pip install --python "%HP_PY%" __hp_test_nonexistent_pkg_0xdeadbeef__ >> "%LOG%" 2>&1
-      call :log "[WARN] uv pip install -r requirements.txt failed; some packages may be missing."
-      set "UV_FALLBACK_REASON=dep_install_failed"
-      call :log "[WARN] UV_FALLBACK reason=dep_install_failed"
-      set "HP_DEP_SKIP=1"
-    )
     if not defined HP_DEP_SKIP (
       "%HP_UV_EXE%" pip install --python "%HP_PY%" -r requirements.txt >> "%LOG%" 2>&1
       if errorlevel 1 (
