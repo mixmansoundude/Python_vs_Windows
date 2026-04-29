@@ -1592,6 +1592,51 @@ def _gate_summary_line(status_data: Optional[dict]) -> str:
     return "n/a"
 
 
+def _batch_conclusion(artifacts: Optional[Path]) -> Optional[bool]:
+    """Return True if run.json records a success conclusion, False for a known failure, None if unknown."""
+    if not artifacts:
+        return None
+    run_meta = artifacts / "batch-check" / "run.json"
+    if not run_meta.exists():
+        return None
+    try:
+        meta = json.loads(run_meta.read_text(encoding="utf-8"))
+        conclusion = str(meta.get("conclusion") or "").strip().lower()
+        if conclusion == "success":
+            return True
+        if conclusion in ("failure", "cancelled", "timed_out"):
+            return False
+        return None
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _iterate_status_display(
+    iterate_log_status: str, batch_status: str, *, batch_passed: Optional[bool] = None
+) -> str:
+    if iterate_log_status == "found":
+        return "available"
+
+    normalized = (batch_status or "").strip()
+    lowered = normalized.lower()
+    # derived requirement: people and agents routinely escalated on the word
+    # "missing" when CI was actually green and iterate intentionally skipped.
+    # Only treat the run as green when there is explicit success evidence —
+    # either the STATUS.txt keyword or a confirmed success conclusion from run.json
+    # (batch_passed=True). A bare run-id format is NOT sufficient because
+    # _batch_status emits that format whenever an archive exists, even for
+    # failing runs.
+    green_batch = (
+        "no failures (success)" in lowered
+        or lowered.endswith("/ success")
+        or batch_passed is True
+    )
+    if green_batch:
+        return "not needed (all checks passing)"
+
+    return "not produced yet (check batch-check run)"
+
+
 def _normalize_link(value: Optional[str]) -> Optional[str]:
     if not value:
         return value
@@ -3381,8 +3426,11 @@ def _build_markdown(
     if iterate_found and iterate_file_status == "missing":
         # derived requirement: Run 19201618363-1 exposed only discovery breadcrumbs; suppress the "found" badge until payload files land.
         iterate_found = False
+    batch_status = _batch_status(diag, context)
     iterate_log_status = "found" if iterate_found else "missing"
-    iterate_hint = None if iterate_found else "missing is OK on green CI (no failures = patcher did not run); see logs/iterate.MISSING.txt"
+    batch_passed = _batch_conclusion(artifacts)
+    iterate_status_display = _iterate_status_display(iterate_log_status, batch_status, batch_passed=batch_passed)
+    iterate_hint = None if iterate_found else "if CI is green, iterate logs were not needed; see logs/iterate.MISSING.txt"
     diag_files = _diag_files(diag)
     artifact_count, artifact_missing = _artifact_stats(artifacts)
     if iterate_found and artifact_missing:
@@ -3394,7 +3442,6 @@ def _build_markdown(
             # stops claiming the artifact is missing. Likewise, treat historical
             # "no completed run" sentinels as stale once iterate evidence is available.
             artifact_missing = None
-    batch_status = _batch_status(diag, context)
     gate_data = _load_iterate_gate(context)
     inputs_info = _iterate_inputs_info(context)
     lines: List[str] = []
@@ -3419,6 +3466,7 @@ def _build_markdown(
             "",
             "## Status",
             f"* Iterate logs: {iterate_log_status}",
+            f"- Iterate logs (human): {iterate_status_display}",
             f"- Batch-check run id: {batch_status}",
             f"- Artifact files enumerated: {artifact_count}",
         ]
@@ -3738,9 +3786,11 @@ def _write_html(
     iterate_file_status, iterate_key_files = _summarize_iterate_files(context)
     if iterate_found and iterate_file_status == "missing":
         iterate_found = False
-    iterate_log_status = "found" if iterate_found else "missing"
-    iterate_hint = None if iterate_found else "missing is OK on green CI (no failures = patcher did not run); see logs/iterate.MISSING.txt"
     batch_status = _batch_status(diag, context)
+    iterate_log_status = "found" if iterate_found else "missing"
+    batch_passed = _batch_conclusion(artifacts)
+    iterate_status_display = _iterate_status_display(iterate_log_status, batch_status, batch_passed=batch_passed)
+    iterate_hint = None if iterate_found else "if CI is green, iterate logs were not needed; see logs/iterate.MISSING.txt"
     diag_files = _diag_files(diag)
     gate_data = _load_iterate_gate(context)
 
@@ -3759,7 +3809,7 @@ def _write_html(
     ]
 
     status_pairs = [
-        {"label": "Iterate logs", "value": iterate_log_status},
+        {"label": "Iterate logs", "value": iterate_status_display},
         {"label": "Batch-check run id", "value": batch_status},
         {"label": "Artifact files enumerated", "value": str(artifact_count)},
     ]
