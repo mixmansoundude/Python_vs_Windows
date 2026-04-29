@@ -303,10 +303,6 @@ rem folder, short-circuiting conda create. On failure, :try_conda_create runs th
 rem existing conda path unchanged. Python version from PYSPEC is not yet forwarded
 rem to uv (version-pinning deferred; uv picks the system default Python).
 if not defined HP_UV_EXE goto :try_conda_create
-if "%HP_TEST_UV_FAIL%"=="1" (
-  call :log "[TEST] Injecting uv failure"
-  goto :uv_venv_fail
-)
 set "HP_UV_ENV_PATH=%HP_SCRIPT_ROOT%.uv_env"
 if exist "%HP_UV_ENV_PATH%\Scripts\python.exe" (
   "%HP_UV_ENV_PATH%\Scripts\python.exe" -c "import pip;exit(0)" >nul 2>&1
@@ -750,6 +746,14 @@ if exist "requirements.txt" (
     rem derived requirement: uv pip install targets the uv venv explicitly via --python.
     rem HP_DEP_SKIP is set by dep_check before this block; 'if not defined' evaluates at
     rem runtime so there is no block-parse-time expansion issue.
+    if "%HP_TEST_UV_FAIL%"=="1" (
+      call :log "[TEST] Injecting uv dep install failure"
+      "%HP_UV_EXE%" pip install --python "%HP_PY%" __hp_test_nonexistent_pkg_0xdeadbeef__ >> "%LOG%" 2>&1
+      call :log "[WARN] uv pip install -r requirements.txt failed; some packages may be missing."
+      set "UV_FALLBACK_REASON=dep_install_failed"
+      call :log "[WARN] UV_FALLBACK reason=dep_install_failed"
+      set "HP_DEP_SKIP=1"
+    )
     if not defined HP_DEP_SKIP (
       "%HP_UV_EXE%" pip install --python "%HP_PY%" -r requirements.txt >> "%LOG%" 2>&1
       if errorlevel 1 (

@@ -937,7 +937,7 @@ class ExtractUvSignalsTest(unittest.TestCase):
                 ),
                 (
                     "test-logs-selftest-contract-uv-fail-1234-1",
-                    "[INFO] HP_ENV_MODE=conda\n[WARN] UV_FALLBACK reason=venv_create_failed\n",
+                    "[INFO] HP_ENV_MODE=uv\n[WARN] UV_FALLBACK reason=dep_install_failed\n",
                     "",
                 ),
                 (
