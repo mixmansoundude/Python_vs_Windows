@@ -91,7 +91,7 @@ def parse_warn_file(warn_path):
                     continue
                 if "top-level" not in line:
                     continue
-                mod = m.group(1).split(".")[0]
+                mod = m.group(1).strip("'\"").split(".")[0]
             if mod.startswith("_"):
                 continue
             if mod in SKIP:
