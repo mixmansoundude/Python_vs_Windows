@@ -201,8 +201,10 @@ $infraError    = $exeLogContent -match 'Failed to parse|uv error|pip error'
 
 if ($scenario -eq 'xfail') {
     # xfail verdict: EXE must exist, fail at runtime, produce a module error, no infra error.
-    # Requiring exeExists ensures we detect build failures and do not silently skip the check.
-    $xfailPass = $exeExists -and (-not ($exeExit -eq 0)) -and (-not $tokenFound) -and $moduleError -and (-not $infraError)
+    # Also require the warnfix path to have actually executed: install and rebuild phrases must
+    # fire and repair must have failed for fake_pkg_xyz123 -- without these guards a regression
+    # that disables warn extraction still yields exeExit!=0 + moduleError and fakes a pass.
+    $xfailPass = $exeExists -and (-not ($exeExit -eq 0)) -and (-not $tokenFound) -and $moduleError -and (-not $infraError) -and $warnInstallFired -and $warnRebuildFired -and $repairFailuresDetected
 
     Write-NdjsonRow ([ordered]@{
         id      = 'self.exe.warnfix.xfail'
