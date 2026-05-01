@@ -115,9 +115,6 @@ $warnInstallFired  = $combined -match [regex]::Escape($warnInstallPhrase)
 $warnRebuildFired  = $combined -match [regex]::Escape($warnRebuildPhrase)
 $repairFailuresDetected = $combined -match [regex]::Escape('[WARN] Repair failed:')
 
-# installPass: warnfix fired (exitCode not checked since smoke test is expected to fail)
-$installPass = $warnInstallFired -and $warnRebuildFired
-
 # EXE run: verify the rebuilt EXE has openpyxl bundled and succeeds
 $envLeaf  = Split-Path $workDir -Leaf
 $envName  = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
@@ -145,6 +142,9 @@ if ($exeExists) {
 }
 
 $successPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound
+
+# installPass: warnfix fired; also fails if repair failures caused runtime breakage
+$installPass = $warnInstallFired -and $warnRebuildFired -and -not ($repairFailuresDetected -and -not $successPass)
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.warnfix.install'
