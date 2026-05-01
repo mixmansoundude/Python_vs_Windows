@@ -113,6 +113,7 @@ $warnInstallPhrase = 'PyInstaller flagged missing modules; installing and rebuil
 $warnRebuildPhrase = 'PyInstaller rebuild after missing module install complete.'
 $warnInstallFired  = $combined -match [regex]::Escape($warnInstallPhrase)
 $warnRebuildFired  = $combined -match [regex]::Escape($warnRebuildPhrase)
+$repairFailuresDetected = $combined -match [regex]::Escape('[WARN] Repair failed:')
 
 # installPass: warnfix fired (exitCode not checked since smoke test is expected to fail)
 $installPass = $warnInstallFired -and $warnRebuildFired
@@ -151,10 +152,11 @@ Write-NdjsonRow ([ordered]@{
     pass    = $installPass
     desc    = 'PyInstaller warn file had missing modules; conda install ran'
     details = [ordered]@{
-        exitCode          = $run1Exit
-        warnInstallFired  = $warnInstallFired
-        warnRebuildFired  = $warnRebuildFired
-        log               = $bootstrapLog
+        exitCode               = $run1Exit
+        warnInstallFired       = $warnInstallFired
+        warnRebuildFired       = $warnRebuildFired
+        repairFailuresDetected = $repairFailuresDetected
+        log                    = $bootstrapLog
     }
 })
 
