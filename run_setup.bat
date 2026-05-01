@@ -1434,20 +1434,31 @@ if "%HP_ENV_MODE%"=="system" (
     if exist "~parse_warn.py" del "~parse_warn.py" >nul 2>&1
     set "HP_WARNFIX_NEEDED="
     for /f "usebackq delims=" %%M in ("~missing_modules.txt") do set "HP_WARNFIX_NEEDED=1"
+    if exist "~warnfix_repair_failed.flag" del "~warnfix_repair_failed.flag" >nul 2>&1
     if defined HP_WARNFIX_NEEDED (
       call :log "[INFO] PyInstaller flagged missing modules; installing and rebuilding."
       if "%HP_ENV_MODE%"=="uv" (
         for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
           "%HP_UV_EXE%" pip install --python "%HP_PY%" %%M >> "%LOG%" 2>&1
+          if errorlevel 1 (
+            call :log "[WARN] Repair failed: %%M"
+            copy nul "~warnfix_repair_failed.flag" >nul 2>&1
+          )
         )
       ) else if defined CONDA_BAT (
         for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
           call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%M >> "%LOG%" 2>&1
+          if errorlevel 1 (
+            call :log "[WARN] Repair failed: %%M"
+            copy nul "~warnfix_repair_failed.flag" >nul 2>&1
+          )
         )
       )
+      if exist "~warnfix_repair_failed.flag" call :log "[WARN] One or more repair attempts failed"
       "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
       call :log "[INFO] PyInstaller rebuild after missing module install complete."
     )
+    if exist "~warnfix_repair_failed.flag" del "~warnfix_repair_failed.flag" >nul 2>&1
     if exist "~missing_modules.txt" del "~missing_modules.txt" >nul 2>&1
     set "HP_WARNFIX_NEEDED="
     if not defined HP_SPEC_PREEXIST if exist "%ENVNAME%.spec" del "%ENVNAME%.spec" >nul 2>&1
