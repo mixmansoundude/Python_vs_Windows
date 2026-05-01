@@ -231,8 +231,18 @@ jobs:
         run: |
           & tests\selfapps_depcheck.ps1
 
-      - name: "Self-test: PyInstaller warn-file driven rebuild (real/conda-full only)"
+      - name: "Self-test: warnfix PASS scenario (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        env:
+          WARNFIX_SCENARIO: pass
+        shell: pwsh
+        run: |
+          & tests\selfapps_warnfix.ps1
+
+      - name: "Self-test: warnfix XFAIL scenario (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        env:
+          WARNFIX_SCENARIO: xfail
         shell: pwsh
         run: |
           & tests\selfapps_warnfix.ps1
@@ -826,8 +836,16 @@ jobs:
             tests\~selftest_warnfix\~setup.log
             tests/~selftest_warnfix/dist/~warnfix_token.txt
             tests\~selftest_warnfix\dist\~warnfix_token.txt
+            tests/~selftest_warnfix/dist/~warnfix_exe.log
+            tests\~selftest_warnfix\dist\~warnfix_exe.log
             tests/~selftest_warnfix/~warnfile.txt
             tests\~selftest_warnfix\~warnfile.txt
+            tests/~selftest_warnfix_xfail/~warnfix_xfail_bootstrap.log
+            tests\~selftest_warnfix_xfail\~warnfix_xfail_bootstrap.log
+            tests/~selftest_warnfix_xfail/~setup.log
+            tests\~selftest_warnfix_xfail\~setup.log
+            tests/~selftest_warnfix_xfail/dist/~warnfix_exe.log
+            tests\~selftest_warnfix_xfail\dist\~warnfix_exe.log
             tests/~selftest_exefail/~exefail_bootstrap.log
             tests\~selftest_exefail\~exefail_bootstrap.log
             tests/~selftest_exefail/~setup.log

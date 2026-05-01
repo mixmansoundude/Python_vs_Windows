@@ -1,10 +1,15 @@
 # ASCII only
 # selfapps_warnfix.ps1 - Test PyInstaller warn-file driven missing-module install + rebuild.
 #
-# Design: HP_SKIP_PIPREQS=1 prevents conda install from running so openpyxl is not
-# pre-installed. App uses a direct "import openpyxl" so PyInstaller's static analysis
-# detects the reference and flags it in warn-<envname>.txt as a missing module.
-# The warnfix step then installs openpyxl via conda and rebuilds the EXE.
+# Scenarios (controlled by WARNFIX_SCENARIO env var; default: pass):
+#
+#   pass  - openpyxl app: warnfix installs the missing module and rebuild succeeds.
+#           Emits: self.exe.warnfix.install, self.exe.warnfix.pass
+#
+#   xfail - fake_pkg_xyz123 app: warnfix fires but install fails (nonexistent package).
+#           EXE is rebuilt without the module and fails at runtime with ModuleNotFoundError.
+#           Infra errors (Failed to parse / uv error / pip error) must not appear.
+#           Emits: self.exe.warnfix.xfail
 #
 # Lane: conda-full and real only.
 param()
@@ -25,49 +30,94 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
+$scenario = if ($env:WARNFIX_SCENARIO) { $env:WARNFIX_SCENARIO.ToLower() } else { 'pass' }
+
+# Separate workDir per scenario so both can run in the same CI job without clobbering.
+# pass uses the historical name to keep existing artifact paths valid.
+$workDirName  = if ($scenario -eq 'xfail') { '~selftest_warnfix_xfail' } else { '~selftest_warnfix' }
+$bootstrapLog = if ($scenario -eq 'xfail') { '~warnfix_xfail_bootstrap.log' } else { '~warnfix_bootstrap.log' }
+
 # Non-Windows skip
 if (-not $IsWindows) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
-    foreach ($id in @('self.exe.warnfix.install','self.exe.warnfix.success')) {
+    if ($scenario -eq 'xfail') {
         Write-NdjsonRow ([ordered]@{
-            id      = $id
+            id      = 'self.exe.warnfix.xfail'
             req     = 'REQ-007'
             pass    = $true
-            desc    = if ($id -eq 'self.exe.warnfix.install') {
-                          'PyInstaller warn file had missing modules; conda install ran'
-                      } else {
-                          'EXE succeeded after warn-driven rebuild'
-                      }
-            details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
+            desc    = 'EXE warnfix XFAIL: module error after unfixable warn (skipped on non-Windows)'
+            details = [ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' }
         })
+    } else {
+        foreach ($id in @('self.exe.warnfix.install', 'self.exe.warnfix.pass')) {
+            Write-NdjsonRow ([ordered]@{
+                id      = $id
+                req     = 'REQ-007'
+                pass    = $true
+                desc    = if ($id -eq 'self.exe.warnfix.install') {
+                              'PyInstaller warn file had missing modules; conda install ran'
+                          } else {
+                              'EXE succeeded after warn-driven rebuild; no infra errors'
+                          }
+                details = [ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' }
+            })
+        }
     }
     exit 0
 }
 
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
-    foreach ($id in @('self.exe.warnfix.install','self.exe.warnfix.success')) {
+    if ($scenario -eq 'xfail') {
         Write-NdjsonRow ([ordered]@{
-            id = $id; req = 'REQ-007'; pass = $false
-            desc = 'Warnfix: run_setup.bat not found'
+            id      = 'self.exe.warnfix.xfail'
+            req     = 'REQ-007'
+            pass    = $false
+            desc    = 'Warnfix XFAIL: run_setup.bat not found'
             details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
         })
+    } else {
+        foreach ($id in @('self.exe.warnfix.install', 'self.exe.warnfix.pass')) {
+            Write-NdjsonRow ([ordered]@{
+                id      = $id
+                req     = 'REQ-007'
+                pass    = $false
+                desc    = 'Warnfix: run_setup.bat not found'
+                details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
+            })
+        }
     }
     exit 1
 }
 
-$workDir = Join-Path $here '~selftest_warnfix'
+$workDir = Join-Path $here $workDirName
 if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 Copy-Item -Path $batchPath -Destination $workDir -Force
 
-# derived requirement: use a direct "import openpyxl" so PyInstaller's static analysis
-# can find the reference and include it in warn-<envname>.txt when the module is absent.
-# HP_SKIP_PIPREQS=1 prevents conda install from running, ensuring openpyxl is not
-# installed before PyInstaller runs. The warnfix step then installs it and rebuilds.
-# The smoke test will fail (exit=1) because openpyxl is missing, but run_setup.bat
-# continues to PyInstaller after a smoke failure.
-$appCode = @'
+if ($scenario -eq 'xfail') {
+    # derived requirement: use a static "import fake_pkg_xyz123" so PyInstaller's static
+    # analysis detects the reference and writes it to warn-<envname>.txt. The module does
+    # not exist on conda-forge, so warnfix fires, install fails ([WARN] Repair failed:),
+    # the EXE is rebuilt without the module, and the EXE fails at runtime with
+    # ModuleNotFoundError. The test validates this is a module error, not an infra error.
+    $appCode = @'
+import fake_pkg_xyz123
+import os as _os
+import sys as _sys
+_here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
+with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
+    _f.write('warnfix-xfail-ok\n')
+print('wrote token')
+'@
+} else {
+    # derived requirement: use a direct "import openpyxl" so PyInstaller's static analysis
+    # can find the reference and include it in warn-<envname>.txt when the module is absent.
+    # HP_SKIP_PIPREQS=1 prevents conda install from running, ensuring openpyxl is not
+    # installed before PyInstaller runs. The warnfix step then installs it and rebuilds.
+    # The smoke test will fail (exit=1) because openpyxl is missing, but run_setup.bat
+    # continues to PyInstaller after a smoke failure.
+    $appCode = @'
 import openpyxl
 import os as _os
 import sys as _sys
@@ -80,12 +130,12 @@ with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
     _f.write('warnfix-ok\n')
 print('wrote out.xlsx')
 '@
+}
 Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
 
-$bootstrapLog = '~warnfix_bootstrap.log'
-
-# Set HP_SKIP_PIPREQS=1 so pipreqs does not run and openpyxl is not pre-installed.
-# This ensures openpyxl shows up in the PyInstaller warn file as a missing module.
+# Set HP_SKIP_PIPREQS=1 so pipreqs does not run and no module is pre-installed.
+# pass: ensures openpyxl is not in the conda env, forcing it into the warn file.
+# xfail: fake_pkg_xyz123 would never install via pipreqs anyway, but keep consistent.
 $prev = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
 $env:HP_SKIP_PIPREQS = '1'
 
@@ -115,7 +165,7 @@ $warnInstallFired  = $combined -match [regex]::Escape($warnInstallPhrase)
 $warnRebuildFired  = $combined -match [regex]::Escape($warnRebuildPhrase)
 $repairFailuresDetected = $combined -match [regex]::Escape('[WARN] Repair failed:')
 
-# EXE run: verify the rebuilt EXE has openpyxl bundled and succeeds
+# EXE run: verify the rebuilt EXE outcome
 $envLeaf  = Split-Path $workDir -Leaf
 $envName  = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
 if (-not $envName) { $envName = '_warnfix' }
@@ -141,7 +191,47 @@ if ($exeExists) {
     }
 }
 
-$successPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound
+# Read EXE output for failure classification.
+# moduleError: EXE failed because a Python module could not be imported (expected for xfail).
+# infraError: EXE or bootstrap failed due to tooling issue -- must not count as valid xfail.
+$exeLogPath    = Join-Path $distDir '~warnfix_exe.log'
+$exeLogContent = if (Test-Path $exeLogPath) { Get-Content -LiteralPath $exeLogPath -Raw -Encoding ASCII } else { '' }
+$moduleError   = $exeLogContent -match 'ModuleNotFoundError|ImportError'
+$infraError    = $exeLogContent -match 'Failed to parse|uv error|pip error'
+
+if ($scenario -eq 'xfail') {
+    # xfail verdict: EXE must exist, fail at runtime, produce a module error, no infra error.
+    # Also require the warnfix path to have actually executed: install and rebuild phrases must
+    # fire and repair must have failed for fake_pkg_xyz123 -- without these guards a regression
+    # that disables warn extraction still yields exeExit!=0 + moduleError and fakes a pass.
+    $xfailPass = $exeExists -and (-not ($exeExit -eq 0)) -and (-not $tokenFound) -and $moduleError -and (-not $infraError) -and $warnInstallFired -and $warnRebuildFired -and $repairFailuresDetected
+
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.exe.warnfix.xfail'
+        req     = 'REQ-007'
+        pass    = $xfailPass
+        desc    = 'EXE failed with module error after warnfix could not fix missing module'
+        details = [ordered]@{
+            scenario               = $scenario
+            exitCode               = $run1Exit
+            exeExists              = $exeExists
+            exeExit                = $exeExit
+            tokenFound             = $tokenFound
+            moduleError            = $moduleError
+            infraError             = $infraError
+            warnInstallFired       = $warnInstallFired
+            warnRebuildFired       = $warnRebuildFired
+            repairFailuresDetected = $repairFailuresDetected
+            exePath                = $exePath
+        }
+    })
+
+    if (-not $xfailPass) { exit 1 }
+    exit 0
+}
+
+# pass scenario
+$successPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and (-not $infraError)
 
 # installPass: warnfix fired; also fails if repair failures caused runtime breakage
 $installPass = $warnInstallFired -and $warnRebuildFired -and -not ($repairFailuresDetected -and -not $successPass)
@@ -152,6 +242,7 @@ Write-NdjsonRow ([ordered]@{
     pass    = $installPass
     desc    = 'PyInstaller warn file had missing modules; conda install ran'
     details = [ordered]@{
+        scenario               = $scenario
         exitCode               = $run1Exit
         warnInstallFired       = $warnInstallFired
         warnRebuildFired       = $warnRebuildFired
@@ -161,15 +252,18 @@ Write-NdjsonRow ([ordered]@{
 })
 
 Write-NdjsonRow ([ordered]@{
-    id      = 'self.exe.warnfix.success'
+    id      = 'self.exe.warnfix.pass'
     req     = 'REQ-007'
     pass    = $successPass
-    desc    = 'EXE succeeded after warn-driven rebuild'
+    desc    = 'EXE succeeded after warn-driven rebuild; no infra errors'
     details = [ordered]@{
+        scenario    = $scenario
         exitCode    = $run1Exit
         exeExists   = $exeExists
         exeExit     = $exeExit
         tokenFound  = $tokenFound
+        moduleError = $moduleError
+        infraError  = $infraError
         exePath     = $exePath
     }
 })
