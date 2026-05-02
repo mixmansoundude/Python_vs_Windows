@@ -261,19 +261,24 @@ $moduleError   = $exeLogContent -match 'ModuleNotFoundError|ImportError'
 $infraError    = $exeLogContent -match 'Failed to parse|uv error|pip error'
 
 if ($scenario -eq 'real') {
-    # real verdict: heuristic pre-installed openpyxl; warnfix must NOT fire; EXE must succeed.
-    $realPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and (-not $warnInstallFired) -and (-not $infraError)
+    # derived requirement: ~prep_requirements.py emits '[HEURISTIC] pandas->openpyxl' to stderr
+    # (redirected to ~setup.log via '2>> %LOG%'). Checking this phrase is more robust than
+    # checking (-not $warnInstallFired) because warnfix can legitimately fire for unrelated
+    # modules (e.g. typing_extensions) even when openpyxl was correctly pre-installed.
+    $heuristicFired = $combined -match [regex]::Escape('[HEURISTIC] pandas->openpyxl')
+    $realPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and $heuristicFired -and (-not $infraError)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.exe.warnfix.real'
         req     = 'REQ-005'
         pass    = $realPass
-        desc    = 'Heuristic pre-installed openpyxl; warnfix not triggered; EXE succeeded'
+        desc    = 'Heuristic pre-installed openpyxl via pandas heuristic; EXE succeeded'
         details = [ordered]@{
             scenario         = $scenario
             exitCode         = $run1Exit
             exeExists        = $exeExists
             exeExit          = $exeExit
             tokenFound       = $tokenFound
+            heuristicFired   = $heuristicFired
             warnInstallFired = $warnInstallFired
             infraError       = $infraError
             exePath          = $exePath
