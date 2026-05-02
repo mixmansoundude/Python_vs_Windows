@@ -11,6 +11,10 @@
 #           Infra errors (Failed to parse / uv error / pip error) must not appear.
 #           Emits: self.exe.warnfix.xfail
 #
+#   real  - openpyxl app with pandas in requirements.txt; Req 5.1 heuristic pre-installs
+#           openpyxl so warnfix does NOT fire. EXE succeeds. HP_DISABLE_HEURISTICS not set.
+#           Emits: self.exe.warnfix.real
+#
 # Lane: conda-full and real only.
 param()
 $ErrorActionPreference = 'Continue'
@@ -32,10 +36,18 @@ function Write-NdjsonRow {
 
 $scenario = if ($env:WARNFIX_SCENARIO) { $env:WARNFIX_SCENARIO.ToLower() } else { 'pass' }
 
-# Separate workDir per scenario so both can run in the same CI job without clobbering.
+# Separate workDir per scenario so all can run in the same CI job without clobbering.
 # pass uses the historical name to keep existing artifact paths valid.
-$workDirName  = if ($scenario -eq 'xfail') { '~selftest_warnfix_xfail' } else { '~selftest_warnfix' }
-$bootstrapLog = if ($scenario -eq 'xfail') { '~warnfix_xfail_bootstrap.log' } else { '~warnfix_bootstrap.log' }
+$workDirName = switch ($scenario) {
+    'xfail' { '~selftest_warnfix_xfail' }
+    'real'  { '~selftest_warnfix_real' }
+    default { '~selftest_warnfix' }
+}
+$bootstrapLog = switch ($scenario) {
+    'xfail' { '~warnfix_xfail_bootstrap.log' }
+    'real'  { '~warnfix_real_bootstrap.log' }
+    default { '~warnfix_bootstrap.log' }
+}
 
 # Non-Windows skip
 if (-not $IsWindows) {
@@ -46,6 +58,14 @@ if (-not $IsWindows) {
             req     = 'REQ-007'
             pass    = $true
             desc    = 'EXE warnfix XFAIL: module error after unfixable warn (skipped on non-Windows)'
+            details = [ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' }
+        })
+    } elseif ($scenario -eq 'real') {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.exe.warnfix.real'
+            req     = 'REQ-005'
+            pass    = $true
+            desc    = 'Heuristic pre-installed openpyxl; warnfix not triggered (skipped on non-Windows)'
             details = [ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' }
         })
     } else {
@@ -74,6 +94,14 @@ if (-not (Test-Path $batchPath)) {
             req     = 'REQ-007'
             pass    = $false
             desc    = 'Warnfix XFAIL: run_setup.bat not found'
+            details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
+        })
+    } elseif ($scenario -eq 'real') {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.exe.warnfix.real'
+            req     = 'REQ-005'
+            pass    = $false
+            desc    = 'Warnfix REAL: run_setup.bat not found'
             details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
         })
     } else {
@@ -110,6 +138,25 @@ with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
     _f.write('warnfix-xfail-ok\n')
 print('wrote token')
 '@
+} elseif ($scenario -eq 'real') {
+    # derived requirement: pandas in requirements.txt triggers Req 5.1 heuristic which
+    # pre-installs openpyxl before PyInstaller runs. HP_DISABLE_HEURISTICS is NOT set
+    # so the heuristic fires; HP_SKIP_PIPREQS=1 ensures pipreqs does not independently
+    # discover openpyxl, isolating the heuristic as the sole install path.
+    # Validation: warnfix must NOT fire (openpyxl was pre-installed) and EXE must succeed.
+    Set-Content -Path (Join-Path $workDir 'requirements.txt') -Value 'pandas' -Encoding ASCII
+    $appCode = @'
+import openpyxl
+import os as _os
+import sys as _sys
+wb = openpyxl.Workbook()
+wb.active['A1'] = 'heuristic-ok'
+wb.save('out.xlsx')
+_here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
+with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
+    _f.write('heuristic-ok\n')
+print('wrote out.xlsx')
+'@
 } else {
     # derived requirement: use a direct "import openpyxl" so PyInstaller's static analysis
     # can find the reference and include it in warn-<envname>.txt when the module is absent.
@@ -136,8 +183,17 @@ Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
 # Set HP_SKIP_PIPREQS=1 so pipreqs does not run and no module is pre-installed.
 # pass: ensures openpyxl is not in the conda env, forcing it into the warn file.
 # xfail: fake_pkg_xyz123 would never install via pipreqs anyway, but keep consistent.
+# real: ensures openpyxl is only installed via the heuristic (pandas in requirements.txt).
 $prev = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
 $env:HP_SKIP_PIPREQS = '1'
+# HP_DISABLE_HEURISTICS=1 for pass/xfail so warnfix is the only repair path.
+# real: leave heuristics enabled so the Req 5.1 heuristic can pre-install openpyxl.
+$prevDisableH = if (Test-Path Env:HP_DISABLE_HEURISTICS) { $env:HP_DISABLE_HEURISTICS } else { $null }
+if ($scenario -eq 'pass' -or $scenario -eq 'xfail') {
+    $env:HP_DISABLE_HEURISTICS = '1'
+} else {
+    Remove-Item Env:HP_DISABLE_HEURISTICS -ErrorAction SilentlyContinue
+}
 
 Push-Location $workDir
 try {
@@ -148,6 +204,11 @@ try {
         Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue
     } else {
         $env:HP_SKIP_PIPREQS = $prev
+    }
+    if ($null -eq $prevDisableH) {
+        Remove-Item Env:HP_DISABLE_HEURISTICS -ErrorAction SilentlyContinue
+    } else {
+        $env:HP_DISABLE_HEURISTICS = $prevDisableH
     }
     Pop-Location
 }
@@ -198,6 +259,29 @@ $exeLogPath    = Join-Path $distDir '~warnfix_exe.log'
 $exeLogContent = if (Test-Path $exeLogPath) { Get-Content -LiteralPath $exeLogPath -Raw -Encoding ASCII } else { '' }
 $moduleError   = $exeLogContent -match 'ModuleNotFoundError|ImportError'
 $infraError    = $exeLogContent -match 'Failed to parse|uv error|pip error'
+
+if ($scenario -eq 'real') {
+    # real verdict: heuristic pre-installed openpyxl; warnfix must NOT fire; EXE must succeed.
+    $realPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and (-not $warnInstallFired) -and (-not $infraError)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.exe.warnfix.real'
+        req     = 'REQ-005'
+        pass    = $realPass
+        desc    = 'Heuristic pre-installed openpyxl; warnfix not triggered; EXE succeeded'
+        details = [ordered]@{
+            scenario         = $scenario
+            exitCode         = $run1Exit
+            exeExists        = $exeExists
+            exeExit          = $exeExit
+            tokenFound       = $tokenFound
+            warnInstallFired = $warnInstallFired
+            infraError       = $infraError
+            exePath          = $exePath
+        }
+    })
+    if (-not $realPass) { exit 1 }
+    exit 0
+}
 
 if ($scenario -eq 'xfail') {
     # xfail verdict: EXE must exist, fail at runtime, produce a module error, no infra error.
