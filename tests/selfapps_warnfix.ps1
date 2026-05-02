@@ -15,6 +15,11 @@
 #           openpyxl so warnfix does NOT fire. EXE succeeds. HP_DISABLE_HEURISTICS not set.
 #           Emits: self.exe.warnfix.real
 #
+#   real_warnfix - xlrd app; xlrd is NOT covered by any heuristic so warnfix MUST fire.
+#           EXE succeeds after warnfix installs xlrd and rebuilds. Validates REQ-007
+#           warnfix path remains functional alongside REQ-005 heuristic path.
+#           Emits: self.exe.warnfix.real_warnfix
+#
 # Lane: conda-full and real only.
 param()
 $ErrorActionPreference = 'Continue'
@@ -39,14 +44,16 @@ $scenario = if ($env:WARNFIX_SCENARIO) { $env:WARNFIX_SCENARIO.ToLower() } else 
 # Separate workDir per scenario so all can run in the same CI job without clobbering.
 # pass uses the historical name to keep existing artifact paths valid.
 $workDirName = switch ($scenario) {
-    'xfail' { '~selftest_warnfix_xfail' }
-    'real'  { '~selftest_warnfix_real' }
-    default { '~selftest_warnfix' }
+    'xfail'        { '~selftest_warnfix_xfail' }
+    'real'         { '~selftest_warnfix_real' }
+    'real_warnfix' { '~selftest_warnfix_real_warnfix' }
+    default        { '~selftest_warnfix' }
 }
 $bootstrapLog = switch ($scenario) {
-    'xfail' { '~warnfix_xfail_bootstrap.log' }
-    'real'  { '~warnfix_real_bootstrap.log' }
-    default { '~warnfix_bootstrap.log' }
+    'xfail'        { '~warnfix_xfail_bootstrap.log' }
+    'real'         { '~warnfix_real_bootstrap.log' }
+    'real_warnfix' { '~warnfix_real_warnfix_bootstrap.log' }
+    default        { '~warnfix_bootstrap.log' }
 }
 
 # Non-Windows skip
@@ -66,6 +73,14 @@ if (-not $IsWindows) {
             req     = 'REQ-005'
             pass    = $true
             desc    = 'Heuristic pre-installed openpyxl; warnfix not triggered (skipped on non-Windows)'
+            details = [ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' }
+        })
+    } elseif ($scenario -eq 'real_warnfix') {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.exe.warnfix.real_warnfix'
+            req     = 'REQ-007'
+            pass    = $true
+            desc    = 'Warnfix installed xlrd (not heuristic-covered); EXE succeeded (skipped on non-Windows)'
             details = [ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' }
         })
     } else {
@@ -102,6 +117,14 @@ if (-not (Test-Path $batchPath)) {
             req     = 'REQ-005'
             pass    = $false
             desc    = 'Warnfix REAL: run_setup.bat not found'
+            details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
+        })
+    } elseif ($scenario -eq 'real_warnfix') {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.exe.warnfix.real_warnfix'
+            req     = 'REQ-007'
+            pass    = $false
+            desc    = 'Warnfix REAL_WARNFIX: run_setup.bat not found'
             details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
         })
     } else {
@@ -156,6 +179,21 @@ _here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
 with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
     _f.write('heuristic-ok\n')
 print('wrote out.xlsx')
+'@
+} elseif ($scenario -eq 'real_warnfix') {
+    # derived requirement: xlrd is not covered by any heuristic; no requirements.txt is
+    # created so there is nothing for prep_requirements to process. HP_SKIP_PIPREQS=1
+    # ensures xlrd is absent when PyInstaller first runs. warnfix must fire to install
+    # xlrd and rebuild. Validates that warnfix still works for deps not covered by any
+    # heuristic (REQ-007 path remains functional alongside REQ-005 heuristic path).
+    $appCode = @'
+import xlrd
+import os as _os
+import sys as _sys
+_here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
+with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
+    _f.write('real-warnfix-ok\n')
+print('xlrd ok')
 '@
 } else {
     # derived requirement: use a direct "import openpyxl" so PyInstaller's static analysis
@@ -285,6 +323,30 @@ if ($scenario -eq 'real') {
         }
     })
     if (-not $realPass) { exit 1 }
+    exit 0
+}
+
+if ($scenario -eq 'real_warnfix') {
+    # Warnfix must fire (xlrd not heuristic-covered) and EXE must succeed.
+    $rwPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and $warnInstallFired -and $warnRebuildFired -and (-not $infraError)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.exe.warnfix.real_warnfix'
+        req     = 'REQ-007'
+        pass    = $rwPass
+        desc    = 'Warnfix installed xlrd (not heuristic-covered); EXE succeeded'
+        details = [ordered]@{
+            scenario         = $scenario
+            exitCode         = $run1Exit
+            exeExists        = $exeExists
+            exeExit          = $exeExit
+            tokenFound       = $tokenFound
+            warnInstallFired = $warnInstallFired
+            warnRebuildFired = $warnRebuildFired
+            infraError       = $infraError
+            exePath          = $exePath
+        }
+    })
+    if (-not $rwPass) { exit 1 }
     exit 0
 }
 
