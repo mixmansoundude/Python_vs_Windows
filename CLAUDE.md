@@ -249,6 +249,7 @@ reqspec.ingest.conda.dryrun, reqspec.ingest.install.import,
 self.depcheck.install, self.depcheck.skip,
 self.parse_warn.table,
 self.exe.warnfix.install, self.exe.warnfix.pass, self.exe.warnfix.xfail,
+self.exe.warnfix.real, self.exe.warnfix.real_warnfix,
 self.parse_warn.table.v6, self.parse_warn.pytest,
 self.runtime.writeback,
 self.pandas.openpyxl.install, self.pandas.openpyxl.import,
@@ -406,6 +407,13 @@ Items deferred to future loops:
   (~30 days), skipping on first install. Conda update can be slow and needs a workaround
   (checking install date or download hash before running) to avoid unnecessary long waits.
   Timing data from CI logs will be needed once implemented. Deferred.
+
+- **parse_warn v3 (delayed/conditional imports)**: Extend HP_PARSE_WARN beyond `top-level`
+  to also process `delayed` (function-scoped) and `conditional` (platform-guarded) imports,
+  while skipping `optional`-only entries (try-except guards). `tools/parse_warn.py` and
+  `tests/test_parse_warn.py` were drafted in PR #230 (branch
+  `claude/add-warnfix-real-scenario-ySLnf`, now closed); that diff is the starting point.
+  Requires a `real_warnfix_delayed` scenario or similar CI coverage per branch coverage policy.
 
 ## Closed Backlog
 
