@@ -11,6 +11,10 @@
 #           Infra errors (Failed to parse / uv error / pip error) must not appear.
 #           Emits: self.exe.warnfix.xfail
 #
+#   real  - openpyxl app with runtime-only optional dep pattern: import inside a function
+#           with a dynamic __import__ call. warnfix installs the module and rebuild succeeds.
+#           Emits: self.exe.warnfix.real
+#
 # Lane: conda-full and real only.
 param()
 $ErrorActionPreference = 'Continue'
@@ -32,10 +36,10 @@ function Write-NdjsonRow {
 
 $scenario = if ($env:WARNFIX_SCENARIO) { $env:WARNFIX_SCENARIO.ToLower() } else { 'pass' }
 
-# Separate workDir per scenario so both can run in the same CI job without clobbering.
+# Separate workDir per scenario so all can run in the same CI job without clobbering.
 # pass uses the historical name to keep existing artifact paths valid.
-$workDirName  = if ($scenario -eq 'xfail') { '~selftest_warnfix_xfail' } else { '~selftest_warnfix' }
-$bootstrapLog = if ($scenario -eq 'xfail') { '~warnfix_xfail_bootstrap.log' } else { '~warnfix_bootstrap.log' }
+$workDirName  = if ($scenario -eq 'xfail') { '~selftest_warnfix_xfail' } elseif ($scenario -eq 'real') { '~selftest_warnfix_real' } else { '~selftest_warnfix' }
+$bootstrapLog = if ($scenario -eq 'xfail') { '~warnfix_xfail_bootstrap.log' } elseif ($scenario -eq 'real') { '~warnfix_real_bootstrap.log' } else { '~warnfix_bootstrap.log' }
 
 # Non-Windows skip
 if (-not $IsWindows) {
@@ -46,6 +50,14 @@ if (-not $IsWindows) {
             req     = 'REQ-007'
             pass    = $true
             desc    = 'EXE warnfix XFAIL: module error after unfixable warn (skipped on non-Windows)'
+            details = [ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' }
+        })
+    } elseif ($scenario -eq 'real') {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.exe.warnfix.real'
+            req     = 'REQ-007'
+            pass    = $true
+            desc    = 'EXE warnfix REAL: runtime-only dep scenario (skipped on non-Windows)'
             details = [ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' }
         })
     } else {
@@ -74,6 +86,14 @@ if (-not (Test-Path $batchPath)) {
             req     = 'REQ-007'
             pass    = $false
             desc    = 'Warnfix XFAIL: run_setup.bat not found'
+            details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
+        })
+    } elseif ($scenario -eq 'real') {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.exe.warnfix.real'
+            req     = 'REQ-007'
+            pass    = $false
+            desc    = 'Warnfix REAL: run_setup.bat not found'
             details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
         })
     } else {
@@ -109,6 +129,32 @@ _here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
 with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
     _f.write('warnfix-xfail-ok\n')
 print('wrote token')
+'@
+} elseif ($scenario -eq 'real') {
+    # derived requirement: simulate a runtime-only optional dependency via __import__() with
+    # a variable argument (PyInstaller static analysis may miss it) plus a direct
+    # "import openpyxl" inside a function (PyInstaller CAN detect this). HP_SKIP_PIPREQS=1
+    # ensures openpyxl is absent before PyInstaller runs, so it lands in the warn file.
+    # Warnfix then installs it, rebuilds, and the EXE succeeds. Uses import json at module
+    # level to represent a realistic multi-import app structure.
+    $appCode = @'
+import json
+import os as _os
+import sys as _sys
+
+def do_work():
+    module = "openpyxl"
+    __import__(module)
+    import openpyxl
+    wb = openpyxl.Workbook()
+    wb.save('out.xlsx')
+    _here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
+    with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
+        _f.write('warnfix-real-ok\n')
+    print('wrote out.xlsx')
+
+if __name__ == "__main__":
+    do_work()
 '@
 } else {
     # derived requirement: use a direct "import openpyxl" so PyInstaller's static analysis
@@ -227,6 +273,34 @@ if ($scenario -eq 'xfail') {
     })
 
     if (-not $xfailPass) { exit 1 }
+    exit 0
+}
+
+if ($scenario -eq 'real') {
+    # real verdict: EXE must succeed (exit 0) and write the token file.
+    # warnInstallFired/warnRebuildFired are not required by the real scenario (the dynamic
+    # __import__ pattern may not produce a warn-file entry), but tokenFound confirms the
+    # EXE actually ran to completion after the warnfix+rebuild cycle.
+    $realPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound
+
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.exe.warnfix.real'
+        req     = 'REQ-007'
+        pass    = $realPass
+        desc    = 'EXE succeeded after warnfix on runtime-only optional dependency'
+        details = [ordered]@{
+            scenario         = $scenario
+            exitCode         = $run1Exit
+            exeExists        = $exeExists
+            exeExit          = $exeExit
+            tokenFound       = $tokenFound
+            warnInstallFired = $warnInstallFired
+            warnRebuildFired = $warnRebuildFired
+            exePath          = $exePath
+        }
+    })
+
+    if (-not $realPass) { exit 1 }
     exit 0
 }
 
