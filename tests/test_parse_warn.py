@@ -2,7 +2,7 @@
 
 Each TRANSLATIONS entry has at least one assertion; removing any entry causes a
 test failure.  Both PyInstaller 5.x (W: no module named 'foo') and 6.x
-(missing module named foo - imported by bar (top-level)) formats are covered.
+(missing module named foo - imported by bar (top-level|delayed|conditional)) formats are covered.
 """
 import os
 import tempfile
@@ -156,11 +156,36 @@ class ParseWarnFileEdgeCasesTest(unittest.TestCase):
         ])
         self.assertEqual(result, [])
 
-    def test_pyi6_non_toplevel_ignored(self):
+    def test_pyi6_optional_only_skipped(self):
+        # derived requirement: (optional)-only means a try-except guard; the module
+        # is intentionally resilient to absence so we do not try to install it.
+        result = _parse_lines([
+            "missing module named openpyxl - imported by app (optional)"
+        ])
+        self.assertEqual(result, [])
+
+    def test_pyi6_skip_set_filtered_even_when_delayed(self):
+        # Unix-only stdlib shims land as (delayed) or (conditional) but are in SKIP.
         result = _parse_lines([
             "missing module named posix - imported by app (conditional)"
         ])
         self.assertEqual(result, [])
+
+    def test_pyi6_delayed_processed(self):
+        # derived requirement: imports inside a function appear as (delayed) in the
+        # warn file (e.g. runtime-only optional dep pattern). warnfix must install them.
+        result = _parse_lines([
+            "missing module named openpyxl - imported by app (delayed)"
+        ])
+        self.assertEqual(result, ["openpyxl"])
+
+    def test_pyi6_conditional_processed(self):
+        # derived requirement: platform-conditional imports (if sys.platform == ...)
+        # appear as (conditional); they are required at runtime so warnfix installs them.
+        result = _parse_lines([
+            "missing module named cv2 - imported by app (conditional)"
+        ])
+        self.assertEqual(result, ["opencv"])
 
     def test_pyi6_toplevel_processed(self):
         result = _parse_lines([
