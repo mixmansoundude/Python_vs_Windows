@@ -408,6 +408,13 @@ Items deferred to future loops:
   (checking install date or download hash before running) to avoid unnecessary long waits.
   Timing data from CI logs will be needed once implemented. Deferred.
 
+- **parse_warn v3 (delayed/conditional imports)**: Extend HP_PARSE_WARN beyond `top-level`
+  to also process `delayed` (function-scoped) and `conditional` (platform-guarded) imports,
+  while skipping `optional`-only entries (try-except guards). `tools/parse_warn.py` and
+  `tests/test_parse_warn.py` were drafted in PR #230 (branch
+  `claude/add-warnfix-real-scenario-ySLnf`, now closed); that diff is the starting point.
+  Requires a `real_warnfix_delayed` scenario or similar CI coverage per branch coverage policy.
+
 ## Closed Backlog
 
 Items completed and shipped:
