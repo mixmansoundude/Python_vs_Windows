@@ -267,6 +267,8 @@ $prev = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null
 $env:HP_SKIP_PIPREQS = '1'
 # HP_DISABLE_HEURISTICS=1 for pass/xfail so warnfix is the only repair path.
 # real: leave heuristics enabled so the Req 5.1 heuristic can pre-install openpyxl.
+# real_warnfix/real_warnfix_delayed: heuristics enabled but xlrd is not heuristic-covered
+# so enabling/disabling makes no difference; warnfix is still the only repair path for xlrd.
 $prevDisableH = if (Test-Path Env:HP_DISABLE_HEURISTICS) { $env:HP_DISABLE_HEURISTICS } else { $null }
 if ($scenario -eq 'pass' -or $scenario -eq 'xfail') {
     $env:HP_DISABLE_HEURISTICS = '1'

@@ -431,4 +431,4 @@ Items completed and shipped:
 - **parse_warn v3 (delayed/conditional imports)**: Extend HP_PARSE_WARN to process
   `delayed` (function-scoped) and `conditional` (platform-guarded) PyInstaller 6.x imports
   in addition to `top-level`; skip `optional`-only entries. Added `real_warnfix_delayed`
-  CI scenario for branch coverage. CLOSED by this PR.
+  CI scenario for branch coverage. CLOSED by #232.
