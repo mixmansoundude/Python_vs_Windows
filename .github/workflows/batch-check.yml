@@ -263,6 +263,14 @@ jobs:
         run: |
           & tests\selfapps_warnfix.ps1
 
+      - name: "Self-test: warnfix REAL_WARNFIX_DELAYED scenario - warnfix processes delayed imports (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        env:
+          WARNFIX_SCENARIO: real_warnfix_delayed
+        shell: pwsh
+        run: |
+          & tests\selfapps_warnfix.ps1
+
       - name: "Self-test: EXE smokerun XFAIL bad import (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh
@@ -878,6 +886,18 @@ jobs:
             tests\~selftest_warnfix_real_warnfix\dist\~warnfix_token.txt
             tests/~selftest_warnfix_real_warnfix/dist/~warnfix_exe.log
             tests\~selftest_warnfix_real_warnfix\dist\~warnfix_exe.log
+            tests/~selftest_warnfix_real_warnfix/~warnfile.txt
+            tests\~selftest_warnfix_real_warnfix\~warnfile.txt
+            tests/~selftest_warnfix_real_warnfix_delayed/~warnfix_real_warnfix_delayed_bootstrap.log
+            tests\~selftest_warnfix_real_warnfix_delayed\~warnfix_real_warnfix_delayed_bootstrap.log
+            tests/~selftest_warnfix_real_warnfix_delayed/~setup.log
+            tests\~selftest_warnfix_real_warnfix_delayed\~setup.log
+            tests/~selftest_warnfix_real_warnfix_delayed/dist/~warnfix_token.txt
+            tests\~selftest_warnfix_real_warnfix_delayed\dist\~warnfix_token.txt
+            tests/~selftest_warnfix_real_warnfix_delayed/dist/~warnfix_exe.log
+            tests\~selftest_warnfix_real_warnfix_delayed\dist\~warnfix_exe.log
+            tests/~selftest_warnfix_real_warnfix_delayed/~warnfile.txt
+            tests\~selftest_warnfix_real_warnfix_delayed\~warnfile.txt
             tests/~selftest_exefail/~exefail_bootstrap.log
             tests\~selftest_exefail\~exefail_bootstrap.log
             tests/~selftest_exefail/~setup.log

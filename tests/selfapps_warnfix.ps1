@@ -20,6 +20,11 @@
 #           warnfix path remains functional alongside REQ-005 heuristic path.
 #           Emits: self.exe.warnfix.real_warnfix
 #
+#   real_warnfix_delayed - xlrd app (function-scoped import); PyInstaller 6.x emits
+#           (delayed) qualifier in warn file. parse_warn v3 must process (delayed) entries
+#           and warnfix must install xlrd and rebuild. Validates delayed-import branch.
+#           Emits: self.exe.warnfix.real_warnfix_delayed
+#
 # Lane: conda-full and real only.
 param()
 $ErrorActionPreference = 'Continue'
@@ -46,14 +51,16 @@ $scenario = if ($env:WARNFIX_SCENARIO) { $env:WARNFIX_SCENARIO.ToLower() } else 
 $workDirName = switch ($scenario) {
     'xfail'        { '~selftest_warnfix_xfail' }
     'real'         { '~selftest_warnfix_real' }
-    'real_warnfix' { '~selftest_warnfix_real_warnfix' }
-    default        { '~selftest_warnfix' }
+    'real_warnfix'         { '~selftest_warnfix_real_warnfix' }
+    'real_warnfix_delayed' { '~selftest_warnfix_real_warnfix_delayed' }
+    default                { '~selftest_warnfix' }
 }
 $bootstrapLog = switch ($scenario) {
-    'xfail'        { '~warnfix_xfail_bootstrap.log' }
-    'real'         { '~warnfix_real_bootstrap.log' }
-    'real_warnfix' { '~warnfix_real_warnfix_bootstrap.log' }
-    default        { '~warnfix_bootstrap.log' }
+    'xfail'                { '~warnfix_xfail_bootstrap.log' }
+    'real'                 { '~warnfix_real_bootstrap.log' }
+    'real_warnfix'         { '~warnfix_real_warnfix_bootstrap.log' }
+    'real_warnfix_delayed' { '~warnfix_real_warnfix_delayed_bootstrap.log' }
+    default                { '~warnfix_bootstrap.log' }
 }
 
 # Non-Windows skip
@@ -81,6 +88,14 @@ if (-not $IsWindows) {
             req     = 'REQ-007'
             pass    = $true
             desc    = 'Warnfix installed xlrd (not heuristic-covered); EXE succeeded (skipped on non-Windows)'
+            details = [ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' }
+        })
+    } elseif ($scenario -eq 'real_warnfix_delayed') {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.exe.warnfix.real_warnfix_delayed'
+            req     = 'REQ-007'
+            pass    = $true
+            desc    = 'Warnfix processed delayed xlrd import; installed xlrd; EXE succeeded (skipped on non-Windows)'
             details = [ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' }
         })
     } else {
@@ -125,6 +140,14 @@ if (-not (Test-Path $batchPath)) {
             req     = 'REQ-007'
             pass    = $false
             desc    = 'Warnfix REAL_WARNFIX: run_setup.bat not found'
+            details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
+        })
+    } elseif ($scenario -eq 'real_warnfix_delayed') {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.exe.warnfix.real_warnfix_delayed'
+            req     = 'REQ-007'
+            pass    = $false
+            desc    = 'Warnfix REAL_WARNFIX_DELAYED: run_setup.bat not found'
             details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
         })
     } else {
@@ -195,6 +218,24 @@ with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
     _f.write('real-warnfix-ok\n')
 print('xlrd ok')
 '@
+} elseif ($scenario -eq 'real_warnfix_delayed') {
+    # derived requirement: xlrd imported inside do_work() forces PyInstaller 6.x to
+    # emit "(delayed)" qualifier in warn file. parse_warn v3 must process (delayed)
+    # entries; warnfix installs xlrd and rebuilds. No requirements.txt created.
+    $appCode = @'
+import os as _os
+import sys as _sys
+
+def do_work():
+    import xlrd
+    _here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
+    with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
+        _f.write('real-warnfix-delayed-ok\n')
+    print('xlrd ok (delayed)')
+
+if __name__ == '__main__':
+    do_work()
+'@
 } else {
     # derived requirement: use a direct "import openpyxl" so PyInstaller's static analysis
     # can find the reference and include it in warn-<envname>.txt when the module is absent.
@@ -226,6 +267,8 @@ $prev = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null
 $env:HP_SKIP_PIPREQS = '1'
 # HP_DISABLE_HEURISTICS=1 for pass/xfail so warnfix is the only repair path.
 # real: leave heuristics enabled so the Req 5.1 heuristic can pre-install openpyxl.
+# real_warnfix/real_warnfix_delayed: heuristics enabled but xlrd is not heuristic-covered
+# so enabling/disabling makes no difference; warnfix is still the only repair path for xlrd.
 $prevDisableH = if (Test-Path Env:HP_DISABLE_HEURISTICS) { $env:HP_DISABLE_HEURISTICS } else { $null }
 if ($scenario -eq 'pass' -or $scenario -eq 'xfail') {
     $env:HP_DISABLE_HEURISTICS = '1'
@@ -347,6 +390,30 @@ if ($scenario -eq 'real_warnfix') {
         }
     })
     if (-not $rwPass) { exit 1 }
+    exit 0
+}
+
+if ($scenario -eq 'real_warnfix_delayed') {
+    # Warnfix must fire for (delayed) xlrd import and EXE must succeed.
+    $rwdPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and $warnInstallFired -and $warnRebuildFired -and (-not $infraError)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.exe.warnfix.real_warnfix_delayed'
+        req     = 'REQ-007'
+        pass    = $rwdPass
+        desc    = 'Warnfix processed delayed xlrd import; installed xlrd; EXE succeeded'
+        details = [ordered]@{
+            scenario         = $scenario
+            exitCode         = $run1Exit
+            exeExists        = $exeExists
+            exeExit          = $exeExit
+            tokenFound       = $tokenFound
+            warnInstallFired = $warnInstallFired
+            warnRebuildFired = $warnRebuildFired
+            infraError       = $infraError
+            exePath          = $exePath
+        }
+    })
+    if (-not $rwdPass) { exit 1 }
     exit 0
 }
 

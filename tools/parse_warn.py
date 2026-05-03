@@ -1,12 +1,12 @@
-"""parse_warn v2 (2026-03-29)
+"""parse_warn v3 (2026-05-03)
 Reads PyInstaller warn file, extracts missing module names, applies translations.
 Usage: python ~parse_warn.py <envname>
 Prints one conda package name per line to stdout.
 Skips internal modules (starting with _) and known-safe/unix-only names.
 Supports PyInstaller 5.x format (W: no module named 'foo') and
-PyInstaller 6.x format (missing module named foo - imported by ... (top-level)).
+PyInstaller 6.x format (missing module named foo - imported by ... (delayed|top-level|conditional)).
 """
-__version__ = "parse_warn v2 (2026-03-29)"
+__version__ = "parse_warn v3 (2026-05-03)"
 __all__ = ["main", "parse_warn_file", "TRANSLATIONS", "SKIP"]
 
 import os
@@ -84,12 +84,17 @@ def parse_warn_file(warn_path):
             else:
                 # PyInstaller 6.x format:
                 # missing module named foo - imported by bar (top-level)
-                # Only process top-level imports; conditional/optional/delayed
-                # are usually unix-only stdlib shims safe to exclude on Windows.
+                # missing module named foo - imported by bar (delayed)
+                # missing module named foo - imported by bar (conditional)
+                # Skip entries that are ONLY optional (try-except guards with no
+                # other qualifier) -- those are intentionally resilient to missing
+                # modules. top-level, delayed, and conditional imports are required
+                # at runtime. Unix-only stdlib shims (grp, pwd, posix, etc.) land
+                # in those categories too but are already filtered by SKIP.
                 m = re.match(r"missing module named (\S+)", line)
                 if not m:
                     continue
-                if "top-level" not in line:
+                if not re.search(r'\([^)]*(?:top-level|delayed|conditional)[^)]*\)', line):
                     continue
                 mod = m.group(1).strip("'\"").split(".")[0]
             if mod.startswith("_"):
