@@ -213,6 +213,8 @@ print('wrote out.xlsx')
 import xlrd
 import os as _os
 import sys as _sys
+_ = xlrd.__version__
+assert callable(xlrd.open_workbook), 'xlrd.open_workbook not accessible'
 _here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
 with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
     _f.write('real-warnfix-ok\n')
@@ -228,6 +230,8 @@ import sys as _sys
 
 def do_work():
     import xlrd
+    _ = xlrd.__version__
+    assert callable(xlrd.open_workbook), 'xlrd.open_workbook not accessible'
     _here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
     with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
         _f.write('real-warnfix-delayed-ok\n')
