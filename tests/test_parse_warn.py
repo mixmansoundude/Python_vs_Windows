@@ -164,6 +164,15 @@ class ParseWarnFileEdgeCasesTest(unittest.TestCase):
         ])
         self.assertEqual(result, [])
 
+    def test_pyi6_optional_with_qualifier_in_modname_skipped(self):
+        # derived requirement: qualifier check must match the trailing parentheses, not
+        # anywhere in the line. A module whose name contains "delayed" but is only
+        # (optional) must still be skipped.
+        result = _parse_lines([
+            "missing module named delayed_tasks - imported by app (optional)"
+        ])
+        self.assertEqual(result, [])
+
     def test_pyi6_skip_set_filtered_even_when_delayed(self):
         # Unix-only stdlib shims land as (delayed) or (conditional) but are in SKIP.
         result = _parse_lines([

@@ -94,7 +94,7 @@ def parse_warn_file(warn_path):
                 m = re.match(r"missing module named (\S+)", line)
                 if not m:
                     continue
-                if "top-level" not in line and "delayed" not in line and "conditional" not in line:
+                if not re.search(r'\((top-level|delayed|conditional)\)', line):
                     continue
                 mod = m.group(1).strip("'\"").split(".")[0]
             if mod.startswith("_"):
