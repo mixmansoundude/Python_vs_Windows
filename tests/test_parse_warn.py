@@ -202,6 +202,23 @@ class ParseWarnFileEdgeCasesTest(unittest.TestCase):
         ])
         self.assertEqual(result, ["opencv"])
 
+    def test_pyi6_combined_qualifiers_processed(self):
+        # derived requirement: PyInstaller 6.x can emit combined qualifiers like
+        # (delayed, conditional) for function-scoped conditional imports.
+        # Any entry containing top-level, delayed, or conditional must be processed.
+        result = _parse_lines([
+            "missing module named xlrd - imported by app (delayed, conditional)"
+        ])
+        self.assertEqual(result, ["xlrd"])
+
+    def test_pyi6_combined_qualifiers_with_optional_processed(self):
+        # derived requirement: (delayed, optional) contains a required qualifier (delayed);
+        # the entry must be processed, not skipped.
+        result = _parse_lines([
+            "missing module named xlrd - imported by app (delayed, optional)"
+        ])
+        self.assertEqual(result, ["xlrd"])
+
     def test_pyi6_quoted_module_name_strips_quotes(self):
         # PyInstaller 6.x may quote the module name; quotes must not appear in output
         result = _parse_lines([
