@@ -410,6 +410,7 @@ if exist "%REQ%" (
   set "DEP_SOURCE=requirements.txt"
   set "DEP_LAYER_REQUIREMENTS=1"
   call :log "[INFO] DEP_LAYER_REQUIREMENTS=1"
+  call :log "[TRACE] dep source selected: requirements.txt"
 )
 set "HP_JOB_SUMMARY=~pipreqs.summary.txt"
 if exist "%HP_JOB_SUMMARY%" del "%HP_JOB_SUMMARY%"
@@ -445,6 +446,7 @@ if defined HP_PYPROJ_ACTIVE (
   call :log "[INFO] pyproject.toml [project].dependencies detected"
   call :log "[INFO] DEP_SOURCE=pyproject"
   call :log "[INFO] DEP_LAYER_PYPROJECT=1"
+  call :log "[TRACE] dep source selected: pyproject"
   set "DEP_SOURCE=pyproject"
   set "DEP_LAYER_PYPROJECT=1"
   copy /y "%HP_PYPROJ_REQ%" "requirements.txt" >nul 2>&1
@@ -516,6 +518,7 @@ if defined PEP723_ACTIVE (
   call :log "[INFO] DEP_SOURCE=pep723"
   call :log "[INFO] PEP723_USED=1"
   call :log "[INFO] DEP_LAYER_PEP723=1"
+  call :log "[TRACE] dep source selected: pep723"
   set "DEP_SOURCE=pep723"
   set "DEP_LAYER_PEP723=1"
   copy /y "%PEP723_REQ%" "requirements.txt" >nul 2>&1
@@ -722,22 +725,28 @@ if exist "requirements.txt" (
 )
 call :log "[INFO] DEP_RESOLVED_FROM=requirements.txt"
 call :log "[INFO] DEP_INSTALL_SOURCE=requirements.txt"
+call :log "[TRACE] dep install phase: start"
 if exist "requirements.txt" (
   if exist "~reqs_conda.txt" del "~reqs_conda.txt"
+  call :log "[TRACE] heuristic augmentation: ~prep_requirements.py"
   if "%HP_ENV_MODE%"=="conda" (
     "%CONDA_BASE_PY%" "~prep_requirements.py" "requirements.txt" >nul 2>> "%LOG%"
   ) else (
     "%HP_PY%" "~prep_requirements.py" "requirements.txt" >nul 2>> "%LOG%"
   )
+  call :log "[TRACE] heuristic augmentation: complete"
   if "%HP_ENV_MODE%"=="conda" (
     if not defined HP_DEP_SKIP (
+      call :log "[INSTALL] conda bulk from ~reqs_conda.txt"
       call "%CONDA_BAT%" install -y -n "%ENVNAME%" --file "~reqs_conda.txt" --override-channels -c conda-forge >> "%LOG%" 2>&1
       if errorlevel 1 (
+        call :log "[INSTALL] conda per-pkg fallback"
         for /f "usebackq delims=" %%P in ("~reqs_conda.txt") do (
           call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%P >> "%LOG%" 2>&1
         )
       )
     )
+    call :log "[INSTALL] pip gap fill from requirements.txt"
     "%HP_PY%" -m pip install -r requirements.txt >> "%LOG%" 2>&1
     if errorlevel 1 (
       echo *** Warning: Some requirements may have failed to install.
@@ -1436,7 +1445,7 @@ if "%HP_ENV_MODE%"=="system" (
     for /f "usebackq delims=" %%M in ("~missing_modules.txt") do set "HP_WARNFIX_NEEDED=1"
     if exist "~warnfix_repair_failed.flag" del "~warnfix_repair_failed.flag" >nul 2>&1
     if defined HP_WARNFIX_NEEDED (
-      call :log "[INFO] PyInstaller flagged missing modules; installing and rebuilding."
+      call :log "[REPAIR] missing modules detected; installing and rebuilding."
       if "%HP_ENV_MODE%"=="uv" (
         for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
           "%HP_UV_EXE%" pip install --python "%HP_PY%" %%M >> "%LOG%" 2>&1
@@ -1456,7 +1465,7 @@ if "%HP_ENV_MODE%"=="system" (
       )
       if exist "~warnfix_repair_failed.flag" call :log "[WARN] One or more repair attempts failed"
       "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
-      call :log "[INFO] PyInstaller rebuild after missing module install complete."
+      call :log "[REPAIR] rebuild complete after warnfix."
     )
     if exist "~warnfix_repair_failed.flag" del "~warnfix_repair_failed.flag" >nul 2>&1
     if exist "~missing_modules.txt" del "~missing_modules.txt" >nul 2>&1
@@ -1604,6 +1613,21 @@ rem $exeTime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
 rem if ($exeTime -ge $latest) { 'fresh' }
 rem If HP_FAST_CHECK changes, update this decoded comment block to match the base64 payload.
 set "HP_FAST_CHECK=JGV4ZSA9ICRhcmdzWzBdCmlmICgtbm90ICRleGUpIHsgJGV4ZSA9ICRlbnY6SFBfRkFTVF9FWEUgfQokaW5mcmFQYXR0ZXJuID0gJyg/aSkoXnxbXC9dKShcLmdpdHxcLmdpdGh1YnxkaXN0fFwudmVudnxfX3B5Y2FjaGVfX3xcLmNvbmRhKShbXC9dfCQpJwokc291cmNlcyA9IEdldC1DaGlsZEl0ZW0gLVJlY3Vyc2UgLUZpbGUgLUZpbHRlciAnKi5weScgfCBXaGVyZS1PYmplY3QgeyAkXy5GdWxsTmFtZSAtbm90bWF0Y2ggJGluZnJhUGF0dGVybiAtYW5kICRfLk5hbWUgLW5vdGxpa2UgJ34qLnB5JyB9CmlmICgtbm90ICRzb3VyY2VzKSB7IGV4aXQgMSB9CiRsYXRlc3QgPSAoJHNvdXJjZXMgfCBTb3J0LU9iamVjdCAtUHJvcGVydHkgTGFzdFdyaXRlVGltZVV0YyAtRGVzY2VuZGluZyB8IFNlbGVjdC1PYmplY3QgLUZpcnN0IDEpLkxhc3RXcml0ZVRpbWVVdGMKJGV4ZVRpbWUgPSAoR2V0LUl0ZW0gLUxpdGVyYWxQYXRoICRleGUpLkxhc3RXcml0ZVRpbWVVdGMKaWYgKCRleGVUaW1lIC1nZSAkbGF0ZXN0KSB7ICdmcmVzaCcgfQo="
+:: --- Embedded helper: HP_PREP_REQUIREMENTS (~prep_requirements.py) ---
+:: Purpose:
+::   - Normalize pip/conda specifiers from requirements.txt
+::   - Apply heuristic extras (REQ-005.8)
+::
+:: Current heuristics applied (if HP_DISABLE_HEURISTICS != 1):
+::   REQ-005.8.1 -- pandas  -> openpyxl (+ xlsxwriter)
+::   REQ-005.8.2 -- requests -> certifi
+::   REQ-005.8.3 -- sqlalchemy -> pymysql
+::   REQ-005.8.4 -- matplotlib -> tk
+::   REQ-005.8.5 -- cryptography/pycryptodome -> cffi
+::
+:: Log format: [HEURISTIC] <source->target>  (emitted to stderr -> ~setup.log)
+:: Tests: selfapps_pandas_excel.ps1 validates REQ-005.8.1 translation
+:: --------------------------------------------------------------------
 set "HP_PREP_REQUIREMENTS=T1BfT1JERVIgPSAoIj09IiwgIiE9IiwgIj49IiwgIj4iLCAiPD0iLCAiPCIpCk9QX1JBTksgPSB7b3A6IGlkeCBmb3IgaWR4LCBvcCBpbiBlbnVtZXJhdGUoT1BfT1JERVIpfQoKaW1wb3J0IG9zCmltcG9ydCByZQppbXBvcnQgc3lzCmZyb20gY29sbGVjdGlvbnMgaW1wb3J0IE9yZGVyZWREaWN0CgpJTlAgPSBzeXMuYXJndlsxXSBpZiBsZW4oc3lzLmFyZ3YpID4gMSBlbHNlICJyZXF1aXJlbWVudHMudHh0IgpPVVRfQ09OREEgPSAifnJlcXNfY29uZGEudHh0IgpPVVRfUElQID0gIn5yZXFzX3BpcC50eHQiClNQRUNfUEFUVEVSTiA9IHJlLmNvbXBpbGUociIofj18PT18IT18Pj18Pnw8PXw8KVxzKihbXlxzLDtdKylccyokIikKTkFNRV9QQVRURVJOID0gcmUuY29tcGlsZShyIl5ccyooW0EtWmEtejAtOV8uLV0rKVxzKiguKikkIikKCgpkZWYgc3BsaXRfbWFya2VyKHRleHQ6IHN0cikgLT4gc3RyOgogICAgcmV0dXJuIHRleHQuc3BsaXQoIjsiKVswXS5zdHJpcCgpCgoKZGVmIHN0cmlwX2V4dHJhcyhuYW1lOiBzdHIpIC0+IHN0cjoKICAgIHJldHVybiByZS5zdWIociJcWy4qP1xdIiwgIiIsIG5hbWUpCgoKZGVmIF92ZXJzaW9uX2tleSh0ZXh0OiBzdHIpOgogICAgcGFydHMgPSBbXQogICAgZm9yIGNodW5rIGluIHRleHQuc3BsaXQoJy4nKToKICAgICAgICB0cnk6CiAgICAgICAgICAgIHBhcnRzLmFwcGVuZChpbnQoY2h1bmspKQogICAgICAgIGV4Y2VwdCBWYWx1ZUVycm9yOgogICAgICAgICAgICBwYXJ0cy5hcHBlbmQoMCkKICAgIHJldHVybiB0dXBsZShwYXJ0cykKCgpkZWYgX2J1bXBfY29tcGF0aWJsZSh2YWx1ZTogc3RyKSAtPiBzdHI6CiAgICBwaWVjZXMgPSB2YWx1ZS5zcGxpdCgnLicpCiAgICBpZiBub3QgcGllY2VzIG9yIG5vdCBwaWVjZXNbMF0uaXNkaWdpdCgpOgogICAgICAgIHJldHVybiB2YWx1ZQogICAgbWFqb3IgPSBpbnQocGllY2VzWzBdKQogICAgaWYgbGVuKHBpZWNlcykgPj0gMyBhbmQgcGllY2VzWzFdLmlzZGlnaXQoKToKICAgICAgICByZXR1cm4gZiJ7bWFqb3J9LntpbnQocGllY2VzWzFdKSArIDF9IgogICAgaWYgbGVuKHBpZWNlcykgPj0gMjoKICAgICAgICByZXR1cm4gZiJ7bWFqb3IgKyAxfS4wIgogICAgcmV0dXJuIHN0cihtYWpvciArIDEpCgoKZGVmIF9leHBhbmRfZnJhZ21lbnQoZnJhZ21lbnQ6IHN0cik6CiAgICBpZiBub3QgZnJhZ21lbnQ6CiAgICAgICAgcmV0dXJuIFtdCiAgICB2YWx1ZSA9IGZyYWdtZW50LnN0cmlwKCkKICAgIGlmIG5vdCB2YWx1ZToKICAgICAgICByZXR1cm4gW10KICAgIG1hdGNoID0gU1BFQ19QQVRURVJOLmZ1bGxtYXRjaCh2YWx1ZSkKICAgIGlmIG5vdCBtYXRjaDoKICAgICAgICByZXR1cm4gW10KICAgIG9wLCB2ZXIgPSBtYXRjaC5ncm91cHMoKQogICAgdmVyID0gdmVyLnN0cmlwKCkKICAgIGlmIG5vdCB2ZXI6CiAgICAgICAgcmV0dXJuIFtdCiAgICBpZiBvcCA9PSAifj0iOgogICAgICAgIHVwcGVyID0gX2J1bXBfY29tcGF0aWJsZSh2ZXIpCiAgICAgICAgcmV0dXJuIFtmIj49e3Zlcn0iLCBmIjx7dXBwZXJ9Il0KICAgIHJldHVybiBbZiJ7b3B9e3Zlcn0iXQoKCmRlZiBjYW5vbmljYWxfb3BzKHNwZWNzKSAtPiBsaXN0OgogICAgYnVja2V0ID0gT3JkZXJlZERpY3QoKQogICAgZm9yIHJhdyBpbiBzcGVjczoKICAgICAgICBmb3Igbm9ybWFsaXplZCBpbiBfZXhwYW5kX2ZyYWdtZW50KHJhdyk6CiAgICAgICAgICAgIGJ1Y2tldFtub3JtYWxpemVkXSA9IE5vbmUKICAgIG9yZGVyZWQgPSBsaXN0KGJ1Y2tldC5rZXlzKCkpCiAgICBvcmRlcmVkLnNvcnQoa2V5PV9zcGVjX3NvcnRfa2V5KQogICAgcmV0dXJuIF9lbmZvcmNlX2JvdW5kc19vcmRlcihvcmRlcmVkKQoKCmRlZiBfc3BlY19zb3J0X2tleSh2YWx1ZTogc3RyKToKICAgIGZvciBvcCBpbiBPUF9PUkRFUjoKICAgICAgICBpZiB2YWx1ZS5zdGFydHN3aXRoKG9wKToKICAgICAgICAgICAgdmVyID0gdmFsdWVbbGVuKG9wKTpdCiAgICAgICAgICAgIHJldHVybiBPUF9SQU5LW29wXSwgX3ZlcnNpb25fa2V5KHZlciksIHZlcgogICAgcmV0dXJuIGxlbihPUF9PUkRFUiksIF92ZXJzaW9uX2tleSh2YWx1ZSksIHZhbHVlCgoKZGVmIF9lbmZvcmNlX2JvdW5kc19vcmRlcihpdGVtczogbGlzdCkgLT4gbGlzdDoKICAgIG9wcyA9IGxpc3QoaXRlbXMpCiAgICBsb3dlcl9pbmRleCA9IG5leHQoKGlkeCBmb3IgaWR4LCB0ZXh0IGluIGVudW1lcmF0ZShvcHMpIGlmIHRleHQuc3RhcnRzd2l0aCgiPj0iKSksIE5vbmUpCiAgICBpZiBsb3dlcl9pbmRleCBpcyBOb25lOgogICAgICAgIHJldHVybiBvcHMKICAgIGZvciB1cHBlcl9vcCBpbiAoIjw9IiwgIjwiKToKICAgICAgICB1cHBlcl9pbmRleCA9IG5leHQoKGlkeCBmb3IgaWR4LCB0ZXh0IGluIGVudW1lcmF0ZShvcHMpIGlmIHRleHQuc3RhcnRzd2l0aCh1cHBlcl9vcCkpLCBOb25lKQogICAgICAgIGlmIHVwcGVyX2luZGV4IGlzIG5vdCBOb25lIGFuZCB1cHBlcl9pbmRleCA8IGxvd2VyX2luZGV4OgogICAgICAgICAgICB2YWx1ZSA9IG9wcy5wb3AobG93ZXJfaW5kZXgpCiAgICAgICAgICAgIG9wcy5pbnNlcnQodXBwZXJfaW5kZXgsIHZhbHVlKQogICAgICAgICAgICBsb3dlcl9pbmRleCA9IHVwcGVyX2luZGV4CiAgICByZXR1cm4gb3BzCgoKZGVmIGZvcm1hdF9saW5lKG5hbWU6IHN0ciwgc3BlY3MpIC0+IGxpc3Q6CiAgICBvcHMgPSBjYW5vbmljYWxfb3BzKHNwZWNzKQogICAgcmV0dXJuIFtmIntuYW1lfSAiICsgIiwiLmpvaW4ob3BzKV0gaWYgb3BzIGVsc2UgW25hbWVdCgoKZGVmIG5vcm1hbGl6ZV9zcGVjaWZpZXJzKHJlc3Q6IHN0cik6CiAgICBpdGVtcyA9IFtdCiAgICBmb3IgY2h1bmsgaW4gcmVzdC5zcGxpdCgnLCcpOgogICAgICAgIGNodW5rID0gY2h1bmsuc3RyaXAoKQogICAgICAgIGlmIGNodW5rOgogICAgICAgICAgICBpdGVtcy5leHRlbmQoX2V4cGFuZF9mcmFnbWVudChjaHVuaykpCiAgICByZXR1cm4gY2Fub25pY2FsX29wcyhpdGVtcykKCgpkZWYgdG9fY29uZGEobGluZTogc3RyKToKICAgIHNlY3Rpb24gPSBzcGxpdF9tYXJrZXIobGluZSkKICAgIGlmIG5vdCBzZWN0aW9uIG9yIHNlY3Rpb24uc3RhcnRzd2l0aCgnIycpOgogICAgICAgIHJldHVybiBbXQogICAgbWF0Y2ggPSBOQU1FX1BBVFRFUk4ubWF0Y2goc2VjdGlvbikKICAgIGlmIG5vdCBtYXRjaDoKICAgICAgICByZXR1cm4gW10KICAgIG5hbWUsIHJlc3QgPSBtYXRjaC5ncm91cHMoKQogICAgbmFtZSA9IHN0cmlwX2V4dHJhcyhuYW1lKQogICAgcmVzdCA9IHJlLnN1YihyIlxbLio/XF0iLCAiIiwgcmVzdCkKICAgIHNwZWNzID0gW2NodW5rLnN0cmlwKCkgZm9yIGNodW5rIGluIHJlc3Quc3BsaXQoJywnKSBpZiBjaHVuay5zdHJpcCgpXQogICAgcmV0dXJuIGZvcm1hdF9saW5lKG5hbWUsIHNwZWNzKQoKCmRlZiB0b19waXAobGluZTogc3RyKToKICAgIHNlY3Rpb24gPSBzcGxpdF9tYXJrZXIobGluZSkKICAgIGlmIG5vdCBzZWN0aW9uIG9yIHNlY3Rpb24uc3RhcnRzd2l0aCgnIycpOgogICAgICAgIHJldHVybiBOb25lCiAgICBtYXRjaCA9IE5BTUVfUEFUVEVSTi5tYXRjaChzZWN0aW9uKQogICAgaWYgbm90IG1hdGNoOgogICAgICAgIHJldHVybiBzZWN0aW9uLnN0cmlwKCkKICAgIG5hbWUsIHJlc3QgPSBtYXRjaC5ncm91cHMoKQogICAgbmFtZSA9IHN0cmlwX2V4dHJhcyhuYW1lKQogICAgcmV0dXJuIChuYW1lICsgcmVzdCkuc3RyaXAoKQoKCmRlZiBtYWluKCk6CiAgICBoYXZlX2ZpbGUgPSBvcy5wYXRoLmV4aXN0cyhJTlApIGFuZCBvcy5wYXRoLmdldHNpemUoSU5QKSA+IDAKICAgIGxpbmVzID0gW10KICAgIGlmIGhhdmVfZmlsZToKICAgICAgICB3aXRoIG9wZW4oSU5QLCAncicsIGVuY29kaW5nPSd1dGYtOCcsIGVycm9ycz0naWdub3JlJykgYXMgaGFuZGxlOgogICAgICAgICAgICBsaW5lcyA9IFtpdGVtLnN0cmlwKCkgZm9yIGl0ZW0gaW4gaGFuZGxlIGlmIGl0ZW0uc3RyaXAoKV0KICAgIGNvbmRhX3NwZWNzID0gW10KICAgIHBpcF9zcGVjcyA9IFtdCiAgICBmb3IgbGluZSBpbiBsaW5lczoKICAgICAgICBjb25kYV9zcGVjcy5leHRlbmQodG9fY29uZGEobGluZSkpCiAgICAgICAgcGlwX2VudHJ5ID0gdG9fcGlwKGxpbmUpCiAgICAgICAgaWYgcGlwX2VudHJ5OgogICAgICAgICAgICBwaXBfc3BlY3MuYXBwZW5kKHBpcF9lbnRyeSkKICAgIG5hbWVzX2xvd2VyID0gW3JlLnNwbGl0KHIiWzw+PSF+LFxzXSIsIHZhbHVlLCBtYXhzcGxpdD0xKVswXS5zdHJpcCgpLmxvd2VyKCkgZm9yIHZhbHVlIGluIHBpcF9zcGVjc10KICAgIGlmIG9zLmVudmlyb24uZ2V0KCdIUF9ESVNBQkxFX0hFVVJJU1RJQ1MnKSAhPSAnMSc6CiAgICAgICAgaWYgJ3BhbmRhcycgaW4gbmFtZXNfbG93ZXIgYW5kICdvcGVucHl4bCcgbm90IGluIG5hbWVzX2xvd2VyOgogICAgICAgICAgICBwaXBfc3BlY3MuYXBwZW5kKCdvcGVucHl4bCcpCiAgICAgICAgICAgIGNvbmRhX3NwZWNzLmV4dGVuZChmb3JtYXRfbGluZSgnb3BlbnB5eGwnLCBbXSkpCiAgICAgICAgICAgIHN5cy5zdGRlcnIud3JpdGUoJ1tIRVVSSVNUSUNdIHBhbmRhcy0+b3BlbnB5eGxcbicpCiAgICAgICAgaWYgJ3BhbmRhcycgaW4gbmFtZXNfbG93ZXIgYW5kICd4bHN4d3JpdGVyJyBub3QgaW4gbmFtZXNfbG93ZXI6CiAgICAgICAgICAgIHBpcF9zcGVjcy5hcHBlbmQoJ3hsc3h3cml0ZXInKQogICAgICAgICAgICBjb25kYV9zcGVjcy5leHRlbmQoZm9ybWF0X2xpbmUoJ3hsc3h3cml0ZXInLCBbXSkpCiAgICAgICAgICAgIHN5cy5zdGRlcnIud3JpdGUoJ1tIRVVSSVNUSUNdIHBhbmRhcy0+eGxzeHdyaXRlclxuJykKICAgICAgICBpZiAncmVxdWVzdHMnIGluIG5hbWVzX2xvd2VyIGFuZCAnY2VydGlmaScgbm90IGluIG5hbWVzX2xvd2VyOgogICAgICAgICAgICBwaXBfc3BlY3MuYXBwZW5kKCdjZXJ0aWZpJykKICAgICAgICAgICAgY29uZGFfc3BlY3MuZXh0ZW5kKGZvcm1hdF9saW5lKCdjZXJ0aWZpJywgW10pKQogICAgICAgICAgICBzeXMuc3RkZXJyLndyaXRlKCdbSEVVUklTVElDXSByZXF1ZXN0cy0+Y2VydGlmaVxuJykKICAgICAgICBpZiAnc3FsYWxjaGVteScgaW4gbmFtZXNfbG93ZXIgYW5kICdweW15c3FsJyBub3QgaW4gbmFtZXNfbG93ZXI6CiAgICAgICAgICAgIHBpcF9zcGVjcy5hcHBlbmQoJ3B5bXlzcWwnKQogICAgICAgICAgICBjb25kYV9zcGVjcy5leHRlbmQoZm9ybWF0X2xpbmUoJ3B5bXlzcWwnLCBbXSkpCiAgICAgICAgICAgIHN5cy5zdGRlcnIud3JpdGUoJ1tIRVVSSVNUSUNdIHNxbGFsY2hlbXktPnB5bXlzcWxcbicpCiAgICAgICAgaWYgJ21hdHBsb3RsaWInIGluIG5hbWVzX2xvd2VyIGFuZCAndGsnIG5vdCBpbiBuYW1lc19sb3dlcjoKICAgICAgICAgICAgcGlwX3NwZWNzLmFwcGVuZCgndGsnKQogICAgICAgICAgICBjb25kYV9zcGVjcy5leHRlbmQoZm9ybWF0X2xpbmUoJ3RrJywgW10pKQogICAgICAgICAgICBzeXMuc3RkZXJyLndyaXRlKCdbSEVVUklTVElDXSBtYXRwbG90bGliLT50a1xuJykKICAgICAgICBpZiAoJ2NyeXB0b2dyYXBoeScgaW4gbmFtZXNfbG93ZXIgb3IgJ3B5Y3J5cHRvZG9tZScgaW4gbmFtZXNfbG93ZXIpIGFuZCAnY2ZmaScgbm90IGluIG5hbWVzX2xvd2VyOgogICAgICAgICAgICBwaXBfc3BlY3MuYXBwZW5kKCdjZmZpJykKICAgICAgICAgICAgY29uZGFfc3BlY3MuZXh0ZW5kKGZvcm1hdF9saW5lKCdjZmZpJywgW10pKQogICAgICAgICAgICBzeXMuc3RkZXJyLndyaXRlKCdbSEVVUklTVElDXSBjcnlwdG8tPmNmZmlcbicpCiAgICB3aXRoIG9wZW4oT1VUX0NPTkRBLCAndycsIGVuY29kaW5nPSdhc2NpaScpIGFzIGhhbmRsZToKICAgICAgICBmb3IgaXRlbSBpbiBjb25kYV9zcGVjczoKICAgICAgICAgICAgaWYgaXRlbToKICAgICAgICAgICAgICAgIGhhbmRsZS53cml0ZShpdGVtICsgJ1xuJykKICAgIHdpdGggb3BlbihPVVRfUElQLCAndycsIGVuY29kaW5nPSdhc2NpaScpIGFzIGhhbmRsZToKICAgICAgICBmb3IgaXRlbSBpbiBwaXBfc3BlY3M6CiAgICAgICAgICAgIGlmIGl0ZW06CiAgICAgICAgICAgICAgICBoYW5kbGUud3JpdGUoaXRlbSArICdcbicpCiAgICBzeXMuc3Rkb3V0LndyaXRlKCdPS1xuJykKCgppZiBfX25hbWVfXyA9PSAnX19tYWluX18nOgogICAgbWFpbigpCg=="
 set "HP_DETECT_VISA=aW1wb3J0IG9zLCByZSwgc3lzCgpST09UID0gb3MuZ2V0Y3dkKCkKUEFUVEVSTlMgPSBbCiAgICByIig/bSleXHMqKD86ZnJvbVxzK3B5dmlzfGltcG9ydFxzK3B5dmlzKSIsCiAgICByIig/bSleXHMqaW1wb3J0XHMrdmlzIiwKXQoKZGVmIG5lZWRzX3Zpc2EoKToKICAgIGZvciBjdXJyZW50LCBkaXJzLCBmaWxlcyBpbiBvcy53YWxrKFJPT1QpOgogICAgICAgIGRpcnNbOl0gPSBbaXRlbSBmb3IgaXRlbSBpbiBkaXJzIGlmIG5vdCBpdGVtLnN0YXJ0c3dpdGgoKCd+JywgJy4nKSldCiAgICAgICAgZm9yIG5hbWUgaW4gZmlsZXM6CiAgICAgICAgICAgIGlmIG5vdCBuYW1lLmVuZHN3aXRoKCcucHknKSBvciBuYW1lLnN0YXJ0c3dpdGgoJ34nKToKICAgICAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgICAgIHBhdGggPSBvcy5wYXRoLmpvaW4oY3VycmVudCwgbmFtZSkKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgd2l0aCBvcGVuKHBhdGgsICdyJywgZW5jb2Rpbmc9J3V0Zi04JywgZXJyb3JzPSdpZ25vcmUnKSBhcyBoYW5kbGU6CiAgICAgICAgICAgICAgICAgICAgdGV4dCA9IGhhbmRsZS5yZWFkKCkKICAgICAgICAgICAgZXhjZXB0IE9TRXJyb3I6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICBmb3IgcGF0dGVybiBpbiBQQVRURVJOUzoKICAgICAgICAgICAgICAgIGlmIHJlLnNlYXJjaChwYXR0ZXJuLCB0ZXh0KToKICAgICAgICAgICAgICAgICAgICByZXR1cm4gVHJ1ZQogICAgcmV0dXJuIEZhbHNlCgpkZWYgbWFpbigpOgogICAgc3lzLnN0ZG91dC53cml0ZSgnMScgaWYgbmVlZHNfdmlzYSgpIGVsc2UgJzAnKQoKaWYgX19uYW1lX18gPT0gJ19fbWFpbl9fJzoKICAgIG1haW4oKQo="
 rem ~find_entry.py emits a normalized crumb, logs it for tests, and skip mode reads its stdout

@@ -224,6 +224,62 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 
 ---
 
+### REQ-005 -- End-to-End Dependency Resolution Trace
+
+This section describes the full runtime flow of dependency resolution, installation, augmentation, and repair as executed during a bootstrap run.
+
+#### Execution Flow Summary
+
+1. Dependency Source Selection
+   - Check PEP 723 metadata first
+   - Else check `pyproject.toml` `[project].dependencies`
+   - Else fall back to `requirements.txt`
+   - Else use `requirements.auto.txt` (pipreqs inference)
+   - Else empty dependency set
+
+2. Dependency Installation Phase
+   - Attempt conda bulk install
+   - If failure -> per-package conda fallback
+   - If still incomplete -> pip gap fill
+
+3. Heuristic Augmentation Phase
+   - Apply known ecosystem dependency mappings via `~prep_requirements.py`
+   - Log all applied heuristics explicitly
+
+4. Runtime Validation Phase
+   - Detect missing imports or runtime failures
+   - Trigger reactive repair system
+
+5. Repair + Retry Loop
+   - Install missing dependencies
+   - Re-run execution
+   - Repeat until success or hard failure
+
+#### Logging Contract
+
+All stages emit structured logs:
+
+- `[WARN]` -- dependency source fallback
+- `[HEURISTIC]` -- applied mapping (emitted by `~prep_requirements.py` to stderr -> `~setup.log`)
+- `[INSTALL]` -- conda/pip actions
+- `[REPAIR]` -- missing module resolution
+- `[TRACE]` -- dependency resolution step transitions
+
+#### Failure Behavior
+
+- No silent fallback allowed
+- Every transition must be logged
+- System prioritizes recovery over strict dependency correctness
+
+#### End State Guarantees
+
+At completion:
+- Environment is either functional OR explicitly failed
+- Dependency source lineage is traceable
+- Repair attempts are fully recorded in logs
+
+---
+
 ## [REQ-008] NI-VISA (optional external)
 
 - If the app imports `pyvisa` or `visa`, attempt **NI-VISA** Windows driver install if not present (system install, not just a Python package).
