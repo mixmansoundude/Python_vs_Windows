@@ -101,31 +101,112 @@ This repository serves as a proof of concept of this new approach.
 
 ---
 
-## [REQ-005] Dependencies
+## REQ-005 -- Dependency Handling
 
-- If `requirements.txt` exists and is non-empty:
-  - First try bulk install:  
-    `conda install --file requirements.txt --override-channels -c conda-forge`
-  - If bulk fails, fall back per-package via conda. For `~=` (compatible release), convert to `>=X.Y,<X.(Y+1)` (PEP 440) before feeding conda. Handle this carefully.
+Defines how dependencies are discovered, selected, installed, augmented, and repaired to ensure the application runs successfully.
 
-- Always run:
+---
 
-  `pipreqs . --force --mode compat --savepath requirements.auto.txt`
+### Core Dependency Flow
 
-  compat mode ensures cross-runner determinism; --force overwrites stale output; --savepath keeps the generated file separate from the source-of-truth requirements.
+#### Source Resolution (authoritative order)
 
-  and log a **diff vs `requirements.txt`**.
+- REQ-005.1 -- Detect requirements source (priority order): Resolve dependencies using the following order:
+  1. PEP 723 inline script metadata (`# /// script`)
+     - If present, valid, and non-empty -> authoritative
+     - Parsed before any file-based source
+     - If malformed or empty: `[WARN] PEP 723 metadata invalid or empty` -> fall through
+  2. `pyproject.toml` `[project].dependencies`
+     - If present and non-empty -> authoritative; overrides `requirements.txt`
+  3. `requirements.txt`
+     - If present and non-empty -> authoritative
+  4. `requirements.auto.txt` (pipreqs output)
+     - Used only if no authoritative source exists
+     - Not authoritative (best-effort inference)
+  5. No dependencies
+     - Continue with empty set if all sources unavailable
 
-- If there is no usable `requirements.txt`, adopt `requirements.auto.txt` as canonical.
+---
 
-- After conda attempts, run:
-pip install -r requirements.txt
+### Installation Strategy (Conda + pip compatibility path)
 
-to fill remaining gaps quickly.
+- REQ-005.2 -- Conda bulk install: Attempt install from the selected dependency source:
+  ```
+  conda install --file <resolved_requirements> --override-channels -c conda-forge
+  ```
 
-- Heuristic extras:
-- If `pandas` is present, ensure `openpyxl` is included.
-- When imports are missing at any point -- such as detected during dependency installation or during EXE build -- the bootstrapper must attempt to identify the missing packages by any available means and install them before retrying. Getting the code to run takes priority.
+---
+
+- REQ-005.3 -- Conda per-package fallback: If bulk install fails:
+  - Install packages individually via conda
+  - Convert `~=` (PEP 440 compatible release) to `>=X.Y,<X.(Y+1)`
+
+---
+
+- REQ-005.4 -- Generate inferred requirements (non-authoritative): Always run:
+  ```
+  pipreqs . --force --mode compat --savepath requirements.auto.txt
+  ```
+  - `compat` ensures cross-runner determinism
+  - `--force` overwrites stale output
+  - `--savepath` preserves original requirements
+  - Behavior: Used for visibility and fallback only
+  - Failure does not stop bootstrap: `[WARN] pipreqs failed, continuing with available sources`
+
+---
+
+- REQ-005.5 -- Diff tracking: Log differences between:
+  - Authoritative source (PEP 723, `pyproject.toml`, or `requirements.txt`)
+  - `requirements.auto.txt`
+
+---
+
+- REQ-005.6 -- Fallback requirements source: If no authoritative source exists:
+  - Promote `requirements.auto.txt` to active dependency set
+
+---
+
+- REQ-005.7 -- pip gap fill: After conda attempts:
+  ```
+  pip install -r <resolved_requirements>
+  ```
+  Purpose:
+  - Resolve packages unavailable or incomplete in conda
+  - Uses the same resolved dependency set (no divergence)
+
+---
+
+### Heuristic Dependency Augmentation (Bootstrap-Time)
+
+- REQ-005.8 -- Heuristic extras: Augment dependencies based on known ecosystem gaps.
+  - REQ-005.8.1 -- pandas -> openpyxl (+ xlsxwriter): Ensures Excel backends are available. TESTED: `tests/selfapps_pandas_excel.ps1`
+  - REQ-005.8.2 -- requests -> certifi: Ensures SSL certificate bundle is present. STATUS: Not explicitly tested
+  - REQ-005.8.3 -- sqlalchemy -> pymysql: Provides common MySQL driver. STATUS: Not explicitly tested
+  - REQ-005.8.4 -- matplotlib -> tk: Enables common GUI backend support. STATUS: Not explicitly tested
+  - REQ-005.8.5 -- cryptography / pycryptodome -> cffi: Supports compiled crypto backends. STATUS: Not explicitly tested
+  - Logging Contract: Heuristics must emit `[HEURISTIC] <source->target>` -- required for test validation.
+
+---
+
+### Reactive Repair (Warnfix)
+
+- REQ-005.9 -- Missing import detection and repair: If missing modules are detected during dependency install or EXE build, the bootstrapper must attempt to identify and install them automatically.
+
+---
+
+- REQ-005.10 -- Retry loop: After repair attempts, rebuild/re-run until:
+  - Success (application runs), or
+  - Hard failure (unresolvable)
+
+---
+
+### Design Principles
+
+- Authoritative hierarchy is deterministic: PEP 723 > requirements.txt > pipreqs > none
+- pipreqs is discovery only: Never trusted for completeness or versions
+- No silent fallbacks: All degradations emit explicit warnings
+- Single resolved dependency set: Conda + pip operate on the same inputs
+- Execution success > dependency purity: System prioritizes working application over strict resolution correctness
 
 ---
 
