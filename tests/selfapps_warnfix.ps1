@@ -305,8 +305,8 @@ $setupText = if (Test-Path $setupLog) { Get-Content -LiteralPath $setupLog -Raw 
 $combined  = ($logLines -join "`n") + "`n" + $setupText
 
 # derived requirement: exact log phrases from run_setup.bat warnfix block.
-$warnInstallPhrase = 'PyInstaller flagged missing modules; installing and rebuilding.'
-$warnRebuildPhrase = 'PyInstaller rebuild after missing module install complete.'
+$warnInstallPhrase = '[REPAIR] missing modules detected; installing and rebuilding.'
+$warnRebuildPhrase = '[REPAIR] rebuild complete after warnfix.'
 $warnInstallFired  = $combined -match [regex]::Escape($warnInstallPhrase)
 $warnRebuildFired  = $combined -match [regex]::Escape($warnRebuildPhrase)
 $repairFailuresDetected = $combined -match [regex]::Escape('[WARN] Repair failed:')
