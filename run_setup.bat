@@ -1618,7 +1618,7 @@ set "HP_FAST_CHECK=JGV4ZSA9ICRhcmdzWzBdCmlmICgtbm90ICRleGUpIHsgJGV4ZSA9ICRlbnY6S
 ::   - Normalize pip/conda specifiers from requirements.txt
 ::   - Apply heuristic extras (REQ-005.8)
 ::
-:: Current heuristics applied (if HP_DISABLE_HEURISTICS != 1):
+:: Current heuristics applied (set HP_DISABLE_HEURISTICS=1 to skip):
 ::   REQ-005.8.1 -- pandas  -> openpyxl (+ xlsxwriter)
 ::   REQ-005.8.2 -- requests -> certifi
 ::   REQ-005.8.3 -- sqlalchemy -> pymysql
