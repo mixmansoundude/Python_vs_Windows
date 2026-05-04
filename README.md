@@ -116,12 +116,14 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
      - If present, valid, and non-empty -> authoritative
      - Parsed before any file-based source
      - If malformed or empty: `[WARN] PEP 723 metadata invalid or empty` -> fall through
-  2. `requirements.txt`
+  2. `pyproject.toml` `[project].dependencies`
+     - If present and non-empty -> authoritative; overrides `requirements.txt`
+  3. `requirements.txt`
      - If present and non-empty -> authoritative
-  3. `requirements.auto.txt` (pipreqs output)
+  4. `requirements.auto.txt` (pipreqs output)
      - Used only if no authoritative source exists
      - Not authoritative (best-effort inference)
-  4. No dependencies
+  5. No dependencies
      - Continue with empty set if all sources unavailable
 
 ---
@@ -154,7 +156,7 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 ---
 
 - REQ-005.5 -- Diff tracking: Log differences between:
-  - Authoritative source (PEP 723 or `requirements.txt`)
+  - Authoritative source (PEP 723, `pyproject.toml`, or `requirements.txt`)
   - `requirements.auto.txt`
 
 ---
