@@ -838,6 +838,37 @@ if "%NEED_VISA%"=="1" (
 )
 if exist "~visa.flag" del "~visa.flag"
 
+rem --- NI-VISA presence check and install (REQ-008) ---
+rem derived requirement: NEED_VISA must be exactly "1"; any other value (0, empty, error)
+rem skips install to avoid hanging CI on non-visa projects.
+if not "%NEED_VISA%"=="1" (
+  call :log "[VISA] skipped (not_required)"
+  goto visa_done
+)
+reg query "HKLM\SOFTWARE\National Instruments\NI-VISA" /v "CurrentVersion" >nul 2>&1
+if not errorlevel 1 (
+  call :log "[VISA] present"
+  goto visa_done
+)
+set "NIVISA_INSTALLER=~ni-visa-runtime.exe"
+curl -L --silent --fail -o "%NIVISA_INSTALLER%" "https://download.ni.com/support/nipkg/products/ni-v/ni-visa/21.5/online/ni-visa_21.5_online.exe" 2>> "%LOG%"
+if not exist "%NIVISA_INSTALLER%" (
+  powershell -Command "try { Invoke-WebRequest -Uri 'https://download.ni.com/support/nipkg/products/ni-v/ni-visa/24.0/runtime/ni-visa-runtime_24.0.0_windows.exe' -OutFile '%NIVISA_INSTALLER%' -UseBasicParsing -ErrorAction Stop } catch { exit 1 }" 2>> "%LOG%"
+)
+if not exist "%NIVISA_INSTALLER%" (
+  call :log "[VISA] install_failed (download)"
+  goto visa_done
+)
+start /wait "" "%NIVISA_INSTALLER%" --quiet --accept-eulas --prevent-reboot --prevent-activation
+reg query "HKLM\SOFTWARE\National Instruments\NI-VISA" /v "CurrentVersion" >nul 2>&1
+if not errorlevel 1 (
+  call :log "[VISA] install_success"
+) else (
+  call :log "[VISA] install_failed (post_check)"
+)
+if exist "%NIVISA_INSTALLER%" del "%NIVISA_INSTALLER%" >nul 2>&1
+:visa_done
+
 rem --- Write env state for fast path on next run ---
 rem derived requirement: goto avoids %errorlevel% parse-time expansion inside
 rem parenthesized if-blocks; same pattern as dep-check and lock-capture blocks.
