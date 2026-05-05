@@ -852,7 +852,10 @@ if not errorlevel 1 (
 )
 set "NIVISA_INSTALLER=~ni-visa-runtime.exe"
 curl -L --silent --fail -o "%NIVISA_INSTALLER%" "https://download.ni.com/support/nipkg/products/ni-v/ni-visa/21.5/online/ni-visa_21.5_online.exe" 2>> "%LOG%"
-if not exist "%NIVISA_INSTALLER%" (
+if errorlevel 1 (
+  rem derived requirement: curl can leave a partial file on failure; delete before fallback
+  rem so PowerShell does not find a corrupt file and skip its own download attempt.
+  if exist "%NIVISA_INSTALLER%" del "%NIVISA_INSTALLER%" >nul 2>&1
   powershell -Command "try { Invoke-WebRequest -Uri 'https://download.ni.com/support/nipkg/products/ni-v/ni-visa/24.0/runtime/ni-visa-runtime_24.0.0_windows.exe' -OutFile '%NIVISA_INSTALLER%' -UseBasicParsing -ErrorAction Stop } catch { exit 1 }" 2>> "%LOG%"
 )
 if not exist "%NIVISA_INSTALLER%" (
@@ -860,12 +863,22 @@ if not exist "%NIVISA_INSTALLER%" (
   goto visa_done
 )
 start /wait "" "%NIVISA_INSTALLER%" --quiet --accept-eulas --prevent-reboot --prevent-activation
+rem derived requirement: NI installers may spawn child processes; retry registry check
+rem up to 3 times (approx 5 s each) before declaring post-install failure.
+set "HP_VISA_RETRY=0"
+:visa_post_check
 reg query "HKLM\SOFTWARE\National Instruments\NI-VISA" /v "CurrentVersion" >nul 2>&1
 if not errorlevel 1 (
   call :log "[VISA] install_success"
-) else (
-  call :log "[VISA] install_failed (post_check)"
+  goto visa_cleanup
 )
+set /a HP_VISA_RETRY+=1
+if %HP_VISA_RETRY% lss 3 (
+  ping -n 6 127.0.0.1 >nul 2>&1
+  goto visa_post_check
+)
+call :log "[VISA] install_failed (post_check)"
+:visa_cleanup
 if exist "%NIVISA_INSTALLER%" del "%NIVISA_INSTALLER%" >nul 2>&1
 :visa_done
 
