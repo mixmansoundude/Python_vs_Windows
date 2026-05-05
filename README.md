@@ -178,7 +178,7 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 
 ### Heuristic Dependency Augmentation (Bootstrap-Time)
 
-- REQ-005.8 -- Heuristic extras: Augment dependencies based on known ecosystem gaps.
+- REQ-005.8 -- Heuristic extras: Augment dependencies based on known ecosystem gaps that are not already included.
   - REQ-005.8.1 -- pandas -> openpyxl (+ xlsxwriter): Ensures Excel backends are available. TESTED: `tests/selfapps_pandas_excel.ps1`
   - REQ-005.8.2 -- requests -> certifi: Ensures SSL certificate bundle is present. STATUS: Not explicitly tested
   - REQ-005.8.3 -- sqlalchemy -> pymysql: Provides common MySQL driver. STATUS: Not explicitly tested
@@ -207,16 +207,6 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 - No silent fallbacks: All degradations emit explicit warnings
 - Single resolved dependency set: Conda + pip operate on the same inputs
 - Execution success > dependency purity: System prioritizes working application over strict resolution correctness
-
----
-
-### Dependency strategy
-
-- PEP 723 inline script metadata (`# /// script` blocks with a `dependencies` list) is supported as the highest-priority dependency source when `requirements.txt` is absent; a malformed or empty block logs `[WARN]` and falls through to the next source.
-- `pipreqs` is used for discovery only -- it is not authoritative for versions or completeness. If pipreqs fails, bootstrap continues on available requirements rather than stopping; getting the code to run takes priority.
-- An existing `requirements.txt` is treated as input (hints), not as the authoritative specification.
-- conda performs final resolution from conda-forge; what it installs is the truth.
-- Implicit and plugin dependencies (for example, `pandas` needing `openpyxl` for `read_excel`) cannot be detected statically -- `pipreqs` only sees `import pandas`, not the runtime method call. These surface as `ImportError` at runtime.
 - When missing imports are detected (for example from build-time warn files or installation output), the bootstrapper
   attempts to identify and install the missing packages using whatever signal is available. It cannot map all module
   names to conda package names (for example, `PIL` maps to `pillow`, `cv2` maps to `opencv`). This is a known
