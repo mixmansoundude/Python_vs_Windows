@@ -59,8 +59,10 @@ try {
 }
 
 $detectPass      = ($log -match 'Detected pyvisa')
-$nisaPass        = ($log -match 'NI-VISA')
-$nisaOutcomePass = ($log -match 'NI-VISA install may be required') -or ($log -match 'NI-VISA already installed') -or ($log -match 'Installing NI-VISA') -or ($log -match 'Skipping NI-VISA')
+# derived requirement: branch and outcome require explicit [VISA] terminal signals, not indirect log substrings.
+# Old fuzzy matches ('NI-VISA', 'NI-VISA install may be required', etc.) allowed false-green when no action was taken.
+$nisaPass        = ($log -match '\[VISA\]')
+$nisaOutcomePass = ($log -match '\[VISA\] present') -or ($log -match '\[VISA\] install_success') -or ($log -match '\[VISA\] skipped') -or ($log -match '\[VISA\] install_failed')
 
 $detectDetails = [ordered]@{ exitCode = $exitCode; detectFound = $detectPass }
 if (-not $log)      { $detectDetails.logMissing = $true }
@@ -82,7 +84,7 @@ Write-NdjsonRow ([ordered]@{
     id      = 'pyvisa.nivisa.branch'
     req     = 'REQ-008'
     pass    = $nisaPass
-    desc    = 'NI-VISA branch taken when pyvisa import detected'
+    desc    = 'NI-VISA branch taken when pyvisa import detected (requires [VISA] terminal signal)'
     details = $nisaDetails
 })
 
@@ -90,10 +92,14 @@ Write-NdjsonRow ([ordered]@{
     id      = 'pyvisa.nivisa.outcome'
     req     = 'REQ-008'
     pass    = $nisaOutcomePass
-    desc    = 'NI-VISA branch outcome logged (install required / already installed / installing / skipping)'
+    desc    = 'NI-VISA terminal signal present ([VISA] present / install_success / skipped / install_failed)'
     details = [ordered]@{ exitCode = $exitCode; outcomeFound = $nisaOutcomePass }
 })
 
+if (-not $nisaPass) {
+    Write-Host "[VISA] terminal signal not present in log"
+    exit 1
+}
 if (-not $nisaOutcomePass) {
     Write-Host "NI-VISA branch outcome not detected"
     exit 1
