@@ -57,7 +57,17 @@ set "HP_PIPREQS_VERSION=%HP_PIPREQS_VERSION%"
 if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
 set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
 if not defined HP_MINICONDA_MIN_BYTES set "HP_MINICONDA_MIN_BYTES=5000000"
-set "HP_MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
+set "HP_CONDA_DL_INJECTED="
+if defined HP_MINICONDA_URL set "HP_CONDA_DL_INJECTED=1"
+if not defined HP_MINICONDA_URL set "HP_MINICONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe"
+set "HP_MINICONDA_FALLBACK_URL=https://repo.continuum.io/miniconda/Miniconda3-latest-Windows-x86_64.exe"
+set "HP_UV_DL_INJECTED="
+if defined HP_UV_URL set "HP_UV_DL_INJECTED=1"
+if not defined HP_UV_URL set "HP_UV_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
+rem HP_UV_FALLBACK_URL: pinned release used when primary GitHub releases/latest CDN fails
+set "HP_UV_FALLBACK_URL=https://github.com/astral-sh/uv/releases/download/0.7.3/uv-x86_64-pc-windows-msvc.zip"
+set "HP_UV_MIN_BYTES=%HP_UV_MIN_BYTES%"
+if not defined HP_UV_MIN_BYTES set "HP_UV_MIN_BYTES=1000000"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -164,17 +174,11 @@ set "CONDA_BASE_PY=%MINICONDA_ROOT%\python.exe"
 call :select_conda_bat
 
 rem Install Miniconda if conda.bat is missing
+set "HP_CONDA_JUST_INSTALLED="
 if not defined CONDA_BAT (
+  set "HP_CONDA_JUST_INSTALLED=1"
   echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
-  set "HP_CONDA_DL_RC=0"
-  curl -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
-  if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
-  if not exist "%TEMP%\miniconda.exe" (
-    echo *** curl download failed, trying PowerShell...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri '%HP_MINICONDA_URL%' -OutFile '%TEMP%\miniconda.exe' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
-    if errorlevel 1 set "HP_CONDA_DL_RC=%errorlevel%"
-  )
-  if not exist "%TEMP%\miniconda.exe" set "HP_CONDA_DL_RC=1"
+  call :download_miniconda_exe
   if exist "%TEMP%\miniconda.exe" (
     REM Attempt AllUsers install with JustMe fallback; see :try_conda_install.
     call :try_conda_install
@@ -228,9 +232,31 @@ if exist "%HP_UV_BIN%\uv.exe" (
 )
 call :log "[INFO] uv: downloading to ~uv_bin..."
 if not exist "%HP_UV_BIN%" mkdir "%HP_UV_BIN%" >nul 2>&1
-curl -L --retry 3 --retry-delay 5 --max-time 120 "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip" -o "%HP_UV_ZIP%" >> "%LOG%" 2>&1
+set "HP_UV_ACTIVE_URL=%HP_UV_URL%"
+if "%HP_TEST_UV_DL_FALLBACK%"=="1" if not defined HP_UV_DL_INJECTED set "HP_UV_ACTIVE_URL=https://uv-test-fail.invalid/uv-x86_64-pc-windows-msvc.zip"
+call :log "[INFO] Downloading uv from %HP_UV_ACTIVE_URL%..."
+curl -L --retry 3 --retry-delay 5 --max-time 120 "%HP_UV_ACTIVE_URL%" -o "%HP_UV_ZIP%" >> "%LOG%" 2>&1
+if not exist "%HP_UV_ZIP%" (
+  if defined HP_UV_DL_INJECTED (
+    call :log "[ERROR] Injected HP_UV_URL failed; not trying fallback."
+  ) else (
+    call :log "[INFO] Trying fallback uv URL: %HP_UV_FALLBACK_URL%..."
+    curl -L --retry 3 --retry-delay 5 --max-time 120 "%HP_UV_FALLBACK_URL%" -o "%HP_UV_ZIP%" >> "%LOG%" 2>&1
+    if exist "%HP_UV_ZIP%" (
+      call :log "[INFO] uv download succeeded from fallback URL."
+    ) else (
+      call :log "[WARN] uv: all download URLs failed."
+    )
+  )
+)
 if exist "%HP_UV_ZIP%" (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Expand-Archive -LiteralPath '%HP_UV_ZIP%' -DestinationPath '%HP_UV_BIN%' -Force } catch { exit 1 }" >> "%LOG%" 2>&1
+  for %%S in ("%HP_UV_ZIP%") do (
+    if %%~zS GEQ %HP_UV_MIN_BYTES% (
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Expand-Archive -LiteralPath '%HP_UV_ZIP%' -DestinationPath '%HP_UV_BIN%' -Force } catch { exit 1 }" >> "%LOG%" 2>&1
+    ) else (
+      call :log "[WARN] uv: zip too small (%%~zS bytes); skipping extract."
+    )
+  )
   del "%HP_UV_ZIP%" >nul 2>&1
 )
 if exist "%HP_UV_BIN%\uv.exe" (
@@ -400,6 +426,11 @@ if not errorlevel 1 (
 if not "%PYVER%"=="" call :log "[INFO] runtime.txt written: %PYVER%"
 
 :after_env_mode_selection
+rem === Conda base periodic update (~30 days) ====================================
+rem derived requirement: README.md requires periodic conda base update; skip on
+rem first install (timestamp seeded) and when uv env is in use.
+call :conda_base_update
+rem === end conda base update ====================================================
 call :emit_from_base64 "~prep_requirements.py" HP_PREP_REQUIREMENTS
 if errorlevel 1 call :die "[ERROR] Could not write ~prep_requirements.py"
 set "REQ=requirements.txt"
@@ -1046,6 +1077,33 @@ if exist "%CONDA_MAIN%" set "CONDA_BAT=%CONDA_MAIN%"
 if not defined CONDA_BAT if exist "%CONDA_ALT%" set "CONDA_BAT=%CONDA_ALT%"
 if defined CONDA_BAT if not exist "%CONDA_BAT%" set "CONDA_BAT="
 exit /b 0
+
+:download_miniconda_exe
+set "HP_MINICONDA_ACTIVE_URL=%HP_MINICONDA_URL%"
+if "%HP_TEST_CONDA_DL_FALLBACK%"=="1" if not defined HP_CONDA_DL_INJECTED set "HP_MINICONDA_ACTIVE_URL=https://miniconda-test-fail.invalid/Miniconda3-latest-Windows-x86_64.exe"
+call :log "[INFO] Downloading Miniconda from %HP_MINICONDA_ACTIVE_URL%..."
+curl -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_ACTIVE_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
+if exist "%TEMP%\miniconda.exe" goto :eof
+echo *** curl download failed, trying PowerShell...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri '%HP_MINICONDA_ACTIVE_URL%' -OutFile '%TEMP%\miniconda.exe' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
+if exist "%TEMP%\miniconda.exe" goto :eof
+if defined HP_CONDA_DL_INJECTED (
+  call :log "[ERROR] Injected HP_MINICONDA_URL failed; not trying fallback."
+  goto :eof
+)
+call :log "[INFO] Trying fallback Miniconda URL: %HP_MINICONDA_FALLBACK_URL%..."
+curl -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_FALLBACK_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
+if exist "%TEMP%\miniconda.exe" (
+  call :log "[INFO] Miniconda download succeeded from fallback URL."
+  goto :eof
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri '%HP_MINICONDA_FALLBACK_URL%' -OutFile '%TEMP%\miniconda.exe' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
+if exist "%TEMP%\miniconda.exe" (
+  call :log "[INFO] Miniconda download succeeded from fallback URL."
+  goto :eof
+)
+call :log "[WARN] Miniconda: all download URLs failed."
+goto :eof
 
 :handle_conda_failure
 set "HP_FAIL_MSG=%~1"
@@ -1737,4 +1795,30 @@ call :log "[INFO] Miniconda installed (JustMe fallback)."
 goto :eof
 :tci_both_failed
 call :die "[ERROR] Miniconda install failed (both AllUsers and JustMe)."
+goto :eof
+
+:conda_base_update
+if /i not "%HP_ENV_MODE%"=="conda" goto :eof
+if "%HP_TEST_CONDA_UPDATE%"=="1" goto :cbu_run
+if defined HP_CONDA_JUST_INSTALLED goto :cbu_firstinstall
+set "HP_CONDA_UPDATE_RESULT=update"
+for /f "delims=" %%R in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '~conda.lastupdate') { try { $d = [datetime](Get-Content '~conda.lastupdate' -Raw); if (((Get-Date)-$d).TotalDays -ge 30) { 'update' } else { 'skip' } } catch { 'update' } } else { 'update' }"') do set "HP_CONDA_UPDATE_RESULT=%%R"
+if "%HP_CONDA_UPDATE_RESULT%"=="update" goto :cbu_run
+call :log "[INFO] Conda base update: skipped (last update < 30 days ago)."
+goto :eof
+
+:cbu_firstinstall
+call :log "[INFO] Conda base update: skipped (first install)."
+powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss') | Set-Content -LiteralPath '~conda.lastupdate' -Encoding Ascii" >nul 2>&1
+goto :eof
+
+:cbu_run
+call :log "[INFO] Conda base update: running (>=30 days since last update or no record)."
+call "%CONDA_BAT%" update -n base --all --override-channels -c conda-forge -y >> "%LOG%" 2>&1
+if not errorlevel 1 (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss') | Set-Content -LiteralPath '~conda.lastupdate' -Encoding Ascii" >nul 2>&1
+  call :log "[INFO] Conda base update complete."
+) else (
+  call :log "[WARN] Conda base update failed; continuing."
+)
 goto :eof

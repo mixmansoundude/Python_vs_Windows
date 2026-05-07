@@ -265,6 +265,18 @@ justme-test lane rows (subset, flag-triggered):
 conda.install.justme
 ```
 
+dl-fallback lane rows (HP_TEST_CONDA_DL_FALLBACK=1, HP_TEST_UV_DL_FALLBACK=1, justme-test):
+
+```
+self.dl.conda.fallback, self.dl.uv.fallback
+```
+
+conda-full lane rows (HP_TEST_CONDA_UPDATE=1, flag-triggered):
+
+```
+self.conda.base.update
+```
+
 contract-uv lane rows (flag-triggered):
 
 ```
@@ -404,11 +416,6 @@ Items deferred to future loops:
   the resolved version and log `[INFO] runtime.txt written: python-X.Y.Z`. This ensures
   subsequent runs hit Tier 1."
 
-- **Conda base periodic update**: README.md requires updating conda base periodically
-  (~30 days), skipping on first install. Conda update can be slow and needs a workaround
-  (checking install date or download hash before running) to avoid unnecessary long waits.
-  Timing data from CI logs will be needed once implemented. Deferred.
-
 ## Closed Backlog
 
 Items completed and shipped:
@@ -432,3 +439,11 @@ Items completed and shipped:
   `delayed` (function-scoped) and `conditional` (platform-guarded) PyInstaller 6.x imports
   in addition to `top-level`; skip `optional`-only entries. Added `real_warnfix_delayed`
   CI scenario for branch coverage. CLOSED by #232.
+- **Fallback URL handling**: Miniconda and uv downloads now try a secondary URL if the
+  primary fails. download logic extracted to :download_miniconda_exe subroutine (CMD
+  parse-time expansion fix). HP_TEST_CONDA_DL_FALLBACK / HP_TEST_UV_DL_FALLBACK flags
+  for CI coverage in justme-test lane. CLOSED by this PR.
+- **Conda base periodic update**: conda update -n base runs at :after_env_mode_selection
+  when HP_ENV_MODE==conda; skipped on first install (timestamp seeded in ~conda.lastupdate);
+  timer threshold 30 days. HP_TEST_CONDA_UPDATE=1 for CI coverage in conda-full lane.
+  CLOSED by this PR.

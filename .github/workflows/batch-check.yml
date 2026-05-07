@@ -83,6 +83,13 @@ jobs:
         run: |
           'HP_TEST_UV_FAIL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
+      # conda-full only: also exercises conda base update path
+      - name: Force conda base update (conda-full only)
+        if: ${{ matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          'HP_TEST_CONDA_UPDATE=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
       # conda-full only: clears venv/system fallbacks so a conda failure can't hide as a venv pass
       - name: Force conda-only bootstrap
         if: ${{ matrix.mode == 'conda-full' }}
@@ -96,6 +103,14 @@ jobs:
         shell: pwsh
         run: |
           'HP_TEST_JUSTME_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
+      # justme-test only: also exercises download fallback by forcing primary URLs to fail
+      - name: Force download fallback path (justme-test only)
+        if: ${{ matrix.mode == 'justme-test' }}
+        shell: pwsh
+        run: |
+          'HP_TEST_CONDA_DL_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          'HP_TEST_UV_DL_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       - name: Ensure CI fallbacks are off
         shell: pwsh
@@ -220,6 +235,12 @@ jobs:
         run: |
           & tests\selfapps_justme.ps1
 
+      - name: "Self-test: download fallback path (justme-test only)"
+        if: ${{ matrix.mode == 'justme-test' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_dl_fallback.ps1
+
       - name: "Self-test: requirements specifier coverage"
         shell: pwsh
         run: |
@@ -327,6 +348,12 @@ jobs:
             details = [ordered]@{ summary = $summaryStr; exit = $exitCode }
           })
           if (-not $pass) { Write-Host $outStr; exit 1 }
+
+      - name: "Self-test: conda base update (conda-full only)"
+        if: ${{ matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_conda_update.ps1
 
       - name: "Self-test: runtime.txt write-back (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
