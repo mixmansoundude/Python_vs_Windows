@@ -235,13 +235,13 @@ if not exist "%HP_UV_BIN%" mkdir "%HP_UV_BIN%" >nul 2>&1
 set "HP_UV_ACTIVE_URL=%HP_UV_URL%"
 if "%HP_TEST_UV_DL_FALLBACK%"=="1" if not defined HP_UV_DL_INJECTED set "HP_UV_ACTIVE_URL=https://uv-test-fail.invalid/uv-x86_64-pc-windows-msvc.zip"
 call :log "[INFO] Downloading uv from %HP_UV_ACTIVE_URL%..."
-curl -L --retry 3 --retry-delay 5 --max-time 120 "%HP_UV_ACTIVE_URL%" -o "%HP_UV_ZIP%" >> "%LOG%" 2>&1
+curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_UV_ACTIVE_URL%" -o "%HP_UV_ZIP%" >> "%LOG%" 2>&1
 if not exist "%HP_UV_ZIP%" (
   if defined HP_UV_DL_INJECTED (
     call :log "[ERROR] Injected HP_UV_URL failed; not trying fallback."
   ) else (
     call :log "[INFO] Trying fallback uv URL: %HP_UV_FALLBACK_URL%..."
-    curl -L --retry 3 --retry-delay 5 --max-time 120 "%HP_UV_FALLBACK_URL%" -o "%HP_UV_ZIP%" >> "%LOG%" 2>&1
+    curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_UV_FALLBACK_URL%" -o "%HP_UV_ZIP%" >> "%LOG%" 2>&1
     if exist "%HP_UV_ZIP%" (
       call :log "[INFO] uv download succeeded from fallback URL."
     ) else (
@@ -1082,8 +1082,8 @@ exit /b 0
 set "HP_MINICONDA_ACTIVE_URL=%HP_MINICONDA_URL%"
 if "%HP_TEST_CONDA_DL_FALLBACK%"=="1" if not defined HP_CONDA_DL_INJECTED set "HP_MINICONDA_ACTIVE_URL=https://miniconda-test-fail.invalid/Miniconda3-latest-Windows-x86_64.exe"
 call :log "[INFO] Downloading Miniconda from %HP_MINICONDA_ACTIVE_URL%..."
-curl -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_ACTIVE_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
-if exist "%TEMP%\miniconda.exe" goto :eof
+curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_ACTIVE_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
+if not errorlevel 1 if exist "%TEMP%\miniconda.exe" goto :eof
 echo *** curl download failed, trying PowerShell...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri '%HP_MINICONDA_ACTIVE_URL%' -OutFile '%TEMP%\miniconda.exe' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
 if exist "%TEMP%\miniconda.exe" goto :eof
@@ -1092,8 +1092,8 @@ if defined HP_CONDA_DL_INJECTED (
   goto :eof
 )
 call :log "[INFO] Trying fallback Miniconda URL: %HP_MINICONDA_FALLBACK_URL%..."
-curl -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_FALLBACK_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
-if exist "%TEMP%\miniconda.exe" (
+curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_FALLBACK_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
+if not errorlevel 1 if exist "%TEMP%\miniconda.exe" (
   call :log "[INFO] Miniconda download succeeded from fallback URL."
   goto :eof
 )
