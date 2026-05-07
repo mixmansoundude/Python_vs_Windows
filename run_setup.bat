@@ -1799,26 +1799,33 @@ goto :eof
 
 :conda_base_update
 if /i not "%HP_ENV_MODE%"=="conda" goto :eof
-if "%HP_TEST_CONDA_UPDATE%"=="1" goto :cbu_run
+if "%HP_TEST_CONDA_UPDATE%"=="1" (
+  if exist "%TEMP%\~conda.update.done" (
+    call :log "[INFO] Conda base update: skipped (already ran this session)."
+    goto :eof
+  )
+  goto :cbu_run
+)
 if defined HP_CONDA_JUST_INSTALLED goto :cbu_firstinstall
 set "HP_CONDA_UPDATE_RESULT=update"
-for /f "delims=" %%R in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '~conda.lastupdate') { try { $d = [datetime](Get-Content '~conda.lastupdate' -Raw); if (((Get-Date)-$d).TotalDays -ge 30) { 'update' } else { 'skip' } } catch { 'update' } } else { 'update' }"') do set "HP_CONDA_UPDATE_RESULT=%%R"
+for /f "delims=" %%R in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%MINICONDA_ROOT%\~conda.lastupdate') { try { $d = [datetime](Get-Content '%MINICONDA_ROOT%\~conda.lastupdate' -Raw); if (((Get-Date)-$d).TotalDays -ge 30) { 'update' } else { 'skip' } } catch { 'update' } } else { 'update' }"') do set "HP_CONDA_UPDATE_RESULT=%%R"
 if "%HP_CONDA_UPDATE_RESULT%"=="update" goto :cbu_run
 call :log "[INFO] Conda base update: skipped (last update < 30 days ago)."
 goto :eof
 
 :cbu_firstinstall
 call :log "[INFO] Conda base update: skipped (first install)."
-powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss') | Set-Content -LiteralPath '~conda.lastupdate' -Encoding Ascii" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss') | Set-Content -LiteralPath '%MINICONDA_ROOT%\~conda.lastupdate' -Encoding Ascii" >nul 2>&1
 goto :eof
 
 :cbu_run
 call :log "[INFO] Conda base update: running (>=30 days since last update or no record)."
 call "%CONDA_BAT%" update -n base --all --override-channels -c conda-forge -y >> "%LOG%" 2>&1
 if not errorlevel 1 (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss') | Set-Content -LiteralPath '~conda.lastupdate' -Encoding Ascii" >nul 2>&1
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss') | Set-Content -LiteralPath '%MINICONDA_ROOT%\~conda.lastupdate' -Encoding Ascii" >nul 2>&1
   call :log "[INFO] Conda base update complete."
 ) else (
   call :log "[WARN] Conda base update failed; continuing."
 )
+type nul > "%TEMP%\~conda.update.done" 2>nul
 goto :eof

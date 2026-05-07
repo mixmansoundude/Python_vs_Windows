@@ -42,7 +42,8 @@ if (-not $logText) { $logText = '' }
 
 $updateRan        = $logText -match 'Conda base update: running'
 $updateComplete   = $logText -match 'Conda base update complete\.'
-$lastupdatePath   = Join-Path $repo '~conda.lastupdate'
+$minicondaRoot    = if ($env:PUBLIC) { Join-Path $env:PUBLIC 'Documents\Miniconda3' } else { '' }
+$lastupdatePath   = if ($minicondaRoot) { Join-Path $minicondaRoot '~conda.lastupdate' } else { Join-Path $repo '~conda.lastupdate' }
 $lastupdateWritten = Test-Path -LiteralPath $lastupdatePath
 
 $pass = $updateRan -and $updateComplete -and $lastupdateWritten
