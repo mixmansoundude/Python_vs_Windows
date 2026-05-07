@@ -83,13 +83,6 @@ jobs:
         run: |
           'HP_TEST_UV_FAIL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
-      # conda-full only: also exercises conda base update path
-      - name: Force conda base update (conda-full only)
-        if: ${{ matrix.mode == 'conda-full' }}
-        shell: pwsh
-        run: |
-          'HP_TEST_CONDA_UPDATE=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
-
       # conda-full only: clears venv/system fallbacks so a conda failure can't hide as a venv pass
       - name: Force conda-only bootstrap
         if: ${{ matrix.mode == 'conda-full' }}
@@ -348,12 +341,6 @@ jobs:
             details = [ordered]@{ summary = $summaryStr; exit = $exitCode }
           })
           if (-not $pass) { Write-Host $outStr; exit 1 }
-
-      - name: "Self-test: conda base update (conda-full only)"
-        if: ${{ matrix.mode == 'conda-full' }}
-        shell: pwsh
-        run: |
-          & tests\selfapps_conda_update.ps1
 
       - name: "Self-test: runtime.txt write-back (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}

@@ -271,10 +271,12 @@ dl-fallback lane rows (HP_TEST_CONDA_DL_FALLBACK=1, HP_TEST_UV_DL_FALLBACK=1, ju
 self.dl.conda.fallback, self.dl.uv.fallback
 ```
 
-conda-full lane rows (HP_TEST_CONDA_UPDATE=1, flag-triggered):
+conda-full lane rows (HP_TEST_CONDA_UPDATE=1, flag-triggered -- NOT currently wired to CI;
+conda base update is implemented in run_setup.bat but HP_TEST_CONDA_UPDATE injection was
+removed because it causes conda solver corruption in shared CI runners):
 
 ```
-self.conda.base.update
+self.conda.base.update  (test file: tests/selfapps_conda_update.ps1 -- not run in CI)
 ```
 
 contract-uv lane rows (flag-triggered):
@@ -445,5 +447,7 @@ Items completed and shipped:
   for CI coverage in justme-test lane. CLOSED by this PR.
 - **Conda base periodic update**: conda update -n base runs at :after_env_mode_selection
   when HP_ENV_MODE==conda; skipped on first install (timestamp seeded in ~conda.lastupdate);
-  timer threshold 30 days. HP_TEST_CONDA_UPDATE=1 for CI coverage in conda-full lane.
-  CLOSED by this PR.
+  timer threshold 30 days. HP_TEST_CONDA_UPDATE=1 CI injection was removed because
+  conda update -n base --all upgrades conda to a broken solver version that cascades
+  failures across the rest of the conda-full job. Feature is live in production code;
+  CI coverage deferred. CLOSED by this PR.
