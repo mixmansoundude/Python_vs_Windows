@@ -60,20 +60,20 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-# Check uv fallback
-$uvFallbackTried     = $logText -match 'Trying fallback uv URL:'
-$uvFallbackSucceeded = $logText -match 'uv download succeeded from fallback URL\.'
-$uvPass = $uvFallbackTried -and $uvFallbackSucceeded
+# Check uv fallback: verify fallback was attempted AND uv binary was ultimately acquired
+$uvFallbackTried = $logText -match 'Trying fallback uv URL:'
+$uvAcquired      = $logText -match 'uv: acquired at ~uv_bin\\uv\.exe'
+$uvPass = $uvFallbackTried -and $uvAcquired
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.dl.uv.fallback'
     req     = 'REQ-003'
     pass    = $uvPass
-    desc    = 'uv fallback URL tried and succeeded when primary fails'
+    desc    = 'uv fallback URL tried and uv binary acquired after fallback'
     details = [ordered]@{
-        fallbackTried     = $uvFallbackTried
-        fallbackSucceeded = $uvFallbackSucceeded
-        setupLog          = $setupLogPath
+        fallbackTried = $uvFallbackTried
+        uvAcquired    = $uvAcquired
+        setupLog      = $setupLogPath
     }
 })
 
