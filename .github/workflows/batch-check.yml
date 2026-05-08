@@ -34,7 +34,7 @@ jobs:
           - mode: real
           # conda-full: third lane - no fallbacks, proves real Miniconda path works
           - mode: conda-full
-          # justme-test: forces JustMe install path via HP_TEST_JUSTME_FALLBACK=1 (informational)
+          # justme-test: simulates non-elevated process via HP_TEST_NOT_ELEVATED=1 to cover fsutil branch (informational)
           - mode: justme-test
           # uv: explicit lane for uv env+dep installer path (no HP_FORCE_CONDA_ONLY)
           - mode: uv
@@ -90,12 +90,12 @@ jobs:
         run: |
           'HP_FORCE_CONDA_ONLY=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
-      # justme-test only: skips AllUsers install so the JustMe fallback path runs
-      - name: Force JustMe install path
+      # justme-test only: simulates non-elevated process so JustMe fallback path runs with CI coverage
+      - name: Force JustMe install path (simulate non-elevated)
         if: ${{ matrix.mode == 'justme-test' }}
         shell: pwsh
         run: |
-          'HP_TEST_JUSTME_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          'HP_TEST_NOT_ELEVATED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       # justme-test only: also exercises download fallback by forcing primary URLs to fail
       - name: Force download fallback path (justme-test only)

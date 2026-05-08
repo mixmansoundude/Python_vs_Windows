@@ -1779,15 +1779,20 @@ exit /b 0
 rem derived requirement: AllUsers install can fail when UAC rejects elevation even for admin accounts.
 rem JustMe is the non-admin fallback that installs under the user profile instead.
 rem Both attempts reuse the already-downloaded installer at %TEMP%\miniconda.exe (no re-download).
-if "%HP_TEST_JUSTME_FALLBACK%"=="1" (
-  call :log "[INFO] HP_TEST_JUSTME_FALLBACK: skipping AllUsers, forcing JustMe path."
-  goto :tci_justme
-)
 rem derived requirement: non-admin machines produce a UAC prompt when AllUsers install is attempted;
 rem skip directly to JustMe when the process is not elevated.
+rem HP_TEST_NOT_ELEVATED=1 simulates a non-admin environment for CI coverage of this branch.
+if "%HP_TEST_NOT_ELEVATED%"=="1" (
+  call :log "[INFO] Not elevated; skipping AllUsers Miniconda install."
+  goto :tci_justme
+)
 fsutil dirty query %systemdrive% >nul 2>&1
 if errorlevel 1 (
   call :log "[INFO] Not elevated; skipping AllUsers Miniconda install."
+  goto :tci_justme
+)
+if "%HP_TEST_JUSTME_FALLBACK%"=="1" (
+  call :log "[INFO] HP_TEST_JUSTME_FALLBACK: skipping AllUsers, forcing JustMe path."
   goto :tci_justme
 )
 start "" /wait "%TEMP%\miniconda.exe" /InstallationType=AllUsers /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
