@@ -35,8 +35,10 @@ if (-not $IsWindows) {
     exit 0
 }
 
-# Read main ~setup.log (written by run_setup.bat :log function)
-$setupLogPath = Join-Path $repo '~setup.log'
+# Read envsmoke ~setup.log: the main bootstrap finds no .py files at repo root
+# and exits early; the actual Miniconda/uv download happens inside the envsmoke
+# sub-bootstrap which runs from tests/~envsmoke/ (same pattern as selfapps_justme.ps1).
+$setupLogPath = Join-Path $here '~envsmoke\~setup.log'
 $logText = ''
 if (Test-Path -LiteralPath $setupLogPath) {
     $logText = Get-Content -LiteralPath $setupLogPath -Raw -Encoding Ascii -ErrorAction SilentlyContinue
