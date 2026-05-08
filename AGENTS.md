@@ -151,6 +151,25 @@ THEN stop and open/append a PR. One loop = one change set.
 - Core flow is non-admin (Miniconda + env under `%PUBLIC%\Documents`).
 - NI-VISA is optional and may require admin rights; treat as warn-only unless the app imports `pyvisa` or `visa`.
 
+## Windows Scripting Conventions
+
+### Batch path quoting
+- Assign with `set "VAR=value"` (quotes wrap the whole assignment, not the value).
+  Never use `set VAR="value"` -- the quotes become part of the string and cause double-quoting on expansion.
+- Execute with `"%VAR%"` at every file-system call site (`del`, `if exist`, `mkdir`, `move`, `copy`, `pushd`).
+- Exception: NSIS installer `/D=` parameter cannot be quoted -- leave as `/D=%VAR%` (NSIS restriction).
+
+### PowerShell 5.1 web requests (TLS)
+- Prepend `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;`
+  to every `Invoke-WebRequest` call. PS 5.1 on older Windows defaults to TLS 1.0/1.1 which modern CDNs reject.
+- Keep `-UseBasicParsing` on all `Invoke-WebRequest` calls.
+
+### Admin awareness before system-wide installs
+- Before any system-wide install, check elevation silently:
+  `fsutil dirty query %systemdrive% >nul 2>&1`
+  If `errorlevel 1`, skip the system-wide path and fall back to per-user installation.
+  This avoids unexpected UAC prompts on non-elevated machines.
+
 ## Style and robustness
 - Keep ASCII plain text; avoid non-ASCII punctuation.
 - Prefer quoting/escaping and logic fixes over silencing errors.

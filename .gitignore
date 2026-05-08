@@ -38,3 +38,6 @@ actionlint_*.tar.gz
 
 # Dependency source diagnostics artifact (written by run_setup.bat)
 dependency_source.txt
+
+# Tilde-prefix runtime artifacts (bootstrapper writes these; see AGENTS.md)
+~*

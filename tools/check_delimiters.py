@@ -357,6 +357,8 @@ class DelimiterChecker:
                     if scan_from is None and not line.rstrip().endswith("^"):
                         self._bat_in_backtick = False
                 self._check_bat_ps_like_brackets(line_no, line)
+                self._check_bat_set_quoting(line_no, line)
+                self._check_bat_unquoted_path_var(line_no, line)
 
         return self.issues
 
@@ -413,6 +415,42 @@ class DelimiterChecker:
                     "PS wildcard treats '[' as a character-class opener -- "
                     "use .StartsWith()/.EndsWith() or escape as '`[' instead.",
                 )
+
+    def _check_bat_set_quoting(self, line_no: int, line: str) -> None:
+        """Flag set assignments that store quotes inside the variable value.
+
+        Correct: set "VAR=value"  -- quotes wrap the entire assignment
+        Wrong:   set VAR="value"  -- quotes become part of the variable string
+        """
+        # derived requirement: set VAR="value" causes double-quoting on %VAR% expansion;
+        # enforce set "VAR=value" uniformly. Skip /a and /p variants (different syntax).
+        if re.match(
+            r'^\s*set\s+(?!/[aApP]\b)(?!")\w+\s*=\s*"',
+            line,
+            re.IGNORECASE,
+        ):
+            col = line.lower().find("set") + 1
+            self.add_issue(
+                line_no,
+                col,
+                'Batch: use set "VAR=value" not set VAR="value"; '
+                "quotes stored inside the variable cause double-quoting on expansion.",
+            )
+
+    def _check_bat_unquoted_path_var(self, line_no: int, line: str) -> None:
+        """Flag path-variable references in file-system commands without double-quote wrapping."""
+        # derived requirement: unquoted %VAR% in file-system commands breaks on paths with spaces.
+        FS_UNQUOTED = re.compile(
+            r'\b(?:del|if\s+(?:not\s+)?exist|mkdir|copy|move|pushd)\s+%[A-Za-z_]',
+            re.IGNORECASE,
+        )
+        for match in FS_UNQUOTED.finditer(line):
+            self.add_issue(
+                line_no,
+                match.start() + 1,
+                'Batch: path variable appears unquoted in a file-system command; '
+                'use "%VAR%" to handle paths containing spaces.',
+            )
 
     def _check_ps1_boolean_operators(self, line_no: int, line: str) -> None:
         # derived requirement: Windows runners surfaced "parameter name 'or'" faults whenever -or/-and sat
