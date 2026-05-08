@@ -97,6 +97,14 @@ jobs:
         run: |
           'HP_TEST_JUSTME_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
+      # justme-test only: also exercises download fallback by forcing primary URLs to fail
+      - name: Force download fallback path (justme-test only)
+        if: ${{ matrix.mode == 'justme-test' }}
+        shell: pwsh
+        run: |
+          'HP_TEST_CONDA_DL_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          'HP_TEST_UV_DL_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
       - name: Ensure CI fallbacks are off
         shell: pwsh
         run: |
@@ -219,6 +227,12 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_justme.ps1
+
+      - name: "Self-test: download fallback path (justme-test only)"
+        if: ${{ matrix.mode == 'justme-test' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_dl_fallback.ps1
 
       - name: "Self-test: requirements specifier coverage"
         shell: pwsh
