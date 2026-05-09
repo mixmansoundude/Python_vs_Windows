@@ -889,7 +889,7 @@ if errorlevel 1 (
   rem derived requirement: curl can leave a partial file on failure; delete before fallback
   rem so PowerShell does not find a corrupt file and skip its own download attempt.
   if exist "%NIVISA_INSTALLER%" del "%NIVISA_INSTALLER%" >nul 2>&1
-  powershell -Command "try { Invoke-WebRequest -Uri 'https://download.ni.com/support/nipkg/products/ni-v/ni-visa/24.0/runtime/ni-visa-runtime_24.0.0_windows.exe' -OutFile '%NIVISA_INSTALLER%' -UseBasicParsing -ErrorAction Stop } catch { exit 1 }" 2>> "%LOG%"
+  powershell -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://download.ni.com/support/nipkg/products/ni-v/ni-visa/24.0/runtime/ni-visa-runtime_24.0.0_windows.exe' -OutFile '%NIVISA_INSTALLER%' -UseBasicParsing -ErrorAction Stop } catch { exit 1 }" 2>> "%LOG%"
 )
 if not exist "%NIVISA_INSTALLER%" (
   call :log "[VISA] install_failed (download)"
@@ -1087,7 +1087,7 @@ call :log "[INFO] Downloading Miniconda from %HP_MINICONDA_ACTIVE_URL%..."
 curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_ACTIVE_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
 if not errorlevel 1 if exist "%TEMP%\miniconda.exe" goto :eof
 echo *** curl download failed, trying PowerShell...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri '%HP_MINICONDA_ACTIVE_URL%' -OutFile '%TEMP%\miniconda.exe' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%HP_MINICONDA_ACTIVE_URL%' -OutFile '%TEMP%\miniconda.exe' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
 if not errorlevel 1 if exist "%TEMP%\miniconda.exe" goto :eof
 if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
 if defined HP_CONDA_DL_INJECTED (
@@ -1100,7 +1100,7 @@ if not errorlevel 1 if exist "%TEMP%\miniconda.exe" (
   call :log "[INFO] Miniconda download succeeded from fallback URL."
   goto :eof
 )
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri '%HP_MINICONDA_FALLBACK_URL%' -OutFile '%TEMP%\miniconda.exe' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%HP_MINICONDA_FALLBACK_URL%' -OutFile '%TEMP%\miniconda.exe' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
 if not errorlevel 1 if exist "%TEMP%\miniconda.exe" (
   call :log "[INFO] Miniconda download succeeded from fallback URL."
   goto :eof
@@ -1779,6 +1779,18 @@ exit /b 0
 rem derived requirement: AllUsers install can fail when UAC rejects elevation even for admin accounts.
 rem JustMe is the non-admin fallback that installs under the user profile instead.
 rem Both attempts reuse the already-downloaded installer at %TEMP%\miniconda.exe (no re-download).
+rem derived requirement: non-admin machines produce a UAC prompt when AllUsers install is attempted;
+rem skip directly to JustMe when the process is not elevated.
+rem HP_TEST_NOT_ELEVATED=1 simulates a non-admin environment for CI coverage of this branch.
+if "%HP_TEST_NOT_ELEVATED%"=="1" (
+  call :log "[INFO] Not elevated; skipping AllUsers Miniconda install."
+  goto :tci_justme
+)
+fsutil dirty query %systemdrive% >nul 2>&1
+if errorlevel 1 (
+  call :log "[INFO] Not elevated; skipping AllUsers Miniconda install."
+  goto :tci_justme
+)
 if "%HP_TEST_JUSTME_FALLBACK%"=="1" (
   call :log "[INFO] HP_TEST_JUSTME_FALLBACK: skipping AllUsers, forcing JustMe path."
   goto :tci_justme

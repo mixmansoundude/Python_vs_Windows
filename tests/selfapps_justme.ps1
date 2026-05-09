@@ -32,7 +32,7 @@ if (-not $IsWindows) {
     exit 0
 }
 
-# Read the envsmoke ~setup.log which is written by the bootstrap that ran with HP_TEST_JUSTME_FALLBACK=1.
+# Read the envsmoke ~setup.log which is written by the bootstrap that ran with HP_TEST_NOT_ELEVATED=1.
 # The justme-test lane runs selfapps_envsmoke.ps1 first (which executes run_setup.bat),
 # so the setup log is at tests/~envsmoke/~setup.log.
 $setupLogPath = Join-Path $here '~envsmoke\~setup.log'
@@ -51,22 +51,22 @@ if (Test-Path -LiteralPath $mainSetupPath) {
 $combinedText = $setupText + $mainSetupText
 
 # derived requirement: the JustMe path log line must appear to confirm the fallback ran.
-# HP_TEST_JUSTME_FALLBACK=1 causes run_setup.bat to goto :tci_justme,
+# HP_TEST_NOT_ELEVATED=1 simulates a non-admin process: run_setup.bat logs
+# "[INFO] Not elevated; skipping AllUsers Miniconda install." and then runs the JustMe install,
 # which logs "[INFO] Miniconda installed (JustMe fallback)."
-# The force-bypass log is "[INFO] HP_TEST_JUSTME_FALLBACK: skipping AllUsers, forcing JustMe path."
+$notElevatedSkip = $combinedText -match 'Not elevated; skipping AllUsers Miniconda install\.'
 $justmeInstalled = $combinedText -match 'Miniconda installed \(JustMe fallback\)'
-$justmeForced    = $combinedText -match 'HP_TEST_JUSTME_FALLBACK'
 
-$pass = $justmeInstalled -and $justmeForced
+$pass = $notElevatedSkip -and $justmeInstalled
 
 Write-NdjsonRow ([ordered]@{
     id      = 'conda.install.justme'
     req     = 'REQ-003'
     pass    = $pass
-    desc    = 'Miniconda JustMe install path executed successfully'
+    desc    = 'Miniconda JustMe install path executed (non-elevated simulation)'
     details = [ordered]@{
+        notElevatedSkip = $notElevatedSkip
         justmeInstalled = $justmeInstalled
-        justmeForced    = $justmeForced
         setupLog        = $setupLogPath
     }
 })
