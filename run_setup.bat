@@ -285,6 +285,8 @@ call :log "[INFO] Workspace: %CD%"
 call :log "[INFO] Env name: %ENVNAME%"
 call :log "[INFO] Log: %LOG%"
 
+set "HP_RUNTIME_TXT_PREEXIST="
+if exist "runtime.txt" set "HP_RUNTIME_TXT_PREEXIST=1"
 rem --- Detect required Python version (must run before env-state check) ---
 rem derived requirement: PYSPEC must be known before the env-state skip decision
 rem so a runtime.txt / pyproject.toml change triggers a full env rebuild.
@@ -356,7 +358,7 @@ call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
 if not errorlevel 1 (
   "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
   for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
-  call :write_runtime_txt
+  if not defined HP_RUNTIME_TXT_PREEXIST call :write_runtime_txt
 )
 if "%HP_TEST_UV_FAIL%"=="1" (
   call :log "[TEST] Injecting uv dep install failure"
@@ -374,7 +376,7 @@ set "HP_UV_EXE="
 :try_conda_create
 call :log "[INFO] HP_ENV_MODE=conda"
 if "%PYSPEC%"=="" (
-  call "%CONDA_BAT%" create -y -n "%ENVNAME%" "python<3.13" pip --override-channels -c conda-forge >> "%LOG%" 2>&1
+  call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 )
@@ -398,8 +400,14 @@ call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
 if errorlevel 1 call :die "[ERROR] Could not write ~print_pyver.py"
 "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
 for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
-if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
-if not "%PYVER%"=="" call :log "[INFO] runtime.txt written: %PYVER%"
+if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
+  >"runtime.txt" echo %PYVER%
+  if errorlevel 1 (
+    call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
+  ) else (
+    call :log "[INFO] runtime.txt written: %PYVER%"
+  )
+)
 
 rem README.md documents the conda-forge policy for this project and why .condarc is required.
 rem Emit the .condarc payload from base64 so quoting stays robust on Windows CMD.
@@ -423,9 +431,15 @@ call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
 if not errorlevel 1 (
   "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
   for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
-  if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
+  if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
+    >"runtime.txt" echo %PYVER%
+    if errorlevel 1 (
+      call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
+    ) else (
+      call :log "[INFO] runtime.txt written: %PYVER%"
+    )
+  )
 )
-if not "%PYVER%"=="" call :log "[INFO] runtime.txt written: %PYVER%"
 
 :after_env_mode_selection
 rem === Conda base periodic update (~30 days) ====================================
@@ -1706,7 +1720,7 @@ rem Regenerate with python - <<'PY' snippets as noted in README.md (base64 docs:
 set "HP_PYPROJ_DEPS=aW1wb3J0IHN5cywgcGF0aGxpYgoKdHJ5OgogICAgaW1wb3J0IHRvbWxsaWIKZXhjZXB0IEltcG9ydEVycm9yOgogICAgdG9tbGxpYiA9IE5vbmUKCm91dCA9IHN5cy5hcmd2WzFdIGlmIGxlbihzeXMuYXJndikgPiAxIGVsc2UgJ35yZXF1aXJlbWVudHMucHlwcm9qZWN0LnR4dCcKdHJ5OgogICAgdHh0ID0gcGF0aGxpYi5QYXRoKCdweXByb2plY3QudG9tbCcpLnJlYWRfdGV4dChlbmNvZGluZz0ndXRmLTgnLCBlcnJvcnM9J3JlcGxhY2UnKQogICAgZGVwcyA9IE5vbmUKICAgIGlmIHRvbWxsaWI6CiAgICAgICAgdHJ5OgogICAgICAgICAgICBkYXRhID0gdG9tbGxpYi5sb2Fkcyh0eHQpCiAgICAgICAgICAgIGRlcHMgPSBkYXRhLmdldCgncHJvamVjdCcsIHt9KS5nZXQoJ2RlcGVuZGVuY2llcycpCiAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgICAgZGVwcyA9IE5vbmUKICAgIGlmIGRlcHMgaXMgTm9uZToKICAgICAgICBpbXBvcnQgcmUKICAgICAgICBtID0gcmUuc2VhcmNoKHInXlxbcHJvamVjdFxdJywgdHh0LCByZS5NVUxUSUxJTkUpCiAgICAgICAgaWYgbm90IG06CiAgICAgICAgICAgIHN5cy5leGl0KDEpCiAgICAgICAgc2VjID0gdHh0W20uZW5kKCk6XQogICAgICAgIHN0b3AgPSByZS5zZWFyY2gocideXFsnLCBzZWMsIHJlLk1VTFRJTElORSkKICAgICAgICBpZiBzdG9wOgogICAgICAgICAgICBzZWMgPSBzZWNbOnN0b3Auc3RhcnQoKV0KICAgICAgICBkbSA9IHJlLnNlYXJjaChyJ15ccypkZXBlbmRlbmNpZXNccyo9XHMqXFsnLCBzZWMsIHJlLk1VTFRJTElORSkKICAgICAgICBpZiBub3QgZG06CiAgICAgICAgICAgIHN5cy5leGl0KDEpCiAgICAgICAgcmVzdCA9IHNlY1tkbS5lbmQoKTpdCiAgICAgICAgIyBXYWxrIGNoYXItYnktY2hhcjogY29sbGVjdCBvbmx5IHF1b3RlZCBzdHJpbmdzOyBzdG9wIGF0IHVucXVvdGVkIF0KICAgICAgICAjIFRoaXMgcHJlc2VydmVzIGZ1bGwgZGVwIHN0cmluZ3MgaW5jbHVkaW5nIGV4dHJhcyAoW2FsbF0pIGFuZAogICAgICAgICMgbXVsdGktY29uc3RyYWludCBzcGVjaWZpZXJzICg+PTQsPDUpIHdpdGhvdXQgbmFpdmUgY29tbWEvbmV3bGluZSBzcGxpdHMuCiAgICAgICAgZGVwcyA9IFtdCiAgICAgICAgaSA9IDAKICAgICAgICB3aGlsZSBpIDwgbGVuKHJlc3QpOgogICAgICAgICAgICBjID0gcmVzdFtpXQogICAgICAgICAgICBpZiBjIGluICgnIicsICInIik6CiAgICAgICAgICAgICAgICBxID0gYwogICAgICAgICAgICAgICAgaSArPSAxCiAgICAgICAgICAgICAgICBzdGFydCA9IGkKICAgICAgICAgICAgICAgIHdoaWxlIGkgPCBsZW4ocmVzdCkgYW5kIHJlc3RbaV0gIT0gcToKICAgICAgICAgICAgICAgICAgICBpZiByZXN0W2ldID09ICdcXCc6CiAgICAgICAgICAgICAgICAgICAgICAgIGkgKz0gMQogICAgICAgICAgICAgICAgICAgIGkgKz0gMQogICAgICAgICAgICAgICAgZGVwcy5hcHBlbmQocmVzdFtzdGFydDppXSkKICAgICAgICAgICAgICAgIGkgKz0gMQogICAgICAgICAgICBlbGlmIGMgPT0gJ10nOgogICAgICAgICAgICAgICAgYnJlYWsKICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgIGkgKz0gMQogICAgaWYgbm90IGRlcHM6CiAgICAgICAgc3lzLmV4aXQoMSkKICAgIHBhdGhsaWIuUGF0aChvdXQpLndyaXRlX3RleHQoJ1xuJy5qb2luKGRlcHMpICsgJ1xuJywgZW5jb2Rpbmc9J2FzY2lpJywgZXJyb3JzPSdyZXBsYWNlJykKICAgIHN5cy5leGl0KDApCmV4Y2VwdCBFeGNlcHRpb246CiAgICBzeXMuZXhpdCgxKQo="
 set "HP_CONDARC=Y2hhbm5lbHM6CiAgLSBjb25kYS1mb3JnZQpjaGFubmVsX3ByaW9yaXR5OiBzdHJpY3QKc2hvd19jaGFubmVsX3VybHM6IHRydWUK"
 set "HP_DETECT_PY=X192ZXJzaW9uX18gPSAiZGV0ZWN0X3B5dGhvbiB2MiAoMjAyNS0wOS0yNCkiCl9fYWxsX18gPSBbInBlcDQ0MF90b19jb25kYSIsICJkZXRlY3RfcmVxdWlyZXNfcHl0aG9uIiwgIm1haW4iXQpPUkRFUiA9IHsiPT0iOiAwLCAiIT0iOiAxLCAiPj0iOiAyLCAiPiI6IDMsICI8PSI6IDQsICI8IjogNX0KCmltcG9ydCBvcwppbXBvcnQgcmUKaW1wb3J0IHN5cwoKIyBIZWxwZXIgaW1wbGVtZW50cyB0aGUgUkVBRE1FIGJvb3RzdHJhcCBjb250cmFjdC4gUEVQIDQ0MCBkZXRhaWxzOgojIGh0dHBzOi8vcGVwcy5weXRob24ub3JnL3BlcC0wNDQwLwoKQ0QgPSBvcy5nZXRjd2QoKQpSVU5USU1FX1BBVEggPSBvcy5wYXRoLmpvaW4oQ0QsICJydW50aW1lLnR4dCIpClBZUFJPSkVDVF9QQVRIID0gb3MucGF0aC5qb2luKENELCAicHlwcm9qZWN0LnRvbWwiKQpQWVBST0pFQ1RfUkUgPSByZS5jb21waWxlKCJyZXF1aXJlcy1weXRob25cXHMqPVxccypbJ1wiXShbXidcIl0rKVsnXCJdIiwgcmUuSUdOT1JFQ0FTRSkKU1BFQ19QQVRURVJOID0gcmUuY29tcGlsZShyJyh+PXw9PXwhPXw+PXw8PXw+fDwpXHMqKFswLTldKyg/OlwuWzAtOV0rKSopJykKCgpkZWYgdmVyc2lvbl9rZXkodGV4dDogc3RyKToKICAgICIiIlJldHVybiBhIHR1cGxlIHVzYWJsZSBmb3IgbnVtZXJpYyBvcmRlcmluZyBvZiBkb3R0ZWQgdmVyc2lvbnMuIiIiCiAgICBwYXJ0cyA9IFtdCiAgICBmb3IgY2h1bmsgaW4gdGV4dC5zcGxpdCgnLicpOgogICAgICAgIHRyeToKICAgICAgICAgICAgcGFydHMuYXBwZW5kKGludChjaHVuaykpCiAgICAgICAgZXhjZXB0IFZhbHVlRXJyb3I6CiAgICAgICAgICAgIHBhcnRzLmFwcGVuZCgwKQogICAgcmV0dXJuIHR1cGxlKHBhcnRzKQoKCmRlZiBidW1wX2Zvcl9jb21wYXRpYmxlKHZlcnNpb246IHN0cikgLT4gc3RyOgogICAgIiIiVHJhbnNsYXRlIHRoZSBQRVAgNDQwIGNvbXBhdGlibGUgcmVsZWFzZSB1cHBlciBib3VuZC4iIiIKICAgIHBpZWNlcyA9IFtpbnQoaXRlbSkgZm9yIGl0ZW0gaW4gdmVyc2lvbi5zcGxpdCgnLicpIGlmIGl0ZW0uaXNkaWdpdCgpXQogICAgaWYgbm90IHBpZWNlczoKICAgICAgICByZXR1cm4gdmVyc2lvbgogICAgaWYgbGVuKHBpZWNlcykgPj0gMzoKICAgICAgICByZXR1cm4gZiJ7cGllY2VzWzBdfS57cGllY2VzWzFdICsgMX0iCiAgICBpZiBsZW4ocGllY2VzKSA9PSAyOgogICAgICAgIHJldHVybiBmIntwaWVjZXNbMF0gKyAxfS4wIgogICAgcmV0dXJuIHN0cihwaWVjZXNbMF0gKyAxKQoKCmRlZiBleHBhbmRfY2xhdXNlKG9wOiBzdHIsIHZlcnNpb246IHN0cik6CiAgICBpZiBvcCA9PSAifj0iOgogICAgICAgIHVwcGVyID0gYnVtcF9mb3JfY29tcGF0aWJsZSh2ZXJzaW9uKQogICAgICAgIHJldHVybiBbKCI+PSIsIHZlcnNpb24pLCAoIjwiLCB1cHBlcildCiAgICByZXR1cm4gWyhvcCwgdmVyc2lvbildCgoKZGVmIHBlcDQ0MF90b19jb25kYShzcGVjOiBzdHIpIC0+IHN0cjoKICAgICIiIlJldHVybiAicHl0aG9uIiBjb25zdHJhaW50cyBleHBhbmRlZCBmcm9tIGEgcmVxdWlyZXMtcHl0aG9uIHNwZWMuIiIiCiAgICBjbGF1c2VzID0gW10KICAgIGZvciByYXcgaW4gc3BlYy5zcGxpdCgnLCcpOgogICAgICAgIHJhdyA9IHJhdy5zdHJpcCgpCiAgICAgICAgaWYgbm90IHJhdzoKICAgICAgICAgICAgY29udGludWUKICAgICAgICBtYXRjaCA9IFNQRUNfUEFUVEVSTi5tYXRjaChyYXcpCiAgICAgICAgaWYgbm90IG1hdGNoOgogICAgICAgICAgICBjb250aW51ZQogICAgICAgIG9wLCB2ZXJzaW9uID0gbWF0Y2guZ3JvdXBzKCkKICAgICAgICBjbGF1c2VzLmV4dGVuZChleHBhbmRfY2xhdXNlKG9wLCB2ZXJzaW9uKSkKICAgIGlmIG5vdCBjbGF1c2VzOgogICAgICAgIHJldHVybiAiIgogICAgZGVkdXAgPSB7fQogICAgZm9yIG9wLCB2ZXJzaW9uIGluIGNsYXVzZXM6CiAgICAgICAgZGVkdXBbKG9wLCB2ZXJzaW9uKV0gPSAob3AsIHZlcnNpb24pCiAgICBvcmRlcmVkID0gc29ydGVkKGRlZHVwLnZhbHVlcygpLCBrZXk9bGFtYmRhIGl0ZW06IChPUkRFUi5nZXQoaXRlbVswXSwgOTkpLCB2ZXJzaW9uX2tleShpdGVtWzFdKSkpCiAgICByZXR1cm4gInB5dGhvbiIgKyAiLCIuam9pbihmIntvcH17dmVyc2lvbn0iIGZvciBvcCwgdmVyc2lvbiBpbiBvcmRlcmVkKQoKCmRlZiByZWFkX3J1bnRpbWVfc3BlYygpIC0+IHN0cjoKICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhSVU5USU1FX1BBVEgpOgogICAgICAgIHJldHVybiAiIgogICAgd2l0aCBvcGVuKFJVTlRJTUVfUEFUSCwgJ3InLCBlbmNvZGluZz0ndXRmLTgnLCBlcnJvcnM9J2lnbm9yZScpIGFzIGhhbmRsZToKICAgICAgICB0ZXh0ID0gaGFuZGxlLnJlYWQoKQogICAgbWF0Y2ggPSByZS5zZWFyY2gocicoPzpweXRob25bLT1dKT9ccyooWzAtOV0rKD86XC5bMC05XSspezAsMn0pJywgdGV4dCkKICAgIGlmIG5vdCBtYXRjaDoKICAgICAgICByZXR1cm4gIiIKICAgIHBhcnRzID0gbWF0Y2guZ3JvdXAoMSkuc3BsaXQoJy4nKQogICAgbWFqb3JfbWlub3IgPSAnLicuam9pbihwYXJ0c1s6Ml0pCiAgICByZXR1cm4gZidweXRob249e21ham9yX21pbm9yfScKCgpkZWYgcmVhZF9weXByb2plY3Rfc3BlYygpIC0+IHN0cjoKICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhQWVBST0pFQ1RfUEFUSCk6CiAgICAgICAgcmV0dXJuICIiCiAgICB3aXRoIG9wZW4oUFlQUk9KRUNUX1BBVEgsICdyJywgZW5jb2Rpbmc9J3V0Zi04JywgZXJyb3JzPSdpZ25vcmUnKSBhcyBoYW5kbGU6CiAgICAgICAgdGV4dCA9IGhhbmRsZS5yZWFkKCkKICAgIG1hdGNoID0gUFlQUk9KRUNUX1JFLnNlYXJjaCh0ZXh0KQogICAgaWYgbm90IG1hdGNoOgogICAgICAgIHJldHVybiAiIgogICAgcmV0dXJuIHBlcDQ0MF90b19jb25kYShtYXRjaC5ncm91cCgxKSkKCgpkZWYgZGV0ZWN0X3JlcXVpcmVzX3B5dGhvbigpIC0+IHN0cjoKICAgICIiIlJldHVybiBiZXN0LWVmZm9ydCByZXF1aXJlcy1weXRob24gY29uc3RyYWludCBmb3IgdGhlIGN1cnJlbnQgcHJvamVjdC4iIiIKICAgIHJ1bnRpbWVfc3BlYyA9IHJlYWRfcnVudGltZV9zcGVjKCkKICAgIGlmIHJ1bnRpbWVfc3BlYzoKICAgICAgICByZXR1cm4gcnVudGltZV9zcGVjCiAgICByZXR1cm4gcmVhZF9weXByb2plY3Rfc3BlYygpCgoKZGVmIG1haW4oYXJndj1Ob25lKSAtPiBOb25lOgogICAgIiIiQ0xJIGVudHJ5IHBvaW50IHRoYXQgcHJpbnRzIG5vcm1hbGl6ZWQgcmVxdWlyZXMtcHl0aG9uIGNvbnN0cmFpbnRzLiIiIgogICAgYXJncyA9IGxpc3Qoc3lzLmFyZ3ZbMTpdIGlmIGFyZ3YgaXMgTm9uZSBlbHNlIGFyZ3YpCiAgICBpZiBhcmdzIGFuZCBhcmdzWzBdID09ICItLXNlbGYtdGVzdCI6CiAgICAgICAgZm9yIHNhbXBsZSBpbiAoIn49My4xMCIsICJ+PTMuOC4xIik6CiAgICAgICAgICAgIHN5cy5zdGRvdXQud3JpdGUocGVwNDQwX3RvX2NvbmRhKHNhbXBsZSkgKyAiXG4iKQoKICAgICAgICByZXR1cm4KICAgIGlmIGFyZ3M6CiAgICAgICAgZm9yIGl0ZW0gaW4gYXJnczoKICAgICAgICAgICAgc3lzLnN0ZG91dC53cml0ZShwZXA0NDBfdG9fY29uZGEoaXRlbSkgKyAiXG4iKQoKICAgICAgICByZXR1cm4KICAgIHN5cy5zdGRvdXQud3JpdGUoZGV0ZWN0X3JlcXVpcmVzX3B5dGhvbigpICsgIlxuIikKCgoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIG1haW4oKQo="
-set "HP_PRINT_PYVER=aW1wb3J0IHN5cwoKcHJpbnQoZiJweXRob24te3N5cy52ZXJzaW9uX2luZm9bMF19LntzeXMudmVyc2lvbl9pbmZvWzFdfSIpCg=="
+set "HP_PRINT_PYVER=aW1wb3J0IHN5cwoKcHJpbnQoZiJweXRob24te3N5cy52ZXJzaW9uX2luZm9bMF19LntzeXMudmVyc2lvbl9pbmZvWzFdfS57c3lzLnZlcnNpb25faW5mb1syXX0iKQo="
 rem HP_FAST_CHECK decoded content:
 rem $exe = $args[0]
 rem if (-not $exe) { $exe = $env:HP_FAST_EXE }
@@ -1757,8 +1771,16 @@ exit /b 0
 rem derived requirement: called from inside a parenthesized if-block so %PYVER%
 rem would expand at block-parse time (empty) if inlined. Subroutine body is
 rem re-parsed at call time, so %PYVER% correctly reflects the for/f result.
-if not "%PYVER%"=="" ( > "runtime.txt" echo %PYVER% )
-if not "%PYVER%"=="" call :log "[INFO] runtime.txt written: %PYVER%"
+rem derived requirement: guarded by HP_RUNTIME_TXT_PREEXIST so write-back only
+rem fires when runtime.txt did not pre-exist (Tier 2/3 promotion to Tier 1).
+if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
+  >"runtime.txt" echo %PYVER%
+  if errorlevel 1 (
+    call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
+  ) else (
+    call :log "[INFO] runtime.txt written: %PYVER%"
+  )
+)
 exit /b 0
 rem :die signals a fatal error but uses exit /b so the caller (CI orchestration,
 rem harness, or run_tests.bat) can continue collecting artifacts and gate results.

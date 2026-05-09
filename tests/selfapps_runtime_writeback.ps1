@@ -61,8 +61,14 @@ $runtimeContent = if ($runtimeExists) {
     (Get-Content -LiteralPath $runtimeTxtPath -Encoding ASCII -Raw).Trim()
 } else { '' }
 
-# Content should match python-X.Y (e.g. python-3.11) or python-X.Y.Z
-$runtimeValid = $runtimeContent -match '^python-\d+\.\d+'
+# Content must match python-X.Y.Z (three-part version; HP_PRINT_PYVER emits patch level)
+$runtimeValid = $runtimeContent -match '^python-\d+\.\d+\.\d+$'
+
+# No trailing whitespace (Trim() above removes it; compare raw vs trimmed to detect it)
+$rawContent = if ($runtimeExists) {
+    (Get-Content -LiteralPath $runtimeTxtPath -Encoding ASCII -Raw)
+} else { '' }
+$noTrailingSpace = ($rawContent.TrimEnd("`r","`n"," ","`t") -eq $runtimeContent)
 
 $logContainsWriteback = $false
 if (Test-Path -LiteralPath $setupLogPath) {
@@ -70,7 +76,24 @@ if (Test-Path -LiteralPath $setupLogPath) {
     $logContainsWriteback = $logText -match '\[INFO\] runtime\.txt written:'
 }
 
-$pass = ($exitCode -eq 0) -and $runtimeExists -and $runtimeValid -and $logContainsWriteback
+# Second run: verify runtime.txt is treated as Tier 1 (content unchanged, bootstrapper reuses it)
+$runtimeContent2     = ''
+$secondRunMatches    = $false
+if ($runtimeExists -and $runtimeValid) {
+    Push-Location $workDir
+    try {
+        cmd /c "call run_setup.bat > ~runtime_writeback_bootstrap2.log 2>&1"
+    } finally {
+        Pop-Location
+    }
+    if (Test-Path -LiteralPath $runtimeTxtPath) {
+        $runtimeContent2  = (Get-Content -LiteralPath $runtimeTxtPath -Encoding ASCII -Raw).Trim()
+        $secondRunMatches = ($runtimeContent2 -eq $runtimeContent)
+    }
+}
+
+$pass = ($exitCode -eq 0) -and $runtimeExists -and $runtimeValid -and
+        $noTrailingSpace -and $logContainsWriteback -and $secondRunMatches
 
 Write-NdjsonRow ([ordered]@{
     id   = 'self.runtime.writeback'
@@ -78,10 +101,13 @@ Write-NdjsonRow ([ordered]@{
     pass = $pass
     desc = 'runtime.txt written with resolved python version and log line emitted'
     details = [ordered]@{
-        bootstrapExit       = $exitCode
-        runtimeExists       = $runtimeExists
-        runtimeContent      = $runtimeContent
-        runtimeValid        = $runtimeValid
+        bootstrapExit        = $exitCode
+        runtimeExists        = $runtimeExists
+        runtimeContent       = $runtimeContent
+        runtimeValid         = $runtimeValid
+        noTrailingSpace      = $noTrailingSpace
         logContainsWriteback = $logContainsWriteback
+        secondRunContent     = $runtimeContent2
+        secondRunMatches     = $secondRunMatches
     }
 })
