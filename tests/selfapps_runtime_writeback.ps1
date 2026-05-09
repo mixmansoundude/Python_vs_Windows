@@ -80,6 +80,7 @@ if (Test-Path -LiteralPath $setupLogPath) {
 $runtimeContent2     = ''
 $secondRunExitCode   = -1
 $secondRunMatches    = $false
+$secondRunNoWriteback = $true
 if ($runtimeExists -and $runtimeValid) {
     Push-Location $workDir
     try {
@@ -92,11 +93,17 @@ if ($runtimeExists -and $runtimeValid) {
         $runtimeContent2  = (Get-Content -LiteralPath $runtimeTxtPath -Encoding ASCII -Raw).Trim()
         $secondRunMatches = ($runtimeContent2 -eq $runtimeContent)
     }
+    # Verify HP_RUNTIME_TXT_PREEXIST guard: write-back must NOT fire on second run
+    $secondBootstrapLog = Join-Path $workDir '~runtime_writeback_bootstrap2.log'
+    if (Test-Path -LiteralPath $secondBootstrapLog) {
+        $secondLogText = Get-Content -LiteralPath $secondBootstrapLog -Encoding ASCII -Raw
+        $secondRunNoWriteback = -not ($secondLogText -match '\[INFO\] runtime\.txt written:')
+    }
 }
 
 $pass = ($exitCode -eq 0) -and $runtimeExists -and $runtimeValid -and
         $noTrailingSpace -and $logContainsWriteback -and
-        ($secondRunExitCode -eq 0) -and $secondRunMatches
+        ($secondRunExitCode -eq 0) -and $secondRunMatches -and $secondRunNoWriteback
 
 Write-NdjsonRow ([ordered]@{
     id   = 'self.runtime.writeback'
@@ -113,5 +120,6 @@ Write-NdjsonRow ([ordered]@{
         secondRunExitCode    = $secondRunExitCode
         secondRunContent     = $runtimeContent2
         secondRunMatches     = $secondRunMatches
+        secondRunNoWriteback = $secondRunNoWriteback
     }
 })
