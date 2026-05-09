@@ -1570,6 +1570,7 @@ if "%HP_ENV_MODE%"=="system" (
     for /f "usebackq delims=" %%M in ("~missing_modules.txt") do set "HP_WARNFIX_NEEDED=1"
     if exist "~warnfix_repair_failed.flag" del "~warnfix_repair_failed.flag" >nul 2>&1
     if defined HP_WARNFIX_NEEDED (
+      set "HP_WARNFIX_APPLIED=1"
       call :log "[REPAIR] missing modules detected; installing and rebuilding."
       if "%HP_ENV_MODE%"=="uv" (
         for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
@@ -1602,10 +1603,23 @@ if "%HP_ENV_MODE%"=="system" (
     call :run_exe_smokerun
   )
 )
+call :try_entry_smoke_after_warnfix
+set "HP_WARNFIX_APPLIED="
 set "HP_FAST_EXE="
 set "HP_FAST_EXE_PATH="
 set "HP_FASTPATH_USED="
 set "HP_FASTPATH_TOKEN="
+exit /b 0
+:try_entry_smoke_after_warnfix
+rem derived requirement: after warnfix installs missing modules into the conda env,
+rem re-run the entry script via Python interpreter so "Entry smoke exit=0" is logged.
+rem This fires only when warnfix was applied AND the original entry smoke failed.
+if not defined HP_WARNFIX_APPLIED exit /b 0
+if "%HP_SMOKE_RC%"=="0" exit /b 0
+call :log "[INFO] Warnfix applied; retrying entry smoke via interpreter."
+"%HP_PY%" "%HP_ENTRY%" 1> "~run.out.txt" 2> "~run.err.txt"
+set "HP_SMOKE_RC=%ERRORLEVEL%"
+call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
 exit /b 0
 :run_exe_smokerun
 if not exist "dist\%ENVNAME%.exe" (
