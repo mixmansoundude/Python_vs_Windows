@@ -526,7 +526,11 @@ if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
   ) else (
     "%HP_PY%" -m pip install -q --disable-pip-version-check pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
   )
-  if errorlevel 1 call :die "[ERROR] pipreqs install failed."
+  if errorlevel 1 (
+    call :log "[WARN] pipreqs install failed (no conda-forge build for this Python version?). Continuing without auto-detected requirements."
+    set "HP_SKIP_PIPREQS=1"
+    set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs unavailable for this Python version)"
+  )
 )
 
 set "HP_PIPREQS_TARGET_WORK=%CD%\requirements.auto.txt"
