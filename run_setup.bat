@@ -406,6 +406,7 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
     call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
   ) else (
     call :log "[INFO] runtime.txt written: %PYVER%"
+    set "PYSPEC=%PYVER:python-=python=%"
   )
 )
 
@@ -437,6 +438,7 @@ if not errorlevel 1 (
       call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
     ) else (
       call :log "[INFO] runtime.txt written: %PYVER%"
+      set "PYSPEC=%PYVER:python-=python=%"
     )
   )
 )
@@ -1779,6 +1781,7 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
     call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
   ) else (
     call :log "[INFO] runtime.txt written: %PYVER%"
+    set "PYSPEC=%PYVER:python-=python=%"
   )
 )
 exit /b 0
