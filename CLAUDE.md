@@ -413,10 +413,7 @@ See **AGENTS.md** §Iteration Contract for the full policy. Key points:
 
 Items deferred to future loops:
 
-- **Python version detection Tier 3 write-back**: README.md requires: "Otherwise let conda
-  pick the latest supported Python. After the environment is created, write runtime.txt with
-  the resolved version and log `[INFO] runtime.txt written: python-X.Y.Z`. This ensures
-  subsequent runs hit Tier 1."
+(none)
 
 ## Closed Backlog
 
@@ -451,3 +448,9 @@ Items completed and shipped:
   conda update -n base --all upgrades conda to a broken solver version that cascades
   failures across the rest of the conda-full job. Feature is live in production code;
   CI coverage deferred. CLOSED by this PR.
+- **Python version detection Tier 3 write-back**: Removed `python<3.13` hard-coded cap so
+  conda picks the latest available Python (no-hard-coded fallback per REQ-004). After env
+  creation, bootstrapper writes runtime.txt in `python-X.Y.Z` format and logs
+  `[INFO] runtime.txt written: python-X.Y.Z`. Write-back guarded by `HP_RUNTIME_TXT_PREEXIST`
+  so Tier 1 files (pre-existing runtime.txt) are never overwritten. Silent WARN on write
+  failure (read-only filesystem). CLOSED by this PR.

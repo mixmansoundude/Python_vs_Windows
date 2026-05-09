@@ -930,6 +930,8 @@ jobs:
             tests\~selftest_parse_warn_table\
             tests/~selftest_runtime_writeback/~runtime_writeback_bootstrap.log
             tests\~selftest_runtime_writeback\~runtime_writeback_bootstrap.log
+            tests/~selftest_runtime_writeback/~runtime_writeback_bootstrap2.log
+            tests\~selftest_runtime_writeback\~runtime_writeback_bootstrap2.log
             tests/~selftest_runtime_writeback/~setup.log
             tests\~selftest_runtime_writeback\~setup.log
             tests/~selftest_runtime_writeback/runtime.txt
