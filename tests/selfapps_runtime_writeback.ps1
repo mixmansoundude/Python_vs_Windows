@@ -78,11 +78,13 @@ if (Test-Path -LiteralPath $setupLogPath) {
 
 # Second run: verify runtime.txt is treated as Tier 1 (content unchanged, bootstrapper reuses it)
 $runtimeContent2     = ''
+$secondRunExitCode   = -1
 $secondRunMatches    = $false
 if ($runtimeExists -and $runtimeValid) {
     Push-Location $workDir
     try {
         cmd /c "call run_setup.bat > ~runtime_writeback_bootstrap2.log 2>&1"
+        $secondRunExitCode = $LASTEXITCODE
     } finally {
         Pop-Location
     }
@@ -93,7 +95,8 @@ if ($runtimeExists -and $runtimeValid) {
 }
 
 $pass = ($exitCode -eq 0) -and $runtimeExists -and $runtimeValid -and
-        $noTrailingSpace -and $logContainsWriteback -and $secondRunMatches
+        $noTrailingSpace -and $logContainsWriteback -and
+        ($secondRunExitCode -eq 0) -and $secondRunMatches
 
 Write-NdjsonRow ([ordered]@{
     id   = 'self.runtime.writeback'
@@ -107,6 +110,7 @@ Write-NdjsonRow ([ordered]@{
         runtimeValid         = $runtimeValid
         noTrailingSpace      = $noTrailingSpace
         logContainsWriteback = $logContainsWriteback
+        secondRunExitCode    = $secondRunExitCode
         secondRunContent     = $runtimeContent2
         secondRunMatches     = $secondRunMatches
     }
