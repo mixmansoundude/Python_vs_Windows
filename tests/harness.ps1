@@ -258,6 +258,12 @@ $instPathOk = ($AllText -match "%PUBLIC%\\Documents\\Miniconda3")
 Write-Result "conda.path" "Miniconda path is %PUBLIC%\Documents\Miniconda3" $instPathOk @{}
 $hasVersionMetadata = ($AllText -match '\[VERSION_METADATA\]')
 Write-Result "version.metadata" "VERSION_METADATA block present in run_setup.bat" $hasVersionMetadata @{}
+$hasHostOS = ($AllText -match 'Host OS:')
+Write-Result "host.env.os" "Host OS diagnostic print present" $hasHostOS @{}
+$hasHostPS = ($AllText -match 'Host PowerShell:')
+Write-Result "host.env.ps" "Host PowerShell diagnostic print present" $hasHostPS @{}
+$hasHostPython = ($AllText -match 'Host Python:')
+Write-Result "host.env.python" "Host Python diagnostic print present" $hasHostPython @{}
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

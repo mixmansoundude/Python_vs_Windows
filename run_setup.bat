@@ -106,7 +106,9 @@ if "%ENVNAME%"=="env" if not "%ENVNAME_ORIG%"=="env" (
   call :log "[WARN] Env name could not be derived from '%ENVNAME_ORIG%'; defaulting to 'env'."
 )
 set "ENVNAME_ORIG="
-
+rem --- Host environment diagnostics (confirm runner OS/PS version for every CI run) ---
+for /f "tokens=*" %%V in ('ver') do call :log "[INFO] Host OS: %%V"
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$PSVersionTable.PSVersion.ToString()" 2^>nul`) do call :log "[INFO] Host PowerShell: %%P"
 
 set "PYCOUNT=0"
 for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul') do call :count_python "%%F"
@@ -476,6 +478,9 @@ echo Interpreter: %HP_PY%
 >> "%LOG%" echo Interpreter: %HP_PY%
 call :append_env_mode_row
 "%HP_PY%" -c "print('py_ok')" 1>nul 2>nul || call :log "[WARN] Interpreter smoke test failed (continuing)."
+"%HP_PY%" -c "import sys;print(sys.version.split()[0])" > "~pyver_host.tmp" 2>nul
+if exist "~pyver_host.tmp" for /f "usebackq delims=" %%Y in ("~pyver_host.tmp") do call :log "[INFO] Host Python: %%Y"
+if exist "~pyver_host.tmp" del "~pyver_host.tmp" >nul 2>&1
 set "PEP723_ACTIVE="
 set "PEP723_BLOCK_FOUND="
 set "PEP723_REQ=~requirements.pep723.txt"
