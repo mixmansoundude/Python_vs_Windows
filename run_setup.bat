@@ -1,8 +1,8 @@
 :: [VERSION_METADATA]
-:: Last Verified Date: 2026-05-09
+:: Last Verified Date: 2026-05-10
 :: Verified Windows: Windows 10/11
 :: Verified PowerShell: 5.1+
-:: Verified Python: 3.12 (CI Default) / 3.13 (Latest)
+:: Verified Python: 3.14 (CI Latest)
 @echo off
 setlocal DisableDelayedExpansion
 set "DEP_SOURCE=unknown"
