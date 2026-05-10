@@ -300,6 +300,7 @@ conda.channels, pipreqs.flags, pyi.onefile, log.rotate, tilde.naming,
 visa.detect, emit.helpers, env.state.write, dep.check.parse_lock,
 dp.compat, prep.multi.constraint, batch.paren.balance, env.foldername,
 conda.path,
+version.metadata,
 self.stub.fastpath, self.stub.rebuild, self.stub.state_skip
 ```
 

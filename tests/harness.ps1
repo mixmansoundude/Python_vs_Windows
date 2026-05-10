@@ -255,7 +255,9 @@ Write-Result "batch.paren.balance" "No negative parenthesis balance while scanni
 $envLine = ($AllText -match 'for %%I in \("%CD%"\) do set "ENVNAME=%%~nI"')
 Write-Result "env.foldername" "Env name equals folder name" $envLine @{} 
 $instPathOk = ($AllText -match "%PUBLIC%\\Documents\\Miniconda3")
-Write-Result "conda.path" "Miniconda path is %PUBLIC%\Documents\Miniconda3" $instPathOk @{} 
+Write-Result "conda.path" "Miniconda path is %PUBLIC%\Documents\Miniconda3" $instPathOk @{}
+$hasVersionMetadata = ($AllText -match '\[VERSION_METADATA\]')
+Write-Result "version.metadata" "VERSION_METADATA block present in run_setup.bat" $hasVersionMetadata @{}
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

@@ -239,3 +239,16 @@ Schema for `~env.state.json` (schema=1):
  "req_hash": "...", "runtime_hash": "...", "lock_hash": "..."}
 ```
 Unknown schema is treated as stale (triggers full rebuild, not error).
+
+## Version Metadata Maintenance
+
+The `[VERSION_METADATA]` block at the top of `run_setup.bat` records the last verified execution environment.
+
+**Maintenance Rule:** If a CI run passes on a version of Windows, PowerShell, or Python newer than
+what is listed in the `[VERSION_METADATA]` block, update that block to reflect the latest verified
+environment. Fields to keep current:
+
+- `Last Verified Date` -- date of the confirming CI run (YYYY-MM-DD)
+- `Verified Windows` -- Windows version(s) confirmed passing
+- `Verified PowerShell` -- PowerShell version confirmed present on the runner
+- `Verified Python` -- Python version(s) used in CI (CI Default / Latest)
