@@ -41,6 +41,28 @@ set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
+rem --- PVW_ super-user overrides (inherit from calling terminal; logged before detection runs) ---
+rem derived requirement: PVW_ variables let a super-user pre-set values to bypass auto-detection.
+if defined PVW_PYTHON_EXE (
+  echo [DEBUG] Using super-user override for PVW_PYTHON_EXE: %PVW_PYTHON_EXE%
+  call :log "[DEBUG] Using super-user override for PVW_PYTHON_EXE: %PVW_PYTHON_EXE%"
+)
+if defined PVW_UV_EXE (
+  echo [DEBUG] Using super-user override for PVW_UV_EXE: %PVW_UV_EXE%
+  call :log "[DEBUG] Using super-user override for PVW_UV_EXE: %PVW_UV_EXE%"
+)
+if defined PVW_CONDA_EXE (
+  echo [DEBUG] Using super-user override for PVW_CONDA_EXE: %PVW_CONDA_EXE%
+  call :log "[DEBUG] Using super-user override for PVW_CONDA_EXE: %PVW_CONDA_EXE%"
+)
+if defined PVW_TARGET_PY (
+  echo [DEBUG] Using super-user override for PVW_TARGET_PY: %PVW_TARGET_PY%
+  call :log "[DEBUG] Using super-user override for PVW_TARGET_PY: %PVW_TARGET_PY%"
+)
+if defined PVW_WORKSPACE (
+  echo [DEBUG] Using super-user override for PVW_WORKSPACE: %PVW_WORKSPACE%
+  call :log "[DEBUG] Using super-user override for PVW_WORKSPACE: %PVW_WORKSPACE%"
+)
 rem --- Path-length guard: warn if script root path approaches the 260-char cmd.exe limit ---
 for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:HP_SCRIPT_ROOT.Length" 2^>nul`) do set "HP_PATH_LEN=%%L"
 if defined HP_PATH_LEN if %HP_PATH_LEN% GEQ 200 (
@@ -185,6 +207,7 @@ set "MINICONDA_ROOT=%MC%"
 set "CONDA_BASE_PY=%MINICONDA_ROOT%\python.exe"
 
 call :select_conda_bat
+if defined PVW_CONDA_EXE set "CONDA_BAT=%PVW_CONDA_EXE%"
 
 rem Install Miniconda if conda.bat is missing
 set "HP_CONDA_JUST_INSTALLED="
@@ -231,6 +254,11 @@ rem === uv acquisition (preferred env+dep installer; falls back to conda) ======
 rem derived requirement: uv is gated by HP_FORCE_CONDA_ONLY (same gate used for
 rem venv/system fallbacks) so the conda-full CI lane exercises the pure conda path.
 rem The binary is cached under ~uv_bin\ (tilde-prefix keeps it gitignored).
+if defined PVW_UV_EXE (
+  set "HP_UV_EXE=%PVW_UV_EXE%"
+  call :log "[INFO] uv: using super-user override PVW_UV_EXE=%PVW_UV_EXE%."
+  goto :uv_acquire_done
+)
 set "HP_UV_EXE="
 set "HP_UV_BIN=%HP_SCRIPT_ROOT%~uv_bin"
 set "HP_UV_ZIP=%TEMP%\~uv_setup.zip"
@@ -312,6 +340,10 @@ if exist "%CONDA_BASE_PY%" (
 )
 set "PYSPEC="
 for /f "usebackq delims=" %%A in ("~py_spec.txt") do set "PYSPEC=%%A"
+if defined PVW_TARGET_PY (
+  set "PYSPEC=%PVW_TARGET_PY%"
+  call :log "[INFO] Python version: using super-user override PVW_TARGET_PY=%PVW_TARGET_PY%."
+)
 
 rem --- Env-state fast path: skip conda create+install if env is still valid ---
 rem derived requirement: ~env.state.json records envMode/envName/envPath/pySpec/lockSize
@@ -346,7 +378,11 @@ rem folder, short-circuiting conda create. On failure, :try_conda_create runs th
 rem existing conda path unchanged. Python version from PYSPEC is not yet forwarded
 rem to uv (version-pinning deferred; uv picks the system default Python).
 if not defined HP_UV_EXE goto :try_conda_create
-set "HP_UV_ENV_PATH=%HP_SCRIPT_ROOT%.uv_env"
+if defined PVW_WORKSPACE (
+  set "HP_UV_ENV_PATH=%PVW_WORKSPACE%"
+) else (
+  set "HP_UV_ENV_PATH=%HP_SCRIPT_ROOT%.uv_env"
+)
 if exist "%HP_UV_ENV_PATH%\Scripts\python.exe" (
   "%HP_UV_ENV_PATH%\Scripts\python.exe" -c "import pip;exit(0)" >nul 2>&1
   if not errorlevel 1 (
@@ -457,6 +493,10 @@ if not errorlevel 1 (
 )
 
 :after_env_mode_selection
+if defined PVW_PYTHON_EXE (
+  set "HP_PY=%PVW_PYTHON_EXE%"
+  call :log "[INFO] Python host: using super-user override PVW_PYTHON_EXE=%PVW_PYTHON_EXE%."
+)
 rem === Conda base periodic update (~30 days) ====================================
 rem derived requirement: README.md requires periodic conda base update; skip on
 rem first install (timestamp seeded) and when uv env is in use.
