@@ -43,8 +43,8 @@ set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
 rem --- PVW_ super-user overrides (inherit from calling terminal; logged before detection runs) ---
 rem derived requirement: PVW_ variables let a super-user pre-set values to bypass auto-detection.
-rem Single-line if form avoids parse-time parenthesis expansion breaking the block on paths like
-rem C:\Program Files (x86)\... -- the ) in (x86) would terminate a parenthesized if block early.
+rem Single-line if form avoids parse-time expansion issues in block-form if-statements when a
+rem variable value contains parentheses, such as a path under "C:\Program Files (x86)\...".
 if defined PVW_PYTHON_EXE echo [DEBUG] Using super-user override for PVW_PYTHON_EXE: %PVW_PYTHON_EXE%
 if defined PVW_PYTHON_EXE call :log "[DEBUG] Using super-user override for PVW_PYTHON_EXE: %PVW_PYTHON_EXE%"
 if defined PVW_UV_EXE echo [DEBUG] Using super-user override for PVW_UV_EXE: %PVW_UV_EXE%
