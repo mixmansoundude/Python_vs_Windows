@@ -1,8 +1,14 @@
+:: run_setup.bat -- Python vs Windows
+:: Project Home: https://github.com/mixmansoundude/Python_vs_Windows
+:: Description: Automated, zero-config Python environment management for Windows. Standalone and portable.
 :: [VERSION_METADATA]
 :: Last Verified Date: 2026-05-10
 :: Verified Windows: Windows 10/11
 :: Verified PowerShell: 5.1+
 :: Verified Python: 3.14 (CI Latest)
+:: RECOVERY: If a future Python version breaks auto-detection, install a Python version matching the
+::   'Last Verified' metadata above, then run 'set PVW_PYTHON_EXE=C:\path\to\python.exe' in your
+::   terminal before running this script to bypass the broken detection.
 @echo off
 setlocal DisableDelayedExpansion
 set "DEP_SOURCE=unknown"
