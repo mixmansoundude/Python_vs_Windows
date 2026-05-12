@@ -38,7 +38,7 @@ tests/
   selfapps_reqspec.ps1         Requirements specifier parsing tests (~= compatible release)
   selfapps_pandas_excel.ps1    Pandas/openpyxl heuristic tests
   dynamic_tests.py             Python-side entry detection and version precedence tests
-  test_*.py                    Python unit tests (13 files, see Testing section)
+  test_*.py                    Python unit tests (14 files, see Testing section)
 
 tools/
   apply_patch.py               Unified/legacy diff parser and applier (used by inline_model_fix)
@@ -326,6 +326,7 @@ Test files and what they cover:
 | `test_poll_public_diag_logging.py` | Diagnostics polling and logging |
 | `test_ps_colon_scan.py` | PowerShell scoped variable detection ($var:) |
 | `test_check_delimiters_import.py` | Delimiter checker import guard |
+| `test_heuristics.py` | Heuristic dep-augmentation rules (REQ-005: all 6 rules, kill-switch, idempotency) |
 | `test_publish_index_regex.py` | Regex patterns in diagnostics publisher |
 | `test_sanitize_iterate_payload.py` | NDJSON redaction and deduplication |
 
