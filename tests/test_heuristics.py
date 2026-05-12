@@ -1,14 +1,19 @@
 # ASCII only. Cross-platform unit tests for HP_PREP_REQUIREMENTS heuristic rules.
-# Extracts the embedded helper from run_setup.bat and exercises all 6 heuristic
-# dependency-augmentation rules (REQ-005), the kill-switch, and idempotency.
+# Covers all 6 REQ-005.8 rules, the HP_DISABLE_HEURISTICS kill-switch, idempotency,
+# and no-false-positives. Runnable with: python -m unittest tests.test_heuristics -v
 import base64
 import importlib.util
 import os
 import re
-import pytest
+import shutil
+import tempfile
+import unittest
 
 REPO = os.path.dirname(os.path.dirname(__file__))
 RUN_SETUP = os.path.join(REPO, "run_setup.bat")
+
+# Module-level singleton: HP_PREP_REQUIREMENTS extracted and imported once.
+_PR_MODULE = None
 
 
 def _extract_payload(varname):
@@ -21,25 +26,30 @@ def _extract_payload(varname):
     raise RuntimeError(f"{varname} not found in run_setup.bat")
 
 
-@pytest.fixture(scope="session")
-def pr(tmp_path_factory):
-    tmp = tmp_path_factory.mktemp("heuristics")
-    script = tmp / "prep_requirements.py"
-    script.write_bytes(_extract_payload("HP_PREP_REQUIREMENTS"))
-    spec = importlib.util.spec_from_file_location("pr", script)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+def _get_pr():
+    global _PR_MODULE
+    if _PR_MODULE is None:
+        tmp = tempfile.mkdtemp(prefix="heuristics.")
+        script = os.path.join(tmp, "prep_requirements.py")
+        with open(script, "wb") as fh:
+            fh.write(_extract_payload("HP_PREP_REQUIREMENTS"))
+        spec = importlib.util.spec_from_file_location("pr", script)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _PR_MODULE = mod
+    return _PR_MODULE
 
 
-def _run(pr, tmp_path, reqs, extra_env=None):
-    inp = tmp_path / "requirements.txt"
-    out_conda = tmp_path / "reqs_conda.txt"
-    out_pip = tmp_path / "reqs_pip.txt"
-    inp.write_text(reqs, encoding="ascii")
-    pr.INP = str(inp)
-    pr.OUT_CONDA = str(out_conda)
-    pr.OUT_PIP = str(out_pip)
+def _run(tmp_dir, reqs, extra_env=None):
+    pr = _get_pr()
+    inp = os.path.join(tmp_dir, "requirements.txt")
+    out_conda = os.path.join(tmp_dir, "reqs_conda.txt")
+    out_pip = os.path.join(tmp_dir, "reqs_pip.txt")
+    with open(inp, "w", encoding="ascii") as fh:
+        fh.write(reqs)
+    pr.INP = inp
+    pr.OUT_CONDA = out_conda
+    pr.OUT_PIP = out_pip
     saved = {}
     try:
         for k, v in (extra_env or {}).items():
@@ -55,8 +65,10 @@ def _run(pr, tmp_path, reqs, extra_env=None):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-    conda = out_conda.read_text(encoding="ascii").splitlines()
-    pip = out_pip.read_text(encoding="ascii").splitlines()
+    with open(out_conda, encoding="ascii") as fh:
+        conda = fh.read().splitlines()
+    with open(out_pip, encoding="ascii") as fh:
+        pip = fh.read().splitlines()
     return conda, pip
 
 
@@ -64,60 +76,72 @@ def _has(lines, pkg):
     return any(pkg.lower() in ln.lower() for ln in lines)
 
 
-class TestPandas:
-    def test_adds_openpyxl(self, pr, tmp_path):
-        conda, pip = _run(pr, tmp_path, "pandas\n")
-        assert _has(conda, "openpyxl") and _has(pip, "openpyxl")
+class _Base(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="heuristics.")
 
-    def test_adds_xlsxwriter(self, pr, tmp_path):
-        conda, pip = _run(pr, tmp_path, "pandas\n")
-        assert _has(conda, "xlsxwriter") and _has(pip, "xlsxwriter")
-
-    def test_no_dup_openpyxl(self, pr, tmp_path):
-        _, pip = _run(pr, tmp_path, "pandas\nopenpyxl\n")
-        assert sum(1 for ln in pip if "openpyxl" in ln.lower()) == 1
+    def tearDown(self):
+        shutil.rmtree(self._tmp, ignore_errors=True)
 
 
-class TestRequests:
-    def test_adds_certifi(self, pr, tmp_path):
-        conda, pip = _run(pr, tmp_path, "requests\n")
-        assert _has(conda, "certifi") and _has(pip, "certifi")
+class TestPandas(_Base):
+    def test_adds_openpyxl(self):
+        conda, pip = _run(self._tmp, "pandas\n")
+        self.assertTrue(_has(conda, "openpyxl") and _has(pip, "openpyxl"))
+
+    def test_adds_xlsxwriter(self):
+        conda, pip = _run(self._tmp, "pandas\n")
+        self.assertTrue(_has(conda, "xlsxwriter") and _has(pip, "xlsxwriter"))
+
+    def test_no_dup_openpyxl(self):
+        _, pip = _run(self._tmp, "pandas\nopenpyxl\n")
+        self.assertEqual(sum(1 for ln in pip if "openpyxl" in ln.lower()), 1)
 
 
-class TestSQLAlchemy:
-    def test_adds_pymysql(self, pr, tmp_path):
-        conda, pip = _run(pr, tmp_path, "sqlalchemy\n")
-        assert _has(conda, "pymysql") and _has(pip, "pymysql")
+class TestRequests(_Base):
+    def test_adds_certifi(self):
+        conda, pip = _run(self._tmp, "requests\n")
+        self.assertTrue(_has(conda, "certifi") and _has(pip, "certifi"))
 
 
-class TestMatplotlib:
-    def test_adds_tk(self, pr, tmp_path):
-        # tk ships as a conda package; verify conda output only
-        conda, _ = _run(pr, tmp_path, "matplotlib\n")
-        assert _has(conda, "tk")
+class TestSQLAlchemy(_Base):
+    def test_adds_pymysql(self):
+        conda, pip = _run(self._tmp, "sqlalchemy\n")
+        self.assertTrue(_has(conda, "pymysql") and _has(pip, "pymysql"))
 
 
-class TestCrypto:
-    def test_cryptography_adds_cffi(self, pr, tmp_path):
-        conda, pip = _run(pr, tmp_path, "cryptography\n")
-        assert _has(conda, "cffi") and _has(pip, "cffi")
-
-    def test_pycryptodome_adds_cffi(self, pr, tmp_path):
-        conda, pip = _run(pr, tmp_path, "pycryptodome\n")
-        assert _has(conda, "cffi") and _has(pip, "cffi")
+class TestMatplotlib(_Base):
+    def test_adds_tk(self):
+        # tk ships as a conda system package; verify conda output only
+        conda, _ = _run(self._tmp, "matplotlib\n")
+        self.assertTrue(_has(conda, "tk"))
 
 
-class TestDisable:
-    def test_kill_switch(self, pr, tmp_path):
-        conda, pip = _run(pr, tmp_path, "pandas\nrequests\n",
+class TestCrypto(_Base):
+    def test_cryptography_adds_cffi(self):
+        conda, pip = _run(self._tmp, "cryptography\n")
+        self.assertTrue(_has(conda, "cffi") and _has(pip, "cffi"))
+
+    def test_pycryptodome_adds_cffi(self):
+        conda, pip = _run(self._tmp, "pycryptodome\n")
+        self.assertTrue(_has(conda, "cffi") and _has(pip, "cffi"))
+
+
+class TestDisable(_Base):
+    def test_kill_switch(self):
+        conda, pip = _run(self._tmp, "pandas\nrequests\n",
                           extra_env={"HP_DISABLE_HEURISTICS": "1"})
-        assert not _has(conda, "openpyxl")
-        assert not _has(pip, "certifi")
+        self.assertFalse(_has(conda, "openpyxl"))
+        self.assertFalse(_has(pip, "certifi"))
 
 
-class TestNoFalsePositives:
-    def test_unrelated_package(self, pr, tmp_path):
-        conda, pip = _run(pr, tmp_path, "flask\n")
+class TestNoFalsePositives(_Base):
+    def test_unrelated_package(self):
+        conda, pip = _run(self._tmp, "flask\n")
         for pkg in ("openpyxl", "certifi", "pymysql", "cffi"):
-            assert not _has(conda, pkg), f"unexpected {pkg} in conda"
-            assert not _has(pip, pkg), f"unexpected {pkg} in pip"
+            self.assertFalse(_has(conda, pkg), f"unexpected {pkg} in conda")
+            self.assertFalse(_has(pip, pkg), f"unexpected {pkg} in pip")
+
+
+if __name__ == "__main__":
+    unittest.main()

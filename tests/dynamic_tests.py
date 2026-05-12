@@ -159,6 +159,23 @@ def main():
     conda_lines = open(pr.OUT_CONDA, "r", encoding="ascii").read().splitlines()
     pip_lines = open(pr.OUT_PIP, "r", encoding="ascii").read().splitlines()
     record({"id":"pr.pandas.openpyxl","pass": any('openpyxl' in x for x in pip_lines) and any('openpyxl' in x for x in conda_lines),"conda":conda_lines,"pip":pip_lines})
+    record({"id":"pr.pandas.xlsxwriter","pass": any('xlsxwriter' in x for x in pip_lines) and any('xlsxwriter' in x for x in conda_lines),"conda":conda_lines,"pip":pip_lines})
+
+    for _pkg, _content, _target, _conda_only in [
+        ("requests",     "requests\n",     "certifi", False),
+        ("sqlalchemy",   "sqlalchemy\n",   "pymysql", False),
+        ("matplotlib",   "matplotlib\n",   "tk",      True),
+        ("cryptography", "cryptography\n", "cffi",    False),
+        ("pycryptodome", "pycryptodome\n", "cffi",    False),
+    ]:
+        with open(tmp, "w", encoding="ascii") as f:
+            f.write(_content)
+        pr.main()
+        conda_lines = open(pr.OUT_CONDA, "r", encoding="ascii").read().splitlines()
+        pip_lines   = open(pr.OUT_PIP,   "r", encoding="ascii").read().splitlines()
+        conda_ok = any(_target in x for x in conda_lines)
+        pip_ok   = _conda_only or any(_target in x for x in pip_lines)
+        record({"id":f"pr.{_pkg}.{_target}","pass":conda_ok and pip_ok,"conda":conda_lines,"pip":pip_lines})
 
     app_text = "import pyvisa\nimport serial\n"
     visa_hit = bool(re.search(r'(?m)^\s*(from\s+pyvisa|import\s+pyvisa|import\s+visa)\b', app_text))

@@ -252,6 +252,7 @@ self.exe.warnfix.install, self.exe.warnfix.pass, self.exe.warnfix.xfail,
 self.exe.warnfix.real, self.exe.warnfix.real_warnfix,
 self.exe.warnfix.real_warnfix_delayed,
 self.parse_warn.table.v6, self.parse_warn.pytest,
+self.heuristics.pytest,
 self.runtime.writeback,
 self.pandas.openpyxl.install, self.pandas.openpyxl.import,
 pyvisa.detect, pyvisa.nivisa.branch,
@@ -289,6 +290,17 @@ contract-uv-fail lane rows (HP_TEST_UV_FAIL=1, flag-triggered):
 
 ```
 self.contract.uv.fail
+```
+
+Dynamic-tests NDJSON (from dynamic_tests.py, selftest artifact `dynamic/` subdirectory):
+
+```
+pr.to_conda (x many), pr.pandas.openpyxl, pr.pandas.xlsxwriter,
+pr.requests.certifi, pr.sqlalchemy.pymysql, pr.matplotlib.tk,
+pr.cryptography.cffi, pr.pycryptodome.cffi,
+app.visa.detect, app.pyserial.detect,
+dp.pep440 (x many), dp.detect.runtime, dp.detect.pyproject,
+entry.select.single, entry.select.main_vs_app, entry.select.common_vs_generic
 ```
 
 Test-logs NDJSON (from harness/selftest, additional rows):

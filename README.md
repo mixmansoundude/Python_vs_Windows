@@ -178,11 +178,11 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 ### Heuristic Dependency Augmentation (Bootstrap-Time)
 
 - REQ-005.8 -- Heuristic extras: Augment dependencies based on known ecosystem gaps that are not already included.
-  - REQ-005.8.1 -- pandas -> openpyxl (+ xlsxwriter): Ensures Excel backends are available. TESTED: `tests/selfapps_pandas_excel.ps1`
-  - REQ-005.8.2 -- requests -> certifi: Ensures SSL certificate bundle is present. STATUS: Not explicitly tested
-  - REQ-005.8.3 -- sqlalchemy -> pymysql: Provides common MySQL driver. STATUS: Not explicitly tested
-  - REQ-005.8.4 -- matplotlib -> tk: Enables common GUI backend support. STATUS: Not explicitly tested
-  - REQ-005.8.5 -- cryptography / pycryptodome -> cffi: Supports compiled crypto backends. STATUS: Not explicitly tested
+  - REQ-005.8.1 -- pandas -> openpyxl (+ xlsxwriter): Ensures Excel backends are available. TESTED: `tests/selfapps_pandas_excel.ps1`, `tests/test_heuristics.py`, `tests/dynamic_tests.py`
+  - REQ-005.8.2 -- requests -> certifi: Ensures SSL certificate bundle is present. TESTED: `tests/test_heuristics.py`, `tests/dynamic_tests.py`
+  - REQ-005.8.3 -- sqlalchemy -> pymysql: Provides common MySQL driver. TESTED: `tests/test_heuristics.py`, `tests/dynamic_tests.py`
+  - REQ-005.8.4 -- matplotlib -> tk: Enables common GUI backend support. TESTED: `tests/test_heuristics.py`, `tests/dynamic_tests.py`
+  - REQ-005.8.5 -- cryptography / pycryptodome -> cffi: Supports compiled crypto backends. TESTED: `tests/test_heuristics.py`, `tests/dynamic_tests.py`
   - Logging Contract: Heuristics must emit `[HEURISTIC] <source->target>` -- required for test validation.
 
 ---
