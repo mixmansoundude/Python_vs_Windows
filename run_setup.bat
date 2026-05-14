@@ -472,6 +472,7 @@ if not exist "%HP_PY%" (
   set "HP_ENV_STATE_RESULT=stale"
   goto :env_state_check_done
 )
+call :log "[BOOT] REQ-009: Searching for Python provider. Found Conda (Portable) [fast path]."
 call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
 if not errorlevel 1 (
   "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
