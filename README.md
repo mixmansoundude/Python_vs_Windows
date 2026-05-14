@@ -49,9 +49,20 @@ This repository serves as a proof of concept of this new approach.
   - `No Python files detected; skipping environment bootstrap.`
 - **Exactly 1 Python file**: run that file directly.
 - **2 or more Python files**: prefer a clear entry by:
+  0) Manual override (`%1` argument, e.g. drag-and-drop) -- if the file is co-located with the bootstrapper (REQ-011), it is used directly and skips all auto-detection.
   1) Common names in order: `main.py` > `app.py` > `run.py` > `cli.py`
   2) Otherwise, any file containing `if __name__ == "__main__":`
   - If no clear entry is found after those checks, the bootstrapper chooses deterministically and logs the choice.
+
+**Entry selection criteria (priority order):**
+
+| Criterion | Priority | REQ |
+|-----------|----------|-----|
+| Manual override `%1` (co-located) | 0 (highest) | REQ-002, REQ-011 |
+| `main.py` | 1 | REQ-002 |
+| `app.py` | 2 | REQ-002 |
+| `run.py` / `cli.py` | 3 | REQ-002 |
+| File with `__main__` guard | 4 | REQ-002 |
 
 ---
 
@@ -91,12 +102,34 @@ This repository serves as a proof of concept of this new approach.
     healthy.
   - The fast path (reusing `dist/<envname>.exe` when non-helper sources are unchanged) sits on top of either provider,
     whether the env originated from Conda or venv.
+- [REQ-009] Environment discovery hierarchy (priority order):
+  1. **UV** -- if `uv.exe` is available (cached or downloadable), create a `.uv_env` virtual environment using UV for fast dependency installs.
+  2. **Conda (Portable / Miniconda)** -- install or reuse Miniconda at `%PUBLIC%\Documents\Miniconda3` (non-admin) and create a named conda env.
+  3. **Local venv** (environment-creation fallback) -- if Conda is unavailable or fails, create a `.venv` virtual environment using whatever `python` / `py` is found on PATH (`python -m venv`). Still isolated, but depends on a pre-existing Python installation to create the env.
+  4. **System Python** (final degraded execution mode) -- if no isolated environment can be created, run the entry point directly under the first `python` / `py` on PATH with no env isolation. Dependencies may conflict with system packages.
+
+  **Provider selection criteria (priority order):**
+
+  | Provider | Priority | Notes |
+  |----------|----------|-------|
+  | UV (`.uv_env`) | 1st | REQ-009 |
+  | Conda / Miniconda | 2nd | REQ-009 |
+  | Local venv (`.venv`) | 3rd | REQ-009; env creation fallback |
+  | System Python | 4th | REQ-009; degraded execution mode, no isolation |
+
 - [REQ-006] Channels policy (determinism and legal-friction avoidance):
   - Before any updates or installs, force **community conda-forge only**:
     ```
     conda config --env --add channels conda-forge
     ```
   - Always install with `--override-channels -c conda-forge`.
+- [REQ-010] Session isolation (leak-proof environment):
+  - At script start, `PYTHONPATH` and `PYTHONHOME` are explicitly cleared so the host shell cannot inject external site-packages into the bootstrapped environment.
+  - Portable provider directories (UV `.uv_env\Scripts`, Conda env `\Scripts`) are **prepended** to `PATH` to shadow any global Python installation.
+- [REQ-011] Directory integrity for explicit file arguments:
+  - When a `.py` file is passed as `%1` (drag-and-drop or CLI argument), its parent directory (`%~dp1`) must equal the batch file directory (`%~dp0`). Both expand to a fully-qualified drive+path with trailing backslash; comparison is case-insensitive.
+  - On mismatch: `[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder for environment cleanliness.` -- script aborts (exit 1).
+  - This prevents accidental cross-project contamination when users drag a file from a different project folder onto `run_setup.bat`.
 
 ---
 

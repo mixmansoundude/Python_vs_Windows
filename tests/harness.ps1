@@ -264,6 +264,10 @@ $hasHostPS = ($AllText -match 'Host PowerShell:')
 Write-Result "host.env.ps" "Host PowerShell diagnostic print present" $hasHostPS @{}
 $hasHostPython = ($AllText -match 'Host Python:')
 Write-Result "host.env.python" "Host Python diagnostic print present" $hasHostPython @{}
+$hasReq010 = ($AllText -match 'set\s+"PYTHONPATH="') -and ($AllText -match 'set\s+"PYTHONHOME="')
+Write-Result "batch.req010.isolation" "REQ-010: PYTHONPATH and PYTHONHOME cleared at script start" $hasReq010 @{}
+$hasReq011 = ($AllText -match 'REQ-011') -and ($AllText -match '%~dp1')
+Write-Result "batch.req011.dircheck" "REQ-011: directory integrity check present in run_setup.bat" $hasReq011 @{}
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

@@ -69,6 +69,9 @@ if /I not "%HP_SCRIPT_ROOT:OneDrive=%"=="%HP_SCRIPT_ROOT%" (
 )
 if exist "%STATUS_FILE%" del "%STATUS_FILE%"
 set "HP_BOOTSTRAP_STATE=ok"
+rem REQ-010: nullify host-system Python path variables to prevent library interference
+set "PYTHONPATH="
+set "PYTHONHOME="
 set "HP_ENV_MODE=conda"
 set "HP_ENV_READY="
 set "HP_SKIP_PIPREQS=%HP_SKIP_PIPREQS%"
@@ -520,6 +523,10 @@ set "PEP723_BLOCK_FOUND="
 set "PEP723_REQ=~requirements.pep723.txt"
 if exist "%PEP723_REQ%" del "%PEP723_REQ%" >nul 2>&1
 call :determine_entry "%~1"
+if errorlevel 11 (
+  call :write_status "error" 1 %PYCOUNT%
+  exit /b 1
+)
 if errorlevel 1 call :die "[ERROR] Could not determine entry point"
 set "HP_PYPROJ_REQ=~requirements.pyproject.txt"
 if exist "%HP_PYPROJ_REQ%" del "%HP_PYPROJ_REQ%" >nul 2>&1
@@ -1104,6 +1111,10 @@ goto :after_env_bootstrap
 :after_env_bootstrap
 if defined HP_CI_SKIP_ENV goto :after_env_skip
 call :determine_entry "%~1"
+if errorlevel 11 (
+  call :write_status "error" 1 %PYCOUNT%
+  exit /b 1
+)
 if errorlevel 1 call :die "[ERROR] Could not determine entry point"
 if "%HP_ENTRY%"=="" (
   call :log "[INFO] No entry script detected; skipping PyInstaller packaging."
@@ -1434,14 +1445,22 @@ exit /b %errorlevel%
 set "HP_ENTRY="
 set "HP_ENTRY_CMD="
 set "HP_ENTRY_ARGS="
-if not "%~1"=="" if exist "%~1" (
-  set "MAIN_FILE=%~1"
-  set "HP_ENTRY=%MAIN_FILE%"
-  if not defined HP_DRAG_MSG_EMITTED (
-    echo *** Using drag-and-drop file: %MAIN_FILE%
-    set "HP_DRAG_MSG_EMITTED=1"
+if not "%~1"=="" (
+  rem REQ-011: %~dp1 = caller's argument directory; %~dp0 = batch script directory (both include trailing \)
+  if /i not "%~dp1"=="%~dp0" (
+    echo [ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder for environment cleanliness.
+    call :log "[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder."
+    exit /b 11
   )
-  exit /b 0
+  if exist "%~1" (
+    set "MAIN_FILE=%~1"
+    set "HP_ENTRY=%MAIN_FILE%"
+    if not defined HP_DRAG_MSG_EMITTED (
+      echo *** Using drag-and-drop file: %MAIN_FILE%
+      set "HP_DRAG_MSG_EMITTED=1"
+    )
+    exit /b 0
+  )
 )
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
 if errorlevel 1 exit /b 1
