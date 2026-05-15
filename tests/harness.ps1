@@ -268,7 +268,7 @@ $hasReq010 = ($AllText -match 'set\s+"PYTHONPATH="') -and ($AllText -match 'set\
 Write-Result "batch.req010.isolation" "REQ-010: PYTHONPATH and PYTHONHOME cleared at script start" $hasReq010 @{}
 $hasReq011 = ($AllText -match 'REQ-011') -and ($AllText -match '%~dp1')
 Write-Result "batch.req011.dircheck" "REQ-011: directory integrity check present in run_setup.bat" $hasReq011 @{}
-$req009Patterns = @('\[BOOT\] REQ-009.*Found UV', '\[BOOT\] REQ-009.*Found Conda', '\[BOOT\] REQ-009.*Local venv', '\[BOOT\] REQ-009.*System Python')
+$req009Patterns = @('\[BOOT\] REQ-009.*Selected.*UV', '\[BOOT\] REQ-009.*Selected.*Conda', '\[BOOT\] REQ-009.*Selected.*Local venv', '\[BOOT\] REQ-009.*Selected.*System Python')
 $hasReq009 = ($req009Patterns | Where-Object { -not ($AllText -match $_) }).Count -eq 0
 Write-Result "batch.req009.provider_logs" "REQ-009: all four provider log lines present in run_setup.bat" $hasReq009 @{}
 $hasReq002Entry = $AllText -match '\[BOOT\] REQ-002.*Entry selected'

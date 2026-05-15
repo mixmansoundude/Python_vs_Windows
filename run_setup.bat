@@ -396,7 +396,7 @@ set "ENV_PATH=%HP_UV_ENV_PATH%"
 call :log "[INFO] uv: venv created at .uv_env"
 :uv_venv_ready
 call :log "[INFO] HP_ENV_MODE=uv"
-call :log "[BOOT] REQ-009: Searching for Python provider. Found UV."
+call :log "[BOOT] REQ-009: Selected Python provider: UV."
 call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
 if not errorlevel 1 (
   "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
@@ -418,7 +418,7 @@ call :log "[WARN] UV_FALLBACK reason=venv_create_failed"
 set "HP_UV_EXE="
 :try_conda_create
 call :log "[INFO] HP_ENV_MODE=conda"
-call :log "[BOOT] REQ-009: Searching for Python provider. Found Conda (Portable)."
+call :log "[BOOT] REQ-009: Selected Python provider: Conda (Portable)."
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
@@ -472,7 +472,7 @@ if not exist "%HP_PY%" (
   set "HP_ENV_STATE_RESULT=stale"
   goto :env_state_check_done
 )
-call :log "[BOOT] REQ-009: Searching for Python provider. Found Conda (Portable) [fast path]."
+call :log "[BOOT] REQ-009: Selected Python provider: Conda (Portable) [fast path]."
 call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
 if not errorlevel 1 (
   "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
@@ -1238,7 +1238,7 @@ set "HP_ENV_MODE=venv"
 set "HP_BOOTSTRAP_STATE=venv_env"
 set "HP_SKIP_PIPREQS="
 call :log "[INFO] venv fallback ready: %HP_PY%"
-call :log "[BOOT] REQ-009: Searching for Python provider. Found Local venv (fallback)."
+call :log "[BOOT] REQ-009: Selected Python provider: Local venv (fallback)."
 exit /b 0
 
 :try_system_fallback
@@ -1257,7 +1257,7 @@ set "HP_ENV_MODE=system"
 set "HP_BOOTSTRAP_STATE=degraded_env"
 set "HP_SKIP_PIPREQS=1"
 call :log "[INFO] System fallback using %HP_PY%"
-call :log "[BOOT] REQ-009: Searching for Python provider. Found System Python (degraded)."
+call :log "[BOOT] REQ-009: Selected Python provider: System Python (degraded)."
 exit /b 0
 
 :resolve_system_python
