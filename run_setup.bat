@@ -418,7 +418,6 @@ call :log "[WARN] UV_FALLBACK reason=venv_create_failed"
 set "HP_UV_EXE="
 :try_conda_create
 call :log "[INFO] HP_ENV_MODE=conda"
-call :log "[BOOT] REQ-009: Selected Python provider: Conda (Portable)."
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
@@ -461,6 +460,7 @@ if errorlevel 1 call :die "[ERROR] Could not stage ~condarc"
 if not exist "%ENV_PATH%" mkdir "%ENV_PATH%"
 copy /y "~condarc" "%ENV_PATH%\.condarc" >> "%LOG%" 2>&1
 if errorlevel 1 call :die "[ERROR] Could not write %ENV_PATH%\.condarc"
+call :log "[BOOT] REQ-009: Selected Python provider: Conda (Portable)."
 goto :after_env_mode_selection
 
 :env_state_fast_path
