@@ -1039,6 +1039,7 @@ jobs:
             tests/~test-results.ndjson
             tests/extracted/**
           if-no-files-found: ignore
+          include-hidden-files: true
           retention-days: 14
 
       # Professional note: cache/save runs separately so failed bootstrap attempts do not persist a partial Miniconda tree.
