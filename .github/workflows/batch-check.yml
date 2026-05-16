@@ -63,9 +63,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: C:\Users\Public\Documents\Miniconda3
-          key: win-${{ runner.os }}-py311-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
+          key: win-${{ runner.os }}-py311b-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
           restore-keys: |
-            win-${{ runner.os }}-py311-conda-
+            win-${{ runner.os }}-py311b-conda-
 
       # probe fires in real, conda-full, uv, and contract-uv* lanes; cache lane skips it intentionally
       - name: Enable Miniconda probe (real/conda-full/uv/contract-uv mode)
@@ -1050,7 +1050,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: C:\Users\Public\Documents\Miniconda3
-          key: win-${{ runner.os }}-py311-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
+          key: win-${{ runner.os }}-py311b-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
 
       - name: Summarize bootstrap result
         if: always()
