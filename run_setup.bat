@@ -41,6 +41,7 @@ set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
+call :merge_git_config
 rem --- PVW_ super-user overrides (inherit from calling terminal; logged before detection runs) ---
 rem derived requirement: PVW_ variables let a super-user pre-set values to bypass auto-detection.
 rem Single-line if form avoids parse-time expansion issues in block-form if-statements when a
@@ -1956,3 +1957,37 @@ if not errorlevel 1 (
 )
 type nul > "%TEMP%\~conda.update.done" 2>nul
 goto :eof
+
+:merge_git_config
+rem REQ-015: idempotently append standard .gitignore and .gitattributes entries.
+rem Uses findstr errorlevel: 0=found (skip), 1=not found, 2=file missing; both 1 and 2 trigger append.
+set "HP_GI_SIG=# Automated Python Bootstrapper Standard Ignores"
+set "HP_GA_SIG=# Automated Python Bootstrapper Attributes"
+findstr /C:"%HP_GI_SIG%" ".gitignore" >nul 2>&1
+if not errorlevel 1 goto :mgc_gi_done
+call :log "[INFO] REQ-015: Appending standard ignores to .gitignore."
+>> ".gitignore" echo.
+>> ".gitignore" echo %HP_GI_SIG%
+>> ".gitignore" echo .*_env/
+>> ".gitignore" echo .venv/
+>> ".gitignore" echo .uv/
+>> ".gitignore" echo .cache/
+>> ".gitignore" echo .conda/
+>> ".gitignore" echo dist/
+>> ".gitignore" echo build/
+>> ".gitignore" echo *~
+>> ".gitignore" echo ~$*
+>> ".gitignore" echo ~setup.log
+:mgc_gi_done
+findstr /C:"%HP_GA_SIG%" ".gitattributes" >nul 2>&1
+if not errorlevel 1 goto :mgc_ga_done
+call :log "[INFO] REQ-015: Appending standard attributes to .gitattributes."
+>> ".gitattributes" echo.
+>> ".gitattributes" echo %HP_GA_SIG%
+>> ".gitattributes" echo *.bat eol=crlf
+>> ".gitattributes" echo *.cmd eol=crlf
+>> ".gitattributes" echo *.exe binary
+:mgc_ga_done
+set "HP_GI_SIG="
+set "HP_GA_SIG="
+exit /b 0

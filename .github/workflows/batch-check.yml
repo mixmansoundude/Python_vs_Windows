@@ -388,6 +388,11 @@ jobs:
         run: |
           & tests\selfapps_pyproject_precedence.ps1
 
+      - name: "Self-test: UX hardening (git config merge)"
+        shell: pwsh
+        run: |
+          & tests\selfapps_ux_hardening.ps1
+
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
@@ -1006,6 +1011,12 @@ jobs:
             tests\~selftest_pep723_mal\~setup.log
             tests/~selftest_pep723_mal/~bootstrap.status.json
             tests\~selftest_pep723_mal\~bootstrap.status.json
+            tests/~selftest_gitconfig/~gitconfig_run1.log
+            tests\~selftest_gitconfig\~gitconfig_run1.log
+            tests/~selftest_gitconfig/~gitconfig_run2.log
+            tests\~selftest_gitconfig\~gitconfig_run2.log
+            tests/~selftest_gitconfig/~setup.log
+            tests\~selftest_gitconfig\~setup.log
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
