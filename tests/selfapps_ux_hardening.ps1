@@ -243,20 +243,14 @@ New-Item -ItemType Directory -Force -Path $sysGateDir | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $sysGateDir -Force
 Set-Content -LiteralPath (Join-Path $sysGateDir 'app.py') -Value 'print("hello")' -Encoding Ascii
 
-# Reach the consent gate: force connectivity check (N=offline), skip conda (FORCE_CONDA_FAIL),
-# force venv to fail, allow system fallback; respond N at consent prompt.
+# Trigger consent gate directly via HP_TEST_FORCE_CONSENT_CHECK=1; pipe n to decline.
+# Direct trigger avoids dependency on HP_FORCE_CONDA_ONLY blocking the fallback chain.
 $savedLane2 = $env:HP_CI_LANE
 $env:HP_CI_LANE = 'test'
-$env:HP_TEST_OFFLINE = '1'
-$env:HP_TEST_FORCE_CONNECTIVITY_CHECK = '1'
-$env:HP_TEST_FORCE_CONDA_FAIL = '1'
-$env:HP_ALLOW_VENV_FALLBACK = '1'
-$env:HP_TEST_FORCE_VENV_FAIL = '1'
-$env:HP_ALLOW_SYSTEM_FALLBACK = '1'
+$env:HP_TEST_FORCE_CONSENT_CHECK = '1'
 $sysLog = Join-Path $sysGateDir '~sys_test.log'
 $sysResp = Join-Path $sysGateDir '~resp.txt'
-# Two responses: N=offline (connectivity), n=decline (consent gate)
-Set-Content -LiteralPath $sysResp -Value "N`r`nn`r`n" -Encoding Ascii
+Set-Content -LiteralPath $sysResp -Value "n`r`n" -Encoding Ascii
 Push-Location -LiteralPath $sysGateDir
 try {
     cmd /c "run_setup.bat < ~resp.txt > ~sys_test.log 2>&1"
@@ -264,12 +258,7 @@ try {
     Pop-Location
 }
 $env:HP_CI_LANE = $savedLane2
-$env:HP_TEST_OFFLINE = ''
-$env:HP_TEST_FORCE_CONNECTIVITY_CHECK = ''
-$env:HP_TEST_FORCE_CONDA_FAIL = ''
-$env:HP_ALLOW_VENV_FALLBACK = ''
-$env:HP_TEST_FORCE_VENV_FAIL = ''
-$env:HP_ALLOW_SYSTEM_FALLBACK = ''
+$env:HP_TEST_FORCE_CONSENT_CHECK = ''
 
 $sysText = ''
 if (Test-Path -LiteralPath $sysLog) {

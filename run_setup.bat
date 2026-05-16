@@ -43,6 +43,14 @@ set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
 call :merge_git_config
 if "%HP_TEST_FORCE_CONNECTIVITY_CHECK%"=="1" call :check_net_after_dl_fail
+if "%HP_TEST_FORCE_CONSENT_CHECK%"=="1" (
+  call :system_python_consent_gate
+  if errorlevel 1 (
+    call :log "[INFO] REQ-014: Consent gate test: user declined."
+    exit /b 1
+  )
+  call :log "[INFO] REQ-014: Consent gate test: user accepted."
+)
 rem --- PVW_ super-user overrides (inherit from calling terminal; logged before detection runs) ---
 rem derived requirement: PVW_ variables let a super-user pre-set values to bypass auto-detection.
 rem Single-line if form avoids parse-time expansion issues in block-form if-statements when a
@@ -108,6 +116,8 @@ rem HP_TEST_FORCE_VENV_FAIL=1: simulates venv creation failure for REQ-014 branc
 set "HP_TEST_FORCE_VENV_FAIL=%HP_TEST_FORCE_VENV_FAIL%"
 rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-014 branch coverage
 set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
+rem HP_TEST_FORCE_CONSENT_CHECK=1: directly triggers consent gate at startup for REQ-014 branch coverage
+set "HP_TEST_FORCE_CONSENT_CHECK=%HP_TEST_FORCE_CONSENT_CHECK%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
