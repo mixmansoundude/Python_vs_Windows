@@ -42,6 +42,7 @@ set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
 call :merge_git_config
+if "%HP_TEST_FORCE_CONNECTIVITY_CHECK%"=="1" call :check_net_after_dl_fail
 rem --- PVW_ super-user overrides (inherit from calling terminal; logged before detection runs) ---
 rem derived requirement: PVW_ variables let a super-user pre-set values to bypass auto-detection.
 rem Single-line if form avoids parse-time expansion issues in block-form if-statements when a
@@ -101,6 +102,12 @@ rem HP_TEST_OFFLINE=1: simulates ping failure for REQ-013 branch coverage (CI te
 set "HP_TEST_OFFLINE=%HP_TEST_OFFLINE%"
 rem HP_OFFLINE_MODE is set by :check_net_after_dl_fail when user declines or no internet
 set "HP_OFFLINE_MODE=%HP_OFFLINE_MODE%"
+rem HP_TEST_FORCE_CONNECTIVITY_CHECK=1: triggers connectivity gate at startup for CI coverage
+set "HP_TEST_FORCE_CONNECTIVITY_CHECK=%HP_TEST_FORCE_CONNECTIVITY_CHECK%"
+rem HP_TEST_FORCE_VENV_FAIL=1: simulates venv creation failure for REQ-014 branch coverage
+set "HP_TEST_FORCE_VENV_FAIL=%HP_TEST_FORCE_VENV_FAIL%"
+rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-014 branch coverage
+set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -432,6 +439,7 @@ call :log "[WARN] UV_FALLBACK reason=venv_create_failed"
 set "HP_UV_EXE="
 :try_conda_create
 call :log "[INFO] HP_ENV_MODE=conda"
+if "%HP_TEST_FORCE_CONDA_FAIL%"=="1" goto :hp_test_conda_fail
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
@@ -1243,6 +1251,10 @@ exit /b 0
 
 :try_venv_fallback
 call :log "[WARN] Attempting venv fallback..."
+if "%HP_TEST_FORCE_VENV_FAIL%"=="1" (
+  call :log "[TEST] HP_TEST_FORCE_VENV_FAIL: simulating venv creation failure."
+  exit /b 1
+)
 call :resolve_system_python
 if errorlevel 1 (
   call :log "[WARN] venv fallback: system Python not found."
@@ -1280,6 +1292,12 @@ if errorlevel 1 (
 set "HP_PY=%HP_SYS_EXE%"
 if not exist "%HP_PY%" (
   call :log "[WARN] system fallback: resolved interpreter path missing."
+  exit /b 1
+)
+rem REQ-014: consent gate before using global system Python.
+call :system_python_consent_gate
+if errorlevel 1 (
+  call :log "[INFO] REQ-014: System Python fallback aborted: consent not granted."
   exit /b 1
 )
 set "HP_ENV_MODE=system"
@@ -2085,3 +2103,30 @@ if /I "%HP_CONN_CHOICE:~0,1%"=="y" (
 call :log "[INFO] REQ-013: Connectivity prompt: user chose offline (N)."
 set "HP_OFFLINE_MODE=1"
 exit /b 1
+
+:system_python_consent_gate
+rem REQ-014: halt and require explicit consent before using global system Python.
+echo.
+echo *** WARNING: System Python Execution ***
+echo *** Using global system Python may pollute shared packages. ***
+echo.
+set "HP_SYSCON_CHOICE="
+set /p HP_SYSCON_CHOICE="Proceed with System Python? (Global pollution risk) [y/n]: "
+if "%HP_SYSCON_CHOICE:~0,1%"=="" (
+  call :log "[INFO] REQ-014: System Python consent: empty input; declining."
+  exit /b 1
+)
+if /I "%HP_SYSCON_CHOICE:~0,1%"=="y" (
+  call :log "[INFO] REQ-014: System Python consent: user accepted."
+  exit /b 0
+)
+call :log "[INFO] REQ-014: System Python consent: user declined."
+exit /b 1
+
+:hp_test_conda_fail
+call :log "[TEST] HP_TEST_FORCE_CONDA_FAIL: simulating conda env creation failure."
+set "HP_ENV_READY="
+call :handle_conda_failure "[TEST] conda env create forced to fail."
+if defined HP_ENV_READY goto :after_env_mode_selection
+call :die "[ERROR] conda env create failed."
+goto :after_env_mode_selection

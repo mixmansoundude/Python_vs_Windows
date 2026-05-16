@@ -1,5 +1,5 @@
 # ASCII only
-# selfapps_ux_hardening.ps1 - UX Hardening tests: REQ-015 (git config), REQ-016 (postflight), REQ-013 (connectivity).
+# selfapps_ux_hardening.ps1 - UX Hardening tests: REQ-015 (git config), REQ-016 (postflight), REQ-013 (connectivity), REQ-014 (system gate).
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -50,6 +50,15 @@ if (-not $IsWindows) {
             req     = 'REQ-013'
             pass    = $true
             desc    = 'Connectivity guard test skipped on non-Windows host'
+            details = $skipDetails
+        })
+    }
+    foreach ($id in @('self.ux.system.gate.n', 'self.ux.system.gate.prompt')) {
+        Write-NdjsonRow ([ordered]@{
+            id      = $id
+            req     = 'REQ-014'
+            pass    = $true
+            desc    = 'System Python consent gate test skipped on non-Windows host'
             details = $skipDetails
         })
     }
@@ -191,8 +200,7 @@ Set-Content -LiteralPath (Join-Path $connDir 'app.py') -Value 'print("hello")' -
 $savedLane = $env:HP_CI_LANE
 $env:HP_CI_LANE = 'test'
 $env:HP_TEST_OFFLINE = '1'
-$env:HP_TEST_CONDA_DL_FALLBACK = '1'
-$env:HP_TEST_UV_DL_FALLBACK = '1'
+$env:HP_TEST_FORCE_CONNECTIVITY_CHECK = '1'
 $connLog = Join-Path $connDir '~conn_test.log'
 $respFile = Join-Path $connDir '~resp.txt'
 Set-Content -LiteralPath $respFile -Value "N`r`n" -Encoding Ascii
@@ -204,8 +212,7 @@ try {
 }
 $env:HP_CI_LANE = $savedLane
 $env:HP_TEST_OFFLINE = ''
-$env:HP_TEST_CONDA_DL_FALLBACK = ''
-$env:HP_TEST_UV_DL_FALLBACK = ''
+$env:HP_TEST_FORCE_CONNECTIVITY_CHECK = ''
 
 $connText = ''
 if (Test-Path -LiteralPath $connLog) {
@@ -230,6 +237,63 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ promptFound = $connPromptFound }
 })
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound
+# ===== REQ-014: System Python Consent Gate =====
+$sysGateDir = Join-Path $here '~selftest_sysgate'
+New-Item -ItemType Directory -Force -Path $sysGateDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $sysGateDir -Force
+Set-Content -LiteralPath (Join-Path $sysGateDir 'app.py') -Value 'print("hello")' -Encoding Ascii
+
+# Reach the consent gate: force connectivity check (N=offline), skip conda (FORCE_CONDA_FAIL),
+# force venv to fail, allow system fallback; respond N at consent prompt.
+$savedLane2 = $env:HP_CI_LANE
+$env:HP_CI_LANE = 'test'
+$env:HP_TEST_OFFLINE = '1'
+$env:HP_TEST_FORCE_CONNECTIVITY_CHECK = '1'
+$env:HP_TEST_FORCE_CONDA_FAIL = '1'
+$env:HP_ALLOW_VENV_FALLBACK = '1'
+$env:HP_TEST_FORCE_VENV_FAIL = '1'
+$env:HP_ALLOW_SYSTEM_FALLBACK = '1'
+$sysLog = Join-Path $sysGateDir '~sys_test.log'
+$sysResp = Join-Path $sysGateDir '~resp.txt'
+# Two responses: N=offline (connectivity), n=decline (consent gate)
+Set-Content -LiteralPath $sysResp -Value "N`r`nn`r`n" -Encoding Ascii
+Push-Location -LiteralPath $sysGateDir
+try {
+    cmd /c "run_setup.bat < ~resp.txt > ~sys_test.log 2>&1"
+} finally {
+    Pop-Location
+}
+$env:HP_CI_LANE = $savedLane2
+$env:HP_TEST_OFFLINE = ''
+$env:HP_TEST_FORCE_CONNECTIVITY_CHECK = ''
+$env:HP_TEST_FORCE_CONDA_FAIL = ''
+$env:HP_ALLOW_VENV_FALLBACK = ''
+$env:HP_TEST_FORCE_VENV_FAIL = ''
+$env:HP_ALLOW_SYSTEM_FALLBACK = ''
+
+$sysText = ''
+if (Test-Path -LiteralPath $sysLog) {
+    $sysText = Get-Content -LiteralPath $sysLog -Raw -Encoding Ascii
+}
+$sysPromptStr = 'Proceed with System Python? (Global pollution risk) [y/n]: '
+$sysPromptFound = $sysText -match [regex]::Escape($sysPromptStr)
+$sysDeclineLog = $sysText -match [regex]::Escape('[INFO] REQ-014: System Python consent: user declined.')
+
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.system.gate.n'
+    req     = 'REQ-014'
+    pass    = ($sysPromptFound -and $sysDeclineLog)
+    desc    = 'System Python consent gate: N response declines'
+    details = [ordered]@{ promptFound = $sysPromptFound; declineLogFound = $sysDeclineLog }
+})
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.system.gate.prompt'
+    req     = 'REQ-014'
+    pass    = $sysPromptFound
+    desc    = 'System Python consent gate: exact prompt string appears in output'
+    details = [ordered]@{ promptFound = $sysPromptFound }
+})
+
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound
 if (-not $allPass) { exit 1 }
 exit 0
