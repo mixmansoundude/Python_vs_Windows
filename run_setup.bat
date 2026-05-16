@@ -2036,8 +2036,7 @@ call :log "[INFO] REQ-015: Appending standard ignores to .gitignore."
 >> ".gitignore" echo dist/
 >> ".gitignore" echo build/
 >> ".gitignore" echo *~
->> ".gitignore" echo ~$*
->> ".gitignore" echo ~setup.log
+>> ".gitignore" echo ~*
 :mgc_gi_done
 findstr /C:"%HP_GA_SIG%" ".gitattributes" >nul 2>&1
 if not errorlevel 1 goto :mgc_ga_done
