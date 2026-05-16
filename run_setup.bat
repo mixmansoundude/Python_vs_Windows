@@ -1144,6 +1144,14 @@ if not "%DEP_SOURCE%"=="unknown" (
   echo dependency_source=%DEP_SOURCE%> "dependency_source.txt"
   echo *** [INFO] Dependency source logged to dependency_source.txt
 )
+rem REQ-016: show post-flight briefing when a full EXE build completed.
+if not defined HP_FASTPATH_USED if exist "dist\%ENVNAME%.exe" (
+  call :print_postflight_briefing
+)
+rem REQ-016: retain terminal window on success so user can read the output.
+if not defined HP_CI_LANE (
+  pause
+)
 exit /b 0
 :count_python
 set "NAME=%~1"
@@ -1883,6 +1891,10 @@ if "%RC%"=="" set "RC=1"
 echo %date% %time% %MSG%
 >> "%LOG%" echo [%date% %time%] %MSG%
 call :write_status "error" %RC% %PYCOUNT%
+rem REQ-016: retain terminal window on error so user can read the message.
+if not defined HP_CI_LANE (
+  pause
+)
 exit /b %RC%
 :rotate_log
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -1990,4 +2002,26 @@ call :log "[INFO] REQ-015: Appending standard attributes to .gitattributes."
 :mgc_ga_done
 set "HP_GI_SIG="
 set "HP_GA_SIG="
+exit /b 0
+
+:print_postflight_briefing
+rem REQ-016: print a scannable summary panel after a successful full EXE build.
+echo.
+echo ============================================================
+echo  SETUP COMPLETE
+echo ============================================================
+echo  Your standalone application is ready:
+echo    dist\%ENVNAME%.exe
+echo.
+echo  KEEP these files with your project:
+echo    requirements.txt  -- packages your app depends on
+echo    runtime.txt       -- Python version pin
+echo.
+echo  SAFE TO DELETE to reclaim disk space:
+echo    .*_env\ folders   -- environment directories
+echo    ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+echo    build\            -- PyInstaller build cache
+echo ============================================================
+echo.
+call :log "[INFO] REQ-016: Post-flight briefing printed."
 exit /b 0

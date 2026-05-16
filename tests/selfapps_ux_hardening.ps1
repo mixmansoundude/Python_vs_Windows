@@ -1,6 +1,5 @@
 # ASCII only
-# selfapps_ux_hardening.ps1 - UX Hardening tests: REQ-015 (git config merge).
-# Parts for REQ-013, REQ-014, REQ-016 will be added in subsequent commits.
+# selfapps_ux_hardening.ps1 - UX Hardening tests: REQ-015 (git config merge), REQ-016 (postflight).
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -38,6 +37,13 @@ if (-not $IsWindows) {
             details = $skipDetails
         })
     }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.ux.postflight'
+        req     = 'REQ-016'
+        pass    = $true
+        desc    = 'Post-flight briefing test skipped on non-Windows host'
+        details = $skipDetails
+    })
     exit 0
 }
 
@@ -139,6 +145,31 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ sigCount = $sigCount2 }
 })
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem
+# ===== REQ-016: Post-flight briefing =====
+$envsmokeDir = Join-Path $here '~envsmoke'
+$envsmokeLog = Join-Path $envsmokeDir '~setup.log'
+$postflightSig = '[INFO] REQ-016: Post-flight briefing printed.'
+$pfFound = $true
+if (-not (Test-Path -LiteralPath $envsmokeLog)) {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.ux.postflight'
+        req     = 'REQ-016'
+        pass    = $true
+        desc    = 'Post-flight briefing log line in envsmoke setup log'
+        details = [ordered]@{ skip = $true; reason = 'envsmoke-log-not-found' }
+    })
+} else {
+    $envsmokeText = Get-Content -LiteralPath $envsmokeLog -Raw -Encoding Ascii
+    $pfFound = $envsmokeText -match [regex]::Escape($postflightSig)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.ux.postflight'
+        req     = 'REQ-016'
+        pass    = $pfFound
+        desc    = 'Post-flight briefing log line in envsmoke setup log'
+        details = [ordered]@{ sigFound = $pfFound }
+    })
+}
+
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound
 if (-not $allPass) { exit 1 }
 exit 0
