@@ -1017,6 +1017,10 @@ jobs:
             tests\~selftest_gitconfig\~gitconfig_run2.log
             tests/~selftest_gitconfig/~setup.log
             tests\~selftest_gitconfig\~setup.log
+            tests/~selftest_gitconfig/.gitignore
+            tests\~selftest_gitconfig\.gitignore
+            tests/~selftest_gitconfig/.gitattributes
+            tests\~selftest_gitconfig\.gitattributes
             tests/~selftest_connectivity/~conn_test.log
             tests\~selftest_connectivity\~conn_test.log
             tests/~selftest_sysgate/~sys_test.log
