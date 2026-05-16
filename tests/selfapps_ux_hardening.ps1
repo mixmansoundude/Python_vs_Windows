@@ -53,7 +53,7 @@ if (-not $IsWindows) {
             details = $skipDetails
         })
     }
-    foreach ($id in @('self.ux.system.gate.n', 'self.ux.system.gate.prompt')) {
+    foreach ($id in @('self.ux.system.gate.n', 'self.ux.system.gate.prompt', 'self.ux.system.gate.real')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
             req     = 'REQ-014'
@@ -283,6 +283,68 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ promptFound = $sysPromptFound }
 })
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound
+# ===== REQ-014: Real system fallback consent gate (behavioral path) =====
+# Drives the full fallback chain naturally: conda-fail -> venv-fail -> :try_system_fallback -> consent gate.
+# Skipped in conda-full lane where HP_FORCE_CONDA_ONLY=1 blocks system fallback unconditionally.
+$sysRealDir = Join-Path $here '~selftest_sysgate_real'
+New-Item -ItemType Directory -Force -Path $sysRealDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $sysRealDir -Force
+Set-Content -LiteralPath (Join-Path $sysRealDir 'app.py') -Value 'print("hello")' -Encoding Ascii
+
+$sysRealPass = $true
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.ux.system.gate.real'
+        req     = 'REQ-014'
+        pass    = $true
+        desc    = 'Real system fallback consent path test'
+        details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-blocks-system-fallback' }
+    })
+} else {
+    $savedOfflineMode  = $env:HP_OFFLINE_MODE
+    $savedCondaFail    = $env:HP_TEST_FORCE_CONDA_FAIL
+    $savedVenvFail     = $env:HP_TEST_FORCE_VENV_FAIL
+    $savedVenvAllow    = $env:HP_ALLOW_VENV_FALLBACK
+    $savedSysAllow     = $env:HP_ALLOW_SYSTEM_FALLBACK
+    $savedLane3        = $env:HP_CI_LANE
+    $env:HP_OFFLINE_MODE            = '1'
+    $env:HP_TEST_FORCE_CONDA_FAIL   = '1'
+    $env:HP_TEST_FORCE_VENV_FAIL    = '1'
+    $env:HP_ALLOW_VENV_FALLBACK     = '1'
+    $env:HP_ALLOW_SYSTEM_FALLBACK   = '1'
+    $env:HP_CI_LANE                 = 'test'
+    $sysRealLog  = Join-Path $sysRealDir '~sys_real_test.log'
+    $sysRealResp = Join-Path $sysRealDir '~resp.txt'
+    Set-Content -LiteralPath $sysRealResp -Value "n`r`n" -Encoding Ascii
+    Push-Location -LiteralPath $sysRealDir
+    try {
+        cmd /c "run_setup.bat < ~resp.txt > ~sys_real_test.log 2>&1"
+    } finally {
+        Pop-Location
+    }
+    $env:HP_OFFLINE_MODE            = $savedOfflineMode
+    $env:HP_TEST_FORCE_CONDA_FAIL   = $savedCondaFail
+    $env:HP_TEST_FORCE_VENV_FAIL    = $savedVenvFail
+    $env:HP_ALLOW_VENV_FALLBACK     = $savedVenvAllow
+    $env:HP_ALLOW_SYSTEM_FALLBACK   = $savedSysAllow
+    $env:HP_CI_LANE                 = $savedLane3
+
+    $sysRealText = ''
+    if (Test-Path -LiteralPath $sysRealLog) {
+        $sysRealText = Get-Content -LiteralPath $sysRealLog -Raw -Encoding Ascii
+    }
+    $sysRealPromptFound = $sysRealText -match [regex]::Escape($sysPromptStr)
+    $sysRealDeclineLog  = $sysRealText -match [regex]::Escape('[INFO] REQ-014: System Python consent: user declined.')
+    $sysRealPass = ($sysRealPromptFound -and $sysRealDeclineLog)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.ux.system.gate.real'
+        req     = 'REQ-014'
+        pass    = $sysRealPass
+        desc    = 'System Python consent gate: real fallback chain reaches consent gate'
+        details = [ordered]@{ promptFound = $sysRealPromptFound; declineLogFound = $sysRealDeclineLog }
+    })
+}
+
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass
 if (-not $allPass) { exit 1 }
 exit 0
