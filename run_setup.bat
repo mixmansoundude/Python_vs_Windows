@@ -2113,6 +2113,11 @@ if /I "%HP_CONN_CHOICE:~0,1%"=="y" (
     call :log "[INFO] REQ-013: Connectivity restored after retry."
     exit /b 0
   )
+  curl -s --connect-timeout 5 --max-time 8 -o nul "https://conda.anaconda.org" >nul 2>&1
+  if not errorlevel 1 (
+    call :log "[INFO] REQ-013: Connectivity restored after retry (HTTPS, ICMP blocked)."
+    exit /b 0
+  )
   call :log "[INFO] REQ-013: Still offline after Y; re-prompting."
   goto :cndf_prompt_loop
 )
