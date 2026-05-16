@@ -97,6 +97,10 @@ rem HP_UV_FALLBACK_URL: pinned release used when primary GitHub releases/latest 
 set "HP_UV_FALLBACK_URL=https://github.com/astral-sh/uv/releases/download/0.7.3/uv-x86_64-pc-windows-msvc.zip"
 set "HP_UV_MIN_BYTES=%HP_UV_MIN_BYTES%"
 if not defined HP_UV_MIN_BYTES set "HP_UV_MIN_BYTES=1000000"
+rem HP_TEST_OFFLINE=1: simulates ping failure for REQ-013 branch coverage (CI test flag)
+set "HP_TEST_OFFLINE=%HP_TEST_OFFLINE%"
+rem HP_OFFLINE_MODE is set by :check_net_after_dl_fail when user declines or no internet
+set "HP_OFFLINE_MODE=%HP_OFFLINE_MODE%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -270,6 +274,12 @@ if exist "%HP_UV_BIN%\uv.exe" (
   call :log "[INFO] uv: cached binary found at ~uv_bin\uv.exe"
   goto :uv_acquire_done
 )
+if "%HP_OFFLINE_MODE%"=="1" (
+  call :log "[INFO] REQ-013: Offline mode: skipping uv download."
+  set "UV_FALLBACK_REASON=offline"
+  call :log "[WARN] UV_FALLBACK reason=offline"
+  goto :uv_acquire_done
+)
 call :log "[INFO] uv: downloading to ~uv_bin..."
 if not exist "%HP_UV_BIN%" mkdir "%HP_UV_BIN%" >nul 2>&1
 set "HP_UV_ACTIVE_URL=%HP_UV_URL%"
@@ -278,6 +288,9 @@ call :log "[INFO] Downloading uv from %HP_UV_ACTIVE_URL%..."
 curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_UV_ACTIVE_URL%" -o "%HP_UV_ZIP%" >> "%LOG%" 2>&1
 if errorlevel 1 if exist "%HP_UV_ZIP%" del "%HP_UV_ZIP%" >nul 2>&1
 if not exist "%HP_UV_ZIP%" (
+  call :check_net_after_dl_fail
+)
+if not exist "%HP_UV_ZIP%" if not "%HP_OFFLINE_MODE%"=="1" (
   if defined HP_UV_DL_INJECTED (
     call :log "[ERROR] Injected HP_UV_URL failed; not trying fallback."
   ) else (
@@ -1170,6 +1183,10 @@ exit /b 0
 :download_miniconda_exe
 set "HP_MINICONDA_ACTIVE_URL=%HP_MINICONDA_URL%"
 if "%HP_TEST_CONDA_DL_FALLBACK%"=="1" if not defined HP_CONDA_DL_INJECTED set "HP_MINICONDA_ACTIVE_URL=https://miniconda-test-fail.invalid/Miniconda3-latest-Windows-x86_64.exe"
+if "%HP_OFFLINE_MODE%"=="1" (
+  call :log "[INFO] REQ-013: Offline mode: skipping Miniconda download."
+  goto :eof
+)
 call :log "[INFO] Downloading Miniconda from %HP_MINICONDA_ACTIVE_URL%..."
 curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_ACTIVE_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
 if not errorlevel 1 if exist "%TEMP%\miniconda.exe" goto :eof
@@ -1177,6 +1194,9 @@ echo *** curl download failed, trying PowerShell...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%HP_MINICONDA_ACTIVE_URL%' -OutFile '%TEMP%\miniconda.exe' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
 if not errorlevel 1 if exist "%TEMP%\miniconda.exe" goto :eof
 if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
+rem REQ-013: primary download failed; check connectivity before trying fallback.
+call :check_net_after_dl_fail
+if "%HP_OFFLINE_MODE%"=="1" goto :eof
 if defined HP_CONDA_DL_INJECTED (
   call :log "[ERROR] Injected HP_MINICONDA_URL failed; not trying fallback."
   goto :eof
@@ -2025,3 +2045,43 @@ echo ============================================================
 echo.
 call :log "[INFO] REQ-016: Post-flight briefing printed."
 exit /b 0
+
+:check_net_after_dl_fail
+rem REQ-013: called after a primary download fails. Pings 8.8.8.8 to distinguish
+rem no-internet (Scenario A) from specific-URL-failed (Scenario B).
+rem HP_TEST_OFFLINE=1 simulates ping failure for CI branch coverage.
+if "%HP_TEST_OFFLINE%"=="1" (
+  call :log "[TEST] HP_TEST_OFFLINE: simulating ping failure for REQ-013."
+  goto :cndf_ping_failed
+)
+ping -n 1 8.8.8.8 >nul 2>&1
+if not errorlevel 1 (
+  call :log "[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback."
+  exit /b 0
+)
+:cndf_ping_failed
+call :log "[WARN] REQ-013: Connectivity check: no internet detected."
+:cndf_prompt_loop
+set "HP_CONN_CHOICE="
+set /p HP_CONN_CHOICE="WARNING: No internet connection detected. Remote providers may fail. Retry? (Fix connection then press Y) or proceed offline (N): "
+if "%HP_CONN_CHOICE:~0,1%"=="" (
+  call :log "[INFO] REQ-013: Connectivity prompt: empty input; defaulting offline."
+  set "HP_OFFLINE_MODE=1"
+  exit /b 1
+)
+if /I "%HP_CONN_CHOICE:~0,1%"=="y" (
+  if "%HP_TEST_OFFLINE%"=="1" (
+    call :log "[TEST] HP_TEST_OFFLINE: Y selected; still simulating offline."
+    goto :cndf_ping_failed
+  )
+  ping -n 1 8.8.8.8 >nul 2>&1
+  if not errorlevel 1 (
+    call :log "[INFO] REQ-013: Connectivity restored after retry."
+    exit /b 0
+  )
+  call :log "[INFO] REQ-013: Still offline after Y; re-prompting."
+  goto :cndf_prompt_loop
+)
+call :log "[INFO] REQ-013: Connectivity prompt: user chose offline (N)."
+set "HP_OFFLINE_MODE=1"
+exit /b 1

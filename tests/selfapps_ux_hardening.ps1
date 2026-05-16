@@ -1,5 +1,5 @@
 # ASCII only
-# selfapps_ux_hardening.ps1 - UX Hardening tests: REQ-015 (git config merge), REQ-016 (postflight).
+# selfapps_ux_hardening.ps1 - UX Hardening tests: REQ-015 (git config), REQ-016 (postflight), REQ-013 (connectivity).
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -44,6 +44,15 @@ if (-not $IsWindows) {
         desc    = 'Post-flight briefing test skipped on non-Windows host'
         details = $skipDetails
     })
+    foreach ($id in @('self.ux.connectivity.offline.n', 'self.ux.connectivity.prompt.shown')) {
+        Write-NdjsonRow ([ordered]@{
+            id      = $id
+            req     = 'REQ-013'
+            pass    = $true
+            desc    = 'Connectivity guard test skipped on non-Windows host'
+            details = $skipDetails
+        })
+    }
     exit 0
 }
 
@@ -170,6 +179,57 @@ if (-not (Test-Path -LiteralPath $envsmokeLog)) {
     })
 }
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound
+# ===== REQ-013: Internet Connectivity Guard =====
+$connDir = Join-Path $here '~selftest_connectivity'
+New-Item -ItemType Directory -Force -Path $connDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $connDir -Force
+# Create an app.py so bootstrap proceeds past the no_python_files early exit
+Set-Content -LiteralPath (Join-Path $connDir 'app.py') -Value 'print("hello")' -Encoding Ascii
+
+# Run with HP_TEST_OFFLINE=1 + forced download failures + HP_CI_LANE=test (suppresses pause)
+# Pipe N to stdin to select "proceed offline"
+$savedLane = $env:HP_CI_LANE
+$env:HP_CI_LANE = 'test'
+$env:HP_TEST_OFFLINE = '1'
+$env:HP_TEST_CONDA_DL_FALLBACK = '1'
+$env:HP_TEST_UV_DL_FALLBACK = '1'
+$connLog = Join-Path $connDir '~conn_test.log'
+$respFile = Join-Path $connDir '~resp.txt'
+Set-Content -LiteralPath $respFile -Value "N`r`n" -Encoding Ascii
+Push-Location -LiteralPath $connDir
+try {
+    cmd /c "run_setup.bat < ~resp.txt > ~conn_test.log 2>&1"
+} finally {
+    Pop-Location
+}
+$env:HP_CI_LANE = $savedLane
+$env:HP_TEST_OFFLINE = ''
+$env:HP_TEST_CONDA_DL_FALLBACK = ''
+$env:HP_TEST_UV_DL_FALLBACK = ''
+
+$connText = ''
+if (Test-Path -LiteralPath $connLog) {
+    $connText = Get-Content -LiteralPath $connLog -Raw -Encoding Ascii
+}
+$connPromptStr = 'WARNING: No internet connection detected. Remote providers may fail. Retry? (Fix connection then press Y) or proceed offline (N): '
+$connPromptFound = $connText -match [regex]::Escape($connPromptStr)
+$connOfflineLog = $connText -match [regex]::Escape('[INFO] REQ-013: Connectivity prompt: user chose offline (N).')
+
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.connectivity.offline.n'
+    req     = 'REQ-013'
+    pass    = ($connPromptFound -and $connOfflineLog)
+    desc    = 'Connectivity guard: N response triggers offline mode'
+    details = [ordered]@{ promptFound = $connPromptFound; offlineLogFound = $connOfflineLog }
+})
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.connectivity.prompt.shown'
+    req     = 'REQ-013'
+    pass    = $connPromptFound
+    desc    = 'Connectivity guard: exact prompt string appears in output'
+    details = [ordered]@{ promptFound = $connPromptFound }
+})
+
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound
 if (-not $allPass) { exit 1 }
 exit 0
