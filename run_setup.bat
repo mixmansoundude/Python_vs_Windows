@@ -2087,8 +2087,14 @@ if not errorlevel 1 (
   call :log "[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback."
   exit /b 0
 )
+rem ICMP may be blocked on corporate networks; try HTTPS as secondary reachability check.
+curl -s --connect-timeout 5 --max-time 8 -o nul "https://conda.anaconda.org" >nul 2>&1
+if not errorlevel 1 (
+  call :log "[INFO] REQ-013: Connectivity check: internet reachable via HTTPS (ICMP blocked). Cascading to fallback."
+  exit /b 0
+)
 :cndf_ping_failed
-call :log "[WARN] REQ-013: Connectivity check: no internet detected."
+call :log "[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed)."
 :cndf_prompt_loop
 set "HP_CONN_CHOICE="
 set /p HP_CONN_CHOICE="WARNING: No internet connection detected. Remote providers may fail. Retry? (Fix connection then press Y) or proceed offline (N): "

@@ -1023,10 +1023,16 @@ jobs:
             tests\~selftest_gitconfig\.gitattributes
             tests/~selftest_connectivity/~conn_test.log
             tests\~selftest_connectivity\~conn_test.log
+            tests/~selftest_connectivity/~setup.log
+            tests\~selftest_connectivity\~setup.log
             tests/~selftest_sysgate/~sys_test.log
             tests\~selftest_sysgate\~sys_test.log
+            tests/~selftest_sysgate/~setup.log
+            tests\~selftest_sysgate\~setup.log
             tests/~selftest_sysgate_real/~sys_real_test.log
             tests\~selftest_sysgate_real\~sys_real_test.log
+            tests/~selftest_sysgate_real/~setup.log
+            tests\~selftest_sysgate_real\~setup.log
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
