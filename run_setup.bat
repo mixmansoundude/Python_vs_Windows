@@ -305,7 +305,7 @@ call :log "[INFO] Downloading uv from %HP_UV_ACTIVE_URL%..."
 curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_UV_ACTIVE_URL%" -o "%HP_UV_ZIP%" >> "%LOG%" 2>&1
 if errorlevel 1 if exist "%HP_UV_ZIP%" del "%HP_UV_ZIP%" >nul 2>&1
 if not exist "%HP_UV_ZIP%" (
-  call :check_net_after_dl_fail
+  if not "%HP_TEST_UV_DL_FALLBACK%"=="1" call :check_net_after_dl_fail
 )
 if not exist "%HP_UV_ZIP%" if not "%HP_OFFLINE_MODE%"=="1" (
   if defined HP_UV_DL_INJECTED (
@@ -1213,7 +1213,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointM
 if not errorlevel 1 if exist "%TEMP%\miniconda.exe" goto :eof
 if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
 rem REQ-013: primary download failed; check connectivity before trying fallback.
-call :check_net_after_dl_fail
+rem Skip connectivity check when HP_TEST_CONDA_DL_FALLBACK=1 (failure was intentional).
+if not "%HP_TEST_CONDA_DL_FALLBACK%"=="1" call :check_net_after_dl_fail
 if "%HP_OFFLINE_MODE%"=="1" goto :eof
 if defined HP_CONDA_DL_INJECTED (
   call :log "[ERROR] Injected HP_MINICONDA_URL failed; not trying fallback."
