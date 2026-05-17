@@ -63,9 +63,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: C:\Users\Public\Documents\Miniconda3
-          key: win-${{ runner.os }}-py311-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
+          key: win-${{ runner.os }}-py311b-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
           restore-keys: |
-            win-${{ runner.os }}-py311-conda-
+            win-${{ runner.os }}-py311b-conda-
 
       # probe fires in real, conda-full, uv, and contract-uv* lanes; cache lane skips it intentionally
       - name: Enable Miniconda probe (real/conda-full/uv/contract-uv mode)
@@ -387,6 +387,11 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_pyproject_precedence.ps1
+
+      - name: "Self-test: UX hardening (git config merge)"
+        shell: pwsh
+        run: |
+          & tests\selfapps_ux_hardening.ps1
 
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
@@ -1006,12 +1011,35 @@ jobs:
             tests\~selftest_pep723_mal\~setup.log
             tests/~selftest_pep723_mal/~bootstrap.status.json
             tests\~selftest_pep723_mal\~bootstrap.status.json
+            tests/~selftest_gitconfig/~gitconfig_run1.log
+            tests\~selftest_gitconfig\~gitconfig_run1.log
+            tests/~selftest_gitconfig/~gitconfig_run2.log
+            tests\~selftest_gitconfig\~gitconfig_run2.log
+            tests/~selftest_gitconfig/~setup.log
+            tests\~selftest_gitconfig\~setup.log
+            tests/~selftest_gitconfig/.gitignore
+            tests\~selftest_gitconfig\.gitignore
+            tests/~selftest_gitconfig/.gitattributes
+            tests\~selftest_gitconfig\.gitattributes
+            tests/~selftest_connectivity/~conn_test.log
+            tests\~selftest_connectivity\~conn_test.log
+            tests/~selftest_connectivity/~setup.log
+            tests\~selftest_connectivity\~setup.log
+            tests/~selftest_sysgate/~sys_test.log
+            tests\~selftest_sysgate\~sys_test.log
+            tests/~selftest_sysgate/~setup.log
+            tests\~selftest_sysgate\~setup.log
+            tests/~selftest_sysgate_real/~sys_real_test.log
+            tests\~selftest_sysgate_real\~sys_real_test.log
+            tests/~selftest_sysgate_real/~setup.log
+            tests\~selftest_sysgate_real\~setup.log
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
             tests/~test-results.ndjson
             tests/extracted/**
           if-no-files-found: ignore
+          include-hidden-files: true
           retention-days: 14
 
       # Professional note: cache/save runs separately so failed bootstrap attempts do not persist a partial Miniconda tree.
@@ -1035,7 +1063,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: C:\Users\Public\Documents\Miniconda3
-          key: win-${{ runner.os }}-py311-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
+          key: win-${{ runner.os }}-py311b-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
 
       - name: Summarize bootstrap result
         if: always()

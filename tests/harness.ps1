@@ -252,6 +252,19 @@ for ($k=0; $k -lt $Lines.Count; $k++) {
   if ($paren -lt 0) { $imbalance += ("line {0}: {1} (paren={2})" -f ($k+1), $ln.Trim(), $paren) }
 }
 Write-Result "batch.paren.balance" "No negative parenthesis balance while scanning" ($imbalance.Count -eq 0) @{ issues=$imbalance }
+$pauseHits = @(); $ungatedPauses = @()
+for ($k = 0; $k -lt $Lines.Count; $k++) {
+  if ($Lines[$k] -match '^\s*pause\s*$') {
+    $pauseHits += $k
+    $start = [Math]::Max(0, $k - 2)
+    $preceding = if ($k -ge 1) { $Lines[$start..($k-1)] -join ' ' } else { '' }
+    if ($preceding -notmatch 'not defined HP_CI_LANE') {
+      $ungatedPauses += ("line {0}: {1}" -f ($k+1), $Lines[$k].Trim())
+    }
+  }
+}
+$pauseGated = ($pauseHits.Count -ge 1) -and ($ungatedPauses.Count -eq 0)
+Write-Result 'batch.ux.pause.gated' 'REQ-016: all pause statements gated on HP_CI_LANE' $pauseGated @{ pauseCount = $pauseHits.Count; ungated = $ungatedPauses }
 $envLine = ($AllText -match 'for %%I in \("%CD%"\) do set "ENVNAME=%%~nI"')
 Write-Result "env.foldername" "Env name equals folder name" $envLine @{} 
 $instPathOk = ($AllText -match "%PUBLIC%\\Documents\\Miniconda3")

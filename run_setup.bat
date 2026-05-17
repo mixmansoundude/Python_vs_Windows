@@ -41,6 +41,16 @@ set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
+call :merge_git_config
+if "%HP_TEST_FORCE_CONNECTIVITY_CHECK%"=="1" call :check_net_after_dl_fail
+if "%HP_TEST_FORCE_CONSENT_CHECK%"=="1" (
+  call :system_python_consent_gate
+  if errorlevel 1 (
+    call :log "[INFO] REQ-014: Consent gate test: user declined."
+    exit /b 1
+  )
+  call :log "[INFO] REQ-014: Consent gate test: user accepted."
+)
 rem --- PVW_ super-user overrides (inherit from calling terminal; logged before detection runs) ---
 rem derived requirement: PVW_ variables let a super-user pre-set values to bypass auto-detection.
 rem Single-line if form avoids parse-time expansion issues in block-form if-statements when a
@@ -96,6 +106,18 @@ rem HP_UV_FALLBACK_URL: pinned release used when primary GitHub releases/latest 
 set "HP_UV_FALLBACK_URL=https://github.com/astral-sh/uv/releases/download/0.7.3/uv-x86_64-pc-windows-msvc.zip"
 set "HP_UV_MIN_BYTES=%HP_UV_MIN_BYTES%"
 if not defined HP_UV_MIN_BYTES set "HP_UV_MIN_BYTES=1000000"
+rem HP_TEST_OFFLINE=1: simulates ping failure for REQ-013 branch coverage (CI test flag)
+set "HP_TEST_OFFLINE=%HP_TEST_OFFLINE%"
+rem HP_OFFLINE_MODE is set by :check_net_after_dl_fail when user declines or no internet
+set "HP_OFFLINE_MODE=%HP_OFFLINE_MODE%"
+rem HP_TEST_FORCE_CONNECTIVITY_CHECK=1: triggers connectivity gate at startup for CI coverage
+set "HP_TEST_FORCE_CONNECTIVITY_CHECK=%HP_TEST_FORCE_CONNECTIVITY_CHECK%"
+rem HP_TEST_FORCE_VENV_FAIL=1: simulates venv creation failure for REQ-014 branch coverage
+set "HP_TEST_FORCE_VENV_FAIL=%HP_TEST_FORCE_VENV_FAIL%"
+rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-014 branch coverage
+set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
+rem HP_TEST_FORCE_CONSENT_CHECK=1: directly triggers consent gate at startup for REQ-014 branch coverage
+set "HP_TEST_FORCE_CONSENT_CHECK=%HP_TEST_FORCE_CONSENT_CHECK%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -269,6 +291,12 @@ if exist "%HP_UV_BIN%\uv.exe" (
   call :log "[INFO] uv: cached binary found at ~uv_bin\uv.exe"
   goto :uv_acquire_done
 )
+if "%HP_OFFLINE_MODE%"=="1" (
+  call :log "[INFO] REQ-013: Offline mode: skipping uv download."
+  set "UV_FALLBACK_REASON=offline"
+  call :log "[WARN] UV_FALLBACK reason=offline"
+  goto :uv_acquire_done
+)
 call :log "[INFO] uv: downloading to ~uv_bin..."
 if not exist "%HP_UV_BIN%" mkdir "%HP_UV_BIN%" >nul 2>&1
 set "HP_UV_ACTIVE_URL=%HP_UV_URL%"
@@ -277,6 +305,9 @@ call :log "[INFO] Downloading uv from %HP_UV_ACTIVE_URL%..."
 curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_UV_ACTIVE_URL%" -o "%HP_UV_ZIP%" >> "%LOG%" 2>&1
 if errorlevel 1 if exist "%HP_UV_ZIP%" del "%HP_UV_ZIP%" >nul 2>&1
 if not exist "%HP_UV_ZIP%" (
+  if not "%HP_TEST_UV_DL_FALLBACK%"=="1" call :check_net_after_dl_fail
+)
+if not exist "%HP_UV_ZIP%" if not "%HP_OFFLINE_MODE%"=="1" (
   if defined HP_UV_DL_INJECTED (
     call :log "[ERROR] Injected HP_UV_URL failed; not trying fallback."
   ) else (
@@ -418,6 +449,7 @@ call :log "[WARN] UV_FALLBACK reason=venv_create_failed"
 set "HP_UV_EXE="
 :try_conda_create
 call :log "[INFO] HP_ENV_MODE=conda"
+if "%HP_TEST_FORCE_CONDA_FAIL%"=="1" goto :hp_test_conda_fail
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
@@ -1143,6 +1175,14 @@ if not "%DEP_SOURCE%"=="unknown" (
   echo dependency_source=%DEP_SOURCE%> "dependency_source.txt"
   echo *** [INFO] Dependency source logged to dependency_source.txt
 )
+rem REQ-016: show post-flight briefing when a full EXE build completed.
+if not defined HP_FASTPATH_USED if exist "dist\%ENVNAME%.exe" (
+  call :print_postflight_briefing
+)
+rem REQ-016: retain terminal window on success so user can read the output.
+if not defined HP_CI_LANE (
+  pause
+)
 exit /b 0
 :count_python
 set "NAME=%~1"
@@ -1161,6 +1201,10 @@ exit /b 0
 :download_miniconda_exe
 set "HP_MINICONDA_ACTIVE_URL=%HP_MINICONDA_URL%"
 if "%HP_TEST_CONDA_DL_FALLBACK%"=="1" if not defined HP_CONDA_DL_INJECTED set "HP_MINICONDA_ACTIVE_URL=https://miniconda-test-fail.invalid/Miniconda3-latest-Windows-x86_64.exe"
+if "%HP_OFFLINE_MODE%"=="1" (
+  call :log "[INFO] REQ-013: Offline mode: skipping Miniconda download."
+  goto :eof
+)
 call :log "[INFO] Downloading Miniconda from %HP_MINICONDA_ACTIVE_URL%..."
 curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_MINICONDA_ACTIVE_URL%" -o "%TEMP%\miniconda.exe" >> "%LOG%" 2>&1
 if not errorlevel 1 if exist "%TEMP%\miniconda.exe" goto :eof
@@ -1168,6 +1212,10 @@ echo *** curl download failed, trying PowerShell...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%HP_MINICONDA_ACTIVE_URL%' -OutFile '%TEMP%\miniconda.exe' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
 if not errorlevel 1 if exist "%TEMP%\miniconda.exe" goto :eof
 if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
+rem REQ-013: primary download failed; check connectivity before trying fallback.
+rem Skip connectivity check when HP_TEST_CONDA_DL_FALLBACK=1 (failure was intentional).
+if not "%HP_TEST_CONDA_DL_FALLBACK%"=="1" call :check_net_after_dl_fail
+if "%HP_OFFLINE_MODE%"=="1" goto :eof
 if defined HP_CONDA_DL_INJECTED (
   call :log "[ERROR] Injected HP_MINICONDA_URL failed; not trying fallback."
   goto :eof
@@ -1214,6 +1262,10 @@ exit /b 0
 
 :try_venv_fallback
 call :log "[WARN] Attempting venv fallback..."
+if "%HP_TEST_FORCE_VENV_FAIL%"=="1" (
+  call :log "[TEST] HP_TEST_FORCE_VENV_FAIL: simulating venv creation failure."
+  exit /b 1
+)
 call :resolve_system_python
 if errorlevel 1 (
   call :log "[WARN] venv fallback: system Python not found."
@@ -1251,6 +1303,12 @@ if errorlevel 1 (
 set "HP_PY=%HP_SYS_EXE%"
 if not exist "%HP_PY%" (
   call :log "[WARN] system fallback: resolved interpreter path missing."
+  exit /b 1
+)
+rem REQ-014: consent gate before using global system Python.
+call :system_python_consent_gate
+if errorlevel 1 (
+  call :log "[INFO] REQ-014: System Python fallback aborted: consent not granted."
   exit /b 1
 )
 set "HP_ENV_MODE=system"
@@ -1882,6 +1940,10 @@ if "%RC%"=="" set "RC=1"
 echo %date% %time% %MSG%
 >> "%LOG%" echo [%date% %time%] %MSG%
 call :write_status "error" %RC% %PYCOUNT%
+rem REQ-016: retain terminal window on error so user can read the message.
+if not defined HP_CI_LANE (
+  pause
+)
 exit /b %RC%
 :rotate_log
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -1956,3 +2018,136 @@ if not errorlevel 1 (
 )
 type nul > "%TEMP%\~conda.update.done" 2>nul
 goto :eof
+
+:merge_git_config
+rem REQ-015: idempotently append standard .gitignore and .gitattributes entries.
+rem Uses findstr errorlevel: 0=found (skip), 1=not found, 2=file missing; both 1 and 2 trigger append.
+set "HP_GI_SIG=# Automated Python Bootstrapper Standard Ignores"
+set "HP_GA_SIG=# Automated Python Bootstrapper Attributes"
+findstr /C:"%HP_GI_SIG%" ".gitignore" >nul 2>&1
+if not errorlevel 1 goto :mgc_gi_done
+call :log "[INFO] REQ-015: Appending standard ignores to .gitignore."
+>> ".gitignore" echo.
+>> ".gitignore" echo %HP_GI_SIG%
+>> ".gitignore" echo .*_env/
+>> ".gitignore" echo .venv/
+>> ".gitignore" echo .uv/
+>> ".gitignore" echo .cache/
+>> ".gitignore" echo .conda/
+>> ".gitignore" echo dist/
+>> ".gitignore" echo build/
+>> ".gitignore" echo *~
+>> ".gitignore" echo ~*
+:mgc_gi_done
+findstr /C:"%HP_GA_SIG%" ".gitattributes" >nul 2>&1
+if not errorlevel 1 goto :mgc_ga_done
+call :log "[INFO] REQ-015: Appending standard attributes to .gitattributes."
+>> ".gitattributes" echo.
+>> ".gitattributes" echo %HP_GA_SIG%
+>> ".gitattributes" echo *.bat eol=crlf
+>> ".gitattributes" echo *.cmd eol=crlf
+>> ".gitattributes" echo *.exe binary
+:mgc_ga_done
+set "HP_GI_SIG="
+set "HP_GA_SIG="
+exit /b 0
+
+:print_postflight_briefing
+rem REQ-016: print a scannable summary panel after a successful full EXE build.
+echo.
+echo ============================================================
+echo  SETUP COMPLETE
+echo ============================================================
+echo  Your standalone application is ready:
+echo    dist\%ENVNAME%.exe
+echo.
+echo  KEEP these files with your project:
+echo    requirements.txt  -- packages your app depends on
+echo    runtime.txt       -- Python version pin
+echo.
+echo  SAFE TO DELETE to reclaim disk space:
+echo    .*_env\ folders   -- environment directories
+echo    ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+echo    build\            -- PyInstaller build cache
+echo ============================================================
+echo.
+call :log "[INFO] REQ-016: Post-flight briefing printed."
+exit /b 0
+
+:check_net_after_dl_fail
+rem REQ-013: called after a primary download fails. Pings 8.8.8.8 to distinguish
+rem no-internet (Scenario A) from specific-URL-failed (Scenario B).
+rem HP_TEST_OFFLINE=1 simulates ping failure for CI branch coverage.
+if "%HP_TEST_OFFLINE%"=="1" (
+  call :log "[TEST] HP_TEST_OFFLINE: simulating ping failure for REQ-013."
+  goto :cndf_ping_failed
+)
+ping -n 1 8.8.8.8 >nul 2>&1
+if not errorlevel 1 (
+  call :log "[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback."
+  exit /b 0
+)
+rem ICMP may be blocked on corporate networks; try HTTPS as secondary reachability check.
+curl -s --connect-timeout 5 --max-time 8 -o nul "https://conda.anaconda.org" >nul 2>&1
+if not errorlevel 1 (
+  call :log "[INFO] REQ-013: Connectivity check: internet reachable via HTTPS (ICMP blocked). Cascading to fallback."
+  exit /b 0
+)
+:cndf_ping_failed
+call :log "[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed)."
+:cndf_prompt_loop
+set "HP_CONN_CHOICE="
+set /p HP_CONN_CHOICE="WARNING: No internet connection detected. Remote providers may fail. Retry? (Fix connection then press Y) or proceed offline (N): "
+if "%HP_CONN_CHOICE:~0,1%"=="" (
+  call :log "[INFO] REQ-013: Connectivity prompt: empty input; defaulting offline."
+  set "HP_OFFLINE_MODE=1"
+  exit /b 1
+)
+if /I "%HP_CONN_CHOICE:~0,1%"=="y" (
+  if "%HP_TEST_OFFLINE%"=="1" (
+    call :log "[TEST] HP_TEST_OFFLINE: Y selected; still simulating offline."
+    goto :cndf_ping_failed
+  )
+  ping -n 1 8.8.8.8 >nul 2>&1
+  if not errorlevel 1 (
+    call :log "[INFO] REQ-013: Connectivity restored after retry."
+    exit /b 0
+  )
+  curl -s --connect-timeout 5 --max-time 8 -o nul "https://conda.anaconda.org" >nul 2>&1
+  if not errorlevel 1 (
+    call :log "[INFO] REQ-013: Connectivity restored after retry (HTTPS, ICMP blocked)."
+    exit /b 0
+  )
+  call :log "[INFO] REQ-013: Still offline after Y; re-prompting."
+  goto :cndf_prompt_loop
+)
+call :log "[INFO] REQ-013: Connectivity prompt: user chose offline (N)."
+set "HP_OFFLINE_MODE=1"
+exit /b 1
+
+:system_python_consent_gate
+rem REQ-014: halt and require explicit consent before using global system Python.
+echo.
+echo *** WARNING: System Python Execution ***
+echo *** Using global system Python may pollute shared packages. ***
+echo.
+set "HP_SYSCON_CHOICE="
+set /p HP_SYSCON_CHOICE="Proceed with System Python? (Global pollution risk) [y/n]: "
+if "%HP_SYSCON_CHOICE:~0,1%"=="" (
+  call :log "[INFO] REQ-014: System Python consent: empty input; declining."
+  exit /b 1
+)
+if /I "%HP_SYSCON_CHOICE:~0,1%"=="y" (
+  call :log "[INFO] REQ-014: System Python consent: user accepted."
+  exit /b 0
+)
+call :log "[INFO] REQ-014: System Python consent: user declined."
+exit /b 1
+
+:hp_test_conda_fail
+call :log "[TEST] HP_TEST_FORCE_CONDA_FAIL: simulating conda env creation failure."
+set "HP_ENV_READY="
+call :handle_conda_failure "[TEST] conda env create forced to fail."
+if defined HP_ENV_READY goto :after_env_mode_selection
+call :die "[ERROR] conda env create failed."
+goto :after_env_mode_selection
