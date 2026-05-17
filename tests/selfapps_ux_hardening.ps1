@@ -44,7 +44,7 @@ if (-not $IsWindows) {
         desc    = 'Post-flight briefing test skipped on non-Windows host'
         details = $skipDetails
     })
-    foreach ($id in @('self.ux.connectivity.offline.n', 'self.ux.connectivity.prompt.shown')) {
+    foreach ($id in @('self.ux.connectivity.offline.n', 'self.ux.connectivity.prompt.shown', 'self.ux.connectivity.offline.uv.skip', 'self.ux.connectivity.offline.conda.skip')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
             req     = 'REQ-013'
@@ -237,6 +237,23 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ promptFound = $connPromptFound }
 })
 
+$uvOfflineLog    = $connText -match [regex]::Escape('[INFO] REQ-013: Offline mode: skipping uv download.')
+$condaOfflineLog = $connText -match [regex]::Escape('[INFO] REQ-013: Offline mode: skipping Miniconda download.')
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.connectivity.offline.uv.skip'
+    req     = 'REQ-013'
+    pass    = $uvOfflineLog
+    desc    = 'Connectivity guard: offline mode skips uv download'
+    details = [ordered]@{ logFound = $uvOfflineLog }
+})
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.connectivity.offline.conda.skip'
+    req     = 'REQ-013'
+    pass    = $condaOfflineLog
+    desc    = 'Connectivity guard: offline mode skips Miniconda download'
+    details = [ordered]@{ logFound = $condaOfflineLog }
+})
+
 # ===== REQ-014: System Python Consent Gate =====
 $sysGateDir = Join-Path $here '~selftest_sysgate'
 New-Item -ItemType Directory -Force -Path $sysGateDir | Out-Null
@@ -345,6 +362,6 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflineLog -and $condaOfflineLog -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass
 if (-not $allPass) { exit 1 }
 exit 0
