@@ -247,7 +247,8 @@ if not defined CONDA_BAT (
 
 rem === Validate existing conda binary health (REQ-020: corruption hardening) ===
 rem Only fires for pre-existing installs (HP_CONDA_JUST_INSTALLED guards fresh downloads).
-if defined CONDA_BAT if not defined HP_CONDA_JUST_INSTALLED (
+rem Skipped when HP_TEST_FORCE_CONDA_FAIL=1 (test flag already simulates conda failure).
+if defined CONDA_BAT if not defined HP_CONDA_JUST_INSTALLED if not defined HP_TEST_FORCE_CONDA_FAIL (
   if defined HP_TEST_CORRUPT_CONDA (
     call :log "[ERROR] HP_TEST_CORRUPT_CONDA: simulating corrupt conda binary."
     goto :conda_binary_corrupt
