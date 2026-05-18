@@ -122,6 +122,8 @@ rem HP_TEST_CORRUPT_CONDA=1: simulates a corrupt conda binary for REQ-020 branch
 set "HP_TEST_CORRUPT_CONDA=%HP_TEST_CORRUPT_CONDA%"
 rem HP_TEST_HEAL_ANSWER=Y|N: bypasses the interactive Y/N prompt in :conda_binary_corrupt for CI testing
 set "HP_TEST_HEAL_ANSWER=%HP_TEST_HEAL_ANSWER%"
+rem HP_TEST_CORRUPT_UV=1: simulates a corrupt uv binary; clears cache and re-downloads for REQ-020 branch coverage
+set "HP_TEST_CORRUPT_UV=%HP_TEST_CORRUPT_UV%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -304,10 +306,22 @@ if "%HP_FORCE_CONDA_ONLY%"=="1" (
   goto :uv_acquire_done
 )
 if exist "%HP_UV_BIN%\uv.exe" (
+  if defined HP_TEST_CORRUPT_UV (
+    call :log "[WARN] HP_TEST_CORRUPT_UV: simulating corrupt uv binary; clearing cache."
+    del /f /q "%HP_UV_BIN%\uv.exe" >nul 2>&1
+    goto :uv_acquire_download
+  )
+  "%HP_UV_BIN%\uv.exe" --version >nul 2>&1
+  if errorlevel 1 (
+    call :log "[WARN] Cached uv.exe failed health check; clearing and re-downloading."
+    del /f /q "%HP_UV_BIN%\uv.exe" >nul 2>&1
+    goto :uv_acquire_download
+  )
   set "HP_UV_EXE=%HP_UV_BIN%\uv.exe"
   call :log "[INFO] uv: cached binary found at ~uv_bin\uv.exe"
   goto :uv_acquire_done
 )
+:uv_acquire_download
 if "%HP_OFFLINE_MODE%"=="1" (
   call :log "[INFO] REQ-013: Offline mode: skipping uv download."
   set "UV_FALLBACK_REASON=offline"

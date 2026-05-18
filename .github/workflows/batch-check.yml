@@ -1087,6 +1087,12 @@ jobs:
             tests\~selftest_heal_decline\~setup.log
             tests/~selftest_heal_decline/~bootstrap.status.json
             tests\~selftest_heal_decline\~bootstrap.status.json
+            tests/~selftest_corrupt_uv/~corrupt_uv_bootstrap.log
+            tests\~selftest_corrupt_uv\~corrupt_uv_bootstrap.log
+            tests/~selftest_corrupt_uv/~setup.log
+            tests\~selftest_corrupt_uv\~setup.log
+            tests/~selftest_corrupt_uv/~bootstrap.status.json
+            tests\~selftest_corrupt_uv\~bootstrap.status.json
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
