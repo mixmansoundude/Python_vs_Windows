@@ -1033,6 +1033,12 @@ jobs:
             tests\~selftest_sysgate_real\~sys_real_test.log
             tests/~selftest_sysgate_real/~setup.log
             tests\~selftest_sysgate_real\~setup.log
+            tests/~selftest_corrupt_conda/~corrupt_bootstrap.log
+            tests\~selftest_corrupt_conda\~corrupt_bootstrap.log
+            tests/~selftest_corrupt_conda/~setup.log
+            tests\~selftest_corrupt_conda\~setup.log
+            tests/~selftest_corrupt_conda/~bootstrap.status.json
+            tests\~selftest_corrupt_conda\~bootstrap.status.json
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt

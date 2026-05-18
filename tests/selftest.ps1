@@ -557,4 +557,38 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($pep723MalWarnFound -and $pep723MalContinued) { $summary.Add('PEP 723 malformed block: PASS') } else { $summary.Add('PEP 723 malformed block: FAIL') }
 
+# --- Conda binary corruption detection test (REQ-020) ---
+# Arrange: HP_TEST_CORRUPT_CONDA=1 simulates a corrupt conda binary.
+# Assert:  bootstrap exits 2 and log contains the corruption-detected error message.
+# Note: test runs only when conda is already installed from the prior bootstrap run;
+#       HP_CONDA_JUST_INSTALLED guards fresh-install runs from triggering the check.
+$corruptDir = Join-Path $TestsDir '~selftest_corrupt_conda'
+if (Test-Path $corruptDir) { Remove-Item -Recurse -Force $corruptDir }
+New-Item -ItemType Directory -Force -Path $corruptDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $corruptDir -Force
+Set-Content -Path (Join-Path $corruptDir 'app_corrupt_test.py') -Value 'print("should-not-reach")' -Encoding ASCII
+$corruptLogName = '~corrupt_bootstrap.log'
+$env:HP_TEST_CORRUPT_CONDA = '1'
+$prevCILane = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $corruptDir
+try {
+  cmd /c "call run_setup.bat > $corruptLogName 2>&1"
+  $corruptExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_CORRUPT_CONDA = ''
+  $env:HP_CI_LANE = $prevCILane
+}
+$corruptLogPath = Join-Path $corruptDir $corruptLogName
+$corruptLines = if (Test-Path $corruptLogPath) { Get-Content -LiteralPath $corruptLogPath -Encoding ASCII } else { @() }
+$corruptMsgFound = ($corruptLines | Where-Object { $_ -like '*Corrupt conda binary*' }).Count -gt 0
+Write-NdjsonRow ([ordered]@{
+  id      = 'self.corrupt.conda.detect'
+  pass    = ($corruptExit -eq 2 -and $corruptMsgFound)
+  desc    = 'HP_TEST_CORRUPT_CONDA=1: bootstrap detects corruption, logs error, exits 2'
+  details = [ordered]@{ exitCode = $corruptExit; msgFound = $corruptMsgFound }
+})
+if ($corruptExit -eq 2 -and $corruptMsgFound) { $summary.Add('Corrupt conda detect: PASS') } else { $summary.Add('Corrupt conda detect: FAIL') }
+
 $summary | Set-Content -Path $summaryPath -Encoding ASCII

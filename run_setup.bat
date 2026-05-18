@@ -118,6 +118,8 @@ rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-014
 set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
 rem HP_TEST_FORCE_CONSENT_CHECK=1: directly triggers consent gate at startup for REQ-014 branch coverage
 set "HP_TEST_FORCE_CONSENT_CHECK=%HP_TEST_FORCE_CONSENT_CHECK%"
+rem HP_TEST_CORRUPT_CONDA=1: simulates a corrupt conda binary for REQ-020 branch coverage (corruption hardening)
+set "HP_TEST_CORRUPT_CONDA=%HP_TEST_CORRUPT_CONDA%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -242,6 +244,18 @@ if not defined CONDA_BAT (
   if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
   call :select_conda_bat
 )
+
+rem === Validate existing conda binary health (REQ-020: corruption hardening) ===
+rem Only fires for pre-existing installs (HP_CONDA_JUST_INSTALLED guards fresh downloads).
+if defined CONDA_BAT if not defined HP_CONDA_JUST_INSTALLED (
+  if defined HP_TEST_CORRUPT_CONDA (
+    call :log "[ERROR] HP_TEST_CORRUPT_CONDA: simulating corrupt conda binary."
+    goto :conda_binary_corrupt
+  )
+  call "%CONDA_BAT%" --version >nul 2>&1
+  if errorlevel 1 goto :conda_binary_corrupt
+)
+:after_conda_bat_validation
 
 if not defined CONDA_BAT (
   set "HP_ENV_READY="
@@ -1930,6 +1944,27 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
   )
 )
 exit /b 0
+rem :conda_binary_corrupt -- REQ-020: shows user-friendly message when conda binary fails health check.
+rem Called when: (a) HP_TEST_CORRUPT_CONDA=1, (b) call "%CONDA_BAT%" --version returns non-zero.
+rem Routes through :die so the CI/user pause gate (REQ-016) is honoured.
+:conda_binary_corrupt
+cls
+echo.
+echo ================================================================
+echo   CORRUPTED PYTHON ENVIRONMENT DETECTED
+echo ================================================================
+echo.
+echo   The local conda installation appears to be broken.
+echo   This can happen after a Windows update or OS migration
+echo   ^(example: DLL load error 0xc000007b^).
+echo.
+echo   Affected path: %MINICONDA_ROOT%
+echo.
+echo   To fix, delete the folder above and run this setup again.
+echo   A fresh Miniconda will be downloaded automatically.
+echo.
+call :log "[ERROR] Corrupt conda binary detected at: %CONDA_BAT%"
+call :die "[ERROR] Corrupt conda binary; delete %MINICONDA_ROOT% and re-run." 2
 rem :die signals a fatal error but uses exit /b so the caller (CI orchestration,
 rem harness, or run_tests.bat) can continue collecting artifacts and gate results.
 rem Do NOT change to a bare `exit` here - that would terminate the entire job.
