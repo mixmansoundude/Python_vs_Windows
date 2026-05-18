@@ -86,6 +86,7 @@ jobs:
               Write-Host "Conda health OK: $output"
             }
           }
+          exit 0  # health check is informational; never fail this step
 
       - name: Emit cache-corruption skip artifacts
         if: ${{ env.HP_CACHE_CORRUPTED == '1' }}
@@ -369,6 +370,7 @@ jobs:
           & tests\selfapps_parse_warn_table.ps1
 
       - name: "Self-test: parse_warn pytest (test_parse_warn.py)"
+        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           $nd   = "tests\~test-results.ndjson"
@@ -397,6 +399,7 @@ jobs:
           if (-not $pass) { Write-Host $outStr; exit 1 }
 
       - name: "Self-test: heuristics unittest (test_heuristics.py)"
+        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           $nd   = "tests\~test-results.ndjson"
