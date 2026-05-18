@@ -68,7 +68,7 @@ jobs:
             win-${{ runner.os }}-py311b-conda-
 
       - name: Validate restored conda binary
-        if: ${{ matrix.mode == 'cache' && steps.conda_cache_restore.outputs.cache-hit == 'true' }}
+        if: ${{ matrix.mode == 'cache' }}
         id: cache_health
         shell: pwsh
         run: |
@@ -76,8 +76,7 @@ jobs:
           $condaAlt  = 'C:\Users\Public\Documents\Miniconda3\Scripts\conda.bat'
           $condaBat = if (Test-Path $condaMain) { $condaMain } elseif (Test-Path $condaAlt) { $condaAlt } else { $null }
           if ($null -eq $condaBat) {
-            Write-Host "::warning::Conda binary not found after cache restore; treating as corrupted."
-            'HP_CACHE_CORRUPTED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+            Write-Host "No conda binary found; fresh install will proceed normally."
           } else {
             $output = & cmd /c "`"$condaBat`" info" 2>&1
             if ($LASTEXITCODE -ne 0) {
