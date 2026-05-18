@@ -1104,7 +1104,7 @@ jobs:
 
       # Professional note: cache/save runs separately so failed bootstrap attempts do not persist a partial Miniconda tree.
       - name: Validate Miniconda before cache save
-        if: ${{ matrix.mode == 'cache' && steps.conda_cache_restore.outputs.cache-hit != 'true' }}
+        if: ${{ matrix.mode == 'cache' && steps.conda_cache_restore.outputs.cache-hit != 'true' && env.HP_CACHE_CORRUPTED != '1' }}
         id: conda_validate
         shell: pwsh
         run: |
