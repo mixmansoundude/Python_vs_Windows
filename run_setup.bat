@@ -120,6 +120,8 @@ rem HP_TEST_FORCE_CONSENT_CHECK=1: directly triggers consent gate at startup for
 set "HP_TEST_FORCE_CONSENT_CHECK=%HP_TEST_FORCE_CONSENT_CHECK%"
 rem HP_TEST_CORRUPT_CONDA=1: simulates a corrupt conda binary for REQ-020 branch coverage (corruption hardening)
 set "HP_TEST_CORRUPT_CONDA=%HP_TEST_CORRUPT_CONDA%"
+rem HP_TEST_HEAL_ANSWER=Y|N: bypasses the interactive Y/N prompt in :conda_binary_corrupt for CI testing
+set "HP_TEST_HEAL_ANSWER=%HP_TEST_HEAL_ANSWER%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -1947,7 +1949,8 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
 exit /b 0
 rem :conda_binary_corrupt -- REQ-020: shows user-friendly message when conda binary fails health check.
 rem Called when: (a) HP_TEST_CORRUPT_CONDA=1, (b) call "%CONDA_BAT%" info returns non-zero (DLL error, etc.).
-rem Routes through :die so the CI/user pause gate (REQ-016) is honoured.
+rem Interactive users get a Y/N prompt to self-heal; CI exits immediately.
+rem HP_TEST_HEAL_ANSWER bypasses HP_CI_LANE gate so CI can test the decline path without pausing.
 :conda_binary_corrupt
 cls
 echo.
@@ -1961,12 +1964,56 @@ echo   ^(example: DLL load error 0xc000007b^).
 echo.
 echo   Affected path: %MINICONDA_ROOT%
 echo.
-echo   To fix, delete the folder above and run this setup again.
-echo   A fresh Miniconda will be downloaded automatically.
-echo.
 call :log "[ERROR] Corrupt conda binary detected at: %CONDA_BAT%"
-call :die "[ERROR] Corrupt conda binary; delete %MINICONDA_ROOT% and re-run." 2
+if defined HP_TEST_HEAL_ANSWER goto :heal_prompt
+if defined HP_CI_LANE goto :corrupt_ci_exit
+:heal_prompt
+set "HP_HEAL_RAW="
+if defined HP_TEST_HEAL_ANSWER (
+  set "HP_HEAL_RAW=%HP_TEST_HEAL_ANSWER%"
+) else (
+  set /p "HP_HEAL_RAW=  Would you like to delete it and rebuild? [Y/N] "
+)
+set "HP_HEAL_CHOICE=%HP_HEAL_RAW:~0,1%"
+if /I "%HP_HEAL_CHOICE%"=="Y" goto :evict_and_rebuild
+echo.
+echo   Exiting without changes. Delete the folder above manually,
+echo   then run this setup again.
+echo.
+call :die "[ERROR] Corrupt conda env; user declined rebuild." 2
 exit /b 2
+:corrupt_ci_exit
+call :die "[ERROR] Corrupt conda binary in CI; cache must be cleared." 2
+exit /b 2
+:evict_and_rebuild
+echo.
+echo   [INFO] Removing corrupt Miniconda installation...
+rmdir /s /q "%MINICONDA_ROOT%" 2>nul
+if exist "%MINICONDA_ROOT%" (
+  echo.
+  echo   [WARN] Could not fully remove %MINICONDA_ROOT%.
+  echo   Some files may be locked. Close any Python/conda windows and try again.
+  echo.
+  call :die "[ERROR] Could not delete corrupt conda dir; files may be locked." 3
+  exit /b 3
+)
+echo   [INFO] Corrupt installation removed. Downloading fresh copy...
+call :log "[INFO] Self-healing: corrupt conda evicted from %MINICONDA_ROOT%."
+set "CONDA_BAT="
+set "HP_CONDA_JUST_INSTALLED="
+set "HP_ENV_STATE_RESULT="
+call :download_miniconda_exe
+if exist "%TEMP%\miniconda.exe" (
+  call :try_conda_install
+)
+if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
+call :select_conda_bat
+if not defined CONDA_BAT (
+  call :die "[ERROR] Fresh Miniconda install failed after self-healing eviction." 4
+  exit /b 4
+)
+set "HP_CONDA_JUST_INSTALLED=1"
+goto :after_conda_bat_validation
 :die
 set "MSG=%~1"
 set "RC=%~2"

@@ -591,4 +591,39 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($corruptExit -eq 2 -and $corruptMsgFound) { $summary.Add('Corrupt conda detect: PASS') } else { $summary.Add('Corrupt conda detect: FAIL') }
 
+# --- Conda binary corruption heal-decline test (REQ-020 Task 3) ---
+# Arrange: HP_TEST_CORRUPT_CONDA=1 + HP_TEST_HEAL_ANSWER=N simulates user declining self-heal.
+# Assert:  bootstrap exits 2 and log contains "declined".
+# Note: HP_TEST_HEAL_ANSWER bypasses the HP_CI_LANE gate so this test works in CI without pausing.
+$healDir = Join-Path $TestsDir '~selftest_heal_decline'
+if (Test-Path $healDir) { Remove-Item -Recurse -Force $healDir }
+New-Item -ItemType Directory -Force -Path $healDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $healDir -Force
+Set-Content -Path (Join-Path $healDir 'app_heal_decline_test.py') -Value 'print("should-not-reach")' -Encoding ASCII
+$healLogName = '~heal_decline_bootstrap.log'
+$env:HP_TEST_CORRUPT_CONDA = '1'
+$env:HP_TEST_HEAL_ANSWER = 'N'
+$prevCILane2 = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $healDir
+try {
+  cmd /c "call run_setup.bat > $healLogName 2>&1"
+  $healExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_CORRUPT_CONDA = ''
+  $env:HP_TEST_HEAL_ANSWER = ''
+  $env:HP_CI_LANE = $prevCILane2
+}
+$healLogPath = Join-Path $healDir $healLogName
+$healLines = if (Test-Path $healLogPath) { Get-Content -LiteralPath $healLogPath -Encoding ASCII } else { @() }
+$healDeclineMsgFound = ($healLines | Where-Object { $_ -like '*declined*' }).Count -gt 0
+Write-NdjsonRow ([ordered]@{
+  id      = 'self.corrupt.conda.heal.decline'
+  pass    = ($healExit -eq 2 -and $healDeclineMsgFound)
+  desc    = 'HP_TEST_HEAL_ANSWER=N: user declines self-heal, bootstrap logs declined and exits 2'
+  details = [ordered]@{ exitCode = $healExit; declineMsgFound = $healDeclineMsgFound }
+})
+if ($healExit -eq 2 -and $healDeclineMsgFound) { $summary.Add('Heal decline: PASS') } else { $summary.Add('Heal decline: FAIL') }
+
 $summary | Set-Content -Path $summaryPath -Encoding ASCII

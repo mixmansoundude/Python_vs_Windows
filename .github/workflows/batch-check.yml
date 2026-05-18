@@ -1081,6 +1081,12 @@ jobs:
             tests\~selftest_corrupt_conda\~setup.log
             tests/~selftest_corrupt_conda/~bootstrap.status.json
             tests\~selftest_corrupt_conda\~bootstrap.status.json
+            tests/~selftest_heal_decline/~heal_decline_bootstrap.log
+            tests\~selftest_heal_decline\~heal_decline_bootstrap.log
+            tests/~selftest_heal_decline/~setup.log
+            tests\~selftest_heal_decline\~setup.log
+            tests/~selftest_heal_decline/~bootstrap.status.json
+            tests\~selftest_heal_decline\~bootstrap.status.json
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
