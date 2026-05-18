@@ -315,7 +315,8 @@ conda.path,
 version.metadata,
 host.env.os, host.env.ps, host.env.python,
 self.stub.fastpath, self.stub.rebuild, self.stub.state_skip,
-self.corrupt.conda.detect
+self.corrupt.conda.detect,
+self.cache.corrupted
 ```
 
 ---
