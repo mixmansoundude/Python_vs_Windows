@@ -1965,9 +1965,7 @@ echo   A fresh Miniconda will be downloaded automatically.
 echo.
 call :log "[ERROR] Corrupt conda binary detected at: %CONDA_BAT%"
 call :die "[ERROR] Corrupt conda binary; delete %MINICONDA_ROOT% and re-run." 2
-rem :die signals a fatal error but uses exit /b so the caller (CI orchestration,
-rem harness, or run_tests.bat) can continue collecting artifacts and gate results.
-rem Do NOT change to a bare `exit` here - that would terminate the entire job.
+exit /b 2
 :die
 set "MSG=%~1"
 set "RC=%~2"
