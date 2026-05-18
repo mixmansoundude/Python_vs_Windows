@@ -252,7 +252,7 @@ if defined CONDA_BAT if not defined HP_CONDA_JUST_INSTALLED (
     call :log "[ERROR] HP_TEST_CORRUPT_CONDA: simulating corrupt conda binary."
     goto :conda_binary_corrupt
   )
-  call "%CONDA_BAT%" --version >nul 2>&1
+  call "%CONDA_BAT%" info >nul 2>&1
   if errorlevel 1 goto :conda_binary_corrupt
 )
 :after_conda_bat_validation
@@ -1945,7 +1945,7 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
 )
 exit /b 0
 rem :conda_binary_corrupt -- REQ-020: shows user-friendly message when conda binary fails health check.
-rem Called when: (a) HP_TEST_CORRUPT_CONDA=1, (b) call "%CONDA_BAT%" --version returns non-zero.
+rem Called when: (a) HP_TEST_CORRUPT_CONDA=1, (b) call "%CONDA_BAT%" info returns non-zero (DLL error, etc.).
 rem Routes through :die so the CI/user pause gate (REQ-016) is honoured.
 :conda_binary_corrupt
 cls

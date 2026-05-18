@@ -79,7 +79,7 @@ jobs:
             Write-Host "::warning::Conda binary not found after cache restore; treating as corrupted."
             'HP_CACHE_CORRUPTED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           } else {
-            $output = & cmd /c "`"$condaBat`" --version" 2>&1
+            $output = & cmd /c "`"$condaBat`" info" 2>&1
             if ($LASTEXITCODE -ne 0) {
               Write-Host "::warning::Conda binary health check failed (exit=$LASTEXITCODE); cache corrupted."
               'HP_CACHE_CORRUPTED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
