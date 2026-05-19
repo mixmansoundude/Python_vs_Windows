@@ -290,6 +290,8 @@ Write-Result "batch.req011.dircheck" "REQ-011: directory integrity check present
 $req009Patterns = @('\[BOOT\] REQ-009.*Selected.*UV', '\[BOOT\] REQ-009.*Selected.*Conda', '\[BOOT\] REQ-009.*Selected.*Local venv', '\[BOOT\] REQ-009.*Selected.*System Python')
 $hasReq009 = ($req009Patterns | Where-Object { -not ($AllText -match $_) }).Count -eq 0
 Write-Result "batch.req009.provider_logs" "REQ-009: all four provider log lines present in run_setup.bat" $hasReq009 @{}
+$venvGuardFound = $AllText -match [regex]::Escape('"%HP_ALLOW_VENV_FALLBACK%"=="1"')
+Write-Result "batch.req009.venv_unconditional" "REQ-009: venv fallback not guarded by HP_ALLOW_VENV_FALLBACK (fallback is unconditional)" (-not $venvGuardFound) @{ guardFound = $venvGuardFound }
 $hasReq002Entry = $AllText -match '\[BOOT\] REQ-002.*Entry selected'
 Write-Result "batch.req002.entry_log" "REQ-002: entry selection log line present in run_setup.bat" $hasReq002Entry @{}
 $feMatch = [regex]::Match($AllText, 'set "HP_FIND_ENTRY=([A-Za-z0-9+/=]+)"')

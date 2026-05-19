@@ -375,6 +375,73 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass
+# ===== REQ-009 Tier 3: Venv fallback success path =====
+# Forces conda to fail; verifies venv fallback fires automatically and app bootstraps via .venv.
+# Skipped in conda-full lane where HP_FORCE_CONDA_ONLY=1 blocks all fallbacks unconditionally.
+$venvFbDir = Join-Path $here '~selftest_venv_fallback'
+if (Test-Path $venvFbDir) { Remove-Item -Recurse -Force $venvFbDir }
+New-Item -ItemType Directory -Force -Path $venvFbDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $venvFbDir -Force
+Set-Content -LiteralPath (Join-Path $venvFbDir 'app.py') -Value 'print("venv-fallback-ok")' -Encoding Ascii
+
+$venvFbPass = $true
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.venv.fallback'
+        req     = 'REQ-009'
+        pass    = $true
+        desc    = 'REQ-009 Tier 3: venv fallback success path test'
+        details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-prohibits-venv-fallback' }
+    })
+} else {
+    $savedCondaFail4 = $env:HP_TEST_FORCE_CONDA_FAIL
+    $savedOffline4   = $env:HP_OFFLINE_MODE
+    $savedSkipPR4    = $env:HP_SKIP_PIPREQS
+    $savedLane4      = $env:HP_CI_LANE
+    $env:HP_TEST_FORCE_CONDA_FAIL = '1'
+    $env:HP_OFFLINE_MODE          = '1'
+    $env:HP_SKIP_PIPREQS          = '1'
+    $env:HP_CI_LANE               = 'test'
+    $venvFbLog = Join-Path $venvFbDir '~venv_fallback.log'
+    Push-Location -LiteralPath $venvFbDir
+    try {
+        cmd /c "run_setup.bat > ~venv_fallback.log 2>&1"
+        $venvFbExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    $env:HP_TEST_FORCE_CONDA_FAIL = $savedCondaFail4
+    $env:HP_OFFLINE_MODE          = $savedOffline4
+    $env:HP_SKIP_PIPREQS          = $savedSkipPR4
+    $env:HP_CI_LANE               = $savedLane4
+
+    $venvFbText = ''
+    if (Test-Path -LiteralPath $venvFbLog) {
+        $venvFbText = Get-Content -LiteralPath $venvFbLog -Raw -Encoding Ascii
+    }
+    $venvFbSetupLog = Join-Path $venvFbDir '~setup.log'
+    $venvFbSetupText = ''
+    if (Test-Path -LiteralPath $venvFbSetupLog) {
+        $venvFbSetupText = Get-Content -LiteralPath $venvFbSetupLog -Raw -Encoding Ascii
+    }
+    $venvFbReady    = ($venvFbSetupText -match [regex]::Escape('[INFO] venv fallback ready:'))
+    $venvFbProvider = ($venvFbSetupText -match [regex]::Escape('[BOOT] REQ-009: Selected Python provider: Local venv (fallback).'))
+    $venvFbAppRan   = ($venvFbText -match [regex]::Escape('venv-fallback-ok'))
+    $venvFbPass = ($venvFbReady -and $venvFbProvider -and $venvFbAppRan)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.venv.fallback'
+        req     = 'REQ-009'
+        pass    = $venvFbPass
+        desc    = 'REQ-009 Tier 3: venv fallback fires when conda fails and app bootstraps via .venv'
+        details = [ordered]@{
+            venvReadyLog     = $venvFbReady
+            providerLogFound = $venvFbProvider
+            appRan           = $venvFbAppRan
+            exit             = $venvFbExit
+        }
+    })
+}
+
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $venvFbPass
 if (-not $allPass) { exit 1 }
 exit 0

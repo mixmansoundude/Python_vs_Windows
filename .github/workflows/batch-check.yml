@@ -1111,6 +1111,12 @@ jobs:
             tests\~selftest_corrupt_uv\~setup.log
             tests/~selftest_corrupt_uv/~bootstrap.status.json
             tests\~selftest_corrupt_uv\~bootstrap.status.json
+            tests/~selftest_venv_fallback/~venv_fallback.log
+            tests\~selftest_venv_fallback\~venv_fallback.log
+            tests/~selftest_venv_fallback/~setup.log
+            tests\~selftest_venv_fallback\~setup.log
+            tests/~selftest_venv_fallback/~bootstrap.status.json
+            tests\~selftest_venv_fallback\~bootstrap.status.json
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
