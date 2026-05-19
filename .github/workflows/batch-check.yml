@@ -1115,6 +1115,10 @@ jobs:
             tests\~selftest_venv_fallback\~venv_fallback.log
             tests/~selftest_venv_fallback/~setup.log
             tests\~selftest_venv_fallback\~setup.log
+            tests/~uv_pyver_test/~pyver_bootstrap.log
+            tests\~uv_pyver_test\~pyver_bootstrap.log
+            tests/~uv_pyver_test/~setup.log
+            tests\~uv_pyver_test\~setup.log
             tests/~selftest_venv_fallback/~bootstrap.status.json
             tests\~selftest_venv_fallback\~bootstrap.status.json
             tests/~selftest_venv_fallback/~run.out.txt

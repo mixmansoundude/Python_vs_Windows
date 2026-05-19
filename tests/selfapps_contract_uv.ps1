@@ -96,4 +96,70 @@ if ($lane -eq 'contract-uv-fail') {
         details = $assertions
         lane    = $lane
     })
+
+    # self.contract.uv.pyver: assert that REQ-004 Python version (from runtime.txt) is
+    # forwarded to uv venv via --python X.Y when PYSPEC is set.
+    # Runs a dedicated minimal bootstrap with runtime.txt pre-created so PYSPEC is set
+    # on the first run and the version forwarding log line is observable.
+    $uvBin = Join-Path $envsmoke '~uv_bin\uv.exe'
+    $uvBinExists = Test-Path -LiteralPath $uvBin
+    $runtimeVersionForPyver = ''
+    if ($runtimeValid -and $runtimeContent -match '^python-([0-9]+\.[0-9]+)') {
+        $runtimeVersionForPyver = $Matches[1]
+    }
+
+    $pyverPass = $false
+    $pyverDetails = [ordered]@{}
+
+    if (-not $uvBinExists) {
+        $pyverPass = $true
+        $pyverDetails = [ordered]@{ skip=$true; reason='uv-not-acquired'; uvBin=$uvBin }
+    } elseif (-not $runtimeVersionForPyver) {
+        $pyverPass = $true
+        $pyverDetails = [ordered]@{ skip=$true; reason='no-runtime-version'; runtimeExists=$runtimeExists; runtimeValid=$runtimeValid }
+    } else {
+        $pyverTest = Join-Path $here '~uv_pyver_test'
+        New-Item -ItemType Directory -Force -Path $pyverTest | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $pyverTest -Force
+        Set-Content -LiteralPath (Join-Path $pyverTest 'app.py') -Value "print('pyver-test-ok')" -NoNewline
+        Set-Content -LiteralPath (Join-Path $pyverTest 'runtime.txt') -Value "python-$runtimeVersionForPyver" -NoNewline
+        $pyverSetupLog = Join-Path $pyverTest '~setup.log'
+        $prevPvwUv = [Environment]::GetEnvironmentVariable('PVW_UV_EXE')
+        $env:PVW_UV_EXE = $uvBin
+        $pyverExit = -1
+        Push-Location -LiteralPath $pyverTest
+        try {
+            cmd /c .\run_setup.bat *> '~pyver_bootstrap.log'
+            $pyverExit = $LASTEXITCODE
+        } finally {
+            if ($null -eq $prevPvwUv) {
+                Remove-Item Env:PVW_UV_EXE -ErrorAction SilentlyContinue
+            } else {
+                $env:PVW_UV_EXE = $prevPvwUv
+            }
+            Pop-Location
+        }
+        $pyverLog = if (Test-Path -LiteralPath $pyverSetupLog) {
+            Get-Content -LiteralPath $pyverSetupLog -Raw -ErrorAction SilentlyContinue
+        } else { '' }
+        # Match the exact log line emitted by run_setup.bat when --python is forwarded.
+        $expectedLogLine = "[INFO] uv: creating venv at .uv_env with Python $runtimeVersionForPyver"
+        $versionForwarded = ($pyverLog -match [regex]::Escape($expectedLogLine))
+        $pyverPass = [bool]$versionForwarded
+        $pyverDetails = [ordered]@{
+            runtimeVersion   = $runtimeVersionForPyver
+            exitCode         = $pyverExit
+            versionForwarded = $versionForwarded
+            expectedLogLine  = $expectedLogLine
+        }
+    }
+
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.contract.uv.pyver'
+        req     = 'REQ-004'
+        pass    = [bool]$pyverPass
+        desc    = 'uv venv --python X.Y forwarded from runtime.txt (PYSPEC REQ-004 Tiers 1-2)'
+        details = $pyverDetails
+        lane    = $lane
+    })
 }
