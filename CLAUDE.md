@@ -314,12 +314,17 @@ dp.compat, prep.multi.constraint, batch.paren.balance, env.foldername,
 conda.path,
 version.metadata,
 host.env.os, host.env.ps, host.env.python,
+batch.req009.venv_unconditional,
 self.stub.fastpath, self.stub.rebuild, self.stub.state_skip,
 self.corrupt.conda.detect,
 self.corrupt.conda.heal.decline,
-self.corrupt.uv.detect,
-self.cache.corrupted,
-self.cache.bootstrap.failed
+self.corrupt.uv.detect
+```
+
+selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes):
+
+```
+self.venv.fallback
 ```
 
 ---

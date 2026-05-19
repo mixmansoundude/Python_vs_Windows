@@ -112,10 +112,12 @@ rem HP_OFFLINE_MODE is set by :check_net_after_dl_fail when user declines or no 
 set "HP_OFFLINE_MODE=%HP_OFFLINE_MODE%"
 rem HP_TEST_FORCE_CONNECTIVITY_CHECK=1: triggers connectivity gate at startup for CI coverage
 set "HP_TEST_FORCE_CONNECTIVITY_CHECK=%HP_TEST_FORCE_CONNECTIVITY_CHECK%"
-rem HP_TEST_FORCE_VENV_FAIL=1: simulates venv creation failure for REQ-014 branch coverage
+rem HP_TEST_FORCE_VENV_FAIL=1: simulates venv creation failure for REQ-009/REQ-014 branch coverage
 set "HP_TEST_FORCE_VENV_FAIL=%HP_TEST_FORCE_VENV_FAIL%"
-rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-014 branch coverage
+rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-009/REQ-014 branch coverage
 set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
+rem HP_ALLOW_VENV_FALLBACK (deprecated): venv fallback is now unconditional when conda fails; accepted but ignored.
+set "HP_ALLOW_VENV_FALLBACK=%HP_ALLOW_VENV_FALLBACK%"
 rem HP_TEST_FORCE_CONSENT_CHECK=1: directly triggers consent gate at startup for REQ-014 branch coverage
 set "HP_TEST_FORCE_CONSENT_CHECK=%HP_TEST_FORCE_CONSENT_CHECK%"
 rem HP_TEST_CORRUPT_CONDA=1: simulates a corrupt conda binary for REQ-020 branch coverage (corruption hardening)
@@ -128,7 +130,6 @@ set "HP_TEST_CORRUPT_UV=%HP_TEST_CORRUPT_UV%"
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
   rem derived requirement: conda-full diagnostics must avoid venv/system fallbacks so iterate can flag real conda regressions.
-  set "HP_ALLOW_VENV_FALLBACK="
   set "HP_ALLOW_SYSTEM_FALLBACK="
   call :log "[INFO] Conda-only flag active: fallbacks disabled."
 )
@@ -1275,12 +1276,11 @@ if "%HP_FORCE_CONDA_ONLY%"=="1" (
   exit /b 0
 )
 
-if "%HP_ALLOW_VENV_FALLBACK%"=="1" (
-  call :try_venv_fallback
-  if not errorlevel 1 (
-    set "HP_ENV_READY=1"
-    exit /b 0
-  )
+rem REQ-009: venv fallback is always attempted when conda fails; HP_ALLOW_VENV_FALLBACK is deprecated/ignored.
+call :try_venv_fallback
+if not errorlevel 1 (
+  set "HP_ENV_READY=1"
+  exit /b 0
 )
 if "%HP_ALLOW_SYSTEM_FALLBACK%"=="1" (
   call :try_system_fallback
