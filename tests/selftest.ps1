@@ -557,4 +557,119 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($pep723MalWarnFound -and $pep723MalContinued) { $summary.Add('PEP 723 malformed block: PASS') } else { $summary.Add('PEP 723 malformed block: FAIL') }
 
+# --- Conda binary corruption detection test (REQ-020) ---
+# Arrange: HP_TEST_CORRUPT_CONDA=1 simulates a corrupt conda binary.
+# Assert:  bootstrap exits 2 and log contains the corruption-detected error message.
+# Note: test runs only when conda is already installed from the prior bootstrap run;
+#       HP_CONDA_JUST_INSTALLED guards fresh-install runs from triggering the check.
+$corruptDir = Join-Path $TestsDir '~selftest_corrupt_conda'
+if (Test-Path $corruptDir) { Remove-Item -Recurse -Force $corruptDir }
+New-Item -ItemType Directory -Force -Path $corruptDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $corruptDir -Force
+Set-Content -Path (Join-Path $corruptDir 'app_corrupt_test.py') -Value 'print("should-not-reach")' -Encoding ASCII
+$corruptLogName = '~corrupt_bootstrap.log'
+$env:HP_TEST_CORRUPT_CONDA = '1'
+$prevCILane = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $corruptDir
+try {
+  cmd /c "call run_setup.bat > $corruptLogName 2>&1"
+  $corruptExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_CORRUPT_CONDA = ''
+  $env:HP_CI_LANE = $prevCILane
+}
+$corruptLogPath = Join-Path $corruptDir $corruptLogName
+$corruptLines = if (Test-Path $corruptLogPath) { Get-Content -LiteralPath $corruptLogPath -Encoding ASCII } else { @() }
+$corruptMsgFound = ($corruptLines | Where-Object { $_ -like '*Corrupt conda binary*' }).Count -gt 0
+Write-NdjsonRow ([ordered]@{
+  id      = 'self.corrupt.conda.detect'
+  pass    = ($corruptExit -eq 2 -and $corruptMsgFound)
+  desc    = 'HP_TEST_CORRUPT_CONDA=1: bootstrap detects corruption, logs error, exits 2'
+  details = [ordered]@{ exitCode = $corruptExit; msgFound = $corruptMsgFound }
+})
+if ($corruptExit -eq 2 -and $corruptMsgFound) { $summary.Add('Corrupt conda detect: PASS') } else { $summary.Add('Corrupt conda detect: FAIL') }
+
+# --- Conda binary corruption heal-decline test (REQ-020 Task 3) ---
+# Arrange: HP_TEST_CORRUPT_CONDA=1 + HP_TEST_HEAL_ANSWER=N simulates user declining self-heal.
+# Assert:  bootstrap exits 2 and log contains "declined".
+# Note: HP_TEST_HEAL_ANSWER bypasses the HP_CI_LANE gate so this test works in CI without pausing.
+$healDir = Join-Path $TestsDir '~selftest_heal_decline'
+if (Test-Path $healDir) { Remove-Item -Recurse -Force $healDir }
+New-Item -ItemType Directory -Force -Path $healDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $healDir -Force
+Set-Content -Path (Join-Path $healDir 'app_heal_decline_test.py') -Value 'print("should-not-reach")' -Encoding ASCII
+$healLogName = '~heal_decline_bootstrap.log'
+$env:HP_TEST_CORRUPT_CONDA = '1'
+$env:HP_TEST_HEAL_ANSWER = 'N'
+$prevCILane2 = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $healDir
+try {
+  cmd /c "call run_setup.bat > $healLogName 2>&1"
+  $healExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_CORRUPT_CONDA = ''
+  $env:HP_TEST_HEAL_ANSWER = ''
+  $env:HP_CI_LANE = $prevCILane2
+}
+$healLogPath = Join-Path $healDir $healLogName
+$healLines = if (Test-Path $healLogPath) { Get-Content -LiteralPath $healLogPath -Encoding ASCII } else { @() }
+$healDeclineMsgFound = ($healLines | Where-Object { $_ -like '*declined*' }).Count -gt 0
+Write-NdjsonRow ([ordered]@{
+  id      = 'self.corrupt.conda.heal.decline'
+  pass    = ($healExit -eq 2 -and $healDeclineMsgFound)
+  desc    = 'HP_TEST_HEAL_ANSWER=N: user declines self-heal, bootstrap logs declined and exits 2'
+  details = [ordered]@{ exitCode = $healExit; declineMsgFound = $healDeclineMsgFound }
+})
+if ($healExit -eq 2 -and $healDeclineMsgFound) { $summary.Add('Heal decline: PASS') } else { $summary.Add('Heal decline: FAIL') }
+
+# --- UV binary corruption eviction test (REQ-020 Task 4) ---
+# Arrange: create fake ~uv_bin\uv.exe + HP_TEST_CORRUPT_UV=1 simulates corrupt cached uv binary.
+# Assert:  bootstrap logs the eviction warning.
+# Skip in conda-only lane (HP_FORCE_CONDA_ONLY=1 bypasses uv path entirely).
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+  Write-NdjsonRow ([ordered]@{
+    id      = 'self.corrupt.uv.detect'
+    pass    = $true
+    desc    = 'HP_TEST_CORRUPT_UV: uv eviction test skipped in conda-only lane'
+    details = [ordered]@{ skipped = $true; reason = 'HP_FORCE_CONDA_ONLY=1' }
+  })
+  $summary.Add('Corrupt uv detect: SKIP (conda-only)')
+} else {
+  $uvCorruptDir = Join-Path $TestsDir '~selftest_corrupt_uv'
+  if (Test-Path $uvCorruptDir) { Remove-Item -Recurse -Force $uvCorruptDir }
+  New-Item -ItemType Directory -Force -Path $uvCorruptDir | Out-Null
+  Copy-Item -Path $BatchPath -Destination $uvCorruptDir -Force
+  Set-Content -Path (Join-Path $uvCorruptDir 'app_corrupt_uv_test.py') -Value 'print("corrupt-uv-test")' -Encoding ASCII
+  $uvBinDir = Join-Path $uvCorruptDir '~uv_bin'
+  New-Item -ItemType Directory -Force -Path $uvBinDir | Out-Null
+  Set-Content -Path (Join-Path $uvBinDir 'uv.exe') -Value '' -Encoding ASCII
+  $uvLogName = '~corrupt_uv_bootstrap.log'
+  $env:HP_TEST_CORRUPT_UV = '1'
+  $prevCILane3 = $env:HP_CI_LANE
+  if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+  Push-Location $uvCorruptDir
+  try {
+    cmd /c "call run_setup.bat > $uvLogName 2>&1"
+    $uvTestExit = $LASTEXITCODE
+  } finally {
+    Pop-Location
+    $env:HP_TEST_CORRUPT_UV = ''
+    $env:HP_CI_LANE = $prevCILane3
+  }
+  $uvLogPath = Join-Path $uvCorruptDir $uvLogName
+  $uvLines = if (Test-Path $uvLogPath) { Get-Content -LiteralPath $uvLogPath -Encoding ASCII } else { @() }
+  $uvEvictMsgFound = ($uvLines | Where-Object { $_ -like '*HP_TEST_CORRUPT_UV*' }).Count -gt 0
+  Write-NdjsonRow ([ordered]@{
+    id      = 'self.corrupt.uv.detect'
+    pass    = $uvEvictMsgFound
+    desc    = 'HP_TEST_CORRUPT_UV=1: bootstrap evicts cached uv binary and logs warning'
+    details = [ordered]@{ exitCode = $uvTestExit; evictMsgFound = $uvEvictMsgFound }
+  })
+  if ($uvEvictMsgFound) { $summary.Add('Corrupt uv detect: PASS') } else { $summary.Add('Corrupt uv detect: FAIL') }
+}
+
 $summary | Set-Content -Path $summaryPath -Encoding ASCII

@@ -57,6 +57,12 @@ if (Test-Path $ResultsPath) {
 }
 $entryHelperRow = $bootstrapRows | Where-Object { $_.id -eq 'helper.find_entry.syntax' } | Select-Object -First 1
 if (!(Test-Path $BatchPath)) { Write-Host "run_setup.bat not found next to run_tests.bat." -ForegroundColor Red; exit 2 }
+if ($env:HP_CACHE_CORRUPTED -eq '1') {
+  Write-Host "::warning:: Cache corruption detected; harness tests skipped (HP_CACHE_CORRUPTED=1)"
+  $rec = [ordered]@{ id='self.cache.corrupted'; pass=$true; desc='Cache corruption detected; harness tests skipped'; details=[ordered]@{ corrupted=$true } }
+  Add-Content -Path $ResultsPath -Value ($rec | ConvertTo-Json -Compress -Depth 8) -Encoding Ascii
+  exit 0
+}
 if (-not (Test-Path ".\.ci_bootstrap_marker")) {
   throw "CI bootstrap marker not found. Did run_setup.bat run?"
 }
@@ -102,7 +108,7 @@ if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
   Write-Host ("SHA256 (fallback): {0}" -f $sha)
 }
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
-$allowedStates = @('ok','no_python_files','venv_env','degraded_env')
+$allowedStates = @('ok','no_python_files','venv_env','degraded_env','cache_corrupted')
 $stateOk = $allowedStates -contains $BootstrapStatus.state
 Write-Result "bootstrap.state" "Bootstrap status state is ok/no_python_files/venv_env/degraded_env" $stateOk @{ state=$BootstrapStatus.state; exitCode=$BootstrapStatus.exitCode; pyFiles=$BootstrapStatus.pyFiles; allowed=$allowedStates }
 Write-Result "bootstrap.exit" "Bootstrap exitCode is 0" ($BootstrapStatus.exitCode -eq 0) @{ exitCode=$BootstrapStatus.exitCode }

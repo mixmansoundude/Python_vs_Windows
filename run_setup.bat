@@ -118,6 +118,12 @@ rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-014
 set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
 rem HP_TEST_FORCE_CONSENT_CHECK=1: directly triggers consent gate at startup for REQ-014 branch coverage
 set "HP_TEST_FORCE_CONSENT_CHECK=%HP_TEST_FORCE_CONSENT_CHECK%"
+rem HP_TEST_CORRUPT_CONDA=1: simulates a corrupt conda binary for REQ-020 branch coverage (corruption hardening)
+set "HP_TEST_CORRUPT_CONDA=%HP_TEST_CORRUPT_CONDA%"
+rem HP_TEST_HEAL_ANSWER=Y|N: bypasses the interactive Y/N prompt in :conda_binary_corrupt for CI testing
+set "HP_TEST_HEAL_ANSWER=%HP_TEST_HEAL_ANSWER%"
+rem HP_TEST_CORRUPT_UV=1: simulates a corrupt uv binary; clears cache and re-downloads for REQ-020 branch coverage
+set "HP_TEST_CORRUPT_UV=%HP_TEST_CORRUPT_UV%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -243,6 +249,19 @@ if not defined CONDA_BAT (
   call :select_conda_bat
 )
 
+rem === Validate existing conda binary health (REQ-020: corruption hardening) ===
+rem Only fires for pre-existing installs (HP_CONDA_JUST_INSTALLED guards fresh downloads).
+rem Skipped when HP_TEST_FORCE_CONDA_FAIL=1 (test flag already simulates conda failure).
+if defined CONDA_BAT if not defined HP_CONDA_JUST_INSTALLED if not defined HP_TEST_FORCE_CONDA_FAIL (
+  if defined HP_TEST_CORRUPT_CONDA (
+    call :log "[ERROR] HP_TEST_CORRUPT_CONDA: simulating corrupt conda binary."
+    goto :conda_binary_corrupt
+  )
+  call "%CONDA_BAT%" info >nul 2>&1
+  if errorlevel 1 goto :conda_binary_corrupt
+)
+:after_conda_bat_validation
+
 if not defined CONDA_BAT (
   set "HP_ENV_READY="
   call :handle_conda_failure "conda.bat not found after bootstrap."
@@ -287,10 +306,22 @@ if "%HP_FORCE_CONDA_ONLY%"=="1" (
   goto :uv_acquire_done
 )
 if exist "%HP_UV_BIN%\uv.exe" (
+  if defined HP_TEST_CORRUPT_UV (
+    call :log "[WARN] HP_TEST_CORRUPT_UV: simulating corrupt uv binary; clearing cache."
+    del /f /q "%HP_UV_BIN%\uv.exe" >nul 2>&1
+    goto :uv_acquire_download
+  )
+  "%HP_UV_BIN%\uv.exe" --version >nul 2>&1
+  if errorlevel 1 (
+    call :log "[WARN] Cached uv.exe failed health check; clearing and re-downloading."
+    del /f /q "%HP_UV_BIN%\uv.exe" >nul 2>&1
+    goto :uv_acquire_download
+  )
   set "HP_UV_EXE=%HP_UV_BIN%\uv.exe"
   call :log "[INFO] uv: cached binary found at ~uv_bin\uv.exe"
   goto :uv_acquire_done
 )
+:uv_acquire_download
 if "%HP_OFFLINE_MODE%"=="1" (
   call :log "[INFO] REQ-013: Offline mode: skipping uv download."
   set "UV_FALLBACK_REASON=offline"
@@ -1930,9 +1961,85 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
   )
 )
 exit /b 0
-rem :die signals a fatal error but uses exit /b so the caller (CI orchestration,
-rem harness, or run_tests.bat) can continue collecting artifacts and gate results.
-rem Do NOT change to a bare `exit` here - that would terminate the entire job.
+rem :conda_binary_corrupt -- REQ-020: shows user-friendly message when conda binary fails health check.
+rem Called when: (a) HP_TEST_CORRUPT_CONDA=1, (b) call "%CONDA_BAT%" info returns non-zero (DLL error, etc.).
+rem Interactive users get a Y/N prompt to self-heal; CI exits immediately.
+rem HP_TEST_HEAL_ANSWER bypasses HP_CI_LANE gate so CI can test the decline path without pausing.
+rem PVW_CONDA_EXE overrides skip self-heal: we must not delete a user-managed conda root.
+:conda_binary_corrupt
+cls
+echo.
+echo ================================================================
+echo   CORRUPTED PYTHON ENVIRONMENT DETECTED
+echo ================================================================
+echo.
+echo   The local conda installation appears to be broken.
+echo   This can happen after a Windows update or OS migration
+echo   ^(example: DLL load error 0xc000007b^).
+echo.
+echo   Affected path: %MINICONDA_ROOT%
+echo.
+call :log "[ERROR] Corrupt conda binary detected at: %CONDA_BAT%"
+if defined PVW_CONDA_EXE goto :corrupt_override_exit
+if defined HP_TEST_HEAL_ANSWER goto :heal_prompt
+if defined HP_CI_LANE goto :corrupt_ci_exit
+:heal_prompt
+set "HP_HEAL_RAW="
+if defined HP_TEST_HEAL_ANSWER (
+  set "HP_HEAL_RAW=%HP_TEST_HEAL_ANSWER%"
+) else (
+  set /p "HP_HEAL_RAW=  Would you like to delete it and rebuild? [Y/N] "
+)
+set "HP_HEAL_CHOICE=%HP_HEAL_RAW:~0,1%"
+if /I "%HP_HEAL_CHOICE%"=="Y" goto :evict_and_rebuild
+echo.
+echo   Exiting without changes. Delete the folder above manually,
+echo   then run this setup again.
+echo.
+call :die "[ERROR] Corrupt conda env; user declined rebuild." 2
+exit /b 2
+:corrupt_override_exit
+echo.
+echo   This binary was specified via PVW_CONDA_EXE:
+echo     %PVW_CONDA_EXE%
+echo.
+echo   Automatic self-healing is not available for user-managed conda.
+echo   Please fix or replace the binary at the path above, then re-run.
+echo.
+call :die "[ERROR] Corrupt user-managed conda (PVW_CONDA_EXE); fix manually." 2
+exit /b 2
+:corrupt_ci_exit
+call :die "[ERROR] Corrupt conda binary in CI; cache must be cleared." 2
+exit /b 2
+:evict_and_rebuild
+echo.
+echo   [INFO] Removing corrupt Miniconda installation...
+rmdir /s /q "%MINICONDA_ROOT%" 2>nul
+if exist "%MINICONDA_ROOT%" (
+  echo.
+  echo   [WARN] Could not fully remove %MINICONDA_ROOT%.
+  echo   Some files may be locked. Close any Python/conda windows and try again.
+  echo.
+  call :die "[ERROR] Could not delete corrupt conda dir; files may be locked." 3
+  exit /b 3
+)
+echo   [INFO] Corrupt installation removed. Downloading fresh copy...
+call :log "[INFO] Self-healing: corrupt conda evicted from %MINICONDA_ROOT%."
+set "CONDA_BAT="
+set "HP_CONDA_JUST_INSTALLED="
+set "HP_ENV_STATE_RESULT="
+call :download_miniconda_exe
+if exist "%TEMP%\miniconda.exe" (
+  call :try_conda_install
+)
+if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
+call :select_conda_bat
+if not defined CONDA_BAT (
+  call :die "[ERROR] Fresh Miniconda install failed after self-healing eviction." 4
+  exit /b 4
+)
+set "HP_CONDA_JUST_INSTALLED=1"
+goto :after_conda_bat_validation
 :die
 set "MSG=%~1"
 set "RC=%~2"
