@@ -1965,6 +1965,7 @@ rem :conda_binary_corrupt -- REQ-020: shows user-friendly message when conda bin
 rem Called when: (a) HP_TEST_CORRUPT_CONDA=1, (b) call "%CONDA_BAT%" info returns non-zero (DLL error, etc.).
 rem Interactive users get a Y/N prompt to self-heal; CI exits immediately.
 rem HP_TEST_HEAL_ANSWER bypasses HP_CI_LANE gate so CI can test the decline path without pausing.
+rem PVW_CONDA_EXE overrides skip self-heal: we must not delete a user-managed conda root.
 :conda_binary_corrupt
 cls
 echo.
@@ -1979,6 +1980,7 @@ echo.
 echo   Affected path: %MINICONDA_ROOT%
 echo.
 call :log "[ERROR] Corrupt conda binary detected at: %CONDA_BAT%"
+if defined PVW_CONDA_EXE goto :corrupt_override_exit
 if defined HP_TEST_HEAL_ANSWER goto :heal_prompt
 if defined HP_CI_LANE goto :corrupt_ci_exit
 :heal_prompt
@@ -1995,6 +1997,16 @@ echo   Exiting without changes. Delete the folder above manually,
 echo   then run this setup again.
 echo.
 call :die "[ERROR] Corrupt conda env; user declined rebuild." 2
+exit /b 2
+:corrupt_override_exit
+echo.
+echo   This binary was specified via PVW_CONDA_EXE:
+echo     %PVW_CONDA_EXE%
+echo.
+echo   Automatic self-healing is not available for user-managed conda.
+echo   Please fix or replace the binary at the path above, then re-run.
+echo.
+call :die "[ERROR] Corrupt user-managed conda (PVW_CONDA_EXE); fix manually." 2
 exit /b 2
 :corrupt_ci_exit
 call :die "[ERROR] Corrupt conda binary in CI; cache must be cleared." 2
