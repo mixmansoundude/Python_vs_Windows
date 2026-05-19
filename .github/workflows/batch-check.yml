@@ -1129,6 +1129,9 @@ jobs:
           retention-days: 14
 
       # Professional note: cache/save runs separately so failed bootstrap attempts do not persist a partial Miniconda tree.
+      # HP_CACHE_CORRUPTED guard on both validate and save: if the restored cache was corrupt (health
+      # check fired) or bootstrap failed (catch step set HP_CACHE_CORRUPTED=1), skip the save so we
+      # never write a corrupt tree back to the cache store (prevents the rolling-corruption-factory loop).
       - name: Validate Miniconda before cache save
         if: ${{ matrix.mode == 'cache' && steps.conda_cache_restore.outputs.cache-hit != 'true' && env.HP_CACHE_CORRUPTED != '1' }}
         id: conda_validate
@@ -1145,11 +1148,11 @@ jobs:
           }
 
       - name: Save Miniconda cache
-        if: ${{ matrix.mode == 'cache' && steps.conda_cache_restore.outputs.cache-hit != 'true' && steps.conda_validate.outputs.conda_ok == 'true' }}
+        if: ${{ matrix.mode == 'cache' && steps.conda_cache_restore.outputs.cache-hit != 'true' && env.HP_CACHE_CORRUPTED != '1' && steps.conda_validate.outputs.conda_ok == 'true' }}
         uses: actions/cache/save@v4
         with:
           path: C:\Users\Public\Documents\Miniconda3
-          key: win-${{ runner.os }}-py311b-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
+          key: ${{ steps.conda_cache_restore.outputs.cache-primary-key }}
 
       - name: Summarize bootstrap result
         if: always()
