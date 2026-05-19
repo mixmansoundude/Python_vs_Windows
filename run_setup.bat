@@ -434,8 +434,8 @@ set "ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%"
 rem === uv venv creation (primary path when uv was acquired) ====================
 rem derived requirement: uv creates a pip-native venv at .uv_env in the project
 rem folder, short-circuiting conda create. On failure, :try_conda_create runs the
-rem existing conda path unchanged. Python version from PYSPEC is not yet forwarded
-rem to uv (version-pinning deferred; uv picks the system default Python).
+rem existing conda path unchanged. REQ-004 Tier 1-2 Python version (PYSPEC) is
+rem forwarded to uv via --python X.Y when a lower-bound version can be extracted.
 if not defined HP_UV_EXE goto :try_conda_create
 set "HP_UV_ENV_PATH=%HP_SCRIPT_ROOT%.uv_env"
 if defined PVW_WORKSPACE set "HP_UV_ENV_PATH=%PVW_WORKSPACE%"
@@ -449,8 +449,20 @@ if exist "%HP_UV_ENV_PATH%\Scripts\python.exe" (
     goto :uv_venv_ready
   )
 )
-call :log "[INFO] uv: creating venv at .uv_env..."
-"%HP_UV_EXE%" venv --seed "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
+rem Extract Python version lower-bound from PYSPEC for uv --python (REQ-004 Tiers 1-2).
+rem Handles: python=X.Y (runtime.txt), python==X.Y, python>=X.Y, python>X.Y.
+rem [Console]::Write avoids the trailing CR from Write-Output that for /f does not strip.
+set "HP_UV_PY_VER="
+if defined PYSPEC (
+  for /f "usebackq delims=" %%V in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "if ($env:PYSPEC -match 'python==([0-9]+\.[0-9]+)') { [Console]::Write($Matches[1]) } elseif ($env:PYSPEC -match 'python=([0-9]+\.[0-9]+)') { [Console]::Write($Matches[1]) } elseif ($env:PYSPEC -match 'python>=([0-9]+\.[0-9]+)') { [Console]::Write($Matches[1]) } elseif ($env:PYSPEC -match 'python>([0-9]+\.[0-9]+)') { [Console]::Write($Matches[1]) } else { [Console]::Write('') }"`) do set "HP_UV_PY_VER=%%V"
+)
+if defined HP_UV_PY_VER (
+  call :log "[INFO] uv: creating venv at .uv_env with Python %HP_UV_PY_VER%..."
+  "%HP_UV_EXE%" venv --seed --python "%HP_UV_PY_VER%" "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
+) else (
+  call :log "[INFO] uv: creating venv at .uv_env..."
+  "%HP_UV_EXE%" venv --seed "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
+)
 if errorlevel 1 goto :uv_venv_fail
 if not exist "%HP_UV_ENV_PATH%\Scripts\python.exe" goto :uv_venv_fail
 set "HP_ENV_MODE=uv"
