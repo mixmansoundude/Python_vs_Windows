@@ -480,3 +480,9 @@ Items completed and shipped:
   `[INFO] runtime.txt written: python-X.Y.Z`. Write-back guarded by `HP_RUNTIME_TXT_PREEXIST`
   so Tier 1 files (pre-existing runtime.txt) are never overwritten. Silent WARN on write
   failure (read-only filesystem). CLOSED by this PR.
+- **REQ-004 uv Python version forwarding (Tiers 1-2)**: When PYSPEC is set from runtime.txt
+  (Tier 1) or pyproject.toml (Tier 2), the detected Python version is now forwarded to
+  `uv venv` via `--python X.Y`. PYSPEC is parsed by inline PowerShell regex to extract the
+  lower-bound version from all forms (python=X.Y, python==X.Y, python>=X.Y, python>X.Y).
+  Log line: `[INFO] uv: creating venv at .uv_env with Python X.Y`. Covered by new NDJSON
+  row `self.contract.uv.pyver` (contract-uv lane). CLOSED by this PR.
