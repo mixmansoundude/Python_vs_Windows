@@ -1117,6 +1117,8 @@ jobs:
             tests\~selftest_venv_fallback\~setup.log
             tests/~selftest_venv_fallback/~bootstrap.status.json
             tests\~selftest_venv_fallback\~bootstrap.status.json
+            tests/~selftest_venv_fallback/~run.out.txt
+            tests\~selftest_venv_fallback\~run.out.txt
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt

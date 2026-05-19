@@ -415,18 +415,19 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     $env:HP_SKIP_PIPREQS          = $savedSkipPR4
     $env:HP_CI_LANE               = $savedLane4
 
-    $venvFbText = ''
-    if (Test-Path -LiteralPath $venvFbLog) {
-        $venvFbText = Get-Content -LiteralPath $venvFbLog -Raw -Encoding Ascii
-    }
     $venvFbSetupLog = Join-Path $venvFbDir '~setup.log'
     $venvFbSetupText = ''
     if (Test-Path -LiteralPath $venvFbSetupLog) {
         $venvFbSetupText = Get-Content -LiteralPath $venvFbSetupLog -Raw -Encoding Ascii
     }
+    $venvFbRunOut = Join-Path $venvFbDir '~run.out.txt'
+    $venvFbRunText = ''
+    if (Test-Path -LiteralPath $venvFbRunOut) {
+        $venvFbRunText = Get-Content -LiteralPath $venvFbRunOut -Raw -Encoding Ascii
+    }
     $venvFbReady    = ($venvFbSetupText -match [regex]::Escape('[INFO] venv fallback ready:'))
     $venvFbProvider = ($venvFbSetupText -match [regex]::Escape('[BOOT] REQ-009: Selected Python provider: Local venv (fallback).'))
-    $venvFbAppRan   = ($venvFbText -match [regex]::Escape('venv-fallback-ok'))
+    $venvFbAppRan   = ($venvFbRunText -match [regex]::Escape('venv-fallback-ok'))
     $venvFbPass = ($venvFbReady -and $venvFbProvider -and $venvFbAppRan)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.venv.fallback'
