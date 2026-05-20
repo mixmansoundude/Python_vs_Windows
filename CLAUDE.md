@@ -240,10 +240,16 @@ CI-artifacts NDJSON (from selfapps tests, conda-full lane):
 
 ```
 self.harness.started, self.bootstrap.state, self.empty_repo.msg,
-self.env.smoke.conda, self.env.smoke.run, self.exe.build, self.exe.run,
+self.empty_repo.no_spurious_warn,
+self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv,
+self.exe.build, self.exe.run,
+self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exedyn.xfail,
 self.fastpath,
+self.entry.results, self.entry.spaced-path,
 reqspec.translate.{gte,eq,compat,gt,neq,lte}, reqspec.conda.dryrun,
 reqspec.conda.channelpin, reqspec.conda.dryrun.failcase,
+reqspec.conda.channelpin.req006, reqspec.conda.dryrun.req006,
+reqspec.gte.explicit,
 reqspec.install.import, reqspec.ingest.translate,
 reqspec.ingest.conda.dryrun, reqspec.ingest.install.import,
 self.depcheck.install, self.depcheck.skip,
@@ -255,9 +261,20 @@ self.parse_warn.table.v6, self.parse_warn.pytest,
 self.heuristics.pytest,
 self.runtime.writeback,
 self.pandas.openpyxl.install, self.pandas.openpyxl.import,
-pyvisa.detect, pyvisa.nivisa.branch,
+pandas_excel.translate, pandas_excel.conda.install, pandas_excel.conda.install.req006,
+pandas_excel.runtime,
+pyvisa.detect, pyvisa.nivisa.branch, pyvisa.nivisa.outcome,
 pyproject.precedence.detect, pyproject.precedence.writeback,
-pyproject.dep.detect
+pyproject.dep.detect,
+self.prime.bootstrap, self.prime.run, self.prime.spaced-path,
+self.prime.exe.build, self.prime.exe.run,
+self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
+self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
+self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real,
+self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
+self.ux.gitattributes.merge, self.ux.gitattributes.idem,
+self.ux.postflight,
+self.venv.fallback
 ```
 
 justme-test lane rows (subset, flag-triggered):
@@ -325,6 +342,12 @@ self.corrupt.uv.detect
 selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes):
 
 ```
+self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
+self.ux.gitattributes.merge, self.ux.gitattributes.idem,
+self.ux.postflight,
+self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
+self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
+self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real,
 self.venv.fallback
 ```
 
@@ -350,6 +373,7 @@ Test files and what they cover:
 | `test_ps_colon_scan.py` | PowerShell scoped variable detection ($var:) |
 | `test_check_delimiters_import.py` | Delimiter checker import guard |
 | `test_heuristics.py` | Heuristic dep-augmentation rules (REQ-005: all 6 rules, kill-switch, idempotency) |
+| `test_parse_warn.py` | PyInstaller warn-file translation table (REQ-007: 5.x and 6.x formats, all TRANSLATIONS entries) |
 | `test_publish_index_regex.py` | Regex patterns in diagnostics publisher |
 | `test_sanitize_iterate_payload.py` | NDJSON redaction and deduplication |
 
