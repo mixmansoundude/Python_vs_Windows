@@ -318,6 +318,73 @@ At completion:
 
 ---
 
+## [REQ-013] Internet Connectivity Guard
+
+- When a primary download fails (Miniconda or uv), the bootstrapper checks internet reachability before cascading to a fallback URL.
+  - First, ICMP ping to 8.8.8.8 (fast path).
+  - If ICMP is blocked, fall back to a lightweight HTTPS probe.
+  - If both fail: prompt the user to confirm offline mode or retry.
+- In offline mode, internet-dependent steps (uv download, Miniconda download) are skipped.
+  - If the user already has a cached Miniconda or uv install, those are used as-is.
+- Log contract:
+  - `[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback.`
+  - `[INFO] REQ-013: Connectivity check: internet reachable via HTTPS (ICMP blocked). Cascading to fallback.`
+  - `[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed).`
+  - `[INFO] REQ-013: Offline mode: skipping uv download.`
+  - `[INFO] REQ-013: Offline mode: skipping Miniconda download.`
+- CI test flag: `HP_TEST_OFFLINE=1` simulates ping failure for branch coverage.
+
+---
+
+## [REQ-014] System Python Consent Gate
+
+- Before using system Python as the last-resort execution provider (REQ-009 Tier 4), the bootstrapper must obtain explicit user consent.
+- Without consent, the bootstrapper aborts rather than silently running under an unmanaged system Python.
+- Log contract:
+  - `[INFO] REQ-014: System Python fallback aborted: consent not granted.`
+  - `[INFO] REQ-014: System Python consent: user accepted.`
+  - `[INFO] REQ-014: System Python consent: user declined.`
+- CI test flag: `HP_TEST_FORCE_CONSENT_CHECK=1` directly triggers the consent gate for branch coverage.
+
+---
+
+## [REQ-015] Idempotent Git Config Merge
+
+- At bootstrap time, the bootstrapper appends standard `.gitignore` and `.gitattributes` entries to the working directory.
+- Uses a sentinel comment line to detect existing entries; never duplicates content already present.
+- `.gitignore` additions: tilde-prefix work files (`~*`), env directories (`.venv/`, `.uv/`, `.*_env/`, `.cache/`, `.conda/`), build artifacts (`dist/`, `build/`).
+- `.gitattributes` additions: `*.bat eol=crlf`, `*.cmd eol=crlf`, `*.exe binary`.
+- Silent if no changes needed; logs when appending.
+- Log contract:
+  - `[INFO] REQ-015: Appending standard ignores to .gitignore.`
+  - `[INFO] REQ-015: Appending standard attributes to .gitattributes.`
+
+---
+
+## [REQ-016] Post-flight Briefing
+
+- After a successful full EXE build, the bootstrapper prints a scannable summary panel identifying the output EXE, files to keep, and files safe to delete.
+- The terminal window is **retained** on both success and error so the user can read the output before it closes.
+- Log contract:
+  - `[INFO] REQ-016: Post-flight briefing printed.`
+
+---
+
+## [REQ-020] Cache Corruption Hardening
+
+- On startup, if a previously downloaded conda or uv binary is found, the bootstrapper validates it with a health check before use.
+- Corrupt conda binary: runs `conda.bat info`; on failure, halts with a user-friendly error message and offers to self-heal (re-download Miniconda). If the user declines, exits with code 2.
+- Corrupt uv binary: detected at startup by a version probe; the cached binary is evicted so the next run downloads a fresh copy. Bootstrap continues via conda.
+- Log contract:
+  - `[ERROR] Corrupt conda binary detected at: <path>` (real corruption)
+  - `[WARN] Cached uv.exe failed health check; clearing and re-downloading.` (real uv corruption)
+  - `[INFO] Self-healing: corrupt conda evicted from <path>.` (user accepts self-heal)
+  - `[ERROR] Corrupt conda env; user declined rebuild.` (user declines)
+- CI test flags: `HP_TEST_CORRUPT_CONDA=1`, `HP_TEST_CORRUPT_UV=1`, `HP_TEST_HEAL_ANSWER=N`.
+- Test NDJSON rows: `self.corrupt.conda.detect`, `self.corrupt.conda.heal.decline`, `self.corrupt.uv.detect` (in `tests/selftest.ps1`).
+
+---
+
 ## Maintenance, Logging, and Lessons Learned
 
 - Update conda base periodically (~30 days), but **skip on first Miniconda install**. Ensure base is configured to conda-forge before updating to avoid prompts.

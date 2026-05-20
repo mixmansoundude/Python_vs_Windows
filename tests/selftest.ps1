@@ -585,6 +585,7 @@ $corruptLines = if (Test-Path $corruptLogPath) { Get-Content -LiteralPath $corru
 $corruptMsgFound = ($corruptLines | Where-Object { $_ -like '*Corrupt conda binary*' }).Count -gt 0
 Write-NdjsonRow ([ordered]@{
   id      = 'self.corrupt.conda.detect'
+  req     = 'REQ-020'
   pass    = ($corruptExit -eq 2 -and $corruptMsgFound)
   desc    = 'HP_TEST_CORRUPT_CONDA=1: bootstrap detects corruption, logs error, exits 2'
   details = [ordered]@{ exitCode = $corruptExit; msgFound = $corruptMsgFound }
@@ -620,6 +621,7 @@ $healLines = if (Test-Path $healLogPath) { Get-Content -LiteralPath $healLogPath
 $healDeclineMsgFound = ($healLines | Where-Object { $_ -like '*declined*' }).Count -gt 0
 Write-NdjsonRow ([ordered]@{
   id      = 'self.corrupt.conda.heal.decline'
+  req     = 'REQ-020'
   pass    = ($healExit -eq 2 -and $healDeclineMsgFound)
   desc    = 'HP_TEST_HEAL_ANSWER=N: user declines self-heal, bootstrap logs declined and exits 2'
   details = [ordered]@{ exitCode = $healExit; declineMsgFound = $healDeclineMsgFound }
@@ -633,6 +635,7 @@ if ($healExit -eq 2 -and $healDeclineMsgFound) { $summary.Add('Heal decline: PAS
 if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
   Write-NdjsonRow ([ordered]@{
     id      = 'self.corrupt.uv.detect'
+    req     = 'REQ-020'
     pass    = $true
     desc    = 'HP_TEST_CORRUPT_UV: uv eviction test skipped in conda-only lane'
     details = [ordered]@{ skipped = $true; reason = 'HP_FORCE_CONDA_ONLY=1' }
@@ -665,6 +668,7 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
   $uvEvictMsgFound = ($uvLines | Where-Object { $_ -like '*HP_TEST_CORRUPT_UV*' }).Count -gt 0
   Write-NdjsonRow ([ordered]@{
     id      = 'self.corrupt.uv.detect'
+    req     = 'REQ-020'
     pass    = $uvEvictMsgFound
     desc    = 'HP_TEST_CORRUPT_UV=1: bootstrap evicts cached uv binary and logs warning'
     details = [ordered]@{ exitCode = $uvTestExit; evictMsgFound = $uvEvictMsgFound }
