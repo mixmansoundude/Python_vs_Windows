@@ -442,7 +442,7 @@ jobs:
             Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii
             Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
           }
-          python -m pip install pytest pydantic --quiet
+          python -m pip install pytest pydantic requests --quiet
           $rawOut = & python -m pytest tests/ `
             --ignore=tests/test_entry_selection.py `
             --ignore=tests/test_entry_single.py `
