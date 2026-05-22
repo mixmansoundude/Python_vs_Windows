@@ -427,6 +427,40 @@ jobs:
           })
           if (-not $pass) { Write-Host $outStr; exit 1 }
 
+      - name: "Self-test: Python unit tests (pytest cross-platform)"
+        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        shell: pwsh
+        run: |
+          $nd   = "tests\~test-results.ndjson"
+          $ciNd = "ci_test_results.ndjson"
+          if (-not (Test-Path $nd))   { New-Item -ItemType File -Path $nd   -Force | Out-Null }
+          if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
+          function Write-NdjsonRow { param([hashtable]$Row)
+            $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
+            if ($lane -and -not $Row.ContainsKey('lane')) { $Row['lane'] = $lane }
+            $json = $Row | ConvertTo-Json -Compress -Depth 8
+            Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii
+            Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
+          }
+          python -m pip install pytest pydantic --quiet
+          $rawOut = & python -m pytest tests/ `
+            --ignore=tests/test_entry_selection.py `
+            --ignore=tests/test_entry_single.py `
+            --ignore=tests/test_poll_public_diag_logging.py `
+            -v 2>&1
+          $exitCode = $LASTEXITCODE
+          $outStr = ($rawOut -join "`n")
+          $pass = ($exitCode -eq 0)
+          $summary = ($rawOut | Select-String -Pattern '(passed|failed|error)' | Select-Object -Last 1)
+          if ($summary) { $summaryStr = $summary.Line.Trim() } else { $summaryStr = "exit=$exitCode" }
+          Write-NdjsonRow ([ordered]@{
+            id      = 'self.pytest.unit'
+            pass    = $pass
+            desc    = 'Python unit tests: pytest cross-platform suite'
+            details = [ordered]@{ summary = $summaryStr; exit = $exitCode }
+          })
+          if (-not $pass) { Write-Host $outStr; exit 1 }
+
       - name: "Self-test: runtime.txt write-back (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh
