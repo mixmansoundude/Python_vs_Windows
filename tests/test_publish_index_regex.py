@@ -626,22 +626,23 @@ class QuickLinksRenderingTest(unittest.TestCase):
         context = self._make_context()
         markdown, html = _build_site_overview(context, None, None, None)
 
+        base = "https://owner.github.io/repo"
         self.assertIn(
-            "- Previewed: [Preview (.txt)](diag/1234-1/_mirrors/logs/previewed.txt) ("
-            "[Download](diag/1234-1/logs/previewed.txt))",
+            f"- Previewed: [Preview (.txt)]({base}/diag/1234-1/_mirrors/logs/previewed.txt) ("
+            f"[Download]({base}/diag/1234-1/logs/previewed.txt))",
             markdown,
         )
         self.assertIn(
-            "- Download only: [Download](diag/1234-1/logs/download-only.txt)",
+            f"- Download only: [Download]({base}/diag/1234-1/logs/download-only.txt)",
             markdown,
         )
         self.assertIn(
-            "<li><strong>Previewed:</strong> <a href=\"diag/1234-1/_mirrors/logs/previewed.txt\">"
-            "Preview (.txt)</a> (<a href=\"diag/1234-1/logs/previewed.txt\">Download</a>)</li>",
+            f'<li><strong>Previewed:</strong> <a href="{base}/diag/1234-1/_mirrors/logs/previewed.txt">'
+            f'Preview (.txt)</a> (<a href="{base}/diag/1234-1/logs/previewed.txt">Download</a>)</li>',
             html,
         )
         self.assertIn(
-            "<li><strong>Download only:</strong> <a href=\"diag/1234-1/logs/download-only.txt\">"
+            f'<li><strong>Download only:</strong> <a href="{base}/diag/1234-1/logs/download-only.txt">'
             "Download</a></li>",
             html,
         )

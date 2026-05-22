@@ -1,7 +1,10 @@
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -170,6 +173,7 @@ def test_request_payload_strips_responses_extras(tmp_path):
     assert sanitized["model"] == "gpt-5-codex"
 
 
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="pwsh not available")
 def test_iterate_gate_enforces_patch_limit(tmp_path):
     workspace = tmp_path
     ctx_dir = workspace / "_ctx"
@@ -215,6 +219,7 @@ def test_iterate_gate_enforces_patch_limit(tmp_path):
     assert "patch limit" in gate["note"].lower()
 
 
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="pwsh not available")
 def test_iterate_gate_skips_when_fail_list_is_none(tmp_path):
     workspace = tmp_path
     artifacts_root = workspace / "_artifacts"
