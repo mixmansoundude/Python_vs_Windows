@@ -166,6 +166,14 @@ set "PYCOUNT=0"
 for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul') do call :count_python "%%F"
 if "%PYCOUNT%"=="" set "PYCOUNT=0"
 call :log "[INFO] Python file count: %PYCOUNT%"
+rem derived requirement: REQ-011 cross-dir check moved to pre-flight so users get instant
+rem feedback rather than waiting through env creation to see the rejection error.
+if not "%~1"=="" if /i not "%~dp1"=="%~dp0" (
+  echo [ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder for environment cleanliness.
+  call :log "[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder."
+  call :write_status "error" 1 %PYCOUNT%
+  exit /b 1
+)
 set "HP_CONDA_PROBE_STATUS=skipped"
 set "HP_CONDA_PROBE_REASON=not-requested"
 
