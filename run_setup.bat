@@ -166,6 +166,14 @@ set "PYCOUNT=0"
 for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul') do call :count_python "%%F"
 if "%PYCOUNT%"=="" set "PYCOUNT=0"
 call :log "[INFO] Python file count: %PYCOUNT%"
+rem derived requirement: REQ-011 cross-dir check moved to pre-flight so users get instant
+rem feedback rather than waiting through env creation to see the rejection error.
+if not "%~1"=="" if /i not "%~dp1"=="%~dp0" (
+  echo [ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder for environment cleanliness.
+  call :log "[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder."
+  call :write_status "error" 1 %PYCOUNT%
+  exit /b 1
+)
 set "HP_CONDA_PROBE_STATUS=skipped"
 set "HP_CONDA_PROBE_REASON=not-requested"
 
@@ -1104,63 +1112,66 @@ if defined HP_SYS_PY_ARGS for %%A in ("%HP_SYS_PY_ARGS%") do set "HP_SYS_PY_ARGS
 
 rem --- run helper and capture RELATIVE crumb ---
 set "HP_CRUMB="
-if defined HP_SYS_PY (
-  rem derived requirement: CI observed `'python" "~find_entry.py' is not recognized` when
-  rem helper args were empty. Keep the helper invocation split so CMD never appends a stray
-  rem quote to the interpreter token, and route stdout through a file to avoid shell quoting drift.
-  if not defined HP_SYS_PY_LOGGED (
-    if defined HP_SYS_PY_ARGS (
-      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%"
-    ) else (
-      >> "%LOG%" echo Helper command: "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%"
-    )
-    set "HP_SYS_PY_LOGGED=1"
-  )
-  rem derived requirement: CI skip jobs sometimes run from a borrowed working directory.
-  rem Normalize the helper root so helper discovery always executes from the bootstrapper tree.
-  set "HP_HELPER_ROOT=%HP_SCRIPT_ROOT%"
-  for %%R in ("%HP_HELPER_ROOT%") do set "HP_HELPER_ROOT=%%~fR"
-  if not defined HP_HELPER_ROOT set "HP_HELPER_ROOT=%CD%"
-  if not exist "%HP_HELPER_ROOT%" mkdir "%HP_HELPER_ROOT%" >nul 2>&1
-  set "HP_CHOOSER_ROOT=%HP_HELPER_ROOT%"
-  for %%R in ("%HP_HELPER_ROOT%tests") do if exist "%%~fR" set "HP_CHOOSER_ROOT=%%~fR"
-  rem derived requirement: the helper enumerates cwd *.py files; pivot into tests/ when present
-  rem so crumbs reference the self-test entry scripts without emitting "The system cannot find the path specified.".
-  for %%R in ("%HP_CHOOSER_ROOT%") do set "HP_CHOOSER_ROOT=%%~fR"
-  if not exist "%HP_CHOOSER_ROOT%" set "HP_CHOOSER_ROOT=%HP_HELPER_ROOT%"
-  set "HP_CRUMB_FILE=%HP_CHOOSER_ROOT%"
-  if not "%HP_CRUMB_FILE:~-1%"=="\" set "HP_CRUMB_FILE=%HP_CRUMB_FILE%\"
-  set "HP_CRUMB_FILE=%HP_CRUMB_FILE%~crumb.txt"
-  if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
-  set "HP_CHOOSER_PUSHD="
-  if exist "%HP_CHOOSER_ROOT%" (
-    pushd "%HP_CHOOSER_ROOT%" >nul 2>&1
-    set "HP_CHOOSER_PUSHD=1"
-  ) else (
-    echo [WARN] pushd skipped, chooser root missing: %HP_CHOOSER_ROOT%
-  )
+if not defined HP_SYS_PY goto :ci_skip_helper_done
+rem derived requirement: use goto instead of if-block; DisableDelayedExpansion coalesces
+rem the entire block at parse time, so %HP_CRUMB_FILE% (set mid-block) was empty when
+rem used as a redirect target, causing "syntax of the command is incorrect" / exit 255.
+rem derived requirement: CI observed `'python" "~find_entry.py' is not recognized` when
+rem helper args were empty. Keep the helper invocation split so CMD never appends a stray
+rem quote to the interpreter token, and route stdout through a file to avoid shell quoting drift.
+if not defined HP_SYS_PY_LOGGED (
   if defined HP_SYS_PY_ARGS (
-    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
+    >> "%LOG%" echo Helper command: "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%"
   ) else (
-    "%HP_SYS_PY%" -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
+    >> "%LOG%" echo Helper command: "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%"
   )
-  if defined HP_SYS_PY_ARGS (
-    "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
-  ) else (
-    "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
-  )
-  if defined HP_CHOOSER_PUSHD (
-    popd >nul 2>&1
-    set "HP_CHOOSER_PUSHD="
-  )
-  if exist "%HP_CRUMB_FILE%" (
-    for /f "usebackq delims=" %%L in ("%HP_CRUMB_FILE%") do if not defined HP_CRUMB set "HP_CRUMB=%%L"
-    del "%HP_CRUMB_FILE%" >nul 2>&1
-  )
-  if /i not "%HP_CHOOSER_ROOT%"=="%HP_HELPER_ROOT%" (
-    if defined HP_CRUMB set "HP_CRUMB=tests\%HP_CRUMB%"
-  )
+  set "HP_SYS_PY_LOGGED=1"
 )
+rem derived requirement: CI skip jobs sometimes run from a borrowed working directory.
+rem Normalize the helper root so helper discovery always executes from the bootstrapper tree.
+set "HP_HELPER_ROOT=%HP_SCRIPT_ROOT%"
+for %%R in ("%HP_HELPER_ROOT%") do set "HP_HELPER_ROOT=%%~fR"
+if not defined HP_HELPER_ROOT set "HP_HELPER_ROOT=%CD%"
+if not exist "%HP_HELPER_ROOT%" mkdir "%HP_HELPER_ROOT%" >nul 2>&1
+set "HP_CHOOSER_ROOT=%HP_HELPER_ROOT%"
+for %%R in ("%HP_HELPER_ROOT%tests") do if exist "%%~fR" set "HP_CHOOSER_ROOT=%%~fR"
+rem derived requirement: the helper enumerates cwd *.py files; pivot into tests/ when present
+rem so crumbs reference the self-test entry scripts without emitting "The system cannot find the path specified.".
+for %%R in ("%HP_CHOOSER_ROOT%") do set "HP_CHOOSER_ROOT=%%~fR"
+if not exist "%HP_CHOOSER_ROOT%" set "HP_CHOOSER_ROOT=%HP_HELPER_ROOT%"
+set "HP_CRUMB_FILE=%HP_CHOOSER_ROOT%"
+if not "%HP_CRUMB_FILE:~-1%"=="\" set "HP_CRUMB_FILE=%HP_CRUMB_FILE%\"
+set "HP_CRUMB_FILE=%HP_CRUMB_FILE%~crumb.txt"
+if exist "%HP_CRUMB_FILE%" del "%HP_CRUMB_FILE%" >nul 2>&1
+set "HP_CHOOSER_PUSHD="
+if exist "%HP_CHOOSER_ROOT%" (
+  pushd "%HP_CHOOSER_ROOT%" >nul 2>&1
+  set "HP_CHOOSER_PUSHD=1"
+) else (
+  echo [WARN] pushd skipped, chooser root missing: %HP_CHOOSER_ROOT%
+)
+if defined HP_SYS_PY_ARGS (
+  "%HP_SYS_PY%" %HP_SYS_PY_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
+) else (
+  "%HP_SYS_PY%" -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
+)
+if defined HP_SYS_PY_ARGS (
+  "%HP_SYS_PY%" %HP_SYS_PY_ARGS% "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
+) else (
+  "%HP_SYS_PY%" "%HP_FIND_ENTRY_ABS%" > "%HP_CRUMB_FILE%" 2>> "%LOG%"
+)
+if defined HP_CHOOSER_PUSHD (
+  popd >nul 2>&1
+  set "HP_CHOOSER_PUSHD="
+)
+if exist "%HP_CRUMB_FILE%" (
+  for /f "usebackq delims=" %%L in ("%HP_CRUMB_FILE%") do if not defined HP_CRUMB set "HP_CRUMB=%%L"
+  del "%HP_CRUMB_FILE%" >nul 2>&1
+)
+if /i not "%HP_CHOOSER_ROOT%"=="%HP_HELPER_ROOT%" (
+  if defined HP_CRUMB set "HP_CRUMB=tests\%HP_CRUMB%"
+)
+:ci_skip_helper_done
 
 if not defined HP_CRUMB (
   echo [INFO] CI skip: no entry script detected.

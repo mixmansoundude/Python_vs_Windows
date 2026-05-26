@@ -37,6 +37,7 @@ tests/
   selfapps_single.ps1          Single Python file bootstrap test
   selfapps_reqspec.ps1         Requirements specifier parsing tests (~= compatible release)
   selfapps_pandas_excel.ps1    Pandas/openpyxl heuristic tests
+  selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
 
@@ -230,6 +231,46 @@ in `batch-check.yml`. No other agent or job may commit auto-fixes. See AGENTS.md
 
 **Diagnostics site**: https://mixmansoundude.github.io/Python_vs_Windows/
 
+### CI Pipeline Architecture (key facts for debugging)
+
+**NDJSON files and who owns them:**
+- `tests/~test-results.ndjson` -- written by every `selfapps_*.ps1` test script during the
+  CI run. The selfapps scripts APPEND rows to this file. `harness.ps1` then DELETES and
+  REWRITES it from `ci_test_results.ndjson` (the root-level aggregator). Do not confuse
+  the mid-run append file with the final harness output.
+- `ci_test_results.ndjson` -- root-level aggregator written by selfapps scripts and read
+  by `harness.ps1`. This is the authoritative input for verdict computation.
+- Rows in `ci_test_results.ndjson` but not in `tests/~test-results.ndjson` after the run
+  means harness.ps1 ran after the selfapps scripts rewrote the file.
+
+**CI job step ordering (within each lane job):**
+1. Selfapps scripts run (each appends rows to both NDJSON files).
+2. Artifacts are uploaded (NDJSON snapshots, logs).
+3. `run_tests.bat` runs `tests/harness.ps1` (verdict -- reads `ci_test_results.ndjson`,
+   rewrites `tests/~test-results.ndjson`, emits pass/fail).
+4. `tests/selftest.ps1` runs the bootstrapper self-tests (empty repo + stub).
+
+**selftest.ps1 vs selftests.ps1:**
+- `selftest.ps1` -- runs run_setup.bat on a real (empty) app directory, validates
+  `~bootstrap.status.json` was written, exercises the stub fast-path and dep-check flows.
+- `selftests.ps1` -- replays a captured bootstrap log and validates console message
+  patterns (does NOT re-run run_setup.bat). Different scope; name similarity is a trap.
+
+**HP_CI_SKIP_ENV=1 mode:**
+- Causes run_setup.bat to skip conda env creation entirely and use system Python.
+- The `:ci_skip_entry` subroutine (lines ~1090-1196) handles this path.
+- Only `selfapps_isolation.ps1` exercises this path directly.
+- Exit code from this path is 0 on success (`:after_env_skip` calls `:write_status ok 0`
+  then `exit /b 0`). The known "exit 255" artifact in `selfapps_single.ps1` referred to
+  PowerShell `$LASTEXITCODE` drift, not the batch exit code itself.
+
+**Missing rows in NDJSON:**
+- A row absent from the diag site means the test script either was not reached, threw
+  before the `Write-NdjsonRow` call, or the lane skipped that selfapps file.
+- Rows gated by `pyFileCount` (e.g. `entry.single.direct`) will be absent whenever the
+  bootstrapper repo itself is the test target (pyFiles != 1 in the main repo).
+- Check the CI step log for `[INFO] ... skipped:` messages before assuming a test regressed.
+
 ---
 
 ## NDJSON Surface (current)
@@ -246,6 +287,7 @@ self.exe.build, self.exe.run,
 self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exedyn.xfail,
 self.fastpath,
 self.entry.results, self.entry.spaced-path,
+self.entry.req011.crossdir, self.entry.req011.sameDir, self.isolation.req010.pythonpath,
 reqspec.translate.{gte,eq,compat,gt,neq,lte}, reqspec.conda.dryrun,
 reqspec.conda.channelpin, reqspec.conda.dryrun.failcase,
 reqspec.conda.channelpin.req006, reqspec.conda.dryrun.req006,

@@ -263,6 +263,14 @@ jobs:
         run: |
           & tests\selfapps_entry.ps1
 
+      - name: "Self-test: isolation and directory integrity (CI-only)"
+        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        env:
+          HP_CI_SKIP_ENV: '1'
+        shell: pwsh
+        run: |
+          & tests\selfapps_isolation.ps1
+
       - name: "Self-test: real env smoke (CI-only)"
         if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
@@ -1159,6 +1167,18 @@ jobs:
             tests\~selftest_venv_fallback\~bootstrap.status.json
             tests/~selftest_venv_fallback/~run.out.txt
             tests\~selftest_venv_fallback\~run.out.txt
+            tests/~entryC_boot/~entryC_bootstrap.log
+            tests\~entryC_boot\~entryC_bootstrap.log
+            tests/~entryD_boot/~entryD_bootstrap.log
+            tests\~entryD_boot\~entryD_bootstrap.log
+            tests/~entryD_boot/~setup.log
+            tests\~entryD_boot\~setup.log
+            tests/~req010_test/~req010_bootstrap.log
+            tests\~req010_test\~req010_bootstrap.log
+            tests/~req010_test/~setup.log
+            tests\~req010_test\~setup.log
+            tests/~req010_test/~isolation_check.txt
+            tests\~req010_test\~isolation_check.txt
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
