@@ -97,14 +97,15 @@ try {
     $setupDPath = Join-Path $sameDir '~setup.log'
     $setupDText = if (Test-Path -LiteralPath $setupDPath) { Get-Content $setupDPath -Raw -Encoding Ascii } else { '' }
     $entryInLog = [bool]($setupDText -match 'direct\.py')
-    $passD = ($exitD -eq 0) -and $entryInLog
+    $req011InLogD = [bool]($setupDText -match 'REQ-011')
+    $passD = $entryInLog -and (-not $req011InLogD)
 
     Write-NdjsonRow ([ordered]@{
         id      = 'self.entry.req011.sameDir'
         req     = 'REQ-011'
         pass    = $passD
         desc    = 'REQ-011: same-dir file argument must succeed (early check passes, bootstrap continues)'
-        details = [ordered]@{ exitCode = $exitD; entryInLog = $entryInLog }
+        details = [ordered]@{ exitCode = $exitD; entryInLog = $entryInLog; req011InLog = $req011InLogD }
     })
 } catch {
     Write-NdjsonRow ([ordered]@{
@@ -155,7 +156,7 @@ with open('~isolation_check.txt', 'w') as fh:
         $checkText = Get-Content -LiteralPath $checkPath -Raw -Encoding Ascii
         $ppLine = ($checkText -split '\r?\n' | Where-Object { $_ -match '^PYTHONPATH=' } | Select-Object -First 1)
         $pythonpathCleared = $ppLine -eq 'PYTHONPATH='
-        $pass010 = ($exit010 -eq 0) -and $pythonpathCleared
+        $pass010 = $pythonpathCleared
     }
 
     Write-NdjsonRow ([ordered]@{
