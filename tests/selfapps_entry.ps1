@@ -178,7 +178,7 @@ function Invoke-EntryScenario {
             $result.setupLog = $result.log
             $match = [regex]::Match($result.log, '^Chosen entry: (.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
             if ($match.Success) {
-                $result.crumb = $match.Groups[1].Value
+                $result.crumb = $match.Groups[1].Value.TrimEnd()
             }
             $helper = [regex]::Match($result.log, '^Helper command:\s*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
             if ($helper.Success) {
