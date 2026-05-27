@@ -300,6 +300,8 @@ if ($feMatch.Success) {
   $hasReq002Payload = $feDecoded -match '\[BOOT\] REQ-002:'
 } else { $hasReq002Payload = $false }
 Write-Result "batch.req002.findentry_payload" "REQ-002: HP_FIND_ENTRY payload has decision-chain logging" $hasReq002Payload @{}
+$hasCli = $feMatch.Success -and ($feDecoded -match '"cli\.py"')
+Write-Result "batch.req002.findentry_cli" "REQ-002: HP_FIND_ENTRY PREFERRED includes cli.py" $hasCli @{}
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

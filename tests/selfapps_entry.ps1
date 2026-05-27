@@ -1,8 +1,7 @@
 # Windows-only entry-selection probe for consumer apps.
-# Synthesizes tiny app roots, writes self.entry.* NDJSON rows (entry1/entryA/entryB),
-# and is gated by ~bootstrap.status.json or PY_FILES so it only runs when exactly
-# one Python entry was detected. In this bootstrapper repo it normally stays
-# dormant unless CI forces a single-entry simulation.
+# Synthesizes tiny app roots and writes self.entry.* NDJSON rows
+# (entry1/entryA/entryB/entryC). Runs unconditionally; HP_CI_SKIP_ENV=1
+# must be set so each scenario uses system Python instead of installing conda.
 $ErrorActionPreference = 'Continue'
 
 $here = $PSScriptRoot
@@ -21,47 +20,6 @@ if (-not (Test-Path -LiteralPath $ciNd)) {
     New-Item -ItemType File -Path $ciNd -Force | Out-Null
 }
 
-# derived requirement: diagnostics run 19035211236-1 flagged `self.entry.*` rows as
-# failures even though the bootstrapper reported `pyFiles=0`. Honor the bootstrap
-# status so these synthetic entry probes only run when the real project exposed a
-# single Python entry.
-$pyFileCount = $null
-$statusPath = Join-Path -Path $repoRoot -ChildPath '~bootstrap.status.json'
-if (Test-Path -LiteralPath $statusPath) {
-    try {
-        $statusJson = Get-Content -LiteralPath $statusPath -Raw -Encoding Ascii | ConvertFrom-Json
-        $candidate = $statusJson.pyFiles
-        if ($null -ne $candidate) {
-            $parsed = 0
-            if ([int]::TryParse($candidate.ToString(), [ref]$parsed)) {
-                $pyFileCount = $parsed
-            }
-        }
-    } catch {
-        # derived requirement: tolerate malformed or missing bootstrap status so we can fall back to env hints.
-    }
-}
-if ($null -eq $pyFileCount -and $env:PY_FILES) {
-    $parsed = 0
-    if ([int]::TryParse($env:PY_FILES, [ref]$parsed)) {
-        $pyFileCount = $parsed
-    }
-}
-if ($null -ne $pyFileCount -and $pyFileCount -ne 1) {
-    # Emit an explicit REQ-002 skip row so coverage is present even when skipped.
-    $skipRow = [ordered]@{
-        id      = 'self.entry.results'
-        req     = 'REQ-002'
-        pass    = $true
-        desc    = 'Entry selection skipped: pyFiles count is not 1'
-        details = [ordered]@{ skip = $true; pyFiles = $pyFileCount; reason = 'pyfiles-not-1' }
-    }
-    $skipJson = $skipRow | ConvertTo-Json -Compress -Depth 8
-    Add-Content -LiteralPath $nd -Value $skipJson -Encoding Ascii
-    Add-Content -LiteralPath $ciNd -Value $skipJson -Encoding Ascii
-    Write-Host ("[INFO] selfapps_entry skipped: pyFiles={0}" -f $pyFileCount)
-    exit 0
-}
 
 function Write-NdjsonRow {
     param([hashtable]$Row)
@@ -282,7 +240,7 @@ if __name__ == "__main__":
     print("from-entry1")
 '@
 })
-$expected1 = Join-Path '.' 'entry1.py'
+$expected1 = 'entry1.py'
 Write-EntryRow -Id 'self.entry.entry1' -Expected $expected1 -Scenario $scenario1 -Description 'Single entry file detected'
 Check-PipreqsFailure -LogPath $scenario1.setupPath -LogText $scenario1.setupLog
 Check-HelperInvokeFailure -LogPath $scenario1.bootstrapPath -LogText $scenario1.bootstrapLog
@@ -298,7 +256,7 @@ if __name__ == "__main__":
     print("from-app")
 '@
 })
-$expectedA = Join-Path '.' 'main.py'
+$expectedA = 'main.py'
 Write-EntryRow -Id 'self.entry.entryA' -Expected $expectedA -Scenario $scenarioA -Description 'main.py beats app.py'
 Check-PipreqsFailure -LogPath $scenarioA.setupPath -LogText $scenarioA.setupLog
 Check-HelperInvokeFailure -LogPath $scenarioA.bootstrapPath -LogText $scenarioA.bootstrapLog
@@ -314,13 +272,29 @@ if __name__ == "__main__":
     print("from-guard")
 '@
 })
-$expectedB = Join-Path '.' 'app.py'
+$expectedB = 'app.py'
 Write-EntryRow -Id 'self.entry.entryB' -Expected $expectedB -Scenario $scenarioB -Description 'app.py preferred over generic modules'
 Check-PipreqsFailure -LogPath $scenarioB.setupPath -LogText $scenarioB.setupLog
 Check-HelperInvokeFailure -LogPath $scenarioB.bootstrapPath -LogText $scenarioB.bootstrapLog
 
+# Scenario C: cli.py should win over a generic module name
+$scenarioC = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entryC_boot') -LogName '~entryC_bootstrap.log' -Files ([ordered]@{
+    'cli.py' = @'
+if __name__ == "__main__":
+    print("from-cli")
+'@
+    'bar.py' = @'
+if __name__ == "__main__":
+    print("from-generic")
+'@
+})
+$expectedC = 'cli.py'
+Write-EntryRow -Id 'self.entry.entryC' -Expected $expectedC -Scenario $scenarioC -Description 'cli.py preferred over generic modules (REQ-002)'
+Check-PipreqsFailure -LogPath $scenarioC.setupPath -LogText $scenarioC.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioC.bootstrapPath -LogText $scenarioC.bootstrapLog
+
 # REQ-011/REQ-010 behavioral tests moved to tests/selfapps_isolation.ps1 (runs unconditionally).
-# This file only covers REQ-002 entry-selection (only valid when pyFileCount==1).
+# This file only covers REQ-002 entry-selection.
 
 $parsedRows = @()
 if (Test-Path -LiteralPath $ciNd) {
@@ -348,7 +322,8 @@ Write-NdjsonRow ([ordered]@{
 $expectedMap = @(
     @{ Id = 'self.entry.entry1'; Expected = $expected1 },
     @{ Id = 'self.entry.entryA'; Expected = $expectedA },
-    @{ Id = 'self.entry.entryB'; Expected = $expectedB }
+    @{ Id = 'self.entry.entryB'; Expected = $expectedB },
+    @{ Id = 'self.entry.entryC'; Expected = $expectedC }
 )
 $issues = @()
 foreach ($item in $expectedMap) {
