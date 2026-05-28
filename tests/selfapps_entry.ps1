@@ -234,7 +234,7 @@ function Write-EntryRow {
 }
 
 # Scenario 1: single entry file should breadcrumb correctly
-$scenario1 = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry1') -LogName '~entry1_bootstrap.log' -Files ([ordered]@{
+$scenario1 = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_sel1') -LogName '~entry_sel1_bootstrap.log' -Files ([ordered]@{
     'entry1.py' = @'
 if __name__ == "__main__":
     print("from-entry1")

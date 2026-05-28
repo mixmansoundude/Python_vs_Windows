@@ -1169,6 +1169,12 @@ jobs:
             tests\~selftest_venv_fallback\~run.out.txt
             tests/~entry_cli/~entry_cli_bootstrap.log
             tests\~entry_cli\~entry_cli_bootstrap.log
+            tests/~entry_cli/~setup.log
+            tests\~entry_cli\~setup.log
+            tests/~entry_sel1/~entry_sel1_bootstrap.log
+            tests\~entry_sel1\~entry_sel1_bootstrap.log
+            tests/~entry_sel1/~setup.log
+            tests\~entry_sel1\~setup.log
             tests/~entryC_boot/~entryC_bootstrap.log
             tests\~entryC_boot\~entryC_bootstrap.log
             tests/~entryD_boot/~entryD_bootstrap.log
@@ -1331,6 +1337,7 @@ jobs:
               ['tests\\~setup.log',                   'tests\\~setup.log'],
               ['tests\\~selftest_empty\\~empty_bootstrap.log', 'tests\\~selftest_empty\\~empty_bootstrap.log'],
               ['tests\\~entry1\\~entry1_bootstrap.log',      'tests\\~entry1\\~entry1_bootstrap.log'],
+              ['tests\\~entry_sel1\\~entry_sel1_bootstrap.log', 'tests\\~entry_sel1\\~entry_sel1_bootstrap.log'],
               ['tests\\~entryA\\~entryA_bootstrap.log',      'tests\\~entryA\\~entryA_bootstrap.log'],
               ['tests\\~entryB\\~entryB_bootstrap.log',      'tests\\~entryB\\~entryB_bootstrap.log'],
               ['tests\\~entry_cli\\~entry_cli_bootstrap.log', 'tests\\~entry_cli\\~entry_cli_bootstrap.log'],
