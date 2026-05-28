@@ -182,7 +182,7 @@ function Invoke-EntryScenario {
             }
             $helper = [regex]::Match($result.log, '^Helper command:\s*(.+)$', [System.Text.RegularExpressions.RegexOptions]::Multiline)
             if ($helper.Success) {
-                $result.helperCommand = [string]($helper.Groups[1].Value.Trim())
+                $result.helperCommand = $helper.Groups[1].Value.Trim()
             }
         }
 
