@@ -64,6 +64,7 @@ function Emit-FailureRow {
 
     Write-NdjsonRow ([ordered]@{
         id      = $Id
+        req     = 'REQ-002'
         pass    = $false
         desc    = $Description
         details = $details
@@ -105,19 +106,12 @@ function Check-HelperInvokeFailure {
     if ($script:RecordedHelperInvoke -or -not $LogPath -or -not (Test-Path -LiteralPath $LogPath)) { return }
     if (-not $LogText) { $LogText = Get-Content -LiteralPath $LogPath -Raw -Encoding Ascii }
 
-    $patterns = @(
-        @{ Pattern = '''python" "~find_entry\.py'' is not recognized as an internal or external command'; RequireFindEntry = $false },
-        @{ Pattern = 'SyntaxError:'; RequireFindEntry = $true }
-    )
-
-    foreach ($item in $patterns) {
-        $pattern = $item.Pattern
-        if ($LogText -match $pattern) {
-            if ($item.RequireFindEntry -and ($LogText -notmatch '~find_entry\.py')) { continue }
-            Emit-FailureRow -Id 'helper.invoke' -Description 'Entry helper failed to execute under Python' -FilePath $LogPath -Pattern $pattern -LogText $LogText
-            $script:RecordedHelperInvoke = $true
-            break
-        }
+    if ($LogText -match '''python" "~find_entry\.py'' is not recognized as an internal or external command') {
+        Emit-FailureRow -Id 'helper.invoke' -Description 'Entry helper failed to execute under Python' -FilePath $LogPath -Pattern '''python" "~find_entry\.py'' is not recognized as an internal or external command' -LogText $LogText
+        $script:RecordedHelperInvoke = $true
+    } elseif (($LogText -match 'SyntaxError:') -and ($LogText -match '~find_entry\.py')) {
+        Emit-FailureRow -Id 'helper.invoke' -Description 'Entry helper failed to execute under Python' -FilePath $LogPath -Pattern 'SyntaxError:' -LogText $LogText
+        $script:RecordedHelperInvoke = $true
     }
 }
 
