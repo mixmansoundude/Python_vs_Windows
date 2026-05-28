@@ -278,7 +278,7 @@ Check-PipreqsFailure -LogPath $scenarioB.setupPath -LogText $scenarioB.setupLog
 Check-HelperInvokeFailure -LogPath $scenarioB.bootstrapPath -LogText $scenarioB.bootstrapLog
 
 # Scenario C: cli.py should win over a generic module name
-$scenarioC = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entryC_boot') -LogName '~entryC_bootstrap.log' -Files ([ordered]@{
+$scenarioC = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_cli') -LogName '~entry_cli_bootstrap.log' -Files ([ordered]@{
     'cli.py' = @'
 if __name__ == "__main__":
     print("from-cli")
