@@ -1925,14 +1925,14 @@ set "HP_PRINT_PYVER=aW1wb3J0IHN5cwoKcHJpbnQoZiJweXRob24te3N5cy52ZXJzaW9uX2luZm9b
 rem HP_FAST_CHECK decoded content:
 rem $exe = $args[0]
 rem if (-not $exe) { $exe = $env:HP_FAST_EXE }
-rem $infraPattern = '(?i)(^|[\/])(\.git|\.github|dist|\.venv|__pycache__|\.conda)([\/]|$)'
+rem $infraPattern = '(?i)(^|[/\\])(\.git|\.github|dist|\.venv|\.uv_env|__pycache__|\.conda)([/\\]|$)'
 rem $sources = Get-ChildItem -Recurse -File -Filter '*.py' | Where-Object { $_.FullName -notmatch $infraPattern -and $_.Name -notlike '~*.py' }
 rem if (-not $sources) { exit 1 }
 rem $latest = ($sources | Sort-Object -Property LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
 rem $exeTime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
 rem if ($exeTime -ge $latest) { 'fresh' }
 rem If HP_FAST_CHECK changes, update this decoded comment block to match the base64 payload.
-set "HP_FAST_CHECK=JGV4ZSA9ICRhcmdzWzBdCmlmICgtbm90ICRleGUpIHsgJGV4ZSA9ICRlbnY6SFBfRkFTVF9FWEUgfQokaW5mcmFQYXR0ZXJuID0gJyg/aSkoXnxbXC9dKShcLmdpdHxcLmdpdGh1YnxkaXN0fFwudmVudnxfX3B5Y2FjaGVfX3xcLmNvbmRhKShbXC9dfCQpJwokc291cmNlcyA9IEdldC1DaGlsZEl0ZW0gLVJlY3Vyc2UgLUZpbGUgLUZpbHRlciAnKi5weScgfCBXaGVyZS1PYmplY3QgeyAkXy5GdWxsTmFtZSAtbm90bWF0Y2ggJGluZnJhUGF0dGVybiAtYW5kICRfLk5hbWUgLW5vdGxpa2UgJ34qLnB5JyB9CmlmICgtbm90ICRzb3VyY2VzKSB7IGV4aXQgMSB9CiRsYXRlc3QgPSAoJHNvdXJjZXMgfCBTb3J0LU9iamVjdCAtUHJvcGVydHkgTGFzdFdyaXRlVGltZVV0YyAtRGVzY2VuZGluZyB8IFNlbGVjdC1PYmplY3QgLUZpcnN0IDEpLkxhc3RXcml0ZVRpbWVVdGMKJGV4ZVRpbWUgPSAoR2V0LUl0ZW0gLUxpdGVyYWxQYXRoICRleGUpLkxhc3RXcml0ZVRpbWVVdGMKaWYgKCRleGVUaW1lIC1nZSAkbGF0ZXN0KSB7ICdmcmVzaCcgfQo="
+set "HP_FAST_CHECK=JGV4ZSA9ICRhcmdzWzBdCmlmICgtbm90ICRleGUpIHsgJGV4ZSA9ICRlbnY6SFBfRkFTVF9FWEUgfQokaW5mcmFQYXR0ZXJuID0gJyg/aSkoXnxbL1xcXSkoXC5naXR8XC5naXRodWJ8ZGlzdHxcLnZlbnZ8XC51dl9lbnZ8X19weWNhY2hlX198XC5jb25kYSkoWy9cXF18JCknCiRzb3VyY2VzID0gR2V0LUNoaWxkSXRlbSAtUmVjdXJzZSAtRmlsZSAtRmlsdGVyICcqLnB5JyB8IFdoZXJlLU9iamVjdCB7ICRfLkZ1bGxOYW1lIC1ub3RtYXRjaCAkaW5mcmFQYXR0ZXJuIC1hbmQgJF8uTmFtZSAtbm90bGlrZSAnfioucHknIH0KaWYgKC1ub3QgJHNvdXJjZXMpIHsgZXhpdCAxIH0KJGxhdGVzdCA9ICgkc291cmNlcyB8IFNvcnQtT2JqZWN0IC1Qcm9wZXJ0eSBMYXN0V3JpdGVUaW1lVXRjIC1EZXNjZW5kaW5nIHwgU2VsZWN0LU9iamVjdCAtRmlyc3QgMSkuTGFzdFdyaXRlVGltZVV0YwokZXhlVGltZSA9IChHZXQtSXRlbSAtTGl0ZXJhbFBhdGggJGV4ZSkuTGFzdFdyaXRlVGltZVV0YwppZiAoJGV4ZVRpbWUgLWdlICRsYXRlc3QpIHsgJ2ZyZXNoJyB9Cg=="
 :: --- Embedded helper: HP_PREP_REQUIREMENTS (~prep_requirements.py) ---
 :: Purpose:
 ::   - Normalize pip/conda specifiers from requirements.txt
