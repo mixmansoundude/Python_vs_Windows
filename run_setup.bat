@@ -929,7 +929,7 @@ if exist "requirements.txt" (
   if "%HP_ENV_MODE%"=="conda" (
     if not defined HP_DEP_SKIP (
       call :log "[INSTALL] conda bulk from ~reqs_conda.txt"
-      call "%CONDA_BAT%" install -y -n "%ENVNAME%" --file "~reqs_conda.txt" --override-channels -c conda-forge >> "%LOG%" 2>&1
+      call :conda_bulk_install
       if errorlevel 1 (
         call :log "[INSTALL] conda per-pkg fallback"
         for /f "usebackq delims=" %%P in ("~reqs_conda.txt") do (
@@ -2063,6 +2063,34 @@ if not defined CONDA_BAT (
 )
 set "HP_CONDA_JUST_INSTALLED=1"
 goto :after_conda_bat_validation
+:conda_bulk_install
+rem Run conda bulk install; retry once if output indicates a transient network failure.
+rem derived requirement: ~conda_bulk.tmp is tilde-prefixed so it is gitignored and cleaned here.
+if exist "~conda_bulk.tmp" del "~conda_bulk.tmp" >nul 2>&1
+call "%CONDA_BAT%" install -y -n "%ENVNAME%" --file "~reqs_conda.txt" --override-channels -c conda-forge > "~conda_bulk.tmp" 2>&1
+set "HP_CBULK_RC=%ERRORLEVEL%"
+type "~conda_bulk.tmp" >> "%LOG%"
+if "%HP_CBULK_RC%"=="0" (
+  del "~conda_bulk.tmp" >nul 2>&1
+  exit /b 0
+)
+findstr /i /c:"repodata" /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" "~conda_bulk.tmp" >nul 2>&1
+if errorlevel 1 (
+  del "~conda_bulk.tmp" >nul 2>&1
+  exit /b 1
+)
+del "~conda_bulk.tmp" >nul 2>&1
+echo Conda install failed -- possible network or repository issue. Retrying once...
+call :log "[INSTALL] conda bulk: transient failure detected; retrying after 15s."
+timeout /t 15 /nobreak >nul 2>&1
+echo Retrying package installation...
+call "%CONDA_BAT%" install -y -n "%ENVNAME%" --file "~reqs_conda.txt" --override-channels -c conda-forge >> "%LOG%" 2>&1
+if not errorlevel 1 exit /b 0
+echo *** Package installation could not complete. This may be a temporary network issue.
+echo *** See log file for details: ~setup.log
+call :log "[WARN] conda bulk: retry after transient failure also failed."
+exit /b 1
+
 :die
 set "MSG=%~1"
 set "RC=%~2"
