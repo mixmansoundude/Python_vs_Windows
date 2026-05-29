@@ -2074,7 +2074,7 @@ if "%HP_CBULK_RC%"=="0" (
   del "~conda_bulk.tmp" >nul 2>&1
   exit /b 0
 )
-findstr /i /c:"repodata" /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" "~conda_bulk.tmp" >nul 2>&1
+findstr /i /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" "~conda_bulk.tmp" >nul 2>&1
 if errorlevel 1 (
   del "~conda_bulk.tmp" >nul 2>&1
   exit /b 1
