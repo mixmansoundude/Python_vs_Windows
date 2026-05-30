@@ -2067,9 +2067,18 @@ goto :after_conda_bat_validation
 rem Run conda bulk install; retry once if output indicates a transient network failure.
 rem derived requirement: ~conda_bulk.tmp is tilde-prefixed so it is gitignored and cleaned here.
 if exist "~conda_bulk.tmp" del "~conda_bulk.tmp" >nul 2>&1
+if not "%HP_TEST_FORCE_CONDA_NETWORK_FAIL%"=="1" goto :conda_bulk_real_call
+rem [TEST] HP_TEST_FORCE_CONDA_NETWORK_FAIL: simulate a transient CondaHTTPError on first attempt.
+echo CondaHTTPError: HTTP 000 CONNECTION FAILED (simulated) > "~conda_bulk.tmp"
+set "HP_TEST_FORCE_CONDA_NETWORK_FAIL="
+type "~conda_bulk.tmp" >> "%LOG%"
+set "HP_CBULK_RC=1"
+goto :conda_bulk_have_rc
+:conda_bulk_real_call
 call "%CONDA_BAT%" install -y -n "%ENVNAME%" --file "~reqs_conda.txt" --override-channels -c conda-forge > "~conda_bulk.tmp" 2>&1
 set "HP_CBULK_RC=%ERRORLEVEL%"
 type "~conda_bulk.tmp" >> "%LOG%"
+:conda_bulk_have_rc
 if "%HP_CBULK_RC%"=="0" (
   del "~conda_bulk.tmp" >nul 2>&1
   exit /b 0
