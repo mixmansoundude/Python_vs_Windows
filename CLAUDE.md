@@ -379,6 +379,7 @@ host.env.os, host.env.ps, host.env.python,
 batch.req009.venv_unconditional,
 batch.req002.findentry_cli,
 self.stub.fastpath, self.stub.rebuild, self.stub.state_skip,
+self.stub.conda_retry,
 self.corrupt.conda.detect,
 self.corrupt.conda.heal.decline,
 self.corrupt.uv.detect

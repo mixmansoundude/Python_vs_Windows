@@ -676,4 +676,43 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
   if ($uvEvictMsgFound) { $summary.Add('Corrupt uv detect: PASS') } else { $summary.Add('Corrupt uv detect: FAIL') }
 }
 
+# --- Conda bulk install retry test ---
+# Arrange: HP_TEST_FORCE_CONDA_NETWORK_FAIL=1 simulates a transient CondaHTTPError on the
+#          first bulk install attempt. Assert: log contains the retry sentinel line and
+#          bootstrap exits 0 (the retry with real conda succeeds).
+# Note: test runs only when conda is already installed from the prior bootstrap run.
+$retryDir = Join-Path $TestsDir '~selftest_conda_retry'
+if (Test-Path $retryDir) { Remove-Item -Recurse -Force $retryDir }
+New-Item -ItemType Directory -Force -Path $retryDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $retryDir -Force
+Set-Content -Path (Join-Path $retryDir 'app_retry_test.py') -Value 'import six; print("six-ok")' -Encoding ASCII
+Set-Content -Path (Join-Path $retryDir 'requirements.txt') -Value 'six' -Encoding ASCII
+$retryLogName = '~conda_retry_bootstrap.log'
+$prevForceCondaOnly4 = $env:HP_FORCE_CONDA_ONLY
+$env:HP_TEST_FORCE_CONDA_NETWORK_FAIL = '1'
+$env:HP_FORCE_CONDA_ONLY = '1'
+$prevCILane4 = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $retryDir
+try {
+  cmd /c "call run_setup.bat > $retryLogName 2>&1"
+  $retryExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_FORCE_CONDA_NETWORK_FAIL = ''
+  $env:HP_FORCE_CONDA_ONLY = $prevForceCondaOnly4
+  $env:HP_CI_LANE = $prevCILane4
+}
+$retryLogPath = Join-Path $retryDir $retryLogName
+$retryLines = if (Test-Path $retryLogPath) { Get-Content -LiteralPath $retryLogPath -Encoding ASCII } else { @() }
+$retryMsgFound = ($retryLines | Where-Object { $_ -like '*conda bulk: transient failure detected*' }).Count -gt 0
+Write-NdjsonRow ([ordered]@{
+  id      = 'self.stub.conda_retry'
+  req     = 'REQ-NET'
+  pass    = ($retryExit -eq 0 -and $retryMsgFound)
+  desc    = 'HP_TEST_FORCE_CONDA_NETWORK_FAIL=1: bootstrap retries conda bulk install on transient failure'
+  details = [ordered]@{ exitCode = $retryExit; retryMsgFound = $retryMsgFound }
+})
+if ($retryExit -eq 0 -and $retryMsgFound) { $summary.Add('Conda retry: PASS') } else { $summary.Add('Conda retry: FAIL') }
+
 $summary | Set-Content -Path $summaryPath -Encoding ASCII
