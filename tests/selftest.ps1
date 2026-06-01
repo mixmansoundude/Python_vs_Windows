@@ -557,6 +557,90 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($pep723MalWarnFound -and $pep723MalContinued) { $summary.Add('PEP 723 malformed block: PASS') } else { $summary.Add('PEP 723 malformed block: FAIL') }
 
+# --- PEP 723 priority over pyproject.toml test (REQ-005.1) ---
+# Arrange: script with PEP 723 metadata (packaging) + pyproject.toml with conflicting dep (colorama).
+# Assert:  bootstrap detects pyproject.toml first, then PEP 723 overrides it; DEP_SOURCE=pep723, exits 0.
+# derived requirement: REQ-005.1 states PEP 723 is authoritative over pyproject.toml; this test
+# guards the priority ordering from being silently reversed in a future refactor.
+$pep723PrioDir = Join-Path $TestsDir '~selftest_pep723_prio'
+if (Test-Path $pep723PrioDir) { Remove-Item -Recurse -Force $pep723PrioDir }
+New-Item -ItemType Directory -Force -Path $pep723PrioDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $pep723PrioDir -Force
+# PEP 723 dep: packaging. pyproject.toml dep: colorama. PEP 723 must win.
+# Extract subroutine expects exactly "# " + quote (one space); extra spaces would break parsing.
+$pep723PrioScript = @'
+# /// script
+# dependencies = [
+# "packaging"
+# ]
+# ///
+print("pep723-priority-test")
+'@
+Set-Content -Path (Join-Path $pep723PrioDir 'app_pep723_prio.py') -Value $pep723PrioScript -Encoding ASCII
+$pep723PrioPyproj = @'
+[project]
+name = "pep723-prio-test"
+dependencies = [
+  "colorama"
+]
+'@
+Set-Content -Path (Join-Path $pep723PrioDir 'pyproject.toml') -Value $pep723PrioPyproj -Encoding ASCII
+$pep723PrioLogName = '~pep723_prio_bootstrap.log'
+Push-Location $pep723PrioDir
+try {
+  cmd /c "call run_setup.bat > $pep723PrioLogName 2>&1"
+  $pep723PrioExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+$pep723PrioLogPath = Join-Path $pep723PrioDir $pep723PrioLogName
+$pep723PrioLines = @()
+if (Test-Path $pep723PrioLogPath) { $pep723PrioLines = Get-Content -LiteralPath $pep723PrioLogPath -Encoding ASCII }
+# pyproject.toml must have been detected (exercises the priority code path, not a degenerate skip).
+# Use .Contains() instead of -like because -like treats [project] as a char-class wildcard.
+$pep723PrioPyprojectTag = 'pyproject.toml [project].dependencies found'
+$pep723PrioPyprojectDetected = ($pep723PrioLines | Where-Object { $_.Contains($pep723PrioPyprojectTag) }).Count -gt 0
+# PEP 723 must have won (overrode pyproject)
+$pep723PrioWinTag = 'Using PEP 723 inline dependency metadata'
+$pep723PrioWon = ($pep723PrioLines | Where-Object { $_ -like "*$pep723PrioWinTag*" }).Count -gt 0
+$pep723PrioStatusPath = Join-Path $pep723PrioDir '~bootstrap.status.json'
+$pep723PrioContinued = $false
+if (Test-Path $pep723PrioStatusPath) {
+  try {
+    $pep723PrioStatus = Get-Content -LiteralPath $pep723PrioStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $pep723PrioContinued = ($pep723PrioStatus.exitCode -eq 0)
+  } catch { }
+}
+# Final-state check: requirements.txt must contain the PEP 723 dep (packaging) and must NOT
+# contain the pyproject dep (colorama).  A refactor that reverses priority would fail here
+# even if both log lines were still emitted.
+# derived requirement: run_setup.bat line 715 copies PEP723_REQ over requirements.txt when
+# PEP723_ACTIVE is set; the dep name is written verbatim by extract_pep723_requirements.
+$pep723PrioReqPath = Join-Path $pep723PrioDir 'requirements.txt'
+$pep723PrioReqHasPackaging = $false
+$pep723PrioReqNoColorama   = $false
+if (Test-Path -LiteralPath $pep723PrioReqPath) {
+  $pep723PrioReqContent = Get-Content -LiteralPath $pep723PrioReqPath -Encoding ASCII -Raw
+  $pep723PrioReqHasPackaging = $pep723PrioReqContent -match 'packaging'
+  $pep723PrioReqNoColorama   = -not ($pep723PrioReqContent -match 'colorama')
+}
+$pep723PrioPass = ($pep723PrioPyprojectDetected -and $pep723PrioWon -and $pep723PrioContinued -and $pep723PrioReqHasPackaging -and $pep723PrioReqNoColorama)
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.pep723.pyproject.override'
+  req  = 'REQ-005.1'
+  pass = $pep723PrioPass
+  desc = 'PEP 723 inline metadata overrides pyproject.toml [project].dependencies when both present (REQ-005.1 priority)'
+  details = [ordered]@{
+    pyprojectDetected = $pep723PrioPyprojectDetected
+    pep723Won         = $pep723PrioWon
+    continued         = $pep723PrioContinued
+    exitCode          = $pep723PrioExit
+    reqHasPackaging   = $pep723PrioReqHasPackaging
+    reqNoColorama     = $pep723PrioReqNoColorama
+  }
+})
+if ($pep723PrioPass) { $summary.Add('PEP 723 priority over pyproject: PASS') } else { $summary.Add('PEP 723 priority over pyproject: FAIL') }
+
 # --- Conda binary corruption detection test (REQ-020) ---
 # Arrange: HP_TEST_CORRUPT_CONDA=1 simulates a corrupt conda binary.
 # Assert:  bootstrap exits 2 and log contains the corruption-detected error message.
