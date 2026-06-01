@@ -596,9 +596,10 @@ try {
 $pep723PrioLogPath = Join-Path $pep723PrioDir $pep723PrioLogName
 $pep723PrioLines = @()
 if (Test-Path $pep723PrioLogPath) { $pep723PrioLines = Get-Content -LiteralPath $pep723PrioLogPath -Encoding ASCII }
-# pyproject.toml must have been detected (exercises the priority code path, not a degenerate skip)
+# pyproject.toml must have been detected (exercises the priority code path, not a degenerate skip).
+# Use .Contains() instead of -like because -like treats [project] as a char-class wildcard.
 $pep723PrioPyprojectTag = 'pyproject.toml [project].dependencies found'
-$pep723PrioPyprojectDetected = ($pep723PrioLines | Where-Object { $_ -like "*$pep723PrioPyprojectTag*" }).Count -gt 0
+$pep723PrioPyprojectDetected = ($pep723PrioLines | Where-Object { $_.Contains($pep723PrioPyprojectTag) }).Count -gt 0
 # PEP 723 must have won (overrode pyproject)
 $pep723PrioWinTag = 'Using PEP 723 inline dependency metadata'
 $pep723PrioWon = ($pep723PrioLines | Where-Object { $_ -like "*$pep723PrioWinTag*" }).Count -gt 0
