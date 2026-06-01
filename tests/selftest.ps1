@@ -611,19 +611,35 @@ if (Test-Path $pep723PrioStatusPath) {
     $pep723PrioContinued = ($pep723PrioStatus.exitCode -eq 0)
   } catch { }
 }
+# Final-state check: requirements.txt must contain the PEP 723 dep (packaging) and must NOT
+# contain the pyproject dep (colorama).  A refactor that reverses priority would fail here
+# even if both log lines were still emitted.
+# derived requirement: run_setup.bat line 715 copies PEP723_REQ over requirements.txt when
+# PEP723_ACTIVE is set; the dep name is written verbatim by extract_pep723_requirements.
+$pep723PrioReqPath = Join-Path $pep723PrioDir 'requirements.txt'
+$pep723PrioReqHasPackaging = $false
+$pep723PrioReqNoColorama   = $false
+if (Test-Path -LiteralPath $pep723PrioReqPath) {
+  $pep723PrioReqContent = Get-Content -LiteralPath $pep723PrioReqPath -Encoding ASCII -Raw
+  $pep723PrioReqHasPackaging = $pep723PrioReqContent -match 'packaging'
+  $pep723PrioReqNoColorama   = -not ($pep723PrioReqContent -match 'colorama')
+}
+$pep723PrioPass = ($pep723PrioPyprojectDetected -and $pep723PrioWon -and $pep723PrioContinued -and $pep723PrioReqHasPackaging -and $pep723PrioReqNoColorama)
 Write-NdjsonRow ([ordered]@{
   id   = 'self.pep723.pyproject.override'
   req  = 'REQ-005.1'
-  pass = ($pep723PrioPyprojectDetected -and $pep723PrioWon -and $pep723PrioContinued)
+  pass = $pep723PrioPass
   desc = 'PEP 723 inline metadata overrides pyproject.toml [project].dependencies when both present (REQ-005.1 priority)'
   details = [ordered]@{
     pyprojectDetected = $pep723PrioPyprojectDetected
     pep723Won         = $pep723PrioWon
     continued         = $pep723PrioContinued
     exitCode          = $pep723PrioExit
+    reqHasPackaging   = $pep723PrioReqHasPackaging
+    reqNoColorama     = $pep723PrioReqNoColorama
   }
 })
-if ($pep723PrioPyprojectDetected -and $pep723PrioWon -and $pep723PrioContinued) { $summary.Add('PEP 723 priority over pyproject: PASS') } else { $summary.Add('PEP 723 priority over pyproject: FAIL') }
+if ($pep723PrioPass) { $summary.Add('PEP 723 priority over pyproject: PASS') } else { $summary.Add('PEP 723 priority over pyproject: FAIL') }
 
 # --- Conda binary corruption detection test (REQ-020) ---
 # Arrange: HP_TEST_CORRUPT_CONDA=1 simulates a corrupt conda binary.
