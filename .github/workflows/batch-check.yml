@@ -955,6 +955,7 @@ jobs:
             dependency_source.txt
             ~dependency_resolved.txt
             ~dependency_installed.txt
+            ~pipreqs.diff.txt
             tests/~dynamic-run.log
             tests/~entry1/~entry1_bootstrap.log
             tests\~entry1\~entry1_bootstrap.log
