@@ -234,6 +234,28 @@ Write-NdjsonRow ([ordered]@{
   }
 })
 if ($stateSkipFound) { $summary.Add('stub state skip: PASS') } else { $summary.Add('stub state skip: FAIL') }
+# --- REQ-005.5 runtime validation ---
+# Verify that after a full stub bootstrap: ~setup.log has the REQ-005.5 diff log line
+# and ~pipreqs.diff.txt was written. Checks the accumulated ~setup.log (not the captured
+# stdout log) since :log writes to ~setup.log regardless of stdout redirection.
+$stubSetupLog  = Join-Path $stubDir '~setup.log'
+$stubDiffFile  = Join-Path $stubDir '~pipreqs.diff.txt'
+$diffLogFound  = $false
+if (Test-Path $stubSetupLog) {
+  $setupLogLines = Get-Content -LiteralPath $stubSetupLog -Encoding ASCII
+  $diffLogFound  = ($setupLogLines | Where-Object { $_ -like '*REQ-005.5*' }).Count -gt 0
+}
+$diffFileExists = Test-Path $stubDiffFile
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.dep.diff.trace'
+  pass = ($diffLogFound -and $diffFileExists)
+  desc = 'REQ-005.5: dependency diff log line emitted and ~pipreqs.diff.txt created during bootstrap'
+  details = [ordered]@{
+    logFound   = $diffLogFound
+    fileExists = $diffFileExists
+  }
+})
+if ($diffLogFound -and $diffFileExists) { $summary.Add('dep.diff.trace: PASS') } else { $summary.Add('dep.diff.trace: FAIL') }
 
 # --- pip-install warning test ---
 # Arrange: stub .py + a requirements.txt containing a nonexistent package so pip install fails.

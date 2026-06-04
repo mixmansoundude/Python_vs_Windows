@@ -974,6 +974,8 @@ jobs:
             tests\~envsmoke\~run.out.txt
             tests/~envsmoke/~environment.lock.txt
             tests\~envsmoke\~environment.lock.txt
+            tests/~envsmoke/~pipreqs.diff.txt
+            tests\~envsmoke\~pipreqs.diff.txt
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log
@@ -986,6 +988,8 @@ jobs:
             tests\~selftest_stub\~stub_run.log
             tests/~selftest_stub/~setup.log
             tests\~selftest_stub\~setup.log
+            tests/~selftest_stub/~pipreqs.diff.txt
+            tests\~selftest_stub\~pipreqs.diff.txt
             tests/~selftest_stub/~bootstrap.status.json
             tests\~selftest_stub\~bootstrap.status.json
             tests/~selftest_stub/~env.state.json
