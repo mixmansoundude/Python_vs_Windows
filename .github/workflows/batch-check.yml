@@ -1252,6 +1252,24 @@ jobs:
             tests\~req010_test\~pipreqs.diff.txt
             tests/~req010_test/~isolation_check.txt
             tests\~req010_test\~isolation_check.txt
+            tests/~selftest_conda_retry/~conda_retry_bootstrap.log
+            tests\~selftest_conda_retry\~conda_retry_bootstrap.log
+            tests/~selftest_conda_retry/~setup.log
+            tests\~selftest_conda_retry\~setup.log
+            tests/~selftest_conda_retry/~pipreqs.diff.txt
+            tests\~selftest_conda_retry\~pipreqs.diff.txt
+            tests/~selftest_pep723_prio/~pep723_prio_bootstrap.log
+            tests\~selftest_pep723_prio\~pep723_prio_bootstrap.log
+            tests/~selftest_pep723_prio/~setup.log
+            tests\~selftest_pep723_prio\~setup.log
+            tests/~selftest_pep723_prio/~pipreqs.diff.txt
+            tests\~selftest_pep723_prio\~pipreqs.diff.txt
+            tests/~selftest_pep723_prio/~bootstrap.status.json
+            tests\~selftest_pep723_prio\~bootstrap.status.json
+            tests/~selftest_guardrail_g1/
+            tests\~selftest_guardrail_g1\
+            tests/~selftest_empty/~setup.log
+            tests\~selftest_empty\~setup.log
             tests/~selftest-summary.txt
             tests\~selftest-summary.txt
             tests/~test-summary.txt
