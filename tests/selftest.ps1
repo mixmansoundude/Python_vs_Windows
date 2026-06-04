@@ -72,6 +72,10 @@ Copy-Item -Path $BatchPath -Destination $stubDir -Force
 $stubScriptPath = Join-Path $stubDir 'hello_stub.py'
 # hello_stub.py intentionally has no imports to test the zero-requirements bootstrap path.
 Set-Content -Path $stubScriptPath -Value 'print("hello-from-stub")' -Encoding ASCII
+# Seed empty requirements.txt so pipreqs output (requirements.auto.txt) can be compared via fc.
+# real/uv lane: pipreqs exits 0 + empty auto.txt -> $bothReqExist=true, fc runs, non-placeholder diff.
+# conda-full lane: pipreqs exits non-zero, no auto.txt -> $bothReqExist=false, placeholder written.
+Set-Content -Path (Join-Path $stubDir 'requirements.txt') -Value '' -Encoding ASCII
 function Invoke-StubSetup {
   param(
     [string]$LogName
@@ -122,8 +126,9 @@ if ($diffFileExists) {
   $diffContent       = Get-Content -LiteralPath $stubDiffFile -Encoding ASCII -Raw
   $diffIsPlaceholder = $diffContent.Trim() -like '*(no diff:*'
 }
-# When both req files exist fc must have run; when files are absent the placeholder is correct.
-$diffCorrect = if ($bothReqExist) { $diffFileExists -and -not $diffIsPlaceholder } else { $diffFileExists }
+# When both req files exist fc must have run (non-placeholder output expected).
+# When auto.txt absent (conda-full lane): placeholder must have been written.
+$diffCorrect = if ($bothReqExist) { $diffFileExists -and -not $diffIsPlaceholder } else { $diffFileExists -and $diffIsPlaceholder }
 Write-NdjsonRow ([ordered]@{
   id   = 'self.dep.diff.trace'
   pass = ($diffLogFound -and $diffCorrect)
@@ -136,7 +141,7 @@ Write-NdjsonRow ([ordered]@{
     diffCorrect       = $diffCorrect
   }
 })
-if ($diffLogFound -and $diffCorrect) { $summary.Add('dep.diff.trace: PASS') } else { $summary.Add('dep.diff.trace: FAIL') }
+if ($diffLogFound -and $diffCorrect) { $summary.Add('self.dep.diff.trace: PASS') } else { $summary.Add('self.dep.diff.trace: FAIL') }
 $stubEnvName = Split-Path -Leaf $stubDir
 $stubEnvNameNormalized = $stubEnvName -replace '[^A-Za-z0-9_-]', '_'
 if ([string]::IsNullOrWhiteSpace($stubEnvNameNormalized) -or $stubEnvNameNormalized.Trim('_').Length -eq 0) {
