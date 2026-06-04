@@ -114,16 +114,29 @@ if (Test-Path $stubSetupLog) {
   $diffLogFound  = ($setupLogLines | Where-Object { $_ -like '*REQ-005.5*' }).Count -gt 0
 }
 $diffFileExists = Test-Path $stubDiffFile
+$stubReqTxt    = Join-Path $stubDir 'requirements.txt'
+$stubAutoTxt   = Join-Path $stubDir 'requirements.auto.txt'
+$bothReqExist  = (Test-Path $stubReqTxt) -and (Test-Path $stubAutoTxt)
+$diffIsPlaceholder = $false
+if ($diffFileExists) {
+  $diffContent       = Get-Content -LiteralPath $stubDiffFile -Encoding ASCII -Raw
+  $diffIsPlaceholder = $diffContent.Trim() -like '*(no diff:*'
+}
+# When both req files exist fc must have run; when files are absent the placeholder is correct.
+$diffCorrect = if ($bothReqExist) { $diffFileExists -and -not $diffIsPlaceholder } else { $diffFileExists }
 Write-NdjsonRow ([ordered]@{
   id   = 'self.dep.diff.trace'
-  pass = ($diffLogFound -and $diffFileExists)
+  pass = ($diffLogFound -and $diffCorrect)
   desc = 'REQ-005.5: dependency diff log line emitted and ~pipreqs.diff.txt created during initial bootstrap'
   details = [ordered]@{
-    logFound   = $diffLogFound
-    fileExists = $diffFileExists
+    logFound          = $diffLogFound
+    fileExists        = $diffFileExists
+    bothReqExist      = $bothReqExist
+    diffIsPlaceholder = $diffIsPlaceholder
+    diffCorrect       = $diffCorrect
   }
 })
-if ($diffLogFound -and $diffFileExists) { $summary.Add('dep.diff.trace: PASS') } else { $summary.Add('dep.diff.trace: FAIL') }
+if ($diffLogFound -and $diffCorrect) { $summary.Add('dep.diff.trace: PASS') } else { $summary.Add('dep.diff.trace: FAIL') }
 $stubEnvName = Split-Path -Leaf $stubDir
 $stubEnvNameNormalized = $stubEnvName -replace '[^A-Za-z0-9_-]', '_'
 if ([string]::IsNullOrWhiteSpace($stubEnvNameNormalized) -or $stubEnvNameNormalized.Trim('_').Length -eq 0) {
