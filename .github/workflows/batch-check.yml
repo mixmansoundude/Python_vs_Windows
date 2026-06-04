@@ -1010,10 +1010,14 @@ jobs:
             tests\~selftest_depcheck\~env.state.json
             tests/~selftest_depcheck/~setup.log
             tests\~selftest_depcheck\~setup.log
+            tests/~selftest_depcheck/~pipreqs.diff.txt
+            tests\~selftest_depcheck\~pipreqs.diff.txt
             tests/~selftest_warnfix/~warnfix_bootstrap.log
             tests\~selftest_warnfix\~warnfix_bootstrap.log
             tests/~selftest_warnfix/~setup.log
             tests\~selftest_warnfix\~setup.log
+            tests/~selftest_warnfix/~pipreqs.diff.txt
+            tests\~selftest_warnfix\~pipreqs.diff.txt
             tests/~selftest_warnfix/dist/~warnfix_token.txt
             tests\~selftest_warnfix\dist\~warnfix_token.txt
             tests/~selftest_warnfix/dist/~warnfix_exe.log
@@ -1024,12 +1028,16 @@ jobs:
             tests\~selftest_warnfix_xfail\~warnfix_xfail_bootstrap.log
             tests/~selftest_warnfix_xfail/~setup.log
             tests\~selftest_warnfix_xfail\~setup.log
+            tests/~selftest_warnfix_xfail/~pipreqs.diff.txt
+            tests\~selftest_warnfix_xfail\~pipreqs.diff.txt
             tests/~selftest_warnfix_xfail/dist/~warnfix_exe.log
             tests\~selftest_warnfix_xfail\dist\~warnfix_exe.log
             tests/~selftest_warnfix_real/~warnfix_real_bootstrap.log
             tests\~selftest_warnfix_real\~warnfix_real_bootstrap.log
             tests/~selftest_warnfix_real/~setup.log
             tests\~selftest_warnfix_real\~setup.log
+            tests/~selftest_warnfix_real/~pipreqs.diff.txt
+            tests\~selftest_warnfix_real\~pipreqs.diff.txt
             tests/~selftest_warnfix_real/dist/~warnfix_token.txt
             tests\~selftest_warnfix_real\dist\~warnfix_token.txt
             tests/~selftest_warnfix_real/dist/~warnfix_exe.log
@@ -1038,6 +1046,8 @@ jobs:
             tests\~selftest_warnfix_real_warnfix\~warnfix_real_warnfix_bootstrap.log
             tests/~selftest_warnfix_real_warnfix/~setup.log
             tests\~selftest_warnfix_real_warnfix\~setup.log
+            tests/~selftest_warnfix_real_warnfix/~pipreqs.diff.txt
+            tests\~selftest_warnfix_real_warnfix\~pipreqs.diff.txt
             tests/~selftest_warnfix_real_warnfix/dist/~warnfix_token.txt
             tests\~selftest_warnfix_real_warnfix\dist\~warnfix_token.txt
             tests/~selftest_warnfix_real_warnfix/dist/~warnfix_exe.log
@@ -1048,6 +1058,8 @@ jobs:
             tests\~selftest_warnfix_real_warnfix_delayed\~warnfix_real_warnfix_delayed_bootstrap.log
             tests/~selftest_warnfix_real_warnfix_delayed/~setup.log
             tests\~selftest_warnfix_real_warnfix_delayed\~setup.log
+            tests/~selftest_warnfix_real_warnfix_delayed/~pipreqs.diff.txt
+            tests\~selftest_warnfix_real_warnfix_delayed\~pipreqs.diff.txt
             tests/~selftest_warnfix_real_warnfix_delayed/dist/~warnfix_token.txt
             tests\~selftest_warnfix_real_warnfix_delayed\dist\~warnfix_token.txt
             tests/~selftest_warnfix_real_warnfix_delayed/dist/~warnfix_exe.log
@@ -1058,14 +1070,20 @@ jobs:
             tests\~selftest_exefail\~exefail_bootstrap.log
             tests/~selftest_exefail/~setup.log
             tests\~selftest_exefail\~setup.log
+            tests/~selftest_exefail/~pipreqs.diff.txt
+            tests\~selftest_exefail\~pipreqs.diff.txt
             tests/~selftest_exedata_fail/~exedata_bootstrap.log
             tests\~selftest_exedata_fail\~exedata_bootstrap.log
             tests/~selftest_exedata_fail/~setup.log
             tests\~selftest_exedata_fail\~setup.log
+            tests/~selftest_exedata_fail/~pipreqs.diff.txt
+            tests\~selftest_exedata_fail\~pipreqs.diff.txt
             tests/~selftest_exedyn_fail/~exedyn_bootstrap.log
             tests\~selftest_exedyn_fail\~exedyn_bootstrap.log
             tests/~selftest_exedyn_fail/~setup.log
             tests\~selftest_exedyn_fail\~setup.log
+            tests/~selftest_exedyn_fail/~pipreqs.diff.txt
+            tests\~selftest_exedyn_fail\~pipreqs.diff.txt
             tests/~pandas_excel/~pandas_excel.log
             tests\~pandas_excel\~pandas_excel.log
             tests/~selftest_parse_warn_table/
@@ -1076,28 +1094,38 @@ jobs:
             tests\~selftest_runtime_writeback\~runtime_writeback_bootstrap2.log
             tests/~selftest_runtime_writeback/~setup.log
             tests\~selftest_runtime_writeback\~setup.log
+            tests/~selftest_runtime_writeback/~pipreqs.diff.txt
+            tests\~selftest_runtime_writeback\~pipreqs.diff.txt
             tests/~selftest_runtime_writeback/runtime.txt
             tests\~selftest_runtime_writeback\runtime.txt
             tests/~pyvisa/~pyvisa_bootstrap.log
             tests\~pyvisa\~pyvisa_bootstrap.log
             tests/~pyvisa/~setup.log
             tests\~pyvisa\~setup.log
+            tests/~pyvisa/~pipreqs.diff.txt
+            tests\~pyvisa\~pipreqs.diff.txt
             tests/~pyproject_prec/~pyproject_prec_bootstrap.log
             tests\~pyproject_prec\~pyproject_prec_bootstrap.log
             tests/~pyproject_prec/~setup.log
             tests\~pyproject_prec\~setup.log
+            tests/~pyproject_prec/~pipreqs.diff.txt
+            tests\~pyproject_prec\~pipreqs.diff.txt
             tests/~pyproject_prec/runtime.txt
             tests\~pyproject_prec\runtime.txt
             tests/~selftest_pip_warn/~pip_warn_bootstrap.log
             tests\~selftest_pip_warn\~pip_warn_bootstrap.log
             tests/~selftest_pip_warn/~setup.log
             tests\~selftest_pip_warn\~setup.log
+            tests/~selftest_pip_warn/~pipreqs.diff.txt
+            tests\~selftest_pip_warn\~pipreqs.diff.txt
             tests/~selftest_pip_warn/~bootstrap.status.json
             tests\~selftest_pip_warn\~bootstrap.status.json
             tests/~selftest_OneDrive/~onedrive_bootstrap.log
             tests\~selftest_OneDrive\~onedrive_bootstrap.log
             tests/~selftest_OneDrive/~setup.log
             tests\~selftest_OneDrive\~setup.log
+            tests/~selftest_OneDrive/~pipreqs.diff.txt
+            tests\~selftest_OneDrive\~pipreqs.diff.txt
             tests/~selftest_OneDrive/~bootstrap.status.json
             tests\~selftest_OneDrive\~bootstrap.status.json
             tests/~selftest_longpath/
@@ -1106,18 +1134,24 @@ jobs:
             tests\~selftest_path_negative\~path_negative_bootstrap.log
             tests/~selftest_path_negative/~setup.log
             tests\~selftest_path_negative\~setup.log
+            tests/~selftest_path_negative/~pipreqs.diff.txt
+            tests\~selftest_path_negative\~pipreqs.diff.txt
             tests/~selftest_path_negative/~bootstrap.status.json
             tests\~selftest_path_negative\~bootstrap.status.json
             tests/~selftest_pep723_valid/~pep723_valid_bootstrap.log
             tests\~selftest_pep723_valid\~pep723_valid_bootstrap.log
             tests/~selftest_pep723_valid/~setup.log
             tests\~selftest_pep723_valid\~setup.log
+            tests/~selftest_pep723_valid/~pipreqs.diff.txt
+            tests\~selftest_pep723_valid\~pipreqs.diff.txt
             tests/~selftest_pep723_valid/~bootstrap.status.json
             tests\~selftest_pep723_valid\~bootstrap.status.json
             tests/~selftest_pep723_mal/~pep723_mal_bootstrap.log
             tests\~selftest_pep723_mal\~pep723_mal_bootstrap.log
             tests/~selftest_pep723_mal/~setup.log
             tests\~selftest_pep723_mal\~setup.log
+            tests/~selftest_pep723_mal/~pipreqs.diff.txt
+            tests\~selftest_pep723_mal\~pipreqs.diff.txt
             tests/~selftest_pep723_mal/~bootstrap.status.json
             tests\~selftest_pep723_mal\~bootstrap.status.json
             tests/~selftest_gitconfig/~gitconfig_run1.log
@@ -1126,6 +1160,8 @@ jobs:
             tests\~selftest_gitconfig\~gitconfig_run2.log
             tests/~selftest_gitconfig/~setup.log
             tests\~selftest_gitconfig\~setup.log
+            tests/~selftest_gitconfig/~pipreqs.diff.txt
+            tests\~selftest_gitconfig\~pipreqs.diff.txt
             tests/~selftest_gitconfig/.gitignore
             tests\~selftest_gitconfig\.gitignore
             tests/~selftest_gitconfig/.gitattributes
@@ -1134,40 +1170,56 @@ jobs:
             tests\~selftest_connectivity\~conn_test.log
             tests/~selftest_connectivity/~setup.log
             tests\~selftest_connectivity\~setup.log
+            tests/~selftest_connectivity/~pipreqs.diff.txt
+            tests\~selftest_connectivity\~pipreqs.diff.txt
             tests/~selftest_sysgate/~sys_test.log
             tests\~selftest_sysgate\~sys_test.log
             tests/~selftest_sysgate/~setup.log
             tests\~selftest_sysgate\~setup.log
+            tests/~selftest_sysgate/~pipreqs.diff.txt
+            tests\~selftest_sysgate\~pipreqs.diff.txt
             tests/~selftest_sysgate_real/~sys_real_test.log
             tests\~selftest_sysgate_real\~sys_real_test.log
             tests/~selftest_sysgate_real/~setup.log
             tests\~selftest_sysgate_real\~setup.log
+            tests/~selftest_sysgate_real/~pipreqs.diff.txt
+            tests\~selftest_sysgate_real\~pipreqs.diff.txt
             tests/~selftest_corrupt_conda/~corrupt_bootstrap.log
             tests\~selftest_corrupt_conda\~corrupt_bootstrap.log
             tests/~selftest_corrupt_conda/~setup.log
             tests\~selftest_corrupt_conda\~setup.log
+            tests/~selftest_corrupt_conda/~pipreqs.diff.txt
+            tests\~selftest_corrupt_conda\~pipreqs.diff.txt
             tests/~selftest_corrupt_conda/~bootstrap.status.json
             tests\~selftest_corrupt_conda\~bootstrap.status.json
             tests/~selftest_heal_decline/~heal_decline_bootstrap.log
             tests\~selftest_heal_decline\~heal_decline_bootstrap.log
             tests/~selftest_heal_decline/~setup.log
             tests\~selftest_heal_decline\~setup.log
+            tests/~selftest_heal_decline/~pipreqs.diff.txt
+            tests\~selftest_heal_decline\~pipreqs.diff.txt
             tests/~selftest_heal_decline/~bootstrap.status.json
             tests\~selftest_heal_decline\~bootstrap.status.json
             tests/~selftest_corrupt_uv/~corrupt_uv_bootstrap.log
             tests\~selftest_corrupt_uv\~corrupt_uv_bootstrap.log
             tests/~selftest_corrupt_uv/~setup.log
             tests\~selftest_corrupt_uv\~setup.log
+            tests/~selftest_corrupt_uv/~pipreqs.diff.txt
+            tests\~selftest_corrupt_uv\~pipreqs.diff.txt
             tests/~selftest_corrupt_uv/~bootstrap.status.json
             tests\~selftest_corrupt_uv\~bootstrap.status.json
             tests/~selftest_venv_fallback/~venv_fallback.log
             tests\~selftest_venv_fallback\~venv_fallback.log
             tests/~selftest_venv_fallback/~setup.log
             tests\~selftest_venv_fallback\~setup.log
+            tests/~selftest_venv_fallback/~pipreqs.diff.txt
+            tests\~selftest_venv_fallback\~pipreqs.diff.txt
             tests/~uv_pyver_test/~pyver_bootstrap.log
             tests\~uv_pyver_test\~pyver_bootstrap.log
             tests/~uv_pyver_test/~setup.log
             tests\~uv_pyver_test\~setup.log
+            tests/~uv_pyver_test/~pipreqs.diff.txt
+            tests\~uv_pyver_test\~pipreqs.diff.txt
             tests/~selftest_venv_fallback/~bootstrap.status.json
             tests\~selftest_venv_fallback\~bootstrap.status.json
             tests/~selftest_venv_fallback/~run.out.txt
@@ -1176,20 +1228,28 @@ jobs:
             tests\~entry_cli\~entry_cli_bootstrap.log
             tests/~entry_cli/~setup.log
             tests\~entry_cli\~setup.log
+            tests/~entry_cli/~pipreqs.diff.txt
+            tests\~entry_cli\~pipreqs.diff.txt
             tests/~entry_sel1/~entry_sel1_bootstrap.log
             tests\~entry_sel1\~entry_sel1_bootstrap.log
             tests/~entry_sel1/~setup.log
             tests\~entry_sel1\~setup.log
+            tests/~entry_sel1/~pipreqs.diff.txt
+            tests\~entry_sel1\~pipreqs.diff.txt
             tests/~entryC_boot/~entryC_bootstrap.log
             tests\~entryC_boot\~entryC_bootstrap.log
             tests/~entryD_boot/~entryD_bootstrap.log
             tests\~entryD_boot\~entryD_bootstrap.log
             tests/~entryD_boot/~setup.log
             tests\~entryD_boot\~setup.log
+            tests/~entryD_boot/~pipreqs.diff.txt
+            tests\~entryD_boot\~pipreqs.diff.txt
             tests/~req010_test/~req010_bootstrap.log
             tests\~req010_test\~req010_bootstrap.log
             tests/~req010_test/~setup.log
             tests\~req010_test\~setup.log
+            tests/~req010_test/~pipreqs.diff.txt
+            tests\~req010_test\~pipreqs.diff.txt
             tests/~req010_test/~isolation_check.txt
             tests\~req010_test\~isolation_check.txt
             tests/~selftest-summary.txt
