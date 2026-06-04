@@ -886,10 +886,11 @@ if not exist "%REQ%" if exist "requirements.auto.txt" (
     call :log "[WARN] Failed to copy requirements.auto.txt to requirements.txt; continuing without dependency installation."
   )
 )
+echo (no diff: requirements files not both present) > "~pipreqs.diff.txt"
 if exist "requirements.txt" if exist "requirements.auto.txt" (
   fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1
-  call :log "[INFO] REQ-005.5: dependency source diff computed -- ~pipreqs.diff.txt"
 )
+call :log "[INFO] REQ-005.5: dependency source diff computed -- ~pipreqs.diff.txt"
 rem --- Dep-check fast path: skip conda install when all pipreqs packages are in the lock ---
 rem derived requirement: skip the slow conda solver on repeat runs when the
 rem environment lock file already contains every package pipreqs detected.

@@ -72,6 +72,10 @@ Copy-Item -Path $BatchPath -Destination $stubDir -Force
 $stubScriptPath = Join-Path $stubDir 'hello_stub.py'
 # hello_stub.py intentionally has no imports to test the zero-requirements bootstrap path.
 Set-Content -Path $stubScriptPath -Value 'print("hello-from-stub")' -Encoding ASCII
+# Seed empty requirements.txt so pipreqs output (requirements.auto.txt) can be compared via fc.
+# real/uv lane: pipreqs exits 0 + empty auto.txt -> $bothReqExist=true, fc runs, non-placeholder diff.
+# conda-full lane: pipreqs exits non-zero, no auto.txt -> $bothReqExist=false, placeholder written.
+Set-Content -Path (Join-Path $stubDir 'requirements.txt') -Value '' -Encoding ASCII
 function Invoke-StubSetup {
   param(
     [string]$LogName
@@ -103,6 +107,41 @@ if ($stubStatus.pyFiles -lt 1) {
 if ($stubStatus.exitCode -ne 0) {
   throw "Expected exitCode 0 for stub bootstrap"
 }
+# --- REQ-005.5 runtime validation (initial bootstrap only) ---
+# ~setup.log at this point contains only the initial bootstrap's entries.
+# ~pipreqs.diff.txt at this point was written only by the initial bootstrap.
+$stubSetupLog  = Join-Path $stubDir '~setup.log'
+$stubDiffFile  = Join-Path $stubDir '~pipreqs.diff.txt'
+$diffLogFound  = $false
+if (Test-Path $stubSetupLog) {
+  $setupLogLines = Get-Content -LiteralPath $stubSetupLog -Encoding ASCII
+  $diffLogFound  = ($setupLogLines | Where-Object { $_ -like '*REQ-005.5*' }).Count -gt 0
+}
+$diffFileExists = Test-Path $stubDiffFile
+$stubReqTxt    = Join-Path $stubDir 'requirements.txt'
+$stubAutoTxt   = Join-Path $stubDir 'requirements.auto.txt'
+$bothReqExist  = (Test-Path $stubReqTxt) -and (Test-Path $stubAutoTxt)
+$diffIsPlaceholder = $false
+if ($diffFileExists) {
+  $diffContent       = Get-Content -LiteralPath $stubDiffFile -Encoding ASCII -Raw
+  $diffIsPlaceholder = $diffContent.Trim() -like '*(no diff:*'
+}
+# When both req files exist fc must have run (non-placeholder output expected).
+# When auto.txt absent (conda-full lane): placeholder must have been written.
+$diffCorrect = if ($bothReqExist) { $diffFileExists -and -not $diffIsPlaceholder } else { $diffFileExists -and $diffIsPlaceholder }
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.dep.diff.trace'
+  pass = ($diffLogFound -and $diffCorrect)
+  desc = 'REQ-005.5: dependency diff log line emitted and ~pipreqs.diff.txt created during initial bootstrap'
+  details = [ordered]@{
+    logFound          = $diffLogFound
+    fileExists        = $diffFileExists
+    bothReqExist      = $bothReqExist
+    diffIsPlaceholder = $diffIsPlaceholder
+    diffCorrect       = $diffCorrect
+  }
+})
+if ($diffLogFound -and $diffCorrect) { $summary.Add('self.dep.diff.trace: PASS') } else { $summary.Add('self.dep.diff.trace: FAIL') }
 $stubEnvName = Split-Path -Leaf $stubDir
 $stubEnvNameNormalized = $stubEnvName -replace '[^A-Za-z0-9_-]', '_'
 if ([string]::IsNullOrWhiteSpace($stubEnvNameNormalized) -or $stubEnvNameNormalized.Trim('_').Length -eq 0) {
