@@ -302,6 +302,8 @@ if ($feMatch.Success) {
 Write-Result "batch.req002.findentry_payload" "REQ-002: HP_FIND_ENTRY payload has decision-chain logging" $hasReq002Payload @{}
 $hasCli = $feMatch.Success -and ($feDecoded -match '"cli\.py"')
 Write-Result "batch.req002.findentry_cli" "REQ-002: HP_FIND_ENTRY PREFERRED includes cli.py" $hasCli @{}
+$hasRun = $feMatch.Success -and ($feDecoded -match '"run\.py"')
+Write-Result "batch.req002.findentry_run" "REQ-002: HP_FIND_ENTRY PREFERRED includes run.py" $hasRun @{}
 $hasDiffTrace = ($Lines | Select-String -SimpleMatch 'REQ-005.5').Count -gt 0
 Write-Result "batch.dep.diff.trace" "REQ-005.5: dependency diff log line present in run_setup.bat source" $hasDiffTrace @{}
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }

@@ -287,6 +287,22 @@ Write-EntryRow -Id 'self.entry.entryC' -Expected $expectedC -Scenario $scenarioC
 Check-PipreqsFailure -LogPath $scenarioC.setupPath -LogText $scenarioC.setupLog
 Check-HelperInvokeFailure -LogPath $scenarioC.bootstrapPath -LogText $scenarioC.bootstrapLog
 
+# Scenario D: run.py should win over cli.py (run.py precedes cli.py in PREFERRED order)
+$scenarioD = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_run') -LogName '~entry_run_bootstrap.log' -Files ([ordered]@{
+    'run.py' = @'
+if __name__ == "__main__":
+    print("from-run")
+'@
+    'cli.py' = @'
+if __name__ == "__main__":
+    print("from-cli")
+'@
+})
+$expectedD = 'run.py'
+Write-EntryRow -Id 'self.entry.entryD' -Expected $expectedD -Scenario $scenarioD -Description 'run.py preferred over cli.py (REQ-002)'
+Check-PipreqsFailure -LogPath $scenarioD.setupPath -LogText $scenarioD.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioD.bootstrapPath -LogText $scenarioD.bootstrapLog
+
 # REQ-011/REQ-010 behavioral tests moved to tests/selfapps_isolation.ps1 (runs unconditionally).
 # This file only covers REQ-002 entry-selection.
 
@@ -317,7 +333,8 @@ $expectedMap = @(
     @{ Id = 'self.entry.entry1'; Expected = $expected1 },
     @{ Id = 'self.entry.entryA'; Expected = $expectedA },
     @{ Id = 'self.entry.entryB'; Expected = $expectedB },
-    @{ Id = 'self.entry.entryC'; Expected = $expectedC }
+    @{ Id = 'self.entry.entryC'; Expected = $expectedC },
+    @{ Id = 'self.entry.entryD'; Expected = $expectedD }
 )
 $issues = @()
 foreach ($item in $expectedMap) {
