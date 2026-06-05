@@ -44,7 +44,7 @@ if (-not $IsWindows) {
         desc    = 'Post-flight briefing test skipped on non-Windows host'
         details = $skipDetails
     })
-    foreach ($id in @('self.ux.connectivity.offline.n', 'self.ux.connectivity.prompt.shown', 'self.ux.connectivity.offline.uv.skip', 'self.ux.connectivity.offline.conda.skip')) {
+    foreach ($id in @('self.ux.connectivity.offline.n', 'self.ux.connectivity.prompt.shown', 'self.ux.connectivity.offline.uv.skip', 'self.ux.connectivity.offline.conda.skip', 'self.ux.connectivity.online')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
             req     = 'REQ-013'
@@ -267,6 +267,53 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ offlineLogFound = $condaOfflineLog; downloadAttempted = $condaDownloadAttempted }
 })
 
+# ===== REQ-013: Connectivity guard ONLINE (reachable) cascade path =====
+# Covers the "internet reachable" branch of :check_net_after_dl_fail -- the common
+# real-world case where a primary download fails but internet is up, so the bootstrapper
+# cascades to the fallback URL. This branch is otherwise untested: the dl-fallback lane
+# skips the connectivity check (HP_TEST_CONDA_DL_FALLBACK=1) and the offline test above
+# forces ping failure (HP_TEST_OFFLINE=1). Here we trigger the check directly with
+# HP_TEST_FORCE_CONNECTIVITY_CHECK=1 and NO HP_TEST_OFFLINE, so the runner's live network
+# drives either the ICMP or HTTPS reachable path. No app.py is staged, so the bootstrap
+# exits early at no_python_files after the check fires -- keeping the test cheap.
+$connOnlineDir = Join-Path $here '~selftest_connectivity_online'
+New-Item -ItemType Directory -Force -Path $connOnlineDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $connOnlineDir -Force
+
+$savedLaneOn    = $env:HP_CI_LANE
+$savedOfflineOn = $env:HP_TEST_OFFLINE
+$env:HP_CI_LANE = 'test'
+$env:HP_TEST_OFFLINE = ''
+$env:HP_TEST_FORCE_CONNECTIVITY_CHECK = '1'
+$connOnlineLog = Join-Path $connOnlineDir '~conn_online_test.log'
+$connOnlineResp = Join-Path $connOnlineDir '~resp.txt'
+# Defensive stdin: if both ICMP and HTTPS unexpectedly fail, this answers the offline
+# prompt with N so the test fails fast (branch did not fire) instead of hanging.
+Set-Content -LiteralPath $connOnlineResp -Value "N`r`n" -Encoding Ascii
+Push-Location -LiteralPath $connOnlineDir
+try {
+    cmd /c "run_setup.bat < ~resp.txt > ~conn_online_test.log 2>&1"
+} finally {
+    Pop-Location
+}
+$env:HP_CI_LANE = $savedLaneOn
+$env:HP_TEST_OFFLINE = $savedOfflineOn
+$env:HP_TEST_FORCE_CONNECTIVITY_CHECK = ''
+
+$connOnlineText = ''
+if (Test-Path -LiteralPath $connOnlineLog) {
+    $connOnlineText = Get-Content -LiteralPath $connOnlineLog -Raw -Encoding Ascii
+}
+# Match the common substring shared by both reachable lines (ICMP-direct and HTTPS-fallback).
+$connReachableFound = $connOnlineText -match [regex]::Escape('REQ-013: Connectivity check: internet reachable')
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.connectivity.online'
+    req     = 'REQ-013'
+    pass    = $connReachableFound
+    desc    = 'Connectivity guard: reachable network cascades to fallback (internet reachable branch)'
+    details = [ordered]@{ reachableLogFound = $connReachableFound }
+})
+
 # ===== REQ-014: System Python Consent Gate =====
 $sysGateDir = Join-Path $here '~selftest_sysgate'
 New-Item -ItemType Directory -Force -Path $sysGateDir | Out-Null
@@ -443,6 +490,6 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $venvFbPass
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $venvFbPass
 if (-not $allPass) { exit 1 }
 exit 0
