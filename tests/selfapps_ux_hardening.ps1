@@ -44,7 +44,7 @@ if (-not $IsWindows) {
         desc    = 'Post-flight briefing test skipped on non-Windows host'
         details = $skipDetails
     })
-    foreach ($id in @('self.ux.connectivity.offline.n', 'self.ux.connectivity.prompt.shown', 'self.ux.connectivity.offline.uv.skip', 'self.ux.connectivity.offline.conda.skip', 'self.ux.connectivity.online')) {
+    foreach ($id in @('self.ux.connectivity.offline.n', 'self.ux.connectivity.prompt.shown', 'self.ux.connectivity.offline.uv.skip', 'self.ux.connectivity.offline.conda.skip', 'self.ux.connectivity.online', 'self.ux.connectivity.retry')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
             req     = 'REQ-013'
@@ -314,6 +314,54 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ reachableLogFound = $connReachableFound }
 })
 
+# ===== REQ-013: Connectivity guard Y-RETRY re-prompt loop =====
+# Covers the "Y retry -> still offline -> re-prompt" branch of :check_net_after_dl_fail.
+# The existing offline.n test pipes "N" (explicit decline, first prompt). The retry
+# loop-back (set HP_TEST_OFFLINE=1, answer Y, which logs the test-mode "still simulating
+# offline" line and jumps back to :cndf_ping_failed to re-prompt) had no coverage. Pipe
+# "Y" then "N": Y triggers the retry branch and re-prompts, N then exits offline. Uses the
+# same proven character-on-stdin mechanism as offline.n (reliable, unlike empty-input
+# simulation where set /p captures a leading CR). No app.py -> cheap no_python_files exit.
+$connRetryDir = Join-Path $here '~selftest_connectivity_retry'
+New-Item -ItemType Directory -Force -Path $connRetryDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $connRetryDir -Force
+
+$savedLaneRt    = $env:HP_CI_LANE
+$savedOfflineRt = $env:HP_TEST_OFFLINE
+$env:HP_CI_LANE = 'test'
+$env:HP_TEST_OFFLINE = '1'
+$env:HP_TEST_FORCE_CONNECTIVITY_CHECK = '1'
+$connRetryLog = Join-Path $connRetryDir '~conn_retry_test.log'
+$connRetryResp = Join-Path $connRetryDir '~resp.txt'
+# Y on the first prompt exercises the retry branch; N on the re-prompt exits offline.
+Set-Content -LiteralPath $connRetryResp -Value "Y`r`nN`r`n" -Encoding Ascii
+Push-Location -LiteralPath $connRetryDir
+try {
+    cmd /c "run_setup.bat < ~resp.txt > ~conn_retry_test.log 2>&1"
+} finally {
+    Pop-Location
+}
+$env:HP_CI_LANE = $savedLaneRt
+$env:HP_TEST_OFFLINE = $savedOfflineRt
+$env:HP_TEST_FORCE_CONNECTIVITY_CHECK = ''
+
+$connRetryText = ''
+if (Test-Path -LiteralPath $connRetryLog) {
+    $connRetryText = Get-Content -LiteralPath $connRetryLog -Raw -Encoding Ascii
+}
+# Retry branch fired if the test-mode "still simulating offline" line appears, and the
+# subsequent N decline confirms the loop re-prompted and then exited offline.
+$connRetryFired   = $connRetryText -match [regex]::Escape('[TEST] HP_TEST_OFFLINE: Y selected; still simulating offline.')
+$connRetryDecline = $connRetryText -match [regex]::Escape('REQ-013: Connectivity prompt: user chose offline (N).')
+$connRetryFound   = $connRetryFired -and $connRetryDecline
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.connectivity.retry'
+    req     = 'REQ-013'
+    pass    = $connRetryFound
+    desc    = 'Connectivity guard: Y answer re-prompts while still offline, then N exits offline'
+    details = [ordered]@{ retryBranchFired = $connRetryFired; declineAfterRetry = $connRetryDecline }
+})
+
 # ===== REQ-014: System Python Consent Gate =====
 $sysGateDir = Join-Path $here '~selftest_sysgate'
 New-Item -ItemType Directory -Force -Path $sysGateDir | Out-Null
@@ -490,6 +538,6 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $venvFbPass
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $venvFbPass
 if (-not $allPass) { exit 1 }
 exit 0
