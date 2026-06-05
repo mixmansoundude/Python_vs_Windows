@@ -1246,6 +1246,12 @@ jobs:
             tests\~entry_cli\~setup.log
             tests/~entry_cli/~pipreqs.diff.txt
             tests\~entry_cli\~pipreqs.diff.txt
+            tests/~entry_run/~entry_run_bootstrap.log
+            tests\~entry_run\~entry_run_bootstrap.log
+            tests/~entry_run/~setup.log
+            tests\~entry_run\~setup.log
+            tests/~entry_run/~pipreqs.diff.txt
+            tests\~entry_run\~pipreqs.diff.txt
             tests/~entry_sel1/~entry_sel1_bootstrap.log
             tests\~entry_sel1\~entry_sel1_bootstrap.log
             tests/~entry_sel1/~setup.log
