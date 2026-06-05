@@ -1188,6 +1188,10 @@ jobs:
             tests\~selftest_connectivity_online\~conn_online_test.log
             tests/~selftest_connectivity_online/~setup.log
             tests\~selftest_connectivity_online\~setup.log
+            tests/~selftest_connectivity_retry/~conn_retry_test.log
+            tests\~selftest_connectivity_retry\~conn_retry_test.log
+            tests/~selftest_connectivity_retry/~setup.log
+            tests\~selftest_connectivity_retry\~setup.log
             tests/~selftest_sysgate/~sys_test.log
             tests\~selftest_sysgate\~sys_test.log
             tests/~selftest_sysgate/~setup.log
