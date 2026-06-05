@@ -1244,6 +1244,12 @@ jobs:
             tests\~selftest_venv_fallback\~bootstrap.status.json
             tests/~selftest_venv_fallback/~run.out.txt
             tests\~selftest_venv_fallback\~run.out.txt
+            tests/~selftest_entry_override/~override.log
+            tests\~selftest_entry_override\~override.log
+            tests/~selftest_entry_override/~setup.log
+            tests\~selftest_entry_override\~setup.log
+            tests/~selftest_entry_override/~run.out.txt
+            tests\~selftest_entry_override\~run.out.txt
             tests/~entry_cli/~entry_cli_bootstrap.log
             tests\~entry_cli\~entry_cli_bootstrap.log
             tests/~entry_cli/~setup.log

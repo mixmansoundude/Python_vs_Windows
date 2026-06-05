@@ -62,6 +62,13 @@ if (-not $IsWindows) {
             details = $skipDetails
         })
     }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.entry.override'
+        req     = 'REQ-002'
+        pass    = $true
+        desc    = 'REQ-002 priority-0 override test skipped on non-Windows host'
+        details = $skipDetails
+    })
     exit 0
 }
 
@@ -538,6 +545,89 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $venvFbPass
+# ===== REQ-002 priority 0: manual %1 override beats auto-detection (main.py) =====
+# REQ-002 ranks a co-located %1 argument (drag-and-drop) above every auto-detected name:
+# it is used directly and skips all auto-detection. Prior tests only cover auto-detection
+# ordering (entryA-D) and REQ-011 same-dir with a SOLE file -- none prove the override
+# WINS over a higher-priority name. The :ci_skip_entry path (HP_CI_SKIP_ENV=1) ignores %1,
+# so this needs the real (non-skip) determine_entry. Reuse the proven forced-venv pattern
+# (cheaper than conda; gated by real/uv lanes): stage main.py (would win auto-detection by
+# name = priority 1) plus zzz_override.py, pass ".\zzz_override.py" as %1, and assert the
+# override is chosen and run -- not main.py. Skipped in conda-full where HP_FORCE_CONDA_ONLY
+# blocks the venv fallback (same as the venv/sysgate-real tests above).
+$entryOvDir = Join-Path $here '~selftest_entry_override'
+if (Test-Path $entryOvDir) { Remove-Item -Recurse -Force $entryOvDir }
+New-Item -ItemType Directory -Force -Path $entryOvDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $entryOvDir -Force
+Set-Content -LiteralPath (Join-Path $entryOvDir 'main.py') -Value 'print("from-main")' -Encoding Ascii
+Set-Content -LiteralPath (Join-Path $entryOvDir 'zzz_override.py') -Value 'print("from-override")' -Encoding Ascii
+
+$entryOvPass = $true
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.entry.override'
+        req     = 'REQ-002'
+        pass    = $true
+        desc    = 'REQ-002 priority 0: manual %1 override beats auto-detection'
+        details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-prohibits-venv-fallback' }
+    })
+} else {
+    $savedCondaFailOv = $env:HP_TEST_FORCE_CONDA_FAIL
+    $savedOfflineOv   = $env:HP_OFFLINE_MODE
+    $savedSkipPROv    = $env:HP_SKIP_PIPREQS
+    $savedLaneOv      = $env:HP_CI_LANE
+    $env:HP_TEST_FORCE_CONDA_FAIL = '1'
+    $env:HP_OFFLINE_MODE          = '1'
+    $env:HP_SKIP_PIPREQS          = '1'
+    $env:HP_CI_LANE               = 'test'
+    Push-Location -LiteralPath $entryOvDir
+    try {
+        cmd /c "run_setup.bat .\zzz_override.py > ~override.log 2>&1"
+        $entryOvExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    $env:HP_TEST_FORCE_CONDA_FAIL = $savedCondaFailOv
+    $env:HP_OFFLINE_MODE          = $savedOfflineOv
+    $env:HP_SKIP_PIPREQS          = $savedSkipPROv
+    $env:HP_CI_LANE               = $savedLaneOv
+
+    $entryOvBootText = ''
+    $entryOvBootLog = Join-Path $entryOvDir '~override.log'
+    if (Test-Path -LiteralPath $entryOvBootLog) {
+        $entryOvBootText = Get-Content -LiteralPath $entryOvBootLog -Raw -Encoding Ascii
+    }
+    $entryOvSetupText = ''
+    $entryOvSetupLog = Join-Path $entryOvDir '~setup.log'
+    if (Test-Path -LiteralPath $entryOvSetupLog) {
+        $entryOvSetupText = Get-Content -LiteralPath $entryOvSetupLog -Raw -Encoding Ascii
+    }
+    $entryOvRunText = ''
+    $entryOvRunOut = Join-Path $entryOvDir '~run.out.txt'
+    if (Test-Path -LiteralPath $entryOvRunOut) {
+        $entryOvRunText = Get-Content -LiteralPath $entryOvRunOut -Raw -Encoding Ascii
+    }
+    # Priority-0 branch fired (drag message) and the chosen entry is the override, not main.py.
+    $entryOvDragMsg  = ($entryOvBootText -match [regex]::Escape('Using drag-and-drop file:')) -and ($entryOvBootText -match [regex]::Escape('zzz_override.py'))
+    $entryOvSelected = ($entryOvSetupText -match [regex]::Escape('[BOOT] REQ-002: Entry selected:')) -and ($entryOvSetupText -match [regex]::Escape('zzz_override.py'))
+    $entryOvRanOverride = ($entryOvRunText -match [regex]::Escape('from-override'))
+    $entryOvNotMain  = -not ($entryOvRunText -match [regex]::Escape('from-main'))
+    $entryOvPass = ($entryOvDragMsg -and $entryOvSelected -and $entryOvRanOverride -and $entryOvNotMain)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.entry.override'
+        req     = 'REQ-002'
+        pass    = $entryOvPass
+        desc    = 'REQ-002 priority 0: co-located %1 override is chosen and run over main.py'
+        details = [ordered]@{
+            dragMsgFound  = $entryOvDragMsg
+            entrySelected = $entryOvSelected
+            ranOverride   = $entryOvRanOverride
+            notMain       = $entryOvNotMain
+            exit          = $entryOvExit
+        }
+    })
+}
+
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $venvFbPass -and $entryOvPass
 if (-not $allPass) { exit 1 }
 exit 0
