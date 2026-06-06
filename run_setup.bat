@@ -1574,10 +1574,13 @@ if not "%~1"=="" (
     exit /b 11
   )
   if exist "%~1" (
-    set "MAIN_FILE=%~1"
-    set "HP_ENTRY=%MAIN_FILE%"
+    rem derived requirement: use the %~1 parameter directly, not %MAIN_FILE%. Inside this
+    rem parenthesized block %MAIN_FILE% expands at parse time (before "set MAIN_FILE" runs),
+    rem which yielded an empty HP_ENTRY and an empty "Using drag-and-drop file:" message.
+    rem %~1 is the call parameter and expands to the argument value, so both are correct.
+    set "HP_ENTRY=%~1"
     if not defined HP_DRAG_MSG_EMITTED (
-      echo *** Using drag-and-drop file: %MAIN_FILE%
+      echo *** Using drag-and-drop file: %~1
       set "HP_DRAG_MSG_EMITTED=1"
     )
     exit /b 0

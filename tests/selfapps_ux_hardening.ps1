@@ -607,8 +607,10 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     if (Test-Path -LiteralPath $entryOvRunOut) {
         $entryOvRunText = Get-Content -LiteralPath $entryOvRunOut -Raw -Encoding Ascii
     }
-    # Priority-0 branch fired (drag message) and the chosen entry is the override, not main.py.
-    $entryOvDragMsg  = ($entryOvBootText -match [regex]::Escape('Using drag-and-drop file:')) -and ($entryOvBootText -match [regex]::Escape('zzz_override.py'))
+    # Priority-0 branch fired and the drag message now prints the filename (regression guard
+    # for the parse-time-expansion fix in :determine_entry, which previously printed an empty
+    # name). Also confirm the chosen entry is the override, not main.py.
+    $entryOvDragMsg  = ($entryOvBootText -match [regex]::Escape('Using drag-and-drop file: .\zzz_override.py'))
     $entryOvSelected = ($entryOvSetupText -match [regex]::Escape('[BOOT] REQ-002: Entry selected:')) -and ($entryOvSetupText -match [regex]::Escape('zzz_override.py'))
     $entryOvRanOverride = ($entryOvRunText -match [regex]::Escape('from-override'))
     $entryOvNotMain  = -not ($entryOvRunText -match [regex]::Escape('from-main'))
