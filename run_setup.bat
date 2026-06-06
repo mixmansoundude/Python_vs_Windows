@@ -126,6 +126,8 @@ rem HP_TEST_HEAL_ANSWER=Y|N: bypasses the interactive Y/N prompt in :conda_binar
 set "HP_TEST_HEAL_ANSWER=%HP_TEST_HEAL_ANSWER%"
 rem HP_TEST_CORRUPT_UV=1: simulates a corrupt uv binary; clears cache and re-downloads for REQ-020 branch coverage
 set "HP_TEST_CORRUPT_UV=%HP_TEST_CORRUPT_UV%"
+rem HP_SKIP_NIVISA=1: REQ-008 opt-out -- skip the NI-VISA driver install even when pyvisa/visa is detected (debugging)
+set "HP_SKIP_NIVISA=%HP_SKIP_NIVISA%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -1038,6 +1040,11 @@ rem derived requirement: NEED_VISA must be exactly "1"; any other value (0, empt
 rem skips install to avoid hanging CI on non-visa projects.
 if not "%NEED_VISA%"=="1" (
   call :log "[VISA] skipped (not_required)"
+  goto visa_done
+)
+rem REQ-008: allow disabling the NI-VISA install for debugging, even when pyvisa/visa is detected.
+if "%HP_SKIP_NIVISA%"=="1" (
+  call :log "[VISA] skipped (disabled)"
   goto visa_done
 )
 reg query "HKLM\SOFTWARE\National Instruments\NI-VISA" /v "CurrentVersion" >nul 2>&1

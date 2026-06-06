@@ -1116,6 +1116,10 @@ jobs:
             tests\~pyvisa\~setup.log
             tests/~pyvisa/~pipreqs.diff.txt
             tests\~pyvisa\~pipreqs.diff.txt
+            tests/~pyvisa_disabled/~pyvisa_disabled_bootstrap.log
+            tests\~pyvisa_disabled\~pyvisa_disabled_bootstrap.log
+            tests/~pyvisa_disabled/~setup.log
+            tests\~pyvisa_disabled\~setup.log
             tests/~pyproject_prec/~pyproject_prec_bootstrap.log
             tests\~pyproject_prec\~pyproject_prec_bootstrap.log
             tests/~pyproject_prec/~setup.log
