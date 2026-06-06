@@ -8,6 +8,20 @@ Operating policy for automated agents (Codex, Copilot, others).
   - Grouped log tails printed by the workflow.
   - PR failure comment posted by the workflow.
 - Local or sandbox runs are advisory only. Windows runner behavior is authoritative.
+
+## CI cost and capacity (do not optimize against these)
+- This is a **public repository**, so GitHub Actions minutes are **free and unmetered**. Do not avoid
+  adding jobs/lanes, re-runs, or long-running diagnostics out of a concern for billing -- there is none.
+- Matrix jobs run on **separate runner VMs in true parallel**. Total CI wall-clock is the duration of the
+  *slowest* lane, not the sum. A new lane is "free" in wall-clock terms as long as it finishes within the
+  current critical lane's time and a runner is available (standard public-repo `windows-latest` = 4 vCPU /
+  16 GB RAM; concurrency limits are generous and not a practical constraint here).
+- Therefore: when a step is slow, flaky, or environment-dependent (e.g. a real NI-VISA install that can take
+  30-45 min), prefer isolating it in its **own non-gating (`continue-on-error`) lane** rather than embedding
+  it in an existing lane -- isolation costs no extra wall-clock and keeps gating lanes fast and deterministic.
+- External/environmental failures (blocked downloads, third-party installer quirks) are **not** repo/test/CI
+  bugs. Make them legible in logs/NDJSON (e.g. capture installer exit codes and emit a `reason=` token) so a
+  non-gating lane surfaces them without failing the run or being mistaken for a regression.
 - Enforce the single-bootstrapper Prime Directive: `run_setup.bat` must work when dropped next to the app with no committed helper files.
 - The CI harness may use additional scripts or assets under `tests/` to inspect the bootstrapper, but those files cannot be required for the real bootstrap flow.
 

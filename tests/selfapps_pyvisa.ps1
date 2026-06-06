@@ -22,6 +22,7 @@ if (-not $IsWindows) {
     Write-NdjsonRow ([ordered]@{ id = 'pyvisa.detect';         req = 'REQ-008'; pass = $true; desc = 'pyvisa detection skipped on non-Windows host';  details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pyvisa.nivisa.branch';  req = 'REQ-008'; pass = $true; desc = 'NI-VISA branch skipped on non-Windows host';    details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pyvisa.nivisa.outcome'; req = 'REQ-008'; pass = $true; desc = 'NI-VISA outcome skipped on non-Windows host';   details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pyvisa.nivisa.reason';  req = 'REQ-008'; pass = $true; desc = 'NI-VISA diagnostic reason skipped on non-Windows host'; details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pyvisa.nivisa.disabled'; req = 'REQ-008'; pass = $true; desc = 'NI-VISA opt-out skipped on non-Windows host';   details = $skipDetails })
     exit 0
 }
@@ -95,6 +96,24 @@ Write-NdjsonRow ([ordered]@{
     pass    = $nisaOutcomePass
     desc    = 'NI-VISA terminal signal present ([VISA] present / install_success / skipped / install_failed)'
     details = [ordered]@{ exitCode = $exitCode; outcomeFound = $nisaOutcomePass }
+})
+
+# REQ-008 diagnostic: the install path must emit a classifiable reason so external (network/installer)
+# failures are distinguishable from a regression. When the install is attempted, the installer exit code
+# is logged; if the download is blocked, that is logged instead. Either is a legible diagnostic outcome.
+$installerRcMatch = [regex]::Match($log, '\[VISA\] installer exit code:\s*(-?\d+)')
+$nisaReasonPass = ($installerRcMatch.Success) `
+    -or ($log -match [regex]::Escape('[VISA] install_failed (download)')) `
+    -or ($log -match [regex]::Escape('[VISA] present')) `
+    -or ($log -match '\[VISA\] skipped')
+$nisaReasonDetails = [ordered]@{ exitCode = $exitCode; reasonFound = $nisaReasonPass }
+if ($installerRcMatch.Success) { $nisaReasonDetails.installerRc = $installerRcMatch.Groups[1].Value }
+Write-NdjsonRow ([ordered]@{
+    id      = 'pyvisa.nivisa.reason'
+    req     = 'REQ-008'
+    pass    = $nisaReasonPass
+    desc    = 'NI-VISA install path emits a classifiable diagnostic (installer exit code or download/skip reason)'
+    details = $nisaReasonDetails
 })
 
 # ===== REQ-008 opt-out: HP_SKIP_NIVISA=1 skips NI-VISA install even when pyvisa is detected =====
