@@ -526,6 +526,13 @@ Items deferred to future loops:
 
 Items completed and shipped:
 
+- **Drag-and-drop message empty filename**: `:determine_entry` printed
+  `*** Using drag-and-drop file: ` with no name (and set `HP_ENTRY` empty on the first
+  call) because `%MAIN_FILE%` was expanded at parse time inside the parenthesized
+  `if exist "%~1" (...)` block, before `set "MAIN_FILE=%~1"` ran. Fixed by using the `%~1`
+  parameter directly for both `HP_ENTRY` and the message. Guarded by the tightened
+  `self.entry.override` assertion (drag line must include the filename). CLOSED by this PR.
+
 - **Warn-file driven missing-import install**: after PyInstaller build, read the warn file,
   extract flagged missing modules, apply the import-to-conda translation table, install via
   conda, and rebuild once. Supersedes the earlier runtime retry-loop design. CLOSED by
