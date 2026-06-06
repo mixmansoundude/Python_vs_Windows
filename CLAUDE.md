@@ -522,6 +522,24 @@ Items deferred to future loops:
 
 (none)
 
+## Known Findings (diagnosed, no action warranted)
+
+- **NI-VISA real install fails fast in CI (`installer_rc=-125083`) -- environmental, NOT a repo/test/CI-code
+  bug.** Diagnosed via the REQ-008 `[VISA]` diagnostic logging (download method / file size / PE check /
+  installer exit code, surfaced in the `pyvisa.nivisa.reason` NDJSON details). On the conda-full lane the
+  installer downloads cleanly via curl (~6.77 MB, `PE_OK` -- a genuine NI-VISA 21.5 online bootstrapper),
+  then runs and exits `-125083` in ~10s. Because the install uses `start /wait`, the post-check budget never
+  kills it; the failure is the online bootstrapper being unable to complete an unattended install on the
+  runner (network policy to NI's package feed and/or no interactive/elevation path). Consequences:
+  `[VISA] install_success` is **unreachable in CI by design**; the validated behavior is
+  detect -> attempt -> log rc -> continue gracefully; **no dedicated real-install lane is warranted** (there
+  is no slow-but-succeeding install to wait out). `HP_NIVISA_WAIT_SECS` remains a useful knob only for the
+  narrow detached-child registry-propagation case.
+  - **NOT YET CONFIRMED on a real machine.** This conclusion rests solely on CI evidence. It still needs a
+    real user run (normal internet, interactive/admin session) to confirm the same valid installer succeeds
+    off-CI (expected ~30-45 min per the maintainer's prior experience). Until then, treat the
+    "environmental" classification as strongly-supported-but-provisional.
+
 ## Closed Backlog
 
 Items completed and shipped:
