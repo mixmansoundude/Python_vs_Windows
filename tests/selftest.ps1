@@ -838,4 +838,45 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($retryExit -eq 0 -and $retryMsgFound) { $summary.Add('Conda retry: PASS') } else { $summary.Add('Conda retry: FAIL') }
 
+# --- REQ-005.3 conda per-package fallback test ---
+# Arrange: HP_TEST_FORCE_CONDA_BULK_FAIL=1 forces a non-transient bulk-install failure, so the
+#          bootstrapper falls back to installing each package individually via conda. Assert:
+#          the per-pkg fallback log line fired and the bootstrap still exits 0 (six installed
+#          individually and the app ran). HP_FORCE_CONDA_ONLY pins the conda path.
+$perpkgDir = Join-Path $TestsDir '~selftest_conda_perpkg'
+if (Test-Path $perpkgDir) { Remove-Item -Recurse -Force $perpkgDir }
+New-Item -ItemType Directory -Force -Path $perpkgDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $perpkgDir -Force
+Set-Content -Path (Join-Path $perpkgDir 'app_perpkg_test.py') -Value 'import six; print("six-ok")' -Encoding ASCII
+Set-Content -Path (Join-Path $perpkgDir 'requirements.txt') -Value 'six' -Encoding ASCII
+$perpkgLogName = '~conda_perpkg_bootstrap.log'
+$prevForceCondaOnly5 = $env:HP_FORCE_CONDA_ONLY
+$env:HP_TEST_FORCE_CONDA_BULK_FAIL = '1'
+$env:HP_FORCE_CONDA_ONLY = '1'
+$prevCILane5 = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $perpkgDir
+try {
+  cmd /c "call run_setup.bat > $perpkgLogName 2>&1"
+  $perpkgExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_FORCE_CONDA_BULK_FAIL = ''
+  $env:HP_FORCE_CONDA_ONLY = $prevForceCondaOnly5
+  $env:HP_CI_LANE = $prevCILane5
+}
+$perpkgLogPath = Join-Path $perpkgDir $perpkgLogName
+$perpkgLines = if (Test-Path $perpkgLogPath) { Get-Content -LiteralPath $perpkgLogPath -Encoding ASCII } else { @() }
+# NOTE: -like treats [INSTALL] as a character-class wildcard, so match the bracket-free
+# phrase (unique to this log line) instead of the literal "[INSTALL] ..." prefix.
+$perpkgMsgFound = ($perpkgLines | Where-Object { $_ -like '*conda per-pkg fallback*' }).Count -gt 0
+Write-NdjsonRow ([ordered]@{
+  id      = 'self.stub.conda_perpkg'
+  req     = 'REQ-005.3'
+  pass    = ($perpkgExit -eq 0 -and $perpkgMsgFound)
+  desc    = 'HP_TEST_FORCE_CONDA_BULK_FAIL=1: bulk-install failure falls back to per-package conda install'
+  details = [ordered]@{ exitCode = $perpkgExit; perpkgMsgFound = $perpkgMsgFound }
+})
+if ($perpkgExit -eq 0 -and $perpkgMsgFound) { $summary.Add('Conda per-pkg fallback: PASS') } else { $summary.Add('Conda per-pkg fallback: FAIL') }
+
 $summary | Set-Content -Path $summaryPath -Encoding ASCII

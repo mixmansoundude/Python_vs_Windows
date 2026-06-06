@@ -128,6 +128,9 @@ rem HP_TEST_CORRUPT_UV=1: simulates a corrupt uv binary; clears cache and re-dow
 set "HP_TEST_CORRUPT_UV=%HP_TEST_CORRUPT_UV%"
 rem HP_SKIP_NIVISA=1: REQ-008 opt-out -- skip the NI-VISA driver install even when pyvisa/visa is detected (debugging)
 set "HP_SKIP_NIVISA=%HP_SKIP_NIVISA%"
+rem HP_TEST_FORCE_CONDA_BULK_FAIL=1: simulate a non-transient conda bulk-install failure so the
+rem REQ-005.3 per-package fallback fires (CI branch coverage). Consumed once in :conda_bulk_install.
+set "HP_TEST_FORCE_CONDA_BULK_FAIL=%HP_TEST_FORCE_CONDA_BULK_FAIL%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -2081,6 +2084,12 @@ goto :after_conda_bat_validation
 rem Run conda bulk install; retry once if output indicates a transient network failure.
 rem derived requirement: ~conda_bulk.tmp is tilde-prefixed so it is gitignored and cleaned here.
 if exist "~conda_bulk.tmp" del "~conda_bulk.tmp" >nul 2>&1
+rem [TEST] HP_TEST_FORCE_CONDA_BULK_FAIL: force a non-transient bulk failure (no retry keyword)
+rem so the caller takes the REQ-005.3 per-package fallback. No real conda call is made here.
+if "%HP_TEST_FORCE_CONDA_BULK_FAIL%"=="1" (
+  call :log "[TEST] HP_TEST_FORCE_CONDA_BULK_FAIL: forcing non-transient bulk failure for REQ-005.3 per-pkg fallback."
+  exit /b 1
+)
 if not "%HP_TEST_FORCE_CONDA_NETWORK_FAIL%"=="1" goto :conda_bulk_real_call
 rem [TEST] HP_TEST_FORCE_CONDA_NETWORK_FAIL: simulate a transient CondaHTTPError on first attempt.
 echo CondaHTTPError: HTTP 000 CONNECTION FAILED (simulated) > "~conda_bulk.tmp"
