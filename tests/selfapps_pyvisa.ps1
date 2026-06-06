@@ -22,6 +22,7 @@ if (-not $IsWindows) {
     Write-NdjsonRow ([ordered]@{ id = 'pyvisa.detect';         req = 'REQ-008'; pass = $true; desc = 'pyvisa detection skipped on non-Windows host';  details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pyvisa.nivisa.branch';  req = 'REQ-008'; pass = $true; desc = 'NI-VISA branch skipped on non-Windows host';    details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pyvisa.nivisa.outcome'; req = 'REQ-008'; pass = $true; desc = 'NI-VISA outcome skipped on non-Windows host';   details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pyvisa.nivisa.disabled'; req = 'REQ-008'; pass = $true; desc = 'NI-VISA opt-out skipped on non-Windows host';   details = $skipDetails })
     exit 0
 }
 
@@ -96,12 +97,59 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ exitCode = $exitCode; outcomeFound = $nisaOutcomePass }
 })
 
+# ===== REQ-008 opt-out: HP_SKIP_NIVISA=1 skips NI-VISA install even when pyvisa is detected =====
+$disWork    = Join-Path -Path $here -ChildPath '~pyvisa_disabled'
+$disLogName = '~pyvisa_disabled_bootstrap.log'
+$disLogPath = Join-Path -Path $disWork -ChildPath $disLogName
+if (Test-Path -LiteralPath $disWork) { Remove-Item -LiteralPath $disWork -Recurse -Force -ErrorAction SilentlyContinue }
+New-Item -ItemType Directory -Force -Path $disWork | Out-Null
+Copy-Item -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'run_setup.bat') -Destination $disWork -Force
+Set-Content -LiteralPath (Join-Path -Path $disWork -ChildPath 'main.py')         -Value 'import pyvisa' -Encoding Ascii -NoNewline
+Set-Content -LiteralPath (Join-Path -Path $disWork -ChildPath 'requirements.txt') -Value 'pyvisa'      -Encoding Ascii -NoNewline
+
+$disExit = $null
+$disLog  = ''
+$savedSkipNivisa = $env:HP_SKIP_NIVISA
+$env:HP_SKIP_NIVISA = '1'
+try {
+    if (Test-Path -LiteralPath $disLogPath) { Remove-Item -LiteralPath $disLogPath -Force }
+    Push-Location -LiteralPath $disWork
+    try {
+        cmd /c .\run_setup.bat *> $disLogName
+        $disExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    if (Test-Path -LiteralPath $disLogPath) { $disLog = Get-Content -LiteralPath $disLogPath -Raw -Encoding Ascii }
+} finally {
+    $env:HP_SKIP_NIVISA = $savedSkipNivisa
+}
+
+# pyvisa must still be detected (so the skip is meaningful), the opt-out skip must fire, and
+# no install terminal signal (present/install_success/install_failed) may appear -- the gate
+# returns before the registry probe and download.
+$disDetected  = ($disLog -match 'Detected pyvisa')
+$disSkipped   = ($disLog -match [regex]::Escape('[VISA] skipped (disabled)'))
+$disNoInstall = -not (($disLog -match [regex]::Escape('[VISA] present')) -or ($disLog -match [regex]::Escape('[VISA] install_success')) -or ($disLog -match [regex]::Escape('[VISA] install_failed')))
+$disabledPass = ($disDetected -and $disSkipped -and $disNoInstall)
+Write-NdjsonRow ([ordered]@{
+    id      = 'pyvisa.nivisa.disabled'
+    req     = 'REQ-008'
+    pass    = $disabledPass
+    desc    = 'HP_SKIP_NIVISA=1 skips NI-VISA install even when pyvisa import detected'
+    details = [ordered]@{ exitCode = $disExit; detected = $disDetected; skippedDisabled = $disSkipped; noInstallAttempt = $disNoInstall }
+})
+
 if (-not $nisaPass) {
     Write-Host "[VISA] terminal signal not present in log"
     exit 1
 }
 if (-not $nisaOutcomePass) {
     Write-Host "NI-VISA branch outcome not detected"
+    exit 1
+}
+if (-not $disabledPass) {
+    Write-Host "HP_SKIP_NIVISA opt-out did not skip the NI-VISA install"
     exit 1
 }
 exit 0

@@ -305,7 +305,7 @@ At completion:
 ## [REQ-008] NI-VISA (optional external)
 
 - If the app imports `pyvisa` or `visa`, attempt **NI-VISA** Windows driver install if not present (system install, not just a Python package).
-- Leave option to disable for debugging purposes.
+- Leave option to disable for debugging purposes: set `HP_SKIP_NIVISA=1` to skip the NI-VISA install even when `pyvisa`/`visa` is detected. Log contract: `[VISA] skipped (disabled)`.
 - May require admin rights.
 
 ---
