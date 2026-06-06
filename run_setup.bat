@@ -1060,8 +1060,10 @@ if not errorlevel 1 (
   goto visa_done
 )
 set "NIVISA_INSTALLER=~ni-visa-runtime.exe"
+set "HP_VISA_DLVIA=curl"
 curl -L --silent --fail -o "%NIVISA_INSTALLER%" "https://download.ni.com/support/nipkg/products/ni-v/ni-visa/21.5/online/ni-visa_21.5_online.exe" 2>> "%LOG%"
 if errorlevel 1 (
+  set "HP_VISA_DLVIA=powershell"
   rem derived requirement: curl can leave a partial file on failure; delete before fallback
   rem so PowerShell does not find a corrupt file and skip its own download attempt.
   if exist "%NIVISA_INSTALLER%" del "%NIVISA_INSTALLER%" >nul 2>&1
@@ -1071,6 +1073,18 @@ if not exist "%NIVISA_INSTALLER%" (
   call :log "[VISA] install_failed (download)"
   goto visa_done
 )
+rem REQ-008 diagnostic: record the downloaded installer's provenance, size, and PE validity so a
+rem non-zero installer exit code can be classified (blocked/redirected payload vs a real installer
+rem that refused unattended install). These are read-only probes -- they never touch the install.
+call :log "[VISA] download method: %HP_VISA_DLVIA%"
+set "HP_VISA_DLSIZE=0"
+for %%S in ("%NIVISA_INSTALLER%") do set "HP_VISA_DLSIZE=%%~zS"
+call :log "[VISA] installer file size: %HP_VISA_DLSIZE% bytes"
+powershell -NoProfile -Command "try { $fs=[System.IO.File]::OpenRead('%NIVISA_INSTALLER%'); $a=$fs.ReadByte(); $b=$fs.ReadByte(); $fs.Close(); if ($a -eq 77 -and $b -eq 90) { 'PE_OK' } else { 'NOT_PE' } } catch { 'PROBE_ERR' }" > "~visa_pe.txt" 2>nul
+set "HP_VISA_PE="
+if exist "~visa_pe.txt" for /f "usebackq delims=" %%P in ("~visa_pe.txt") do set "HP_VISA_PE=%%P"
+if exist "~visa_pe.txt" del "~visa_pe.txt" >nul 2>&1
+call :log "[VISA] installer PE check: %HP_VISA_PE%"
 start /wait "" "%NIVISA_INSTALLER%" --quiet --accept-eulas --prevent-reboot --prevent-activation
 set "HP_VISA_INSTALLER_RC=%ERRORLEVEL%"
 rem derived requirement: capture the installer exit code so diagnostics can tell a hard failure
