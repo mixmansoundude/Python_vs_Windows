@@ -185,13 +185,33 @@ if (-not (Test-Path -LiteralPath $envsmokeLog)) {
     })
 } else {
     $envsmokeText = Get-Content -LiteralPath $envsmokeLog -Raw -Encoding Ascii
-    $pfFound = $envsmokeText -match [regex]::Escape($postflightSig)
+    $pfLogLine = $envsmokeText -match [regex]::Escape($postflightSig)
+    # REQ-016 requires the panel to identify the output EXE, files to keep, and files safe to
+    # delete -- not merely that a "printed" log line fired. The panel is echoed to stdout
+    # (captured in ~envsmoke_bootstrap.log), not ~setup.log, so verify its content there.
+    $pfDetails = [ordered]@{ logLineFound = $pfLogLine }
+    $pfContent = $true
+    $envsmokeBootLog = Join-Path $envsmokeDir '~envsmoke_bootstrap.log'
+    if (Test-Path -LiteralPath $envsmokeBootLog) {
+        $bootText = Get-Content -LiteralPath $envsmokeBootLog -Raw -Encoding Ascii
+        $pfExe    = $bootText -match [regex]::Escape('Your standalone application is ready:')
+        $pfKeep   = $bootText -match [regex]::Escape('KEEP these files')
+        $pfDelete = $bootText -match [regex]::Escape('SAFE TO DELETE')
+        $pfContent = ($pfExe -and $pfKeep -and $pfDelete)
+        $pfDetails.exeSectionFound    = $pfExe
+        $pfDetails.keepSectionFound   = $pfKeep
+        $pfDetails.deleteSectionFound = $pfDelete
+    } else {
+        # Defensive: never false-fail if the stdout capture is absent; fall back to the log line.
+        $pfDetails.bootLogMissing = $true
+    }
+    $pfFound = ($pfLogLine -and $pfContent)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.ux.postflight'
         req     = 'REQ-016'
         pass    = $pfFound
-        desc    = 'Post-flight briefing log line in envsmoke setup log'
-        details = [ordered]@{ sigFound = $pfFound }
+        desc    = 'Post-flight briefing: log line plus panel content (EXE + keep + delete sections)'
+        details = $pfDetails
     })
 }
 
