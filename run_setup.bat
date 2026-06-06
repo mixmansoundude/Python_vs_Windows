@@ -128,6 +128,10 @@ rem HP_TEST_CORRUPT_UV=1: simulates a corrupt uv binary; clears cache and re-dow
 set "HP_TEST_CORRUPT_UV=%HP_TEST_CORRUPT_UV%"
 rem HP_SKIP_NIVISA=1: REQ-008 opt-out -- skip the NI-VISA driver install even when pyvisa/visa is detected (debugging)
 set "HP_SKIP_NIVISA=%HP_SKIP_NIVISA%"
+rem HP_NIVISA_WAIT_SECS=<n>: REQ-008 diagnostic -- post-install registry poll budget in seconds.
+rem Default (unset) keeps the fast ~15s / 3-retry behavior for gating lanes. A dedicated non-gating
+rem lane sets a large value (e.g. 2700 = 45 min) to wait out a genuinely slow NI-VISA install.
+set "HP_NIVISA_WAIT_SECS=%HP_NIVISA_WAIT_SECS%"
 rem HP_TEST_FORCE_CONDA_BULK_FAIL=1: simulate a non-transient conda bulk-install failure so the
 rem REQ-005.3 per-package fallback fires (CI branch coverage). Consumed once in :conda_bulk_install.
 set "HP_TEST_FORCE_CONDA_BULK_FAIL=%HP_TEST_FORCE_CONDA_BULK_FAIL%"
@@ -1068,8 +1072,19 @@ if not exist "%NIVISA_INSTALLER%" (
   goto visa_done
 )
 start /wait "" "%NIVISA_INSTALLER%" --quiet --accept-eulas --prevent-reboot --prevent-activation
-rem derived requirement: NI installers may spawn child processes; retry registry check
-rem up to 3 times (approx 5 s each) before declaring post-install failure.
+set "HP_VISA_INSTALLER_RC=%ERRORLEVEL%"
+rem derived requirement: capture the installer exit code so diagnostics can tell a hard failure
+rem (non-zero rc) apart from a slow-but-progressing install (rc=0, registry not yet populated).
+call :log "[VISA] installer exit code: %HP_VISA_INSTALLER_RC%"
+rem derived requirement: NI installers may spawn child processes; poll the registry before declaring
+rem post-install failure. Budget is configurable via HP_NIVISA_WAIT_SECS so a dedicated diagnostic
+rem lane can wait out a slow (~30-45 min) NI-VISA install without slowing gating lanes. Default keeps
+rem the original ~15s behavior (3 retries x ~5s); single-line ifs avoid parenthesized parse-time issues.
+set "HP_VISA_PINGN=6"
+set "HP_VISA_MAXRETRY=3"
+if defined HP_NIVISA_WAIT_SECS set "HP_VISA_PINGN=31"
+if defined HP_NIVISA_WAIT_SECS set /a HP_VISA_MAXRETRY=%HP_NIVISA_WAIT_SECS%/30
+if %HP_VISA_MAXRETRY% lss 3 set "HP_VISA_MAXRETRY=3"
 set "HP_VISA_RETRY=0"
 :visa_post_check
 reg query "HKLM\SOFTWARE\National Instruments\NI-VISA" /v "CurrentVersion" >nul 2>&1
@@ -1078,11 +1093,12 @@ if not errorlevel 1 (
   goto visa_cleanup
 )
 set /a HP_VISA_RETRY+=1
-if %HP_VISA_RETRY% lss 3 (
-  ping -n 6 127.0.0.1 >nul 2>&1
+if %HP_VISA_RETRY% lss %HP_VISA_MAXRETRY% (
+  call :log "[VISA] post-check waiting; retry %HP_VISA_RETRY%/%HP_VISA_MAXRETRY% (installer_rc=%HP_VISA_INSTALLER_RC%)"
+  ping -n %HP_VISA_PINGN% 127.0.0.1 >nul 2>&1
   goto visa_post_check
 )
-call :log "[VISA] install_failed (post_check)"
+call :log "[VISA] install_failed (post_check_timeout) installer_rc=%HP_VISA_INSTALLER_RC%"
 :visa_cleanup
 if exist "%NIVISA_INSTALLER%" del "%NIVISA_INSTALLER%" >nul 2>&1
 :visa_done
