@@ -1298,6 +1298,10 @@ jobs:
             tests\~selftest_conda_retry\~setup.log
             tests/~selftest_conda_retry/~pipreqs.diff.txt
             tests\~selftest_conda_retry\~pipreqs.diff.txt
+            tests/~selftest_conda_perpkg/~conda_perpkg_bootstrap.log
+            tests\~selftest_conda_perpkg\~conda_perpkg_bootstrap.log
+            tests/~selftest_conda_perpkg/~setup.log
+            tests\~selftest_conda_perpkg\~setup.log
             tests/~selftest_pep723_prio/~pep723_prio_bootstrap.log
             tests\~selftest_pep723_prio\~pep723_prio_bootstrap.log
             tests/~selftest_pep723_prio/~setup.log
