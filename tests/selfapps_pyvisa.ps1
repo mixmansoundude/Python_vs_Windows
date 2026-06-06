@@ -108,6 +108,14 @@ $nisaReasonPass = ($installerRcMatch.Success) `
     -or ($log -match '\[VISA\] skipped')
 $nisaReasonDetails = [ordered]@{ exitCode = $exitCode; reasonFound = $nisaReasonPass }
 if ($installerRcMatch.Success) { $nisaReasonDetails.installerRc = $installerRcMatch.Groups[1].Value }
+# REQ-008 diagnostic: surface download provenance so a non-zero installer rc is classifiable
+# (e.g. tiny size + NOT_PE => blocked/redirected payload; valid PE + rc!=0 => unattended refusal).
+$dlViaMatch  = [regex]::Match($log, '\[VISA\] download method:\s*(\S+)')
+$dlSizeMatch = [regex]::Match($log, '\[VISA\] installer file size:\s*(\d+)\s*bytes')
+$peMatch     = [regex]::Match($log, '\[VISA\] installer PE check:\s*(\S+)')
+if ($dlViaMatch.Success)  { $nisaReasonDetails.downloadVia  = $dlViaMatch.Groups[1].Value }
+if ($dlSizeMatch.Success) { $nisaReasonDetails.installerSize = $dlSizeMatch.Groups[1].Value }
+if ($peMatch.Success)     { $nisaReasonDetails.peCheck       = $peMatch.Groups[1].Value }
 Write-NdjsonRow ([ordered]@{
     id      = 'pyvisa.nivisa.reason'
     req     = 'REQ-008'
