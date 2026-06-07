@@ -37,7 +37,7 @@ tests/
   selfapps_single.ps1          Single Python file bootstrap test
   selfapps_reqspec.ps1         Requirements specifier parsing tests (~= compatible release)
   selfapps_pandas_excel.ps1    Pandas/openpyxl heuristic tests
-  selfapps_pipgap.ps1          pip gap-fill safety net (conda misses opencv-python; pip fills it)
+  selfapps_pipgap.ps1          pip gap-fill safety net (runs run_setup.bat: conda misses opencv-python, pip fills it)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
