@@ -1106,6 +1106,12 @@ jobs:
             tests\~pandas_excel\~pandas_excel.log
             tests/~pipgap/~pipgap.log
             tests\~pipgap\~pipgap.log
+            tests/~pipgap/~pipgap_bootstrap.log
+            tests\~pipgap\~pipgap_bootstrap.log
+            tests/~pipgap/~setup.log
+            tests\~pipgap\~setup.log
+            tests/~pipgap/~run.out.txt
+            tests\~pipgap\~run.out.txt
             tests/~selftest_parse_warn_table/
             tests\~selftest_parse_warn_table\
             tests/~selftest_runtime_writeback/~runtime_writeback_bootstrap.log
