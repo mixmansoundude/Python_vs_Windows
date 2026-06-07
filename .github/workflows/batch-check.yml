@@ -371,6 +371,12 @@ jobs:
         run: |
           & tests\selfapps_pandas_excel.ps1
 
+      - name: "Test pip gap-fill safety net (conda-full only)"
+        if: ${{ matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_pipgap.ps1
+
       - name: "Self-test: parse_warn TRANSLATIONS table coverage"
         if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
@@ -1098,6 +1104,8 @@ jobs:
             tests\~selftest_exedyn_fail\~pipreqs.diff.txt
             tests/~pandas_excel/~pandas_excel.log
             tests\~pandas_excel\~pandas_excel.log
+            tests/~pipgap/~pipgap.log
+            tests\~pipgap\~pipgap.log
             tests/~selftest_parse_warn_table/
             tests\~selftest_parse_warn_table\
             tests/~selftest_runtime_writeback/~runtime_writeback_bootstrap.log
