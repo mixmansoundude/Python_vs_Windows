@@ -126,6 +126,10 @@ rem HP_TEST_HEAL_ANSWER=Y|N: bypasses the interactive Y/N prompt in :conda_binar
 set "HP_TEST_HEAL_ANSWER=%HP_TEST_HEAL_ANSWER%"
 rem HP_TEST_CORRUPT_UV=1: simulates a corrupt uv binary; clears cache and re-downloads for REQ-020 branch coverage
 set "HP_TEST_CORRUPT_UV=%HP_TEST_CORRUPT_UV%"
+rem HP_TEST_SKIP_EVICT=1: CI-only; skips the rmdir and Miniconda re-download in :evict_and_rebuild.
+rem Use with HP_TEST_CORRUPT_CONDA=1 + HP_TEST_HEAL_ANSWER=Y to test the accept branch without
+rem deleting the real CI Miniconda installation. The eviction log line is still emitted.
+set "HP_TEST_SKIP_EVICT=%HP_TEST_SKIP_EVICT%"
 rem HP_SKIP_NIVISA=1: REQ-008 opt-out -- skip the NI-VISA driver install even when pyvisa/visa is detected (debugging)
 set "HP_SKIP_NIVISA=%HP_SKIP_NIVISA%"
 rem HP_NIVISA_WAIT_SECS=<n>: REQ-008 diagnostic -- post-install registry poll budget in seconds.
@@ -2084,25 +2088,32 @@ exit /b 2
 :evict_and_rebuild
 echo.
 echo   [INFO] Removing corrupt Miniconda installation...
-rmdir /s /q "%MINICONDA_ROOT%" 2>nul
-if exist "%MINICONDA_ROOT%" (
-  echo.
-  echo   [WARN] Could not fully remove %MINICONDA_ROOT%.
-  echo   Some files may be locked. Close any Python/conda windows and try again.
-  echo.
-  call :die "[ERROR] Could not delete corrupt conda dir; files may be locked." 3
-  exit /b 3
+rem HP_TEST_SKIP_EVICT: CI branch-coverage flag -- skip actual deletion and re-download so
+rem the test does not destroy the CI Miniconda installation. The eviction log line fires to
+rem prove the accept branch was reached. Must not be set in production.
+if not defined HP_TEST_SKIP_EVICT (
+  rmdir /s /q "%MINICONDA_ROOT%" 2>nul
+  if exist "%MINICONDA_ROOT%" (
+    echo.
+    echo   [WARN] Could not fully remove %MINICONDA_ROOT%.
+    echo   Some files may be locked. Close any Python/conda windows and try again.
+    echo.
+    call :die "[ERROR] Could not delete corrupt conda dir; files may be locked." 3
+    exit /b 3
+  )
+  echo   [INFO] Corrupt installation removed. Downloading fresh copy...
 )
-echo   [INFO] Corrupt installation removed. Downloading fresh copy...
 call :log "[INFO] Self-healing: corrupt conda evicted from %MINICONDA_ROOT%."
 set "CONDA_BAT="
 set "HP_CONDA_JUST_INSTALLED="
 set "HP_ENV_STATE_RESULT="
-call :download_miniconda_exe
-if exist "%TEMP%\miniconda.exe" (
-  call :try_conda_install
+if not defined HP_TEST_SKIP_EVICT (
+  call :download_miniconda_exe
+  if exist "%TEMP%\miniconda.exe" (
+    call :try_conda_install
+  )
+  if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
 )
-if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
 call :select_conda_bat
 if not defined CONDA_BAT (
   call :die "[ERROR] Fresh Miniconda install failed after self-healing eviction." 4

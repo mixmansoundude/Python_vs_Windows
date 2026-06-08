@@ -751,6 +751,57 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($healExit -eq 2 -and $healDeclineMsgFound) { $summary.Add('Heal decline: PASS') } else { $summary.Add('Heal decline: FAIL') }
 
+# --- Conda binary corruption heal-accept test (REQ-020) ---
+# Arrange: HP_TEST_CORRUPT_CONDA=1 + HP_TEST_HEAL_ANSWER=Y + HP_TEST_SKIP_EVICT=1.
+# HP_TEST_SKIP_EVICT prevents the actual rmdir + Miniconda re-download so CI conda stays intact.
+# The eviction log line is still emitted, proving the Y-branch (goto :evict_and_rebuild) fired.
+# Assert: exit 0, eviction log line present, bootstrap status ok.
+$healAcceptDir = Join-Path $TestsDir '~selftest_heal_accept'
+if (Test-Path $healAcceptDir) { Remove-Item -Recurse -Force $healAcceptDir }
+New-Item -ItemType Directory -Force -Path $healAcceptDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $healAcceptDir -Force
+Set-Content -Path (Join-Path $healAcceptDir 'app_heal_accept_test.py') -Value 'print("heal-accept-ok")' -Encoding ASCII
+$healAcceptLogName = '~heal_accept_bootstrap.log'
+$env:HP_TEST_CORRUPT_CONDA = '1'
+$env:HP_TEST_HEAL_ANSWER = 'Y'
+$env:HP_TEST_SKIP_EVICT = '1'
+$prevCILaneHA = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $healAcceptDir
+try {
+  cmd /c "call run_setup.bat > $healAcceptLogName 2>&1"
+  $healAcceptExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_CORRUPT_CONDA = ''
+  $env:HP_TEST_HEAL_ANSWER = ''
+  $env:HP_TEST_SKIP_EVICT = ''
+  $env:HP_CI_LANE = $prevCILaneHA
+}
+$healAcceptLogPath = Join-Path $healAcceptDir $healAcceptLogName
+$healAcceptLines = if (Test-Path $healAcceptLogPath) { Get-Content -LiteralPath $healAcceptLogPath -Encoding ASCII } else { @() }
+$healAcceptEvictMsgFound = ($healAcceptLines | Where-Object { $_ -like '*Self-healing: corrupt conda evicted*' }).Count -gt 0
+$healAcceptStatusPath = Join-Path $healAcceptDir '~bootstrap.status.json'
+$healAcceptState = if (Test-Path $healAcceptStatusPath) {
+  try { (Get-Content -LiteralPath $healAcceptStatusPath -Raw | ConvertFrom-Json).state } catch { 'read-error' }
+} else { 'missing' }
+Write-NdjsonRow ([ordered]@{
+  id      = 'self.corrupt.conda.heal.accept'
+  req     = 'REQ-020'
+  pass    = ($healAcceptExit -eq 0 -and $healAcceptEvictMsgFound -and $healAcceptState -eq 'ok')
+  desc    = 'HP_TEST_HEAL_ANSWER=Y + HP_TEST_SKIP_EVICT=1: accept branch fires, eviction logged, bootstrap ok'
+  details = [ordered]@{
+    exitCode   = $healAcceptExit
+    evictFound = $healAcceptEvictMsgFound
+    state      = $healAcceptState
+  }
+})
+if ($healAcceptExit -eq 0 -and $healAcceptEvictMsgFound -and $healAcceptState -eq 'ok') {
+  $summary.Add('Heal accept: PASS')
+} else {
+  $summary.Add('Heal accept: FAIL')
+}
+
 # --- UV binary corruption eviction test (REQ-020 Task 4) ---
 # Arrange: create fake ~uv_bin\uv.exe + HP_TEST_CORRUPT_UV=1 simulates corrupt cached uv binary.
 # Assert:  bootstrap logs the eviction warning.
