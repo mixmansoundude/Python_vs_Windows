@@ -394,6 +394,7 @@ self.guardrail.g1, self.guardrail.g2, self.guardrail.g3,
 self.pep723.valid, self.pep723.malformed, self.pep723.pyproject.override,
 self.corrupt.conda.detect,
 self.corrupt.conda.heal.decline,
+self.corrupt.conda.heal.accept,
 self.corrupt.uv.detect
 ```
 

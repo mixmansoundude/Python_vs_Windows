@@ -1238,6 +1238,14 @@ jobs:
             tests\~selftest_heal_decline\~pipreqs.diff.txt
             tests/~selftest_heal_decline/~bootstrap.status.json
             tests\~selftest_heal_decline\~bootstrap.status.json
+            tests/~selftest_heal_accept/~heal_accept_bootstrap.log
+            tests\~selftest_heal_accept\~heal_accept_bootstrap.log
+            tests/~selftest_heal_accept/~setup.log
+            tests\~selftest_heal_accept\~setup.log
+            tests/~selftest_heal_accept/~pipreqs.diff.txt
+            tests\~selftest_heal_accept\~pipreqs.diff.txt
+            tests/~selftest_heal_accept/~bootstrap.status.json
+            tests\~selftest_heal_accept\~bootstrap.status.json
             tests/~selftest_corrupt_uv/~corrupt_uv_bootstrap.log
             tests\~selftest_corrupt_uv\~corrupt_uv_bootstrap.log
             tests/~selftest_corrupt_uv/~setup.log
