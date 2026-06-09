@@ -2,10 +2,10 @@
 :: Project Home: https://github.com/mixmansoundude/Python_vs_Windows
 :: Description: Automated, zero-config Python environment management for Windows. Standalone and portable.
 :: [VERSION_METADATA]
-:: Last Verified Date: 2026-05-10
+:: Last Verified Date: 2026-06-08
 :: Verified Windows: Windows 10/11
 :: Verified PowerShell: 5.1+
-:: Verified Python: 3.14 (CI Latest)
+:: Verified Python: 3.14.5 (CI Latest)
 :: RECOVERY: If a future Python version breaks auto-detection, install a Python version matching the
 ::   'Last Verified' metadata above, then run 'set PVW_PYTHON_EXE=C:\path\to\python.exe' in your
 ::   terminal before running this script to bypass the broken detection.
@@ -271,17 +271,6 @@ if not defined CONDA_BAT (
   call :select_conda_bat
 )
 
-rem === Validate existing conda binary health (REQ-020: corruption hardening) ===
-rem Only fires for pre-existing installs (HP_CONDA_JUST_INSTALLED guards fresh downloads).
-rem Skipped when HP_TEST_FORCE_CONDA_FAIL=1 (test flag already simulates conda failure).
-if defined CONDA_BAT if not defined HP_CONDA_JUST_INSTALLED if not defined HP_TEST_FORCE_CONDA_FAIL (
-  if defined HP_TEST_CORRUPT_CONDA (
-    call :log "[ERROR] HP_TEST_CORRUPT_CONDA: simulating corrupt conda binary."
-    goto :conda_binary_corrupt
-  )
-  call "%CONDA_BAT%" info >nul 2>&1
-  if errorlevel 1 goto :conda_binary_corrupt
-)
 :after_conda_bat_validation
 
 if not defined CONDA_BAT (
@@ -292,6 +281,29 @@ if not defined CONDA_BAT (
 )
 
 set "PATH=%MINICONDA_ROOT%\condabin;%MINICONDA_ROOT%\Scripts;%MINICONDA_ROOT%\Library\bin;%MINICONDA_ROOT%;%PATH%"
+
+rem === Fresh install: warm up conda to initialize base-env state (REQ-020) ===
+rem derived requirement: Silent Miniconda install (/S /AddToPath=0) leaves the base
+rem environment in a state where conda info may return non-zero until conda is run
+rem once with its own directories in PATH. Calling conda info here (silently, after
+rem the PATH update) ensures subsequent bootstrap runs that find the pre-installed
+rem Miniconda pass the corruption health check instead of falsely flagging it corrupt.
+if defined HP_CONDA_JUST_INSTALLED if defined CONDA_BAT (
+  call "%CONDA_BAT%" info >nul 2>&1
+)
+
+rem === Validate existing conda binary health (REQ-020: corruption hardening) ===
+rem Only fires for pre-existing installs (HP_CONDA_JUST_INSTALLED guards fresh downloads).
+rem Skipped when HP_TEST_FORCE_CONDA_FAIL=1 (test flag already simulates conda failure).
+rem Placed after PATH update so conda.bat internal calls can resolve their dependencies.
+if defined CONDA_BAT if not defined HP_CONDA_JUST_INSTALLED if not defined HP_TEST_FORCE_CONDA_FAIL (
+  if defined HP_TEST_CORRUPT_CONDA (
+    call :log "[ERROR] HP_TEST_CORRUPT_CONDA: simulating corrupt conda binary."
+    goto :conda_binary_corrupt
+  )
+  call "%CONDA_BAT%" info >nul 2>&1
+  if errorlevel 1 goto :conda_binary_corrupt
+)
 where conda >> "%LOG%" 2>&1 || (
   set "HP_ENV_READY="
   call :handle_conda_failure "[ERROR] 'conda' not found on PATH after bootstrap."
