@@ -306,7 +306,7 @@ $hasRun = $feMatch.Success -and ($feDecoded -match '"run\.py"')
 Write-Result "batch.req002.findentry_run" "REQ-002: HP_FIND_ENTRY PREFERRED includes run.py" $hasRun @{}
 $hasDiffTrace = ($Lines | Select-String -SimpleMatch 'REQ-005.5').Count -gt 0
 Write-Result "batch.dep.diff.trace" "REQ-005.5: dependency diff log line present in run_setup.bat source" $hasDiffTrace @{}
-$hasCondaWarmup = ($AllText -match 'HP_CONDA_JUST_INSTALLED') -and ($AllText -match 'call\s+"%CONDA_BAT%"\s+info\s+>nul')
+$hasCondaWarmup = ($AllText -match 'if defined HP_CONDA_JUST_INSTALLED\s+if defined CONDA_BAT') -and ($AllText -match 'call\s+"%CONDA_BAT%"\s+info\s+>nul')
 Write-Result "batch.conda.warmup" "REQ-020: fresh-install conda warm-up (HP_CONDA_JUST_INSTALLED guard) present in run_setup.bat" $hasCondaWarmup @{}
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
