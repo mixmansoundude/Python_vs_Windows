@@ -236,20 +236,21 @@ in `batch-check.yml`. No other agent or job may commit auto-fixes. See AGENTS.md
 
 **NDJSON files and who owns them:**
 - `tests/~test-results.ndjson` -- written by every `selfapps_*.ps1` test script during the
-  CI run. The selfapps scripts APPEND rows to this file. `harness.ps1` then DELETES and
-  REWRITES it from `ci_test_results.ndjson` (the root-level aggregator). Do not confuse
-  the mid-run append file with the final harness output.
-- `ci_test_results.ndjson` -- root-level aggregator written by selfapps scripts and read
-  by `harness.ps1`. This is the authoritative input for verdict computation.
-- Rows in `ci_test_results.ndjson` but not in `tests/~test-results.ndjson` after the run
-  means harness.ps1 ran after the selfapps scripts rewrote the file.
+  CI run. The selfapps scripts APPEND rows to this file. The CI "Verdict from NDJSON" step
+  reads it immediately after upload. Later, `harness.ps1` DELETES it and REWRITES it with
+  harness static check rows. The final artifact content is harness rows only.
+- `ci_test_results.ndjson` -- parallel aggregator written by selfapps scripts; used as
+  fallback by the "Verdict from NDJSON" step if `tests/~test-results.ndjson` is empty/missing.
+  `harness.ps1` does NOT read this file.
 
 **CI job step ordering (within each lane job):**
 1. Selfapps scripts run (each appends rows to both NDJSON files).
-2. Artifacts are uploaded (NDJSON snapshots, logs).
-3. `run_tests.bat` runs `tests/harness.ps1` (verdict -- reads `ci_test_results.ndjson`,
-   rewrites `tests/~test-results.ndjson`, emits pass/fail).
-4. `tests/selftest.ps1` runs the bootstrapper self-tests (empty repo + stub).
+2. Artifacts are uploaded (NDJSON snapshot of selfapps rows).
+3. "Verdict from NDJSON" CI step reads pre-harness selfapps rows (has_failures verdict).
+4. Dynamic tests run.
+5. `run_tests.bat` runs `tests/harness.ps1` (reads and deletes `tests/~test-results.ndjson`,
+   writes harness static check rows back to the same file).
+6. `tests/selftest.ps1` runs the bootstrapper self-tests (empty repo + stub).
 
 **selftest.ps1 vs selftests.ps1:**
 - `selftest.ps1` -- runs run_setup.bat on a real (empty) app directory, validates
@@ -384,6 +385,7 @@ batch.req010.isolation, batch.req011.dircheck,
 batch.req002.findentry_cli, batch.req002.findentry_run, batch.req002.entry_log, batch.req002.findentry_payload,
 batch.ux.pause.gated,
 batch.dep.diff.trace,
+batch.conda.warmup,
 self.bootstrap.state, self.empty_repo.msg, self.empty_repo.no_spurious_warn,
 self.harness.started,
 self.stub.fastpath, self.stub.rebuild, self.stub.state_skip,
@@ -432,6 +434,7 @@ Test files and what they cover:
 | `test_poll_public_diag_logging.py` | Diagnostics polling and logging |
 | `test_ps_colon_scan.py` | PowerShell scoped variable detection ($var:) |
 | `test_check_delimiters_import.py` | Delimiter checker import guard |
+| `test_fast_check_pattern.py` | HP_FAST_CHECK infra-dir exclusion regex ($infraPattern) |
 | `test_heuristics.py` | Heuristic dep-augmentation rules (REQ-005: all 6 rules, kill-switch, idempotency) |
 | `test_parse_warn.py` | PyInstaller warn-file translation table (REQ-007: 5.x and 6.x formats, all TRANSLATIONS entries) |
 | `test_publish_index_regex.py` | Regex patterns in diagnostics publisher |

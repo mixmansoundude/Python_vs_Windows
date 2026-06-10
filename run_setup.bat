@@ -271,6 +271,7 @@ if not defined CONDA_BAT (
   call :select_conda_bat
 )
 
+set "PATH=%MINICONDA_ROOT%\condabin;%MINICONDA_ROOT%\Scripts;%MINICONDA_ROOT%\Library\bin;%MINICONDA_ROOT%;%PATH%"
 :after_conda_bat_validation
 
 if not defined CONDA_BAT (
@@ -279,8 +280,6 @@ if not defined CONDA_BAT (
   if defined HP_ENV_READY goto :after_env_mode_selection
   call :die "[ERROR] conda.bat not found after bootstrap."
 )
-
-set "PATH=%MINICONDA_ROOT%\condabin;%MINICONDA_ROOT%\Scripts;%MINICONDA_ROOT%\Library\bin;%MINICONDA_ROOT%;%PATH%"
 
 rem === Fresh install: warm up conda to initialize base-env state (REQ-020) ===
 rem derived requirement: Silent Miniconda install (/S /AddToPath=0) leaves the base
