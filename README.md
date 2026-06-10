@@ -381,7 +381,7 @@ At completion:
   - `[INFO] Self-healing: corrupt conda evicted from <path>.` (user accepts self-heal)
   - `[ERROR] Corrupt conda env; user declined rebuild.` (user declines)
 - CI test flags: `HP_TEST_CORRUPT_CONDA=1`, `HP_TEST_CORRUPT_UV=1`, `HP_TEST_HEAL_ANSWER=N`.
-- Test NDJSON rows: `self.corrupt.conda.detect`, `self.corrupt.conda.heal.decline`, `self.corrupt.uv.detect` (in `tests/selftest.ps1`).
+- Test NDJSON rows: `self.corrupt.conda.detect`, `self.corrupt.conda.heal.decline`, `self.corrupt.conda.heal.accept`, `self.corrupt.uv.detect` (in `tests/selftest.ps1`).
 
 ---
 
