@@ -20,6 +20,9 @@ concurrency:
   group: batch-check-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   selftest:
     name: Batch syntax/run check (${{ matrix.mode }})

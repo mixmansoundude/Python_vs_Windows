@@ -14,6 +14,9 @@ permissions:
   contents: read
   actions: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   lint-workflows:
     name: Lint GitHub workflows
