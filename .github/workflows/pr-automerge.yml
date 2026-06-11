@@ -18,9 +18,6 @@ permissions:
   pull-requests: write
   contents: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   auto_merge:
     runs-on: ubuntu-latest
@@ -38,7 +35,7 @@ jobs:
 
       - name: Resolve candidate PR numbers for this event
         id: prs
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -67,7 +64,7 @@ jobs:
 
       - name: Enable Auto-merge via PAT
         if: ${{ steps.prs.outputs.numbers != '[]' && env.AUTOMERGE_TOKEN }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.AUTOMERGE_TOKEN }}
           script: |
@@ -146,7 +143,7 @@ jobs:
 
       - name: Enable Auto-merge via GITHUB_TOKEN
         if: ${{ steps.prs.outputs.numbers != '[]' && !env.AUTOMERGE_TOKEN }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -199,7 +196,7 @@ jobs:
 
       - name: Auto-merge diagnostics (state + reason)
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -269,7 +266,7 @@ jobs:
 
       - name: Note auto-merge state in Summary
         if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |

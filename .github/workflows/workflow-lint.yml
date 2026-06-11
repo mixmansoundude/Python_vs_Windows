@@ -14,9 +14,6 @@ permissions:
   contents: read
   actions: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   lint-workflows:
     name: Lint GitHub workflows
@@ -24,7 +21,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download actionlint (no external linters)
         run: |
@@ -206,7 +203,7 @@ jobs:
 
       # Optional: keep tiny files for other jobs (e.g., your Pages job)
       - name: Upload mini outputs (optional)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: workflow-lint-summary-${{ github.run_attempt }}
           path: |

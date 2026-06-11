@@ -20,8 +20,6 @@ concurrency:
   group: batch-check-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   selftest:
@@ -58,12 +56,12 @@ jobs:
       HP_CI_LANE: ${{ matrix.mode }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Restore Miniconda cache
         if: ${{ matrix.mode == 'cache' }}
         id: conda_cache_restore
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: C:\Users\Public\Documents\Miniconda3
           key: win-${{ runner.os }}-py311b-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
@@ -506,7 +504,7 @@ jobs:
 
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci_test_summary-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: tests/~test-summary.txt
@@ -515,7 +513,7 @@ jobs:
 
       - name: Upload CI NDJSON
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ci_test_results-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: tests/~test-results.ndjson
@@ -623,7 +621,7 @@ jobs:
 
       - name: Upload iterate gate verdict
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: selftest-verdict-${{ matrix.mode }}
           path: lane_verdict.json
@@ -805,7 +803,7 @@ jobs:
 
       - name: Upload bootstrapper tests artifact
         if: ${{ always() && matrix.mode == 'real' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bootstrapper-tests
           path: _out/*
@@ -895,7 +893,7 @@ jobs:
         # the workflow tolerant so diagnostics jobs do not fail when the helper
         # intentionally skips packaging.
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: iterate-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: _ctx/**
@@ -954,7 +952,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: test-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -1369,7 +1367,7 @@ jobs:
 
       - name: Save Miniconda cache
         if: ${{ matrix.mode == 'cache' && steps.conda_cache_restore.outputs.cache-hit != 'true' && env.HP_CACHE_CORRUPTED != '1' && steps.conda_validate.outputs.conda_ok == 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: C:\Users\Public\Documents\Miniconda3
           key: ${{ steps.conda_cache_restore.outputs.cache-primary-key }}
@@ -1442,7 +1440,7 @@ jobs:
 
       - name: Summarize self-tests (NDJSON → Job Summary)
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -1787,7 +1785,7 @@ jobs:
 
       - name: Upload failing test IDs
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: batchcheck-failures-${{ matrix.mode }}
           path: |
@@ -2168,7 +2166,7 @@ jobs:
 
       - name: Upload diagnostics bundle
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: diag-selftest-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.build_public.outputs.public_dir }}
@@ -2177,7 +2175,7 @@ jobs:
 
       - name: Gate on NDJSON results
         if: ${{ always() }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -2368,7 +2366,7 @@ jobs:
 
       - name: Upload self-test artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: selftest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.mode }}
           path: selftest-diag-${{ matrix.mode }}
@@ -2489,7 +2487,7 @@ jobs:
 
       - name: Distribute codex failure summary (PR comment)
         if: ${{ failure() && github.event_name == 'pull_request' && env.AUTOMERGE_TOKEN != '' }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           AUTOMERGE_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
         with:
@@ -2519,7 +2517,7 @@ jobs:
       has_failures: ${{ steps.aggregate.outputs.has_failures }}
     steps:
       - name: Download lane verdicts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         continue-on-error: true
         with:
           pattern: selftest-verdict-*
@@ -2659,7 +2657,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Determine branch context
@@ -2679,7 +2677,7 @@ jobs:
           echo "branch_slug=$slug" >> "$GITHUB_OUTPUT"
       - name: Download CI NDJSON for inline helper
         if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: _artifacts/batch-check/_ci_artifacts
@@ -2905,7 +2903,7 @@ jobs:
           fi
       - name: Upload iterate artifact
         if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
           path: logs/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip
@@ -2952,7 +2950,7 @@ jobs:
           df -h || true
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -2988,7 +2986,7 @@ jobs:
       - name: Download iterate logs artifact (if present)
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
           # derived requirement: match the inline helper's artifact name exactly so diagnostics always
@@ -3078,7 +3076,7 @@ jobs:
             fi
           done
 
-          # derived requirement: download-artifact@v4 nests the uploaded
+          # derived requirement: download-artifact@v6 nests the uploaded
           # _artifacts/iterate payload one directory deeper; flatten it so the
           # diagnostics publisher detects '* Iterate logs: found'.
 
@@ -3114,7 +3112,7 @@ jobs:
 
       - name: Download CI NDJSON artifacts
         if: ${{ always() }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prep.outputs.ARTIFACTS }}/batch-check/_ci_artifacts
@@ -3122,7 +3120,7 @@ jobs:
       - name: Download CI test logs artifacts
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           pattern: test-logs-selftest-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prep.outputs.ARTIFACTS }}/batch-check/test-logs
@@ -3773,18 +3771,18 @@ jobs:
             }
           }
 
-      - uses: actions/configure-pages@v4
+      - uses: actions/configure-pages@v6
         if: ${{ github.event_name != 'pull_request' }}
 
       - name: Upload Pages artifact
         if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: ${{ steps.prep.outputs.SITE }}
 
       - name: Deploy to GitHub Pages
         if: ${{ github.event_name != 'pull_request' }}
         id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
