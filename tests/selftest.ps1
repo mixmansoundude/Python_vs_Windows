@@ -596,6 +596,54 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($pep723MalWarnFound -and $pep723MalContinued) { $summary.Add('PEP 723 malformed block: PASS') } else { $summary.Add('PEP 723 malformed block: FAIL') }
 
+# --- pyproject.toml malformed TOML test (REQ-005.1) ---
+# Arrange: a .py file + pyproject.toml containing invalid TOML (missing closing bracket on [project).
+# Assert:  bootstrap emits [WARN] pyproject.toml TOML parse error and exits 0 (pipreqs fallback).
+# derived requirement: REQ-005.1 silent-fallback rule; malformed TOML must surface a warning so the
+# user knows their dependency spec was not used, consistent with the PEP 723 malformed behavior.
+$pypmtMalDir = Join-Path $TestsDir '~selftest_pyproj_malformed'
+if (Test-Path $pypmtMalDir) { Remove-Item -Recurse -Force $pypmtMalDir }
+New-Item -ItemType Directory -Force -Path $pypmtMalDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $pypmtMalDir -Force
+Set-Content -Path (Join-Path $pypmtMalDir 'app_ppm.py') -Value 'print("pyproject-mal")' -Encoding ASCII
+# pyproject.toml with a missing closing bracket on the section header -- invalid TOML.
+$pypmtMalToml = @'
+[project
+name = "malformed-app"
+'@
+Set-Content -Path (Join-Path $pypmtMalDir 'pyproject.toml') -Value $pypmtMalToml -Encoding ASCII
+$pypmtLogName = '~pyproj_mal_bootstrap.log'
+Push-Location $pypmtMalDir
+try {
+  cmd /c "call run_setup.bat > $pypmtLogName 2>&1"
+} finally {
+  Pop-Location
+}
+$pypmtMalLogPath = Join-Path $pypmtMalDir $pypmtLogName
+$pypmtMalLines = @()
+if (Test-Path $pypmtMalLogPath) { $pypmtMalLines = Get-Content -LiteralPath $pypmtMalLogPath -Encoding ASCII }
+$pypmtMalWarnTag = 'pyproject.toml TOML parse error'
+$pypmtMalWarnFound = ($pypmtMalLines | Where-Object { $_ -like "*$pypmtMalWarnTag*" }).Count -gt 0
+$pypmtMalStatusPath = Join-Path $pypmtMalDir '~bootstrap.status.json'
+$pypmtMalContinued = $false
+if (Test-Path $pypmtMalStatusPath) {
+  try {
+    $pypmtMalStatus = Get-Content -LiteralPath $pypmtMalStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $pypmtMalContinued = ($pypmtMalStatus.exitCode -eq 0)
+  } catch { }
+}
+Write-NdjsonRow ([ordered]@{
+  id = 'self.pyproject.malformed'
+  pass = ($pypmtMalWarnFound -and $pypmtMalContinued)
+  desc = 'pyproject.toml TOML parse error: bootstrap emits [WARN] and exits 0 (pipreqs fallback, no hard failure)'
+  req = 'REQ-005.1'
+  details = [ordered]@{
+    warnFound = $pypmtMalWarnFound
+    continued = $pypmtMalContinued
+  }
+})
+if ($pypmtMalWarnFound -and $pypmtMalContinued) { $summary.Add('pyproject.toml malformed: PASS') } else { $summary.Add('pyproject.toml malformed: FAIL') }
+
 # --- PEP 723 priority over pyproject.toml test (REQ-005.1) ---
 # Arrange: script with PEP 723 metadata (packaging) + pyproject.toml with conflicting dep (colorama).
 # Assert:  bootstrap detects pyproject.toml first, then PEP 723 overrides it; DEP_SOURCE=pep723, exits 0.
