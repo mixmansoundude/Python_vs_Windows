@@ -1185,6 +1185,12 @@ jobs:
             tests\~selftest_pep723_mal\~pipreqs.diff.txt
             tests/~selftest_pep723_mal/~bootstrap.status.json
             tests\~selftest_pep723_mal\~bootstrap.status.json
+            tests/~selftest_pyproj_malformed/~pyproj_mal_bootstrap.log
+            tests\~selftest_pyproj_malformed\~pyproj_mal_bootstrap.log
+            tests/~selftest_pyproj_malformed/~setup.log
+            tests\~selftest_pyproj_malformed\~setup.log
+            tests/~selftest_pyproj_malformed/~bootstrap.status.json
+            tests\~selftest_pyproj_malformed\~bootstrap.status.json
             tests/~selftest_gitconfig/~gitconfig_run1.log
             tests\~selftest_gitconfig\~gitconfig_run1.log
             tests/~selftest_gitconfig/~gitconfig_run2.log
