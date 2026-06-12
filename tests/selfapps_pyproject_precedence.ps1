@@ -22,6 +22,7 @@ if (-not $IsWindows) {
     Write-NdjsonRow ([ordered]@{ id = 'pyproject.precedence.detect';    req = 'REQ-004'; pass = $true; desc = 'pyproject precedence detect skipped on non-Windows host';   details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pyproject.precedence.writeback'; req = 'REQ-004'; pass = $true; desc = 'pyproject precedence writeback skipped on non-Windows host'; details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pyproject.dep.detect';           req = 'REQ-004'; pass = $true; desc = 'pyproject dep detect skipped on non-Windows host';           details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'pyproject.dep.noproj';           req = 'REQ-005.1'; pass = $true; desc = 'pyproject dep noproj skipped on non-Windows host';         details = $skipDetails })
     exit 0
 }
 
@@ -262,6 +263,55 @@ Write-NdjsonRow ([ordered]@{
     pass    = $depPass
     desc    = 'HP_PYPROJ_DEPS helper parses pyproject.toml [project].dependencies and writes deps'
     details = $depDetails
+})
+
+# --- Test 4: pyproject.dep.noproj ---
+# derived requirement: HP_PYPROJ_DEPS must exit non-zero when pyproject.toml has no
+# [project] section (e.g. tool-only config such as [tool.black]), so the bootstrapper
+# falls through to requirements.txt instead of treating the file as authoritative.
+# Guards the "no [project] section -> exit 1" branch of HP_PYPROJ_DEPS (branch coverage
+# policy: every exit path must have a corresponding CI test).
+$noProjDir     = Join-Path $here '~pyproject_noproj'
+$noProjHelper  = Join-Path $noProjDir '~pyproj_deps.py'
+$noProjOut     = Join-Path $noProjDir '~out.txt'
+$noProjPass    = $false
+$noProjDetails = [ordered]@{}
+
+if (-not $condaPython -or -not (Test-Path -LiteralPath $condaPython)) {
+    $noProjDetails.reason = "conda python missing: $condaPython"
+    $noProjDetails.condaBatCandidates = $condaInfo.candidates
+} else {
+    if (Test-Path -LiteralPath $noProjDir) { Remove-Item -LiteralPath $noProjDir -Recurse -Force -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Force -Path $noProjDir | Out-Null
+    # pyproject.toml with only a tool section -- no [project] section at all.
+    # Common for projects that use pyproject.toml for black/isort/mypy config only.
+    Set-Content -LiteralPath (Join-Path $noProjDir 'pyproject.toml') -Encoding Ascii -Value '[tool.black]
+line-length = 88
+'
+    try {
+        Export-PyprojectDepsHelper -BatchPath (Join-Path $repoRoot 'run_setup.bat') -OutPath $noProjHelper
+        Push-Location -LiteralPath $noProjDir
+        try {
+            & $condaPython $noProjHelper $noProjOut 2>&1 | Out-Null
+            $noProjExit = $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+        $noProjDetails.exitCode   = $noProjExit
+        $noProjDetails.outExists  = Test-Path -LiteralPath $noProjOut
+        # exit 1 = no [project] section found (correct fallthrough); exit 0 = wrongly found deps; exit 2 = TOML error
+        $noProjPass = ($noProjExit -eq 1) -and (-not (Test-Path -LiteralPath $noProjOut))
+    } catch {
+        $noProjDetails.error = $_.Exception.Message
+    }
+}
+
+Write-NdjsonRow ([ordered]@{
+    id      = 'pyproject.dep.noproj'
+    req     = 'REQ-005.1'
+    pass    = $noProjPass
+    desc    = 'HP_PYPROJ_DEPS exits 1 (no deps) when pyproject.toml has no [project] section'
+    details = $noProjDetails
 })
 
 exit 0
