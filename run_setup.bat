@@ -9,6 +9,23 @@
 :: RECOVERY: If a future Python version breaks auto-detection, install a Python version matching the
 ::   'Last Verified' metadata above, then run 'set PVW_PYTHON_EXE=C:\path\to\python.exe' in your
 ::   terminal before running this script to bypass the broken detection.
+:: ============================================================
+:: FIRST-TIME WINDOWS USERS: SmartScreen / Security Warning
+:: ============================================================
+:: When you double-click this file, Windows may show:
+::   "Windows protected your PC"
+:: This is normal for any .bat file downloaded from the internet.
+::
+:: TO RUN:  Click "More info"  then  "Run anyway"
+::
+:: IF "Run anyway" is not shown:
+::   1. Close this dialog
+::   2. Right-click run_setup.bat in File Explorer
+::   3. Click "Properties"
+::   4. At the bottom, check the "Unblock" checkbox
+::   5. Click "OK"
+::   6. Double-click run_setup.bat again
+:: ============================================================
 @echo off
 setlocal DisableDelayedExpansion
 set "DEP_SOURCE=unknown"

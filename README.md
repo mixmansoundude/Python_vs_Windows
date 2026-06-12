@@ -32,6 +32,7 @@ This repository serves as a proof of concept of this new approach.
 - **Windows 10 (1809+)** or newer.
 - **One Folder per Program:** Create a unique folder for your project (e.g., `universal_paperclip_optimizer` or `solve_world_hunger_v2`).
 - **Avoid Conflicts:** To ensure environment integrity, do not mix independent programs in the same folder. Each program should have its own dedicated folder and its own copy of `run_setup.bat`.
+- **First run on Windows:** Windows may show "Windows protected your PC" -- click **More info** -> **Run anyway**. If "Run anyway" is absent: right-click the batch -> **Properties** -> check **Unblock** -> **OK** -> run again.
 - **Setup:** Put your `.py` files and `run_setup.bat` in that folder, then double-click the `.bat`.
 - **Environment Locking:** On the first run, `run_setup.bat` creates or respects a `runtime.txt` to "pin" the Python version. It applies similar logic for dependencies found in `requirements.txt`, `pyproject.toml`, or PEP 723 headers.
 
