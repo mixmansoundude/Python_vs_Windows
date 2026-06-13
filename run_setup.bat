@@ -1805,7 +1805,7 @@ rem so this detection finds nothing and HP_PYI_EXPAT stays empty (no behavior ch
 set "HP_PYI_EXPAT="
 set "HP_EXPAT_DLL="
 for %%I in ("%HP_PY%") do set "HP_PY_DIR=%%~dpI"
-if defined HP_PY_DIR for %%D in ("%HP_PY_DIR%Library\bin\libexpat*.dll") do set "HP_EXPAT_DLL=%%~fD"
+if defined HP_PY_DIR for /f "delims=" %%D in ('dir /b /a-d "%HP_PY_DIR%Library\bin\libexpat*.dll" 2^>nul') do if not defined HP_EXPAT_DLL set "HP_EXPAT_DLL=%HP_PY_DIR%Library\bin\%%D"
 if defined HP_EXPAT_DLL (
   call :log "[INFO] REQ-007: bundling conda libexpat DLL for pyexpat: %HP_EXPAT_DLL%"
   set "HP_PYI_EXPAT=--add-binary "%HP_EXPAT_DLL%;.""
@@ -1889,6 +1889,9 @@ set "HP_FAST_EXE="
 set "HP_FAST_EXE_PATH="
 set "HP_FASTPATH_USED="
 set "HP_FASTPATH_TOKEN="
+set "HP_PYI_EXPAT="
+set "HP_EXPAT_DLL="
+set "HP_PY_DIR="
 exit /b 0
 :try_entry_smoke_after_warnfix
 rem derived requirement: after warnfix installs missing modules into the conda env,
