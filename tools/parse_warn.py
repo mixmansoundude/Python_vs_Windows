@@ -44,6 +44,10 @@ SKIP = frozenset([
     "importlib.metadata",
     "importlib.resources",
     "importlib.abc",
+    # stdlib packages whose submodules surface as "missing" in the warn file
+    # (e.g. collections.abc -> collections). They are never conda packages, so
+    # forwarding them to "conda install" only produces a noisy PackagesNotFound.
+    "collections",
     # Unix-only platform modules absent on Windows; these appear as optional/delayed
     # stdlib imports in the warn file and are safe to ignore.
     "grp",
