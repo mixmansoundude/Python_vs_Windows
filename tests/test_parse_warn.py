@@ -222,9 +222,18 @@ class ParseWarnFileEdgeCasesTest(unittest.TestCase):
     def test_pyi6_quoted_module_name_strips_quotes(self):
         # PyInstaller 6.x may quote the module name; quotes must not appear in output
         result = _parse_lines([
-            "missing module named 'collections' - imported by app (top-level)"
+            "missing module named 'requests' - imported by app (top-level)"
         ])
-        self.assertEqual(result, ["collections"])
+        self.assertEqual(result, ["requests"])
+
+    def test_stdlib_collections_skipped(self):
+        # collections.abc surfaces as "missing module named collections.abc"; the root
+        # collections is stdlib, never a conda package, so it must be skipped (REQ-007).
+        result = _parse_lines([
+            "missing module named 'collections.abc' - imported by app (top-level)",
+            "missing module named collections - imported by app (top-level)",
+        ])
+        self.assertEqual(result, [])
 
     def test_submodule_resolves_to_root(self):
         # PIL.Image.open -> root PIL -> pillow
