@@ -52,8 +52,8 @@ This repository serves as a proof of concept of this new approach.
 - **2 or more Python files**: prefer a clear entry by:
   0) Manual override (`%1` argument, e.g. drag-and-drop) -- if the file is co-located with the bootstrapper (REQ-011), it is used directly and skips all auto-detection.
   1) Common names in order: `main.py` > `app.py` > `run.py` > `cli.py`
-  2) Otherwise, any file containing `if __name__ == "__main__":`
-  - If no clear entry is found after those checks, the bootstrapper chooses deterministically and logs the choice.
+  2) Otherwise, the sole file containing a **substantive** `if __name__ == "__main__":` guard (a guard whose body is only `pass`, comments, a docstring, or `...` does not count, so a real sibling entry wins).
+  - If no single clear entry is found after those checks, the bootstrapper falls back to the **alphabetically-first** candidate -- preferring files that declared a `__main__` guard, otherwise any `.py` file -- so something always runs and packages instead of the entry resolving to empty. It logs the choice: `[BOOT] REQ-002: No clear entry found; selecting <file> (alphabetical fallback).`
 
 **Entry selection criteria (priority order):**
 
@@ -63,7 +63,8 @@ This repository serves as a proof of concept of this new approach.
 | `main.py` | 1 | REQ-002 |
 | `app.py` | 2 | REQ-002 |
 | `run.py` / `cli.py` | 3 | REQ-002 |
-| File with `__main__` guard | 4 | REQ-002 |
+| Sole file with a substantive `__main__` guard | 4 | REQ-002 |
+| Alphabetical fallback (deterministic) | 5 (lowest) | REQ-002 |
 
 ---
 

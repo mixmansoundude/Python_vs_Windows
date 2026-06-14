@@ -44,6 +44,7 @@ tests/
 
 tools/
   apply_patch.py               Unified/legacy diff parser and applier (used by inline_model_fix)
+  find_entry.py                REQ-002 entry-point selector (canonical source for HP_FIND_ENTRY)
   check_delimiters.py          Bracket/quote balance validator (.bat/.ps1/.py/.yml/.json)
   check_workflows_yaml.py      YAML syntax validation via PyYAML
   inline_model_fix.py          AI quick-fix orchestrator (OpenAI Responses API -- CI use only)
@@ -430,6 +431,7 @@ Test files and what they cover:
 |------|--------|
 | `test_apply_patch.py` | Unified/legacy diff parsing and application |
 | `test_entry_selection.py` | Entry file precedence (main > app > run > cli > __main__) |
+| `test_find_entry.py` | find_entry.py selection matrix: substantive `__main__` detection, alphabetical fallback (REQ-002), HP_FIND_ENTRY base64 sync |
 | `test_entry_single.py` | Single Python file bootstrap (Windows only, skipped on Linux) |
 | `test_inline_model_fix_decision.py` | Model quick-fix decision logic |
 | `test_ndjson_fail_list.py` | Fail list extraction from NDJSON artifacts |
