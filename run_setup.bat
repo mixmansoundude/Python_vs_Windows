@@ -209,6 +209,9 @@ set "HP_CONDA_PROBE_REASON=not-requested"
 
 rem --- Very top EXE fast path: reuse dist\%ENVNAME%.exe when sources are unchanged ---
 set "HP_FASTPATH_USED="
+rem REQ-016: start clean so an inherited env var can never trigger a false "EXE
+rem unverified" caveat; :run_exe_smokerun sets this only on a real non-zero EXE exit.
+set "HP_EXE_VERIFY_FAILED="
 if not "%PYCOUNT%"=="0" (
   call :try_fast_exe
 )
@@ -1772,6 +1775,9 @@ rem freshness check cannot see. Drop the fast path and fall through to a full re
 rem routes any persistent failure through :run_exe_smokerun's graceful handling + banner.
 if not "%HP_SMOKE_RC%"=="0" (
   call :log "[WARN] Fast path EXE exited %HP_SMOKE_RC%; discarding cached EXE and rebuilding."
+  rem Delete the broken EXE so the next :try_fast_exe call does not re-detect it as
+  rem "fresh" and run the known-bad binary again; the rebuild below recreates it.
+  if exist "%HP_FAST_EXE%" del "%HP_FAST_EXE%" >nul 2>&1
   set "HP_FASTPATH_USED="
   set "HP_SMOKE_RC="
 )

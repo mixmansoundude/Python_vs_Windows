@@ -80,6 +80,12 @@ print((ir.files("mypkg") / "data" / "info.txt").read_text())
 $prev = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
 $env:HP_SKIP_PIPREQS = '1'
 
+# Defensive: ensure the bootstrap's EXE smokerun does not emit a self.exe.smokerun
+# pass=false row into the gated NDJSON (the broken EXE is expected to fail here).
+# run_setup.bat only emits that row when HP_NDJSON is defined.
+$prevNd = if (Test-Path Env:HP_NDJSON) { $env:HP_NDJSON } else { $null }
+Remove-Item Env:HP_NDJSON -ErrorAction SilentlyContinue
+
 function Invoke-Bootstrap {
     param([string]$LogName)
     Push-Location $workDir
@@ -102,6 +108,7 @@ try {
     } else {
         $env:HP_SKIP_PIPREQS = $prev
     }
+    if ($null -ne $prevNd) { $env:HP_NDJSON = $prevNd }
 }
 
 $run2LogPath = Join-Path $workDir '~exefastpath_run2.log'
