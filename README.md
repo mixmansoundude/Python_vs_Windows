@@ -380,6 +380,41 @@ At completion:
 
 ---
 
+## [REQ-012] Super-user Execution-skip Hooks
+
+- For advanced/CI use, two environment variables let a caller build the environment and EXE **without executing any user code**:
+  - `HP_SKIP_ENTRY_SMOKE=1` -- skip the entry-script interpreter smoke test (and the fast-path EXE reuse, which also runs the program). The build still runs; the result is left **unverified** (not a fake pass or fail).
+  - `HP_SKIP_EXE_SMOKERUN=1` -- skip running the built/cached EXE for verification (both first-build and fast-path). "Skipped by request" is distinct from "failed verification": the post-flight panel shows a neutral note rather than the unverified caveat.
+- With both set, env creation, dependency install, and the PyInstaller build all still run, but no user code executes.
+- Log contract:
+  - `[INFO] REQ-012: HP_SKIP_ENTRY_SMOKE set; skipping entry-script smoke test (no user code executed).`
+  - `[INFO] REQ-012: HP_SKIP_EXE_SMOKERUN set; skipping EXE verification (skipped by request).`
+- Test NDJSON row: `self.skiphooks.combined` (in `tests/selfapps_skiphooks.ps1`).
+
+---
+
+## [REQ-017] Bootstrapper Size Limit
+
+- `run_setup.bat` is fully self-contained (all helper payloads are base64-embedded), so the single file is the entire deliverable.
+- It must stay **under 20 MB** so it can be distributed by email. CI enforces this as a tripwire to catch unbounded future growth (the current size is a tiny fraction of the limit).
+- Test NDJSON row: `self.size.tripwire` (in `tests/selfapps_size.ps1`).
+
+---
+
+## Advanced Environment Variables (reference)
+
+Operational knobs, not needed for normal double-click use:
+
+| Variable | Effect | REQ |
+|----------|--------|-----|
+| `HP_SKIP_ENTRY_SMOKE=1` | Skip the entry-script smoke test (no user code run) | REQ-012 |
+| `HP_SKIP_EXE_SMOKERUN=1` | Skip running the built/cached EXE for verification | REQ-012 |
+| `HP_SKIP_NIVISA=1` | Skip NI-VISA install even when pyvisa/visa is detected | REQ-008 |
+
+CI-only test-injection flags (`HP_TEST_*`, `HP_CI_*`, `HP_FORCE_CONDA_ONLY`, etc.) are documented inline in their respective REQ sections.
+
+---
+
 ## [REQ-020] Cache Corruption Hardening
 
 - On startup, if a previously downloaded conda or uv binary is found, the bootstrapper validates it with a health check before use.
