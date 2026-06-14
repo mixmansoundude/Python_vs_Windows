@@ -215,6 +215,9 @@ set "HP_FASTPATH_USED="
 rem REQ-016: start clean so an inherited env var can never trigger a false "EXE
 rem unverified" caveat; :run_exe_smokerun sets this only on a real non-zero EXE exit.
 set "HP_EXE_VERIFY_FAILED="
+rem REQ-012: HP_EXE_SKIPPED records that EXE verification was skipped by request
+rem (HP_SKIP_EXE_SMOKERUN) -- distinct from "failed" -- for the post-flight note.
+set "HP_EXE_SKIPPED="
 if not "%PYCOUNT%"=="0" (
   call :try_fast_exe
 )
@@ -1767,6 +1770,12 @@ if /I "%HP_FASTPATH_TOKEN%"=="fresh" (
   set "HP_FASTPATH_USED=1"
 )
 if not defined HP_FASTPATH_USED exit /b 0
+rem REQ-012: super-user hook -- reuse the fresh cached EXE but do not run it.
+if defined HP_SKIP_EXE_SMOKERUN (
+  call :log "[INFO] REQ-012: HP_SKIP_EXE_SMOKERUN set; reusing cached EXE without running it (skipped by request)."
+  set "HP_EXE_SKIPPED=1"
+  exit /b 0
+)
 call :log "[INFO] Fast path: reusing %HP_FAST_EXE%"
 >> "%LOG%" echo Fast path command: "%HP_FAST_EXE%" ^> "~run.out.txt" 2^> "~run.err.txt"
 "%HP_FAST_EXE%" 1> "~run.out.txt" 2> "~run.err.txt"
@@ -1789,6 +1798,14 @@ exit /b 0
 call :record_chosen_entry "%HP_ENTRY%"
 set "HP_FASTPATH_USED="
 set "HP_SMOKE_RC="
+rem REQ-012: super-user hook -- skip the entry-script smoke test (and fast-path EXE
+rem reuse, which also executes the program) so no user code runs. Env creation,
+rem dependency install, and the PyInstaller build still proceed; the result is left
+rem unverified (HP_SMOKE_RC stays empty), not a fake pass or fail.
+if defined HP_SKIP_ENTRY_SMOKE (
+  call :log "[INFO] REQ-012: HP_SKIP_ENTRY_SMOKE set; skipping entry-script smoke test (no user code executed)."
+  goto :run_entry_after_smoke
+)
 call :try_fast_exe
 if defined HP_FASTPATH_USED goto :run_entry_after_smoke
 call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
@@ -1914,6 +1931,9 @@ exit /b 0
 rem derived requirement: after warnfix installs missing modules into the conda env,
 rem re-run the entry script via Python interpreter so "Entry smoke exit=0" is logged.
 rem This fires only when warnfix was applied AND the original entry smoke failed.
+rem REQ-012: honor HP_SKIP_ENTRY_SMOKE here too -- otherwise the empty HP_SMOKE_RC
+rem (from skipping the initial smoke) would fall through and run user code anyway.
+if defined HP_SKIP_ENTRY_SMOKE exit /b 0
 if not defined HP_WARNFIX_APPLIED exit /b 0
 if "%HP_SMOKE_RC%"=="0" exit /b 0
 call :log "[INFO] Warnfix applied; retrying entry smoke via interpreter."
@@ -1924,6 +1944,14 @@ exit /b 0
 :run_exe_smokerun
 if not exist "dist\%ENVNAME%.exe" (
   call :log "[WARN] EXE smokerun: dist\%ENVNAME%.exe not found; skipping"
+  exit /b 0
+)
+rem REQ-012: super-user hook -- skip EXE verification by request, BEFORE announcing a
+rem test. Distinct from a verification failure, so HP_EXE_VERIFY_FAILED is NOT set; the
+rem post-flight note records that the EXE was built but intentionally not run.
+if defined HP_SKIP_EXE_SMOKERUN (
+  call :log "[INFO] REQ-012: HP_SKIP_EXE_SMOKERUN set; skipping EXE verification (skipped by request)."
+  set "HP_EXE_SKIPPED=1"
   exit /b 0
 )
 call :log "[INFO] EXE smokerun: testing dist\%ENVNAME%.exe"
@@ -2364,6 +2392,7 @@ echo  SETUP COMPLETE
 echo ============================================================
 echo  Your standalone application is ready:
 echo    dist\%ENVNAME%.exe
+if defined HP_EXE_SKIPPED echo    Note: EXE verification was skipped by request (HP_SKIP_EXE_SMOKERUN).
 goto :pfb_runapp
 :pfb_caveat
 echo  SETUP COMPLETE -- WITH A CAVEAT

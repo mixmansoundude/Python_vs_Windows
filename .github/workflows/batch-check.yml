@@ -278,6 +278,12 @@ jobs:
         run: |
           & tests\selfapps_envname.ps1
 
+      - name: "Self-test: bootstrapper size tripwire (REQ-017)"
+        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_size.ps1
+
       - name: "Self-test: real env smoke (CI-only)"
         if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
@@ -377,6 +383,12 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_exefastpath.ps1
+
+      - name: "Self-test: super-user skip hooks (conda-full only)"
+        if: ${{ matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_skiphooks.ps1
 
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
         if: ${{ matrix.mode == 'conda-full' }}
