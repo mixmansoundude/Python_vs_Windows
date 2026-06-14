@@ -272,6 +272,12 @@ jobs:
         run: |
           & tests\selfapps_isolation.ps1
 
+      - name: "Self-test: env-name sanitization (leading hyphen)"
+        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_envname.ps1
+
       - name: "Self-test: real env smoke (CI-only)"
         if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh

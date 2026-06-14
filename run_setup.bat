@@ -180,14 +180,17 @@ rem derived requirement: conda env names reject characters like '~'; self env sm
 rem scenarios run from tests\~envsmoke so normalize to ASCII word chars/_/-.
 set "ENVNAME_ORIG=%ENVNAME%"
 set "ENVNAME_SANITIZED="
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = $env:ENVNAME; if (-not $name) { $name = 'env'; } $san = ($name -replace '[^A-Za-z0-9_-]', '_'); if ([string]::IsNullOrWhiteSpace($san) -or ($san.Trim('_').Length -eq 0)) { $san = 'env'; } [Console]::Write($san)"` ) do set "ENVNAME_SANITIZED=%%I"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = $env:ENVNAME; if (-not $name) { $name = 'env'; } $san = ($name -replace '[^A-Za-z0-9_-]', '_'); $san = ($san -replace '^-+', '_'); if ([string]::IsNullOrWhiteSpace($san) -or ($san.Trim('_').Length -eq 0)) { $san = 'env'; } [Console]::Write($san)"` ) do set "ENVNAME_SANITIZED=%%I"
 if defined ENVNAME_SANITIZED set "ENVNAME=%ENVNAME_SANITIZED%"
 set "ENVNAME_SANITIZED="
+rem derived requirement: a leading hyphen is replaced above because `conda create -n -foo`
+rem parses the name as a command-line flag (malformed); internal hyphens (my-app) are kept.
 rem G1 guardrail: warn when folder name contained only non-word chars and defaulted to 'env'
 if "%ENVNAME%"=="env" if not "%ENVNAME_ORIG%"=="env" (
   call :log "[WARN] Env name could not be derived from '%ENVNAME_ORIG%'; defaulting to 'env'."
 )
 set "ENVNAME_ORIG="
+call :log "[INFO] Environment name: %ENVNAME%"
 rem --- Host environment diagnostics (confirm runner OS/PS version for every CI run) ---
 for /f "tokens=*" %%V in ('ver') do call :log "[INFO] Host OS: %%V"
 for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$PSVersionTable.PSVersion.ToString()" 2^>nul`) do call :log "[INFO] Host PowerShell: %%P"
