@@ -89,7 +89,7 @@ This repository serves as a proof of concept of this new approach.
   2. `pyproject.toml` `requires-python`
   3. Otherwise let **conda pick latest** (no hard-coded fallback); then **write back `runtime.txt`**.
 
-- Environment naming: env name equals the **current folder name**.
+- Environment naming: env name equals the **current folder name**, sanitized for conda: characters outside `[A-Za-z0-9_-]` (e.g. spaces) become `_`, a **leading hyphen** is replaced with `_` (so `conda create -n` does not parse the name as a flag), and a name that reduces to only separators falls back to `env`. Internal hyphens (e.g. `my-app`) are preserved. The derived name is logged: `[INFO] Environment name: <name>`.
 
 - Miniconda is the primary environment provider and the CI contract expects it. When Miniconda cannot be installed or
   downloaded, the bootstrapper falls back first to a Python venv and, as a last resort, runs the entry point under any
