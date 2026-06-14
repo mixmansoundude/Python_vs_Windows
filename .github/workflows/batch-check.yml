@@ -366,6 +366,12 @@ jobs:
         run: |
           & tests\selfapps_exedyn_fail.ps1
 
+      - name: "Self-test: fast-path broken-EXE graceful fallback (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_exefastpath.ps1
+
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
         if: ${{ matrix.mode == 'conda-full' }}
         shell: pwsh
@@ -1103,6 +1109,12 @@ jobs:
             tests\~selftest_exedyn_fail\~setup.log
             tests/~selftest_exedyn_fail/~pipreqs.diff.txt
             tests\~selftest_exedyn_fail\~pipreqs.diff.txt
+            tests/~selftest_exefastpath/~exefastpath_run1.log
+            tests\~selftest_exefastpath\~exefastpath_run1.log
+            tests/~selftest_exefastpath/~exefastpath_run2.log
+            tests\~selftest_exefastpath\~exefastpath_run2.log
+            tests/~selftest_exefastpath/~setup.log
+            tests\~selftest_exefastpath\~setup.log
             tests/~pandas_excel/~pandas_excel.log
             tests\~pandas_excel\~pandas_excel.log
             tests/~pipgap/~pipgap.log
