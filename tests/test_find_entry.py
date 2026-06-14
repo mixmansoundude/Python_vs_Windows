@@ -101,6 +101,25 @@ class FindEntrySelection(unittest.TestCase):
         self.assertEqual(out, "alpha.py")  # alphabetical fallback (no real guard)
         self.assertIn("alphabetical fallback", err)
 
+    def test_nested_guard_inside_function_does_not_count(self):
+        # A guard nested in a def/class is not a module entry point; only the
+        # top-level program (aaa_program.py) should be considered -> fallback.
+        out, err = _run({
+            "aaa_program.py": "def go():\n    return 1\n",
+            "zlib_helper.py": "def run():\n    if __name__ == '__main__':\n        print('x')\n",
+        })
+        self.assertEqual(out, "aaa_program.py")
+        self.assertIn("alphabetical fallback", err)
+
+    def test_unparseable_file_is_not_a_guard(self):
+        # A syntactically broken file containing "__main__" only in a string must
+        # not be selected via has_main; the real entry wins.
+        out, _ = _run({
+            "broken.py": "def (:  # syntax error\nmsg = 'see __main__'\n",
+            "real.py": "if __name__ == '__main__':\n    print('real')\n",
+        })
+        self.assertEqual(out, "real.py")
+
 
 class FindEntryPayloadSync(unittest.TestCase):
     def test_embedded_base64_matches_source(self):

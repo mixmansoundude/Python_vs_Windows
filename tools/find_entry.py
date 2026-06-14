@@ -65,10 +65,12 @@ def has_main(path):
     try:
         tree = ast.parse(src)
     except Exception:
-        # Unparseable source: fall back to a substring check so a real guard in a
-        # file we cannot parse is not silently lost.
-        return "__main__" in src
-    for node in ast.walk(tree):
+        # Unparseable source is a poor entry candidate; do not resurrect the old
+        # substring heuristic (which mis-fired on "__main__" in strings/comments).
+        return False
+    # Only a module-level guard marks a runnable script; a guard nested inside a
+    # function or class (e.g. a helper's `def run(): ... if __name__ == ...`) is not.
+    for node in tree.body:
         if isinstance(node, ast.If) and _is_main_guard(node.test):
             if any(_is_substantive(stmt) for stmt in node.body):
                 return True
