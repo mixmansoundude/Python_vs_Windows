@@ -316,6 +316,11 @@ At completion:
 - Attempt to produce a **PyInstaller one-file EXE** after setup.
 - Name the EXE exactly the env name (equals the folder name).
 - Fast path: if sources are unchanged since the last EXE build, detect early and run the existing EXE. Fast path freshness is determined by comparing the EXE timestamp against non-helper *.py files under the working directory (recursively), ignoring infrastructure directories like .git, .github, dist, .venv, __pycache__, etc.
+- **Graceful EXE-failure handling**: a packaged EXE that exits non-zero must never abort the bootstrapper. The environment and dependencies are already installed, so the bootstrap completes and the user is guided to run the app directly.
+  - First-build path: the EXE smoke test logs the non-zero exit, emits hints, and continues (`self.exe.smokerun` records the result).
+  - Fast path: a reused EXE that exits non-zero is **discarded** (the cached EXE may be stale or carry an unbundled runtime dependency, e.g. a DLL or data file the freshness check cannot see) and a full rebuild runs instead of aborting.
+  - Log contract: `[WARN] Fast path EXE exited <N>; discarding cached EXE and rebuilding.`
+  - Covered by `self.exe.fastpath.graceful` (real/conda-full lanes): builds an EXE that fails at runtime (a `importlib.resources` package data file not bundled by PyInstaller), then re-runs the bootstrapper so the fast path reuses the broken EXE, asserting the second run discards it, rebuilds, and still exits 0.
 
 ---
 
@@ -365,9 +370,12 @@ At completion:
 ## [REQ-016] Post-flight Briefing
 
 - After a successful full EXE build, the bootstrapper prints a scannable summary panel identifying the output EXE, files to keep, and files safe to delete.
+- The panel always includes a **RUNNING YOUR APP** section covering the two most common beginner confusions with frozen Windows executables: (1) the console window flashing closed before output is visible (run from an already-open Command Prompt to keep it open), and (2) in-place progress output appearing all at once due to stdout buffering differences between the EXE and the script.
+- When the packaged EXE could not be verified (its smoke run exited non-zero), the panel instead shows a **caveat**: the environment and dependencies are installed correctly, and the exact command to run the app directly via the prepared interpreter (`"<env python>" "<entry>"`). The bootstrap still completes (the environment is usable).
 - The terminal window is **retained** on both success and error so the user can read the output before it closes.
 - Log contract:
   - `[INFO] REQ-016: Post-flight briefing printed.`
+  - `[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run.`
 
 ---
 

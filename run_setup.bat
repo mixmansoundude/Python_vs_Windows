@@ -1766,7 +1766,15 @@ call :log "[INFO] Fast path: reusing %HP_FAST_EXE%"
 "%HP_FAST_EXE%" 1> "~run.out.txt" 2> "~run.err.txt"
 set "HP_SMOKE_RC=%ERRORLEVEL%"
 call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
-if not "%HP_SMOKE_RC%"=="0" call :die "[ERROR] Fast path EXE execution failed."
+rem REQ-007: a reused EXE that exits non-zero must NOT abort the bootstrapper. The cached
+rem EXE may be stale or carry an unbundled runtime dependency (DLL/data file) the fast-path
+rem freshness check cannot see. Drop the fast path and fall through to a full rebuild, which
+rem routes any persistent failure through :run_exe_smokerun's graceful handling + banner.
+if not "%HP_SMOKE_RC%"=="0" (
+  call :log "[WARN] Fast path EXE exited %HP_SMOKE_RC%; discarding cached EXE and rebuilding."
+  set "HP_FASTPATH_USED="
+  set "HP_SMOKE_RC="
+)
 exit /b 0
 :run_entry_smoke
 call :record_chosen_entry "%HP_ENTRY%"
@@ -1917,8 +1925,12 @@ popd
 if not defined HP_EXE_EXIT set "HP_EXE_EXIT=-1"
 if "%HP_EXE_EXIT%"=="0" (
   call :log "[INFO] EXE smokerun: exited 0 (ok)"
+  set "HP_EXE_VERIFY_FAILED="
 ) else (
   call :log "[WARN] EXE smokerun: exited %HP_EXE_EXIT% (non-zero)"
+  rem REQ-016: record that the packaged EXE could not be verified so the post-flight
+  rem briefing can guide the user to run the app directly instead of claiming success.
+  set "HP_EXE_VERIFY_FAILED=1"
   call :exe_smokerun_hints
 )
 if defined HP_NDJSON (
@@ -2338,10 +2350,34 @@ exit /b 0
 rem REQ-016: print a scannable summary panel after a successful full EXE build.
 echo.
 echo ============================================================
+if defined HP_EXE_VERIFY_FAILED goto :pfb_caveat
 echo  SETUP COMPLETE
 echo ============================================================
 echo  Your standalone application is ready:
 echo    dist\%ENVNAME%.exe
+goto :pfb_runapp
+:pfb_caveat
+echo  SETUP COMPLETE -- WITH A CAVEAT
+echo ============================================================
+echo  We packaged your app, but couldn't fully verify it runs as a
+echo  standalone program. Your environment and dependencies ARE
+echo  installed correctly -- you can always run your app directly:
+echo    "%HP_PY%" "%HP_ENTRY%"
+:pfb_runapp
+echo.
+echo  RUNNING YOUR APP
+echo    Double-click dist\%ENVNAME%.exe to run it.
+echo.
+echo    If the window flashes and closes instantly: that's normal if
+echo    your program finished quickly or hit an error before printing
+echo    anything. To see what happened, open Command Prompt, cd to
+echo    this folder, and run:
+echo      dist\%ENVNAME%.exe
+echo    This keeps the window open so you can read any messages.
+echo.
+echo    A progress indicator that updates in place may appear all at
+echo    once instead of live when run as the .exe -- that is a stdout
+echo    buffering difference between the .exe and the script, not an error.
 echo.
 echo  KEEP these files with your project:
 echo    requirements.txt  -- packages your app depends on
@@ -2353,7 +2389,11 @@ echo    ~* files          -- tilde-prefix work files (e.g. ~setup.log)
 echo    build\            -- PyInstaller build cache
 echo ============================================================
 echo.
+if defined HP_EXE_VERIFY_FAILED goto :pfb_log_caveat
 call :log "[INFO] REQ-016: Post-flight briefing printed."
+exit /b 0
+:pfb_log_caveat
+call :log "[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run."
 exit /b 0
 
 :check_net_after_dl_fail
