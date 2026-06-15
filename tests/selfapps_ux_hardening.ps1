@@ -194,13 +194,23 @@ if (-not (Test-Path -LiteralPath $envsmokeLog)) {
     $envsmokeBootLog = Join-Path $envsmokeDir '~envsmoke_bootstrap.log'
     if (Test-Path -LiteralPath $envsmokeBootLog) {
         $bootText = Get-Content -LiteralPath $envsmokeBootLog -Raw -Encoding Ascii
-        $pfExe    = $bootText -match [regex]::Escape('Your standalone application is ready:')
-        $pfKeep   = $bootText -match [regex]::Escape('KEEP these files')
-        $pfDelete = $bootText -match [regex]::Escape('SAFE TO DELETE')
-        $pfContent = ($pfExe -and $pfKeep -and $pfDelete)
-        $pfDetails.exeSectionFound    = $pfExe
-        $pfDetails.keepSectionFound   = $pfKeep
-        $pfDetails.deleteSectionFound = $pfDelete
+        $pfExe      = $bootText -match [regex]::Escape('Your standalone application is ready:')
+        $pfKeep     = $bootText -match [regex]::Escape('KEEP these files')
+        $pfDelete   = $bootText -match [regex]::Escape('SAFE TO DELETE')
+        # REQ-016 also requires a RUNNING YOUR APP section with two specific beginner-confusion items:
+        # (1) console-window flash advice (open Command Prompt to keep it open)
+        # (2) stdout buffering difference note -- "buffering difference" is on one echo line;
+        #     "stdout" ends the preceding line so we match the single-line phrase here.
+        $pfRunApp    = $bootText -match [regex]::Escape('RUNNING YOUR APP')
+        $pfCmdPrompt = $bootText -match [regex]::Escape('Command Prompt')
+        $pfStdBuf    = $bootText -match [regex]::Escape('buffering difference')
+        $pfContent = ($pfExe -and $pfKeep -and $pfDelete -and $pfRunApp -and $pfCmdPrompt -and $pfStdBuf)
+        $pfDetails.exeSectionFound     = $pfExe
+        $pfDetails.keepSectionFound    = $pfKeep
+        $pfDetails.deleteSectionFound  = $pfDelete
+        $pfDetails.runAppSectionFound  = $pfRunApp
+        $pfDetails.cmdPromptFound      = $pfCmdPrompt
+        $pfDetails.stdBufferingFound   = $pfStdBuf
     } else {
         # Defensive: never false-fail if the stdout capture is absent; fall back to the log line.
         $pfDetails.bootLogMissing = $true
@@ -210,7 +220,7 @@ if (-not (Test-Path -LiteralPath $envsmokeLog)) {
         id      = 'self.ux.postflight'
         req     = 'REQ-016'
         pass    = $pfFound
-        desc    = 'Post-flight briefing: log line plus panel content (EXE + keep + delete sections)'
+        desc    = 'Post-flight briefing: log line plus panel (EXE + keep + delete + RUNNING YOUR APP + Command Prompt + stdout buffering)'
         details = $pfDetails
     })
 }
