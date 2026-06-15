@@ -173,7 +173,7 @@ Write-NdjsonRow ([ordered]@{
 # ===== REQ-016: Post-flight briefing =====
 $envsmokeDir = Join-Path $here '~envsmoke'
 $envsmokeLog = Join-Path $envsmokeDir '~setup.log'
-$postflightSig = '[INFO] REQ-016: Post-flight briefing printed.'
+$postflightSig = 'REQ-016: Post-flight briefing printed'
 $pfFound = $true
 if (-not (Test-Path -LiteralPath $envsmokeLog)) {
     Write-NdjsonRow ([ordered]@{
@@ -194,7 +194,10 @@ if (-not (Test-Path -LiteralPath $envsmokeLog)) {
     $envsmokeBootLog = Join-Path $envsmokeDir '~envsmoke_bootstrap.log'
     if (Test-Path -LiteralPath $envsmokeBootLog) {
         $bootText = Get-Content -LiteralPath $envsmokeBootLog -Raw -Encoding Ascii
-        $pfExe      = $bootText -match [regex]::Escape('Your standalone application is ready:')
+        # Accept either the normal-path header or the caveat-path header; both confirm the panel printed.
+        $pfNormalExe  = $bootText -match [regex]::Escape('Your standalone application is ready:')
+        $pfCaveatHead = $bootText -match [regex]::Escape('SETUP COMPLETE -- WITH A CAVEAT')
+        $pfExe = ($pfNormalExe -or $pfCaveatHead)
         $pfKeep     = $bootText -match [regex]::Escape('KEEP these files')
         $pfDelete   = $bootText -match [regex]::Escape('SAFE TO DELETE')
         # REQ-016 also requires a RUNNING YOUR APP section with two specific beginner-confusion items:
@@ -202,6 +205,7 @@ if (-not (Test-Path -LiteralPath $envsmokeLog)) {
         # (2) stdout buffering difference note -- "buffering difference" is on one echo line;
         #     "stdout" ends the preceding line so we match the single-line phrase here.
         $pfRunApp    = $bootText -match [regex]::Escape('RUNNING YOUR APP')
+        # "Command Prompt" is the REQ-016-mandated term for Windows beginners; rephrase only with a req update.
         $pfCmdPrompt = $bootText -match [regex]::Escape('Command Prompt')
         $pfStdBuf    = $bootText -match [regex]::Escape('buffering difference')
         $pfContent = ($pfExe -and $pfKeep -and $pfDelete -and $pfRunApp -and $pfCmdPrompt -and $pfStdBuf)
