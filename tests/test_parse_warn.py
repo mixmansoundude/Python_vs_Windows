@@ -3,13 +3,21 @@
 Each TRANSLATIONS entry has at least one assertion; removing any entry causes a
 test failure.  Both PyInstaller 5.x (W: no module named 'foo') and 6.x
 (missing module named foo - imported by bar (top-level|delayed|conditional)) formats are covered.
+
+Also guards that the base64 HP_PARSE_WARN payload embedded in run_setup.bat
+matches this source (mirrors FindEntryPayloadSync in test_find_entry.py).
 """
+import base64
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
 from tools.parse_warn import parse_warn_file, TRANSLATIONS, SKIP
+
+REPO = Path(__file__).resolve().parent.parent
+PARSE_WARN = REPO / "tools" / "parse_warn.py"
 
 
 def _warn5(mod):
@@ -272,6 +280,19 @@ class ParseWarnFileEdgeCasesTest(unittest.TestCase):
         self.assertIn("importlib.abc", SKIP)
         result = _parse_lines(["W: no module named 'importlib.abc'"])
         self.assertEqual(result, [])
+
+
+class ParseWarnPayloadSync(unittest.TestCase):
+    def test_embedded_base64_matches_source(self):
+        bat = (REPO / "run_setup.bat").read_text(encoding="utf-8", errors="replace")
+        m = re.search(r'set "HP_PARSE_WARN=([A-Za-z0-9+/=]+)"', bat)
+        self.assertIsNotNone(m, "HP_PARSE_WARN payload not found in run_setup.bat")
+        decoded = base64.b64decode(m.group(1)).decode("utf-8")
+        source = PARSE_WARN.read_text(encoding="utf-8")
+        self.assertEqual(
+            decoded, source,
+            "HP_PARSE_WARN base64 is out of sync with tools/parse_warn.py; re-encode it.",
+        )
 
 
 if __name__ == "__main__":
