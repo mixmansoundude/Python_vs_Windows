@@ -81,6 +81,13 @@ def emit(path):
     print(os.path.normpath(path))
 
 
+# Exit codes: 0 = a clear, unambiguous pick was emitted; AMBIGUOUS_RC (3) = the
+# alphabetical fallback was used (multiple files, no clear winner) -- run_setup.bat
+# reads this to decide whether to offer the interactive picker. stdout always holds
+# the chosen entry regardless, so non-interactive callers are unaffected by the code.
+AMBIGUOUS_RC = 3
+
+
 def main():
     files = [name for name in os.listdir(".") if is_py(name)]
 
@@ -109,6 +116,8 @@ def main():
 
     # Deterministic fallback (REQ-002): no PREFERRED name and not exactly one
     # substantive __main__ guard. Prefer files that declared a guard, else any file.
+    # This ambiguous path exits AMBIGUOUS_RC so the batch may offer the interactive
+    # picker before accepting this alphabetical default.
     pool = candidates if candidates else files
     if pool:
         choice = sorted(pool)[0]
@@ -117,7 +126,7 @@ def main():
             % choice
         )
         emit(choice)
-        return 0
+        return AMBIGUOUS_RC
 
     # No .py files at all -- the bootstrapper handles no-python-files separately.
     return 0
