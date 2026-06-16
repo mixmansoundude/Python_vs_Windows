@@ -390,6 +390,12 @@ jobs:
         run: |
           & tests\selfapps_skiphooks.ps1
 
+      - name: "Self-test: REQ-002 timed entry picker (conda-full only)"
+        if: ${{ matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_entry_picker.ps1
+
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
         if: ${{ matrix.mode == 'conda-full' }}
         shell: pwsh

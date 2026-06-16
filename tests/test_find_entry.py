@@ -31,6 +31,46 @@ def _run(files):
         return proc.stdout.strip(), proc.stderr
 
 
+def _rc(files):
+    """Run find_entry in a temp dir; return (stdout pick, exit code)."""
+    with tempfile.TemporaryDirectory() as d:
+        for name, content in files.items():
+            (Path(d) / name).write_text(content, encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, str(FIND_ENTRY)],
+            cwd=d,
+            capture_output=True,
+            text=True,
+        )
+        return proc.stdout.strip(), proc.returncode
+
+
+class FindEntryExitCode(unittest.TestCase):
+    """Exit code signals selection certainty to run_setup.bat: 0 = clear pick,
+    3 (AMBIGUOUS_RC) = alphabetical fallback -> the only case that offers the picker."""
+
+    def test_rc_preferred_is_clear(self):
+        self.assertEqual(_rc({"zzz.py": "x=1\n", "main.py": "x=1\n"}), ("main.py", 0))
+
+    def test_rc_single_is_clear(self):
+        self.assertEqual(_rc({"solo.py": "print('hi')\n"}), ("solo.py", 0))
+
+    def test_rc_sole_mainguard_is_clear(self):
+        out, rc = _rc({"lib.py": "x=1\n", "tool.py": "if __name__ == '__main__':\n    print('go')\n"})
+        self.assertEqual((out, rc), ("tool.py", 0))
+
+    def test_rc_fallback_no_main_is_ambiguous(self):
+        self.assertEqual(_rc({"plotting.py": "x=1\n", "analysis.py": "y=2\n"}), ("analysis.py", 3))
+
+    def test_rc_fallback_multiple_guards_is_ambiguous(self):
+        out, rc = _rc({
+            "aaa.py": "x=1\n",
+            "ggg.py": "if __name__ == '__main__':\n    print('g')\n",
+            "hhh.py": "if __name__ == '__main__':\n    print('h')\n",
+        })
+        self.assertEqual((out, rc), ("ggg.py", 3))
+
+
 class FindEntrySelection(unittest.TestCase):
     def test_single_file(self):
         out, _ = _run({"solo.py": "print('hi')\n"})

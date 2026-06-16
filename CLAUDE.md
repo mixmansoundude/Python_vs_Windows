@@ -291,7 +291,7 @@ self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exed
 self.exe.fastpath.graceful, self.skiphooks.combined,
 self.fastpath,
 self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self.entry.entryD,
-self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path,
+self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, self.entry.picker,
 self.entry.req011.crossdir, self.entry.req011.sameDir, self.isolation.req010.pythonpath,
 self.envname.hyphen, self.size.tripwire,
 reqspec.translate.{gte,eq,compat,gt,neq,lte}, reqspec.conda.dryrun,
