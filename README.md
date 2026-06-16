@@ -53,7 +53,9 @@ This repository serves as a proof of concept of this new approach.
   0) Manual override (`%1` argument, e.g. drag-and-drop) -- if the file is co-located with the bootstrapper (REQ-011), it is used directly and skips all auto-detection.
   1) Common names in order: `main.py` > `app.py` > `run.py` > `cli.py`
   2) Otherwise, the sole file containing a **substantive** `if __name__ == "__main__":` guard (a guard whose body is only `pass`, comments, a docstring, or `...` does not count, so a real sibling entry wins).
-  - If no single clear entry is found after those checks, the bootstrapper falls back to the **alphabetically-first** candidate -- preferring files that declared a `__main__` guard, otherwise any `.py` file -- so something always runs and packages instead of the entry resolving to empty. It logs the choice: `[BOOT] REQ-002: No clear entry found; selecting <file> (alphabetical fallback).`
+  - If no single clear entry remains after those checks (multiple files, no clear winner), the bootstrapper reverts to the spirit of its original behavior:
+    - **Interactive picker (timed)** -- when a human is present (interactive console; not CI/`NOINPUT`/`HP_NONINTERACTIVE`), it prints an alphabetical numbered menu (up to 9 files) and waits ~30s. Typing a valid number selects that file; **timeout (or no console) -> the alphabetical default**. The menu also explains how to avoid the prompt next time (drag-and-drop a file onto the batch, rename to `main.py`/`app.py`/`run.py`/`cli.py`, or add a single `__main__` guard).
+    - **Alphabetical fallback (deterministic)** -- the non-interactive / default path: the alphabetically-first candidate (preferring files that declared a `__main__` guard, otherwise any `.py` file). This is the guaranteed terminal pick, so something always runs and packages instead of the entry resolving to empty. `find_entry` logs `[BOOT] REQ-002: No clear entry found; selecting <file> (alphabetical fallback).` and exits with a distinct ambiguous code that triggers the picker.
 
 **Entry selection criteria (priority order):**
 
@@ -64,7 +66,8 @@ This repository serves as a proof of concept of this new approach.
 | `app.py` | 2 | REQ-002 |
 | `run.py` / `cli.py` | 3 | REQ-002 |
 | Sole file with a substantive `__main__` guard | 4 | REQ-002 |
-| Alphabetical fallback (deterministic) | 5 (lowest) | REQ-002 |
+| Interactive picker (timed; human present) | 5 | REQ-002 |
+| Alphabetical fallback (deterministic) | 6 (lowest) | REQ-002 |
 
 ---
 
@@ -410,6 +413,7 @@ Operational knobs, not needed for normal double-click use:
 | `HP_SKIP_ENTRY_SMOKE=1` | Skip the entry-script smoke test (no user code run) | REQ-012 |
 | `HP_SKIP_EXE_SMOKERUN=1` | Skip running the built/cached EXE for verification | REQ-012 |
 | `HP_SKIP_NIVISA=1` | Skip NI-VISA install even when pyvisa/visa is detected | REQ-008 |
+| `NOINPUT=1` / `HP_NONINTERACTIVE=1` | Skip the interactive entry picker; take the alphabetical default | REQ-002 |
 
 CI-only test-injection flags (`HP_TEST_*`, `HP_CI_*`, `HP_FORCE_CONDA_ONLY`, etc.) are documented inline in their respective REQ sections.
 
