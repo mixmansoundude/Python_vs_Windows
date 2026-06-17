@@ -72,15 +72,10 @@ rem --- PVW_ super-user overrides (inherit from calling terminal; logged before 
 rem derived requirement: PVW_ variables let a super-user pre-set values to bypass auto-detection.
 rem Single-line if form avoids parse-time expansion issues in block-form if-statements when a
 rem variable value contains parentheses, such as a path under "C:\Program Files (x86)\...".
-if defined PVW_PYTHON_EXE echo [DEBUG] Using super-user override for PVW_PYTHON_EXE: %PVW_PYTHON_EXE%
 if defined PVW_PYTHON_EXE call :log "[DEBUG] Using super-user override for PVW_PYTHON_EXE: %PVW_PYTHON_EXE%"
-if defined PVW_UV_EXE echo [DEBUG] Using super-user override for PVW_UV_EXE: %PVW_UV_EXE%
 if defined PVW_UV_EXE call :log "[DEBUG] Using super-user override for PVW_UV_EXE: %PVW_UV_EXE%"
-if defined PVW_CONDA_EXE echo [DEBUG] Using super-user override for PVW_CONDA_EXE: %PVW_CONDA_EXE%
 if defined PVW_CONDA_EXE call :log "[DEBUG] Using super-user override for PVW_CONDA_EXE: %PVW_CONDA_EXE%"
-if defined PVW_TARGET_PY echo [DEBUG] Using super-user override for PVW_TARGET_PY: %PVW_TARGET_PY%
 if defined PVW_TARGET_PY call :log "[DEBUG] Using super-user override for PVW_TARGET_PY: %PVW_TARGET_PY%"
-if defined PVW_WORKSPACE echo [DEBUG] Using super-user override for PVW_WORKSPACE: %PVW_WORKSPACE%
 if defined PVW_WORKSPACE call :log "[DEBUG] Using super-user override for PVW_WORKSPACE: %PVW_WORKSPACE%"
 rem --- Path-length guard: warn if script root path approaches the 260-char cmd.exe limit ---
 for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:HP_SCRIPT_ROOT.Length" 2^>nul`) do set "HP_PATH_LEN=%%L"
