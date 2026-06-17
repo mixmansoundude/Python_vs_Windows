@@ -307,6 +307,17 @@ $hasCli = $feMatch.Success -and ($feDecoded -match '"cli\.py"')
 Write-Result "batch.req002.findentry_cli" "REQ-002: HP_FIND_ENTRY PREFERRED includes cli.py" $hasCli @{}
 $hasRun = $feMatch.Success -and ($feDecoded -match '"run\.py"')
 Write-Result "batch.req002.findentry_run" "REQ-002: HP_FIND_ENTRY PREFERRED includes run.py" $hasRun @{}
+$hasPickerSub    = $AllText -match ':pick_entry_interactive'
+$hasNoinputGuard = ($AllText -match 'if\s+defined\s+NOINPUT') -and ($AllText -match 'if\s+defined\s+HP_NONINTERACTIVE')
+$hasPickerForce  = $AllText -match 'HP_TEST_FORCE_PICKER'
+$hasPickerLog    = $AllText.Contains('[INFO] REQ-002: Picker entry selected:')
+$pickerOk = $hasPickerSub -and $hasNoinputGuard -and $hasPickerForce -and $hasPickerLog
+Write-Result 'batch.req002.picker' 'REQ-002: interactive picker subroutine, non-interactive guards, test-force flag, and resolution log present' $pickerOk @{
+    hasPickerSub    = $hasPickerSub
+    hasNoinputGuard = $hasNoinputGuard
+    hasPickerForce  = $hasPickerForce
+    hasPickerLog    = $hasPickerLog
+}
 $hasDiffTrace = ($Lines | Select-String -SimpleMatch 'REQ-005.5').Count -gt 0
 Write-Result "batch.dep.diff.trace" "REQ-005.5: dependency diff log line present in run_setup.bat source" $hasDiffTrace @{}
 $hasCondaWarmup = ($AllText -match 'if defined HP_CONDA_JUST_INSTALLED\s+if defined CONDA_BAT') -and ($AllText -match 'call\s+"%CONDA_BAT%"\s+info\s+>nul')
