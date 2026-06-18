@@ -104,7 +104,16 @@ set "HP_HELPER_CMD_LOGGED="
 set "HP_FIND_ENTRY_NAME=~find_entry.py"
 set "HP_FIND_ENTRY_ABS="
 set "HP_PIPREQS_VERSION=%HP_PIPREQS_VERSION%"
-if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
+rem derived requirement: pin pipreqs to 0.4.13, NOT 0.5.0. pipreqs 0.5.0 added Jupyter
+rem notebook scanning, which hard-pins ipython==8.12.3 (the last ipython supporting Python
+rem 3.8). ipython 8.12.3 does not support Python 3.13+, so 0.5.0's metadata declares
+rem Requires-Python >=3.8.1,<3.13. Because the bootstrapper always targets the latest
+rem conda-forge Python (3.14+), 0.5.0 refuses to install there and pipreqs is lost entirely.
+rem 0.4.13 has Requires-Python >=3.7 (no upper cap), deps only docopt+yarg, supports the same
+rem --mode compat / --force / --savepath flags, uses only stable stdlib (ast-based scan), and
+rem runs on Python 3.14. Do NOT "upgrade" back to 0.5.0 -- it reintroduces the <3.13 cap.
+rem The only feature lost is .ipynb scanning, which was already non-functional on latest Python.
+if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.4.13"
 set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
 if not defined HP_MINICONDA_MIN_BYTES set "HP_MINICONDA_MIN_BYTES=5000000"
 set "HP_CONDA_DL_INJECTED="
@@ -721,6 +730,7 @@ if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
     set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs unavailable for this Python version)"
   ) else (
     set "HP_PIPREQS_INSTALL_PASS=1"
+    call :log "[INFO] pipreqs %HP_PIPREQS_VERSION% installed successfully; using it for dependency discovery."
   )
 )
 if defined HP_NDJSON (

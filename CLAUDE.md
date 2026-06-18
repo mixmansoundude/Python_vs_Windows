@@ -516,12 +516,30 @@ and cv2/opencv mapping limitation.
 
 ---
 
-## Dependency Discovery Fallback: Python 3.13+ (as of 2026-06-18)
+## Dependency Discovery: pipreqs pin rationale (as of 2026-06-18)
 
-**Status:** pipreqs 0.5.0 (pinned version) requires `Python <3.13` and is permanently unavailable on Python 3.13+.
-There is no newer pipreqs version; 0.5.0 is the latest release and will not be updated retroactively.
+**pipreqs is pinned to 0.4.13, NOT 0.5.0.** This is deliberate and load-bearing:
 
-**Fallback mechanism:** When pipreqs install fails, the bootstrapper gracefully falls back to `warnfix`:
+- pipreqs 0.5.0 (the latest release) added Jupyter notebook scanning, which hard-pins `ipython==8.12.3`
+  (the last ipython supporting Python 3.8). ipython 8.12.3 does not support Python 3.13+, so 0.5.0's
+  metadata declares `Requires-Python >=3.8.1,<3.13`.
+- The bootstrapper always targets the latest conda-forge Python (currently 3.14+). On that Python, pip
+  refuses to install 0.5.0 (version cap), so pipreqs would be lost entirely and every run would fall back
+  to warnfix.
+- pipreqs 0.4.13 has `Requires-Python >=3.7` (no upper cap), deps only `docopt`+`yarg`, supports the same
+  `--mode compat` / `--force` / `--savepath` flags, uses only stable stdlib (ast-based scan), and runs on
+  Python 3.14. It restores pipreqs as the primary discovery tool.
+- **Do NOT "upgrade" the pin back to 0.5.0** -- it reintroduces the `<3.13` cap and silently disables
+  pipreqs on modern Python. The only feature lost by 0.4.13 is `.ipynb` scanning, which was already
+  non-functional on latest Python (0.5.0 cannot run there).
+
+The `pipreqs.flags` CI gate validates the invocation flags, not the version, so the pin is free to change.
+The setup log line `[INFO] pipreqs <ver> installed successfully` confirms pipreqs is active on a given run.
+
+## Dependency Discovery Fallback: warnfix (secondary safety net)
+
+If pipreqs install ever fails (e.g., a future Python drops a stdlib API pipreqs needs, or docopt/yarg
+cannot build), the bootstrapper still falls back to `warnfix`:
 1. PyInstaller builds the EXE (static analysis finds many imports)
 2. Read the `warn` file (list of modules PyInstaller couldn't find)
 3. Parse warn file via `parse_warn.py`: extract top-level, delayed, and conditional imports
