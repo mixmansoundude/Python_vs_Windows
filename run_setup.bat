@@ -1970,6 +1970,11 @@ if "%HP_ENV_MODE%"=="system" (
       type "build\%ENVNAME%\warn-%ENVNAME%.txt" >> "%LOG%"
       copy "build\%ENVNAME%\warn-%ENVNAME%.txt" "~warnfile.txt" >nul 2>&1
       call :log "[INFO] warnfix: Platform-specific modules in the list above are expected on Windows: posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external. These will be filtered out automatically."
+      if defined HP_NDJSON (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+          "$row = @{ id='self.warnfix.platform_filter'; pass=$true; detail='posix_modules_expected_on_windows' } | ConvertTo-Json -Compress -Depth 8;" ^
+          "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+      )
     ) else (
       call :log "[DEBUG] warnfix: warn file not found"
     )
