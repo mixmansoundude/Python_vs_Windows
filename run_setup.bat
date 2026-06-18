@@ -716,7 +716,9 @@ if defined PEP723_BLOCK_FOUND if not defined PEP723_ACTIVE (
 set "PEP723_BLOCK_FOUND="
 
 set "HP_PIPREQS_INSTALL_PASS=0"
+set "HP_PIPREQS_INSTALL_ATTEMPTED=0"
 if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
+  set "HP_PIPREQS_INSTALL_ATTEMPTED=1"
   if "%HP_ENV_MODE%"=="uv" (
     rem derived requirement: uv pip install bypasses python -m pip so pip need not
     rem be a module inside the uv venv; uv's own resolver handles the installation.
@@ -736,17 +738,18 @@ if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
 if defined HP_NDJSON (
   rem Emit pass=true for intentional skips (PEP 723 or pre-existing HP_SKIP_PIPREQS),
   rem pass=true for successful installs, pass=false for install failures.
-  rem Check if skip was intentional: if PEP723_ACTIVE is set, or if HP_SKIP_PIPREQS
-  rem was set BEFORE the install block (indicated by no install attempt made).
+  rem Use HP_PIPREQS_INSTALL_ATTEMPTED to distinguish failed install (attempted=1, pass=0)
+  rem from intentional skip (attempted=0).
   if defined PEP723_ACTIVE (
     powershell -NoProfile -ExecutionPolicy Bypass -Command ^
       "$row = @{ id='pipreqs.install'; pass=$true; reason='pep723_active' } | ConvertTo-Json -Compress -Depth 8;" ^
       "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
   ) else (
     powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$attempted = [Environment]::GetEnvironmentVariable('HP_PIPREQS_INSTALL_ATTEMPTED') -eq '1';" ^
       "$pass = [Environment]::GetEnvironmentVariable('HP_PIPREQS_INSTALL_PASS') -eq '1';" ^
-      "$skipReason = [Environment]::GetEnvironmentVariable('HP_SKIP_PIPREQS') -eq '1';" ^
-      "if ($skipReason) { $pass = $true; $reason = 'skip_preexisting' } else { $reason = if ($pass) { 'success' } else { 'install_failed' } }" ^
+      "if ($attempted) { $reason = if ($pass) { 'success' } else { 'install_failed' } } else { $reason = 'skip_preexisting' };" ^
+      "$pass = if ($attempted) { $pass } else { $true };" ^
       "$row = @{ id='pipreqs.install'; pass=$pass; reason=$reason } | ConvertTo-Json -Compress -Depth 8;" ^
       "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
   )
