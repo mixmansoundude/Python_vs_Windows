@@ -25,7 +25,7 @@ Getting the code running takes priority over preserving constraints.
 ## Repository Map
 
 ```
-run_setup.bat                  Main bootstrapper (self-contained, ~61 KB) -- the deliverable
+run_setup.bat                  Main bootstrapper (self-contained, ~157 KB) -- the deliverable
 run_tests.bat                  Static test orchestrator (calls harness.ps1)
 
 tests/
@@ -513,6 +513,36 @@ Responses API, extracts a fenced diff, and applies it via `tools/apply_patch.py`
 `pipreqs` is discovery only. `requirements.txt` is a hint, not authority. conda-forge is
 truth. See README.md §Dependency strategy for the full explanation including the PIL/pillow
 and cv2/opencv mapping limitation.
+
+---
+
+## Dependency Discovery Fallback: Python 3.13+ (as of 2026-06-18)
+
+**Status:** pipreqs 0.5.0 (pinned version) requires `Python <3.13` and is permanently unavailable on Python 3.13+.
+There is no newer pipreqs version; 0.5.0 is the latest release and will not be updated retroactively.
+
+**Fallback mechanism:** When pipreqs install fails, the bootstrapper gracefully falls back to `warnfix`:
+1. PyInstaller builds the EXE (static analysis finds many imports)
+2. Read the `warn` file (list of modules PyInstaller couldn't find)
+3. Parse warn file via `parse_warn.py`: extract top-level, delayed, and conditional imports
+4. Filter out platform-specific modules (posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external — all POSIX/Unix-only, safe to ignore on Windows)
+5. Install detected missing packages via conda or pip
+6. Rebuild EXE
+7. Retry interpreter smoke test
+
+**Warnfix coverage:** Warnfix detects and handles:
+- ✓ Top-level imports (e.g., `import colorama`)
+- ✓ Delayed imports (e.g., `def load(): import requests`)
+- ✓ Conditional imports (e.g., `if sys.platform == 'win32': import winreg`)
+- ✗ Optional/try-except imports (intentionally skipped, guarded by try-except)
+- ✗ Dynamic imports (e.g., `importlib.import_module(name)`)
+
+**User recommendation:** For Python 3.13+ or to avoid fallback latency, provide explicit dependencies:
+- **Option 1:** Add `requirements.txt` (comma-separated or newline-separated, any format pip understands)
+- **Option 2:** Add `pyproject.toml` with `[project]` section and `dependencies` field (PEP 508 format)
+- **Option 3:** Add PEP 723 inline metadata: `# /// script` block at the top of your `.py` file (Python 3.11+)
+
+See README.md §Dependency strategy for full details.
 
 ---
 

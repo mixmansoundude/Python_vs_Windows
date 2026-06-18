@@ -706,6 +706,7 @@ if defined PEP723_BLOCK_FOUND if not defined PEP723_ACTIVE (
 )
 set "PEP723_BLOCK_FOUND="
 
+set "HP_PIPREQS_INSTALL_PASS=0"
 if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
   if "%HP_ENV_MODE%"=="uv" (
     rem derived requirement: uv pip install bypasses python -m pip so pip need not
@@ -715,10 +716,18 @@ if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
     "%HP_PY%" -m pip install -q --disable-pip-version-check pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
   )
   if errorlevel 1 (
-    call :log "[WARN] pipreqs install failed (no conda-forge build for this Python version?). Continuing without auto-detected requirements."
+    call :log "[WARN] pipreqs install failed (Python version incompatible with pipreqs). Fallback: warnfix will detect and install missing imports at build time. Consider adding requirements.txt or pyproject.toml [project].dependencies for explicit dependency specification."
     set "HP_SKIP_PIPREQS=1"
     set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs unavailable for this Python version)"
+  ) else (
+    set "HP_PIPREQS_INSTALL_PASS=1"
   )
+)
+if defined HP_NDJSON (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$pass = [Environment]::GetEnvironmentVariable('HP_PIPREQS_INSTALL_PASS') -eq '1';" ^
+    "$row = @{ id='pipreqs.install'; pass=$pass } | ConvertTo-Json -Compress -Depth 8;" ^
+    "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 )
 
 set "HP_PIPREQS_TARGET_WORK=%CD%\requirements.auto.txt"
@@ -1935,6 +1944,7 @@ if "%HP_ENV_MODE%"=="system" (
       call :log "[DEBUG] warnfix: warn file found"
       type "build\%ENVNAME%\warn-%ENVNAME%.txt" >> "%LOG%"
       copy "build\%ENVNAME%\warn-%ENVNAME%.txt" "~warnfile.txt" >nul 2>&1
+      call :log "[INFO] warnfix: Platform-specific modules in the list above are expected on Windows: posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external. These will be filtered out automatically."
     ) else (
       call :log "[DEBUG] warnfix: warn file not found"
     )
