@@ -734,10 +734,22 @@ if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
   )
 )
 if defined HP_NDJSON (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$pass = [Environment]::GetEnvironmentVariable('HP_PIPREQS_INSTALL_PASS') -eq '1';" ^
-    "$row = @{ id='pipreqs.install'; pass=$pass } | ConvertTo-Json -Compress -Depth 8;" ^
-    "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+  rem Emit pass=true for intentional skips (PEP 723 or pre-existing HP_SKIP_PIPREQS),
+  rem pass=true for successful installs, pass=false for install failures.
+  rem Check if skip was intentional: if PEP723_ACTIVE is set, or if HP_SKIP_PIPREQS
+  rem was set BEFORE the install block (indicated by no install attempt made).
+  if defined PEP723_ACTIVE (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$row = @{ id='pipreqs.install'; pass=$true; reason='pep723_active' } | ConvertTo-Json -Compress -Depth 8;" ^
+      "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+  ) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$pass = [Environment]::GetEnvironmentVariable('HP_PIPREQS_INSTALL_PASS') -eq '1';" ^
+      "$skipReason = [Environment]::GetEnvironmentVariable('HP_SKIP_PIPREQS') -eq '1';" ^
+      "if ($skipReason) { $pass = $true; $reason = 'skip_preexisting' } else { $reason = if ($pass) { 'success' } else { 'install_failed' } }" ^
+      "$row = @{ id='pipreqs.install'; pass=$pass; reason=$reason } | ConvertTo-Json -Compress -Depth 8;" ^
+      "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+  )
 )
 
 set "HP_PIPREQS_TARGET_WORK=%CD%\requirements.auto.txt"
