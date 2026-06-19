@@ -810,6 +810,13 @@ echo *** [WARN] Auto-detection may be incomplete or incorrect
 echo *** [INFO] Consider adding requirements.txt or PEP 723 metadata for reliability
 if not "%DEP_SOURCE%"=="requirements.txt" set "DEP_SOURCE=pipreqs"
 
+rem pipreqs invocation: uses "python -m pipreqs.pipreqs" NOT the console script (pipreqs command).
+rem derived requirement: bootstrap determinism. The console script (pipreqs) relies on PATH being set
+rem correctly after conda env activation, which is not guaranteed in the same shell session immediately
+rem after environment creation. Using explicit Python interpreter + module bypasses PATH resolution and
+rem works reliably in bootstrap contexts where shell state / PATH propagation is not fully initialized.
+rem This is NOT a pipreqs API issue (the console script is the official API); it is a Windows batch
+rem bootstrap sequencing issue. pipreqs is pinned to 0.4.13 permanently, so internal coupling is zero-risk.
 rem pipreqs flags are locked by CI (pipreqs.flags gate).
 rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
 if defined HP_PIPREQS_IGNORE goto :pipreqs_direct_with_ignore

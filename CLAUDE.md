@@ -536,6 +536,27 @@ and cv2/opencv mapping limitation.
 The `pipreqs.flags` CI gate validates the invocation flags, not the version, so the pin is free to change.
 The setup log line `[INFO] pipreqs <ver> installed successfully` confirms pipreqs is active on a given run.
 
+## Dependency Discovery: pipreqs invocation (bootstrap determinism)
+
+**pipreqs is invoked via `python -m pipreqs.pipreqs`, NOT the console script (`pipreqs` command).**
+This is a bootstrap architecture decision, not a pipreqs API issue:
+
+- **The official pipreqs API:** The console script `pipreqs` is the documented, portable way to invoke pipreqs
+  (defined in `entry_points.txt` as `pipreqs = pipreqs.pipreqs:main`).
+- **Why not used here:** The console script relies on PATH being correctly set after conda environment
+  activation. In Windows batch bootstrap contexts (where the bootstrapper immediately invokes tools
+  after environment creation in the same shell session), conda environment activation may not be fully
+  applied, and PATH may not include `%CONDA_PREFIX%\Scripts`. This makes the console script unreliable.
+- **Why this approach:** Using `python -m pipreqs.pipreqs` with an explicit Python interpreter path
+  (`%HP_PY%`) bypasses PATH resolution entirely and works deterministically in bootstrap contexts where
+  shell state / PATH propagation is not fully initialized.
+- **Risk mitigation:** pipreqs is pinned to 0.4.13 permanently, so internal module coupling (`pipreqs.pipreqs`
+  file location) is a zero-risk assumption.
+
+This is a **bootstrap sequencing trade-off:** deterministic execution in a half-initialized environment
+takes priority over API purity. See `run_setup.bat` lines ~813–820 for the invocation and the extended
+comment explaining this decision.
+
 ## Dependency Discovery Fallback: warnfix (secondary safety net)
 
 If pipreqs install ever fails (e.g., a future Python drops a stdlib API pipreqs needs, or docopt/yarg
