@@ -539,23 +539,26 @@ The setup log line `[INFO] pipreqs <ver> installed successfully` confirms pipreq
 ## Dependency Discovery: pipreqs invocation (bootstrap determinism)
 
 **pipreqs is invoked via `python -m pipreqs.pipreqs`, NOT the console script (`pipreqs` command).**
-This is a bootstrap architecture decision, not a pipreqs API issue:
+This is an intentional bootstrap execution strategy, not a workaround for pipreqs limitations.
 
-- **The official pipreqs API:** The console script `pipreqs` is the documented, portable way to invoke pipreqs
-  (defined in `entry_points.txt` as `pipreqs = pipreqs.pipreqs:main`).
-- **Why not used here:** The console script relies on PATH being correctly set after conda environment
-  activation. In Windows batch bootstrap contexts (where the bootstrapper immediately invokes tools
-  after environment creation in the same shell session), conda environment activation may not be fully
-  applied, and PATH may not include `%CONDA_PREFIX%\Scripts`. This makes the console script unreliable.
-- **Why this approach:** Using `python -m pipreqs.pipreqs` with an explicit Python interpreter path
-  (`%HP_PY%`) bypasses PATH resolution entirely and works deterministically in bootstrap contexts where
-  shell state / PATH propagation is not fully initialized.
-- **Risk mitigation:** pipreqs is pinned to 0.4.13 permanently, so internal module coupling (`pipreqs.pipreqs`
-  file location) is a zero-risk assumption.
+**Constraints driving this choice:**
+- Windows batch bootstrap never depends on shell state (PATH, activation, environment variables)
+- Bootstrap runs immediately after environment creation in the same shell session
+- Console scripts require PATH correctness and activation to persist—neither is guaranteed
+- Bootstrap reliability > API purity in this system class
 
-This is a **bootstrap sequencing trade-off:** deterministic execution in a half-initialized environment
-takes priority over API purity. See `run_setup.bat` lines ~813–820 for the invocation and the extended
-comment explaining this decision.
+**Why internal module invocation is safe here:**
+- pipreqs is pinned to 0.4.13 permanently (no automatic upgrades)
+- Version freeze makes internal module structure (`pipreqs/pipreqs.py`) stable by contract
+- Internal coupling is not a "fragility risk" but a "controlled dependency"
+
+**Comparison of approaches:**
+| Approach | Reliability in Bootstrap | Architecture | Scope |
+|----------|--------------------------|--------------|-------|
+| `pipreqs` (console script) | ⚠ Fragile (PATH dependent) | ✔ Official API | General use |
+| `python -m pipreqs.pipreqs` | ✔ Deterministic (no PATH) | ⚠ Internal mechanism | Bootstrap only |
+
+See `run_setup.bat` lines ~813–820 for the invocation comment and rationale. This is a **deterministic execution pattern required for bootstrap reliability**, not a sign of fragility or a temporary workaround.
 
 ## Dependency Discovery Fallback: warnfix (secondary safety net)
 
@@ -582,6 +585,26 @@ cannot build), the bootstrapper still falls back to `warnfix`:
 - **Option 3:** Add PEP 723 inline metadata: `# /// script` block at the top of your `.py` file (Python 3.11+)
 
 See README.md §Dependency strategy for full details.
+
+---
+
+## Bootstrap Architecture Principles
+
+This system prioritizes **deterministic execution during bootstrap** over packaging purity. These principles guide decisions about tool invocation, dependency handling, and error handling in `run_setup.bat`:
+
+1. **Bootstrap reliability > API correctness.** If a feature depends on "maybe PATH is set" or "activation might work," it is invalid for bootstrap paths. Determinism is non-negotiable.
+
+2. **Never depend on console scripts during bootstrap.** Console scripts (`pipreqs`, `pytest`, etc.) are forbidden in bootstrap logic because they require: Scripts/ on PATH, activation state correctness, OS-level shim resolution. Instead: use explicit interpreter paths or direct Python APIs.
+
+3. **All execution must be interpreter-anchored.** Every tool invocation roots in an explicit Python executable path (`%HP_PY%` or `%CONDA_PREFIX%\python.exe`), never relying on PATH or activation to supply the correct interpreter.
+
+4. **Pinned dependencies are assumed stable.** For version-frozen tools (pipreqs 0.4.13), internal behavior and module structure may be relied upon as stable by contract. Internal coupling is acceptable when version is locked.
+
+5. **Bootstrap must fail fast and explicitly.** If bootstrap cannot guarantee interpreter, environment, or dependency availability, it fails loudly and early. No silent fallbacks unless explicitly logged.
+
+6. **Non-obvious decisions must be self-documenting.** If bootstrap does something like `python -m pipreqs.pipreqs` instead of `pipreqs`, it must include a comment explaining why PATH/CLI/activation was not used. Future maintainers must not be tempted to "fix" it incorrectly.
+
+**Application:** These principles validate the pipreqs invocation strategy, justify the dep-check cache optimization, and guide all future bootstrap-critical decisions. See pipreqs invocation section above for a concrete example.
 
 ---
 
