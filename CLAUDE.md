@@ -550,7 +550,7 @@ This is an intentional bootstrap execution strategy, not a workaround for pipreq
 **Why internal module invocation is safe here:**
 - pipreqs is pinned to 0.4.13 permanently (no automatic upgrades)
 - Version freeze makes internal module structure (`pipreqs/pipreqs.py`) stable by contract
-- Internal coupling is not a "fragility risk" but a "controlled dependency"
+- Internal coupling is a low-risk controlled assumption due to the pinned dependency version
 
 **Comparison of approaches:**
 | Approach | Reliability in Bootstrap | Architecture | Scope |
