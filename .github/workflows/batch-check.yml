@@ -50,7 +50,6 @@ jobs:
       has_failures: ${{ steps.verdict.outputs.has_failures }}
 
     env:
-      HP_PIPREQS_VERSION: 0.4.13
       GH_TOKEN: ${{ github.token }}
       # HP_CI_LANE: tags every NDJSON row so diagnostics can filter by lane
       HP_CI_LANE: ${{ matrix.mode }}
@@ -58,13 +57,28 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Extract pipreqs version from bootstrapper
+        id: extract_version
+        shell: pwsh
+        run: |
+          $content = Get-Content run_setup.bat -Raw
+          $match = $content | Select-String 'set "HP_PIPREQS_VERSION=([0-9.]+)"'
+          if ($match.Matches.Count -gt 0) {
+            $version = $match.Matches[0].Groups[1].Value
+            "pipreqs_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+            Write-Host "Extracted pipreqs version: $version"
+          } else {
+            Write-Error "Could not extract HP_PIPREQS_VERSION from run_setup.bat"
+            exit 1
+          }
+
       - name: Restore Miniconda cache
         if: ${{ matrix.mode == 'cache' }}
         id: conda_cache_restore
         uses: actions/cache/restore@v5
         with:
           path: C:\Users\Public\Documents\Miniconda3
-          key: win-${{ runner.os }}-py311b-conda-${{ hashFiles('run_setup.bat') }}-${{ env.HP_PIPREQS_VERSION }}
+          key: win-${{ runner.os }}-py311b-conda-${{ hashFiles('run_setup.bat') }}-${{ steps.extract_version.outputs.pipreqs_version }}
           restore-keys: |
             win-${{ runner.os }}-py311b-conda-
 
