@@ -322,6 +322,12 @@ $hasDiffTrace = ($Lines | Select-String -SimpleMatch 'REQ-005.5').Count -gt 0
 Write-Result "batch.dep.diff.trace" "REQ-005.5: dependency diff log line present in run_setup.bat source" $hasDiffTrace @{}
 $hasCondaWarmup = ($AllText -match 'if defined HP_CONDA_JUST_INSTALLED\s+if defined CONDA_BAT') -and ($AllText -match 'call\s+"%CONDA_BAT%"\s+info\s+>nul')
 Write-Result "batch.conda.warmup" "REQ-020: fresh-install conda warm-up (HP_CONDA_JUST_INSTALLED guard) present in run_setup.bat" $hasCondaWarmup @{}
+$req013Patterns = @('REQ-013: Connectivity check: internet reachable', 'REQ-013: Offline mode: skipping', 'HP_TEST_OFFLINE')
+$hasReq013 = ($req013Patterns | Where-Object { -not ($AllText -match $_) }).Count -eq 0
+Write-Result 'batch.req013.connectivity' 'REQ-013: connectivity guard log lines and HP_TEST_OFFLINE CI flag present in run_setup.bat' $hasReq013 @{}
+$req014Patterns = @('REQ-014: System Python fallback aborted', 'REQ-014: System Python consent: user accepted', 'HP_TEST_FORCE_CONSENT_CHECK')
+$hasReq014 = ($req014Patterns | Where-Object { -not ($AllText -match $_) }).Count -eq 0
+Write-Result 'batch.req014.consent' 'REQ-014: system Python consent gate log lines and HP_TEST_FORCE_CONSENT_CHECK CI flag present in run_setup.bat' $hasReq014 @{}
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
