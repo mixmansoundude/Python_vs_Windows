@@ -25,7 +25,7 @@ Getting the code running takes priority over preserving constraints.
 ## Repository Map
 
 ```
-run_setup.bat                  Main bootstrapper (self-contained, ~61 KB) -- the deliverable
+run_setup.bat                  Main bootstrapper (self-contained, ~157 KB) -- the deliverable
 run_tests.bat                  Static test orchestrator (calls harness.ps1)
 
 tests/
@@ -513,6 +513,98 @@ Responses API, extracts a fenced diff, and applies it via `tools/apply_patch.py`
 `pipreqs` is discovery only. `requirements.txt` is a hint, not authority. conda-forge is
 truth. See README.md §Dependency strategy for the full explanation including the PIL/pillow
 and cv2/opencv mapping limitation.
+
+---
+
+## Dependency Discovery: pipreqs pin rationale (as of 2026-06-18)
+
+**pipreqs is pinned to 0.4.13, NOT 0.5.0.** This is deliberate and load-bearing:
+
+- pipreqs 0.5.0 (the latest release) added Jupyter notebook scanning, which hard-pins `ipython==8.12.3`
+  (the last ipython supporting Python 3.8). ipython 8.12.3 does not support Python 3.13+, so 0.5.0's
+  metadata declares `Requires-Python >=3.8.1,<3.13`.
+- The bootstrapper always targets the latest conda-forge Python (currently 3.14+). On that Python, pip
+  refuses to install 0.5.0 (version cap), so pipreqs would be lost entirely and every run would fall back
+  to warnfix.
+- pipreqs 0.4.13 has `Requires-Python >=3.7` (no upper cap), deps only `docopt`+`yarg`, supports the same
+  `--mode compat` / `--force` / `--savepath` flags, uses only stable stdlib (ast-based scan), and runs on
+  Python 3.14. It restores pipreqs as the primary discovery tool.
+- **Do NOT "upgrade" the pin back to 0.5.0** -- it reintroduces the `<3.13` cap and silently disables
+  pipreqs on modern Python. The only feature lost by 0.4.13 is `.ipynb` scanning, which was already
+  non-functional on latest Python (0.5.0 cannot run there).
+
+The `pipreqs.flags` CI gate validates the invocation flags, not the version, so the pin is free to change.
+The setup log line `[INFO] pipreqs <ver> installed successfully` confirms pipreqs is active on a given run.
+
+## Dependency Discovery: pipreqs invocation (bootstrap determinism)
+
+**pipreqs is invoked via `python -m pipreqs.pipreqs`, NOT the console script (`pipreqs` command).**
+This is an intentional bootstrap execution strategy, not a workaround for pipreqs limitations.
+
+**Constraints driving this choice:**
+- Windows batch bootstrap never depends on shell state (PATH, activation, environment variables)
+- Bootstrap runs immediately after environment creation in the same shell session
+- Console scripts require PATH correctness and activation to persist—neither is guaranteed
+- Bootstrap reliability > API purity in this system class
+
+**Why internal module invocation is safe here:**
+- pipreqs is pinned to 0.4.13 permanently (no automatic upgrades)
+- Version freeze makes internal module structure (`pipreqs/pipreqs.py`) stable by contract
+- Internal coupling is a low-risk controlled assumption due to the pinned dependency version
+
+**Comparison of approaches:**
+| Approach | Reliability in Bootstrap | Architecture | Scope |
+|----------|--------------------------|--------------|-------|
+| `pipreqs` (console script) | ⚠ Fragile (PATH dependent) | ✔ Official API | General use |
+| `python -m pipreqs.pipreqs` | ✔ Deterministic (no PATH) | ⚠ Internal mechanism | Bootstrap only |
+
+See `run_setup.bat` lines ~813–820 for the invocation comment and rationale. This is a **deterministic execution pattern required for bootstrap reliability**, not a sign of fragility or a temporary workaround.
+
+## Dependency Discovery Fallback: warnfix (secondary safety net)
+
+If pipreqs install ever fails (e.g., a future Python drops a stdlib API pipreqs needs, or docopt/yarg
+cannot build), the bootstrapper still falls back to `warnfix`:
+1. PyInstaller builds the EXE (static analysis finds many imports)
+2. Read the `warn` file (list of modules PyInstaller couldn't find)
+3. Parse warn file via `parse_warn.py`: extract top-level, delayed, and conditional imports
+4. Filter out platform-specific modules (posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external — all POSIX/Unix-only, safe to ignore on Windows)
+5. Install detected missing packages via conda or pip
+6. Rebuild EXE
+7. Retry interpreter smoke test
+
+**Warnfix coverage:** Warnfix detects and handles:
+- ✓ Top-level imports (e.g., `import colorama`)
+- ✓ Delayed imports (e.g., `def load(): import requests`)
+- ✓ Conditional imports (e.g., `if sys.platform == 'win32': import winreg`)
+- ✗ Optional/try-except imports (intentionally skipped, guarded by try-except)
+- ✗ Dynamic imports (e.g., `importlib.import_module(name)`)
+
+**User recommendation:** For Python 3.13+ or to avoid fallback latency, provide explicit dependencies:
+- **Option 1:** Add `requirements.txt` (comma-separated or newline-separated, any format pip understands)
+- **Option 2:** Add `pyproject.toml` with `[project]` section and `dependencies` field (PEP 508 format)
+- **Option 3:** Add PEP 723 inline metadata: `# /// script` block at the top of your `.py` file (Python 3.11+)
+
+See README.md §Dependency strategy for full details.
+
+---
+
+## Bootstrap Architecture Principles
+
+This system prioritizes **deterministic execution during bootstrap** over packaging purity. These principles guide decisions about tool invocation, dependency handling, and error handling in `run_setup.bat`:
+
+1. **Bootstrap reliability > API correctness.** If a feature depends on "maybe PATH is set" or "activation might work," it is invalid for bootstrap paths. Determinism is non-negotiable.
+
+2. **Never depend on console scripts during bootstrap.** Console scripts (`pipreqs`, `pytest`, etc.) are forbidden in bootstrap logic because they require: Scripts/ on PATH, activation state correctness, OS-level shim resolution. Instead: use explicit interpreter paths or direct Python APIs.
+
+3. **All execution must be interpreter-anchored.** Every tool invocation roots in an explicit Python executable path (`%HP_PY%` or `%CONDA_PREFIX%\python.exe`), never relying on PATH or activation to supply the correct interpreter.
+
+4. **Pinned dependencies are assumed stable.** For version-frozen tools (pipreqs 0.4.13), internal behavior and module structure may be relied upon as stable by contract. Internal coupling is acceptable when version is locked.
+
+5. **Bootstrap must fail fast and explicitly.** If bootstrap cannot guarantee interpreter, environment, or dependency availability, it fails loudly and early. No silent fallbacks unless explicitly logged.
+
+6. **Non-obvious decisions must be self-documenting.** If bootstrap does something like `python -m pipreqs.pipreqs` instead of `pipreqs`, it must include a comment explaining why PATH/CLI/activation was not used. Future maintainers must not be tempted to "fix" it incorrectly.
+
+**Application:** These principles validate the pipreqs invocation strategy, justify the dep-check cache optimization, and guide all future bootstrap-critical decisions. See pipreqs invocation section above for a concrete example.
 
 ---
 

@@ -104,7 +104,16 @@ set "HP_HELPER_CMD_LOGGED="
 set "HP_FIND_ENTRY_NAME=~find_entry.py"
 set "HP_FIND_ENTRY_ABS="
 set "HP_PIPREQS_VERSION=%HP_PIPREQS_VERSION%"
-if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.5.0"
+rem derived requirement: pin pipreqs to 0.4.13, NOT 0.5.0. pipreqs 0.5.0 added Jupyter
+rem notebook scanning, which hard-pins ipython==8.12.3 (the last ipython supporting Python
+rem 3.8). ipython 8.12.3 does not support Python 3.13+, so 0.5.0's metadata declares
+rem Requires-Python >=3.8.1,<3.13. Because the bootstrapper always targets the latest
+rem conda-forge Python (3.14+), 0.5.0 refuses to install there and pipreqs is lost entirely.
+rem 0.4.13 has Requires-Python >=3.7 (no upper cap), deps only docopt+yarg, supports the same
+rem --mode compat / --force / --savepath flags, uses only stable stdlib (ast-based scan), and
+rem runs on Python 3.14. Do NOT "upgrade" back to 0.5.0 -- it reintroduces the <3.13 cap.
+rem The only feature lost is .ipynb scanning, which was already non-functional on latest Python.
+if not defined HP_PIPREQS_VERSION set "HP_PIPREQS_VERSION=0.4.13"
 set "HP_MINICONDA_MIN_BYTES=%HP_MINICONDA_MIN_BYTES%"
 if not defined HP_MINICONDA_MIN_BYTES set "HP_MINICONDA_MIN_BYTES=5000000"
 set "HP_CONDA_DL_INJECTED="
@@ -706,7 +715,10 @@ if defined PEP723_BLOCK_FOUND if not defined PEP723_ACTIVE (
 )
 set "PEP723_BLOCK_FOUND="
 
+set "HP_PIPREQS_INSTALL_PASS=0"
+set "HP_PIPREQS_INSTALL_ATTEMPTED=0"
 if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
+  set "HP_PIPREQS_INSTALL_ATTEMPTED=1"
   if "%HP_ENV_MODE%"=="uv" (
     rem derived requirement: uv pip install bypasses python -m pip so pip need not
     rem be a module inside the uv venv; uv's own resolver handles the installation.
@@ -715,9 +727,31 @@ if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
     "%HP_PY%" -m pip install -q --disable-pip-version-check pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
   )
   if errorlevel 1 (
-    call :log "[WARN] pipreqs install failed (no conda-forge build for this Python version?). Continuing without auto-detected requirements."
+    call :log "[WARN] pipreqs install failed (Python version incompatible with pipreqs). Fallback: warnfix will detect and install missing imports at build time. Consider adding requirements.txt or pyproject.toml [project].dependencies for explicit dependency specification."
     set "HP_SKIP_PIPREQS=1"
     set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs unavailable for this Python version)"
+  ) else (
+    set "HP_PIPREQS_INSTALL_PASS=1"
+    call :log "[INFO] pipreqs %HP_PIPREQS_VERSION% installed successfully; using it for dependency discovery."
+  )
+)
+if defined HP_NDJSON (
+  rem Emit pass=true for intentional skips (PEP 723 or pre-existing HP_SKIP_PIPREQS),
+  rem pass=true for successful installs, pass=false for install failures.
+  rem Use HP_PIPREQS_INSTALL_ATTEMPTED to distinguish failed install (attempted=1, pass=0)
+  rem from intentional skip (attempted=0).
+  if defined PEP723_ACTIVE (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$row = @{ id='pipreqs.install'; pass=$true; reason='pep723_active' } | ConvertTo-Json -Compress -Depth 8;" ^
+      "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+  ) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$attempted = [Environment]::GetEnvironmentVariable('HP_PIPREQS_INSTALL_ATTEMPTED') -eq '1';" ^
+      "$pass = [Environment]::GetEnvironmentVariable('HP_PIPREQS_INSTALL_PASS') -eq '1';" ^
+      "if ($attempted) { $reason = if ($pass) { 'success' } else { 'install_failed' } } else { $reason = 'skip_preexisting' };" ^
+      "$pass = if ($attempted) { $pass } else { $true };" ^
+      "$row = @{ id='pipreqs.install'; pass=$pass; reason=$reason } | ConvertTo-Json -Compress -Depth 8;" ^
+      "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
   )
 )
 
@@ -776,17 +810,25 @@ echo *** [WARN] Auto-detection may be incomplete or incorrect
 echo *** [INFO] Consider adding requirements.txt or PEP 723 metadata for reliability
 if not "%DEP_SOURCE%"=="requirements.txt" set "DEP_SOURCE=pipreqs"
 
+rem pipreqs invocation: uses "python -m pipreqs.pipreqs" NOT the console script (pipreqs command).
+rem derived requirement: bootstrap determinism. The console script (pipreqs) relies on PATH being set
+rem correctly after conda env activation, which is not guaranteed in the same shell session immediately
+rem after environment creation. Using explicit Python interpreter + module bypasses PATH resolution and
+rem works reliably in bootstrap contexts where shell state / PATH propagation is not fully initialized.
+rem This is NOT a pipreqs API issue (the console script is the official API); it is a Windows batch
+rem bootstrap sequencing issue. pipreqs is pinned to 0.4.13 permanently, so internal coupling is a
+rem low-risk controlled assumption due to the pinned dependency version.
 rem pipreqs flags are locked by CI (pipreqs.flags gate).
 rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
 if defined HP_PIPREQS_IGNORE goto :pipreqs_direct_with_ignore
 rem pipreqs flags are locked by CI (pipreqs.flags gate).
 rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-  "%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+  "%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
 goto :pipreqs_direct_done
 :pipreqs_direct_with_ignore
 rem pipreqs flags are locked by CI (pipreqs.flags gate).
 rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-"%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+"%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
 :pipreqs_direct_done
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
 set "HP_PIPREQS_RC=%errorlevel%"
@@ -864,7 +906,7 @@ call :log "[INFO] pipreqs (staging) command: pipreqs . --force --mode compat --s
 echo Pipreqs command (staging): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%"
 :: pipreqs flags are locked by CI (pipreqs.flags gate).
 :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-"%HP_PY%" -m pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" > "%HP_PIPREQS_STAGE_LOG%" 2>&1
+"%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" > "%HP_PIPREQS_STAGE_LOG%" 2>&1
 set "HP_PIPREQS_RC=%errorlevel%"
 popd >nul 2>&1
 if errorlevel 1 call :log "[WARN] pipreqs staging: popd failed; CWD may not be restored."
@@ -1935,6 +1977,12 @@ if "%HP_ENV_MODE%"=="system" (
       call :log "[DEBUG] warnfix: warn file found"
       type "build\%ENVNAME%\warn-%ENVNAME%.txt" >> "%LOG%"
       copy "build\%ENVNAME%\warn-%ENVNAME%.txt" "~warnfile.txt" >nul 2>&1
+      call :log "[INFO] warnfix: Platform-specific modules in the list above are expected on Windows: posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external. These will be filtered out automatically."
+      if defined HP_NDJSON (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+          "$row = @{ id='self.warnfix.platform_filter'; pass=$true; detail='posix_modules_expected_on_windows' } | ConvertTo-Json -Compress -Depth 8;" ^
+          "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
+      )
     ) else (
       call :log "[DEBUG] warnfix: warn file not found"
     )
