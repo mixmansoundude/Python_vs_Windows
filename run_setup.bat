@@ -98,6 +98,7 @@ set "HP_ENV_MODE=conda"
 set "HP_ENV_READY="
 set "HP_SKIP_PIPREQS=%HP_SKIP_PIPREQS%"
 set "HP_PY="
+set "HP_UV_PROVIDING_PYTHON="
 set "HP_FIND_ENTRY_SYNTAX_OK="
 set "HP_HELPER_SYNTAX_EMITTED="
 set "HP_HELPER_CMD_LOGGED="
@@ -147,6 +148,10 @@ rem HP_TEST_HEAL_ANSWER=Y|N: bypasses the interactive Y/N prompt in :conda_binar
 set "HP_TEST_HEAL_ANSWER=%HP_TEST_HEAL_ANSWER%"
 rem HP_TEST_CORRUPT_UV=1: simulates a corrupt uv binary; clears cache and re-downloads for REQ-020 branch coverage
 set "HP_TEST_CORRUPT_UV=%HP_TEST_CORRUPT_UV%"
+rem HP_TEST_FORCE_UV_FAIL=1: CI-only; forces uv acquisition to fail entirely (before any download attempt).
+rem Use in justme-test lane to exercise Miniconda/JustMe paths that are bypassed when uv succeeds.
+rem Mirrors HP_TEST_FORCE_CONDA_FAIL=1 pattern. Does not affect HP_TEST_UV_DL_FALLBACK behavior.
+set "HP_TEST_FORCE_UV_FAIL=%HP_TEST_FORCE_UV_FAIL%"
 rem HP_TEST_SKIP_EVICT=1: CI-only; skips the rmdir and Miniconda re-download in :evict_and_rebuild.
 rem Use with HP_TEST_CORRUPT_CONDA=1 + HP_TEST_HEAL_ANSWER=Y to test the accept branch without
 rem deleting the real CI Miniconda installation. The eviction log line is still emitted.
@@ -272,86 +277,6 @@ if "%HP_CONDA_PROBE_STATUS%"=="skipped" (
 
 if defined HP_CI_SKIP_ENV goto :ci_skip_entry
 
-rem === Miniconda location (non-admin) =========================================
-rem G2 guardrail: warn if PUBLIC is absent so path failures are observable
-if not defined PUBLIC call :log "[WARN] PUBLIC env var not defined; Miniconda path may be invalid."
-set "MC=%PUBLIC%\Documents\Miniconda3"
-set "CONDA_MAIN=%MC%\condabin\conda.bat"
-set "CONDA_ALT=%MC%\Scripts\conda.bat"
-set "MINICONDA_ROOT=%MC%"
-set "CONDA_BASE_PY=%MINICONDA_ROOT%\python.exe"
-
-call :select_conda_bat
-rem PVW_CONDA_EXE: super-user override for the conda batch file path. When set, Miniconda
-rem installation is skipped. Requires conda to already be on PATH (the 'where conda' probe
-rem below will fail gracefully if not). Typical usage: pointing at a system-wide conda install.
-if defined PVW_CONDA_EXE set "CONDA_BAT=%PVW_CONDA_EXE%"
-
-rem Install Miniconda if conda.bat is missing
-set "HP_CONDA_JUST_INSTALLED="
-if not defined CONDA_BAT (
-  set "HP_CONDA_JUST_INSTALLED=1"
-  echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
-  call :download_miniconda_exe
-  if exist "%TEMP%\miniconda.exe" (
-    REM Attempt AllUsers install with JustMe fallback; see :try_conda_install.
-    call :try_conda_install
-  )
-  if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
-  call :select_conda_bat
-)
-
-set "PATH=%MINICONDA_ROOT%\condabin;%MINICONDA_ROOT%\Scripts;%MINICONDA_ROOT%\Library\bin;%MINICONDA_ROOT%;%PATH%"
-:after_conda_bat_validation
-
-if not defined CONDA_BAT (
-  set "HP_ENV_READY="
-  call :handle_conda_failure "conda.bat not found after bootstrap."
-  if defined HP_ENV_READY goto :after_env_mode_selection
-  call :die "[ERROR] conda.bat not found after bootstrap."
-)
-
-rem === Fresh install: warm up conda to initialize base-env state (REQ-020) ===
-rem derived requirement: Silent Miniconda install (/S /AddToPath=0) leaves the base
-rem environment in a state where conda info may return non-zero until conda is run
-rem once with its own directories in PATH. Calling conda info here (silently, after
-rem the PATH update) ensures subsequent bootstrap runs that find the pre-installed
-rem Miniconda pass the corruption health check instead of falsely flagging it corrupt.
-if defined HP_CONDA_JUST_INSTALLED if defined CONDA_BAT (
-  call "%CONDA_BAT%" info >nul 2>&1
-)
-
-rem === Validate existing conda binary health (REQ-020: corruption hardening) ===
-rem Only fires for pre-existing installs (HP_CONDA_JUST_INSTALLED guards fresh downloads).
-rem Skipped when HP_TEST_FORCE_CONDA_FAIL=1 (test flag already simulates conda failure).
-rem Placed after PATH update so conda.bat internal calls can resolve their dependencies.
-if defined CONDA_BAT if not defined HP_CONDA_JUST_INSTALLED if not defined HP_TEST_FORCE_CONDA_FAIL (
-  if defined HP_TEST_CORRUPT_CONDA (
-    call :log "[ERROR] HP_TEST_CORRUPT_CONDA: simulating corrupt conda binary."
-    goto :conda_binary_corrupt
-  )
-  call "%CONDA_BAT%" info >nul 2>&1
-  if errorlevel 1 goto :conda_binary_corrupt
-)
-where conda >> "%LOG%" 2>&1 || (
-  set "HP_ENV_READY="
-  call :handle_conda_failure "[ERROR] 'conda' not found on PATH after bootstrap."
-  if defined HP_ENV_READY goto :after_env_mode_selection
-  call :die "[ERROR] 'conda' not found on PATH after bootstrap."
-)
-where python >> "%LOG%" 2>&1 || (
-  set "HP_ENV_READY="
-  call :handle_conda_failure "[ERROR] 'python' not found on PATH after bootstrap."
-  if defined HP_ENV_READY goto :after_env_mode_selection
-  call :die "[ERROR] 'python' not found on PATH after bootstrap."
-)
-python -V >> "%LOG%" 2>&1 || (
-  set "HP_ENV_READY="
-  call :handle_conda_failure "[ERROR] 'python -V' failed after bootstrap."
-  if defined HP_ENV_READY goto :after_env_mode_selection
-  call :die "[ERROR] 'python -V' failed after bootstrap."
-)
-
 rem === uv acquisition (preferred env+dep installer; falls back to conda) =======
 rem derived requirement: uv is gated by HP_FORCE_CONDA_ONLY (same gate used for
 rem venv/system fallbacks) so the conda-full CI lane exercises the pure conda path.
@@ -366,6 +291,12 @@ set "HP_UV_BIN=%HP_SCRIPT_ROOT%~uv_bin"
 set "HP_UV_ZIP=%TEMP%\~uv_setup.zip"
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
   call :log "[INFO] uv: skipped (HP_FORCE_CONDA_ONLY=1)."
+  goto :uv_acquire_done
+)
+if "%HP_TEST_FORCE_UV_FAIL%"=="1" (
+  call :log "[WARN] uv: HP_TEST_FORCE_UV_FAIL: simulating uv acquisition failure."
+  set "UV_FALLBACK_REASON=test_forced_fail"
+  call :log "[WARN] UV_FALLBACK reason=test_forced_fail"
   goto :uv_acquire_done
 )
 if exist "%HP_UV_BIN%\uv.exe" (
@@ -435,11 +366,113 @@ if exist "%HP_UV_BIN%\uv.exe" (
 )
 :uv_acquire_done
 
+rem === uv-first: skip Miniconda when uv can provide Python ====================
+rem derived requirement: when uv is available, use it to run ~detect_python.py
+rem instead of CONDA_BASE_PY so the Miniconda download can be skipped entirely.
+rem HP_FORCE_CONDA_ONLY already cleared HP_UV_EXE above, so no extra check needed.
+if not defined HP_UV_EXE goto :uv_first_skip
+set "HP_RUNTIME_TXT_PREEXIST="
+if exist "runtime.txt" set "HP_RUNTIME_TXT_PREEXIST=1"
+call :emit_from_base64 "~detect_python.py" HP_DETECT_PY
+if errorlevel 1 goto :uv_first_skip
+"%HP_UV_EXE%" run --no-project python "~detect_python.py" > "~py_spec.txt" 2>> "%LOG%"
+if errorlevel 1 (
+  call :log "[WARN] uv-first: detect_python via uv run failed; will download Miniconda."
+  goto :uv_first_skip
+)
+set "PYSPEC="
+for /f "usebackq delims=" %%A in ("~py_spec.txt") do set "PYSPEC=%%A"
+set "HP_UV_PROVIDING_PYTHON=1"
+call :log "[INFO] uv-first: Miniconda download skipped."
+:uv_first_skip
+
+rem === Miniconda location (non-admin) =========================================
+rem G2 guardrail: warn if PUBLIC is absent so path failures are observable
+if not defined PUBLIC call :log "[WARN] PUBLIC env var not defined; Miniconda path may be invalid."
+set "MC=%PUBLIC%\Documents\Miniconda3"
+set "CONDA_MAIN=%MC%\condabin\conda.bat"
+set "CONDA_ALT=%MC%\Scripts\conda.bat"
+set "MINICONDA_ROOT=%MC%"
+set "CONDA_BASE_PY=%MINICONDA_ROOT%\python.exe"
+
+call :select_conda_bat
+rem PVW_CONDA_EXE: super-user override for the conda batch file path. When set, Miniconda
+rem installation is skipped. Requires conda to already be on PATH (the 'where conda' probe
+rem below will fail gracefully if not). Typical usage: pointing at a system-wide conda install.
+if defined PVW_CONDA_EXE set "CONDA_BAT=%PVW_CONDA_EXE%"
+
+rem Install Miniconda if conda.bat is missing (skipped when uv is providing Python)
+set "HP_CONDA_JUST_INSTALLED="
+if not defined HP_UV_PROVIDING_PYTHON if not defined CONDA_BAT (
+  set "HP_CONDA_JUST_INSTALLED=1"
+  echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
+  call :download_miniconda_exe
+  if exist "%TEMP%\miniconda.exe" (
+    REM Attempt AllUsers install with JustMe fallback; see :try_conda_install.
+    call :try_conda_install
+  )
+  if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
+  call :select_conda_bat
+)
+
+set "PATH=%MINICONDA_ROOT%\condabin;%MINICONDA_ROOT%\Scripts;%MINICONDA_ROOT%\Library\bin;%MINICONDA_ROOT%;%PATH%"
+:after_conda_bat_validation
+
+if not defined HP_UV_PROVIDING_PYTHON if not defined CONDA_BAT (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "conda.bat not found after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] conda.bat not found after bootstrap."
+)
+
+rem === Fresh install: warm up conda to initialize base-env state (REQ-020) ===
+rem derived requirement: Silent Miniconda install (/S /AddToPath=0) leaves the base
+rem environment in a state where conda info may return non-zero until conda is run
+rem once with its own directories in PATH. Calling conda info here (silently, after
+rem the PATH update) ensures subsequent bootstrap runs that find the pre-installed
+rem Miniconda pass the corruption health check instead of falsely flagging it corrupt.
+if defined HP_CONDA_JUST_INSTALLED if defined CONDA_BAT (
+  call "%CONDA_BAT%" info >nul 2>&1
+)
+
+rem === Validate existing conda binary health (REQ-020: corruption hardening) ===
+rem Only fires for pre-existing installs (HP_CONDA_JUST_INSTALLED guards fresh downloads).
+rem Skipped when HP_TEST_FORCE_CONDA_FAIL=1 (test flag already simulates conda failure).
+rem Placed after PATH update so conda.bat internal calls can resolve their dependencies.
+if defined CONDA_BAT if not defined HP_CONDA_JUST_INSTALLED if not defined HP_TEST_FORCE_CONDA_FAIL (
+  if defined HP_TEST_CORRUPT_CONDA (
+    call :log "[ERROR] HP_TEST_CORRUPT_CONDA: simulating corrupt conda binary."
+    goto :conda_binary_corrupt
+  )
+  call "%CONDA_BAT%" info >nul 2>&1
+  if errorlevel 1 goto :conda_binary_corrupt
+)
+if defined HP_UV_PROVIDING_PYTHON goto :after_conda_probes
+where conda >> "%LOG%" 2>&1 || (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "[ERROR] 'conda' not found on PATH after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] 'conda' not found on PATH after bootstrap."
+)
+where python >> "%LOG%" 2>&1 || (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "[ERROR] 'python' not found on PATH after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] 'python' not found on PATH after bootstrap."
+)
+python -V >> "%LOG%" 2>&1 || (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "[ERROR] 'python -V' failed after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] 'python -V' failed after bootstrap."
+)
+:after_conda_probes
+
 rem === Channel policy (determinism & legal) ===================================
-if not exist "%CONDA_BAT%" (
+if not defined HP_UV_PROVIDING_PYTHON if not exist "%CONDA_BAT%" (
   call :die "[ERROR] Conda not found at: %CONDA_BAT%"
 )
-call "%CONDA_BAT%" config --name base --add channels conda-forge >> "%LOG%" 2>&1
+if not defined HP_UV_PROVIDING_PYTHON call "%CONDA_BAT%" config --name base --add channels conda-forge >> "%LOG%" 2>&1
 
 rem NOTE: every 'conda create' or 'conda install' call below MUST include:
 rem       --override-channels -c conda-forge
@@ -449,11 +482,15 @@ call :log "[INFO] Workspace: %CD%"
 call :log "[INFO] Env name: %ENVNAME%"
 call :log "[INFO] Log: %LOG%"
 
-set "HP_RUNTIME_TXT_PREEXIST="
-if exist "runtime.txt" set "HP_RUNTIME_TXT_PREEXIST=1"
+if not defined HP_UV_PROVIDING_PYTHON (
+  set "HP_RUNTIME_TXT_PREEXIST="
+  if exist "runtime.txt" set "HP_RUNTIME_TXT_PREEXIST=1"
+)
 rem --- Detect required Python version (must run before env-state check) ---
 rem derived requirement: PYSPEC must be known before the env-state skip decision
 rem so a runtime.txt / pyproject.toml change triggers a full env rebuild.
+rem uv-first path: already ran detect_python via uv run and set PYSPEC above.
+if defined HP_UV_PROVIDING_PYTHON goto :detect_python_done
 call :emit_from_base64 "~detect_python.py" HP_DETECT_PY
 if errorlevel 1 call :die "[ERROR] Could not write ~detect_python.py"
 if exist "%CONDA_BASE_PY%" (
@@ -463,6 +500,7 @@ if exist "%CONDA_BASE_PY%" (
 )
 set "PYSPEC="
 for /f "usebackq delims=" %%A in ("~py_spec.txt") do set "PYSPEC=%%A"
+:detect_python_done
 if defined PVW_TARGET_PY set "PYSPEC=%PVW_TARGET_PY%"
 if defined PVW_TARGET_PY call :log "[INFO] Python version: using super-user override PVW_TARGET_PY."
 
@@ -470,6 +508,8 @@ rem --- Env-state fast path: skip conda create+install if env is still valid ---
 rem derived requirement: ~env.state.json records envMode/envName/envPath/pySpec/lockSize
 rem from the last successful run. Fast path fires only when PYSPEC, envName, lock size,
 rem and python.exe all match the stored snapshot.
+rem uv-first path: env reuse is handled by the .uv_env existence check below; skip here.
+if defined HP_UV_PROVIDING_PYTHON goto :env_state_check_done
 set "HP_ENV_STATE_RESULT="
 call :emit_from_base64 "~env_state.py" HP_ENV_STATE
 if errorlevel 1 goto :env_state_check_done
@@ -549,6 +589,30 @@ if "%HP_TEST_UV_FAIL%"=="1" (
 )
 goto :after_env_mode_selection
 :uv_venv_fail
+rem derived requirement: uv venv reads pyproject.toml for requires-python even when
+rem --python is not passed, so a malformed pyproject.toml causes venv creation to fail.
+rem When HP_UV_PROVIDING_PYTHON=1 (conda not installed), retry via "uv run --no-project
+rem python -m venv" which bypasses project discovery and ignores pyproject.toml.
+rem The HP_PYPROJ_DEPS path (line ~712) later detects the malformed TOML and emits the
+rem [WARN] pyproject.toml TOML parse error message as normal.
+if defined HP_UV_PROVIDING_PYTHON (
+  call :log "[WARN] uv: venv creation failed; retrying via uv run --no-project (malformed pyproject.toml guard)."
+  if defined HP_UV_PY_VER (
+    "%HP_UV_EXE%" run --no-project --python "%HP_UV_PY_VER%" python -m venv "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
+  ) else (
+    "%HP_UV_EXE%" run --no-project python -m venv "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
+  )
+  if not errorlevel 1 (
+    if exist "%HP_UV_ENV_PATH%\Scripts\python.exe" (
+      set "HP_ENV_MODE=uv"
+      set "HP_PY=%HP_UV_ENV_PATH%\Scripts\python.exe"
+      set "ENV_PATH=%HP_UV_ENV_PATH%"
+      call :log "[INFO] uv: venv created at .uv_env via uv run --no-project fallback"
+      goto :uv_venv_ready
+    )
+  )
+  call :log "[WARN] uv: uv run --no-project venv also failed; falling back to conda create."
+)
 call :log "[WARN] uv: venv creation failed; falling back to conda create."
 set "UV_FALLBACK_REASON=venv_create_failed"
 call :log "[WARN] UV_FALLBACK reason=venv_create_failed"
@@ -2171,7 +2235,7 @@ exit /b %errorlevel%
 :define_helper_payloads
 rem Helper payloads are base64-encoded so run_setup.bat stays self-contained.
 rem Regenerate with python - <<'PY' snippets as noted in README.md (base64 docs: https://docs.python.org/3/library/base64.html).
-set "HP_PYPROJ_DEPS=aW1wb3J0IHN5cywgcGF0aGxpYgoKdHJ5OgogICAgaW1wb3J0IHRvbWxsaWIKZXhjZXB0IEltcG9ydEVycm9yOgogICAgdG9tbGxpYiA9IE5vbmUKCm91dCA9IHN5cy5hcmd2WzFdIGlmIGxlbihzeXMuYXJndikgPiAxIGVsc2UgJ35yZXF1aXJlbWVudHMucHlwcm9qZWN0LnR4dCcKdHJ5OgogICAgdHh0ID0gcGF0aGxpYi5QYXRoKCdweXByb2plY3QudG9tbCcpLnJlYWRfdGV4dChlbmNvZGluZz0ndXRmLTgnLCBlcnJvcnM9J3JlcGxhY2UnKQogICAgZGVwcyA9IE5vbmUKICAgIGlmIHRvbWxsaWI6CiAgICAgICAgdHJ5OgogICAgICAgICAgICBkYXRhID0gdG9tbGxpYi5sb2Fkcyh0eHQpCiAgICAgICAgICAgIGRlcHMgPSBkYXRhLmdldCgncHJvamVjdCcsIHt9KS5nZXQoJ2RlcGVuZGVuY2llcycpCiAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgICAgIyBFeGl0IDIgc2lnbmFscyBjYWxsZXIgdG8gZW1pdCBbV0FSTl06IHB5cHJvamVjdC50b21sIGlzIG5vdCB2YWxpZCBUT01MLgogICAgICAgICAgICBzeXMuZXhpdCgyKQogICAgaWYgZGVwcyBpcyBOb25lOgogICAgICAgIGltcG9ydCByZQogICAgICAgIG0gPSByZS5zZWFyY2gocideXFtwcm9qZWN0XF0nLCB0eHQsIHJlLk1VTFRJTElORSkKICAgICAgICBpZiBub3QgbToKICAgICAgICAgICAgc3lzLmV4aXQoMSkKICAgICAgICBzZWMgPSB0eHRbbS5lbmQoKTpdCiAgICAgICAgc3RvcCA9IHJlLnNlYXJjaChyJ15cWycsIHNlYywgcmUuTVVMVElMSU5FKQogICAgICAgIGlmIHN0b3A6CiAgICAgICAgICAgIHNlYyA9IHNlY1s6c3RvcC5zdGFydCgpXQogICAgICAgIGRtID0gcmUuc2VhcmNoKHInXlxzKmRlcGVuZGVuY2llc1xzKj1ccypcWycsIHNlYywgcmUuTVVMVElMSU5FKQogICAgICAgIGlmIG5vdCBkbToKICAgICAgICAgICAgc3lzLmV4aXQoMSkKICAgICAgICByZXN0ID0gc2VjW2RtLmVuZCgpOl0KICAgICAgICAjIFdhbGsgY2hhci1ieS1jaGFyOiBjb2xsZWN0IG9ubHkgcXVvdGVkIHN0cmluZ3M7IHN0b3AgYXQgdW5xdW90ZWQgXQogICAgICAgICMgVGhpcyBwcmVzZXJ2ZXMgZnVsbCBkZXAgc3RyaW5ncyBpbmNsdWRpbmcgZXh0cmFzIChbYWxsXSkgYW5kCiAgICAgICAgIyBtdWx0aS1jb25zdHJhaW50IHNwZWNpZmllcnMgKD49NCw8NSkgd2l0aG91dCBuYWl2ZSBjb21tYS9uZXdsaW5lIHNwbGl0cy4KICAgICAgICBkZXBzID0gW10KICAgICAgICBpID0gMAogICAgICAgIHdoaWxlIGkgPCBsZW4ocmVzdCk6CiAgICAgICAgICAgIGMgPSByZXN0W2ldCiAgICAgICAgICAgIGlmIGMgaW4gKCciJywgIiciKToKICAgICAgICAgICAgICAgIHEgPSBjCiAgICAgICAgICAgICAgICBpICs9IDEKICAgICAgICAgICAgICAgIHN0YXJ0ID0gaQogICAgICAgICAgICAgICAgd2hpbGUgaSA8IGxlbihyZXN0KSBhbmQgcmVzdFtpXSAhPSBxOgogICAgICAgICAgICAgICAgICAgIGlmIHJlc3RbaV0gPT0gJ1xcJzoKICAgICAgICAgICAgICAgICAgICAgICAgaSArPSAxCiAgICAgICAgICAgICAgICAgICAgaSArPSAxCiAgICAgICAgICAgICAgICBkZXBzLmFwcGVuZChyZXN0W3N0YXJ0OmldKQogICAgICAgICAgICAgICAgaSArPSAxCiAgICAgICAgICAgIGVsaWYgYyA9PSAnXSc6CiAgICAgICAgICAgICAgICBicmVhawogICAgICAgICAgICBlbHNlOgogICAgICAgICAgICAgICAgaSArPSAxCiAgICBpZiBub3QgZGVwczoKICAgICAgICBzeXMuZXhpdCgxKQogICAgcGF0aGxpYi5QYXRoKG91dCkud3JpdGVfdGV4dCgnXG4nLmpvaW4oZGVwcykgKyAnXG4nLCBlbmNvZGluZz0nYXNjaWknLCBlcnJvcnM9J3JlcGxhY2UnKQogICAgc3lzLmV4aXQoMCkKZXhjZXB0IEV4Y2VwdGlvbjoKICAgIHN5cy5leGl0KDEpCg=="
+set "HP_PYPROJ_DEPS=aW1wb3J0IHN5cywgcGF0aGxpYgoKdHJ5OgogICAgaW1wb3J0IHRvbWxsaWIKZXhjZXB0IEltcG9ydEVycm9yOgogICAgdG9tbGxpYiA9IE5vbmUKCm91dCA9IHN5cy5hcmd2WzFdIGlmIGxlbihzeXMuYXJndikgPiAxIGVsc2UgJ35yZXF1aXJlbWVudHMucHlwcm9qZWN0LnR4dCcKdHJ5OgogICAgdHh0ID0gcGF0aGxpYi5QYXRoKCdweXByb2plY3QudG9tbCcpLnJlYWRfdGV4dChlbmNvZGluZz0ndXRmLTgnLCBlcnJvcnM9J3JlcGxhY2UnKQogICAgZGVwcyA9IE5vbmUKICAgIGlmIHRvbWxsaWI6CiAgICAgICAgdHJ5OgogICAgICAgICAgICBkYXRhID0gdG9tbGxpYi5sb2Fkcyh0eHQpCiAgICAgICAgICAgIGRlcHMgPSBkYXRhLmdldCgncHJvamVjdCcsIHt9KS5nZXQoJ2RlcGVuZGVuY2llcycpCiAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgICAgIyBFeGl0IDIgc2lnbmFscyBjYWxsZXIgdG8gZW1pdCBbV0FSTl06IHB5cHJvamVjdC50b21sIGlzIG5vdCB2YWxpZCBUT01MLgogICAgICAgICAgICBzeXMuZXhpdCgyKQogICAgaWYgZGVwcyBpcyBOb25lOgogICAgICAgIGltcG9ydCByZQogICAgICAgIG0gPSByZS5zZWFyY2gocideXFtwcm9qZWN0XF0nLCB0eHQsIHJlLk1VTFRJTElORSkKICAgICAgICBpZiBub3QgbToKICAgICAgICAgICAgIyBkZXJpdmVkIHJlcXVpcmVtZW50OiB3aXRob3V0IHRvbWxsaWIsIGRldGVjdCBvYnZpb3VzbHkgbWFsZm9ybWVkIFtwcm9qZWN0IGhlYWRlcgogICAgICAgICAgICAjIChtaXNzaW5nIGNsb3NpbmcgYnJhY2tldCAtLSBlLmcuICJbcHJvamVjdFxuIikuIEV4aXQgMiBzbyBjYWxsZXIgZW1pdHMgVE9NTCBwYXJzZSB3YXJuaW5nLgogICAgICAgICAgICBpZiByZS5zZWFyY2gocideXFtwcm9qZWN0XHMqJCcsIHR4dCwgcmUuTVVMVElMSU5FKToKICAgICAgICAgICAgICAgIHN5cy5leGl0KDIpCiAgICAgICAgICAgIHN5cy5leGl0KDEpCiAgICAgICAgc2VjID0gdHh0W20uZW5kKCk6XQogICAgICAgIHN0b3AgPSByZS5zZWFyY2gocideXFsnLCBzZWMsIHJlLk1VTFRJTElORSkKICAgICAgICBpZiBzdG9wOgogICAgICAgICAgICBzZWMgPSBzZWNbOnN0b3Auc3RhcnQoKV0KICAgICAgICBkbSA9IHJlLnNlYXJjaChyJ15ccypkZXBlbmRlbmNpZXNccyo9XHMqXFsnLCBzZWMsIHJlLk1VTFRJTElORSkKICAgICAgICBpZiBub3QgZG06CiAgICAgICAgICAgIHN5cy5leGl0KDEpCiAgICAgICAgcmVzdCA9IHNlY1tkbS5lbmQoKTpdCiAgICAgICAgIyBXYWxrIGNoYXItYnktY2hhcjogY29sbGVjdCBvbmx5IHF1b3RlZCBzdHJpbmdzOyBzdG9wIGF0IHVucXVvdGVkIF0KICAgICAgICAjIFRoaXMgcHJlc2VydmVzIGZ1bGwgZGVwIHN0cmluZ3MgaW5jbHVkaW5nIGV4dHJhcyAoW2FsbF0pIGFuZAogICAgICAgICMgbXVsdGktY29uc3RyYWludCBzcGVjaWZpZXJzICg+PTQsPDUpIHdpdGhvdXQgbmFpdmUgY29tbWEvbmV3bGluZSBzcGxpdHMuCiAgICAgICAgZGVwcyA9IFtdCiAgICAgICAgaSA9IDAKICAgICAgICB3aGlsZSBpIDwgbGVuKHJlc3QpOgogICAgICAgICAgICBjID0gcmVzdFtpXQogICAgICAgICAgICBpZiBjIGluICgnIicsICInIik6CiAgICAgICAgICAgICAgICBxID0gYwogICAgICAgICAgICAgICAgaSArPSAxCiAgICAgICAgICAgICAgICBzdGFydCA9IGkKICAgICAgICAgICAgICAgIHdoaWxlIGkgPCBsZW4ocmVzdCkgYW5kIHJlc3RbaV0gIT0gcToKICAgICAgICAgICAgICAgICAgICBpZiByZXN0W2ldID09ICdcXCc6CiAgICAgICAgICAgICAgICAgICAgICAgIGkgKz0gMQogICAgICAgICAgICAgICAgICAgIGkgKz0gMQogICAgICAgICAgICAgICAgZGVwcy5hcHBlbmQocmVzdFtzdGFydDppXSkKICAgICAgICAgICAgICAgIGkgKz0gMQogICAgICAgICAgICBlbGlmIGMgPT0gJ10nOgogICAgICAgICAgICAgICAgYnJlYWsKICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgIGkgKz0gMQogICAgaWYgbm90IGRlcHM6CiAgICAgICAgc3lzLmV4aXQoMSkKICAgIHBhdGhsaWIuUGF0aChvdXQpLndyaXRlX3RleHQoJ1xuJy5qb2luKGRlcHMpICsgJ1xuJywgZW5jb2Rpbmc9J2FzY2lpJywgZXJyb3JzPSdyZXBsYWNlJykKICAgIHN5cy5leGl0KDApCmV4Y2VwdCBFeGNlcHRpb246CiAgICBzeXMuZXhpdCgxKQo="
 set "HP_CONDARC=Y2hhbm5lbHM6CiAgLSBjb25kYS1mb3JnZQpjaGFubmVsX3ByaW9yaXR5OiBzdHJpY3QKc2hvd19jaGFubmVsX3VybHM6IHRydWUK"
 set "HP_DETECT_PY=X192ZXJzaW9uX18gPSAiZGV0ZWN0X3B5dGhvbiB2MiAoMjAyNS0wOS0yNCkiCl9fYWxsX18gPSBbInBlcDQ0MF90b19jb25kYSIsICJkZXRlY3RfcmVxdWlyZXNfcHl0aG9uIiwgIm1haW4iXQpPUkRFUiA9IHsiPT0iOiAwLCAiIT0iOiAxLCAiPj0iOiAyLCAiPiI6IDMsICI8PSI6IDQsICI8IjogNX0KCmltcG9ydCBvcwppbXBvcnQgcmUKaW1wb3J0IHN5cwoKIyBIZWxwZXIgaW1wbGVtZW50cyB0aGUgUkVBRE1FIGJvb3RzdHJhcCBjb250cmFjdC4gUEVQIDQ0MCBkZXRhaWxzOgojIGh0dHBzOi8vcGVwcy5weXRob24ub3JnL3BlcC0wNDQwLwoKQ0QgPSBvcy5nZXRjd2QoKQpSVU5USU1FX1BBVEggPSBvcy5wYXRoLmpvaW4oQ0QsICJydW50aW1lLnR4dCIpClBZUFJPSkVDVF9QQVRIID0gb3MucGF0aC5qb2luKENELCAicHlwcm9qZWN0LnRvbWwiKQpQWVBST0pFQ1RfUkUgPSByZS5jb21waWxlKCJyZXF1aXJlcy1weXRob25cXHMqPVxccypbJ1wiXShbXidcIl0rKVsnXCJdIiwgcmUuSUdOT1JFQ0FTRSkKU1BFQ19QQVRURVJOID0gcmUuY29tcGlsZShyJyh+PXw9PXwhPXw+PXw8PXw+fDwpXHMqKFswLTldKyg/OlwuWzAtOV0rKSopJykKCgpkZWYgdmVyc2lvbl9rZXkodGV4dDogc3RyKToKICAgICIiIlJldHVybiBhIHR1cGxlIHVzYWJsZSBmb3IgbnVtZXJpYyBvcmRlcmluZyBvZiBkb3R0ZWQgdmVyc2lvbnMuIiIiCiAgICBwYXJ0cyA9IFtdCiAgICBmb3IgY2h1bmsgaW4gdGV4dC5zcGxpdCgnLicpOgogICAgICAgIHRyeToKICAgICAgICAgICAgcGFydHMuYXBwZW5kKGludChjaHVuaykpCiAgICAgICAgZXhjZXB0IFZhbHVlRXJyb3I6CiAgICAgICAgICAgIHBhcnRzLmFwcGVuZCgwKQogICAgcmV0dXJuIHR1cGxlKHBhcnRzKQoKCmRlZiBidW1wX2Zvcl9jb21wYXRpYmxlKHZlcnNpb246IHN0cikgLT4gc3RyOgogICAgIiIiVHJhbnNsYXRlIHRoZSBQRVAgNDQwIGNvbXBhdGlibGUgcmVsZWFzZSB1cHBlciBib3VuZC4iIiIKICAgIHBpZWNlcyA9IFtpbnQoaXRlbSkgZm9yIGl0ZW0gaW4gdmVyc2lvbi5zcGxpdCgnLicpIGlmIGl0ZW0uaXNkaWdpdCgpXQogICAgaWYgbm90IHBpZWNlczoKICAgICAgICByZXR1cm4gdmVyc2lvbgogICAgaWYgbGVuKHBpZWNlcykgPj0gMzoKICAgICAgICByZXR1cm4gZiJ7cGllY2VzWzBdfS57cGllY2VzWzFdICsgMX0iCiAgICBpZiBsZW4ocGllY2VzKSA9PSAyOgogICAgICAgIHJldHVybiBmIntwaWVjZXNbMF0gKyAxfS4wIgogICAgcmV0dXJuIHN0cihwaWVjZXNbMF0gKyAxKQoKCmRlZiBleHBhbmRfY2xhdXNlKG9wOiBzdHIsIHZlcnNpb246IHN0cik6CiAgICBpZiBvcCA9PSAifj0iOgogICAgICAgIHVwcGVyID0gYnVtcF9mb3JfY29tcGF0aWJsZSh2ZXJzaW9uKQogICAgICAgIHJldHVybiBbKCI+PSIsIHZlcnNpb24pLCAoIjwiLCB1cHBlcildCiAgICByZXR1cm4gWyhvcCwgdmVyc2lvbildCgoKZGVmIHBlcDQ0MF90b19jb25kYShzcGVjOiBzdHIpIC0+IHN0cjoKICAgICIiIlJldHVybiAicHl0aG9uIiBjb25zdHJhaW50cyBleHBhbmRlZCBmcm9tIGEgcmVxdWlyZXMtcHl0aG9uIHNwZWMuIiIiCiAgICBjbGF1c2VzID0gW10KICAgIGZvciByYXcgaW4gc3BlYy5zcGxpdCgnLCcpOgogICAgICAgIHJhdyA9IHJhdy5zdHJpcCgpCiAgICAgICAgaWYgbm90IHJhdzoKICAgICAgICAgICAgY29udGludWUKICAgICAgICBtYXRjaCA9IFNQRUNfUEFUVEVSTi5tYXRjaChyYXcpCiAgICAgICAgaWYgbm90IG1hdGNoOgogICAgICAgICAgICBjb250aW51ZQogICAgICAgIG9wLCB2ZXJzaW9uID0gbWF0Y2guZ3JvdXBzKCkKICAgICAgICBjbGF1c2VzLmV4dGVuZChleHBhbmRfY2xhdXNlKG9wLCB2ZXJzaW9uKSkKICAgIGlmIG5vdCBjbGF1c2VzOgogICAgICAgIHJldHVybiAiIgogICAgZGVkdXAgPSB7fQogICAgZm9yIG9wLCB2ZXJzaW9uIGluIGNsYXVzZXM6CiAgICAgICAgZGVkdXBbKG9wLCB2ZXJzaW9uKV0gPSAob3AsIHZlcnNpb24pCiAgICBvcmRlcmVkID0gc29ydGVkKGRlZHVwLnZhbHVlcygpLCBrZXk9bGFtYmRhIGl0ZW06IChPUkRFUi5nZXQoaXRlbVswXSwgOTkpLCB2ZXJzaW9uX2tleShpdGVtWzFdKSkpCiAgICByZXR1cm4gInB5dGhvbiIgKyAiLCIuam9pbihmIntvcH17dmVyc2lvbn0iIGZvciBvcCwgdmVyc2lvbiBpbiBvcmRlcmVkKQoKCmRlZiByZWFkX3J1bnRpbWVfc3BlYygpIC0+IHN0cjoKICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhSVU5USU1FX1BBVEgpOgogICAgICAgIHJldHVybiAiIgogICAgd2l0aCBvcGVuKFJVTlRJTUVfUEFUSCwgJ3InLCBlbmNvZGluZz0ndXRmLTgnLCBlcnJvcnM9J2lnbm9yZScpIGFzIGhhbmRsZToKICAgICAgICB0ZXh0ID0gaGFuZGxlLnJlYWQoKQogICAgbWF0Y2ggPSByZS5zZWFyY2gocicoPzpweXRob25bLT1dKT9ccyooWzAtOV0rKD86XC5bMC05XSspezAsMn0pJywgdGV4dCkKICAgIGlmIG5vdCBtYXRjaDoKICAgICAgICByZXR1cm4gIiIKICAgIHBhcnRzID0gbWF0Y2guZ3JvdXAoMSkuc3BsaXQoJy4nKQogICAgbWFqb3JfbWlub3IgPSAnLicuam9pbihwYXJ0c1s6Ml0pCiAgICByZXR1cm4gZidweXRob249e21ham9yX21pbm9yfScKCgpkZWYgcmVhZF9weXByb2plY3Rfc3BlYygpIC0+IHN0cjoKICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhQWVBST0pFQ1RfUEFUSCk6CiAgICAgICAgcmV0dXJuICIiCiAgICB3aXRoIG9wZW4oUFlQUk9KRUNUX1BBVEgsICdyJywgZW5jb2Rpbmc9J3V0Zi04JywgZXJyb3JzPSdpZ25vcmUnKSBhcyBoYW5kbGU6CiAgICAgICAgdGV4dCA9IGhhbmRsZS5yZWFkKCkKICAgIG1hdGNoID0gUFlQUk9KRUNUX1JFLnNlYXJjaCh0ZXh0KQogICAgaWYgbm90IG1hdGNoOgogICAgICAgIHJldHVybiAiIgogICAgcmV0dXJuIHBlcDQ0MF90b19jb25kYShtYXRjaC5ncm91cCgxKSkKCgpkZWYgZGV0ZWN0X3JlcXVpcmVzX3B5dGhvbigpIC0+IHN0cjoKICAgICIiIlJldHVybiBiZXN0LWVmZm9ydCByZXF1aXJlcy1weXRob24gY29uc3RyYWludCBmb3IgdGhlIGN1cnJlbnQgcHJvamVjdC4iIiIKICAgIHJ1bnRpbWVfc3BlYyA9IHJlYWRfcnVudGltZV9zcGVjKCkKICAgIGlmIHJ1bnRpbWVfc3BlYzoKICAgICAgICByZXR1cm4gcnVudGltZV9zcGVjCiAgICByZXR1cm4gcmVhZF9weXByb2plY3Rfc3BlYygpCgoKZGVmIG1haW4oYXJndj1Ob25lKSAtPiBOb25lOgogICAgIiIiQ0xJIGVudHJ5IHBvaW50IHRoYXQgcHJpbnRzIG5vcm1hbGl6ZWQgcmVxdWlyZXMtcHl0aG9uIGNvbnN0cmFpbnRzLiIiIgogICAgYXJncyA9IGxpc3Qoc3lzLmFyZ3ZbMTpdIGlmIGFyZ3YgaXMgTm9uZSBlbHNlIGFyZ3YpCiAgICBpZiBhcmdzIGFuZCBhcmdzWzBdID09ICItLXNlbGYtdGVzdCI6CiAgICAgICAgZm9yIHNhbXBsZSBpbiAoIn49My4xMCIsICJ+PTMuOC4xIik6CiAgICAgICAgICAgIHN5cy5zdGRvdXQud3JpdGUocGVwNDQwX3RvX2NvbmRhKHNhbXBsZSkgKyAiXG4iKQoKICAgICAgICByZXR1cm4KICAgIGlmIGFyZ3M6CiAgICAgICAgZm9yIGl0ZW0gaW4gYXJnczoKICAgICAgICAgICAgc3lzLnN0ZG91dC53cml0ZShwZXA0NDBfdG9fY29uZGEoaXRlbSkgKyAiXG4iKQoKICAgICAgICByZXR1cm4KICAgIHN5cy5zdGRvdXQud3JpdGUoZGV0ZWN0X3JlcXVpcmVzX3B5dGhvbigpICsgIlxuIikKCgoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIG1haW4oKQo="
 set "HP_PRINT_PYVER=aW1wb3J0IHN5cwoKcHJpbnQoZiJweXRob24te3N5cy52ZXJzaW9uX2luZm9bMF19LntzeXMudmVyc2lvbl9pbmZvWzFdfS57c3lzLnZlcnNpb25faW5mb1syXX0iKQo="

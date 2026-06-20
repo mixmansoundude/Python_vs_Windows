@@ -1863,6 +1863,35 @@ def _inventory_lines(encoded: Optional[str]) -> List[str]:
     return decoded.splitlines()
 
 
+def _resolve_inventory_lines(context: "Context") -> List[str]:
+    """Return the raw inventory bullet lines for the index.
+
+    Preference order:
+      1. INVENTORY_B64 env var (legacy path; kept for backward compatibility).
+      2. The on-disk ``inventory.md`` written by the CI inventory step.
+
+    derived requirement: the inventory grows with the artifact count and was
+    previously forwarded through the INVENTORY_B64 step env var. A large value
+    there overflows execve's argument/environment limit (E2BIG, "Argument list
+    too long") when the publish step launches bash. The inventory step already
+    writes the identical content to ``<DIAG>/inventory.md``, so read that file
+    instead of routing ~168 KB through the process environment.
+    """
+
+    if context.inventory_b64:
+        lines = _inventory_lines(context.inventory_b64)
+        if lines:
+            return lines
+    if context.diag:
+        inventory_md = context.diag / "inventory.md"
+        try:
+            if inventory_md.is_file():
+                return inventory_md.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+    return []
+
+
 def _nonempty_file(path: Path) -> bool:
     try:
         return path.is_file() and path.stat().st_size > 0
@@ -3720,7 +3749,7 @@ def _build_markdown(
             else:
                 lines.append(f"- {display_name}: [Download]({normalized}) — {size}")
 
-    inventory_lines = _inventory_lines(context.inventory_b64)
+    inventory_lines = _resolve_inventory_lines(context)
     if inventory_lines:
         lines.append("")
         lines.append("## Inventory (raw)")
@@ -4151,7 +4180,7 @@ def _write_html(
         html.append("</ul>")
         html.append("</section>")
 
-    inventory_lines = _inventory_lines(context.inventory_b64)
+    inventory_lines = _resolve_inventory_lines(context)
     if inventory_lines:
         html.append("<section>")
         html.append("<h2>Inventory (raw)</h2>")

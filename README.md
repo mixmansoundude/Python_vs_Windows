@@ -8,7 +8,7 @@
 
 Prime Directive: With only one or more Python files on a clean Windows 10+ machine with internet, get at least one to run, with all imports installed.
 
-This tool is for beginners or unfamiliar users who have been given Python code and want to get it running, not for maintaining production repositories. It brute-forces a working environment: it discovers dependencies, installs them via conda, and produces a standalone EXE. Getting the code to run takes priority over preserving outdated constraints.
+This tool is for beginners or unfamiliar users who have been given Python code and want to get it running, not for maintaining production repositories. It brute-forces a working environment: it discovers dependencies, installs them via the selected provider (uv, conda, or pip), and produces a standalone EXE. Getting the code to run takes priority over preserving outdated constraints.
 
 ---
 
@@ -74,8 +74,8 @@ This repository serves as a proof of concept of this new approach.
 ## [REQ-003] Platform & Locations
 
 - Platform: Windows 10 (1809+) or newer to leverage built-in `curl` and PowerShell.
-- Conda environments: use **Miniconda** (non-admin).
-- Writable, non-admin locations under Public Documents:
+- Conda environments (when conda is the selected provider): use **Miniconda** (non-admin).
+- Writable, non-admin locations under Public Documents (conda provider):
   - Miniconda root: `%PUBLIC%\Documents\Miniconda3`
   - App workspace: current folder (where the batch runs)
 
@@ -91,22 +91,17 @@ This repository serves as a proof of concept of this new approach.
 - [REQ-004] Python version detection precedence:
   1. `runtime.txt` (`python-3.x.y` or `3.x[.y]`)
   2. `pyproject.toml` `requires-python`
-  3. Otherwise let **conda pick latest** (no hard-coded fallback); then **write back `runtime.txt`**.
+  3. Otherwise let the **selected provider pick latest** (no hard-coded fallback); then **write back `runtime.txt`**. (When the conda provider is active, conda resolves the latest available Python from conda-forge.)
 
-- Environment naming: env name equals the **current folder name**, sanitized for conda: characters outside `[A-Za-z0-9_-]` (e.g. spaces) become `_`, a **leading hyphen** is replaced with `_` (so `conda create -n` does not parse the name as a flag), and a name that reduces to only separators falls back to `env`. Internal hyphens (e.g. `my-app`) are preserved. The derived name is logged: `[INFO] Environment name: <name>`.
+- Environment naming: env name equals the **current folder name**, sanitized (characters outside `[A-Za-z0-9_-]` (e.g. spaces) become `_`, a **leading hyphen** is replaced with `_`, and a name that reduces to only separators falls back to `env`; internal hyphens like `my-app` are preserved). When the conda provider is active, this sanitized name is passed to `conda create -n`. The derived name is logged: `[INFO] Environment name: <name>`.
 
-- Miniconda is the primary environment provider and the CI contract expects it. When Miniconda cannot be installed or
-  downloaded, the bootstrapper falls back first to a Python venv and, as a last resort, runs the entry point under any
-  available system Python. Either fallback preserves the Prime Directive -- at least one .py file runs with its imports
-  satisfied.
-- Why Miniconda instead of only venv?
-  - Conda/Miniconda is the primary, tested path used in CI with pinned channels and reproducible solver behavior.
-  - venv is a pragmatic fallback for networks or hosts where Conda cannot be installed or downloaded; it is not the main
-    contract.
-  - Many users already have a Conda installer cached, so exercising the Miniconda path keeps the real-world fast path
-    healthy.
-  - The fast path (reusing `dist/<envname>.exe` when non-helper sources are unchanged) sits on top of either provider,
-    whether the env originated from Conda or venv.
+- **Provider independence:** The bootstrapper cannot depend exclusively on a single provider. It must be able to function with only any one of the REQ-009 providers available (uv alone, conda alone, venv alone, or system Python alone). No bootstrap path may hard-require a specific provider to be present.
+- UV is the preferred environment provider when available (cached or downloadable), as it is fast and avoids Miniconda download latency. When UV is unavailable or disabled, the bootstrapper falls back to Miniconda (conda provider), then to a local venv, and as a last resort runs the entry point under any available system Python. Every provider path preserves the Prime Directive -- at least one .py file runs with its imports satisfied.
+- Why multiple providers instead of only one?
+  - UV is fast and increasingly well-supported; prioritizing it reduces cold-start latency for new users.
+  - Conda/Miniconda has deep ecosystem support and reproducible solver behavior; it remains the authoritative provider in CI (cache and conda-full lanes) and the fallback when UV is unavailable.
+  - venv is a pragmatic fallback for networks or hosts where neither UV nor Conda can be installed or downloaded.
+  - The fast path (reusing `dist/<envname>.exe` when non-helper sources are unchanged) sits on top of any provider, regardless of which one created the environment.
 - [REQ-009] Environment discovery hierarchy (priority order):
   1. **UV** -- if `uv.exe` is available (cached or downloadable), create a `.uv_env` virtual environment using UV for fast dependency installs.
   2. **Conda (Portable / Miniconda)** -- install or reuse Miniconda at `%PUBLIC%\Documents\Miniconda3` (non-admin) and create a named conda env.
@@ -122,12 +117,15 @@ This repository serves as a proof of concept of this new approach.
   | Local venv (`.venv`) | 3rd | REQ-009; env creation fallback |
   | System Python | 4th | REQ-009; degraded execution mode, no isolation |
 
-- [REQ-006] Channels policy (determinism and legal-friction avoidance):
-  - Before any updates or installs, force **community conda-forge only**:
+  **Provider fallback trigger (current behavior):** The cascade to the next provider fires on *environment creation failure* only (e.g., uv venv create fails, Miniconda download fails). A provider that successfully creates its environment is not currently abandoned if dependency installation or warnfix repair later fails -- the bootstrap continues in a degraded state within the same provider. The intended direction is that a warnfix hard failure should also cascade to the next provider (e.g., uv warnfix exhausted -> retry full dep-install under conda).
+
+- [REQ-006] Channels policy (applies when **conda is the selected provider**; determinism and legal-friction avoidance):
+  - Before any conda updates or installs, force **community conda-forge only**:
     ```
     conda config --env --add channels conda-forge
     ```
   - Always install with `--override-channels -c conda-forge`.
+  - These constraints do not apply to uv or venv providers, which use PyPI (pip) with no channel concept.
 - [REQ-010] Session isolation (leak-proof environment):
   - At script start, `PYTHONPATH` and `PYTHONHOME` are explicitly cleared so the host shell cannot inject external site-packages into the bootstrapped environment.
   - Portable provider directories (UV `.uv_env\Scripts`, Conda env `\Scripts`) are **prepended** to `PATH` to shadow any global Python installation.
@@ -165,16 +163,18 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 
 ---
 
-### Installation Strategy (Conda + pip compatibility path)
+### Installation Strategy (provider-dependent)
 
-- REQ-005.2 -- Conda bulk install: Attempt install from the selected dependency source:
+The install strategy varies by the active REQ-009 provider. The steps below apply when **conda is the selected provider**. When uv or venv is the provider, pip is used directly (no conda install step, no channel policy).
+
+- REQ-005.2 -- Conda bulk install (conda provider only): Attempt install from the selected dependency source:
   ```
   conda install --file <resolved_requirements> --override-channels -c conda-forge
   ```
 
 ---
 
-- REQ-005.3 -- Conda per-package fallback: If bulk install fails:
+- REQ-005.3 -- Conda per-package fallback (conda provider only): If bulk install fails:
   - Install packages individually via conda
   - Convert `~=` (PEP 440 compatible release) to `>=X.Y,<X.(Y+1)`
 
@@ -203,12 +203,12 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 
 ---
 
-- REQ-005.7 -- pip gap fill: After conda attempts:
+- REQ-005.7 -- pip gap fill: After the provider's primary install attempt (conda bulk/per-package when conda is active; uv or pip directly when uv/venv is active):
   ```
   pip install -r <resolved_requirements>
   ```
   Purpose:
-  - Resolve packages unavailable or incomplete in conda
+  - Resolve packages unavailable or incomplete in the primary provider
   - Uses the same resolved dependency set (no divergence)
 
 ---
@@ -233,7 +233,8 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 
 - REQ-005.10 -- Retry loop: After repair attempts, rebuild/re-run until:
   - Success (application runs), or
-  - Hard failure (unresolvable)
+  - Hard failure (unresolvable within the current provider)
+  - On hard failure: currently logs and exits. Intended direction: cascade to the next REQ-009 provider (uv exhausted -> conda, conda exhausted -> venv, venv exhausted -> system Python) and re-attempt from the dependency installation phase.
 
 ---
 
@@ -244,6 +245,7 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 - No silent fallbacks: All degradations emit explicit warnings
 - Single resolved dependency set: Conda + pip operate on the same inputs
 - Execution success > dependency purity: System prioritizes working application over strict resolution correctness
+- Provider cascade on hard failure (intended): dep-install and warnfix failures are currently contained within the active provider. The design intent is that exhausting repair within a provider triggers REQ-009 fallback rather than a hard exit.
 - When missing imports are detected (for example from build-time warn files or installation output), the bootstrapper
   attempts to identify and install the missing packages using whatever signal is available. It cannot map all module
   names to conda package names (for example, `PIL` maps to `pillow`, `cv2` maps to `opencv`). This is a known
@@ -423,7 +425,7 @@ CI-only test-injection flags (`HP_TEST_*`, `HP_CI_*`, `HP_FORCE_CONDA_ONLY`, etc
 
 - On startup, if a previously downloaded conda or uv binary is found, the bootstrapper validates it with a health check before use.
 - Corrupt conda binary: runs `conda.bat info`; on failure, halts with a user-friendly error message and offers to self-heal (re-download Miniconda). If the user declines, exits with code 2.
-- Corrupt uv binary: detected at startup by a version probe; the cached binary is evicted so the next run downloads a fresh copy. Bootstrap continues via conda.
+- Corrupt uv binary: detected at startup by a version probe; the cached binary is evicted so the next run downloads a fresh copy. Bootstrap continues via the next available provider (conda if available, otherwise venv or system Python).
 - Log contract:
   - `[ERROR] Corrupt conda binary detected at: <path>` (real corruption)
   - `[WARN] Cached uv.exe failed health check; clearing and re-downloading.` (real uv corruption)

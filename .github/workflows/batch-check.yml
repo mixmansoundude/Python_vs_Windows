@@ -147,13 +147,15 @@ jobs:
         run: |
           'HP_TEST_NOT_ELEVATED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
-      # justme-test only: also exercises download fallback by forcing primary URLs to fail
+      # justme-test only: forces Miniconda DL fallback and completely prevents uv acquisition
+      # so the JustMe and Miniconda DL fallback paths are exercised (uv-first would bypass them).
+      # HP_TEST_UV_DL_FALLBACK is NOT set here; the uv DL fallback path needs a dedicated lane.
       - name: Force download fallback path (justme-test only)
         if: ${{ matrix.mode == 'justme-test' }}
         shell: pwsh
         run: |
           'HP_TEST_CONDA_DL_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
-          'HP_TEST_UV_DL_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          'HP_TEST_FORCE_UV_FAIL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       - name: Ensure CI fallbacks are off
         shell: pwsh
@@ -3755,9 +3757,9 @@ jobs:
           $joined | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.md')
           ($plainLines.ToArray() -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.txt')
           ($htmlLines.ToArray() -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.html')
-          [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($joined)) | ForEach-Object {
-            "inventory_b64=$_" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
-          }
+          # Note: the inventory is consumed by publish_index.py from inventory.md on disk.
+          # We deliberately do NOT emit an inventory_b64 step output: a large value routed
+          # through the publish step's env overflows execve (E2BIG) when bash launches.
 
       - name: Write batch-check metadata
         if: ${{ always() }}
@@ -3800,7 +3802,10 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHORTSHA: ${{ steps.prep.outputs.SHORTSHA }}
-          INVENTORY_B64: ${{ steps.inventory.outputs.inventory_b64 }}
+          # derived requirement: INVENTORY_B64 was previously forwarded here, but the
+          # inventory grows with the artifact count and a large value overflows execve's
+          # env/arg limit (E2BIG, "Argument list too long") when this step launches bash.
+          # publish_index.py now reads the identical content from <DIAG>/inventory.md.
           BATCH_RUN_ID: ${{ steps.fetch_batch.outputs.run_id }}
           BATCH_RUN_ATTEMPT: ${{ steps.fetch_batch.outputs.run_attempt }}
           SITE: ${{ steps.prep.outputs.SITE }}
