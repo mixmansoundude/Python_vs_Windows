@@ -147,13 +147,15 @@ jobs:
         run: |
           'HP_TEST_NOT_ELEVATED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
-      # justme-test only: also exercises download fallback by forcing primary URLs to fail
+      # justme-test only: forces Miniconda DL fallback and completely prevents uv acquisition
+      # so the JustMe and Miniconda DL fallback paths are exercised (uv-first would bypass them).
+      # HP_TEST_UV_DL_FALLBACK is NOT set here; the uv DL fallback path needs a dedicated lane.
       - name: Force download fallback path (justme-test only)
         if: ${{ matrix.mode == 'justme-test' }}
         shell: pwsh
         run: |
           'HP_TEST_CONDA_DL_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
-          'HP_TEST_UV_DL_FALLBACK=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          'HP_TEST_FORCE_UV_FAIL=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       - name: Ensure CI fallbacks are off
         shell: pwsh

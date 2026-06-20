@@ -334,7 +334,9 @@ justme-test lane rows (subset, flag-triggered):
 conda.install.justme
 ```
 
-dl-fallback lane rows (HP_TEST_CONDA_DL_FALLBACK=1, HP_TEST_UV_DL_FALLBACK=1, justme-test):
+dl-fallback lane rows (HP_TEST_CONDA_DL_FALLBACK=1 + HP_TEST_FORCE_UV_FAIL=1, justme-test):
+Note: HP_TEST_UV_DL_FALLBACK is NOT set in justme-test; uv DL fallback path needs a dedicated
+non-gating lane (see Active Backlog). self.dl.uv.fallback passes with skip=true in justme-test.
 
 ```
 self.dl.conda.fallback, self.dl.uv.fallback
@@ -629,6 +631,8 @@ Items deferred to future loops:
 
 - **Provider cascade on warnfix hard failure (REQ-009 / REQ-005.10)**: Currently a warnfix hard failure within a provider (uv, conda, venv) logs and exits rather than cascading to the next REQ-009 provider. Intended direction: exhausting repair within a provider triggers fallback to the next tier and re-attempts from the dependency installation phase. Requires deciding the cascade trigger condition (max repair attempts, specific error classes, or explicit unresolvable signal) and updating the retry loop in `run_setup.bat` accordingly.
 
+- **uv DL fallback CI coverage**: `self.dl.uv.fallback` (uv download fallback path -- HP_TEST_UV_DL_FALLBACK=1) has no active CI lane. justme-test now uses HP_TEST_FORCE_UV_FAIL=1 (skips uv entirely before any download) so the secondary uv URL is never exercised in CI. Needs a dedicated non-gating lane that sets HP_TEST_UV_DL_FALLBACK=1 without HP_FORCE_CONDA_ONLY=1 and without HP_TEST_NOT_ELEVATED=1, so uv download path is reached and the fallback URL is tried.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **NI-VISA real install fails fast in CI (`installer_rc=-125083`) -- environmental, NOT a repo/test/CI-code
@@ -686,8 +690,9 @@ Items completed and shipped:
   CI scenario for branch coverage. CLOSED by #232.
 - **Fallback URL handling**: Miniconda and uv downloads now try a secondary URL if the
   primary fails. download logic extracted to :download_miniconda_exe subroutine (CMD
-  parse-time expansion fix). HP_TEST_CONDA_DL_FALLBACK / HP_TEST_UV_DL_FALLBACK flags
-  for CI coverage in justme-test lane. CLOSED by this PR.
+  parse-time expansion fix). HP_TEST_CONDA_DL_FALLBACK for justme-test CI coverage.
+  HP_TEST_UV_DL_FALLBACK is implemented but has no active CI lane (see Active Backlog).
+  CLOSED by this PR (uv DL fallback coverage deferred).
 - **Conda base periodic update**: conda update -n base runs at :after_env_mode_selection
   when HP_ENV_MODE==conda; skipped on first install (timestamp seeded in ~conda.lastupdate);
   timer threshold 30 days. HP_TEST_CONDA_UPDATE=1 CI injection was removed because

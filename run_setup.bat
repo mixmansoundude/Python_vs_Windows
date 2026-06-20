@@ -148,6 +148,10 @@ rem HP_TEST_HEAL_ANSWER=Y|N: bypasses the interactive Y/N prompt in :conda_binar
 set "HP_TEST_HEAL_ANSWER=%HP_TEST_HEAL_ANSWER%"
 rem HP_TEST_CORRUPT_UV=1: simulates a corrupt uv binary; clears cache and re-downloads for REQ-020 branch coverage
 set "HP_TEST_CORRUPT_UV=%HP_TEST_CORRUPT_UV%"
+rem HP_TEST_FORCE_UV_FAIL=1: CI-only; forces uv acquisition to fail entirely (before any download attempt).
+rem Use in justme-test lane to exercise Miniconda/JustMe paths that are bypassed when uv succeeds.
+rem Mirrors HP_TEST_FORCE_CONDA_FAIL=1 pattern. Does not affect HP_TEST_UV_DL_FALLBACK behavior.
+set "HP_TEST_FORCE_UV_FAIL=%HP_TEST_FORCE_UV_FAIL%"
 rem HP_TEST_SKIP_EVICT=1: CI-only; skips the rmdir and Miniconda re-download in :evict_and_rebuild.
 rem Use with HP_TEST_CORRUPT_CONDA=1 + HP_TEST_HEAL_ANSWER=Y to test the accept branch without
 rem deleting the real CI Miniconda installation. The eviction log line is still emitted.
@@ -287,6 +291,12 @@ set "HP_UV_BIN=%HP_SCRIPT_ROOT%~uv_bin"
 set "HP_UV_ZIP=%TEMP%\~uv_setup.zip"
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
   call :log "[INFO] uv: skipped (HP_FORCE_CONDA_ONLY=1)."
+  goto :uv_acquire_done
+)
+if "%HP_TEST_FORCE_UV_FAIL%"=="1" (
+  call :log "[WARN] uv: HP_TEST_FORCE_UV_FAIL: simulating uv acquisition failure."
+  set "UV_FALLBACK_REASON=test_forced_fail"
+  call :log "[WARN] UV_FALLBACK reason=test_forced_fail"
   goto :uv_acquire_done
 )
 if exist "%HP_UV_BIN%\uv.exe" (
