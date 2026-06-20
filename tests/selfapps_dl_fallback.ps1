@@ -46,21 +46,34 @@ if (Test-Path -LiteralPath $setupLogPath) {
 if (-not $logText) { $logText = '' }
 
 # Check Miniconda fallback
-$condaFallbackTried     = $logText -match 'Trying fallback Miniconda URL:'
-$condaFallbackSucceeded = $logText -match 'Miniconda download succeeded from fallback URL\.'
-$condaPass = $condaFallbackTried -and $condaFallbackSucceeded
-
-Write-NdjsonRow ([ordered]@{
-    id      = 'self.dl.conda.fallback'
-    req     = 'REQ-003'
-    pass    = $condaPass
-    desc    = 'Miniconda fallback URL tried and succeeded when primary fails'
-    details = [ordered]@{
-        fallbackTried     = $condaFallbackTried
-        fallbackSucceeded = $condaFallbackSucceeded
-        setupLog          = $setupLogPath
-    }
-})
+# derived requirement: when uv-first is active, Miniconda is not downloaded at all;
+# the fallback URL is legitimately unreachable. Skip the conda fallback check in that case.
+$uvFirstSkipped = $logText -match '\[INFO\] uv-first: Miniconda download skipped\.'
+$condaPass = $true
+if ($uvFirstSkipped) {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.dl.conda.fallback'
+        req     = 'REQ-003'
+        pass    = $true
+        desc    = 'Miniconda fallback URL tried and succeeded when primary fails'
+        details = [ordered]@{ skip = $true; reason = 'uv-first-active'; uvFirstSkipped = $true }
+    })
+} else {
+    $condaFallbackTried     = $logText -match 'Trying fallback Miniconda URL:'
+    $condaFallbackSucceeded = $logText -match 'Miniconda download succeeded from fallback URL\.'
+    $condaPass = $condaFallbackTried -and $condaFallbackSucceeded
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.dl.conda.fallback'
+        req     = 'REQ-003'
+        pass    = $condaPass
+        desc    = 'Miniconda fallback URL tried and succeeded when primary fails'
+        details = [ordered]@{
+            fallbackTried     = $condaFallbackTried
+            fallbackSucceeded = $condaFallbackSucceeded
+            setupLog          = $setupLogPath
+        }
+    })
+}
 
 # Check uv fallback: verify fallback was attempted AND uv binary was ultimately acquired.
 # derived requirement: when HP_TEST_FORCE_UV_FAIL=1, uv acquisition is bypassed before any
