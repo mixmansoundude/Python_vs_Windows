@@ -98,6 +98,7 @@ set "HP_ENV_MODE=conda"
 set "HP_ENV_READY="
 set "HP_SKIP_PIPREQS=%HP_SKIP_PIPREQS%"
 set "HP_PY="
+set "HP_UV_PROVIDING_PYTHON="
 set "HP_FIND_ENTRY_SYNTAX_OK="
 set "HP_HELPER_SYNTAX_EMITTED="
 set "HP_HELPER_CMD_LOGGED="
@@ -272,86 +273,6 @@ if "%HP_CONDA_PROBE_STATUS%"=="skipped" (
 
 if defined HP_CI_SKIP_ENV goto :ci_skip_entry
 
-rem === Miniconda location (non-admin) =========================================
-rem G2 guardrail: warn if PUBLIC is absent so path failures are observable
-if not defined PUBLIC call :log "[WARN] PUBLIC env var not defined; Miniconda path may be invalid."
-set "MC=%PUBLIC%\Documents\Miniconda3"
-set "CONDA_MAIN=%MC%\condabin\conda.bat"
-set "CONDA_ALT=%MC%\Scripts\conda.bat"
-set "MINICONDA_ROOT=%MC%"
-set "CONDA_BASE_PY=%MINICONDA_ROOT%\python.exe"
-
-call :select_conda_bat
-rem PVW_CONDA_EXE: super-user override for the conda batch file path. When set, Miniconda
-rem installation is skipped. Requires conda to already be on PATH (the 'where conda' probe
-rem below will fail gracefully if not). Typical usage: pointing at a system-wide conda install.
-if defined PVW_CONDA_EXE set "CONDA_BAT=%PVW_CONDA_EXE%"
-
-rem Install Miniconda if conda.bat is missing
-set "HP_CONDA_JUST_INSTALLED="
-if not defined CONDA_BAT (
-  set "HP_CONDA_JUST_INSTALLED=1"
-  echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
-  call :download_miniconda_exe
-  if exist "%TEMP%\miniconda.exe" (
-    REM Attempt AllUsers install with JustMe fallback; see :try_conda_install.
-    call :try_conda_install
-  )
-  if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
-  call :select_conda_bat
-)
-
-set "PATH=%MINICONDA_ROOT%\condabin;%MINICONDA_ROOT%\Scripts;%MINICONDA_ROOT%\Library\bin;%MINICONDA_ROOT%;%PATH%"
-:after_conda_bat_validation
-
-if not defined CONDA_BAT (
-  set "HP_ENV_READY="
-  call :handle_conda_failure "conda.bat not found after bootstrap."
-  if defined HP_ENV_READY goto :after_env_mode_selection
-  call :die "[ERROR] conda.bat not found after bootstrap."
-)
-
-rem === Fresh install: warm up conda to initialize base-env state (REQ-020) ===
-rem derived requirement: Silent Miniconda install (/S /AddToPath=0) leaves the base
-rem environment in a state where conda info may return non-zero until conda is run
-rem once with its own directories in PATH. Calling conda info here (silently, after
-rem the PATH update) ensures subsequent bootstrap runs that find the pre-installed
-rem Miniconda pass the corruption health check instead of falsely flagging it corrupt.
-if defined HP_CONDA_JUST_INSTALLED if defined CONDA_BAT (
-  call "%CONDA_BAT%" info >nul 2>&1
-)
-
-rem === Validate existing conda binary health (REQ-020: corruption hardening) ===
-rem Only fires for pre-existing installs (HP_CONDA_JUST_INSTALLED guards fresh downloads).
-rem Skipped when HP_TEST_FORCE_CONDA_FAIL=1 (test flag already simulates conda failure).
-rem Placed after PATH update so conda.bat internal calls can resolve their dependencies.
-if defined CONDA_BAT if not defined HP_CONDA_JUST_INSTALLED if not defined HP_TEST_FORCE_CONDA_FAIL (
-  if defined HP_TEST_CORRUPT_CONDA (
-    call :log "[ERROR] HP_TEST_CORRUPT_CONDA: simulating corrupt conda binary."
-    goto :conda_binary_corrupt
-  )
-  call "%CONDA_BAT%" info >nul 2>&1
-  if errorlevel 1 goto :conda_binary_corrupt
-)
-where conda >> "%LOG%" 2>&1 || (
-  set "HP_ENV_READY="
-  call :handle_conda_failure "[ERROR] 'conda' not found on PATH after bootstrap."
-  if defined HP_ENV_READY goto :after_env_mode_selection
-  call :die "[ERROR] 'conda' not found on PATH after bootstrap."
-)
-where python >> "%LOG%" 2>&1 || (
-  set "HP_ENV_READY="
-  call :handle_conda_failure "[ERROR] 'python' not found on PATH after bootstrap."
-  if defined HP_ENV_READY goto :after_env_mode_selection
-  call :die "[ERROR] 'python' not found on PATH after bootstrap."
-)
-python -V >> "%LOG%" 2>&1 || (
-  set "HP_ENV_READY="
-  call :handle_conda_failure "[ERROR] 'python -V' failed after bootstrap."
-  if defined HP_ENV_READY goto :after_env_mode_selection
-  call :die "[ERROR] 'python -V' failed after bootstrap."
-)
-
 rem === uv acquisition (preferred env+dep installer; falls back to conda) =======
 rem derived requirement: uv is gated by HP_FORCE_CONDA_ONLY (same gate used for
 rem venv/system fallbacks) so the conda-full CI lane exercises the pure conda path.
@@ -435,11 +356,113 @@ if exist "%HP_UV_BIN%\uv.exe" (
 )
 :uv_acquire_done
 
+rem === uv-first: skip Miniconda when uv can provide Python ====================
+rem derived requirement: when uv is available, use it to run ~detect_python.py
+rem instead of CONDA_BASE_PY so the Miniconda download can be skipped entirely.
+rem HP_FORCE_CONDA_ONLY already cleared HP_UV_EXE above, so no extra check needed.
+if not defined HP_UV_EXE goto :uv_first_skip
+set "HP_RUNTIME_TXT_PREEXIST="
+if exist "runtime.txt" set "HP_RUNTIME_TXT_PREEXIST=1"
+call :emit_from_base64 "~detect_python.py" HP_DETECT_PY
+if errorlevel 1 goto :uv_first_skip
+"%HP_UV_EXE%" run --no-project python "~detect_python.py" > "~py_spec.txt" 2>> "%LOG%"
+if errorlevel 1 (
+  call :log "[WARN] uv-first: detect_python via uv run failed; will download Miniconda."
+  goto :uv_first_skip
+)
+set "PYSPEC="
+for /f "usebackq delims=" %%A in ("~py_spec.txt") do set "PYSPEC=%%A"
+set "HP_UV_PROVIDING_PYTHON=1"
+call :log "[INFO] uv-first: Miniconda download skipped."
+:uv_first_skip
+
+rem === Miniconda location (non-admin) =========================================
+rem G2 guardrail: warn if PUBLIC is absent so path failures are observable
+if not defined PUBLIC call :log "[WARN] PUBLIC env var not defined; Miniconda path may be invalid."
+set "MC=%PUBLIC%\Documents\Miniconda3"
+set "CONDA_MAIN=%MC%\condabin\conda.bat"
+set "CONDA_ALT=%MC%\Scripts\conda.bat"
+set "MINICONDA_ROOT=%MC%"
+set "CONDA_BASE_PY=%MINICONDA_ROOT%\python.exe"
+
+call :select_conda_bat
+rem PVW_CONDA_EXE: super-user override for the conda batch file path. When set, Miniconda
+rem installation is skipped. Requires conda to already be on PATH (the 'where conda' probe
+rem below will fail gracefully if not). Typical usage: pointing at a system-wide conda install.
+if defined PVW_CONDA_EXE set "CONDA_BAT=%PVW_CONDA_EXE%"
+
+rem Install Miniconda if conda.bat is missing (skipped when uv is providing Python)
+set "HP_CONDA_JUST_INSTALLED="
+if not defined HP_UV_PROVIDING_PYTHON if not defined CONDA_BAT (
+  set "HP_CONDA_JUST_INSTALLED=1"
+  echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
+  call :download_miniconda_exe
+  if exist "%TEMP%\miniconda.exe" (
+    REM Attempt AllUsers install with JustMe fallback; see :try_conda_install.
+    call :try_conda_install
+  )
+  if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
+  call :select_conda_bat
+)
+
+set "PATH=%MINICONDA_ROOT%\condabin;%MINICONDA_ROOT%\Scripts;%MINICONDA_ROOT%\Library\bin;%MINICONDA_ROOT%;%PATH%"
+:after_conda_bat_validation
+
+if not defined HP_UV_PROVIDING_PYTHON if not defined CONDA_BAT (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "conda.bat not found after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] conda.bat not found after bootstrap."
+)
+
+rem === Fresh install: warm up conda to initialize base-env state (REQ-020) ===
+rem derived requirement: Silent Miniconda install (/S /AddToPath=0) leaves the base
+rem environment in a state where conda info may return non-zero until conda is run
+rem once with its own directories in PATH. Calling conda info here (silently, after
+rem the PATH update) ensures subsequent bootstrap runs that find the pre-installed
+rem Miniconda pass the corruption health check instead of falsely flagging it corrupt.
+if defined HP_CONDA_JUST_INSTALLED if defined CONDA_BAT (
+  call "%CONDA_BAT%" info >nul 2>&1
+)
+
+rem === Validate existing conda binary health (REQ-020: corruption hardening) ===
+rem Only fires for pre-existing installs (HP_CONDA_JUST_INSTALLED guards fresh downloads).
+rem Skipped when HP_TEST_FORCE_CONDA_FAIL=1 (test flag already simulates conda failure).
+rem Placed after PATH update so conda.bat internal calls can resolve their dependencies.
+if defined CONDA_BAT if not defined HP_CONDA_JUST_INSTALLED if not defined HP_TEST_FORCE_CONDA_FAIL (
+  if defined HP_TEST_CORRUPT_CONDA (
+    call :log "[ERROR] HP_TEST_CORRUPT_CONDA: simulating corrupt conda binary."
+    goto :conda_binary_corrupt
+  )
+  call "%CONDA_BAT%" info >nul 2>&1
+  if errorlevel 1 goto :conda_binary_corrupt
+)
+if defined HP_UV_PROVIDING_PYTHON goto :after_conda_probes
+where conda >> "%LOG%" 2>&1 || (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "[ERROR] 'conda' not found on PATH after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] 'conda' not found on PATH after bootstrap."
+)
+where python >> "%LOG%" 2>&1 || (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "[ERROR] 'python' not found on PATH after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] 'python' not found on PATH after bootstrap."
+)
+python -V >> "%LOG%" 2>&1 || (
+  set "HP_ENV_READY="
+  call :handle_conda_failure "[ERROR] 'python -V' failed after bootstrap."
+  if defined HP_ENV_READY goto :after_env_mode_selection
+  call :die "[ERROR] 'python -V' failed after bootstrap."
+)
+:after_conda_probes
+
 rem === Channel policy (determinism & legal) ===================================
-if not exist "%CONDA_BAT%" (
+if not defined HP_UV_PROVIDING_PYTHON if not exist "%CONDA_BAT%" (
   call :die "[ERROR] Conda not found at: %CONDA_BAT%"
 )
-call "%CONDA_BAT%" config --name base --add channels conda-forge >> "%LOG%" 2>&1
+if not defined HP_UV_PROVIDING_PYTHON call "%CONDA_BAT%" config --name base --add channels conda-forge >> "%LOG%" 2>&1
 
 rem NOTE: every 'conda create' or 'conda install' call below MUST include:
 rem       --override-channels -c conda-forge
@@ -449,11 +472,15 @@ call :log "[INFO] Workspace: %CD%"
 call :log "[INFO] Env name: %ENVNAME%"
 call :log "[INFO] Log: %LOG%"
 
-set "HP_RUNTIME_TXT_PREEXIST="
-if exist "runtime.txt" set "HP_RUNTIME_TXT_PREEXIST=1"
+if not defined HP_UV_PROVIDING_PYTHON (
+  set "HP_RUNTIME_TXT_PREEXIST="
+  if exist "runtime.txt" set "HP_RUNTIME_TXT_PREEXIST=1"
+)
 rem --- Detect required Python version (must run before env-state check) ---
 rem derived requirement: PYSPEC must be known before the env-state skip decision
 rem so a runtime.txt / pyproject.toml change triggers a full env rebuild.
+rem uv-first path: already ran detect_python via uv run and set PYSPEC above.
+if defined HP_UV_PROVIDING_PYTHON goto :detect_python_done
 call :emit_from_base64 "~detect_python.py" HP_DETECT_PY
 if errorlevel 1 call :die "[ERROR] Could not write ~detect_python.py"
 if exist "%CONDA_BASE_PY%" (
@@ -463,6 +490,7 @@ if exist "%CONDA_BASE_PY%" (
 )
 set "PYSPEC="
 for /f "usebackq delims=" %%A in ("~py_spec.txt") do set "PYSPEC=%%A"
+:detect_python_done
 if defined PVW_TARGET_PY set "PYSPEC=%PVW_TARGET_PY%"
 if defined PVW_TARGET_PY call :log "[INFO] Python version: using super-user override PVW_TARGET_PY."
 
@@ -470,6 +498,8 @@ rem --- Env-state fast path: skip conda create+install if env is still valid ---
 rem derived requirement: ~env.state.json records envMode/envName/envPath/pySpec/lockSize
 rem from the last successful run. Fast path fires only when PYSPEC, envName, lock size,
 rem and python.exe all match the stored snapshot.
+rem uv-first path: env reuse is handled by the .uv_env existence check below; skip here.
+if defined HP_UV_PROVIDING_PYTHON goto :env_state_check_done
 set "HP_ENV_STATE_RESULT="
 call :emit_from_base64 "~env_state.py" HP_ENV_STATE
 if errorlevel 1 goto :env_state_check_done

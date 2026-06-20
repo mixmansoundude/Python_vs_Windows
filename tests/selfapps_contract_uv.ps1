@@ -97,6 +97,22 @@ if ($lane -eq 'contract-uv-fail') {
         lane    = $lane
     })
 
+    # self.uv.first.miniconda.skip: assert that Miniconda download was skipped when uv
+    # was available (uv-first feature). Expects the skip log line and no install attempt.
+    $uvFirstSkipped = ($logText -match '\[INFO\] uv-first: Miniconda download skipped\.')
+    $minicondaInstalled = ($logText -match '\[INFO\] Installing Miniconda')
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.uv.first.miniconda.skip'
+        req     = 'REQ-009'
+        pass    = [bool]($uvFirstSkipped -and -not $minicondaInstalled)
+        desc    = 'Miniconda download must be skipped when uv is available (uv-first)'
+        details = [ordered]@{
+            uvFirstSkipped      = $uvFirstSkipped
+            minicondaInstalled  = $minicondaInstalled
+        }
+        lane    = $lane
+    })
+
     # self.contract.uv.pyver: assert that REQ-004 Python version (from runtime.txt) is
     # forwarded to uv venv via --python X.Y when PYSPEC is set.
     # Runs a dedicated minimal bootstrap with runtime.txt pre-created so PYSPEC is set

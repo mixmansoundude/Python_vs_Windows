@@ -353,6 +353,7 @@ contract-uv lane rows (flag-triggered):
 ```
 self.contract.uv
 self.contract.uv.pyver
+self.uv.first.miniconda.skip
 ```
 
 contract-uv-fail lane rows (HP_TEST_UV_FAIL=1, flag-triggered):
@@ -626,8 +627,6 @@ See **AGENTS.md** §Iteration Contract for the full policy. Key points:
 
 Items deferred to future loops:
 
-- **uv-first: skip Miniconda download when uv can provide Python**: Today Miniconda (~95 MB) is always downloaded even when `HP_ENV_MODE=uv`, because `CONDA_BASE_PY` (Miniconda base Python) is used to run `~detect_python.py` and `~env_state.py` before the uv venv exists. uv's managed Python (`uv run python <script>`) can replace this. Required change: (1) download uv first, (2) route `~detect_python.py` and `~env_state.py` through `uv run python` instead of `CONDA_BASE_PY`, (3) gate the entire Miniconda download/install block on `HP_FORCE_CONDA_ONLY` so it is skipped when uv succeeds. Trade-off: conda-forge binary packages unavailable when conda is skipped; pip/PyPI is the only install source in uv mode (already the case for `HP_ENV_MODE=uv`).
-
 - **Provider cascade on warnfix hard failure (REQ-009 / REQ-005.10)**: Currently a warnfix hard failure within a provider (uv, conda, venv) logs and exits rather than cascading to the next REQ-009 provider. Intended direction: exhausting repair within a provider triggers fallback to the next tier and re-attempts from the dependency installation phase. Requires deciding the cascade trigger condition (max repair attempts, specific error classes, or explicit unresolvable signal) and updating the retry loop in `run_setup.bat` accordingly.
 
 ## Known Findings (diagnosed, no action warranted)
@@ -651,6 +650,13 @@ Items deferred to future loops:
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **uv-first: skip Miniconda download when uv can provide Python**: Moved uv acquisition
+  before the Miniconda block. After acquiring uv, runs `~detect_python.py` via
+  `uv run --no-project python` to detect PYSPEC without needing Miniconda base Python.
+  Sets `HP_UV_PROVIDING_PYTHON=1` on success; all Miniconda-dependent guards check this
+  flag. Miniconda is still downloaded when uv is unavailable or HP_FORCE_CONDA_ONLY=1.
+  Verified by `self.uv.first.miniconda.skip` NDJSON row (contract-uv lane). CLOSED by this PR.
 
 - **Drag-and-drop message empty filename**: `:determine_entry` printed
   `*** Using drag-and-drop file: ` with no name (and set `HP_ENTRY` empty on the first
