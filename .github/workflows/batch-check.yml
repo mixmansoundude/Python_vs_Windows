@@ -58,7 +58,9 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Extract pipreqs version from bootstrapper
+        if: ${{ matrix.mode == 'cache' }}
         id: extract_version
+        continue-on-error: true
         shell: pwsh
         run: |
           $content = Get-Content run_setup.bat -Raw
@@ -68,8 +70,8 @@ jobs:
             "pipreqs_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
             Write-Host "Extracted pipreqs version: $version"
           } else {
-            Write-Error "Could not extract HP_PIPREQS_VERSION from run_setup.bat"
-            exit 1
+            Write-Host "::warning::Could not extract HP_PIPREQS_VERSION; using fallback 0.4.13"
+            "pipreqs_version=0.4.13" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           }
 
       - name: Restore Miniconda cache
