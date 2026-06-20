@@ -557,8 +557,8 @@ This is an intentional bootstrap execution strategy, not a workaround for pipreq
 **Comparison of approaches:**
 | Approach | Reliability in Bootstrap | Architecture | Scope |
 |----------|--------------------------|--------------|-------|
-| `pipreqs` (console script) | ⚠ Fragile (PATH dependent) | ✔ Official API | General use |
-| `python -m pipreqs.pipreqs` | ✔ Deterministic (no PATH) | ⚠ Internal mechanism | Bootstrap only |
+| `pipreqs` (console script) | WARN Fragile (PATH dependent) | OK Official API | General use |
+| `python -m pipreqs.pipreqs` | OK Deterministic (no PATH) | WARN Internal mechanism | Bootstrap only |
 
 See `run_setup.bat` lines ~813–820 for the invocation comment and rationale. This is a **deterministic execution pattern required for bootstrap reliability**, not a sign of fragility or a temporary workaround.
 
@@ -575,11 +575,11 @@ cannot build), the bootstrapper still falls back to `warnfix`:
 7. Retry interpreter smoke test
 
 **Warnfix coverage:** Warnfix detects and handles:
-- ✓ Top-level imports (e.g., `import colorama`)
-- ✓ Delayed imports (e.g., `def load(): import requests`)
-- ✓ Conditional imports (e.g., `if sys.platform == 'win32': import winreg`)
-- ✗ Optional/try-except imports (intentionally skipped, guarded by try-except)
-- ✗ Dynamic imports (e.g., `importlib.import_module(name)`)
+- [x] Top-level imports (e.g., `import colorama`)
+- [x] Delayed imports (e.g., `def load(): import requests`)
+- [x] Conditional imports (e.g., `if sys.platform == 'win32': import winreg`)
+- [ ] Optional/try-except imports (intentionally skipped, guarded by try-except)
+- [ ] Dynamic imports (e.g., `importlib.import_module(name)`)
 
 **User recommendation:** For Python 3.13+ or to avoid fallback latency, provide explicit dependencies:
 - **Option 1:** Add `requirements.txt` (comma-separated or newline-separated, any format pip understands)

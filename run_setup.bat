@@ -757,7 +757,7 @@ if defined HP_NDJSON (
 
 set "HP_PIPREQS_TARGET_WORK=%CD%\requirements.auto.txt"
 set "HP_PIPREQS_TARGET=%HP_PIPREQS_TARGET_WORK%"
-set "HP_PIPREQS_IGNORE=.git,.github,.venv,venv,env,build,dist,__pycache__,tests"
+set "HP_PIPREQS_IGNORE=.git,.github,.venv,venv,env,.uv_env,build,dist,__pycache__,tests"
 set "HP_PIPREQS_IGNORE_DISPLAY="
 if defined HP_PIPREQS_IGNORE set "HP_PIPREQS_IGNORE_DISPLAY= --ignore \"%HP_PIPREQS_IGNORE%\""
 set "HP_PIPREQS_SUMMARY_PHASE="
@@ -818,14 +818,6 @@ rem works reliably in bootstrap contexts where shell state / PATH propagation is
 rem This is NOT a pipreqs API issue (the console script is the official API); it is a Windows batch
 rem bootstrap sequencing issue. pipreqs is pinned to 0.4.13 permanently, so internal coupling is a
 rem low-risk controlled assumption due to the pinned dependency version.
-rem pipreqs flags are locked by CI (pipreqs.flags gate).
-rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-if defined HP_PIPREQS_IGNORE goto :pipreqs_direct_with_ignore
-rem pipreqs flags are locked by CI (pipreqs.flags gate).
-rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-  "%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
-goto :pipreqs_direct_done
-:pipreqs_direct_with_ignore
 rem pipreqs flags are locked by CI (pipreqs.flags gate).
 rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
 "%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1

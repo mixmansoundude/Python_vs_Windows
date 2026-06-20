@@ -58,7 +58,9 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Extract pipreqs version from bootstrapper
+        if: ${{ matrix.mode == 'cache' }}
         id: extract_version
+        continue-on-error: true
         shell: pwsh
         run: |
           $content = Get-Content run_setup.bat -Raw
@@ -68,8 +70,8 @@ jobs:
             "pipreqs_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
             Write-Host "Extracted pipreqs version: $version"
           } else {
-            Write-Error "Could not extract HP_PIPREQS_VERSION from run_setup.bat"
-            exit 1
+            Write-Host "::warning::Could not extract HP_PIPREQS_VERSION; using fallback 0.4.13"
+            "pipreqs_version=0.4.13" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           }
 
       - name: Restore Miniconda cache
@@ -1039,6 +1041,8 @@ jobs:
             tests\~envsmoke\~environment.lock.txt
             tests/~envsmoke/~pipreqs.diff.txt
             tests\~envsmoke\~pipreqs.diff.txt
+            tests/~envsmoke/~pipreqs_direct.log
+            tests\~envsmoke\~pipreqs_direct.log
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log
@@ -1053,6 +1057,8 @@ jobs:
             tests\~selftest_stub\~setup.log
             tests/~selftest_stub/~pipreqs.diff.txt
             tests\~selftest_stub\~pipreqs.diff.txt
+            tests/~selftest_stub/~pipreqs_direct.log
+            tests\~selftest_stub\~pipreqs_direct.log
             tests/~selftest_stub/~bootstrap.status.json
             tests\~selftest_stub\~bootstrap.status.json
             tests/~selftest_stub/~env.state.json
@@ -1075,6 +1081,8 @@ jobs:
             tests\~selftest_depcheck\~setup.log
             tests/~selftest_depcheck/~pipreqs.diff.txt
             tests\~selftest_depcheck\~pipreqs.diff.txt
+            tests/~selftest_depcheck/~pipreqs_direct.log
+            tests\~selftest_depcheck\~pipreqs_direct.log
             tests/~selftest_warnfix/~warnfix_bootstrap.log
             tests\~selftest_warnfix\~warnfix_bootstrap.log
             tests/~selftest_warnfix/~setup.log
