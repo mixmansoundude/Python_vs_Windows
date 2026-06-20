@@ -625,6 +625,93 @@ See **AGENTS.md** §Iteration Contract for the full policy. Key points:
 
 ---
 
+## uv-First Provider Architecture: Interconnectedness Map
+
+The "uv-first" feature (skip Miniconda download when uv can provide Python) has a larger
+blast radius than it appears. This section documents how it touches test infrastructure so
+future agents do not re-introduce the same failures.
+
+### Provider selection flow (run_setup.bat)
+
+```
+HP_FORCE_CONDA_ONLY=1 → always go through Miniconda; uv is never tried as primary
+HP_TEST_FORCE_UV_FAIL=1 → fires at line 296 (BEFORE cached-uv check at 302); uv never used
+HP_UV_PROVIDING_PYTHON=1 → set when uv successfully detects Python; gates Miniconda skip
+```
+
+When `HP_UV_PROVIDING_PYTHON=1`:
+- Miniconda is NOT downloaded or installed
+- `:select_conda_bat` (line 398) runs, but `%PUBLIC%\Documents\Miniconda3\condabin\conda.bat`
+  does not exist on disk, so `CONDA_BAT` is never set
+- The corruption check at line 442 (`if defined CONDA_BAT ...`) never fires
+- All conda-dependent bootstrap paths are bypassed
+
+### Lanes and their conda state
+
+| Lane | HP_FORCE_CONDA_ONLY | uv used | Miniconda installed | CONDA_BAT set |
+|------|---------------------|---------|---------------------|---------------|
+| conda-full | 1 | no | yes | yes |
+| real | not set | yes (uv-first) | no | no |
+| cache | not set | yes (uv-first) | maybe (cached) | maybe |
+| justme-test | not set | no (HP_TEST_FORCE_UV_FAIL=1) | via JustMe | yes |
+| contract-uv | not set | yes (forced) | no | no |
+
+### Test files that assume conda is present -- skip=true pattern required
+
+These test files call `Get-CondaBatPath` and use the result to run conda-specific operations.
+When conda is absent AND `HP_FORCE_CONDA_ONLY != '1'`, they MUST emit `skip=true` rows
+instead of failures. When `HP_FORCE_CONDA_ONLY == '1'`, they MUST emit `pass=$false`
+(conda is supposed to be there in that lane).
+
+| Test file | Affected rows | Skip guard added? |
+|-----------|--------------|-------------------|
+| `tests/selfapps_reqspec.ps1` | reqspec.translate.*, reqspec.conda.*, reqspec.install.import, reqspec.gte.explicit, reqspec.ingest.* | YES (current) |
+| `tests/selfapps_pyproject_precedence.ps1` | pyproject.precedence.detect, pyproject.dep.detect, pyproject.dep.noproj | YES (current) |
+| `tests/selftest.ps1` | self.corrupt.conda.detect, self.corrupt.conda.heal.decline, self.corrupt.conda.heal.accept | YES -- guards on `$condaBatOnDisk` |
+| `tests/selfapps_envsmoke.ps1` | self.env.smoke.conda | check -- may need guard if conda absent in real lane |
+| `tests/selfapps_pandas_excel.ps1` | pandas_excel.conda.install, pandas_excel.conda.install.req006 | check -- calls conda for install |
+| `tests/selfapps_pipgap.ps1` | pipgap.conda.miss, pipgap.pip.fill | check -- tests conda miss / pip fill gap |
+
+The `pyproject.precedence.writeback` test runs the FULL bootstrapper (which uses uv in
+uv-first lanes) and does NOT require conda to be present. It is NOT in the "needs guard" list.
+
+### HP_TEST_FORCE_UV_FAIL and HP_TEST_CORRUPT_UV interaction
+
+`HP_TEST_FORCE_UV_FAIL=1` fires at `run_setup.bat` line 296 (BEFORE the cached-uv check
+at line 302 where `HP_TEST_CORRUPT_UV` fires). If both are set simultaneously, the
+FORCE_UV_FAIL gate fires first and the CORRUPT_UV test never reaches its trigger.
+
+Fix (applied in `tests/selftest.ps1`): the corrupt-uv sub-bootstrap saves/clears/restores
+`HP_TEST_FORCE_UV_FAIL` so that the corrupt-uv branch is correctly exercised in all lanes.
+
+### INVENTORY_B64 E2BIG pattern (publish_index.py)
+
+Passing large data through step env vars (`INVENTORY_B64` was ~168 KB base64) overflows
+Linux's `execve` ARG_MAX. Fix: read the same data from a file written to disk by the
+inventory step instead of routing it through the process environment. Applied to
+`tools/diag/publish_index.py` and `.github/workflows/batch-check.yml`.
+
+General rule: NEVER pass data >32 KB through GitHub Actions step `env:` -- write to a
+temp file in `$GITHUB_WORKSPACE` and read from disk instead.
+
+### Skip pattern template (copy-paste for new conda-specific test blocks)
+
+```powershell
+# derived requirement: in uv-first lanes, Miniconda is not installed so these
+# conda-specific tests are not applicable -- emit skip=true.
+# In conda-only lanes (HP_FORCE_CONDA_ONLY=1), conda MUST be present; emit failures.
+if ($env:HP_FORCE_CONDA_ONLY -ne '1') {
+    $myPass = $true
+    $myDetails.skip   = $true
+    $myDetails.reason = 'conda-not-installed-uv-first'
+} else {
+    $myDetails.reason = "conda python missing: $condaPython"
+    $myDetails.condaBatCandidates = $condaInfo.candidates
+}
+```
+
+---
+
 ## Active Backlog
 
 Items deferred to future loops:

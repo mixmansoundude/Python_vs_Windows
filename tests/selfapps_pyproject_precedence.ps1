@@ -84,8 +84,16 @@ $detectPass = $false
 $detectDetails = [ordered]@{}
 
 if (-not $condaPython -or -not (Test-Path -LiteralPath $condaPython)) {
-    $detectDetails.reason = "conda python missing: $condaPython"
-    $detectDetails.condaBatCandidates = $condaInfo.candidates
+    # derived requirement: in uv-first lanes, conda is absent; skip rather than fail.
+    # In conda-only lanes (HP_FORCE_CONDA_ONLY=1), conda MUST be present so keep as fail.
+    if ($env:HP_FORCE_CONDA_ONLY -ne '1') {
+        $detectPass = $true
+        $detectDetails.skip   = $true
+        $detectDetails.reason = 'conda-not-installed-uv-first'
+    } else {
+        $detectDetails.reason = "conda python missing: $condaPython"
+        $detectDetails.condaBatCandidates = $condaInfo.candidates
+    }
 } else {
     if (Test-Path -LiteralPath $detectDir) { Remove-Item -LiteralPath $detectDir -Recurse -Force -ErrorAction SilentlyContinue }
     New-Item -ItemType Directory -Force -Path $detectDir | Out-Null
@@ -225,8 +233,14 @@ $depPass       = $false
 $depDetails    = [ordered]@{}
 
 if (-not $condaPython -or -not (Test-Path -LiteralPath $condaPython)) {
-    $depDetails.reason = "conda python missing: $condaPython"
-    $depDetails.condaBatCandidates = $condaInfo.candidates
+    if ($env:HP_FORCE_CONDA_ONLY -ne '1') {
+        $depPass = $true
+        $depDetails.skip   = $true
+        $depDetails.reason = 'conda-not-installed-uv-first'
+    } else {
+        $depDetails.reason = "conda python missing: $condaPython"
+        $depDetails.condaBatCandidates = $condaInfo.candidates
+    }
 } else {
     if (Test-Path -LiteralPath $depDetectDir) { Remove-Item -LiteralPath $depDetectDir -Recurse -Force -ErrorAction SilentlyContinue }
     New-Item -ItemType Directory -Force -Path $depDetectDir | Out-Null
@@ -278,8 +292,14 @@ $noProjPass    = $false
 $noProjDetails = [ordered]@{}
 
 if (-not $condaPython -or -not (Test-Path -LiteralPath $condaPython)) {
-    $noProjDetails.reason = "conda python missing: $condaPython"
-    $noProjDetails.condaBatCandidates = $condaInfo.candidates
+    if ($env:HP_FORCE_CONDA_ONLY -ne '1') {
+        $noProjPass = $true
+        $noProjDetails.skip   = $true
+        $noProjDetails.reason = 'conda-not-installed-uv-first'
+    } else {
+        $noProjDetails.reason = "conda python missing: $condaPython"
+        $noProjDetails.condaBatCandidates = $condaInfo.candidates
+    }
 } else {
     if (Test-Path -LiteralPath $noProjDir) { Remove-Item -LiteralPath $noProjDir -Recurse -Force -ErrorAction SilentlyContinue }
     New-Item -ItemType Directory -Force -Path $noProjDir | Out-Null
