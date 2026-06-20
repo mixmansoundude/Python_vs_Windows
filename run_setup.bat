@@ -589,6 +589,30 @@ if "%HP_TEST_UV_FAIL%"=="1" (
 )
 goto :after_env_mode_selection
 :uv_venv_fail
+rem derived requirement: uv venv reads pyproject.toml for requires-python even when
+rem --python is not passed, so a malformed pyproject.toml causes venv creation to fail.
+rem When HP_UV_PROVIDING_PYTHON=1 (conda not installed), retry via "uv run --no-project
+rem python -m venv" which bypasses project discovery and ignores pyproject.toml.
+rem The HP_PYPROJ_DEPS path (line ~712) later detects the malformed TOML and emits the
+rem [WARN] pyproject.toml TOML parse error message as normal.
+if defined HP_UV_PROVIDING_PYTHON (
+  call :log "[WARN] uv: venv creation failed; retrying via uv run --no-project (malformed pyproject.toml guard)."
+  if defined HP_UV_PY_VER (
+    "%HP_UV_EXE%" run --no-project --python "%HP_UV_PY_VER%" python -m venv "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
+  ) else (
+    "%HP_UV_EXE%" run --no-project python -m venv "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
+  )
+  if not errorlevel 1 (
+    if exist "%HP_UV_ENV_PATH%\Scripts\python.exe" (
+      set "HP_ENV_MODE=uv"
+      set "HP_PY=%HP_UV_ENV_PATH%\Scripts\python.exe"
+      set "ENV_PATH=%HP_UV_ENV_PATH%"
+      call :log "[INFO] uv: venv created at .uv_env via uv run --no-project fallback"
+      goto :uv_venv_ready
+    )
+  )
+  call :log "[WARN] uv: uv run --no-project venv also failed; falling back to conda create."
+)
 call :log "[WARN] uv: venv creation failed; falling back to conda create."
 set "UV_FALLBACK_REASON=venv_create_failed"
 call :log "[WARN] UV_FALLBACK reason=venv_create_failed"

@@ -684,6 +684,29 @@ FORCE_UV_FAIL gate fires first and the CORRUPT_UV test never reaches its trigger
 Fix (applied in `tests/selftest.ps1`): the corrupt-uv sub-bootstrap saves/clears/restores
 `HP_TEST_FORCE_UV_FAIL` so that the corrupt-uv branch is correctly exercised in all lanes.
 
+### Malformed pyproject.toml + uv venv failure (uv-first lanes)
+
+`uv venv` reads `pyproject.toml` for `[project].requires-python` even without `--python`.
+When pyproject.toml is malformed TOML, `uv venv` exits non-zero. In the uv-first real lane
+(no conda installed), this cascades: `:uv_venv_fail` falls to `:try_conda_create`, but
+`CONDA_BAT` is empty, so conda create also fails, and the bootstrap exits non-zero.
+
+**Symptom**: `self.pyproject.malformed` fails in real/cache lanes (uv-first).
+**Root cause**: `uv venv` runs in the project directory and hits the malformed TOML before
+`HP_PYPROJ_DEPS` gets a chance to detect and warn about it.
+**Fix** (in `:uv_venv_fail`): when `HP_UV_PROVIDING_PYTHON=1`, retry via
+`uv run --no-project python -m venv .uv_env` which bypasses project discovery entirely.
+On success, go to `:uv_venv_ready`. The `HP_PYPROJ_DEPS` path (line ~712) then naturally
+detects the malformed TOML and emits `[WARN] pyproject.toml TOML parse error; falling back.`
+
+**Note**: `UV_NO_CONFIG=1` does NOT help -- uv's own docs say: "Note that if a pyproject.toml
+file is present, uv will still use the [project] metadata (e.g., requires-python) to guide
+dependency resolution." Only `--no-project` truly bypasses pyproject.toml discovery.
+
+**Note**: `~detect_python.py` reads pyproject.toml via REGEX (not TOML parser), so it exits 0
+even on malformed TOML (just returns empty string). That's why `HP_UV_PROVIDING_PYTHON=1` is
+set correctly, and the venv creation step is the first point of failure.
+
 ### INVENTORY_B64 E2BIG pattern (publish_index.py)
 
 Passing large data through step env vars (`INVENTORY_B64` was ~168 KB base64) overflows
