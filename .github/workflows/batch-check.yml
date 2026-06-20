@@ -3757,9 +3757,9 @@ jobs:
           $joined | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.md')
           ($plainLines.ToArray() -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.txt')
           ($htmlLines.ToArray() -join "`n") | Set-Content -Encoding UTF8 (Join-Path $Diag 'inventory.html')
-          [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($joined)) | ForEach-Object {
-            "inventory_b64=$_" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
-          }
+          # Note: the inventory is consumed by publish_index.py from inventory.md on disk.
+          # We deliberately do NOT emit an inventory_b64 step output: a large value routed
+          # through the publish step's env overflows execve (E2BIG) when bash launches.
 
       - name: Write batch-check metadata
         if: ${{ always() }}
@@ -3802,7 +3802,10 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHORTSHA: ${{ steps.prep.outputs.SHORTSHA }}
-          INVENTORY_B64: ${{ steps.inventory.outputs.inventory_b64 }}
+          # derived requirement: INVENTORY_B64 was previously forwarded here, but the
+          # inventory grows with the artifact count and a large value overflows execve's
+          # env/arg limit (E2BIG, "Argument list too long") when this step launches bash.
+          # publish_index.py now reads the identical content from <DIAG>/inventory.md.
           BATCH_RUN_ID: ${{ steps.fetch_batch.outputs.run_id }}
           BATCH_RUN_ATTEMPT: ${{ steps.fetch_batch.outputs.run_attempt }}
           SITE: ${{ steps.prep.outputs.SITE }}
