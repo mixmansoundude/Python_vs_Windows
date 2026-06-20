@@ -728,6 +728,13 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($pep723PrioPass) { $summary.Add('PEP 723 priority over pyproject: PASS') } else { $summary.Add('PEP 723 priority over pyproject: FAIL') }
 
+# derived requirement: CONDA_BAT is set by :select_conda_bat only when
+# %PUBLIC%\Documents\Miniconda3\condabin\conda.bat exists on disk. In uv-first
+# fresh lanes, Miniconda is never installed so the corruption check precondition
+# is never met. The cache lane still exercises these tests (Miniconda cached).
+$condaBatOnDisk = Test-Path -LiteralPath (Join-Path $MiniRoot 'condabin\conda.bat')
+if ($condaBatOnDisk) {
+
 # --- Conda binary corruption detection test (REQ-020) ---
 # Arrange: HP_TEST_CORRUPT_CONDA=1 simulates a corrupt conda binary.
 # Assert:  bootstrap exits 2 and log contains the corruption-detected error message.
@@ -849,6 +856,18 @@ if ($healAcceptExit -eq 0 -and $healAcceptEvictMsgFound -and $healAcceptState -e
 } else {
   $summary.Add('Heal accept: FAIL')
 }
+} else {
+  foreach ($id in @('self.corrupt.conda.detect', 'self.corrupt.conda.heal.decline', 'self.corrupt.conda.heal.accept')) {
+    Write-NdjsonRow ([ordered]@{
+      id      = $id
+      req     = 'REQ-020'
+      pass    = $true
+      desc    = 'Corrupt conda test: Miniconda not on disk in uv-first lane; skip'
+      details = [ordered]@{ skip = $true; reason = 'miniconda-not-on-disk' }
+    })
+  }
+  $summary.Add('Corrupt conda tests: SKIP (miniconda-not-on-disk)')
+}
 
 # --- UV binary corruption eviction test (REQ-020 Task 4) ---
 # Arrange: create fake ~uv_bin\uv.exe + HP_TEST_CORRUPT_UV=1 simulates corrupt cached uv binary.
@@ -874,6 +893,10 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
   Set-Content -Path (Join-Path $uvBinDir 'uv.exe') -Value '' -Encoding ASCII
   $uvLogName = '~corrupt_uv_bootstrap.log'
   $env:HP_TEST_CORRUPT_UV = '1'
+  # derived requirement: HP_TEST_FORCE_UV_FAIL (e.g. justme-test lane) must be cleared;
+  # the gate at line 296 fires before the cached-uv check at line 302 where HP_TEST_CORRUPT_UV fires.
+  $prevForceUvFail3 = $env:HP_TEST_FORCE_UV_FAIL
+  $env:HP_TEST_FORCE_UV_FAIL = ''
   $prevCILane3 = $env:HP_CI_LANE
   if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
   Push-Location $uvCorruptDir
@@ -883,6 +906,7 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
   } finally {
     Pop-Location
     $env:HP_TEST_CORRUPT_UV = ''
+    $env:HP_TEST_FORCE_UV_FAIL = $prevForceUvFail3
     $env:HP_CI_LANE = $prevCILane3
   }
   $uvLogPath = Join-Path $uvCorruptDir $uvLogName
