@@ -196,7 +196,22 @@ THEN stop and open/append a PR. One loop = one change set.
 - Be sure to sanity check anything touched before submitting code. Recommended options include:
   - Python: `python -m compileall -q .` and `python -m pyflakes .` (install `pyflakes` if needed).
 - PowerShell:
-    - Install `pwsh` first (works on these runners as of 2025-11-09):
+    - **Do NOT skip PowerShell validation just because the host is Linux.** `pwsh` installs and runs
+      reliably on these Linux runners — this is a proven, repeatable path, not a long shot. If a script
+      under `.ps1` is touched, install `pwsh` and validate it. "I'm on Linux so I can't check PowerShell"
+      is not an acceptable reason to push unvalidated `.ps1` changes.
+    - **Fastest check (no PSGallery, no script execution): AST parse via the .NET parser.** This catches
+      every syntax error (unbalanced braces, bad here-strings, parameter-name `-or`/`-and` traps) in
+      milliseconds and runs identically on Linux and Windows. Use it as the default `.ps1` pre-commit gate:
+      ```
+      pwsh -NoProfile -c "[System.Management.Automation.Language.Parser]::ParseFile('tests/selftest.ps1', [ref]\$null, [ref]\$null)"
+      ```
+      Exit code 0 with no output means the file parses cleanly. To sweep every PowerShell file:
+      ```
+      pwsh -NoProfile -c "Get-ChildItem -Recurse -Include *.ps1,*.psm1,*.psd1 | ForEach-Object { \$errs=\$null; [System.Management.Automation.Language.Parser]::ParseFile(\$_.FullName,[ref]\$null,[ref]\$errs) > \$null; if (\$errs) { Write-Host \"FAIL \$(\$_.FullName)\"; \$errs } }"
+      ```
+      (`tools/ps-compileall.ps1` wraps this sweep if you prefer a named helper.)
+    - If `pwsh` is not yet present, install it first (works on these runners as of 2025-11-09):
       ```
       sudo apt-get update
       sudo apt-get install -y wget apt-transport-https software-properties-common lsb-release
@@ -205,7 +220,8 @@ THEN stop and open/append a PR. One loop = one change set.
       sudo apt-get update
       sudo apt-get install -y powershell
       ```
-      Verify with `pwsh --version` (7.5.4 installs cleanly).
+      Verify with `pwsh --version` (7.5.4 installs cleanly). If the apt path is blocked, the Microsoft
+      install docs cover tarball and snap alternatives — try those before declaring pwsh unavailable.
     - PowerShell Gallery downloads (PSResourceGet / PSScriptAnalyzer) are still blocked by proxy 403 responses. When linting is required, prefer executing the scripts directly under `pwsh` with realistic environment variables instead of relying on ScriptAnalyzer.
     - After installing `pwsh`, sanity-check modified scripts by invoking them directly. For example, populate temporary directories for `DIAG`/`ARTIFACTS` and run `pwsh -NoLogo -File tools/diag/publish_index.ps1` to catch syntax errors.
     - Use `pwsh -NoLogo -NoProfile -File tools/ps-compileall.ps1` for syntax-only sweeps across `.ps1`/`.psm1`/`.psd1` files when you need a lightweight pre-commit check without PSGallery access.
