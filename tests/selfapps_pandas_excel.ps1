@@ -135,9 +135,25 @@ if (-not $condaBat) {
     $runtimeDetails.reason = 'conda-not-found'
     $runtimeDetails.condaBatCandidates = $condaInfo.candidates
     $runtimeDetails.publicRoot = $condaInfo.publicRoot
-    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate';     req = 'REQ-005'; pass = $false; desc = 'prep_requirements translates pandas and openpyxl'; details = $translationDetails })
-    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install'; req = 'REQ-005'; pass = $false; desc = 'conda installs translated pandas/openpyxl requirements'; details = $installDetails })
-    Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.runtime';       req = 'REQ-005'; pass = $false; desc = 'runtime writes out.xlsx using pandas+openpyxl'; details = $runtimeDetails })
+    # derived requirement: in uv-first lanes, Miniconda is not installed so these
+    # conda-specific tests are not applicable -- emit skip=true.
+    # In conda-only lanes (HP_FORCE_CONDA_ONLY=1), conda MUST be present; emit failures.
+    if ($env:HP_FORCE_CONDA_ONLY -ne '1') {
+        $skipDetails = [ordered]@{ skip = $true; reason = 'conda-not-installed-uv-first'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }
+        Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate';            req = 'REQ-005'; pass = $true; desc = 'prep_requirements translates pandas and openpyxl'; details = $skipDetails })
+        Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install';        req = 'REQ-005'; pass = $true; desc = 'conda installs translated pandas/openpyxl requirements'; details = $skipDetails })
+        Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install.req006'; req = 'REQ-006'; pass = $true; desc = 'conda installs pandas/openpyxl via conda-forge channel exclusively'; details = $skipDetails })
+        Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.runtime';              req = 'REQ-005'; pass = $true; desc = 'runtime writes out.xlsx using pandas+openpyxl'; details = $skipDetails })
+        Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.install'; req = 'REQ-005'; pass = $true; desc = 'pandas and openpyxl both present in conda env after install'; details = $skipDetails })
+        Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.import';  req = 'REQ-005'; pass = $true; desc = 'import pandas; import openpyxl succeeds in conda env'; details = $skipDetails })
+    } else {
+        Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate';            req = 'REQ-005'; pass = $false; desc = 'prep_requirements translates pandas and openpyxl'; details = $translationDetails })
+        Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install';        req = 'REQ-005'; pass = $false; desc = 'conda installs translated pandas/openpyxl requirements'; details = $installDetails })
+        Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install.req006'; req = 'REQ-006'; pass = $false; desc = 'conda installs pandas/openpyxl via conda-forge channel exclusively'; details = $installDetails })
+        Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.runtime';              req = 'REQ-005'; pass = $false; desc = 'runtime writes out.xlsx using pandas+openpyxl'; details = $runtimeDetails })
+        Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.install'; req = 'REQ-005'; pass = $false; desc = 'pandas and openpyxl both present in conda env after install'; details = ([ordered]@{ skip = $false; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) })
+        Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.import';  req = 'REQ-005'; pass = $false; desc = 'import pandas; import openpyxl succeeds in conda env'; details = ([ordered]@{ skip = $false; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) })
+    }
     exit 0
 }
 

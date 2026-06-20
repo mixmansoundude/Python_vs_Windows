@@ -208,7 +208,7 @@ is skipped entirely.
 |------|-------------|
 | `~bootstrap.status.json` | Every run (state, exitCode, pyFiles) |
 | `~setup.log` | Every run (probe errors, bootstrap path) |
-| `~environment.lock.txt` | After successful conda install (errorlevel=0, non-empty) |
+| `~environment.lock.txt` | conda mode: after conda list --export; uv mode: copy of ~dependency_installed.txt |
 | `~env.state.json` | After successful full bootstrap |
 
 ---
@@ -663,17 +663,82 @@ When conda is absent AND `HP_FORCE_CONDA_ONLY != '1'`, they MUST emit `skip=true
 instead of failures. When `HP_FORCE_CONDA_ONLY == '1'`, they MUST emit `pass=$false`
 (conda is supposed to be there in that lane).
 
+**Sweep completed (2026-06-20): only 3 files use `Get-CondaBatPath`; all other selfapps files
+run the full bootstrapper or are lane-guarded (see notes below).**
+
 | Test file | Affected rows | Skip guard added? |
 |-----------|--------------|-------------------|
 | `tests/selfapps_reqspec.ps1` | reqspec.translate.*, reqspec.conda.*, reqspec.install.import, reqspec.gte.explicit, reqspec.ingest.* | YES (current) |
 | `tests/selfapps_pyproject_precedence.ps1` | pyproject.precedence.detect, pyproject.dep.detect, pyproject.dep.noproj | YES (current) |
 | `tests/selftest.ps1` | self.corrupt.conda.detect, self.corrupt.conda.heal.decline, self.corrupt.conda.heal.accept | YES -- guards on `$condaBatOnDisk` |
-| `tests/selfapps_envsmoke.ps1` | self.env.smoke.conda | check -- may need guard if conda absent in real lane |
-| `tests/selfapps_pandas_excel.ps1` | pandas_excel.conda.install, pandas_excel.conda.install.req006 | check -- calls conda for install |
-| `tests/selfapps_pipgap.ps1` | pipgap.conda.miss, pipgap.pip.fill | check -- tests conda miss / pip fill gap |
+| `tests/selfapps_pandas_excel.ps1` | pandas_excel.translate, pandas_excel.conda.install, pandas_excel.conda.install.req006, pandas_excel.runtime, self.pandas.openpyxl.install, self.pandas.openpyxl.import | YES (current) -- all 6 rows |
+| `tests/selfapps_envsmoke.ps1` | self.env.smoke.conda, self.env.smoke.uv | NOT NEEDED -- already uv-aware via `$isUvMode = Test-Path .uv_env\Scripts\python.exe`; self.env.smoke.conda tests full bootstrapper; self.env.smoke.uv has explicit skip logic when uv not acquired or fell back to conda |
+| `tests/selfapps_pipgap.ps1` | pipgap.conda.miss, pipgap.pip.fill | NOT NEEDED -- test sets `$env:HP_FORCE_CONDA_ONLY = '1'` (line 66) before running run_setup.bat; always in conda mode |
+| `tests/selfapps_depcheck.ps1` | self.depcheck.install, self.depcheck.skip | NOT NEEDED -- dep-check runs in both conda AND uv mode (`HP_ENV_MODE` guard at run_setup.bat line 1048); in uv mode, `~environment.lock.txt` is written by copying `~dependency_installed.txt` (run_setup.bat lines 1141-1145) |
+| `tests/selfapps_warnfix.ps1` | self.exe.warnfix.* | NOT NEEDED -- runs full bootstrapper; warnfix is a PyInstaller post-build phase in run_setup.bat that uses pip/conda within the bootstrapper's own install logic; no direct conda bat calls in test |
+| `tests/selfapps_justme.ps1` | conda.install.justme | NOT NEEDED -- only runs in justme-test lane where HP_TEST_FORCE_UV_FAIL=1; conda always present via JustMe install |
+| `tests/selfapps_ux_hardening.ps1` | self.ux.* | NOT NEEDED -- runs full bootstrapper; references conda only in a comment |
 
 The `pyproject.precedence.writeback` test runs the FULL bootstrapper (which uses uv in
 uv-first lanes) and does NOT require conda to be present. It is NOT in the "needs guard" list.
+
+### EXE fast path vs env-state fast path vs uv venv reuse
+
+Three distinct "fast" paths exist in run_setup.bat. They serve different purposes and
+produce different log lines. Future agents must not confuse them:
+
+| Fast path | Trigger | Log line | Lane |
+|-----------|---------|----------|------|
+| EXE fast path (`:try_fast_exe`) | `dist\<ENVNAME>.exe` exists AND `HP_FAST_CHECK` token = "fresh" | `[INFO] Fast path: reusing dist\<ENVNAME>.exe` | All lanes |
+| Env-state fast path (`:env_state_fast_path`) | `~env.state.json` valid, conda env python.exe present | `[INFO] Env-state fast path: reusing conda env <ENVNAME>.` | conda mode only; skipped when HP_UV_PROVIDING_PYTHON=1 |
+| uv venv reuse | `.uv_env\Scripts\python.exe` exists AND `import pip` succeeds | `[INFO] uv: reusing existing .uv_env` | uv mode only |
+
+**Critical order**: EXE fast path runs at line 222 (top of file, BEFORE provider selection).
+If it fires, run_setup.bat goes directly to `:success`. uv/conda provider logic is never reached.
+The env-state check (line 507) and uv venv reuse (line 544) are therefore only reached when
+the EXE fast path does NOT fire (first run, or sources changed).
+
+**`self.fastpath` test** (`selfapps_envsmoke.ps1` second run): matches `'Fast path: reusing'`
+which appears in the EXE fast path log line. This works in ALL lanes (uv and conda) because
+the EXE fast path is completely provider-independent. The test correctly validates the EXE
+fast path, not the env-state or uv venv fast path.
+
+### ~dependency_installed.txt: pip freeze output and its consumers
+
+`~dependency_installed.txt` is written after install via `pip freeze` (run_setup.bat lines 1122-1134):
+- uv mode: `uv pip freeze --python "%HP_PY%"`
+- conda/venv mode: `"%HP_PY%" -m pip freeze`
+
+**Consumers:**
+- `selfapps_pipgap.ps1`: reads `~dependency_installed.txt` to check `opencv-python` was installed
+- `~environment.lock.txt` (uv mode): `copy /y "~dependency_installed.txt" "~environment.lock.txt"` (line 1145)
+- The dep-check (`~dep_check.py`) reads `~environment.lock.txt` (either conda list --export or pip freeze copy)
+
+### warnfix install + uv mode
+
+When `HP_ENV_MODE=uv`, the warnfix repair loop (run_setup.bat lines 2055-2062) uses
+`uv pip install --python "%HP_PY%" %%M` for each missing module. When `HP_ENV_MODE=conda`,
+it uses `conda install -y -n "%ENVNAME%"`. PyInstaller is also installed via
+`uv pip install --python "%HP_PY%" -q pyinstaller` in uv mode (line 2018).
+
+This means `selfapps_warnfix.ps1` works correctly in uv-first lanes without any guard:
+the full bootstrapper handles the uv/conda split internally. The test only checks for log
+phrases (`[REPAIR] missing modules detected`) and EXE success, both of which work in uv mode.
+
+### dep-check + uv mode lock file interconnection
+
+`~environment.lock.txt` is the dep-check cache key. In conda mode it is written via
+`conda list --export`. In uv mode it is written by copying `~dependency_installed.txt`
+(run_setup.bat lines 1141-1145). This ensures `selfapps_depcheck.ps1` works correctly
+in uv-first lanes: the lock file exists after run 1, and dep-check on run 2 correctly
+finds all packages already in the lock and emits the skip log line.
+
+`dep_check.py` is run for BOTH `HP_ENV_MODE=conda` and `HP_ENV_MODE=uv` (line 1048:
+`if not "%HP_ENV_MODE%"=="conda" if not "%HP_ENV_MODE%"=="uv" goto :dep_check_done`).
+For venv and system modes, dep_check is skipped entirely (no lock written, no skip check).
+
+`HP_DEP_SKIP` is honored in uv mode too (line 1108: `if not defined HP_DEP_SKIP` guards
+the `uv pip install` call), so second-run dep-check correctly skips pip install as well.
 
 ### HP_TEST_FORCE_UV_FAIL and HP_TEST_CORRUPT_UV interaction
 
@@ -707,6 +772,12 @@ dependency resolution." Only `--no-project` truly bypasses pyproject.toml discov
 even on malformed TOML (just returns empty string). That's why `HP_UV_PROVIDING_PYTHON=1` is
 set correctly, and the venv creation step is the first point of failure.
 
+**Test assertion** (`tests/selftest.ps1` lines 599-643, all lanes, no HP_FORCE_CONDA_ONLY):
+- Asserts: `[WARN] pyproject.toml TOML parse error` in log AND `exitCode == 0`
+- Row: `self.pyproject.malformed`
+- In conda-full lane: malformed TOML is detected by HP_PYPROJ_DEPS (conda create doesn't read TOML)
+- In uv-first lane: the `:uv_venv_fail` retry path allows the bootstrap to continue so HP_PYPROJ_DEPS runs
+
 ### INVENTORY_B64 E2BIG pattern (publish_index.py)
 
 Passing large data through step env vars (`INVENTORY_B64` was ~168 KB base64) overflows
@@ -716,6 +787,71 @@ inventory step instead of routing it through the process environment. Applied to
 
 General rule: NEVER pass data >32 KB through GitHub Actions step `env:` -- write to a
 temp file in `$GITHUB_WORKSPACE` and read from disk instead.
+
+### HP_FORCE_CONDA_ONLY as a test-override pattern
+
+Some tests that specifically test conda behavior SET `HP_FORCE_CONDA_ONLY=1` themselves,
+rather than relying on the CI lane. These tests are self-contained and work in all lanes
+(including uv-first lanes, where they trigger Miniconda download if not already installed):
+
+| Test | Why it sets HP_FORCE_CONDA_ONLY=1 |
+|------|-----------------------------------|
+| `selfapps_pipgap.ps1` (line 66) | Must test conda bulk fail + pip gap-fill path; conda is required for the bulk fail path |
+| `tests/selftest.ps1` conda_retry block (line 939) | Must test conda bulk transient network retry; conda path required |
+| `tests/selftest.ps1` conda_perpkg block (line 978) | Must test conda per-package fallback; conda path required |
+
+Contrast these with tests that SKIP when conda is absent (reqspec, pyproject_precedence, pandas_excel):
+those tests test non-conda-specific behaviors (translation, pyproject parsing) but happen to call
+conda. They emit `skip=true` when conda is absent rather than triggering a download.
+
+The distinction: if the test IS testing conda behavior → force it; if the test happens to USE conda
+as a side effect but is testing something else → skip=true in uv-first lanes.
+
+### HP_UV_BIN locality: why offline sub-bootstrap tests work in all lanes
+
+`HP_UV_BIN` is set to `%HP_SCRIPT_ROOT%~uv_bin` (run_setup.bat line 290), where `HP_SCRIPT_ROOT`
+is the directory containing the bootstrapper, not a system temp or user-global path. This has
+a critical consequence for sub-bootstrap tests:
+
+**When a test creates a fresh temp directory and copies run_setup.bat into it:**
+- The sub-bootstrap's `HP_SCRIPT_ROOT` = the new temp dir
+- `HP_UV_BIN` = `~selftest_foo\~uv_bin\` (empty, no uv.exe)
+- `HP_OFFLINE_MODE=1` (set by the test) prevents re-downloading uv
+- Result: uv is ALWAYS unavailable in the sub-bootstrap
+
+This makes the fallback chain tests in `selfapps_ux_hardening.ps1` work correctly in uv-first
+(real/cache) lanes even though those lanes normally use uv as the primary provider:
+
+| Test | Env vars set | Why uv is bypassed |
+|------|--------------|-------------------|
+| `self.venv.fallback` | HP_OFFLINE_MODE=1, HP_TEST_FORCE_CONDA_FAIL=1 | HP_OFFLINE_MODE blocks uv download; fresh dir has no ~uv_bin |
+| `self.ux.system.gate.real` | HP_OFFLINE_MODE=1, HP_TEST_FORCE_CONDA_FAIL=1, HP_TEST_FORCE_VENV_FAIL=1 | Same; forced chain: no-uv → conda-fail → venv-fail → consent gate |
+| `self.entry.override` | HP_OFFLINE_MODE=1, HP_TEST_FORCE_CONDA_FAIL=1 | Same; forced chain: no-uv → conda-fail → venv-succeed |
+
+All three tests skip in conda-full lane (HP_FORCE_CONDA_ONLY=1 blocks system/venv fallbacks there).
+
+**What NOT to do**: never set HP_UV_BIN to a user-global or TEMP-based path — it would break this
+isolation property and make sub-bootstrap tests depend on whether the parent job happened to
+download uv already.
+
+`PVW_UV_EXE` is a super-user override (line 284) that would also break this property, but CI does
+not set it (confirmed by grepping batch-check.yml).
+
+### selfapps_isolation.ps1: HP_CI_SKIP_ENV=1 bypasses all provider logic
+
+The three tests in `selfapps_isolation.ps1` (crossdir, sameDir, req010.pythonpath) run the
+bootstrapper with `HP_CI_SKIP_ENV=1` inherited from the CI environment. This causes run_setup.bat
+to jump to `:ci_skip_entry` (lines ~1090-1196) which uses system Python and bypasses the entire
+provider selection (no uv, no conda, no venv decision). These tests are completely lane-agnostic
+and safe in all lanes including uv-first.
+
+### selfapps_skiphooks.ps1: provider-independent, conda-full lane only
+
+Declared "Lane: conda-full only (behavior is provider-independent)" in the file header. The test
+runs a full bootstrap and checks that HP_SKIP_ENTRY_SMOKE=1 + HP_SKIP_EXE_SMOKERUN=1 prevents
+user code execution while still building the PyInstaller EXE. No Get-CondaBatPath call. The test
+does not assert anything about the Python provider — it only checks that the EXE was built and
+that no user code ran. It is restricted to conda-full by CI wiring, not by the test itself.
 
 ### Skip pattern template (copy-paste for new conda-specific test blocks)
 
