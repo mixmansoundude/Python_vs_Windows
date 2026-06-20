@@ -122,6 +122,8 @@ This repository serves as a proof of concept of this new approach.
   | Local venv (`.venv`) | 3rd | REQ-009; env creation fallback |
   | System Python | 4th | REQ-009; degraded execution mode, no isolation |
 
+  **Provider fallback trigger (current behavior):** The cascade to the next provider fires on *environment creation failure* only (e.g., uv venv create fails, Miniconda download fails). A provider that successfully creates its environment is not currently abandoned if dependency installation or warnfix repair later fails -- the bootstrap continues in a degraded state within the same provider. The intended direction is that a warnfix hard failure should also cascade to the next provider (e.g., uv warnfix exhausted -> retry full dep-install under conda).
+
 - [REQ-006] Channels policy (determinism and legal-friction avoidance):
   - Before any updates or installs, force **community conda-forge only**:
     ```
@@ -233,7 +235,8 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 
 - REQ-005.10 -- Retry loop: After repair attempts, rebuild/re-run until:
   - Success (application runs), or
-  - Hard failure (unresolvable)
+  - Hard failure (unresolvable within the current provider)
+  - On hard failure: currently logs and exits. Intended direction: cascade to the next REQ-009 provider (uv exhausted -> conda, conda exhausted -> venv, venv exhausted -> system Python) and re-attempt from the dependency installation phase.
 
 ---
 
@@ -244,6 +247,7 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 - No silent fallbacks: All degradations emit explicit warnings
 - Single resolved dependency set: Conda + pip operate on the same inputs
 - Execution success > dependency purity: System prioritizes working application over strict resolution correctness
+- Provider cascade on hard failure (intended): dep-install and warnfix failures are currently contained within the active provider. The design intent is that exhausting repair within a provider triggers REQ-009 fallback rather than a hard exit.
 - When missing imports are detected (for example from build-time warn files or installation output), the bootstrapper
   attempts to identify and install the missing packages using whatever signal is available. It cannot map all module
   names to conda package names (for example, `PIL` maps to `pillow`, `cv2` maps to `opencv`). This is a known
