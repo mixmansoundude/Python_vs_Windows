@@ -1039,6 +1039,8 @@ jobs:
             tests\~envsmoke\~environment.lock.txt
             tests/~envsmoke/~pipreqs.diff.txt
             tests\~envsmoke\~pipreqs.diff.txt
+            tests/~envsmoke/~pipreqs_direct.log
+            tests\~envsmoke\~pipreqs_direct.log
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log
@@ -1053,6 +1055,8 @@ jobs:
             tests\~selftest_stub\~setup.log
             tests/~selftest_stub/~pipreqs.diff.txt
             tests\~selftest_stub\~pipreqs.diff.txt
+            tests/~selftest_stub/~pipreqs_direct.log
+            tests\~selftest_stub\~pipreqs_direct.log
             tests/~selftest_stub/~bootstrap.status.json
             tests\~selftest_stub\~bootstrap.status.json
             tests/~selftest_stub/~env.state.json
@@ -1075,6 +1079,8 @@ jobs:
             tests\~selftest_depcheck\~setup.log
             tests/~selftest_depcheck/~pipreqs.diff.txt
             tests\~selftest_depcheck\~pipreqs.diff.txt
+            tests/~selftest_depcheck/~pipreqs_direct.log
+            tests\~selftest_depcheck\~pipreqs_direct.log
             tests/~selftest_warnfix/~warnfix_bootstrap.log
             tests\~selftest_warnfix\~warnfix_bootstrap.log
             tests/~selftest_warnfix/~setup.log

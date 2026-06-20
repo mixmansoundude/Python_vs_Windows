@@ -757,7 +757,7 @@ if defined HP_NDJSON (
 
 set "HP_PIPREQS_TARGET_WORK=%CD%\requirements.auto.txt"
 set "HP_PIPREQS_TARGET=%HP_PIPREQS_TARGET_WORK%"
-set "HP_PIPREQS_IGNORE=.git,.github,.venv,venv,env,build,dist,__pycache__,tests"
+set "HP_PIPREQS_IGNORE=.git,.github,.venv,venv,env,.uv_env,build,dist,__pycache__,tests"
 set "HP_PIPREQS_IGNORE_DISPLAY="
 if defined HP_PIPREQS_IGNORE set "HP_PIPREQS_IGNORE_DISPLAY= --ignore \"%HP_PIPREQS_IGNORE%\""
 set "HP_PIPREQS_SUMMARY_PHASE="
