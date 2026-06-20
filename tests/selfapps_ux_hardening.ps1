@@ -284,14 +284,17 @@ $condaOfflineLog = $connText -match [regex]::Escape('[INFO] REQ-013: Offline mod
 # uv offline skip: the log fires only when uv would be downloaded. In the conda-full lane,
 # HP_FORCE_CONDA_ONLY=1 (inherited by the sub-invocation) exits the uv section before the
 # offline check -- that is the correct alternative path, not a coverage gap.
-$uvCondaOnlySkip = $connText -match [regex]::Escape('[INFO] uv: skipped (HP_FORCE_CONDA_ONLY=1).')
-$uvOfflinePass   = $uvOfflineLog -or $uvCondaOnlySkip
+# In the justme-test lane, HP_TEST_FORCE_UV_FAIL=1 is inherited and exits the uv section
+# before the offline check -- also a legitimate bypass, not a coverage gap.
+$uvCondaOnlySkip  = $connText -match [regex]::Escape('[INFO] uv: skipped (HP_FORCE_CONDA_ONLY=1).')
+$uvForcedFailSkip = $connText -match [regex]::Escape('[WARN] uv: HP_TEST_FORCE_UV_FAIL: simulating uv acquisition failure.')
+$uvOfflinePass    = $uvOfflineLog -or $uvCondaOnlySkip -or $uvForcedFailSkip
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.connectivity.offline.uv.skip'
     req     = 'REQ-013'
     pass    = $uvOfflinePass
     desc    = 'Connectivity guard: offline mode skips uv download (or uv legitimately bypassed)'
-    details = [ordered]@{ offlineLogFound = $uvOfflineLog; condaOnlySkip = $uvCondaOnlySkip }
+    details = [ordered]@{ offlineLogFound = $uvOfflineLog; condaOnlySkip = $uvCondaOnlySkip; forcedFailSkip = $uvForcedFailSkip }
 })
 
 # conda offline skip: :download_miniconda_exe is only called when conda.bat is missing.
