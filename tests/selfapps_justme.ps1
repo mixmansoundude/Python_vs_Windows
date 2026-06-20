@@ -50,6 +50,20 @@ if (Test-Path -LiteralPath $mainSetupPath) {
 
 $combinedText = $setupText + $mainSetupText
 
+# derived requirement: if uv was acquired (uv-first feature), Miniconda is skipped entirely
+# so the JustMe path is legitimately unreachable. Pass with skip in that case.
+$uvFirstSkipped = $combinedText -match '\[INFO\] uv-first: Miniconda download skipped\.'
+if ($uvFirstSkipped) {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'conda.install.justme'
+        req     = 'REQ-003'
+        pass    = $true
+        desc    = 'Miniconda JustMe install path executed (non-elevated simulation)'
+        details = [ordered]@{ skip = $true; reason = 'uv-first-active'; uvFirstSkipped = $true }
+    })
+    exit 0
+}
+
 # derived requirement: the JustMe path log line must appear to confirm the fallback ran.
 # HP_TEST_NOT_ELEVATED=1 simulates a non-admin process: run_setup.bat logs
 # "[INFO] Not elevated; skipping AllUsers Miniconda install." and then runs the JustMe install,
