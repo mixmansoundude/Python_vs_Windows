@@ -10,10 +10,7 @@ working in this repository. It summarizes structure, workflows, and conventions.
 
 **Supplemental context loaded automatically by Claude Code:**
 @docs/agent-ndjson.md
-
-**On-demand reference (read before editing run_setup.bat or debugging CI failures):**
-`docs/agent-interconnect.md` -- cross-component dependency map (uv-first architecture,
-CMD line limits, fast path table, embedded helper hazards, skip patterns, etc.)
+@docs/agent-interconnect.md
 
 ---
 
@@ -65,7 +62,7 @@ tools/
     ndjson_fail_list.ps1       Legacy fail list extractor
 
 docs/
-  agent-interconnect.md        Cross-component dependency map (on-demand; read before editing run_setup.bat or debugging CI)
+  agent-interconnect.md        Cross-component dependency map (loaded via @ import)
   agent-ndjson.md              NDJSON row registry by lane (loaded via @ import)
 
 .github/workflows/
