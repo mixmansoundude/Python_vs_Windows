@@ -65,8 +65,8 @@ tools/
     ndjson_fail_list.ps1       Legacy fail list extractor
 
 docs/
-  agent-interconnect.md        Cross-component dependency map (loaded via @ import above)
-  agent-ndjson.md              NDJSON row registry by lane (loaded via @ import above)
+  agent-interconnect.md        Cross-component dependency map (on-demand; read before editing run_setup.bat or debugging CI)
+  agent-ndjson.md              NDJSON row registry by lane (loaded via @ import)
 
 .github/workflows/
   batch-check.yml              Main CI pipeline (3-lane Windows matrix, ~40 KB)
