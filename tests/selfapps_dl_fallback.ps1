@@ -93,5 +93,37 @@ if ($uvForcedFail) {
     })
 }
 
+# Check uv fallback: verify fallback was attempted AND uv binary was ultimately acquired.
+# derived requirement: when HP_TEST_FORCE_UV_FAIL=1, uv acquisition is bypassed before any
+# download attempt so the DL fallback path is never reached. Skip with explicit reason.
+# The uv DL fallback path needs a dedicated lane to be fully exercised (see Active Backlog).
+$uvForcedFail    = $logText -match 'HP_TEST_FORCE_UV_FAIL: simulating uv acquisition failure'
+$uvFallbackTried = $logText -match 'Trying fallback uv URL:'
+$uvAcquired      = $logText -match 'uv: acquired at ~uv_bin\\uv\.exe'
+if ($uvForcedFail) {
+    $uvPass = $true
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.dl.uv.fallback'
+        req     = 'REQ-003'
+        pass    = $true
+        desc    = 'uv fallback URL tried and uv binary acquired after fallback'
+        details = [ordered]@{ skip = $true; reason = 'HP_TEST_FORCE_UV_FAIL'; uvForcedFail = $true }
+    })
+} else {
+    $uvPass = $uvFallbackTried -and $uvAcquired
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.dl.uv.fallback'
+        req     = 'REQ-003'
+        pass    = $uvPass
+        desc    = 'uv fallback URL tried and uv binary acquired after fallback'
+        details = [ordered]@{
+            fallbackTried = $uvFallbackTried
+            uvAcquired    = $uvAcquired
+            setupLog      = $setupLogPath
+        }
+    })
+}
+
+
 if (-not $condaPass -or -not $uvPass) { exit 1 }
 exit 0

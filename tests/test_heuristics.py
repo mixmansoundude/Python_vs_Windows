@@ -97,6 +97,30 @@ class TestPandas(_Base):
         _, pip = _run(self._tmp, "pandas\nopenpyxl\n")
         self.assertEqual(sum(1 for ln in pip if "openpyxl" in ln.lower()), 1)
 
+    def test_no_dup_xlsxwriter(self):
+        _, pip = _run(self._tmp, "pandas\nxlsxwriter\n")
+        self.assertEqual(sum(1 for ln in pip if "xlsxwriter" in ln.lower()), 1)
+
+    def test_pandas_with_openpyxl_explicit_still_adds_xlsxwriter(self):
+        conda, pip = _run(self._tmp, "pandas\nopenpyxl\n")
+        self.assertTrue(_has(conda, "xlsxwriter") and _has(pip, "xlsxwriter"))
+
+    def test_pandas_with_xlsxwriter_explicit_still_adds_openpyxl(self):
+        conda, pip = _run(self._tmp, "pandas\nxlsxwriter\n")
+        self.assertTrue(_has(conda, "openpyxl") and _has(pip, "openpyxl"))
+
+    def test_pandas_capitalized_triggers(self):
+        # Package names are case-insensitive per PEP 508; Pandas == pandas
+        conda, pip = _run(self._tmp, "Pandas\n")
+        self.assertTrue(_has(conda, "openpyxl") and _has(pip, "openpyxl"))
+        self.assertTrue(_has(conda, "xlsxwriter") and _has(pip, "xlsxwriter"))
+
+    def test_pandas_extras_triggers(self):
+        # pandas[excel] is valid pip extras syntax; extras must be stripped before name lookup
+        conda, pip = _run(self._tmp, "pandas[excel]\n")
+        self.assertTrue(_has(conda, "openpyxl") and _has(pip, "openpyxl"))
+        self.assertTrue(_has(conda, "xlsxwriter") and _has(pip, "xlsxwriter"))
+
 
 class TestRequests(_Base):
     def test_adds_certifi(self):
