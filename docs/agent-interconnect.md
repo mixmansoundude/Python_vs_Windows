@@ -338,6 +338,50 @@ modern documentation into requirements.txt now get openpyxl and xlsxwriter injec
 
 ---
 
+## CMD.EXE 8191-Character Line Limit for HP_* Payloads
+
+**Critical: every `set "HP_VARNAME=..."` line in run_setup.bat must stay under 8191 total characters.**
+
+CMD.EXE enforces a hard 8191-character line limit for `set` commands. Exceeding this causes
+CMD.EXE to crash with exit code `-1073740791` (`0xC0000409` = `STATUS_STACK_BUFFER_OVERRUN`).
+The crash is silent and hard to diagnose: `bootstrap.log` will contain only 1-3 early lines
+(the UNC-path warning and any REQ-015 lines), and the CI job completes in ~1 second.
+
+**Budget calculation per payload:**
+- `set "HP_VARNAME=` prefix = varies (22-26 chars depending on var name)
+- `"` suffix = 1 char
+- Max b64 content = 8191 - prefix_len - 1
+
+| Payload var | Prefix chars | Max b64 chars | Current b64 | Safety margin |
+|-------------|-------------|---------------|-------------|---------------|
+| HP_PREP_REQUIREMENTS | 26 | 8165 | 7972 | 192 |
+| HP_DEP_CHECK | 18 | 8173 | 3244 | 4928 |
+| HP_ENV_STATE | 18 | 8173 | 3280 | 4892 |
+| HP_PYPROJ_DEPS | 20 | 8171 | 2868 | 5302 |
+
+**HP_PREP_REQUIREMENTS is the tightest** because it encodes the largest helper.
+The 192-char safety margin is narrow. Before expanding the payload, verify b64 length:
+```python
+import base64
+b64 = base64.b64encode(open('helper.py', 'rb').read()).decode('ascii')
+line_len = len('set "HP_PREP_REQUIREMENTS=') + len(b64) + 1  # +1 for closing " (prefix=26)
+print(f"b64={len(b64)}, line={line_len}, margin={8191-line_len}")
+assert line_len <= 8191, f"CMD line limit exceeded by {line_len-8191} chars!"
+```
+
+**Crash diagnosis checklist:**
+1. bootstrap.log has only 1-3 lines (not the usual 50+ lines)
+2. CI job runtime is ~1s (not the usual 5-15 min)
+3. `exit code -1073740791` or `0xC0000409` in CI step output
+4. Failure happens at `call :define_helper_payloads` (line ~188 of run_setup.bat)
+5. Run `python -c "line = open('run_setup.bat').read().split('\n'); [print(i, len(l), l[:60]) for i, l in enumerate(line) if len(l) > 8190]"` to find offending lines
+
+**Occurred in commit `23c1ed9`:** Adding `strip_extras()` function to HP_PREP_REQUIREMENTS
+pushed the line to 8215 chars. Fixed in `d8f313c` by removing the redundant function
+(NAME_PATTERN already stops at `[`, so `strip_extras()` was a no-op).
+
+---
+
 ## Embedded Helper Update Workflow
 
 All helpers embedded in `run_setup.bat` as `HP_*` base64 vars have NO standalone source file.
