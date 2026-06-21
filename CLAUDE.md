@@ -9,8 +9,11 @@ working in this repository. It summarizes structure, workflows, and conventions.
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** -- Fork/branch/PR workflow and iteration priorities
 
 **Supplemental context loaded automatically by Claude Code:**
-@docs/agent-interconnect.md
 @docs/agent-ndjson.md
+
+**On-demand reference (read before editing run_setup.bat or debugging CI failures):**
+`docs/agent-interconnect.md` -- cross-component dependency map (uv-first architecture,
+CMD line limits, fast path table, embedded helper hazards, skip patterns, etc.)
 
 ---
 
