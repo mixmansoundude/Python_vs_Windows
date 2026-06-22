@@ -442,6 +442,58 @@ Write-NdjsonRow ([ordered]@{
     desc='uv env creation and dependency install'
     details=$uvSmokeDetails
 })
+
+# self.uv.managed.interpreter (REQ-004): when uv created the venv, assert its base
+# interpreter is a uv-MANAGED CPython rather than an ambient/system Python discovered on
+# PATH/registry (the historical 3.9.x leak). Non-hardcoded by design: compares the venv
+# base path against uv's managed root (`uv python dir`) and the managed
+# cpython-<ver>-windows directory naming; it never asserts a specific version number
+# because the target Python advances over time. Skips (pass) on the same graceful paths as
+# self.env.smoke.uv: conda-only lane, uv not acquired, or uv acquired but fell back.
+$uvExe     = Join-Path $app '~uv_bin\uv.exe'
+$pyvenvCfg = Join-Path $app '.uv_env\pyvenv.cfg'
+$mgrDetails = [ordered]@{}
+if ($uvSmokeForceSkip) {
+    $mgrPass = $true
+    $mgrDetails.skip = $true; $mgrDetails.reason = 'HP_FORCE_CONDA_ONLY'
+} elseif (-not $uvAcquired) {
+    $mgrPass = $true
+    $mgrDetails.skip = $true; $mgrDetails.reason = 'uv-not-acquired'
+} elseif (-not $isUvMode) {
+    $mgrPass = $true
+    $mgrDetails.skip = $true; $mgrDetails.reason = 'uv-acquired-but-fell-back'
+} else {
+    $managedRoot = ''
+    if (Test-Path -LiteralPath $uvExe) {
+        try { $managedRoot = (& $uvExe python dir 2>$null | Select-Object -First 1) } catch { $managedRoot = '' }
+        if ($managedRoot) { $managedRoot = $managedRoot.ToString().Trim() }
+    }
+    $basePath = ''
+    if (Test-Path -LiteralPath $pyvenvCfg) {
+        foreach ($cfgLine in (Get-Content -LiteralPath $pyvenvCfg -Encoding Ascii)) {
+            if ($cfgLine -match '^\s*base-executable\s*=\s*(.+?)\s*$') { $basePath = $Matches[1].Trim() }
+            elseif ((-not $basePath) -and ($cfgLine -match '^\s*home\s*=\s*(.+?)\s*$')) { $basePath = $Matches[1].Trim() }
+        }
+    }
+    $normProbe = ($basePath -replace '/', '\').ToLowerInvariant()
+    $normRoot  = ($managedRoot -replace '/', '\').ToLowerInvariant()
+    $underManagedRoot = [bool](($normRoot) -and ($normProbe) -and ($normProbe.StartsWith($normRoot)))
+    $looksManaged     = [bool]($normProbe -match 'cpython-[0-9][^\\]*windows')
+    $mgrPass = ($underManagedRoot -or $looksManaged)
+    $mgrDetails.managedRoot      = $managedRoot
+    $mgrDetails.basePath         = $basePath
+    $mgrDetails.underManagedRoot = $underManagedRoot
+    $mgrDetails.looksManaged     = $looksManaged
+    $mgrDetails.interpreterPath  = $interpreterPath
+}
+Write-NdjsonRow ([ordered]@{
+    id='self.uv.managed.interpreter'
+    req='REQ-004'
+    pass=$mgrPass
+    desc='uv venv uses a uv-managed CPython, not an ambient/system Python'
+    details=$mgrDetails
+})
+
 Write-NdjsonRow ([ordered]@{
     id='self.prime.bootstrap'
     req='REQ-001'

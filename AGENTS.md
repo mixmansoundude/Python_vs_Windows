@@ -222,6 +222,17 @@ THEN stop and open/append a PR. One loop = one change set.
       ```
       Verify with `pwsh --version` (7.5.4 installs cleanly). If the apt path is blocked, the Microsoft
       install docs cover tarball and snap alternatives — try those before declaring pwsh unavailable.
+    - **No-sudo / restricted-env fallback (verified 2026-06-22): direct tarball install.** When apt/sudo
+      is unavailable in the cloud session, download the release tarball straight from GitHub and run it
+      from a local prefix — no root needed:
+      ```
+      curl -fsSL --max-time 90 \
+        https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/powershell-7.4.6-linux-x64.tar.gz \
+        -o /tmp/pwsh.tar.gz
+      mkdir -p /opt/pwsh && tar -xzf /tmp/pwsh.tar.gz -C /opt/pwsh && chmod +x /opt/pwsh/pwsh
+      /opt/pwsh/pwsh --version   # -> PowerShell 7.4.6
+      ```
+      Then use `/opt/pwsh/pwsh -NoLogo -NoProfile -File tools/ps-compileall.ps1` for the syntax sweep.
     - PowerShell Gallery downloads (PSResourceGet / PSScriptAnalyzer) are still blocked by proxy 403 responses. When linting is required, prefer executing the scripts directly under `pwsh` with realistic environment variables instead of relying on ScriptAnalyzer.
     - After installing `pwsh`, sanity-check modified scripts by invoking them directly. For example, populate temporary directories for `DIAG`/`ARTIFACTS` and run `pwsh -NoLogo -File tools/diag/publish_index.ps1` to catch syntax errors.
     - Use `pwsh -NoLogo -NoProfile -File tools/ps-compileall.ps1` for syntax-only sweeps across `.ps1`/`.psm1`/`.psd1` files when you need a lightweight pre-commit check without PSGallery access.

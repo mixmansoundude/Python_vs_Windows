@@ -18,6 +18,7 @@ accidental removal or unexpected additions.**
 self.harness.started, self.bootstrap.state, self.empty_repo.msg,
 self.empty_repo.no_spurious_warn,
 self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv,
+self.uv.managed.interpreter,
 self.exe.build, self.exe.run,
 self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exedyn.xfail,
 self.exe.fastpath.graceful, self.skiphooks.combined,
