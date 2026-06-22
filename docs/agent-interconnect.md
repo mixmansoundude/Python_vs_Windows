@@ -4,38 +4,18 @@ This file is loaded automatically by Claude Code via the `@docs/agent-interconne
 import in CLAUDE.md. It documents the non-obvious cross-component dependencies that
 future agents must understand to avoid re-introducing known failures.
 
-**AGENT DIRECTIVE: When you discover a new interconnect or correct an existing one,
-update this file immediately in the same commit. The map must stay current.**
+Standalone hazards, rules, budgets, and procedures (batch/CMD quirks, the CMD `set` line
+limit, the embedded-helper workflow, the ambient-Python lesson, etc.) now live in
+`docs/agent-lessons-learned.md`.
 
----
+**Categorization principle:** interconnect = a dependency between two or more components
+such that changing one requires understanding the other ("touch A, must understand B"). A
+standalone discovered fact, hazard, budget, or procedure belongs in
+`docs/agent-lessons-learned.md` instead.
 
-## Python Version Hazard: uv selects older Python for sub-bootstrap venvs
-
-**Critical: any embedded helper (`~pyproj_deps.py`, etc.) relying on Python 3.11+ stdlib
-must have a fallback path for Python 3.9.x.**
-
-In the real lane (uv-first), `uv venv` can select Python 3.9.25 from the system or
-its own toolchain cache. This was confirmed in CI: the `self.pyproject.malformed` test
-failed because `~pyproj_deps.py` assumed `tomllib` (3.11+ stdlib) was available.
-
-**Root cause pattern:**
-- `uv venv` selects Python 3.9.x when no `--python` version constraint is specified
-  and a 3.9.x interpreter is available.
-- `tomllib` was added in Python 3.11. On Python 3.9.x, `import tomllib` raises `ImportError`.
-- Any embedded helper that does `import tomllib` without a try/except will crash on 3.9.x.
-
-**Fix applied in `~pyproj_deps.py` (HP_PYPROJ_DEPS):**
-```python
-try:
-    import tomllib
-except ImportError:
-    tomllib = None
-```
-When `tomllib is None`, the helper falls back to regex-based TOML parsing. The regex
-fallback must also handle the malformed TOML detection case (exit 2 for missing `]`).
-
-**Rule: Any helper embedded as `HP_*` base64 in run_setup.bat MUST work on Python 3.9.x.
-Never assume 3.11+ stdlib (tomllib, match-statement, etc.).**
+**AGENT DIRECTIVE: When you discover a new interconnect or correct an existing one, update
+this file immediately in the SAME commit (edit existing entries, do not only append). Keep
+`docs/agent-lessons-learned.md` current too. The map must stay accurate.**
 
 ---
 
@@ -58,6 +38,20 @@ When `HP_UV_PROVIDING_PYTHON=1`:
   does not exist on disk, so `CONDA_BAT` is never set
 - The corruption check at line 442 (`if defined CONDA_BAT ...`) never fires
 - All conda-dependent bootstrap paths are bypassed
+
+### uv uses managed-only CPython (UV_PYTHON_PREFERENCE)
+
+`run_setup.bat` sets `UV_PYTHON_PREFERENCE=only-managed` at the top of the uv acquisition
+block (before the `PVW_UV_EXE` branch and before the first uv invocation). Consequences that
+ripple across components:
+- Every uv command in the bootstrapper process (`uv run` detect, `uv venv`, `uv pip`)
+  inherits it; uv never selects an ambient/system/conda interpreter.
+- With no user constraint, `.uv_env` is the latest managed CPython; a user
+  `runtime.txt`/`pyproject.toml` is still forwarded via `uv venv --python X.Y`.
+- Tests that read the resulting `.uv_env` (e.g. `self.uv.managed.interpreter` in
+  `selfapps_envsmoke.ps1`) depend on this; `harness.ps1` also statically asserts the `set`
+  line via `uv.python.preference.configured`. The rationale and the embedded-helper Python
+  baseline live in `docs/agent-lessons-learned.md`.
 
 ### Lanes and their conda state
 
@@ -185,7 +179,8 @@ dependency resolution." Only `--no-project` truly bypasses pyproject.toml discov
 even on malformed TOML (just returns empty string). That's why `HP_UV_PROVIDING_PYTHON=1` is
 set correctly, and the venv creation step is the first point of failure.
 
-**Malformed TOML regex fallback detail** (tomllib unavailable on Python 3.9.x):
+**Malformed TOML regex fallback detail** (the helper must not assume `tomllib`; see the
+embedded-helper Python baseline in `docs/agent-lessons-learned.md`):
 The regex must detect `[project` missing the closing `]` even without tomllib. The fix:
 `re.search(r'^\[project\s*$', txt, re.MULTILINE)` -- matches `[project` at end of line
 (with optional whitespace/CRLF). This exits 2 so the caller emits WARN. No false positives
@@ -196,16 +191,6 @@ for sub-tables like `[project.urls]` because `\s*$` requires end of line after `
 - Row: `self.pyproject.malformed`
 - In conda-full lane: malformed TOML is detected by HP_PYPROJ_DEPS (conda create doesn't read TOML)
 - In uv-first lane: the `:uv_venv_fail` retry path allows the bootstrap to continue so HP_PYPROJ_DEPS runs
-
-### INVENTORY_B64 E2BIG pattern (publish_index.py)
-
-Passing large data through step env vars (`INVENTORY_B64` was ~168 KB base64) overflows
-Linux's `execve` ARG_MAX. Fix: read the same data from a file written to disk by the
-inventory step instead of routing it through the process environment. Applied to
-`tools/diag/publish_index.py` and `.github/workflows/batch-check.yml`.
-
-General rule: NEVER pass data >32 KB through GitHub Actions step `env:` -- write to a
-temp file in `$GITHUB_WORKSPACE` and read from disk instead.
 
 ### HP_FORCE_CONDA_ONLY as a test-override pattern
 
@@ -291,6 +276,10 @@ the uv-first guard branch.
 - `self.contract.uv.pyver` (contract-uv lane): verifies Python version forwarded to `uv venv --python X.Y`
 - `self.uv.first.miniconda.skip` (contract-uv lane): verifies Miniconda is NOT downloaded when uv provides Python
 - `self.contract.uv.fail` (contract-uv-fail lane): verifies graceful degradation when uv fails
+- `self.uv.managed.interpreter` (selfapps_envsmoke.ps1, all uv-first lanes): verifies the
+  `.uv_env` base interpreter is a uv-managed CPython, not an ambient/system Python
+- `uv.python.preference.configured` (harness.ps1, static): verifies the
+  `UV_PYTHON_PREFERENCE=only-managed` line is present in run_setup.bat
 - `self.dl.uv.fallback` (justme-test lane): PASSES with `skip=true` because HP_TEST_UV_DL_FALLBACK is not set
 
 **Gap (Active Backlog):**
@@ -314,97 +303,3 @@ if ($env:HP_FORCE_CONDA_ONLY -ne '1') {
     $myDetails.condaBatCandidates = $condaInfo.candidates
 }
 ```
-
----
-
-## Heuristic dep-augmentation (HP_PREP_REQUIREMENTS)
-
-### pandas[excel] extras syntax
-
-The `names_lower` list is built from `pip_specs` by splitting at version specifier chars
-and lowercasing. The original code did NOT strip pip extras (`[excel]`) before the lookup,
-so `pandas[excel]` was stored as `"pandas[excel]"` in `names_lower` and the check
-`'pandas' in names_lower` returned `False`.
-
-**Fix applied (2026-06-21):** Strip `[...]` from each name before lowercasing:
-```python
-names_lower = [re.sub(r"\[.*?\]", "", re.split(r"[<>=!~,\s]", value, maxsplit=1)[0]).strip().lower() for value in pip_specs]
-```
-
-Covered by `tests/test_heuristics.py::TestPandas::test_pandas_extras_triggers`.
-
-The fix is load-bearing for the primary use case: users who copy `pandas[excel]` from
-modern documentation into requirements.txt now get openpyxl and xlsxwriter injected.
-
----
-
-## CMD.EXE 8191-Character Line Limit for HP_* Payloads
-
-**Critical: every `set "HP_VARNAME=..."` line in run_setup.bat must stay under 8191 total characters.**
-
-CMD.EXE enforces a hard 8191-character line limit for `set` commands. Exceeding this causes
-CMD.EXE to crash with exit code `-1073740791` (`0xC0000409` = `STATUS_STACK_BUFFER_OVERRUN`).
-The crash is silent and hard to diagnose: `bootstrap.log` will contain only 1-3 early lines
-(the UNC-path warning and any REQ-015 lines), and the CI job completes in ~1 second.
-
-**Budget calculation per payload:**
-- `set "HP_VARNAME=` prefix = varies (22-26 chars depending on var name)
-- `"` suffix = 1 char
-- Max b64 content = 8191 - prefix_len - 1
-
-| Payload var | Prefix chars | Max b64 chars | Current b64 | Safety margin |
-|-------------|-------------|---------------|-------------|---------------|
-| HP_PREP_REQUIREMENTS | 26 | 8165 | 7972 | 192 |
-| HP_DEP_CHECK | 18 | 8173 | 3244 | 4928 |
-| HP_ENV_STATE | 18 | 8173 | 3280 | 4892 |
-| HP_PYPROJ_DEPS | 20 | 8171 | 2868 | 5302 |
-
-**HP_PREP_REQUIREMENTS is the tightest** because it encodes the largest helper.
-The 192-char safety margin is narrow. Before expanding the payload, verify b64 length:
-```python
-import base64
-b64 = base64.b64encode(open('helper.py', 'rb').read()).decode('ascii')
-line_len = len('set "HP_PREP_REQUIREMENTS=') + len(b64) + 1  # +1 for closing " (prefix=26)
-print(f"b64={len(b64)}, line={line_len}, margin={8191-line_len}")
-assert line_len <= 8191, f"CMD line limit exceeded by {line_len-8191} chars!"
-```
-
-**Crash diagnosis checklist:**
-1. bootstrap.log has only 1-3 lines (not the usual 50+ lines)
-2. CI job runtime is ~1s (not the usual 5-15 min)
-3. `exit code -1073740791` or `0xC0000409` in CI step output
-4. Failure happens at `call :define_helper_payloads` (line ~188 of run_setup.bat)
-5. Run `python -c "line = open('run_setup.bat').read().split('\n'); [print(i, len(l), l[:60]) for i, l in enumerate(line) if len(l) > 8190]"` to find offending lines
-
-**Occurred in commit `23c1ed9`:** Adding `strip_extras()` function to HP_PREP_REQUIREMENTS
-pushed the line to 8215 chars. Fixed in `d8f313c` by removing the redundant function
-(NAME_PATTERN already stops at `[`, so `strip_extras()` was a no-op).
-
----
-
-## Embedded Helper Update Workflow
-
-All helpers embedded in `run_setup.bat` as `HP_*` base64 vars have NO standalone source file.
-The canonical source is the decoded base64. To update a helper:
-
-1. Extract + decode:
-   ```python
-   import base64, re
-   with open('run_setup.bat', 'r', encoding='ascii', errors='ignore') as f:
-       for line in f:
-           m = re.match(r'^set "HP_VARNAME=(.*)"$', line.rstrip('\r\n'))
-           if m:
-               print(base64.b64decode(m.group(1)).decode('ascii'))
-               break
-   ```
-2. Edit the decoded Python source.
-3. Re-encode:
-   ```python
-   import base64
-   new_b64 = base64.b64encode(open('helper.py', 'rb').read()).decode('ascii')
-   ```
-4. Replace the `set "HP_VARNAME=..."` line in run_setup.bat.
-5. Run `python tools/check_delimiters.py run_setup.bat` and the relevant unit test.
-
-**Python version hazard reminder:** The helper will run on whatever Python `uv venv` selects,
-which may be 3.9.x. Avoid 3.11+ stdlib. Test with `python3.9 helper.py` if available.

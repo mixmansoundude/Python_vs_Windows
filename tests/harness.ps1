@@ -328,6 +328,12 @@ Write-Result 'batch.req013.connectivity' 'REQ-013: connectivity guard log lines 
 $req014Patterns = @('REQ-014: System Python fallback aborted', 'REQ-014: System Python consent: user accepted', 'HP_TEST_FORCE_CONSENT_CHECK')
 $hasReq014 = ($req014Patterns | Where-Object { -not ($AllText -match $_) }).Count -eq 0
 Write-Result 'batch.req014.consent' 'REQ-014: system Python consent gate log lines and HP_TEST_FORCE_CONSENT_CHECK CI flag present in run_setup.bat' $hasReq014 @{}
+# Configuration-presence check (NOT a runtime assertion): confirms the orchestration layer
+# pins uv to managed-only CPython so it cannot pick up an ambient/system interpreter. The
+# runtime proof that this is actually honored lives in self.uv.managed.interpreter
+# (tests/selfapps_envsmoke.ps1). See docs/agent-lessons-learned.md.
+$hasUvPref = ($AllText -match 'set\s+"UV_PYTHON_PREFERENCE=only-managed"')
+Write-Result 'uv.python.preference.configured' 'config: run_setup.bat sets UV_PYTHON_PREFERENCE=only-managed (managed-only orchestration; no ambient Python)' $hasUvPref @{}
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
