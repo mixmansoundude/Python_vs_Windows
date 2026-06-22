@@ -283,6 +283,16 @@ rem === uv acquisition (preferred env+dep installer; falls back to conda) ======
 rem derived requirement: uv is gated by HP_FORCE_CONDA_ONLY (same gate used for
 rem venv/system fallbacks) so the conda-full CI lane exercises the pure conda path.
 rem The binary is cached under ~uv_bin\ (tilde-prefix keeps it gitignored).
+rem Orchestration layer: force uv to use only its own managed CPython toolchain and
+rem ignore any ambient/legacy system or conda interpreter on PATH/registry (e.g. the
+rem GitHub runner's hostedtoolcache Python). With no user version constraint uv then
+rem selects the latest managed CPython; a user runtime.txt/pyproject.toml is still
+rem honored via the --python X.Y forwarding applied downstream where the uv venv is
+rem created (HP_UV_PY_VER). Set before the PVW_UV_EXE branch and before the first uv
+rem invocation so every uv command (run,
+rem venv, pip) in this process inherits it. See docs/agent-lessons-learned.md.
+set "UV_PYTHON_PREFERENCE=only-managed"
+call :log "[INFO] uv: UV_PYTHON_PREFERENCE=only-managed (orchestration uses managed Python)."
 if not defined PVW_UV_EXE goto :pvw_uv_exe_skip
 set "HP_UV_EXE=%PVW_UV_EXE%"
 call :log "[INFO] uv: using super-user override PVW_UV_EXE."

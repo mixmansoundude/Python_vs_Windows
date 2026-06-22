@@ -11,6 +11,15 @@ working in this repository. It summarizes structure, workflows, and conventions.
 **Supplemental context loaded automatically by Claude Code:**
 @docs/agent-ndjson.md
 @docs/agent-interconnect.md
+@docs/agent-lessons-learned.md
+
+**AGENT DIRECTIVE -- keep the knowledge docs current.** When a change teaches or invalidates
+a lesson, update the relevant doc in the SAME commit, editing existing entries (not only
+appending):
+- `docs/agent-interconnect.md` -- cross-component dependencies ("touch A, must understand B").
+- `docs/agent-lessons-learned.md` -- standalone hazards, rules, budgets, procedures. Most are
+  batch/CMD syntax quirks and Windows shell gotchas; record those here.
+- `docs/agent-ndjson.md` -- the NDJSON row registry (add/rename/remove rows here too).
 
 ---
 
@@ -63,6 +72,7 @@ tools/
 
 docs/
   agent-interconnect.md        Cross-component dependency map (loaded via @ import)
+  agent-lessons-learned.md     Standalone hazards/rules/quirks/procedures (loaded via @ import)
   agent-ndjson.md              NDJSON row registry by lane (loaded via @ import)
 
 .github/workflows/
@@ -480,6 +490,8 @@ Items deferred to future loops:
 - **Provider cascade on warnfix hard failure (REQ-009 / REQ-005.10)**: Currently a warnfix hard failure within a provider (uv, conda, venv) logs and exits rather than cascading to the next REQ-009 provider. Intended direction: exhausting repair within a provider triggers fallback to the next tier and re-attempts from the dependency installation phase. Requires deciding the cascade trigger condition (max repair attempts, specific error classes, or explicit unresolvable signal) and updating the retry loop in `run_setup.bat` accordingly.
 
 - **uv DL fallback CI coverage**: `self.dl.uv.fallback` (uv download fallback path -- HP_TEST_UV_DL_FALLBACK=1) has no active CI lane. justme-test now uses HP_TEST_FORCE_UV_FAIL=1 (skips uv entirely before any download) so the secondary uv URL is never exercised in CI. Needs a dedicated non-gating lane that sets HP_TEST_UV_DL_FALLBACK=1 without HP_FORCE_CONDA_ONLY=1 and without HP_TEST_NOT_ELEVATED=1, so uv download path is reached and the fallback URL is tried.
+
+- **uv floor-vs-pin: `>=`/`>` constraints pin to the floor instead of latest-satisfying.** `run_setup.bat` (~lines 556-565) regex-extracts the lower-bound version from PYSPEC and forwards it as `uv venv --python X.Y`. This is a PYSPEC->uv translation (uv's `--python` wants a concrete `X.Y`, not a conda-style range), but as a side effect a user `requires-python = ">=3.11"` is pinned to exactly 3.11 rather than the latest managed Python that satisfies the floor. **Severity: low** -- the chosen version always satisfies the user's constraint; it is just older than necessary and inconsistent with the conda path (which passes the range to the solver). **Research first** before changing: confirm exactly why the lower-bound is extracted (the `--python` range-acceptance behavior of the pinned uv) and the impact on the `self.contract.uv.pyver` row, then decide whether only exact `==`/runtime.txt pins should stay fixed while `>=`/`>` resolve to latest-satisfying. The `UV_PYTHON_PREFERENCE=only-managed` fix already handles the no-constraint case (latest managed); this is only about loose floor constraints.
 
 ## Known Findings (diagnosed, no action warranted)
 
