@@ -498,14 +498,6 @@ Items deferred to future loops:
   perform nor log conda work. (Confirm whether the 95 MB is actually downloaded or just a
   size estimate printed.)
 
-- **Spurious "add requirements.txt" WARN when one already exists**: the pipreqs auto-detect
-  block prints `[WARN] Dependencies were auto-detected (pipreqs)` / `Consider adding
-  requirements.txt or PEP 723 metadata` even when earlier output already said
-  `Using requirements.txt for dependencies` / `dep source selected: requirements.txt`. Gate
-  the WARN so it only prints when deps were genuinely auto-detected (no user-provided
-  requirements.txt / pyproject / PEP 723). Also confirm/clarify that a user-provided
-  `requirements.txt` is never overwritten by the auto-generated `requirements.auto.txt`.
-
 - **User-code exit-code semantics**: verify the exit code read after running the user's code
   is purely the user program's (no bootstrapper logic interleaved). If so, a non-zero exit is
   very likely outside bootstrapper control; confirm such a case routes to warnfix gracefully
@@ -549,6 +541,17 @@ Items deferred to future loops:
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Spurious "add requirements.txt" WARN when one already exists**: gated the WARN (lines
+  900-902 of `run_setup.bat`) on `not defined DEP_SOURCE`; it now fires only when no
+  user-provided dep source was found (no requirements.txt / pyproject / PEP 723). When the
+  user has explicit deps, pipreqs runs as an augmentation pass and the WARN is suppressed with
+  a `[TRACE]` log. Also fixed the silent regression where `DEP_SOURCE=pyproject` was being
+  overwritten to `pipreqs` (now `DEP_SOURCE` is only set to `pipreqs` when it was unset).
+  Confirmed that a user-provided `requirements.txt` is never overwritten by
+  `requirements.auto.txt` (guarded by `if not exist "%REQ%"` at line 1058).
+  Covered by `self.pipreqs.warn.gated` (selftest.ps1, conda-retry scenario) and
+  `batch.req005.warn_gate` (harness.ps1 static check). CLOSED by this PR.
 
 - **uv floor-vs-pin: loose `>=`/`>` constraints now forward the range to uv**: previously
   `run_setup.bat` regex-extracted only the lower-bound `X.Y` from PYSPEC and passed a concrete
