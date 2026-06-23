@@ -491,7 +491,42 @@ Items deferred to future loops:
 
 - **uv DL fallback CI coverage**: `self.dl.uv.fallback` (uv download fallback path -- HP_TEST_UV_DL_FALLBACK=1) has no active CI lane. justme-test now uses HP_TEST_FORCE_UV_FAIL=1 (skips uv entirely before any download) so the secondary uv URL is never exercised in CI. Needs a dedicated non-gating lane that sets HP_TEST_UV_DL_FALLBACK=1 without HP_FORCE_CONDA_ONLY=1 and without HP_TEST_NOT_ELEVATED=1, so uv download path is reached and the fallback URL is tried.
 
-- **uv floor-vs-pin: `>=`/`>` constraints pin to the floor instead of latest-satisfying.** `run_setup.bat` (~lines 556-565) regex-extracts the lower-bound version from PYSPEC and forwards it as `uv venv --python X.Y`. This is a PYSPEC->uv translation (uv's `--python` wants a concrete `X.Y`, not a conda-style range), but as a side effect a user `requires-python = ">=3.11"` is pinned to exactly 3.11 rather than the latest managed Python that satisfies the floor. **Severity: low** -- the chosen version always satisfies the user's constraint; it is just older than necessary and inconsistent with the conda path (which passes the range to the solver). **Research first** before changing: confirm exactly why the lower-bound is extracted (the `--python` range-acceptance behavior of the pinned uv) and the impact on the `self.contract.uv.pyver` row, then decide whether only exact `==`/runtime.txt pins should stay fixed while `>=`/`>` resolve to latest-satisfying. The `UV_PYTHON_PREFERENCE=only-managed` fix already handles the no-constraint case (latest managed); this is only about loose floor constraints.
+- **Miniconda probe runs even when uv succeeds**: in a normal uv run the log shows a
+  "Miniconda probe" line reporting a ~95 MB download even though nothing conda-related should
+  be touched once the uv lane succeeds. Investigate where the probe fires and consider
+  deferring it to immediately before an actual conda download attempt, so uv-only runs neither
+  perform nor log conda work. (Confirm whether the 95 MB is actually downloaded or just a
+  size estimate printed.)
+
+- **Spurious "add requirements.txt" WARN when one already exists**: the pipreqs auto-detect
+  block prints `[WARN] Dependencies were auto-detected (pipreqs)` / `Consider adding
+  requirements.txt or PEP 723 metadata` even when earlier output already said
+  `Using requirements.txt for dependencies` / `dep source selected: requirements.txt`. Gate
+  the WARN so it only prints when deps were genuinely auto-detected (no user-provided
+  requirements.txt / pyproject / PEP 723). Also confirm/clarify that a user-provided
+  `requirements.txt` is never overwritten by the auto-generated `requirements.auto.txt`.
+
+- **User-code exit-code semantics**: verify the exit code read after running the user's code
+  is purely the user program's (no bootstrapper logic interleaved). If so, a non-zero exit is
+  very likely outside bootstrapper control; confirm such a case routes to warnfix gracefully
+  rather than being reported as a bootstrapper failure. Document the conclusion.
+
+- **Iterate-gate pre-flight snapshot contradiction**: the pre-flight snapshot is described as
+  "expected has_failures:true while NDJSONs are missing" but the emitted JSON shows
+  `{"has_failures":false,...}`. Reconcile the message vs. the emitted verdict (the intent is
+  that missing `tests/~test-results.ndjson` / `ci_test_results.ndjson` are treated as
+  failures so empty streams never pass).
+
+- **Persisted run-page warnings**: review the last several CI runs for warnings that recur
+  across runs (Actions "Annotations"/warnings), and triage each as fix-or-accept.
+
+- **Progress messaging for >5s steps**: audit steps that take more than ~5 seconds (installer
+  creation, downloads, env build) and ensure each emits a user-facing "starting X / installing
+  X" line before the long operation, so a slow step never looks like a hang.
+
+- **CI-side NDJSON row registry check**: consider building the `docs/agent-ndjson.md` row
+  audit into CI (it exists today so agents can see which rows are missing). Likely still a
+  manual-sync confirmation step, since fully automated discovery can miss flag-gated rows.
 
 ## Known Findings (diagnosed, no action warranted)
 
@@ -514,6 +549,17 @@ Items deferred to future loops:
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **uv floor-vs-pin: loose `>=`/`>` constraints now forward the range to uv**: previously
+  `run_setup.bat` regex-extracted only the lower-bound `X.Y` from PYSPEC and passed a concrete
+  `uv venv --python X.Y`, so `requires-python = ">=3.11"` pinned exactly 3.11. Confirmed uv's
+  `--python` accepts PEP 440 ranges (`>=3.12,<3.13`) and prefers newer versions, so the
+  translation now emits two values: `HP_UV_PY_REQ` (forwarded to uv -- the full range for
+  loose forms, bare `X.Y` for exact `=`/`==` pins) and `HP_UV_PY_DISP` (operator-free log
+  string, since `:log` echoes unquoted). The range (with `<`/`>`) flows only through the
+  double-quoted `--python "%HP_UV_PY_REQ%"` argument. Conda path untouched (PYSPEC unchanged).
+  Covered by new rows `self.contract.uv.pyver.range` and `self.contract.uv.pyver.exactpin`
+  (contract-uv lane). CLOSED by this PR.
 
 - **pandas[excel] extras syntax not triggering heuristic**: `names_lower` was built without
   stripping pip extras, so `pandas[excel]` was stored as `"pandas[excel]"` and `'pandas' in

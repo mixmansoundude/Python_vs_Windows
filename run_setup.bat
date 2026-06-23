@@ -287,8 +287,9 @@ rem Orchestration layer: force uv to use only its own managed CPython toolchain 
 rem ignore any ambient/legacy system or conda interpreter on PATH/registry (e.g. the
 rem GitHub runner's hostedtoolcache Python). With no user version constraint uv then
 rem selects the latest managed CPython; a user runtime.txt/pyproject.toml is still
-rem honored via the --python X.Y forwarding applied downstream where the uv venv is
-rem created (HP_UV_PY_VER). Set before the PVW_UV_EXE branch and before the first uv
+rem honored via the --python forwarding applied downstream where the uv venv is created
+rem (HP_UV_PY_REQ; loose constraints forward the range so uv picks the latest satisfying
+rem version, exact pins stay fixed). Set before the PVW_UV_EXE branch and before the first uv
 rem invocation so every uv command (run,
 rem venv, pip) in this process inherits it. See docs/agent-lessons-learned.md.
 set "UV_PYTHON_PREFERENCE=only-managed"
@@ -563,16 +564,29 @@ if exist "%HP_UV_ENV_PATH%\Scripts\python.exe" (
     goto :uv_venv_ready
   )
 )
-rem Extract Python version lower-bound from PYSPEC for uv --python (REQ-004 Tiers 1-2).
-rem Handles: python=X.Y (runtime.txt), python==X.Y, python>=X.Y, python>X.Y.
-rem [Console]::Write avoids the trailing CR from Write-Output that for /f does not strip.
-set "HP_UV_PY_VER="
+rem Translate PYSPEC into a uv --python request (REQ-004 Tiers 1-2, floor-vs-pin).
+rem Two outputs, pipe-delimited: HP_UV_PY_REQ (forwarded to uv) and HP_UV_PY_DISP (log only).
+rem  - Exact pins (python=X.Y runtime.txt, python==X.Y) -> bare "X.Y" (uv pins to X.Y).
+rem  - Loose/range forms (python>=X.Y, python>X.Y, python>=X.Y,<X.Z) -> the RANGE itself, so
+rem    uv resolves the LATEST satisfying managed CPython instead of the floor (matches the
+rem    conda path, which hands the full range to its solver).
+rem CRITICAL: the range may contain < and > . Forward it ONLY through the double-quoted
+rem --python "%HP_UV_PY_REQ%" argument (quotes shield it from cmd's redirection parser).
+rem The :log line uses HP_UV_PY_DISP, which is operator-free ("X.Y" or "X.Y or newer"),
+rem because :log echoes its message UNQUOTED -- a raw < or > there would be a redirection.
+rem Single quotes only inside -Command (a literal " would close the cmd-level quote).
+rem [Console]::Write avoids the trailing CR that for /f does not strip.
+set "HP_UV_PY_REQ="
+set "HP_UV_PY_DISP="
 if defined PYSPEC (
-  for /f "usebackq delims=" %%V in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "if ($env:PYSPEC -match 'python==([0-9]+\.[0-9]+)') { [Console]::Write($Matches[1]) } elseif ($env:PYSPEC -match 'python=([0-9]+\.[0-9]+)') { [Console]::Write($Matches[1]) } elseif ($env:PYSPEC -match 'python>=([0-9]+\.[0-9]+)') { [Console]::Write($Matches[1]) } elseif ($env:PYSPEC -match 'python>([0-9]+\.[0-9]+)') { [Console]::Write($Matches[1]) } else { [Console]::Write('') }"`) do set "HP_UV_PY_VER=%%V"
+  for /f "usebackq tokens=1,2 delims=|" %%V in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$s = $env:PYSPEC; $req = ($s -replace '^python','').Trim(); if ($req -match '^==?([0-9].*)$') { $req = $Matches[1] }; $floor = ''; if ($s -match '([0-9]+\.[0-9]+)') { $floor = $Matches[1] }; $disp = $floor; if ($req -ne $floor) { $disp = $floor + ' or newer' }; [Console]::Write($req + '|' + $disp)"`) do (
+    set "HP_UV_PY_REQ=%%V"
+    set "HP_UV_PY_DISP=%%W"
+  )
 )
-if defined HP_UV_PY_VER (
-  call :log "[INFO] uv: creating venv at .uv_env with Python %HP_UV_PY_VER%..."
-  "%HP_UV_EXE%" venv --seed --python "%HP_UV_PY_VER%" "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
+if defined HP_UV_PY_REQ (
+  call :log "[INFO] uv: creating venv at .uv_env with Python %HP_UV_PY_DISP%..."
+  "%HP_UV_EXE%" venv --seed --python "%HP_UV_PY_REQ%" "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
 ) else (
   call :log "[INFO] uv: creating venv at .uv_env..."
   "%HP_UV_EXE%" venv --seed "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
@@ -609,8 +623,8 @@ rem The HP_PYPROJ_DEPS path (line ~712) later detects the malformed TOML and emi
 rem [WARN] pyproject.toml TOML parse error message as normal.
 if defined HP_UV_PROVIDING_PYTHON (
   call :log "[WARN] uv: venv creation failed; retrying via uv run --no-project (malformed pyproject.toml guard)."
-  if defined HP_UV_PY_VER (
-    "%HP_UV_EXE%" run --no-project --python "%HP_UV_PY_VER%" python -m venv "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
+  if defined HP_UV_PY_REQ (
+    "%HP_UV_EXE%" run --no-project --python "%HP_UV_PY_REQ%" python -m venv "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
   ) else (
     "%HP_UV_EXE%" run --no-project python -m venv "%HP_UV_ENV_PATH%" >> "%LOG%" 2>&1
   )

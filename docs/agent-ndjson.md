@@ -92,6 +92,8 @@ self.conda.base.update  (test file: tests/selfapps_conda_update.ps1 -- not run i
 ```
 self.contract.uv
 self.contract.uv.pyver
+self.contract.uv.pyver.range
+self.contract.uv.pyver.exactpin
 self.uv.first.miniconda.skip
 ```
 

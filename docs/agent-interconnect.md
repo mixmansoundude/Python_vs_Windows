@@ -273,7 +273,15 @@ the uv-first guard branch.
 
 **Currently covered by CI:**
 - `self.contract.uv` (contract-uv lane): verifies uv venv creation and pip install work
-- `self.contract.uv.pyver` (contract-uv lane): verifies Python version forwarded to `uv venv --python X.Y`
+- `self.contract.uv.pyver` (contract-uv lane): verifies an exact runtime.txt version is
+  forwarded to `uv venv --python X.Y`
+- `self.contract.uv.pyver.range` (contract-uv lane): verifies a loose pyproject
+  `requires-python = ">=X.Y"` forwards the RANGE to uv so it resolves the latest satisfying
+  managed CPython (interpreter minor in `.uv_env\pyvenv.cfg` is greater than the floor), not
+  the floor. This is the floor-vs-pin fix: `run_setup.bat` emits `HP_UV_PY_REQ` (range for
+  loose forms, bare `X.Y` for exact) and an operator-free `HP_UV_PY_DISP` for `:log`.
+- `self.contract.uv.pyver.exactpin` (contract-uv lane): verifies an exact `==X.Y` pin stays
+  pinned to `X.Y` and does not drift to latest after the range change.
 - `self.uv.first.miniconda.skip` (contract-uv lane): verifies Miniconda is NOT downloaded when uv provides Python
 - `self.contract.uv.fail` (contract-uv-fail lane): verifies graceful degradation when uv fails
 - `self.uv.managed.interpreter` (selfapps_envsmoke.ps1, all uv-first lanes): verifies the
