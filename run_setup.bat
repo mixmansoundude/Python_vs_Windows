@@ -579,7 +579,7 @@ rem [Console]::Write avoids the trailing CR that for /f does not strip.
 set "HP_UV_PY_REQ="
 set "HP_UV_PY_DISP="
 if defined PYSPEC (
-  for /f "usebackq tokens=1,2 delims=|" %%V in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$s = $env:PYSPEC; $req = $s -replace '^python',''; if ($req -match '^==?([0-9].*)$') { $req = $Matches[1] }; $floor = ''; if ($s -match '([0-9]+\.[0-9]+)') { $floor = $Matches[1] }; $disp = $floor; if ($req -ne $floor) { $disp = $floor + ' or newer' }; [Console]::Write($req + '|' + $disp)"`) do (
+  for /f "usebackq tokens=1,2 delims=|" %%V in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$s = $env:PYSPEC; $req = ($s -replace '^python','').Trim(); if ($req -match '^==?([0-9].*)$') { $req = $Matches[1] }; $floor = ''; if ($s -match '([0-9]+\.[0-9]+)') { $floor = $Matches[1] }; $disp = $floor; if ($req -ne $floor) { $disp = $floor + ' or newer' }; [Console]::Write($req + '|' + $disp)"`) do (
     set "HP_UV_PY_REQ=%%V"
     set "HP_UV_PY_DISP=%%W"
   )

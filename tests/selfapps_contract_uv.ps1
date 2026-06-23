@@ -21,7 +21,8 @@ function Write-NdjsonRow {
 function Invoke-UvPyverScenario {
     param(
         [string]$Name,
-        [string]$RequiresPython,
+        [string]$RequiresPython = '',
+        [string]$RuntimePython = '',
         [string]$UvBin,
         [string]$Repo,
         [string]$Here
@@ -33,8 +34,16 @@ function Invoke-UvPyverScenario {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     Copy-Item -LiteralPath (Join-Path $Repo 'run_setup.bat') -Destination $dir -Force
     Set-Content -LiteralPath (Join-Path $dir 'app.py') -Value "print('pyver-test-ok')" -NoNewline
-    $pyproj = "[project]`r`nname = `"pyvertest`"`r`nversion = `"0.0.0`"`r`nrequires-python = `"$RequiresPython`"`r`n"
-    Set-Content -LiteralPath (Join-Path $dir 'pyproject.toml') -Value $pyproj -Encoding Ascii
+    # runtime.txt (Tier 1) is preferred for exact pins: uv does not read a project
+    # requires-python from it, so the chosen interpreter is never re-validated against an
+    # exact `==X.Y` constraint (which PEP 440 would not match against X.Y.patch). pyproject
+    # (Tier 2) is used for loose ranges, which uv satisfies with the latest version.
+    if ($RuntimePython) {
+        Set-Content -LiteralPath (Join-Path $dir 'runtime.txt') -Value "python-$RuntimePython" -NoNewline
+    } else {
+        $pyproj = "[project]`r`nname = `"pyvertest`"`r`nversion = `"0.0.0`"`r`nrequires-python = `"$RequiresPython`"`r`n"
+        Set-Content -LiteralPath (Join-Path $dir 'pyproject.toml') -Value $pyproj -Encoding Ascii
+    }
     $scenarioLog = Join-Path $dir '~setup.log'
     $prev = [Environment]::GetEnvironmentVariable('PVW_UV_EXE')
     $env:PVW_UV_EXE = $UvBin
@@ -276,22 +285,24 @@ if ($lane -eq 'contract-uv-fail') {
     })
 
     # self.contract.uv.pyver.exactpin: REQ-004 floor-vs-pin guard for the OTHER half. An exact
-    # pyproject requires-python (==X.Y) must stay pinned to X.Y and must NOT drift to latest
-    # after the range change. Uses a non-latest version (3.12) and asserts the exact log
-    # phrasing (no "or newer") AND that the provisioned interpreter is exactly 3.12.x.
+    # pin (runtime.txt python-X.Y -> PYSPEC python=X.Y) must stay pinned to X.Y and must NOT
+    # drift to latest after the range change. Uses a non-latest version (3.12) and asserts the
+    # exact log phrasing (no "or newer") AND that the provisioned interpreter is exactly 3.12.x.
+    # runtime.txt (not pyproject ==3.12) avoids uv re-validating the 3.12.x interpreter against
+    # an exact ==3.12 constraint that PEP 440 would not match.
     $exactPass = $false
     $exactDetails = [ordered]@{}
     if (-not $uvBinExists) {
         $exactPass = $true
         $exactDetails = [ordered]@{ skip=$true; reason='uv-not-acquired'; uvBin=$uvBin }
     } else {
-        $r = Invoke-UvPyverScenario -Name '~uv_pyver_exact' -RequiresPython '==3.12' -UvBin $uvBin -Repo $repo -Here $here
+        $r = Invoke-UvPyverScenario -Name '~uv_pyver_exact' -RuntimePython '3.12' -UvBin $uvBin -Repo $repo -Here $here
         $exactMsg  = ($r.log -match [regex]::Escape('[INFO] uv: creating venv at .uv_env with Python 3.12'))
         $notNewer  = (-not ($r.log -match 'with Python 3\.12 or newer'))
         $isExactPin = ($r.version -match '^3\.12\.')
         $exactPass = [bool]($exactMsg -and $notNewer -and $isExactPin)
         $exactDetails = [ordered]@{
-            requested       = '==3.12'
+            requested       = 'runtime.txt python-3.12'
             resolvedVersion = $r.version
             exactMsgLogged  = $exactMsg
             notLabeledNewer = $notNewer
@@ -303,7 +314,7 @@ if ($lane -eq 'contract-uv-fail') {
         id      = 'self.contract.uv.pyver.exactpin'
         req     = 'REQ-004'
         pass    = [bool]$exactPass
-        desc    = 'Exact requires-python (==X.Y) pins uv venv --python to X.Y (does not drift to latest)'
+        desc    = 'Exact pin (runtime.txt python-X.Y) pins uv venv --python to X.Y (does not drift to latest)'
         details = $exactDetails
         lane    = $lane
     })
