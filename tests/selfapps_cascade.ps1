@@ -139,6 +139,18 @@ if (Test-Path $statusPath) {
 # terminated (did not loop), no tier was retried, and the bootstrap ended gracefully (exit 0).
 $execPass = ($uvToConda -eq 1) -and $condaSelected -and $terminated -and $noLoop -and ($statusExit -eq 0)
 
+# Self-diagnosis: run_setup.bat output is redirected to the bootstrap log file, so without this
+# the CI job log shows nothing about what the cascade actually did. Echo the computed evidence
+# and the REQ-009 / provider / warnfix lines so a failure is diagnosable from the step log alone.
+Write-Host "=== self.cascade.exec evidence ==="
+Write-Host ("uvToConda={0} condaToVenv={1} venvToSystem={2} condaSelected={3} terminated={4} noLoop={5} statusExit={6} statusState={7} runExit={8} execPass={9}" -f `
+    $uvToConda, $condaToVenv, $venvToSystem, $condaSelected, $terminated, $noLoop, $statusExit, $statusState, $runExit, $execPass)
+Write-Host "=== REQ-009 / provider / warnfix lines (setup log) ==="
+($setupText -split "`n") | Where-Object { $_ -match 'REQ-009|Selected Python provider|REPAIR|HP_ENV_MODE|warnfix|cascade|Trying the next Python provider|Installing Miniconda' } | Select-Object -First 80 | ForEach-Object { Write-Host $_ }
+Write-Host "=== bootstrap stdout log tail (50) ==="
+$logLines | Select-Object -Last 50 | ForEach-Object { Write-Host $_ }
+Write-Host "=== end self.cascade.exec evidence ==="
+
 Write-NdjsonRow ([ordered]@{
     id      = 'self.cascade.exec'
     req     = 'REQ-009'
