@@ -129,6 +129,32 @@ workflows.
 
 ---
 
+## `:log` echoes UNQUOTED -- never route shell metacharacters through it
+
+`:log` in `run_setup.bat` does `set "MSG=%~1"` then `echo %date% %time% %MSG%` -- the message
+is echoed **unquoted**. If `%MSG%` contains a redirection/pipe metacharacter (`<`, `>`, `|`,
+`&`), cmd's parser treats it as a redirection/pipe at execution time, corrupting the log line
+and/or creating a stray file (e.g. `call :log "...with Python >=3.11..."` would try to write
+to a file named `=3.11`). This is the cmd.exe escape trap.
+
+**Rule:** never pass a value containing `<`/`>`/`|`/`&` into `:log`. If you must surface such
+a value, forward it **only** through a tightly double-quoted argument to the actual command
+(e.g. `uv venv --python "%HP_UV_PY_REQ%"`) -- double quotes shield those characters from the
+redirection parser -- and log a separate **operator-free** display string instead. The
+floor-vs-pin change (REQ-004) is the canonical example: `HP_UV_PY_REQ` (may contain `>=`/`<`,
+quoted at the uv call site only) vs `HP_UV_PY_DISP` (`X.Y` / `X.Y or newer`, safe for `:log`).
+
+**Deferred tech debt -- do NOT "fix" `:log` with delayed expansion.** A global hardening of
+`:log` to swallow metacharacters via `setlocal enabledelayedexpansion` + `echo !MSG!` is
+**blocked** by three CI static checks in `tests/harness.ps1`: `batch.delayed.off` (requires
+`DisableDelayedExpansion` present), `batch.delayed.enable_absent` (forbids
+`EnableDelayedExpansion`), and `batch.bang.scan` (no `!` in live batch lines). Those guards
+exist because process-wide delayed expansion previously caused `!`-collision debugging pain.
+If a global `:log` fix is ever pursued, it is its own isolated task that must also revisit
+those checks -- not a drive-by change.
+
+---
+
 ## INVENTORY_B64 E2BIG pattern (publish_index.py)
 
 Passing large data through step env vars (`INVENTORY_B64` was ~168 KB base64) overflows
