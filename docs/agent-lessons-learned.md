@@ -155,6 +155,35 @@ those checks -- not a drive-by change.
 
 ---
 
+## Provider-cascade dispatch is goto-based on purpose (parse-time expansion)
+
+`:provider_cascade` (REQ-009/REQ-005.10 slice 3) routes by `HP_ENV_MODE` to one of
+`:cascade_from_uv` / `:cascade_from_conda` / `:cascade_from_venv` using **one-line `if /i ...
+goto`** statements, not a big parenthesized `if (...)` block. This is deliberate: inside the
+`uv -> conda` path we `set "HP_ENV_MODE=conda"` and then `set "ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%"`
+and immediately `goto :try_conda_create`. If those were inside a single parenthesized block,
+CMD's parse-time `%VAR%` expansion would read the OLD values of any variable set earlier in
+the same block (the classic drag-and-drop empty-filename bug). Splitting into goto-reached
+labels means each `set`/read happens on a freshly parsed line. **If you refactor the cascade
+into nested `( ... )` blocks, re-verify every `%VAR%` you read was not `set` earlier in the
+same block** -- prefer keeping the goto-dispatch shape.
+
+Two more cascade gotchas worth remembering:
+- `if defined HP_CASCADE_TRIED_UV` / `if not defined CONDA_BAT` are **runtime** checks (safe
+  inside blocks); `%HP_CASCADE_TRIED_UV%` / `%CONDA_BAT%` are parse-time (not safe). The
+  per-tier no-retry guards use the `if defined` form for exactly this reason.
+- `:cascade_acquire_conda` is `call`ed (not `goto`'d) so it returns; it relies on
+  `MINICONDA_ROOT`/`CONDA_MAIN`/`CONDA_ALT` already being set near line 410 (they are, even in
+  uv-first runs -- only the *install* at line ~423 is gated on `HP_UV_PROVIDING_PYTHON`).
+- The cascade `:log` messages say **"uv to conda"**, not "uv -> conda". `:log` echoes UNQUOTED
+  (see the ":log echoes UNQUOTED" section above), so a `>` in the message is parsed as a
+  redirection and silently EATS the log line (and litters a stray file). This actually bit
+  slice 3: the cascade ran correctly on Windows (uv->conda->venv->stop, no loop, exit 0) but
+  `self.cascade.exec` failed because its phrase-count assertions never matched -- the
+  `cascading provider uv -> conda` lines had been swallowed by the `>`. Keep these arrow-free.
+
+---
+
 ## INVENTORY_B64 E2BIG pattern (publish_index.py)
 
 Passing large data through step env vars (`INVENTORY_B64` was ~168 KB base64) overflows

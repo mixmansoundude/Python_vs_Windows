@@ -1432,6 +1432,14 @@ if "%HP_ENTRY%"=="" (
   call :run_entry_smoke
 )
 
+rem REQ-009/REQ-005.10 slice 3: if warnfix left dependencies unresolved under the current
+rem provider AND the user approved (HP_CASCADE_APPROVED, set in :warnfix_cascade_detect),
+rem re-attempt the dependency phase under the next REQ-009 provider tier. The per-tier
+rem HP_CASCADE_TRIED_* guards inside :provider_cascade ensure a tier is never used as a
+rem cascade source twice, so an unresolvable dependency exhausts the tiers and stops --
+rem it never loops. Each re-attempt re-enters at :try_conda_create / :after_env_mode_selection.
+if defined HP_CASCADE_APPROVED goto :provider_cascade
+:after_cascade_decision
 if /i "%HP_BOOTSTRAP_STATE%"=="ok" (
   call :write_status ok 0 %PYCOUNT%
 ) else (
@@ -1459,6 +1467,83 @@ if not defined HP_CI_LANE (
   pause
 )
 exit /b 0
+
+:provider_cascade
+rem REQ-009/REQ-005.10 slice 3: re-attempt the dependency phase under the next provider tier.
+rem Dispatch is goto-based (no parenthesized interdependent sets) to avoid CMD parse-time
+rem expansion traps. Each tier is marked HP_CASCADE_TRIED_<tier> the first time it is used as a
+rem cascade source; a tier is never used twice, so tiers exhaust and the run stops (no loop).
+rem HP_ENV_MODE only advances (uv -> conda -> venv -> system), so re-entry cannot revisit a tier.
+rem NOTE: the :log messages below say "uv to conda" (not "uv -> conda") on purpose -- :log
+rem echoes UNQUOTED, so a ">" in the message would be parsed as redirection and eat the line
+rem (see docs/agent-lessons-learned.md). Do not "fix" these to arrows.
+set "HP_CASCADE_APPROVED="
+if /i "%HP_ENV_MODE%"=="uv" goto :cascade_from_uv
+if /i "%HP_ENV_MODE%"=="conda" goto :cascade_from_conda
+if /i "%HP_ENV_MODE%"=="venv" goto :cascade_from_venv
+call :log "[INFO] REQ-009: provider tiers exhausted after %HP_ENV_MODE%; keeping current build."
+goto :after_cascade_decision
+
+:cascade_from_uv
+if defined HP_CASCADE_TRIED_UV goto :after_cascade_decision
+set "HP_CASCADE_TRIED_UV=1"
+call :log "[INFO] REQ-009: cascading provider uv to conda; re-attempting dependencies."
+echo *** [INFO] Trying the next Python provider (conda) to resolve dependencies...
+call :cascade_acquire_conda
+if not defined CONDA_BAT goto :cascade_conda_unavailable
+set "HP_UV_PROVIDING_PYTHON="
+set "HP_ENV_MODE=conda"
+set "ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%"
+goto :try_conda_create
+:cascade_conda_unavailable
+call :log "[WARN] REQ-009: cascade to conda unavailable (Miniconda not installed); keeping current build."
+goto :after_cascade_decision
+
+:cascade_from_conda
+if defined HP_CASCADE_TRIED_CONDA goto :after_cascade_decision
+set "HP_CASCADE_TRIED_CONDA=1"
+if "%HP_FORCE_CONDA_ONLY%"=="1" goto :cascade_condaonly_stop
+call :log "[INFO] REQ-009: cascading provider conda to venv; re-attempting dependencies."
+echo *** [INFO] Trying the next Python provider (venv) to resolve dependencies...
+call :try_venv_fallback
+if errorlevel 1 goto :cascade_venv_unavailable
+goto :after_env_mode_selection
+:cascade_condaonly_stop
+call :log "[INFO] REQ-009: conda-only mode; cascade beyond conda suppressed; keeping current build."
+goto :after_cascade_decision
+:cascade_venv_unavailable
+call :log "[WARN] REQ-009: cascade target venv unavailable; keeping current build."
+goto :after_cascade_decision
+
+:cascade_from_venv
+if defined HP_CASCADE_TRIED_VENV goto :after_cascade_decision
+set "HP_CASCADE_TRIED_VENV=1"
+if not "%HP_ALLOW_SYSTEM_FALLBACK%"=="1" goto :cascade_nosystem_stop
+call :log "[INFO] REQ-009: cascading provider venv to system; re-attempting dependencies."
+call :try_system_fallback
+if errorlevel 1 goto :cascade_system_unavailable
+goto :after_env_mode_selection
+:cascade_nosystem_stop
+call :log "[INFO] REQ-009: system Python fallback not enabled; keeping current build."
+goto :after_cascade_decision
+:cascade_system_unavailable
+call :log "[WARN] REQ-009: cascade target system Python unavailable; keeping current build."
+goto :after_cascade_decision
+
+:cascade_acquire_conda
+rem REQ-009 slice 3: a uv-first run skipped Miniconda; acquire it on demand for a uv->conda
+rem cascade. MINICONDA_ROOT / CONDA_MAIN / CONDA_ALT are already set (near line 410) even in
+rem uv-first runs, so :select_conda_bat and :try_conda_install work without further setup.
+call :select_conda_bat
+if defined CONDA_BAT goto :eof
+echo [INFO] Installing Miniconda into "%MINICONDA_ROOT%"...
+set "HP_CONDA_JUST_INSTALLED=1"
+call :download_miniconda_exe
+if exist "%TEMP%\miniconda.exe" call :try_conda_install
+if exist "%TEMP%\miniconda.exe" del "%TEMP%\miniconda.exe" >nul 2>&1
+call :select_conda_bat
+goto :eof
+
 :count_python
 set "NAME=%~1"
 if "%NAME%"=="" exit /b 0
@@ -2176,7 +2261,7 @@ rem Slice 2: ask for consent. Slice 3 will consume HP_CASCADE_APPROVED to re-att
 rem dependency phase under the next REQ-009 provider tier. Detection-only until then.
 if defined HP_CASCADE_CANDIDATE call :cascade_consent_gate
 if defined HP_CASCADE_CANDIDATE if not errorlevel 1 set "HP_CASCADE_APPROVED=1"
-if defined HP_CASCADE_APPROVED call :log "[INFO] REQ-009: cascade approved; provider re-attempt not yet implemented (slice 3)."
+if defined HP_CASCADE_APPROVED call :log "[INFO] REQ-009: cascade approved; will re-attempt under the next provider tier."
 if defined HP_CASCADE_CANDIDATE if not defined HP_CASCADE_APPROVED call :log "[INFO] REQ-009: cascade declined; keeping current build."
 if exist "~missing_after.txt" del "~missing_after.txt" >nul 2>&1
 exit /b 0

@@ -487,8 +487,6 @@ See **AGENTS.md** section Iteration Contract for the full policy. Key points:
 
 Items deferred to future loops:
 
-- **Provider cascade on warnfix hard failure (REQ-009 / REQ-005.10)**: Currently a warnfix hard failure within a provider (uv, conda, venv) logs and exits rather than cascading to the next REQ-009 provider. Intended direction: exhausting repair within a provider triggers fallback to the next tier and re-attempts from the dependency installation phase. Requires deciding the cascade trigger condition (max repair attempts, specific error classes, or explicit unresolvable signal) and updating the retry loop in `run_setup.bat` accordingly.
-
 - **uv DL fallback CI coverage**: `self.dl.uv.fallback` (uv download fallback path -- HP_TEST_UV_DL_FALLBACK=1) has no active CI lane. justme-test now uses HP_TEST_FORCE_UV_FAIL=1 (skips uv entirely before any download) so the secondary uv URL is never exercised in CI. Needs a dedicated non-gating lane that sets HP_TEST_UV_DL_FALLBACK=1 without HP_FORCE_CONDA_ONLY=1 and without HP_TEST_NOT_ELEVATED=1, so uv download path is reached and the fallback URL is tried.
 
 - **Miniconda probe runs even when uv succeeds**: in a normal uv run the log shows a
@@ -541,6 +539,25 @@ Items deferred to future loops:
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Provider cascade on warnfix hard failure (REQ-009 / REQ-005.10)**: shipped in three slices.
+  Slice 1 (#301) detects an unresolved-after-rebuild candidate (`:warnfix_cascade_detect`):
+  fires only when warnfix still reports missing modules AND a repair install failed
+  (`HP_CASCADE_CANDIDATE`). Slice 2 (#303) adds the user-consent gate
+  (`:cascade_consent_gate`, `HP_CASCADE_APPROVED`; CI-safe via `HP_TEST_CASCADE_ANSWER` /
+  `HP_CI_LANE` auto-decline). Slice 3 adds EXECUTION: on approval the main line jumps to
+  `:provider_cascade`, which re-attempts the dependency phase under the next REQ-009 tier in
+  priority order (uv -> conda -> venv -> system; uv->conda is the main gain since conda is the
+  strongest solver). Re-entry reuses the existing env-create paths (`:try_conda_create` /
+  `:after_env_mode_selection`); a uv->conda cascade acquires Miniconda on demand
+  (`:cascade_acquire_conda`) because uv-first runs skip it. Per-tier `HP_CASCADE_TRIED_*`
+  guards ensure a tier is never used as a cascade source twice, so the tiers exhaust and the
+  run stops -- it never loops. conda-only mode (`HP_FORCE_CONDA_ONLY=1`) and a cleared
+  `HP_ALLOW_SYSTEM_FALLBACK` suppress the respective downstream tiers. Tests: gating warnfix
+  `xfail` now declines (stable, provider-independent) -> `self.cascade.consent`; the dedicated
+  NON-gating `uv`-lane test `tests/selfapps_cascade.ps1` exercises the heavy uv->conda
+  execution -> `self.cascade.exec`; harness static check `batch.req009.cascade_exec`. CLOSED
+  by this PR.
 
 - **Spurious "add requirements.txt" WARN when one already exists**: gated the WARN (lines
   900-902 of `run_setup.bat`) on `not defined DEP_SOURCE`; it now fires only when no

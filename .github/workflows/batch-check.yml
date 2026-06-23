@@ -378,6 +378,15 @@ jobs:
         run: |
           & tests\selfapps_warnfix.ps1
 
+      # REQ-009/REQ-005.10 slice 3: provider-cascade EXECUTION. Runs only in the uv lane
+      # (uv-first, non-gating). The cascade walks uv -> conda (Miniconda download mid-run) ->
+      # venv -> stop. Heavy and provider-dependent, hence non-gating (uv lane continue-on-error).
+      - name: "Self-test: provider cascade EXECUTION uv -> conda (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_cascade.ps1
+
       - name: "Self-test: EXE smokerun XFAIL bad import (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh
@@ -2522,6 +2531,25 @@ jobs:
               Add-Content $env:GITHUB_STEP_SUMMARY -Value '```text'
               Get-Content $item.Path -Tail 120 | ForEach-Object { Add-Content $env:GITHUB_STEP_SUMMARY -Value $_ }
               Add-Content $env:GITHUB_STEP_SUMMARY -Value '```'
+            }
+          }
+
+      - name: "Diag: cascade execution evidence (uv lane; stdout so it lands in the log tail)"
+        if: ${{ always() && matrix.mode == 'uv' }}
+        shell: pwsh
+        run: |
+          $bl = 'tests\~selftest_cascade_exec\~cascade_exec_bootstrap.log'
+          $sl = 'tests\~selftest_cascade_exec\~setup.log'
+          Write-Host '=== self.cascade.exec row (ci_test_results.ndjson) ==='
+          if (Test-Path 'ci_test_results.ndjson') {
+            Select-String -Path 'ci_test_results.ndjson' -Pattern 'self\.cascade\.exec' | ForEach-Object { Write-Host $_.Line }
+          } else { Write-Host 'ci_test_results.ndjson not found' }
+          foreach ($f in @($bl, $sl)) {
+            if (Test-Path $f) {
+              Write-Host ("=== {0}: REQ-009 / provider / warnfix / cascade lines ===" -f $f)
+              Select-String -Path $f -Pattern 'REQ-009|Selected Python provider|REPAIR|HP_ENV_MODE|cascade|Installing Miniconda|conda create|warnfix' | ForEach-Object { Write-Host $_.Line }
+            } else {
+              Write-Host ("MISSING: {0}" -f $f)
             }
           }
 
