@@ -301,6 +301,12 @@ Write-Result "batch.req009.cascade_detect" "REQ-009/REQ-005.10: warnfix cascade-
 $cascadeConsentPatterns = @(':cascade_consent_gate', 'cascade consent: accepted', 'cascade consent: declined', 'HP_TEST_CASCADE_ANSWER')
 $hasCascadeConsent = ($cascadeConsentPatterns | Where-Object { -not ($AllText -match [regex]::Escape($_)) }).Count -eq 0
 Write-Result "batch.req009.cascade_consent" "REQ-009/REQ-005.10: cascade consent gate (subroutine + accept/decline logs + test flag) present in run_setup.bat" $hasCascadeConsent @{}
+# REQ-009/REQ-005.10 slice 3: cascade EXECUTION scaffolding -- dispatch label, the priority
+# uv->conda tier, per-tier no-retry guards, the on-demand Miniconda acquisition, and the
+# approval-gated dispatch on the main line. All five must be present in run_setup.bat.
+$cascadeExecPatterns = @(':provider_cascade', ':cascade_from_uv', 'cascading provider uv -> conda', 'HP_CASCADE_TRIED_UV', ':cascade_acquire_conda', 'if defined HP_CASCADE_APPROVED goto :provider_cascade')
+$hasCascadeExec = ($cascadeExecPatterns | Where-Object { -not ($AllText -match [regex]::Escape($_)) }).Count -eq 0
+Write-Result "batch.req009.cascade_exec" "REQ-009/REQ-005.10: provider cascade execution (dispatch + uv->conda tier + per-tier no-retry guards + on-demand conda acquire) present in run_setup.bat" $hasCascadeExec @{}
 $hasReq002Entry = $AllText -match '\[BOOT\] REQ-002.*Entry selected'
 Write-Result "batch.req002.entry_log" "REQ-002: entry selection log line present in run_setup.bat" $hasReq002Entry @{}
 $feMatch = [regex]::Match($AllText, 'set "HP_FIND_ENTRY=([A-Za-z0-9+/=]+)"')

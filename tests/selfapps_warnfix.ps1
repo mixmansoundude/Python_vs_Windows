@@ -279,12 +279,15 @@ if ($scenario -eq 'pass' -or $scenario -eq 'xfail') {
 } else {
     Remove-Item Env:HP_DISABLE_HEURISTICS -ErrorAction SilentlyContinue
 }
-# REQ-009/REQ-005.10 (slice 2): xfail leaves fake_pkg_xyz123 unresolved, so the cascade
-# consent gate fires. Answer Y to exercise the accept path deterministically (slice 2 only
-# logs consent; it does not yet execute the cascade, so the xfail EXE outcome is unchanged).
+# REQ-009/REQ-005.10 (slice 3): xfail leaves fake_pkg_xyz123 unresolved, so the cascade
+# consent gate fires. Answer N to exercise the DECLINE path deterministically: with slice 3
+# an accept would now EXECUTE the cascade (uv->conda Miniconda download + full re-attempt),
+# which would make this gating warnfix test heavy and provider-dependent. Declining keeps the
+# xfail EXE outcome stable. The accept+execute path is covered by the dedicated, non-gating
+# cascade-exec lane (tests/selfapps_cascade.ps1 -> self.cascade.exec).
 $prevCascade = if (Test-Path Env:HP_TEST_CASCADE_ANSWER) { $env:HP_TEST_CASCADE_ANSWER } else { $null }
 if ($scenario -eq 'xfail') {
-    $env:HP_TEST_CASCADE_ANSWER = 'Y'
+    $env:HP_TEST_CASCADE_ANSWER = 'N'
 } else {
     Remove-Item Env:HP_TEST_CASCADE_ANSWER -ErrorAction SilentlyContinue
 }
@@ -478,22 +481,30 @@ if ($scenario -eq 'xfail') {
         }
     })
 
-    # REQ-009/REQ-005.10 (slice 2): with HP_TEST_CASCADE_ANSWER=Y the consent gate must take
-    # the accept path. (Slice 2 only logs consent; it does not yet execute the cascade.)
-    $consentAccepted = $combined -match [regex]::Escape('[INFO] REQ-009: cascade consent: accepted')
+    # REQ-009/REQ-005.10 (slice 3): with HP_TEST_CASCADE_ANSWER=N the consent gate must take
+    # the DECLINE path, and no provider cascade may execute (the build is kept as-is). This keeps
+    # the gating warnfix lane stable and provider-independent; accept+execute is covered by the
+    # dedicated non-gating cascade-exec lane (self.cascade.exec). We assert the decline was logged
+    # AND that no cascade execution log line appeared.
+    $consentDeclined = $combined -match [regex]::Escape('[INFO] REQ-009: cascade consent: declined')
+    $cascadeKept     = $combined -match [regex]::Escape('[INFO] REQ-009: cascade declined; keeping current build')
+    $cascadeExecuted = $combined -match [regex]::Escape('[INFO] REQ-009: cascading provider ')
+    $consentPass     = $consentDeclined -and $cascadeKept -and (-not $cascadeExecuted)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.cascade.consent'
         req     = 'REQ-009'
-        pass    = [bool]$consentAccepted
-        desc    = 'cascade consent gate accept path fires under HP_TEST_CASCADE_ANSWER=Y (consent-only slice)'
+        pass    = [bool]$consentPass
+        desc    = 'cascade consent gate decline path keeps build; no cascade executes under HP_TEST_CASCADE_ANSWER=N'
         details = [ordered]@{
             scenario         = $scenario
-            consentAccepted  = $consentAccepted
+            consentDeclined  = $consentDeclined
+            cascadeKept      = $cascadeKept
+            cascadeExecuted  = $cascadeExecuted
             cascadeDetected  = $cascadeDetected
         }
     })
 
-    if (-not $xfailPass -or -not $cascadeDetected -or -not $consentAccepted) { exit 1 }
+    if (-not $xfailPass -or -not $cascadeDetected -or -not $consentPass) { exit 1 }
     exit 0
 }
 

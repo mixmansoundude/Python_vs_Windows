@@ -39,6 +39,39 @@ When `HP_UV_PROVIDING_PYTHON=1`:
 - The corruption check at line 442 (`if defined CONDA_BAT ...`) never fires
 - All conda-dependent bootstrap paths are bypassed
 
+### Provider cascade execution re-enters env-create (REQ-009/REQ-005.10 slice 3)
+
+`:provider_cascade` (reached from the main line via `if defined HP_CASCADE_APPROVED goto
+:provider_cascade`, just after `:run_entry_smoke` returns) re-attempts the dependency phase
+under the next provider tier. **It does not re-implement env-create -- it reuses the existing
+paths**, so anyone touching those paths must understand the cascade re-entry:
+
+- `uv -> conda`: sets `HP_ENV_MODE=conda`, clears `HP_UV_PROVIDING_PYTHON`, sets
+  `ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%`, then `goto :try_conda_create`. Because uv-first
+  runs skipped Miniconda, `:cascade_acquire_conda` first downloads+installs it on demand
+  (mirroring the normal acquisition at lines ~423-432; `MINICONDA_ROOT`/`CONDA_MAIN`/`CONDA_ALT`
+  are already set near line 410 even in uv-first runs, so `:select_conda_bat` / `:try_conda_install`
+  work). `:try_conda_create` ends with `goto :after_env_mode_selection`, which re-runs dep
+  install + build.
+- `conda -> venv`: `call :try_venv_fallback` (sets `HP_ENV_MODE=venv`), then
+  `goto :after_env_mode_selection`. Suppressed when `HP_FORCE_CONDA_ONLY=1`.
+- `venv -> system`: `call :try_system_fallback` (sets `HP_ENV_MODE=system`), then
+  `goto :after_env_mode_selection`. Suppressed unless `HP_ALLOW_SYSTEM_FALLBACK=1` (CI clears
+  it for all lanes, so cascade stops at venv in CI).
+
+**No-loop guarantee (touch one, understand all):** each tier is marked `HP_CASCADE_TRIED_<tier>`
+the first time it is used as a cascade source, and `HP_ENV_MODE` only ever advances
+(uv->conda->venv->system). Re-entry therefore cannot revisit a tier, and tiers exhaust to a
+"keeping current build" terminal. If you add a new provider or reorder tiers, you MUST add a
+matching `HP_CASCADE_TRIED_*` guard and keep the order monotonic, or the cascade can loop.
+
+**`:after_env_mode_selection` re-entrancy:** the cascade relies on this label being safe to
+re-enter (it recomputes REQ/DEP_SOURCE/entry/pyproject state from scratch). The EXE fast path
+(`:try_fast_exe`, top of file) is NOT re-run on cascade, and `:run_entry_smoke`'s rebuild-skip
+is gated on `HP_FASTPATH_USED` (unset on a fresh first build), so the next tier genuinely
+rebuilds. Do not introduce first-run-only state into `:after_env_mode_selection` without
+making it idempotent.
+
 ### uv uses managed-only CPython (UV_PYTHON_PREFERENCE)
 
 `run_setup.bat` sets `UV_PYTHON_PREFERENCE=only-managed` at the top of the uv acquisition
