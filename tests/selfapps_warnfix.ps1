@@ -448,7 +448,23 @@ if ($scenario -eq 'xfail') {
         }
     })
 
-    if (-not $xfailPass) { exit 1 }
+    # REQ-009/REQ-005.10 (slice 1): the xfail app leaves fake_pkg_xyz123 unresolved after
+    # rebuild and the install failed, so the warnfix cascade-candidate detection must fire.
+    $cascadeDetected = $combined -match [regex]::Escape('[INFO] REQ-009: cascade candidate detected')
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.cascade.detect'
+        req     = 'REQ-009'
+        pass    = [bool]$cascadeDetected
+        desc    = 'warnfix unresolved-after-rebuild marks a cascade candidate (detect-only slice)'
+        details = [ordered]@{
+            scenario               = $scenario
+            cascadeDetected        = $cascadeDetected
+            warnInstallFired       = $warnInstallFired
+            repairFailuresDetected = $repairFailuresDetected
+        }
+    })
+
+    if (-not $xfailPass -or -not $cascadeDetected) { exit 1 }
     exit 0
 }
 
