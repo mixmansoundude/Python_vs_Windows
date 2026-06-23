@@ -337,6 +337,9 @@ Write-Result 'batch.req014.consent' 'REQ-014: system Python consent gate log lin
 # (tests/selfapps_envsmoke.ps1). See docs/agent-lessons-learned.md.
 $hasUvPref = ($AllText -match 'set\s+"UV_PYTHON_PREFERENCE=only-managed"')
 Write-Result 'uv.python.preference.configured' 'config: run_setup.bat sets UV_PYTHON_PREFERENCE=only-managed (managed-only orchestration; no ambient Python)' $hasUvPref @{}
+$warnGatePatterns = @('if not defined DEP_SOURCE (', 'Dependencies were auto-detected (pipreqs)', 'pipreqs augmenting')
+$hasWarnGate = ($warnGatePatterns | Where-Object { -not ($AllText -match [regex]::Escape($_)) }).Count -eq 0
+Write-Result 'batch.req005.warn_gate' 'REQ-005: pipreqs auto-detect WARN gated on DEP_SOURCE unset (suppressed when requirements.txt/pyproject present)' $hasWarnGate @{}
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

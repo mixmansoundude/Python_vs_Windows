@@ -960,6 +960,19 @@ Write-NdjsonRow ([ordered]@{
   details = [ordered]@{ exitCode = $retryExit; retryMsgFound = $retryMsgFound }
 })
 if ($retryExit -eq 0 -and $retryMsgFound) { $summary.Add('Conda retry: PASS') } else { $summary.Add('Conda retry: FAIL') }
+# REQ-005: pipreqs WARN gate -- reuses the conda_retry log (has requirements.txt=six).
+# The "Dependencies were auto-detected (pipreqs)" WARN must NOT appear when user has requirements.txt.
+# Guard: if the retry log is empty (prior scenario produced no output), fail rather than false-pass.
+$warnFound = ($retryLines | Where-Object { $_ -like '*Dependencies were auto-detected (pipreqs)*' }).Count -gt 0
+$warnGatePass = ($retryLines.Count -gt 0) -and (-not $warnFound)
+Write-NdjsonRow ([ordered]@{
+  id      = 'self.pipreqs.warn.gated'
+  req     = 'REQ-005'
+  pass    = $warnGatePass
+  desc    = 'pipreqs auto-detect WARN absent when user requirements.txt present (not shown to user who already declared deps)'
+  details = [ordered]@{ warnFound = $warnFound; logLines = $retryLines.Count }
+})
+if ($warnGatePass) { $summary.Add('Pipreqs WARN gate: PASS') } else { $summary.Add('Pipreqs WARN gate: FAIL') }
 
 # --- REQ-005.3 conda per-package fallback test ---
 # Arrange: HP_TEST_FORCE_CONDA_BULK_FAIL=1 forces a non-transient bulk-install failure, so the

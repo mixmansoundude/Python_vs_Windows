@@ -897,10 +897,17 @@ if defined PEP723_ACTIVE (
   set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
   goto :after_pipreqs_run
 )
-echo *** [WARN] Dependencies were auto-detected (pipreqs)
-echo *** [WARN] Auto-detection may be incomplete or incorrect
-echo *** [INFO] Consider adding requirements.txt or PEP 723 metadata for reliability
-if not "%DEP_SOURCE%"=="requirements.txt" set "DEP_SOURCE=pipreqs"
+rem REQ-005: Only warn when no user-provided dep source was detected (no requirements.txt /
+rem pyproject / PEP 723). If DEP_SOURCE is already set, pipreqs runs as an augmentation
+rem pass but the user has explicit deps -- the WARN is misleading and must be suppressed.
+if not defined DEP_SOURCE (
+  echo *** [WARN] Dependencies were auto-detected (pipreqs)
+  echo *** [WARN] Auto-detection may be incomplete or incorrect
+  echo *** [INFO] Consider adding requirements.txt or PEP 723 metadata for reliability
+  set "DEP_SOURCE=pipreqs"
+) else (
+  call :log "[TRACE] pipreqs augmenting %DEP_SOURCE% dep source; auto-detect WARN suppressed."
+)
 
 rem pipreqs invocation: uses "python -m pipreqs.pipreqs" NOT the console script (pipreqs command).
 rem derived requirement: bootstrap determinism. The console script (pipreqs) relies on PATH being set
