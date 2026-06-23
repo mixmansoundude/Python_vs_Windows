@@ -2534,6 +2534,25 @@ jobs:
             }
           }
 
+      - name: "Diag: cascade execution evidence (uv lane; stdout so it lands in the log tail)"
+        if: ${{ always() && matrix.mode == 'uv' }}
+        shell: pwsh
+        run: |
+          $bl = 'tests\~selftest_cascade_exec\~cascade_exec_bootstrap.log'
+          $sl = 'tests\~selftest_cascade_exec\~setup.log'
+          Write-Host '=== self.cascade.exec row (ci_test_results.ndjson) ==='
+          if (Test-Path 'ci_test_results.ndjson') {
+            Select-String -Path 'ci_test_results.ndjson' -Pattern 'self\.cascade\.exec' | ForEach-Object { Write-Host $_.Line }
+          } else { Write-Host 'ci_test_results.ndjson not found' }
+          foreach ($f in @($bl, $sl)) {
+            if (Test-Path $f) {
+              Write-Host ("=== {0}: REQ-009 / provider / warnfix / cascade lines ===" -f $f)
+              Select-String -Path $f -Pattern 'REQ-009|Selected Python provider|REPAIR|HP_ENV_MODE|cascade|Installing Miniconda|conda create|warnfix' | ForEach-Object { Write-Host $_.Line }
+            } else {
+              Write-Host ("MISSING: {0}" -f $f)
+            }
+          }
+
       - name: Publish failure summary
         if: failure()
         shell: pwsh
