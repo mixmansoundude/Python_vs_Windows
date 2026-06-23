@@ -1474,6 +1474,9 @@ rem Dispatch is goto-based (no parenthesized interdependent sets) to avoid CMD p
 rem expansion traps. Each tier is marked HP_CASCADE_TRIED_<tier> the first time it is used as a
 rem cascade source; a tier is never used twice, so tiers exhaust and the run stops (no loop).
 rem HP_ENV_MODE only advances (uv -> conda -> venv -> system), so re-entry cannot revisit a tier.
+rem NOTE: the :log messages below say "uv to conda" (not "uv -> conda") on purpose -- :log
+rem echoes UNQUOTED, so a ">" in the message would be parsed as redirection and eat the line
+rem (see docs/agent-lessons-learned.md). Do not "fix" these to arrows.
 set "HP_CASCADE_APPROVED="
 if /i "%HP_ENV_MODE%"=="uv" goto :cascade_from_uv
 if /i "%HP_ENV_MODE%"=="conda" goto :cascade_from_conda
@@ -1484,7 +1487,7 @@ goto :after_cascade_decision
 :cascade_from_uv
 if defined HP_CASCADE_TRIED_UV goto :after_cascade_decision
 set "HP_CASCADE_TRIED_UV=1"
-call :log "[INFO] REQ-009: cascading provider uv -> conda; re-attempting dependencies."
+call :log "[INFO] REQ-009: cascading provider uv to conda; re-attempting dependencies."
 echo *** [INFO] Trying the next Python provider (conda) to resolve dependencies...
 call :cascade_acquire_conda
 if not defined CONDA_BAT goto :cascade_conda_unavailable
@@ -1500,7 +1503,7 @@ goto :after_cascade_decision
 if defined HP_CASCADE_TRIED_CONDA goto :after_cascade_decision
 set "HP_CASCADE_TRIED_CONDA=1"
 if "%HP_FORCE_CONDA_ONLY%"=="1" goto :cascade_condaonly_stop
-call :log "[INFO] REQ-009: cascading provider conda -> venv; re-attempting dependencies."
+call :log "[INFO] REQ-009: cascading provider conda to venv; re-attempting dependencies."
 echo *** [INFO] Trying the next Python provider (venv) to resolve dependencies...
 call :try_venv_fallback
 if errorlevel 1 goto :cascade_venv_unavailable
@@ -1516,7 +1519,7 @@ goto :after_cascade_decision
 if defined HP_CASCADE_TRIED_VENV goto :after_cascade_decision
 set "HP_CASCADE_TRIED_VENV=1"
 if not "%HP_ALLOW_SYSTEM_FALLBACK%"=="1" goto :cascade_nosystem_stop
-call :log "[INFO] REQ-009: cascading provider venv -> system; re-attempting dependencies."
+call :log "[INFO] REQ-009: cascading provider venv to system; re-attempting dependencies."
 call :try_system_fallback
 if errorlevel 1 goto :cascade_system_unavailable
 goto :after_env_mode_selection

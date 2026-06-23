@@ -304,7 +304,7 @@ Write-Result "batch.req009.cascade_consent" "REQ-009/REQ-005.10: cascade consent
 # REQ-009/REQ-005.10 slice 3: cascade EXECUTION scaffolding -- dispatch label, the priority
 # uv->conda tier, per-tier no-retry guards, the on-demand Miniconda acquisition, and the
 # approval-gated dispatch on the main line. All five must be present in run_setup.bat.
-$cascadeExecPatterns = @(':provider_cascade', ':cascade_from_uv', 'cascading provider uv -> conda', 'HP_CASCADE_TRIED_UV', ':cascade_acquire_conda', 'if defined HP_CASCADE_APPROVED goto :provider_cascade')
+$cascadeExecPatterns = @(':provider_cascade', ':cascade_from_uv', 'cascading provider uv to conda', 'HP_CASCADE_TRIED_UV', ':cascade_acquire_conda', 'if defined HP_CASCADE_APPROVED goto :provider_cascade')
 $hasCascadeExec = ($cascadeExecPatterns | Where-Object { -not ($AllText -match [regex]::Escape($_)) }).Count -eq 0
 Write-Result "batch.req009.cascade_exec" "REQ-009/REQ-005.10: provider cascade execution (dispatch + uv->conda tier + per-tier no-retry guards + on-demand conda acquire) present in run_setup.bat" $hasCascadeExec @{}
 $hasReq002Entry = $AllText -match '\[BOOT\] REQ-002.*Entry selected'

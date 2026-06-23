@@ -175,6 +175,12 @@ Two more cascade gotchas worth remembering:
 - `:cascade_acquire_conda` is `call`ed (not `goto`'d) so it returns; it relies on
   `MINICONDA_ROOT`/`CONDA_MAIN`/`CONDA_ALT` already being set near line 410 (they are, even in
   uv-first runs -- only the *install* at line ~423 is gated on `HP_UV_PROVIDING_PYTHON`).
+- The cascade `:log` messages say **"uv to conda"**, not "uv -> conda". `:log` echoes UNQUOTED
+  (see the ":log echoes UNQUOTED" section above), so a `>` in the message is parsed as a
+  redirection and silently EATS the log line (and litters a stray file). This actually bit
+  slice 3: the cascade ran correctly on Windows (uv->conda->venv->stop, no loop, exit 0) but
+  `self.cascade.exec` failed because its phrase-count assertions never matched -- the
+  `cascading provider uv -> conda` lines had been swallowed by the `>`. Keep these arrow-free.
 
 ---
 

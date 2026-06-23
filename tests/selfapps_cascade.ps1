@@ -113,9 +113,9 @@ $combined  = ($logLines -join "`n") + "`n" + $setupText
 # IMPORTANT: count against a SINGLE log source ($setupText = ~setup.log). :log writes every
 # line to BOTH stdout (captured in $logLines) AND ~setup.log, so counting against $combined
 # would double every occurrence and break the "-eq 1" / no-loop checks.
-$uvToConda    = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider uv -> conda'))).Count
-$condaToVenv  = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider conda -> venv'))).Count
-$venvToSystem = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider venv -> system'))).Count
+$uvToConda    = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider uv to conda'))).Count
+$condaToVenv  = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider conda to venv'))).Count
+$venvToSystem = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider venv to system'))).Count
 # Conda was actually selected after the uv -> conda cascade.
 $condaSelected = $combined -match [regex]::Escape('REQ-009: Selected Python provider: Conda')
 # Terminal state: a "keeping current build" line means the cascade stopped (did not loop).
