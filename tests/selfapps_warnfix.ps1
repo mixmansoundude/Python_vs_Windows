@@ -279,6 +279,15 @@ if ($scenario -eq 'pass' -or $scenario -eq 'xfail') {
 } else {
     Remove-Item Env:HP_DISABLE_HEURISTICS -ErrorAction SilentlyContinue
 }
+# REQ-009/REQ-005.10 (slice 2): xfail leaves fake_pkg_xyz123 unresolved, so the cascade
+# consent gate fires. Answer Y to exercise the accept path deterministically (slice 2 only
+# logs consent; it does not yet execute the cascade, so the xfail EXE outcome is unchanged).
+$prevCascade = if (Test-Path Env:HP_TEST_CASCADE_ANSWER) { $env:HP_TEST_CASCADE_ANSWER } else { $null }
+if ($scenario -eq 'xfail') {
+    $env:HP_TEST_CASCADE_ANSWER = 'Y'
+} else {
+    Remove-Item Env:HP_TEST_CASCADE_ANSWER -ErrorAction SilentlyContinue
+}
 
 Push-Location $workDir
 try {
@@ -294,6 +303,11 @@ try {
         Remove-Item Env:HP_DISABLE_HEURISTICS -ErrorAction SilentlyContinue
     } else {
         $env:HP_DISABLE_HEURISTICS = $prevDisableH
+    }
+    if ($null -eq $prevCascade) {
+        Remove-Item Env:HP_TEST_CASCADE_ANSWER -ErrorAction SilentlyContinue
+    } else {
+        $env:HP_TEST_CASCADE_ANSWER = $prevCascade
     }
     Pop-Location
 }
@@ -464,7 +478,22 @@ if ($scenario -eq 'xfail') {
         }
     })
 
-    if (-not $xfailPass -or -not $cascadeDetected) { exit 1 }
+    # REQ-009/REQ-005.10 (slice 2): with HP_TEST_CASCADE_ANSWER=Y the consent gate must take
+    # the accept path. (Slice 2 only logs consent; it does not yet execute the cascade.)
+    $consentAccepted = $combined -match [regex]::Escape('[INFO] REQ-009: cascade consent: accepted')
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.cascade.consent'
+        req     = 'REQ-009'
+        pass    = [bool]$consentAccepted
+        desc    = 'cascade consent gate accept path fires under HP_TEST_CASCADE_ANSWER=Y (consent-only slice)'
+        details = [ordered]@{
+            scenario         = $scenario
+            consentAccepted  = $consentAccepted
+            cascadeDetected  = $cascadeDetected
+        }
+    })
+
+    if (-not $xfailPass -or -not $cascadeDetected -or -not $consentAccepted) { exit 1 }
     exit 0
 }
 

@@ -142,6 +142,8 @@ rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-009
 set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
 rem HP_TEST_FORCE_WARNFIX_UNRESOLVED=1: forces the warnfix cascade-candidate detection (REQ-009/REQ-005.10) for branch coverage
 set "HP_TEST_FORCE_WARNFIX_UNRESOLVED=%HP_TEST_FORCE_WARNFIX_UNRESOLVED%"
+rem HP_TEST_CASCADE_ANSWER=Y|N: bypasses the cascade consent prompt (REQ-009/REQ-005.10) for CI testing
+set "HP_TEST_CASCADE_ANSWER=%HP_TEST_CASCADE_ANSWER%"
 rem HP_ALLOW_VENV_FALLBACK (deprecated): venv fallback is now unconditional when conda fails; accepted but ignored.
 set "HP_ALLOW_VENV_FALLBACK=%HP_ALLOW_VENV_FALLBACK%"
 rem HP_TEST_FORCE_CONSENT_CHECK=1: directly triggers consent gate at startup for REQ-014 branch coverage
@@ -2165,12 +2167,42 @@ if exist "build\%ENVNAME%\warn-%ENVNAME%.txt" (
 )
 if exist "~warnfix_repair_failed.flag" if defined HP_UNRESOLVED_AFTER set "HP_CASCADE_CANDIDATE=1"
 if "%HP_TEST_FORCE_WARNFIX_UNRESOLVED%"=="1" set "HP_CASCADE_CANDIDATE=1"
+set "HP_CASCADE_APPROVED="
 if defined HP_CASCADE_CANDIDATE (
   call :log "[WARN] REQ-009: warnfix left modules unresolved under provider %HP_ENV_MODE%."
-  call :log "[INFO] REQ-009: cascade candidate detected; next-tier fallback not yet enabled."
+  call :log "[INFO] REQ-009: cascade candidate detected."
 )
+rem Slice 2: ask for consent. Slice 3 will consume HP_CASCADE_APPROVED to re-attempt the
+rem dependency phase under the next REQ-009 provider tier. Detection-only until then.
+if defined HP_CASCADE_CANDIDATE call :cascade_consent_gate
+if defined HP_CASCADE_CANDIDATE if not errorlevel 1 set "HP_CASCADE_APPROVED=1"
+if defined HP_CASCADE_APPROVED call :log "[INFO] REQ-009: cascade approved; provider re-attempt not yet implemented (slice 3)."
+if defined HP_CASCADE_CANDIDATE if not defined HP_CASCADE_APPROVED call :log "[INFO] REQ-009: cascade declined; keeping current build."
 if exist "~missing_after.txt" del "~missing_after.txt" >nul 2>&1
 exit /b 0
+:cascade_consent_gate
+rem REQ-009/REQ-005.10: require explicit consent before cascading to the next provider tier.
+rem CI-safe (mirrors :conda_binary_corrupt heal prompt): HP_TEST_CASCADE_ANSWER (Y/N) overrides;
+rem otherwise HP_CI_LANE auto-declines with no prompt (no set /p hang in CI); interactive users
+rem get a Y/N prompt. exit 0 = approved (cascade), exit 1 = declined (keep the current build).
+echo.
+echo *** Some dependencies could not be installed under the current Python provider. ***
+echo.
+set "HP_CASCADE_RAW="
+if defined HP_TEST_CASCADE_ANSWER (
+  set "HP_CASCADE_RAW=%HP_TEST_CASCADE_ANSWER%"
+) else if defined HP_CI_LANE (
+  set "HP_CASCADE_RAW=n"
+) else (
+  set /p "HP_CASCADE_RAW=  Try the next Python provider to resolve them? [Y/N] "
+)
+set "HP_CASCADE_CHOICE=%HP_CASCADE_RAW:~0,1%"
+if /I "%HP_CASCADE_CHOICE%"=="Y" (
+  call :log "[INFO] REQ-009: cascade consent: accepted."
+  exit /b 0
+)
+call :log "[INFO] REQ-009: cascade consent: declined."
+exit /b 1
 :run_exe_smokerun
 if not exist "dist\%ENVNAME%.exe" (
   call :log "[WARN] EXE smokerun: dist\%ENVNAME%.exe not found; skipping"
