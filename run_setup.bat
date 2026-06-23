@@ -140,6 +140,8 @@ rem HP_TEST_FORCE_VENV_FAIL=1: simulates venv creation failure for REQ-009/REQ-0
 set "HP_TEST_FORCE_VENV_FAIL=%HP_TEST_FORCE_VENV_FAIL%"
 rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-009/REQ-014 branch coverage
 set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
+rem HP_TEST_FORCE_WARNFIX_UNRESOLVED=1: forces the warnfix cascade-candidate detection (REQ-009/REQ-005.10) for branch coverage
+set "HP_TEST_FORCE_WARNFIX_UNRESOLVED=%HP_TEST_FORCE_WARNFIX_UNRESOLVED%"
 rem HP_ALLOW_VENV_FALLBACK (deprecated): venv fallback is now unconditional when conda fails; accepted but ignored.
 set "HP_ALLOW_VENV_FALLBACK=%HP_ALLOW_VENV_FALLBACK%"
 rem HP_TEST_FORCE_CONSENT_CHECK=1: directly triggers consent gate at startup for REQ-014 branch coverage
@@ -2098,6 +2100,9 @@ if "%HP_ENV_MODE%"=="system" (
       if exist "~warnfix_repair_failed.flag" call :log "[WARN] One or more repair attempts failed"
       "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
       call :log "[REPAIR] rebuild complete after warnfix."
+      rem REQ-009/REQ-005.10 (slice 1: detect only): flag when this provider could not
+      rem resolve all modules. Must run before the repair-failed flag is deleted (next line).
+      call :warnfix_cascade_detect
     )
     if exist "~warnfix_repair_failed.flag" del "~warnfix_repair_failed.flag" >nul 2>&1
     if exist "~missing_modules.txt" del "~missing_modules.txt" >nul 2>&1
@@ -2132,6 +2137,32 @@ call :log "[INFO] Warnfix applied; retrying entry smoke via interpreter."
 "%HP_PY%" "%HP_ENTRY%" 1> "~run.out.txt" 2> "~run.err.txt"
 set "HP_SMOKE_RC=%ERRORLEVEL%"
 call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
+exit /b 0
+:warnfix_cascade_detect
+rem REQ-009/REQ-005.10 (slice 1: detect only). After the warnfix rebuild, re-parse the
+rem fresh PyInstaller warn file. If modules are STILL missing AND at least one repair
+rem install failed this round, the current provider genuinely cannot supply them -- mark a
+rem cascade candidate (HP_CASCADE_CANDIDATE). This slice only detects and logs; the actual
+rem provider cascade (re-attempt under the next REQ-009 tier) is added in a later change.
+rem Confidence gate: require BOTH the unresolved signal AND a recorded install failure so a
+rem parse_warn false-positive on an already-present module does not trigger a cascade.
+rem HP_TEST_FORCE_WARNFIX_UNRESOLVED=1 forces the candidate for deterministic CI coverage.
+rem No setlocal: HP_CASCADE_CANDIDATE must persist to the caller.
+set "HP_CASCADE_CANDIDATE="
+set "HP_UNRESOLVED_AFTER="
+if exist "build\%ENVNAME%\warn-%ENVNAME%.txt" (
+  call :emit_from_base64 "~parse_warn.py" HP_PARSE_WARN
+  "%HP_PY%" ~parse_warn.py "%ENVNAME%" > "~missing_after.txt" 2>> "%LOG%"
+  if exist "~parse_warn.py" del "~parse_warn.py" >nul 2>&1
+  for /f "usebackq delims=" %%M in ("~missing_after.txt") do set "HP_UNRESOLVED_AFTER=1"
+)
+if exist "~warnfix_repair_failed.flag" if defined HP_UNRESOLVED_AFTER set "HP_CASCADE_CANDIDATE=1"
+if "%HP_TEST_FORCE_WARNFIX_UNRESOLVED%"=="1" set "HP_CASCADE_CANDIDATE=1"
+if defined HP_CASCADE_CANDIDATE (
+  call :log "[WARN] REQ-009: warnfix left modules unresolved under provider %HP_ENV_MODE%."
+  call :log "[INFO] REQ-009: cascade candidate detected; next-tier fallback not yet enabled."
+)
+if exist "~missing_after.txt" del "~missing_after.txt" >nul 2>&1
 exit /b 0
 :run_exe_smokerun
 if not exist "dist\%ENVNAME%.exe" (

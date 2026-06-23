@@ -295,6 +295,9 @@ $hasReq009 = ($req009Patterns | Where-Object { -not ($AllText -match $_) }).Coun
 Write-Result "batch.req009.provider_logs" "REQ-009: all four provider log lines present in run_setup.bat" $hasReq009 @{}
 $venvGuardFound = $AllText -match [regex]::Escape('"%HP_ALLOW_VENV_FALLBACK%"=="1"')
 Write-Result "batch.req009.venv_unconditional" "REQ-009: venv fallback not guarded by HP_ALLOW_VENV_FALLBACK (fallback is unconditional)" (-not $venvGuardFound) @{ guardFound = $venvGuardFound }
+$cascadeDetectPatterns = @(':warnfix_cascade_detect', 'cascade candidate detected', 'HP_TEST_FORCE_WARNFIX_UNRESOLVED', 'HP_CASCADE_CANDIDATE')
+$hasCascadeDetect = ($cascadeDetectPatterns | Where-Object { -not ($AllText -match [regex]::Escape($_)) }).Count -eq 0
+Write-Result "batch.req009.cascade_detect" "REQ-009/REQ-005.10: warnfix cascade-candidate detection (subroutine + log + test flag) present in run_setup.bat" $hasCascadeDetect @{}
 $hasReq002Entry = $AllText -match '\[BOOT\] REQ-002.*Entry selected'
 Write-Result "batch.req002.entry_log" "REQ-002: entry selection log line present in run_setup.bat" $hasReq002Entry @{}
 $feMatch = [regex]::Match($AllText, 'set "HP_FIND_ENTRY=([A-Za-z0-9+/=]+)"')
