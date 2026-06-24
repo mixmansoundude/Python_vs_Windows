@@ -56,7 +56,7 @@ self.prime.exe.build, self.prime.exe.run,
 self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry,
-self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real,
+self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
 self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
 self.ux.gitattributes.merge, self.ux.gitattributes.idem,
 self.ux.postflight,
@@ -163,7 +163,7 @@ self.ux.postflight,
 self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry,
-self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real,
+self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
 self.venv.fallback, self.entry.override
 ```
 

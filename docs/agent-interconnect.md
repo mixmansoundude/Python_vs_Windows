@@ -56,8 +56,13 @@ paths**, so anyone touching those paths must understand the cascade re-entry:
 - `conda -> venv`: `call :try_venv_fallback` (sets `HP_ENV_MODE=venv`), then
   `goto :after_env_mode_selection`. Suppressed when `HP_FORCE_CONDA_ONLY=1`.
 - `venv -> system`: `call :try_system_fallback` (sets `HP_ENV_MODE=system`), then
-  `goto :after_env_mode_selection`. Suppressed unless `HP_ALLOW_SYSTEM_FALLBACK=1` (CI clears
-  it for all lanes, so cascade stops at venv in CI).
+  `goto :after_env_mode_selection`. **Reached in any run** -- the only gate is the REQ-014
+  consent prompt inside `:try_system_fallback` (no env flag; `HP_ALLOW_SYSTEM_FALLBACK` is
+  deprecated/ignored). In CI the consent gate auto-declines (`HP_CI_LANE`, or an explicit
+  `HP_TEST_SYSCON_ANSWER=N`), so the cascade logs `cascading provider venv to system`, the gate
+  declines, and `:cascade_system_unavailable` keeps the current build -- the cascade stops at
+  system in CI without entering it. `HP_FORCE_CONDA_ONLY=1` suppresses this tier upstream (the
+  cascade never leaves `:cascade_from_conda`).
 
 **No-loop guarantee (touch one, understand all):** each tier is marked `HP_CASCADE_TRIED_<tier>`
 the first time it is used as a cascade source, and `HP_ENV_MODE` only ever advances
@@ -262,10 +267,13 @@ This makes the fallback chain tests in `selfapps_ux_hardening.ps1` work correctl
 | Test | Env vars set | Why uv is bypassed |
 |------|--------------|-------------------|
 | `self.venv.fallback` | HP_OFFLINE_MODE=1, HP_TEST_FORCE_CONDA_FAIL=1 | HP_OFFLINE_MODE blocks uv download; fresh dir has no ~uv_bin |
-| `self.ux.system.gate.real` | HP_OFFLINE_MODE=1, HP_TEST_FORCE_CONDA_FAIL=1, HP_TEST_FORCE_VENV_FAIL=1 | Same; forced chain: no-uv -> conda-fail -> venv-fail -> consent gate |
+| `self.ux.system.gate.real` | HP_OFFLINE_MODE=1, HP_TEST_FORCE_CONDA_FAIL=1, HP_TEST_FORCE_VENV_FAIL=1, HP_TEST_SYSCON_ANSWER=N | Same; forced chain: no-uv -> conda-fail -> venv-fail -> REQ-014 consent gate (declines). **No HP_ALLOW_SYSTEM_FALLBACK** -- proves the tier is reachable in a default no-flag run. |
+| `self.ux.system.gate.accept` | HP_OFFLINE_MODE=1, HP_TEST_FORCE_CONDA_FAIL=1, HP_TEST_FORCE_VENV_FAIL=1, HP_TEST_SYSCON_ANSWER=Y | Same forced chain, but ACCEPT routes into Tier 4: asserts `System Python (degraded)` provider selected + `consent: user accepted` (REQ-009 "system Python alone"). |
 | `self.entry.override` | HP_OFFLINE_MODE=1, HP_TEST_FORCE_CONDA_FAIL=1 | Same; forced chain: no-uv -> conda-fail -> venv-succeed |
 
-All three tests skip in conda-full lane (HP_FORCE_CONDA_ONLY=1 blocks system/venv fallbacks there).
+These tests skip in conda-full lane (HP_FORCE_CONDA_ONLY=1 blocks system/venv fallbacks there).
+Note: `HP_TEST_SYSCON_ANSWER` (Y/N) deterministically answers the REQ-014 consent prompt; it is
+checked BEFORE the `HP_CI_LANE` auto-decline, so `=Y` reaches the system tier even in CI.
 
 **What NOT to do**: never set HP_UV_BIN to a user-global or TEMP-based path -- it would break this
 isolation property and make sub-bootstrap tests depend on whether the parent job happened to
