@@ -40,10 +40,17 @@ This repository serves as a proof of concept of this new approach.
 
 # Software Requirements Directive
 
+**Intent of this directive.** This document specifies **what must happen** -- the observable,
+user-facing outcomes the bootstrapper must guarantee -- stated as high-level and unambiguously as
+possible, **independent of the current implementation or CI mechanics**. Test wiring, NDJSON rows,
+CI lane behavior, and exact log strings are **implementation detail, not requirements**: they may
+illustrate a requirement but never define it. Going forward, when a section is updated it should
+trend toward this altitude -- keep the requirement crisp and let mechanism detail live in
+**[AGENTS.md](./AGENTS.md)**, the `docs/` notes, or the diagnostics site.
+
 ## [REQ-001] Prime Directive Expanded
 
 - From only one or more `.py` files on a clean Windows 10+ machine with internet, a **single batch file** (double-clicked) must bootstrap everything to run the Python app **with all imports installed**.
-- **Intended run paths are double-click and drag-and-drop, with no environment variables set.** All `HP_*` and `PVW_*` environment variables are **test/CI/super-user scaffolding only**. No intended user path may *require* the user to set such a flag, and the **absence** of any such flag must never block a Prime-Directive outcome (i.e. a flag may add diagnostic/CI behavior or a super-user override, but the default no-flag run must still reach every fallback tier that gets the code running). Requirements and tests must therefore exercise the no-flag path; an opt-in flag is never the gate for a behavior the Prime Directive needs.
 
 ### [REQ-002] Entry selection (current behavior)
 - **0 Python files**: the bootstrapper reports no Python files and skips environment bootstrap. It prints:
@@ -235,7 +242,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 - REQ-005.10 -- Retry loop: After repair attempts, rebuild/re-run until:
   - Success (application runs), or
   - Hard failure (unresolvable within the current provider)
-  - On hard failure: cascade to the next REQ-009 provider (uv exhausted -> conda, conda exhausted -> venv, venv exhausted -> system Python) and re-attempt from the dependency installation phase, after explicit user consent (REQ-014 for the system tier). Shipped (REQ-009/REQ-005.10).
+  - On hard failure: cascade to the next REQ-009 provider (uv exhausted -> conda, conda exhausted -> venv, venv exhausted -> system Python) and re-attempt from the dependency installation phase, after explicit user consent (REQ-014 for the system tier).
 
 ---
 
@@ -246,7 +253,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 - No silent fallbacks: All degradations emit explicit warnings
 - Single resolved dependency set: Conda + pip operate on the same inputs
 - Execution success > dependency purity: System prioritizes working application over strict resolution correctness
-- Provider cascade on hard failure (shipped, REQ-009/REQ-005.10): exhausting dep-install/warnfix repair within a provider triggers a consent-gated REQ-009 fallback to the next tier rather than a hard exit. The venv -> system tier is gated by the REQ-014 consent prompt and reachable in the default run.
+- Provider cascade on hard failure (REQ-009/REQ-005.10): exhausting dep-install/warnfix repair within a provider triggers a consent-gated REQ-009 fallback to the next tier rather than a hard exit. The venv -> system tier is gated by the REQ-014 consent prompt and reachable in the default run.
 - When missing imports are detected (for example from build-time warn files or installation output), the bootstrapper
   attempts to identify and install the missing packages using whatever signal is available. It cannot map all module
   names to conda package names (for example, `PIL` maps to `pillow`, `cv2` maps to `opencv`). This is a known
@@ -410,6 +417,14 @@ At completion:
 
 ## Advanced Environment Variables (reference)
 
+**Intended run paths are double-click and drag-and-drop, with no environment variables set.** All
+`HP_*` and `PVW_*` environment variables are **test/CI/super-user scaffolding only**. No intended
+user path may *require* the user to set such a flag, and the **absence** of any such flag must
+never block a Prime-Directive outcome: a flag may add diagnostic/CI behavior or a super-user
+override, or suppress an optional step (so absence == full behavior), but it is never the gate for
+a behavior the Prime Directive needs. The default no-flag run must still reach every fallback tier
+that gets the code running. Requirements and tests therefore exercise the no-flag path.
+
 Operational knobs, not needed for normal double-click use:
 
 | Variable | Effect | REQ |
@@ -419,7 +434,10 @@ Operational knobs, not needed for normal double-click use:
 | `HP_SKIP_NIVISA=1` | Skip NI-VISA install even when pyvisa/visa is detected | REQ-008 |
 | `NOINPUT=1` / `HP_NONINTERACTIVE=1` | Skip the interactive entry picker; take the alphabetical default | REQ-002 |
 
-CI-only test-injection flags (`HP_TEST_*`, `HP_CI_*`, `HP_FORCE_CONDA_ONLY`, etc.) are documented inline in their respective REQ sections.
+**This table is not exhaustive -- for awareness only.** More `HP_*` / `PVW_*` / `HP_TEST_*`
+variables exist (CI-only test-injection flags such as `HP_TEST_*`, `HP_CI_*`, and
+`HP_FORCE_CONDA_ONLY` are documented inline in their respective REQ sections). The authoritative
+set lives in `run_setup.bat`.
 
 ---
 
