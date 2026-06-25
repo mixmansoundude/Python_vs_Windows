@@ -146,8 +146,14 @@ rem HP_TEST_CASCADE_ANSWER=Y|N: bypasses the cascade consent prompt (REQ-009/REQ
 set "HP_TEST_CASCADE_ANSWER=%HP_TEST_CASCADE_ANSWER%"
 rem HP_ALLOW_VENV_FALLBACK (deprecated): venv fallback is now unconditional when conda fails; accepted but ignored.
 set "HP_ALLOW_VENV_FALLBACK=%HP_ALLOW_VENV_FALLBACK%"
+rem HP_ALLOW_SYSTEM_FALLBACK (deprecated as a gate): system Python fallback (REQ-009 Tier 4) is now
+rem reached in any run and gated solely by the REQ-014 consent prompt; this flag is accepted but
+rem ignored. Conda-only mode still suppresses all non-conda fallbacks via HP_FORCE_CONDA_ONLY.
+set "HP_ALLOW_SYSTEM_FALLBACK=%HP_ALLOW_SYSTEM_FALLBACK%"
 rem HP_TEST_FORCE_CONSENT_CHECK=1: directly triggers consent gate at startup for REQ-014 branch coverage
 set "HP_TEST_FORCE_CONSENT_CHECK=%HP_TEST_FORCE_CONSENT_CHECK%"
+rem HP_TEST_SYSCON_ANSWER=Y|N: bypasses the REQ-014 system Python consent prompt for CI testing
+set "HP_TEST_SYSCON_ANSWER=%HP_TEST_SYSCON_ANSWER%"
 rem HP_TEST_CORRUPT_CONDA=1: simulates a corrupt conda binary for REQ-020 branch coverage (corruption hardening)
 set "HP_TEST_CORRUPT_CONDA=%HP_TEST_CORRUPT_CONDA%"
 rem HP_TEST_HEAL_ANSWER=Y|N: bypasses the interactive Y/N prompt in :conda_binary_corrupt for CI testing
@@ -1518,14 +1524,12 @@ goto :after_cascade_decision
 :cascade_from_venv
 if defined HP_CASCADE_TRIED_VENV goto :after_cascade_decision
 set "HP_CASCADE_TRIED_VENV=1"
-if not "%HP_ALLOW_SYSTEM_FALLBACK%"=="1" goto :cascade_nosystem_stop
+rem REQ-009/REQ-014: system Python is Tier 4; reached in any run and gated only by the REQ-014
+rem consent prompt inside :try_system_fallback (no env flag). A decline keeps the current build.
 call :log "[INFO] REQ-009: cascading provider venv to system; re-attempting dependencies."
 call :try_system_fallback
 if errorlevel 1 goto :cascade_system_unavailable
 goto :after_env_mode_selection
-:cascade_nosystem_stop
-call :log "[INFO] REQ-009: system Python fallback not enabled; keeping current build."
-goto :after_cascade_decision
 :cascade_system_unavailable
 call :log "[WARN] REQ-009: cascade target system Python unavailable; keeping current build."
 goto :after_cascade_decision
@@ -1610,12 +1614,13 @@ if not errorlevel 1 (
   set "HP_ENV_READY=1"
   exit /b 0
 )
-if "%HP_ALLOW_SYSTEM_FALLBACK%"=="1" (
-  call :try_system_fallback
-  if not errorlevel 1 (
-    set "HP_ENV_READY=1"
-    exit /b 0
-  )
+rem REQ-009/REQ-014: system Python is the last-resort Tier 4 and is always attempted when venv also
+rem fails; the REQ-014 consent prompt inside :try_system_fallback is the only gate (no env flag).
+rem HP_ALLOW_SYSTEM_FALLBACK is deprecated/ignored.
+call :try_system_fallback
+if not errorlevel 1 (
+  set "HP_ENV_READY=1"
+  exit /b 0
 )
 exit /b 0
 
@@ -2834,12 +2839,23 @@ exit /b 1
 
 :system_python_consent_gate
 rem REQ-014: halt and require explicit consent before using global system Python.
+rem CI-safe (mirrors :cascade_consent_gate): HP_TEST_SYSCON_ANSWER (Y/N) overrides; otherwise
+rem HP_CI_LANE auto-declines with no prompt (no set /p hang in CI); interactive users get a
+rem y/n prompt. The prompt string is echoed unconditionally so it appears even on the
+rem auto-decline path. exit 0 = accepted, exit 1 = declined.
 echo.
 echo *** WARNING: System Python Execution ***
 echo *** Using global system Python may pollute shared packages. ***
 echo.
+echo Proceed with System Python? (Global pollution risk) [y/n]: y to accept, n to decline.
 set "HP_SYSCON_CHOICE="
-set /p HP_SYSCON_CHOICE="Proceed with System Python? (Global pollution risk) [y/n]: "
+if defined HP_TEST_SYSCON_ANSWER (
+  set "HP_SYSCON_CHOICE=%HP_TEST_SYSCON_ANSWER%"
+) else if defined HP_CI_LANE (
+  set "HP_SYSCON_CHOICE=n"
+) else (
+  set /p "HP_SYSCON_CHOICE=Your choice [y/n]: "
+)
 if "%HP_SYSCON_CHOICE:~0,1%"=="" (
   call :log "[INFO] REQ-014: System Python consent: empty input; declining."
   exit /b 1

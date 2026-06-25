@@ -184,6 +184,41 @@ Two more cascade gotchas worth remembering:
 
 ---
 
+## Env-var flags are scaffolding, not intended run paths (REQ-001)
+
+The intended run paths are **double-click and drag-and-drop with no environment variables**.
+Every `HP_*` / `PVW_*` variable is test/CI/super-user scaffolding. **No Prime-Directive outcome
+may depend on a user setting one**, and the *absence* of a flag must never block a fallback tier
+that gets the code running. A flag may ADD diagnostic/CI behavior or a super-user override, or
+DISABLE/skip an optional step (so absence == full behavior) -- but an **opt-in flag must never be
+the gate for a behavior the Prime Directive needs**.
+
+This bit us with system Python (REQ-009 Tier 4): it was hard-gated behind
+`HP_ALLOW_SYSTEM_FALLBACK==1`, a flag the bootstrapper never sets and a double-click user never
+sets, so the last-resort tier was unreachable by default and the REQ-014 consent prompt was dead
+code for real users -- a silent violation of REQ-009/REQ-014/Prime Directive. Fix: system Python
+is now reached in any run, gated solely by the REQ-014 consent prompt;
+`HP_ALLOW_SYSTEM_FALLBACK` is deprecated/ignored (mirroring the earlier `HP_ALLOW_VENV_FALLBACK`
+deprecation). `HP_FORCE_CONDA_ONLY` (CI conda-diagnostic lane) is a legitimate *suppression* flag
+and stays. **When auditing, treat any `if "%HP_...%"=="1"` that ENABLES a Prime-Directive
+behavior as a bug; flags should only suppress, divert for tests, or add super-user overrides.**
+
+## CI-safe interactive gates: echo the prompt, then resolve the answer
+
+Any `set /p` consent prompt that can be reached on a non-interactive CI path must be made
+CI-safe or it hangs (or relies on a fragile stdin EOF). The established pattern (see
+`:cascade_consent_gate` and `:system_python_consent_gate`):
+
+1. **Echo the exact prompt string unconditionally** (a plain `echo`, not via `:log`) so prompt
+   assertions still see it even when input is skipped. Put real text after the colon-space so the
+   asserted substring (`... [y/n]: `) does not rely on a trailing space surviving an editor.
+2. Then branch: `if defined HP_TEST_<X>_ANSWER` (deterministic Y/N override, checked FIRST so an
+   explicit `Y` can still ACCEPT in CI) `else if defined HP_CI_LANE` (auto-decline, no `set /p`)
+   `else` interactive `set /p`.
+3. Keep the accept/decline log lines verbatim -- harness static checks and behavioral tests match
+   them. For the system gate: `HP_TEST_SYSCON_ANSWER`, with `batch.req014.consent` asserting the
+   flag name is present in `run_setup.bat`.
+
 ## INVENTORY_B64 E2BIG pattern (publish_index.py)
 
 Passing large data through step env vars (`INVENTORY_B64` was ~168 KB base64) overflows

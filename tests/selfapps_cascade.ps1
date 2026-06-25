@@ -9,8 +9,11 @@
 # The app imports a nonexistent module (fake_pkg_cascade_xyz). PyInstaller's static analysis
 # writes it to the warn file, so warnfix fires under every tier and genuinely fails to install
 # it, marking a cascade candidate each time. With consent granted the run walks the priority
-# path uv -> conda (the main gain: conda is the strongest solver) and then conda -> venv, then
-# stops at venv -> system because system fallback is not enabled. The final build is kept.
+# path uv -> conda (the main gain: conda is the strongest solver), then conda -> venv, then
+# venv -> system; the system tier is now reached in any run (no env flag) but its REQ-014
+# consent prompt is declined deterministically here (HP_TEST_SYSCON_ANSWER=N), so the cascade
+# stops there and the build is kept. The no-loop check still holds: each tier is used as a
+# cascade source at most once.
 #
 # This lane is NON-GATING (continue-on-error) and deliberately heavy: the uv -> conda step
 # downloads Miniconda mid-run. It must run uv-first (do NOT set HP_FORCE_CONDA_ONLY).
@@ -84,12 +87,16 @@ Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
 # HP_SKIP_PIPREQS=1: keep the fake module out of pipreqs/conda install so warnfix is the path.
 # HP_DISABLE_HEURISTICS=1: no heuristic can touch the fake module; warnfix is the only repair.
 # HP_TEST_CASCADE_ANSWER=Y: grant cascade consent deterministically (no prompt, no CI auto-decline).
+# HP_TEST_SYSCON_ANSWER=N: the cascade now reaches the venv -> system tier; decline the REQ-014
+#   system consent gate deterministically (no set /p, robust even when run locally without HP_CI_LANE).
 $prevSkip     = if (Test-Path Env:HP_SKIP_PIPREQS)       { $env:HP_SKIP_PIPREQS }       else { $null }
 $prevDisableH = if (Test-Path Env:HP_DISABLE_HEURISTICS) { $env:HP_DISABLE_HEURISTICS } else { $null }
 $prevCascade  = if (Test-Path Env:HP_TEST_CASCADE_ANSWER){ $env:HP_TEST_CASCADE_ANSWER }else { $null }
+$prevSyscon   = if (Test-Path Env:HP_TEST_SYSCON_ANSWER) { $env:HP_TEST_SYSCON_ANSWER }  else { $null }
 $env:HP_SKIP_PIPREQS       = '1'
 $env:HP_DISABLE_HEURISTICS = '1'
 $env:HP_TEST_CASCADE_ANSWER = 'Y'
+$env:HP_TEST_SYSCON_ANSWER  = 'N'
 
 $bootstrapLog = '~cascade_exec_bootstrap.log'
 Push-Location $workDir
@@ -100,6 +107,7 @@ try {
     if ($null -eq $prevSkip)     { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue }       else { $env:HP_SKIP_PIPREQS = $prevSkip }
     if ($null -eq $prevDisableH) { Remove-Item Env:HP_DISABLE_HEURISTICS -ErrorAction SilentlyContinue } else { $env:HP_DISABLE_HEURISTICS = $prevDisableH }
     if ($null -eq $prevCascade)  { Remove-Item Env:HP_TEST_CASCADE_ANSWER -ErrorAction SilentlyContinue }else { $env:HP_TEST_CASCADE_ANSWER = $prevCascade }
+    if ($null -eq $prevSyscon)   { Remove-Item Env:HP_TEST_SYSCON_ANSWER -ErrorAction SilentlyContinue }  else { $env:HP_TEST_SYSCON_ANSWER = $prevSyscon }
     Pop-Location
 }
 

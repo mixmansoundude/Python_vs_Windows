@@ -337,9 +337,9 @@ Write-Result "batch.conda.warmup" "REQ-020: fresh-install conda warm-up (HP_COND
 $req013Patterns = @('REQ-013: Connectivity check: internet reachable', 'REQ-013: Offline mode: skipping', 'HP_TEST_OFFLINE')
 $hasReq013 = ($req013Patterns | Where-Object { -not ($AllText -match $_) }).Count -eq 0
 Write-Result 'batch.req013.connectivity' 'REQ-013: connectivity guard log lines and HP_TEST_OFFLINE CI flag present in run_setup.bat' $hasReq013 @{}
-$req014Patterns = @('REQ-014: System Python fallback aborted', 'REQ-014: System Python consent: user accepted', 'HP_TEST_FORCE_CONSENT_CHECK')
+$req014Patterns = @('REQ-014: System Python fallback aborted', 'REQ-014: System Python consent: user accepted', 'HP_TEST_FORCE_CONSENT_CHECK', 'HP_TEST_SYSCON_ANSWER')
 $hasReq014 = ($req014Patterns | Where-Object { -not ($AllText -match $_) }).Count -eq 0
-Write-Result 'batch.req014.consent' 'REQ-014: system Python consent gate log lines and HP_TEST_FORCE_CONSENT_CHECK CI flag present in run_setup.bat' $hasReq014 @{}
+Write-Result 'batch.req014.consent' 'REQ-014: system Python consent gate log lines + HP_TEST_FORCE_CONSENT_CHECK/HP_TEST_SYSCON_ANSWER CI flags present in run_setup.bat' $hasReq014 @{}
 # Configuration-presence check (NOT a runtime assertion): confirms the orchestration layer
 # pins uv to managed-only CPython so it cannot pick up an ambient/system interpreter. The
 # runtime proof that this is actually honored lives in self.uv.managed.interpreter

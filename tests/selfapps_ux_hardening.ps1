@@ -53,7 +53,7 @@ if (-not $IsWindows) {
             details = $skipDetails
         })
     }
-    foreach ($id in @('self.ux.system.gate.n', 'self.ux.system.gate.prompt', 'self.ux.system.gate.real')) {
+    foreach ($id in @('self.ux.system.gate.n', 'self.ux.system.gate.prompt', 'self.ux.system.gate.real', 'self.ux.system.gate.accept')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
             req     = 'REQ-014'
@@ -412,22 +412,24 @@ New-Item -ItemType Directory -Force -Path $sysGateDir | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $sysGateDir -Force
 Set-Content -LiteralPath (Join-Path $sysGateDir 'app.py') -Value 'print("hello")' -Encoding Ascii
 
-# Trigger consent gate directly via HP_TEST_FORCE_CONSENT_CHECK=1; pipe n to decline.
+# Trigger consent gate directly via HP_TEST_FORCE_CONSENT_CHECK=1; HP_TEST_SYSCON_ANSWER=N
+# deterministically answers the prompt with N (genuine decline branch, no set /p / stdin race).
 # Direct trigger avoids dependency on HP_FORCE_CONDA_ONLY blocking the fallback chain.
 $savedLane2 = $env:HP_CI_LANE
+$savedSyscon2 = $env:HP_TEST_SYSCON_ANSWER
 $env:HP_CI_LANE = 'test'
 $env:HP_TEST_FORCE_CONSENT_CHECK = '1'
+$env:HP_TEST_SYSCON_ANSWER = 'N'
 $sysLog = Join-Path $sysGateDir '~sys_test.log'
-$sysResp = Join-Path $sysGateDir '~resp.txt'
-Set-Content -LiteralPath $sysResp -Value "n`r`n" -Encoding Ascii
 Push-Location -LiteralPath $sysGateDir
 try {
-    cmd /c "run_setup.bat < ~resp.txt > ~sys_test.log 2>&1"
+    cmd /c "run_setup.bat > ~sys_test.log 2>&1"
 } finally {
     Pop-Location
 }
 $env:HP_CI_LANE = $savedLane2
 $env:HP_TEST_FORCE_CONSENT_CHECK = ''
+if ($null -eq $savedSyscon2) { Remove-Item Env:HP_TEST_SYSCON_ANSWER -ErrorAction SilentlyContinue } else { $env:HP_TEST_SYSCON_ANSWER = $savedSyscon2 }
 
 $sysText = ''
 if (Test-Path -LiteralPath $sysLog) {
@@ -452,9 +454,11 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ promptFound = $sysPromptFound }
 })
 
-# ===== REQ-014: Real system fallback consent gate (behavioral path) =====
+# ===== REQ-014: Real system fallback consent gate (behavioral path, DEFAULT no-flag run) =====
 # Drives the full fallback chain naturally: conda-fail -> venv-fail -> :try_system_fallback -> consent gate.
-# Skipped in conda-full lane where HP_FORCE_CONDA_ONLY=1 blocks system fallback unconditionally.
+# Proves the system tier is reachable WITHOUT HP_ALLOW_SYSTEM_FALLBACK (deprecated as a gate);
+# HP_TEST_SYSCON_ANSWER=N declines deterministically and the build is kept.
+# Skipped in conda-full lane where HP_FORCE_CONDA_ONLY=1 blocks all non-conda fallbacks.
 $sysRealDir = Join-Path $here '~selftest_sysgate_real'
 New-Item -ItemType Directory -Force -Path $sysRealDir | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $sysRealDir -Force
@@ -473,30 +477,25 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     $savedOfflineMode  = $env:HP_OFFLINE_MODE
     $savedCondaFail    = $env:HP_TEST_FORCE_CONDA_FAIL
     $savedVenvFail     = $env:HP_TEST_FORCE_VENV_FAIL
-    $savedVenvAllow    = $env:HP_ALLOW_VENV_FALLBACK
-    $savedSysAllow     = $env:HP_ALLOW_SYSTEM_FALLBACK
+    $savedSyscon3      = $env:HP_TEST_SYSCON_ANSWER
     $savedLane3        = $env:HP_CI_LANE
     $env:HP_OFFLINE_MODE            = '1'
     $env:HP_TEST_FORCE_CONDA_FAIL   = '1'
     $env:HP_TEST_FORCE_VENV_FAIL    = '1'
-    $env:HP_ALLOW_VENV_FALLBACK     = '1'
-    $env:HP_ALLOW_SYSTEM_FALLBACK   = '1'
+    $env:HP_TEST_SYSCON_ANSWER      = 'N'
     $env:HP_CI_LANE                 = 'test'
     $sysRealLog  = Join-Path $sysRealDir '~sys_real_test.log'
-    $sysRealResp = Join-Path $sysRealDir '~resp.txt'
-    Set-Content -LiteralPath $sysRealResp -Value "n`r`n" -Encoding Ascii
     Push-Location -LiteralPath $sysRealDir
     try {
-        cmd /c "run_setup.bat < ~resp.txt > ~sys_real_test.log 2>&1"
+        cmd /c "run_setup.bat > ~sys_real_test.log 2>&1"
     } finally {
         Pop-Location
     }
     $env:HP_OFFLINE_MODE            = $savedOfflineMode
     $env:HP_TEST_FORCE_CONDA_FAIL   = $savedCondaFail
     $env:HP_TEST_FORCE_VENV_FAIL    = $savedVenvFail
-    $env:HP_ALLOW_VENV_FALLBACK     = $savedVenvAllow
-    $env:HP_ALLOW_SYSTEM_FALLBACK   = $savedSysAllow
     $env:HP_CI_LANE                 = $savedLane3
+    if ($null -eq $savedSyscon3) { Remove-Item Env:HP_TEST_SYSCON_ANSWER -ErrorAction SilentlyContinue } else { $env:HP_TEST_SYSCON_ANSWER = $savedSyscon3 }
 
     $sysRealText = ''
     if (Test-Path -LiteralPath $sysRealLog) {
@@ -504,13 +503,85 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     }
     $sysRealPromptFound = $sysRealText -match [regex]::Escape($sysPromptStr)
     $sysRealDeclineLog  = $sysRealText -match [regex]::Escape('[INFO] REQ-014: System Python consent: user declined.')
-    $sysRealPass = ($sysRealPromptFound -and $sysRealDeclineLog)
+    $sysRealAbortLog    = $sysRealText -match [regex]::Escape('[INFO] REQ-014: System Python fallback aborted: consent not granted.')
+    $sysRealPass = ($sysRealPromptFound -and $sysRealDeclineLog -and $sysRealAbortLog)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.ux.system.gate.real'
         req     = 'REQ-014'
         pass    = $sysRealPass
-        desc    = 'System Python consent gate: real fallback chain reaches consent gate'
-        details = [ordered]@{ promptFound = $sysRealPromptFound; declineLogFound = $sysRealDeclineLog }
+        desc    = 'System Python consent gate: default (no-flag) fallback chain reaches consent gate; decline keeps build'
+        details = [ordered]@{ promptFound = $sysRealPromptFound; declineLogFound = $sysRealDeclineLog; abortLogFound = $sysRealAbortLog }
+    })
+}
+
+# ===== REQ-014/REQ-009: System Python ACCEPT path enters Tier 4 (provider independence) =====
+# The previously-missing end-to-end proof: in a DEFAULT (no-flag) run with uv/conda/venv all
+# forced to fail, accepting the REQ-014 consent prompt (HP_TEST_SYSCON_ANSWER=Y) routes into the
+# REQ-009 Tier 4 system provider and the bootstrapper proceeds under system Python ("system
+# Python alone"). No HP_ALLOW_SYSTEM_FALLBACK is set -- the consent prompt is the only gate.
+# Skipped in conda-full lane (HP_FORCE_CONDA_ONLY=1 suppresses non-conda tiers).
+$sysAcceptDir = Join-Path $here '~selftest_sysgate_accept'
+New-Item -ItemType Directory -Force -Path $sysAcceptDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $sysAcceptDir -Force
+Set-Content -LiteralPath (Join-Path $sysAcceptDir 'app.py') -Value 'print("hello from system python")' -Encoding Ascii
+
+$sysAcceptPass = $true
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.ux.system.gate.accept'
+        req     = 'REQ-014'
+        pass    = $true
+        desc    = 'System Python accept path test'
+        details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-blocks-system-fallback' }
+    })
+} else {
+    $savedOfflineModeA = $env:HP_OFFLINE_MODE
+    $savedCondaFailA   = $env:HP_TEST_FORCE_CONDA_FAIL
+    $savedVenvFailA    = $env:HP_TEST_FORCE_VENV_FAIL
+    $savedSysconA      = $env:HP_TEST_SYSCON_ANSWER
+    $savedLaneA        = $env:HP_CI_LANE
+    $env:HP_OFFLINE_MODE          = '1'
+    $env:HP_TEST_FORCE_CONDA_FAIL = '1'
+    $env:HP_TEST_FORCE_VENV_FAIL  = '1'
+    $env:HP_TEST_SYSCON_ANSWER    = 'Y'
+    $env:HP_CI_LANE               = 'test'
+    $sysAcceptLog = Join-Path $sysAcceptDir '~sys_accept_test.log'
+    Push-Location -LiteralPath $sysAcceptDir
+    try {
+        cmd /c "run_setup.bat > ~sys_accept_test.log 2>&1"
+    } finally {
+        Pop-Location
+    }
+    $env:HP_OFFLINE_MODE          = $savedOfflineModeA
+    $env:HP_TEST_FORCE_CONDA_FAIL = $savedCondaFailA
+    $env:HP_TEST_FORCE_VENV_FAIL  = $savedVenvFailA
+    $env:HP_CI_LANE               = $savedLaneA
+    if ($null -eq $savedSysconA) { Remove-Item Env:HP_TEST_SYSCON_ANSWER -ErrorAction SilentlyContinue } else { $env:HP_TEST_SYSCON_ANSWER = $savedSysconA }
+
+    $sysAcceptText = ''
+    if (Test-Path -LiteralPath $sysAcceptLog) {
+        $sysAcceptText = Get-Content -LiteralPath $sysAcceptLog -Raw -Encoding Ascii
+    }
+    $sysAcceptConsentLog = $sysAcceptText -match [regex]::Escape('[INFO] REQ-014: System Python consent: user accepted.')
+    $sysAcceptSelected   = $sysAcceptText -match [regex]::Escape('[BOOT] REQ-009: Selected Python provider: System Python (degraded).')
+    # Informational: degraded_env is the state written when system Python is the provider.
+    $sysAcceptStatePath = Join-Path $sysAcceptDir '~bootstrap.status.json'
+    $sysAcceptState = $null
+    $sysAcceptExit  = $null
+    if (Test-Path -LiteralPath $sysAcceptStatePath) {
+        try {
+            $st = Get-Content -LiteralPath $sysAcceptStatePath -Raw -Encoding Ascii | ConvertFrom-Json
+            $sysAcceptState = $st.state
+            $sysAcceptExit  = $st.exitCode
+        } catch { }
+    }
+    $sysAcceptPass = ($sysAcceptConsentLog -and $sysAcceptSelected)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.ux.system.gate.accept'
+        req     = 'REQ-014'
+        pass    = $sysAcceptPass
+        desc    = 'System Python consent ACCEPT routes into Tier 4 system provider in a default no-flag run (REQ-009 provider independence)'
+        details = [ordered]@{ consentAcceptLog = $sysAcceptConsentLog; systemSelected = $sysAcceptSelected; state = $sysAcceptState; exitCode = $sysAcceptExit }
     })
 }
 
@@ -667,6 +738,6 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $venvFbPass -and $entryOvPass
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $sysAcceptPass -and $venvFbPass -and $entryOvPass
 if (-not $allPass) { exit 1 }
 exit 0

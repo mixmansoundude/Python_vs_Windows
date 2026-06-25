@@ -487,6 +487,16 @@ See **AGENTS.md** section Iteration Contract for the full policy. Key points:
 
 Items deferred to future loops:
 
+- **Env-var-gated intended-path audit (follow-up)**: a sweep was done when system Python
+  fallback was un-gated (`HP_ALLOW_SYSTEM_FALLBACK` deprecated; system Tier 4 now reachable in
+  the default no-flag run, gated only by the REQ-014 consent prompt -- see README REQ-001/REQ-009/
+  REQ-014). That sweep found system fallback as the only opt-in flag that *enabled* a
+  Prime-Directive behavior. Remaining to confirm-or-file: (a) `HP_OFFLINE_MODE` is auto-set by the
+  REQ-013 connectivity check, never user-required; (b) `HP_SKIP_*` flags only *disable* optional
+  steps (absence == full behavior). Re-audit `if "%HP_...%"=="1"` gates whenever a new flag is
+  added; treat any flag that ENABLES (rather than suppresses/diverts) intended behavior as a bug
+  (see docs/agent-lessons-learned.md "Env-var flags are scaffolding").
+
 - **uv DL fallback CI coverage**: `self.dl.uv.fallback` (uv download fallback path -- HP_TEST_UV_DL_FALLBACK=1) has no active CI lane. justme-test now uses HP_TEST_FORCE_UV_FAIL=1 (skips uv entirely before any download) so the secondary uv URL is never exercised in CI. Needs a dedicated non-gating lane that sets HP_TEST_UV_DL_FALLBACK=1 without HP_FORCE_CONDA_ONLY=1 and without HP_TEST_NOT_ELEVATED=1, so uv download path is reached and the fallback URL is tried.
 
 - **Miniconda probe runs even when uv succeeds**: in a normal uv run the log shows a

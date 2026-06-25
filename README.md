@@ -40,6 +40,14 @@ This repository serves as a proof of concept of this new approach.
 
 # Software Requirements Directive
 
+**Intent of this directive.** This document specifies **what must happen** -- the observable,
+user-facing outcomes the bootstrapper must guarantee -- stated as high-level and unambiguously as
+possible, **independent of the current implementation or CI mechanics**. Test wiring, NDJSON rows,
+CI lane behavior, and exact log strings are **implementation detail, not requirements**: they may
+illustrate a requirement but never define it. Going forward, when a section is updated it should
+trend toward this altitude -- keep the requirement crisp and let mechanism detail live in
+**[AGENTS.md](./AGENTS.md)**, the `docs/` notes, or the diagnostics site.
+
 ## [REQ-001] Prime Directive Expanded
 
 - From only one or more `.py` files on a clean Windows 10+ machine with internet, a **single batch file** (double-clicked) must bootstrap everything to run the Python app **with all imports installed**.
@@ -106,7 +114,7 @@ This repository serves as a proof of concept of this new approach.
   1. **UV** -- if `uv.exe` is available (cached or downloadable), create a `.uv_env` virtual environment using UV for fast dependency installs.
   2. **Conda (Portable / Miniconda)** -- install or reuse Miniconda at `%PUBLIC%\Documents\Miniconda3` (non-admin) and create a named conda env.
   3. **Local venv** (environment-creation fallback) -- if Conda is unavailable or fails, create a `.venv` virtual environment using whatever `python` / `py` is found on PATH (`python -m venv`). Still isolated, but depends on a pre-existing Python installation to create the env.
-  4. **System Python** (final degraded execution mode) -- if no isolated environment can be created, run the entry point directly under the first `python` / `py` on PATH with no env isolation. Dependencies may conflict with system packages.
+  4. **System Python** (final degraded execution mode) -- if no isolated environment can be created, run the entry point directly under the first `python` / `py` on PATH with no env isolation. Dependencies may conflict with system packages. **This tier is reachable in the default (no-flag) run** and is gated **only** by the REQ-014 consent prompt -- never by an opt-in environment variable. The legacy `HP_ALLOW_SYSTEM_FALLBACK` flag is **deprecated as a gate** (accepted but ignored, mirroring `HP_ALLOW_VENV_FALLBACK`). The CI-only `HP_FORCE_CONDA_ONLY` lane still suppresses all non-conda tiers for conda diagnostics.
 
   **Provider selection criteria (priority order):**
 
@@ -234,7 +242,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 - REQ-005.10 -- Retry loop: After repair attempts, rebuild/re-run until:
   - Success (application runs), or
   - Hard failure (unresolvable within the current provider)
-  - On hard failure: currently logs and exits. Intended direction: cascade to the next REQ-009 provider (uv exhausted -> conda, conda exhausted -> venv, venv exhausted -> system Python) and re-attempt from the dependency installation phase.
+  - On hard failure: cascade to the next REQ-009 provider (uv exhausted -> conda, conda exhausted -> venv, venv exhausted -> system Python) and re-attempt from the dependency installation phase, after explicit user consent (REQ-014 for the system tier).
 
 ---
 
@@ -245,7 +253,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 - No silent fallbacks: All degradations emit explicit warnings
 - Single resolved dependency set: Conda + pip operate on the same inputs
 - Execution success > dependency purity: System prioritizes working application over strict resolution correctness
-- Provider cascade on hard failure (intended): dep-install and warnfix failures are currently contained within the active provider. The design intent is that exhausting repair within a provider triggers REQ-009 fallback rather than a hard exit.
+- Provider cascade on hard failure (REQ-009/REQ-005.10): exhausting dep-install/warnfix repair within a provider triggers a consent-gated REQ-009 fallback to the next tier rather than a hard exit. The venv -> system tier is gated by the REQ-014 consent prompt and reachable in the default run.
 - When missing imports are detected (for example from build-time warn files or installation output), the bootstrapper
   attempts to identify and install the missing packages using whatever signal is available. It cannot map all module
   names to conda package names (for example, `PIL` maps to `pillow`, `cv2` maps to `opencv`). This is a known
@@ -352,11 +360,12 @@ At completion:
 
 - Before using system Python as the last-resort execution provider (REQ-009 Tier 4), the bootstrapper must obtain explicit user consent.
 - Without consent, the bootstrapper aborts rather than silently running under an unmanaged system Python.
+- **This consent prompt is the sole gate on the system tier.** It is reached in the default (no-flag) run whenever uv, conda, and venv all fail -- it is not behind an opt-in environment variable. The bootstrapper echoes the prompt string unconditionally (so it is visible even on non-interactive auto-decline), then resolves the answer; an empty/declined answer aborts the tier and keeps the current build.
 - Log contract:
   - `[INFO] REQ-014: System Python fallback aborted: consent not granted.`
   - `[INFO] REQ-014: System Python consent: user accepted.`
   - `[INFO] REQ-014: System Python consent: user declined.`
-- CI test flag: `HP_TEST_FORCE_CONSENT_CHECK=1` directly triggers the consent gate for branch coverage.
+- CI test flags: `HP_TEST_FORCE_CONSENT_CHECK=1` directly triggers the consent gate at startup for branch coverage; `HP_TEST_SYSCON_ANSWER=Y|N` deterministically answers the prompt (and, like other interactive gates, `HP_CI_LANE` auto-declines with no `set /p` to avoid a CI hang).
 
 ---
 
@@ -408,6 +417,14 @@ At completion:
 
 ## Advanced Environment Variables (reference)
 
+**Intended run paths are double-click and drag-and-drop, with no environment variables set.** All
+`HP_*` and `PVW_*` environment variables are **test/CI/super-user scaffolding only**. No intended
+user path may *require* the user to set such a flag, and the **absence** of any such flag must
+never block a Prime-Directive outcome: a flag may add diagnostic/CI behavior or a super-user
+override, or suppress an optional step (so absence == full behavior), but it is never the gate for
+a behavior the Prime Directive needs. The default no-flag run must still reach every fallback tier
+that gets the code running. Requirements and tests therefore exercise the no-flag path.
+
 Operational knobs, not needed for normal double-click use:
 
 | Variable | Effect | REQ |
@@ -417,7 +434,10 @@ Operational knobs, not needed for normal double-click use:
 | `HP_SKIP_NIVISA=1` | Skip NI-VISA install even when pyvisa/visa is detected | REQ-008 |
 | `NOINPUT=1` / `HP_NONINTERACTIVE=1` | Skip the interactive entry picker; take the alphabetical default | REQ-002 |
 
-CI-only test-injection flags (`HP_TEST_*`, `HP_CI_*`, `HP_FORCE_CONDA_ONLY`, etc.) are documented inline in their respective REQ sections.
+**This table is not exhaustive -- for awareness only.** More `HP_*` / `PVW_*` / `HP_TEST_*`
+variables exist (CI-only test-injection flags such as `HP_TEST_*`, `HP_CI_*`, and
+`HP_FORCE_CONDA_ONLY` are documented inline in their respective REQ sections). The authoritative
+set lives in `run_setup.bat`.
 
 ---
 
