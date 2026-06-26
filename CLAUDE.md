@@ -497,7 +497,6 @@ Items deferred to future loops:
   added; treat any flag that ENABLES (rather than suppresses/diverts) intended behavior as a bug
   (see docs/agent-lessons-learned.md "Env-var flags are scaffolding").
 
-- **uv DL fallback CI coverage**: `self.dl.uv.fallback` (uv download fallback path -- HP_TEST_UV_DL_FALLBACK=1) has no active CI lane. justme-test now uses HP_TEST_FORCE_UV_FAIL=1 (skips uv entirely before any download) so the secondary uv URL is never exercised in CI. Needs a dedicated non-gating lane that sets HP_TEST_UV_DL_FALLBACK=1 without HP_FORCE_CONDA_ONLY=1 and without HP_TEST_NOT_ELEVATED=1, so uv download path is reached and the fallback URL is tried.
 
 - **User-code exit-code semantics**: verify the exit code read after running the user's code
   is purely the user program's (no bootstrapper logic interleaved). If so, a non-zero exit is
@@ -542,6 +541,14 @@ Items deferred to future loops:
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **uv DL fallback CI coverage**: Added a dedicated non-gating `uv-dl-fallback` lane
+  (`HP_TEST_UV_DL_FALLBACK=1`) that forces the primary uv download URL to fail so the
+  pinned-release fallback URL (`HP_UV_FALLBACK_URL`) is exercised and uv is acquired from it.
+  `self.dl.uv.fallback` now fires as a real test in this lane (verifies `Trying fallback uv URL:`
+  logged and `uv: acquired at ~uv_bin\uv.exe` confirms binary acquired). In `justme-test` it
+  continues to pass with `skip=true` (HP_TEST_FORCE_UV_FAIL bypasses uv before any download).
+  Fixed a duplicate `self.dl.uv.fallback` block in `selfapps_dl_fallback.ps1`. CLOSED by this PR.
 
 - **Miniconda probe deferred to after uv detection**: the probe (CI-only, HP_CI_TEST_CONDA_DL=1)
   was firing before uv acquisition, downloading ~99 MB unnecessarily in all uv-first lanes
