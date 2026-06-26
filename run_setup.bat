@@ -266,27 +266,6 @@ if "%PYCOUNT%"=="0" (
   goto :success
 )
 
-if "%HP_CI_TEST_CONDA_DL%"=="1" (
-  if not defined HP_CI_SKIP_ENV (
-    set "HP_CONDA_PROBE_STATUS=ran"
-    call :probe_conda_url
-    if errorlevel 1 (
-      rem derived requirement: CI observed the Miniconda probe erroring before real bootstrap.
-      rem Emit a warning and continue so the actual install path can still run.
-      set "HP_CONDA_PROBE_STATUS=failed"
-      set "HP_CONDA_PROBE_REASON=probe-failed"
-      call :log "[WARN] Miniconda download probe failed; continuing to bootstrap."
-    )
-  ) else (
-    set "HP_CONDA_PROBE_REASON=skip-env"
-  )
-) else if defined HP_CI_SKIP_ENV (
-  set "HP_CONDA_PROBE_REASON=skip-env"
-)
-if "%HP_CONDA_PROBE_STATUS%"=="skipped" (
-  call :emit_conda_probe_skip
-)
-
 if defined HP_CI_SKIP_ENV goto :ci_skip_entry
 
 rem === uv acquisition (preferred env+dep installer; falls back to conda) =======
@@ -408,6 +387,33 @@ for /f "usebackq delims=" %%A in ("~py_spec.txt") do set "PYSPEC=%%A"
 set "HP_UV_PROVIDING_PYTHON=1"
 call :log "[INFO] uv-first: Miniconda download skipped."
 :uv_first_skip
+
+rem === Miniconda URL probe (CI only, deferred after uv detection) ==============
+rem derived requirement: probe deferred to after uv detection so that uv-first
+rem runs skip the ~99 MB download when Miniconda will not be used. The probe
+rem verifies the Miniconda URL is reachable only when conda is actually needed.
+if "%HP_CI_TEST_CONDA_DL%"=="1" (
+  if not defined HP_CI_SKIP_ENV (
+    if not defined HP_UV_PROVIDING_PYTHON (
+      set "HP_CONDA_PROBE_STATUS=ran"
+      call :probe_conda_url
+      if errorlevel 1 (
+        rem derived requirement: CI observed the Miniconda probe erroring before real bootstrap.
+        rem Emit a warning and continue so the actual install path can still run.
+        set "HP_CONDA_PROBE_STATUS=failed"
+        set "HP_CONDA_PROBE_REASON=probe-failed"
+        call :log "[WARN] Miniconda download probe failed; continuing to bootstrap."
+      )
+    ) else (
+      set "HP_CONDA_PROBE_REASON=uv-first"
+    )
+  ) else (
+    set "HP_CONDA_PROBE_REASON=skip-env"
+  )
+)
+if "%HP_CONDA_PROBE_STATUS%"=="skipped" (
+  call :emit_conda_probe_skip
+)
 
 rem === Miniconda location (non-admin) =========================================
 rem G2 guardrail: warn if PUBLIC is absent so path failures are observable

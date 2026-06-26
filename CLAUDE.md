@@ -499,13 +499,6 @@ Items deferred to future loops:
 
 - **uv DL fallback CI coverage**: `self.dl.uv.fallback` (uv download fallback path -- HP_TEST_UV_DL_FALLBACK=1) has no active CI lane. justme-test now uses HP_TEST_FORCE_UV_FAIL=1 (skips uv entirely before any download) so the secondary uv URL is never exercised in CI. Needs a dedicated non-gating lane that sets HP_TEST_UV_DL_FALLBACK=1 without HP_FORCE_CONDA_ONLY=1 and without HP_TEST_NOT_ELEVATED=1, so uv download path is reached and the fallback URL is tried.
 
-- **Miniconda probe runs even when uv succeeds**: in a normal uv run the log shows a
-  "Miniconda probe" line reporting a ~95 MB download even though nothing conda-related should
-  be touched once the uv lane succeeds. Investigate where the probe fires and consider
-  deferring it to immediately before an actual conda download attempt, so uv-only runs neither
-  perform nor log conda work. (Confirm whether the 95 MB is actually downloaded or just a
-  size estimate printed.)
-
 - **User-code exit-code semantics**: verify the exit code read after running the user's code
   is purely the user program's (no bootstrapper logic interleaved). If so, a non-zero exit is
   very likely outside bootstrapper control; confirm such a case routes to warnfix gracefully
@@ -549,6 +542,15 @@ Items deferred to future loops:
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Miniconda probe deferred to after uv detection**: the probe (CI-only, HP_CI_TEST_CONDA_DL=1)
+  was firing before uv acquisition, downloading ~99 MB unnecessarily in all uv-first lanes
+  (real, uv, contract-uv*). The probe is now deferred to after `:uv_first_skip`; when
+  `HP_UV_PROVIDING_PYTHON=1` the probe emits `skipped=true, reason=uv-first` via
+  `emit_conda_probe_skip` instead of downloading. The conda-full lane is unaffected (uv
+  disabled there). Harness static check `batch.conda.probe.deferred` verifies the probe call
+  appears after `UV_PYTHON_PREFERENCE` in the file and the `HP_UV_PROVIDING_PYTHON` guard is
+  present. CLOSED by this PR.
 
 - **Provider cascade on warnfix hard failure (REQ-009 / REQ-005.10)**: shipped in three slices.
   Slice 1 (#301) detects an unresolved-after-rebuild candidate (`:warnfix_cascade_detect`):
