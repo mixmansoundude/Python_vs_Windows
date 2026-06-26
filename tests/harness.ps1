@@ -365,10 +365,14 @@ $condaMsgPos  = $AllText.IndexOf('[INFO] Creating Python environment')
 $condaCallPos = $AllText.IndexOf('create -y -n "%ENVNAME%"')
 $condaCreateProgress = ($condaMsgPos -ge 0) -and ($condaCallPos -ge 0) -and ($condaMsgPos -lt $condaCallPos)
 Write-Result 'batch.progress.conda_create' "Progress message before conda create: user sees 'Creating Python environment' before the slow conda env create step" $condaCreateProgress @{ msgIdx = $condaMsgPos; opIdx = $condaCallPos; ordered = $condaCreateProgress }
-$pyiMsgPos  = $AllText.IndexOf('[INFO] Building standalone executable')
-$pyiCallPos = $AllText.IndexOf('-m PyInstaller -y --onefile')
-$pyiProgress = ($pyiMsgPos -ge 0) -and ($pyiCallPos -ge 0) -and ($pyiMsgPos -lt $pyiCallPos)
-Write-Result 'batch.progress.pyi_build' "Progress message before PyInstaller build: user sees 'Building standalone executable' before the slow install+build step" $pyiProgress @{ msgIdx = $pyiMsgPos; opIdx = $pyiCallPos; ordered = $pyiProgress }
+$pyiMsgPos      = $AllText.IndexOf('[INFO] Building standalone executable')
+$pyiCallPos     = $AllText.IndexOf('-m PyInstaller -y --onefile')
+$pyiOrdered     = ($pyiMsgPos -ge 0) -and ($pyiCallPos -ge 0) -and ($pyiMsgPos -lt $pyiCallPos)
+$warnfixMsgPos  = $AllText.IndexOf('[INFO] Rebuilding standalone executable after warnfix')
+$warnfixCallPos = $AllText.IndexOf('-m PyInstaller -y --onefile', ($pyiCallPos + 1))
+$warnfixOrdered = ($warnfixMsgPos -ge 0) -and ($warnfixCallPos -ge 0) -and ($warnfixMsgPos -lt $warnfixCallPos)
+$pyiProgress = $pyiOrdered -and $warnfixOrdered
+Write-Result 'batch.progress.pyi_build' "Progress message before PyInstaller build: user sees 'Building standalone executable' before the slow install+build step; warnfix rebuild also has its own progress message" $pyiProgress @{ msgIdx = $pyiMsgPos; opIdx = $pyiCallPos; ordered = $pyiOrdered; warnfixMsgIdx = $warnfixMsgPos; warnfixOpIdx = $warnfixCallPos; warnfixOrdered = $warnfixOrdered }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
