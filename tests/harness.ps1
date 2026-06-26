@@ -359,6 +359,12 @@ $probeAfterUv = ($uvAcqPos -ge 0) -and ($probeCallPos -ge 0) -and ($probeCallPos
 $probeGuard  = $AllText -match 'if not defined HP_UV_PROVIDING_PYTHON'
 $hasProbeDeferred = $probeAfterUv -and $probeGuard
 Write-Result 'batch.conda.probe.deferred' 'Miniconda URL probe deferred to after uv detection (HP_UV_PROVIDING_PYTHON guard present; probe call appears after UV_PYTHON_PREFERENCE)' $hasProbeDeferred @{ probeAfterUv = $probeAfterUv; probeGuard = $probeGuard }
+# derived requirement: operations taking more than ~5s must emit a user-facing progress
+# message before the silent work begins so the script never appears to hang.
+$condaCreateProgress = $AllText.Contains('[INFO] Creating Python environment')
+Write-Result 'batch.progress.conda_create' "Progress message before conda create: user sees 'Creating Python environment' before the slow conda env create step" $condaCreateProgress @{}
+$pyiProgress = $AllText.Contains('[INFO] Building standalone executable')
+Write-Result 'batch.progress.pyi_build' "Progress message before PyInstaller build: user sees 'Building standalone executable' before the slow install+build step" $pyiProgress @{}
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

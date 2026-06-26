@@ -662,6 +662,9 @@ set "HP_UV_EXE="
 :try_conda_create
 call :log "[INFO] HP_ENV_MODE=conda"
 if "%HP_TEST_FORCE_CONDA_FAIL%"=="1" goto :hp_test_conda_fail
+rem derived requirement: conda env create can take several minutes; emit a user-facing message
+rem so the script never appears to hang silently during the longest single step.
+call :log "[INFO] Creating Python environment '%ENVNAME%' -- this may take several minutes..."
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
@@ -2143,6 +2146,9 @@ if "%HP_ENV_MODE%"=="system" (
   if defined HP_FASTPATH_USED (
     call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
   ) else (
+    rem derived requirement: PyInstaller install + build can take a minute or more; emit a
+    rem user-facing message before the silent operation so the script never looks hung.
+    call :log "[INFO] Building standalone executable -- this may take a minute or two..."
     :: derived requirement: ~parse_warn.py was written against PyInstaller 5.x and 6.x warn-file formats.
     :: Version is intentionally unpinned so future PyInstaller releases are adopted automatically.
     :: If CI starts failing parse_warn tests after a PyInstaller update, review ~parse_warn.py
