@@ -100,6 +100,7 @@ ripple across components:
 | cache | not set | yes (uv-first) | maybe (cached) | maybe |
 | justme-test | not set | no (HP_TEST_FORCE_UV_FAIL=1) | via JustMe | yes |
 | contract-uv | not set | yes (forced) | no | no |
+| uv-dl-fallback | not set | yes (HP_TEST_UV_DL_FALLBACK=1 forces primary URL fail, fallback URL used) | no | no |
 
 ### Test files that assume conda is present -- skip=true pattern required
 

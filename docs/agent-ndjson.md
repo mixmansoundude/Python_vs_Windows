@@ -69,11 +69,22 @@ self.venv.fallback, self.entry.override
 conda.install.justme
 ```
 
-## dl-fallback lane rows (HP_TEST_CONDA_DL_FALLBACK=1 + HP_TEST_FORCE_UV_FAIL=1, justme-test)
+## dl-fallback lane rows
 
-Note: HP_TEST_UV_DL_FALLBACK is NOT set in justme-test; uv DL fallback path needs a dedicated
-non-gating lane (see Active Backlog in CLAUDE.md). self.dl.uv.fallback passes with skip=true
-in justme-test.
+### justme-test lane (HP_TEST_CONDA_DL_FALLBACK=1 + HP_TEST_FORCE_UV_FAIL=1)
+
+`self.dl.conda.fallback` fires as a real test (Miniconda fallback URL exercised).
+`self.dl.uv.fallback` passes with skip=true (HP_TEST_FORCE_UV_FAIL bypasses uv before download).
+
+```
+self.dl.conda.fallback, self.dl.uv.fallback
+```
+
+### uv-dl-fallback lane (HP_TEST_UV_DL_FALLBACK=1, non-gating)
+
+`self.dl.uv.fallback` fires as a real test (primary uv URL replaced with invalid URL;
+fallback URL is tried and uv is acquired). `self.dl.conda.fallback` passes with skip=true
+(Miniconda DL fallback is not exercised in this lane).
 
 ```
 self.dl.conda.fallback, self.dl.uv.fallback
