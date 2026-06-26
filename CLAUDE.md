@@ -512,10 +512,6 @@ Items deferred to future loops:
 - **Persisted run-page warnings**: review the last several CI runs for warnings that recur
   across runs (Actions "Annotations"/warnings), and triage each as fix-or-accept.
 
-- **Progress messaging for >5s steps**: audit steps that take more than ~5 seconds (installer
-  creation, downloads, env build) and ensure each emits a user-facing "starting X / installing
-  X" line before the long operation, so a slow step never looks like a hang.
-
 - **CI-side NDJSON row registry check**: consider building the `docs/agent-ndjson.md` row
   audit into CI (it exists today so agents can see which rows are missing). Likely still a
   manual-sync confirmation step, since fully automated discovery can miss flag-gated rows.
@@ -541,6 +537,12 @@ Items deferred to future loops:
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Progress messaging for >5s steps**: Added `[INFO]` progress messages before the two
+  longest silent steps (conda env create at `:try_conda_create`, PyInstaller install+build in
+  the main EXE-build branch) so users never mistake silence for a hang. Harness static checks
+  `batch.progress.conda_create` and `batch.progress.pyi_build` verify both strings are present
+  in `run_setup.bat`. CLOSED by PR #308.
 
 - **uv DL fallback CI coverage**: Added a dedicated non-gating `uv-dl-fallback` lane
   (`HP_TEST_UV_DL_FALLBACK=1`) that forces the primary uv download URL to fail so the
