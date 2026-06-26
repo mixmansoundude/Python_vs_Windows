@@ -410,8 +410,6 @@ if "%HP_CI_TEST_CONDA_DL%"=="1" (
   ) else (
     set "HP_CONDA_PROBE_REASON=skip-env"
   )
-) else if defined HP_CI_SKIP_ENV (
-  set "HP_CONDA_PROBE_REASON=skip-env"
 )
 if "%HP_CONDA_PROBE_STATUS%"=="skipped" (
   call :emit_conda_probe_skip
