@@ -349,6 +349,16 @@ Write-Result 'uv.python.preference.configured' 'config: run_setup.bat sets UV_PY
 $warnGatePatterns = @('if not defined DEP_SOURCE (', 'Dependencies were auto-detected (pipreqs)', 'pipreqs augmenting')
 $hasWarnGate = ($warnGatePatterns | Where-Object { -not ($AllText -match [regex]::Escape($_)) }).Count -eq 0
 Write-Result 'batch.req005.warn_gate' 'REQ-005: pipreqs auto-detect WARN gated on DEP_SOURCE unset (suppressed when requirements.txt/pyproject present)' $hasWarnGate @{}
+# derived requirement: the Miniconda URL probe must be deferred to after uv detection
+# so uv-first runs do not waste ~99 MB downloading Miniconda when it will not be used.
+# Verified by: (a) probe call appears after UV_PYTHON_PREFERENCE in the file, and
+# (b) HP_UV_PROVIDING_PYTHON guard is present so probe skips when uv is the provider.
+$uvAcqPos    = $AllText.IndexOf('set "UV_PYTHON_PREFERENCE=only-managed"')
+$probeCallPos = $AllText.IndexOf('call :probe_conda_url')
+$probeAfterUv = ($uvAcqPos -ge 0) -and ($probeCallPos -ge 0) -and ($probeCallPos -gt $uvAcqPos)
+$probeGuard  = $AllText -match 'if not defined HP_UV_PROVIDING_PYTHON'
+$hasProbeDeferred = $probeAfterUv -and $probeGuard
+Write-Result 'batch.conda.probe.deferred' 'Miniconda URL probe deferred to after uv detection (HP_UV_PROVIDING_PYTHON guard present; probe call appears after UV_PYTHON_PREFERENCE)' $hasProbeDeferred @{ probeAfterUv = $probeAfterUv; probeGuard = $probeGuard }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
