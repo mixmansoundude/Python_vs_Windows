@@ -261,6 +261,7 @@ Run the delimiter check after every payload change.
 | `HP_DEP_CHECK` | `~dep_check.py` | Compares pipreqs output against `~environment.lock.txt`; exits 0 (skip install) or 1 (install needed). SHIPPED Loop 2. |
 | `HP_ENV_STATE` | `~env_state.py` | Reads/writes `~env.state.json`; validates env cache across runs. SHIPPED Loop 3. |
 | `HP_PARSE_WARN` | `~parse_warn.py` | Reads PyInstaller warn file, extracts missing module names, applies import-to-conda translation table. Supports PyInstaller 5.x (W: no module named 'foo') and 6.x (missing module named foo - imported by ... (delayed|top-level|conditional)) formats. Skips (optional)-only entries (try-except guards). Prints one package per line. Version is intentionally unpinned -- update this table and the translation logic if a new format is introduced. |
+| `HP_COLLECT_SUBMODULES` | `~collect_submodules.py` | Emits pre-build `--collect-submodules=PKG` flags (one space-separated line) for curated packages (sklearn, matplotlib, scipy, plotly) that load submodules dynamically and are invisible to the warn file. Double-gated: a flag is emitted only when the package is BOTH imported by the user's project source AND importable in the build interpreter. Canonical source `tools/collect_submodules.py`; PayloadSync in `tests/test_collect_submodules.py`. |
 
 ## Runtime artifact paths
 

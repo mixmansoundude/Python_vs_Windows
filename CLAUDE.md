@@ -160,6 +160,13 @@ This is the deliverable. Treat changes carefully.
      not-found/error, 2 on malformed TOML. Used by the layered dep resolution block.
    - `HP_PREP_REQUIREMENTS` -- decodes to `~prep_requirements.py`; applies heuristic
      dep-augmentation rules (REQ-005.8); strips pip extras (`[excel]`) before name lookup.
+   - `HP_COLLECT_SUBMODULES` -- decodes to `~collect_submodules.py`; emits pre-build
+     `--collect-submodules=PKG` flags for curated packages (sklearn, matplotlib, scipy,
+     plotly) that load submodules dynamically (the warn file is silent about them).
+     Double-gated: a flag is emitted only when the package is BOTH imported by the user's
+     project source AND importable in the build interpreter, so a fat global env never
+     bloats a lean app's EXE. Canonical source `tools/collect_submodules.py`; PayloadSync
+     in `tests/test_collect_submodules.py` asserts byte-equality of the embedded base64.
 
 2. **Delimiter-check after every edit**:
    ```bash

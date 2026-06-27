@@ -250,6 +250,34 @@ modern documentation into requirements.txt now get openpyxl and xlsxwriter injec
 
 ---
 
+## Pre-build `--collect-submodules` must be DOUBLE-gated (used AND installed), never installed-only
+
+`HP_COLLECT_SUBMODULES` (`~collect_submodules.py`) emits `--collect-submodules=PKG` flags for a
+curated set (sklearn, matplotlib, scipy, plotly) whose submodules load via dynamic dispatch that
+PyInstaller's static analysis cannot trace -- the warn file stays silent, so warnfix never repairs
+them and the frozen EXE fails at runtime on the un-bundled submodule.
+
+**The gate is deliberately on USED-by-source AND INSTALLED, not on installed alone.** Gating on
+"installed" (a bare `find_spec`) would make every EXE bundle hundreds of MB of an unused library
+merely because it sits in a fat global/conda env -- a `print("hello")` script would ship all of
+scikit-learn. Gating on "used" alone could emit a flag for a package that is imported but absent,
+which makes PyInstaller error out. **Do NOT "simplify" this to a single gate.** The double-gate is
+the whole point; `tests/test_collect_submodules.py::GatingMatrix` locks both halves.
+
+Two more details a future agent must preserve:
+- The curated set uses IMPORT names (`sklearn`, not `scikit-learn`) because `--collect-submodules`
+  takes the importable module name AND because matching the import name against project source
+  avoids the package-vs-import naming mismatch. Keep the set conservative -- heavy stacks
+  (torch/tensorflow/transformers) are excluded on purpose (gigabyte EXEs).
+- `HP_PYI_COLLECT` is computed in the `:compute_collect_flags` SUBROUTINE and set BEFORE the
+  `if "%HP_ENV_MODE%"=="system" (...) else (...)` build block, exactly like `HP_PYI_EXPAT`. If you
+  move the computation inside that parenthesized block, `%HP_PYI_COLLECT%` in the build command will
+  parse-time-expand to its OLD (empty) value (the classic drag-and-drop trap). The walk reuses the
+  `~detect_visa.py` pattern (skip `~`/`.`-prefixed dirs) and AST-parses with a per-file regex
+  fallback so a single un-parseable user file does not blind the scan.
+
+---
+
 ## CMD.EXE 8191-Character Line Limit for HP_* Payloads
 
 **Critical: every `set "HP_VARNAME=..."` line in run_setup.bat must stay under 8191 total characters.**
@@ -267,11 +295,13 @@ The crash is silent and hard to diagnose: `bootstrap.log` will contain only 1-3 
 | Payload var | Prefix chars | Max b64 chars | Current b64 | Safety margin |
 |-------------|-------------|---------------|-------------|---------------|
 | HP_PREP_REQUIREMENTS | 26 | 8165 | 7972 | 192 |
+| HP_COLLECT_SUBMODULES | 27 | 8163 | 7704 | 459 |
 | HP_DEP_CHECK | 18 | 8173 | 3244 | 4928 |
 | HP_ENV_STATE | 18 | 8173 | 3280 | 4892 |
 | HP_PYPROJ_DEPS | 20 | 8171 | 2868 | 5302 |
 
-**HP_PREP_REQUIREMENTS is the tightest** because it encodes the largest helper.
+**HP_PREP_REQUIREMENTS is the tightest** because it encodes the largest helper
+(HP_COLLECT_SUBMODULES is the second-tightest at 459).
 The 192-char safety margin is narrow. Before expanding the payload, verify b64 length:
 ```python
 import base64

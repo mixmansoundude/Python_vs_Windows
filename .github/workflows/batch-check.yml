@@ -387,6 +387,12 @@ jobs:
         run: |
           & tests\selfapps_warnfix.ps1
 
+      - name: "Self-test: pre-build collect-submodules double-gate (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_collect.ps1
+
       # REQ-009/REQ-005.10 slice 3: provider-cascade EXECUTION. Runs only in the uv lane
       # (uv-first, non-gating). The cascade walks uv -> conda (Miniconda download mid-run) ->
       # venv -> stop. Heavy and provider-dependent, hence non-gating (uv lane continue-on-error).
@@ -1157,6 +1163,14 @@ jobs:
             tests\~selftest_warnfix_real_warnfix_delayed\dist\~warnfix_exe.log
             tests/~selftest_warnfix_real_warnfix_delayed/~warnfile.txt
             tests\~selftest_warnfix_real_warnfix_delayed\~warnfile.txt
+            tests/~selftest_collect/~collect_bootstrap.log
+            tests\~selftest_collect\~collect_bootstrap.log
+            tests/~selftest_collect/~setup.log
+            tests\~selftest_collect\~setup.log
+            tests/~selftest_collect/dist/~collect_token.txt
+            tests\~selftest_collect\dist\~collect_token.txt
+            tests/~selftest_collect/dist/~collect_exe.log
+            tests\~selftest_collect\dist\~collect_exe.log
             tests/~selftest_exefail/~exefail_bootstrap.log
             tests\~selftest_exefail\~exefail_bootstrap.log
             tests/~selftest_exefail/~setup.log
