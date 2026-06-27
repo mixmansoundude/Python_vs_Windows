@@ -2209,6 +2209,7 @@ if "%HP_ENV_MODE%"=="system" (
         )
       )
       if exist "~warnfix_repair_failed.flag" call :log "[WARN] One or more repair attempts failed"
+      call :log "[INFO] Rebuilding standalone executable after warnfix -- this may take a minute or two..."
       "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
       call :log "[REPAIR] rebuild complete after warnfix."
       rem REQ-009/REQ-005.10 (slice 1: detect only): flag when this provider could not
