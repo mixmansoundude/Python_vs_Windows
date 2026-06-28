@@ -2140,6 +2140,12 @@ if defined HP_EXPAT_DLL (
   call :log "[INFO] REQ-007: bundling conda libexpat DLL for pyexpat: %HP_EXPAT_DLL%"
   set "HP_PYI_EXPAT=--add-binary "%HP_EXPAT_DLL%;.""
 )
+rem REQ-005.x: pre-build --collect-submodules for curated packages that load
+rem submodules dynamically (the warn file is silent about them, so warnfix never
+rem repairs them). Double-gated inside the helper (used-by-source AND installed) so
+rem a fat global env never bloats a lean app EXE. Computed in a subroutine so
+rem %HP_PYI_COLLECT% resolves at parse time inside the build block below.
+call :compute_collect_flags
 if "%HP_ENV_MODE%"=="system" (
   call :log "[INFO] System fallback: skipping PyInstaller packaging."
 ) else (
@@ -2159,7 +2165,7 @@ if "%HP_ENV_MODE%"=="system" (
       "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
     )
     if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
-    "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+    "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
     if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
     if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
     call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
@@ -2210,7 +2216,7 @@ if "%HP_ENV_MODE%"=="system" (
       )
       if exist "~warnfix_repair_failed.flag" call :log "[WARN] One or more repair attempts failed"
       call :log "[INFO] Rebuilding standalone executable after warnfix -- this may take a minute or two..."
-      "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+      "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
       call :log "[REPAIR] rebuild complete after warnfix."
       rem REQ-009/REQ-005.10 (slice 1: detect only): flag when this provider could not
       rem resolve all modules. Must run before the repair-failed flag is deleted (next line).
@@ -2235,6 +2241,25 @@ set "HP_FASTPATH_TOKEN="
 set "HP_PYI_EXPAT="
 set "HP_EXPAT_DLL="
 set "HP_PY_DIR="
+exit /b 0
+:compute_collect_flags
+rem Emit --collect-submodules flags for curated packages (sklearn, matplotlib,
+rem scipy, plotly) that load submodules dynamically -- PyInstaller static analysis
+rem misses them so the warn file is silent and warnfix never repairs them. The helper
+rem ~collect_submodules.py double-gates: a flag is emitted only when the package is
+rem BOTH imported by the user project source AND importable in the build interpreter,
+rem so a hello-world in a fat env stays lean. No setlocal: HP_PYI_COLLECT must persist
+rem to the caller and into the build command.
+set "HP_PYI_COLLECT="
+if "%HP_ENV_MODE%"=="system" exit /b 0
+if defined HP_FASTPATH_USED exit /b 0
+call :emit_from_base64 "~collect_submodules.py" HP_COLLECT_SUBMODULES
+if exist "~collect_flags.txt" del "~collect_flags.txt" >nul 2>&1
+"%HP_PY%" ~collect_submodules.py . > "~collect_flags.txt" 2>> "%LOG%"
+if exist "~collect_submodules.py" del "~collect_submodules.py" >nul 2>&1
+for /f "usebackq delims=" %%F in ("~collect_flags.txt") do set "HP_PYI_COLLECT=%%F"
+if exist "~collect_flags.txt" del "~collect_flags.txt" >nul 2>&1
+if defined HP_PYI_COLLECT call :log "[INFO] Pre-build collect-submodules:%HP_PYI_COLLECT%"
 exit /b 0
 :try_entry_smoke_after_warnfix
 rem derived requirement: after warnfix installs missing modules into the conda env,
@@ -2306,6 +2331,60 @@ if /I "%HP_CASCADE_CHOICE%"=="Y" (
 )
 call :log "[INFO] REQ-009: cascade consent: declined."
 exit /b 1
+:hidden_import_recover
+rem Slice 2 (REQ-016): strict, double-gated --hidden-import auto-recovery loop.
+rem Acts ONLY on `ModuleNotFoundError: No module named X` where X is INSTALLED in the
+rem build interpreter (~hidden_import_scan.py enforces both gates), so a user typo /
+rem ImportError / circular-import never triggers a rebuild. Bounded to 3 rebuilds; the
+rem helper's already-tried list plus the iter cap guarantee the loop cannot run forever.
+rem Sets HP_EXE_EXIT to the final EXE exit so the caller re-checks success. goto-based
+rem (not a parenthesized block) so each %VAR% reads its runtime value, not a parse-time one.
+if not exist "dist\%ENVNAME%.exe" exit /b 0
+set "HP_PYI_HIDDEN_IMPORTS="
+set "HP_HIDDEN_ITER=0"
+set "HP_HIDDEN_TRIED="
+rem preserve a user pre-existing spec across recovery rebuilds (the main-build spec-preexist
+rem flag was already consumed before run_exe_smokerun ran).
+set "HP_HID_SPEC_PRE="
+if exist "%ENVNAME%.spec" set "HP_HID_SPEC_PRE=1"
+:hidden_import_loop
+pushd dist
+"%ENVNAME%.exe" > "~exe_out.txt" 2>&1
+set "HP_EXE_EXIT=%ERRORLEVEL%"
+popd
+if "%HP_EXE_EXIT%"=="0" goto :hidden_import_recover_done
+if %HP_HIDDEN_ITER% GEQ 3 goto :hidden_import_recover_done
+call :emit_from_base64 "~hidden_import_scan.py" HP_HIDDEN_IMPORT_SCAN
+"%HP_PY%" ~hidden_import_scan.py "dist\~exe_out.txt" %HP_HIDDEN_TRIED% > "~next_hidden.txt" 2>> "%LOG%"
+if exist "~hidden_import_scan.py" del "~hidden_import_scan.py" >nul 2>&1
+set "HP_NEXT_HIDDEN="
+for /f "usebackq delims=" %%M in ("~next_hidden.txt") do set "HP_NEXT_HIDDEN=%%M"
+if exist "~next_hidden.txt" del "~next_hidden.txt" >nul 2>&1
+if not defined HP_NEXT_HIDDEN goto :hidden_import_recover_done
+set /a HP_HIDDEN_ITER+=1
+set "HP_PYI_HIDDEN_IMPORTS=%HP_PYI_HIDDEN_IMPORTS% --hidden-import=%HP_NEXT_HIDDEN%"
+set "HP_HIDDEN_TRIED=%HP_HIDDEN_TRIED% %HP_NEXT_HIDDEN%"
+call :log "[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=%HP_NEXT_HIDDEN%; rebuilding EXE (iter %HP_HIDDEN_ITER%/3)."
+"%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% %HP_PYI_HIDDEN_IMPORTS% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "[REPAIR][HIDDEN_IMPORT] PyInstaller rebuild failed; stopping recovery."
+  set "HP_EXE_EXIT=1"
+  goto :hidden_import_recover_done
+)
+goto :hidden_import_loop
+:hidden_import_recover_done
+if "%HP_EXE_EXIT%"=="0" if %HP_HIDDEN_ITER% GEQ 1 call :log "[REPAIR][HIDDEN_IMPORT] EXE verified after hidden-import recovery."
+if exist "dist\~exe_out.txt" del "dist\~exe_out.txt" >nul 2>&1
+rem clean up artifacts created by recovery rebuilds (mirror the main-build cleanup);
+rem preserve a user pre-existing spec.
+if not defined HP_HID_SPEC_PRE if exist "%ENVNAME%.spec" del "%ENVNAME%.spec" >nul 2>&1
+if exist "build\%ENVNAME%" rd /s /q "build\%ENVNAME%" >nul 2>&1
+set "HP_HIDDEN_ITER="
+set "HP_HIDDEN_TRIED="
+set "HP_NEXT_HIDDEN="
+set "HP_HID_SPEC_PRE="
+set "HP_PYI_HIDDEN_IMPORTS="
+exit /b 0
 :run_exe_smokerun
 if not exist "dist\%ENVNAME%.exe" (
   call :log "[WARN] EXE smokerun: dist\%ENVNAME%.exe not found; skipping"
@@ -2325,16 +2404,22 @@ pushd dist
 for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%ENVNAME%.exe';$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
 popd
 if not defined HP_EXE_EXIT set "HP_EXE_EXIT=-1"
-if "%HP_EXE_EXIT%"=="0" (
-  call :log "[INFO] EXE smokerun: exited 0 (ok)"
-  set "HP_EXE_VERIFY_FAILED="
-) else (
-  call :log "[WARN] EXE smokerun: exited %HP_EXE_EXIT% (non-zero)"
-  rem REQ-016: record that the packaged EXE could not be verified so the post-flight
-  rem briefing can guide the user to run the app directly instead of claiming success.
-  set "HP_EXE_VERIFY_FAILED=1"
-  call :exe_smokerun_hints
-)
+if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok
+call :log "[WARN] EXE smokerun: exited %HP_EXE_EXIT% (non-zero)"
+rem Slice 2 (REQ-016): attempt strict --hidden-import auto-recovery before giving up.
+rem Skip when HP_EXE_EXIT is -1 (a timeout/hang) -- re-running a hung EXE in the recovery
+rem loop would hang too; only a real fast non-zero exit (e.g. ModuleNotFoundError) is fixable.
+if not "%HP_EXE_EXIT%"=="-1" call :hidden_import_recover
+if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok
+rem REQ-016: record that the packaged EXE could not be verified so the post-flight
+rem briefing can guide the user to run the app directly instead of claiming success.
+set "HP_EXE_VERIFY_FAILED=1"
+call :exe_smokerun_hints
+goto :smokerun_ndjson
+:smokerun_ok
+call :log "[INFO] EXE smokerun: exited 0 (ok)"
+set "HP_EXE_VERIFY_FAILED="
+:smokerun_ndjson
 if defined HP_NDJSON (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$c=[int]'%HP_EXE_EXIT%';" ^
@@ -2478,6 +2563,12 @@ set "HP_PARSE_WARN=IiIicGFyc2Vfd2FybiB2MyAoMjAyNi0wNS0wMykKUmVhZHMgUHlJbnN0YWxsZ
 rem ~dep_check.py compares requirements.auto.txt against ~environment.lock.txt;
 rem prints 'skip' when all pipreqs packages are already installed, 'run' otherwise.
 set "HP_DEP_CHECK=IiIiZGVwX2NoZWNrIHYxICgyMDI2LTAzLTI3KQpDb21wYXJlcyByZXF1aXJlbWVudHMuYXV0by50eHQgKHBpcHJlcXMgb3V0cHV0KSBhZ2FpbnN0IH5lbnZpcm9ubWVudC5sb2NrLnR4dAooY29uZGEgbGlzdCAtLWV4cG9ydCBzbmFwc2hvdCkuIFByaW50cyAnc2tpcCcgd2hlbiBldmVyeSBwYWNrYWdlIGRldGVjdGVkIGJ5CnBpcHJlcXMgaXMgYWxyZWFkeSBwcmVzZW50IGluIHRoZSBsb2NrOyBwcmludHMgJ3J1bicgb3RoZXJ3aXNlIHNvIHRoZSBjYWxsZXIKcHJvY2VlZHMgd2l0aCBjb25kYSBpbnN0YWxsLgoiIiIKX192ZXJzaW9uX18gPSAiZGVwX2NoZWNrIHYxICgyMDI2LTAzLTI3KSIKX19hbGxfXyA9IFsicGFyc2VfbG9jayIsICJwYXJzZV9yZXFzIiwgIm1haW4iXQoKaW1wb3J0IG9zCmltcG9ydCByZQppbXBvcnQgc3lzCgpSRVFfRklMRSA9ICJyZXF1aXJlbWVudHMuYXV0by50eHQiCkxPQ0tfRklMRSA9ICJ+ZW52aXJvbm1lbnQubG9jay50eHQiCgoKZGVmIHBhcnNlX2xvY2socGF0aCk6CiAgICAiIiJSZXR1cm4gZnJvemVuc2V0IG9mIGxvd2VyY2FzZSBwYWNrYWdlIG5hbWVzIGZyb20gY29uZGEgbGlzdCAtLWV4cG9ydC4iIiIKICAgIG5hbWVzID0gc2V0KCkKICAgIHRyeToKICAgICAgICB3aXRoIG9wZW4ocGF0aCwgInIiLCBlbmNvZGluZz0idXRmLTgiLCBlcnJvcnM9Imlnbm9yZSIpIGFzIGZoOgogICAgICAgICAgICBmb3IgbGluZSBpbiBmaDoKICAgICAgICAgICAgICAgIGxpbmUgPSBsaW5lLnN0cmlwKCkKICAgICAgICAgICAgICAgIGlmIG5vdCBsaW5lIG9yIGxpbmUuc3RhcnRzd2l0aCgiIyIpOgogICAgICAgICAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgICAgICAgICAjIGNvbmRhIGxpc3QgLS1leHBvcnQ6IG5hbWU9dmVyc2lvbj1idWlsZFs9Y2hhbm5lbF0KICAgICAgICAgICAgICAgIG5hbWUgPSBsaW5lLnNwbGl0KCI9IilbMF0uc3RyaXAoKS5sb3dlcigpCiAgICAgICAgICAgICAgICBpZiBuYW1lOgogICAgICAgICAgICAgICAgICAgIG5hbWVzLmFkZChuYW1lKQogICAgZXhjZXB0IE9TRXJyb3I6CiAgICAgICAgcGFzcwogICAgcmV0dXJuIGZyb3plbnNldChuYW1lcykKCgpkZWYgcGFyc2VfcmVxcyhwYXRoKToKICAgICIiIlJldHVybiBsaXN0IG9mIGxvd2VyY2FzZSBwYWNrYWdlIG5hbWVzIGZyb20gcGlwLXN0eWxlIHJlcXVpcmVtZW50cyBmaWxlLiIiIgogICAgbmFtZXMgPSBbXQogICAgdHJ5OgogICAgICAgIHdpdGggb3BlbihwYXRoLCAiciIsIGVuY29kaW5nPSJ1dGYtOCIsIGVycm9ycz0iaWdub3JlIikgYXMgZmg6CiAgICAgICAgICAgIGZvciBsaW5lIGluIGZoOgogICAgICAgICAgICAgICAgbGluZSA9IGxpbmUuc3RyaXAoKQogICAgICAgICAgICAgICAgaWYgbm90IGxpbmUgb3IgbGluZS5zdGFydHN3aXRoKCIjIik6CiAgICAgICAgICAgICAgICAgICAgY29udGludWUKICAgICAgICAgICAgICAgICMgU3RyaXAgdmVyc2lvbiBzcGVjaWZpZXI6IG51bXB5Pj0xLjIwIC0+IG51bXB5CiAgICAgICAgICAgICAgICBuYW1lID0gcmUuc3BsaXQociJbPj08IX4sO1xzXFtdIiwgbGluZSwgbWF4c3BsaXQ9MSlbMF0uc3RyaXAoKS5sb3dlcigpCiAgICAgICAgICAgICAgICBpZiBuYW1lOgogICAgICAgICAgICAgICAgICAgIG5hbWVzLmFwcGVuZChuYW1lKQogICAgZXhjZXB0IE9TRXJyb3I6CiAgICAgICAgcGFzcwogICAgcmV0dXJuIG5hbWVzCgoKZGVmIG1haW4oKToKICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhMT0NLX0ZJTEUpOgogICAgICAgIHN5cy5zdGRvdXQud3JpdGUoInJ1blxuIikKICAgICAgICByZXR1cm4KICAgIGlmIG5vdCBvcy5wYXRoLmV4aXN0cyhSRVFfRklMRSk6CiAgICAgICAgIyBObyBwaXByZXFzIG91dHB1dDsgbm90aGluZyByZXF1aXJlcyBpbnN0YWxsYXRpb24KICAgICAgICBzeXMuc3Rkb3V0LndyaXRlKCJza2lwXG4iKQogICAgICAgIHJldHVybgogICAgbG9ja19uYW1lcyA9IHBhcnNlX2xvY2soTE9DS19GSUxFKQogICAgaWYgbm90IGxvY2tfbmFtZXM6CiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgicnVuXG4iKQogICAgICAgIHJldHVybgogICAgcmVxX25hbWVzID0gcGFyc2VfcmVxcyhSRVFfRklMRSkKICAgIGlmIG5vdCByZXFfbmFtZXM6CiAgICAgICAgIyBFbXB0eSByZXF1aXJlbWVudHMgZmlsZTsgY29uZGEgaW5zdGFsbCB3b3VsZCBiZSBhIG5vLW9wCiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgic2tpcFxuIikKICAgICAgICByZXR1cm4KICAgIG1pc3NpbmcgPSBbbmFtZSBmb3IgbmFtZSBpbiByZXFfbmFtZXMgaWYgbmFtZSBub3QgaW4gbG9ja19uYW1lc10KICAgIGlmIG1pc3Npbmc6CiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgicnVuXG4iKQogICAgZWxzZToKICAgICAgICBzeXMuc3Rkb3V0LndyaXRlKCJza2lwXG4iKQoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBtYWluKCkK"
+rem ~collect_submodules.py emits pre-build --collect-submodules flags for packages
+rem that load submodules dynamically; double-gated on used-by-source AND installed.
+set "HP_COLLECT_SUBMODULES=IiIiY29sbGVjdF9zdWJtb2R1bGVzIHYxICgyMDI2LTA2LTI3KQpQcmUtYnVpbGQgUHlJbnN0YWxsZXIgZmxhZyBnZW5lcmF0b3IgZm9yIHBhY2thZ2VzIHRoYXQgbG9hZCBzdWJtb2R1bGVzCmR5bmFtaWNhbGx5IChwbHVnaW4vYmFja2VuZC9yZWdpc3RyeSBzeXN0ZW1zKSB3aGljaCBQeUluc3RhbGxlcidzIHN0YXRpYwphbmFseXNpcyBjYW5ub3QgdHJhY2UuIFN1Y2ggcGFja2FnZXMgcHJvZHVjZSBOTyB3YXJuLWZpbGUgZW50cnkgKHRoZSBpbXBvcnQKaXRzZWxmIHJlc29sdmVzKSwgc28gd2FybmZpeCBuZXZlciBzZWVzIHRoZW07IHRoZSBmcm96ZW4gRVhFIHRoZW4gZmFpbHMgYXQKcnVudGltZSB3aGVuIGl0IHJlYWNoZXMgdGhlIHVuLWJ1bmRsZWQgc3VibW9kdWxlLgoKRW1pdHMgb25lIHNwYWNlLXNlcGFyYXRlZCBsaW5lIG9mIGAtLWNvbGxlY3Qtc3VibW9kdWxlcz1QS0dgIGZsYWdzIHRvIHN0ZG91dC4KCkRPVUJMRS1HQVRFIChkZWxpYmVyYXRlIC0tIHNlZSBkZXJpdmVkIHJlcXVpcmVtZW50IGJlbG93KTogYSBmbGFnIGlzIGVtaXR0ZWQKb25seSB3aGVuIFBLRyBpcyBCT1RICiAgKDEpIGltcG9ydGVkIGJ5IHRoZSB1c2VyJ3MgcHJvamVjdCBzb3VyY2UgKCJ1c2VkIiksIEFORAogICgyKSBpbXBvcnRhYmxlIGluIHRoZSBidWlsZCBpbnRlcnByZXRlciAoImluc3RhbGxlZCIsIHZpYSBmaW5kX3NwZWMpLgpHYXRpbmcgb24gImluc3RhbGxlZCIgYWxvbmUgd291bGQgYnVuZGxlIGh1bmRyZWRzIG9mIE1CIG9mIGFuIHVudXNlZCBsaWJyYXJ5CmludG8gZXZlcnkgRVhFIG1lcmVseSBiZWNhdXNlIGl0IGhhcHBlbnMgdG8gc2l0IGluIGEgZmF0IGdsb2JhbC9jb25kYSBlbnYKKGEgNS1saW5lIGhlbGxvLXdvcmxkIHNob3VsZCBzdGF5IGxlYW4pLiBHYXRpbmcgb24gInVzZWQiIGFsb25lIGNvdWxkIHBhc3MgYQpmbGFnIGZvciBhIHBhY2thZ2UgdGhhdCBpcyBpbXBvcnRlZCBidXQgbm90IGFjdHVhbGx5IGluc3RhbGxlZCwgd2hpY2ggbWFrZXMKUHlJbnN0YWxsZXIgZXJyb3Igb3V0LiBSZXF1aXJpbmcgYm90aCBrZWVwcyBsZWFuIGFwcHMgbGVhbiBhbmQgYXZvaWRzIHNwdXJpb3VzCmZsYWdzLgoKVGhlIGN1cmF0ZWQgc2V0IHVzZXMgSU1QT1JUIG5hbWVzIChza2xlYXJuLCBub3Qgc2Npa2l0LWxlYXJuKSBiZWNhdXNlCi0tY29sbGVjdC1zdWJtb2R1bGVzIHRha2VzIHRoZSBpbXBvcnRhYmxlIG1vZHVsZSBuYW1lLCBhbmQgbWF0Y2hpbmcgdGhlIGltcG9ydApuYW1lIGFnYWluc3QgcHJvamVjdCBzb3VyY2UgYXZvaWRzIHRoZSBwYWNrYWdlLXZzLWltcG9ydCBuYW1pbmcgbWlzbWF0Y2guCgpVc2FnZTogcHl0aG9uIH5jb2xsZWN0X3N1Ym1vZHVsZXMucHkgW3Byb2plY3Rfcm9vdF0gICAoZGVmYXVsdDogY3dkKQoiIiIKX192ZXJzaW9uX18gPSAiY29sbGVjdF9zdWJtb2R1bGVzIHYxICgyMDI2LTA2LTI3KSIKX19hbGxfXyA9IFsiRFlOQU1JQ19QS0dTIiwgImltcG9ydGVkX3RvcF9sZXZlbHMiLCAiY29sbGVjdF9mbGFncyIsICJtYWluIl0KCmltcG9ydCBhc3QKaW1wb3J0IGltcG9ydGxpYi51dGlsCmltcG9ydCBvcwppbXBvcnQgcmUKaW1wb3J0IHN5cwoKIyBDdXJhdGVkIHNldCBvZiBwYWNrYWdlcyB3aG9zZSBzdWJtb2R1bGVzIGFyZSBsb2FkZWQgdmlhIGR5bmFtaWMgZGlzcGF0Y2gKIyAoZXN0aW1hdG9yIHJlZ2lzdHJpZXMsIGJhY2tlbmQgcGx1Z2lucywgY29tcGlsZWQtZXh0ZW5zaW9uIHN1Ym1vZHVsZXMpIHRoYXQKIyBQeUluc3RhbGxlcidzIHN0YXRpYyB0cmFjZXIgbWlzc2VzLiBJbXBvcnQtbmFtZSA9PSAtLWNvbGxlY3Qtc3VibW9kdWxlcyB0YXJnZXQuCiMgQ29uc2VydmF0aXZlIG9uIHB1cnBvc2U6IGhlYXZ5IE1MIHN0YWNrcyAodG9yY2gvdGVuc29yZmxvdy90cmFuc2Zvcm1lcnMpIGFyZQojIGV4Y2x1ZGVkIC0tIGNvbGxlY3RpbmcgdGhlaXIgc3VibW9kdWxlcyBibG9hdHMgdGhlIEVYRSBieSBnaWdhYnl0ZXMgYW5kIHRob3NlCiMgdXNlcnMgdHlwaWNhbGx5IHN1cHBseSBleHBsaWNpdCBkZXBzLgpEWU5BTUlDX1BLR1MgPSAoInNrbGVhcm4iLCAibWF0cGxvdGxpYiIsICJzY2lweSIsICJwbG90bHkiKQoKIyBEaXJlY3RvcmllcyBuZXZlciBwYXJ0IG9mIHRoZSB1c2VyJ3MgYXBwbGljYXRpb24gc291cmNlLgpfU0tJUF9ESVJTID0gZnJvemVuc2V0KFsKICAgICJkaXN0IiwgImJ1aWxkIiwgIl9fcHljYWNoZV9fIiwgIm5vZGVfbW9kdWxlcyIsCl0pCgoKZGVmIF9za2lwX2RpcihuYW1lKToKICAgICIiIlRydWUgaWYgYSBkaXJlY3Rvcnkgc2hvdWxkIG5vdCBiZSB3YWxrZWQgZm9yIHVzZXIgc291cmNlLiIiIgogICAgaWYgbmFtZS5zdGFydHN3aXRoKCIuIikgb3IgbmFtZS5zdGFydHN3aXRoKCJ+Iik6CiAgICAgICAgcmV0dXJuIFRydWUKICAgIHJldHVybiBuYW1lIGluIF9TS0lQX0RJUlMKCgpkZWYgX3JlZ2V4X3RvcF9sZXZlbHModGV4dCk6CiAgICAiIiJGYWxsYmFjayBpbXBvcnQgc2NhbiBmb3IgYSBzaW5nbGUgZmlsZSB0aGF0IGZhaWxlZCB0byBBU1QtcGFyc2UuCgogICAgTWF0Y2hlcyBvbmx5IGltcG9ydCBzdGF0ZW1lbnRzIGF0IGxpbmUgc3RhcnQgKGFmdGVyIG9wdGlvbmFsIHdoaXRlc3BhY2UpLAogICAgd2l0aCBhIHdvcmQgYm91bmRhcnkgc28gJ2ltcG9ydCBzY2lweXRob24nIGRvZXMgbm90IG1hdGNoICdzY2lweScuCiAgICAiIiIKICAgIGZvdW5kID0gc2V0KCkKICAgIGZvciBwa2cgaW4gRFlOQU1JQ19QS0dTOgogICAgICAgIHBhdHRlcm4gPSByIig/bSleXHMqKD86aW1wb3J0fGZyb20pXHMrIiArIHJlLmVzY2FwZShwa2cpICsgciJcYiIKICAgICAgICBpZiByZS5zZWFyY2gocGF0dGVybiwgdGV4dCk6CiAgICAgICAgICAgIGZvdW5kLmFkZChwa2cpCiAgICByZXR1cm4gZm91bmQKCgpkZWYgX2ZpbGVfdG9wX2xldmVscyh0ZXh0KToKICAgICIiIlJldHVybiB0aGUgc2V0IG9mIHRvcC1sZXZlbCBpbXBvcnRlZCBtb2R1bGUgbmFtZXMgaW4gb25lIHNvdXJjZSBmaWxlLgoKICAgIFVzZXMgQVNUIChzbyBjb21tZW50ZWQtb3V0IG9yIHN0cmluZy1saXRlcmFsICdpbXBvcnRzJyBkbyBub3QgY291bnQpLiBPbiBhCiAgICBTeW50YXhFcnJvciBpbiB0aGUgdXNlcidzIGNvZGUsIGZhbGxzIGJhY2sgdG8gYSBjb25zZXJ2YXRpdmUgcmVnZXggc2NhbiBvZgogICAgdGhlIHNhbWUgdGV4dCBzbyBhIHNpbmdsZSB1bi1wYXJzZWFibGUgZmlsZSBkb2VzIG5vdCBibGluZCB0aGUgd2hvbGUgc2Nhbi4KICAgICIiIgogICAgZm91bmQgPSBzZXQoKQogICAgdHJ5OgogICAgICAgIHRyZWUgPSBhc3QucGFyc2UodGV4dCkKICAgIGV4Y2VwdCAoU3ludGF4RXJyb3IsIFZhbHVlRXJyb3IpOgogICAgICAgIHJldHVybiBfcmVnZXhfdG9wX2xldmVscyh0ZXh0KQogICAgZm9yIG5vZGUgaW4gYXN0LndhbGsodHJlZSk6CiAgICAgICAgaWYgaXNpbnN0YW5jZShub2RlLCBhc3QuSW1wb3J0KToKICAgICAgICAgICAgZm9yIGFsaWFzIGluIG5vZGUubmFtZXM6CiAgICAgICAgICAgICAgICBpZiBhbGlhcy5uYW1lOgogICAgICAgICAgICAgICAgICAgIGZvdW5kLmFkZChhbGlhcy5uYW1lLnNwbGl0KCIuIilbMF0pCiAgICAgICAgZWxpZiBpc2luc3RhbmNlKG5vZGUsIGFzdC5JbXBvcnRGcm9tKToKICAgICAgICAgICAgIyBsZXZlbCA+IDAgaXMgYSByZWxhdGl2ZSBpbXBvcnQgKGZyb20gLiBpbXBvcnQgeCkgLS0gdGhlIG1vZHVsZSBpcwogICAgICAgICAgICAjIGxvY2FsIHRvIHRoZSBwcm9qZWN0LCBuZXZlciBvbmUgb2YgdGhlIGN1cmF0ZWQgdGhpcmQtcGFydHkgcGtncy4KICAgICAgICAgICAgaWYgbm9kZS5sZXZlbCA9PSAwIGFuZCBub2RlLm1vZHVsZToKICAgICAgICAgICAgICAgIGZvdW5kLmFkZChub2RlLm1vZHVsZS5zcGxpdCgiLiIpWzBdKQogICAgcmV0dXJuIGZvdW5kCgoKZGVmIGltcG9ydGVkX3RvcF9sZXZlbHMocm9vdCk6CiAgICAiIiJXYWxrIHRoZSBwcm9qZWN0IHRyZWUgYW5kIHJldHVybiB0aGUgc2V0IG9mIHRvcC1sZXZlbCBpbXBvcnRlZCBtb2R1bGVzLiIiIgogICAgZm91bmQgPSBzZXQoKQogICAgZm9yIGN1cnJlbnQsIGRpcnMsIGZpbGVzIGluIG9zLndhbGsocm9vdCk6CiAgICAgICAgZGlyc1s6XSA9IFtkIGZvciBkIGluIGRpcnMgaWYgbm90IF9za2lwX2RpcihkKV0KICAgICAgICBmb3IgbmFtZSBpbiBmaWxlczoKICAgICAgICAgICAgaWYgbm90IG5hbWUuZW5kc3dpdGgoIi5weSIpIG9yIG5hbWUuc3RhcnRzd2l0aCgifiIpOgogICAgICAgICAgICAgICAgY29udGludWUKICAgICAgICAgICAgcGF0aCA9IG9zLnBhdGguam9pbihjdXJyZW50LCBuYW1lKQogICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICB3aXRoIG9wZW4ocGF0aCwgInIiLCBlbmNvZGluZz0idXRmLTgiLCBlcnJvcnM9Imlnbm9yZSIpIGFzIGhhbmRsZToKICAgICAgICAgICAgICAgICAgICB0ZXh0ID0gaGFuZGxlLnJlYWQoKQogICAgICAgICAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgICAgIGZvdW5kIHw9IF9maWxlX3RvcF9sZXZlbHModGV4dCkKICAgIHJldHVybiBmb3VuZAoKCmRlZiBfaXNfaW5zdGFsbGVkKG5hbWUpOgogICAgIiIiVHJ1ZSBpZiBuYW1lIGlzIGltcG9ydGFibGUgaW4gdGhlIGN1cnJlbnQgKGJ1aWxkKSBpbnRlcnByZXRlci4iIiIKICAgIHRyeToKICAgICAgICByZXR1cm4gaW1wb3J0bGliLnV0aWwuZmluZF9zcGVjKG5hbWUpIGlzIG5vdCBOb25lCiAgICBleGNlcHQgKEltcG9ydEVycm9yLCBWYWx1ZUVycm9yLCBBdHRyaWJ1dGVFcnJvcik6CiAgICAgICAgIyBmaW5kX3NwZWMgY2FuIHJhaXNlIGZvciBuYW1lc3BhY2UvcGFydGlhbCBwYWNrYWdlczsgdHJlYXQgYXMgYWJzZW50LgogICAgICAgIHJldHVybiBGYWxzZQoKCmRlZiBjb2xsZWN0X2ZsYWdzKHJvb3QsIGluc3RhbGxlZF9jaGVjaz1Ob25lKToKICAgICIiIlJldHVybiBvcmRlcmVkIC0tY29sbGVjdC1zdWJtb2R1bGVzIGZsYWdzIGZvciB1c2VkIEFORCBpbnN0YWxsZWQgcGFja2FnZXMuCgogICAgaW5zdGFsbGVkX2NoZWNrIGlzIGluamVjdGFibGUgZm9yIHRlc3Rpbmcgc28gdGhlIGdhdGluZyBsb2dpYyBjYW4gYmUKICAgIGV4ZXJjaXNlZCB3aXRob3V0IGFjdHVhbGx5IGluc3RhbGxpbmcgaGVhdnkgcGFja2FnZXMuCiAgICAiIiIKICAgIGlmIGluc3RhbGxlZF9jaGVjayBpcyBOb25lOgogICAgICAgIGluc3RhbGxlZF9jaGVjayA9IF9pc19pbnN0YWxsZWQKICAgIHVzZWQgPSBpbXBvcnRlZF90b3BfbGV2ZWxzKHJvb3QpCiAgICBmbGFncyA9IFtdCiAgICBmb3IgcGtnIGluIERZTkFNSUNfUEtHUzoKICAgICAgICBpZiBwa2cgaW4gdXNlZCBhbmQgaW5zdGFsbGVkX2NoZWNrKHBrZyk6CiAgICAgICAgICAgIGZsYWdzLmFwcGVuZCgiLS1jb2xsZWN0LXN1Ym1vZHVsZXM9IiArIHBrZykKICAgIHJldHVybiBmbGFncwoKCmRlZiBtYWluKGFyZ3Y9Tm9uZSk6CiAgICBhcmdzID0gbGlzdChzeXMuYXJndlsxOl0gaWYgYXJndiBpcyBOb25lIGVsc2UgYXJndikKICAgICMgTm9ybWFsaXplIHRvIGFuIGFic29sdXRlIHBhdGggc28gdGhlIHdhbGsgaXMgYW5jaG9yZWQgcmVnYXJkbGVzcyBvZiB0aGUKICAgICMgY2FsbGVyJ3MgY3dkIC8gcmVsYXRpdmUtcGF0aCBkcmlmdCAoZGVmZW5zaXZlIG9uIFdpbmRvd3MgbXVsdGktZHJpdmUgcGF0aHMpLgogICAgcm9vdCA9IG9zLnBhdGguYWJzcGF0aChhcmdzWzBdIGlmIGFyZ3MgZWxzZSAiLiIpCiAgICBzeXMuc3Rkb3V0LndyaXRlKCIgIi5qb2luKGNvbGxlY3RfZmxhZ3Mocm9vdCkpKQoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBtYWluKCkK"
+rem ~hidden_import_scan.py decides the next --hidden-import target from a frozen EXE
+rem stderr: strict ModuleNotFoundError + the module must be installed in the build env.
+set "HP_HIDDEN_IMPORT_SCAN=IiIiaGlkZGVuX2ltcG9ydF9zY2FuIHYxICgyMDI2LTA2LTI4KQpEZWNpZGUgdGhlIG5leHQgLS1oaWRkZW4taW1wb3J0IHRhcmdldCBmcm9tIGEgZnJvemVuIEVYRSdzIHN0ZGVyciwgZm9yIHRoZQpTbGljZSAyIGF1dG8tcmVjb3ZlcnkgbG9vcCBpbiBydW5fc2V0dXAuYmF0LgoKU1RSSUNUIGFuZCBET1VCTEUtR0FURUQgb24gcHVycG9zZToKICAoMSkgVGhlIEVYRSBzdGRlcnIgbXVzdCBjb250YWluIGBNb2R1bGVOb3RGb3VuZEVycm9yOiBObyBtb2R1bGUgbmFtZWQgJ1gnYC4KICAgICAgVGhhdCBpcyB0aGUgZGV0ZXJtaW5pc3RpYyAiWCdzIGNvZGUgaXMgbm90IGluIHRoZSBidW5kbGUiIHNpZ25hbCAtLQogICAgICBQeUluc3RhbGxlciBsZWZ0IFggb3V0LCBhbmQgYC0taGlkZGVuLWltcG9ydD1YYCBpcyB0aGUgZXhhY3Qgc3RydWN0dXJhbCBmaXguCiAgKDIpIFggKGl0cyB0b3AtbGV2ZWwgcGFja2FnZSkgbXVzdCBiZSBpbXBvcnRhYmxlIGluIHRoZSBCVUlMRCBpbnRlcnByZXRlcgogICAgICAoZmluZF9zcGVjKS4gSWYgWCBpcyBub3QgaW5zdGFsbGVkLCB0aGlzIGlzIGEgdXNlciB0eXBvIG9yIGEgZ2VudWluZWx5CiAgICAgIG1pc3NpbmcgZGVwZW5kZW5jeSAtLSBOT1QgYSBwYWNrYWdpbmcgbWlzcyAtLSBzbyB3ZSBlbWl0IG5vdGhpbmcgYW5kIGxldAogICAgICB0aGUgcG9zdC1mbGlnaHQgaGludHMgc3VyZmFjZSB0aGUgc3RhY2sgdHJhY2UuIFRoaXMgaXMgd2hhdCBtYWtlcyBhIHR5cG8KICAgICAgbGlrZSBgaW1wb3J0IG5vbmV4aXN0YW50YCBjb3N0IFpFUk8gcmVidWlsZHMuCiAgKDMpIFggbXVzdCBub3QgYWxyZWFkeSBiZSBpbiB0aGUgYWxyZWFkeS10cmllZCBsaXN0IChubyBsb29wcykuCiAgKDQpIFggbXVzdCBub3QgYmUgYSBwbGF0Zm9ybS9zdGRsaWIgc2hpbSBsZWdpdGltYXRlbHkgYWJzZW50IG9uIFdpbmRvd3MuCgpEZWxpYmVyYXRlbHkgTk9UIGhhbmRsZWQ6IGBJbXBvcnRFcnJvcjogY2Fubm90IGltcG9ydCBuYW1lICdZJyBmcm9tICdaJ2AuIFogaXMKYWxyZWFkeSBidW5kbGVkIGFuZCBZIGlzIGFuIGF0dHJpYnV0ZSwgbm90IGEgbW9kdWxlLCBzbyBubyAtLWhpZGRlbi1pbXBvcnQKdGFyZ2V0IGlzIGRlcml2YWJsZSBhbmQgYSByZWJ1aWxkIGNhbm5vdCBmaXggaXQuIFN1Y2ggZXJyb3JzIGFyZSB1c2VyIGNvZGUKKHR5cG9zLCBjaXJjdWxhciBpbXBvcnRzLCB2ZXJzaW9uIGRyaWZ0KSBvciBkeW5hbWljLXN1Ym1vZHVsZSBnYXBzIGJldHRlciBmaXhlZApieSAtLWNvbGxlY3Qtc3VibW9kdWxlcyAoaGFuZGxlZCBzZXBhcmF0ZWx5KS4gVGhleSByb3V0ZSB0byBoaW50cyB1bmNoYW5nZWQuCgpVc2FnZTogcHl0aG9uIH5oaWRkZW5faW1wb3J0X3NjYW4ucHkgPHN0ZGVycl9maWxlPiBbYWxyZWFkeV90cmllZCAuLi5dClByaW50cyB0aGUgbmV4dCBoaWRkZW4taW1wb3J0IG1vZHVsZSBuYW1lIChvciBub3RoaW5nKSB0byBzdGRvdXQuCiIiIgpfX3ZlcnNpb25fXyA9ICJoaWRkZW5faW1wb3J0X3NjYW4gdjEgKDIwMjYtMDYtMjgpIgpfX2FsbF9fID0gWyJTS0lQIiwgIm5leHRfaGlkZGVuX2ltcG9ydCIsICJtYWluIl0KCmltcG9ydCBpbXBvcnRsaWIudXRpbAppbXBvcnQgcmUKaW1wb3J0IHN5cwoKIyBQbGF0Zm9ybS9zdGRsaWIgbW9kdWxlcyBsZWdpdGltYXRlbHkgYWJzZW50IG9uIFdpbmRvd3MgLS0gbmV2ZXIgYSBwYWNrYWdpbmcKIyBtaXNzLCBzbyBuZXZlciBoaWRkZW4taW1wb3J0IHRoZW0gKG1pcnJvciBvZiB0aGUgcGFyc2Vfd2FybiB1bml4LW9ubHkgc2V0KS4KU0tJUCA9IGZyb3plbnNldChbCiAgICAiZ3JwIiwgInB3ZCIsICJwb3NpeCIsICJyZXNvdXJjZSIsICJmY250bCIsICJyZWFkbGluZSIsICJ0ZXJtaW9zIiwgInR0eSIsCiAgICAicHR5IiwgImNyeXB0IiwgInNwd2QiLCAibmlzIiwgInN5c2xvZyIsICJvc3NhdWRpb2RldiIsCiAgICAiX3Bvc2l4c3VicHJvY2VzcyIsICJfc2Nwcm94eSIsICJfZnJvemVuX2ltcG9ydGxpYl9leHRlcm5hbCIsCl0pCgojIE9ubHkgTW9kdWxlTm90Rm91bmRFcnJvciAtLSBOT1QgYSBiYXJlIEltcG9ydEVycm9yIChzZWUgbW9kdWxlIGRvY3N0cmluZykuCl9QQVRURVJOID0gcmUuY29tcGlsZSgKICAgIHIiTW9kdWxlTm90Rm91bmRFcnJvcjogTm8gbW9kdWxlIG5hbWVkIFsnXCJdKFteJ1wiXSspWydcIl0iCikKCgpkZWYgX2lzX2luc3RhbGxlZChuYW1lKToKICAgICIiIlRydWUgaWYgbmFtZSBpcyBpbXBvcnRhYmxlIGluIHRoZSBjdXJyZW50IChidWlsZCkgaW50ZXJwcmV0ZXIuIiIiCiAgICB0cnk6CiAgICAgICAgcmV0dXJuIGltcG9ydGxpYi51dGlsLmZpbmRfc3BlYyhuYW1lKSBpcyBub3QgTm9uZQogICAgZXhjZXB0IChJbXBvcnRFcnJvciwgVmFsdWVFcnJvciwgQXR0cmlidXRlRXJyb3IpOgogICAgICAgIHJldHVybiBGYWxzZQoKCmRlZiBuZXh0X2hpZGRlbl9pbXBvcnQoc3RkZXJyX3RleHQsIGFscmVhZHlfdHJpZWQ9KCksIGluc3RhbGxlZF9jaGVjaz1Ob25lKToKICAgICIiIlJldHVybiB0aGUgbmV4dCAtLWhpZGRlbi1pbXBvcnQgbW9kdWxlIG5hbWUsIG9yICIiIGlmIG5vbmUgaXMgZml4YWJsZS4KCiAgICBpbnN0YWxsZWRfY2hlY2sgaXMgaW5qZWN0YWJsZSBmb3IgdGVzdGluZyBzbyB0aGUgZmluZF9zcGVjIGdhdGUgY2FuIGJlCiAgICBleGVyY2lzZWQgd2l0aG91dCBpbnN0YWxsaW5nIHBhY2thZ2VzLiBJdCBpcyBjYWxsZWQgd2l0aCB0aGUgVE9QLUxFVkVMCiAgICBwYWNrYWdlIG5hbWUgKG5vdCB0aGUgZG90dGVkIHN1Ym1vZHVsZSkgdG8gYXZvaWQgaW1wb3J0aW5nIHRoZSBwYXJlbnQKICAgIHBhY2thZ2UncyBzaWRlIGVmZmVjdHMgZHVyaW5nIGRldGVjdGlvbi4KICAgICIiIgogICAgaWYgaW5zdGFsbGVkX2NoZWNrIGlzIE5vbmU6CiAgICAgICAgaW5zdGFsbGVkX2NoZWNrID0gX2lzX2luc3RhbGxlZAogICAgdHJpZWQgPSBzZXQoYWxyZWFkeV90cmllZCkKICAgIGZvciBtYXRjaCBpbiBfUEFUVEVSTi5maW5kaXRlcihzdGRlcnJfdGV4dCk6CiAgICAgICAgbW9kID0gbWF0Y2guZ3JvdXAoMSkuc3RyaXAoKQogICAgICAgIGlmIG5vdCBtb2Qgb3IgbW9kIGluIHRyaWVkOgogICAgICAgICAgICBjb250aW51ZQogICAgICAgIHRvcCA9IG1vZC5zcGxpdCgiLiIpWzBdCiAgICAgICAgaWYgdG9wIGluIFNLSVAgb3IgbW9kIGluIFNLSVAgb3IgdG9wLnN0YXJ0c3dpdGgoIl8iKToKICAgICAgICAgICAgY29udGludWUKICAgICAgICAjIEdhdGUgKDIpOiB0aGUgdG9wLWxldmVsIHBhY2thZ2UgbXVzdCBiZSBpbnN0YWxsZWQgaW4gdGhlIGJ1aWxkIGludGVycC4KICAgICAgICAjIFdlIGVtaXQgdGhlIEZVTEwgZG90dGVkIG5hbWUgYXMgdGhlIGhpZGRlbi1pbXBvcnQgdGFyZ2V0IGJ1dCBnYXRlIG9uCiAgICAgICAgIyB0aGUgdG9wLWxldmVsIHBhY2thZ2Ugc28gZGV0ZWN0aW9uIG5ldmVyIGltcG9ydHMgYSBoZWF2eSBzdWJtb2R1bGUuCiAgICAgICAgaWYgaW5zdGFsbGVkX2NoZWNrKHRvcCk6CiAgICAgICAgICAgIHJldHVybiBtb2QKICAgIHJldHVybiAiIgoKCmRlZiBtYWluKGFyZ3Y9Tm9uZSk6CiAgICBhcmdzID0gbGlzdChzeXMuYXJndlsxOl0gaWYgYXJndiBpcyBOb25lIGVsc2UgYXJndikKICAgIGlmIG5vdCBhcmdzOgogICAgICAgIHJldHVybgogICAgc3RkZXJyX2ZpbGUgPSBhcmdzWzBdCiAgICBhbHJlYWR5ID0gYXJnc1sxOl0KICAgIHRyeToKICAgICAgICB3aXRoIG9wZW4oc3RkZXJyX2ZpbGUsICJyIiwgZW5jb2Rpbmc9InV0Zi04IiwgZXJyb3JzPSJpZ25vcmUiKSBhcyBmaDoKICAgICAgICAgICAgdGV4dCA9IGZoLnJlYWQoKQogICAgZXhjZXB0IE9TRXJyb3I6CiAgICAgICAgcmV0dXJuCiAgICBzeXMuc3Rkb3V0LndyaXRlKG5leHRfaGlkZGVuX2ltcG9ydCh0ZXh0LCBhbHJlYWR5KSkKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgbWFpbigpCg=="
 exit /b 0
 :log
 set "MSG=%~1"
@@ -2770,6 +2861,11 @@ echo    "%HP_PY%" "%HP_ENTRY%"
 echo.
 echo  RUNNING YOUR APP
 echo    Double-click dist\%ENVNAME%.exe to run it.
+echo.
+echo    STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
+echo    starts, so allow 10-15 seconds (longer for big libraries like
+echo    numpy/scipy/matplotlib, or when extra packages were bundled to fix
+echo    missing imports) before assuming it has hung.
 echo.
 echo    If the window flashes and closes instantly: that's normal if
 echo    your program finished quickly or hit an error before printing

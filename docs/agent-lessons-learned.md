@@ -250,6 +250,80 @@ modern documentation into requirements.txt now get openpyxl and xlsxwriter injec
 
 ---
 
+## Pre-build `--collect-submodules` must be DOUBLE-gated (used AND installed), never installed-only
+
+`HP_COLLECT_SUBMODULES` (`~collect_submodules.py`) emits `--collect-submodules=PKG` flags for a
+curated set (sklearn, matplotlib, scipy, plotly) whose submodules load via dynamic dispatch that
+PyInstaller's static analysis cannot trace -- the warn file stays silent, so warnfix never repairs
+them and the frozen EXE fails at runtime on the un-bundled submodule.
+
+**The gate is deliberately on USED-by-source AND INSTALLED, not on installed alone.** Gating on
+"installed" (a bare `find_spec`) would make every EXE bundle hundreds of MB of an unused library
+merely because it sits in a fat global/conda env -- a `print("hello")` script would ship all of
+scikit-learn. Gating on "used" alone could emit a flag for a package that is imported but absent,
+which makes PyInstaller error out. **Do NOT "simplify" this to a single gate.** The double-gate is
+the whole point; `tests/test_collect_submodules.py::GatingMatrix` locks both halves.
+
+Two more details a future agent must preserve:
+- The curated set uses IMPORT names (`sklearn`, not `scikit-learn`) because `--collect-submodules`
+  takes the importable module name AND because matching the import name against project source
+  avoids the package-vs-import naming mismatch. Keep the set conservative -- heavy stacks
+  (torch/tensorflow/transformers) are excluded on purpose (gigabyte EXEs).
+- `HP_PYI_COLLECT` is computed in the `:compute_collect_flags` SUBROUTINE and set BEFORE the
+  `if "%HP_ENV_MODE%"=="system" (...) else (...)` build block, exactly like `HP_PYI_EXPAT`. If you
+  move the computation inside that parenthesized block, `%HP_PYI_COLLECT%` in the build command will
+  parse-time-expand to its OLD (empty) value (the classic drag-and-drop trap). The walk reuses the
+  `~detect_visa.py` pattern (skip `~`/`.`-prefixed dirs) and AST-parses with a per-file regex
+  fallback so a single un-parseable user file does not blind the scan.
+
+---
+
+## --hidden-import auto-recovery must stay STRICT (ModuleNotFoundError + installed), never broaden to ImportError
+
+`:hidden_import_recover` (REQ-016 Slice 2) re-runs a failed frozen EXE, and via
+`~hidden_import_scan.py` (`HP_HIDDEN_IMPORT_SCAN`) decides the next `--hidden-import` target.
+It is deliberately gated on TWO conditions and it is a mistake to relax either:
+
+1. **`ModuleNotFoundError: No module named 'X'` only -- NOT a bare `ImportError`.**
+   For `ModuleNotFoundError`, X *is* the exact `--hidden-import` target (its code is simply not
+   in the bundle). For `ImportError: cannot import name 'Y' from 'Z'`, Z is **already bundled**
+   and Y is an *attribute*, not a module -- so **no `--hidden-import` target is derivable** and a
+   rebuild cannot fix it. Broadening to ImportError would burn the 3 rebuild cycles and hand back
+   the same error. The genuine packaging case behind some ImportErrors (a dynamic
+   `except ImportError: from ._fallback import ...` where the fallback was not collected) is
+   `--collect-submodules`/`--collect-all` territory (Slice 1 / a future Slice 3), **not** the
+   hidden-import token extractor.
+2. **X must be installed in the build interpreter (`find_spec`).** This is what makes a user typo
+   `import nonexistant` cost **ZERO rebuilds** -- the typo'd module is not installed, so the helper
+   emits nothing and the failure routes straight to the post-flight hints. It also excludes a
+   genuinely-missing dependency (warnfix's job, not this loop's).
+
+No-loop guarantee: the helper takes an already-tried list and the batch caps at 3 iterations, so
+a pathological "different missing module every rebuild" app stops at 3 and a "same module repeats"
+app stops after 1. The loop only re-runs the EXE when the *initial* smoke returned a real fast
+non-zero exit (not `-1`); a `-1` is a timeout/hang, and re-running a hung EXE in the loop would
+hang too, so recovery is skipped for it.
+
+Two batch hazards a future agent must preserve:
+- `:hidden_import_recover` is **goto-based, not a parenthesized block**, so each `%HP_HIDDEN_ITER%`
+  / `%HP_PYI_HIDDEN_IMPORTS%` reads its runtime value. `set /a HP_HIDDEN_ITER+=1` then
+  `if %HP_HIDDEN_ITER% GEQ 3 ...` only works because they are separate lines re-parsed per goto.
+- Recovery rebuilds recreate `<ENVNAME>.spec` and `build\<ENVNAME>\` **after** the main-build
+  cleanup already ran, so the subroutine cleans them up itself and re-snapshots spec pre-existence
+  (`HP_HID_SPEC_PRE`) at entry to avoid clobbering a user's committed `.spec`.
+
+**Test interaction (caught in CI run 28307675855):** any XFAIL test that builds an EXE which fails
+on a `ModuleNotFoundError` for an **installed** module is now **auto-recovered** by this loop and
+will XPASS. `selfapps_exedyn_fail.ps1` originally dynamically imported colorama (installed) expecting
+permanent failure; it was repurposed to import a **non-installed** module so recovery's find_spec
+gate correctly declines and the graceful-failure path is still covered (the recover-success case is
+covered positively by `selfapps_hidden_import.ps1`). `selfapps_exefail.ps1` (static `import
+nonexistent_module`, not installed) and `selfapps_exedata_fail.ps1` (FileNotFoundError, not a MNFE)
+are unaffected -- recovery declines for both. When adding a new EXE-failure xfail test, use a
+not-installed module or a non-MNFE failure so recovery cannot heal it.
+
+---
+
 ## CMD.EXE 8191-Character Line Limit for HP_* Payloads
 
 **Critical: every `set "HP_VARNAME=..."` line in run_setup.bat must stay under 8191 total characters.**
@@ -267,11 +341,14 @@ The crash is silent and hard to diagnose: `bootstrap.log` will contain only 1-3 
 | Payload var | Prefix chars | Max b64 chars | Current b64 | Safety margin |
 |-------------|-------------|---------------|-------------|---------------|
 | HP_PREP_REQUIREMENTS | 26 | 8165 | 7972 | 192 |
+| HP_COLLECT_SUBMODULES | 27 | 8163 | 7704 | 459 |
+| HP_HIDDEN_IMPORT_SCAN | 27 | 8163 | 5216 | 2947 |
 | HP_DEP_CHECK | 18 | 8173 | 3244 | 4928 |
 | HP_ENV_STATE | 18 | 8173 | 3280 | 4892 |
 | HP_PYPROJ_DEPS | 20 | 8171 | 2868 | 5302 |
 
-**HP_PREP_REQUIREMENTS is the tightest** because it encodes the largest helper.
+**HP_PREP_REQUIREMENTS is the tightest** because it encodes the largest helper
+(HP_COLLECT_SUBMODULES is the second-tightest at 459).
 The 192-char safety margin is narrow. Before expanding the payload, verify b64 length:
 ```python
 import base64
