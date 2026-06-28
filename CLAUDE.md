@@ -517,12 +517,6 @@ Items deferred to future loops:
   very likely outside bootstrapper control; confirm such a case routes to warnfix gracefully
   rather than being reported as a bootstrapper failure. Document the conclusion.
 
-- **Iterate-gate pre-flight snapshot contradiction**: the pre-flight snapshot is described as
-  "expected has_failures:true while NDJSONs are missing" but the emitted JSON shows
-  `{"has_failures":false,...}`. Reconcile the message vs. the emitted verdict (the intent is
-  that missing `tests/~test-results.ndjson` / `ci_test_results.ndjson` are treated as
-  failures so empty streams never pass).
-
 - **Persisted run-page warnings**: review the last several CI runs for warnings that recur
   across runs (Actions "Annotations"/warnings), and triage each as fix-or-accept.
 
@@ -551,6 +545,15 @@ Items deferred to future loops:
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Iterate-gate pre-flight snapshot contradiction**: `tools/iterate_gate.ps1` emitted
+  `has_failures:false` even when NDJSONs were missing, contradicting the intent that missing
+  `tests/~test-results.ndjson` / `ci_test_results.ndjson` are treated as failures so empty
+  streams never pass. Fixed by setting `$hasFailingTests = $true` after the NDJSON probing
+  loop when `$missing.Count -gt 0`. Also updated the "Append iterate gate to Summary" CI step
+  header in `batch-check.yml` to remove the confusing "expected has_failures:true while NDJSONs
+  are missing" phrase (which appeared alongside `has_failures:false` in green runs where NDJSONs
+  ARE present, creating a misleading appearance). CLOSED by this PR.
 
 - **Progress messaging for >5s steps**: Added `[INFO]` progress messages before the two
   longest silent steps (conda env create at `:try_conda_create`, PyInstaller install+build in

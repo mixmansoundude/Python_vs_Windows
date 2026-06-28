@@ -275,6 +275,11 @@ foreach ($name in $requiredFiles) {
     }
 }
 
+# derived requirement: missing NDJSONs are treated as failures so empty streams never pass.
+if ($missing.Count -gt 0) {
+    $hasFailingTests = $true
+}
+
 if (-not $skipIterate -and $limitReached) {
     # derived requirement: CI currently allows one autopatch per workflow run; avoid
     # subsequent model calls until the limit is raised.
