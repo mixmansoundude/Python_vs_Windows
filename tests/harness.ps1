@@ -382,6 +382,16 @@ $collectEmit    = $AllText -match 'emit_from_base64 "~collect_submodules.py" HP_
 $collectInject  = ([regex]::Matches($AllText, [regex]::Escape('--log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name'))).Count -eq 2
 $hasCollectPrecheck = $collectCall -and $collectLabel -and $collectPayload -and $collectEmit -and $collectInject
 Write-Result 'batch.pyi.collect.precheck' 'REQ-005: pre-build --collect-submodules double-gate wired (subroutine called + payload + emitted + injected into both PyInstaller calls)' $hasCollectPrecheck @{ call = $collectCall; label = $collectLabel; payload = $collectPayload; emit = $collectEmit; injectedBoth = $collectInject }
+# derived requirement: Slice 2 strict --hidden-import auto-recovery (REQ-016) must stay wired.
+# Static guard against silent deletion; runtime proof is self.exe.hidden_import (selfapps_hidden_import.ps1).
+$hiCall    = $AllText -match 'call :hidden_import_recover'
+$hiLabel   = ([regex]::Matches($AllText, ':hidden_import_recover')).Count -ge 2
+$hiPayload = $AllText -match 'set "HP_HIDDEN_IMPORT_SCAN='
+$hiEmit    = $AllText -match 'emit_from_base64 "~hidden_import_scan.py" HP_HIDDEN_IMPORT_SCAN'
+$hiCap     = $AllText -match [regex]::Escape('if %HP_HIDDEN_ITER% GEQ 3')
+$hiRepair  = $AllText -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=')
+$hasHiddenRecover = $hiCall -and $hiLabel -and $hiPayload -and $hiEmit -and $hiCap -and $hiRepair
+Write-Result 'batch.pyi.hidden_import.recover' 'REQ-016: strict --hidden-import auto-recovery wired (recover subroutine called + payload + emit + 3-iter cap + repair log)' $hasHiddenRecover @{ call=$hiCall; label=$hiLabel; payload=$hiPayload; emit=$hiEmit; cap=$hiCap; repair=$hiRepair }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

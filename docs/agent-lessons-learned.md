@@ -278,6 +278,42 @@ Two more details a future agent must preserve:
 
 ---
 
+## --hidden-import auto-recovery must stay STRICT (ModuleNotFoundError + installed), never broaden to ImportError
+
+`:hidden_import_recover` (REQ-016 Slice 2) re-runs a failed frozen EXE, and via
+`~hidden_import_scan.py` (`HP_HIDDEN_IMPORT_SCAN`) decides the next `--hidden-import` target.
+It is deliberately gated on TWO conditions and it is a mistake to relax either:
+
+1. **`ModuleNotFoundError: No module named 'X'` only -- NOT a bare `ImportError`.**
+   For `ModuleNotFoundError`, X *is* the exact `--hidden-import` target (its code is simply not
+   in the bundle). For `ImportError: cannot import name 'Y' from 'Z'`, Z is **already bundled**
+   and Y is an *attribute*, not a module -- so **no `--hidden-import` target is derivable** and a
+   rebuild cannot fix it. Broadening to ImportError would burn the 3 rebuild cycles and hand back
+   the same error. The genuine packaging case behind some ImportErrors (a dynamic
+   `except ImportError: from ._fallback import ...` where the fallback was not collected) is
+   `--collect-submodules`/`--collect-all` territory (Slice 1 / a future Slice 3), **not** the
+   hidden-import token extractor.
+2. **X must be installed in the build interpreter (`find_spec`).** This is what makes a user typo
+   `import nonexistant` cost **ZERO rebuilds** -- the typo'd module is not installed, so the helper
+   emits nothing and the failure routes straight to the post-flight hints. It also excludes a
+   genuinely-missing dependency (warnfix's job, not this loop's).
+
+No-loop guarantee: the helper takes an already-tried list and the batch caps at 3 iterations, so
+a pathological "different missing module every rebuild" app stops at 3 and a "same module repeats"
+app stops after 1. The loop only re-runs the EXE when the *initial* smoke returned a real fast
+non-zero exit (not `-1`); a `-1` is a timeout/hang, and re-running a hung EXE in the loop would
+hang too, so recovery is skipped for it.
+
+Two batch hazards a future agent must preserve:
+- `:hidden_import_recover` is **goto-based, not a parenthesized block**, so each `%HP_HIDDEN_ITER%`
+  / `%HP_PYI_HIDDEN_IMPORTS%` reads its runtime value. `set /a HP_HIDDEN_ITER+=1` then
+  `if %HP_HIDDEN_ITER% GEQ 3 ...` only works because they are separate lines re-parsed per goto.
+- Recovery rebuilds recreate `<ENVNAME>.spec` and `build\<ENVNAME>\` **after** the main-build
+  cleanup already ran, so the subroutine cleans them up itself and re-snapshots spec pre-existence
+  (`HP_HID_SPEC_PRE`) at entry to avoid clobbering a user's committed `.spec`.
+
+---
+
 ## CMD.EXE 8191-Character Line Limit for HP_* Payloads
 
 **Critical: every `set "HP_VARNAME=..."` line in run_setup.bat must stay under 8191 total characters.**
@@ -296,6 +332,7 @@ The crash is silent and hard to diagnose: `bootstrap.log` will contain only 1-3 
 |-------------|-------------|---------------|-------------|---------------|
 | HP_PREP_REQUIREMENTS | 26 | 8165 | 7972 | 192 |
 | HP_COLLECT_SUBMODULES | 27 | 8163 | 7704 | 459 |
+| HP_HIDDEN_IMPORT_SCAN | 27 | 8163 | 5216 | 2947 |
 | HP_DEP_CHECK | 18 | 8173 | 3244 | 4928 |
 | HP_ENV_STATE | 18 | 8173 | 3280 | 4892 |
 | HP_PYPROJ_DEPS | 20 | 8171 | 2868 | 5302 |

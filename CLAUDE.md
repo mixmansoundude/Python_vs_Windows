@@ -167,6 +167,13 @@ This is the deliverable. Treat changes carefully.
      project source AND importable in the build interpreter, so a fat global env never
      bloats a lean app's EXE. Canonical source `tools/collect_submodules.py`; PayloadSync
      in `tests/test_collect_submodules.py` asserts byte-equality of the embedded base64.
+   - `HP_HIDDEN_IMPORT_SCAN` -- decodes to `~hidden_import_scan.py`; for the Slice 2
+     `--hidden-import` auto-recovery loop (`:hidden_import_recover` in run_setup.bat). Reads a
+     frozen EXE's stderr and emits the next hidden-import target ONLY when stderr shows
+     `ModuleNotFoundError: No module named 'X'` AND X is installed in the build interpreter --
+     so a user typo or `ImportError: cannot import name` causes ZERO rebuilds. Bounded to 3
+     rebuilds (helper tried-list + iter cap). Canonical source `tools/hidden_import_scan.py`;
+     PayloadSync in `tests/test_hidden_import_scan.py`.
 
 2. **Delimiter-check after every edit**:
    ```bash
