@@ -312,6 +312,16 @@ Two batch hazards a future agent must preserve:
   cleanup already ran, so the subroutine cleans them up itself and re-snapshots spec pre-existence
   (`HP_HID_SPEC_PRE`) at entry to avoid clobbering a user's committed `.spec`.
 
+**Test interaction (caught in CI run 28307675855):** any XFAIL test that builds an EXE which fails
+on a `ModuleNotFoundError` for an **installed** module is now **auto-recovered** by this loop and
+will XPASS. `selfapps_exedyn_fail.ps1` originally dynamically imported colorama (installed) expecting
+permanent failure; it was repurposed to import a **non-installed** module so recovery's find_spec
+gate correctly declines and the graceful-failure path is still covered (the recover-success case is
+covered positively by `selfapps_hidden_import.ps1`). `selfapps_exefail.ps1` (static `import
+nonexistent_module`, not installed) and `selfapps_exedata_fail.ps1` (FileNotFoundError, not a MNFE)
+are unaffected -- recovery declines for both. When adding a new EXE-failure xfail test, use a
+not-installed module or a non-MNFE failure so recovery cannot heal it.
+
 ---
 
 ## CMD.EXE 8191-Character Line Limit for HP_* Payloads
