@@ -2347,10 +2347,15 @@ rem preserve a user pre-existing spec across recovery rebuilds (the main-build s
 rem flag was already consumed before run_exe_smokerun ran).
 set "HP_HID_SPEC_PRE="
 if exist "%ENVNAME%.spec" set "HP_HID_SPEC_PRE=1"
+call :warn_user_code_launch
 :hidden_import_loop
+rem run the EXE with a 30s cap and capture combined output for the scan. A cap is
+rem essential here: once recovery fixes a missing import the app may proceed into a
+rem long-running phase (server/GUI), and an uncapped run would hang the bootstrapper.
+set "HP_EXE_EXIT="
 pushd dist
-"%ENVNAME%.exe" > "~exe_out.txt" 2>&1
-set "HP_EXE_EXIT=%ERRORLEVEL%"
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%ENVNAME%.exe';$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};($so.Result+$se.Result)|Set-Content -Path '~exe_out.txt' -Encoding ASCII;if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
+if not defined HP_EXE_EXIT set "HP_EXE_EXIT=-1"
 popd
 if "%HP_EXE_EXIT%"=="0" goto :hidden_import_recover_done
 if %HP_HIDDEN_ITER% GEQ 3 goto :hidden_import_recover_done
@@ -2385,6 +2390,13 @@ set "HP_NEXT_HIDDEN="
 set "HP_HID_SPEC_PRE="
 set "HP_PYI_HIDDEN_IMPORTS="
 exit /b 0
+:warn_user_code_launch
+rem REQ-016: tightly-scoped heads-up before a launch that is force-stopped at ~30s, so the
+rem user does not mistake a verification run for finished setup and start real work in it
+rem (which would be lost when the run is killed). Called only where a 30s kill actually
+rem happens -- the EXE smoke and hidden-import recovery -- not at the untimed entry smoke.
+call :log "[WARN] Verifying the built program now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost."
+exit /b 0
 :run_exe_smokerun
 if not exist "dist\%ENVNAME%.exe" (
   call :log "[WARN] EXE smokerun: dist\%ENVNAME%.exe not found; skipping"
@@ -2399,6 +2411,7 @@ if defined HP_SKIP_EXE_SMOKERUN (
   exit /b 0
 )
 call :log "[INFO] EXE smokerun: testing dist\%ENVNAME%.exe"
+call :warn_user_code_launch
 set "HP_EXE_EXIT=-1"
 pushd dist
 for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%ENVNAME%.exe';$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
@@ -2414,7 +2427,9 @@ if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok
 rem REQ-016: record that the packaged EXE could not be verified so the post-flight
 rem briefing can guide the user to run the app directly instead of claiming success.
 set "HP_EXE_VERIFY_FAILED=1"
-call :exe_smokerun_hints
+rem a -1 is a timeout/hang: no parseable error to hint on, and re-running the EXE in
+rem :exe_smokerun_hints would hang too -- skip straight to the post-flight caveat.
+if not "%HP_EXE_EXIT%"=="-1" call :exe_smokerun_hints
 goto :smokerun_ndjson
 :smokerun_ok
 call :log "[INFO] EXE smokerun: exited 0 (ok)"

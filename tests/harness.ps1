@@ -392,6 +392,12 @@ $hiCap     = $AllText -match [regex]::Escape('if %HP_HIDDEN_ITER% GEQ 3')
 $hiRepair  = $AllText -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=')
 $hasHiddenRecover = $hiCall -and $hiLabel -and $hiPayload -and $hiEmit -and $hiCap -and $hiRepair
 Write-Result 'batch.pyi.hidden_import.recover' 'REQ-016: strict --hidden-import auto-recovery wired (recover subroutine called + payload + emit + 3-iter cap + repair log)' $hasHiddenRecover @{ call=$hiCall; label=$hiLabel; payload=$hiPayload; emit=$hiEmit; cap=$hiCap; repair=$hiRepair }
+# derived requirement: tightly-scoped 30s-kill warning must precede launches that force-stop
+# user code (EXE smoke + hidden-import recovery), so users do not lose work in a verification run.
+$warnSubCount = ([regex]::Matches($AllText, ':warn_user_code_launch')).Count
+$warnMsg = $AllText -match [regex]::Escape('force-stopped after about 30')
+$hasKillWarn = ($warnSubCount -ge 3) -and $warnMsg
+Write-Result 'batch.smoke.kill_warn' 'REQ-016: scoped force-stop-at-30s warning before EXE smoke + recovery (subroutine defined + called at both kill sites)' $hasKillWarn @{ subCount = $warnSubCount; msg = $warnMsg }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
