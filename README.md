@@ -335,6 +335,8 @@ At completion:
   - Fast path: a reused EXE that exits non-zero is **discarded** (the cached EXE may be stale or carry an unbundled runtime dependency, e.g. a DLL or data file the freshness check cannot see) and a full rebuild runs instead of aborting.
   - Log contract: `[WARN] Fast path EXE exited <N>; discarding cached EXE and rebuilding.`
   - Covered by `self.exe.fastpath.graceful` (real/conda-full lanes): builds an EXE that fails at runtime (a `importlib.resources` package data file not bundled by PyInstaller), then re-runs the bootstrapper so the fast path reuses the broken EXE, asserting the second run discards it, rebuilds, and still exits 0.
+- **Application-complete packaging**: the produced EXE must include the dependencies the application actually uses -- including ones loaded in ways a static packager cannot see (plugin/backend systems, runtime-resolved submodules, dynamic imports). Conversely it must not bundle libraries the application does not use: a trivial app must not inherit the bulk of whatever happens to be installed in the environment.
+- **Self-healing of packaging misses**: when a freshly built EXE fails at runtime *solely* because an already-installed dependency was left out of the bundle, the bootstrapper attempts to repair the packaging and rebuild automatically, bounded so the attempt always terminates. It must not attempt repair for a failure it cannot mechanically fix -- a dependency the user never installed, or a fault in the user's own code -- which instead completes gracefully per the graceful-EXE-failure rule above. When self-healing does not apply it costs nothing (no extra rebuild).
 
 ---
 
@@ -386,6 +388,7 @@ At completion:
 
 - After a successful full EXE build, the bootstrapper prints a scannable summary panel identifying the output EXE, files to keep, and files safe to delete.
 - The panel always includes a **RUNNING YOUR APP** section covering the two most common beginner confusions with frozen Windows executables: (1) the console window flashing closed before output is visible (run from an already-open Command Prompt to keep it open), and (2) in-place progress output appearing all at once due to stdout buffering differences between the EXE and the script.
+- The panel sets realistic startup expectations: a one-file EXE can take noticeably longer to start than running the script (it self-extracts on each launch, more so when large or extra-bundled libraries are present), so a slow first appearance is not mistaken for a hang.
 - When the packaged EXE could not be verified (its smoke run exited non-zero), the panel instead shows a **caveat**: the environment and dependencies are installed correctly, and the exact command to run the app directly via the prepared interpreter (`"<env python>" "<entry>"`). The bootstrap still completes (the environment is usable).
 - The terminal window is **retained** on both success and error so the user can read the output before it closes.
 - Log contract:
