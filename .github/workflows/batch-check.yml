@@ -586,6 +586,12 @@ jobs:
         run: |
           & tests\selfapps_ux_hardening.ps1
 
+      - name: "Self-test: REQ-007 system-Python build consent gate (non-conda-full)"
+        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_sysbuild.ps1
+
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v6

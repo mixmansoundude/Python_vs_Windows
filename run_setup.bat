@@ -2154,8 +2154,14 @@ rem repairs them). Double-gated inside the helper (used-by-source AND installed)
 rem a fat global env never bloats a lean app EXE. Computed in a subroutine so
 rem %HP_PYI_COLLECT% resolves at parse time inside the build block below.
 call :compute_collect_flags
-if "%HP_ENV_MODE%"=="system" (
-  call :log "[INFO] System fallback: skipping PyInstaller packaging."
+rem REQ-007: provider-independent build. The EXE build is attempted under every provider. System
+rem Python (Tier 4) is the one exception: building installs PyInstaller into the user's system
+rem interpreter, so it is gated on explicit consent (CI auto-declines); all other providers build.
+set "HP_BUILD_OK=1"
+if /i "%HP_ENV_MODE%"=="system" call :system_build_consent_gate
+if /i "%HP_ENV_MODE%"=="system" if errorlevel 1 set "HP_BUILD_OK="
+if not defined HP_BUILD_OK (
+  call :log "[INFO] REQ-007: system-Python EXE build not consented; skipping PyInstaller packaging. The environment and dependencies are installed; run the app directly via the prepared Python."
 ) else (
   if defined HP_FASTPATH_USED (
     call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
@@ -2298,6 +2304,33 @@ for /f "usebackq delims=" %%F in ("~collect_flags.txt") do set "HP_PYI_COLLECT=%
 if exist "~collect_flags.txt" del "~collect_flags.txt" >nul 2>&1
 if defined HP_PYI_COLLECT call :log "[INFO] Pre-build collect-submodules:%HP_PYI_COLLECT%"
 exit /b 0
+:system_build_consent_gate
+rem REQ-007: consent before installing PyInstaller into the user's system Python to build an EXE.
+rem CI-safe (mirrors :cascade_consent_gate): HP_TEST_SYSBUILD_ANSWER (Y/N) overrides; else
+rem HP_CI_LANE auto-declines with no set /p (no CI hang); else interactive prompt. The prompt
+rem string is echoed unconditionally so prompt assertions see it even on auto-decline.
+rem exit 0 = consent (build), exit 1 = decline (skip the build).
+echo.
+echo *** The standalone EXE build installs PyInstaller into your system Python. ***
+echo *** This is the same PyInstaller build used for every provider -- not a special path -- and ***
+echo *** its footprint is small and self-contained (it does not pin common libraries), so it is ***
+echo *** unlikely to conflict with your existing packages. ***
+echo.
+set "HP_SYSBUILD_RAW="
+if defined HP_TEST_SYSBUILD_ANSWER (
+  set "HP_SYSBUILD_RAW=%HP_TEST_SYSBUILD_ANSWER%"
+) else if defined HP_CI_LANE (
+  set "HP_SYSBUILD_RAW=n"
+) else (
+  set /p "HP_SYSBUILD_RAW=  Build the standalone EXE now? [Y/N] "
+)
+set "HP_SYSBUILD_CHOICE=%HP_SYSBUILD_RAW:~0,1%"
+if /I "%HP_SYSBUILD_CHOICE%"=="Y" (
+  call :log "[INFO] REQ-007: system-Python EXE build consent: accepted."
+  exit /b 0
+)
+call :log "[INFO] REQ-007: system-Python EXE build consent: declined."
+exit /b 1
 :try_entry_smoke_after_warnfix
 rem derived requirement: after warnfix installs missing modules into the conda env,
 rem re-run the entry script via Python interpreter so "Entry smoke exit=0" is logged.

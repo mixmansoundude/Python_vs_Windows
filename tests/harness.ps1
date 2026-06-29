@@ -407,6 +407,17 @@ $pfMsg     = $AllText -match [regex]::Escape('[ERROR] REQ-021:')
 $pfGuard   = $AllText -match [regex]::Escape('if defined HP_PREFLIGHT_FAILED')
 $hasPreflight = $pfSub -and $pfCall -and $pfCompile -and $pfMsg -and $pfGuard
 Write-Result 'batch.preflight.compile' 'REQ-021: static py_compile pre-flight wired (subroutine + call site + py_compile + REQ-021 message + graceful error-state guard)' $hasPreflight @{ sub=$pfSub; call=$pfCall; compile=$pfCompile; msg=$pfMsg; guard=$pfGuard }
+# derived requirement: REQ-007 provider-independent build must stay wired -- the EXE build is no
+# longer gated out for system mode; system Python builds only behind :system_build_consent_gate.
+# Guard against silent reversion to the old "system -> skip build" behavior.
+$pbGate    = $AllText -match 'call :system_build_consent_gate'
+$pbLabel   = $AllText -match '(?m)^:system_build_consent_gate'
+$pbFlag    = $AllText -match [regex]::Escape('set "HP_BUILD_OK=1"')
+$pbAnswer  = $AllText -match 'HP_TEST_SYSBUILD_ANSWER'
+$pbDecline = $AllText -match [regex]::Escape('system-Python EXE build not consented; skipping PyInstaller packaging')
+$pbNoSkip  = -not ($AllText -match [regex]::Escape('System fallback: skipping PyInstaller packaging'))
+$hasProviderBuild = $pbGate -and $pbLabel -and $pbFlag -and $pbAnswer -and $pbDecline -and $pbNoSkip
+Write-Result 'batch.req007.provider_build' 'REQ-007: provider-independent build wired (system build consent gate + HP_BUILD_OK + CI-safe answer flag); old unconditional system skip removed' $hasProviderBuild @{ gate=$pbGate; label=$pbLabel; flag=$pbFlag; answer=$pbAnswer; decline=$pbDecline; oldSkipRemoved=$pbNoSkip }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
