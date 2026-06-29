@@ -158,6 +158,7 @@ batch.pyi.collect.precheck,
 batch.pyi.hidden_import.recover,
 batch.smoke.kill_warn,
 batch.preflight.compile,
+batch.req007.provider_build,
 self.bootstrap.state, self.empty_repo.msg, self.empty_repo.no_spurious_warn,
 self.harness.started,
 self.stub.fastpath, self.stub.rebuild, self.stub.state_skip,
@@ -184,6 +185,7 @@ self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
+self.sysbuild.decline,
 self.venv.fallback, self.entry.override
 ```
 
