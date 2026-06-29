@@ -34,6 +34,7 @@ This repository serves as a proof of concept of this new approach.
 - **Avoid Conflicts:** To ensure environment integrity, do not mix independent programs in the same folder. Each program should have its own dedicated folder and its own copy of `run_setup.bat`.
 - **First run on Windows:** Windows may show "Windows protected your PC" -- click **More info** -> **Run anyway**. If "Run anyway" is absent: right-click the batch -> **Properties** -> check **Unblock** -> **OK** -> run again.
 - **Setup:** Put your `.py` files and `run_setup.bat` in that folder, then double-click the `.bat`.
+- **Running your app:** The first double-click sets up the environment, builds the app, verifies it, and offers to run it. Double-clicking `run_setup.bat` again later runs the ready app directly and quickly -- no console interaction needed -- rebuilding only if your code changed.
 - **Environment Locking:** On the first run, `run_setup.bat` creates or respects a `runtime.txt` to "pin" the Python version. It applies similar logic for dependencies found in `requirements.txt`, `pyproject.toml`, or PEP 723 headers.
 
 ---
@@ -337,6 +338,26 @@ At completion:
   - Covered by `self.exe.fastpath.graceful` (real/conda-full lanes): builds an EXE that fails at runtime (a `importlib.resources` package data file not bundled by PyInstaller), then re-runs the bootstrapper so the fast path reuses the broken EXE, asserting the second run discards it, rebuilds, and still exits 0.
 - **Application-complete packaging**: the produced EXE must include the dependencies the application actually uses -- including ones loaded in ways a static packager cannot see (plugin/backend systems, runtime-resolved submodules, dynamic imports). Conversely it must not bundle libraries the application does not use: a trivial app must not inherit the bulk of whatever happens to be installed in the environment.
 - **Self-healing of packaging misses**: when a freshly built EXE fails at runtime *solely* because an already-installed dependency was left out of the bundle, the bootstrapper attempts to repair the packaging and rebuild automatically, bounded so the attempt always terminates. It must not attempt repair for a failure it cannot mechanically fix -- a dependency the user never installed, or a fault in the user's own code -- which instead completes gracefully per the graceful-EXE-failure rule above. When self-healing does not apply it costs nothing (no extra rebuild).
+- **Provider-independent build.** The EXE build is attempted regardless of which REQ-009 provider created the environment (uv, conda, or venv) -- it is the same normal build step in every case, not a special path. The single exception is the system-Python degraded mode (REQ-009 Tier 4): because building would install PyInstaller into the user's existing system Python, the build there is offered behind a separate explicit consent and, if declined or non-interactive, skipped with a logged reason -- never silently.
+- **Explicit packaging vocabulary.** Every user-facing message about the build, verification, or failure of the standalone executable names the concrete artifact and tool in plain words -- "EXE", "PyInstaller", "standalone .exe" -- never vague phrasing like "packaging error" alone, so the user can always tell the message concerns the optional one-file executable, not their environment or dependencies (which are already installed and usable).
+
+---
+
+## [REQ-018] Controlled execution of user code
+
+Running the user's program IS the goal -- a beginner who cannot launch it themselves is exactly who this tool serves -- but each run must be treated as potentially destructive: a program is not guaranteed to be idempotent, and one run can overwrite files, send network requests or email, mutate a database, or actuate connected hardware (e.g. a VISA/serial instrument). The bootstrapper therefore runs the user's code purposefully and at most once per invocation, never repeatedly and never via two launch methods in the same run.
+
+- **Fast path is the user's run (frictionless).** When a current, already-verified EXE exists (sources unchanged since it was built), double-clicking the batch runs it directly and untimed, with no prompt and no console interaction -- the double-click is the user's intent to run, and this is the session's single run. A fast non-zero exit is still treated as a stale/broken EXE and triggers a rebuild (REQ-007); a program that keeps running is the user's app, left to run.
+- **Verifying a fresh build is time-boxed and announced.** When the bootstrapper builds or rebuilds the EXE, it runs it once to verify, force-stopped after a short interval even if running fine, and preceded by a clear warning that this is a throwaway check so the user does not start real work in it. This is the only run that is killed on a timer.
+- **After a build, the real run is offered, not forced.** Following a successful build and verification, the bootstrapper offers to launch the app untimed for real, so a beginner need not launch it manually. The offer is consent-gated and names the side-effect/idempotency risk; declining leaves the verified EXE plus the post-flight guidance.
+- **Consent before any extra run.** Beyond the single automatic run, any further execution -- re-running, or running via the other launch method -- requires explicit consent that names the risk that the program may not be safe to run twice.
+- **Non-interactive and CI** resolve every gate without hanging: no untimed run, and offers auto-decline.
+
+---
+
+## [REQ-021] Static pre-flight validation
+
+Before executing or packaging the selected entry, the bootstrapper statically validates that it is syntactically loadable (byte-compilation of the entry file). A pure code-level error in the user's own program (a SyntaxError) is reported early, in plain language, and attributed to the user's code -- distinct from a dependency-install failure or a PyInstaller packaging failure -- so a user typo does not surface as a confusing downstream error. It reports an existing, unavoidable failure (a syntax error makes the program unrunnable under both the interpreter and PyInstaller) clearly and first; it never aborts a run that would otherwise have succeeded, and it costs nothing when the code is valid.
 
 ---
 
