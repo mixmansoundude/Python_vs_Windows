@@ -2505,6 +2505,18 @@ goto :smokerun_ndjson
 call :log "[INFO] EXE smokerun: exited 0 (ok)"
 set "HP_EXE_VERIFY_FAILED="
 :smokerun_ndjson
+rem REQ-018 (2b-A): telemetry readout of the single verification run. HP_EXE_EXIT is the final
+rem EXE exit after any hidden-import recovery: 0 = clean, -1 = the 30s cap was hit (force-stopped,
+rem not necessarily broken), other = a real non-zero exit. This [STATUS] line is the data the
+rem 2b-C post-execution checkpoint will surface to the user. :log echoes unquoted, so keep the
+rem message free of < > | & (parentheses are literal to echo outside if/for blocks).
+if "%HP_EXE_EXIT%"=="0" (
+  call :log "[STATUS] Run Status: SUCCESS (Exit Code: 0)"
+) else if "%HP_EXE_EXIT%"=="-1" (
+  call :log "[STATUS] Run Status: TIMED OUT (hit the ~30s verification cap; force-stopped, not necessarily broken)"
+) else (
+  call :log "[STATUS] Run Status: FAILED (Exit Code: %HP_EXE_EXIT%)"
+)
 if defined HP_NDJSON (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$c=[int]'%HP_EXE_EXIT%';" ^
