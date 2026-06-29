@@ -418,6 +418,15 @@ $pbDecline = $AllText -match [regex]::Escape('system-Python EXE build not consen
 $pbNoSkip  = -not ($AllText -match [regex]::Escape('System fallback: skipping PyInstaller packaging'))
 $hasProviderBuild = $pbGate -and $pbLabel -and $pbFlag -and $pbAnswer -and $pbDecline -and $pbNoSkip
 Write-Result 'batch.req007.provider_build' 'REQ-007: provider-independent build wired (system build consent gate + HP_BUILD_OK + CI-safe answer flag); old unconditional system skip removed' $hasProviderBuild @{ gate=$pbGate; label=$pbLabel; flag=$pbFlag; answer=$pbAnswer; decline=$pbDecline; oldSkipRemoved=$pbNoSkip }
+# derived requirement: REQ-018 (2b-A) telemetry readout -- the single verification run emits a
+# [STATUS] Run Status line (SUCCESS / TIMED OUT / FAILED) that the 2b-C post-execution checkpoint
+# will surface. Guard the three branches against silent removal.
+$tmStatus  = $AllText -match [regex]::Escape('[STATUS] Run Status:')
+$tmSuccess = $AllText -match [regex]::Escape('Run Status: SUCCESS (Exit Code: 0)')
+$tmTimeout = $AllText -match [regex]::Escape('Run Status: TIMED OUT')
+$tmFailed  = $AllText -match [regex]::Escape('Run Status: FAILED (Exit Code:')
+$hasTelemetry = $tmStatus -and $tmSuccess -and $tmTimeout -and $tmFailed
+Write-Result 'batch.smoke.telemetry' 'REQ-018: single-verification telemetry readout wired ([STATUS] Run Status SUCCESS/TIMED OUT/FAILED branches present)' $hasTelemetry @{ status=$tmStatus; success=$tmSuccess; timeout=$tmTimeout; failed=$tmFailed }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
