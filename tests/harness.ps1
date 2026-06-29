@@ -398,6 +398,15 @@ $warnSubCount = ([regex]::Matches($AllText, ':warn_user_code_launch')).Count
 $warnMsg = $AllText -match [regex]::Escape('force-stopped after about 30')
 $hasKillWarn = ($warnSubCount -ge 3) -and $warnMsg
 Write-Result 'batch.smoke.kill_warn' 'REQ-016: scoped force-stop-at-30s warning before EXE smoke + recovery (subroutine defined + called at both kill sites)' $hasKillWarn @{ subCount = $warnSubCount; msg = $warnMsg }
+# derived requirement: REQ-021 static py_compile pre-flight must stay wired (guard against silent
+# deletion). Runtime proof is self.preflight.syntax (selfapps_preflight.ps1).
+$pfSub     = $AllText -match [regex]::Escape('REQ-021: static pre-flight -- byte-compile the entry')
+$pfCall    = $AllText -match 'call :preflight_compile'
+$pfCompile = $AllText -match [regex]::Escape('-m py_compile "%HP_ENTRY%"')
+$pfMsg     = $AllText -match [regex]::Escape('[ERROR] REQ-021:')
+$pfGuard   = $AllText -match [regex]::Escape('if defined HP_PREFLIGHT_FAILED')
+$hasPreflight = $pfSub -and $pfCall -and $pfCompile -and $pfMsg -and $pfGuard
+Write-Result 'batch.preflight.compile' 'REQ-021: static py_compile pre-flight wired (subroutine + call site + py_compile + REQ-021 message + graceful error-state guard)' $hasPreflight @{ sub=$pfSub; call=$pfCall; compile=$pfCompile; msg=$pfMsg; guard=$pfGuard }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

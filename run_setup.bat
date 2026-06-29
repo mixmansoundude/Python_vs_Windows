@@ -2092,6 +2092,14 @@ if not "%HP_SMOKE_RC%"=="0" (
 exit /b 0
 :run_entry_smoke
 call :record_chosen_entry "%HP_ENTRY%"
+rem REQ-021: static pre-flight syntax check of the entry (no user code executed). A SyntaxError
+rem makes the program unrunnable under the interpreter AND unbuildable by PyInstaller, so report it
+rem clearly and stop here instead of failing later inside the doomed PyInstaller build.
+call :preflight_compile
+if defined HP_PREFLIGHT_FAILED (
+  set "HP_BOOTSTRAP_STATE=error"
+  exit /b 0
+)
 set "HP_FASTPATH_USED="
 set "HP_SMOKE_RC="
 rem REQ-012: super-user hook -- skip the entry-script smoke test (and fast-path EXE
@@ -2241,6 +2249,35 @@ set "HP_FASTPATH_TOKEN="
 set "HP_PYI_EXPAT="
 set "HP_EXPAT_DLL="
 set "HP_PY_DIR="
+exit /b 0
+:preflight_compile
+rem REQ-021: static pre-flight -- byte-compile the entry to catch a SyntaxError in the user's own
+rem code early and clearly, before the doomed PyInstaller build. py_compile uses the same parser as
+rem the interpreter (zero false positives for the entry) and writes NO .pyc on failure. No setlocal:
+rem HP_PREFLIGHT_FAILED must persist to the caller. Capture %ERRORLEVEL% immediately (the del/set
+rem below would clobber it).
+set "HP_PREFLIGHT_FAILED="
+if not defined HP_ENTRY exit /b 0
+if not exist "%HP_ENTRY%" exit /b 0
+if exist "~preflight.err.txt" del "~preflight.err.txt" >nul 2>&1
+"%HP_PY%" -m py_compile "%HP_ENTRY%" 2> "~preflight.err.txt"
+set "HP_PREFLIGHT_RC=%ERRORLEVEL%"
+if "%HP_PREFLIGHT_RC%"=="0" (
+  if exist "~preflight.err.txt" del "~preflight.err.txt" >nul 2>&1
+  set "HP_PREFLIGHT_RC="
+  exit /b 0
+)
+echo.
+echo *** [ERROR] REQ-021: Your Python program has a syntax error and cannot run. ***
+echo *** File: "%HP_ENTRY%" ***
+call :log "[ERROR] REQ-021: entry failed py_compile (syntax error): %HP_ENTRY%"
+if exist "~preflight.err.txt" type "~preflight.err.txt"
+if exist "~preflight.err.txt" type "~preflight.err.txt" >> "%LOG%"
+echo.
+echo *** Fix the syntax error shown above, then run this batch again. ***
+if exist "~preflight.err.txt" del "~preflight.err.txt" >nul 2>&1
+set "HP_PREFLIGHT_RC="
+set "HP_PREFLIGHT_FAILED=1"
 exit /b 0
 :compute_collect_flags
 rem Emit --collect-submodules flags for curated packages (sklearn, matplotlib,

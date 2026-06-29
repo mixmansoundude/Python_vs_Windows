@@ -414,6 +414,12 @@ jobs:
         run: |
           & tests\selfapps_exefail.ps1
 
+      - name: "Self-test: REQ-021 py_compile pre-flight syntax error (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_preflight.ps1
+
       - name: "Self-test: EXE smokerun XFAIL missing data file (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh
