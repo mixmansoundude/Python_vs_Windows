@@ -372,10 +372,17 @@ strings and run artifacts:
     (`'Running entry script smoke test'`).
   - `[INFO] Entry smoke exit=%HP_EXE_EXIT%` at `:smokerun_ndjson` -> matches `$hasEntryExit`
     (`'Entry smoke exit=0'`) when the EXE verifies clean.
-  - `... | Set-Content -Path '..\~run.out.txt'` (and `~run.err.txt`) from inside `pushd dist` ->
-    writes the app's stdout to the app root so envsmoke `$tokenFound` (`'smoke-ok'` in
-    `~run.out.txt`) is satisfied by the EXE run instead of the deleted interpreter run.
-  **If you change any of these three strings/paths, envsmoke `$bootstrapPass` /
+  - The EXE smoke runs from the **app root** (NOT `pushd dist`) with `WorkingDirectory` = app root,
+    matching the interpreter smoke and the fast-path run. This is load-bearing: an app that writes a
+    file relative to CWD (e.g. `selfapps_envsmoke.ps1`'s spaced-path `~smoke_token.txt`) lands it in
+    the app root where the test reads it, not inside `dist\`. Running the EXE from `dist\` (the old
+    behavior, which only worked because the deleted pre-build interpreter smoke wrote the token from
+    the app root first) breaks `self.prime.spaced-path` / `self.entry.spaced-path`.
+  - `$so.Result | Set-Content -Path (Join-Path (Get-Location) '~run.out.txt')` (and `~run.err.txt`)
+    captures the EXE's stdout/stderr to the app root so envsmoke `$tokenFound` (`'smoke-ok'`) is
+    satisfied by the EXE run instead of the deleted interpreter run. Absolute paths via `Join-Path`
+    keep the leading `~` from being read as a PowerShell home-dir shortcut.
+  **If you change any of these strings/paths, envsmoke `$bootstrapPass` /
   `self.env.smoke.run` / `self.prime.run` / `self.prime.bootstrap` break.** `harness.ps1`
   `batch.smoke.single_verify` statically guards them.
 - **No-EXE path** (system-Python build declined, or build skipped) runs the interpreter ONCE via
