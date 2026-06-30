@@ -2495,13 +2495,17 @@ call :log "[INFO] EXE smokerun: testing dist\%ENVNAME%.exe"
 call :log "[INFO] Running entry script smoke test via packaged EXE."
 call :warn_user_code_launch
 set "HP_EXE_EXIT=-1"
-rem REQ-018 (2b-A.2): run the EXE from the APP ROOT (not dist) with WorkingDirectory = app root, so
-rem its working directory matches the interpreter smoke and the fast-path run. An app that writes a
-rem file relative to CWD (e.g. the spaced-path test's ~smoke_token.txt) then lands it where the user
-rem -- and the tests -- expect, instead of inside dist\. Capture stdout/stderr to the app-root
-rem ~run.out.txt / ~run.err.txt (absolute paths via Join-Path, so the leading ~ is never treated as
-rem a home-dir shortcut). ReadToEndAsync drains both pipes before WaitForExit (no deadlock).
-for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName=(Join-Path (Get-Location) 'dist\%ENVNAME%.exe');$si.WorkingDirectory=(Get-Location).Path;$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};$so.Result|Set-Content -Path (Join-Path (Get-Location) '~run.out.txt') -Encoding ASCII;$se.Result|Set-Content -Path (Join-Path (Get-Location) '~run.err.txt') -Encoding ASCII;if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
+pushd dist
+rem REQ-018 (2b-A.2): the EXE smoke runs from dist\ (CWD = dist) -- the working directory a frozen
+rem EXE has always used here, and some tests depend on it (the selfapps_exedata_fail app opens a
+rem CWD-relative config.json that MUST be absent at runtime, which only holds when CWD is dist\).
+rem Capture the EXE stdout/stderr to the APP ROOT (..\~run.out.txt / ..\~run.err.txt) so the single
+rem EXE verification produces the run artifacts the old interpreter smoke did -- the main 'smoke-ok'
+rem token is on stdout. Note: an app that writes a file next to sys.argv[0] (e.g. the spaced-path
+rem test's ~smoke_token.txt) writes it into dist\ for a frozen EXE, so selfapps_envsmoke.ps1 reads
+rem that token from dist\. ReadToEndAsync drains both pipes before WaitForExit (no deadlock).
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%ENVNAME%.exe';$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};$so.Result|Set-Content -Path '..\~run.out.txt' -Encoding ASCII;$se.Result|Set-Content -Path '..\~run.err.txt' -Encoding ASCII;if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
+popd
 if not defined HP_EXE_EXIT set "HP_EXE_EXIT=-1"
 if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok
 call :log "[WARN] EXE smokerun: exited %HP_EXE_EXIT% (non-zero)"

@@ -372,16 +372,20 @@ strings and run artifacts:
     (`'Running entry script smoke test'`).
   - `[INFO] Entry smoke exit=%HP_EXE_EXIT%` at `:smokerun_ndjson` -> matches `$hasEntryExit`
     (`'Entry smoke exit=0'`) when the EXE verifies clean.
-  - The EXE smoke runs from the **app root** (NOT `pushd dist`) with `WorkingDirectory` = app root,
-    matching the interpreter smoke and the fast-path run. This is load-bearing: an app that writes a
-    file relative to CWD (e.g. `selfapps_envsmoke.ps1`'s spaced-path `~smoke_token.txt`) lands it in
-    the app root where the test reads it, not inside `dist\`. Running the EXE from `dist\` (the old
-    behavior, which only worked because the deleted pre-build interpreter smoke wrote the token from
-    the app root first) breaks `self.prime.spaced-path` / `self.entry.spaced-path`.
-  - `$so.Result | Set-Content -Path (Join-Path (Get-Location) '~run.out.txt')` (and `~run.err.txt`)
-    captures the EXE's stdout/stderr to the app root so envsmoke `$tokenFound` (`'smoke-ok'`) is
-    satisfied by the EXE run instead of the deleted interpreter run. Absolute paths via `Join-Path`
-    keep the leading `~` from being read as a PowerShell home-dir shortcut.
+  - The EXE smoke runs from `pushd dist` (CWD = dist\) -- the working directory a frozen EXE has
+    always used here, and **load-bearing**: `selfapps_exedata_fail`'s app opens a CWD-relative
+    `config.json` that MUST be absent at runtime (xfail), which only holds when CWD is `dist\`, not
+    the app root (the app root contains `config.json`). Do NOT switch the EXE smoke to run from the
+    app root -- it makes that file findable and turns the xfail into an xpass.
+  - `$so.Result | Set-Content -Path '..\~run.out.txt'` (and `~run.err.txt`) from inside `pushd dist`
+    captures the EXE's stdout/stderr to the app root so envsmoke `$tokenFound` (`'smoke-ok'`, on
+    stdout) is satisfied by the EXE run instead of the deleted interpreter run.
+  - **sys.argv[0]-relative files land in dist\ for a frozen EXE.** An app that writes next to
+    `sys.argv[0]` (e.g. the spaced-path app's `~smoke_token.txt`, written to
+    `dirname(abspath(sys.argv[0]))`) lands it in `dist\` under the EXE, not the app root where the
+    interpreter would. `selfapps_envsmoke.ps1` therefore reads the spaced-path token from BOTH the
+    app root and `dist\` (`$spaceTokenDist`). This is an inherent EXE-vs-script behavior difference,
+    not something the bootstrapper can normalize.
   **If you change any of these strings/paths, envsmoke `$bootstrapPass` /
   `self.env.smoke.run` / `self.prime.run` / `self.prime.bootstrap` break.** `harness.ps1`
   `batch.smoke.single_verify` statically guards them.

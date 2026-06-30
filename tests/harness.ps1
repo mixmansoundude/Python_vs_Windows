@@ -435,7 +435,7 @@ $svNoExeLabel = $AllText -match '(?m)^:verify_no_exe_interpreter'
 $svNoExeCall  = $AllText -match 'call :verify_no_exe_interpreter'
 $svOldGone    = -not ($AllText -match 'try_entry_smoke_after_warnfix')
 $svExeVocab   = $AllText -match [regex]::Escape('Running entry script smoke test via packaged EXE')
-$svExeCapture = $AllText -match [regex]::Escape("Set-Content -Path (Join-Path (Get-Location) '~run.out.txt')")
+$svExeCapture = $AllText -match [regex]::Escape("Set-Content -Path '..\~run.out.txt'")
 $hasSingleVerify = $svNoExeLabel -and $svNoExeCall -and $svOldGone -and $svExeVocab -and $svExeCapture
 Write-Result 'batch.smoke.single_verify' 'REQ-018: single-verification pass wired (no-EXE interpreter subroutine + EXE smoke captures ~run.out.txt + unified vocab); legacy post-warnfix interpreter retry removed' $hasSingleVerify @{ noExeLabel=$svNoExeLabel; noExeCall=$svNoExeCall; oldRemoved=$svOldGone; exeVocab=$svExeVocab; exeCapture=$svExeCapture }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
