@@ -2111,14 +2111,12 @@ if defined HP_SKIP_ENTRY_SMOKE (
   goto :run_entry_after_smoke
 )
 call :try_fast_exe
-if defined HP_FASTPATH_USED goto :run_entry_after_smoke
-call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
-rem derived requirement: execute the smoke command inline so cmd, not our logging, owns redirection parsing.
->> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
-"%HP_PY%" "%HP_ENTRY%" 1> "~run.out.txt" 2> "~run.err.txt"
-set "HP_SMOKE_RC=%ERRORLEVEL%"
-call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
-if not "%HP_SMOKE_RC%"=="0" call :log "[WARN] Entry script execution failed; warnfix will attempt repair."
+rem REQ-018 (2b-A.2): single verification -- the redundant pre-build interpreter smoke is removed.
+rem In the EXE path the timed EXE smoke (:run_exe_smokerun) is now the sole verification run, so the
+rem app is no longer executed twice (interpreter then EXE). When no EXE is produced (system-Python
+rem decline / build skipped), the interpreter runs ONCE via :verify_no_exe_interpreter after the
+rem build gate. The fast-path EXE run inside :try_fast_exe is the user's run and is left as-is here
+rem (its run-timing/consent is unified with the no-EXE interpreter in slice 2b-C).
 :run_entry_after_smoke
 rem derived requirement: the CI harness inspects the breadcrumb log to flag missing entries.
 set "HP_BREADCRUMB=~entry1_bootstrap.log"
@@ -2246,7 +2244,7 @@ if not defined HP_BUILD_OK (
     call :run_exe_smokerun
   )
 )
-call :try_entry_smoke_after_warnfix
+call :verify_no_exe_interpreter
 set "HP_WARNFIX_APPLIED="
 set "HP_FAST_EXE="
 set "HP_FAST_EXE_PATH="
@@ -2331,19 +2329,32 @@ if /I "%HP_SYSBUILD_CHOICE%"=="Y" (
 )
 call :log "[INFO] REQ-007: system-Python EXE build consent: declined."
 exit /b 1
-:try_entry_smoke_after_warnfix
-rem derived requirement: after warnfix installs missing modules into the conda env,
-rem re-run the entry script via Python interpreter so "Entry smoke exit=0" is logged.
-rem This fires only when warnfix was applied AND the original entry smoke failed.
-rem REQ-012: honor HP_SKIP_ENTRY_SMOKE here too -- otherwise the empty HP_SMOKE_RC
-rem (from skipping the initial smoke) would fall through and run user code anyway.
+:verify_no_exe_interpreter
+rem REQ-018 (2b-A.2): single-verification fallback for the NO-EXE path. When no EXE was built or
+rem run (system-Python build declined, or build skipped), run the entry once via the interpreter --
+rem in those providers there is no EXE deliverable, so this IS the user's run, not a throwaway. It
+rem is kept UNTIMED on purpose: hard-killing it at ~30s would terminate a long-running app
+rem (GUI / server / loop) for system-mode users with no recourse. Slice 2b-C unifies the
+rem run-timing / fail-fast probe / interactive checkpoint for BOTH this interpreter run and the
+rem fast-path EXE run. Skipped when user code must not run (REQ-012) or already ran (fast path, or
+rem an EXE smoke verified the build). Emits the same "Entry smoke" vocabulary + [STATUS] readout.
 if defined HP_SKIP_ENTRY_SMOKE exit /b 0
-if not defined HP_WARNFIX_APPLIED exit /b 0
-if "%HP_SMOKE_RC%"=="0" exit /b 0
-call :log "[INFO] Warnfix applied; retrying entry smoke via interpreter."
+if defined HP_FASTPATH_USED exit /b 0
+rem skip only when an EXE smoke actually verified the build; if the EXE exists but its smoke was
+rem skipped by request (HP_SKIP_EXE_SMOKERUN without HP_SKIP_ENTRY_SMOKE), still verify via the
+rem interpreter so that REQ-012 "skip the EXE run" does not silently skip all verification.
+if exist "dist\%ENVNAME%.exe" if not defined HP_EXE_SKIPPED exit /b 0
+call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
+rem derived requirement: execute the smoke command inline so cmd, not our logging, owns redirection parsing.
+>> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
 "%HP_PY%" "%HP_ENTRY%" 1> "~run.out.txt" 2> "~run.err.txt"
 set "HP_SMOKE_RC=%ERRORLEVEL%"
 call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
+if "%HP_SMOKE_RC%"=="0" (
+  call :log "[STATUS] Run Status: SUCCESS (Exit Code: 0)"
+) else (
+  call :log "[STATUS] Run Status: FAILED (Exit Code: %HP_SMOKE_RC%)"
+)
 exit /b 0
 :warnfix_cascade_detect
 rem REQ-009/REQ-005.10 (slice 1: detect only). After the warnfix rebuild, re-parse the
@@ -2481,10 +2492,15 @@ if defined HP_SKIP_EXE_SMOKERUN (
   exit /b 0
 )
 call :log "[INFO] EXE smokerun: testing dist\%ENVNAME%.exe"
+call :log "[INFO] Running entry script smoke test via packaged EXE."
 call :warn_user_code_launch
 set "HP_EXE_EXIT=-1"
 pushd dist
-for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%ENVNAME%.exe';$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
+rem REQ-018 (2b-A.2): capture the EXE's stdout/stderr to the app root (~run.out.txt / ~run.err.txt)
+rem so the single EXE verification produces the same run artifacts the old interpreter smoke did
+rem (token and diagnostic checks read them). ReadToEndAsync drains both pipes before WaitForExit so
+rem a large-output app cannot deadlock the wait.
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%ENVNAME%.exe';$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};$so.Result|Set-Content -Path '..\~run.out.txt' -Encoding ASCII;$se.Result|Set-Content -Path '..\~run.err.txt' -Encoding ASCII;if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
 popd
 if not defined HP_EXE_EXIT set "HP_EXE_EXIT=-1"
 if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok
@@ -2505,6 +2521,10 @@ goto :smokerun_ndjson
 call :log "[INFO] EXE smokerun: exited 0 (ok)"
 set "HP_EXE_VERIFY_FAILED="
 :smokerun_ndjson
+rem REQ-018 (2b-A.2): unified verification vocabulary -- emit the same "Entry smoke exit=" line the
+rem interpreter smoke used, so the single EXE verification satisfies the existing run assertions
+rem (self.env.smoke.run / self.prime.run / self.prime.bootstrap) without re-pointing them.
+call :log "[INFO] Entry smoke exit=%HP_EXE_EXIT%"
 rem REQ-018 (2b-A): telemetry readout of the single verification run. HP_EXE_EXIT is the final
 rem EXE exit after any hidden-import recovery: 0 = clean, -1 = the 30s cap was hit (force-stopped,
 rem not necessarily broken), other = a real non-zero exit. This [STATUS] line is the data the

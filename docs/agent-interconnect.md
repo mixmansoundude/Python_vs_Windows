@@ -353,3 +353,42 @@ if ($env:HP_FORCE_CONDA_ONLY -ne '1') {
     $myDetails.condaBatCandidates = $condaInfo.candidates
 }
 ```
+
+---
+
+## Single-verification smoke model (REQ-018 2b-A.2) couples run_setup.bat to envsmoke/skiphooks
+
+The bootstrapper runs the user's code for verification at most ONCE per invocation. Touching the
+smoke flow in `run_setup.bat` requires understanding the assertions in
+`tests/selfapps_envsmoke.ps1` and `tests/selfapps_skiphooks.ps1`, which are coupled by exact log
+strings and run artifacts:
+
+- **Removed:** the pre-build interpreter smoke (in `:run_entry_smoke`) and
+  `:try_entry_smoke_after_warnfix`. The EXE path no longer runs the app twice (interpreter then EXE).
+- **EXE path = sole verification via the timed EXE smoke** (`:run_exe_smokerun`). To keep the
+  existing tests passing WITHOUT re-pointing them, the EXE smoke now emits the **same vocabulary**
+  the interpreter smoke used and **captures the EXE stdout/stderr** to the app root:
+  - `[INFO] Running entry script smoke test via packaged EXE.` -> matches envsmoke `$hasEntryRun`
+    (`'Running entry script smoke test'`).
+  - `[INFO] Entry smoke exit=%HP_EXE_EXIT%` at `:smokerun_ndjson` -> matches `$hasEntryExit`
+    (`'Entry smoke exit=0'`) when the EXE verifies clean.
+  - `... | Set-Content -Path '..\~run.out.txt'` (and `~run.err.txt`) from inside `pushd dist` ->
+    writes the app's stdout to the app root so envsmoke `$tokenFound` (`'smoke-ok'` in
+    `~run.out.txt`) is satisfied by the EXE run instead of the deleted interpreter run.
+  **If you change any of these three strings/paths, envsmoke `$bootstrapPass` /
+  `self.env.smoke.run` / `self.prime.run` / `self.prime.bootstrap` break.** `harness.ps1`
+  `batch.smoke.single_verify` statically guards them.
+- **No-EXE path** (system-Python build declined, or build skipped) runs the interpreter ONCE via
+  `:verify_no_exe_interpreter` (after the build gate), emitting the same vocabulary. It is
+  **UNTIMED on purpose** (in those providers the interpreter run IS the user's run, not a throwaway
+  -- hard-killing a long-running app would have no recourse). It is skipped when `dist\<env>.exe`
+  exists (EXE smoke handled it), `HP_FASTPATH_USED` (fast path ran it), or `HP_SKIP_ENTRY_SMOKE`.
+- **skiphooks** (`HP_SKIP_ENTRY_SMOKE` + `HP_SKIP_EXE_SMOKERUN`) still asserts no user code ran:
+  `:run_exe_smokerun` exits at the skip check BEFORE the vocab line, and
+  `:verify_no_exe_interpreter` exits on `HP_SKIP_ENTRY_SMOKE`, so `'Running entry script smoke test'`
+  is never emitted -> `$noUserCode` holds.
+- **Deferred to 2b-C (unified run-model):** run-timing / fail-fast probe / interactive checkpoint
+  for BOTH the no-EXE interpreter run AND the fast-path EXE run (lines 243/2077, still untimed). The
+  `~run.out.txt` capture happens on the INITIAL EXE smoke run, before any hidden-import recovery, so
+  after a recovery rebuild it reflects the pre-recovery run (diagnostic-only; token tests do not hit
+  recovery).

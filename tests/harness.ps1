@@ -427,6 +427,17 @@ $tmTimeout = $AllText -match [regex]::Escape('Run Status: TIMED OUT')
 $tmFailed  = $AllText -match [regex]::Escape('Run Status: FAILED (Exit Code:')
 $hasTelemetry = $tmStatus -and $tmSuccess -and $tmTimeout -and $tmFailed
 Write-Result 'batch.smoke.telemetry' 'REQ-018: single-verification telemetry readout wired ([STATUS] Run Status SUCCESS/TIMED OUT/FAILED branches present)' $hasTelemetry @{ status=$tmStatus; success=$tmSuccess; timeout=$tmTimeout; failed=$tmFailed }
+# derived requirement: REQ-018 (2b-A.2) single-verification pass. The redundant pre-build
+# interpreter smoke and :try_entry_smoke_after_warnfix are removed; the timed EXE smoke is the sole
+# verification in the EXE path (and captures the app stdout to ~run.out.txt), while the no-EXE path
+# runs the interpreter once via :verify_no_exe_interpreter. Guard against reverting to the double-run.
+$svNoExeLabel = $AllText -match '(?m)^:verify_no_exe_interpreter'
+$svNoExeCall  = $AllText -match 'call :verify_no_exe_interpreter'
+$svOldGone    = -not ($AllText -match 'try_entry_smoke_after_warnfix')
+$svExeVocab   = $AllText -match [regex]::Escape('Running entry script smoke test via packaged EXE')
+$svExeCapture = $AllText -match [regex]::Escape("Set-Content -Path '..\~run.out.txt'")
+$hasSingleVerify = $svNoExeLabel -and $svNoExeCall -and $svOldGone -and $svExeVocab -and $svExeCapture
+Write-Result 'batch.smoke.single_verify' 'REQ-018: single-verification pass wired (no-EXE interpreter subroutine + EXE smoke captures ~run.out.txt + unified vocab); legacy post-warnfix interpreter retry removed' $hasSingleVerify @{ noExeLabel=$svNoExeLabel; noExeCall=$svNoExeCall; oldRemoved=$svOldGone; exeVocab=$svExeVocab; exeCapture=$svExeCapture }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
