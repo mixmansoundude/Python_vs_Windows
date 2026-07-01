@@ -661,6 +661,10 @@ $spaceApp = Join-Path $spaceRoot 'level one\level two\test space path'
 $spaceSetupLog = Join-Path $spaceApp '~setup.log'
 $spaceBootstrapLog = Join-Path $spaceApp '~envsmoke_space_bootstrap.log'
 $spaceToken = Join-Path $spaceApp '~smoke_token.txt'
+# REQ-018 (2b-A.2) single verification: the app writes ~smoke_token.txt next to sys.argv[0].
+# For a frozen one-file EXE, sys.argv[0] is the EXE in dist\, so the token lands in dist\ (the
+# interpreter, by contrast, writes next to the script in the app root). Check both locations.
+$spaceTokenDist = Join-Path $spaceApp 'dist\~smoke_token.txt'
 
 New-Item -ItemType Directory -Force -Path $spaceApp | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $spaceApp -Force
@@ -708,9 +712,13 @@ $spaceSetupText = if (Test-Path -LiteralPath $spaceSetupLog) {
 $spaceBootstrapText = if (Test-Path -LiteralPath $spaceBootstrapLog) {
     Get-Content -LiteralPath $spaceBootstrapLog -Raw -Encoding Ascii
 } else { '' }
-$spaceTokenText = if (Test-Path -LiteralPath $spaceToken) {
-    Get-Content -LiteralPath $spaceToken -Raw -Encoding Ascii
-} else { '' }
+$spaceTokenText = ''
+if (Test-Path -LiteralPath $spaceToken) {
+    $spaceTokenText += (Get-Content -LiteralPath $spaceToken -Raw -Encoding Ascii)
+}
+if (Test-Path -LiteralPath $spaceTokenDist) {
+    $spaceTokenText += (Get-Content -LiteralPath $spaceTokenDist -Raw -Encoding Ascii)
+}
 $spaceEnvLeaf = Split-Path $spaceApp -Leaf
 $spaceEnvName = ($spaceEnvLeaf -replace '[^A-Za-z0-9_-]', '_')
 if (-not $spaceEnvName) { $spaceEnvName = '_space_path' }
