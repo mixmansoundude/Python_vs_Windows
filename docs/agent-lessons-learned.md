@@ -168,6 +168,23 @@ labels means each `set`/read happens on a freshly parsed line. **If you refactor
 into nested `( ... )` blocks, re-verify every `%VAR%` you read was not `set` earlier in the
 same block** -- prefer keeping the goto-dispatch shape.
 
+**Second confirmed instance (Slice 2b-C, `:try_fast_exe` / `:verify_no_exe_interpreter`):** an
+earlier revision of the fail-fast probe dispatch launched a process and read
+`set "HP_SMOKE_RC=%ERRORLEVEL%"` (plus the immediate SUCCESS/FAILED `[STATUS]` branch) INSIDE the
+non-interactive `else ( ... )` clause of an `if defined HP_INTERACTIVE_RUN (...) else (...)`
+block -- this is the exact same bug class as the drag-and-drop empty-filename bug and the cascade
+gotcha above, just with `%ERRORLEVEL%` as the frozen variable instead of `%MAIN_FILE%`. It froze
+silently (no error, no crash) to whatever the errorlevel was right before the dispatch began
+(almost always `"0"`, since the preceding line is usually a successful `set`), so a genuinely
+broken cached EXE was NEVER discarded via the non-interactive branch in CI. Fixed the same way as
+the cascade: `if defined HP_INTERACTIVE_RUN goto :<label>_probe` instead of a parenthesized
+if/else, so the launch + `%ERRORLEVEL%` capture + STATUS branch are all top-level lines, each
+parsed fresh. **Any time a diff wraps a previously-top-level "launch a process, read
+`%ERRORLEVEL%`" sequence inside a NEW `if (...) ( ... ) else ( ... )` block for ANY reason
+(feature-flagging, dispatch, refactor), stop and check whether the read is safe** -- this is easy
+to introduce by accident precisely because the surrounding lines look unchanged and the bug
+produces no error, only a silently wrong captured exit code.
+
 Two more cascade gotchas worth remembering:
 - `if defined HP_CASCADE_TRIED_UV` / `if not defined CONDA_BAT` are **runtime** checks (safe
   inside blocks); `%HP_CASCADE_TRIED_UV%` / `%CONDA_BAT%` are parse-time (not safe). The
@@ -400,3 +417,55 @@ on the latest managed CPython, but fallback paths can still hand them an older a
 interpreter. Target modern CPython, guard modern *stdlib features* with `try/except`, and
 keep the file's *syntax* parse-compatible with older interpreters (no `match`/`case`, no
 evaluated `X | Y` unions). See "Embedded-helper Python baseline" above.
+
+**PowerShell helpers apply too, and the choice of inline `-Command` vs. embedded `.ps1` file
+matters more than it looks (Slice 2b-C, `HP_FAILFAST_PROBE`):** `:run_exe_smokerun`'s inline
+`powershell -Command "..."` one-liners work because they carefully avoid ANY literal `"` character
+inside the command body (all internal PowerShell string literals use single quotes, and the final
+captured value is a bare expression like `$p.ExitCode`, never a double-quoted interpolated string).
+The fail-fast probe needed to build a properly-quoted single argument for
+`ProcessStartInfo.Arguments` (`$si.Arguments = '"' + $rawArgs + '"'`, so a script path containing
+spaces still parses as one argument) -- and the `'"'` literal (a single-quoted PowerShell string
+whose CONTENT is one double-quote character) is itself a literal `"` character sitting in the
+command text cmd.exe has to tokenize. **The root cause is any literal `"` appearing anywhere in
+the `-Command` body, not specifically interpolation** -- a literal `"` embedded inside an
+already-double-quoted `-Command "..."` argument breaks cmd.exe's naive quote-toggle tokenization
+of that argument (cmd does not understand PowerShell's quoting rules; it just flips an
+in-quotes/out-of-quotes flag on every literal `"` it sees, with no concept of nesting or of
+"this quote is inside a single-quoted PowerShell string"). String interpolation
+(`"$exceeded|$($p.ExitCode)"`) would trip the SAME hazard if used inline, since it also requires a
+double-quoted PowerShell string, but avoiding interpolation alone (e.g. via `+` concatenation)
+would NOT have been sufficient here -- the `Arguments` quoting step needed a literal `"` character
+regardless of interpolation vs. concatenation. **Fix: emit a standalone `.ps1` file via the
+existing `:emit_from_base64` mechanism (exactly like `HP_FAST_CHECK`/`~fast_check.ps1`) and invoke
+it with `-File` instead of `-Command`.** A real file has no cmd.exe quote-parsing exposure at all
+-- write normal, readable PowerShell inside it, quotes and interpolation both included freely.
+Rule of thumb: if an inline `-Command` one-liner would need ANY literal `"` character anywhere in
+its body (interpolation, nested quoting, here-strings, or quoting an argument for
+`ProcessStartInfo`), stop and make it a `.ps1` helper instead of trying to escape around it.
+
+**Fail-fast probe window vs. the ~30s hard-kill cap are unrelated numbers, do not conflate them:**
+`HP_FAILFAST_PROBE_MS` (default 5000ms, `:run_failfast_probe`) is a CLASSIFICATION checkpoint --
+how long to wait before deciding "this exited fast, treat a non-zero rc as a stale artifact" vs.
+"this is still running, treat it as the user's real program and never touch it again." The ~30s cap
+used by `:run_exe_smokerun`/`:hidden_import_recover` is a FORCE-KILL CEILING for the one run this
+bootstrapper is ever allowed to `Kill()` (the fresh-build verification run). The probe's second wait
+stage (`$p.WaitForExit()`, no argument) is genuinely unbounded and never kills anything -- raising or
+lowering the probe window only changes how quickly a broken cached EXE gets discarded+rebuilt, it
+never introduces a new kill point.
+
+**Accepted gap: most `selfapps_*.ps1` files do not locally pin `HP_CI_LANE`/`HP_NONINTERACTIVE`
+around their `run_setup.bat` invocations, so a LOCAL (non-CI) run of one that reaches the fast-path
+reuse or no-EXE interpreter dispatch point would take the new interactive fail-fast-probe branch
+instead of the plain/legacy branch.** This is a deliberate, low-priority trade-off, not an oversight:
+real CI always sets `HP_CI_LANE` at the GitHub Actions job level (`batch-check.yml`,
+`HP_CI_LANE: ${{ matrix.mode }}`), and every subprocess (including a PS test script's own
+`cmd /c run_setup.bat` child) inherits it automatically -- so CI determinism for `self.fastpath` /
+`self.exe.fastpath.graceful` / envsmoke's fast-path assertions is unaffected regardless of what any
+individual test file does. Only `tests/selfapps_sysbuild.ps1`, `tests/selfapps_ux_hardening.ps1`,
+and the new `tests/selfapps_failfast_probe.ps1` explicitly set `$env:HP_CI_LANE` locally (needed
+because those specifically drive consent gates / force the new branch on purpose). If a future
+agent wants full local-dev parity with CI for the remaining files, add the same
+save/set/restore-`HP_CI_LANE` pattern to whichever ones are found to actually reach the dispatch
+point (most single-build-run tests never reach it at all, since `:try_fast_exe` returns immediately
+when no cached EXE exists yet) -- but this is optional polish, not a correctness requirement.

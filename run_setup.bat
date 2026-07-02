@@ -177,6 +177,18 @@ set "HP_NIVISA_WAIT_SECS=%HP_NIVISA_WAIT_SECS%"
 rem HP_TEST_FORCE_CONDA_BULK_FAIL=1: simulate a non-transient conda bulk-install failure so the
 rem REQ-005.3 per-package fallback fires (CI branch coverage). Consumed once in :conda_bulk_install.
 set "HP_TEST_FORCE_CONDA_BULK_FAIL=%HP_TEST_FORCE_CONDA_BULK_FAIL%"
+rem HP_TEST_FORCE_INTERACTIVE_PROBE=1: CI-only; forces the fail-fast probe's interactive branch
+rem (:try_fast_exe / :verify_no_exe_interpreter) even under HP_CI_LANE, for deterministic branch
+rem coverage of the ALIVE_AT_PROBE state machine. Mirrors HP_TEST_FORCE_PICKER.
+set "HP_TEST_FORCE_INTERACTIVE_PROBE=%HP_TEST_FORCE_INTERACTIVE_PROBE%"
+rem HP_FAILFAST_PROBE_MS: the fail-fast probe's classification window (default 5000ms). This is
+rem NOT the same concept as the unrelated ~30s hard-kill cap used by :run_exe_smokerun /
+rem :hidden_import_recover -- that is a force-kill ceiling for the fresh-build verification run
+rem (the only run this bootstrapper ever kills). This probe window only decides how long to wait
+rem before treating a launched process as "still alive / healthy" rather than "failed fast"; once
+rem classified alive, the wait becomes unbounded and the process is never killed.
+set "HP_FAILFAST_PROBE_MS=%HP_FAILFAST_PROBE_MS%"
+if not defined HP_FAILFAST_PROBE_MS set "HP_FAILFAST_PROBE_MS=5000"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -231,6 +243,10 @@ if not "%~1"=="" if /i not "%~dp1"=="%~dp0" (
 set "HP_CONDA_PROBE_STATUS=skipped"
 set "HP_CONDA_PROBE_REASON=not-requested"
 
+rem Slice 2b-C: compute the shared interactivity determination once, before the very first
+rem :try_fast_exe call below, so both untimed user-code launch points dispatch consistently.
+call :compute_interactive_run
+
 rem --- Very top EXE fast path: reuse dist\%ENVNAME%.exe when sources are unchanged ---
 set "HP_FASTPATH_USED="
 rem REQ-016: start clean so an inherited env var can never trigger a false "EXE
@@ -239,12 +255,34 @@ set "HP_EXE_VERIFY_FAILED="
 rem REQ-012: HP_EXE_SKIPPED records that EXE verification was skipped by request
 rem (HP_SKIP_EXE_SMOKERUN) -- distinct from "failed" -- for the post-flight note.
 set "HP_EXE_SKIPPED="
+rem Slice 2b-C: start clean so an inherited HP_SMOKE_RC (e.g. from a parent shell/CI wrapper)
+rem can never be misread as "the just-attempted run failed" below -- :try_fast_exe's own
+rem REQ-012 HP_SKIP_EXE_SMOKERUN early-return leaves HP_SMOKE_RC untouched by design (no run
+rem happened), and the HP_FASTPATH_RUN_FAILED check right after this call relies on that
+rem meaning "empty", not "whatever happened to be inherited."
+set "HP_SMOKE_RC="
 if not "%PYCOUNT%"=="0" (
   call :try_fast_exe
 )
+rem Slice 2b-C: HP_FASTPATH_USED alone is no longer proof of a clean run -- the interactive
+rem fail-fast probe can leave it set even when the reused EXE later exited non-zero (it is
+rem classified alive/healthy at the probe and is never discarded/rebuilt for a later failure;
+rem see :try_fast_exe). Decouple "keep the cached EXE, skip the rebuild" from "declare full
+rem success" so that outcome is never silently swallowed: HP_SMOKE_RC is empty when the run
+rem never happened or was skipped by request (REQ-012, HP_EXE_SKIPPED) -- still the
+rem zero-friction path -- and is a real non-zero value only for a genuine post-probe failure.
+set "HP_FASTPATH_RUN_FAILED="
+if defined HP_SMOKE_RC if not "%HP_SMOKE_RC%"=="0" set "HP_FASTPATH_RUN_FAILED=1"
 if defined HP_FASTPATH_USED (
-  rem derived requirement: if the EXE fast path succeeds, treat bootstrap as complete without touching Conda/venv.
-  call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
+  if defined HP_FASTPATH_RUN_FAILED (
+    rem :run_failfast_probe already logged "[STATUS] Run Status: FAILED (Exit Code: ...)"
+    rem for this exact run (it always fires before returning here) -- add only the extra
+    rem context, not a duplicate STATUS line.
+    call :log "[WARN] dist\%ENVNAME%.exe (standalone EXE, PyInstaller build) ran to completion and exited non-zero after passing the fail-fast probe; treated as your program's own result, not a rebuild trigger."
+  ) else (
+    rem derived requirement: if the EXE fast path succeeds, treat bootstrap as complete without touching Conda/venv.
+    call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
+  )
   if /I "%HP_BOOTSTRAP_STATE%"=="ok" (
     call :write_status ok 0 %PYCOUNT%
   ) else (
@@ -252,6 +290,7 @@ if defined HP_FASTPATH_USED (
   )
   goto :success
 )
+set "HP_FASTPATH_RUN_FAILED="
 
 if "%PYCOUNT%"=="0" (
   rem derived requirement: CI observed the Miniconda probe firing before the
@@ -2040,6 +2079,87 @@ call :log "[BOOT] REQ-002: Entry selected: %HP_CRUMB%"
 rem If we also need an absolute path for execution, set HP_ENTRY elsewhere
 rem and keep the echo outside any ( ... ) block.
 exit /b 0
+:compute_interactive_run
+rem Slice 2b-C: single interactivity determination shared by the fail-fast probe at both
+rem untimed user-code launch points (:try_fast_exe, :verify_no_exe_interpreter). Mirrors
+rem :pick_entry_interactive's three non-interactivity signals (NOINPUT, HP_NONINTERACTIVE,
+rem HP_CI_LANE) so a real double-click user gets the new probe with zero flags required,
+rem while every CI/automation signal keeps today's plain-redirect behavior byte-for-byte
+rem unchanged (self.fastpath / self.exe.fastpath.graceful stay deterministic).
+rem HP_TEST_FORCE_INTERACTIVE_PROBE=1 forces the probe branch under HP_CI_LANE for
+rem dedicated, deterministic CI coverage of the new state machine (mirrors HP_TEST_FORCE_PICKER).
+set "HP_INTERACTIVE_RUN=1"
+if defined NOINPUT set "HP_INTERACTIVE_RUN="
+if defined HP_NONINTERACTIVE set "HP_INTERACTIVE_RUN="
+if defined HP_CI_LANE if not defined HP_TEST_FORCE_INTERACTIVE_PROBE set "HP_INTERACTIVE_RUN="
+exit /b 0
+:run_failfast_probe
+rem Slice 2b-C: shared fail-fast probe for the two untimed user-code launch points. Reuses
+rem :run_exe_smokerun's ProcessStartInfo + ReadToEndAsync pattern (preserves ~run.out.txt /
+rem ~run.err.txt for existing consumers -- envsmoke's 'smoke-ok' token, spaced-path dist\
+rem token capture) but replaces the single 30s-cap-then-Kill() wait with a two-stage wait
+rem inside ~failfast_probe.ps1 (HP_FAILFAST_PROBE): WaitForExit(HP_FAILFAST_PROBE_MS)
+rem classifies a fast exit vs. still-running; if still running, a SECOND, UNBOUNDED
+rem WaitForExit() follows and the process is NEVER killed -- this is the only difference
+rem from :run_exe_smokerun, which stays the sole place in this file allowed to force-kill
+rem (the fresh-build verification run). Caller sets HP_PROBE_EXE / HP_PROBE_ARGS (raw,
+rem unquoted -- the helper quotes it) / HP_PROBE_CWD before calling; %1 is a short site tag
+rem ('fastpath'|'interpreter') used only for the NDJSON row and log text. Always leaves
+rem HP_SMOKE_RC set to the true final exit code and HP_PROBE_EXCEEDED set (1) iff the probe
+rem window was exceeded -- the caller decides what that means (:try_fast_exe discards a
+rem cached EXE only when NOT exceeded; :verify_no_exe_interpreter has no cached artifact and
+rem just reports the final outcome either way).
+set "HP_PROBE_SITE=%~1"
+set "HP_PROBE_EXCEEDED="
+set "HP_SMOKE_RC="
+set "HP_PROBE_PS=~failfast_probe.ps1"
+if exist "%HP_PROBE_PS%" del "%HP_PROBE_PS%" >nul 2>&1
+rem pre-truncate: the helper only writes these once, at process exit, so without this an
+rem unbounded ALIVE-AT-PROBE wait would leave stale prior-run content lingering for its
+rem full duration with no indication it is stale.
+if exist "~run.out.txt" del "~run.out.txt" >nul 2>&1
+if exist "~run.err.txt" del "~run.err.txt" >nul 2>&1
+call :emit_from_base64 "%HP_PROBE_PS%" HP_FAILFAST_PROBE
+if errorlevel 1 (
+  rem Extremely rare (disk/permission failure writing a work file); mirror :try_fast_exe's own
+  rem emit-failure convention of skipping gracefully rather than hand-rolling an unsafe manual
+  rem launch here (HP_PROBE_ARGS is intentionally unquoted raw text -- only the .ps1 helper
+  rem quotes it safely; a direct cmd invocation would mis-tokenize an entry path with spaces).
+  rem HP_SMOKE_RC stays unset; the safety net below turns that into -1 so callers still see a
+  rem defined, non-zero, non-"exceeded" outcome (:try_fast_exe's discard-and-rebuild fires).
+  call :log "[WARN] Fail-fast probe: could not emit ~failfast_probe.ps1; treating as a failed run."
+) else (
+  for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%HP_PROBE_PS%"`) do (
+    for /f "tokens=1,2 delims=|" %%A in ("%%X") do (
+      set "HP_PROBE_EXCEEDED=%%A"
+      set "HP_SMOKE_RC=%%B"
+    )
+  )
+  if exist "%HP_PROBE_PS%" del "%HP_PROBE_PS%" >nul 2>&1
+)
+if "%HP_PROBE_EXCEEDED%"=="0" set "HP_PROBE_EXCEEDED="
+if not defined HP_SMOKE_RC set "HP_SMOKE_RC=-1"
+call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
+if defined HP_PROBE_EXCEEDED (
+  call :log "[INFO] Fail-fast probe: still running after %HP_FAILFAST_PROBE_MS%ms; this is your program's real run, not a rebuild trigger. If it has a GUI it may have opened minimized or on another window; if it is a background/console app with no window, that is expected. The bootstrapper is waiting for it to finish so it can report the final result -- it will not force-stop it."
+)
+if "%HP_SMOKE_RC%"=="0" (
+  call :log "[STATUS] Run Status: SUCCESS (Exit Code: 0)"
+) else (
+  call :log "[STATUS] Run Status: FAILED (Exit Code: %HP_SMOKE_RC%)"
+)
+if defined HP_NDJSON (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$c=[int]'%HP_SMOKE_RC%';$ex=[bool]'%HP_PROBE_EXCEEDED%';" ^
+    "$r=[ordered]@{id='self.failfast.probe';pass=($c -eq 0);details=[ordered]@{site='%HP_PROBE_SITE%';exitCode=$c;probeExceeded=$ex;probeMs=[int]'%HP_FAILFAST_PROBE_MS%'}}|ConvertTo-Json -Compress -Depth 8;" ^
+    "Add-Content -Path '%HP_NDJSON%' -Value $r -Encoding ASCII" >> "%LOG%" 2>&1
+)
+set "HP_PROBE_EXE="
+set "HP_PROBE_ARGS="
+set "HP_PROBE_CWD="
+set "HP_PROBE_SITE="
+set "HP_PROBE_PS="
+exit /b 0
 :try_fast_exe
 set "HP_FASTPATH_USED="
 set "HP_FAST_EXE="
@@ -2072,17 +2192,55 @@ if defined HP_SKIP_EXE_SMOKERUN (
   set "HP_EXE_SKIPPED=1"
   exit /b 0
 )
+set "HP_PROBE_EXCEEDED="
+rem Slice 2b-C: goto-based dispatch, NOT a parenthesized if/else block, is deliberate here --
+rem see docs/agent-lessons-learned.md "Provider-cascade dispatch is goto-based on purpose".
+rem cmd.exe expands every %VAR% in a parenthesized ( ... ) block ONCE, at parse time, using
+rem values from BEFORE the block started -- an earlier revision of this code launched the EXE
+rem and read "set HP_SMOKE_RC=%ERRORLEVEL%" inside the else-branch's own parens, which silently
+rem froze %ERRORLEVEL% (and every in-block %HP_SMOKE_RC% read) to whatever it was right before
+rem the if/else began (almost always "0"), so a genuinely broken cached EXE was NEVER discarded
+rem in the legacy/CI branch. Each branch below is reached via goto so its statements are parsed
+rem and executed as fresh top-level lines, exactly like the rest of this file's %ERRORLEVEL%
+rem capture sites.
+if defined HP_INTERACTIVE_RUN goto :try_fast_exe_probe
 call :log "[INFO] Fast path: reusing %HP_FAST_EXE%"
 >> "%LOG%" echo Fast path command: "%HP_FAST_EXE%" ^> "~run.out.txt" 2^> "~run.err.txt"
 "%HP_FAST_EXE%" 1> "~run.out.txt" 2> "~run.err.txt"
 set "HP_SMOKE_RC=%ERRORLEVEL%"
 call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
+if "%HP_SMOKE_RC%"=="0" (
+  call :log "[STATUS] Run Status: SUCCESS (Exit Code: 0)"
+) else (
+  call :log "[STATUS] Run Status: FAILED (Exit Code: %HP_SMOKE_RC%)"
+)
+goto :try_fast_exe_discard_check
+:try_fast_exe_probe
+rem Interactive fail-fast probe -- a real double-click user is told explicitly what is about
+rem to launch and never sees a hard kill here; a genuinely stale/broken cached EXE that fails
+rem within the probe window is still discarded+rebuilt below exactly as before. CI/automation
+rem (HP_INTERACTIVE_RUN unset) takes the branch above instead, byte-for-byte unchanged, so
+rem self.fastpath / self.exe.fastpath.graceful stay deterministic.
+call :log "[INFO] Launching your program now via the cached standalone EXE (PyInstaller build): %HP_FAST_EXE%"
+rem Resolve to an absolute path -- HP_FAST_EXE is relative (dist\%ENVNAME%.exe). .NET
+rem Process.Start's FileName resolution is a different mechanism from cmd.exe's own relative
+rem launch, so keep this unambiguous rather than relying on the child process inheriting the
+rem right CWD to resolve it, in case a future change alters how/where this is invoked from.
+set "HP_PROBE_EXE=%CD%\%HP_FAST_EXE%"
+set "HP_PROBE_ARGS="
+set "HP_PROBE_CWD=%CD%"
+call :run_failfast_probe fastpath
+:try_fast_exe_discard_check
 rem REQ-007: a reused EXE that exits non-zero must NOT abort the bootstrapper. The cached
 rem EXE may be stale or carry an unbundled runtime dependency (DLL/data file) the fast-path
 rem freshness check cannot see. Drop the fast path and fall through to a full rebuild, which
 rem routes any persistent failure through :run_exe_smokerun's graceful handling + banner.
-if not "%HP_SMOKE_RC%"=="0" (
-  call :log "[WARN] Fast path EXE exited %HP_SMOKE_RC%; discarding cached EXE and rebuilding."
+rem Slice 2b-C: this discard only fires when the probe was NOT exceeded (a fast, genuine
+rem failure). Once a process is classified alive/healthy at the probe, a LATER non-zero exit
+rem is presumed to be the user's own program outcome, not proof of a stale artifact -- a
+rem rebuild would not fix a runtime bug in the user's own code, so the cached EXE is kept.
+if not "%HP_SMOKE_RC%"=="0" if not defined HP_PROBE_EXCEEDED (
+  call :log "[WARN] Fast path standalone EXE (PyInstaller build) exited %HP_SMOKE_RC%; discarding cached EXE and rebuilding."
   rem Delete the broken EXE so the next :try_fast_exe call does not re-detect it as
   rem "fresh" and run the known-bad binary again; the rebuild below recreates it.
   if exist "%HP_FAST_EXE%" del "%HP_FAST_EXE%" >nul 2>&1
@@ -2158,11 +2316,26 @@ rem interpreter, so it is gated on explicit consent (CI auto-declines); all othe
 set "HP_BUILD_OK=1"
 if /i "%HP_ENV_MODE%"=="system" call :system_build_consent_gate
 if /i "%HP_ENV_MODE%"=="system" if errorlevel 1 set "HP_BUILD_OK="
+rem Slice 2b-C: recompute the same HP_FASTPATH_RUN_FAILED check the top-of-file gate uses
+rem (this is :try_fast_exe's SECOND call site, inside :run_entry_smoke; the first call's own
+rem HP_FASTPATH_RUN_FAILED does not reach here -- any first-call success or post-probe-failure
+rem outcome already took goto :success before this point, so this recomputation is normally a
+rem no-op today, but keeps this call site from silently reopening the same "HP_FASTPATH_USED
+rem alone is not proof of a clean run" gap the top-of-file gate closed, should a future change
+rem (e.g. a provider-cascade re-entry) ever reach here with HP_FASTPATH_USED still set from a
+rem probe-classified alive-then-failed run). Computed as a top-level statement, not inside the
+rem block below, for the same parse-time-expansion reason documented in :try_fast_exe.
+set "HP_FASTPATH_RUN_FAILED="
+if defined HP_SMOKE_RC if not "%HP_SMOKE_RC%"=="0" set "HP_FASTPATH_RUN_FAILED=1"
 if not defined HP_BUILD_OK (
   call :log "[INFO] REQ-007: system-Python EXE build not consented; skipping PyInstaller packaging. The environment and dependencies are installed; run the app directly via the prepared Python."
 ) else (
   if defined HP_FASTPATH_USED (
-    call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
+    if defined HP_FASTPATH_RUN_FAILED (
+      call :log "[WARN] dist\%ENVNAME%.exe (standalone EXE, PyInstaller build) ran to completion and exited non-zero after passing the fail-fast probe; treated as your program's own result, not a rebuild trigger."
+    ) else (
+      call :log "[INFO] Fast path: skipping PyInstaller rebuild for existing dist\%ENVNAME%.exe"
+    )
   ) else (
     rem derived requirement: PyInstaller install + build can take a minute or more; emit a
     rem user-facing message before the silent operation so the script never looks hung.
@@ -2332,18 +2505,21 @@ exit /b 1
 :verify_no_exe_interpreter
 rem REQ-018 (2b-A.2): single-verification fallback for the NO-EXE path. When no EXE was built or
 rem run (system-Python build declined, or build skipped), run the entry once via the interpreter --
-rem in those providers there is no EXE deliverable, so this IS the user's run, not a throwaway. It
-rem is kept UNTIMED on purpose: hard-killing it at ~30s would terminate a long-running app
-rem (GUI / server / loop) for system-mode users with no recourse. Slice 2b-C unifies the
-rem run-timing / fail-fast probe / interactive checkpoint for BOTH this interpreter run and the
-rem fast-path EXE run. Skipped when user code must not run (REQ-012) or already ran (fast path, or
-rem an EXE smoke verified the build). Emits the same "Entry smoke" vocabulary + [STATUS] readout.
+rem in those providers there is no EXE deliverable, so this IS the user's run, not a throwaway.
+rem Skipped when user code must not run (REQ-012) or already ran (fast path, or an EXE smoke
+rem verified the build). Emits the same "Entry smoke" vocabulary + [STATUS] readout.
 if defined HP_SKIP_ENTRY_SMOKE exit /b 0
 if defined HP_FASTPATH_USED exit /b 0
 rem skip only when an EXE smoke actually verified the build; if the EXE exists but its smoke was
 rem skipped by request (HP_SKIP_EXE_SMOKERUN without HP_SKIP_ENTRY_SMOKE), still verify via the
 rem interpreter so that REQ-012 "skip the EXE run" does not silently skip all verification.
 if exist "dist\%ENVNAME%.exe" if not defined HP_EXE_SKIPPED exit /b 0
+set "HP_PROBE_EXCEEDED="
+rem Slice 2b-C: goto-based dispatch, not a parenthesized if/else block -- see the identical
+rem rationale comment in :try_fast_exe (cmd.exe freezes every %VAR% in a ( ... ) block to its
+rem pre-block value at parse time; launching the interpreter and reading %ERRORLEVEL% inside
+rem the same parens would silently corrupt HP_SMOKE_RC for the legacy/CI branch).
+if defined HP_INTERACTIVE_RUN goto :verify_no_exe_probe
 call :log "[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter."
 rem derived requirement: execute the smoke command inline so cmd, not our logging, owns redirection parsing.
 >> "%LOG%" echo Smoke command: "%HP_PY%" "%HP_ENTRY%" ^> "~run.out.txt" 2^> "~run.err.txt"
@@ -2355,6 +2531,19 @@ if "%HP_SMOKE_RC%"=="0" (
 ) else (
   call :log "[STATUS] Run Status: FAILED (Exit Code: %HP_SMOKE_RC%)"
 )
+exit /b 0
+:verify_no_exe_probe
+rem Kept UNTIMED past the short probe window on purpose: a long-running app (GUI / server /
+rem loop) for system-mode users has no recourse if killed, so once the probe window
+rem (HP_FAILFAST_PROBE_MS) is crossed the wait becomes unbounded and the process is never
+rem force-stopped. There is no cached artifact at this call site, so the probe only adds an
+rem early, honest heads-up log line; the final outcome is reported either way once the
+rem interpreter actually exits.
+call :log "[INFO] Launching your program now via the %HP_ENV_MODE% interpreter: %HP_PY% %HP_ENTRY%"
+set "HP_PROBE_EXE=%HP_PY%"
+set "HP_PROBE_ARGS=%HP_ENTRY%"
+set "HP_PROBE_CWD=%CD%"
+call :run_failfast_probe interpreter
 exit /b 0
 :warnfix_cascade_detect
 rem REQ-009/REQ-005.10 (slice 1: detect only). After the warnfix rebuild, re-parse the
@@ -2476,7 +2665,7 @@ rem REQ-016: tightly-scoped heads-up before a launch that is force-stopped at ~3
 rem user does not mistake a verification run for finished setup and start real work in it
 rem (which would be lost when the run is killed). Called only where a 30s kill actually
 rem happens -- the EXE smoke and hidden-import recovery -- not at the untimed entry smoke.
-call :log "[WARN] Verifying the built program now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost."
+call :log "[WARN] Verifying the built standalone EXE (PyInstaller) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost."
 exit /b 0
 :run_exe_smokerun
 if not exist "dist\%ENVNAME%.exe" (
@@ -2578,7 +2767,7 @@ call :log "[HINT][HIDDEN_IMPORT] Hidden import likely missing: %HP_HINT_MOD%"
 call :log "[HINT][HIDDEN_IMPORT] Consider adding: --hidden-import=%HP_HINT_MOD%"
 if defined HINT_JSON powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host ([PSCustomObject]@{hint_type='HIDDEN_IMPORT';module=$env:HP_HINT_MOD}|ConvertTo-Json -Compress)"
 :hint_packaging
-call :log "[HINT][RUNTIME_MISMATCH] EXE behavior differs from Python runtime (possible packaging issue)"
+call :log "[HINT][RUNTIME_MISMATCH] Standalone EXE behavior differs from the Python runtime (possible PyInstaller packaging issue in the EXE, not your environment or dependencies)"
 if defined HINT_JSON powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host ([PSCustomObject]@{hint_type='RUNTIME_MISMATCH'}|ConvertTo-Json -Compress)"
 if exist "%HP_HINT_FILE%" del "%HP_HINT_FILE%" >nul 2>&1
 set "HP_HINT_FILE="
@@ -2655,6 +2844,38 @@ rem $exeTime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
 rem if ($exeTime -ge $latest) { 'fresh' }
 rem If HP_FAST_CHECK changes, update this decoded comment block to match the base64 payload.
 set "HP_FAST_CHECK=JGV4ZSA9ICRhcmdzWzBdCmlmICgtbm90ICRleGUpIHsgJGV4ZSA9ICRlbnY6SFBfRkFTVF9FWEUgfQokaW5mcmFQYXR0ZXJuID0gJyg/aSkoXnxbL1xcXSkoXC5naXR8XC5naXRodWJ8ZGlzdHxcLnZlbnZ8XC51dl9lbnZ8X19weWNhY2hlX198XC5jb25kYSkoWy9cXF18JCknCiRzb3VyY2VzID0gR2V0LUNoaWxkSXRlbSAtUmVjdXJzZSAtRmlsZSAtRmlsdGVyICcqLnB5JyB8IFdoZXJlLU9iamVjdCB7ICRfLkZ1bGxOYW1lIC1ub3RtYXRjaCAkaW5mcmFQYXR0ZXJuIC1hbmQgJF8uTmFtZSAtbm90bGlrZSAnfioucHknIH0KaWYgKC1ub3QgJHNvdXJjZXMpIHsgZXhpdCAxIH0KJGxhdGVzdCA9ICgkc291cmNlcyB8IFNvcnQtT2JqZWN0IC1Qcm9wZXJ0eSBMYXN0V3JpdGVUaW1lVXRjIC1EZXNjZW5kaW5nIHwgU2VsZWN0LU9iamVjdCAtRmlyc3QgMSkuTGFzdFdyaXRlVGltZVV0YwokZXhlVGltZSA9IChHZXQtSXRlbSAtTGl0ZXJhbFBhdGggJGV4ZSkuTGFzdFdyaXRlVGltZVV0YwppZiAoJGV4ZVRpbWUgLWdlICRsYXRlc3QpIHsgJ2ZyZXNoJyB9Cg=="
+rem HP_FAILFAST_PROBE decoded content (Slice 2b-C):
+rem $exe = $env:HP_PROBE_EXE
+rem $rawArgs = $env:HP_PROBE_ARGS
+rem $workDir = $env:HP_PROBE_CWD
+rem $probeMs = [int]$env:HP_FAILFAST_PROBE_MS
+rem $si = New-Object System.Diagnostics.ProcessStartInfo
+rem $si.FileName = $exe
+rem if ($rawArgs) { $si.Arguments = '"' + $rawArgs + '"' }
+rem $si.WorkingDirectory = $workDir
+rem $si.UseShellExecute = $false
+rem $si.RedirectStandardOutput = $true
+rem $si.RedirectStandardError = $true
+rem $p = [System.Diagnostics.Process]::Start($si)
+rem $so = $p.StandardOutput.ReadToEndAsync()
+rem $se = $p.StandardError.ReadToEndAsync()
+rem $fast = $p.WaitForExit($probeMs)
+rem $exceeded = 0
+rem if (-not $fast) {
+rem     $exceeded = 1
+rem     $p.WaitForExit()
+rem }
+rem $so.Result | Set-Content -Path '~run.out.txt' -Encoding ASCII
+rem $se.Result | Set-Content -Path '~run.err.txt' -Encoding ASCII
+rem "$exceeded|$($p.ExitCode)"
+rem Never calls $p.Kill() -- once the probe window (HP_FAILFAST_PROBE_MS) is exceeded, the second
+rem WaitForExit() is unbounded so a healthy long-running app is never force-stopped. Reads all
+rem inputs from env vars set by the caller (no positional args) to avoid any cmd.exe quoting
+rem hazard; caller must pre-truncate ~run.out.txt/~run.err.txt before invoking (this script only
+rem writes them once, at process exit, so a stale prior run's content would otherwise linger for
+rem the full unbounded-wait duration).
+rem If HP_FAILFAST_PROBE changes, update this decoded comment block to match the base64 payload.
+set "HP_FAILFAST_PROBE=JGV4ZSA9ICRlbnY6SFBfUFJPQkVfRVhFCiRyYXdBcmdzID0gJGVudjpIUF9QUk9CRV9BUkdTCiR3b3JrRGlyID0gJGVudjpIUF9QUk9CRV9DV0QKJHByb2JlTXMgPSBbaW50XSRlbnY6SFBfRkFJTEZBU1RfUFJPQkVfTVMKJHNpID0gTmV3LU9iamVjdCBTeXN0ZW0uRGlhZ25vc3RpY3MuUHJvY2Vzc1N0YXJ0SW5mbwokc2kuRmlsZU5hbWUgPSAkZXhlCmlmICgkcmF3QXJncykgeyAkc2kuQXJndW1lbnRzID0gJyInICsgJHJhd0FyZ3MgKyAnIicgfQokc2kuV29ya2luZ0RpcmVjdG9yeSA9ICR3b3JrRGlyCiRzaS5Vc2VTaGVsbEV4ZWN1dGUgPSAkZmFsc2UKJHNpLlJlZGlyZWN0U3RhbmRhcmRPdXRwdXQgPSAkdHJ1ZQokc2kuUmVkaXJlY3RTdGFuZGFyZEVycm9yID0gJHRydWUKJHAgPSBbU3lzdGVtLkRpYWdub3N0aWNzLlByb2Nlc3NdOjpTdGFydCgkc2kpCiRzbyA9ICRwLlN0YW5kYXJkT3V0cHV0LlJlYWRUb0VuZEFzeW5jKCkKJHNlID0gJHAuU3RhbmRhcmRFcnJvci5SZWFkVG9FbmRBc3luYygpCiRmYXN0ID0gJHAuV2FpdEZvckV4aXQoJHByb2JlTXMpCiRleGNlZWRlZCA9IDAKaWYgKC1ub3QgJGZhc3QpIHsKICAgICRleGNlZWRlZCA9IDEKICAgICRwLldhaXRGb3JFeGl0KCkKfQokc28uUmVzdWx0IHwgU2V0LUNvbnRlbnQgLVBhdGggJ35ydW4ub3V0LnR4dCcgLUVuY29kaW5nIEFTQ0lJCiRzZS5SZXN1bHQgfCBTZXQtQ29udGVudCAtUGF0aCAnfnJ1bi5lcnIudHh0JyAtRW5jb2RpbmcgQVNDSUkKIiRleGNlZWRlZHwkKCRwLkV4aXRDb2RlKSIK"
 :: --- Embedded helper: HP_PREP_REQUIREMENTS (~prep_requirements.py) ---
 :: Purpose:
 ::   - Normalize pip/conda specifiers from requirements.txt

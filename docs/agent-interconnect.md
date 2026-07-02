@@ -135,7 +135,7 @@ produce different log lines. Future agents must not confuse them:
 
 | Fast path | Trigger | Log line | Lane |
 |-----------|---------|----------|------|
-| EXE fast path (`:try_fast_exe`) | `dist\<ENVNAME>.exe` exists AND `HP_FAST_CHECK` token = "fresh" | `[INFO] Fast path: reusing dist\<ENVNAME>.exe` | All lanes |
+| EXE fast path (`:try_fast_exe`) | `dist\<ENVNAME>.exe` exists AND `HP_FAST_CHECK` token = "fresh" | `[INFO] Fast path: reusing dist\<ENVNAME>.exe` (non-interactive/CI -- `HP_INTERACTIVE_RUN` unset) or `[INFO] Launching your program now via the cached standalone EXE (PyInstaller build): dist\<ENVNAME>.exe` (interactive -- see "Fail-fast probe (Slice 2b-C)" below) | All lanes |
 | Env-state fast path (`:env_state_fast_path`) | `~env.state.json` valid, conda env python.exe present | `[INFO] Env-state fast path: reusing conda env <ENVNAME>.` | conda mode only; skipped when HP_UV_PROVIDING_PYTHON=1 |
 | uv venv reuse | `.uv_env\Scripts\python.exe` exists AND `import pip` succeeds | `[INFO] uv: reusing existing .uv_env` | uv mode only |
 
@@ -145,9 +145,12 @@ The env-state check (line 507) and uv venv reuse (line 544) are therefore only r
 the EXE fast path does NOT fire (first run, or sources changed).
 
 **`self.fastpath` test** (`selfapps_envsmoke.ps1` second run): matches `'Fast path: reusing'`
-which appears in the EXE fast path log line. This works in ALL lanes (uv and conda) because
-the EXE fast path is completely provider-independent. The test correctly validates the EXE
-fast path, not the env-state or uv venv fast path.
+which appears in the EXE fast path log line ONLY on the non-interactive branch (real CI always
+sets `HP_CI_LANE` at the job level, so this holds in every CI lane regardless of whether the
+individual test file pins it locally -- see the "Accepted gap" entry in
+`docs/agent-lessons-learned.md`). This works in ALL lanes (uv and conda) because the EXE fast
+path is completely provider-independent. The test correctly validates the EXE fast path, not
+the env-state or uv venv fast path.
 
 ### ~dependency_installed.txt: pip freeze output and its consumers
 
@@ -398,8 +401,97 @@ strings and run artifacts:
   `:run_exe_smokerun` exits at the skip check BEFORE the vocab line, and
   `:verify_no_exe_interpreter` exits on `HP_SKIP_ENTRY_SMOKE`, so `'Running entry script smoke test'`
   is never emitted -> `$noUserCode` holds.
-- **Deferred to 2b-C (unified run-model):** run-timing / fail-fast probe / interactive checkpoint
-  for BOTH the no-EXE interpreter run AND the fast-path EXE run (lines 243/2077, still untimed). The
-  `~run.out.txt` capture happens on the INITIAL EXE smoke run, before any hidden-import recovery, so
+- **Shipped in 2b-C: fail-fast probe for the two previously-untimed runs** (`:try_fast_exe`'s cached
+  EXE reuse and `:verify_no_exe_interpreter`). See the dedicated "Fail-fast probe (Slice 2b-C)"
+  section below for the full mechanism, state variables, and the interconnects that touching either
+  call site must respect (CWD-per-call-site, the `HP_FASTPATH_USED`/`HP_SMOKE_RC` decoupling fix,
+  and the shared `:run_failfast_probe` subroutine both now route through).
+- The `~run.out.txt` capture happens on the INITIAL EXE smoke run, before any hidden-import recovery, so
   after a recovery rebuild it reflects the pre-recovery run (diagnostic-only; token tests do not hit
-  recovery).
+  recovery). The fail-fast probe's own capture (interactive branch of `:try_fast_exe` /
+  `:verify_no_exe_interpreter`) is a SEPARATE write of the same two files, pre-truncated at the start
+  of `:run_failfast_probe` -- see the dedicated section below for why that pre-truncation matters.
+
+## Fail-fast probe (Slice 2b-C): shared state machine for the two untimed launch points
+
+`:try_fast_exe` (cached EXE reuse) and `:verify_no_exe_interpreter` (no-EXE interpreter run) both
+launch user code with NO timeout at all in CI/automation (unchanged, plain `cmd` redirect). For a
+real interactive double-click user (`HP_INTERACTIVE_RUN` set -- see `:compute_interactive_run`,
+mirrors `:pick_entry_interactive`'s `NOINPUT`/`HP_NONINTERACTIVE`/`HP_CI_LANE` signals, plus
+`HP_TEST_FORCE_INTERACTIVE_PROBE=1` to force the branch under `HP_CI_LANE` for CI coverage), both
+call the shared `:run_failfast_probe` subroutine instead, which launches via
+`~failfast_probe.ps1` (`HP_FAILFAST_PROBE`, a base64 embedded helper emitted through the existing
+`:emit_from_base64` mechanism -- NOT an inline `-Command` one-liner, deliberately: the two-stage
+wait needs interpolated strings, and `.ps1` file content sidesteps every cmd.exe quote-nesting
+hazard an inline `-Command "..."` string would hit here). The helper does `WaitForExit(HP_FAILFAST_PROBE_MS)`
+(default 5000ms, distinct from the unrelated ~30s hard-kill cap used by `:run_exe_smokerun`/
+`:hidden_import_recover` -- that is a force-kill ceiling for the fresh-build verification run, the
+ONLY run this bootstrapper ever kills; this probe window is purely a classification checkpoint,
+never a ceiling) then, if the process is still running, a SECOND, UNBOUNDED `WaitForExit()` with no
+`Kill()` call anywhere.
+
+**Touch either call site, must understand the other, plus the top-of-file success gate:**
+- Both callers set `HP_PROBE_EXE` / `HP_PROBE_ARGS` (raw, UNQUOTED -- the helper quotes it via
+  `'"' + $rawArgs + '"'`, which only works correctly for a SINGLE path argument; do not repurpose
+  `HP_PROBE_ARGS` for a multi-token command line) / `HP_PROBE_CWD` before calling
+  `:run_failfast_probe <site>`. **CWD is preserved per call site exactly as before this slice**:
+  `:try_fast_exe` runs from the app root (`%CD%`, no `pushd dist`) and `:verify_no_exe_interpreter`
+  also runs from the app root -- neither adopts `:run_exe_smokerun`'s `pushd dist` CWD (load-bearing
+  for `selfapps_exedata_fail`'s CWD-relative `config.json` check; see the paragraph above). If you
+  ever unify these CWDs, re-verify that xfail test.
+- `:run_failfast_probe` always leaves `HP_SMOKE_RC` set to the true final exit code (whether the
+  process exited fast or only after the unbounded continuation) and `HP_PROBE_EXCEEDED` set (`1`)
+  iff the probe window was crossed. `:try_fast_exe`'s discard-and-rebuild block is gated on
+  `if not "%HP_SMOKE_RC%"=="0" if not defined HP_PROBE_EXCEEDED` -- once a process is classified
+  alive/healthy at the probe, a LATER non-zero exit is presumed to be the user's own program outcome
+  (not proof of a stale artifact) and the cached EXE is kept, never discarded.
+- **The silent-success bug this closed:** the top-of-file fast-path caller (`run_setup.bat`, near
+  the very top, before provider selection) used to gate its `goto :success` shortcut on
+  `HP_FASTPATH_USED` alone, with no check of the run's outcome -- harmless before this slice because
+  any non-zero `HP_SMOKE_RC` always cleared `HP_FASTPATH_USED` too (inside `:try_fast_exe`'s old
+  unconditional discard). Once the probe's "don't discard past the probe window" rule could leave
+  `HP_FASTPATH_USED` set through a real later failure, that same shortcut would have silently
+  reported full bootstrap success while hiding the failure. Fixed by computing
+  `HP_FASTPATH_RUN_FAILED` (true only when `HP_SMOKE_RC` is DEFINED and non-"0" -- empty/undefined
+  `HP_SMOKE_RC` still means "no real failure observed," e.g. the REQ-012
+  `HP_SKIP_EXE_SMOKERUN` skip-without-running case, which must still take the zero-friction path)
+  and branching the log message on it before `write_status`/`goto :success`; `HP_BOOTSTRAP_STATE`
+  stays `ok` either way (env/build genuinely succeeded; a runtime bug in the user's own code is not
+  something a rebuild could fix -- matches the "User-code exit-code semantics" item in
+  `CLAUDE.md`'s Active Backlog), but the console/log now always shows the true
+  `[STATUS] Run Status: ...` outcome first. This second call site was recomputed with the exact
+  same `HP_FASTPATH_RUN_FAILED` guard (see the next bullet).
+- **Both `:try_fast_exe` call sites now carry this guard, not just the top-of-file one.** The
+  second call site (inside `:run_entry_smoke`'s build gate, `if defined HP_FASTPATH_USED (...)`
+  just before the PyInstaller build block) recomputes `HP_FASTPATH_RUN_FAILED` fresh as its own
+  top-level statement and branches the same way. It is normally unreachable with a real failure
+  today -- any first-call success or post-probe-failure outcome already took `goto :success`
+  before this point -- but a future provider-cascade re-entry (`:after_env_mode_selection`) could
+  reach it with `HP_FASTPATH_USED` still set from a probe-classified alive-then-failed run, and
+  this closes that gap defensively rather than leaving a second, unguarded copy of the same logic.
+- **cmd.exe parse-time-expansion hazard, avoided via goto, not if/else, at both call sites.** An
+  earlier revision of this slice launched the process and read `set "HP_SMOKE_RC=%ERRORLEVEL%"`
+  (plus the immediate SUCCESS/FAILED branch) INSIDE the non-interactive `else ( ... )` clause of
+  the `if defined HP_INTERACTIVE_RUN (...) else (...)` dispatch. cmd.exe expands every `%VAR%` in
+  a parenthesized block ONCE, at parse time, using values from before the block started -- so
+  `%ERRORLEVEL%` (and every in-block `%HP_SMOKE_RC%` read) silently froze to whatever it was right
+  before the dispatch began (almost always `"0"`), meaning a genuinely broken cached EXE was NEVER
+  discarded in the legacy/CI branch. Both `:try_fast_exe` and `:verify_no_exe_interpreter` now use
+  `if defined HP_INTERACTIVE_RUN goto :<label>_probe` instead, so each branch's statements are
+  parsed and executed as fresh top-level lines -- see
+  `docs/agent-lessons-learned.md` "Provider-cascade dispatch is goto-based on purpose" for the same
+  pattern used elsewhere in this file, and do not reintroduce a parenthesized if/else around a
+  launch+`%ERRORLEVEL%`-capture sequence at either call site.
+- `:try_fast_exe`'s legacy (non-interactive) branch also gained a `[STATUS] Run Status:
+  SUCCESS/FAILED` line for parity (it previously never emitted `[STATUS]` telemetry at all, unlike
+  `:verify_no_exe_interpreter` and `:run_exe_smokerun`) -- purely additive, does not change any
+  branch/goto target, so it does not affect CI determinism for `self.fastpath` /
+  `self.exe.fastpath.graceful`.
+- NDJSON row `self.failfast.probe` (gated on `HP_NDJSON`, same convention as `self.exe.smokerun`)
+  carries `details.site` (`'fastpath'|'interpreter'`) so one schema covers both call sites.
+- Test coverage: `tests/selfapps_failfast_probe.ps1` (`self.failfast.probe.fastfail`,
+  `self.failfast.probe.alive`), forced via `HP_TEST_FORCE_INTERACTIVE_PROBE=1` under
+  `HP_CI_LANE=test` (mirrors the `HP_TEST_FORCE_PICKER` pattern) since CI is otherwise always
+  non-interactive. `tests/harness.ps1`'s `batch.failfast.probe` statically guards the interactivity
+  subroutine, the shared probe subroutine, the test override, the default probe window, the
+  `HP_PROBE_EXCEEDED` state var, and the decoupling fix.
