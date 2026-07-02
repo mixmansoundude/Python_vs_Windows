@@ -438,6 +438,18 @@ $svExeVocab   = $AllText -match [regex]::Escape('Running entry script smoke test
 $svExeCapture = $AllText -match [regex]::Escape("Set-Content -Path '..\~run.out.txt'")
 $hasSingleVerify = $svNoExeLabel -and $svNoExeCall -and $svOldGone -and $svExeVocab -and $svExeCapture
 Write-Result 'batch.smoke.single_verify' 'REQ-018: single-verification pass wired (no-EXE interpreter subroutine + EXE smoke captures ~run.out.txt + unified vocab); legacy post-warnfix interpreter retry removed' $hasSingleVerify @{ noExeLabel=$svNoExeLabel; noExeCall=$svNoExeCall; oldRemoved=$svOldGone; exeVocab=$svExeVocab; exeCapture=$svExeCapture }
+# derived requirement: Slice 2b-C fail-fast probe -- guard against silent removal of the shared
+# interactivity determination, the shared probe subroutine, the CI-safe test-forcing override, and
+# the top-of-file HP_FASTPATH_USED/HP_SMOKE_RC decoupling fix (the "silent success" bug where a
+# fast-path reuse could report full bootstrap success while hiding a real post-probe app failure).
+$ffInteractiveSub = $AllText -match '(?m)^:compute_interactive_run'
+$ffProbeSub        = $AllText -match '(?m)^:run_failfast_probe'
+$ffTestOverride    = $AllText -match 'HP_TEST_FORCE_INTERACTIVE_PROBE'
+$ffProbeMs         = $AllText -match [regex]::Escape('set "HP_FAILFAST_PROBE_MS=5000"')
+$ffExceededVar     = $AllText -match 'HP_PROBE_EXCEEDED'
+$ffDecoupleGuard   = $AllText -match [regex]::Escape('set "HP_FASTPATH_RUN_FAILED=')
+$hasFailfastProbe = $ffInteractiveSub -and $ffProbeSub -and $ffTestOverride -and $ffProbeMs -and $ffExceededVar -and $ffDecoupleGuard
+Write-Result 'batch.failfast.probe' 'REQ-018 (2b-C): fail-fast probe wired (interactivity subroutine + shared probe subroutine + CI-safe test override + default probe window + HP_PROBE_EXCEEDED state + HP_FASTPATH_USED/HP_SMOKE_RC decoupling guard)' $hasFailfastProbe @{ interactiveSub=$ffInteractiveSub; probeSub=$ffProbeSub; testOverride=$ffTestOverride; probeMs=$ffProbeMs; exceededVar=$ffExceededVar; decoupleGuard=$ffDecoupleGuard }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

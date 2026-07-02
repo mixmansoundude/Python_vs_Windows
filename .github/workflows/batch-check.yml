@@ -438,6 +438,12 @@ jobs:
         run: |
           & tests\selfapps_exefastpath.ps1
 
+      - name: "Self-test: fail-fast probe -- fast-failure discard and alive-past-probe no-discard (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_failfast_probe.ps1
+
       - name: "Self-test: super-user skip hooks (conda-full only)"
         if: ${{ matrix.mode == 'conda-full' }}
         shell: pwsh

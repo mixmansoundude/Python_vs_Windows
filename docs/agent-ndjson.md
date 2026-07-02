@@ -23,6 +23,7 @@ self.exe.build, self.exe.run,
 self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exedyn.xfail,
 self.exe.fastpath.graceful, self.skiphooks.combined,
 self.fastpath,
+self.failfast.probe.fastfail, self.failfast.probe.alive, self.failfast.probe,
 self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self.entry.entryD,
 self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, self.entry.picker,
 self.entry.req011.crossdir, self.entry.req011.sameDir, self.isolation.req010.pythonpath,
@@ -161,6 +162,7 @@ batch.preflight.compile,
 batch.req007.provider_build,
 batch.smoke.telemetry,
 batch.smoke.single_verify,
+batch.failfast.probe,
 self.bootstrap.state, self.empty_repo.msg, self.empty_repo.no_spurious_warn,
 self.harness.started,
 self.stub.fastpath, self.stub.rebuild, self.stub.state_skip,
@@ -200,6 +202,13 @@ self.venv.fallback, self.entry.override
 - Rows gated by `pyFileCount` (e.g. `entry.single.direct`) will be absent whenever the
   bootstrapper repo itself is the test target (pyFiles != 1 in the main repo).
 - Check the CI step log for `[INFO] ... skipped:` messages before assuming a test regressed.
+- `self.failfast.probe` (bare row, distinct from `self.failfast.probe.fastfail`/`.alive`) is
+  emitted inline by `run_setup.bat`'s `:run_failfast_probe`, gated on `HP_NDJSON`. The current CI
+  lane that forces the interactive branch (`HP_TEST_FORCE_INTERACTIVE_PROBE=1`, in
+  `selfapps_failfast_probe.ps1`) unsets or never populates `HP_NDJSON` for that sub-bootstrap, so
+  this row does not currently appear in a real CI artifact -- same situation as `self.exe.smokerun`
+  and other inline-emitted rows. It is registered above so its id is not mistaken for an
+  unexpected/typo'd addition if a future lane change makes it fire.
 
 **NDJSON files and who owns them:**
 - `tests/~test-results.ndjson` -- written by every `selfapps_*.ps1` test script during the
