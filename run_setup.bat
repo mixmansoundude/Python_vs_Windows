@@ -189,6 +189,10 @@ rem before treating a launched process as "still alive / healthy" rather than "f
 rem classified alive, the wait becomes unbounded and the process is never killed.
 set "HP_FAILFAST_PROBE_MS=%HP_FAILFAST_PROBE_MS%"
 if not defined HP_FAILFAST_PROBE_MS set "HP_FAILFAST_PROBE_MS=5000"
+rem HP_TEST_CHECKPOINT_ANSWER=Y|N: bypasses the REQ-018 post-execution checkpoint prompt for CI
+rem testing (mirrors HP_TEST_SYSBUILD_ANSWER/HP_TEST_SYSCON_ANSWER). Checked before HP_CI_LANE so
+rem an explicit Y reaches the accept branch even in CI.
+set "HP_TEST_CHECKPOINT_ANSWER=%HP_TEST_CHECKPOINT_ANSWER%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -2104,21 +2108,27 @@ rem WaitForExit() follows and the process is NEVER killed -- this is the only di
 rem from :run_exe_smokerun, which stays the sole place in this file allowed to force-kill
 rem (the fresh-build verification run). Caller sets HP_PROBE_EXE / HP_PROBE_ARGS (raw,
 rem unquoted -- the helper quotes it) / HP_PROBE_CWD before calling; %1 is a short site tag
-rem ('fastpath'|'interpreter') used only for the NDJSON row and log text. Always leaves
-rem HP_SMOKE_RC set to the true final exit code and HP_PROBE_EXCEEDED set (1) iff the probe
+rem ('fastpath'|'interpreter'|'checkpoint' -- the last added by :run_postexec_checkpoint,
+rem Slice 2b-C's post-execution checkpoint) used only for the NDJSON row and log text. Always
+rem leaves HP_SMOKE_RC set to the true final exit code and HP_PROBE_EXCEEDED set (1) iff the probe
 rem window was exceeded -- the caller decides what that means (:try_fast_exe discards a
 rem cached EXE only when NOT exceeded; :verify_no_exe_interpreter has no cached artifact and
-rem just reports the final outcome either way).
+rem just reports the final outcome either way). Caller may optionally set HP_PROBE_OUT /
+rem HP_PROBE_ERR to redirect the captured stdout/stderr somewhere other than the default
+rem ~run.out.txt / ~run.err.txt -- :run_postexec_checkpoint uses this so its elective SECOND
+rem run never overwrites the FIRST (real) verification run's captured output.
 set "HP_PROBE_SITE=%~1"
 set "HP_PROBE_EXCEEDED="
 set "HP_SMOKE_RC="
 set "HP_PROBE_PS=~failfast_probe.ps1"
+if not defined HP_PROBE_OUT set "HP_PROBE_OUT=~run.out.txt"
+if not defined HP_PROBE_ERR set "HP_PROBE_ERR=~run.err.txt"
 if exist "%HP_PROBE_PS%" del "%HP_PROBE_PS%" >nul 2>&1
 rem pre-truncate: the helper only writes these once, at process exit, so without this an
 rem unbounded ALIVE-AT-PROBE wait would leave stale prior-run content lingering for its
 rem full duration with no indication it is stale.
-if exist "~run.out.txt" del "~run.out.txt" >nul 2>&1
-if exist "~run.err.txt" del "~run.err.txt" >nul 2>&1
+if exist "%HP_PROBE_OUT%" del "%HP_PROBE_OUT%" >nul 2>&1
+if exist "%HP_PROBE_ERR%" del "%HP_PROBE_ERR%" >nul 2>&1
 call :emit_from_base64 "%HP_PROBE_PS%" HP_FAILFAST_PROBE
 if errorlevel 1 (
   rem Extremely rare (disk/permission failure writing a work file); mirror :try_fast_exe's own
@@ -2159,6 +2169,86 @@ set "HP_PROBE_ARGS="
 set "HP_PROBE_CWD="
 set "HP_PROBE_SITE="
 set "HP_PROBE_PS="
+set "HP_PROBE_OUT="
+set "HP_PROBE_ERR="
+exit /b 0
+:run_postexec_checkpoint
+rem REQ-018 (2b-C): post-execution checkpoint. The FIRST run (EXE smoke or no-EXE interpreter
+rem run) has already happened and its [STATUS] telemetry has already been printed by the time
+rem this is called -- this offers an ELECTIVE second run via the interpreter as a diagnostic
+rem tool, never forced. Declining (the default, and the only outcome in CI/automation) leaves
+rem the run footprint at exactly one execution. Called unconditionally after every verification
+rem telemetry point (never after :try_fast_exe's fast-path reuse, which stays zero-friction by
+rem design -- see docs/agent-interconnect.md). %1 is a short site tag ('exe'|'interpreter') used
+rem only for the log lines below, so a reader can tell which verification path preceded this.
+rem
+rem Mirrors the existing 3-branch consent-gate pattern (:system_build_consent_gate,
+rem :cascade_consent_gate, :system_python_consent_gate): echo the prompt UNCONDITIONALLY (so
+rem prompt-text assertions see it even on auto-decline), then HP_TEST_CHECKPOINT_ANSWER
+rem (override, checked FIRST so an explicit Y reaches the accept branch even under HP_CI_LANE)
+rem -> HP_CI_LANE auto-decline -> interactive set /p. UNLIKE those 3 gates (each reached only on
+rem a narrow edge-case path), this one fires on essentially every successful bootstrap run, so it
+rem ALSO auto-declines on NOINPUT/HP_NONINTERACTIVE (the same signals :compute_interactive_run and
+rem :pick_entry_interactive already treat as authoritative non-interactivity elsewhere in this
+rem file) -- without this, any automation that sets those two flags but not HP_CI_LANE (a
+rem documented, supported way to run this bootstrapper headlessly), or a contributor running a
+rem full-bootstrap selfapps test locally (most do not pin HP_CI_LANE, see docs/agent-lessons-
+rem learned.md "Accepted gap"), would hang on set /p with no console input available.
+set "HP_CHECKPOINT_SITE=%~1"
+echo.
+echo *** Verification finished -- see the Run Status above. ***
+echo *** You can run your program again now via the interpreter as an extra diagnostic check. ***
+set "HP_CHECKPOINT_RAW="
+if defined HP_TEST_CHECKPOINT_ANSWER (
+  set "HP_CHECKPOINT_RAW=%HP_TEST_CHECKPOINT_ANSWER%"
+) else if defined HP_CI_LANE (
+  set "HP_CHECKPOINT_RAW=n"
+) else if defined NOINPUT (
+  set "HP_CHECKPOINT_RAW=n"
+) else if defined HP_NONINTERACTIVE (
+  set "HP_CHECKPOINT_RAW=n"
+) else (
+  set /p "HP_CHECKPOINT_RAW=  Run again via the interpreter now? [Y/N] "
+)
+set "HP_CHECKPOINT_CHOICE=%HP_CHECKPOINT_RAW:~0,1%"
+if /I not "%HP_CHECKPOINT_CHOICE%"=="Y" (
+  call :log "[INFO] REQ-018: post-execution checkpoint (%HP_CHECKPOINT_SITE%): declined (run footprint stays at one execution)."
+  set "HP_CHECKPOINT_SITE="
+  set "HP_CHECKPOINT_RAW="
+  set "HP_CHECKPOINT_CHOICE="
+  exit /b 0
+)
+call :log "[INFO] REQ-018: post-execution checkpoint (%HP_CHECKPOINT_SITE%): accepted; running a second time via the interpreter."
+if /I "%HP_CHECKPOINT_SITE%"=="exe" call :log "[INFO] REQ-018: note -- this diagnostic run uses the interpreter, not the packaged EXE, so behavior can differ (e.g. working directory, bundled resources)."
+rem Reuses :run_failfast_probe (same never-kill, two-stage wait) rather than a fourth ad hoc
+rem launch mechanism -- this elective run is exactly the same class of "user consciously
+rem launched something that might run for a while" as the fail-fast probe's own interactive
+rem branch, so it gets the same guarantees (never hard-killed, final outcome always reported).
+rem Save/restore HP_SMOKE_RC and HP_PROBE_EXCEEDED around this second call: they belong to the
+rem FIRST (real) verification run in the caller's namespace, and :run_failfast_probe would
+rem otherwise overwrite both with the SECOND (elective) run's outcome, corrupting them for any
+rem future code a caller might add after this checkpoint call before its own exit /b 0.
+set "HP_CHECKPOINT_SAVED_SMOKE_RC=%HP_SMOKE_RC%"
+set "HP_CHECKPOINT_SAVED_PROBE_EXCEEDED=%HP_PROBE_EXCEEDED%"
+set "HP_PROBE_EXE=%HP_PY%"
+set "HP_PROBE_ARGS=%HP_ENTRY%"
+set "HP_PROBE_CWD=%CD%"
+rem Distinct output files from the primary run's ~run.out.txt/~run.err.txt: this is a genuinely
+rem SECOND, separate execution, and reusing those paths would silently overwrite the FIRST run's
+rem captured output out from under any downstream consumer (envsmoke's 'smoke-ok' token check,
+rem the spaced-path dist\ token capture) that expects them to reflect the verified build.
+set "HP_PROBE_OUT=~checkpoint_run.out.txt"
+set "HP_PROBE_ERR=~checkpoint_run.err.txt"
+call :run_failfast_probe checkpoint
+set "HP_PROBE_OUT="
+set "HP_PROBE_ERR="
+set "HP_SMOKE_RC=%HP_CHECKPOINT_SAVED_SMOKE_RC%"
+set "HP_PROBE_EXCEEDED=%HP_CHECKPOINT_SAVED_PROBE_EXCEEDED%"
+set "HP_CHECKPOINT_SAVED_SMOKE_RC="
+set "HP_CHECKPOINT_SAVED_PROBE_EXCEEDED="
+set "HP_CHECKPOINT_SITE="
+set "HP_CHECKPOINT_RAW="
+set "HP_CHECKPOINT_CHOICE="
 exit /b 0
 :try_fast_exe
 set "HP_FASTPATH_USED="
@@ -2531,6 +2621,7 @@ if "%HP_SMOKE_RC%"=="0" (
 ) else (
   call :log "[STATUS] Run Status: FAILED (Exit Code: %HP_SMOKE_RC%)"
 )
+call :run_postexec_checkpoint interpreter
 exit /b 0
 :verify_no_exe_probe
 rem Kept UNTIMED past the short probe window on purpose: a long-running app (GUI / server /
@@ -2544,6 +2635,7 @@ set "HP_PROBE_EXE=%HP_PY%"
 set "HP_PROBE_ARGS=%HP_ENTRY%"
 set "HP_PROBE_CWD=%CD%"
 call :run_failfast_probe interpreter
+call :run_postexec_checkpoint interpreter
 exit /b 0
 :warnfix_cascade_detect
 rem REQ-009/REQ-005.10 (slice 1: detect only). After the warnfix rebuild, re-parse the
@@ -2720,9 +2812,10 @@ rem (self.env.smoke.run / self.prime.run / self.prime.bootstrap) without re-poin
 call :log "[INFO] Entry smoke exit=%HP_EXE_EXIT%"
 rem REQ-018 (2b-A): telemetry readout of the single verification run. HP_EXE_EXIT is the final
 rem EXE exit after any hidden-import recovery: 0 = clean, -1 = the 30s cap was hit (force-stopped,
-rem not necessarily broken), other = a real non-zero exit. This [STATUS] line is the data the
-rem 2b-C post-execution checkpoint will surface to the user. :log echoes unquoted, so keep the
-rem message free of < > | & (parentheses are literal to echo outside if/for blocks).
+rem not necessarily broken), other = a real non-zero exit. This [STATUS] line is the readout the
+rem 2b-C post-execution checkpoint (:run_postexec_checkpoint, called below) shows the user before
+rem offering the elective second run. :log echoes unquoted, so keep the message free of
+rem < > | & (parentheses are literal to echo outside if/for blocks).
 if "%HP_EXE_EXIT%"=="0" (
   call :log "[STATUS] Run Status: SUCCESS (Exit Code: 0)"
 ) else if "%HP_EXE_EXIT%"=="-1" (
@@ -2736,6 +2829,7 @@ if defined HP_NDJSON (
     "$r=[ordered]@{id='self.exe.smokerun';pass=($c -eq 0);details=[ordered]@{exitCode=$c}}|ConvertTo-Json -Compress -Depth 8;" ^
     "Add-Content -Path '%HP_NDJSON%' -Value $r -Encoding ASCII" >> "%LOG%" 2>&1
 )
+call :run_postexec_checkpoint exe
 set "HP_EXE_EXIT="
 exit /b 0
 :exe_smokerun_hints
@@ -2844,11 +2938,16 @@ rem $exeTime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
 rem if ($exeTime -ge $latest) { 'fresh' }
 rem If HP_FAST_CHECK changes, update this decoded comment block to match the base64 payload.
 set "HP_FAST_CHECK=JGV4ZSA9ICRhcmdzWzBdCmlmICgtbm90ICRleGUpIHsgJGV4ZSA9ICRlbnY6SFBfRkFTVF9FWEUgfQokaW5mcmFQYXR0ZXJuID0gJyg/aSkoXnxbL1xcXSkoXC5naXR8XC5naXRodWJ8ZGlzdHxcLnZlbnZ8XC51dl9lbnZ8X19weWNhY2hlX198XC5jb25kYSkoWy9cXF18JCknCiRzb3VyY2VzID0gR2V0LUNoaWxkSXRlbSAtUmVjdXJzZSAtRmlsZSAtRmlsdGVyICcqLnB5JyB8IFdoZXJlLU9iamVjdCB7ICRfLkZ1bGxOYW1lIC1ub3RtYXRjaCAkaW5mcmFQYXR0ZXJuIC1hbmQgJF8uTmFtZSAtbm90bGlrZSAnfioucHknIH0KaWYgKC1ub3QgJHNvdXJjZXMpIHsgZXhpdCAxIH0KJGxhdGVzdCA9ICgkc291cmNlcyB8IFNvcnQtT2JqZWN0IC1Qcm9wZXJ0eSBMYXN0V3JpdGVUaW1lVXRjIC1EZXNjZW5kaW5nIHwgU2VsZWN0LU9iamVjdCAtRmlyc3QgMSkuTGFzdFdyaXRlVGltZVV0YwokZXhlVGltZSA9IChHZXQtSXRlbSAtTGl0ZXJhbFBhdGggJGV4ZSkuTGFzdFdyaXRlVGltZVV0YwppZiAoJGV4ZVRpbWUgLWdlICRsYXRlc3QpIHsgJ2ZyZXNoJyB9Cg=="
-rem HP_FAILFAST_PROBE decoded content (Slice 2b-C):
+rem HP_FAILFAST_PROBE decoded content (Slice 2b-C, output-path args added in the 2b-C checkpoint
+rem slice so the elective secondary run never overwrites the primary run's captured files):
 rem $exe = $env:HP_PROBE_EXE
 rem $rawArgs = $env:HP_PROBE_ARGS
 rem $workDir = $env:HP_PROBE_CWD
 rem $probeMs = [int]$env:HP_FAILFAST_PROBE_MS
+rem $outPath = $env:HP_PROBE_OUT
+rem if (-not $outPath) { $outPath = '~run.out.txt' }
+rem $errPath = $env:HP_PROBE_ERR
+rem if (-not $errPath) { $errPath = '~run.err.txt' }
 rem $si = New-Object System.Diagnostics.ProcessStartInfo
 rem $si.FileName = $exe
 rem if ($rawArgs) { $si.Arguments = '"' + $rawArgs + '"' }
@@ -2865,17 +2964,17 @@ rem if (-not $fast) {
 rem     $exceeded = 1
 rem     $p.WaitForExit()
 rem }
-rem $so.Result | Set-Content -Path '~run.out.txt' -Encoding ASCII
-rem $se.Result | Set-Content -Path '~run.err.txt' -Encoding ASCII
+rem $so.Result | Set-Content -Path $outPath -Encoding ASCII
+rem $se.Result | Set-Content -Path $errPath -Encoding ASCII
 rem "$exceeded|$($p.ExitCode)"
 rem Never calls $p.Kill() -- once the probe window (HP_FAILFAST_PROBE_MS) is exceeded, the second
 rem WaitForExit() is unbounded so a healthy long-running app is never force-stopped. Reads all
 rem inputs from env vars set by the caller (no positional args) to avoid any cmd.exe quoting
-rem hazard; caller must pre-truncate ~run.out.txt/~run.err.txt before invoking (this script only
-rem writes them once, at process exit, so a stale prior run's content would otherwise linger for
-rem the full unbounded-wait duration).
+rem hazard; caller must pre-truncate the output files (default paths baked into this script)
+rem before invoking (this script only writes them once, at process exit, so a stale prior run's
+rem content would otherwise linger for the full unbounded-wait duration).
 rem If HP_FAILFAST_PROBE changes, update this decoded comment block to match the base64 payload.
-set "HP_FAILFAST_PROBE=JGV4ZSA9ICRlbnY6SFBfUFJPQkVfRVhFCiRyYXdBcmdzID0gJGVudjpIUF9QUk9CRV9BUkdTCiR3b3JrRGlyID0gJGVudjpIUF9QUk9CRV9DV0QKJHByb2JlTXMgPSBbaW50XSRlbnY6SFBfRkFJTEZBU1RfUFJPQkVfTVMKJHNpID0gTmV3LU9iamVjdCBTeXN0ZW0uRGlhZ25vc3RpY3MuUHJvY2Vzc1N0YXJ0SW5mbwokc2kuRmlsZU5hbWUgPSAkZXhlCmlmICgkcmF3QXJncykgeyAkc2kuQXJndW1lbnRzID0gJyInICsgJHJhd0FyZ3MgKyAnIicgfQokc2kuV29ya2luZ0RpcmVjdG9yeSA9ICR3b3JrRGlyCiRzaS5Vc2VTaGVsbEV4ZWN1dGUgPSAkZmFsc2UKJHNpLlJlZGlyZWN0U3RhbmRhcmRPdXRwdXQgPSAkdHJ1ZQokc2kuUmVkaXJlY3RTdGFuZGFyZEVycm9yID0gJHRydWUKJHAgPSBbU3lzdGVtLkRpYWdub3N0aWNzLlByb2Nlc3NdOjpTdGFydCgkc2kpCiRzbyA9ICRwLlN0YW5kYXJkT3V0cHV0LlJlYWRUb0VuZEFzeW5jKCkKJHNlID0gJHAuU3RhbmRhcmRFcnJvci5SZWFkVG9FbmRBc3luYygpCiRmYXN0ID0gJHAuV2FpdEZvckV4aXQoJHByb2JlTXMpCiRleGNlZWRlZCA9IDAKaWYgKC1ub3QgJGZhc3QpIHsKICAgICRleGNlZWRlZCA9IDEKICAgICRwLldhaXRGb3JFeGl0KCkKfQokc28uUmVzdWx0IHwgU2V0LUNvbnRlbnQgLVBhdGggJ35ydW4ub3V0LnR4dCcgLUVuY29kaW5nIEFTQ0lJCiRzZS5SZXN1bHQgfCBTZXQtQ29udGVudCAtUGF0aCAnfnJ1bi5lcnIudHh0JyAtRW5jb2RpbmcgQVNDSUkKIiRleGNlZWRlZHwkKCRwLkV4aXRDb2RlKSIK"
+set "HP_FAILFAST_PROBE=JGV4ZSA9ICRlbnY6SFBfUFJPQkVfRVhFCiRyYXdBcmdzID0gJGVudjpIUF9QUk9CRV9BUkdTCiR3b3JrRGlyID0gJGVudjpIUF9QUk9CRV9DV0QKJHByb2JlTXMgPSBbaW50XSRlbnY6SFBfRkFJTEZBU1RfUFJPQkVfTVMKJG91dFBhdGggPSAkZW52OkhQX1BST0JFX09VVAppZiAoLW5vdCAkb3V0UGF0aCkgeyAkb3V0UGF0aCA9ICd+cnVuLm91dC50eHQnIH0KJGVyclBhdGggPSAkZW52OkhQX1BST0JFX0VSUgppZiAoLW5vdCAkZXJyUGF0aCkgeyAkZXJyUGF0aCA9ICd+cnVuLmVyci50eHQnIH0KJHNpID0gTmV3LU9iamVjdCBTeXN0ZW0uRGlhZ25vc3RpY3MuUHJvY2Vzc1N0YXJ0SW5mbwokc2kuRmlsZU5hbWUgPSAkZXhlCmlmICgkcmF3QXJncykgeyAkc2kuQXJndW1lbnRzID0gJyInICsgJHJhd0FyZ3MgKyAnIicgfQokc2kuV29ya2luZ0RpcmVjdG9yeSA9ICR3b3JrRGlyCiRzaS5Vc2VTaGVsbEV4ZWN1dGUgPSAkZmFsc2UKJHNpLlJlZGlyZWN0U3RhbmRhcmRPdXRwdXQgPSAkdHJ1ZQokc2kuUmVkaXJlY3RTdGFuZGFyZEVycm9yID0gJHRydWUKJHAgPSBbU3lzdGVtLkRpYWdub3N0aWNzLlByb2Nlc3NdOjpTdGFydCgkc2kpCiRzbyA9ICRwLlN0YW5kYXJkT3V0cHV0LlJlYWRUb0VuZEFzeW5jKCkKJHNlID0gJHAuU3RhbmRhcmRFcnJvci5SZWFkVG9FbmRBc3luYygpCiRmYXN0ID0gJHAuV2FpdEZvckV4aXQoJHByb2JlTXMpCiRleGNlZWRlZCA9IDAKaWYgKC1ub3QgJGZhc3QpIHsKICAgICRleGNlZWRlZCA9IDEKICAgICRwLldhaXRGb3JFeGl0KCkKfQokc28uUmVzdWx0IHwgU2V0LUNvbnRlbnQgLVBhdGggJG91dFBhdGggLUVuY29kaW5nIEFTQ0lJCiRzZS5SZXN1bHQgfCBTZXQtQ29udGVudCAtUGF0aCAkZXJyUGF0aCAtRW5jb2RpbmcgQVNDSUkKIiRleGNlZWRlZHwkKCRwLkV4aXRDb2RlKSIK"
 :: --- Embedded helper: HP_PREP_REQUIREMENTS (~prep_requirements.py) ---
 :: Purpose:
 ::   - Normalize pip/conda specifiers from requirements.txt

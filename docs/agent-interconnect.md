@@ -488,10 +488,72 @@ never a ceiling) then, if the process is still running, a SECOND, UNBOUNDED `Wai
   branch/goto target, so it does not affect CI determinism for `self.fastpath` /
   `self.exe.fastpath.graceful`.
 - NDJSON row `self.failfast.probe` (gated on `HP_NDJSON`, same convention as `self.exe.smokerun`)
-  carries `details.site` (`'fastpath'|'interpreter'`) so one schema covers both call sites.
+  carries `details.site` (`'fastpath'|'interpreter'|'checkpoint'` -- the third value added when
+  `:run_postexec_checkpoint`, Slice 2b-C's post-execution checkpoint, shipped; see that section
+  below) so one schema covers all three call sites. Because the checkpoint can trigger this same
+  subroutine a SECOND time within one bootstrap invocation, `self.failfast.probe` is no longer
+  guaranteed to appear at most once per `HP_NDJSON` stream -- a consumer must key off
+  `details.site` to distinguish the primary verification's row from an accepted checkpoint's row,
+  not assume a single row per run.
 - Test coverage: `tests/selfapps_failfast_probe.ps1` (`self.failfast.probe.fastfail`,
   `self.failfast.probe.alive`), forced via `HP_TEST_FORCE_INTERACTIVE_PROBE=1` under
   `HP_CI_LANE=test` (mirrors the `HP_TEST_FORCE_PICKER` pattern) since CI is otherwise always
   non-interactive. `tests/harness.ps1`'s `batch.failfast.probe` statically guards the interactivity
   subroutine, the shared probe subroutine, the test override, the default probe window, the
   `HP_PROBE_EXCEEDED` state var, and the decoupling fix.
+
+## Post-execution checkpoint (Slice 2b-C, second half): the elective second run
+
+`:run_postexec_checkpoint` is the other half of 2b-C promised by the original REQ-018 design doc
+(the fail-fast probe above shipped first, in a separate PR). It is a **consent gate**, not a probe
+mechanism -- it follows the SAME 3-branch template as `:system_build_consent_gate` /
+`:cascade_consent_gate` / `:system_python_consent_gate` (echo the prompt UNCONDITIONALLY, then
+`HP_TEST_CHECKPOINT_ANSWER` override checked first, then `HP_CI_LANE` auto-decline, then
+interactive `set /p`) -- **not** the `HP_INTERACTIVE_RUN`/`HP_TEST_FORCE_INTERACTIVE_PROBE`
+convention the fail-fast probe uses. Do not conflate the two patterns: `HP_INTERACTIVE_RUN`
+silently SKIPS a branch under `HP_CI_LANE` (no prompt text at all in CI); the consent-gate pattern
+always ECHOES the prompt even when auto-declining, so a `self.checkpoint.*` test can assert the
+prompt text is shown regardless of lane.
+
+**What it does and why it is safe to call unconditionally:** `:run_postexec_checkpoint <site>` is
+called at the end of every place that already printed `[STATUS] Run Status: ...` telemetry for a
+FRESH verification run -- `:smokerun_ndjson` (after the EXE smoke + its NDJSON emission) and both
+branches of `:verify_no_exe_interpreter` (the legacy branch, and after `:run_failfast_probe
+interpreter` returns in `:verify_no_exe_probe`). It is deliberately **never** called from
+`:try_fast_exe`'s fast-path reuse -- the locked design requirement is "Fast path = ZERO friction...
+do NOT add a prompt or flag to the fast path," and since the checkpoint gate itself would decline
+silently-but-still-echo a prompt in CI, adding the call there would violate that zero-friction
+guarantee even on the auto-decline path. On accept, it reuses `:run_failfast_probe` (site
+`'checkpoint'`) for the actual second launch rather than a fourth ad hoc process-launch mechanism
+-- same never-kill, two-stage-wait guarantee as the fail-fast probe's own interactive branch.
+
+**State it touches, and why nothing downstream breaks:** the checkpoint's accepted run reuses
+`HP_PROBE_EXE`/`HP_PROBE_ARGS`/`HP_PROBE_CWD` (cleared and reset, same as any other
+`:run_failfast_probe` call), and via `HP_PROBE_OUT`/`HP_PROBE_ERR` writes to distinct
+`~checkpoint_run.out.txt`/`~checkpoint_run.err.txt` files rather than the FIRST run's
+`~run.out.txt`/`~run.err.txt` (see the `:run_failfast_probe` header comment above --
+`HP_PROBE_OUT`/`HP_PROBE_ERR` exist specifically so this elective second run cannot clobber the
+real verification's captured output). `HP_SMOKE_RC`/`HP_PROBE_EXCEEDED` are explicitly
+**saved before and restored after** the `:run_failfast_probe checkpoint` call
+(`HP_CHECKPOINT_SAVED_SMOKE_RC`/`HP_CHECKPOINT_SAVED_PROBE_EXCEEDED`) -- NOT left overwritten by
+the second run's outcome -- because they belong to the FIRST (real) verification run in the
+caller's namespace and any code a caller might add after the checkpoint call (before its own
+`exit /b 0`) must still see the FIRST run's result, not the elective diagnostic run's. The elective
+run's own outcome is only ever surfaced via its own `[STATUS]`/NDJSON emission inside
+`:run_failfast_probe checkpoint` itself, never propagated back into the caller's `HP_SMOKE_RC`.
+
+**Cascade re-entry can offer the checkpoint more than once per bootstrap.** `:after_env_mode_selection`
+(see "Provider cascade execution re-enters env-create" above) is re-entrant, so a REQ-009 provider
+cascade (uv -> conda -> venv -> system) that reaches a NEW verification run at any of the three
+call sites offers a FRESH checkpoint prompt each time. This is intentional, not a bug: each cascade
+tier is a genuinely different build/environment, so a fresh "run it again to check" offer is
+correct per tier -- but it does mean `self.checkpoint.*`-style assertions on a cascading run must
+not assume exactly one prompt occurrence, and a real interactive user could see the prompt more
+than once in a single double-click session if their run happens to cascade through providers.
+
+Test coverage: `tests/selfapps_postexec_checkpoint.ps1` (`self.checkpoint.accept` via
+`HP_TEST_CHECKPOINT_ANSWER=Y`, `self.checkpoint.decline` via the default/`HP_CI_LANE` path),
+asserting the prompt is shown in both cases and the run footprint is exactly two vs. one
+`Entry smoke exit=0` occurrences. `tests/harness.ps1`'s `batch.postexec.checkpoint` statically
+guards the subroutine, the test override, the unconditional prompt echo, both log lines, and that
+all three call sites are still wired (`call :run_postexec_checkpoint` count `-ge 3`).
