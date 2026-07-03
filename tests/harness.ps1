@@ -419,8 +419,9 @@ $pbNoSkip  = -not ($AllText -match [regex]::Escape('System fallback: skipping Py
 $hasProviderBuild = $pbGate -and $pbLabel -and $pbFlag -and $pbAnswer -and $pbDecline -and $pbNoSkip
 Write-Result 'batch.req007.provider_build' 'REQ-007: provider-independent build wired (system build consent gate + HP_BUILD_OK + CI-safe answer flag); old unconditional system skip removed' $hasProviderBuild @{ gate=$pbGate; label=$pbLabel; flag=$pbFlag; answer=$pbAnswer; decline=$pbDecline; oldSkipRemoved=$pbNoSkip }
 # derived requirement: REQ-018 (2b-A) telemetry readout -- the single verification run emits a
-# [STATUS] Run Status line (SUCCESS / TIMED OUT / FAILED) that the 2b-C post-execution checkpoint
-# will surface. Guard the three branches against silent removal.
+# [STATUS] Run Status line (SUCCESS / TIMED OUT / FAILED) that :run_postexec_checkpoint (shipped
+# in the 2b-C post-execution checkpoint slice, see batch.postexec.checkpoint below) shows the
+# user before offering the elective second run. Guard the three branches against silent removal.
 $tmStatus  = $AllText -match [regex]::Escape('[STATUS] Run Status:')
 $tmSuccess = $AllText -match [regex]::Escape('Run Status: SUCCESS (Exit Code: 0)')
 $tmTimeout = $AllText -match [regex]::Escape('Run Status: TIMED OUT')
@@ -450,6 +451,18 @@ $ffExceededVar     = $AllText -match 'HP_PROBE_EXCEEDED'
 $ffDecoupleGuard   = $AllText -match [regex]::Escape('set "HP_FASTPATH_RUN_FAILED=')
 $hasFailfastProbe = $ffInteractiveSub -and $ffProbeSub -and $ffTestOverride -and $ffProbeMs -and $ffExceededVar -and $ffDecoupleGuard
 Write-Result 'batch.failfast.probe' 'REQ-018 (2b-C): fail-fast probe wired (interactivity subroutine + shared probe subroutine + CI-safe test override + default probe window + HP_PROBE_EXCEEDED state + HP_FASTPATH_USED/HP_SMOKE_RC decoupling guard)' $hasFailfastProbe @{ interactiveSub=$ffInteractiveSub; probeSub=$ffProbeSub; testOverride=$ffTestOverride; probeMs=$ffProbeMs; exceededVar=$ffExceededVar; decoupleGuard=$ffDecoupleGuard }
+# derived requirement: Slice 2b-C post-execution checkpoint -- guard against silent removal of
+# the checkpoint subroutine, the CI-safe test override, the unconditional prompt echo (so
+# prompt-shown assertions never silently stop matching), and both call sites (EXE smoke path
+# via :smokerun_ndjson, no-EXE interpreter path via both branches of :verify_no_exe_interpreter).
+$cpSub          = $AllText -match '(?m)^:run_postexec_checkpoint'
+$cpTestOverride = $AllText -match 'HP_TEST_CHECKPOINT_ANSWER'
+$cpPrompt       = $AllText -match [regex]::Escape('Verification finished -- see the Run Status above.')
+$cpAccept       = $AllText -match [regex]::Escape('post-execution checkpoint (%HP_CHECKPOINT_SITE%): accepted')
+$cpDecline      = $AllText -match [regex]::Escape('post-execution checkpoint (%HP_CHECKPOINT_SITE%): declined')
+$cpCallCount    = ([regex]::Matches($AllText, 'call :run_postexec_checkpoint')).Count
+$hasCheckpoint = $cpSub -and $cpTestOverride -and $cpPrompt -and $cpAccept -and $cpDecline -and ($cpCallCount -ge 3)
+Write-Result 'batch.postexec.checkpoint' 'REQ-018 (2b-C): post-execution checkpoint wired (subroutine + CI-safe test override + unconditional prompt echo + accept/decline log lines + call sites at EXE smoke and both no-EXE interpreter branches)' $hasCheckpoint @{ sub=$cpSub; testOverride=$cpTestOverride; prompt=$cpPrompt; accept=$cpAccept; decline=$cpDecline; callSites=$cpCallCount }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

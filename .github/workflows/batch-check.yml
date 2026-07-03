@@ -444,6 +444,12 @@ jobs:
         run: |
           & tests\selfapps_failfast_probe.ps1
 
+      - name: "Self-test: post-execution checkpoint -- accept and decline (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_postexec_checkpoint.ps1
+
       - name: "Self-test: super-user skip hooks (conda-full only)"
         if: ${{ matrix.mode == 'conda-full' }}
         shell: pwsh

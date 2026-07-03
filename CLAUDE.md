@@ -552,6 +552,23 @@ Items deferred to future loops:
 
 Items completed and shipped:
 
+- **REQ-018 Slice 2b-C -- unified run-model, both halves**: shipped in two PRs. The **fail-fast
+  probe** (`:compute_interactive_run`, `:run_failfast_probe`, `HP_FAILFAST_PROBE_MS` default
+  5000ms) times out the two previously-untimed user-code launch points (`:try_fast_exe`'s
+  cached-EXE reuse, `:verify_no_exe_interpreter`'s no-EXE path): an interactive user gets a short
+  classification window then an unbounded, never-killed wait so a genuinely long-running app is
+  never force-stopped, while a stale/broken cached EXE that fails fast still triggers
+  discard-and-rebuild. Also fixed a silent-success gap it surfaced (`HP_FASTPATH_RUN_FAILED`
+  decouples "keep the cached EXE" from "declare full success"). CLOSED by PR #318. The
+  **post-execution checkpoint** (`:run_postexec_checkpoint`, `HP_TEST_CHECKPOINT_ANSWER`) is the
+  other half of the original design: after the FIRST verification run's `[STATUS]` telemetry
+  prints, offers an ELECTIVE second run via the interpreter (diagnostic tool), gated by the same
+  3-branch consent-gate pattern as `:system_build_consent_gate`/`:cascade_consent_gate` -- never
+  offered on the zero-friction fast path. Reuses `:run_failfast_probe` for the actual second
+  launch rather than a fourth execution mechanism. See `docs/agent-interconnect.md` "Post-execution
+  checkpoint (Slice 2b-C, second half)" for the full state-touching/safety analysis. CLOSED by
+  this PR.
+
 - **Progress messaging for >5s steps**: Added `[INFO]` progress messages before the two
   longest silent steps (conda env create at `:try_conda_create`, PyInstaller install+build in
   the main EXE-build branch) so users never mistake silence for a hang. Harness static checks
