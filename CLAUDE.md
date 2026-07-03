@@ -517,12 +517,6 @@ Items deferred to future loops:
   very likely outside bootstrapper control; confirm such a case routes to warnfix gracefully
   rather than being reported as a bootstrapper failure. Document the conclusion.
 
-- **Iterate-gate pre-flight snapshot contradiction**: the pre-flight snapshot is described as
-  "expected has_failures:true while NDJSONs are missing" but the emitted JSON shows
-  `{"has_failures":false,...}`. Reconcile the message vs. the emitted verdict (the intent is
-  that missing `tests/~test-results.ndjson` / `ci_test_results.ndjson` are treated as
-  failures so empty streams never pass).
-
 - **Persisted run-page warnings**: review the last several CI runs for warnings that recur
   across runs (Actions "Annotations"/warnings), and triage each as fix-or-accept.
 
@@ -568,6 +562,20 @@ Items completed and shipped:
   launch rather than a fourth execution mechanism. See `docs/agent-interconnect.md` "Post-execution
   checkpoint (Slice 2b-C, second half)" for the full state-touching/safety analysis. CLOSED by
   this PR.
+
+- **Iterate-gate pre-flight snapshot contradiction**: `tools/iterate_gate.ps1` emitted
+  `has_failures:false` even when NDJSONs were missing, contradicting the intent that missing
+  `tests/~test-results.ndjson` / `ci_test_results.ndjson` are treated as failures so empty
+  streams never pass. Fixed by setting `$hasFailingTests = $true` after the NDJSON probing
+  loop when `$missing.Count -gt 0`, but only when `$skipIterate` is not already `$true` --
+  `batchcheck_failing.txt`/`failing-tests.txt` is itself derived from NDJSON rows by the
+  harness, so an authoritative "no failures" verdict from the fail list is trusted over
+  NDJSON copies this gate invocation did not have staged (an unconditional override broke
+  `test_iterate_gate_skips_when_fail_list_is_none`, which stages a clean fail list with no
+  NDJSON files present). Also updated the "Append iterate gate to Summary" CI step header in
+  `batch-check.yml` to remove the confusing "expected has_failures:true while NDJSONs are
+  missing" phrase (which appeared alongside `has_failures:false` in green runs where NDJSONs
+  ARE present, creating a misleading appearance). CLOSED by this PR.
 
 - **Progress messaging for >5s steps**: Added `[INFO]` progress messages before the two
   longest silent steps (conda env create at `:try_conda_create`, PyInstaller install+build in

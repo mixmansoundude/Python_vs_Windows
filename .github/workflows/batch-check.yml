@@ -694,7 +694,7 @@ jobs:
         shell: pwsh
         run: |
           $flag = '${{ steps.verdict.outputs.has_failures }}'
-          "### Iterate gate (pre-flight snapshot - expected has_failures:true while NDJSONs are missing)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "### Iterate gate (pre-flight snapshot)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
           "- has_failures: $flag" | Out-File -Append $env:GITHUB_STEP_SUMMARY
           "This snapshot ensures missing tests~test-results.ndjson / ci_test_results.ndjson are treated as failures so empty streams never pass; later gates reflect the real NDJSON rows." | Out-File -Append $env:GITHUB_STEP_SUMMARY
           if (Test-Path 'iterate_gate.json') {
