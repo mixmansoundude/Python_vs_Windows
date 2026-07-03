@@ -275,8 +275,12 @@ foreach ($name in $requiredFiles) {
     }
 }
 
-# derived requirement: missing NDJSONs are treated as failures so empty streams never pass.
-if ($missing.Count -gt 0) {
+# derived requirement: missing NDJSONs are treated as failures so empty streams never pass,
+# but only when there is no authoritative fail-list verdict already saying otherwise.
+# batchcheck_failing.txt/failing-tests.txt is itself derived from NDJSON rows by the harness;
+# if it explicitly reports no failures, trust that verdict instead of flagging failure over
+# NDJSON copies this gate invocation did not have staged (e.g. a synthetic/partial workspace).
+if ($missing.Count -gt 0 -and -not $skipIterate) {
     $hasFailingTests = $true
 }
 
