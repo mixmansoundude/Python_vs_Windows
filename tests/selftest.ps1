@@ -315,6 +315,85 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($pipWarnFound -and $pipWarnContinued) { $summary.Add('pip install warn + continue: PASS') } else { $summary.Add('pip install warn + continue: FAIL') }
 
+# --- pipreqs version-forced-failure fallback test ---
+# Arrange: stub app imports a real third-party package (six) with NO requirements.txt/
+# pyproject.toml/PEP-723 metadata, so pipreqs is the only thing that could have declared it.
+# HP_PIPREQS_VERSION=0.5.0 forces the "pip install pipreqs" step to fail deterministically:
+# pipreqs 0.5.0's own PyPI metadata declares Requires-Python >=3.8.1,<3.13 (see the pipreqs
+# pin rationale in CLAUDE.md), which this bootstrapper's always-latest-Python target (3.13+)
+# always violates -- a fast, offline-metadata rejection, not a flaky network-dependent one.
+# Assert: the pipreqs-install-failed WARN fires, DEP_SOURCE never becomes "pipreqs" (nothing
+# declares `six`), the PyInstaller warn-file/warnfix repair loop is the ONLY thing that installs
+# `six`, and the rebuilt program still runs and prints its token. All four must hold -- checking
+# only "did it exit 0" would let this test silently pass for the wrong reason (e.g. if a future
+# pipreqs release ever lifts the <3.13 cap and the forced failure stops firing at all).
+$pipreqsFailDir = Join-Path $TestsDir '~selftest_pipreqs_version_fail'
+if (Test-Path $pipreqsFailDir) { Remove-Item -Recurse -Force $pipreqsFailDir }
+New-Item -ItemType Directory -Force -Path $pipreqsFailDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $pipreqsFailDir -Force
+Set-Content -Path (Join-Path $pipreqsFailDir 'app_pipreqs_fail_test.py') -Value @'
+import six
+print("pipreqs-fail-ok")
+'@ -Encoding ASCII
+$pipreqsFailLogName = '~pipreqs_version_fail_bootstrap.log'
+$prevPipreqsVersion = $env:HP_PIPREQS_VERSION
+$env:HP_PIPREQS_VERSION = '0.5.0'
+# derived requirement: this app is expected to build+warnfix-recover+run successfully, which
+# reaches the REQ-018 post-execution checkpoint (:run_postexec_checkpoint) -- a set /p consent
+# prompt that only auto-declines when HP_CI_LANE (or a few other flags) is defined. Real CI
+# always sets HP_CI_LANE at the job level, so this is masked there, but a contributor running
+# this script locally without it set would hang forever on the prompt. Pin it locally exactly
+# like the neighboring conda_retry/conda_perpkg blocks do (see docs/agent-lessons-learned.md
+# "Accepted gap").
+$prevCILanePipreqs = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $pipreqsFailDir
+try {
+  cmd /c "call run_setup.bat > $pipreqsFailLogName 2>&1"
+  $pipreqsFailExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_PIPREQS_VERSION = $prevPipreqsVersion
+  $env:HP_CI_LANE = $prevCILanePipreqs
+}
+$pipreqsFailLogPath = Join-Path $pipreqsFailDir $pipreqsFailLogName
+$pipreqsFailLines = @()
+if (Test-Path $pipreqsFailLogPath) { $pipreqsFailLines = Get-Content -LiteralPath $pipreqsFailLogPath -Encoding ASCII }
+$pipreqsInstallFailFound = ($pipreqsFailLines | Where-Object { $_ -like '*pipreqs install failed*' }).Count -gt 0
+$pipreqsWarnfixEngaged = ($pipreqsFailLines | Where-Object { $_ -like '*rebuild complete after warnfix*' }).Count -gt 0
+# derived requirement: the app's own stdout is never echoed into run_setup.bat's own console/log
+# (both the EXE-smoke path at run_setup.bat:2783 and the no-EXE interpreter path at :2616 redirect
+# the child process's stdout to a standalone ~run.out.txt in the app root instead) -- so the printed
+# token must be read from THAT file, not grepped out of the bootstrap log, or this assertion would
+# always be false regardless of whether the app actually ran. Matches the convention already used
+# by tests/selfapps_envsmoke.ps1 ($runout = Join-Path $app '~run.out.txt').
+$pipreqsFailRunOutPath = Join-Path $pipreqsFailDir '~run.out.txt'
+$pipreqsFailRunOut = ''
+if (Test-Path $pipreqsFailRunOutPath) { $pipreqsFailRunOut = Get-Content -LiteralPath $pipreqsFailRunOutPath -Raw -Encoding ASCII }
+$pipreqsAppRan = ($pipreqsFailRunOut -like '*pipreqs-fail-ok*')
+$pipreqsFailStatusPath = Join-Path $pipreqsFailDir '~bootstrap.status.json'
+$pipreqsFailBootstrapOk = $false
+if (Test-Path $pipreqsFailStatusPath) {
+  try {
+    $pipreqsFailStatus = Get-Content -LiteralPath $pipreqsFailStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $pipreqsFailBootstrapOk = ($pipreqsFailStatus.state -eq 'ok' -and $pipreqsFailStatus.exitCode -eq 0)
+  } catch { }
+}
+$pipreqsFailAllPass = ($pipreqsInstallFailFound -and $pipreqsWarnfixEngaged -and $pipreqsAppRan -and $pipreqsFailBootstrapOk)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.pipreqs_version_fail'
+  pass = $pipreqsFailAllPass
+  desc = 'HP_PIPREQS_VERSION=0.5.0 forces pipreqs install to fail; warnfix alone recovers the missing import and the app still runs'
+  details = [ordered]@{
+    installFailWarnFound = $pipreqsInstallFailFound
+    warnfixEngaged = $pipreqsWarnfixEngaged
+    appRan = $pipreqsAppRan
+    bootstrapOk = $pipreqsFailBootstrapOk
+    exitCode = $pipreqsFailExit
+  }
+})
+if ($pipreqsFailAllPass) { $summary.Add('pipreqs version-forced-failure fallback: PASS') } else { $summary.Add('pipreqs version-forced-failure fallback: FAIL') }
+
 # --- OneDrive/synced-folder path warning test ---
 # Arrange: run from a directory whose name contains "OneDrive" so the guardrail fires.
 # Assert:  "[WARN] OneDrive path detected" appears in log and bootstrap exits 0.

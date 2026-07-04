@@ -524,6 +524,122 @@ Items deferred to future loops:
   audit into CI (it exists today so agents can see which rows are missing). Likely still a
   manual-sync confirmation step, since fully automated discovery can miss flag-gated rows.
 
+- **CI lane gating audit (2026-07 maintenance pass)**: current state confirmed directly from
+  `batch-check.yml:48` -- only `real` and `conda-full` are gating (`continue-on-error: false`);
+  `cache`, `justme-test`, `uv`, `contract-uv`, `contract-uv-fail`, and `uv-dl-fallback` are all
+  `continue-on-error: true`. This is **not an oversight**: AGENTS.md's own stated policy
+  (see "Iteration Contract"/CI guidance near the top of that file) is to *deliberately* isolate
+  slow/flaky/environment-dependent lanes as non-gating, and CLAUDE.md's own Closed-Backlog
+  history documents why each of the five non-`cache` non-gating lanes was made that way (heavy
+  provider-dependent execution, "informational while shaking out," or a narrow flag-triggered
+  fallback scenario). Recommendation: do **not** blanket-flip "all but cache must gate" -- that
+  would reverse a documented, deliberate design decision. Instead, do a narrower follow-up:
+  review `uv` and `justme-test` (the two most mature/stable of the six) as graduation
+  candidates to gating after an explicit soak-period review; leave `contract-uv`/
+  `contract-uv-fail`/`uv-dl-fallback` non-gating since their non-gating status is explicitly
+  load-bearing per their own inline comments (narrow, flag-triggered diagnostic scenarios).
+
+- **Add `.github/dependabot.yml`**: no dependabot config exists anywhere in the repo today, so
+  there is no automated signal when a GitHub Action pin (or any other dependency) falls behind.
+  A 2026-07 maintenance sweep found every current action pin already on its latest major
+  (`checkout@v5`, `cache@v5`, `upload-artifact@v6`, `download-artifact@v6`, `github-script@v8`,
+  `codeql-action@v3`, `configure-pages@v6`, `upload-pages-artifact@v5`, `deploy-pages@v5`) with
+  nothing to bump right now, but that was a manual audit; a small `github-actions` ecosystem
+  dependabot config would catch the next drift automatically. Low effort, low risk, no rush.
+
+- **pipreqs dead-or-not / internalization decision (2026-07)**: pipreqs (bndr/pipreqs) is
+  stagnant (maintenance-only, looking for maintainers) but not at risk of disappearing from
+  PyPI outright -- PyPI does not delete established packages. The real risk the community
+  cites is future-Python bitrot (an AST parser silently failing on new syntax), which this repo
+  has already pre-empted twice over: the 0.4.13 pin (see "pipreqs pin rationale" above) avoids
+  0.5.0's `<3.13` Requires-Python ceiling, and the warnfix build-time safety net (see
+  "Dependency Discovery Fallback: warnfix" above) means the bootstrap **never hard-fails** even
+  if pipreqs is 100% unavailable -- confirmed by the new `self.stub.pipreqs_version_fail` test
+  (Closed Backlog, this pass) which forces pipreqs's own install to fail via
+  `HP_PIPREQS_VERSION=0.5.0` (already an env-overridable variable, no code change needed to
+  trigger this) and proves the bootstrap still reaches a working, fully-run EXE via warnfix
+  alone. Decision: **defer full internalization** (embedding a native AST-based scanner +
+  mapping table to replace pipreqs entirely). It is technically feasible and roughly the size a
+  3rd-party estimate suggested (a few hundred lines + a small mapping table), but it duplicates
+  a safety net that already works and is tested, and is its own nontrivial project (matching
+  pipreqs's accumulated edge-case handling: encoding fallback, syntax-error tolerance, stdlib
+  filtering). When it is eventually undertaken: write a **clean-room** scanner rather than
+  copying pipreqs's actual source or mapping file (pipreqs is MIT-licensed; copying it verbatim
+  would require carrying its copyright notice -- a clean-room reimplementation sidesteps this
+  entirely, though crediting pipreqs by name/link as prior art in a code comment is a fair
+  courtesy). Seed the mapping table by extending this repo's own already-license-clear
+  `tools/parse_warn.py` `TRANSLATIONS` dict rather than importing external mapping databases
+  (showmereqs/FawltyDeps/marimo/Grayskull all carry their own licenses needing separate audit,
+  and none of those tables have been vetted against this repo's actual needs). Use
+  `sys.stdlib_module_names` with a `try/except ImportError` guard per the existing
+  "Embedded-helper Python baseline" convention (it's a 3.10+ feature; must degrade gracefully
+  on an older ambient interpreter on the venv/system fallback tiers). Do not chase alternative
+  tools as a wholesale replacement: `pigar` was correctly ruled out elsewhere (its wheel bundles
+  an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
+
+- **HP_ENTRY echo redirection risk (accepted, no action)**: `%HP_ENTRY%` is echoed unquoted at
+  4 call sites (run_setup.bat:2017 via a raw `echo`, and :2028/:2540/:2633 via the `:log`
+  subroutine, which is documented above as echoing unquoted). A filename containing `<>&|`
+  would in principle mis-parse as a redirection/pipe operator. Accepted risk: this requires a
+  maliciously-or-accidentally-crafted filename delivered via a Windows double-click/drag-and-drop
+  flow (not a common vector), and a global `:log` rework is separately documented above as
+  high-effort tech debt blocked by three CI static guards (`batch.delayed.off`,
+  `batch.delayed.enable_absent`, `batch.bang.scan`) that would themselves need revisiting. No
+  action planned; noted here so it isn't rediscovered as a "new" finding later.
+
+- **Pre-flight py_compile cost on the fast path (accepted, by design)**: `:preflight_compile`
+  (REQ-021) runs unconditionally on every `:run_entry_smoke` invocation, including runs that
+  will subsequently take the cached-EXE fast path -- it is not skipped or gated on
+  `HP_FASTPATH_USED`. This is intentional: it catches an entry `SyntaxError` before a doomed
+  PyInstaller build even when the cached EXE is about to be reused. Cost is negligible
+  (single-file byte-compile, ~50ms). No action needed.
+
+- **Provider symmetry: no standalone Python-download tier**: confirmed gap in the REQ-009
+  provider cascade (uv -> conda -> venv -> system). uv and conda both self-acquire a full Python
+  interpreter (uv's managed CPython, conda's bundled Miniconda Python); venv and system
+  (`:resolve_system_python`) both require an *ambient* interpreter already on the host and have
+  no download path of their own. If uv is unreachable, conda create/install fails, and no
+  ambient `python`/`py` launcher exists, the bootstrap has no remaining way to acquire a Python
+  interpreter and falls through to `:die`. A future tier could target the official
+  python.org embeddable zip (`python-X.Y.Z-embed-amd64.zip`), verified by checksum, extracted to
+  a local/isolated directory, treated like an ambient interpreter, with pip bootstrapped via
+  `get-pip.py` if needed to feed warnfix. This is a substantial feature (new tier, checksum
+  verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
+  not attempted piecemeal.
+
+- **venv creation resilience**: `:try_venv_fallback` (run_setup.bat:1679-1710) is confirmed to
+  be a single, unguarded `python -m venv .\.venv` attempt -- any failure (missing `ensurepip`,
+  broken host symlinks, permission-denied, OneDrive/AV lock contention) falls straight through
+  to the system-Python tier with no retry or recovery attempt of any kind. Recommended scope for
+  a future round (deliberately narrower than a full "cascading fallback ladder" proposal that
+  was considered and partly rejected): (a) a post-creation canary probe (`python -c "import
+  sys"` against the freshly created venv's interpreter) to catch a "created but broken" venv
+  before it ever reaches PyInstaller; (b) a single retry using `python -m venv .\.venv
+  --without-pip` followed by a manual `get-pip.py` bootstrap when the first attempt fails --
+  this covers the most commonly-cited real-world failure mode (a stripped-down host Python
+  missing `ensurepip`). Explicitly **rejected**: relocating venv creation to
+  `%LOCALAPPDATA%\hp_cache\...` and a `PYTHONUSERBASE`-based "stealth isolation" fallback tier.
+  Both have a blast radius disproportionate to their benefit here -- nearly every downstream
+  path in this bootstrapper assumes CWD-relative execution (relocating would ripple everywhere),
+  and `PYTHONUSERBASE` directly contradicts the REQ-010 host-isolation invariant this repo
+  already enforces (nullifying `PYTHONPATH`/`PYTHONHOME`) while risking leaving dependency
+  residue on the user's machine -- arguably worse than simply falling through to the existing,
+  already-consented system-Python tier that sits below it in the cascade today.
+
+- **conda-create transient-retry gap (top priority pickup for the next round)**: confirmed
+  `:try_conda_create` (run_setup.bat:705-721) has zero retry logic on a `conda create` failure
+  -- it fails straight to `:handle_conda_failure` (venv/system cascade) on the very first
+  non-zero exit. This is asymmetric with the sibling `:conda_bulk_install` phase
+  (run_setup.bat:3121-3162), which already has a proven, tested pattern: scan the failure output
+  for `CondaHTTPError`/`Failed to fetch`/`timed out`/`ConnectionError` via `findstr`, wait 15s,
+  retry once. Root-caused against a real CI failure (conda-full lane, run #1517): a transient
+  `conda.anaconda.org` 403 during the `repodata.json` fetch (a well-documented, community-known
+  Cloudflare-fronted intermittent issue with no upstream fix beyond "retry"; resolved that time
+  by a manual retrigger, run #1518). Extending `:try_conda_create` with the identical
+  detect-transient-error-and-retry-once pattern already proven in `:conda_bulk_install` is the
+  most concretely ready-to-implement item in this backlog -- small, low-risk, reuses an
+  existing tested idiom almost verbatim.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **NI-VISA real install fails fast in CI (`installer_rc=-125083`) -- environmental, NOT a repo/test/CI-code

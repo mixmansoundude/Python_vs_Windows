@@ -469,3 +469,53 @@ agent wants full local-dev parity with CI for the remaining files, add the same
 save/set/restore-`HP_CI_LANE` pattern to whichever ones are found to actually reach the dispatch
 point (most single-build-run tests never reach it at all, since `:try_fast_exe` returns immediately
 when no cached EXE exists yet) -- but this is optional polish, not a correctness requirement.
+
+---
+
+## `cache` lane Miniconda-corruption handling lives only in `batch-check.yml` YAML comments
+
+The `cache` CI lane restores a Miniconda install from a GitHub Actions cache to skip the ~99 MB
+download/install on every run. This mechanism has its own self-healing logic that is easy to miss
+because, until this note, it was documented nowhere except inline YAML comments in
+`.github/workflows/batch-check.yml` -- a future agent debugging "why did the cache lane skip
+everything" should read this instead of re-deriving it from the workflow file.
+
+**Cache key includes the pipreqs version, not just a source hash** (`batch-check.yml:85-87`):
+```yaml
+key: win-${{ runner.os }}-py311b-conda-${{ hashFiles('run_setup.bat') }}-${{ steps.extract_version.outputs.pipreqs_version }}
+restore-keys: |
+  win-${{ runner.os }}-py311b-conda-
+```
+`hashFiles('run_setup.bat')` busts the cache automatically on any bootstrapper edit (no manual
+cache-bust needed for source changes); the `pipreqs_version` suffix (extracted via regex from the
+`HP_PIPREQS_VERSION` default-assignment line, `batch-check.yml:62-77`) additionally busts it if the
+pin ever changes. The `restore-keys` prefix fallback means a stale/partial-match cache can still be
+restored even when the primary key misses.
+
+**Three-layer anti-corruption chain, all keyed on a single `HP_CACHE_CORRUPTED` env flag:**
+1. *Health check on restore* (`batch-check.yml:89-108`, "Validate restored conda binary"): runs
+   `conda.bat info`; on failure, sets `HP_CACHE_CORRUPTED=1` via `GITHUB_ENV` and logs
+   `::warning::Conda binary health check failed...; cache corrupted.` The step deliberately
+   `exit 0`s regardless ("health check is informational; never fail this step") so a corrupt cache
+   doesn't crash the job outright.
+2. *Bootstrap-failure fallback* (`batch-check.yml:248-258`, "Catch cache lane bootstrap failure"):
+   if `run_setup.bat` itself fails in the cache lane (even with a healthy-looking cache), this ALSO
+   sets `HP_CACHE_CORRUPTED=1`.
+3. *Skip path*: when `HP_CACHE_CORRUPTED=1` (from either trigger above), later steps write
+   placeholder NDJSON rows (`self.cache.corrupted` / `self.cache.bootstrap.failed`, both marked
+   `"pass":true`) and skip the rest of the self-test battery for that run -- treating the condition
+   as an infrastructure issue, not a product regression. Most subsequent steps are guarded by
+   `if: ${{ env.HP_CACHE_CORRUPTED != '1' }}`.
+
+**Save-side guard prevents a "rolling corruption factory"** (`batch-check.yml:1485-1509`): "Validate
+Miniconda before cache save" and "Save Miniconda cache" both additionally require
+`HP_CACHE_CORRUPTED != '1'` (plus a fresh `conda.bat` presence/health check of their own). This
+means a corrupted cache is **never re-saved** -- corruption cannot compound run over run, and the
+next run's `restore-keys` fallback will eventually pick up a healthy cache from before the
+corruption was introduced (or fall through to a fresh install if none exists).
+
+If you touch any of `batch-check.yml`'s cache-lane steps, preserve this chain: the health check
+must stay non-fatal (`exit 0`), `HP_CACHE_CORRUPTED` must gate both the skip-path steps and the
+save step, and the cache key must keep including a value that changes whenever the *content* the
+cache is keyed on (Miniconda install driven by `run_setup.bat` + the pinned pipreqs version) could
+have changed.
