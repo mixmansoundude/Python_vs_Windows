@@ -318,15 +318,21 @@ if ($pipWarnFound -and $pipWarnContinued) { $summary.Add('pip install warn + con
 # --- pipreqs version-forced-failure fallback test ---
 # Arrange: stub app imports a real third-party package (six) with NO requirements.txt/
 # pyproject.toml/PEP-723 metadata, so pipreqs is the only thing that could have declared it.
-# HP_PIPREQS_VERSION=0.5.0 forces the "pip install pipreqs" step to fail deterministically:
-# pipreqs 0.5.0's own PyPI metadata declares Requires-Python >=3.8.1,<3.13 (see the pipreqs
-# pin rationale in CLAUDE.md), which this bootstrapper's always-latest-Python target (3.13+)
-# always violates -- a fast, offline-metadata rejection, not a flaky network-dependent one.
+# HP_PIPREQS_VERSION=99.99.99 forces the "pip install pipreqs" step to fail deterministically:
+# no version "99.99.99" of pipreqs has ever existed on PyPI, so "pip install pipreqs==99.99.99"
+# (or the uv-mode equivalent) always fails with "No matching distribution found", independent
+# of the Python interpreter version or resolver leniency. This is deliberately NOT the same
+# mechanism as pipreqs 0.5.0's real Requires-Python<3.13 cap (see the pipreqs pin rationale in
+# CLAUDE.md) -- an earlier version of this test used HP_PIPREQS_VERSION=0.5.0 and it only fails
+# to install when the *ambient* Python actually exceeds 3.13; confirmed locally that
+# `pip install pipreqs==0.5.0` resolves and installs cleanly on Python 3.11, and CI run #1522
+# showed the same non-failure on at least one lane (installFailWarnFound=false even though
+# warnfix still had to recover `six`, i.e. pipreqs's own scan produced nothing usable by some
+# other path). A nonexistent version number removes that external dependency entirely.
 # Assert: the pipreqs-install-failed WARN fires, DEP_SOURCE never becomes "pipreqs" (nothing
 # declares `six`), the PyInstaller warn-file/warnfix repair loop is the ONLY thing that installs
 # `six`, and the rebuilt program still runs and prints its token. All four must hold -- checking
-# only "did it exit 0" would let this test silently pass for the wrong reason (e.g. if a future
-# pipreqs release ever lifts the <3.13 cap and the forced failure stops firing at all).
+# only "did it exit 0" would let this test silently pass for the wrong reason.
 $pipreqsFailDir = Join-Path $TestsDir '~selftest_pipreqs_version_fail'
 if (Test-Path $pipreqsFailDir) { Remove-Item -Recurse -Force $pipreqsFailDir }
 New-Item -ItemType Directory -Force -Path $pipreqsFailDir | Out-Null
@@ -337,7 +343,7 @@ print("pipreqs-fail-ok")
 '@ -Encoding ASCII
 $pipreqsFailLogName = '~pipreqs_version_fail_bootstrap.log'
 $prevPipreqsVersion = $env:HP_PIPREQS_VERSION
-$env:HP_PIPREQS_VERSION = '0.5.0'
+$env:HP_PIPREQS_VERSION = '99.99.99'
 # derived requirement: this app is expected to build+warnfix-recover+run successfully, which
 # reaches the REQ-018 post-execution checkpoint (:run_postexec_checkpoint) -- a set /p consent
 # prompt that only auto-declines when HP_CI_LANE (or a few other flags) is defined. Real CI
@@ -383,7 +389,7 @@ $pipreqsFailAllPass = ($pipreqsInstallFailFound -and $pipreqsWarnfixEngaged -and
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.pipreqs_version_fail'
   pass = $pipreqsFailAllPass
-  desc = 'HP_PIPREQS_VERSION=0.5.0 forces pipreqs install to fail; warnfix alone recovers the missing import and the app still runs'
+  desc = 'HP_PIPREQS_VERSION=99.99.99 forces pipreqs install to fail; warnfix alone recovers the missing import and the app still runs'
   details = [ordered]@{
     installFailWarnFound = $pipreqsInstallFailFound
     warnfixEngaged = $pipreqsWarnfixEngaged

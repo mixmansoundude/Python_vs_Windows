@@ -556,8 +556,10 @@ Items deferred to future loops:
   "Dependency Discovery Fallback: warnfix" above) means the bootstrap **never hard-fails** even
   if pipreqs is 100% unavailable -- confirmed by the new `self.stub.pipreqs_version_fail` test
   (Closed Backlog, this pass) which forces pipreqs's own install to fail via
-  `HP_PIPREQS_VERSION=0.5.0` (already an env-overridable variable, no code change needed to
-  trigger this) and proves the bootstrap still reaches a working, fully-run EXE via warnfix
+  `HP_PIPREQS_VERSION=99.99.99` (already an env-overridable variable, no code change needed to
+  trigger this; a nonexistent version number was chosen over pipreqs 0.5.0's real `<3.13` cap
+  after CI showed the cap alone does not reliably fail across every lane's ambient Python) and
+  proves the bootstrap still reaches a working, fully-run EXE via warnfix
   alone. Decision: **defer full internalization** (embedding a native AST-based scanner +
   mapping table to replace pipreqs entirely). It is technically feasible and roughly the size a
   3rd-party estimate suggested (a few hundred lines + a small mapping table), but it duplicates

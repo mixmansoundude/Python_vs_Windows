@@ -223,7 +223,9 @@ self.venv.fallback, self.entry.override
   *unexpected* real pipreqs failure (matching `No module named pipreqs\.__main__`) is found in
   a test's bootstrap log; it is not an active failure-injection hook. Contrast with
   `self.stub.pipreqs_version_fail` (Test-logs NDJSON, below), which *deliberately* forces
-  pipreqs's own install to fail via `HP_PIPREQS_VERSION=0.5.0` to prove the warnfix fallback
+  pipreqs's own install to fail via `HP_PIPREQS_VERSION=99.99.99` (a version that has never
+  existed on PyPI, chosen for determinism over pipreqs 0.5.0's real `<3.13` cap -- the cap alone
+  does not reliably fail on every lane's ambient Python) to prove the warnfix fallback
   recovers gracefully.
 
 **NDJSON files and who owns them:**
