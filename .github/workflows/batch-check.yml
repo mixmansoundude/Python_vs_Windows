@@ -1425,6 +1425,16 @@ jobs:
             tests\~selftest_venv_canary_fail\~pipreqs.diff.txt
             tests/~selftest_venv_canary_fail/~bootstrap.status.json
             tests\~selftest_venv_canary_fail\~bootstrap.status.json
+            tests/~selftest_venv_nopip_retry/~venv_nopip.log
+            tests\~selftest_venv_nopip_retry\~venv_nopip.log
+            tests/~selftest_venv_nopip_retry/~setup.log
+            tests\~selftest_venv_nopip_retry\~setup.log
+            tests/~selftest_venv_nopip_retry/~pipreqs.diff.txt
+            tests\~selftest_venv_nopip_retry\~pipreqs.diff.txt
+            tests/~selftest_venv_nopip_retry/~bootstrap.status.json
+            tests\~selftest_venv_nopip_retry\~bootstrap.status.json
+            tests/~selftest_venv_nopip_retry/~run.out.txt
+            tests\~selftest_venv_nopip_retry\~run.out.txt
             tests/~selftest_entry_override/~override.log
             tests\~selftest_entry_override\~override.log
             tests/~selftest_entry_override/~setup.log

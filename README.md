@@ -367,21 +367,33 @@ Before executing or packaging the selected entry, the bootstrapper statically va
 
 ---
 
-## [REQ-013] Internet Connectivity Guard
+## [REQ-013] Network Resilience
 
-- When a primary download fails (Miniconda or uv), the bootstrapper checks internet reachability before cascading to a fallback URL.
-  - First, ICMP ping to 8.8.8.8 (fast path).
-  - If ICMP is blocked, fall back to a lightweight HTTPS probe.
-  - If both fail: prompt the user to confirm offline mode or retry.
-- In offline mode, internet-dependent steps (uv download, Miniconda download) are skipped.
-  - If the user already has a cached Miniconda or uv install, those are used as-is.
-- Log contract:
+The bootstrapper shall detect connectivity problems and be robust against transient network
+failures during environment and dependency acquisition -- retrying before giving up on a step,
+and falling through to the next REQ-009 provider tier rather than failing outright on a single
+blip or a temporary outage.
+
+- **Connectivity detection**: when a primary download fails (Miniconda or uv), the bootstrapper
+  checks internet reachability before cascading to a fallback URL -- first an ICMP ping, then a
+  lightweight HTTPS probe if ICMP is blocked. If both fail, it prompts the user to confirm
+  offline mode or retry. In offline mode, internet-dependent steps (uv download, Miniconda
+  download) are skipped; an already-cached Miniconda or uv install is used as-is.
+- **Transient-failure retry**: conda environment creation, conda's bulk dependency install, and
+  the venv fallback tier's pip bootstrap (via a downloaded `get-pip.py`, used when a plain venv
+  creation attempt fails outright) each retry once on a detected transient failure before
+  falling through to the next provider tier. Download steps (Miniconda, uv, get-pip.py)
+  additionally retry across a primary URL, a PowerShell fallback method, and a secondary URL
+  before giving up.
+- Mechanism detail for each retry point (exact log lines, CI test flags, subroutine names) is
+  intentionally not enumerated here -- see `docs/agent-lessons-learned.md` and CLAUDE.md's
+  Closed Backlog, which are the authoritative source for implementation-level specifics.
+- Log contract (illustrative, not exhaustive):
   - `[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback.`
-  - `[INFO] REQ-013: Connectivity check: internet reachable via HTTPS (ICMP blocked). Cascading to fallback.`
   - `[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed).`
-  - `[INFO] REQ-013: Offline mode: skipping uv download.`
-  - `[INFO] REQ-013: Offline mode: skipping Miniconda download.`
-- CI test flag: `HP_TEST_OFFLINE=1` simulates ping failure for branch coverage.
+- CI test flag: `HP_TEST_OFFLINE=1` simulates ping failure for connectivity-check branch
+  coverage; per-mechanism retry test flags are documented alongside their subroutines in
+  `docs/agent-lessons-learned.md`.
 
 ---
 
@@ -486,19 +498,6 @@ set lives in `run_setup.bat`.
 
 ---
 
-## [REQ-022] Conda Environment-Creation Transient Retry
-
-- If `conda create` (environment creation, distinct from the REQ-005.2 bulk dependency install) fails, the bootstrapper inspects the failure output for a transient network signature (`CondaHTTPError`, `Failed to fetch`, `timed out`, `ConnectionError`) before falling back to the next REQ-009 provider.
-- If a transient signature is found: wait 15 seconds and retry the exact same `conda create` command once. If the retry succeeds, bootstrap continues normally.
-- If no transient signature is found, or the retry also fails, behavior is unchanged: falls through to the REQ-009 provider cascade (venv, then system Python).
-- Log contract:
-  - `[INFO] conda create: transient failure detected; retrying after 15s.`
-  - `[WARN] conda create: retry after transient failure also failed.`
-- CI test flag: `HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL=1` simulates a transient CondaHTTPError on the first attempt only.
-- Test NDJSON row: `self.stub.conda_create_retry` (in `tests/selftest.ps1`).
-
----
-
 ## [REQ-023] Venv Fallback Canary Probe
 
 - After the REQ-009 Tier 3 venv fallback (`:try_venv_fallback`) creates `.venv` and confirms the interpreter file exists, the bootstrapper verifies the interpreter actually runs (`python -c "import sys"`) before declaring the tier ready.
@@ -508,6 +507,9 @@ set lives in `run_setup.bat`.
   - `[WARN] venv fallback: interpreter created but failed canary probe (import sys).`
 - CI test flag: `HP_TEST_FORCE_VENV_CANARY_FAIL=1` simulates a failing probe after a real, successful venv creation.
 - Test NDJSON row: `self.venv.canary_fail` (in `tests/selfapps_ux_hardening.ps1`).
+- The venv fallback tier's retry-on-transient-failure behavior (when plain venv creation fails
+  outright, distinct from this canary probe) is part of the REQ-013 Network Resilience
+  requirement above, not this one -- this section covers only the post-creation health check.
 
 ---
 
