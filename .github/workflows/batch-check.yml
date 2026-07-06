@@ -1417,6 +1417,14 @@ jobs:
             tests\~selftest_venv_fallback\~bootstrap.status.json
             tests/~selftest_venv_fallback/~run.out.txt
             tests\~selftest_venv_fallback\~run.out.txt
+            tests/~selftest_venv_canary_fail/~venv_canary.log
+            tests\~selftest_venv_canary_fail\~venv_canary.log
+            tests/~selftest_venv_canary_fail/~setup.log
+            tests\~selftest_venv_canary_fail\~setup.log
+            tests/~selftest_venv_canary_fail/~pipreqs.diff.txt
+            tests\~selftest_venv_canary_fail\~pipreqs.diff.txt
+            tests/~selftest_venv_canary_fail/~bootstrap.status.json
+            tests\~selftest_venv_canary_fail\~bootstrap.status.json
             tests/~selftest_entry_override/~override.log
             tests\~selftest_entry_override\~override.log
             tests/~selftest_entry_override/~setup.log

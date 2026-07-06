@@ -566,24 +566,22 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
   verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
   not attempted piecemeal.
 
-- **venv creation resilience**: `:try_venv_fallback` (run_setup.bat:1717-1748) is confirmed to
-  be a single, unguarded `python -m venv .\.venv` attempt -- any failure (missing `ensurepip`,
-  broken host symlinks, permission-denied, OneDrive/AV lock contention) falls straight through
-  to the system-Python tier with no retry or recovery attempt of any kind. Recommended scope for
-  a future round (deliberately narrower than a full "cascading fallback ladder" proposal that
-  was considered and partly rejected): (a) a post-creation canary probe (`python -c "import
-  sys"` against the freshly created venv's interpreter) to catch a "created but broken" venv
-  before it ever reaches PyInstaller; (b) a single retry using `python -m venv .\.venv
-  --without-pip` followed by a manual `get-pip.py` bootstrap when the first attempt fails --
-  this covers the most commonly-cited real-world failure mode (a stripped-down host Python
-  missing `ensurepip`). Explicitly **rejected**: relocating venv creation to
-  `%LOCALAPPDATA%\hp_cache\...` and a `PYTHONUSERBASE`-based "stealth isolation" fallback tier.
-  Both have a blast radius disproportionate to their benefit here -- nearly every downstream
-  path in this bootstrapper assumes CWD-relative execution (relocating would ripple everywhere),
-  and `PYTHONUSERBASE` directly contradicts the REQ-010 host-isolation invariant this repo
-  already enforces (nullifying `PYTHONPATH`/`PYTHONHOME`) while risking leaving dependency
-  residue on the user's machine -- arguably worse than simply falling through to the existing,
-  already-consented system-Python tier that sits below it in the cascade today.
+- **venv creation resilience, part 2 (--without-pip retry)**: the post-creation canary probe
+  (part 1, REQ-023) shipped -- see Closed Backlog. Remaining: when `python -m venv .\.venv`
+  fails outright (not just a canary-probe failure after apparent success), retry once using
+  `python -m venv .\.venv --without-pip` followed by a manual `get-pip.py` bootstrap -- this
+  covers the most commonly-cited real-world failure mode (a stripped-down host Python missing
+  `ensurepip`). This needs new download infrastructure (fetching `get-pip.py`, likely mirroring
+  the existing Miniconda/uv downloader's retry/fallback-URL pattern) that the REQ-023 probe did
+  not require, so it's a meaningfully bigger and riskier slice -- keep it a separate round.
+  Explicitly **rejected**: relocating venv creation to `%LOCALAPPDATA%\hp_cache\...` and a
+  `PYTHONUSERBASE`-based "stealth isolation" fallback tier. Both have a blast radius
+  disproportionate to their benefit here -- nearly every downstream path in this bootstrapper
+  assumes CWD-relative execution (relocating would ripple everywhere), and `PYTHONUSERBASE`
+  directly contradicts the REQ-010 host-isolation invariant this repo already enforces
+  (nullifying `PYTHONPATH`/`PYTHONHOME`) while risking leaving dependency residue on the user's
+  machine -- arguably worse than simply falling through to the existing, already-consented
+  system-Python tier that sits below it in the cascade today.
 
 ## Periodic Maintenance Checks (recurring, quarterly)
 
@@ -670,6 +668,22 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **venv fallback canary probe (REQ-023)**: `:try_venv_fallback` (run_setup.bat:1721-1768)
+  previously declared the venv tier ready as soon as `.venv\Scripts\python.exe` existed on disk,
+  without ever confirming the interpreter actually runs -- a venv can be "created" (directory +
+  exe present) yet non-functional (missing DLLs, broken symlinks, execution-policy blocks),
+  exactly the failure mode a stripped-down or corrupted host Python produces. Added a
+  post-creation canary probe (`python -c "import sys"`) right before the tier is declared ready;
+  on failure it logs a WARN and `exit /b 1` exactly like the tier's three existing failure
+  branches already do, falling through to the next REQ-009 provider (system Python) with no new
+  failure-handling path needed. Goto-based dispatch (not nested in a parenthesized if/else) per
+  "Provider-cascade dispatch is goto-based on purpose" in `docs/agent-lessons-learned.md`. New
+  test hook `HP_TEST_FORCE_VENV_CANARY_FAIL` plus `self.venv.canary_fail` in
+  `tests/selfapps_ux_hardening.ps1` exercise this end-to-end. This was split from the broader
+  "venv creation resilience" backlog item -- the other half (a `--without-pip` + `get-pip.py`
+  retry when venv creation itself fails outright) needs new download infrastructure and remains
+  a separate Active Backlog item. CLOSED by this PR.
 
 - **conda-create transient-retry gap (REQ-022)**: `:try_conda_create` (run_setup.bat:705-761) previously
   had zero retry logic on a `conda create` failure -- it fell straight to `:handle_conda_failure`

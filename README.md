@@ -499,6 +499,18 @@ set lives in `run_setup.bat`.
 
 ---
 
+## [REQ-023] Venv Fallback Canary Probe
+
+- After the REQ-009 Tier 3 venv fallback (`:try_venv_fallback`) creates `.venv` and confirms the interpreter file exists, the bootstrapper verifies the interpreter actually runs (`python -c "import sys"`) before declaring the tier ready.
+- A venv can be "created" (directory and `python.exe` present) yet still be non-functional (missing DLLs, broken symlinks, execution-policy blocks). Without this check, a silently broken venv would reach PyInstaller and fail later with a more confusing error, or be reported as bootstrap success when the environment cannot actually run code.
+- If the probe fails, the venv tier is declined (as if creation itself had failed) and the bootstrap falls through to the next REQ-009 provider (system Python).
+- Log contract:
+  - `[WARN] venv fallback: interpreter created but failed canary probe (import sys).`
+- CI test flag: `HP_TEST_FORCE_VENV_CANARY_FAIL=1` simulates a failing probe after a real, successful venv creation.
+- Test NDJSON row: `self.venv.canary_fail` (in `tests/selfapps_ux_hardening.ps1`).
+
+---
+
 ## Maintenance, Logging, and Lessons Learned
 
 - Update conda base periodically (~30 days), but **skip on first Miniconda install**. Ensure base is configured to conda-forge before updating to avoid prompts.
