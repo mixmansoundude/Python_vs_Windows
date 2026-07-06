@@ -1039,7 +1039,7 @@ $retryLines = if (Test-Path $retryLogPath) { Get-Content -LiteralPath $retryLogP
 $retryMsgFound = ($retryLines | Where-Object { $_ -like '*conda bulk: transient failure detected*' }).Count -gt 0
 Write-NdjsonRow ([ordered]@{
   id      = 'self.stub.conda_retry'
-  req     = 'REQ-NET'
+  req     = 'REQ-005.2'
   pass    = ($retryExit -eq 0 -and $retryMsgFound)
   desc    = 'HP_TEST_FORCE_CONDA_NETWORK_FAIL=1: bootstrap retries conda bulk install on transient failure'
   details = [ordered]@{ exitCode = $retryExit; retryMsgFound = $retryMsgFound }
@@ -1093,7 +1093,7 @@ $createRetryLines = if (Test-Path $createRetryLogPath) { Get-Content -LiteralPat
 $createRetryMsgFound = ($createRetryLines | Where-Object { $_ -like '*conda create: transient failure detected*' }).Count -gt 0
 Write-NdjsonRow ([ordered]@{
   id      = 'self.stub.conda_create_retry'
-  req     = 'REQ-NET'
+  req     = 'REQ-022'
   pass    = ($createRetryExit -eq 0 -and $createRetryMsgFound)
   desc    = 'HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL=1: bootstrap retries conda env creation on transient failure'
   details = [ordered]@{ exitCode = $createRetryExit; retryMsgFound = $createRetryMsgFound }

@@ -671,7 +671,7 @@ rather than relying on manual memory.
 
 Items completed and shipped:
 
-- **conda-create transient-retry gap**: `:try_conda_create` (run_setup.bat:705-761) previously
+- **conda-create transient-retry gap (REQ-022)**: `:try_conda_create` (run_setup.bat:705-761) previously
   had zero retry logic on a `conda create` failure -- it fell straight to `:handle_conda_failure`
   (venv/system cascade) on the very first non-zero exit, asymmetric with the sibling
   `:conda_bulk_install` phase's already-proven transient-retry pattern. Root-caused against a

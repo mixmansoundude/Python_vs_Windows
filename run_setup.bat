@@ -708,7 +708,7 @@ if "%HP_TEST_FORCE_CONDA_FAIL%"=="1" goto :hp_test_conda_fail
 rem derived requirement: conda env create can take several minutes; emit a user-facing message
 rem so the script never appears to hang silently during the longest single step.
 call :log "[INFO] Creating Python environment '%ENVNAME%' -- this may take several minutes..."
-rem REQ-NET: transient-retry for conda create, mirroring the proven :conda_bulk_install pattern
+rem REQ-022: transient-retry for conda create, mirroring the proven :conda_bulk_install pattern
 rem (findstr-detect a transient network error, wait 15s, retry once). Goto-based dispatch on
 rem purpose (see docs/agent-lessons-learned.md "Provider-cascade dispatch is goto-based on
 rem purpose"): the create call + %ERRORLEVEL% capture is never nested inside a parenthesized

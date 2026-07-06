@@ -180,6 +180,12 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
   ```
   conda install --file <resolved_requirements> --override-channels -c conda-forge
   ```
+  If this fails with a transient network signature (`CondaHTTPError`, `Failed to fetch`, `timed out`,
+  `ConnectionError`), wait 15 seconds and retry once before falling through to REQ-005.3. This is the
+  same retry mechanism REQ-022 applies to conda environment creation.
+  - Log contract: `[INSTALL] conda bulk: transient failure detected; retrying after 15s.`
+  - CI test flag: `HP_TEST_FORCE_CONDA_NETWORK_FAIL=1`.
+  - Test NDJSON row: `self.stub.conda_retry` (in `tests/selftest.ps1`).
 
 ---
 
@@ -477,6 +483,19 @@ set lives in `run_setup.bat`.
   - `[ERROR] Corrupt conda env; user declined rebuild.` (user declines)
 - CI test flags: `HP_TEST_CORRUPT_CONDA=1`, `HP_TEST_CORRUPT_UV=1`, `HP_TEST_HEAL_ANSWER=N`.
 - Test NDJSON rows: `self.corrupt.conda.detect`, `self.corrupt.conda.heal.decline`, `self.corrupt.conda.heal.accept`, `self.corrupt.uv.detect` (in `tests/selftest.ps1`).
+
+---
+
+## [REQ-022] Conda Environment-Creation Transient Retry
+
+- If `conda create` (environment creation, distinct from the REQ-005.2 bulk dependency install) fails, the bootstrapper inspects the failure output for a transient network signature (`CondaHTTPError`, `Failed to fetch`, `timed out`, `ConnectionError`) before falling back to the next REQ-009 provider.
+- If a transient signature is found: wait 15 seconds and retry the exact same `conda create` command once. If the retry succeeds, bootstrap continues normally.
+- If no transient signature is found, or the retry also fails, behavior is unchanged: falls through to the REQ-009 provider cascade (venv, then system Python).
+- Log contract:
+  - `[INFO] conda create: transient failure detected; retrying after 15s.`
+  - `[WARN] conda create: retry after transient failure also failed.`
+- CI test flag: `HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL=1` simulates a transient CondaHTTPError on the first attempt only.
+- Test NDJSON row: `self.stub.conda_create_retry` (in `tests/selftest.ps1`).
 
 ---
 
