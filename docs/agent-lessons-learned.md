@@ -153,6 +153,15 @@ exist because process-wide delayed expansion previously caused `!`-collision deb
 If a global `:log` fix is ever pursued, it is its own isolated task that must also revisit
 those checks -- not a drive-by change.
 
+**Concrete unresolved instance, accepted risk, no action planned: `%HP_ENTRY%`.** `%HP_ENTRY%`
+is echoed unquoted at 4 call sites (run_setup.bat:2017 via a raw `echo`, and :2028/:2540/:2633
+via `:log`). A filename containing `<`/`>`/`&`/`|` would in principle mis-parse as a
+redirection/pipe operator here, exactly per the rule above. This requires a
+maliciously-or-accidentally-crafted filename delivered via a Windows double-click/drag-and-drop
+flow (not a common vector), and the only real fix is the global `:log` rework already documented
+as blocked by the three CI static guards above. Noted here so it isn't rediscovered as a "new"
+finding later.
+
 ---
 
 ## Provider-cascade dispatch is goto-based on purpose (parse-time expansion)
@@ -219,6 +228,15 @@ is now reached in any run, gated solely by the REQ-014 consent prompt;
 deprecation). `HP_FORCE_CONDA_ONLY` (CI conda-diagnostic lane) is a legitimate *suppression* flag
 and stays. **When auditing, treat any `if "%HP_...%"=="1"` that ENABLES a Prime-Directive
 behavior as a bug; flags should only suppress, divert for tests, or add super-user overrides.**
+
+**Standing directive: re-run this audit whenever a new `HP_*`/`PVW_*` flag is added.** The
+system-Python sweep above was the first pass; it also confirmed two other flag families are
+correctly scoped as suppression-only (no further action needed unless a future flag changes
+their behavior): `HP_OFFLINE_MODE` is auto-set by the REQ-013 connectivity check and never
+something a user is required to set, and `HP_SKIP_*` flags only ever *disable* an optional step
+(absence == full behavior, never the reverse). Treat this as a checklist item for every new flag,
+not a one-time task -- see the "Periodic Maintenance Checks" section of `CLAUDE.md` for the
+scheduled cadence this and other recurring reviews are tracked under.
 
 ## CI-safe interactive gates: echo the prompt, then resolve the answer
 
@@ -519,3 +537,14 @@ must stay non-fatal (`exit 0`), `HP_CACHE_CORRUPTED` must gate both the skip-pat
 save step, and the cache key must keep including a value that changes whenever the *content* the
 cache is keyed on (Miniconda install driven by `run_setup.bat` + the pinned pipreqs version) could
 have changed.
+
+---
+
+## Pre-flight py_compile cost on the fast path (accepted, by design)
+
+`:preflight_compile` (REQ-021, run_setup.bat) runs unconditionally on every `:run_entry_smoke`
+invocation, including runs that will subsequently take the cached-EXE fast path -- it is not
+skipped or gated on `HP_FASTPATH_USED`. This is intentional, not an oversight: it catches an
+entry `SyntaxError` before a doomed PyInstaller build even when the cached EXE is about to be
+reused. Cost is negligible (single-file byte-compile, ~50ms) relative to the fast path's overall
+savings. No action needed; recorded here so it isn't re-flagged as a "missing optimization" later.

@@ -499,45 +499,19 @@ See **AGENTS.md** section Iteration Contract for the full policy. Key points:
 
 ## Active Backlog
 
-Items deferred to future loops:
-
-- **Env-var-gated intended-path audit (follow-up)**: a sweep was done when system Python
-  fallback was un-gated (`HP_ALLOW_SYSTEM_FALLBACK` deprecated; system Tier 4 now reachable in
-  the default no-flag run, gated only by the REQ-014 consent prompt -- see README REQ-001/REQ-009/
-  REQ-014). That sweep found system fallback as the only opt-in flag that *enabled* a
-  Prime-Directive behavior. Remaining to confirm-or-file: (a) `HP_OFFLINE_MODE` is auto-set by the
-  REQ-013 connectivity check, never user-required; (b) `HP_SKIP_*` flags only *disable* optional
-  steps (absence == full behavior). Re-audit `if "%HP_...%"=="1"` gates whenever a new flag is
-  added; treat any flag that ENABLES (rather than suppresses/diverts) intended behavior as a bug
-  (see docs/agent-lessons-learned.md "Env-var flags are scaffolding").
-
+Items deferred to future loops. This list is for genuine future work -- a decision already made,
+a fact confirmed with no action needed, or a recurring/periodic check belongs in
+"Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead
+(see those sections' own scope notes).
 
 - **User-code exit-code semantics**: verify the exit code read after running the user's code
   is purely the user program's (no bootstrapper logic interleaved). If so, a non-zero exit is
   very likely outside bootstrapper control; confirm such a case routes to warnfix gracefully
   rather than being reported as a bootstrapper failure. Document the conclusion.
 
-- **Persisted run-page warnings**: review the last several CI runs for warnings that recur
-  across runs (Actions "Annotations"/warnings), and triage each as fix-or-accept.
-
 - **CI-side NDJSON row registry check**: consider building the `docs/agent-ndjson.md` row
   audit into CI (it exists today so agents can see which rows are missing). Likely still a
   manual-sync confirmation step, since fully automated discovery can miss flag-gated rows.
-
-- **CI lane gating audit (2026-07 maintenance pass)**: current state confirmed directly from
-  `batch-check.yml:48` -- only `real` and `conda-full` are gating (`continue-on-error: false`);
-  `cache`, `justme-test`, `uv`, `contract-uv`, `contract-uv-fail`, and `uv-dl-fallback` are all
-  `continue-on-error: true`. This is **not an oversight**: AGENTS.md's own stated policy
-  (see "Iteration Contract"/CI guidance near the top of that file) is to *deliberately* isolate
-  slow/flaky/environment-dependent lanes as non-gating, and CLAUDE.md's own Closed-Backlog
-  history documents why each of the five non-`cache` non-gating lanes was made that way (heavy
-  provider-dependent execution, "informational while shaking out," or a narrow flag-triggered
-  fallback scenario). Recommendation: do **not** blanket-flip "all but cache must gate" -- that
-  would reverse a documented, deliberate design decision. Instead, do a narrower follow-up:
-  review `uv` and `justme-test` (the two most mature/stable of the six) as graduation
-  candidates to gating after an explicit soak-period review; leave `contract-uv`/
-  `contract-uv-fail`/`uv-dl-fallback` non-gating since their non-gating status is explicitly
-  load-bearing per their own inline comments (narrow, flag-triggered diagnostic scenarios).
 
 - **Add `.github/dependabot.yml`**: no dependabot config exists anywhere in the repo today, so
   there is no automated signal when a GitHub Action pin (or any other dependency) falls behind.
@@ -578,23 +552,6 @@ Items deferred to future loops:
   on an older ambient interpreter on the venv/system fallback tiers). Do not chase alternative
   tools as a wholesale replacement: `pigar` was correctly ruled out elsewhere (its wheel bundles
   an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
-
-- **HP_ENTRY echo redirection risk (accepted, no action)**: `%HP_ENTRY%` is echoed unquoted at
-  4 call sites (run_setup.bat:2017 via a raw `echo`, and :2028/:2540/:2633 via the `:log`
-  subroutine, which is documented above as echoing unquoted). A filename containing `<>&|`
-  would in principle mis-parse as a redirection/pipe operator. Accepted risk: this requires a
-  maliciously-or-accidentally-crafted filename delivered via a Windows double-click/drag-and-drop
-  flow (not a common vector), and a global `:log` rework is separately documented above as
-  high-effort tech debt blocked by three CI static guards (`batch.delayed.off`,
-  `batch.delayed.enable_absent`, `batch.bang.scan`) that would themselves need revisiting. No
-  action planned; noted here so it isn't rediscovered as a "new" finding later.
-
-- **Pre-flight py_compile cost on the fast path (accepted, by design)**: `:preflight_compile`
-  (REQ-021) runs unconditionally on every `:run_entry_smoke` invocation, including runs that
-  will subsequently take the cached-EXE fast path -- it is not skipped or gated on
-  `HP_FASTPATH_USED`. This is intentional: it catches an entry `SyntaxError` before a doomed
-  PyInstaller build even when the cached EXE is about to be reused. Cost is negligible
-  (single-file byte-compile, ~50ms). No action needed.
 
 - **Provider symmetry: no standalone Python-download tier**: confirmed gap in the REQ-009
   provider cascade (uv -> conda -> venv -> system). uv and conda both self-acquire a full Python
@@ -641,6 +598,70 @@ Items deferred to future loops:
   detect-transient-error-and-retry-once pattern already proven in `:conda_bulk_install` is the
   most concretely ready-to-implement item in this backlog -- small, low-risk, reuses an
   existing tested idiom almost verbatim.
+
+## Periodic Maintenance Checks (recurring, quarterly)
+
+This section is for checks that need to be **repeated on a schedule** because they track
+externally-moving state (GitHub's own ecosystem, CI lane maturity, upstream project health) --
+not one-time backlog items. Each entry keeps only the *most recent* scan's date, findings, and
+going-forward notes; overwrite in place rather than appending a history.
+
+**Directive: re-run this checklist and update every entry below every 3 months** (calendar
+quarters -- Jan/Apr/Jul/Oct). Quarterly comfortably covers GitHub's own deprecation cadence
+(Actions runner/Node-version changes are typically announced 6-12 months ahead) without letting
+findings go stale for a full year. This is the standard mechanism for scheduled recurring
+maintenance in this repo -- prefer adding a new dated entry here over inventing a new backlog
+item for something that will need re-checking indefinitely. A quarterly Claude Code Remote
+trigger ("Python_vs_Windows quarterly maintenance scan", cron `0 9 1 1,4,7,10 *`, fires a fresh
+session each time) pokes a session to run this checklist and open a docs-only PR with the
+update; if that trigger is ever missing or misfiring, recreate it with the same name/cadence
+rather than relying on manual memory.
+
+### GitHub Actions / CI health (action pins, deprecations, lint)
+
+- **Last scanned**: 2026-07-06.
+- **Findings**: all action pins across `.github/workflows/*.yml` are on their latest majors
+  (`checkout@v5`, `cache@v5`, `upload-artifact@v6`, `download-artifact@v6`, `github-script@v8`,
+  `codeql-action@v3`, `configure-pages@v6`, `upload-pages-artifact@v5`, `deploy-pages@v5`) --
+  nothing to bump. One informational, non-actionable GitHub-runner-side notice observed in CI
+  logs ("Node.js 20 is deprecated... forced to run on Node.js 24" against `download-artifact@v6`,
+  which is already latest) -- upstream runner behavior, no fix available or needed. `actionlint`
+  and `yamllint` both clean (one cosmetic yamllint comment-indentation nit found and fixed this
+  pass). No `dependabot.yml` exists yet (tracked as an Active Backlog item above).
+- **Going forward**: once `dependabot.yml` lands, this scan should shift from a manual pin audit
+  to confirming Dependabot is actually opening PRs (not just present but inert).
+
+### Persisted CI run-page warnings
+
+- **Last scanned**: 2026-07-06.
+- **Findings**: reviewed the latest completed runs (through run #1523); no warnings recur across
+  multiple runs beyond the Node.js-20-deprecation notice already covered above.
+- **Going forward**: look for anything recurring across several runs, not one-off transient
+  network blips (e.g. the `conda.anaconda.org` 403 already tracked separately as the
+  conda-create transient-retry gap above).
+
+### CI lane gating maturity
+
+- **Last scanned**: 2026-07-04 (`batch-check.yml:48` audit).
+- **Findings**: only `real` and `conda-full` gate PR merges; `cache`, `justme-test`, `uv`,
+  `contract-uv`, `contract-uv-fail`, `uv-dl-fallback` are deliberately non-gating (see AGENTS.md
+  policy and this file's Closed-Backlog history for why each was made so) -- not a bug.
+- **Going forward**: `uv` and `justme-test` are the two most mature/stable of the six non-gating
+  lanes -- re-assess each scan whether either has soaked long enough (no flakiness, no
+  lane-specific caveats left) to graduate to gating. Leave `contract-uv`/`contract-uv-fail`/
+  `uv-dl-fallback` non-gating indefinitely (their non-gating status is explicitly load-bearing,
+  not provisional).
+
+### pipreqs ecosystem status
+
+- **Last scanned**: 2026-07-04.
+- **Findings**: pipreqs (bndr/pipreqs) still stagnant/maintenance-only as of this scan; no new
+  PyPI release since 0.5.0; still correctly pinned to 0.4.13 here (see "pipreqs pin rationale"
+  above); `self.stub.pipreqs_version_fail` (Closed Backlog) confirms the warnfix safety net
+  covers total pipreqs unavailability regardless of the exact failure mode.
+- **Going forward**: check whether pipreqs has a new maintainer/release that changes the
+  `<3.13` Requires-Python situation, or whether it's been removed from PyPI (extremely unlikely)
+  -- revisit the internalization decision above if either happens.
 
 ## Known Findings (diagnosed, no action warranted)
 
