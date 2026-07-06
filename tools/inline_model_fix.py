@@ -6,10 +6,10 @@ remain.
 
 This utility orchestrates two phases:
 
-1. ``stage`` — download the current run's logs, locate the first failing step,
+1. ``stage`` -- download the current run's logs, locate the first failing step,
    build ``_ctx`` with ``failpack.log``, ``guide.json``, trimmed attachments,
    and a manifest describing the staged files.
-2. ``call`` — upload staged attachments to OpenAI's Files API, invoke the
+2. ``call`` -- upload staged attachments to OpenAI's Files API, invoke the
    Responses API request, persist the raw response, and extract any fenced diff
    into ``_ctx/fix.patch``.
 
@@ -408,7 +408,7 @@ def _gather_context_file_list(repo_root: Path, ctx_dir: Path) -> List[Path]:
             rel = bat_path.relative_to(repo_root)
         except ValueError:
             continue
-        # derived requirement: keep batch harness focus narrow — only root-level
+        # derived requirement: keep batch harness focus narrow -- only root-level
         # launchers and tests/**/*.bat matter for iterate triage.
         if len(rel.parts) > 1 and rel.parts[0] not in {"tests"}:
             continue

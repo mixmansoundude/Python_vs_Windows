@@ -46,7 +46,7 @@ jobs:
               if (context.eventName === 'pull_request') {
                 return [context.payload.pull_request.number];
               }
-              // Map status/check_suite SHA → PRs using stable REST API
+              // Map status/check_suite SHA -> PRs using stable REST API
               const sha =
                 context.eventName === 'status'
                   ? context.payload.sha

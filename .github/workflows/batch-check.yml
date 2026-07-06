@@ -1745,7 +1745,7 @@ jobs:
 
             if (-not $BasePath) { return @() }
 
-            # Professional note: Requirement "search under the job workspace using broad globs" —
+            # Professional note: Requirement "search under the job workspace using broad globs" --
             # scan the entire workspace instead of the packaged artifact layout so we detect
             # freshly written NDJSON before diagnostics copies them elsewhere.
             $patterns = @('*~test-results.ndjson', 'ci_test_results*.ndjson')

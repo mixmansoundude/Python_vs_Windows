@@ -28,7 +28,7 @@ Operating policy for automated agents (Codex, Copilot, others).
 ### Current agents
 - One CI auto-patcher exists: `.github/workflows/batch-check.yml` job **Model quick-fix (inline)** calling `tools/inline_model_fix.py` with the `gpt-codex-5` model via the inline Models.OpenAI request.
 - Iterate and the diagnostics publisher consume NDJSON/git results only; they do not invoke models directly.
-- Older “online model” or extra inline experiments were removed; extend this single path for any future model work.
+- Older "online model" or extra inline experiments were removed; extend this single path for any future model work.
 
 ## Do not
 - Do not weaken tests or remove logging/artifacts.
@@ -76,7 +76,7 @@ When adding a new branch or fallback:
 - Always install with `--override-channels -c conda-forge`.
 
 ## How to work here
-- Read and enforce the **README.md** and follow the “Software Requirements Directive”.
+- Read and enforce the **README.md** and follow the "Software Requirements Directive".
 - Make minimal, surgical patches in failing areas:
   - `run_tests.bat`, `tests/harness.ps1`, files under `tests/**`.
 - If you cannot call Actions APIs:
@@ -136,21 +136,21 @@ Do NOT open a PR before CI is green on the final commit.
 You MUST follow this order every loop:
 Always run yml lint on workflow.
 
-IF scope change requested → create backlog item; DO NOT edit current requirements unless explicitly told to do so.
+IF scope change requested -> create backlog item; DO NOT edit current requirements unless explicitly told to do so.
 
-IF CI red → fix CI.
+IF CI red -> fix CI.
 
-IF tests error (crash/invalid) → fix tests/harness. Run yml lint, python compile, install and run pyflakes, do other self checks/tests.
+IF tests error (crash/invalid) -> fix tests/harness. Run yml lint, python compile, install and run pyflakes, do other self checks/tests.
 
-IF tests fail (assert red) → fix product code at root cause.
+IF tests fail (assert red) -> fix product code at root cause.
 
-IF all green → verify no false passes (hunt flakiness/missing checks).
+IF all green -> verify no false passes (hunt flakiness/missing checks).
 
-ELSE IF unmet requirement exists → implement ONE slice.
+ELSE IF unmet requirement exists -> implement ONE slice.
 
-ELSE IF implemented behavior lacks a test → add ONE test.
+ELSE IF implemented behavior lacks a test -> add ONE test.
 
-IF any code is untraceable to a requirement → add comment:
+IF any code is untraceable to a requirement -> add comment:
 `derived requirement: <why needed>` and propose a requirement.
 
 THEN stop and open/append a PR. One loop = one change set.
@@ -191,13 +191,13 @@ THEN stop and open/append a PR. One loop = one change set.
 - Batch file syntax has been a critical source of failures. Especially for escaping special characters.
   - Since batch file syntax is tricky, and there is not an easy checker, if you cannot run it on a windows environment then utilize the CI workflow actions that run on every push so wait for the results to appear and recheck after the push.
 - Do not change line endings manually; follow .gitattributes.
-- If you change the bootstrapper’s console text or these entry rules in a future PR, update the self-test and any entry-selection tests accordingly.
-- The bootstrapper’s exit code when no Python files are present is not a release contract; guard on the console text instead.
+- If you change the bootstrapper's console text or these entry rules in a future PR, update the self-test and any entry-selection tests accordingly.
+- The bootstrapper's exit code when no Python files are present is not a release contract; guard on the console text instead.
 - Be sure to sanity check anything touched before submitting code. Recommended options include:
   - Python: `python -m compileall -q .` and `python -m pyflakes .` (install `pyflakes` if needed).
 - PowerShell:
     - **Do NOT skip PowerShell validation just because the host is Linux.** `pwsh` installs and runs
-      reliably on these Linux runners — this is a proven, repeatable path, not a long shot. If a script
+      reliably on these Linux runners -- this is a proven, repeatable path, not a long shot. If a script
       under `.ps1` is touched, install `pwsh` and validate it. "I'm on Linux so I can't check PowerShell"
       is not an acceptable reason to push unvalidated `.ps1` changes.
     - **Fastest check (no PSGallery, no script execution): AST parse via the .NET parser.** This catches
@@ -221,10 +221,10 @@ THEN stop and open/append a PR. One loop = one change set.
       sudo apt-get install -y powershell
       ```
       Verify with `pwsh --version` (7.5.4 installs cleanly). If the apt path is blocked, the Microsoft
-      install docs cover tarball and snap alternatives — try those before declaring pwsh unavailable.
+      install docs cover tarball and snap alternatives -- try those before declaring pwsh unavailable.
     - **No-sudo / restricted-env fallback (verified 2026-06-22): direct tarball install.** When apt/sudo
       is unavailable in the cloud session, download the release tarball straight from GitHub and run it
-      from a local prefix — no root needed:
+      from a local prefix -- no root needed:
       ```
       curl -fsSL --max-time 90 \
         https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/powershell-7.4.6-linux-x64.tar.gz \
@@ -238,14 +238,14 @@ THEN stop and open/append a PR. One loop = one change set.
     - Use `pwsh -NoLogo -NoProfile -File tools/ps-compileall.ps1` for syntax-only sweeps across `.ps1`/`.psm1`/`.psd1` files when you need a lightweight pre-commit check without PSGallery access.
 - YAML (and GitHub Actions): run `python -m yamllint <file>` (or `actionshub/yamllint@v1`) and `actionlint -oneline` for workflow validation.
   - Preferred actionlint install: `curl -sSLO https://github.com/rhysd/actionlint/releases/latest/download/actionlint_linux_amd64.tar.gz && tar -xzf actionlint_linux_amd64.tar.gz actionlint && ./actionlint -oneline .`
-  - If the release tarball resolves to "Not Found" due to proxy filtering, install with Go instead: `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.1` and add `/root/.local/share/mise/installs/go/1.24.3/bin` to `PATH` before running `actionlint`. On this runner `go env GOPATH` resolves to `/root/go`, so the compiled binary also lives under `/root/go/bin`—add that directory to `PATH` if the mise shim is absent.
+  - If the release tarball resolves to "Not Found" due to proxy filtering, install with Go instead: `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.1` and add `/root/.local/share/mise/installs/go/1.24.3/bin` to `PATH` before running `actionlint`. On this runner `go env GOPATH` resolves to `/root/go`, so the compiled binary also lives under `/root/go/bin` -- add that directory to `PATH` if the mise shim is absent.
   - JSON: `jq -e .` over `*.json`.
   - Generic paired-delimiter scan for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
     - Provide a helper such as `tools/check_delimiters.py` that validates (), {}, [], and quotes " ' (handle escapes and ignore comments when practical).
     - For `.bat/.cmd`, treat `^` as escape and `REM`/`::` as comment starts; avoid over-parsing redirection symbols.
-    - For `.ps1`, respect `#` comments and here-strings (@'…'@, @"…"@) when counting delimiters.
+    - For `.ps1`, respect `#` comments and here-strings (@'...'@, @"..."@) when counting delimiters.
 
-- Work in an explicit loop: **Plan → Check the plan → Execute → Self-check/tests**. Document the plan before coding, verify it against requirements, act, then rerun the listed sanity checks.
+- Work in an explicit loop: **Plan -> Check the plan -> Execute -> Self-check/tests**. Document the plan before coding, verify it against requirements, act, then rerun the listed sanity checks.
 - When fixing bugs, leave professional comments that explain why the change is structured the way it is so future readers understand the constraint.
 - You may add helper utilities under `tools/` (preferred over embedding long scripts inside YAML/PowerShell/batch files). Run helpers from there freely, but update existing tools carefully to avoid regressions.
 
