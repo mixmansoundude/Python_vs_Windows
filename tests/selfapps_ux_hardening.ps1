@@ -653,6 +653,79 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
+# ===== REQ-023: venv canary probe declines a created-but-broken venv =====
+# Forces conda to fail (reaching the venv tier) and forces the post-creation canary probe itself
+# to fail via HP_TEST_FORCE_VENV_CANARY_FAIL=1 (venv creation succeeds normally -- only the
+# "python -c import sys" health check is simulated as failing). Asserts the new WARN fires and
+# venv is correctly NOT selected as the provider, instead of silently declaring a broken venv
+# "ready". HP_TEST_SYSCON_ANSWER=N keeps the downstream system-Python consent gate
+# non-interactive so the run terminates deterministically (declining is expected/correct here --
+# every tier is forced to fail in this scenario on purpose).
+# Skipped in conda-full lane where HP_FORCE_CONDA_ONLY=1 blocks all fallbacks unconditionally.
+$venvCanaryDir = Join-Path $here '~selftest_venv_canary_fail'
+if (Test-Path $venvCanaryDir) { Remove-Item -Recurse -Force $venvCanaryDir }
+New-Item -ItemType Directory -Force -Path $venvCanaryDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $venvCanaryDir -Force
+Set-Content -LiteralPath (Join-Path $venvCanaryDir 'app.py') -Value 'print("venv-canary-ok")' -Encoding Ascii
+
+$venvCanaryPass = $true
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.venv.canary_fail'
+        req     = 'REQ-023'
+        pass    = $true
+        desc    = 'REQ-023: venv canary probe test'
+        details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-prohibits-venv-fallback' }
+    })
+} else {
+    $savedCondaFail5 = $env:HP_TEST_FORCE_CONDA_FAIL
+    $savedOffline5   = $env:HP_OFFLINE_MODE
+    $savedSkipPR5    = $env:HP_SKIP_PIPREQS
+    $savedLane5      = $env:HP_CI_LANE
+    $savedCanaryFail = $env:HP_TEST_FORCE_VENV_CANARY_FAIL
+    $savedSyscon5    = $env:HP_TEST_SYSCON_ANSWER
+    $env:HP_TEST_FORCE_CONDA_FAIL       = '1'
+    $env:HP_OFFLINE_MODE                = '1'
+    $env:HP_SKIP_PIPREQS                = '1'
+    $env:HP_CI_LANE                     = 'test'
+    $env:HP_TEST_FORCE_VENV_CANARY_FAIL = '1'
+    $env:HP_TEST_SYSCON_ANSWER          = 'N'
+    $venvCanaryLog = Join-Path $venvCanaryDir '~venv_canary.log'
+    Push-Location -LiteralPath $venvCanaryDir
+    try {
+        cmd /c "run_setup.bat > ~venv_canary.log 2>&1"
+        $venvCanaryExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    $env:HP_TEST_FORCE_CONDA_FAIL       = $savedCondaFail5
+    $env:HP_OFFLINE_MODE                = $savedOffline5
+    $env:HP_SKIP_PIPREQS                = $savedSkipPR5
+    $env:HP_CI_LANE                     = $savedLane5
+    $env:HP_TEST_FORCE_VENV_CANARY_FAIL = $savedCanaryFail
+    $env:HP_TEST_SYSCON_ANSWER          = $savedSyscon5
+
+    $venvCanarySetupLog = Join-Path $venvCanaryDir '~setup.log'
+    $venvCanarySetupText = ''
+    if (Test-Path -LiteralPath $venvCanarySetupLog) {
+        $venvCanarySetupText = Get-Content -LiteralPath $venvCanarySetupLog -Raw -Encoding Ascii
+    }
+    $venvCanaryWarnFound = ($venvCanarySetupText -match [regex]::Escape('[WARN] venv fallback: interpreter created but failed canary probe (import sys).'))
+    $venvCanaryNotSelected = -not ($venvCanarySetupText -match [regex]::Escape('[BOOT] REQ-009: Selected Python provider: Local venv (fallback).'))
+    $venvCanaryPass = ($venvCanaryWarnFound -and $venvCanaryNotSelected)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.venv.canary_fail'
+        req     = 'REQ-023'
+        pass    = $venvCanaryPass
+        desc    = 'REQ-023: venv canary probe correctly declines a created-but-broken venv instead of selecting it'
+        details = [ordered]@{
+            canaryWarnFound = $venvCanaryWarnFound
+            venvNotSelected = $venvCanaryNotSelected
+            exit            = $venvCanaryExit
+        }
+    })
+}
+
 # ===== REQ-002 priority 0: manual %1 override beats auto-detection (main.py) =====
 # REQ-002 ranks a co-located %1 argument (drag-and-drop) above every auto-detected name:
 # it is used directly and skips all auto-detection. Prior tests only cover auto-detection

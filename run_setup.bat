@@ -138,6 +138,10 @@ rem HP_TEST_FORCE_CONNECTIVITY_CHECK=1: triggers connectivity gate at startup fo
 set "HP_TEST_FORCE_CONNECTIVITY_CHECK=%HP_TEST_FORCE_CONNECTIVITY_CHECK%"
 rem HP_TEST_FORCE_VENV_FAIL=1: simulates venv creation failure for REQ-009/REQ-014 branch coverage
 set "HP_TEST_FORCE_VENV_FAIL=%HP_TEST_FORCE_VENV_FAIL%"
+rem HP_TEST_FORCE_VENV_CANARY_FAIL=1: simulates the post-creation canary probe (REQ-023) failing
+rem after a real, successful venv creation (distinct from HP_TEST_FORCE_VENV_FAIL, which skips
+rem creation entirely)
+set "HP_TEST_FORCE_VENV_CANARY_FAIL=%HP_TEST_FORCE_VENV_CANARY_FAIL%"
 rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-009/REQ-014 branch coverage
 set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
 rem HP_TEST_FORCE_WARNFIX_UNRESOLVED=1: forces the warnfix cascade-candidate detection (REQ-009/REQ-005.10) for branch coverage
@@ -1740,6 +1744,21 @@ if not exist "%HP_PY%" (
   call :log "[WARN] venv fallback: interpreter missing after creation."
   exit /b 1
 )
+rem REQ-023: canary probe -- a venv can be "created" (directory + exe present) yet still be
+rem non-functional (missing DLLs, broken symlinks, execution-policy blocks). Verify the fresh
+rem interpreter actually runs before declaring success, so a silently broken venv doesn't reach
+rem PyInstaller only to fail later with a more confusing error. Goto-based (not nested inside
+rem an if/else block) per "Provider-cascade dispatch is goto-based on purpose" in
+rem docs/agent-lessons-learned.md, so the probe call + %ERRORLEVEL% read is never frozen by
+rem cmd's parse-time %VAR% expansion.
+if "%HP_TEST_FORCE_VENV_CANARY_FAIL%"=="1" goto :venv_canary_fail
+"%HP_PY%" -c "import sys" >nul 2>&1
+if errorlevel 1 goto :venv_canary_fail
+goto :venv_canary_ok
+:venv_canary_fail
+call :log "[WARN] venv fallback: interpreter created but failed canary probe (import sys)."
+exit /b 1
+:venv_canary_ok
 set "HP_ENV_MODE=venv"
 set "HP_BOOTSTRAP_STATE=venv_env"
 set "HP_SKIP_PIPREQS="
