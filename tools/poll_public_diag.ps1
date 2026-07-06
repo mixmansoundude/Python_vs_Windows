@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # Never put a colon right after a PowerShell variable in double-quoted strings;
-# prefer -f or $($var)—and don’t mismatch placeholder counts. CI caught parser
+# prefer -f or $($var) -- and don't mismatch placeholder counts. CI caught parser
 # errors in this script before, so keep this guard comment close to the helpers.
 
 function Format-Safe {

@@ -566,7 +566,7 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
   verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
   not attempted piecemeal.
 
-- **venv creation resilience**: `:try_venv_fallback` (run_setup.bat:1679-1710) is confirmed to
+- **venv creation resilience**: `:try_venv_fallback` (run_setup.bat:1717-1748) is confirmed to
   be a single, unguarded `python -m venv .\.venv` attempt -- any failure (missing `ensurepip`,
   broken host symlinks, permission-denied, OneDrive/AV lock contention) falls straight through
   to the system-Python tier with no retry or recovery attempt of any kind. Recommended scope for
@@ -584,20 +584,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
   already enforces (nullifying `PYTHONPATH`/`PYTHONHOME`) while risking leaving dependency
   residue on the user's machine -- arguably worse than simply falling through to the existing,
   already-consented system-Python tier that sits below it in the cascade today.
-
-- **conda-create transient-retry gap (top priority pickup for the next round)**: confirmed
-  `:try_conda_create` (run_setup.bat:705-721) has zero retry logic on a `conda create` failure
-  -- it fails straight to `:handle_conda_failure` (venv/system cascade) on the very first
-  non-zero exit. This is asymmetric with the sibling `:conda_bulk_install` phase
-  (run_setup.bat:3121-3162), which already has a proven, tested pattern: scan the failure output
-  for `CondaHTTPError`/`Failed to fetch`/`timed out`/`ConnectionError` via `findstr`, wait 15s,
-  retry once. Root-caused against a real CI failure (conda-full lane, run #1517): a transient
-  `conda.anaconda.org` 403 during the `repodata.json` fetch (a well-documented, community-known
-  Cloudflare-fronted intermittent issue with no upstream fix beyond "retry"; resolved that time
-  by a manual retrigger, run #1518). Extending `:try_conda_create` with the identical
-  detect-transient-error-and-retry-once pattern already proven in `:conda_bulk_install` is the
-  most concretely ready-to-implement item in this backlog -- small, low-risk, reuses an
-  existing tested idiom almost verbatim.
 
 ## Periodic Maintenance Checks (recurring, quarterly)
 
@@ -684,6 +670,24 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **conda-create transient-retry gap (REQ-022)**: `:try_conda_create` (run_setup.bat:705-761) previously
+  had zero retry logic on a `conda create` failure -- it fell straight to `:handle_conda_failure`
+  (venv/system cascade) on the very first non-zero exit, asymmetric with the sibling
+  `:conda_bulk_install` phase's already-proven transient-retry pattern. Root-caused against a
+  real CI failure (conda-full lane, run #1517: a transient `conda.anaconda.org` 403 during the
+  `repodata.json` fetch, resolved only by a manual retrigger to run #1518). Fixed by porting the
+  identical detect-transient-error-and-retry-once pattern from `:conda_bulk_install`
+  (`findstr` for `CondaHTTPError`/`Failed to fetch`/`timed out`/`ConnectionError`, wait 15s,
+  retry once) into `:try_conda_create`, using goto-based dispatch throughout (never nesting the
+  create call + `%ERRORLEVEL%` capture inside a parenthesized if/else block) per the
+  "Provider-cascade dispatch is goto-based on purpose" lesson in
+  `docs/agent-lessons-learned.md`. On a non-transient or retry-also-fails outcome, behavior is
+  byte-for-byte identical to before (falls through to `:handle_conda_failure` then `:die` exactly
+  as it always did). New test hook `HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL` (separate from
+  `HP_TEST_FORCE_CONDA_NETWORK_FAIL`, which only covers the bulk-install phase) plus
+  `self.stub.conda_create_retry` in `tests/selftest.ps1` exercise this end-to-end. CLOSED by
+  this PR.
 
 - **REQ-018 Slice 2b-C -- unified run-model, both halves**: shipped in two PRs. The **fail-fast
   probe** (`:compute_interactive_run`, `:run_failfast_probe`, `HP_FAILFAST_PROBE_MS` default

@@ -1467,6 +1467,12 @@ jobs:
             tests\~selftest_conda_retry\~setup.log
             tests/~selftest_conda_retry/~pipreqs.diff.txt
             tests\~selftest_conda_retry\~pipreqs.diff.txt
+            tests/~selftest_conda_create_retry/~conda_create_retry_bootstrap.log
+            tests\~selftest_conda_create_retry\~conda_create_retry_bootstrap.log
+            tests/~selftest_conda_create_retry/~setup.log
+            tests\~selftest_conda_create_retry\~setup.log
+            tests/~selftest_conda_create_retry/~pipreqs.diff.txt
+            tests\~selftest_conda_create_retry\~pipreqs.diff.txt
             tests/~selftest_conda_perpkg/~conda_perpkg_bootstrap.log
             tests\~selftest_conda_perpkg\~conda_perpkg_bootstrap.log
             tests/~selftest_conda_perpkg/~setup.log
@@ -1739,7 +1745,7 @@ jobs:
 
             if (-not $BasePath) { return @() }
 
-            # Professional note: Requirement "search under the job workspace using broad globs" —
+            # Professional note: Requirement "search under the job workspace using broad globs" --
             # scan the entire workspace instead of the packaged artifact layout so we detect
             # freshly written NDJSON before diagnostics copies them elsewhere.
             $patterns = @('*~test-results.ndjson', 'ci_test_results*.ndjson')

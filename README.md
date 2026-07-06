@@ -12,16 +12,16 @@ This tool is for beginners or unfamiliar users who have been given Python code a
 
 ---
 
-### 🌟 Armchair Vibe Coding
+### Armchair Vibe Coding
 
-> 🔧 This project was **entirely armchair vibe coded** — built from a mobile device using conversational AI prompts, without a traditional development setup.
+> This project was **entirely armchair vibe coded** -- built from a mobile device using conversational AI prompts, without a traditional development setup.
 
 **What is Armchair Vibe Coding?**  
-Armchair Vibe Coding is a new workflow where developers build software by interacting with AI tools (like ChatGPT or GitHub Copilot) primarily from mobile devices. It combines the philosophy of **vibe coding** — coding through natural-language prompts and AI — with a relaxed, mobile-first posture.
+Armchair Vibe Coding is a new workflow where developers build software by interacting with AI tools (like ChatGPT or GitHub Copilot) primarily from mobile devices. It combines the philosophy of **vibe coding** -- coding through natural-language prompts and AI -- with a relaxed, mobile-first posture.
 
-You’re not at a desk. You’re not opening VS Code. You’re on your couch, your bed, a train — just vibing and coding through AI.
+You're not at a desk. You're not opening VS Code. You're on your couch, your bed, a train -- just vibing and coding through AI.
 
-> It’s not just code — it’s coding on your terms, powered by AI and creativity, not IDEs and desk chairs.
+> It's not just code -- it's coding on your terms, powered by AI and creativity, not IDEs and desk chairs.
 
 This repository serves as a proof of concept of this new approach.
 
@@ -180,6 +180,12 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
   ```
   conda install --file <resolved_requirements> --override-channels -c conda-forge
   ```
+  If this fails with a transient network signature (`CondaHTTPError`, `Failed to fetch`, `timed out`,
+  `ConnectionError`), wait 15 seconds and retry once before falling through to REQ-005.3. This is the
+  same retry mechanism REQ-022 applies to conda environment creation.
+  - Log contract: `[INSTALL] conda bulk: transient failure detected; retrying after 15s.`
+  - CI test flag: `HP_TEST_FORCE_CONDA_NETWORK_FAIL=1`.
+  - Test NDJSON row: `self.stub.conda_retry` (in `tests/selftest.ps1`).
 
 ---
 
@@ -480,6 +486,19 @@ set lives in `run_setup.bat`.
 
 ---
 
+## [REQ-022] Conda Environment-Creation Transient Retry
+
+- If `conda create` (environment creation, distinct from the REQ-005.2 bulk dependency install) fails, the bootstrapper inspects the failure output for a transient network signature (`CondaHTTPError`, `Failed to fetch`, `timed out`, `ConnectionError`) before falling back to the next REQ-009 provider.
+- If a transient signature is found: wait 15 seconds and retry the exact same `conda create` command once. If the retry succeeds, bootstrap continues normally.
+- If no transient signature is found, or the retry also fails, behavior is unchanged: falls through to the REQ-009 provider cascade (venv, then system Python).
+- Log contract:
+  - `[INFO] conda create: transient failure detected; retrying after 15s.`
+  - `[WARN] conda create: retry after transient failure also failed.`
+- CI test flag: `HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL=1` simulates a transient CondaHTTPError on the first attempt only.
+- Test NDJSON row: `self.stub.conda_create_retry` (in `tests/selftest.ps1`).
+
+---
+
 ## Maintenance, Logging, and Lessons Learned
 
 - Update conda base periodically (~30 days), but **skip on first Miniconda install**. Ensure base is configured to conda-forge before updating to avoid prompts.
@@ -504,10 +523,10 @@ set lives in `run_setup.bat`.
 
 ## Repository Map
 
-- `run_setup.bat` — bootstrap installer (Miniconda + env + deps + optional EXE)
-- `run_tests.bat` — CI/static checks and harness
-- `tests/` — PowerShell/batch harness, log helpers, and ndjson summaries
-- `.github/workflows/` — CI workflows (batch check + CodeQL)
+- `run_setup.bat` -- bootstrap installer (Miniconda + env + deps + optional EXE)
+- `run_tests.bat` -- CI/static checks and harness
+- `tests/` -- PowerShell/batch harness, log helpers, and ndjson summaries
+- `.github/workflows/` -- CI workflows (batch check + CodeQL)
 - Helper scripts are emitted on demand by `run_setup.bat`; no committed helper directory is required.
 
 ### Bootstrap status contract
@@ -562,12 +581,12 @@ The GitHub Actions job summary always lists information in this order:
 
 ### Artifacts
 The workflow uploads a single artifact bundle named `test-logs` containing:
-- `bootstrap.log` – full bootstrap transcript.
-- `~setup.log` – rolling setup log from the batch.
-- `tests/~dynamic-run.log` – canonical dynamic test status line.
-- `tests/~test-summary.txt` – condensed static harness output.
-- `tests/~test-results.ndjson` – machine-readable check results.
-- `tests/extracted/**` – helper scripts decoded from the bootstrapper for inspection.
+- `bootstrap.log` -- full bootstrap transcript.
+- `~setup.log` -- rolling setup log from the batch.
+- `tests/~dynamic-run.log` -- canonical dynamic test status line.
+- `tests/~test-summary.txt` -- condensed static harness output.
+- `tests/~test-results.ndjson` -- machine-readable check results.
+- `tests/extracted/**` -- helper scripts decoded from the bootstrapper for inspection.
 
 ### Green on empty repositories
 A branch with zero Python files still counts as healthy when:
@@ -604,4 +623,4 @@ See `SECURITY.md`. Do not include secrets in issues or PRs.
 
 ## License
 
-MIT — see `LICENSE`.
+MIT -- see `LICENSE`.

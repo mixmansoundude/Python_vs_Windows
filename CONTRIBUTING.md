@@ -5,10 +5,10 @@
 
 ## Iteration Priorities (per loop)
 
-1) Freeze scope for this loop; changes → backlog.
+1) Freeze scope for this loop; changes -> backlog.
 2) CI must be green; fix pipeline/config first.
-3) Broken tests (errors/crashes) → fix tests/harness.
-4) Failing tests (red assertions) → fix product code at root cause.
+3) Broken tests (errors/crashes) -> fix tests/harness.
+4) Failing tests (red assertions) -> fix product code at root cause.
 5) All green? Sanity-check for false passes (flaky/missing checks).
 6) Implement exactly one missing slice of a requirement.
 7) Add exactly one missing test for implemented behavior.
