@@ -1059,6 +1059,47 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($warnGatePass) { $summary.Add('Pipreqs WARN gate: PASS') } else { $summary.Add('Pipreqs WARN gate: FAIL') }
 
+# --- Conda env-create retry test ---
+# Arrange: HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL=1 simulates a transient CondaHTTPError on the
+#          first `conda create` attempt (the env-CREATION phase, distinct from the bulk-INSTALL
+#          retry test above -- :try_conda_create and :conda_bulk_install are separate code paths
+#          with separate test hooks so one flag can't cross-trigger the other's retry).
+#          Assert: log contains the create-phase retry sentinel line and bootstrap exits 0 (the
+#          retry with a real `conda create` succeeds).
+# Note: test runs only when conda is already installed from the prior bootstrap run.
+$createRetryDir = Join-Path $TestsDir '~selftest_conda_create_retry'
+if (Test-Path $createRetryDir) { Remove-Item -Recurse -Force $createRetryDir }
+New-Item -ItemType Directory -Force -Path $createRetryDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $createRetryDir -Force
+Set-Content -Path (Join-Path $createRetryDir 'app_create_retry_test.py') -Value 'print("create-retry-ok")' -Encoding ASCII
+$createRetryLogName = '~conda_create_retry_bootstrap.log'
+$prevForceCondaOnly6 = $env:HP_FORCE_CONDA_ONLY
+$env:HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL = '1'
+$env:HP_FORCE_CONDA_ONLY = '1'
+$prevCILane6 = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $createRetryDir
+try {
+  cmd /c "call run_setup.bat > $createRetryLogName 2>&1"
+  $createRetryExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL = ''
+  $env:HP_FORCE_CONDA_ONLY = $prevForceCondaOnly6
+  $env:HP_CI_LANE = $prevCILane6
+}
+$createRetryLogPath = Join-Path $createRetryDir $createRetryLogName
+$createRetryLines = if (Test-Path $createRetryLogPath) { Get-Content -LiteralPath $createRetryLogPath -Encoding ASCII } else { @() }
+$createRetryMsgFound = ($createRetryLines | Where-Object { $_ -like '*conda create: transient failure detected*' }).Count -gt 0
+Write-NdjsonRow ([ordered]@{
+  id      = 'self.stub.conda_create_retry'
+  req     = 'REQ-NET'
+  pass    = ($createRetryExit -eq 0 -and $createRetryMsgFound)
+  desc    = 'HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL=1: bootstrap retries conda env creation on transient failure'
+  details = [ordered]@{ exitCode = $createRetryExit; retryMsgFound = $createRetryMsgFound }
+})
+if ($createRetryExit -eq 0 -and $createRetryMsgFound) { $summary.Add('Conda create retry: PASS') } else { $summary.Add('Conda create retry: FAIL') }
+
 # --- REQ-005.3 conda per-package fallback test ---
 # Arrange: HP_TEST_FORCE_CONDA_BULK_FAIL=1 forces a non-transient bulk-install failure, so the
 #          bootstrapper falls back to installing each package individually via conda. Assert:

@@ -154,7 +154,7 @@ If a global `:log` fix is ever pursued, it is its own isolated task that must al
 those checks -- not a drive-by change.
 
 **Concrete unresolved instance, accepted risk, no action planned: `%HP_ENTRY%`.** `%HP_ENTRY%`
-is echoed unquoted at 4 call sites (run_setup.bat:2017 via a raw `echo`, and :2028/:2540/:2633
+is echoed unquoted at 4 call sites (run_setup.bat:2055 via a raw `echo`, and :2066/:2578/:2671
 via `:log`). A filename containing `<`/`>`/`&`/`|` would in principle mis-parse as a
 redirection/pipe operator here, exactly per the rule above. This requires a
 maliciously-or-accidentally-crafted filename delivered via a Windows double-click/drag-and-drop

@@ -1467,6 +1467,12 @@ jobs:
             tests\~selftest_conda_retry\~setup.log
             tests/~selftest_conda_retry/~pipreqs.diff.txt
             tests\~selftest_conda_retry\~pipreqs.diff.txt
+            tests/~selftest_conda_create_retry/~conda_create_retry_bootstrap.log
+            tests\~selftest_conda_create_retry\~conda_create_retry_bootstrap.log
+            tests/~selftest_conda_create_retry/~setup.log
+            tests\~selftest_conda_create_retry\~setup.log
+            tests/~selftest_conda_create_retry/~pipreqs.diff.txt
+            tests\~selftest_conda_create_retry\~pipreqs.diff.txt
             tests/~selftest_conda_perpkg/~conda_perpkg_bootstrap.log
             tests\~selftest_conda_perpkg\~conda_perpkg_bootstrap.log
             tests/~selftest_conda_perpkg/~setup.log

@@ -708,17 +708,55 @@ if "%HP_TEST_FORCE_CONDA_FAIL%"=="1" goto :hp_test_conda_fail
 rem derived requirement: conda env create can take several minutes; emit a user-facing message
 rem so the script never appears to hang silently during the longest single step.
 call :log "[INFO] Creating Python environment '%ENVNAME%' -- this may take several minutes..."
+rem REQ-NET: transient-retry for conda create, mirroring the proven :conda_bulk_install pattern
+rem (findstr-detect a transient network error, wait 15s, retry once). Goto-based dispatch on
+rem purpose (see docs/agent-lessons-learned.md "Provider-cascade dispatch is goto-based on
+rem purpose"): the create call + %ERRORLEVEL% capture is never nested inside a parenthesized
+rem if/else block, so cmd's parse-time %VAR% expansion cannot freeze it to a stale value.
+if exist "~conda_create.tmp" del "~conda_create.tmp" >nul 2>&1
+if "%HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL%"=="1" goto :conda_create_test_network_fail
+if "%PYSPEC%"=="" (
+  call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge > "~conda_create.tmp" 2>&1
+) else (
+  call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% pip --override-channels -c conda-forge > "~conda_create.tmp" 2>&1
+)
+set "HP_CCREATE_RC=%ERRORLEVEL%"
+goto :conda_create_have_rc
+:conda_create_test_network_fail
+rem [TEST] HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL: simulate a transient CondaHTTPError on the
+rem first conda-create attempt only (mirrors HP_TEST_FORCE_CONDA_NETWORK_FAIL for bulk-install).
+echo CondaHTTPError: HTTP 000 CONNECTION FAILED (simulated) > "~conda_create.tmp"
+set "HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL="
+set "HP_CCREATE_RC=1"
+:conda_create_have_rc
+type "~conda_create.tmp" >> "%LOG%"
+if not "%HP_CCREATE_RC%"=="0" goto :conda_create_check_transient
+del "~conda_create.tmp" >nul 2>&1
+goto :conda_create_done
+:conda_create_check_transient
+findstr /i /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" "~conda_create.tmp" >nul 2>&1
+set "HP_CCREATE_TRANSIENT_RC=%ERRORLEVEL%"
+del "~conda_create.tmp" >nul 2>&1
+if not "%HP_CCREATE_TRANSIENT_RC%"=="0" goto :conda_create_failed
+echo Conda environment creation failed -- possible network or repository issue. Retrying once...
+call :log "[INFO] conda create: transient failure detected; retrying after 15s."
+timeout /t 15 /nobreak >nul 2>&1
+echo Retrying environment creation...
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 )
-if errorlevel 1 (
-  set "HP_ENV_READY="
-  call :handle_conda_failure "[ERROR] conda env create failed."
-  if defined HP_ENV_READY goto :after_env_mode_selection
-  call :die "[ERROR] conda env create failed."
-)
+if not errorlevel 1 goto :conda_create_done
+echo *** Conda environment creation could not complete. This may be a temporary network issue.
+echo *** See log file for details: ~setup.log
+call :log "[WARN] conda create: retry after transient failure also failed."
+:conda_create_failed
+set "HP_ENV_READY="
+call :handle_conda_failure "[ERROR] conda env create failed."
+if defined HP_ENV_READY goto :after_env_mode_selection
+call :die "[ERROR] conda env create failed."
+:conda_create_done
 
 set "CONDA_PREFIX=%ENV_PATH%"
 set "HP_PY=%CONDA_PREFIX%\python.exe"
