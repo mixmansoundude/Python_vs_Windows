@@ -1281,6 +1281,16 @@ jobs:
             tests\~selftest_pip_warn\~pipreqs.diff.txt
             tests/~selftest_pip_warn/~bootstrap.status.json
             tests\~selftest_pip_warn\~bootstrap.status.json
+            tests/~selftest_pipreqs_version_fail/~pipreqs_version_fail_bootstrap.log
+            tests\~selftest_pipreqs_version_fail\~pipreqs_version_fail_bootstrap.log
+            tests/~selftest_pipreqs_version_fail/~setup.log
+            tests\~selftest_pipreqs_version_fail\~setup.log
+            tests/~selftest_pipreqs_version_fail/~pipreqs.diff.txt
+            tests\~selftest_pipreqs_version_fail\~pipreqs.diff.txt
+            tests/~selftest_pipreqs_version_fail/~bootstrap.status.json
+            tests\~selftest_pipreqs_version_fail\~bootstrap.status.json
+            tests/~selftest_pipreqs_version_fail/~run.out.txt
+            tests\~selftest_pipreqs_version_fail\~run.out.txt
             tests/~selftest_OneDrive/~onedrive_bootstrap.log
             tests\~selftest_OneDrive\~onedrive_bootstrap.log
             tests/~selftest_OneDrive/~setup.log

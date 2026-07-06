@@ -36,6 +36,7 @@ reqspec.gte.explicit,
 reqspec.install.import, reqspec.ingest.translate,
 reqspec.ingest.conda.dryrun, reqspec.ingest.install.import,
 self.depcheck.install, self.depcheck.skip,
+pipreqs.install, pipreqs.run,
 self.parse_warn.table,
 self.exe.warnfix.install, self.exe.warnfix.pass, self.exe.warnfix.xfail,
 self.exe.warnfix.real, self.exe.warnfix.real_warnfix,
@@ -169,6 +170,7 @@ self.bootstrap.state, self.empty_repo.msg, self.empty_repo.no_spurious_warn,
 self.harness.started,
 self.stub.fastpath, self.stub.rebuild, self.stub.state_skip,
 self.stub.conda_retry, self.stub.conda_perpkg, self.stub.pip_warn,
+self.stub.pipreqs_version_fail,
 self.pipreqs.warn.gated,
 self.dep.diff.trace,
 self.warn.onedrive, self.warn.longpath, self.warn.path_negative,
@@ -211,6 +213,20 @@ self.venv.fallback, self.entry.override
   this row does not currently appear in a real CI artifact -- same situation as `self.exe.smokerun`
   and other inline-emitted rows. It is registered above so its id is not mistaken for an
   unexpected/typo'd addition if a future lane change makes it fire.
+- `pipreqs.install` and `pipreqs.run` (backfilled into the registry 2026-07; both already
+  existed in code before this) were emitted but undocumented gaps in this registry.
+  `pipreqs.install` is emitted inline by `run_setup.bat` (gated on `HP_NDJSON`) right after the
+  pipreqs package-install attempt, with `pass`/`reason` reflecting `success`,
+  `install_failed`, `pep723_active`, or `skip_preexisting`. `pipreqs.run` is emitted by a
+  `Check-PipreqsFailure` helper duplicated across `selfapps_entry.ps1`, `selfapps_envsmoke.ps1`,
+  and `selfapps_single.ps1` -- it is a *passive* detector that only fires (and fails) if an
+  *unexpected* real pipreqs failure (matching `No module named pipreqs\.__main__`) is found in
+  a test's bootstrap log; it is not an active failure-injection hook. Contrast with
+  `self.stub.pipreqs_version_fail` (Test-logs NDJSON, below), which *deliberately* forces
+  pipreqs's own install to fail via `HP_PIPREQS_VERSION=99.99.99` (a version that has never
+  existed on PyPI, chosen for determinism over pipreqs 0.5.0's real `<3.13` cap -- the cap alone
+  does not reliably fail on every lane's ambient Python) to prove the warnfix fallback
+  recovers gracefully.
 
 **NDJSON files and who owns them:**
 - `tests/~test-results.ndjson` -- written by every `selfapps_*.ps1` test script during the
