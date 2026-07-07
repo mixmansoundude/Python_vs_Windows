@@ -2711,7 +2711,15 @@ jobs:
         with:
           pattern: selftest-verdict-*
           path: ${{ runner.temp }}/selftest-verdicts
-          merge-multiple: true
+          # derived requirement: NOT merge-multiple -- every lane's artifact zips a file with the
+          # identical local name (lane_verdict.json), so merging them into one flat directory made
+          # each download silently overwrite the last, leaving the aggregation step below able to
+          # see only ONE lane's verdict (Get-ChildItem found a single surviving file) instead of
+          # all matrix lanes'. Found while auditing this exact artifact-collision pattern after
+          # tools/check_ndjson_registry.py's own download step hit the identical bug (see
+          # docs/agent-lessons-learned.md). Without merge-multiple, each artifact lands in its own
+          # <path>/<artifact-name>/ subdirectory; the aggregation step's Get-ChildItem already uses
+          # -Recurse, so no other change is needed to see every lane's verdict.
 
       - name: Aggregate verdicts
         id: aggregate

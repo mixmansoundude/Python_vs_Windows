@@ -17,7 +17,7 @@ accidental removal or unexpected additions.**
 ```
 self.harness.started, self.bootstrap.state, self.empty_repo.msg,
 self.empty_repo.no_spurious_warn,
-self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv,
+self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv, envsmoke.run,
 self.uv.managed.interpreter,
 self.exe.build, self.exe.run,
 self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exedyn.xfail,
@@ -28,6 +28,7 @@ self.checkpoint.accept, self.checkpoint.decline,
 self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self.entry.entryD,
 self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, self.entry.picker,
 self.entry.req011.crossdir, self.entry.req011.sameDir, self.isolation.req010.pythonpath,
+entry.single.direct, entry.expected, helper.invoke,
 self.envname.hyphen, self.size.tripwire,
 reqspec.translate.{gte,eq,compat,gt,neq,lte}, reqspec.conda.dryrun,
 reqspec.conda.channelpin, reqspec.conda.dryrun.failcase,
@@ -141,7 +142,10 @@ batch.delayed.off, batch.delayed.enable_absent, batch.bang.scan,
 conda.channels, pipreqs.flags, pyi.onefile, log.rotate, tilde.naming,
 visa.detect, emit.helpers, env.state.write, dep.check.parse_lock,
 dp.compat, prep.multi.constraint, batch.paren.balance, env.foldername,
-conda.path,
+conda.path, conda.url, env.mode,
+self.warnfix.platform_filter, self.exe.smokerun, helper.find_entry.syntax, entry.helper.ok,
+self.cache.corrupted, self.cache.bootstrap.failed,
+meta.env.mode, workflow.lint,
 version.metadata,
 host.env.os, host.env.ps, host.env.python,
 batch.req009.venv_unconditional, batch.req009.provider_logs, batch.req009.cascade_detect, batch.req009.cascade_consent, batch.req009.cascade_exec,
@@ -213,6 +217,38 @@ self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.ove
   this row does not currently appear in a real CI artifact -- same situation as `self.exe.smokerun`
   and other inline-emitted rows. It is registered above so its id is not mistaken for an
   unexpected/typo'd addition if a future lane change makes it fire.
+- **Backfilled 2026-07 via `tools/check_ndjson_registry.py`'s first real run.** Twelve rows were
+  genuinely emitted but never registered: `conda.url` and `env.mode` (inline `run_setup.bat`,
+  `HP_NDJSON`-gated -- the Miniconda download-probe outcome and the REQ-009 selected-provider
+  log, respectively), `self.warnfix.platform_filter` (inline `run_setup.bat`, confirms the
+  warnfix POSIX-module filter ran), `self.exe.smokerun` (inline `run_setup.bat`'s
+  `:smokerun_ndjson`, the EXE smoke exit-code row -- already referenced by the bullet above but
+  never formally registered), `helper.find_entry.syntax` (inline `run_setup.bat`, HP_FIND_ENTRY
+  payload compile-probe result) and `entry.helper.ok` (`harness.ps1` re-emits the same
+  pass/fail under this id), `entry.single.direct` (`selfapps_single.ps1`, REQ-002 -- already
+  referenced two bullets above but never formally registered), `entry.expected` and
+  `helper.invoke` (both `selfapps_single.ps1`, REQ-002 companion failure-detail rows --
+  `helper.invoke` is the same passive failure-detector documented for
+  `self.entry.helper.invoke.absent` above, just the underlying row itself), `envsmoke.run`
+  (`selfapps_envsmoke.ps1`, REQ-003 failure-detail row), and `self.cache.corrupted` (`harness.ps1`,
+  see `docs/agent-lessons-learned.md`'s cache-lane corruption-handling entry for the full
+  mechanism). This pass also caught the tool's own scope gap: `.github/workflows/*.yml` inline
+  PowerShell/Python was not scanned at all, which produced two kinds of error simultaneously --
+  three ALREADY-registered rows (`self.heuristics.pytest`, `self.parse_warn.pytest`,
+  `self.pytest.unit`, all emitted from `batch-check.yml` steps) were misreported as stale, and at
+  least two genuinely emitted rows (`self.cache.bootstrap.failed`, the sibling of
+  `self.cache.corrupted` documented in the same lessons-learned entry; `meta.env.mode`, the
+  per-lane "matrix mode meta row" step that fires unconditionally at the end of every selftest
+  matrix lane) were invisible to the tool entirely -- they never appeared in either the doc_only
+  or code_only list on the first run, because the tool didn't scan the file that emits them. A
+  fourth PowerShell/JSON emission convention was also found and added to the scanner: a raw
+  JSON-string literal (`'{"id":"...",...}'`), used by the "Catch cache lane bootstrap failure"
+  step instead of the `id = '...'` hashtable-literal form the other three conventions use.
+  `tools/check_ndjson_registry.py` now scans `.github/workflows/*.yml`/`*.yaml` in addition to
+  `tests/*.ps1` and `run_setup.bat`, and recognizes all four conventions. `workflow.lint` (from
+  the separate, dormant `workflow-lint.yml` -- `workflow_dispatch`-only, not run automatically;
+  see AGENTS.md/CLAUDE.md for why) was registered too for the same completeness reason, even
+  though that workflow rarely executes in practice.
 - `pipreqs.install` and `pipreqs.run` (backfilled into the registry 2026-07; both already
   existed in code before this) were emitted but undocumented gaps in this registry.
   `pipreqs.install` is emitted inline by `run_setup.bat` (gated on `HP_NDJSON`) right after the
