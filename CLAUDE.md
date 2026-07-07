@@ -652,6 +652,25 @@ rather than relying on manual memory.
 
 Items completed and shipped:
 
+- **Fail-fast probe window widened 5000ms -> 10000ms**: `HP_FAILFAST_PROBE_MS` (the REQ-018
+  Slice 2b-C fail-fast probe's classification window -- see the entry below for the full
+  mechanism) was tuned assuming the window only needs to outlast a failing process's own error
+  handling (effectively instant). It does not: a PyInstaller *onefile* EXE must first extract its
+  bundled runtime to a temp directory and boot an embedded interpreter before any user code (or
+  its failure) can run at all, and that cold-start step alone is commonly 1-3+ seconds even on an
+  idle machine. Root-caused against a real CI flake in `self.failfast.probe.fastfail`: identical
+  code produced `discardedAndRebuilt: true` on one run and `discardedAndRebuilt: false` on the very
+  next run of the same commit -- a pure timing race between cold-start-plus-failure and the
+  classification window, worsened by CI-runner CPU/disk contention or a Defender on-access scan of
+  the freshly-extracted EXE/DLLs. Widening this value is unconditionally low-risk since it is
+  classification-only and never introduces a kill point (see `docs/agent-lessons-learned.md`
+  "Fail-fast probe window vs. the ~30s hard-kill cap are unrelated numbers" for why); the only
+  cost of widening it is a few extra seconds before a genuinely broken cached EXE is recognized
+  and rebuilt. Justifying comment added directly above the `set "HP_FAILFAST_PROBE_MS=10000"`
+  line in `run_setup.bat` so a future reader does not "fix" it back down. Updated the matching
+  static assertion in `tests/harness.ps1` (`batch.failfast.probe`) and all doc mentions of the old
+  default. CLOSED by this PR.
+
 - **venv creation resilience, part 2 (REQ-023b, --without-pip + get-pip.py retry)**:
   `:try_venv_fallback` previously declined the venv tier outright the
   moment plain `python -m venv .\.venv` failed, with no retry -- the most commonly-cited
@@ -717,7 +736,8 @@ Items completed and shipped:
 
 - **REQ-018 Slice 2b-C -- unified run-model, both halves**: shipped in two PRs. The **fail-fast
   probe** (`:compute_interactive_run`, `:run_failfast_probe`, `HP_FAILFAST_PROBE_MS` default
-  5000ms) times out the two previously-untimed user-code launch points (`:try_fast_exe`'s
+  10000ms as of a later widening -- see Closed Backlog entry above) times out the two
+  previously-untimed user-code launch points (`:try_fast_exe`'s
   cached-EXE reuse, `:verify_no_exe_interpreter`'s no-EXE path): an interactive user gets a short
   classification window then an unbounded, never-killed wait so a genuinely long-running app is
   never force-stopped, while a stale/broken cached EXE that fails fast still triggers

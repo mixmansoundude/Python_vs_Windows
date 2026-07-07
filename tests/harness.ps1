@@ -446,7 +446,7 @@ Write-Result 'batch.smoke.single_verify' 'REQ-018: single-verification pass wire
 $ffInteractiveSub = $AllText -match '(?m)^:compute_interactive_run'
 $ffProbeSub        = $AllText -match '(?m)^:run_failfast_probe'
 $ffTestOverride    = $AllText -match 'HP_TEST_FORCE_INTERACTIVE_PROBE'
-$ffProbeMs         = $AllText -match [regex]::Escape('set "HP_FAILFAST_PROBE_MS=5000"')
+$ffProbeMs         = $AllText -match [regex]::Escape('set "HP_FAILFAST_PROBE_MS=10000"')
 $ffExceededVar     = $AllText -match 'HP_PROBE_EXCEEDED'
 $ffDecoupleGuard   = $AllText -match [regex]::Escape('set "HP_FASTPATH_RUN_FAILED=')
 $hasFailfastProbe = $ffInteractiveSub -and $ffProbeSub -and $ffTestOverride -and $ffProbeMs -and $ffExceededVar -and $ffDecoupleGuard

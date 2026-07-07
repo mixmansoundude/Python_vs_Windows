@@ -196,14 +196,24 @@ rem HP_TEST_FORCE_INTERACTIVE_PROBE=1: CI-only; forces the fail-fast probe's int
 rem (:try_fast_exe / :verify_no_exe_interpreter) even under HP_CI_LANE, for deterministic branch
 rem coverage of the ALIVE_AT_PROBE state machine. Mirrors HP_TEST_FORCE_PICKER.
 set "HP_TEST_FORCE_INTERACTIVE_PROBE=%HP_TEST_FORCE_INTERACTIVE_PROBE%"
-rem HP_FAILFAST_PROBE_MS: the fail-fast probe's classification window (default 5000ms). This is
+rem HP_FAILFAST_PROBE_MS: the fail-fast probe's classification window (default 10000ms). This is
 rem NOT the same concept as the unrelated ~30s hard-kill cap used by :run_exe_smokerun /
 rem :hidden_import_recover -- that is a force-kill ceiling for the fresh-build verification run
 rem (the only run this bootstrapper ever kills). This probe window only decides how long to wait
 rem before treating a launched process as "still alive / healthy" rather than "failed fast"; once
 rem classified alive, the wait becomes unbounded and the process is never killed.
+rem Widened from the original 5000ms after a real CI flake (self.failfast.probe.fastfail):
+rem what races this window is not the failure itself (a raised exception unwinds and exits in
+rem microseconds) but PyInstaller onefile COLD START -- extracting the bundled runtime to a temp
+rem dir and booting an embedded interpreter before any user code (or its failure) can even run.
+rem That step is commonly 1-3+ seconds on a healthy machine and can be pushed well past 5s under
+rem CI-runner CPU/disk contention or a Defender on-access scan of the freshly-extracted EXE/DLLs.
+rem A real user's own machine sees this same cold-start cost but rarely the added contention, so
+rem widening this is a low-risk, low-cost change: it never introduces a kill (this window only
+rem ever governs classification, never termination -- see above), and the only cost of widening
+rem it is a few extra seconds before a genuinely broken cached EXE is recognized as such.
 set "HP_FAILFAST_PROBE_MS=%HP_FAILFAST_PROBE_MS%"
-if not defined HP_FAILFAST_PROBE_MS set "HP_FAILFAST_PROBE_MS=5000"
+if not defined HP_FAILFAST_PROBE_MS set "HP_FAILFAST_PROBE_MS=10000"
 rem HP_TEST_CHECKPOINT_ANSWER=Y|N: bypasses the REQ-018 post-execution checkpoint prompt for CI
 rem testing (mirrors HP_TEST_SYSBUILD_ANSWER/HP_TEST_SYSCON_ANSWER). Checked before HP_CI_LANE so
 rem an explicit Y reaches the accept branch even in CI.
