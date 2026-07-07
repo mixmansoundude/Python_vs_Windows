@@ -3105,7 +3105,9 @@ jobs:
     # artifacts are definitely uploaded before the publisher attempts to fetch them,
     # otherwise Pages may ship an empty _iter if publish_diag races ahead.
     needs: [selftest, selftest-gate, model-quick-fix]
-    timeout-minutes: 25
+    # derived requirement: widened from 25 to accommodate the Pages-deploy retry-with-backoff
+    # sequence below (up to a 20-minute wait before the final attempt), plus normal setup time.
+    timeout-minutes: 40
     concurrency:
       # derived requirement: run 19236437263-1 exhausted the runner disk while a prior
       # publish was still active; serialize by ref and bound runtime so hanging jobs
@@ -3972,9 +3974,45 @@ jobs:
         with:
           path: ${{ steps.prep.outputs.SITE }}
 
-      - name: Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages (attempt 1)
         if: ${{ github.event_name != 'pull_request' }}
-        id: deploy
+        id: deploy1
+        continue-on-error: true
+        uses: actions/deploy-pages@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait before Pages deploy retry (short backoff)
+        # derived requirement: GitHub Pages deployment backend occasionally returns a transient
+        # "Deployment failed, try again later" error (observed directly in this repo's own CI,
+        # e.g. run 28798318708) that a short wait usually resolves. Mirrors the existing
+        # detect-transient-failure-then-retry pattern already used for conda create/bulk install.
+        if: ${{ github.event_name != 'pull_request' && steps.deploy1.outcome == 'failure' }}
+        shell: bash
+        run: sleep 30
+
+      - name: Deploy to GitHub Pages (attempt 2)
+        if: ${{ github.event_name != 'pull_request' && steps.deploy1.outcome == 'failure' }}
+        id: deploy2
+        continue-on-error: true
+        uses: actions/deploy-pages@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait before Pages deploy retry (long backoff)
+        # A second consecutive failure suggests a longer-lived backend issue rather than a
+        # one-off blip; wait substantially longer (20 min) to give it real room to recover
+        # before the final attempt, rather than hammering the API on a short cadence. This job
+        # is non-gating and has concurrency.cancel-in-progress set on this ref (see the job's
+        # concurrency block above), so a sleeping attempt is safely superseded, not wasted, if a
+        # newer push arrives in the meantime.
+        if: ${{ github.event_name != 'pull_request' && steps.deploy1.outcome == 'failure' && steps.deploy2.outcome == 'failure' }}
+        shell: bash
+        run: sleep 1200
+
+      - name: Deploy to GitHub Pages (attempt 3, final)
+        if: ${{ github.event_name != 'pull_request' && steps.deploy1.outcome == 'failure' && steps.deploy2.outcome == 'failure' }}
+        id: deploy3
         uses: actions/deploy-pages@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

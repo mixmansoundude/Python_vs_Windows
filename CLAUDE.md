@@ -504,11 +504,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
 "Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead
 (see those sections' own scope notes).
 
-- **User-code exit-code semantics**: verify the exit code read after running the user's code
-  is purely the user program's (no bootstrapper logic interleaved). If so, a non-zero exit is
-  very likely outside bootstrapper control; confirm such a case routes to warnfix gracefully
-  rather than being reported as a bootstrapper failure. Document the conclusion.
-
 - **CI-side NDJSON row registry check**: consider building the `docs/agent-ndjson.md` row
   audit into CI (it exists today so agents can see which rows are missing). Likely still a
   manual-sync confirmation step, since fully automated discovery can miss flag-gated rows.
@@ -628,6 +623,29 @@ rather than relying on manual memory.
 
 ## Known Findings (diagnosed, no action warranted)
 
+- **User-code exit-code semantics are already correctly isolated from bootstrapper status --
+  verified, no action needed.** Traced the full flow: `HP_SMOKE_RC` is captured directly from
+  `%ERRORLEVEL%` immediately after launching the user's program at every verification call site
+  (`:run_exe_smokerun`'s EXE smoke, `:verify_no_exe_interpreter`'s interpreter run,
+  `:run_failfast_probe`'s interactive probe), via goto-based dispatch (not nested in a
+  parenthesized if/else) with no bootstrapper logic interleaved between launch and capture --
+  confirms it is purely the user program's own exit code. Separately confirmed the
+  bootstrapper's own reported status is entirely decoupled: the terminating `exit /b 0` at the
+  end of the `:success` label (the actual `run_setup.bat` process exit code on a real
+  double-click) and every `call :write_status ok 0 ...` site pass a hardcoded literal `0`,
+  never `%HP_SMOKE_RC%` -- so a crashing/non-zero-exiting user program is never reported as a
+  bootstrapper failure. `~bootstrap.status.json`'s `exitCode` field means "did the
+  bootstrapper's own env/build lifecycle succeed," not "what did the user's program return";
+  the true user-program outcome is surfaced separately via the console
+  `[STATUS] Run Status: SUCCESS/FAILED (Exit Code: N)` line. Also confirmed such a case does
+  not get misrouted into repair logic: the `--hidden-import` auto-recovery loop only engages
+  for a narrow signature (`ModuleNotFoundError` of a module that IS installed in the build
+  interpreter -- see "--hidden-import auto-recovery must stay STRICT" in
+  `docs/agent-lessons-learned.md`); any other user-program failure (a logic bug, an unrelated
+  unhandled exception, etc.) takes no recovery action and is left exactly as observed, correctly
+  not conflated with a packaging/bootstrapper problem. No code change needed; existing behavior
+  already satisfies the intent.
+
 - **NI-VISA real install fails fast in CI (`installer_rc=-125083`) -- environmental, NOT a repo/test/CI-code
   bug.** Diagnosed via the REQ-008 `[VISA]` diagnostic logging (download method / file size / PE check /
   installer exit code, surfaced in the `pyvisa.nivisa.reason` NDJSON details). On the conda-full lane the
@@ -647,6 +665,20 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Pages-deploy retry with backoff**: the "Deploy to GitHub Pages" step (`publish_diag` job)
+  previously made a single `actions/deploy-pages@v5` attempt with no retry, so a transient
+  backend failure ("Deployment failed, try again later" -- observed directly in this repo's own
+  CI, e.g. run 28798318708) required a manual empty-commit retrigger. Split the single step into
+  up to three attempts: attempt 1, then (only on failure) a 30s wait and attempt 2, then (only
+  if both failed) a 20-minute wait and a final attempt 3 -- escalating rather than flat, on the
+  theory that two consecutive failures signal a longer-lived backend issue worth giving real
+  recovery time rather than hammering on a short cadence. Mirrors this repo's existing
+  detect-transient-failure-then-retry idiom (conda create/bulk install) rather than pulling in a
+  third-party retry-wrapper action. The job's `timeout-minutes` was widened 25 -> 40 to
+  accommodate the worst case. Non-gating and safe to wait long: the job already has
+  `concurrency.cancel-in-progress: true` scoped to the ref, so a sleeping attempt is safely
+  superseded (not wasted runner time) if a newer push lands in the meantime. CLOSED by this PR.
 
 - **Add `.github/dependabot.yml`**: no dependabot config existed anywhere in the repo, so there
   was no automated signal when a GitHub Action pin fell behind (the 2026-07 maintenance sweeps
