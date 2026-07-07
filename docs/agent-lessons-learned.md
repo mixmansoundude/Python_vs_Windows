@@ -466,7 +466,7 @@ its body (interpolation, nested quoting, here-strings, or quoting an argument fo
 `ProcessStartInfo`), stop and make it a `.ps1` helper instead of trying to escape around it.
 
 **Fail-fast probe window vs. the ~30s hard-kill cap are unrelated numbers, do not conflate them:**
-`HP_FAILFAST_PROBE_MS` (default 5000ms, `:run_failfast_probe`) is a CLASSIFICATION checkpoint --
+`HP_FAILFAST_PROBE_MS` (default 10000ms, `:run_failfast_probe`) is a CLASSIFICATION checkpoint --
 how long to wait before deciding "this exited fast, treat a non-zero rc as a stale artifact" vs.
 "this is still running, treat it as the user's real program and never touch it again." The ~30s cap
 used by `:run_exe_smokerun`/`:hidden_import_recover` is a FORCE-KILL CEILING for the one run this
@@ -474,6 +474,21 @@ bootstrapper is ever allowed to `Kill()` (the fresh-build verification run). The
 stage (`$p.WaitForExit()`, no argument) is genuinely unbounded and never kills anything -- raising or
 lowering the probe window only changes how quickly a broken cached EXE gets discarded+rebuilt, it
 never introduces a new kill point.
+
+**Why the default is 10000ms, not 5000ms (widened 2026-07):** the original 5000ms default was
+tuned assuming the probe window only needs to outlast a failing process's own error handling
+(instant -- an unhandled exception unwinds in microseconds). It does not: a PyInstaller *onefile*
+EXE must first extract its bundled runtime to a temp directory and boot an embedded interpreter
+before ANY user code (or its failure) can run at all, and that cold-start step alone is commonly
+1-3+ seconds even on an idle machine. Confirmed as the real cause via a CI flake in
+`self.failfast.probe.fastfail` (a test whose whole design is a reliably-fast-failing frozen EXE):
+identical code produced `discardedAndRebuilt: true` on one CI run and `discardedAndRebuilt: false`
+on the very next run of the same commit, with no code change between them -- a pure timing race
+between cold-start-plus-failure and the classification window, worsened by a shared CI runner's
+CPU/disk contention or a Defender on-access scan of the freshly-extracted EXE/DLLs. Widening the
+window is unconditionally safe to do liberally: it is a classification-only value (see above --
+never a kill point), so the only cost of widening it is a few extra seconds before a genuinely
+broken cached EXE is recognized and rebuilt.
 
 **Accepted gap: most `selfapps_*.ps1` files do not locally pin `HP_CI_LANE`/`HP_NONINTERACTIVE`
 around their `run_setup.bat` invocations, so a LOCAL (non-CI) run of one that reaches the fast-path

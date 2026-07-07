@@ -424,7 +424,7 @@ call the shared `:run_failfast_probe` subroutine instead, which launches via
 `:emit_from_base64` mechanism -- NOT an inline `-Command` one-liner, deliberately: the two-stage
 wait needs interpolated strings, and `.ps1` file content sidesteps every cmd.exe quote-nesting
 hazard an inline `-Command "..."` string would hit here). The helper does `WaitForExit(HP_FAILFAST_PROBE_MS)`
-(default 5000ms, distinct from the unrelated ~30s hard-kill cap used by `:run_exe_smokerun`/
+(default 10000ms, distinct from the unrelated ~30s hard-kill cap used by `:run_exe_smokerun`/
 `:hidden_import_recover` -- that is a force-kill ceiling for the fresh-build verification run, the
 ONLY run this bootstrapper ever kills; this probe window is purely a classification checkpoint,
 never a ceiling) then, if the process is still running, a SECOND, UNBOUNDED `WaitForExit()` with no
