@@ -504,17 +504,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
 "Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead
 (see those sections' own scope notes).
 
-- **Backfill the 11 real gaps surfaced by the new NDJSON registry check**: the first real
-  run of `tools/check_ndjson_registry.py` (see Closed Backlog) found 11 row IDs genuinely
-  emitted in code but never registered in `docs/agent-ndjson.md` (`conda.url`, `env.mode`,
-  `helper.find_entry.syntax`, `helper.invoke`, `entry.expected`, `entry.helper.ok`,
-  `entry.single.direct`, `envsmoke.run`, `self.cache.corrupted`, `self.exe.smokerun`,
-  `self.warnfix.platform_filter`) and 3 stale registry entries with zero matching emission
-  site anywhere in the repo (`self.heuristics.pytest`, `self.parse_warn.pytest`,
-  `self.pytest.unit` -- likely rows removed from code without a doc update at the time).
-  Deliberately left unfixed in the same PR as the tool itself (verify-the-tool-works vs.
-  fix-every-finding are different tasks); register/remove these in a dedicated follow-up.
-
 - **pipreqs dead-or-not / internalization decision (2026-07)**: pipreqs (bndr/pipreqs) is
   stagnant (maintenance-only, looking for maintainers) but not at risk of disappearing from
   PyPI outright -- PyPI does not delete established packages. The real risk the community
@@ -672,6 +661,42 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **NDJSON registry backfill + scanner scope fix + `selftest-gate` artifact-collision fix**:
+  follow-up to the registry-check tool below (same day). Investigating its first real findings
+  (11 code-only rows, 3 doc-only "stale" rows) found the "stale" classification was **wrong**:
+  those 3 rows (`self.heuristics.pytest`, `self.parse_warn.pytest`, `self.pytest.unit`) were
+  never removed from code -- they're emitted directly from inline PowerShell in
+  `.github/workflows/batch-check.yml`, a file the scanner never read (it only scanned
+  `tests/*.ps1` and `run_setup.bat`). Extended `tools/check_ndjson_registry.py`'s `code_paths`
+  to also scan `.github/workflows/*.yml`/`*.yaml`, which fixed the false "stale" classification
+  and surfaced 3 MORE genuinely-undocumented rows the old scope had made invisible entirely
+  (`meta.env.mode`, `self.cache.bootstrap.failed`, and `workflow.lint` from the separate dormant
+  `workflow-lint.yml`) -- bringing the real gap count to 14, not 11. Also found and added a 4th
+  PowerShell/JSON emission convention while scanning workflow YAML: a raw JSON-string literal
+  (`'{"id":"...",...}'`), used by the "Catch cache lane bootstrap failure" step instead of the
+  `id = '...'` hashtable-literal form the other three conventions use. All 14 rows are now
+  registered in `docs/agent-ndjson.md` (see that file's "Key facts" section for the full
+  per-row breakdown); a clean re-run now shows 0 code-only findings and exactly the 16
+  genuinely-out-of-scope `dynamic_tests.py` rows as the only doc-only findings. Two new unit
+  tests cover the JSON-literal pattern and workflow-YAML scanning.
+
+  Separately, while auditing the repo for other instances of the exact artifact-collision bug
+  the registry-check job itself had (see the entry below), found a second, pre-existing
+  instance: `selftest-gate`'s "Download lane verdicts" step had the identical
+  `merge-multiple: true` + identical-local-filename (`lane_verdict.json`) collision, silently
+  limiting its `has_failures` aggregation to whichever single lane's verdict survived instead of
+  ORing all 8 matrix lanes. Lower severity than it sounds: `has_failures` only gates
+  `model-quick-fix`'s auto-fix trigger, not PR merge gating (the `real`/`conda-full` matrix jobs
+  gate merges via their own independent check conclusions) -- but it could silently skip
+  auto-fix attempts when a non-surviving lane had real failures. Fixed with the same one-line
+  removal of `merge-multiple`. Audited the workflow's two other `merge-multiple: true` usages:
+  one (`iterate-logs-*` download) is a single-named-artifact download with no collision
+  possible, confirmed safe and left as-is. Added a general lessons-learned entry
+  (`docs/agent-lessons-learned.md`, "`download-artifact@v6` `merge-multiple: true` silently
+  overwrites same-named files") documenting the hazard class and an audit method for future
+  additions, so this class of bug is checked for by construction rather than rediscovered a
+  third time. CLOSED by this PR.
 
 - **CI-side NDJSON row registry check (3-way: doc vs code vs log)**: no automated signal
   existed that `docs/agent-ndjson.md`'s row registry had drifted from what the code actually

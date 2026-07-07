@@ -267,6 +267,54 @@ inventory step instead of routing it through the process environment. Applied to
 General rule: NEVER pass data >32 KB through GitHub Actions step `env:` -- write to a
 temp file in `$GITHUB_WORKSPACE` and read from disk instead.
 
+## `download-artifact@v6` `merge-multiple: true` silently overwrites same-named files
+
+**This has now bitten this repo twice with the identical root cause.** When a workflow step
+downloads MULTIPLE artifacts matching a `pattern:`, and each of those artifacts zips a file with
+the SAME local filename (only the artifact's own top-level *name* differs, e.g.
+`ci_test_results-selftest-<mode>-<run>-<attempt>` all containing `ci_test_results.ndjson`, or
+`selftest-verdict-<mode>` all containing `lane_verdict.json`), setting `merge-multiple: true`
+extracts every matched artifact into ONE flat directory. Because the local filenames collide,
+each subsequent download silently overwrites the previous one -- **only the last-downloaded
+artifact's content survives**, with no error, warning, or non-zero exit code anywhere in the
+step. Any step downstream that reads "the file" in that directory silently sees just one lane's
+data instead of all of them.
+
+**Confirmed instances (both fixed):**
+1. `ndjson-registry-check`'s "Download lane NDJSON artifacts" step (added 2026-07): caught during
+   CI verification of the job's first real run -- the `--log-dir` cross-check reported only 1
+   observed ID across all 8 lanes instead of the expected 100+. This was advisory-only (never
+   affected the job's exit code or the primary doc-vs-code diff), but degraded the tool's third
+   data source to near-uselessness.
+2. `selftest-gate`'s "Download lane verdicts" step (pre-existing, found while auditing the first
+   instance for other occurrences of the same pattern): silently limited the `has_failures`
+   aggregation to whichever single lane's `lane_verdict.json` happened to survive the collision,
+   instead of the OR of all 8 matrix lanes. Lower severity than it sounds -- `has_failures` only
+   feeds `model-quick-fix`'s auto-fix trigger (`HAS_FAILURES` env var), NOT PR merge gating
+   itself (the `real`/`conda-full` matrix jobs gate merges via their own individual GitHub check
+   conclusions, entirely independent of this aggregation) -- but it could have caused the
+   auto-fix bot to skip attempting a fix when a non-surviving lane genuinely had failures.
+
+**The fix is the same in both cases and is the correct default: drop `merge-multiple` entirely.**
+Without it, `download-artifact@v6` places each matched artifact into its own
+`<path>/<artifact-name>/` subdirectory, so no collision is possible. Every consumer in this repo
+that reads the downloaded files already does so via `Get-ChildItem -Recurse` / `Path.rglob` /
+equivalent, so removing `merge-multiple` requires no other code change -- the recursive read
+already looks inside per-artifact subdirectories.
+
+**When `merge-multiple: true` IS actually safe (confirmed present, unfixed, correctly so):**
+`batch-check.yml`'s "Download iterate logs artifact" step (`publish_diag` job) downloads a
+single artifact by exact `name:`, not a `pattern:` matching several -- there is only ever one
+artifact in play, so no collision is possible regardless of the flag.
+
+**Audit method for future additions:** before setting `merge-multiple: true` on any
+`download-artifact@v6` step that uses `pattern:` (matches more than one artifact), trace the
+matching `upload-artifact@v6` step(s) and check whether the uploaded `path:` is the same local
+filename across all matched artifacts. If yes, either drop `merge-multiple` (preferred -- almost
+always safe, since consuming code should already handle nested subdirectories) or give each
+upload a distinct filename. Do not add `merge-multiple: true` to a new multi-artifact download
+step without doing this check first.
+
 ---
 
 ## Heuristic dep-augmentation (HP_PREP_REQUIREMENTS): pandas[excel] extras syntax

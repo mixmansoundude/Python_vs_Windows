@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Cross-checks NDJSON row IDs across three sources: docs/agent-ndjson.md (doc),
 PowerShell Write-NdjsonRow/Write-Result call sites plus run_setup.bat inline
-emissions (code), and observed NDJSON artifacts from a CI run (log, optional).
+emissions and .github/workflows/*.yml inline PowerShell emissions (code), and
+observed NDJSON artifacts from a CI run (log, optional).
 
 Advisory tool: reports mismatches, does not attempt to be exhaustive.
-Scope: PowerShell-emitted rows only (tests/*.ps1, tests/harness.ps1,
-run_setup.bat). dynamic_tests.py's Python-side rows are out of scope --
-docs/agent-ndjson.md's own "Dynamic-tests NDJSON" section already
-acknowledges several of those as "(x many)" per-test-case IDs.
+Scope: PowerShell-emitted rows only (tests/*.ps1, run_setup.bat,
+.github/workflows/*.yml inline `run:` blocks -- several rows, e.g.
+self.pytest.unit, self.cache.corrupted, are emitted directly from workflow
+YAML, not from a tests/*.ps1 file). dynamic_tests.py's Python-side rows are
+out of scope -- docs/agent-ndjson.md's own "Dynamic-tests NDJSON" section
+already acknowledges several of those as "(x many)" per-test-case IDs.
 """
 import argparse
 import json
@@ -21,6 +24,7 @@ DOC_TOKEN_RE = re.compile(r'([A-Za-z0-9][A-Za-z0-9_.\-]*\.[A-Za-z0-9_.\-]*)(?:\s
 CODE_HASHTABLE_ID_RE = re.compile(r"""\bid\s*=\s*['"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['"]""")
 CODE_WRITERESULT_ID_RE = re.compile(r"""Write-Result\s+['"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['"]""")
 CODE_NAMEDPARAM_ID_RE = re.compile(r"""-Id\s+['"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['"]""")
+CODE_JSONLITERAL_ID_RE = re.compile(r'"id"\s*:\s*"([A-Za-z0-9][A-Za-z0-9_.\-]*)"')
 
 
 def expand_braces(text: str) -> str:
@@ -65,6 +69,8 @@ def scan_code_ids(paths):
             ids.add(m.group(1))
         for m in CODE_NAMEDPARAM_ID_RE.finditer(text):
             ids.add(m.group(1))
+        for m in CODE_JSONLITERAL_ID_RE.finditer(text):
+            ids.add(m.group(1))
     return ids
 
 
@@ -100,7 +106,12 @@ def main(argv=None):
     doc_path = root / 'docs' / 'agent-ndjson.md'
     doc_ids, doc_many_ids = parse_doc_registry(doc_path)
 
-    code_paths = sorted((root / 'tests').glob('*.ps1')) + [root / 'run_setup.bat']
+    code_paths = (
+        sorted((root / 'tests').glob('*.ps1'))
+        + [root / 'run_setup.bat']
+        + sorted((root / '.github' / 'workflows').glob('*.yml'))
+        + sorted((root / '.github' / 'workflows').glob('*.yaml'))
+    )
     code_paths = [p for p in code_paths if p.is_file()]
     code_ids = scan_code_ids(code_paths)
 
