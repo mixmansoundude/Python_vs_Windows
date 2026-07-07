@@ -504,9 +504,16 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
 "Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead
 (see those sections' own scope notes).
 
-- **CI-side NDJSON row registry check**: consider building the `docs/agent-ndjson.md` row
-  audit into CI (it exists today so agents can see which rows are missing). Likely still a
-  manual-sync confirmation step, since fully automated discovery can miss flag-gated rows.
+- **Backfill the 11 real gaps surfaced by the new NDJSON registry check**: the first real
+  run of `tools/check_ndjson_registry.py` (see Closed Backlog) found 11 row IDs genuinely
+  emitted in code but never registered in `docs/agent-ndjson.md` (`conda.url`, `env.mode`,
+  `helper.find_entry.syntax`, `helper.invoke`, `entry.expected`, `entry.helper.ok`,
+  `entry.single.direct`, `envsmoke.run`, `self.cache.corrupted`, `self.exe.smokerun`,
+  `self.warnfix.platform_filter`) and 3 stale registry entries with zero matching emission
+  site anywhere in the repo (`self.heuristics.pytest`, `self.parse_warn.pytest`,
+  `self.pytest.unit` -- likely rows removed from code without a doc update at the time).
+  Deliberately left unfixed in the same PR as the tool itself (verify-the-tool-works vs.
+  fix-every-finding are different tasks); register/remove these in a dedicated follow-up.
 
 - **pipreqs dead-or-not / internalization decision (2026-07)**: pipreqs (bndr/pipreqs) is
   stagnant (maintenance-only, looking for maintainers) but not at risk of disappearing from
@@ -665,6 +672,33 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **CI-side NDJSON row registry check (3-way: doc vs code vs log)**: no automated signal
+  existed that `docs/agent-ndjson.md`'s row registry had drifted from what the code actually
+  emits, despite the file's own AGENT DIRECTIVE asking for in-commit sync. Added
+  `tools/check_ndjson_registry.py` (stdlib-only): parses doc-registered IDs from the fenced
+  code blocks (with brace-expansion for `prefix.{a,b,c}` syntax and parenthetical-annotation
+  stripping), statically scans `tests/*.ps1` and `run_setup.bat` for all three PowerShell
+  emission conventions in use (`id = '...'` hashtable literals, `Write-Result '...'`
+  positional, `-Id '...'` named-parameter), and optionally cross-references against IDs
+  actually observed in a directory of downloaded NDJSON artifacts. Deliberately excludes
+  `tests/dynamic_tests.py` (Python, different emission pattern, and its "Dynamic-tests
+  NDJSON" doc section already documents several rows as "(x many)" per-test-case IDs) --
+  documented as an explicit scope limitation, not silently ignored. Discovered along the way
+  that the doc's own "(x many)" annotation means "same literal id fires multiple times in a
+  loop," not "dynamically-suffixed id family" as first assumed -- verified by tracing actual
+  emission sites (`pr.to_conda`, `dp.pep440`, `emit.extract` are all single literal IDs
+  called repeatedly, not templated); an earlier draft that treated them as wildcards produced
+  a false positive on `emit.extract`, fixed before shipping. Wired into `batch-check.yml` as
+  a new `ndjson-registry-check` job (`needs: [selftest]`, `ubuntu-latest`, downloads only the
+  small `ci_test_results-selftest-*` artifacts -- not the multi-hundred-MB `diag-*` bundles)
+  with job-level `continue-on-error: true`, matching this repo's established non-gating-lane
+  convention so a real finding is visible without blocking merges while the tool is new. Five
+  unit tests in `tests/test_check_ndjson_registry.py` cover brace expansion, all three code
+  emission patterns, log-file parsing, and both pass/fail end-to-end paths via `main()`. First
+  real run against this repo found 11 genuine undocumented rows and 3 stale registry entries
+  (see the new Active Backlog item to backfill them -- deliberately left unfixed in this same
+  PR). CLOSED by this PR.
 
 - **Pages-deploy retry with backoff**: the "Deploy to GitHub Pages" step (`publish_diag` job)
   previously made a single `actions/deploy-pages@v5` attempt with no retry, so a transient
