@@ -513,14 +513,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
   audit into CI (it exists today so agents can see which rows are missing). Likely still a
   manual-sync confirmation step, since fully automated discovery can miss flag-gated rows.
 
-- **Add `.github/dependabot.yml`**: no dependabot config exists anywhere in the repo today, so
-  there is no automated signal when a GitHub Action pin (or any other dependency) falls behind.
-  A 2026-07 maintenance sweep found every current action pin already on its latest major
-  (`checkout@v5`, `cache@v5`, `upload-artifact@v6`, `download-artifact@v6`, `github-script@v8`,
-  `codeql-action@v3`, `configure-pages@v6`, `upload-pages-artifact@v5`, `deploy-pages@v5`) with
-  nothing to bump right now, but that was a manual audit; a small `github-actions` ecosystem
-  dependabot config would catch the next drift automatically. Low effort, low risk, no rush.
-
 - **pipreqs dead-or-not / internalization decision (2026-07)**: pipreqs (bndr/pipreqs) is
   stagnant (maintenance-only, looking for maintainers) but not at risk of disappearing from
   PyPI outright -- PyPI does not delete established packages. The real risk the community
@@ -586,17 +578,21 @@ rather than relying on manual memory.
 
 ### GitHub Actions / CI health (action pins, deprecations, lint)
 
-- **Last scanned**: 2026-07-06.
+- **Last scanned**: 2026-07-07.
 - **Findings**: all action pins across `.github/workflows/*.yml` are on their latest majors
   (`checkout@v5`, `cache@v5`, `upload-artifact@v6`, `download-artifact@v6`, `github-script@v8`,
   `codeql-action@v3`, `configure-pages@v6`, `upload-pages-artifact@v5`, `deploy-pages@v5`) --
-  nothing to bump. One informational, non-actionable GitHub-runner-side notice observed in CI
-  logs ("Node.js 20 is deprecated... forced to run on Node.js 24" against `download-artifact@v6`,
-  which is already latest) -- upstream runner behavior, no fix available or needed. `actionlint`
-  and `yamllint` both clean (one cosmetic yamllint comment-indentation nit found and fixed this
-  pass). No `dependabot.yml` exists yet (tracked as an Active Backlog item above).
-- **Going forward**: once `dependabot.yml` lands, this scan should shift from a manual pin audit
-  to confirming Dependabot is actually opening PRs (not just present but inert).
+  nothing to bump. Two informational, non-actionable GitHub-runner-side/action-internal notices
+  observed in CI logs, neither with any fix available on this repo's side: (1) "Node.js 20 is
+  deprecated... forced to run on Node.js 24" against `download-artifact@v6` (already latest --
+  upstream runner behavior); (2) a Node `[DEP0040] DeprecationWarning: The punycode module is
+  deprecated` emitted from inside `actions/deploy-pages@v5`'s own bundled JS during the "Publish
+  diagnostics to Pages" job -- originates inside the action's own execution, not this repo's
+  code, and resolves whenever the action's maintainers update their bundled dependencies.
+  `actionlint` and `yamllint` both clean. `.github/dependabot.yml` now exists (`github-actions`
+  ecosystem, weekly schedule) -- see Closed Backlog.
+- **Going forward**: confirm Dependabot is actually opening PRs against the `github-actions`
+  ecosystem (not just present but inert) at the next scan.
 
 ### Persisted CI run-page warnings
 
@@ -651,6 +647,18 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Add `.github/dependabot.yml`**: no dependabot config existed anywhere in the repo, so there
+  was no automated signal when a GitHub Action pin fell behind (the 2026-07 maintenance sweeps
+  found every pin already on its latest major, but that was a manual, point-in-time audit).
+  Added a minimal config with a single `github-actions` ecosystem entry (weekly schedule,
+  `open-pull-request-limit: 5`) -- the only ecosystem with anything for Dependabot to track,
+  since this repo has no committed `requirements.txt`/`pyproject.toml` (CI installs ad-hoc pip
+  packages inline in workflow YAML `run:` steps, which Dependabot's `pip` ecosystem has no
+  manifest file to scan). Dependabot PRs land on a same-repo branch (not a fork), so the
+  existing `pr-automerge.yml` handler picks them up automatically like any other PR -- auto-merge
+  is armed (not an instant merge), so the `real`/`conda-full` gating lanes still have to pass
+  before a version bump actually merges. No workflow changes needed. CLOSED by this PR.
 
 - **Fail-fast probe window widened 5000ms -> 10000ms**: `HP_FAILFAST_PROBE_MS` (the REQ-018
   Slice 2b-C fail-fast probe's classification window -- see the entry below for the full

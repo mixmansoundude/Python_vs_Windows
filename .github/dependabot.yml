@@ -1,0 +1,18 @@
+---
+version: 2
+updates:
+  # This repo pins every action version explicitly in .github/workflows/*.yml
+  # (checkout@v5, cache@v5, upload-artifact@v6, etc.) with no automated signal
+  # when a pin falls behind. A 2026-07 manual audit found every pin already on
+  # its latest major -- nothing to bump at that time -- but that was a one-off
+  # manual sweep; this catches the next drift on its own.
+  # github-actions is the only ecosystem configured here on purpose: this repo
+  # has no committed requirements.txt/pyproject.toml (CI installs ad-hoc pip
+  # packages inline in workflow YAML run: steps, which Dependabot's pip
+  # ecosystem has no manifest file to scan), so there is nothing else for
+  # Dependabot to track today.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-request-limit: 5
