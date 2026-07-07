@@ -2824,6 +2824,38 @@ jobs:
             '- No gate summary generated.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
 
+  ndjson-registry-check:
+    name: NDJSON registry cross-check (doc vs code vs log)
+    # derived requirement: advisory only -- cross-checks docs/agent-ndjson.md's row registry
+    # against PowerShell/run_setup.bat emission sites (code) and this run's own observed NDJSON
+    # artifacts (log). continue-on-error keeps this fully non-gating: a finding here is real and
+    # worth fixing, but must never block a PR merge on its own (this tool is new and advisory by
+    # design, matching how other non-mature lanes in this repo graduate to gating only after a
+    # soak period -- see AGENTS.md and CLAUDE.md's CI lane gating maturity notes).
+    needs: [selftest]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download lane NDJSON artifacts (small files only, not the diag bundles)
+        uses: actions/download-artifact@v6
+        continue-on-error: true
+        with:
+          pattern: ci_test_results-selftest-*
+          path: ${{ runner.temp }}/ndjson-logs
+          # derived requirement: NOT merge-multiple -- every lane's artifact zips a file with
+          # the identical name (ci_test_results.ndjson), so merging them into one flat directory
+          # makes each download silently overwrite the last, leaving only one lane's rows visible
+          # to the --log-dir scan. Without merge-multiple, each artifact lands in its own
+          # <path>/<artifact-name>/ subdirectory; scan_log_ids() already globs recursively
+          # (Path.rglob), so all lanes' rows are still picked up.
+
+      - name: Run NDJSON registry cross-check
+        shell: bash
+        run: python3 tools/check_ndjson_registry.py --repo-root . --log-dir "${{ runner.temp }}/ndjson-logs"
 
   model-quick-fix:
     name: Model quick-fix (inline)
