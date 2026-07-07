@@ -2846,7 +2846,12 @@ jobs:
         with:
           pattern: ci_test_results-selftest-*
           path: ${{ runner.temp }}/ndjson-logs
-          merge-multiple: true
+          # derived requirement: NOT merge-multiple -- every lane's artifact zips a file with
+          # the identical name (ci_test_results.ndjson), so merging them into one flat directory
+          # makes each download silently overwrite the last, leaving only one lane's rows visible
+          # to the --log-dir scan. Without merge-multiple, each artifact lands in its own
+          # <path>/<artifact-name>/ subdirectory; scan_log_ids() already globs recursively
+          # (Path.rglob), so all lanes' rows are still picked up.
 
       - name: Run NDJSON registry cross-check
         shell: bash
