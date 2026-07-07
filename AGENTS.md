@@ -248,6 +248,7 @@ THEN stop and open/append a PR. One loop = one change set.
 - Work in an explicit loop: **Plan -> Check the plan -> Execute -> Self-check/tests**. Document the plan before coding, verify it against requirements, act, then rerun the listed sanity checks.
 - When fixing bugs, leave professional comments that explain why the change is structured the way it is so future readers understand the constraint.
 - You may add helper utilities under `tools/` (preferred over embedding long scripts inside YAML/PowerShell/batch files). Run helpers from there freely, but update existing tools carefully to avoid regressions.
+- **Cite `run_setup.bat` locations by label/subroutine name (a hard anchor), not by exact line number, in CLAUDE.md/docs/README.** A line number drifts on every unrelated edit above the citation, so every prior insertion into this file has forced a re-verification sweep across every existing citation before a commit could land -- real, recurring cost for a soft benefit. Prefer `` `:try_venv_fallback` `` or `` `:download_get_pip` `` alone (`grep -n '^:label_name'` always finds it, drift-proof by construction). If a single statement inside a long subroutine genuinely needs pinpointing, describe it by nearby log text or purpose instead of a line number (e.g. "the get-pip.py bootstrap call inside `:try_venv_fallback`"). Only include a line number when it adds real, immediate value for the one commit introducing it, and never treat it as something a later, unrelated commit is obligated to keep in sync.
 
 ## Embedded payload inventory (run_setup.bat)
 

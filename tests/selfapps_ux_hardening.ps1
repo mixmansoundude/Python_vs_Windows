@@ -726,6 +726,85 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
+# ===== REQ-023b: venv --without-pip retry + get-pip.py bootstrap =====
+# Forces the FIRST plain "python -m venv" attempt to fail via HP_TEST_FORCE_VENV_CREATE_FAIL=1
+# (simulating a stripped-down host Python missing ensurepip) so the --without-pip retry path is
+# exercised for real, followed by a real get-pip.py download+bootstrap (needs actual network --
+# unlike the neighboring venv tests, HP_OFFLINE_MODE=1 is still set here purely to cheaply skip
+# the unrelated Miniconda download; :download_get_pip carves out an explicit exception for this
+# exact test flag so the get-pip.py fetch itself is not skipped). Asserts the retry WARN, the
+# pip-bootstrap success INFO, the venv-selected line, and that the app actually ran.
+# Skipped in conda-full lane where HP_FORCE_CONDA_ONLY=1 blocks all fallbacks unconditionally.
+$venvNoPipDir = Join-Path $here '~selftest_venv_nopip_retry'
+if (Test-Path $venvNoPipDir) { Remove-Item -Recurse -Force $venvNoPipDir }
+New-Item -ItemType Directory -Force -Path $venvNoPipDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $venvNoPipDir -Force
+Set-Content -LiteralPath (Join-Path $venvNoPipDir 'app.py') -Value 'print("venv-nopip-retry-ok")' -Encoding Ascii
+
+$venvNoPipPass = $true
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.venv.nopip_retry'
+        req     = 'REQ-023b'
+        pass    = $true
+        desc    = 'REQ-023b: venv --without-pip retry + get-pip.py bootstrap test'
+        details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-prohibits-venv-fallback' }
+    })
+} else {
+    $savedCondaFail6    = $env:HP_TEST_FORCE_CONDA_FAIL
+    $savedOffline6      = $env:HP_OFFLINE_MODE
+    $savedSkipPR6       = $env:HP_SKIP_PIPREQS
+    $savedLane6         = $env:HP_CI_LANE
+    $savedVenvCreateFail = $env:HP_TEST_FORCE_VENV_CREATE_FAIL
+    $env:HP_TEST_FORCE_CONDA_FAIL      = '1'
+    $env:HP_OFFLINE_MODE               = '1'
+    $env:HP_SKIP_PIPREQS                = '1'
+    $env:HP_CI_LANE                     = 'test'
+    $env:HP_TEST_FORCE_VENV_CREATE_FAIL = '1'
+    $venvNoPipLog = Join-Path $venvNoPipDir '~venv_nopip.log'
+    Push-Location -LiteralPath $venvNoPipDir
+    try {
+        cmd /c "run_setup.bat > ~venv_nopip.log 2>&1"
+        $venvNoPipExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    $env:HP_TEST_FORCE_CONDA_FAIL       = $savedCondaFail6
+    $env:HP_OFFLINE_MODE                = $savedOffline6
+    $env:HP_SKIP_PIPREQS                = $savedSkipPR6
+    $env:HP_CI_LANE                     = $savedLane6
+    $env:HP_TEST_FORCE_VENV_CREATE_FAIL = $savedVenvCreateFail
+
+    $venvNoPipSetupLog = Join-Path $venvNoPipDir '~setup.log'
+    $venvNoPipSetupText = ''
+    if (Test-Path -LiteralPath $venvNoPipSetupLog) {
+        $venvNoPipSetupText = Get-Content -LiteralPath $venvNoPipSetupLog -Raw -Encoding Ascii
+    }
+    $venvNoPipRunOut = Join-Path $venvNoPipDir '~run.out.txt'
+    $venvNoPipRunText = ''
+    if (Test-Path -LiteralPath $venvNoPipRunOut) {
+        $venvNoPipRunText = Get-Content -LiteralPath $venvNoPipRunOut -Raw -Encoding Ascii
+    }
+    $venvNoPipRetryFound = ($venvNoPipSetupText -match [regex]::Escape('[WARN] venv fallback: python -m venv failed; retrying once with --without-pip.'))
+    $venvNoPipBootstrapOk = ($venvNoPipSetupText -match [regex]::Escape('[INFO] venv fallback: pip bootstrapped successfully via get-pip.py.'))
+    $venvNoPipProvider = ($venvNoPipSetupText -match [regex]::Escape('[BOOT] REQ-009: Selected Python provider: Local venv (fallback).'))
+    $venvNoPipAppRan = ($venvNoPipRunText -match [regex]::Escape('venv-nopip-retry-ok'))
+    $venvNoPipPass = ($venvNoPipRetryFound -and $venvNoPipBootstrapOk -and $venvNoPipProvider -and $venvNoPipAppRan)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.venv.nopip_retry'
+        req     = 'REQ-023b'
+        pass    = $venvNoPipPass
+        desc    = 'REQ-023b: venv fallback retries with --without-pip and bootstraps pip via get-pip.py when plain venv creation fails'
+        details = [ordered]@{
+            retryWarnFound  = $venvNoPipRetryFound
+            pipBootstrapOk  = $venvNoPipBootstrapOk
+            providerLogFound = $venvNoPipProvider
+            appRan          = $venvNoPipAppRan
+            exit            = $venvNoPipExit
+        }
+    })
+}
+
 # ===== REQ-002 priority 0: manual %1 override beats auto-detection (main.py) =====
 # REQ-002 ranks a co-located %1 argument (drag-and-drop) above every auto-detected name:
 # it is used directly and skips all auto-detection. Prior tests only cover auto-detection

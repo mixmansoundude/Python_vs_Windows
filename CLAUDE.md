@@ -566,23 +566,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
   verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
   not attempted piecemeal.
 
-- **venv creation resilience, part 2 (--without-pip retry)**: the post-creation canary probe
-  (part 1, REQ-023) shipped -- see Closed Backlog. Remaining: when `python -m venv .\.venv`
-  fails outright (not just a canary-probe failure after apparent success), retry once using
-  `python -m venv .\.venv --without-pip` followed by a manual `get-pip.py` bootstrap -- this
-  covers the most commonly-cited real-world failure mode (a stripped-down host Python missing
-  `ensurepip`). This needs new download infrastructure (fetching `get-pip.py`, likely mirroring
-  the existing Miniconda/uv downloader's retry/fallback-URL pattern) that the REQ-023 probe did
-  not require, so it's a meaningfully bigger and riskier slice -- keep it a separate round.
-  Explicitly **rejected**: relocating venv creation to `%LOCALAPPDATA%\hp_cache\...` and a
-  `PYTHONUSERBASE`-based "stealth isolation" fallback tier. Both have a blast radius
-  disproportionate to their benefit here -- nearly every downstream path in this bootstrapper
-  assumes CWD-relative execution (relocating would ripple everywhere), and `PYTHONUSERBASE`
-  directly contradicts the REQ-010 host-isolation invariant this repo already enforces
-  (nullifying `PYTHONPATH`/`PYTHONHOME`) while risking leaving dependency residue on the user's
-  machine -- arguably worse than simply falling through to the existing, already-consented
-  system-Python tier that sits below it in the cascade today.
-
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -669,8 +652,38 @@ rather than relying on manual memory.
 
 Items completed and shipped:
 
-- **venv fallback canary probe (REQ-023)**: `:try_venv_fallback` (run_setup.bat:1721-1768)
-  previously declared the venv tier ready as soon as `.venv\Scripts\python.exe` existed on disk,
+- **venv creation resilience, part 2 (REQ-023b, --without-pip + get-pip.py retry)**:
+  `:try_venv_fallback` previously declined the venv tier outright the
+  moment plain `python -m venv .\.venv` failed, with no retry -- the most commonly-cited
+  real-world failure mode (a stripped-down host Python missing `ensurepip`, which plain `venv`
+  requires but `--without-pip` does not) had no recovery path. Added a single retry with
+  `--without-pip` on the first failure, followed by a manual pip bootstrap via a newly downloaded
+  `get-pip.py` (new `:download_get_pip` subroutine, mirroring the existing Miniconda/uv
+  download-with-fallback pattern: curl, then PowerShell `Invoke-WebRequest`, then a fallback URL
+  via both methods -- no interactive REQ-013 connectivity gate, since a plain failure here should
+  silently decline the tier, not pause to ask the user). Goto-based dispatch throughout per
+  "Provider-cascade dispatch is goto-based on purpose" in `docs/agent-lessons-learned.md`. New
+  test hook `HP_TEST_FORCE_VENV_CREATE_FAIL` forces the first plain attempt to fail so the retry
+  runs for real (including a real network download of `get-pip.py`); it also carves out a narrow
+  exception in `:download_get_pip`'s offline check so the test can still use `HP_OFFLINE_MODE=1`
+  to cheaply skip the unrelated Miniconda download, without weakening real-user offline
+  protection (the flag is never set outside CI). New test `self.venv.nopip_retry` in
+  `tests/selfapps_ux_hardening.ps1` exercises this end-to-end. This closes the second half of the
+  "venv creation resilience" backlog item (part 1, the REQ-023 canary probe below, shipped
+  separately). Explicitly **rejected** as part of this item, and not planned for any future round:
+  relocating venv creation to `%LOCALAPPDATA%\hp_cache\...` and a `PYTHONUSERBASE`-based "stealth
+  isolation" fallback tier -- both have a blast radius disproportionate to their benefit here
+  (nearly every downstream path in this bootstrapper assumes CWD-relative execution, and
+  `PYTHONUSERBASE` directly contradicts the REQ-010 host-isolation invariant this repo already
+  enforces while risking leaving dependency residue on the user's machine, arguably worse than
+  simply falling through to the existing system-Python tier below it in the cascade). CLOSED by
+  this PR.
+
+- **venv fallback canary probe (REQ-023)**: `:try_venv_fallback` (the canary-probe-specific
+  logic this entry describes sits right before the final `[BOOT] REQ-009: Selected Python
+  provider` log line in that subroutine -- see REQ-023b above, which added the `--without-pip`
+  retry earlier in the same subroutine) previously declared the venv tier ready as soon as
+  `.venv\Scripts\python.exe` existed on disk,
   without ever confirming the interpreter actually runs -- a venv can be "created" (directory +
   exe present) yet non-functional (missing DLLs, broken symlinks, execution-policy blocks),
   exactly the failure mode a stripped-down or corrupted host Python produces. Added a
@@ -682,10 +695,9 @@ Items completed and shipped:
   test hook `HP_TEST_FORCE_VENV_CANARY_FAIL` plus `self.venv.canary_fail` in
   `tests/selfapps_ux_hardening.ps1` exercise this end-to-end. This was split from the broader
   "venv creation resilience" backlog item -- the other half (a `--without-pip` + `get-pip.py`
-  retry when venv creation itself fails outright) needs new download infrastructure and remains
-  a separate Active Backlog item. CLOSED by this PR.
+  retry when venv creation itself fails outright, above) shipped separately. CLOSED by this PR.
 
-- **conda-create transient-retry gap (REQ-022)**: `:try_conda_create` (run_setup.bat:705-761) previously
+- **conda-create transient-retry gap (REQ-022)**: `:try_conda_create` previously
   had zero retry logic on a `conda create` failure -- it fell straight to `:handle_conda_failure`
   (venv/system cascade) on the very first non-zero exit, asymmetric with the sibling
   `:conda_bulk_install` phase's already-proven transient-retry pattern. Root-caused against a

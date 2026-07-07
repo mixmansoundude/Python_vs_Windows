@@ -154,8 +154,11 @@ If a global `:log` fix is ever pursued, it is its own isolated task that must al
 those checks -- not a drive-by change.
 
 **Concrete unresolved instance, accepted risk, no action planned: `%HP_ENTRY%`.** `%HP_ENTRY%`
-is echoed unquoted at 4 call sites (run_setup.bat:2074 via a raw `echo`, and :2085/:2597/:2690
-via `:log`). A filename containing `<`/`>`/`&`/`|` would in principle mis-parse as a
+is echoed unquoted at 4 call sites: the raw `echo` alphabetical-fallback hint and the
+`[INFO] REQ-002: Picker entry selected:` `:log` call, both inside `:pick_entry_interactive`;
+the `[ERROR] REQ-021: entry failed py_compile` `:log` call inside `:preflight_compile`; and the
+`[INFO] Launching your program now via the ... interpreter:` `:log` call inside
+`:verify_no_exe_probe`. A filename containing `<`/`>`/`&`/`|` would in principle mis-parse as a
 redirection/pipe operator here, exactly per the rule above. This requires a
 maliciously-or-accidentally-crafted filename delivered via a Windows double-click/drag-and-drop
 flow (not a common vector), and the only real fix is the global `:log` rework already documented

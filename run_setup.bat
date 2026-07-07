@@ -130,6 +130,12 @@ rem HP_UV_FALLBACK_URL: pinned release used when primary GitHub releases/latest 
 set "HP_UV_FALLBACK_URL=https://github.com/astral-sh/uv/releases/download/0.7.3/uv-x86_64-pc-windows-msvc.zip"
 set "HP_UV_MIN_BYTES=%HP_UV_MIN_BYTES%"
 if not defined HP_UV_MIN_BYTES set "HP_UV_MIN_BYTES=1000000"
+rem REQ-023b: get-pip.py -- used only by the venv fallback tier's --without-pip retry (see
+rem :download_get_pip / :try_venv_fallback). HP_GETPIP_FALLBACK_URL is the get-pip project's own
+rem GitHub source (the file bootstrap.pypa.io serves is generated from this repo), mirroring the
+rem primary-CDN + GitHub-source fallback pattern already used for Miniconda/uv above.
+if not defined HP_GETPIP_URL set "HP_GETPIP_URL=https://bootstrap.pypa.io/get-pip.py"
+set "HP_GETPIP_FALLBACK_URL=https://raw.githubusercontent.com/pypa/get-pip/main/public/get-pip.py"
 rem HP_TEST_OFFLINE=1: simulates ping failure for REQ-013 branch coverage (CI test flag)
 set "HP_TEST_OFFLINE=%HP_TEST_OFFLINE%"
 rem HP_OFFLINE_MODE is set by :check_net_after_dl_fail when user declines or no internet
@@ -142,6 +148,11 @@ rem HP_TEST_FORCE_VENV_CANARY_FAIL=1: simulates the post-creation canary probe (
 rem after a real, successful venv creation (distinct from HP_TEST_FORCE_VENV_FAIL, which skips
 rem creation entirely)
 set "HP_TEST_FORCE_VENV_CANARY_FAIL=%HP_TEST_FORCE_VENV_CANARY_FAIL%"
+rem HP_TEST_FORCE_VENV_CREATE_FAIL=1: simulates the FIRST plain "python -m venv" attempt failing
+rem outright (e.g. a stripped-down host Python missing ensurepip) so the REQ-023b --without-pip
+rem retry path is exercised for real; distinct from HP_TEST_FORCE_VENV_FAIL, which skips venv
+rem creation entirely and never reaches either attempt.
+set "HP_TEST_FORCE_VENV_CREATE_FAIL=%HP_TEST_FORCE_VENV_CREATE_FAIL%"
 rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-009/REQ-014 branch coverage
 set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
 rem HP_TEST_FORCE_WARNFIX_UNRESOLVED=1: forces the warnfix cascade-candidate detection (REQ-009/REQ-005.10) for branch coverage
@@ -1692,6 +1703,51 @@ if not errorlevel 1 if exist "%TEMP%\miniconda.exe" (
 call :log "[WARN] Miniconda: all download URLs failed."
 goto :eof
 
+:download_get_pip
+rem REQ-023b: fetches get-pip.py so the venv fallback tier can bootstrap pip after a
+rem --without-pip venv creation (see :try_venv_fallback). Sets HP_GETPIP_PY to the downloaded
+rem file path on success; leaves it undefined/absent on failure so the caller can detect it via
+rem "if not exist". No interactive connectivity gate here (unlike :download_miniconda_exe's use
+rem of :check_net_after_dl_fail) -- this runs deep inside a fallback tier where the zero-friction
+rem design intent reserves the one interactive prompt for the REQ-014 system-Python consent gate;
+rem a plain download failure here should silently decline the tier, not stop to ask the user.
+set "HP_GETPIP_PY="
+rem The HP_TEST_FORCE_VENV_CREATE_FAIL exception below lets CI exercise this real download
+rem path while still using HP_OFFLINE_MODE=1 to cheaply skip the (unrelated, ~99 MB) Miniconda
+rem download elsewhere in the same test run -- it never weakens real-user offline protection,
+rem since that test flag is never set outside CI coverage.
+if "%HP_OFFLINE_MODE%"=="1" if not "%HP_TEST_FORCE_VENV_CREATE_FAIL%"=="1" (
+  call :log "[INFO] REQ-013: Offline mode: skipping get-pip.py download."
+  goto :eof
+)
+call :log "[INFO] Downloading get-pip.py from %HP_GETPIP_URL%..."
+curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_GETPIP_URL%" -o "%TEMP%\get-pip.py" >> "%LOG%" 2>&1
+if not errorlevel 1 if exist "%TEMP%\get-pip.py" (
+  set "HP_GETPIP_PY=%TEMP%\get-pip.py"
+  goto :eof
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%HP_GETPIP_URL%' -OutFile '%TEMP%\get-pip.py' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
+if not errorlevel 1 if exist "%TEMP%\get-pip.py" (
+  set "HP_GETPIP_PY=%TEMP%\get-pip.py"
+  goto :eof
+)
+if exist "%TEMP%\get-pip.py" del "%TEMP%\get-pip.py" >nul 2>&1
+call :log "[INFO] Trying fallback get-pip.py URL: %HP_GETPIP_FALLBACK_URL%..."
+curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_GETPIP_FALLBACK_URL%" -o "%TEMP%\get-pip.py" >> "%LOG%" 2>&1
+if not errorlevel 1 if exist "%TEMP%\get-pip.py" (
+  call :log "[INFO] get-pip.py download succeeded from fallback URL."
+  set "HP_GETPIP_PY=%TEMP%\get-pip.py"
+  goto :eof
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%HP_GETPIP_FALLBACK_URL%' -OutFile '%TEMP%\get-pip.py' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
+if not errorlevel 1 if exist "%TEMP%\get-pip.py" (
+  call :log "[INFO] get-pip.py download succeeded from fallback URL."
+  set "HP_GETPIP_PY=%TEMP%\get-pip.py"
+  goto :eof
+)
+call :log "[WARN] get-pip.py: all download URLs failed."
+goto :eof
+
 :handle_conda_failure
 set "HP_FAIL_MSG=%~1"
 if not "%HP_FAIL_MSG%"=="" call :log "%HP_FAIL_MSG%"
@@ -1730,20 +1786,57 @@ if errorlevel 1 (
   exit /b 1
 )
 if exist ".\.venv" rd /s /q ".\.venv" >nul 2>&1
+if "%HP_TEST_FORCE_VENV_CREATE_FAIL%"=="1" goto :venv_create_retry
 if defined HP_SYS_ARGS (
   "%HP_SYS_CMD%" %HP_SYS_ARGS% -m venv .\.venv >> "%LOG%" 2>&1
 ) else (
   "%HP_SYS_CMD%" -m venv .\.venv >> "%LOG%" 2>&1
 )
+if not errorlevel 1 goto :venv_create_ok
+rem REQ-023b: "python -m venv" (which requires ensurepip) can fail outright on a stripped-down
+rem host Python that is missing ensurepip -- a commonly cited real-world failure mode. Retry
+rem once with --without-pip (which does not need ensurepip) and manually bootstrap pip via
+rem get-pip.py, mirroring the existing Miniconda/uv download-with-fallback pattern
+rem (:download_get_pip). Goto-based per "Provider-cascade dispatch is goto-based on purpose" in
+rem docs/agent-lessons-learned.md.
+:venv_create_retry
+call :log "[WARN] venv fallback: python -m venv failed; retrying once with --without-pip."
+if exist ".\.venv" rd /s /q ".\.venv" >nul 2>&1
+if defined HP_SYS_ARGS (
+  "%HP_SYS_CMD%" %HP_SYS_ARGS% -m venv .\.venv --without-pip >> "%LOG%" 2>&1
+) else (
+  "%HP_SYS_CMD%" -m venv .\.venv --without-pip >> "%LOG%" 2>&1
+)
 if errorlevel 1 (
-  call :log "[WARN] venv fallback: python -m venv failed."
+  call :log "[WARN] venv fallback: python -m venv --without-pip also failed."
   exit /b 1
 )
+set "HP_PY=%CD%\.venv\Scripts\python.exe"
+if not exist "%HP_PY%" (
+  call :log "[WARN] venv fallback: interpreter missing after --without-pip creation."
+  exit /b 1
+)
+call :download_get_pip
+if not exist "%HP_GETPIP_PY%" (
+  call :log "[WARN] venv fallback: get-pip.py download failed; venv has no pip."
+  exit /b 1
+)
+"%HP_PY%" "%HP_GETPIP_PY%" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  del "%HP_GETPIP_PY%" >nul 2>&1
+  call :log "[WARN] venv fallback: get-pip.py bootstrap failed."
+  exit /b 1
+)
+del "%HP_GETPIP_PY%" >nul 2>&1
+call :log "[INFO] venv fallback: pip bootstrapped successfully via get-pip.py."
+goto :venv_create_pip_ready
+:venv_create_ok
 set "HP_PY=%CD%\.venv\Scripts\python.exe"
 if not exist "%HP_PY%" (
   call :log "[WARN] venv fallback: interpreter missing after creation."
   exit /b 1
 )
+:venv_create_pip_ready
 rem REQ-023: canary probe -- a venv can be "created" (directory + exe present) yet still be
 rem non-functional (missing DLLs, broken symlinks, execution-policy blocks). Verify the fresh
 rem interpreter actually runs before declaring success, so a silently broken venv doesn't reach

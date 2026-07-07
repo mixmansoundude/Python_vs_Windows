@@ -66,7 +66,7 @@ self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, sel
 self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
 self.ux.gitattributes.merge, self.ux.gitattributes.idem,
 self.ux.postflight,
-self.venv.fallback, self.venv.canary_fail, self.entry.override
+self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override
 ```
 
 ## justme-test lane rows (flag-triggered)
@@ -194,7 +194,7 @@ self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
 self.sysbuild.decline,
-self.venv.fallback, self.venv.canary_fail, self.entry.override
+self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override
 ```
 
 ---
