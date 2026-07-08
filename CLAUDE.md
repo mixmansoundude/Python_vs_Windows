@@ -478,21 +478,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
   verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
   not attempted piecemeal.
 
-- **No concurrent-instance protection (double-click race, 2026-07 iteration-pass finding)**:
-  confirmed via code search -- no mutex/lockfile mechanism exists anywhere in `run_setup.bat`.
-  A beginner double-clicking the `.bat` twice in quick succession (a plausible real action --
-  no console window may be visibly open yet during the earliest startup checks, so a second
-  click can look like "nothing happened") launches two concurrent bootstrap processes that race
-  on the same `conda create -n <name>` / same `~setup.log` writes / same `dist\<name>.exe`
-  PyInstaller build target, risking a confusing corrupted state (partial env, truncated log,
-  half-written EXE) that a beginner has no obvious way to diagnose or recover from beyond
-  deleting generated folders and retrying. A future fix needs a lightweight lock (e.g. a tilde-
-  prefixed lockfile with the owning PID, checked and staled-out if the owning process no longer
-  exists) plus a friendly message for the second instance ("setup is already running in this
-  folder; please wait") rather than letting it silently race. Backlog for a dedicated round --
-  batch has no native mutex primitive, so this needs careful design (stale-lock detection after
-  a crash, cross-process visibility) and its own test coverage, not a piecemeal addition.
-
 - **No proactive disk-space check (2026-07 iteration-pass finding)**: confirmed via code search
   -- the only disk-space-related output is the post-flight "SAFE TO DELETE to reclaim disk
   space" hint; there is no pre-flight free-space check before Miniconda download/install or
@@ -652,6 +637,45 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Concurrent-instance lock (REQ-024, double-click race)**: closes the 2026-07 iteration-pass
+  finding that no mutex/lockfile mechanism existed anywhere in `run_setup.bat`, so a beginner
+  double-clicking the `.bat` twice in quick succession (plausible -- no console window may be
+  visibly open yet during the earliest startup checks) could launch two concurrent bootstrap
+  processes racing on the same `conda create -n <name>` / `~setup.log` writes / `dist\<name>.exe`
+  build target. Added `:acquire_lock`/`:lock_is_stale`/`:release_lock` (new subroutines, right
+  after `:rotate_log`): `mkdir "~bootstrap.lock"` is the atomic acquire primitive (NTFS `mkdir`
+  is race-free, unlike a check-then-create sequence), called near the very top of the main line
+  (right after `%STATUS_FILE%` cleanup, before any real bootstrap work) with the caller checking
+  `errorlevel` and exiting the whole process directly if acquisition fails -- matching the
+  existing top-level `call :subroutine` / `if errorlevel 1 exit /b 1` idiom already used for the
+  REQ-014 test-hook consent gate a few lines above it. A losing instance prints a friendly
+  message (points the user at deleting the `~bootstrap.lock` folder if they're sure no other
+  instance is really running), logs `[WARN] REQ-024: setup already running...`, and critically
+  never deletes or otherwise touches the lock directory it does not own. Staleness is age-based
+  (`~bootstrap.lock`'s `LastWriteTime`, >= 2 hours via the same PowerShell
+  `(Get-Date)-$d).TotalHours` idiom already used by the conda-base-update timer), deliberately
+  NOT PID-liveness-based -- a dead process's PID can be recycled by an unrelated program, so
+  automated staleness logic must not trust PID liveness; the PID is still written to
+  `~bootstrap.lock\owner.txt` for human troubleshooting only. Release is hooked at `:die` and
+  `:success` (the two confirmed universal termination funnels for the normal flow), NOT at every
+  one of the ~100 `exit /b` sites in the file -- CMD has no `finally`/`trap`, so a design that
+  depended on *proving* every exit path releases the lock would be the wrong shape regardless of
+  audit thoroughness; staleness is the correctness backstop, the `:die`/`:success` hooks are
+  purely an optimization to avoid an ordinary successful run or ordinary handled failure leaving
+  a lock sitting for up to 2 hours. See `docs/agent-interconnect.md` "Concurrent-instance lock
+  (REQ-024) touches every exit path" for the call-graph tracing method used to scope this (and
+  its limits -- a line-based CFG walk cannot fully resolve parenthesized `if/else` block
+  structure without a paren-balance parser, which was assessed as disproportionate for this
+  feature). Test hooks: `HP_TEST_DISABLE_LOCK` (opt out entirely, for tests that don't want
+  lock semantics at all) and `HP_TEST_FORCE_LOCK_STALE` (deterministically force the staleness
+  check without waiting out the real threshold). Three new `tests/selftest.ps1` rows:
+  `self.stub.lock_no_leak` (lock does not persist after a normal successful run -- reuses the
+  already-completed pipreqs-fail-fallback run above it at zero extra CI cost),
+  `self.stub.lock_held_decline` (a fresh pre-existing lock blocks a second instance, which exits
+  non-zero, logs the message, and leaves the lock untouched), and `self.stub.lock_stale_evict`
+  (a forced-stale pre-existing lock is evicted and the bootstrap proceeds and completes
+  normally). CLOSED by this PR.
 
 - **NDJSON registry backfill + scanner scope fix + `selftest-gate` artifact-collision fix**:
   follow-up to the registry-check tool below (same day). Investigating its first real findings

@@ -19,6 +19,60 @@ this file immediately in the SAME commit (edit existing entries, do not only app
 
 ---
 
+## Concurrent-instance lock (REQ-024) touches every exit path -- call-graph tracing method
+
+The lock (`:acquire_lock`/`:lock_is_stale`/`:release_lock`, called near the top of the file
+right after `%STATUS_FILE%` cleanup, released at `:die` and `:success`) is a cross-cutting
+concern: **any future change that adds a NEW top-level process-terminating `exit /b` site, or
+converts an existing `call`-based subroutine into a `goto`-only continuation of the main line,
+must consider whether that site also needs `call :release_lock` before it.** This section
+documents the call-graph tracing method used to scope the lock's release points, and its limits,
+so a future agent doesn't have to rediscover them.
+
+**Why release is hooked at `:die`/`:success` only, not all ~100 `exit /b` sites.** A naive count
+finds around 100 lines matching `exit /b` in `run_setup.bat` (including ones indented inside
+parenthesized blocks). Whether a given `exit /b` actually terminates the whole process or just
+returns from a subroutine depends on the RUNTIME call stack at that point, not on whether the
+label it lexically sits under was ever `call`ed -- CMD.EXE's `exit /b` returns to the nearest
+active `call` frame, and a label reached purely via `goto` from *inside* an active call frame
+(e.g. `:venv_canary_fail`, reached by `goto` from within `:try_venv_fallback`'s call frame) still
+returns to `:try_venv_fallback`'s caller, not the whole process. A static, line-based CFG walk
+(BFS over `goto`/`call`/fall-through edges, attempted while designing this feature) correctly
+proves depth for pure goto/call/fall-through code, but breaks down at parenthesized
+`if (...) ( ... ) else ( ... )` blocks: a bare `exit /b N` line lexically inside such a block is
+only reached when the block's condition is true, and the walker has no notion of "skip to the
+line after the matching close-paren" for the false branch without a full paren-balance parser --
+early lines 45-52 (`if not exist "%~dp0" ( ... exit /b 1 )`) demonstrated this: the naive walker
+treated that `exit /b 1` as *always* reached and stopped exploring right there, never proving
+reachability for the other ~4000 lines that obviously do execute in a normal run. Building a true
+paren-aware CFG parser was assessed as disproportionate effort for this feature.
+
+**The practical, sufficient answer instead:** CMD has no `finally`/`trap`, so a lock design that
+depends on *proving* every exit path releases it is the wrong shape regardless of how good the
+audit is -- a `Ctrl+C`, a killed process, a power loss, or a genuinely-missed exit site all bypass
+any release hook unconditionally. The correct backstop is age-based staleness (already the
+design), so the release hooks at `:die`/`:success` are an optimization (avoid leaving a stale
+lock around for up to ~2 hours after an ordinary successful run or an ordinary handled failure),
+not the correctness mechanism. Both labels were independently confirmed as the two universal
+funnels for the normal flow: every `call`-based consent-gate decline (REQ-014 system-Python
+consent, REQ-009 cascade consent, REQ-013 connectivity decline, the venv canary probe, etc.)
+returns up its call chain and continues the bootstrap (possibly into a further fallback tier)
+rather than terminating the process directly, and the EXE fast path's early success shortcut
+(`:try_fast_exe`, called at line ~294, near the top of the file) also funnels through `:success`
+(confirmed separately in the "EXE fast path vs env-state fast path" section below). The three
+handful of truly-early, pre-label `exit /b 1` sites (workspace-path-invalid guards, lines ~47/52)
+execute before the lock is ever acquired (lock acquisition is placed intentionally AFTER those
+checks), so they need no release call by construction.
+
+**If you add a new top-level (non-`call`ed) `exit /b` site to the main line in the future**, ask
+whether it can be reached with an empty call stack (i.e., directly off a `goto` from the main
+line, not from inside any `call`ed subroutine's continuation chain). If so, and if it is a
+*routine* exit that a real user could hit often (not a crash), add `call :release_lock` before it
+-- the same way `:die` and `:success` do -- so a normal repeated-decline pattern doesn't leave
+stale locks for other users of the same folder to wait out.
+
+---
+
 ## uv-First Provider Architecture
 
 The "uv-first" feature (skip Miniconda download when uv can provide Python) has a larger

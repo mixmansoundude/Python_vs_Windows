@@ -400,6 +400,118 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($pipreqsFailAllPass) { $summary.Add('pipreqs version-forced-failure fallback: PASS') } else { $summary.Add('pipreqs version-forced-failure fallback: FAIL') }
 
+# --- Concurrent-instance lock (REQ-024) tests ---
+# Part A (zero extra bootstrap cost): the pipreqs-fail run above already completed a full,
+# successful bootstrap in $pipreqsFailDir. Its own lock directory must not persist afterward --
+# reuses that already-completed run instead of paying for a fourth full bootstrap just to prove
+# cleanup-on-success.
+$lockNoLeakPath = Join-Path $pipreqsFailDir '~bootstrap.lock'
+$lockNoLeak = -not (Test-Path $lockNoLeakPath)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.lock_no_leak'
+  pass = $lockNoLeak
+  desc = 'REQ-024: the lock directory does not persist after a normal successful bootstrap'
+  details = [ordered]@{ lockDirPresent = (Test-Path $lockNoLeakPath) }
+})
+if ($lockNoLeak) { $summary.Add('lock cleanup after success: PASS') } else { $summary.Add('lock cleanup after success: FAIL') }
+
+# Part B: a fresh (non-stale) pre-existing lock directory must cause a second instance to decline
+# gracefully -- exit non-zero, log the "already running" message, and critically must NOT delete
+# or otherwise touch a lock it does not own (it never set HP_LOCK_OWNED). The decline happens
+# before any real bootstrap work, so no ~bootstrap.status.json should be written at all.
+$lockHeldDir = Join-Path $TestsDir '~selftest_lock_held'
+if (Test-Path $lockHeldDir) { Remove-Item -Recurse -Force $lockHeldDir }
+New-Item -ItemType Directory -Force -Path $lockHeldDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $lockHeldDir -Force
+Set-Content -Path (Join-Path $lockHeldDir 'hello_stub.py') -Value 'print("hello-from-stub")' -Encoding ASCII
+$lockHeldPreexisting = Join-Path $lockHeldDir '~bootstrap.lock'
+New-Item -ItemType Directory -Force -Path $lockHeldPreexisting | Out-Null
+Set-Content -Path (Join-Path $lockHeldPreexisting 'owner.txt') -Value "pid=999999`nstarted=simulated" -Encoding ASCII
+$lockHeldLogName = '~lock_held_bootstrap.log'
+Push-Location $lockHeldDir
+try {
+  cmd /c "call run_setup.bat > $lockHeldLogName 2>&1"
+  $lockHeldExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+$lockHeldLogPath = Join-Path $lockHeldDir $lockHeldLogName
+$lockHeldLines = @()
+if (Test-Path $lockHeldLogPath) { $lockHeldLines = Get-Content -LiteralPath $lockHeldLogPath -Encoding ASCII }
+$lockHeldMsgFound = ($lockHeldLines | Where-Object { $_ -like '*already running*' }).Count -gt 0
+$lockHeldDeclined = ($lockHeldExit -ne 0)
+$lockHeldNotDeleted = Test-Path $lockHeldPreexisting
+$lockHeldStatusPath = Join-Path $lockHeldDir '~bootstrap.status.json'
+$lockHeldNoStatus = -not (Test-Path $lockHeldStatusPath)
+$lockHeldAllPass = ($lockHeldMsgFound -and $lockHeldDeclined -and $lockHeldNotDeleted -and $lockHeldNoStatus)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.lock_held_decline'
+  pass = $lockHeldAllPass
+  desc = 'REQ-024: a fresh (non-stale) lock directory causes a second instance to decline gracefully without touching the lock it does not own'
+  details = [ordered]@{
+    msgFound = $lockHeldMsgFound
+    declined = $lockHeldDeclined
+    lockPreserved = $lockHeldNotDeleted
+    noStatusWrite = $lockHeldNoStatus
+    exitCode = $lockHeldExit
+  }
+})
+if ($lockHeldAllPass) { $summary.Add('lock held decline: PASS') } else { $summary.Add('lock held decline: FAIL') }
+
+# Part C: HP_TEST_FORCE_LOCK_STALE=1 forces the staleness check to report stale (deterministic --
+# avoids waiting out the real ~2 hour threshold in CI), so a pre-existing lock directory
+# (simulating a crashed prior instance that never released it) is evicted and the bootstrap
+# proceeds and completes normally.
+$lockStaleDir = Join-Path $TestsDir '~selftest_lock_stale'
+if (Test-Path $lockStaleDir) { Remove-Item -Recurse -Force $lockStaleDir }
+New-Item -ItemType Directory -Force -Path $lockStaleDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $lockStaleDir -Force
+Set-Content -Path (Join-Path $lockStaleDir 'hello_stub.py') -Value 'print("hello-from-stub")' -Encoding ASCII
+$lockStalePreexisting = Join-Path $lockStaleDir '~bootstrap.lock'
+New-Item -ItemType Directory -Force -Path $lockStalePreexisting | Out-Null
+Set-Content -Path (Join-Path $lockStalePreexisting 'owner.txt') -Value "pid=999998`nstarted=simulated-stale" -Encoding ASCII
+$lockStaleLogName = '~lock_stale_bootstrap.log'
+$prevForceLockStale = $env:HP_TEST_FORCE_LOCK_STALE
+$env:HP_TEST_FORCE_LOCK_STALE = '1'
+# derived requirement: same HP_CI_LANE pinning as the pipreqs-fail block above -- a successful
+# run reaches the REQ-018 post-execution checkpoint prompt, which only auto-declines under
+# HP_CI_LANE (see docs/agent-lessons-learned.md "Accepted gap").
+$prevCILaneLockStale = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $lockStaleDir
+try {
+  cmd /c "call run_setup.bat > $lockStaleLogName 2>&1"
+  $lockStaleExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_FORCE_LOCK_STALE = $prevForceLockStale
+  $env:HP_CI_LANE = $prevCILaneLockStale
+}
+$lockStaleLogPath = Join-Path $lockStaleDir $lockStaleLogName
+$lockStaleLines = @()
+if (Test-Path $lockStaleLogPath) { $lockStaleLines = Get-Content -LiteralPath $lockStaleLogPath -Encoding ASCII }
+$lockStaleEvictedFound = ($lockStaleLines | Where-Object { $_ -like '*stale lock evicted*' }).Count -gt 0
+$lockStaleStatusPath = Join-Path $lockStaleDir '~bootstrap.status.json'
+$lockStaleBootstrapOk = $false
+if (Test-Path $lockStaleStatusPath) {
+  try {
+    $lockStaleStatus = Get-Content -LiteralPath $lockStaleStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $lockStaleBootstrapOk = ($lockStaleStatus.state -eq 'ok' -and $lockStaleStatus.exitCode -eq 0)
+  } catch { }
+}
+$lockStaleAllPass = ($lockStaleEvictedFound -and $lockStaleBootstrapOk)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.lock_stale_evict'
+  pass = $lockStaleAllPass
+  desc = 'REQ-024: HP_TEST_FORCE_LOCK_STALE evicts a pre-existing lock directory and the bootstrap proceeds normally'
+  details = [ordered]@{
+    evictedFound = $lockStaleEvictedFound
+    bootstrapOk = $lockStaleBootstrapOk
+    exitCode = $lockStaleExit
+  }
+})
+if ($lockStaleAllPass) { $summary.Add('lock stale eviction: PASS') } else { $summary.Add('lock stale eviction: FAIL') }
+
 # --- OneDrive/synced-folder path warning test ---
 # Arrange: run from a directory whose name contains "OneDrive" so the guardrail fires.
 # Assert:  "[WARN] OneDrive path detected" appears in log and bootstrap exits 0.
