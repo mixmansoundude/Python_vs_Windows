@@ -92,6 +92,10 @@ if /I not "%HP_SCRIPT_ROOT:OneDrive=%"=="%HP_SCRIPT_ROOT%" (
   call :log "[WARN] OneDrive path detected; file locking may cause failures."
 )
 if exist "%STATUS_FILE%" del "%STATUS_FILE%"
+rem REQ-024: concurrent-instance protection -- must run before any real bootstrap work
+rem (env creation, downloads, EXE fast path) so two double-clicks in this folder cannot race.
+call :acquire_lock
+if errorlevel 1 exit /b 1
 set "HP_BOOTSTRAP_STATE=ok"
 rem REQ-010: nullify host-system Python path variables to prevent library interference
 set "PYTHONPATH="
@@ -1583,6 +1587,7 @@ rem REQ-016: show post-flight briefing when a full EXE build completed.
 if not defined HP_FASTPATH_USED if exist "dist\%ENVNAME%.exe" (
   call :print_postflight_briefing
 )
+call :release_lock
 rem REQ-016: retain terminal window on success so user can read the output.
 if not defined HP_CI_LANE (
   pause
@@ -3328,6 +3333,7 @@ if "%RC%"=="" set "RC=1"
 echo %date% %time% %MSG%
 >> "%LOG%" echo [%date% %time%] %MSG%
 call :write_status "error" %RC% %PYCOUNT%
+call :release_lock
 rem REQ-016: retain terminal window on error so user can read the message.
 if not defined HP_CI_LANE (
   pause
@@ -3336,6 +3342,58 @@ exit /b %RC%
 :rotate_log
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 "if (Test-Path '%LOG%') { if ((Get-Item '%LOG%').Length -gt 10485760) { Move-Item -Force '%LOG%' '%LOGPREV%' } }"
+exit /b 0
+:acquire_lock
+rem REQ-024: concurrent-instance (double-click race) protection. mkdir is atomic on NTFS,
+rem giving a race-free acquire primitive; CMD has no native mutex. Staleness (age-based, not
+rem PID-liveness -- PIDs get reused) is the correctness backstop for the crash/kill/power-loss
+rem case, since CMD has no finally/trap to guarantee release on every exit path. See
+rem docs/agent-lessons-learned.md "Concurrent-instance lock" for the full design rationale.
+set "HP_LOCK_DIR=%HP_SCRIPT_ROOT%~bootstrap.lock"
+set "HP_LOCK_OWNED="
+if defined HP_TEST_DISABLE_LOCK exit /b 0
+mkdir "%HP_LOCK_DIR%" 2>nul
+if not errorlevel 1 goto :lock_acquired
+call :lock_is_stale
+if not errorlevel 1 goto :lock_stale_evict
+echo ***
+echo *** Another instance of this setup appears to be running in this folder already.
+echo *** If you are sure that is NOT the case ^(for example, a previous run crashed^),
+echo *** delete the "~bootstrap.lock" folder next to this script and run it again.
+echo ***
+if exist "%HP_LOCK_DIR%\owner.txt" type "%HP_LOCK_DIR%\owner.txt"
+call :log "[WARN] REQ-024: setup already running (lock held, not stale); this instance is exiting."
+if not defined HP_CI_LANE pause
+exit /b 1
+:lock_stale_evict
+call :log "[INFO] REQ-024: stale lock evicted (older than the staleness threshold); proceeding."
+rd /s /q "%HP_LOCK_DIR%" 2>nul
+mkdir "%HP_LOCK_DIR%" 2>nul
+if errorlevel 1 (
+  call :log "[WARN] REQ-024: could not acquire lock after evicting stale lock; continuing without it."
+  exit /b 0
+)
+:lock_acquired
+set "HP_LOCK_OWNED=1"
+set "HP_LOCK_PID="
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$PID" 2^>nul`) do set "HP_LOCK_PID=%%P"
+>"%HP_LOCK_DIR%\owner.txt" echo pid=%HP_LOCK_PID%
+>>"%HP_LOCK_DIR%\owner.txt" echo started=%date% %time%
+exit /b 0
+:lock_is_stale
+rem exit/b 0 = stale (caller should evict); exit/b 1 = fresh (still held by a live instance).
+rem derived requirement: HP_TEST_FORCE_LOCK_STALE gives CI a deterministic way to exercise the
+rem eviction path without waiting out the real ~2 hour threshold.
+if defined HP_TEST_FORCE_LOCK_STALE exit /b 0
+set "HP_LOCK_STALE_RESULT="
+for /f "usebackq delims=" %%R in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%HP_LOCK_DIR%') { try { $d = (Get-Item '%HP_LOCK_DIR%').LastWriteTime; if (((Get-Date)-$d).TotalHours -ge 2) { 'stale' } else { 'fresh' } } catch { 'stale' } } else { 'stale' }" 2^>nul`) do set "HP_LOCK_STALE_RESULT=%%R"
+if "%HP_LOCK_STALE_RESULT%"=="stale" exit /b 0
+exit /b 1
+:release_lock
+if defined HP_LOCK_OWNED (
+  rd /s /q "%HP_LOCK_DIR%" 2>nul
+  set "HP_LOCK_OWNED="
+)
 exit /b 0
 :try_conda_install
 rem derived requirement: AllUsers install can fail when UAC rejects elevation even for admin accounts.
