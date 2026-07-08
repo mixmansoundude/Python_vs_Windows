@@ -1364,7 +1364,7 @@ if errorlevel 1 (
   rem derived requirement: curl can leave a partial file on failure; delete before fallback
   rem so PowerShell does not find a corrupt file and skip its own download attempt.
   if exist "%NIVISA_INSTALLER%" del "%NIVISA_INSTALLER%" >nul 2>&1
-  powershell -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://download.ni.com/support/nipkg/products/ni-v/ni-visa/24.0/runtime/ni-visa-runtime_24.0.0_windows.exe' -OutFile '%NIVISA_INSTALLER%' -UseBasicParsing -ErrorAction Stop } catch { exit 1 }" 2>> "%LOG%"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://download.ni.com/support/nipkg/products/ni-v/ni-visa/24.0/runtime/ni-visa-runtime_24.0.0_windows.exe' -OutFile '%NIVISA_INSTALLER%' -UseBasicParsing -ErrorAction Stop } catch { exit 1 }" 2>> "%LOG%"
 )
 if not exist "%NIVISA_INSTALLER%" (
   call :log "[VISA] install_failed (download)"
@@ -1377,7 +1377,7 @@ call :log "[VISA] download method: %HP_VISA_DLVIA%"
 set "HP_VISA_DLSIZE=0"
 for %%S in ("%NIVISA_INSTALLER%") do set "HP_VISA_DLSIZE=%%~zS"
 call :log "[VISA] installer file size: %HP_VISA_DLSIZE% bytes"
-powershell -NoProfile -Command "try { $fs=[System.IO.File]::OpenRead('%NIVISA_INSTALLER%'); $a=$fs.ReadByte(); $b=$fs.ReadByte(); $fs.Close(); if ($a -eq 77 -and $b -eq 90) { 'PE_OK' } else { 'NOT_PE' } } catch { 'PROBE_ERR' }" > "~visa_pe.txt" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $fs=[System.IO.File]::OpenRead('%NIVISA_INSTALLER%'); $a=$fs.ReadByte(); $b=$fs.ReadByte(); $fs.Close(); if ($a -eq 77 -and $b -eq 90) { 'PE_OK' } else { 'NOT_PE' } } catch { 'PROBE_ERR' }" > "~visa_pe.txt" 2>nul
 set "HP_VISA_PE="
 if exist "~visa_pe.txt" for /f "usebackq delims=" %%P in ("~visa_pe.txt") do set "HP_VISA_PE=%%P"
 if exist "~visa_pe.txt" del "~visa_pe.txt" >nul 2>&1

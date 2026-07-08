@@ -99,25 +99,39 @@ git push -u origin <branch-name>
 
 ## Mandatory Sanity Checks
 
-Run these before every commit. README.md changes do not affect them but run as a baseline.
+Run this full sweep before every commit. README.md-only changes do not affect most of these
+checks but still run the sweep as a baseline (it also catches an accidental non-doc diff).
 
 ```bash
-# Python syntax and name errors
-python -m compileall -q .
-python -m pyflakes .
+python -m compileall -q . && echo "COMPILEALL OK"
+python -m pyflakes . 2>&1 | head -20
+python tools/check_delimiters.py run_setup.bat && echo "DELIM OK"
+python -m yamllint .github/workflows/ && echo "YAMLLINT OK"
+export PATH="$PATH:/root/go/bin"
+actionlint -oneline .github/workflows/*.yml && echo "ACTIONLINT OK"
 
-# Delimiter balance in the main bootstrapper
-python tools/check_delimiters.py run_setup.bat
+for f in run_setup.bat tests/harness.ps1 docs/agent-interconnect.md docs/agent-lessons-learned.md CLAUDE.md; do
+  out=$(grep -nP '[^\x00-\x7F]' "$f")
+  if [ -n "$out" ]; then echo "=== $f ==="; echo "$out"; fi
+done
+echo "ASCII SWEEP DONE"
+git diff --stat origin/main
 
-# YAML lint (if workflow files changed)
-python -m yamllint .github/workflows/
+pwsh -c "
+\$ErrorActionPreference = 'Stop'
+\$fail = 0
+Get-ChildItem /home/user/Python_vs_Windows/tests/*.ps1, /home/user/Python_vs_Windows/tools/*.ps1 | ForEach-Object {
+  try { [System.Management.Automation.Language.Parser]::ParseFile(\$_.FullName, [ref]\$null, [ref]\$null) | Out-Null }
+  catch { Write-Host \"PARSE FAIL: \$(\$_.FullName): \$_\"; \$fail = 1 }
+}
+if (\$fail -eq 0) { Write-Host 'PS PARSE SWEEP DONE - ALL CLEAN' }
+"
+python -m pytest /home/user/Python_vs_Windows/tests/test_*.py -q 2>&1 | tail -5
 ```
 
-For modified PowerShell files, see **AGENTS.md** for the AST-based syntax validation method
-(`pwsh -c "[System.Management.Automation.Language.Parser]::ParseFile(...)"`) since PSGallery
-is blocked by proxy on CI runners.
-
-For actionlint (workflow files), see **AGENTS.md** for the download/install method.
+The ASCII sweep's file list is illustrative, not exhaustive -- extend it to cover whatever
+files the current change actually touches. `actionlint`/`pwsh` install methods (if not already
+present in the environment) are documented in **AGENTS.md**.
 
 ---
 
@@ -188,62 +202,6 @@ This is the deliverable. Treat changes carefully.
    {"state":"ok|no_python_files|error","exitCode":0,"pyFiles":0}
    ```
    CI harnesses and `tests/selftest.ps1` read this. See README.md for full contract.
-
----
-
-## Edit Detection Sprint (Loops 1-3) -- SHIPPED
-
-All three loops are complete and live in `run_setup.bat`.
-
-### Loop 1 -- PyInstaller build artifact cleanup
-
-After a successful PyInstaller build, `run_setup.bat` now:
-- Deletes the `build\%ENVNAME%\` directory.
-- Deletes `%ENVNAME%.spec` **unless** a spec file pre-existed (guarded by
-  `HP_SPEC_PREEXIST` set before PyInstaller runs).
-- Logs: `[INFO] PyInstaller build artifacts cleaned up.`
-
-### Loop 2 -- Dependency skip (HP_DEP_CHECK / ~dep_check.py)
-
-After `pipreqs` generates `requirements.auto.txt`, `run_setup.bat` compares the
-output against `~environment.lock.txt` (written on first successful conda install).
-If every package listed by pipreqs is already present in the lock file, conda install
-is skipped entirely.
-- Log line: `Dep-check: all pipreqs packages satisfied in lock; skipping conda install.`
-- The lock file is written via `conda list --export` gated on errorlevel=0 AND
-  non-empty output.
-- Skip is conservative: if package name normalization is uncertain, falls through to
-  `conda install`.
-
-### Loop 3 -- Env-state fast path (HP_ENV_STATE / ~env_state.py)
-
-After a successful bootstrap, `run_setup.bat` writes `~env.state.json`:
-```json
-{
-  "schema": 1,
-  "env_name": "...",
-  "env_path": "...",
-  "python_version": "...",
-  "req_hash": "...",
-  "runtime_hash": "...",
-  "lock_hash": "..."
-}
-```
-On the next run, if state is valid and `python.exe` is present in the env, `conda create`
-is skipped entirely.
-- Log line: `Env-state fast path: reusing conda env <ENVNAME>.`
-- Schema field = 1. If schema is unknown or missing, treated as stale (not error).
-- State file is not backwards compatible before it was introduced -- first run after
-  upgrade does a full rebuild (expected behavior).
-
-### Runtime artifacts written by the bootstrapper
-
-| File | When written |
-|------|-------------|
-| `~bootstrap.status.json` | Every run (state, exitCode, pyFiles) |
-| `~setup.log` | Every run (probe errors, bootstrap path) |
-| `~environment.lock.txt` | conda mode: after conda list --export; uv mode: copy of ~dependency_installed.txt |
-| `~env.state.json` | After successful full bootstrap |
 
 ---
 
@@ -322,6 +280,9 @@ Test files and what they cover:
 | `test_parse_warn.py` | PyInstaller warn-file translation table (REQ-007: 5.x and 6.x formats, all TRANSLATIONS entries) |
 | `test_publish_index_regex.py` | Regex patterns in diagnostics publisher |
 | `test_sanitize_iterate_payload.py` | NDJSON redaction and deduplication |
+| `test_collect_submodules.py` | `--collect-submodules` double-gate (used AND installed), adversarial import-scan cases, AST-failure regex fallback, HP_COLLECT_SUBMODULES payload sync |
+| `test_hidden_import_scan.py` | `--hidden-import` auto-recovery strictness (ModuleNotFoundError + installed only), typo/ImportError/circular-import non-triggers, tried-list loop guard, HP_HIDDEN_IMPORT_SCAN payload sync |
+| `test_check_ndjson_registry.py` | NDJSON registry cross-check: brace expansion, all four code emission patterns, log-file parsing, pass/fail end-to-end paths |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -504,38 +465,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
 "Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead
 (see those sections' own scope notes).
 
-- **pipreqs dead-or-not / internalization decision (2026-07)**: pipreqs (bndr/pipreqs) is
-  stagnant (maintenance-only, looking for maintainers) but not at risk of disappearing from
-  PyPI outright -- PyPI does not delete established packages. The real risk the community
-  cites is future-Python bitrot (an AST parser silently failing on new syntax), which this repo
-  has already pre-empted twice over: the 0.4.13 pin (see "pipreqs pin rationale" above) avoids
-  0.5.0's `<3.13` Requires-Python ceiling, and the warnfix build-time safety net (see
-  "Dependency Discovery Fallback: warnfix" above) means the bootstrap **never hard-fails** even
-  if pipreqs is 100% unavailable -- confirmed by the new `self.stub.pipreqs_version_fail` test
-  (Closed Backlog, this pass) which forces pipreqs's own install to fail via
-  `HP_PIPREQS_VERSION=99.99.99` (already an env-overridable variable, no code change needed to
-  trigger this; a nonexistent version number was chosen over pipreqs 0.5.0's real `<3.13` cap
-  after CI showed the cap alone does not reliably fail across every lane's ambient Python) and
-  proves the bootstrap still reaches a working, fully-run EXE via warnfix
-  alone. Decision: **defer full internalization** (embedding a native AST-based scanner +
-  mapping table to replace pipreqs entirely). It is technically feasible and roughly the size a
-  3rd-party estimate suggested (a few hundred lines + a small mapping table), but it duplicates
-  a safety net that already works and is tested, and is its own nontrivial project (matching
-  pipreqs's accumulated edge-case handling: encoding fallback, syntax-error tolerance, stdlib
-  filtering). When it is eventually undertaken: write a **clean-room** scanner rather than
-  copying pipreqs's actual source or mapping file (pipreqs is MIT-licensed; copying it verbatim
-  would require carrying its copyright notice -- a clean-room reimplementation sidesteps this
-  entirely, though crediting pipreqs by name/link as prior art in a code comment is a fair
-  courtesy). Seed the mapping table by extending this repo's own already-license-clear
-  `tools/parse_warn.py` `TRANSLATIONS` dict rather than importing external mapping databases
-  (showmereqs/FawltyDeps/marimo/Grayskull all carry their own licenses needing separate audit,
-  and none of those tables have been vetted against this repo's actual needs). Use
-  `sys.stdlib_module_names` with a `try/except ImportError` guard per the existing
-  "Embedded-helper Python baseline" convention (it's a 3.10+ feature; must degrade gracefully
-  on an older ambient interpreter on the venv/system fallback tiers). Do not chase alternative
-  tools as a wholesale replacement: `pigar` was correctly ruled out elsewhere (its wheel bundles
-  an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
-
 - **Provider symmetry: no standalone Python-download tier**: confirmed gap in the REQ-009
   provider cascade (uv -> conda -> venv -> system). uv and conda both self-acquire a full Python
   interpreter (uv's managed CPython, conda's bundled Miniconda Python); venv and system
@@ -548,6 +477,34 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
   `get-pip.py` if needed to feed warnfix. This is a substantial feature (new tier, checksum
   verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
   not attempted piecemeal.
+
+- **No concurrent-instance protection (double-click race, 2026-07 iteration-pass finding)**:
+  confirmed via code search -- no mutex/lockfile mechanism exists anywhere in `run_setup.bat`.
+  A beginner double-clicking the `.bat` twice in quick succession (a plausible real action --
+  no console window may be visibly open yet during the earliest startup checks, so a second
+  click can look like "nothing happened") launches two concurrent bootstrap processes that race
+  on the same `conda create -n <name>` / same `~setup.log` writes / same `dist\<name>.exe`
+  PyInstaller build target, risking a confusing corrupted state (partial env, truncated log,
+  half-written EXE) that a beginner has no obvious way to diagnose or recover from beyond
+  deleting generated folders and retrying. A future fix needs a lightweight lock (e.g. a tilde-
+  prefixed lockfile with the owning PID, checked and staled-out if the owning process no longer
+  exists) plus a friendly message for the second instance ("setup is already running in this
+  folder; please wait") rather than letting it silently race. Backlog for a dedicated round --
+  batch has no native mutex primitive, so this needs careful design (stale-lock detection after
+  a crash, cross-process visibility) and its own test coverage, not a piecemeal addition.
+
+- **No proactive disk-space check (2026-07 iteration-pass finding)**: confirmed via code search
+  -- the only disk-space-related output is the post-flight "SAFE TO DELETE to reclaim disk
+  space" hint; there is no pre-flight free-space check before Miniconda download/install or
+  conda env creation (which together can require several hundred MB to a few GB depending on
+  packages). A beginner on a low-spec/older machine who runs out of space mid-bootstrap sees
+  whatever low-level error curl/conda/pip happens to surface for "no space left on device"
+  rather than a clear, early, plain-language message. Lower urgency than the concurrent-instance
+  finding above -- existing `[ERROR]`/`[WARN]` logging conventions mean the user isn't left with
+  zero explanation, just a less specifically-tailored one -- but worth a future round: a cheap
+  `fsutil volume diskfree` (or PowerShell `Get-PSDrive`) check before the first large download,
+  with a generous threshold and a friendly early abort/warning rather than a failure deep inside
+  a conda solver or pip install.
 
 ## Periodic Maintenance Checks (recurring, quarterly)
 
@@ -657,6 +614,40 @@ rather than relying on manual memory.
     real user run (normal internet, interactive/admin session) to confirm the same valid installer succeeds
     off-CI (expected ~30-45 min per the maintainer's prior experience). Until then, treat the
     "environmental" classification as strongly-supported-but-provisional.
+
+- **pipreqs dead-or-not / internalization decision (2026-07, moved here from Active Backlog
+  during a 2026-07 documentation thinning pass -- this is a decision already made with no
+  action pending, not open future work).** pipreqs (bndr/pipreqs) is stagnant
+  (maintenance-only, looking for maintainers) but not at risk of disappearing from PyPI
+  outright -- PyPI does not delete established packages. The real risk the community cites is
+  future-Python bitrot (an AST parser silently failing on new syntax), which this repo has
+  already pre-empted twice over: the 0.4.13 pin (see "pipreqs pin rationale" above) avoids
+  0.5.0's `<3.13` Requires-Python ceiling, and the warnfix build-time safety net (see
+  "Dependency Discovery Fallback: warnfix" above) means the bootstrap **never hard-fails** even
+  if pipreqs is 100% unavailable -- confirmed by `self.stub.pipreqs_version_fail` (Closed
+  Backlog), which forces pipreqs's own install to fail via `HP_PIPREQS_VERSION=99.99.99`
+  (already an env-overridable variable, no code change needed to trigger this; a nonexistent
+  version number was chosen over pipreqs 0.5.0's real `<3.13` cap after CI showed the cap alone
+  does not reliably fail across every lane's ambient Python) and proves the bootstrap still
+  reaches a working, fully-run EXE via warnfix alone. Decision: **defer full internalization**
+  (embedding a native AST-based scanner + mapping table to replace pipreqs entirely). It is
+  technically feasible and roughly the size a 3rd-party estimate suggested (a few hundred lines
+  + a small mapping table), but it duplicates a safety net that already works and is tested,
+  and is its own nontrivial project (matching pipreqs's accumulated edge-case handling:
+  encoding fallback, syntax-error tolerance, stdlib filtering). When it is eventually
+  undertaken: write a **clean-room** scanner rather than copying pipreqs's actual source or
+  mapping file (pipreqs is MIT-licensed; copying it verbatim would require carrying its
+  copyright notice -- a clean-room reimplementation sidesteps this entirely, though crediting
+  pipreqs by name/link as prior art in a code comment is a fair courtesy). Seed the mapping
+  table by extending this repo's own already-license-clear `tools/parse_warn.py`
+  `TRANSLATIONS` dict rather than importing external mapping databases (showmereqs/
+  FawltyDeps/marimo/Grayskull all carry their own licenses needing separate audit, and none of
+  those tables have been vetted against this repo's actual needs). Use
+  `sys.stdlib_module_names` with a `try/except ImportError` guard per the existing
+  "Embedded-helper Python baseline" convention (it's a 3.10+ feature; must degrade gracefully
+  on an older ambient interpreter on the venv/system fallback tiers). Do not chase alternative
+  tools as a wholesale replacement: `pigar` was correctly ruled out elsewhere (its wheel
+  bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
 
@@ -990,3 +981,14 @@ Items completed and shipped:
   lower-bound version from all forms (python=X.Y, python==X.Y, python>=X.Y, python>X.Y).
   Log line: `[INFO] uv: creating venv at .uv_env with Python X.Y`. Covered by new NDJSON
   row `self.contract.uv.pyver` (contract-uv lane). CLOSED by this PR.
+- **Edit Detection Sprint (Loops 1-3)**: the earliest fast-path work in this repo's history,
+  predating most of the conventions documented above. Loop 1 (PyInstaller build artifact
+  cleanup): after a successful build, deletes `build\%ENVNAME%\` and `%ENVNAME%.spec` unless
+  a spec file pre-existed (`HP_SPEC_PREEXIST`), logging `[INFO] PyInstaller build artifacts
+  cleaned up.` Loop 2 (`HP_DEP_CHECK`/`~dep_check.py`) and Loop 3 (`HP_ENV_STATE`/
+  `~env_state.py`) are the dep-check skip and env-state fast paths already summarized under
+  "run_setup.bat Rules" above; their runtime-artifact schedule (`~bootstrap.status.json`,
+  `~setup.log`, `~environment.lock.txt`, `~env.state.json`) and the `~env.state.json` schema
+  both live in AGENTS.md's "Runtime artifact paths" section -- not duplicated here. All three
+  loops are complete and live in `run_setup.bat`. CLOSED (this entry condensed from a
+  standalone top-level section during a 2026-07 documentation thinning pass).

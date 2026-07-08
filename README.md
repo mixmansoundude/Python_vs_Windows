@@ -62,7 +62,7 @@ trend toward this altitude -- keep the requirement crisp and let mechanism detai
   0) Manual override (`%1` argument, e.g. drag-and-drop) -- if the file is co-located with the bootstrapper (REQ-011), it is used directly and skips all auto-detection.
   1) Common names in order: `main.py` > `app.py` > `run.py` > `cli.py`
   2) Otherwise, the sole file containing a **substantive** `if __name__ == "__main__":` guard (a guard whose body is only `pass`, comments, a docstring, or `...` does not count, so a real sibling entry wins).
-  - If no single clear entry remains after those checks (multiple files, no clear winner), the bootstrapper reverts to the spirit of its original behavior:
+  - If no single clear entry remains after those checks (multiple files, no clear winner), the bootstrapper falls through to a deterministic resolution:
     - **Interactive picker (timed)** -- when a human is present (interactive console; not CI/`NOINPUT`/`HP_NONINTERACTIVE`), it prints an alphabetical numbered menu (up to 9 files) and waits ~30s. Typing a valid number selects that file; **timeout (or no console) -> the alphabetical default**. The menu also explains how to avoid the prompt next time (drag-and-drop a file onto the batch, rename to `main.py`/`app.py`/`run.py`/`cli.py`, or add a single `__main__` guard).
     - **Alphabetical fallback (deterministic)** -- the non-interactive / default path: the alphabetically-first candidate (preferring files that declared a `__main__` guard, otherwise any `.py` file). This is the guaranteed terminal pick, so something always runs and packages instead of the entry resolving to empty. `find_entry` logs `[BOOT] REQ-002: No clear entry found; selecting <file> (alphabetical fallback).` and exits with a distinct ambiguous code that triggers the picker.
 
@@ -265,6 +265,18 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
   attempts to identify and install the missing packages using whatever signal is available. It cannot map all module
   names to conda package names (for example, `PIL` maps to `pillow`, `cv2` maps to `opencv`). This is a known
   limitation, not a bug.
+
+### Dependency strategy
+
+Summary of the design above, for readers linking directly to this anchor: **pipreqs is discovery
+only** (static import scanning, never trusted for completeness or exact versions), **`requirements.txt`
+is a hint, not authority** (getting the code to run takes priority over preserving the original
+author's exact pin set), and **conda-forge is truth** (the resolved conda environment is the
+source of record once installed, per REQ-006's channel policy). The known module-name-to-package-name
+mapping limitation (`PIL` -> `pillow`, `cv2` -> `opencv`) above is the main practical consequence:
+static analysis and the warnfix repair loop cannot always guess the correct package name from an
+`import` statement, so an unusual mapping can occasionally require a `requirements.txt` hint from
+the user to resolve cleanly on the first try.
 
 ---
 
@@ -518,7 +530,6 @@ set lives in `run_setup.bat`.
 - Update conda base periodically (~30 days), but **skip on first Miniconda install**. Ensure base is configured to conda-forge before updating to avoid prompts.
 - Single rolling log `~setup.log` capped near **10 MB** total, don't spin out extra log files. Trim at start. Use debug-level detail when `VERBOSE=1`.
 - Tilde-prefix any files not meant to persist (or may remain after a crash) so they are easy to ignore in VCS.
-- Batch robustness for some approaches:
 - Avoid `EnableDelayedExpansion`. If unavoidable, enable only around the exact lines, then disable. Force disable at script start.
 - Be robust against parent shells started with `CMD /V:ON` and 3rd-party wrappers.
 - Treat special characters (`&`, `~`, etc.) carefully in batch.
@@ -531,7 +542,7 @@ set lives in `run_setup.bat`.
 
 ## Agent Guardrails (Codex / Copilot / other agents)
 
-- Enforce and obey this readme document and see See **[AGENTS.md](./AGENTS.md)**.
+- Enforce and obey this README; see **[AGENTS.md](./AGENTS.md)** for the full agent policy.
   
 ---
 
