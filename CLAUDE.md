@@ -507,19 +507,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
   in one file, no run_setup.bat/tests/*.ps1 changes) -- implement when picked up, no further
   design discussion needed first.
 
-- **No proactive disk-space check (2026-07 iteration-pass finding)**: confirmed via code search
-  -- the only disk-space-related output is the post-flight "SAFE TO DELETE to reclaim disk
-  space" hint; there is no pre-flight free-space check before Miniconda download/install or
-  conda env creation (which together can require several hundred MB to a few GB depending on
-  packages). A beginner on a low-spec/older machine who runs out of space mid-bootstrap sees
-  whatever low-level error curl/conda/pip happens to surface for "no space left on device"
-  rather than a clear, early, plain-language message. Lower urgency than the concurrent-instance
-  finding above -- existing `[ERROR]`/`[WARN]` logging conventions mean the user isn't left with
-  zero explanation, just a less specifically-tailored one -- but worth a future round: a cheap
-  `fsutil volume diskfree` (or PowerShell `Get-PSDrive`) check before the first large download,
-  with a generous threshold and a friendly early abort/warning rather than a failure deep inside
-  a conda solver or pip install.
-
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -666,6 +653,29 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Proactive disk-space check (REQ-025)**: closes the 2026-07 iteration-pass finding that the
+  only disk-space-related output anywhere in `run_setup.bat` was the post-flight "SAFE TO DELETE
+  to reclaim disk space" hint -- there was no pre-flight free-space check before Miniconda
+  download/install or conda env creation (which together can require several hundred MB to a few
+  GB depending on packages), so a beginner on a low-spec/older machine who ran out of space
+  mid-bootstrap saw whatever low-level error curl/conda/pip happened to surface for "no space
+  left on device" instead of a clear, early, plain-language message. Added a new guard block
+  (grouped with the existing path-length and OneDrive early-warning checks, right before
+  `%STATUS_FILE%` cleanup -- runs before `:acquire_lock`, though order relative to the lock does
+  not matter since this check never acquires or gates anything) that reads the script's drive's
+  free space via a single PowerShell `Get-PSDrive` one-liner (using `$env:HP_SCRIPT_ROOT` inside
+  the command rather than textually interpolating the path into the command string, matching the
+  existing path-length guard's safer idiom) and logs a `[WARN] REQ-025: low disk space detected`
+  message when free space is under a generous 2 GB threshold. **Warn-only, by design, per REQ-001
+  (env-var flags are scaffolding, never a Prime-Directive gate)**: a low reading never aborts the
+  run -- the user may still have just enough space, or may free some and retry after seeing the
+  warning; a hard-block here would be exactly the kind of flag-gated behavior REQ-001 forbids for
+  anything the Prime Directive needs. New test hook `HP_TEST_FORCE_LOW_DISK` (deterministically
+  forces the low-disk branch, since a CI runner's drive is never actually low) and a new
+  `tests/selftest.ps1` row, `self.stub.low_disk_warn`, asserting both that the WARN fires AND
+  that the bootstrap still completes normally (`state=ok`, `exitCode=0`) -- proving the guard
+  never blocks. CLOSED by this PR.
 
 - **Concurrent-instance lock (REQ-024, double-click race)**: closes the 2026-07 iteration-pass
   finding that no mutex/lockfile mechanism existed anywhere in `run_setup.bat`, so a beginner

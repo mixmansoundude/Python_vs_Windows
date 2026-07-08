@@ -91,6 +91,27 @@ if /I not "%HP_SCRIPT_ROOT:OneDrive=%"=="%HP_SCRIPT_ROOT%" (
   echo *** WARNING: Script appears to be in a OneDrive folder. File locking may cause failures.
   call :log "[WARN] OneDrive path detected; file locking may cause failures."
 )
+rem --- Free-disk-space guard: warn (never abort) if the script's drive looks low on space ---
+rem derived requirement: Miniconda download/install plus conda env creation can together need
+rem several hundred MB to a few GB; a low-disk-space beginner machine would otherwise see whatever
+rem low-level error curl/conda/pip happens to surface for "no space left on device" deep inside the
+rem bootstrap, instead of a clear, early, plain-language message. Threshold is deliberately generous
+rem (2 GB) and this only warns -- per REQ-001 (env-var flags are scaffolding, never a Prime-Directive
+rem gate), a low reading must never hard-block the run: the user may still have just enough, or may
+rem free space and retry after seeing the warning.
+set "HP_FREE_GB="
+if defined HP_TEST_FORCE_LOW_DISK (
+  set "HP_FREE_GB=0"
+) else (
+  for /f "usebackq delims=" %%D in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $letter = ([System.IO.Path]::GetPathRoot($env:HP_SCRIPT_ROOT)).Substring(0,1); [math]::Floor((Get-PSDrive -Name $letter).Free / 1GB) } catch { '' }" 2^>nul`) do set "HP_FREE_GB=%%D"
+)
+if defined HP_FREE_GB if %HP_FREE_GB% LSS 2 (
+  echo *** WARNING: Only ~%HP_FREE_GB% GB free disk space detected on this drive.
+  echo *** Downloading Python/Miniconda and building your app can need several GB.
+  echo *** If setup fails partway through, freeing up disk space is a likely fix.
+  call :log "[WARN] REQ-025: low disk space detected (~%HP_FREE_GB% GB free); continuing (warn-only)."
+)
+set "HP_FREE_GB="
 if exist "%STATUS_FILE%" del "%STATUS_FILE%"
 rem REQ-024: concurrent-instance protection -- must run before any real bootstrap work
 rem (env creation, downloads, EXE fast path) so two double-clicks in this folder cannot race.
