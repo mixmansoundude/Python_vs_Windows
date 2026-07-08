@@ -2407,6 +2407,27 @@ def _link_entry(diag: Optional[Path], label: str, path: Path) -> Optional[dict]:
     return {"label": label, "path": path, "mirror": mirror}
 
 
+def _collect_ndjson_registry_report_link(diag: Optional[Path]) -> Optional[dict]:
+    """Surface the advisory ndjson-registry-check job's report, if present.
+
+    The report is uploaded as an artifact named ci_test_results-ndjson-registry-<run>-<attempt>
+    (matching the ci_test_results-* wildcard already downloaded by publish_diag, so no dedicated
+    download step was needed -- see the "Upload NDJSON registry report" step in batch-check.yml).
+    """
+    if not diag:
+        return None
+    ci_artifacts_root = diag / "_artifacts" / "batch-check" / "_ci_artifacts"
+    if not ci_artifacts_root.exists():
+        return None
+    try:
+        candidates = sorted(ci_artifacts_root.glob("ci_test_results-ndjson-registry-*/~ndjson-registry-report.txt"))
+    except OSError:
+        return None
+    if not candidates:
+        return None
+    return _link_entry(diag, "NDJSON registry cross-check report (advisory)", candidates[0])
+
+
 def _collect_batch_ndjson_links(diag: Optional[Path]) -> List[dict]:
     if not diag:
         return []
@@ -3366,6 +3387,7 @@ def _bundle_links(context: Context) -> List[dict]:
         append(entry)
 
     entries.extend(_collect_batch_ndjson_links(diag))
+    append(_collect_ndjson_registry_report_link(diag))
     for entry in _collect_setup_log_links(diag):
         append(entry)
 

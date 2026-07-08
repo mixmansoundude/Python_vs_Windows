@@ -2863,7 +2863,25 @@ jobs:
 
       - name: Run NDJSON registry cross-check
         shell: bash
-        run: python3 tools/check_ndjson_registry.py --repo-root . --log-dir "${{ runner.temp }}/ndjson-logs"
+        run: |
+          set -o pipefail
+          python3 tools/check_ndjson_registry.py --repo-root . --log-dir "${{ runner.temp }}/ndjson-logs" \
+            | tee ~ndjson-registry-report.txt
+
+      - name: Upload NDJSON registry report
+        # derived requirement: makes this advisory job's findings visible on the diagnostics
+        # site with zero new download-artifact wiring -- name it to match the ci_test_results-*
+        # wildcard pattern already used by publish_diag's "Download CI NDJSON artifacts" step, so
+        # it lands in _artifacts/batch-check/_ci_artifacts/ alongside the per-lane NDJSON files
+        # without a dedicated download step. See tools/diag/publish_index.py's
+        # _collect_batch_ndjson_links() for the Quick Links entry that surfaces it by name.
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ci_test_results-ndjson-registry-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ~ndjson-registry-report.txt
+          if-no-files-found: warn
+          retention-days: 7
 
   model-quick-fix:
     name: Model quick-fix (inline)
