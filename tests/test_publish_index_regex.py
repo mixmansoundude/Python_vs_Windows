@@ -12,6 +12,7 @@ from tools.diag.publish_index import (
     _build_markdown,
     _build_site_overview,
     _batch_status,
+    _collect_ndjson_registry_report_link,
     _ensure_diag_log_placeholders,
     _ensure_iterate_log_archive,
     _ensure_repo_index,
@@ -976,6 +977,35 @@ class ExtractUvSignalsTest(unittest.TestCase):
             self.assertEqual(sig["uv_used"], "1")
             self.assertEqual(sig["uv_fallback_reason"], "none")
             self.assertEqual(sig["lock_present"], "yes")
+
+
+class NdjsonRegistryReportLinkTest(unittest.TestCase):
+    def test_returns_none_when_diag_missing(self) -> None:
+        self.assertIsNone(_collect_ndjson_registry_report_link(None))
+
+    def test_returns_none_when_artifact_not_downloaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag = Path(tmp) / "diag"
+            diag.mkdir(parents=True)
+            self.assertIsNone(_collect_ndjson_registry_report_link(diag))
+
+    def test_finds_report_by_wildcard_run_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diag = Path(tmp) / "diag"
+            report_dir = (
+                diag / "_artifacts" / "batch-check" / "_ci_artifacts"
+                / "ci_test_results-ndjson-registry-1234-1"
+            )
+            report_dir.mkdir(parents=True)
+            (report_dir / "~ndjson-registry-report.txt").write_text(
+                "PASS: no doc/code registry mismatches found.\n", encoding="utf-8"
+            )
+
+            entry = _collect_ndjson_registry_report_link(diag)
+
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["label"], "NDJSON registry cross-check report (advisory)")
+            self.assertEqual(entry["path"].name, "~ndjson-registry-report.txt")
 
 
 if __name__ == "__main__":
