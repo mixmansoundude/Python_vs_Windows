@@ -512,6 +512,59 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($lockStaleAllPass) { $summary.Add('lock stale eviction: PASS') } else { $summary.Add('lock stale eviction: FAIL') }
 
+# --- Free-disk-space guard (REQ-025) test ---
+# Arrange: HP_TEST_FORCE_LOW_DISK=1 deterministically forces the "low disk space" branch instead
+# of depending on the real free space of the CI runner's drive (which is never actually low).
+# Assert: the WARN line fires and the bootstrap still completes normally -- this guard is
+# warn-only and must NEVER abort the run, per REQ-001 (env-var flags are scaffolding, never a
+# Prime-Directive gate).
+$lowDiskDir = Join-Path $TestsDir '~selftest_low_disk'
+if (Test-Path $lowDiskDir) { Remove-Item -Recurse -Force $lowDiskDir }
+New-Item -ItemType Directory -Force -Path $lowDiskDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $lowDiskDir -Force
+Set-Content -Path (Join-Path $lowDiskDir 'hello_stub.py') -Value 'print("hello-from-stub")' -Encoding ASCII
+$lowDiskLogName = '~low_disk_bootstrap.log'
+$prevForceLowDisk = $env:HP_TEST_FORCE_LOW_DISK
+$env:HP_TEST_FORCE_LOW_DISK = '1'
+# derived requirement: same HP_CI_LANE pinning as the pipreqs-fail/lock-stale blocks above -- a
+# successful run reaches the REQ-018 post-execution checkpoint prompt, which only auto-declines
+# under HP_CI_LANE (see docs/agent-lessons-learned.md "Accepted gap").
+$prevCILaneLowDisk = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $lowDiskDir
+try {
+  cmd /c "call run_setup.bat > $lowDiskLogName 2>&1"
+  $lowDiskExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_FORCE_LOW_DISK = $prevForceLowDisk
+  $env:HP_CI_LANE = $prevCILaneLowDisk
+}
+$lowDiskLogPath = Join-Path $lowDiskDir $lowDiskLogName
+$lowDiskLines = @()
+if (Test-Path $lowDiskLogPath) { $lowDiskLines = Get-Content -LiteralPath $lowDiskLogPath -Encoding ASCII }
+$lowDiskWarnFound = ($lowDiskLines | Where-Object { $_ -like '*low disk space detected*' }).Count -gt 0
+$lowDiskStatusPath = Join-Path $lowDiskDir '~bootstrap.status.json'
+$lowDiskBootstrapOk = $false
+if (Test-Path $lowDiskStatusPath) {
+  try {
+    $lowDiskStatus = Get-Content -LiteralPath $lowDiskStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $lowDiskBootstrapOk = ($lowDiskStatus.state -eq 'ok' -and $lowDiskStatus.exitCode -eq 0)
+  } catch { }
+}
+$lowDiskAllPass = ($lowDiskWarnFound -and $lowDiskBootstrapOk)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.low_disk_warn'
+  pass = $lowDiskAllPass
+  desc = 'REQ-025: HP_TEST_FORCE_LOW_DISK forces the low-disk-space WARN and the bootstrap still completes normally (warn-only, never abort)'
+  details = [ordered]@{
+    warnFound = $lowDiskWarnFound
+    bootstrapOk = $lowDiskBootstrapOk
+    exitCode = $lowDiskExit
+  }
+})
+if ($lowDiskAllPass) { $summary.Add('low disk space warn: PASS') } else { $summary.Add('low disk space warn: FAIL') }
+
 # --- OneDrive/synced-folder path warning test ---
 # Arrange: run from a directory whose name contains "OneDrive" so the guardrail fires.
 # Assert:  "[WARN] OneDrive path detected" appears in log and bootstrap exits 0.
