@@ -29,9 +29,11 @@ must consider whether that site also needs `call :release_lock` before it.** Thi
 documents the call-graph tracing method used to scope the lock's release points, and its limits,
 so a future agent doesn't have to rediscover them.
 
-**Why release is hooked at `:die`/`:success` only, not all ~100 `exit /b` sites.** A naive count
-finds around 100 lines matching `exit /b` in `run_setup.bat` (including ones indented inside
-parenthesized blocks). Whether a given `exit /b` actually terminates the whole process or just
+**Why release is hooked at `:die`/`:success` only, not all ~100 `exit /b` sites.** Before this
+feature, `run_setup.bat` had 129 `:label` definitions and 55 top-level (unindented) `exit /b`
+sites (100 total once indented/parenthesized ones are included). A naive count of lines matching
+`exit /b` (including ones indented inside parenthesized blocks) is not a reliable proxy for
+"process-terminating site" -- whether a given `exit /b` actually terminates the whole process or just
 returns from a subroutine depends on the RUNTIME call stack at that point, not on whether the
 label it lexically sits under was ever `call`ed -- CMD.EXE's `exit /b` returns to the nearest
 active `call` frame, and a label reached purely via `goto` from *inside* an active call frame
@@ -46,6 +48,14 @@ early lines 45-52 (`if not exist "%~dp0" ( ... exit /b 1 )`) demonstrated this: 
 treated that `exit /b 1` as *always* reached and stopped exploring right there, never proving
 reachability for the other ~4000 lines that obviously do execute in a normal run. Building a true
 paren-aware CFG parser was assessed as disproportionate effort for this feature.
+
+**`tools/audit_batch_exit_paths.py`** (new, not wired into CI -- run by hand) captures the
+label/call/exit inventory this section is based on: it lists every label, every `call :label`
+site, and every `exit /b` site with its containing label and whether that label is ever `call`ed
+anywhere in the file. It explicitly does NOT attempt the paren-aware CFG proof described above --
+its own module docstring documents the same "called=False is a hint, not proof" limitation. Use
+it as the starting point for a future exit-path audit (e.g. before reworking this lock feature,
+or before adding a new top-level consent gate), not as a final answer on its own.
 
 **The practical, sufficient answer instead:** CMD has no `finally`/`trap`, so a lock design that
 depends on *proving* every exit path releases it is the wrong shape regardless of how good the

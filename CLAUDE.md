@@ -478,6 +478,35 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
   verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
   not attempted piecemeal.
 
+- **`ndjson-registry-check` permanently red on the "doc-registered but no code emission site
+  found" category (approved for implementation, ready when picked up)**: confirmed via direct
+  inspection of `tests/dynamic_tests.py` and `tools/check_ndjson_registry.py`'s own module
+  docstring -- the scanner's `code_paths` cover `tests/*.ps1`, `run_setup.bat`, and
+  `.github/workflows/*.yml` only; Python source was excluded by design from day one. All 16 IDs
+  the scanner flags every single run under "registered in docs but no matching code emission
+  site found" are exactly the rows `dynamic_tests.py` emits via plain Python dict literals
+  (`record({"id": "...", ...})`, written straight to JSON) -- `pr.to_conda`, `pr.pandas.openpyxl`,
+  `pr.pandas.xlsxwriter`, `pr.requests.certifi`, `pr.sqlalchemy.pymysql`, `pr.matplotlib.tk`,
+  `pr.cryptography.cffi`, `pr.pycryptodome.cffi`, `app.visa.detect`, `app.pyserial.detect`,
+  `dp.pep440`, `dp.detect.runtime`, `dp.detect.pyproject`, `entry.select.single`,
+  `entry.select.main_vs_app`, `entry.select.common_vs_generic`. These rows are genuinely emitted
+  and genuinely correct in the doc registry (confirmed live on the diagnostics site) -- the
+  scanner simply cannot see them, so this category is mathematically guaranteed to be non-empty
+  on every run, forever, until the scanner is taught to parse Python too. Unlike a normal
+  advisory finding, this bucket carries zero information for a human glancing at the check (it
+  never converges to green, never changes) -- it is pure, permanent noise layered on top of the
+  scanner's two genuinely-useful categories (undocumented code-only rows, and the log
+  cross-check). Fix: extend `tools/check_ndjson_registry.py` with a fourth code-scanning path for
+  `tests/dynamic_tests.py` (and any future Python test files) that recognizes the
+  `record({"id": "...", ...})` / `record({"id": f"...", ...})` call pattern (a regex over
+  `"id"\s*:\s*"..."` plus f-string prefix handling for the templated `pr.{_pkg}.{_target}` case
+  is likely sufficient, mirroring the existing `CODE_JSONLITERAL_ID_RE` convention already used
+  for the raw-JSON-string-literal PowerShell/YAML case). Once closed, re-evaluate whether the job
+  should gain a stricter non-`continue-on-error` posture, since its only remaining noise source
+  today is exactly this gap. Scope is small and self-contained (one new regex + code_paths entry
+  in one file, no run_setup.bat/tests/*.ps1 changes) -- implement when picked up, no further
+  design discussion needed first.
+
 - **No proactive disk-space check (2026-07 iteration-pass finding)**: confirmed via code search
   -- the only disk-space-related output is the post-flight "SAFE TO DELETE to reclaim disk
   space" hint; there is no pre-flight free-space check before Miniconda download/install or
