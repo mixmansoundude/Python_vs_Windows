@@ -478,34 +478,27 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
   verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
   not attempted piecemeal.
 
-- **`ndjson-registry-check` permanently red on the "doc-registered but no code emission site
-  found" category (approved for implementation, ready when picked up)**: confirmed via direct
-  inspection of `tests/dynamic_tests.py` and `tools/check_ndjson_registry.py`'s own module
-  docstring -- the scanner's `code_paths` cover `tests/*.ps1`, `run_setup.bat`, and
-  `.github/workflows/*.yml` only; Python source was excluded by design from day one. All 16 IDs
-  the scanner flags every single run under "registered in docs but no matching code emission
-  site found" are exactly the rows `dynamic_tests.py` emits via plain Python dict literals
-  (`record({"id": "...", ...})`, written straight to JSON) -- `pr.to_conda`, `pr.pandas.openpyxl`,
-  `pr.pandas.xlsxwriter`, `pr.requests.certifi`, `pr.sqlalchemy.pymysql`, `pr.matplotlib.tk`,
-  `pr.cryptography.cffi`, `pr.pycryptodome.cffi`, `app.visa.detect`, `app.pyserial.detect`,
-  `dp.pep440`, `dp.detect.runtime`, `dp.detect.pyproject`, `entry.select.single`,
-  `entry.select.main_vs_app`, `entry.select.common_vs_generic`. These rows are genuinely emitted
-  and genuinely correct in the doc registry (confirmed live on the diagnostics site) -- the
-  scanner simply cannot see them, so this category is mathematically guaranteed to be non-empty
-  on every run, forever, until the scanner is taught to parse Python too. Unlike a normal
-  advisory finding, this bucket carries zero information for a human glancing at the check (it
-  never converges to green, never changes) -- it is pure, permanent noise layered on top of the
-  scanner's two genuinely-useful categories (undocumented code-only rows, and the log
-  cross-check). Fix: extend `tools/check_ndjson_registry.py` with a fourth code-scanning path for
-  `tests/dynamic_tests.py` (and any future Python test files) that recognizes the
-  `record({"id": "...", ...})` / `record({"id": f"...", ...})` call pattern (a regex over
-  `"id"\s*:\s*"..."` plus f-string prefix handling for the templated `pr.{_pkg}.{_target}` case
-  is likely sufficient, mirroring the existing `CODE_JSONLITERAL_ID_RE` convention already used
-  for the raw-JSON-string-literal PowerShell/YAML case). Once closed, re-evaluate whether the job
-  should gain a stricter non-`continue-on-error` posture, since its only remaining noise source
-  today is exactly this gap. Scope is small and self-contained (one new regex + code_paths entry
-  in one file, no run_setup.bat/tests/*.ps1 changes) -- implement when picked up, no further
-  design discussion needed first.
+- **`ndjson-registry-check`: re-evaluate for a stricter non-`continue-on-error` posture.** Now
+  that the scanner reads `tests/dynamic_tests.py` (see Closed Backlog entry below), a local
+  dry-run against this repo's real state shows a clean `PASS: no doc/code registry mismatches
+  found.` for the first time -- confirm this holds in real CI (not just the local dry-run) across
+  a few runs before flipping `continue-on-error: true` -> gating in `batch-check.yml`. Small,
+  low-risk follow-up once confirmed; deliberately not bundled into the scanner-fix PR itself
+  (CI behavior changes are their own unit, verified separately per this repo's "one thing at a
+  time" convention).
+
+- **Provider symmetry: no standalone Python-download tier**: confirmed gap in the REQ-009
+  provider cascade (uv -> conda -> venv -> system). uv and conda both self-acquire a full Python
+  interpreter (uv's managed CPython, conda's bundled Miniconda Python); venv and system
+  (`:resolve_system_python`) both require an *ambient* interpreter already on the host and have
+  no download path of their own. If uv is unreachable, conda create/install fails, and no
+  ambient `python`/`py` launcher exists, the bootstrap has no remaining way to acquire a Python
+  interpreter and falls through to `:die`. A future tier could target the official
+  python.org embeddable zip (`python-X.Y.Z-embed-amd64.zip`), verified by checksum, extracted to
+  a local/isolated directory, treated like an ambient interpreter, with pip bootstrapped via
+  `get-pip.py` if needed to feed warnfix. This is a substantial feature (new tier, checksum
+  verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
+  not attempted piecemeal.
 
 ## Periodic Maintenance Checks (recurring, quarterly)
 
@@ -653,6 +646,41 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **`ndjson-registry-check` Python-source scanning (closes the permanent 16-row noise gap)**:
+  `tools/check_ndjson_registry.py` previously only scanned `tests/*.ps1`, `run_setup.bat`, and
+  `.github/workflows/*.yml` -- `tests/dynamic_tests.py` (Python) was out of scope by design, so
+  the 16 rows it emits (`pr.to_conda`, `dp.pep440`, `entry.select.*`, etc.) showed up as
+  "registered in docs but no matching code emission site found" on literally every single run,
+  forever, with zero chance of ever converging to green. Added `scan_dynamic_tests_ids()`: an
+  `ast`-based resolver (not regex -- the id-construction shapes turned out more varied than the
+  original backlog note assumed) that walks `record({"id": ...})` calls and resolves the id
+  value three ways: a plain string literal; an f-string templated from an enclosing `for`
+  loop's literal iterable (`f"pr.{_pkg}.{_target}"`, including `dict.items()` iteration via a
+  locally-tracked dict-literal assignment, e.g. `needed = {...}; for dst, var in
+  needed.items():`); or a *bare* loop variable used directly as the id with no string literal
+  at all (`for rec_id, ... in [("entry.select.single", ...), ...]: record({"id": rec_id, ...})`
+  -- the `entry.select.*` rows use this shape, which a pure regex cannot resolve at all). Also
+  handles the one-hop `rec = {"id": ...}; ...; record(rec)` indirection
+  `ensure_extracted()` uses. Deliberately does not attempt anything more dynamic than that
+  (nested loops, non-literal iterables, function calls) -- see the module docstring and
+  `_for_loop_bindings`'s own docstring for the exact resolution scope.
+  Running the extended scanner against this repo's real state immediately surfaced 7
+  **genuinely new**, previously-invisible undocumented rows the old scope could never have
+  found even in principle: `helpers.run_setup`, `bootstrap.status`, and 5
+  `helpers.decode.~<name>.py` rows (one per embedded helper payload
+  `ensure_extracted()` decodes out of `run_setup.bat`). Backfilled all 7 into
+  `docs/agent-ndjson.md`'s "Dynamic-tests NDJSON" section in the same commit, matching this
+  repo's established backfill-in-the-same-PR convention. Also fixed a latent bug the tilde in
+  `helpers.decode.~detect_python.py` exposed: `DOC_TOKEN_RE` (the doc-side token regex) didn't
+  include `~` in its character class, so it silently mis-split any tilde-containing id into two
+  bogus tokens at the tilde boundary -- fixed by adding `~` to the regex's character class.
+  A local dry-run now shows a clean `PASS: no doc/code registry mismatches found.` for the
+  first time since the job was added -- see the new Active Backlog entry above for the
+  follow-up (confirm this holds in real CI, then consider flipping the job off
+  `continue-on-error`). 3 new unit tests in `tests/test_check_ndjson_registry.py` cover the
+  three id-resolution shapes plus the `.items()`/`rec` indirection and an end-to-end `main()`
+  wiring check. CLOSED by this PR.
 
 - **Proactive disk-space check (REQ-025)**: closes the 2026-07 iteration-pass finding that the
   only disk-space-related output anywhere in `run_setup.bat` was the post-flight "SAFE TO DELETE

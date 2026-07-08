@@ -131,8 +131,22 @@ pr.requests.certifi, pr.sqlalchemy.pymysql, pr.matplotlib.tk,
 pr.cryptography.cffi, pr.pycryptodome.cffi,
 app.visa.detect, app.pyserial.detect,
 dp.pep440 (x many), dp.detect.runtime, dp.detect.pyproject,
-entry.select.single, entry.select.main_vs_app, entry.select.common_vs_generic
+entry.select.single, entry.select.main_vs_app, entry.select.common_vs_generic,
+helpers.run_setup, bootstrap.status,
+helpers.decode.~detect_python.py, helpers.decode.~prep_requirements.py,
+helpers.decode.~print_pyver.py, helpers.decode.~detect_visa.py,
+helpers.decode.~find_entry.py
 ```
+
+**Backfilled 2026-07 via `tools/check_ndjson_registry.py`'s new AST-based Python scan.** The 7
+`helpers.*`/`bootstrap.status` rows above were always emitted (`ensure_extracted()`'s payload-decode
+loop and `main()`'s status-file read at the top of `tests/dynamic_tests.py`) but were invisible to
+this registry until the scanner learned to parse Python. `helpers.run_setup` fires only on the rare
+`run_setup.bat missing` guard clause (a hard `SystemExit(1)` before any other row); `bootstrap.status`
+fires exactly once per `dynamic_tests.py` run (pass/fail depending on whether `~bootstrap.status.json`
+parses); the 5 `helpers.decode.*` rows fire once per embedded helper payload
+(`~detect_python.py`/`~prep_requirements.py`/`~print_pyver.py`/`~detect_visa.py`/`~find_entry.py`)
+decoded out of `run_setup.bat`.
 
 ## Test-logs NDJSON (harness/selftest, additional rows)
 
