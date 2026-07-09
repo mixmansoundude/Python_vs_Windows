@@ -478,14 +478,17 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
   verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
   not attempted piecemeal.
 
-- **`ndjson-registry-check`: re-evaluate for a stricter non-`continue-on-error` posture.** Now
-  that the scanner reads `tests/dynamic_tests.py` (see Closed Backlog entry below), a local
-  dry-run against this repo's real state shows a clean `PASS: no doc/code registry mismatches
-  found.` for the first time -- confirm this holds in real CI (not just the local dry-run) across
-  a few runs before flipping `continue-on-error: true` -> gating in `batch-check.yml`. Small,
-  low-risk follow-up once confirmed; deliberately not bundled into the scanner-fix PR itself
-  (CI behavior changes are their own unit, verified separately per this repo's "one thing at a
-  time" convention).
+- **`ndjson-registry-check`: leave non-gating for now; revisit under the CI lane gating maturity
+  cadence, not as a one-off flip.** The scanner now reads `tests/dynamic_tests.py` (see Closed
+  Backlog entry below) and shows a clean `PASS: no doc/code registry mismatches found.` in real
+  CI for the first time (run #1555). Explicit decision (2026-07): do NOT flip
+  `continue-on-error: true` -> gating yet. This job's real purpose right now is automating a
+  check other coding agents previously had to do by hand (comparing doc registry vs. code
+  emission sites) so they can just read the result instead -- the same maturing-lane pattern
+  already established for `uv`/`justme-test` in "CI lane gating maturity" below: prove out over
+  multiple real runs before it earns a spot gating merges. Track it there (add
+  `ndjson-registry-check` to that section's watch list) rather than as a standalone backlog item,
+  so it gets re-assessed on the same periodic cadence instead of being special-cased.
 
 - **Provider symmetry: no standalone Python-download tier**: confirmed gap in the REQ-009
   provider cascade (uv -> conda -> venv -> system). uv and conda both self-acquire a full Python
@@ -547,15 +550,20 @@ rather than relying on manual memory.
 
 ### CI lane gating maturity
 
-- **Last scanned**: 2026-07-04 (`batch-check.yml:48` audit).
+- **Last scanned**: 2026-07-08 (added `ndjson-registry-check` to the watch list; see below).
 - **Findings**: only `real` and `conda-full` gate PR merges; `cache`, `justme-test`, `uv`,
   `contract-uv`, `contract-uv-fail`, `uv-dl-fallback` are deliberately non-gating (see AGENTS.md
-  policy and this file's Closed-Backlog history for why each was made so) -- not a bug.
+  policy and this file's Closed-Backlog history for why each was made so) -- not a bug. The
+  `ndjson-registry-check` job (a separate advisory job, not a matrix lane) is also
+  `continue-on-error: true` -- as of run #1555 it shows a clean PASS in real CI for the first
+  time after its Python-source-scanning gap closed (see Closed Backlog), but is being watched
+  for soak time before any gating discussion, same as the two lanes below.
 - **Going forward**: `uv` and `justme-test` are the two most mature/stable of the six non-gating
   lanes -- re-assess each scan whether either has soaked long enough (no flakiness, no
   lane-specific caveats left) to graduate to gating. Leave `contract-uv`/`contract-uv-fail`/
   `uv-dl-fallback` non-gating indefinitely (their non-gating status is explicitly load-bearing,
-  not provisional).
+  not provisional). `ndjson-registry-check` needs several more real-CI runs at clean PASS before
+  even considering gating -- one green run is not a trend.
 
 ### pipreqs ecosystem status
 
