@@ -465,43 +465,27 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
 "Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead
 (see those sections' own scope notes).
 
-- **Provider symmetry: no standalone Python-download tier**: confirmed gap in the REQ-009
-  provider cascade (uv -> conda -> venv -> system). uv and conda both self-acquire a full Python
-  interpreter (uv's managed CPython, conda's bundled Miniconda Python); venv and system
-  (`:resolve_system_python`) both require an *ambient* interpreter already on the host and have
-  no download path of their own. If uv is unreachable, conda create/install fails, and no
-  ambient `python`/`py` launcher exists, the bootstrap has no remaining way to acquire a Python
-  interpreter and falls through to `:die`. A future tier could target the official
-  python.org embeddable zip (`python-X.Y.Z-embed-amd64.zip`), verified by checksum, extracted to
-  a local/isolated directory, treated like an ambient interpreter, with pip bootstrapped via
-  `get-pip.py` if needed to feed warnfix. This is a substantial feature (new tier, checksum
-  verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
-  not attempted piecemeal.
-
-- **`ndjson-registry-check`: leave non-gating for now; revisit under the CI lane gating maturity
-  cadence, not as a one-off flip.** The scanner now reads `tests/dynamic_tests.py` (see Closed
-  Backlog entry below) and shows a clean `PASS: no doc/code registry mismatches found.` in real
-  CI for the first time (run #1555). Explicit decision (2026-07): do NOT flip
-  `continue-on-error: true` -> gating yet. This job's real purpose right now is automating a
-  check other coding agents previously had to do by hand (comparing doc registry vs. code
-  emission sites) so they can just read the result instead -- the same maturing-lane pattern
-  already established for `uv`/`justme-test` in "CI lane gating maturity" below: prove out over
-  multiple real runs before it earns a spot gating merges. Track it there (add
-  `ndjson-registry-check` to that section's watch list) rather than as a standalone backlog item,
-  so it gets re-assessed on the same periodic cadence instead of being special-cased.
-
-- **Provider symmetry: no standalone Python-download tier**: confirmed gap in the REQ-009
-  provider cascade (uv -> conda -> venv -> system). uv and conda both self-acquire a full Python
-  interpreter (uv's managed CPython, conda's bundled Miniconda Python); venv and system
-  (`:resolve_system_python`) both require an *ambient* interpreter already on the host and have
-  no download path of their own. If uv is unreachable, conda create/install fails, and no
-  ambient `python`/`py` launcher exists, the bootstrap has no remaining way to acquire a Python
-  interpreter and falls through to `:die`. A future tier could target the official
-  python.org embeddable zip (`python-X.Y.Z-embed-amd64.zip`), verified by checksum, extracted to
-  a local/isolated directory, treated like an ambient interpreter, with pip bootstrapped via
-  `get-pip.py` if needed to feed warnfix. This is a substantial feature (new tier, checksum
-  verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
-  not attempted piecemeal.
+- **Provider symmetry: standalone Python-download tier (REQ-009 Tier 5) -- design agreed
+  2026-07, ready to implement.** Confirmed gap in the REQ-009 provider cascade (uv -> conda ->
+  venv -> system). uv and conda both self-acquire a full Python interpreter (uv's managed
+  CPython, conda's bundled Miniconda Python); venv and system (`:resolve_system_python`) both
+  require an *ambient* interpreter already on the host and have no download path of their own.
+  If uv is unreachable, conda create/install fails, and no ambient `python`/`py` launcher
+  exists, the bootstrap has no remaining way to acquire a Python interpreter and falls through
+  to `:die`. Design discussion completed and decisions locked in: target the official python.org
+  embeddable zip, no REQ-014-style consent gate (more isolated than system Python, not less), a
+  pinned per-minor-version table (not a single fallback, not a live "latest" scrape) covering
+  python.org's currently-non-EOL CPython minors refreshed quarterly, embedded SHA256 checksums
+  (not fetched at runtime), reuse of the existing `:download_get_pip` subroutine, and correct
+  handling of the embeddable zip's disabled-`site`-imports `._pth` file gotcha. Full call-site
+  audit of every `HP_ENV_MODE` interconnect this touches (which sites need a genuinely new
+  `embed` case vs. which already work automatically) is in
+  `docs/agent-interconnect.md`'s "Standalone Python-download tier (REQ-009 Tier 5, PLANNED)"
+  section -- read that before starting implementation, it is the actual scope map. Substantial
+  feature (new tier, checksum table, dual fallback-ladder wiring at both the initial-failure and
+  post-warnfix-cascade entry points, new `HP_ENV_MODE=embed` case threaded through the
+  dependency-install branch, new tests) -- still a dedicated round, not attempted piecemeal, but
+  no longer blocked on open design questions.
 
 ## Periodic Maintenance Checks (recurring, quarterly)
 
