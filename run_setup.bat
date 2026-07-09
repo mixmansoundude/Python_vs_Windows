@@ -2031,6 +2031,17 @@ if "%HP_OFFLINE_MODE%"=="1" if not "%HP_TEST_FORCE_EMBED_REAL%"=="1" (
 )
 set "HP_EMBED_URL=https://www.python.org/ftp/python/%HP_EMBED_LATEST_PATCH%/python-%HP_EMBED_LATEST_PATCH%-embed-amd64.zip"
 set "HP_EMBED_ZIP=%TEMP%\python-%HP_EMBED_LATEST_PATCH%-embed-amd64.zip"
+set "HP_EMBED_DIR=%HP_SCRIPT_ROOT%~embed_python"
+rem derived requirement: a single retry of the WHOLE download+verify cycle on either a download
+rem failure or a checksum mismatch -- mirrors the existing transient-network-retry pattern used
+rem by :try_conda_create/:conda_bulk_install (REQ-022) elsewhere in this file. A checksum mismatch
+rem here does not necessarily mean a bad pin; it can mean a truncated/corrupted download, so
+rem redownloading (not just re-verifying) is the correct remedy. Goto-based, not nested inside a
+rem parenthesized if/else, per "Provider-cascade dispatch is goto-based on purpose" in
+rem docs/agent-lessons-learned.md.
+set "HP_EMBED_DL_ATTEMPT=0"
+:embed_dl_retry
+set /a HP_EMBED_DL_ATTEMPT+=1
 if exist "%HP_EMBED_ZIP%" del "%HP_EMBED_ZIP%" >nul 2>&1
 call :log "[INFO] Downloading embedded Python %HP_EMBED_LATEST_PATCH% from %HP_EMBED_URL%..."
 curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_EMBED_URL%" -o "%HP_EMBED_ZIP%" >> "%LOG%" 2>&1
@@ -2038,10 +2049,13 @@ if not errorlevel 1 if exist "%HP_EMBED_ZIP%" goto :embed_dl_ok
 echo *** curl download failed, trying PowerShell...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%HP_EMBED_URL%' -OutFile '%HP_EMBED_ZIP%' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
 if not errorlevel 1 if exist "%HP_EMBED_ZIP%" goto :embed_dl_ok
+if %HP_EMBED_DL_ATTEMPT% LSS 2 (
+  call :log "[WARN] embed fallback: download failed; retrying once."
+  goto :embed_dl_retry
+)
 call :log "[WARN] embed fallback: download failed (both curl and PowerShell)."
 exit /b 1
 :embed_dl_ok
-set "HP_EMBED_DIR=%HP_SCRIPT_ROOT%~embed_python"
 call :emit_from_base64 "~embed_extract.ps1" HP_EMBED_EXTRACT
 if errorlevel 1 (
   call :log "[WARN] embed fallback: could not write ~embed_extract.ps1."
@@ -2053,6 +2067,10 @@ for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass
 if exist "~embed_extract.ps1" del "~embed_extract.ps1" >nul 2>&1
 if exist "%HP_EMBED_ZIP%" del "%HP_EMBED_ZIP%" >nul 2>&1
 if not exist "%HP_EMBED_PY%" (
+  if %HP_EMBED_DL_ATTEMPT% LSS 2 (
+    call :log "[WARN] embed fallback: checksum verification or extraction failed; retrying download once."
+    goto :embed_dl_retry
+  )
   call :log "[WARN] embed fallback: checksum verification or extraction failed."
   exit /b 1
 )

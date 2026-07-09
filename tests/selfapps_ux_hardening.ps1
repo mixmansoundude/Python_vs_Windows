@@ -870,13 +870,18 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
             $embedDeclineStExit = $st.exitCode
         } catch { }
     }
-    $embedDeclineDied = ($embedDeclineState -eq 'error') -and ($embedDeclineExit -ne 0)
+    # derived requirement: run_setup.bat's own :die uses "exit /b" (a subroutine return, not a
+    # process exit) -- per CLAUDE.md's "Known Findings", the batch process can still exit 0 even
+    # after a logical failure, so ~bootstrap.status.json's state (not the raw process exit code)
+    # is this codebase's own documented source of truth for "did it actually fail". processExit is
+    # captured in details for diagnostics only, not asserted.
+    $embedDeclineDied = ($embedDeclineState -eq 'error')
     $embedDeclinePass = ($embedDeclineAttempted -and $embedDeclineForced -and $embedDeclineDied)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.embed.fallback.decline'
         req     = 'REQ-009'
         pass    = $embedDeclinePass
-        desc    = 'REQ-009 Tier 5: embed fallback is attempted after uv/conda/venv/system all fail, and a forced embed failure reaches a clean :die'
+        desc    = 'REQ-009 Tier 5: embed fallback is attempted after uv/conda/venv/system all fail, and a forced embed failure reaches :die (bootstrap.status.json reports state=error)'
         details = [ordered]@{
             attemptedLog = $embedDeclineAttempted
             forcedLog    = $embedDeclineForced
