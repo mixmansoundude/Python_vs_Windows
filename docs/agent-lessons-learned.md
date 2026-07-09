@@ -576,6 +576,45 @@ Rule of thumb: if an inline `-Command` one-liner would need ANY literal `"` char
 its body (interpolation, nested quoting, here-strings, or quoting an argument for
 `ProcessStartInfo`), stop and make it a `.ps1` helper instead of trying to escape around it.
 
+**Prefer raw .NET types over Utility-module cmdlets (Get-FileHash, Expand-Archive, Get-Content,
+Set-Content) in embedded `.ps1` helpers invoked from a `for /f` backtick subshell -- module
+auto-loading is not guaranteed there on Windows PowerShell 5.1.** Discovered via a real CI
+failure building the REQ-009 Tier 5 embed tier: `tools/embed_extract.ps1` used `Get-FileHash` to
+verify the downloaded zip's checksum, tested successfully with `pwsh` (PowerShell 7 on this
+repo's Linux dev sandbox), and then failed on every real Windows CI run with `'Get-FileHash' is
+not recognized as the name of a cmdlet, function, script file, or operable program` -- the exact
+`CommandNotFoundException` wording, meaning `Get-FileHash`'s module (`Microsoft.PowerShell.Utility`)
+was genuinely not auto-loading in that specific invocation context (`run_setup.bat`'s
+`for /f "usebackq delims=" %%P in (\`powershell ... -File "helper.ps1" ...\`) do ...` pattern --
+i.e. `powershell.exe` spawned as a backtick subshell child of a `for /f` inside `cmd.exe`).
+`Test-Path`/`Get-Item` (`Microsoft.PowerShell.Management`) worked fine in the same run, so this is
+scoped to `Microsoft.PowerShell.Utility` cmdlets specifically, not module auto-loading in general
+-- and it never reproduced under `pwsh`, which does not share Windows PowerShell 5.1's module
+discovery behavior, so **local testing with `pwsh` on Linux cannot catch this class of bug**; it
+only shows up on a real Windows PowerShell 5.1 CI run. Fixed by replacing `Get-FileHash` with
+`[System.Security.Cryptography.SHA256]::Create()` + `[System.IO.File]::OpenRead()`, `Expand-Archive`
+with `[System.IO.Compression.ZipFile]::ExtractToDirectory()` (needs
+`Add-Type -AssemblyName System.IO.Compression.FileSystem` first), and `Get-Content`/`Set-Content`
+with `[System.IO.File]::ReadAllText()`/`WriteAllText()` -- all raw .NET API calls with zero
+PowerShell module dependency, since `System.Security.Cryptography`/`System.IO`/
+`System.IO.Compression` are loaded as part of the CLR itself, not lazily discovered via
+`$env:PSModulePath`. Any future embedded `.ps1` helper reached via this same
+`for /f`-backtick-subshell pattern should default to .NET types for hashing/archive/file-IO
+rather than assuming the equivalent PowerShell cmdlet's module will be available.
+
+**A second, independent bug hid behind the first and only surfaced once diagnostics were added:**
+once `Get-FileHash` was replaced, a follow-up local `pwsh` test against the real downloaded zip
+showed extraction succeeding but the `._pth` site-imports patch silently NOT applying --
+`(Get-Content ...) -replace '^#import site$', 'import site'` (and its .NET-API equivalent using
+the same regex) never matched, because the embeddable zip's `._pth` file uses CRLF line endings
+and .NET regex `$` in multiline mode matches immediately before `\n`, not before a `\r\n` pair --
+the literal `\r` sits between `site` and the match position, so the anchor never lines up. Fixed
+by widening the pattern to `'(?m)^#import site\r?$'`. This is the same general CRLF-vs-`$`-anchor
+hazard as `.ps1` PayloadSync tests needing CRLF normalization (see "Embedded Helper Update
+Workflow" below) but hits at *runtime* instead of test-time -- worth checking for on ANY regex
+anchor (`^`/`$`) applied to file content that might carry Windows line endings, not just test
+assertions.
+
 **Fail-fast probe window vs. the ~30s hard-kill cap are unrelated numbers, do not conflate them:**
 `HP_FAILFAST_PROBE_MS` (default 10000ms, `:run_failfast_probe`) is a CLASSIFICATION checkpoint --
 how long to wait before deciding "this exited fast, treat a non-zero rc as a stale artifact" vs.
