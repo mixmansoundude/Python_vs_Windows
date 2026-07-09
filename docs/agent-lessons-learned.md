@@ -213,6 +213,48 @@ Two more cascade gotchas worth remembering:
 
 ---
 
+## A declined/failed fallback tier must clear HP_PY, not just return failure
+
+**Discovered 2026-07 via the REQ-009 Tier 5 embed-tier tests (the first tests in this repo's
+history to assert the OUTCOME of a fully-exhausted fallback chain, not just that each individual
+decline point was logged).** `:try_system_fallback` sets `HP_PY=%HP_SYS_EXE%` *before* the REQ-014
+consent gate (so it's ready to use immediately on accept), but on EITHER of the two failure exits
+after that point (missing interpreter path, or consent declined) it returned `exit /b 1` without
+clearing `HP_PY` back to empty. Combined with `:die` being `call`ed (not `goto`'d) everywhere --
+see the "Known Findings" `:die` note elsewhere in this file: `exit /b` inside `:die` only returns
+from that one `call`, so execution routinely continues past a `call :die` line to whatever comes
+next in the enclosing block -- the leaked, non-empty `HP_PY` silently satisfied
+`:after_env_mode_selection`'s `if not defined HP_PY (call :die ...)` guard, the LAST checkpoint
+before dependency install/build. The bootstrap then proceeded to actually build and run using
+the STALE interpreter path from the declined/failed system attempt, with `HP_ENV_MODE` left at
+whatever it was last set to (often still `conda`, its optimistic default) -- silently reporting
+full `state=ok` SUCCESS out of a scenario where every real provider tier had failed or been
+declined. This directly blocked the new embed tier from ever being reached in any scenario that
+declines system consent (both `self.embed.fallback.decline` and `self.embed.fallback.real` decline
+system consent to reach embed) -- `self.embed.fallback.real`'s failure signature confirmed it:
+`appRan: true` but `extractedLog`/`readyLog`/`providerLogFound` all `false`, meaning the app ran
+successfully via the leaked system Python without the embed tier ever being attempted at all.
+
+**Fix**: `:try_system_fallback` now sets `HP_PY=` (clears it) on both failure exits, immediately
+before their `exit /b 1`. **Rule for any current or future fallback-tier subroutine that sets
+`HP_PY` (or any other "selected provider" variable) speculatively before a gate that can still
+decline**: every failure/decline exit AFTER that point must clear the variable back to its
+pre-tier state, not just return a non-zero/failure signal -- a failed subroutine's job is to leave
+no trace of its attempt in shared state, since callers may (and in this codebase's case, routinely
+do, via the `:die`-continues quirk) proceed past a declared failure using whatever is left behind.
+
+**Known, closely-related, NOT-yet-fixed gap, flagged here rather than fixed in the same pass (out
+of scope for the Tier 5 PR that found it):** `:try_venv_fallback`'s `:venv_canary_fail` label has
+the identical pattern -- `HP_PY` is set to `.venv\Scripts\python.exe` during venv creation, and if
+the post-creation canary probe (REQ-023) then fails, it returns `exit /b 1` without clearing
+`HP_PY`. Not hit by either new embed test (both force `HP_TEST_FORCE_VENV_FAIL=1`, which exits
+before `HP_PY` is ever set in venv's case, so this leak point isn't on their path), but the same
+failure mode is plausible: a real-world venv that creates successfully but fails its canary check
+would leak a technically-existing-but-broken interpreter path forward exactly like system's did.
+Worth a small follow-up fix (`set "HP_PY="` before that `exit /b 1`) using the same rule above.
+
+---
+
 ## Env-var flags are scaffolding, not intended run paths (REQ-001)
 
 The intended run paths are **double-click and drag-and-drop with no environment variables**.
@@ -481,6 +523,27 @@ The canonical source is the decoded base64. To update a helper:
 4. Replace the `set "HP_VARNAME=..."` line in run_setup.bat.
 5. Run `python tools/check_delimiters.py run_setup.bat` and the relevant unit test.
 
+**PayloadSync tests for a `.ps1` canonical source must normalize CRLF/LF before comparing bytes.**
+All prior PayloadSync precedents (`test_collect_submodules.py`, `test_hidden_import_scan.py`)
+wrap `.py` canonical sources, which are `eol=lf` per `.gitattributes` -- no checkout-time line
+ending translation, so a raw `read_bytes()` byte-comparison against the base64-decoded payload is
+safe. The first `.ps1` canonical source with a PayloadSync test (`tools/embed_extract.ps1`, added
+for REQ-009 Tier 5) hit a real, CI-only failure this precedent didn't anticipate: `.ps1` files
+carry `*.ps1 text eol=crlf`, so `actions/checkout@v5` on the Windows CI runner materializes CRLF
+line endings in the working tree regardless of what the payload was encoded from. If the payload
+was encoded on a Linux/dev sandbox (LF-only working copy, since files created via a local editor
+don't go through git's checkout smudge filter), the base64-decoded bytes stay LF while
+`PS_SOURCE.read_bytes()` on the Windows runner returns CRLF -- a byte-for-byte mismatch that
+passes locally and fails only in real CI. This is a test-assertion bug only, not a functional one:
+the base64 string itself is immune to `.bat` eol conversion (it's plain characters on one line,
+no `\r`/`\n` inside it), and the runtime-extracted `.ps1` script works identically whether it
+lands on disk as LF or CRLF (PowerShell parses both). Fix: normalize both sides with
+`.replace(b"\r\n", b"\n")` before `assertEqual` -- verifies logical content, not incidental
+checkout-time line-ending translation. Any FUTURE PayloadSync test added for a `.bat`/`.ps1`/
+`.cmd`/`.psm1`/`.psd1` canonical source (anything covered by an `eol=crlf` `.gitattributes` rule)
+must include this same normalization from the start; `.py`/`.sh`/other `eol=lf`-attributed sources
+do not need it.
+
 **Python baseline reminder:** With `UV_PYTHON_PREFERENCE=only-managed`, helpers normally run
 on the latest managed CPython, but fallback paths can still hand them an older ambient
 interpreter. Target modern CPython, guard modern *stdlib features* with `try/except`, and
@@ -512,6 +575,45 @@ it with `-File` instead of `-Command`.** A real file has no cmd.exe quote-parsin
 Rule of thumb: if an inline `-Command` one-liner would need ANY literal `"` character anywhere in
 its body (interpolation, nested quoting, here-strings, or quoting an argument for
 `ProcessStartInfo`), stop and make it a `.ps1` helper instead of trying to escape around it.
+
+**Prefer raw .NET types over Utility-module cmdlets (Get-FileHash, Expand-Archive, Get-Content,
+Set-Content) in embedded `.ps1` helpers invoked from a `for /f` backtick subshell -- module
+auto-loading is not guaranteed there on Windows PowerShell 5.1.** Discovered via a real CI
+failure building the REQ-009 Tier 5 embed tier: `tools/embed_extract.ps1` used `Get-FileHash` to
+verify the downloaded zip's checksum, tested successfully with `pwsh` (PowerShell 7 on this
+repo's Linux dev sandbox), and then failed on every real Windows CI run with `'Get-FileHash' is
+not recognized as the name of a cmdlet, function, script file, or operable program` -- the exact
+`CommandNotFoundException` wording, meaning `Get-FileHash`'s module (`Microsoft.PowerShell.Utility`)
+was genuinely not auto-loading in that specific invocation context (`run_setup.bat`'s
+`for /f "usebackq delims=" %%P in (\`powershell ... -File "helper.ps1" ...\`) do ...` pattern --
+i.e. `powershell.exe` spawned as a backtick subshell child of a `for /f` inside `cmd.exe`).
+`Test-Path`/`Get-Item` (`Microsoft.PowerShell.Management`) worked fine in the same run, so this is
+scoped to `Microsoft.PowerShell.Utility` cmdlets specifically, not module auto-loading in general
+-- and it never reproduced under `pwsh`, which does not share Windows PowerShell 5.1's module
+discovery behavior, so **local testing with `pwsh` on Linux cannot catch this class of bug**; it
+only shows up on a real Windows PowerShell 5.1 CI run. Fixed by replacing `Get-FileHash` with
+`[System.Security.Cryptography.SHA256]::Create()` + `[System.IO.File]::OpenRead()`, `Expand-Archive`
+with `[System.IO.Compression.ZipFile]::ExtractToDirectory()` (needs
+`Add-Type -AssemblyName System.IO.Compression.FileSystem` first), and `Get-Content`/`Set-Content`
+with `[System.IO.File]::ReadAllText()`/`WriteAllText()` -- all raw .NET API calls with zero
+PowerShell module dependency, since `System.Security.Cryptography`/`System.IO`/
+`System.IO.Compression` are loaded as part of the CLR itself, not lazily discovered via
+`$env:PSModulePath`. Any future embedded `.ps1` helper reached via this same
+`for /f`-backtick-subshell pattern should default to .NET types for hashing/archive/file-IO
+rather than assuming the equivalent PowerShell cmdlet's module will be available.
+
+**A second, independent bug hid behind the first and only surfaced once diagnostics were added:**
+once `Get-FileHash` was replaced, a follow-up local `pwsh` test against the real downloaded zip
+showed extraction succeeding but the `._pth` site-imports patch silently NOT applying --
+`(Get-Content ...) -replace '^#import site$', 'import site'` (and its .NET-API equivalent using
+the same regex) never matched, because the embeddable zip's `._pth` file uses CRLF line endings
+and .NET regex `$` in multiline mode matches immediately before `\n`, not before a `\r\n` pair --
+the literal `\r` sits between `site` and the match position, so the anchor never lines up. Fixed
+by widening the pattern to `'(?m)^#import site\r?$'`. This is the same general CRLF-vs-`$`-anchor
+hazard as `.ps1` PayloadSync tests needing CRLF normalization (see "Embedded Helper Update
+Workflow" below) but hits at *runtime* instead of test-time -- worth checking for on ANY regex
+anchor (`^`/`$`) applied to file content that might carry Windows line endings, not just test
+assertions.
 
 **Fail-fast probe window vs. the ~30s hard-kill cap are unrelated numbers, do not conflate them:**
 `HP_FAILFAST_PROBE_MS` (default 10000ms, `:run_failfast_probe`) is a CLASSIFICATION checkpoint --

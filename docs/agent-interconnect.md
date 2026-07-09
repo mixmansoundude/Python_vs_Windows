@@ -83,6 +83,199 @@ stale locks for other users of the same folder to wait out.
 
 ---
 
+## Standalone Python-download tier (REQ-009 Tier 5, SHIPPED)
+
+**Status: implemented 2026-07.** `:try_embed_fallback` (new subroutine in `run_setup.bat`) is
+wired into both fallback ladders, a new `HP_ENV_MODE=embed` value flows through every call site
+identified during the original design audit, and CI coverage lives in
+`tests/selfapps_ux_hardening.ps1` (`self.embed.fallback.decline`, `self.embed.fallback.real` --
+see `docs/agent-ndjson.md`). This section is kept as the map of the `HP_ENV_MODE` blast radius
+this tier touches -- useful for anyone extending or debugging it later, not just for the original
+implementer. The original design-map audit covered 34 `HP_ENV_MODE` reference sites in
+`run_setup.bat`; re-verify line numbers against the current file before relying on them, since
+they will have moved.
+
+**Refinement made during implementation, beyond the original design map: two-stage
+PowerShell/Python split, not a single PowerShell script.** The original design map (below)
+assumed one implementation stage. Building it surfaced a chicken-and-egg problem the design map
+had not addressed: this tier runs precisely when NO Python interpreter exists anywhere on the
+system (the scenario it exists for), so per-request version-table logic cannot live in Python
+until *some* interpreter is on disk. The shipped design splits the tier into two stages:
+1. **PowerShell stage** (`tools/embed_extract.ps1`, embedded as `HP_EMBED_EXTRACT`) -- batch has
+   already downloaded ONE hardcoded "latest" version's zip (`HP_EMBED_LATEST_PATCH` /
+   `HP_EMBED_LATEST_SHA256` constants near the top of `run_setup.bat`). This script does ONLY
+   checksum verification (`Get-FileHash`), extraction (`Expand-Archive`), and the `._pth` patch
+   (uncommenting `#import site`) -- zero per-request branching. Prints the extracted
+   `python.exe` path on success, exits 1 silently on any failure.
+2. **Python stage** (`tools/embed_pyver_check.py`, embedded as `HP_EMBED_PYVER_CHECK`) -- runs
+   under the fresh interpreter stage 1 just extracted. This is the ONLY place per-request version
+   logic lives, reusing the same `PYSPEC` value `~detect_python.py` already computed earlier in
+   the bootstrap (the same value uv/conda already honor) instead of re-deriving equivalent regex
+   logic a second time in PowerShell. If `PYSPEC` requests a minor other than the table's
+   "latest" entry, it re-fetches/verifies/extracts the correct version itself via stdlib
+   (`urllib.request`, `hashlib`, `zipfile`) -- not PowerShell a second time.
+
+   `EMBED_PYTHON_TABLE` (in `embed_pyver_check.py`) maps minor -> `(patch, sha256)` for 3.10
+   through 3.14 (5 entries, matching the design map's "python.org's currently-supported (non-EOL)
+   CPython minors" scope decision below). The `"3.14"` entry's patch/sha256 MUST match the
+   batch-side `HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256` constants exactly -- a refresh that
+   updates one but not the other is caught by `tests/test_embed_tier.py`'s
+   `BatchPythonConsistency` test, not discovered live.
+
+**Windows self-file-lock hazard (discovered during implementation, not in the original design
+map): a running process cannot delete or replace its own executable/DLLs.** The Python stage
+(stage 2 above) runs FROM `HP_EMBED_DIR` (the directory stage 1 just extracted into) -- so if a
+version swap is needed, extracting the replacement directly into `HP_EMBED_DIR` while that same
+process is still running fails on Windows file locks. Fix: the Python stage extracts any swap
+into a SIBLING staging directory (`HP_EMBED_DIR` + `_swap`), never into its own running directory.
+The actual directory swap (`rd /s /q` old + `move /y` new-into-place) happens in the BATCH caller,
+only AFTER the `for /f ... in ('powershell ... -File "~embed_pyver_check.py" ...')` call has
+returned -- i.e., only after the Python process has fully exited and released its locks. If you
+ever refactor this to invoke the Python stage differently (e.g. inline instead of via `for /f`
+capturing its own exit), re-verify the swap still happens strictly after process exit.
+
+**Offline-mode test-flag exception chain -- touches two call sites, not one.** A CI test that
+wants to exercise the REAL embed download (`HP_TEST_FORCE_EMBED_REAL=1`) needs to punch a hole
+through `HP_OFFLINE_MODE=1` at BOTH: `:try_embed_fallback`'s own offline check, AND
+`:download_get_pip` (reused from the REQ-023b venv-resilience work to bootstrap pip into the
+embed interpreter), whose existing offline exception only recognized
+`HP_TEST_FORCE_VENV_CREATE_FAIL`. `:download_get_pip`'s check was extended to an OR of both flags
+via an intermediate `HP_GETPIP_SKIP_OFFLINE` variable (batch has no clean single-line boolean OR
+without delayed expansion, which is off-limits here -- see "CMD.EXE 8191-Character Line Limit"
+and the delayed-expansion ban elsewhere in `docs/agent-lessons-learned.md`). If a future test
+needs `:download_get_pip`'s real download exercised under a THIRD new test flag, both call sites
+must be extended together, or the new flag will be silently blocked by the second one even after
+successfully bypassing the first.
+
+**CMD line-length budget was hit for real building this.** The first draft of
+`embed_pyver_check.py` (comments, docstrings, nested-dict table) produced a base64 line of 9439
+chars -- over the 8191 hard limit (see "CMD.EXE 8191-Character Line Limit" in
+`docs/agent-lessons-learned.md`) by 1248 chars. Trimmed to 6739 chars (comments condensed,
+docstrings replaced with inline comments, table changed from nested dicts to tuples) with a
+1452-char safety margin. If you extend `EMBED_PYTHON_TABLE` with more minors or add features,
+re-check the budget with the same method documented in that lessons-learned entry before assuming
+it still fits.
+
+**Sigstore was evaluated and rejected for this tier's integrity check, in favor of embedded
+SHA256.** Verifying via Sigstore would require `cosign` or `sigstore-python`, both of which
+themselves require an existing Python/tool installation -- circular for a tier whose entire
+purpose is "no Python exists yet." Embedded SHA256 (`HP_EMBED_LATEST_SHA256` / the per-minor
+`EMBED_PYTHON_TABLE` entries, computed once at pin-time and verified independently against real
+downloads before shipping) is proportionate and consistent with this repo's "bootstrap
+reliability > API correctness" architecture principle (see CLAUDE.md).
+
+**Original design-map audit below, preserved as the source of the confirmed call-site list.**
+This was produced by auditing every `HP_ENV_MODE` reference in `run_setup.bat` (34 sites at audit
+time) and classifying each as "needs a new `embed` case" vs. "already provider-agnostic, works
+automatically."
+
+**Design decisions already agreed with the user (2026-07):**
+- No REQ-014-style consent gate. Unlike system Python (which uses a shared, uncontrolled,
+  version-unknown ambient environment), the embeddable zip is a private, checksummed,
+  bootstrapper-controlled extraction under `~embed_python\` -- more REQ-010-isolated than the
+  system tier, not less. Progress logging (REQ-016-style), not a prompt.
+- Version selection: a small pinned per-minor-version table (`{"3.11": "3.11.9", ...}`), NOT a
+  single hardcoded fallback version and NOT a live python.org scrape for "latest" (violates this
+  repo's "deterministic execution > dynamic resolution" principle -- same reasoning as the
+  pipreqs 0.4.13 pin). Table scope: python.org's currently-supported (non-EOL) CPython minor
+  versions at time of refresh -- practically ~5-6 entries, refreshed on the same quarterly
+  cadence as the pipreqs pin and other "Periodic Maintenance Checks" entries. A request older
+  than the table's floor (an EOL version) falls back to the table's oldest entry with a WARN,
+  rather than the table growing back indefinitely. The orchestration-layer default (no user
+  version request) always uses the table's *newest* entry, mirroring "orchestration always uses
+  latest" already established for uv (`UV_PYTHON_PREFERENCE=only-managed`).
+- Integrity: embed the expected SHA256 per pinned version directly in the bootstrapper (computed
+  once at pin-time), not fetched from a checksum file at runtime over the same network path as
+  the download itself.
+- Two real implementation gotchas to not lose: (1) the embeddable zip ships with `site` imports
+  disabled via the `pythonXY._pth` file -- must uncomment/edit that file before pip or any
+  installed package is importable at all, or the tier will look like it succeeded while being
+  silently broken. (2) the embeddable zip has no pip -- reuse the existing `:download_get_pip`
+  subroutine (built for the REQ-023b venv-resilience work), do not write a second copy.
+
+**Mental model: embed behaves like `venv`, not like `system`.** venv and embed are both
+"fully isolated, bootstrapper-installable Python environments" (safe to `pip install` into
+freely); system is "shared, minimally-invasive" (installs are avoided/consent-gated). Wherever
+the code below branches system out to a restricted/no-op path, embed should NOT be excluded the
+same way -- it should fall through and behave like venv/uv/conda's normal path instead.
+
+**Confirmed call sites requiring a genuinely new `embed` case (the real work):**
+1. `:handle_conda_failure` (~line 1787) -- the INITIAL fallback chain, reached whenever conda
+   itself fails to install/create at bootstrap (both the uv-fails-then-conda-also-fails path and
+   the conda-only entry path funnel here). Currently: `call :try_venv_fallback` -> if that fails,
+   `call :try_system_fallback` -> if that also fails, `exit /b 0` (gives up, caller falls to
+   `:die`). Add a third rung: `call :try_embed_fallback` after the system-fallback attempt,
+   before the final `exit /b 0`. `HP_FORCE_CONDA_ONLY=1` already short-circuits this whole
+   function before any fallback is attempted, so embed is automatically suppressed under that
+   flag with no extra check needed.
+2. `:provider_cascade`'s dispatch (~line 1618-1632) -- the SEPARATE post-build, warnfix-driven
+   cascade (re-attempts the dependency phase under the next tier when an already-built EXE has
+   unresolved imports and the user consents via `:cascade_consent_gate`). Currently dispatches
+   `uv -> conda -> venv -> system` via `if /i "%HP_ENV_MODE%"=="<tier>" goto :cascade_from_<tier>`
+   lines, then a final "tiers exhausted" catch-all. Needs: a new
+   `if /i "%HP_ENV_MODE%"=="system" goto :cascade_from_system` case ahead of the catch-all, a new
+   `:cascade_from_system` label (mirroring `:cascade_from_venv`'s shape exactly: guard on a new
+   `HP_CASCADE_TRIED_SYSTEM` var, call `:try_embed_fallback`, `goto :after_env_mode_selection` on
+   success or a new `:cascade_embed_unavailable` label on failure). Per the existing "no-loop
+   guarantee" rule in this doc: the new guard var is mandatory, and embed must be the last tier
+   (no further cascade target), which falls out naturally by not adding an `embed` case to the
+   dispatch `if` chain -- reaching `embed` there falls through to the existing exhausted
+   catch-all.
+3. **New subroutine `:try_embed_fallback`** (does not exist yet) -- mirrors `:try_venv_fallback`
+   / `:try_system_fallback`'s exact shape and is called from BOTH sites above (both entry ladders
+   -- venv/system already have this dual-entry pattern, embed must match it, not just implement
+   one path). On success: `set "HP_ENV_MODE=embed"`, `set "HP_PY=<path to extracted
+   pythonXY.exe>"`, `set "HP_BOOTSTRAP_STATE=embed_env"` (new state value, matching venv's
+   `venv_env` / system's `degraded_env` pattern), leave `HP_SKIP_PIPREQS` UNSET (matching venv,
+   NOT system -- system sets `HP_SKIP_PIPREQS=1` specifically because pipreqs requires
+   `pip install pipreqs` into a shared/uncontrolled environment it's trying to avoid touching;
+   that reasoning does not apply to embed's private extraction), log
+   `[BOOT] REQ-009: Selected Python provider: Embedded Python (python.org).`, `exit /b 0`.
+4. Dependency-install branch inside `:after_env_mode_selection`'s requirement-install block
+   (~line 1258-1303) -- `if "%HP_ENV_MODE%"=="conda" (...) else if "%HP_ENV_MODE%"=="venv" (...)
+   else if "%HP_ENV_MODE%"=="uv" (...) else ( call :log "[WARN] System fallback: skipping
+   requirement installation." )`. **This is the single most important site to get right**: the
+   final `else` is currently reached by `system` mode ON PURPOSE (conservative, no-install
+   behavior for a shared environment) -- but it would ALSO silently catch `embed` mode if no new
+   branch is added, meaning embed would build with zero declared dependencies installed and rely
+   100% on the warnfix safety net. Add `else if "%HP_ENV_MODE%"=="embed" (...)` before the final
+   catch-all `else`, with the exact same body as the `venv` branch (plain
+   `"%HP_PY%" -m pip install -r requirements.txt`, no `--python` flag needed unlike uv, no conda
+   channel logic).
+
+**Confirmed call sites that already work automatically, zero code change needed** (each was
+individually verified, not assumed): the pipreqs-install uv-vs-else branch (~line 962, else
+branch is plain `%HP_PY% -m pip install`, already works once embed's pip is bootstrapped); the
+heuristic-augmentation conda-vs-else branch (~line 1258, same reasoning); the pip-freeze capture
+uv-vs-else branch (~line 1307); the PyInstaller-install uv-vs-else branch (~line 2623); the
+`:compute_collect_flags` system-only exclusion (~line 2744, embed should NOT be excluded here,
+and isn't, since no `embed` string ever matches the existing `if "%HP_ENV_MODE%"=="system"` check
+-- confirms by omission, not by addition); the REQ-007 "build under every provider except system"
+gate (~line 2593, same reasoning -- embed builds automatically); the `:append_env_mode_row` NDJSON
+emitter (~line 1946, reads `HP_ENV_MODE` dynamically, no hardcoded branch); both smoke-test log
+lines that interpolate `%HP_ENV_MODE%` directly as display text (~lines 2799, 2819); the
+`:conda_base_update` conda-only guard (~line 3457, correctly excludes embed already, no conda
+involved); dep-check's fast-path gate (~line 1231, `if not "%HP_ENV_MODE%"=="conda" if not
+"%HP_ENV_MODE%"=="uv" goto :dep_check_done` -- **deliberately** left excluding embed too, matching
+venv's existing scope; this is a design choice to keep embed symmetric with venv for MVP, not an
+oversight -- the dep-check fast-path skip-on-repeat-run optimization could be extended to embed
+in a later round if desired, but isn't required for parity).
+
+**Pre-existing gap discovered during this audit, unrelated to embed, flagged not fixed:** the
+warnfix REPAIR-install branch (~line 2661, inside the missing-modules-detected block) only has
+two cases -- `if "%HP_ENV_MODE%"=="uv" (...)` and `else if defined CONDA_BAT (...)` -- with NO
+plain-pip fallback for any other mode. This means venv and system modes ALREADY have a silent
+blind spot today: if warnfix detects missing modules under venv or system, neither branch matches
+(uv is false, `CONDA_BAT` is undefined since conda was never touched), so the repair loop is a
+no-op and the rebuild proceeds with the same missing modules still missing. This is a real,
+pre-existing bug independent of the embed-tier work. **Confirmed unchanged after shipping embed**
+(the `~line 2661` warnfix REPAIR-install branch was not touched by the Tier 5 PR): embed inherits
+the identical gap, matching venv's/system's existing behavior, not introducing a new one. Still
+worth a dedicated future fix (add a plain-`%HP_PY% -m pip install` catch-all branch covering
+venv/system/embed alike) -- remains its own backlog item, not folded into the Tier 5 work.
+
+---
+
 ## uv-First Provider Architecture
 
 The "uv-first" feature (skip Miniconda download when uv can provide Python) has a larger

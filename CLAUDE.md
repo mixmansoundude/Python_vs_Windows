@@ -465,43 +465,8 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
 "Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead
 (see those sections' own scope notes).
 
-- **Provider symmetry: no standalone Python-download tier**: confirmed gap in the REQ-009
-  provider cascade (uv -> conda -> venv -> system). uv and conda both self-acquire a full Python
-  interpreter (uv's managed CPython, conda's bundled Miniconda Python); venv and system
-  (`:resolve_system_python`) both require an *ambient* interpreter already on the host and have
-  no download path of their own. If uv is unreachable, conda create/install fails, and no
-  ambient `python`/`py` launcher exists, the bootstrap has no remaining way to acquire a Python
-  interpreter and falls through to `:die`. A future tier could target the official
-  python.org embeddable zip (`python-X.Y.Z-embed-amd64.zip`), verified by checksum, extracted to
-  a local/isolated directory, treated like an ambient interpreter, with pip bootstrapped via
-  `get-pip.py` if needed to feed warnfix. This is a substantial feature (new tier, checksum
-  verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
-  not attempted piecemeal.
-
-- **`ndjson-registry-check`: leave non-gating for now; revisit under the CI lane gating maturity
-  cadence, not as a one-off flip.** The scanner now reads `tests/dynamic_tests.py` (see Closed
-  Backlog entry below) and shows a clean `PASS: no doc/code registry mismatches found.` in real
-  CI for the first time (run #1555). Explicit decision (2026-07): do NOT flip
-  `continue-on-error: true` -> gating yet. This job's real purpose right now is automating a
-  check other coding agents previously had to do by hand (comparing doc registry vs. code
-  emission sites) so they can just read the result instead -- the same maturing-lane pattern
-  already established for `uv`/`justme-test` in "CI lane gating maturity" below: prove out over
-  multiple real runs before it earns a spot gating merges. Track it there (add
-  `ndjson-registry-check` to that section's watch list) rather than as a standalone backlog item,
-  so it gets re-assessed on the same periodic cadence instead of being special-cased.
-
-- **Provider symmetry: no standalone Python-download tier**: confirmed gap in the REQ-009
-  provider cascade (uv -> conda -> venv -> system). uv and conda both self-acquire a full Python
-  interpreter (uv's managed CPython, conda's bundled Miniconda Python); venv and system
-  (`:resolve_system_python`) both require an *ambient* interpreter already on the host and have
-  no download path of their own. If uv is unreachable, conda create/install fails, and no
-  ambient `python`/`py` launcher exists, the bootstrap has no remaining way to acquire a Python
-  interpreter and falls through to `:die`. A future tier could target the official
-  python.org embeddable zip (`python-X.Y.Z-embed-amd64.zip`), verified by checksum, extracted to
-  a local/isolated directory, treated like an ambient interpreter, with pip bootstrapped via
-  `get-pip.py` if needed to feed warnfix. This is a substantial feature (new tier, checksum
-  verification, new fallback-ladder wiring, new tests) -- backlog for a dedicated future round,
-  not attempted piecemeal.
+*(Empty as of 2026-07-09 -- the last open item, the standalone Python-download tier, shipped;
+see Closed Backlog.)*
 
 ## Periodic Maintenance Checks (recurring, quarterly)
 
@@ -654,6 +619,78 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Standalone Python-download tier (REQ-009 Tier 5)**: closes the confirmed gap in the REQ-009
+  provider cascade (uv -> conda -> venv -> system) where uv and conda both self-acquire a full
+  Python interpreter (uv's managed CPython, conda's bundled Miniconda Python) but venv and system
+  (`:resolve_system_python`) both require an *ambient* interpreter already on the host and have no
+  download path of their own -- if uv is unreachable, conda create/install fails, and no ambient
+  `python`/`py` launcher exists, the bootstrap previously had no remaining way to acquire a Python
+  interpreter and fell straight through to `:die`. Implements Tier 5: download the official
+  python.org embeddable zip, verify against an embedded SHA256, extract, patch its disabled-`site`
+  `._pth` file, bootstrap pip via the existing `:download_get_pip` subroutine (reused from
+  REQ-023b, not duplicated), and canary-probe (`import sys, pip`) before selecting it as the
+  provider. No REQ-014-style consent gate -- unlike system Python (a shared, uncontrolled,
+  version-unknown ambient environment), the embeddable zip is a private, checksummed,
+  bootstrapper-controlled extraction under `~embed_python\`, more REQ-010-isolated than the system
+  tier, not less; it behaves like `venv` (freely installable-into), not like `system`
+  (install-avoiding). New subroutine `:try_embed_fallback`, called from both fallback ladders
+  (`:handle_conda_failure`'s initial chain, after `:try_system_fallback`; and `:provider_cascade`'s
+  post-warnfix cascade via a new `:cascade_from_system` label, guarded by the standard
+  `HP_CASCADE_TRIED_SYSTEM` no-loop var -- embed is the final tier, no further cascade target). A
+  new `HP_ENV_MODE=embed` case was threaded through the one call site that mattered most: the
+  dependency-install branch (`:after_env_mode_selection`), which previously would have silently
+  caught `embed` in the conservative no-install `system` catch-all -- embed now gets the same
+  plain `pip install -r requirements.txt` treatment as venv.
+
+  **Two-stage PowerShell/Python design (the key implementation decision, refined beyond the
+  original design discussion)**: this tier runs precisely when no Python interpreter exists
+  anywhere on the system, so per-request version-selection logic cannot live in Python until some
+  interpreter is on disk first. Stage 1, `tools/embed_extract.ps1` (embedded as
+  `HP_EMBED_EXTRACT`), is pure PowerShell with zero per-request branching -- it only verifies,
+  extracts, and patches ONE hardcoded "latest" version batch already downloaded
+  (`HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256`). Stage 2, `tools/embed_pyver_check.py`
+  (embedded as `HP_EMBED_PYVER_CHECK`), runs under that fresh interpreter and is the ONLY place
+  per-request version logic lives -- it reuses the same `PYSPEC` value `~detect_python.py` already
+  computed (the value uv/conda already honor), and if it requests a minor other than "latest",
+  re-fetches/verifies/extracts the correct version itself via `urllib.request`/`hashlib`/`zipfile`.
+  `EMBED_PYTHON_TABLE` covers Python 3.10-3.14 (5 pinned minor -> (patch, sha256) entries, all
+  independently verified via real downloads plus local SHA256 computation before shipping); an
+  out-of-range request falls back to the table's floor (below) or latest (above) with a WARN,
+  never growing the table indefinitely. A `BatchPythonConsistency` unit test asserts the "3.14"
+  table entry matches the batch-side constants exactly, so a refresh that updates one but not the
+  other is caught at CI time.
+
+  **Windows self-file-lock fix**: a running process cannot delete/replace its own executable/DLLs,
+  so a version swap in stage 2 cannot extract directly into the directory it is running from.
+  Fixed by extracting any swap into a sibling `_swap` directory; the actual `rd /s /q` + `move /y`
+  swap happens in the BATCH caller only after the Python subprocess has fully exited (confirmed
+  via the `for /f` capture call having already returned), releasing its file locks first.
+
+  Sigstore verification was evaluated and rejected for MVP: it requires `cosign` or
+  `sigstore-python`, both of which themselves require an existing Python/tool installation --
+  circular for a tier whose entire purpose is "no Python exists yet." Embedded SHA256 (computed
+  once at pin-time, independently verified) is proportionate and matches this repo's "bootstrap
+  reliability > API correctness" principle.
+
+  Test coverage: `tests/test_embed_tier.py` (10 tests: version-table resolution logic, batch/table
+  consistency, and `PayloadSync`-style byte-equality of both embedded payloads against their
+  `tools/` canonical sources, mirroring the established `test_collect_submodules.py`/
+  `test_hidden_import_scan.py` pattern). CI: `tests/selfapps_ux_hardening.ps1`'s
+  `self.embed.fallback.decline` (forces the full uv/conda/venv/system chain to fail, then forces
+  the embed tier itself to fail via `HP_TEST_FORCE_EMBED_FAIL=1`, asserting a clean `:die` instead
+  of a hang or false success) and `self.embed.fallback.real` (same chain, but
+  `HP_TEST_FORCE_EMBED_REAL=1` -- a narrow, test-only hole through the `HP_OFFLINE_MODE=1` gate,
+  mirroring the existing `HP_TEST_FORCE_VENV_CREATE_FAIL` exception pattern for
+  `:download_get_pip` -- exercises the real download-verify-extract-patch-pip-bootstrap-canary-
+  build-run path end-to-end). Both skip gracefully in the conda-full lane. Full interconnect
+  detail (the complete `HP_ENV_MODE` call-site audit, the two-stage split rationale, the file-lock
+  fix, and the offline-mode exception chain touching two call sites) lives in
+  `docs/agent-interconnect.md`'s "Standalone Python-download tier (REQ-009 Tier 5, SHIPPED)"
+  section. One pre-existing, unrelated gap was confirmed (not fixed) during this work: the warnfix
+  REPAIR-install branch has no plain-pip fallback for venv/system-family modes; embed inherits
+  this identical gap, matching venv's/system's current behavior -- remains its own future backlog
+  item, not folded into this PR. CLOSED by this PR.
 
 - **`ndjson-registry-check` Python-source scanning (closes the permanent 16-row noise gap)**:
   `tools/check_ndjson_registry.py` previously only scanned `tests/*.ps1`, `run_setup.bat`, and

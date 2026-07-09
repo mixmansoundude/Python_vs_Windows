@@ -1435,6 +1435,22 @@ jobs:
             tests\~selftest_venv_nopip_retry\~bootstrap.status.json
             tests/~selftest_venv_nopip_retry/~run.out.txt
             tests\~selftest_venv_nopip_retry\~run.out.txt
+            tests/~selftest_embed_decline/~embed_decline.log
+            tests\~selftest_embed_decline\~embed_decline.log
+            tests/~selftest_embed_decline/~setup.log
+            tests\~selftest_embed_decline\~setup.log
+            tests/~selftest_embed_decline/~bootstrap.status.json
+            tests\~selftest_embed_decline\~bootstrap.status.json
+            tests/~selftest_embed_real/~embed_real.log
+            tests\~selftest_embed_real\~embed_real.log
+            tests/~selftest_embed_real/~setup.log
+            tests\~selftest_embed_real\~setup.log
+            tests/~selftest_embed_real/~pipreqs.diff.txt
+            tests\~selftest_embed_real\~pipreqs.diff.txt
+            tests/~selftest_embed_real/~bootstrap.status.json
+            tests\~selftest_embed_real\~bootstrap.status.json
+            tests/~selftest_embed_real/~run.out.txt
+            tests\~selftest_embed_real\~run.out.txt
             tests/~selftest_entry_override/~override.log
             tests\~selftest_entry_override\~override.log
             tests/~selftest_entry_override/~setup.log
