@@ -13,21 +13,35 @@ $ExpectedSha256 = $args[1]
 $DestDir = $args[2]
 
 try {
-    if (-not (Test-Path -LiteralPath $ZipPath)) { exit 1 }
+    if (-not (Test-Path -LiteralPath $ZipPath)) {
+        [Console]::Error.WriteLine("[embed_extract] zip not found: $ZipPath")
+        exit 1
+    }
+    $ZipSize = (Get-Item -LiteralPath $ZipPath).Length
     $ActualHash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLower()
-    if ($ActualHash -ne $ExpectedSha256.ToLower()) { exit 1 }
+    if ($ActualHash -ne $ExpectedSha256.ToLower()) {
+        [Console]::Error.WriteLine("[embed_extract] checksum mismatch: size=$ZipSize expected=$($ExpectedSha256.ToLower()) actual=$ActualHash")
+        exit 1
+    }
 
     if (Test-Path -LiteralPath $DestDir) { Remove-Item -Recurse -Force -LiteralPath $DestDir }
     Expand-Archive -LiteralPath $ZipPath -DestinationPath $DestDir -Force
 
     $PthFile = Get-ChildItem -LiteralPath $DestDir -Filter "python*._pth" -File | Select-Object -First 1
-    if (-not $PthFile) { exit 1 }
+    if (-not $PthFile) {
+        [Console]::Error.WriteLine("[embed_extract] no python*._pth file found under $DestDir")
+        exit 1
+    }
     (Get-Content -LiteralPath $PthFile.FullName) -replace '^#import site$', 'import site' |
         Set-Content -LiteralPath $PthFile.FullName -Encoding ASCII
 
     $PyExe = Join-Path $DestDir "python.exe"
-    if (-not (Test-Path -LiteralPath $PyExe)) { exit 1 }
+    if (-not (Test-Path -LiteralPath $PyExe)) {
+        [Console]::Error.WriteLine("[embed_extract] python.exe missing after extraction: $PyExe")
+        exit 1
+    }
     [Console]::Write($PyExe)
 } catch {
+    [Console]::Error.WriteLine("[embed_extract] exception: $($_.Exception.Message)")
     exit 1
 }
