@@ -213,6 +213,48 @@ Two more cascade gotchas worth remembering:
 
 ---
 
+## A declined/failed fallback tier must clear HP_PY, not just return failure
+
+**Discovered 2026-07 via the REQ-009 Tier 5 embed-tier tests (the first tests in this repo's
+history to assert the OUTCOME of a fully-exhausted fallback chain, not just that each individual
+decline point was logged).** `:try_system_fallback` sets `HP_PY=%HP_SYS_EXE%` *before* the REQ-014
+consent gate (so it's ready to use immediately on accept), but on EITHER of the two failure exits
+after that point (missing interpreter path, or consent declined) it returned `exit /b 1` without
+clearing `HP_PY` back to empty. Combined with `:die` being `call`ed (not `goto`'d) everywhere --
+see the "Known Findings" `:die` note elsewhere in this file: `exit /b` inside `:die` only returns
+from that one `call`, so execution routinely continues past a `call :die` line to whatever comes
+next in the enclosing block -- the leaked, non-empty `HP_PY` silently satisfied
+`:after_env_mode_selection`'s `if not defined HP_PY (call :die ...)` guard, the LAST checkpoint
+before dependency install/build. The bootstrap then proceeded to actually build and run using
+the STALE interpreter path from the declined/failed system attempt, with `HP_ENV_MODE` left at
+whatever it was last set to (often still `conda`, its optimistic default) -- silently reporting
+full `state=ok` SUCCESS out of a scenario where every real provider tier had failed or been
+declined. This directly blocked the new embed tier from ever being reached in any scenario that
+declines system consent (both `self.embed.fallback.decline` and `self.embed.fallback.real` decline
+system consent to reach embed) -- `self.embed.fallback.real`'s failure signature confirmed it:
+`appRan: true` but `extractedLog`/`readyLog`/`providerLogFound` all `false`, meaning the app ran
+successfully via the leaked system Python without the embed tier ever being attempted at all.
+
+**Fix**: `:try_system_fallback` now sets `HP_PY=` (clears it) on both failure exits, immediately
+before their `exit /b 1`. **Rule for any current or future fallback-tier subroutine that sets
+`HP_PY` (or any other "selected provider" variable) speculatively before a gate that can still
+decline**: every failure/decline exit AFTER that point must clear the variable back to its
+pre-tier state, not just return a non-zero/failure signal -- a failed subroutine's job is to leave
+no trace of its attempt in shared state, since callers may (and in this codebase's case, routinely
+do, via the `:die`-continues quirk) proceed past a declared failure using whatever is left behind.
+
+**Known, closely-related, NOT-yet-fixed gap, flagged here rather than fixed in the same pass (out
+of scope for the Tier 5 PR that found it):** `:try_venv_fallback`'s `:venv_canary_fail` label has
+the identical pattern -- `HP_PY` is set to `.venv\Scripts\python.exe` during venv creation, and if
+the post-creation canary probe (REQ-023) then fails, it returns `exit /b 1` without clearing
+`HP_PY`. Not hit by either new embed test (both force `HP_TEST_FORCE_VENV_FAIL=1`, which exits
+before `HP_PY` is ever set in venv's case, so this leak point isn't on their path), but the same
+failure mode is plausible: a real-world venv that creates successfully but fails its canary check
+would leak a technically-existing-but-broken interpreter path forward exactly like system's did.
+Worth a small follow-up fix (`set "HP_PY="` before that `exit /b 1`) using the same rule above.
+
+---
+
 ## Env-var flags are scaffolding, not intended run paths (REQ-001)
 
 The intended run paths are **double-click and drag-and-drop with no environment variables**.

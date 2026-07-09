@@ -1960,12 +1960,19 @@ if errorlevel 1 (
 set "HP_PY=%HP_SYS_EXE%"
 if not exist "%HP_PY%" (
   call :log "[WARN] system fallback: resolved interpreter path missing."
+  set "HP_PY="
   exit /b 1
 )
 rem REQ-014: consent gate before using global system Python.
 call :system_python_consent_gate
 if errorlevel 1 (
   call :log "[INFO] REQ-014: System Python fallback aborted: consent not granted."
+  rem derived requirement: HP_PY was set above to prepare for a possible accept, but
+  rem a decline must not leak it forward -- a later gate (:after_env_mode_selection's
+  rem "if not defined HP_PY") would otherwise treat this exhausted tier as if a real
+  rem provider had been selected, silently proceeding with a stale interpreter path
+  rem instead of reaching :die. See docs/agent-lessons-learned.md.
+  set "HP_PY="
   exit /b 1
 )
 set "HP_ENV_MODE=system"
