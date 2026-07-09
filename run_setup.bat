@@ -161,6 +161,15 @@ rem GitHub source (the file bootstrap.pypa.io serves is generated from this repo
 rem primary-CDN + GitHub-source fallback pattern already used for Miniconda/uv above.
 if not defined HP_GETPIP_URL set "HP_GETPIP_URL=https://bootstrap.pypa.io/get-pip.py"
 set "HP_GETPIP_FALLBACK_URL=https://raw.githubusercontent.com/pypa/get-pip/main/public/get-pip.py"
+rem REQ-009 Tier 5: embeddable-Python fallback, last resort when uv/conda/venv/system all fail
+rem (or no ambient interpreter exists at all). Only a single "latest" version is ever downloaded
+rem here -- HP_EMBED_LATEST_SHA256 MUST match the "3.14" entry embedded in the Python-side
+rem ~embed_pyver_check.py payload below (a unit test asserts this so a refresh that updates one
+rem but not the other is caught at CI time, not discovered live). See docs/agent-interconnect.md
+rem "Standalone Python-download tier" for the two-stage PowerShell/Python design and why a
+rem per-request version table deliberately does NOT live here in batch.
+if not defined HP_EMBED_LATEST_PATCH set "HP_EMBED_LATEST_PATCH=3.14.6"
+set "HP_EMBED_LATEST_SHA256=df901e84a896ff1ee720ad03377e0c8d8c2244fda79808aeeaff6316df1cb75c"
 rem HP_TEST_OFFLINE=1: simulates ping failure for REQ-013 branch coverage (CI test flag)
 set "HP_TEST_OFFLINE=%HP_TEST_OFFLINE%"
 rem HP_OFFLINE_MODE is set by :check_net_after_dl_fail when user declines or no internet
@@ -178,6 +187,15 @@ rem outright (e.g. a stripped-down host Python missing ensurepip) so the REQ-023
 rem retry path is exercised for real; distinct from HP_TEST_FORCE_VENV_FAIL, which skips venv
 rem creation entirely and never reaches either attempt.
 set "HP_TEST_FORCE_VENV_CREATE_FAIL=%HP_TEST_FORCE_VENV_CREATE_FAIL%"
+rem HP_TEST_FORCE_EMBED_FAIL=1: simulates the REQ-009 Tier 5 embedded-Python fallback failing
+rem outright, for CI coverage of the "every tier exhausted" clean-:die path.
+set "HP_TEST_FORCE_EMBED_FAIL=%HP_TEST_FORCE_EMBED_FAIL%"
+rem HP_TEST_FORCE_EMBED_REAL=1: narrow test-only hole through HP_OFFLINE_MODE=1 for the embed
+rem tier's own download AND the get-pip.py download it triggers (mirrors
+rem HP_TEST_FORCE_VENV_CREATE_FAIL's existing exception for :download_get_pip) so CI can exercise
+rem the real embed download/extract/patch/pip-bootstrap path while HP_OFFLINE_MODE=1 still blocks
+rem unrelated Miniconda/uv downloads earlier in the same test run.
+set "HP_TEST_FORCE_EMBED_REAL=%HP_TEST_FORCE_EMBED_REAL%"
 rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-009/REQ-014 branch coverage
 set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
 rem HP_TEST_FORCE_WARNFIX_UNRESOLVED=1: forces the warnfix cascade-candidate detection (REQ-009/REQ-005.10) for branch coverage
@@ -1298,6 +1316,15 @@ if exist "requirements.txt" (
       )
     )
     call :log "[INFO] UV_USED=1"
+  ) else if "%HP_ENV_MODE%"=="embed" (
+    rem REQ-009 Tier 5: embed is a private, bootstrapper-owned interpreter like venv, not a
+    rem shared/uncontrolled one like system -- installing into it is exactly the point, so it
+    rem must NOT fall into the system catch-all below (that branch deliberately skips install).
+    "%HP_PY%" -m pip install -r requirements.txt >> "%LOG%" 2>&1
+    if errorlevel 1 (
+      echo *** Warning: Some requirements may have failed to install.
+      call :log "[WARN] pip install -r requirements.txt failed; some packages may be missing."
+    )
   ) else (
     call :log "[WARN] System fallback: skipping requirement installation."
   )
@@ -1620,14 +1647,15 @@ rem REQ-009/REQ-005.10 slice 3: re-attempt the dependency phase under the next p
 rem Dispatch is goto-based (no parenthesized interdependent sets) to avoid CMD parse-time
 rem expansion traps. Each tier is marked HP_CASCADE_TRIED_<tier> the first time it is used as a
 rem cascade source; a tier is never used twice, so tiers exhaust and the run stops (no loop).
-rem HP_ENV_MODE only advances (uv -> conda -> venv -> system), so re-entry cannot revisit a tier.
-rem NOTE: the :log messages below say "uv to conda" (not "uv -> conda") on purpose -- :log
-rem echoes UNQUOTED, so a ">" in the message would be parsed as redirection and eat the line
-rem (see docs/agent-lessons-learned.md). Do not "fix" these to arrows.
+rem HP_ENV_MODE only advances (uv -> conda -> venv -> system -> embed), so re-entry cannot
+rem revisit a tier. NOTE: the :log messages below say "uv to conda" (not "uv -> conda") on
+rem purpose -- :log echoes UNQUOTED, so a ">" in the message would be parsed as redirection and
+rem eat the line (see docs/agent-lessons-learned.md). Do not "fix" these to arrows.
 set "HP_CASCADE_APPROVED="
 if /i "%HP_ENV_MODE%"=="uv" goto :cascade_from_uv
 if /i "%HP_ENV_MODE%"=="conda" goto :cascade_from_conda
 if /i "%HP_ENV_MODE%"=="venv" goto :cascade_from_venv
+if /i "%HP_ENV_MODE%"=="system" goto :cascade_from_system
 call :log "[INFO] REQ-009: provider tiers exhausted after %HP_ENV_MODE%; keeping current build."
 goto :after_cascade_decision
 
@@ -1673,6 +1701,21 @@ if errorlevel 1 goto :cascade_system_unavailable
 goto :after_env_mode_selection
 :cascade_system_unavailable
 call :log "[WARN] REQ-009: cascade target system Python unavailable; keeping current build."
+goto :after_cascade_decision
+
+:cascade_from_system
+if defined HP_CASCADE_TRIED_SYSTEM goto :after_cascade_decision
+set "HP_CASCADE_TRIED_SYSTEM=1"
+rem REQ-009 Tier 5: embedded Python is the final tier; no further cascade target beyond it (no
+rem "embed" case is added to the dispatch above, so a future re-entry with HP_ENV_MODE=embed
+rem falls through to the "tiers exhausted" catch-all, exactly like reaching here for real does
+rem when :try_embed_fallback itself fails).
+call :log "[INFO] REQ-009: cascading provider system to embed; re-attempting dependencies."
+call :try_embed_fallback
+if errorlevel 1 goto :cascade_embed_unavailable
+goto :after_env_mode_selection
+:cascade_embed_unavailable
+call :log "[WARN] REQ-009: cascade target embedded Python unavailable; keeping current build."
 goto :after_cascade_decision
 
 :cascade_acquire_conda
@@ -1748,11 +1791,15 @@ rem of :check_net_after_dl_fail) -- this runs deep inside a fallback tier where 
 rem design intent reserves the one interactive prompt for the REQ-014 system-Python consent gate;
 rem a plain download failure here should silently decline the tier, not stop to ask the user.
 set "HP_GETPIP_PY="
-rem The HP_TEST_FORCE_VENV_CREATE_FAIL exception below lets CI exercise this real download
-rem path while still using HP_OFFLINE_MODE=1 to cheaply skip the (unrelated, ~99 MB) Miniconda
-rem download elsewhere in the same test run -- it never weakens real-user offline protection,
-rem since that test flag is never set outside CI coverage.
-if "%HP_OFFLINE_MODE%"=="1" if not "%HP_TEST_FORCE_VENV_CREATE_FAIL%"=="1" (
+rem The HP_TEST_FORCE_VENV_CREATE_FAIL / HP_TEST_FORCE_EMBED_REAL exceptions below let CI
+rem exercise this real download path while still using HP_OFFLINE_MODE=1 to cheaply skip
+rem unrelated downloads (Miniconda, the embed zip's own earlier PowerShell-stage download)
+rem elsewhere in the same test run -- neither flag weakens real-user offline protection, since
+rem they are never set outside CI coverage.
+set "HP_GETPIP_SKIP_OFFLINE=1"
+if "%HP_TEST_FORCE_VENV_CREATE_FAIL%"=="1" set "HP_GETPIP_SKIP_OFFLINE="
+if "%HP_TEST_FORCE_EMBED_REAL%"=="1" set "HP_GETPIP_SKIP_OFFLINE="
+if "%HP_OFFLINE_MODE%"=="1" if defined HP_GETPIP_SKIP_OFFLINE (
   call :log "[INFO] REQ-013: Offline mode: skipping get-pip.py download."
   goto :eof
 )
@@ -1804,6 +1851,14 @@ rem REQ-009/REQ-014: system Python is the last-resort Tier 4 and is always attem
 rem fails; the REQ-014 consent prompt inside :try_system_fallback is the only gate (no env flag).
 rem HP_ALLOW_SYSTEM_FALLBACK is deprecated/ignored.
 call :try_system_fallback
+if not errorlevel 1 (
+  set "HP_ENV_READY=1"
+  exit /b 0
+)
+rem REQ-009 Tier 5: embedded Python is the final rung, always attempted when system also fails
+rem (or no ambient interpreter exists at all -- the scenario this tier exists for). No consent
+rem gate (see :try_embed_fallback's header comment for why).
+call :try_embed_fallback
 if not errorlevel 1 (
   set "HP_ENV_READY=1"
   exit /b 0
@@ -1941,6 +1996,129 @@ if exist "%HP_SYS_TMP%" (
   del "%HP_SYS_TMP%" >nul 2>&1
 )
 if not defined HP_SYS_EXE exit /b 1
+exit /b 0
+
+:try_embed_fallback
+rem REQ-009 Tier 5: last-resort fallback when uv, conda, venv, and system all failed (or no
+rem ambient interpreter exists at all). Unlike system Python, embed is a private, checksummed,
+rem bootstrapper-controlled extraction -- no REQ-014-style consent gate, matching venv's
+rem zero-friction treatment, not system's. Two stages: PowerShell (~embed_extract.ps1) always
+rem fetches ONE hardcoded "latest" version with no per-request branching; Python
+rem (~embed_pyver_check.py), running under that fresh interpreter, checks PYSPEC (already
+rem computed earlier by ~detect_python.py -- the same value uv/conda already honor) and re-fetches
+rem a different version via its own urllib/hashlib/zipfile if requested. See
+rem docs/agent-interconnect.md "Standalone Python-download tier" for the full design rationale,
+rem including why this is deliberately NOT all-PowerShell.
+call :log "[WARN] Attempting embedded Python download (REQ-009 Tier 5)..."
+if "%HP_TEST_FORCE_EMBED_FAIL%"=="1" (
+  call :log "[TEST] HP_TEST_FORCE_EMBED_FAIL: simulating embed tier failure."
+  exit /b 1
+)
+rem derived requirement: HP_TEST_FORCE_EMBED_REAL punches a narrow hole through the offline
+rem gate for this tier only, mirroring HP_TEST_FORCE_VENV_CREATE_FAIL's exception for
+rem :download_get_pip -- lets CI exercise the real embed download while HP_OFFLINE_MODE=1 still
+rem blocks the earlier uv/conda/venv tiers' unrelated downloads in the same test run.
+if "%HP_OFFLINE_MODE%"=="1" if not "%HP_TEST_FORCE_EMBED_REAL%"=="1" (
+  call :log "[WARN] embed fallback: offline mode; cannot download embedded Python."
+  exit /b 1
+)
+set "HP_EMBED_URL=https://www.python.org/ftp/python/%HP_EMBED_LATEST_PATCH%/python-%HP_EMBED_LATEST_PATCH%-embed-amd64.zip"
+set "HP_EMBED_ZIP=%TEMP%\python-%HP_EMBED_LATEST_PATCH%-embed-amd64.zip"
+if exist "%HP_EMBED_ZIP%" del "%HP_EMBED_ZIP%" >nul 2>&1
+call :log "[INFO] Downloading embedded Python %HP_EMBED_LATEST_PATCH% from %HP_EMBED_URL%..."
+curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_EMBED_URL%" -o "%HP_EMBED_ZIP%" >> "%LOG%" 2>&1
+if not errorlevel 1 if exist "%HP_EMBED_ZIP%" goto :embed_dl_ok
+echo *** curl download failed, trying PowerShell...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%HP_EMBED_URL%' -OutFile '%HP_EMBED_ZIP%' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
+if not errorlevel 1 if exist "%HP_EMBED_ZIP%" goto :embed_dl_ok
+call :log "[WARN] embed fallback: download failed (both curl and PowerShell)."
+exit /b 1
+:embed_dl_ok
+set "HP_EMBED_DIR=%HP_SCRIPT_ROOT%~embed_python"
+call :emit_from_base64 "~embed_extract.ps1" HP_EMBED_EXTRACT
+if errorlevel 1 (
+  call :log "[WARN] embed fallback: could not write ~embed_extract.ps1."
+  if exist "%HP_EMBED_ZIP%" del "%HP_EMBED_ZIP%" >nul 2>&1
+  exit /b 1
+)
+set "HP_EMBED_PY="
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -File "~embed_extract.ps1" "%HP_EMBED_ZIP%" "%HP_EMBED_LATEST_SHA256%" "%HP_EMBED_DIR%"`) do set "HP_EMBED_PY=%%P"
+if exist "~embed_extract.ps1" del "~embed_extract.ps1" >nul 2>&1
+if exist "%HP_EMBED_ZIP%" del "%HP_EMBED_ZIP%" >nul 2>&1
+if not exist "%HP_EMBED_PY%" (
+  call :log "[WARN] embed fallback: checksum verification or extraction failed."
+  exit /b 1
+)
+call :log "[INFO] embed fallback: %HP_EMBED_LATEST_PATCH% extracted and verified."
+
+rem --- Python stage: only place per-request version logic lives (deliberately not PowerShell
+rem a second time). A failure here is non-fatal -- the "latest" interpreter from the stage above
+rem is kept and used as-is; only a genuine version *mismatch* is lost, not the whole tier.
+call :emit_from_base64 "~embed_pyver_check.py" HP_EMBED_PYVER_CHECK
+if not errorlevel 1 (
+  set "HP_EMBED_CHECK_OUT=~embed_pyver_check.txt"
+  if exist "%HP_EMBED_CHECK_OUT%" del "%HP_EMBED_CHECK_OUT%" >nul 2>&1
+  "%HP_EMBED_PY%" "~embed_pyver_check.py" "%HP_EMBED_DIR%" > "%HP_EMBED_CHECK_OUT%" 2>> "%LOG%"
+  if exist "~embed_pyver_check.py" del "~embed_pyver_check.py" >nul 2>&1
+  set "HP_EMBED_SWAP_TAG="
+  set "HP_EMBED_SWAP_MINOR="
+  set "HP_EMBED_SWAP_DIR="
+  for /f "usebackq tokens=1,2,3 delims=|" %%A in ("%HP_EMBED_CHECK_OUT%") do (
+    set "HP_EMBED_SWAP_TAG=%%A"
+    set "HP_EMBED_SWAP_MINOR=%%B"
+    set "HP_EMBED_SWAP_DIR=%%C"
+  )
+  if exist "%HP_EMBED_CHECK_OUT%" del "%HP_EMBED_CHECK_OUT%" >nul 2>&1
+  rem derived requirement: the version-check process (the "%HP_EMBED_PY%" call above) has
+  rem already fully exited by this point, so its file locks on HP_EMBED_DIR are released and
+  rem it is now safe to replace that directory -- swapping while that process was still running
+  rem would fail (Windows will not let a process delete/replace the files it is executing from),
+  rem which is exactly why the Python stage extracted into a sibling _swap directory instead of
+  rem overwriting HP_EMBED_DIR itself. See docs/agent-interconnect.md.
+  if defined HP_EMBED_SWAP_DIR if exist "%HP_EMBED_SWAP_DIR%\python.exe" (
+    rd /s /q "%HP_EMBED_DIR%" >nul 2>&1
+    move /y "%HP_EMBED_SWAP_DIR%" "%HP_EMBED_DIR%" >nul 2>&1
+    if exist "%HP_EMBED_DIR%\python.exe" (
+      call :log "[INFO] embed fallback: swapped to requested Python %HP_EMBED_SWAP_MINOR%."
+    ) else (
+      call :log "[WARN] embed fallback: swap move failed; interpreter may be missing."
+    )
+  )
+  if /i "%HP_EMBED_SWAP_TAG%"=="fellback" call :log "[WARN] REQ-009: requested Python not in embed table; using %HP_EMBED_SWAP_MINOR% instead."
+)
+set "HP_EMBED_PY=%HP_EMBED_DIR%\python.exe"
+if not exist "%HP_EMBED_PY%" (
+  call :log "[WARN] embed fallback: interpreter missing after version-check stage."
+  exit /b 1
+)
+
+rem --- bootstrap pip via get-pip.py (reuses the existing REQ-023b download) ---
+call :download_get_pip
+if not exist "%HP_GETPIP_PY%" (
+  call :log "[WARN] embed fallback: get-pip.py download failed."
+  exit /b 1
+)
+"%HP_EMBED_PY%" "%HP_GETPIP_PY%" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  del "%HP_GETPIP_PY%" >nul 2>&1
+  call :log "[WARN] embed fallback: get-pip.py bootstrap failed."
+  exit /b 1
+)
+del "%HP_GETPIP_PY%" >nul 2>&1
+
+rem --- canary probe (matches REQ-023's venv canary probe) ---
+"%HP_EMBED_PY%" -c "import sys, pip" >nul 2>&1
+if errorlevel 1 (
+  call :log "[WARN] embed fallback: interpreter created but failed canary probe (import sys, pip)."
+  exit /b 1
+)
+
+set "HP_ENV_MODE=embed"
+set "HP_PY=%HP_EMBED_PY%"
+set "HP_BOOTSTRAP_STATE=embed_env"
+set "HP_SKIP_PIPREQS="
+call :log "[INFO] embed fallback ready: %HP_PY%"
+call :log "[BOOT] REQ-009: Selected Python provider: Embedded Python (python.org)."
 exit /b 0
 
 :append_env_mode_row
@@ -3124,6 +3302,8 @@ rem $exeTime = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
 rem if ($exeTime -ge $latest) { 'fresh' }
 rem If HP_FAST_CHECK changes, update this decoded comment block to match the base64 payload.
 set "HP_FAST_CHECK=JGV4ZSA9ICRhcmdzWzBdCmlmICgtbm90ICRleGUpIHsgJGV4ZSA9ICRlbnY6SFBfRkFTVF9FWEUgfQokaW5mcmFQYXR0ZXJuID0gJyg/aSkoXnxbL1xcXSkoXC5naXR8XC5naXRodWJ8ZGlzdHxcLnZlbnZ8XC51dl9lbnZ8X19weWNhY2hlX198XC5jb25kYSkoWy9cXF18JCknCiRzb3VyY2VzID0gR2V0LUNoaWxkSXRlbSAtUmVjdXJzZSAtRmlsZSAtRmlsdGVyICcqLnB5JyB8IFdoZXJlLU9iamVjdCB7ICRfLkZ1bGxOYW1lIC1ub3RtYXRjaCAkaW5mcmFQYXR0ZXJuIC1hbmQgJF8uTmFtZSAtbm90bGlrZSAnfioucHknIH0KaWYgKC1ub3QgJHNvdXJjZXMpIHsgZXhpdCAxIH0KJGxhdGVzdCA9ICgkc291cmNlcyB8IFNvcnQtT2JqZWN0IC1Qcm9wZXJ0eSBMYXN0V3JpdGVUaW1lVXRjIC1EZXNjZW5kaW5nIHwgU2VsZWN0LU9iamVjdCAtRmlyc3QgMSkuTGFzdFdyaXRlVGltZVV0YwokZXhlVGltZSA9IChHZXQtSXRlbSAtTGl0ZXJhbFBhdGggJGV4ZSkuTGFzdFdyaXRlVGltZVV0YwppZiAoJGV4ZVRpbWUgLWdlICRsYXRlc3QpIHsgJ2ZyZXNoJyB9Cg=="
+set "HP_EMBED_EXTRACT=IyBSRVEtMDA5IFRpZXIgNTogdmVyaWZpZXMgY2hlY2tzdW0sIGV4dHJhY3RzLCBhbmQgcGF0Y2hlcyB0aGUgZGlzYWJsZWQtc2l0ZS1pbXBvcnRzIC5fcHRoIGZpbGUKIyBmb3IgYW4gYWxyZWFkeS1kb3dubG9hZGVkIGVtYmVkZGFibGUgUHl0aG9uIHppcC4gQmF0Y2ggaGFzIGFscmVhZHkgZG93bmxvYWRlZCB0aGUgemlwICh2aWEgdGhlCiMgc2FtZSBjdXJsLXRoZW4tSW52b2tlLVdlYlJlcXVlc3QgcGF0dGVybiBhcyA6ZG93bmxvYWRfbWluaWNvbmRhX2V4ZS86ZG93bmxvYWRfZ2V0X3BpcCkgYW5kCiMgcGFzc2VzIGl0cyBwYXRoIHBsdXMgdGhlIGV4cGVjdGVkIFNIQTI1NiBhbmQgZGVzdGluYXRpb24gZGlyZWN0b3J5IGFzIGFyZ3MuIFRoaXMgc2NyaXB0IGRvZXMKIyBOT1QgZG93bmxvYWQgYW55dGhpbmcgaXRzZWxmIGFuZCBkb2VzIE5PVCBicmFuY2ggb24gcmVxdWVzdGVkIHZlcnNpb24gLS0gc2VlIHRoZSBQeXRob24tc2lkZQojIHN0YWdlIGZvciBwZXItcmVxdWVzdCB2ZXJzaW9uIHNlbGVjdGlvbi4KIyBBcmdzOiAkMSA9IHppcCBwYXRoLCAkMiA9IGV4cGVjdGVkIHNoYTI1NiAobG93ZXJjYXNlIGhleCksICQzID0gZGVzdGluYXRpb24gZGlyZWN0b3J5LgojIE91dHB1dDogb24gc3VjY2VzcywgcHJpbnRzIHRoZSBleHRyYWN0ZWQgcHl0aG9uLmV4ZSBwYXRoIG9uIHN0ZG91dCwgZXhpdCAwLiBPbiBmYWlsdXJlCiMgKGNoZWNrc3VtIG1pc21hdGNoLCBleHRyYWN0aW9uIGZhaWx1cmUsIG1pc3NpbmcgLl9wdGgsIG1pc3NpbmcgcHl0aG9uLmV4ZSksIHByaW50cyBub3RoaW5nIGFuZAojIGV4aXRzIDEgLS0gY2FsbGVyIGNoZWNrcyBib3RoIHN0ZG91dCBhbmQgZXhpdCBjb2RlLgokWmlwUGF0aCA9ICRhcmdzWzBdCiRFeHBlY3RlZFNoYTI1NiA9ICRhcmdzWzFdCiREZXN0RGlyID0gJGFyZ3NbMl0KCnRyeSB7CiAgICBpZiAoLW5vdCAoVGVzdC1QYXRoIC1MaXRlcmFsUGF0aCAkWmlwUGF0aCkpIHsgZXhpdCAxIH0KICAgICRBY3R1YWxIYXNoID0gKEdldC1GaWxlSGFzaCAtTGl0ZXJhbFBhdGggJFppcFBhdGggLUFsZ29yaXRobSBTSEEyNTYpLkhhc2guVG9Mb3dlcigpCiAgICBpZiAoJEFjdHVhbEhhc2ggLW5lICRFeHBlY3RlZFNoYTI1Ni5Ub0xvd2VyKCkpIHsgZXhpdCAxIH0KCiAgICBpZiAoVGVzdC1QYXRoIC1MaXRlcmFsUGF0aCAkRGVzdERpcikgeyBSZW1vdmUtSXRlbSAtUmVjdXJzZSAtRm9yY2UgLUxpdGVyYWxQYXRoICREZXN0RGlyIH0KICAgIEV4cGFuZC1BcmNoaXZlIC1MaXRlcmFsUGF0aCAkWmlwUGF0aCAtRGVzdGluYXRpb25QYXRoICREZXN0RGlyIC1Gb3JjZQoKICAgICRQdGhGaWxlID0gR2V0LUNoaWxkSXRlbSAtTGl0ZXJhbFBhdGggJERlc3REaXIgLUZpbHRlciAicHl0aG9uKi5fcHRoIiAtRmlsZSB8IFNlbGVjdC1PYmplY3QgLUZpcnN0IDEKICAgIGlmICgtbm90ICRQdGhGaWxlKSB7IGV4aXQgMSB9CiAgICAoR2V0LUNvbnRlbnQgLUxpdGVyYWxQYXRoICRQdGhGaWxlLkZ1bGxOYW1lKSAtcmVwbGFjZSAnXiNpbXBvcnQgc2l0ZSQnLCAnaW1wb3J0IHNpdGUnIHwKICAgICAgICBTZXQtQ29udGVudCAtTGl0ZXJhbFBhdGggJFB0aEZpbGUuRnVsbE5hbWUgLUVuY29kaW5nIEFTQ0lJCgogICAgJFB5RXhlID0gSm9pbi1QYXRoICREZXN0RGlyICJweXRob24uZXhlIgogICAgaWYgKC1ub3QgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggJFB5RXhlKSkgeyBleGl0IDEgfQogICAgW0NvbnNvbGVdOjpXcml0ZSgkUHlFeGUpCn0gY2F0Y2ggewogICAgZXhpdCAxCn0K"
+set "HP_EMBED_PYVER_CHECK=IyBSRVEtMDA5IFRpZXIgNSwgUHl0aG9uIHN0YWdlOiBydW5zIHVuZGVyIHRoZSAiYWx3YXlzIGxhdGVzdCIgaW50ZXJwcmV0ZXIgfmVtYmVkX2V4dHJhY3QucHMxCiMgKFBvd2VyU2hlbGwgc3RhZ2UpIGFscmVhZHkgZG93bmxvYWRlZC92ZXJpZmllZC9leHRyYWN0ZWQuIFRoaXMgaXMgdGhlIE9OTFkgcGxhY2UgcGVyLXJlcXVlc3QKIyB2ZXJzaW9uIGxvZ2ljIGxpdmVzIC0tIGRlbGliZXJhdGVseSBQeXRob24sIG5vdCBQb3dlclNoZWxsLCByZXVzaW5nIHRoaXMgY29kZWJhc2UncyBwcm92ZW4KIyB2ZXJzaW9uLWRldGVjdGlvbiBwYXR0ZXJuIGluc3RlYWQgb2YgcmUtZGVyaXZpbmcgaXQgaW4gUG93ZXJTaGVsbC4gRnVsbCByYXRpb25hbGU6CiMgZG9jcy9hZ2VudC1pbnRlcmNvbm5lY3QubWQgIlN0YW5kYWxvbmUgUHl0aG9uLWRvd25sb2FkIHRpZXIiLiAiMy4xNCIgZW50cnkgYmVsb3cgTVVTVCBtYXRjaAojIEhQX0VNQkVEX0xBVEVTVF9QQVRDSC9IUF9FTUJFRF9MQVRFU1RfU0hBMjU2IGluIHJ1bl9zZXR1cC5iYXQgLS0gYSBQYXlsb2FkU3luYy1zdHlsZSB1bml0IHRlc3QKIyBhc3NlcnRzIHRoaXMuIExhc3QgcmVmcmVzaGVkOiAyMDI2LTA3LTA5LgppbXBvcnQgaGFzaGxpYgppbXBvcnQgb3MKaW1wb3J0IHJlCmltcG9ydCBzaHV0aWwKaW1wb3J0IHN5cwppbXBvcnQgdXJsbGliLnJlcXVlc3QKaW1wb3J0IHppcGZpbGUKCiMgbWlub3IgLT4gKHBhdGNoLCBzaGEyNTYpCkVNQkVEX1BZVEhPTl9UQUJMRSA9IHsKICAgICIzLjEwIjogKCIzLjEwLjExIiwgIjYwODYxOWY4NjE5MDc1NjI5YzljNjlmMzYxMzUyYTBkYTZlZDdlNjJmODNhMGUxOWM2M2UwZWEzMmViNzYyOWQiKSwKICAgICIzLjExIjogKCIzLjExLjkiLCAiMDA5ZDZiZjdlM2IyZGRjYTNkNzg0ZmEwOWY5MGZlNTQzMzZkNWI2MGYwZTBmMzA1YzM3ZjQwMGJmODNjZmQzYiIpLAogICAgIjMuMTIiOiAoIjMuMTIuMTAiLCAiNGFjYmVkNmRkMWM3NDRiMDM3NmUzYjFjZjU3Y2U5MDZmOWRjOWU5NWU2ODgyNDU4NGM4MDk5YTYzMDI1YTNjMyIpLAogICAgIjMuMTMiOiAoIjMuMTMuMTQiLCAiOTBiNGU1Yjk4OThiNzJkNzQ0NjUwNTI0YmZmOTIzNzdjMzY3ZjQ0YmQ1ZmJkMDllMzE0ODY1NmMwODBhZDkwNyIpLAogICAgIjMuMTQiOiAoIjMuMTQuNiIsICJkZjkwMWU4NGE4OTZmZjFlZTcyMGFkMDMzNzdlMGM4ZDhjMjI0NGZkYTc5ODA4YWVlYWZmNjMxNmRmMWNiNzVjIiksCn0KTEFURVNUX01JTk9SID0gIjMuMTQiCkZMT09SX01JTk9SID0gIjMuMTAiCgpTUEVDX01JTk9SX1JFID0gcmUuY29tcGlsZShyIihbMC05XStcLlswLTldKykiKQoKCmRlZiBfbWlub3Jfa2V5KG1pbm9yKToKICAgIHRyeToKICAgICAgICBtYWpvciwgc3ViID0gbWlub3Iuc3BsaXQoIi4iKQogICAgICAgIHJldHVybiAoaW50KG1ham9yKSwgaW50KHN1YikpCiAgICBleGNlcHQgKFZhbHVlRXJyb3IsIEF0dHJpYnV0ZUVycm9yKToKICAgICAgICByZXR1cm4gKDAsIDApCgoKZGVmIHJlc29sdmVfcmVxdWVzdGVkX21pbm9yKHB5c3BlYyk6CiAgICAjIEV4dHJhY3RzICJYLlkiIGZyb20gYSBQWVNQRUMgc3RyaW5nIChlLmcuICJweXRob24+PTMuMTAsPDQuMCIpOyBOb25lIGlmIGVtcHR5L3VucGFyc2VhYmxlLgogICAgaWYgbm90IHB5c3BlYzoKICAgICAgICByZXR1cm4gTm9uZQogICAgbWF0Y2ggPSBTUEVDX01JTk9SX1JFLnNlYXJjaChweXNwZWMpCiAgICByZXR1cm4gbWF0Y2guZ3JvdXAoMSkgaWYgbWF0Y2ggZWxzZSBOb25lCgoKZGVmIHJlc29sdmVfdGFibGVfZW50cnkocmVxdWVzdGVkX21pbm9yKToKICAgICMgUmV0dXJucyAobWlub3IsIHBhdGNoLCBzaGEyNTYsIGZlbGxfYmFjayk7IG1pcnJvcnMgdGhlIFBvd2VyU2hlbGwgc3RhZ2UncyBvd24gcnVsZXMuCiAgICBpZiByZXF1ZXN0ZWRfbWlub3IgaW4gRU1CRURfUFlUSE9OX1RBQkxFOgogICAgICAgIHBhdGNoLCBzaGEyNTYgPSBFTUJFRF9QWVRIT05fVEFCTEVbcmVxdWVzdGVkX21pbm9yXQogICAgICAgIHJldHVybiByZXF1ZXN0ZWRfbWlub3IsIHBhdGNoLCBzaGEyNTYsIEZhbHNlCiAgICBtaW5vciA9IEZMT09SX01JTk9SIGlmIF9taW5vcl9rZXkocmVxdWVzdGVkX21pbm9yKSA8IF9taW5vcl9rZXkoRkxPT1JfTUlOT1IpIGVsc2UgTEFURVNUX01JTk9SCiAgICBwYXRjaCwgc2hhMjU2ID0gRU1CRURfUFlUSE9OX1RBQkxFW21pbm9yXQogICAgcmV0dXJuIG1pbm9yLCBwYXRjaCwgc2hhMjU2LCBUcnVlCgoKZGVmIGRvd25sb2FkX2FuZF92ZXJpZnkodXJsLCBleHBlY3RlZF9zaGEyNTYsIGRlc3RfemlwKToKICAgIHVybGxpYi5yZXF1ZXN0LnVybHJldHJpZXZlKHVybCwgZGVzdF96aXApCiAgICBkaWdlc3QgPSBoYXNobGliLnNoYTI1NigpCiAgICB3aXRoIG9wZW4oZGVzdF96aXAsICJyYiIpIGFzIGZoOgogICAgICAgIGZvciBjaHVuayBpbiBpdGVyKGxhbWJkYTogZmgucmVhZCgxIDw8IDIwKSwgYiIiKToKICAgICAgICAgICAgZGlnZXN0LnVwZGF0ZShjaHVuaykKICAgIGFjdHVhbCA9IGRpZ2VzdC5oZXhkaWdlc3QoKS5sb3dlcigpCiAgICBpZiBhY3R1YWwgIT0gZXhwZWN0ZWRfc2hhMjU2Lmxvd2VyKCk6CiAgICAgICAgb3MucmVtb3ZlKGRlc3RfemlwKQogICAgICAgIHJhaXNlIFZhbHVlRXJyb3IoImNoZWNrc3VtIG1pc21hdGNoOiBleHBlY3RlZCB7fSwgZ290IHt9Ii5mb3JtYXQoZXhwZWN0ZWRfc2hhMjU2LCBhY3R1YWwpKQoKCmRlZiBleHRyYWN0X2FuZF9wYXRjaCh6aXBfcGF0aCwgZGVzdF9kaXIpOgogICAgaWYgb3MucGF0aC5pc2RpcihkZXN0X2Rpcik6CiAgICAgICAgc2h1dGlsLnJtdHJlZShkZXN0X2RpcikKICAgIHdpdGggemlwZmlsZS5aaXBGaWxlKHppcF9wYXRoKSBhcyB6ZjoKICAgICAgICB6Zi5leHRyYWN0YWxsKGRlc3RfZGlyKQogICAgcHRoX2ZpbGVzID0gW2YgZm9yIGYgaW4gb3MubGlzdGRpcihkZXN0X2RpcikgaWYgcmUubWF0Y2gociJecHl0aG9uXGQrXC5fcHRoJCIsIGYpXQogICAgaWYgbm90IHB0aF9maWxlczoKICAgICAgICByYWlzZSBGaWxlTm90Rm91bmRFcnJvcigibm8gcHl0aG9uKi5fcHRoIGZpbGUgZm91bmQgYWZ0ZXIgZXh0cmFjdGlvbiIpCiAgICBwdGhfcGF0aCA9IG9zLnBhdGguam9pbihkZXN0X2RpciwgcHRoX2ZpbGVzWzBdKQogICAgd2l0aCBvcGVuKHB0aF9wYXRoLCAiciIsIGVuY29kaW5nPSJhc2NpaSIpIGFzIGZoOgogICAgICAgIGNvbnRlbnQgPSBmaC5yZWFkKCkKICAgIGNvbnRlbnQgPSByZS5zdWIociIoP20pXiNpbXBvcnQgc2l0ZSQiLCAiaW1wb3J0IHNpdGUiLCBjb250ZW50KQogICAgd2l0aCBvcGVuKHB0aF9wYXRoLCAidyIsIGVuY29kaW5nPSJhc2NpaSIsIG5ld2xpbmU9IiIpIGFzIGZoOgogICAgICAgIGZoLndyaXRlKGNvbnRlbnQpCiAgICBweV9leGUgPSBvcy5wYXRoLmpvaW4oZGVzdF9kaXIsICJweXRob24uZXhlIikKICAgIGlmIG5vdCBvcy5wYXRoLmlzZmlsZShweV9leGUpOgogICAgICAgIHJhaXNlIEZpbGVOb3RGb3VuZEVycm9yKCJweXRob24uZXhlIG1pc3NpbmcgYWZ0ZXIgZXh0cmFjdGlvbiIpCiAgICByZXR1cm4gcHlfZXhlCgoKZGVmIG1haW4oKToKICAgICMgZGVzdF9kaXIgaXMgd2hlcmUgVEhJUyBydW5uaW5nIGludGVycHJldGVyIGxpdmVzOyBXaW5kb3dzIHdvbid0IGxldCBhIHByb2Nlc3MgcmVwbGFjZSBpdHMKICAgICMgb3duIGZpbGVzLCBzbyBhIHN3YXAgZXh0cmFjdHMgaW50byBhIHNpYmxpbmcgX3N3YXAgZGlyIGFuZCBiYXRjaCBtb3ZlcyBpdCBpbnRvIHBsYWNlIG9ubHkKICAgICMgYWZ0ZXIgdGhpcyBwcm9jZXNzIGV4aXRzIChsb2NrcyByZWxlYXNlZCkuIFNlZSBkb2NzL2FnZW50LWludGVyY29ubmVjdC5tZC4KICAgIGRlc3RfZGlyID0gc3lzLmFyZ3ZbMV0gaWYgbGVuKHN5cy5hcmd2KSA+IDEgZWxzZSAiIgogICAgc3dhcF9kaXIgPSBkZXN0X2Rpci5yc3RyaXAoIlxcLyIpICsgIl9zd2FwIgogICAgcHlzcGVjID0gb3MuZW52aXJvbi5nZXQoIlBZU1BFQyIsICIiKQogICAgcmVxdWVzdGVkX21pbm9yID0gcmVzb2x2ZV9yZXF1ZXN0ZWRfbWlub3IocHlzcGVjKQoKICAgIGlmIHJlcXVlc3RlZF9taW5vciBpcyBOb25lIG9yIHJlcXVlc3RlZF9taW5vciA9PSBMQVRFU1RfTUlOT1I6CiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgidW5jaGFuZ2VkfHt9XG4iLmZvcm1hdChMQVRFU1RfTUlOT1IpKQogICAgICAgIHJldHVybiAwCgogICAgbWlub3IsIHBhdGNoLCBzaGEyNTYsIGZlbGxfYmFjayA9IHJlc29sdmVfdGFibGVfZW50cnkocmVxdWVzdGVkX21pbm9yKQogICAgaWYgbWlub3IgPT0gTEFURVNUX01JTk9SOgogICAgICAgIHN5cy5zdGRvdXQud3JpdGUoInVuY2hhbmdlZHx7fVxuIi5mb3JtYXQobWlub3IpKQogICAgICAgIHJldHVybiAwCgogICAgdXJsID0gImh0dHBzOi8vd3d3LnB5dGhvbi5vcmcvZnRwL3B5dGhvbi97cH0vcHl0aG9uLXtwfS1lbWJlZC1hbWQ2NC56aXAiLmZvcm1hdChwPXBhdGNoKQogICAgemlwX3BhdGggPSBvcy5wYXRoLmpvaW4ob3MuZW52aXJvbi5nZXQoIlRFTVAiLCAiLiIpLCAicHl0aG9uLXt9LWVtYmVkLWFtZDY0LnppcCIuZm9ybWF0KHBhdGNoKSkKICAgIHRyeToKICAgICAgICBkb3dubG9hZF9hbmRfdmVyaWZ5KHVybCwgc2hhMjU2LCB6aXBfcGF0aCkKICAgICAgICBleHRyYWN0X2FuZF9wYXRjaCh6aXBfcGF0aCwgc3dhcF9kaXIpCiAgICBleGNlcHQgRXhjZXB0aW9uIGFzIGV4YzoKICAgICAgICBzeXMuc3RkZXJyLndyaXRlKCJlbWJlZCB2ZXJzaW9uIHN3YXAgZmFpbGVkOiB7fVxuIi5mb3JtYXQoZXhjKSkKICAgICAgICBpZiBvcy5wYXRoLmlzZGlyKHN3YXBfZGlyKToKICAgICAgICAgICAgc2h1dGlsLnJtdHJlZShzd2FwX2RpciwgaWdub3JlX2Vycm9ycz1UcnVlKQogICAgICAgIHJldHVybiAxCgogICAgdGFnID0gImZlbGxiYWNrIiBpZiBmZWxsX2JhY2sgZWxzZSAic3dhcHBlZCIKICAgIHN5cy5zdGRvdXQud3JpdGUoInt9fHt9fHt9XG4iLmZvcm1hdCh0YWcsIG1pbm9yLCBzd2FwX2RpcikpCiAgICByZXR1cm4gMAoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBzeXMuZXhpdChtYWluKCkpCg=="
 rem HP_FAILFAST_PROBE decoded content (Slice 2b-C, output-path args added in the 2b-C checkpoint
 rem slice so the elective secondary run never overwrites the primary run's captured files):
 rem $exe = $env:HP_PROBE_EXE

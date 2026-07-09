@@ -805,6 +805,172 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
+# ===== REQ-009 Tier 5: embedded Python fallback declines gracefully when all tiers fail =====
+# Forces the FULL chain to fail (conda, venv, system-decline via HP_TEST_SYSCON_ANSWER=N) and
+# then forces the new embed tier itself to fail via HP_TEST_FORCE_EMBED_FAIL=1. Proves
+# :handle_conda_failure's new embed call is wired correctly and, when every tier is exhausted,
+# the bootstrap reaches :die cleanly instead of hanging or silently reporting success.
+# Skipped in conda-full lane where HP_FORCE_CONDA_ONLY=1 blocks all fallbacks unconditionally.
+$embedDeclineDir = Join-Path $here '~selftest_embed_decline'
+if (Test-Path $embedDeclineDir) { Remove-Item -Recurse -Force $embedDeclineDir }
+New-Item -ItemType Directory -Force -Path $embedDeclineDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $embedDeclineDir -Force
+Set-Content -LiteralPath (Join-Path $embedDeclineDir 'app.py') -Value 'print("embed-decline-should-not-run")' -Encoding Ascii
+
+$embedDeclinePass = $true
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.embed.fallback.decline'
+        req     = 'REQ-009'
+        pass    = $true
+        desc    = 'REQ-009 Tier 5: embed fallback graceful-decline test'
+        details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-prohibits-non-conda-fallbacks' }
+    })
+} else {
+    $savedCondaFail7 = $env:HP_TEST_FORCE_CONDA_FAIL
+    $savedVenvFail7  = $env:HP_TEST_FORCE_VENV_FAIL
+    $savedSyscon7    = $env:HP_TEST_SYSCON_ANSWER
+    $savedOffline7   = $env:HP_OFFLINE_MODE
+    $savedLane7      = $env:HP_CI_LANE
+    $savedEmbedFail7 = $env:HP_TEST_FORCE_EMBED_FAIL
+    $env:HP_TEST_FORCE_CONDA_FAIL = '1'
+    $env:HP_TEST_FORCE_VENV_FAIL  = '1'
+    $env:HP_TEST_SYSCON_ANSWER    = 'N'
+    $env:HP_OFFLINE_MODE          = '1'
+    $env:HP_CI_LANE               = 'test'
+    $env:HP_TEST_FORCE_EMBED_FAIL = '1'
+    $embedDeclineLog = Join-Path $embedDeclineDir '~embed_decline.log'
+    Push-Location -LiteralPath $embedDeclineDir
+    try {
+        cmd /c "run_setup.bat > ~embed_decline.log 2>&1"
+        $embedDeclineExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    $env:HP_TEST_FORCE_CONDA_FAIL = $savedCondaFail7
+    $env:HP_TEST_FORCE_VENV_FAIL  = $savedVenvFail7
+    if ($null -eq $savedSyscon7) { Remove-Item Env:HP_TEST_SYSCON_ANSWER -ErrorAction SilentlyContinue } else { $env:HP_TEST_SYSCON_ANSWER = $savedSyscon7 }
+    $env:HP_OFFLINE_MODE          = $savedOffline7
+    $env:HP_CI_LANE               = $savedLane7
+    if ($null -eq $savedEmbedFail7) { Remove-Item Env:HP_TEST_FORCE_EMBED_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_EMBED_FAIL = $savedEmbedFail7 }
+
+    $embedDeclineText = ''
+    if (Test-Path -LiteralPath $embedDeclineLog) {
+        $embedDeclineText = Get-Content -LiteralPath $embedDeclineLog -Raw -Encoding Ascii
+    }
+    $embedDeclineAttempted = ($embedDeclineText -match [regex]::Escape('[WARN] Attempting embedded Python download (REQ-009 Tier 5)...'))
+    $embedDeclineForced    = ($embedDeclineText -match [regex]::Escape('[TEST] HP_TEST_FORCE_EMBED_FAIL: simulating embed tier failure.'))
+    $embedDeclineStatePath = Join-Path $embedDeclineDir '~bootstrap.status.json'
+    $embedDeclineState = $null
+    $embedDeclineStExit = $null
+    if (Test-Path -LiteralPath $embedDeclineStatePath) {
+        try {
+            $st = Get-Content -LiteralPath $embedDeclineStatePath -Raw -Encoding Ascii | ConvertFrom-Json
+            $embedDeclineState = $st.state
+            $embedDeclineStExit = $st.exitCode
+        } catch { }
+    }
+    $embedDeclineDied = ($embedDeclineState -eq 'error') -and ($embedDeclineExit -ne 0)
+    $embedDeclinePass = ($embedDeclineAttempted -and $embedDeclineForced -and $embedDeclineDied)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.embed.fallback.decline'
+        req     = 'REQ-009'
+        pass    = $embedDeclinePass
+        desc    = 'REQ-009 Tier 5: embed fallback is attempted after uv/conda/venv/system all fail, and a forced embed failure reaches a clean :die'
+        details = [ordered]@{
+            attemptedLog = $embedDeclineAttempted
+            forcedLog    = $embedDeclineForced
+            state        = $embedDeclineState
+            exitCode     = $embedDeclineStExit
+            processExit  = $embedDeclineExit
+        }
+    })
+}
+
+# ===== REQ-009 Tier 5: embedded Python fallback real download-through-run path =====
+# Forces the same full chain (conda-fail, venv-fail, system-decline) but instead of forcing the
+# embed tier to fail, uses HP_TEST_FORCE_EMBED_REAL=1 -- a narrow hole through the HP_OFFLINE_MODE
+# gate for this tier only (mirrors HP_TEST_FORCE_VENV_CREATE_FAIL's existing exception for
+# :download_get_pip) -- so the real checksum-verified download, extraction, ._pth patch,
+# get-pip.py bootstrap, canary probe, dependency install, EXE build, and run all execute for
+# real. Proves the tier is not just wired but actually functional end-to-end.
+# Skipped in conda-full lane where HP_FORCE_CONDA_ONLY=1 blocks all fallbacks unconditionally.
+$embedRealDir = Join-Path $here '~selftest_embed_real'
+if (Test-Path $embedRealDir) { Remove-Item -Recurse -Force $embedRealDir }
+New-Item -ItemType Directory -Force -Path $embedRealDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $embedRealDir -Force
+Set-Content -LiteralPath (Join-Path $embedRealDir 'app.py') -Value 'print("embed-real-ok")' -Encoding Ascii
+
+$embedRealPass = $true
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.embed.fallback.real'
+        req     = 'REQ-009'
+        pass    = $true
+        desc    = 'REQ-009 Tier 5: embed fallback real download-through-run test'
+        details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-prohibits-non-conda-fallbacks' }
+    })
+} else {
+    $savedCondaFail8 = $env:HP_TEST_FORCE_CONDA_FAIL
+    $savedVenvFail8  = $env:HP_TEST_FORCE_VENV_FAIL
+    $savedSyscon8    = $env:HP_TEST_SYSCON_ANSWER
+    $savedOffline8   = $env:HP_OFFLINE_MODE
+    $savedSkipPR8    = $env:HP_SKIP_PIPREQS
+    $savedLane8      = $env:HP_CI_LANE
+    $savedEmbedReal8 = $env:HP_TEST_FORCE_EMBED_REAL
+    $env:HP_TEST_FORCE_CONDA_FAIL = '1'
+    $env:HP_TEST_FORCE_VENV_FAIL  = '1'
+    $env:HP_TEST_SYSCON_ANSWER    = 'N'
+    $env:HP_OFFLINE_MODE          = '1'
+    $env:HP_SKIP_PIPREQS          = '1'
+    $env:HP_CI_LANE               = 'test'
+    $env:HP_TEST_FORCE_EMBED_REAL = '1'
+    $embedRealLog = Join-Path $embedRealDir '~embed_real.log'
+    Push-Location -LiteralPath $embedRealDir
+    try {
+        cmd /c "run_setup.bat > ~embed_real.log 2>&1"
+        $embedRealExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    $env:HP_TEST_FORCE_CONDA_FAIL = $savedCondaFail8
+    $env:HP_TEST_FORCE_VENV_FAIL  = $savedVenvFail8
+    if ($null -eq $savedSyscon8) { Remove-Item Env:HP_TEST_SYSCON_ANSWER -ErrorAction SilentlyContinue } else { $env:HP_TEST_SYSCON_ANSWER = $savedSyscon8 }
+    $env:HP_OFFLINE_MODE          = $savedOffline8
+    $env:HP_SKIP_PIPREQS          = $savedSkipPR8
+    $env:HP_CI_LANE               = $savedLane8
+    if ($null -eq $savedEmbedReal8) { Remove-Item Env:HP_TEST_FORCE_EMBED_REAL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_EMBED_REAL = $savedEmbedReal8 }
+
+    $embedRealSetupLog = Join-Path $embedRealDir '~setup.log'
+    $embedRealSetupText = ''
+    if (Test-Path -LiteralPath $embedRealSetupLog) {
+        $embedRealSetupText = Get-Content -LiteralPath $embedRealSetupLog -Raw -Encoding Ascii
+    }
+    $embedRealRunOut = Join-Path $embedRealDir '~run.out.txt'
+    $embedRealRunText = ''
+    if (Test-Path -LiteralPath $embedRealRunOut) {
+        $embedRealRunText = Get-Content -LiteralPath $embedRealRunOut -Raw -Encoding Ascii
+    }
+    $embedRealExtracted = ($embedRealSetupText -match [regex]::Escape('[INFO] embed fallback: ') ) -and ($embedRealSetupText -match [regex]::Escape('extracted and verified.'))
+    $embedRealReady     = ($embedRealSetupText -match [regex]::Escape('[INFO] embed fallback ready:'))
+    $embedRealProvider  = ($embedRealSetupText -match [regex]::Escape('[BOOT] REQ-009: Selected Python provider: Embedded Python (python.org).'))
+    $embedRealAppRan    = ($embedRealRunText -match [regex]::Escape('embed-real-ok'))
+    $embedRealPass = ($embedRealExtracted -and $embedRealReady -and $embedRealProvider -and $embedRealAppRan)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.embed.fallback.real'
+        req     = 'REQ-009'
+        pass    = $embedRealPass
+        desc    = 'REQ-009 Tier 5: real embed download/extract/patch/get-pip/canary/build/run succeeds end-to-end'
+        details = [ordered]@{
+            extractedLog     = $embedRealExtracted
+            readyLog         = $embedRealReady
+            providerLogFound = $embedRealProvider
+            appRan           = $embedRealAppRan
+            exit             = $embedRealExit
+        }
+    })
+}
+
 # ===== REQ-002 priority 0: manual %1 override beats auto-detection (main.py) =====
 # REQ-002 ranks a co-located %1 argument (drag-and-drop) above every auto-detected name:
 # it is used directly and skips all auto-detection. Prior tests only cover auto-detection
@@ -890,6 +1056,6 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $sysAcceptPass -and $venvFbPass -and $entryOvPass
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $sysAcceptPass -and $venvFbPass -and $venvCanaryPass -and $venvNoPipPass -and $embedDeclinePass -and $embedRealPass -and $entryOvPass
 if (-not $allPass) { exit 1 }
 exit 0

@@ -67,7 +67,8 @@ self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, sel
 self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
 self.ux.gitattributes.merge, self.ux.gitattributes.idem,
 self.ux.postflight,
-self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override
+self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
+self.embed.fallback.decline, self.embed.fallback.real
 ```
 
 ## justme-test lane rows (flag-triggered)
@@ -214,7 +215,8 @@ self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
 self.sysbuild.decline,
-self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override
+self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
+self.embed.fallback.decline, self.embed.fallback.real
 ```
 
 ---
@@ -279,6 +281,17 @@ self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.ove
   existed on PyPI, chosen for determinism over pipreqs 0.5.0's real `<3.13` cap -- the cap alone
   does not reliably fail on every lane's ambient Python) to prove the warnfix fallback
   recovers gracefully.
+- `self.embed.fallback.decline` and `self.embed.fallback.real` (REQ-009 Tier 5, the standalone
+  embeddable-Python download fallback -- see `docs/agent-interconnect.md` "Standalone
+  Python-download tier") are emitted by `selfapps_ux_hardening.ps1`. Both force the full
+  uv/conda/venv/system chain to fail first (conda-fail, venv-fail, system-decline via
+  `HP_TEST_SYSCON_ANSWER=N`) so `:try_embed_fallback` is reached the same way a real user with
+  no ambient Python and no reachable uv/conda would reach it. `.decline` additionally forces
+  `HP_TEST_FORCE_EMBED_FAIL=1` and asserts a clean `:die` (state=error, non-zero exit) instead
+  of a hang or false success. `.real` instead sets `HP_TEST_FORCE_EMBED_REAL=1` (a narrow hole
+  through the `HP_OFFLINE_MODE=1` gate for this tier only) and exercises the real
+  download-verify-extract-patch-pip-bootstrap-canary-build-run path end-to-end. Both skip with
+  `skip=true` in the conda-full lane (`HP_FORCE_CONDA_ONLY=1` blocks all non-conda fallbacks).
 
 **NDJSON files and who owns them:**
 - `tests/~test-results.ndjson` -- written by every `selfapps_*.ps1` test script during the

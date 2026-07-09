@@ -83,16 +83,91 @@ stale locks for other users of the same folder to wait out.
 
 ---
 
-## Standalone Python-download tier (REQ-009 Tier 5, PLANNED -- not yet implemented)
+## Standalone Python-download tier (REQ-009 Tier 5, SHIPPED)
 
-**Status: design map only, agreed 2026-07, no code shipped yet.** This section exists so that
-whoever implements the embeddable-Python fallback tier (closing the "Provider symmetry" Active
-Backlog item in CLAUDE.md) does not have to re-derive the full `HP_ENV_MODE` blast radius from
-scratch. It was produced by auditing every `HP_ENV_MODE` reference in `run_setup.bat` (34 sites
-at audit time) and classifying each as "needs a new `embed` case" vs. "already provider-agnostic,
-works automatically." Treat this as a starting map, not a spec frozen in stone -- re-verify
-against the current file before implementing, since line numbers and surrounding code will have
-moved.
+**Status: implemented 2026-07.** `:try_embed_fallback` (new subroutine in `run_setup.bat`) is
+wired into both fallback ladders, a new `HP_ENV_MODE=embed` value flows through every call site
+identified during the original design audit, and CI coverage lives in
+`tests/selfapps_ux_hardening.ps1` (`self.embed.fallback.decline`, `self.embed.fallback.real` --
+see `docs/agent-ndjson.md`). This section is kept as the map of the `HP_ENV_MODE` blast radius
+this tier touches -- useful for anyone extending or debugging it later, not just for the original
+implementer. The original design-map audit covered 34 `HP_ENV_MODE` reference sites in
+`run_setup.bat`; re-verify line numbers against the current file before relying on them, since
+they will have moved.
+
+**Refinement made during implementation, beyond the original design map: two-stage
+PowerShell/Python split, not a single PowerShell script.** The original design map (below)
+assumed one implementation stage. Building it surfaced a chicken-and-egg problem the design map
+had not addressed: this tier runs precisely when NO Python interpreter exists anywhere on the
+system (the scenario it exists for), so per-request version-table logic cannot live in Python
+until *some* interpreter is on disk. The shipped design splits the tier into two stages:
+1. **PowerShell stage** (`tools/embed_extract.ps1`, embedded as `HP_EMBED_EXTRACT`) -- batch has
+   already downloaded ONE hardcoded "latest" version's zip (`HP_EMBED_LATEST_PATCH` /
+   `HP_EMBED_LATEST_SHA256` constants near the top of `run_setup.bat`). This script does ONLY
+   checksum verification (`Get-FileHash`), extraction (`Expand-Archive`), and the `._pth` patch
+   (uncommenting `#import site`) -- zero per-request branching. Prints the extracted
+   `python.exe` path on success, exits 1 silently on any failure.
+2. **Python stage** (`tools/embed_pyver_check.py`, embedded as `HP_EMBED_PYVER_CHECK`) -- runs
+   under the fresh interpreter stage 1 just extracted. This is the ONLY place per-request version
+   logic lives, reusing the same `PYSPEC` value `~detect_python.py` already computed earlier in
+   the bootstrap (the same value uv/conda already honor) instead of re-deriving equivalent regex
+   logic a second time in PowerShell. If `PYSPEC` requests a minor other than the table's
+   "latest" entry, it re-fetches/verifies/extracts the correct version itself via stdlib
+   (`urllib.request`, `hashlib`, `zipfile`) -- not PowerShell a second time.
+
+   `EMBED_PYTHON_TABLE` (in `embed_pyver_check.py`) maps minor -> `(patch, sha256)` for 3.10
+   through 3.14 (5 entries, matching the design map's "python.org's currently-supported (non-EOL)
+   CPython minors" scope decision below). The `"3.14"` entry's patch/sha256 MUST match the
+   batch-side `HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256` constants exactly -- a refresh that
+   updates one but not the other is caught by `tests/test_embed_tier.py`'s
+   `BatchPythonConsistency` test, not discovered live.
+
+**Windows self-file-lock hazard (discovered during implementation, not in the original design
+map): a running process cannot delete or replace its own executable/DLLs.** The Python stage
+(stage 2 above) runs FROM `HP_EMBED_DIR` (the directory stage 1 just extracted into) -- so if a
+version swap is needed, extracting the replacement directly into `HP_EMBED_DIR` while that same
+process is still running fails on Windows file locks. Fix: the Python stage extracts any swap
+into a SIBLING staging directory (`HP_EMBED_DIR` + `_swap`), never into its own running directory.
+The actual directory swap (`rd /s /q` old + `move /y` new-into-place) happens in the BATCH caller,
+only AFTER the `for /f ... in ('powershell ... -File "~embed_pyver_check.py" ...')` call has
+returned -- i.e., only after the Python process has fully exited and released its locks. If you
+ever refactor this to invoke the Python stage differently (e.g. inline instead of via `for /f`
+capturing its own exit), re-verify the swap still happens strictly after process exit.
+
+**Offline-mode test-flag exception chain -- touches two call sites, not one.** A CI test that
+wants to exercise the REAL embed download (`HP_TEST_FORCE_EMBED_REAL=1`) needs to punch a hole
+through `HP_OFFLINE_MODE=1` at BOTH: `:try_embed_fallback`'s own offline check, AND
+`:download_get_pip` (reused from the REQ-023b venv-resilience work to bootstrap pip into the
+embed interpreter), whose existing offline exception only recognized
+`HP_TEST_FORCE_VENV_CREATE_FAIL`. `:download_get_pip`'s check was extended to an OR of both flags
+via an intermediate `HP_GETPIP_SKIP_OFFLINE` variable (batch has no clean single-line boolean OR
+without delayed expansion, which is off-limits here -- see "CMD.EXE 8191-Character Line Limit"
+and the delayed-expansion ban elsewhere in `docs/agent-lessons-learned.md`). If a future test
+needs `:download_get_pip`'s real download exercised under a THIRD new test flag, both call sites
+must be extended together, or the new flag will be silently blocked by the second one even after
+successfully bypassing the first.
+
+**CMD line-length budget was hit for real building this.** The first draft of
+`embed_pyver_check.py` (comments, docstrings, nested-dict table) produced a base64 line of 9439
+chars -- over the 8191 hard limit (see "CMD.EXE 8191-Character Line Limit" in
+`docs/agent-lessons-learned.md`) by 1248 chars. Trimmed to 6739 chars (comments condensed,
+docstrings replaced with inline comments, table changed from nested dicts to tuples) with a
+1452-char safety margin. If you extend `EMBED_PYTHON_TABLE` with more minors or add features,
+re-check the budget with the same method documented in that lessons-learned entry before assuming
+it still fits.
+
+**Sigstore was evaluated and rejected for this tier's integrity check, in favor of embedded
+SHA256.** Verifying via Sigstore would require `cosign` or `sigstore-python`, both of which
+themselves require an existing Python/tool installation -- circular for a tier whose entire
+purpose is "no Python exists yet." Embedded SHA256 (`HP_EMBED_LATEST_SHA256` / the per-minor
+`EMBED_PYTHON_TABLE` entries, computed once at pin-time and verified independently against real
+downloads before shipping) is proportionate and consistent with this repo's "bootstrap
+reliability > API correctness" architecture principle (see CLAUDE.md).
+
+**Original design-map audit below, preserved as the source of the confirmed call-site list.**
+This was produced by auditing every `HP_ENV_MODE` reference in `run_setup.bat` (34 sites at audit
+time) and classifying each as "needs a new `embed` case" vs. "already provider-agnostic, works
+automatically."
 
 **Design decisions already agreed with the user (2026-07):**
 - No REQ-014-style consent gate. Unlike system Python (which uses a shared, uncontrolled,
@@ -193,10 +268,11 @@ plain-pip fallback for any other mode. This means venv and system modes ALREADY 
 blind spot today: if warnfix detects missing modules under venv or system, neither branch matches
 (uv is false, `CONDA_BAT` is undefined since conda was never touched), so the repair loop is a
 no-op and the rebuild proceeds with the same missing modules still missing. This is a real,
-pre-existing bug independent of the embed-tier work -- embed would inherit the identical gap by
-default (matching venv's current behavior, not introducing a new one). Worth a dedicated future
-fix (add a plain-`%HP_PY% -m pip install` catch-all branch covering venv/system/embed alike), but
-out of scope for the embed tier itself -- do not fold it into that PR.
+pre-existing bug independent of the embed-tier work. **Confirmed unchanged after shipping embed**
+(the `~line 2661` warnfix REPAIR-install branch was not touched by the Tier 5 PR): embed inherits
+the identical gap, matching venv's/system's existing behavior, not introducing a new one. Still
+worth a dedicated future fix (add a plain-`%HP_PY% -m pip install` catch-all branch covering
+venv/system/embed alike) -- remains its own backlog item, not folded into the Tier 5 work.
 
 ---
 
