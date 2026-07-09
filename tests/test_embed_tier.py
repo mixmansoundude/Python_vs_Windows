@@ -86,11 +86,16 @@ class BatchPythonConsistency(unittest.TestCase):
 
 class PayloadSync(unittest.TestCase):
     def test_embed_extract_ps1_matches_source(self):
+        # derived requirement: tools/embed_extract.ps1 carries .gitattributes' `*.ps1 text
+        # eol=crlf`, so a checkout on Windows CI materializes CRLF line endings regardless of
+        # what the payload was encoded from -- normalize both sides before comparing so this
+        # test verifies content, not incidental checkout-time line-ending translation (which
+        # PowerShell itself does not care about either).
         bat = BAT.read_text(encoding="ascii", errors="replace")
         m = re.search(r'set "HP_EMBED_EXTRACT=([A-Za-z0-9+/=]+)"', bat)
         self.assertIsNotNone(m, "HP_EMBED_EXTRACT payload not found in run_setup.bat")
-        decoded = base64.b64decode(m.group(1))
-        source = PS_SOURCE.read_bytes()
+        decoded = base64.b64decode(m.group(1)).replace(b"\r\n", b"\n")
+        source = PS_SOURCE.read_bytes().replace(b"\r\n", b"\n")
         self.assertEqual(
             decoded, source,
             "HP_EMBED_EXTRACT base64 is out of sync with tools/embed_extract.ps1; re-encode it.",

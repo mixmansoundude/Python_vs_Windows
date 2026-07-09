@@ -481,6 +481,27 @@ The canonical source is the decoded base64. To update a helper:
 4. Replace the `set "HP_VARNAME=..."` line in run_setup.bat.
 5. Run `python tools/check_delimiters.py run_setup.bat` and the relevant unit test.
 
+**PayloadSync tests for a `.ps1` canonical source must normalize CRLF/LF before comparing bytes.**
+All prior PayloadSync precedents (`test_collect_submodules.py`, `test_hidden_import_scan.py`)
+wrap `.py` canonical sources, which are `eol=lf` per `.gitattributes` -- no checkout-time line
+ending translation, so a raw `read_bytes()` byte-comparison against the base64-decoded payload is
+safe. The first `.ps1` canonical source with a PayloadSync test (`tools/embed_extract.ps1`, added
+for REQ-009 Tier 5) hit a real, CI-only failure this precedent didn't anticipate: `.ps1` files
+carry `*.ps1 text eol=crlf`, so `actions/checkout@v5` on the Windows CI runner materializes CRLF
+line endings in the working tree regardless of what the payload was encoded from. If the payload
+was encoded on a Linux/dev sandbox (LF-only working copy, since files created via a local editor
+don't go through git's checkout smudge filter), the base64-decoded bytes stay LF while
+`PS_SOURCE.read_bytes()` on the Windows runner returns CRLF -- a byte-for-byte mismatch that
+passes locally and fails only in real CI. This is a test-assertion bug only, not a functional one:
+the base64 string itself is immune to `.bat` eol conversion (it's plain characters on one line,
+no `\r`/`\n` inside it), and the runtime-extracted `.ps1` script works identically whether it
+lands on disk as LF or CRLF (PowerShell parses both). Fix: normalize both sides with
+`.replace(b"\r\n", b"\n")` before `assertEqual` -- verifies logical content, not incidental
+checkout-time line-ending translation. Any FUTURE PayloadSync test added for a `.bat`/`.ps1`/
+`.cmd`/`.psm1`/`.psd1` canonical source (anything covered by an `eol=crlf` `.gitattributes` rule)
+must include this same normalization from the start; `.py`/`.sh`/other `eol=lf`-attributed sources
+do not need it.
+
 **Python baseline reminder:** With `UV_PYTHON_PREFERENCE=only-managed`, helpers normally run
 on the latest managed CPython, but fallback paths can still hand them an older ambient
 interpreter. Target modern CPython, guard modern *stdlib features* with `try/except`, and
