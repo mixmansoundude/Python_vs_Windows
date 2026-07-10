@@ -2079,38 +2079,49 @@ call :log "[INFO] embed fallback: %HP_EMBED_LATEST_PATCH% extracted and verified
 rem --- Python stage: only place per-request version logic lives (deliberately not PowerShell
 rem a second time). A failure here is non-fatal -- the "latest" interpreter from the stage above
 rem is kept and used as-is; only a genuine version *mismatch* is lost, not the whole tier.
+rem derived requirement: this block used to be one big parenthesized "if not errorlevel 1 ( ... )"
+rem block. A for /f loop inside it set HP_EMBED_SWAP_DIR/_TAG/_MINOR, and code later in the SAME
+rem block read %HP_EMBED_SWAP_DIR% to decide whether to swap -- but CMD's parse-time %VAR%
+rem expansion substitutes every %VAR% in a parenthesized block using the value from BEFORE the
+rem block began, not a value a for /f loop set earlier in the same block's own execution. Since
+rem HP_EMBED_SWAP_DIR was never set before this point, that read was always empty, so the swap
+rem NEVER executed regardless of what the Python stage actually requested -- the entire
+rem "pull latest, then swap to the user's requested version" feature was dead code. Fixed via
+rem goto-based dispatch (see "Provider-cascade dispatch is goto-based on purpose" in
+rem docs/agent-lessons-learned.md) so every %VAR% read below reflects its true runtime value.
 call :emit_from_base64 "~embed_pyver_check.py" HP_EMBED_PYVER_CHECK
-if not errorlevel 1 (
-  set "HP_EMBED_CHECK_OUT=~embed_pyver_check.txt"
-  if exist "%HP_EMBED_CHECK_OUT%" del "%HP_EMBED_CHECK_OUT%" >nul 2>&1
-  "%HP_EMBED_PY%" "~embed_pyver_check.py" "%HP_EMBED_DIR%" > "%HP_EMBED_CHECK_OUT%" 2>> "%LOG%"
-  if exist "~embed_pyver_check.py" del "~embed_pyver_check.py" >nul 2>&1
-  set "HP_EMBED_SWAP_TAG="
-  set "HP_EMBED_SWAP_MINOR="
-  set "HP_EMBED_SWAP_DIR="
-  for /f "usebackq tokens=1,2,3 delims=|" %%A in ("%HP_EMBED_CHECK_OUT%") do (
-    set "HP_EMBED_SWAP_TAG=%%A"
-    set "HP_EMBED_SWAP_MINOR=%%B"
-    set "HP_EMBED_SWAP_DIR=%%C"
-  )
-  if exist "%HP_EMBED_CHECK_OUT%" del "%HP_EMBED_CHECK_OUT%" >nul 2>&1
-  rem derived requirement: the version-check process (the "%HP_EMBED_PY%" call above) has
-  rem already fully exited by this point, so its file locks on HP_EMBED_DIR are released and
-  rem it is now safe to replace that directory -- swapping while that process was still running
-  rem would fail (Windows will not let a process delete/replace the files it is executing from),
-  rem which is exactly why the Python stage extracted into a sibling _swap directory instead of
-  rem overwriting HP_EMBED_DIR itself. See docs/agent-interconnect.md.
-  if defined HP_EMBED_SWAP_DIR if exist "%HP_EMBED_SWAP_DIR%\python.exe" (
-    rd /s /q "%HP_EMBED_DIR%" >nul 2>&1
-    move /y "%HP_EMBED_SWAP_DIR%" "%HP_EMBED_DIR%" >nul 2>&1
-    if exist "%HP_EMBED_DIR%\python.exe" (
-      call :log "[INFO] embed fallback: swapped to requested Python %HP_EMBED_SWAP_MINOR%."
-    ) else (
-      call :log "[WARN] embed fallback: swap move failed; interpreter may be missing."
-    )
-  )
-  if /i "%HP_EMBED_SWAP_TAG%"=="fellback" call :log "[WARN] REQ-009: requested Python not in embed table; using %HP_EMBED_SWAP_MINOR% instead."
+if errorlevel 1 goto :embed_pyver_check_skip
+set "HP_EMBED_CHECK_OUT=~embed_pyver_check.txt"
+if exist "%HP_EMBED_CHECK_OUT%" del "%HP_EMBED_CHECK_OUT%" >nul 2>&1
+"%HP_EMBED_PY%" "~embed_pyver_check.py" "%HP_EMBED_DIR%" > "%HP_EMBED_CHECK_OUT%" 2>> "%LOG%"
+if exist "~embed_pyver_check.py" del "~embed_pyver_check.py" >nul 2>&1
+set "HP_EMBED_SWAP_TAG="
+set "HP_EMBED_SWAP_MINOR="
+set "HP_EMBED_SWAP_DIR="
+for /f "usebackq tokens=1,2,3 delims=|" %%A in ("%HP_EMBED_CHECK_OUT%") do (
+  set "HP_EMBED_SWAP_TAG=%%A"
+  set "HP_EMBED_SWAP_MINOR=%%B"
+  set "HP_EMBED_SWAP_DIR=%%C"
 )
+if exist "%HP_EMBED_CHECK_OUT%" del "%HP_EMBED_CHECK_OUT%" >nul 2>&1
+rem derived requirement: the version-check process (the "%HP_EMBED_PY%" call above) has
+rem already fully exited by this point, so its file locks on HP_EMBED_DIR are released and
+rem it is now safe to replace that directory -- swapping while that process was still running
+rem would fail (Windows will not let a process delete/replace the files it is executing from),
+rem which is exactly why the Python stage extracted into a sibling _swap directory instead of
+rem overwriting HP_EMBED_DIR itself. See docs/agent-interconnect.md.
+if not defined HP_EMBED_SWAP_DIR goto :embed_pyver_check_tagcheck
+if not exist "%HP_EMBED_SWAP_DIR%\python.exe" goto :embed_pyver_check_tagcheck
+rd /s /q "%HP_EMBED_DIR%" >nul 2>&1
+move /y "%HP_EMBED_SWAP_DIR%" "%HP_EMBED_DIR%" >nul 2>&1
+if exist "%HP_EMBED_DIR%\python.exe" (
+  call :log "[INFO] embed fallback: swapped to requested Python %HP_EMBED_SWAP_MINOR%."
+) else (
+  call :log "[WARN] embed fallback: swap move failed; interpreter may be missing."
+)
+:embed_pyver_check_tagcheck
+if /i "%HP_EMBED_SWAP_TAG%"=="fellback" call :log "[WARN] REQ-009: requested Python not in embed table; using %HP_EMBED_SWAP_MINOR% instead."
+:embed_pyver_check_skip
 set "HP_EMBED_PY=%HP_EMBED_DIR%\python.exe"
 if not exist "%HP_EMBED_PY%" (
   call :log "[WARN] embed fallback: interpreter missing after version-check stage."
