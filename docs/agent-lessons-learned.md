@@ -277,15 +277,15 @@ pre-tier state, not just return a non-zero/failure signal -- a failed subroutine
 no trace of its attempt in shared state, since callers may (and in this codebase's case, routinely
 do, via the `:die`-continues quirk) proceed past a declared failure using whatever is left behind.
 
-**Known, closely-related, NOT-yet-fixed gap, flagged here rather than fixed in the same pass (out
-of scope for the Tier 5 PR that found it):** `:try_venv_fallback`'s `:venv_canary_fail` label has
+**Sibling leak fixed in a follow-up pass:** `:try_venv_fallback`'s `:venv_canary_fail` label had
 the identical pattern -- `HP_PY` is set to `.venv\Scripts\python.exe` during venv creation, and if
-the post-creation canary probe (REQ-023) then fails, it returns `exit /b 1` without clearing
-`HP_PY`. Not hit by either new embed test (both force `HP_TEST_FORCE_VENV_FAIL=1`, which exits
-before `HP_PY` is ever set in venv's case, so this leak point isn't on their path), but the same
-failure mode is plausible: a real-world venv that creates successfully but fails its canary check
+the post-creation canary probe (REQ-023) then fails, it returned `exit /b 1` without clearing
+`HP_PY`. Not hit by either Tier 5 embed test (both force `HP_TEST_FORCE_VENV_FAIL=1`, which exits
+before `HP_PY` is ever set in venv's case, so this leak point wasn't on their path), but the same
+failure mode was plausible: a real-world venv that creates successfully but fails its canary check
 would leak a technically-existing-but-broken interpreter path forward exactly like system's did.
-Worth a small follow-up fix (`set "HP_PY="` before that `exit /b 1`) using the same rule above.
+Fixed with `set "HP_PY="` before that `exit /b 1`, exact mirror of the `:try_system_fallback` fix
+above.
 
 ---
 

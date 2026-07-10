@@ -1941,6 +1941,13 @@ if errorlevel 1 goto :venv_canary_fail
 goto :venv_canary_ok
 :venv_canary_fail
 call :log "[WARN] venv fallback: interpreter created but failed canary probe (import sys)."
+rem derived requirement: HP_PY was set above to the venv interpreter path in preparation for
+rem success, but a failed canary probe must not leak it forward -- a later gate
+rem (:after_env_mode_selection's "if not defined HP_PY") would otherwise treat this failed tier
+rem as if a real provider had been selected, silently proceeding with a broken interpreter
+rem instead of reaching :die. Exact mirror of the :try_system_fallback fix. See
+rem docs/agent-lessons-learned.md "A declined/failed fallback tier must clear HP_PY".
+set "HP_PY="
 exit /b 1
 :venv_canary_ok
 set "HP_ENV_MODE=venv"
