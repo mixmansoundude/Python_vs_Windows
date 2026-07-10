@@ -2221,7 +2221,22 @@ jobs:
             }
           }
 
-          Get-ChildItem -LiteralPath . -Force | Where-Object { $_.Name -notin @('.', '..', '.git', 'site') } | ForEach-Object {
+          # derived requirement: this diagnostics snapshot previously blanket-copied the whole
+          # post-test repo tree with only .git/site excluded, sweeping up every scratch
+          # conda/venv/uv env, PyInstaller dist/build output, downloaded Miniconda/embed-Python
+          # zips, and extracted embeddable-Python distribution any selfapps/selftest sub-bootstrap
+          # left behind -- ballooning per-lane diag-selftest-* artifacts to ~5.4 GB combined
+          # (confirmed via real per-artifact byte sizes) even though the actual published Pages
+          # site only needs ~32 MB of logs/index. This is the most likely cause of the
+          # "Publish diagnostics to Pages" job getting cancelled on a real merge-commit run.
+          $diagExcludeExact = @('.', '..', '.git', 'site', 'dist', 'build', '.venv', '.uv_env', '~uv_bin', 'Miniconda3')
+          $diagExcludePatterns = @('~embed_python*', '*.zip', '*.exe')
+          Get-ChildItem -LiteralPath . -Force | Where-Object {
+            $name = $_.Name
+            if ($diagExcludeExact -contains $name) { return $false }
+            foreach ($pat in $diagExcludePatterns) { if ($name -like $pat) { return $false } }
+            return $true
+          } | ForEach-Object {
             Copy-Item -Path $_.FullName -Destination (Join-Path $repoDir $_.Name) -Recurse -Force -ErrorAction SilentlyContinue
           }
 
