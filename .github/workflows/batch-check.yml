@@ -554,11 +554,27 @@ jobs:
             Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
           }
           python -m pip install pytest pydantic requests --quiet
-          $rawOut = & python -m pytest tests/ `
-            --ignore=tests/test_entry_selection.py `
-            --ignore=tests/test_entry_single.py `
-            --ignore=tests/test_poll_public_diag_logging.py `
-            --tb=line -v 2>&1
+          # derived requirement: collect only the flat tests/test_*.py files (this repo's actual
+          # test-file layout -- confirmed no legitimate test_*.py exists in any subdirectory),
+          # not a recursive "tests/" scan. A recursive scan picks up ANY nested Python
+          # installation's own bundled test suite that happens to land under tests/ during this
+          # same CI run -- e.g. the REQ-009 embed tier's real python.org download (in
+          # tests/~selftest_cascade_exec/~embed_python/ or tests/~selftest_embed_real/) installs
+          # pip/setuptools/PyInstaller, and setuptools bundles its OWN test_*.py files under
+          # site-packages/setuptools/_distutils/tests/ -- pytest then tries to import those as if
+          # they were this repo's tests and fails to collect them (missing distutils/jaraco.path,
+          # relative-import errors), even though they were never meant to run standalone. Root
+          # cause was always latent (any scratch dir containing a nested Python install could
+          # trigger it); confirmed via a real CI failure once the provider-chain reorder made the
+          # uv-lane cascade test reach a real embed build for the first time. PowerShell does not
+          # glob-expand a "tests/test_*.py" string argument to an external command the way a bash
+          # shell would, so the file list is enumerated explicitly via Get-ChildItem instead of
+          # relying on a wildcard string reaching python/pytest unexpanded.
+          $excludeUnitFiles = @('test_entry_selection.py', 'test_entry_single.py', 'test_poll_public_diag_logging.py')
+          $unitTestFiles = Get-ChildItem -Path 'tests' -Filter 'test_*.py' -File |
+            Where-Object { $excludeUnitFiles -notcontains $_.Name } |
+            ForEach-Object { $_.FullName }
+          $rawOut = & python -m pytest $unitTestFiles --tb=line -v 2>&1
           $exitCode = $LASTEXITCODE
           $outStr = ($rawOut -join "`n")
           $pass = ($exitCode -eq 0)
