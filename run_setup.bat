@@ -3141,6 +3141,11 @@ if errorlevel 1 (
 goto :hidden_import_loop
 :hidden_import_recover_done
 if "%HP_EXE_EXIT%"=="0" if %HP_HIDDEN_ITER% GEQ 1 call :log "[REPAIR][HIDDEN_IMPORT] EXE verified after hidden-import recovery."
+rem derived requirement: prior to this line, exhausting the 3-attempt cap with the EXE still
+rem failing logged nothing beyond the per-iteration [REPAIR][HIDDEN_IMPORT] lines -- the user
+rem only saw the generic post-build failure output, with no explicit signal that auto-recovery
+rem was attempted and gave up.
+if not "%HP_EXE_EXIT%"=="0" if %HP_HIDDEN_ITER% GEQ 3 call :log "[WARN][HIDDEN_IMPORT] Auto-recovery exhausted after 3 attempts; module(s) still missing."
 if exist "dist\~exe_out.txt" del "dist\~exe_out.txt" >nul 2>&1
 rem clean up artifacts created by recovery rebuilds (mirror the main-build cleanup);
 rem preserve a user pre-existing spec.
