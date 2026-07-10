@@ -3784,21 +3784,39 @@ exit /b 0
 rem REQ-013: called after a primary download fails. Pings 8.8.8.8 to distinguish
 rem no-internet (Scenario A) from specific-URL-failed (Scenario B).
 rem HP_TEST_OFFLINE=1 simulates ping failure for CI branch coverage.
+rem derived requirement: both the ping and curl reachability checks retry once (2 total
+rem attempts each) before concluding "no internet" -- a single dropped ICMP echo or a
+rem momentarily-contended curl connect on a busy shared CI runner is enough to misclassify a
+rem genuinely-online host as offline (root-caused from a real self.ux.connectivity.online CI
+rem flake). Mirrors the REQ-022 detect-transient-then-retry-once idiom used elsewhere in this
+rem file (:try_conda_create/:conda_bulk_install). The counter-based loop below is safe because
+rem these lines are top-level (not nested in a parenthesized block); the "Y" retry branch
+rem further down uses literal duplication instead of a counter, since it IS nested in a block
+rem and a counter set+read inside the same block would hit CMD's parse-time %VAR% expansion
+rem trap (see docs/agent-lessons-learned.md).
 if "%HP_TEST_OFFLINE%"=="1" (
   call :log "[TEST] HP_TEST_OFFLINE: simulating ping failure for REQ-013."
   goto :cndf_ping_failed
 )
+set "HP_CONN_PING_ATTEMPT=0"
+:cndf_ping_retry
+set /a HP_CONN_PING_ATTEMPT+=1
 ping -n 1 8.8.8.8 >nul 2>&1
 if not errorlevel 1 (
   call :log "[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback."
   exit /b 0
 )
+if %HP_CONN_PING_ATTEMPT% LSS 2 goto :cndf_ping_retry
 rem ICMP may be blocked on corporate networks; try HTTPS as secondary reachability check.
+set "HP_CONN_CURL_ATTEMPT=0"
+:cndf_curl_retry
+set /a HP_CONN_CURL_ATTEMPT+=1
 curl -s --connect-timeout 5 --max-time 8 -o nul "https://conda.anaconda.org" >nul 2>&1
 if not errorlevel 1 (
   call :log "[INFO] REQ-013: Connectivity check: internet reachable via HTTPS (ICMP blocked). Cascading to fallback."
   exit /b 0
 )
+if %HP_CONN_CURL_ATTEMPT% LSS 2 goto :cndf_curl_retry
 :cndf_ping_failed
 call :log "[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed)."
 :cndf_prompt_loop
@@ -3814,9 +3832,23 @@ if /I "%HP_CONN_CHOICE:~0,1%"=="y" (
     call :log "[TEST] HP_TEST_OFFLINE: Y selected; still simulating offline."
     goto :cndf_ping_failed
   )
+  rem derived requirement: 2 literal attempts each (not a counter var) -- this whole branch is
+  rem nested inside the "y" parenthesized block, and a counter set+read inside the same block
+  rem would be frozen at the block's pre-execution value by CMD's parse-time %VAR% expansion
+  rem (see docs/agent-lessons-learned.md); literal duplication has no such variable to freeze.
   ping -n 1 8.8.8.8 >nul 2>&1
   if not errorlevel 1 (
     call :log "[INFO] REQ-013: Connectivity restored after retry."
+    exit /b 0
+  )
+  ping -n 1 8.8.8.8 >nul 2>&1
+  if not errorlevel 1 (
+    call :log "[INFO] REQ-013: Connectivity restored after retry."
+    exit /b 0
+  )
+  curl -s --connect-timeout 5 --max-time 8 -o nul "https://conda.anaconda.org" >nul 2>&1
+  if not errorlevel 1 (
+    call :log "[INFO] REQ-013: Connectivity restored after retry (HTTPS, ICMP blocked)."
     exit /b 0
   )
   curl -s --connect-timeout 5 --max-time 8 -o nul "https://conda.anaconda.org" >nul 2>&1

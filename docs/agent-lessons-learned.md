@@ -94,6 +94,40 @@ CPython. But fallback paths still exist where `HP_PY` can be an older ambient in
 
 ---
 
+## REQ-013 connectivity check needed the REQ-022 retry idiom too -- and a second technique for the in-block case
+
+`:check_net_after_dl_fail` (the REQ-013 "is the host actually offline" probe) did exactly ONE
+`ping -n 1 8.8.8.8` and, if that failed, exactly ONE `curl --connect-timeout 5 --max-time 8` to
+`conda.anaconda.org` -- zero retries on either check. Root-caused a real CI failure to this: a
+single dropped ICMP echo plus a curl connect that happened to exceed 5s (plausible under network
+contention on a shared runner, especially in the `conda-full` lane which is mid-flight doing
+several other real network operations for its ~80-minute duration) is enough to misclassify a
+genuinely-online host as offline. This is the same transient-single-shot-check problem REQ-022
+already solved for `:try_conda_create`/`:conda_bulk_install` (detect, wait, retry once) -- just
+never applied to this subroutine.
+
+Fixed by adding a 2-total-attempts retry to both the ping and curl checks, but using **two
+different techniques depending on nesting**, because this subroutine has both a top-level check
+and an in-block check:
+
+- **Top-level check** (the initial ping/curl, not nested in any parenthesized block): a normal
+  `set "HP_CONN_PING_ATTEMPT=0"` + `:label` + `set /a HP_CONN_PING_ATTEMPT+=1` + single-line
+  `if %HP_CONN_PING_ATTEMPT% LSS 2 goto :label` counter loop is safe here, because every line is
+  freshly parsed at the top level -- no parenthesized block is freezing any `%VAR%` read.
+- **In-block check** (the "Y" interactive retry, nested inside `if /I "...=="y" ( ... )`): a
+  counter variable would NOT work here -- `set /a`-ing it and then reading it via `if %VAR% LSS 2
+  goto` INSIDE the same parenthesized block hits the exact parse-time `%VAR%`-expansion trap
+  documented above ("Provider-cascade dispatch is goto-based on purpose"): the whole block is
+  read once before any of its `set` statements execute, so the counter read would always see the
+  pre-block (0/undefined) value, making the loop condition always true or always false depending
+  on how it's written, never the real in-block-incremented count. Fixed instead by literally
+  duplicating the ping/curl-and-check pair a second time (2 total attempts spelled out, no
+  variable) -- there is nothing to freeze when there is no counter variable at all. **Rule of
+  thumb:** inside a parenthesized block, prefer literal duplication over a counter-variable retry
+  loop for a small, fixed attempt count (2-3); reserve the counter-loop idiom for top-level code.
+
+---
+
 ## Batch / CMD.EXE syntax quirks (the most common source of regressions)
 
 The bootstrapper is a single self-contained `.bat` file, so CMD.EXE parsing rules dominate
