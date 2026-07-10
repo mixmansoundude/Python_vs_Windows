@@ -1647,15 +1647,22 @@ rem REQ-009/REQ-005.10 slice 3: re-attempt the dependency phase under the next p
 rem Dispatch is goto-based (no parenthesized interdependent sets) to avoid CMD parse-time
 rem expansion traps. Each tier is marked HP_CASCADE_TRIED_<tier> the first time it is used as a
 rem cascade source; a tier is never used twice, so tiers exhaust and the run stops (no loop).
-rem HP_ENV_MODE only advances (uv -> conda -> venv -> system -> embed), so re-entry cannot
-rem revisit a tier. NOTE: the :log messages below say "uv to conda" (not "uv -> conda") on
+rem HP_ENV_MODE only advances (uv -> conda -> embed -> venv -> system), so re-entry cannot
+rem revisit a tier. conda and embed both front-load acquisition of a FRESH/pinned interpreter
+rem before falling back to venv/system, which merely wrap whatever Python is already ambient on
+rem the machine -- see docs/agent-interconnect.md "Standalone Python-download tier" for the
+rem ordering rationale. NOTE: the :log messages below say "uv to conda" (not "uv -> conda") on
 rem purpose -- :log echoes UNQUOTED, so a ">" in the message would be parsed as redirection and
 rem eat the line (see docs/agent-lessons-learned.md). Do not "fix" these to arrows.
 set "HP_CASCADE_APPROVED="
 if /i "%HP_ENV_MODE%"=="uv" goto :cascade_from_uv
 if /i "%HP_ENV_MODE%"=="conda" goto :cascade_from_conda
+if /i "%HP_ENV_MODE%"=="embed" goto :cascade_from_embed
 if /i "%HP_ENV_MODE%"=="venv" goto :cascade_from_venv
-if /i "%HP_ENV_MODE%"=="system" goto :cascade_from_system
+rem NOTE: no "system" case here, by design -- system is the absolute last resort (Tier 4 by
+rem naming/history, REQ-014-gated), no cascade target beyond it. A re-entry with
+rem HP_ENV_MODE=system falls straight through to the catch-all below, exactly as a re-entry
+rem with HP_ENV_MODE=embed used to before this reorder (when embed was terminal).
 call :log "[INFO] REQ-009: provider tiers exhausted after %HP_ENV_MODE%; keeping current build."
 goto :after_cascade_decision
 
@@ -1678,14 +1685,26 @@ goto :after_cascade_decision
 if defined HP_CASCADE_TRIED_CONDA goto :after_cascade_decision
 set "HP_CASCADE_TRIED_CONDA=1"
 if "%HP_FORCE_CONDA_ONLY%"=="1" goto :cascade_condaonly_stop
-call :log "[INFO] REQ-009: cascading provider conda to venv; re-attempting dependencies."
-echo *** [INFO] Trying the next Python provider (venv) to resolve dependencies...
-call :try_venv_fallback
-if errorlevel 1 goto :cascade_venv_unavailable
+call :log "[INFO] REQ-009: cascading provider conda to embed; re-attempting dependencies."
+echo *** [INFO] Trying the next Python provider (embed) to resolve dependencies...
+call :try_embed_fallback
+if errorlevel 1 goto :cascade_embed_unavailable
 goto :after_env_mode_selection
 :cascade_condaonly_stop
 call :log "[INFO] REQ-009: conda-only mode; cascade beyond conda suppressed; keeping current build."
 goto :after_cascade_decision
+:cascade_embed_unavailable
+call :log "[WARN] REQ-009: cascade target embedded Python unavailable; keeping current build."
+goto :after_cascade_decision
+
+:cascade_from_embed
+if defined HP_CASCADE_TRIED_EMBED goto :after_cascade_decision
+set "HP_CASCADE_TRIED_EMBED=1"
+call :log "[INFO] REQ-009: cascading provider embed to venv; re-attempting dependencies."
+echo *** [INFO] Trying the next Python provider (venv) to resolve dependencies...
+call :try_venv_fallback
+if errorlevel 1 goto :cascade_venv_unavailable
+goto :after_env_mode_selection
 :cascade_venv_unavailable
 call :log "[WARN] REQ-009: cascade target venv unavailable; keeping current build."
 goto :after_cascade_decision
@@ -1693,29 +1712,15 @@ goto :after_cascade_decision
 :cascade_from_venv
 if defined HP_CASCADE_TRIED_VENV goto :after_cascade_decision
 set "HP_CASCADE_TRIED_VENV=1"
-rem REQ-009/REQ-014: system Python is Tier 4; reached in any run and gated only by the REQ-014
-rem consent prompt inside :try_system_fallback (no env flag). A decline keeps the current build.
+rem REQ-009/REQ-014: system Python is Tier 4 (by naming/history; executed last in chain order);
+rem reached in any run and gated only by the REQ-014 consent prompt inside :try_system_fallback
+rem (no env flag). A decline keeps the current build.
 call :log "[INFO] REQ-009: cascading provider venv to system; re-attempting dependencies."
 call :try_system_fallback
 if errorlevel 1 goto :cascade_system_unavailable
 goto :after_env_mode_selection
 :cascade_system_unavailable
 call :log "[WARN] REQ-009: cascade target system Python unavailable; keeping current build."
-goto :after_cascade_decision
-
-:cascade_from_system
-if defined HP_CASCADE_TRIED_SYSTEM goto :after_cascade_decision
-set "HP_CASCADE_TRIED_SYSTEM=1"
-rem REQ-009 Tier 5: embedded Python is the final tier; no further cascade target beyond it (no
-rem "embed" case is added to the dispatch above, so a future re-entry with HP_ENV_MODE=embed
-rem falls through to the "tiers exhausted" catch-all, exactly like reaching here for real does
-rem when :try_embed_fallback itself fails).
-call :log "[INFO] REQ-009: cascading provider system to embed; re-attempting dependencies."
-call :try_embed_fallback
-if errorlevel 1 goto :cascade_embed_unavailable
-goto :after_env_mode_selection
-:cascade_embed_unavailable
-call :log "[WARN] REQ-009: cascade target embedded Python unavailable; keeping current build."
 goto :after_cascade_decision
 
 :cascade_acquire_conda
@@ -1841,24 +1846,29 @@ if "%HP_FORCE_CONDA_ONLY%"=="1" (
   exit /b 0
 )
 
-rem REQ-009: venv fallback is always attempted when conda fails; HP_ALLOW_VENV_FALLBACK is deprecated/ignored.
+rem REQ-009 (reordered): embedded Python (Tier 5 by naming/history, executed 3rd since this
+rem reorder) is attempted immediately after conda fails, ahead of venv/system -- so a user who
+rem pinned a newer-than-ambient Python version via runtime.txt/pyproject.toml still gets it via
+rem a fresh checksummed python.org download, before falling back to a tier that just wraps
+rem whatever's already on the machine. No consent gate (see :try_embed_fallback's header
+rem comment for why). See docs/agent-interconnect.md "Standalone Python-download tier" for the
+rem full ordering rationale.
+call :try_embed_fallback
+if not errorlevel 1 (
+  set "HP_ENV_READY=1"
+  exit /b 0
+)
+rem REQ-009: venv fallback is attempted when conda and embed both fail; HP_ALLOW_VENV_FALLBACK
+rem is deprecated/ignored.
 call :try_venv_fallback
 if not errorlevel 1 (
   set "HP_ENV_READY=1"
   exit /b 0
 )
-rem REQ-009/REQ-014: system Python is the last-resort Tier 4 and is always attempted when venv also
-rem fails; the REQ-014 consent prompt inside :try_system_fallback is the only gate (no env flag).
-rem HP_ALLOW_SYSTEM_FALLBACK is deprecated/ignored.
+rem REQ-009/REQ-014: system Python is Tier 4 (by naming/history) and the absolute last resort --
+rem the only tier gated by the REQ-014 consent prompt (touches the user's real environment), so
+rem it stays final regardless of embed's move. HP_ALLOW_SYSTEM_FALLBACK is deprecated/ignored.
 call :try_system_fallback
-if not errorlevel 1 (
-  set "HP_ENV_READY=1"
-  exit /b 0
-)
-rem REQ-009 Tier 5: embedded Python is the final rung, always attempted when system also fails
-rem (or no ambient interpreter exists at all -- the scenario this tier exists for). No consent
-rem gate (see :try_embed_fallback's header comment for why).
-call :try_embed_fallback
 if not errorlevel 1 (
   set "HP_ENV_READY=1"
   exit /b 0
@@ -1941,6 +1951,13 @@ if errorlevel 1 goto :venv_canary_fail
 goto :venv_canary_ok
 :venv_canary_fail
 call :log "[WARN] venv fallback: interpreter created but failed canary probe (import sys)."
+rem derived requirement: HP_PY was set above to the venv interpreter path in preparation for
+rem success, but a failed canary probe must not leak it forward -- a later gate
+rem (:after_env_mode_selection's "if not defined HP_PY") would otherwise treat this failed tier
+rem as if a real provider had been selected, silently proceeding with a broken interpreter
+rem instead of reaching :die. Exact mirror of the :try_system_fallback fix. See
+rem docs/agent-lessons-learned.md "A declined/failed fallback tier must clear HP_PY".
+set "HP_PY="
 exit /b 1
 :venv_canary_ok
 set "HP_ENV_MODE=venv"
@@ -2079,38 +2096,63 @@ call :log "[INFO] embed fallback: %HP_EMBED_LATEST_PATCH% extracted and verified
 rem --- Python stage: only place per-request version logic lives (deliberately not PowerShell
 rem a second time). A failure here is non-fatal -- the "latest" interpreter from the stage above
 rem is kept and used as-is; only a genuine version *mismatch* is lost, not the whole tier.
+rem derived requirement: this block used to be one big parenthesized "if not errorlevel 1 ( ... )"
+rem block. A for /f loop inside it set HP_EMBED_SWAP_DIR/_TAG/_MINOR, and code later in the SAME
+rem block read %HP_EMBED_SWAP_DIR% to decide whether to swap -- but CMD's parse-time %VAR%
+rem expansion substitutes every %VAR% in a parenthesized block using the value from BEFORE the
+rem block began, not a value a for /f loop set earlier in the same block's own execution. Since
+rem HP_EMBED_SWAP_DIR was never set before this point, that read was always empty, so the swap
+rem NEVER executed regardless of what the Python stage actually requested -- the entire
+rem "pull latest, then swap to the user's requested version" feature was dead code. Fixed via
+rem goto-based dispatch (see "Provider-cascade dispatch is goto-based on purpose" in
+rem docs/agent-lessons-learned.md) so every %VAR% read below reflects its true runtime value.
 call :emit_from_base64 "~embed_pyver_check.py" HP_EMBED_PYVER_CHECK
-if not errorlevel 1 (
-  set "HP_EMBED_CHECK_OUT=~embed_pyver_check.txt"
-  if exist "%HP_EMBED_CHECK_OUT%" del "%HP_EMBED_CHECK_OUT%" >nul 2>&1
-  "%HP_EMBED_PY%" "~embed_pyver_check.py" "%HP_EMBED_DIR%" > "%HP_EMBED_CHECK_OUT%" 2>> "%LOG%"
-  if exist "~embed_pyver_check.py" del "~embed_pyver_check.py" >nul 2>&1
-  set "HP_EMBED_SWAP_TAG="
-  set "HP_EMBED_SWAP_MINOR="
-  set "HP_EMBED_SWAP_DIR="
-  for /f "usebackq tokens=1,2,3 delims=|" %%A in ("%HP_EMBED_CHECK_OUT%") do (
-    set "HP_EMBED_SWAP_TAG=%%A"
-    set "HP_EMBED_SWAP_MINOR=%%B"
-    set "HP_EMBED_SWAP_DIR=%%C"
-  )
-  if exist "%HP_EMBED_CHECK_OUT%" del "%HP_EMBED_CHECK_OUT%" >nul 2>&1
-  rem derived requirement: the version-check process (the "%HP_EMBED_PY%" call above) has
-  rem already fully exited by this point, so its file locks on HP_EMBED_DIR are released and
-  rem it is now safe to replace that directory -- swapping while that process was still running
-  rem would fail (Windows will not let a process delete/replace the files it is executing from),
-  rem which is exactly why the Python stage extracted into a sibling _swap directory instead of
-  rem overwriting HP_EMBED_DIR itself. See docs/agent-interconnect.md.
-  if defined HP_EMBED_SWAP_DIR if exist "%HP_EMBED_SWAP_DIR%\python.exe" (
-    rd /s /q "%HP_EMBED_DIR%" >nul 2>&1
-    move /y "%HP_EMBED_SWAP_DIR%" "%HP_EMBED_DIR%" >nul 2>&1
-    if exist "%HP_EMBED_DIR%\python.exe" (
-      call :log "[INFO] embed fallback: swapped to requested Python %HP_EMBED_SWAP_MINOR%."
-    ) else (
-      call :log "[WARN] embed fallback: swap move failed; interpreter may be missing."
-    )
-  )
-  if /i "%HP_EMBED_SWAP_TAG%"=="fellback" call :log "[WARN] REQ-009: requested Python not in embed table; using %HP_EMBED_SWAP_MINOR% instead."
+if errorlevel 1 goto :embed_pyver_check_skip
+set "HP_EMBED_CHECK_OUT=~embed_pyver_check.txt"
+if exist "%HP_EMBED_CHECK_OUT%" del "%HP_EMBED_CHECK_OUT%" >nul 2>&1
+"%HP_EMBED_PY%" "~embed_pyver_check.py" "%HP_EMBED_DIR%" > "%HP_EMBED_CHECK_OUT%" 2>> "%LOG%"
+if exist "~embed_pyver_check.py" del "~embed_pyver_check.py" >nul 2>&1
+set "HP_EMBED_SWAP_TAG="
+set "HP_EMBED_SWAP_MINOR="
+set "HP_EMBED_SWAP_DIR="
+for /f "usebackq tokens=1,2,3 delims=|" %%A in ("%HP_EMBED_CHECK_OUT%") do (
+  set "HP_EMBED_SWAP_TAG=%%A"
+  set "HP_EMBED_SWAP_MINOR=%%B"
+  set "HP_EMBED_SWAP_DIR=%%C"
 )
+if exist "%HP_EMBED_CHECK_OUT%" del "%HP_EMBED_CHECK_OUT%" >nul 2>&1
+rem derived requirement: the version-check process (the "%HP_EMBED_PY%" call above) has
+rem already fully exited by this point, so its file locks on HP_EMBED_DIR are released and
+rem it is now safe to replace that directory -- swapping while that process was still running
+rem would fail (Windows will not let a process delete/replace the files it is executing from),
+rem which is exactly why the Python stage extracted into a sibling _swap directory instead of
+rem overwriting HP_EMBED_DIR itself. See docs/agent-interconnect.md.
+if not defined HP_EMBED_SWAP_DIR goto :embed_pyver_check_tagcheck
+if not exist "%HP_EMBED_SWAP_DIR%\python.exe" goto :embed_pyver_check_tagcheck
+rem derived requirement: rd /s /q can return before an AV/indexer file handle on HP_EMBED_DIR
+rem fully releases, causing the immediately-following move /y to fail (a real, if low-severity,
+rem Windows deletion race). Already failed safely before this change (checked python.exe exists
+rem after, logged WARN, tier failed cleanly) -- this just retries the pair up to 3 total attempts
+rem with a short pause between, so a rare transient lock doesn't needlessly fail the last-resort
+rem tier. Uses ping (not timeout /t) for the pause -- this file already has a proven-safe idiom
+rem for exactly this at line 1461's VISA-detection delay; see docs/agent-lessons-learned.md.
+set "HP_EMBED_SWAP_ATTEMPT=0"
+:embed_swap_retry
+set /a HP_EMBED_SWAP_ATTEMPT+=1
+rd /s /q "%HP_EMBED_DIR%" >nul 2>&1
+move /y "%HP_EMBED_SWAP_DIR%" "%HP_EMBED_DIR%" >nul 2>&1
+if exist "%HP_EMBED_DIR%\python.exe" (
+  call :log "[INFO] embed fallback: swapped to requested Python %HP_EMBED_SWAP_MINOR%."
+  goto :embed_pyver_check_tagcheck
+)
+if %HP_EMBED_SWAP_ATTEMPT% LSS 3 (
+  ping -n 2 127.0.0.1 >nul 2>&1
+  goto :embed_swap_retry
+)
+call :log "[WARN] embed fallback: swap move failed; interpreter may be missing."
+:embed_pyver_check_tagcheck
+if /i "%HP_EMBED_SWAP_TAG%"=="fellback" call :log "[WARN] REQ-009: requested Python not in embed table; using %HP_EMBED_SWAP_MINOR% instead."
+:embed_pyver_check_skip
 set "HP_EMBED_PY=%HP_EMBED_DIR%\python.exe"
 if not exist "%HP_EMBED_PY%" (
   call :log "[WARN] embed fallback: interpreter missing after version-check stage."
@@ -3130,6 +3172,11 @@ if errorlevel 1 (
 goto :hidden_import_loop
 :hidden_import_recover_done
 if "%HP_EXE_EXIT%"=="0" if %HP_HIDDEN_ITER% GEQ 1 call :log "[REPAIR][HIDDEN_IMPORT] EXE verified after hidden-import recovery."
+rem derived requirement: prior to this line, exhausting the 3-attempt cap with the EXE still
+rem failing logged nothing beyond the per-iteration [REPAIR][HIDDEN_IMPORT] lines -- the user
+rem only saw the generic post-build failure output, with no explicit signal that auto-recovery
+rem was attempted and gave up.
+if not "%HP_EXE_EXIT%"=="0" if %HP_HIDDEN_ITER% GEQ 3 call :log "[WARN][HIDDEN_IMPORT] Auto-recovery exhausted after 3 attempts; module(s) still missing."
 if exist "dist\~exe_out.txt" del "dist\~exe_out.txt" >nul 2>&1
 rem clean up artifacts created by recovery rebuilds (mirror the main-build cleanup);
 rem preserve a user pre-existing spec.
@@ -3328,7 +3375,7 @@ rem if ($exeTime -ge $latest) { 'fresh' }
 rem If HP_FAST_CHECK changes, update this decoded comment block to match the base64 payload.
 set "HP_FAST_CHECK=JGV4ZSA9ICRhcmdzWzBdCmlmICgtbm90ICRleGUpIHsgJGV4ZSA9ICRlbnY6SFBfRkFTVF9FWEUgfQokaW5mcmFQYXR0ZXJuID0gJyg/aSkoXnxbL1xcXSkoXC5naXR8XC5naXRodWJ8ZGlzdHxcLnZlbnZ8XC51dl9lbnZ8X19weWNhY2hlX198XC5jb25kYSkoWy9cXF18JCknCiRzb3VyY2VzID0gR2V0LUNoaWxkSXRlbSAtUmVjdXJzZSAtRmlsZSAtRmlsdGVyICcqLnB5JyB8IFdoZXJlLU9iamVjdCB7ICRfLkZ1bGxOYW1lIC1ub3RtYXRjaCAkaW5mcmFQYXR0ZXJuIC1hbmQgJF8uTmFtZSAtbm90bGlrZSAnfioucHknIH0KaWYgKC1ub3QgJHNvdXJjZXMpIHsgZXhpdCAxIH0KJGxhdGVzdCA9ICgkc291cmNlcyB8IFNvcnQtT2JqZWN0IC1Qcm9wZXJ0eSBMYXN0V3JpdGVUaW1lVXRjIC1EZXNjZW5kaW5nIHwgU2VsZWN0LU9iamVjdCAtRmlyc3QgMSkuTGFzdFdyaXRlVGltZVV0YwokZXhlVGltZSA9IChHZXQtSXRlbSAtTGl0ZXJhbFBhdGggJGV4ZSkuTGFzdFdyaXRlVGltZVV0YwppZiAoJGV4ZVRpbWUgLWdlICRsYXRlc3QpIHsgJ2ZyZXNoJyB9Cg=="
 set "HP_EMBED_EXTRACT=IyBSRVEtMDA5IFRpZXIgNTogdmVyaWZpZXMgY2hlY2tzdW0sIGV4dHJhY3RzLCBhbmQgcGF0Y2hlcyB0aGUgZGlzYWJsZWQtc2l0ZS1pbXBvcnRzIC5fcHRoIGZpbGUKIyBmb3IgYW4gYWxyZWFkeS1kb3dubG9hZGVkIGVtYmVkZGFibGUgUHl0aG9uIHppcC4gQmF0Y2ggaGFzIGFscmVhZHkgZG93bmxvYWRlZCB0aGUgemlwICh2aWEgdGhlCiMgc2FtZSBjdXJsLXRoZW4tSW52b2tlLVdlYlJlcXVlc3QgcGF0dGVybiBhcyA6ZG93bmxvYWRfbWluaWNvbmRhX2V4ZS86ZG93bmxvYWRfZ2V0X3BpcCkgYW5kCiMgcGFzc2VzIGl0cyBwYXRoIHBsdXMgdGhlIGV4cGVjdGVkIFNIQTI1NiBhbmQgZGVzdGluYXRpb24gZGlyZWN0b3J5IGFzIGFyZ3MuIFRoaXMgc2NyaXB0IGRvZXMKIyBOT1QgZG93bmxvYWQgYW55dGhpbmcgaXRzZWxmIGFuZCBkb2VzIE5PVCBicmFuY2ggb24gcmVxdWVzdGVkIHZlcnNpb24gLS0gc2VlIHRoZSBQeXRob24tc2lkZQojIHN0YWdlIGZvciBwZXItcmVxdWVzdCB2ZXJzaW9uIHNlbGVjdGlvbi4KIyBBcmdzOiAkMSA9IHppcCBwYXRoLCAkMiA9IGV4cGVjdGVkIHNoYTI1NiAobG93ZXJjYXNlIGhleCksICQzID0gZGVzdGluYXRpb24gZGlyZWN0b3J5LgojIE91dHB1dDogb24gc3VjY2VzcywgcHJpbnRzIHRoZSBleHRyYWN0ZWQgcHl0aG9uLmV4ZSBwYXRoIG9uIHN0ZG91dCwgZXhpdCAwLiBPbiBmYWlsdXJlCiMgKGNoZWNrc3VtIG1pc21hdGNoLCBleHRyYWN0aW9uIGZhaWx1cmUsIG1pc3NpbmcgLl9wdGgsIG1pc3NpbmcgcHl0aG9uLmV4ZSksIHByaW50cyBub3RoaW5nIGFuZAojIGV4aXRzIDEgLS0gY2FsbGVyIGNoZWNrcyBib3RoIHN0ZG91dCBhbmQgZXhpdCBjb2RlLgojCiMgZGVyaXZlZCByZXF1aXJlbWVudDogaGFzaGluZy9leHRyYWN0aW9uL3RleHQtSU8gZGVsaWJlcmF0ZWx5IHVzZSByYXcgLk5FVCBBUElzCiMgKFtTeXN0ZW0uU2VjdXJpdHkuQ3J5cHRvZ3JhcGh5LlNIQTI1Nl0sIFtTeXN0ZW0uSU8uQ29tcHJlc3Npb24uWmlwRmlsZV0sIFtTeXN0ZW0uSU8uRmlsZV0pCiMgaW5zdGVhZCBvZiB0aGUgR2V0LUZpbGVIYXNoIC8gRXhwYW5kLUFyY2hpdmUgLyBHZXQtQ29udGVudCAvIFNldC1Db250ZW50IGNtZGxldHMuIENvbmZpcm1lZCB2aWEKIyByZWFsIENJIGZhaWx1cmUgKFdpbmRvd3MgUG93ZXJTaGVsbCA1LjEsIGludm9rZWQgYXMgYSBmb3IgL2YgYmFja3RpY2sgc3Vic2hlbGwgZnJvbSBydW5fc2V0dXAuYmF0KQojIHRoYXQgR2V0LUZpbGVIYXNoIHRocm93cyAibm90IHJlY29nbml6ZWQgYXMgdGhlIG5hbWUgb2YgYSBjbWRsZXQiIGluIHRoYXQgZXhhY3QgaW52b2NhdGlvbgojIGNvbnRleHQgLS0gaXRzIG1vZHVsZSAoTWljcm9zb2Z0LlBvd2VyU2hlbGwuVXRpbGl0eSkgd2FzIG5vdCBhdXRvLWxvYWRpbmcsIGV2ZW4gdGhvdWdoIHRoaXMKIyBzY3JpcHQgdGVzdGVkIGZpbmUgbG9jYWxseSB1bmRlciBwd3NoIChQb3dlclNoZWxsIDcgb24gTGludXgpIGJlZm9yZWhhbmQsIHdoaWNoIGRvZXMgbm90IHNoYXJlCiMgdGhlIHNhbWUgbW9kdWxlLWxvYWRpbmcgYmVoYXZpb3IuIFRlc3QtUGF0aC9HZXQtSXRlbSAoTWljcm9zb2Z0LlBvd2VyU2hlbGwuTWFuYWdlbWVudCkgd29ya2VkCiMgZmluZSBpbiB0aGUgc2FtZSBydW4sIHNvIHRoaXMgaXMgc2NvcGVkIHRvIFV0aWxpdHktbW9kdWxlIGNtZGxldHMgc3BlY2lmaWNhbGx5OyAuTkVUIHR5cGVzIGhhdmUKIyBubyBtb2R1bGUtbG9hZGluZyBkZXBlbmRlbmN5IGF0IGFsbCBhbmQgc2lkZXN0ZXAgdGhlIHdob2xlIGNsYXNzIG9mIGZhaWx1cmUuIFNlZQojIGRvY3MvYWdlbnQtbGVzc29ucy1sZWFybmVkLm1kLgokWmlwUGF0aCA9ICRhcmdzWzBdCiRFeHBlY3RlZFNoYTI1NiA9ICRhcmdzWzFdCiREZXN0RGlyID0gJGFyZ3NbMl0KCnRyeSB7CiAgICBpZiAoLW5vdCAoVGVzdC1QYXRoIC1MaXRlcmFsUGF0aCAkWmlwUGF0aCkpIHsKICAgICAgICBbQ29uc29sZV06OkVycm9yLldyaXRlTGluZSgiW2VtYmVkX2V4dHJhY3RdIHppcCBub3QgZm91bmQ6ICRaaXBQYXRoIikKICAgICAgICBleGl0IDEKICAgIH0KICAgICRaaXBTaXplID0gKEdldC1JdGVtIC1MaXRlcmFsUGF0aCAkWmlwUGF0aCkuTGVuZ3RoCiAgICAkU2hhMjU2UHJvdmlkZXIgPSBbU3lzdGVtLlNlY3VyaXR5LkNyeXB0b2dyYXBoeS5TSEEyNTZdOjpDcmVhdGUoKQogICAgJEZpbGVTdHJlYW0gPSBbU3lzdGVtLklPLkZpbGVdOjpPcGVuUmVhZCgkWmlwUGF0aCkKICAgIHRyeSB7CiAgICAgICAgJEhhc2hCeXRlcyA9ICRTaGEyNTZQcm92aWRlci5Db21wdXRlSGFzaCgkRmlsZVN0cmVhbSkKICAgIH0gZmluYWxseSB7CiAgICAgICAgJEZpbGVTdHJlYW0uRGlzcG9zZSgpCiAgICAgICAgJFNoYTI1NlByb3ZpZGVyLkRpc3Bvc2UoKQogICAgfQogICAgJEFjdHVhbEhhc2ggPSAoW0JpdENvbnZlcnRlcl06OlRvU3RyaW5nKCRIYXNoQnl0ZXMpIC1yZXBsYWNlICctJywgJycpLlRvTG93ZXIoKQogICAgaWYgKCRBY3R1YWxIYXNoIC1uZSAkRXhwZWN0ZWRTaGEyNTYuVG9Mb3dlcigpKSB7CiAgICAgICAgW0NvbnNvbGVdOjpFcnJvci5Xcml0ZUxpbmUoIltlbWJlZF9leHRyYWN0XSBjaGVja3N1bSBtaXNtYXRjaDogc2l6ZT0kWmlwU2l6ZSBleHBlY3RlZD0kKCRFeHBlY3RlZFNoYTI1Ni5Ub0xvd2VyKCkpIGFjdHVhbD0kQWN0dWFsSGFzaCIpCiAgICAgICAgZXhpdCAxCiAgICB9CgogICAgaWYgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggJERlc3REaXIpIHsgUmVtb3ZlLUl0ZW0gLVJlY3Vyc2UgLUZvcmNlIC1MaXRlcmFsUGF0aCAkRGVzdERpciB9CiAgICBBZGQtVHlwZSAtQXNzZW1ibHlOYW1lIFN5c3RlbS5JTy5Db21wcmVzc2lvbi5GaWxlU3lzdGVtCiAgICBbU3lzdGVtLklPLkNvbXByZXNzaW9uLlppcEZpbGVdOjpFeHRyYWN0VG9EaXJlY3RvcnkoJFppcFBhdGgsICREZXN0RGlyKQoKICAgICRQdGhGaWxlID0gR2V0LUNoaWxkSXRlbSAtTGl0ZXJhbFBhdGggJERlc3REaXIgLUZpbHRlciAicHl0aG9uKi5fcHRoIiAtRmlsZSB8IFNlbGVjdC1PYmplY3QgLUZpcnN0IDEKICAgIGlmICgtbm90ICRQdGhGaWxlKSB7CiAgICAgICAgW0NvbnNvbGVdOjpFcnJvci5Xcml0ZUxpbmUoIltlbWJlZF9leHRyYWN0XSBubyBweXRob24qLl9wdGggZmlsZSBmb3VuZCB1bmRlciAkRGVzdERpciIpCiAgICAgICAgZXhpdCAxCiAgICB9CiAgICAjIGRlcml2ZWQgcmVxdWlyZW1lbnQ6IHRoZSBlbWJlZGRhYmxlIHppcCdzIC5fcHRoIGZpbGUgc2hpcHMgd2l0aCBDUkxGIGxpbmUgZW5kaW5ncywgYW5kCiAgICAjIC5ORVQgcmVnZXggJCBpbiBtdWx0aWxpbmUgbW9kZSBtYXRjaGVzIGltbWVkaWF0ZWx5IGJlZm9yZSBcbiAtLSBpdCBkb2VzIG5vdCBza2lwIGEKICAgICMgcHJlY2VkaW5nIFxyLCBzbyBhbiBhbmNob3Igb2YgIl4jaW1wb3J0IHNpdGUkIiBhZ2FpbnN0IGEgQ1JMRiBsaW5lIHNpbGVudGx5IG5ldmVyIG1hdGNoZXMKICAgICMgKHRoZSBcciBzaXRzIGJldHdlZW4gInNpdGUiIGFuZCB0aGUgbWF0Y2ggcG9zaXRpb24pLiBccj8gaGFuZGxlcyBib3RoIGxpbmUtZW5kaW5nIHN0eWxlcy4KICAgICRQdGhDb250ZW50ID0gW1N5c3RlbS5JTy5GaWxlXTo6UmVhZEFsbFRleHQoJFB0aEZpbGUuRnVsbE5hbWUpCiAgICAkUHRoQ29udGVudCA9ICRQdGhDb250ZW50IC1yZXBsYWNlICcoP20pXiNpbXBvcnQgc2l0ZVxyPyQnLCAnaW1wb3J0IHNpdGUnCiAgICBbU3lzdGVtLklPLkZpbGVdOjpXcml0ZUFsbFRleHQoJFB0aEZpbGUuRnVsbE5hbWUsICRQdGhDb250ZW50LCBbU3lzdGVtLlRleHQuRW5jb2RpbmddOjpBU0NJSSkKCiAgICAkUHlFeGUgPSBKb2luLVBhdGggJERlc3REaXIgInB5dGhvbi5leGUiCiAgICBpZiAoLW5vdCAoVGVzdC1QYXRoIC1MaXRlcmFsUGF0aCAkUHlFeGUpKSB7CiAgICAgICAgW0NvbnNvbGVdOjpFcnJvci5Xcml0ZUxpbmUoIltlbWJlZF9leHRyYWN0XSBweXRob24uZXhlIG1pc3NpbmcgYWZ0ZXIgZXh0cmFjdGlvbjogJFB5RXhlIikKICAgICAgICBleGl0IDEKICAgIH0KICAgIFtDb25zb2xlXTo6V3JpdGUoJFB5RXhlKQp9IGNhdGNoIHsKICAgIFtDb25zb2xlXTo6RXJyb3IuV3JpdGVMaW5lKCJbZW1iZWRfZXh0cmFjdF0gZXhjZXB0aW9uOiAkKCRfLkV4Y2VwdGlvbi5NZXNzYWdlKSIpCiAgICBleGl0IDEKfQo="
-set "HP_EMBED_PYVER_CHECK=IyBSRVEtMDA5IFRpZXIgNSwgUHl0aG9uIHN0YWdlOiBydW5zIHVuZGVyIHRoZSAiYWx3YXlzIGxhdGVzdCIgaW50ZXJwcmV0ZXIgfmVtYmVkX2V4dHJhY3QucHMxCiMgKFBvd2VyU2hlbGwgc3RhZ2UpIGFscmVhZHkgZG93bmxvYWRlZC92ZXJpZmllZC9leHRyYWN0ZWQuIFRoaXMgaXMgdGhlIE9OTFkgcGxhY2UgcGVyLXJlcXVlc3QKIyB2ZXJzaW9uIGxvZ2ljIGxpdmVzIC0tIGRlbGliZXJhdGVseSBQeXRob24sIG5vdCBQb3dlclNoZWxsLCByZXVzaW5nIHRoaXMgY29kZWJhc2UncyBwcm92ZW4KIyB2ZXJzaW9uLWRldGVjdGlvbiBwYXR0ZXJuIGluc3RlYWQgb2YgcmUtZGVyaXZpbmcgaXQgaW4gUG93ZXJTaGVsbC4gRnVsbCByYXRpb25hbGU6CiMgZG9jcy9hZ2VudC1pbnRlcmNvbm5lY3QubWQgIlN0YW5kYWxvbmUgUHl0aG9uLWRvd25sb2FkIHRpZXIiLiAiMy4xNCIgZW50cnkgYmVsb3cgTVVTVCBtYXRjaAojIEhQX0VNQkVEX0xBVEVTVF9QQVRDSC9IUF9FTUJFRF9MQVRFU1RfU0hBMjU2IGluIHJ1bl9zZXR1cC5iYXQgLS0gYSBQYXlsb2FkU3luYy1zdHlsZSB1bml0IHRlc3QKIyBhc3NlcnRzIHRoaXMuIExhc3QgcmVmcmVzaGVkOiAyMDI2LTA3LTA5LgppbXBvcnQgaGFzaGxpYgppbXBvcnQgb3MKaW1wb3J0IHJlCmltcG9ydCBzaHV0aWwKaW1wb3J0IHN5cwppbXBvcnQgdXJsbGliLnJlcXVlc3QKaW1wb3J0IHppcGZpbGUKCiMgbWlub3IgLT4gKHBhdGNoLCBzaGEyNTYpCkVNQkVEX1BZVEhPTl9UQUJMRSA9IHsKICAgICIzLjEwIjogKCIzLjEwLjExIiwgIjYwODYxOWY4NjE5MDc1NjI5YzljNjlmMzYxMzUyYTBkYTZlZDdlNjJmODNhMGUxOWM2M2UwZWEzMmViNzYyOWQiKSwKICAgICIzLjExIjogKCIzLjExLjkiLCAiMDA5ZDZiZjdlM2IyZGRjYTNkNzg0ZmEwOWY5MGZlNTQzMzZkNWI2MGYwZTBmMzA1YzM3ZjQwMGJmODNjZmQzYiIpLAogICAgIjMuMTIiOiAoIjMuMTIuMTAiLCAiNGFjYmVkNmRkMWM3NDRiMDM3NmUzYjFjZjU3Y2U5MDZmOWRjOWU5NWU2ODgyNDU4NGM4MDk5YTYzMDI1YTNjMyIpLAogICAgIjMuMTMiOiAoIjMuMTMuMTQiLCAiOTBiNGU1Yjk4OThiNzJkNzQ0NjUwNTI0YmZmOTIzNzdjMzY3ZjQ0YmQ1ZmJkMDllMzE0ODY1NmMwODBhZDkwNyIpLAogICAgIjMuMTQiOiAoIjMuMTQuNiIsICJkZjkwMWU4NGE4OTZmZjFlZTcyMGFkMDMzNzdlMGM4ZDhjMjI0NGZkYTc5ODA4YWVlYWZmNjMxNmRmMWNiNzVjIiksCn0KTEFURVNUX01JTk9SID0gIjMuMTQiCkZMT09SX01JTk9SID0gIjMuMTAiCgpTUEVDX01JTk9SX1JFID0gcmUuY29tcGlsZShyIihbMC05XStcLlswLTldKykiKQoKCmRlZiBfbWlub3Jfa2V5KG1pbm9yKToKICAgIHRyeToKICAgICAgICBtYWpvciwgc3ViID0gbWlub3Iuc3BsaXQoIi4iKQogICAgICAgIHJldHVybiAoaW50KG1ham9yKSwgaW50KHN1YikpCiAgICBleGNlcHQgKFZhbHVlRXJyb3IsIEF0dHJpYnV0ZUVycm9yKToKICAgICAgICByZXR1cm4gKDAsIDApCgoKZGVmIHJlc29sdmVfcmVxdWVzdGVkX21pbm9yKHB5c3BlYyk6CiAgICAjIEV4dHJhY3RzICJYLlkiIGZyb20gYSBQWVNQRUMgc3RyaW5nIChlLmcuICJweXRob24+PTMuMTAsPDQuMCIpOyBOb25lIGlmIGVtcHR5L3VucGFyc2VhYmxlLgogICAgaWYgbm90IHB5c3BlYzoKICAgICAgICByZXR1cm4gTm9uZQogICAgbWF0Y2ggPSBTUEVDX01JTk9SX1JFLnNlYXJjaChweXNwZWMpCiAgICByZXR1cm4gbWF0Y2guZ3JvdXAoMSkgaWYgbWF0Y2ggZWxzZSBOb25lCgoKZGVmIHJlc29sdmVfdGFibGVfZW50cnkocmVxdWVzdGVkX21pbm9yKToKICAgICMgUmV0dXJucyAobWlub3IsIHBhdGNoLCBzaGEyNTYsIGZlbGxfYmFjayk7IG1pcnJvcnMgdGhlIFBvd2VyU2hlbGwgc3RhZ2UncyBvd24gcnVsZXMuCiAgICBpZiByZXF1ZXN0ZWRfbWlub3IgaW4gRU1CRURfUFlUSE9OX1RBQkxFOgogICAgICAgIHBhdGNoLCBzaGEyNTYgPSBFTUJFRF9QWVRIT05fVEFCTEVbcmVxdWVzdGVkX21pbm9yXQogICAgICAgIHJldHVybiByZXF1ZXN0ZWRfbWlub3IsIHBhdGNoLCBzaGEyNTYsIEZhbHNlCiAgICBtaW5vciA9IEZMT09SX01JTk9SIGlmIF9taW5vcl9rZXkocmVxdWVzdGVkX21pbm9yKSA8IF9taW5vcl9rZXkoRkxPT1JfTUlOT1IpIGVsc2UgTEFURVNUX01JTk9SCiAgICBwYXRjaCwgc2hhMjU2ID0gRU1CRURfUFlUSE9OX1RBQkxFW21pbm9yXQogICAgcmV0dXJuIG1pbm9yLCBwYXRjaCwgc2hhMjU2LCBUcnVlCgoKZGVmIGRvd25sb2FkX2FuZF92ZXJpZnkodXJsLCBleHBlY3RlZF9zaGEyNTYsIGRlc3RfemlwKToKICAgIHVybGxpYi5yZXF1ZXN0LnVybHJldHJpZXZlKHVybCwgZGVzdF96aXApCiAgICBkaWdlc3QgPSBoYXNobGliLnNoYTI1NigpCiAgICB3aXRoIG9wZW4oZGVzdF96aXAsICJyYiIpIGFzIGZoOgogICAgICAgIGZvciBjaHVuayBpbiBpdGVyKGxhbWJkYTogZmgucmVhZCgxIDw8IDIwKSwgYiIiKToKICAgICAgICAgICAgZGlnZXN0LnVwZGF0ZShjaHVuaykKICAgIGFjdHVhbCA9IGRpZ2VzdC5oZXhkaWdlc3QoKS5sb3dlcigpCiAgICBpZiBhY3R1YWwgIT0gZXhwZWN0ZWRfc2hhMjU2Lmxvd2VyKCk6CiAgICAgICAgb3MucmVtb3ZlKGRlc3RfemlwKQogICAgICAgIHJhaXNlIFZhbHVlRXJyb3IoImNoZWNrc3VtIG1pc21hdGNoOiBleHBlY3RlZCB7fSwgZ290IHt9Ii5mb3JtYXQoZXhwZWN0ZWRfc2hhMjU2LCBhY3R1YWwpKQoKCmRlZiBleHRyYWN0X2FuZF9wYXRjaCh6aXBfcGF0aCwgZGVzdF9kaXIpOgogICAgaWYgb3MucGF0aC5pc2RpcihkZXN0X2Rpcik6CiAgICAgICAgc2h1dGlsLnJtdHJlZShkZXN0X2RpcikKICAgIHdpdGggemlwZmlsZS5aaXBGaWxlKHppcF9wYXRoKSBhcyB6ZjoKICAgICAgICB6Zi5leHRyYWN0YWxsKGRlc3RfZGlyKQogICAgcHRoX2ZpbGVzID0gW2YgZm9yIGYgaW4gb3MubGlzdGRpcihkZXN0X2RpcikgaWYgcmUubWF0Y2gociJecHl0aG9uXGQrXC5fcHRoJCIsIGYpXQogICAgaWYgbm90IHB0aF9maWxlczoKICAgICAgICByYWlzZSBGaWxlTm90Rm91bmRFcnJvcigibm8gcHl0aG9uKi5fcHRoIGZpbGUgZm91bmQgYWZ0ZXIgZXh0cmFjdGlvbiIpCiAgICBwdGhfcGF0aCA9IG9zLnBhdGguam9pbihkZXN0X2RpciwgcHRoX2ZpbGVzWzBdKQogICAgd2l0aCBvcGVuKHB0aF9wYXRoLCAiciIsIGVuY29kaW5nPSJhc2NpaSIpIGFzIGZoOgogICAgICAgIGNvbnRlbnQgPSBmaC5yZWFkKCkKICAgIGNvbnRlbnQgPSByZS5zdWIociIoP20pXiNpbXBvcnQgc2l0ZSQiLCAiaW1wb3J0IHNpdGUiLCBjb250ZW50KQogICAgd2l0aCBvcGVuKHB0aF9wYXRoLCAidyIsIGVuY29kaW5nPSJhc2NpaSIsIG5ld2xpbmU9IiIpIGFzIGZoOgogICAgICAgIGZoLndyaXRlKGNvbnRlbnQpCiAgICBweV9leGUgPSBvcy5wYXRoLmpvaW4oZGVzdF9kaXIsICJweXRob24uZXhlIikKICAgIGlmIG5vdCBvcy5wYXRoLmlzZmlsZShweV9leGUpOgogICAgICAgIHJhaXNlIEZpbGVOb3RGb3VuZEVycm9yKCJweXRob24uZXhlIG1pc3NpbmcgYWZ0ZXIgZXh0cmFjdGlvbiIpCiAgICByZXR1cm4gcHlfZXhlCgoKZGVmIG1haW4oKToKICAgICMgZGVzdF9kaXIgaXMgd2hlcmUgVEhJUyBydW5uaW5nIGludGVycHJldGVyIGxpdmVzOyBXaW5kb3dzIHdvbid0IGxldCBhIHByb2Nlc3MgcmVwbGFjZSBpdHMKICAgICMgb3duIGZpbGVzLCBzbyBhIHN3YXAgZXh0cmFjdHMgaW50byBhIHNpYmxpbmcgX3N3YXAgZGlyIGFuZCBiYXRjaCBtb3ZlcyBpdCBpbnRvIHBsYWNlIG9ubHkKICAgICMgYWZ0ZXIgdGhpcyBwcm9jZXNzIGV4aXRzIChsb2NrcyByZWxlYXNlZCkuIFNlZSBkb2NzL2FnZW50LWludGVyY29ubmVjdC5tZC4KICAgIGRlc3RfZGlyID0gc3lzLmFyZ3ZbMV0gaWYgbGVuKHN5cy5hcmd2KSA+IDEgZWxzZSAiIgogICAgc3dhcF9kaXIgPSBkZXN0X2Rpci5yc3RyaXAoIlxcLyIpICsgIl9zd2FwIgogICAgcHlzcGVjID0gb3MuZW52aXJvbi5nZXQoIlBZU1BFQyIsICIiKQogICAgcmVxdWVzdGVkX21pbm9yID0gcmVzb2x2ZV9yZXF1ZXN0ZWRfbWlub3IocHlzcGVjKQoKICAgIGlmIHJlcXVlc3RlZF9taW5vciBpcyBOb25lIG9yIHJlcXVlc3RlZF9taW5vciA9PSBMQVRFU1RfTUlOT1I6CiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgidW5jaGFuZ2VkfHt9XG4iLmZvcm1hdChMQVRFU1RfTUlOT1IpKQogICAgICAgIHJldHVybiAwCgogICAgbWlub3IsIHBhdGNoLCBzaGEyNTYsIGZlbGxfYmFjayA9IHJlc29sdmVfdGFibGVfZW50cnkocmVxdWVzdGVkX21pbm9yKQogICAgaWYgbWlub3IgPT0gTEFURVNUX01JTk9SOgogICAgICAgIHN5cy5zdGRvdXQud3JpdGUoInVuY2hhbmdlZHx7fVxuIi5mb3JtYXQobWlub3IpKQogICAgICAgIHJldHVybiAwCgogICAgdXJsID0gImh0dHBzOi8vd3d3LnB5dGhvbi5vcmcvZnRwL3B5dGhvbi97cH0vcHl0aG9uLXtwfS1lbWJlZC1hbWQ2NC56aXAiLmZvcm1hdChwPXBhdGNoKQogICAgemlwX3BhdGggPSBvcy5wYXRoLmpvaW4ob3MuZW52aXJvbi5nZXQoIlRFTVAiLCAiLiIpLCAicHl0aG9uLXt9LWVtYmVkLWFtZDY0LnppcCIuZm9ybWF0KHBhdGNoKSkKICAgIHRyeToKICAgICAgICBkb3dubG9hZF9hbmRfdmVyaWZ5KHVybCwgc2hhMjU2LCB6aXBfcGF0aCkKICAgICAgICBleHRyYWN0X2FuZF9wYXRjaCh6aXBfcGF0aCwgc3dhcF9kaXIpCiAgICBleGNlcHQgRXhjZXB0aW9uIGFzIGV4YzoKICAgICAgICBzeXMuc3RkZXJyLndyaXRlKCJlbWJlZCB2ZXJzaW9uIHN3YXAgZmFpbGVkOiB7fVxuIi5mb3JtYXQoZXhjKSkKICAgICAgICBpZiBvcy5wYXRoLmlzZGlyKHN3YXBfZGlyKToKICAgICAgICAgICAgc2h1dGlsLnJtdHJlZShzd2FwX2RpciwgaWdub3JlX2Vycm9ycz1UcnVlKQogICAgICAgIHJldHVybiAxCgogICAgdGFnID0gImZlbGxiYWNrIiBpZiBmZWxsX2JhY2sgZWxzZSAic3dhcHBlZCIKICAgIHN5cy5zdGRvdXQud3JpdGUoInt9fHt9fHt9XG4iLmZvcm1hdCh0YWcsIG1pbm9yLCBzd2FwX2RpcikpCiAgICByZXR1cm4gMAoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBzeXMuZXhpdChtYWluKCkpCg=="
+set "HP_EMBED_PYVER_CHECK=IyBSRVEtMDA5IFRpZXIgNSwgUHl0aG9uIHN0YWdlOiBydW5zIHVuZGVyIHRoZSAiYWx3YXlzIGxhdGVzdCIgaW50ZXJwcmV0ZXIgfmVtYmVkX2V4dHJhY3QucHMxCiMgKFBvd2VyU2hlbGwgc3RhZ2UpIGFscmVhZHkgZG93bmxvYWRlZC92ZXJpZmllZC9leHRyYWN0ZWQuIFRoaXMgaXMgdGhlIE9OTFkgcGxhY2UgcGVyLXJlcXVlc3QKIyB2ZXJzaW9uIGxvZ2ljIGxpdmVzIC0tIGRlbGliZXJhdGVseSBQeXRob24sIG5vdCBQb3dlclNoZWxsLCByZXVzaW5nIHRoaXMgY29kZWJhc2UncyBwcm92ZW4KIyB2ZXJzaW9uLWRldGVjdGlvbiBwYXR0ZXJuIGluc3RlYWQgb2YgcmUtZGVyaXZpbmcgaXQgaW4gUG93ZXJTaGVsbC4gRnVsbCByYXRpb25hbGU6CiMgZG9jcy9hZ2VudC1pbnRlcmNvbm5lY3QubWQgIlN0YW5kYWxvbmUgUHl0aG9uLWRvd25sb2FkIHRpZXIiLiAiMy4xNCIgZW50cnkgYmVsb3cgTVVTVCBtYXRjaAojIEhQX0VNQkVEX0xBVEVTVF9QQVRDSC9IUF9FTUJFRF9MQVRFU1RfU0hBMjU2IGluIHJ1bl9zZXR1cC5iYXQgLS0gYSBQYXlsb2FkU3luYy1zdHlsZSB1bml0IHRlc3QKIyBhc3NlcnRzIHRoaXMuIExhc3QgcmVmcmVzaGVkOiAyMDI2LTA3LTA5LgppbXBvcnQgaGFzaGxpYgppbXBvcnQgb3MKaW1wb3J0IHJlCmltcG9ydCBzaHV0aWwKaW1wb3J0IHNvY2tldAppbXBvcnQgc3lzCmltcG9ydCB1cmxsaWIucmVxdWVzdAppbXBvcnQgemlwZmlsZQoKIyBkZXJpdmVkIHJlcXVpcmVtZW50OiB1cmxsaWIucmVxdWVzdC51cmxyZXRyaWV2ZSBoYXMgbm8gdGltZW91dD0gcGFyYW1ldGVyICh2ZXJpZmllZCB2aWEKIyBpbnNwZWN0LnNpZ25hdHVyZSAtLSBwYXNzaW5nIG9uZSByYWlzZXMgVHlwZUVycm9yKSwgc28gYSBzdGFsbGVkIChub3QgcmVmdXNlZCkgY29ubmVjdGlvbgojIGR1cmluZyBkb3dubG9hZF9hbmRfdmVyaWZ5KCkgd291bGQgb3RoZXJ3aXNlIGhhbmcgdGhpcyBvbmUtc2hvdCBzY3JpcHQgZm9yZXZlci4gQSBnbG9iYWwKIyBkZWZhdWx0IHRpbWVvdXQgaXMgc2FmZSBoZXJlIHNpbmNlIHRoZSB3aG9sZSBzY3JpcHQgZXhpdHMgaW1tZWRpYXRlbHkgYWZ0ZXIgdXNlIC0tIG5vdGhpbmcKIyBlbHNlIGluIHRoaXMgc2hvcnQtbGl2ZWQgcHJvY2VzcyBpcyBhZmZlY3RlZC4gTWlycm9ycyB0aGUgY3VybCAtLW1heC10aW1lIDEyMCBhbHJlYWR5IHVzZWQKIyBmb3IgdGhlIFBvd2VyU2hlbGwtc3RhZ2UgZG93bmxvYWQgb2YgdGhlIHNhbWUgemlwIGZhbWlseS4Kc29ja2V0LnNldGRlZmF1bHR0aW1lb3V0KDEyMCkKCiMgbWlub3IgLT4gKHBhdGNoLCBzaGEyNTYpCkVNQkVEX1BZVEhPTl9UQUJMRSA9IHsKICAgICIzLjEwIjogKCIzLjEwLjExIiwgIjYwODYxOWY4NjE5MDc1NjI5YzljNjlmMzYxMzUyYTBkYTZlZDdlNjJmODNhMGUxOWM2M2UwZWEzMmViNzYyOWQiKSwKICAgICIzLjExIjogKCIzLjExLjkiLCAiMDA5ZDZiZjdlM2IyZGRjYTNkNzg0ZmEwOWY5MGZlNTQzMzZkNWI2MGYwZTBmMzA1YzM3ZjQwMGJmODNjZmQzYiIpLAogICAgIjMuMTIiOiAoIjMuMTIuMTAiLCAiNGFjYmVkNmRkMWM3NDRiMDM3NmUzYjFjZjU3Y2U5MDZmOWRjOWU5NWU2ODgyNDU4NGM4MDk5YTYzMDI1YTNjMyIpLAogICAgIjMuMTMiOiAoIjMuMTMuMTQiLCAiOTBiNGU1Yjk4OThiNzJkNzQ0NjUwNTI0YmZmOTIzNzdjMzY3ZjQ0YmQ1ZmJkMDllMzE0ODY1NmMwODBhZDkwNyIpLAogICAgIjMuMTQiOiAoIjMuMTQuNiIsICJkZjkwMWU4NGE4OTZmZjFlZTcyMGFkMDMzNzdlMGM4ZDhjMjI0NGZkYTc5ODA4YWVlYWZmNjMxNmRmMWNiNzVjIiksCn0KTEFURVNUX01JTk9SID0gIjMuMTQiCkZMT09SX01JTk9SID0gIjMuMTAiCgpTUEVDX01JTk9SX1JFID0gcmUuY29tcGlsZShyIihbMC05XStcLlswLTldKykiKQoKCmRlZiBfbWlub3Jfa2V5KG1pbm9yKToKICAgIHRyeToKICAgICAgICBtYWpvciwgc3ViID0gbWlub3Iuc3BsaXQoIi4iKQogICAgICAgIHJldHVybiAoaW50KG1ham9yKSwgaW50KHN1YikpCiAgICBleGNlcHQgKFZhbHVlRXJyb3IsIEF0dHJpYnV0ZUVycm9yKToKICAgICAgICByZXR1cm4gKDAsIDApCgoKZGVmIHJlc29sdmVfcmVxdWVzdGVkX21pbm9yKHB5c3BlYyk6CiAgICAjIEV4dHJhY3RzICJYLlkiIGZyb20gYSBQWVNQRUMgc3RyaW5nIChlLmcuICJweXRob24+PTMuMTAsPDQuMCIpOyBOb25lIGlmIGVtcHR5L3VucGFyc2VhYmxlLgogICAgaWYgbm90IHB5c3BlYzoKICAgICAgICByZXR1cm4gTm9uZQogICAgbWF0Y2ggPSBTUEVDX01JTk9SX1JFLnNlYXJjaChweXNwZWMpCiAgICByZXR1cm4gbWF0Y2guZ3JvdXAoMSkgaWYgbWF0Y2ggZWxzZSBOb25lCgoKZGVmIHJlc29sdmVfdGFibGVfZW50cnkocmVxdWVzdGVkX21pbm9yKToKICAgICMgUmV0dXJucyAobWlub3IsIHBhdGNoLCBzaGEyNTYsIGZlbGxfYmFjayk7IG1pcnJvcnMgdGhlIFBvd2VyU2hlbGwgc3RhZ2UncyBvd24gcnVsZXMuCiAgICBpZiByZXF1ZXN0ZWRfbWlub3IgaW4gRU1CRURfUFlUSE9OX1RBQkxFOgogICAgICAgIHBhdGNoLCBzaGEyNTYgPSBFTUJFRF9QWVRIT05fVEFCTEVbcmVxdWVzdGVkX21pbm9yXQogICAgICAgIHJldHVybiByZXF1ZXN0ZWRfbWlub3IsIHBhdGNoLCBzaGEyNTYsIEZhbHNlCiAgICBtaW5vciA9IEZMT09SX01JTk9SIGlmIF9taW5vcl9rZXkocmVxdWVzdGVkX21pbm9yKSA8IF9taW5vcl9rZXkoRkxPT1JfTUlOT1IpIGVsc2UgTEFURVNUX01JTk9SCiAgICBwYXRjaCwgc2hhMjU2ID0gRU1CRURfUFlUSE9OX1RBQkxFW21pbm9yXQogICAgcmV0dXJuIG1pbm9yLCBwYXRjaCwgc2hhMjU2LCBUcnVlCgoKZGVmIGRvd25sb2FkX2FuZF92ZXJpZnkodXJsLCBleHBlY3RlZF9zaGEyNTYsIGRlc3RfemlwKToKICAgIHVybGxpYi5yZXF1ZXN0LnVybHJldHJpZXZlKHVybCwgZGVzdF96aXApCiAgICBkaWdlc3QgPSBoYXNobGliLnNoYTI1NigpCiAgICB3aXRoIG9wZW4oZGVzdF96aXAsICJyYiIpIGFzIGZoOgogICAgICAgIGZvciBjaHVuayBpbiBpdGVyKGxhbWJkYTogZmgucmVhZCgxIDw8IDIwKSwgYiIiKToKICAgICAgICAgICAgZGlnZXN0LnVwZGF0ZShjaHVuaykKICAgIGFjdHVhbCA9IGRpZ2VzdC5oZXhkaWdlc3QoKS5sb3dlcigpCiAgICBpZiBhY3R1YWwgIT0gZXhwZWN0ZWRfc2hhMjU2Lmxvd2VyKCk6CiAgICAgICAgb3MucmVtb3ZlKGRlc3RfemlwKQogICAgICAgIHJhaXNlIFZhbHVlRXJyb3IoImNoZWNrc3VtIG1pc21hdGNoOiBleHBlY3RlZCB7fSwgZ290IHt9Ii5mb3JtYXQoZXhwZWN0ZWRfc2hhMjU2LCBhY3R1YWwpKQoKCmRlZiBleHRyYWN0X2FuZF9wYXRjaCh6aXBfcGF0aCwgZGVzdF9kaXIpOgogICAgaWYgb3MucGF0aC5pc2RpcihkZXN0X2Rpcik6CiAgICAgICAgc2h1dGlsLnJtdHJlZShkZXN0X2RpcikKICAgIHdpdGggemlwZmlsZS5aaXBGaWxlKHppcF9wYXRoKSBhcyB6ZjoKICAgICAgICB6Zi5leHRyYWN0YWxsKGRlc3RfZGlyKQogICAgcHRoX2ZpbGVzID0gW2YgZm9yIGYgaW4gb3MubGlzdGRpcihkZXN0X2RpcikgaWYgcmUubWF0Y2gociJecHl0aG9uXGQrXC5fcHRoJCIsIGYpXQogICAgaWYgbm90IHB0aF9maWxlczoKICAgICAgICByYWlzZSBGaWxlTm90Rm91bmRFcnJvcigibm8gcHl0aG9uKi5fcHRoIGZpbGUgZm91bmQgYWZ0ZXIgZXh0cmFjdGlvbiIpCiAgICBwdGhfcGF0aCA9IG9zLnBhdGguam9pbihkZXN0X2RpciwgcHRoX2ZpbGVzWzBdKQogICAgd2l0aCBvcGVuKHB0aF9wYXRoLCAiciIsIGVuY29kaW5nPSJhc2NpaSIpIGFzIGZoOgogICAgICAgIGNvbnRlbnQgPSBmaC5yZWFkKCkKICAgIGNvbnRlbnQgPSByZS5zdWIociIoP20pXiNpbXBvcnQgc2l0ZSQiLCAiaW1wb3J0IHNpdGUiLCBjb250ZW50KQogICAgd2l0aCBvcGVuKHB0aF9wYXRoLCAidyIsIGVuY29kaW5nPSJhc2NpaSIsIG5ld2xpbmU9IiIpIGFzIGZoOgogICAgICAgIGZoLndyaXRlKGNvbnRlbnQpCiAgICBweV9leGUgPSBvcy5wYXRoLmpvaW4oZGVzdF9kaXIsICJweXRob24uZXhlIikKICAgIGlmIG5vdCBvcy5wYXRoLmlzZmlsZShweV9leGUpOgogICAgICAgIHJhaXNlIEZpbGVOb3RGb3VuZEVycm9yKCJweXRob24uZXhlIG1pc3NpbmcgYWZ0ZXIgZXh0cmFjdGlvbiIpCiAgICByZXR1cm4gcHlfZXhlCgoKZGVmIG1haW4oKToKICAgICMgZGVzdF9kaXIgaXMgd2hlcmUgVEhJUyBydW5uaW5nIGludGVycHJldGVyIGxpdmVzOyBXaW5kb3dzIHdvbid0IGxldCBhIHByb2Nlc3MgcmVwbGFjZSBpdHMKICAgICMgb3duIGZpbGVzLCBzbyBhIHN3YXAgZXh0cmFjdHMgaW50byBhIHNpYmxpbmcgX3N3YXAgZGlyIGFuZCBiYXRjaCBtb3ZlcyBpdCBpbnRvIHBsYWNlIG9ubHkKICAgICMgYWZ0ZXIgdGhpcyBwcm9jZXNzIGV4aXRzIChsb2NrcyByZWxlYXNlZCkuIFNlZSBkb2NzL2FnZW50LWludGVyY29ubmVjdC5tZC4KICAgIGRlc3RfZGlyID0gc3lzLmFyZ3ZbMV0gaWYgbGVuKHN5cy5hcmd2KSA+IDEgZWxzZSAiIgogICAgc3dhcF9kaXIgPSBkZXN0X2Rpci5yc3RyaXAoIlxcLyIpICsgIl9zd2FwIgogICAgcHlzcGVjID0gb3MuZW52aXJvbi5nZXQoIlBZU1BFQyIsICIiKQogICAgcmVxdWVzdGVkX21pbm9yID0gcmVzb2x2ZV9yZXF1ZXN0ZWRfbWlub3IocHlzcGVjKQoKICAgIGlmIHJlcXVlc3RlZF9taW5vciBpcyBOb25lIG9yIHJlcXVlc3RlZF9taW5vciA9PSBMQVRFU1RfTUlOT1I6CiAgICAgICAgc3lzLnN0ZG91dC53cml0ZSgidW5jaGFuZ2VkfHt9XG4iLmZvcm1hdChMQVRFU1RfTUlOT1IpKQogICAgICAgIHJldHVybiAwCgogICAgbWlub3IsIHBhdGNoLCBzaGEyNTYsIGZlbGxfYmFjayA9IHJlc29sdmVfdGFibGVfZW50cnkocmVxdWVzdGVkX21pbm9yKQogICAgaWYgbWlub3IgPT0gTEFURVNUX01JTk9SOgogICAgICAgIHN5cy5zdGRvdXQud3JpdGUoInVuY2hhbmdlZHx7fVxuIi5mb3JtYXQobWlub3IpKQogICAgICAgIHJldHVybiAwCgogICAgdXJsID0gImh0dHBzOi8vd3d3LnB5dGhvbi5vcmcvZnRwL3B5dGhvbi97cH0vcHl0aG9uLXtwfS1lbWJlZC1hbWQ2NC56aXAiLmZvcm1hdChwPXBhdGNoKQogICAgemlwX3BhdGggPSBvcy5wYXRoLmpvaW4ob3MuZW52aXJvbi5nZXQoIlRFTVAiLCAiLiIpLCAicHl0aG9uLXt9LWVtYmVkLWFtZDY0LnppcCIuZm9ybWF0KHBhdGNoKSkKICAgIHRyeToKICAgICAgICBkb3dubG9hZF9hbmRfdmVyaWZ5KHVybCwgc2hhMjU2LCB6aXBfcGF0aCkKICAgICAgICBleHRyYWN0X2FuZF9wYXRjaCh6aXBfcGF0aCwgc3dhcF9kaXIpCiAgICBleGNlcHQgRXhjZXB0aW9uIGFzIGV4YzoKICAgICAgICBzeXMuc3RkZXJyLndyaXRlKCJlbWJlZCB2ZXJzaW9uIHN3YXAgZmFpbGVkOiB7fVxuIi5mb3JtYXQoZXhjKSkKICAgICAgICBpZiBvcy5wYXRoLmlzZGlyKHN3YXBfZGlyKToKICAgICAgICAgICAgc2h1dGlsLnJtdHJlZShzd2FwX2RpciwgaWdub3JlX2Vycm9ycz1UcnVlKQogICAgICAgIHJldHVybiAxCgogICAgdGFnID0gImZlbGxiYWNrIiBpZiBmZWxsX2JhY2sgZWxzZSAic3dhcHBlZCIKICAgIHN5cy5zdGRvdXQud3JpdGUoInt9fHt9fHt9XG4iLmZvcm1hdCh0YWcsIG1pbm9yLCBzd2FwX2RpcikpCiAgICByZXR1cm4gMAoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBzeXMuZXhpdChtYWluKCkpCg=="
 rem HP_FAILFAST_PROBE decoded content (Slice 2b-C, output-path args added in the 2b-C checkpoint
 rem slice so the elective secondary run never overwrites the primary run's captured files):
 rem $exe = $env:HP_PROBE_EXE
@@ -3784,21 +3831,39 @@ exit /b 0
 rem REQ-013: called after a primary download fails. Pings 8.8.8.8 to distinguish
 rem no-internet (Scenario A) from specific-URL-failed (Scenario B).
 rem HP_TEST_OFFLINE=1 simulates ping failure for CI branch coverage.
+rem derived requirement: both the ping and curl reachability checks retry once (2 total
+rem attempts each) before concluding "no internet" -- a single dropped ICMP echo or a
+rem momentarily-contended curl connect on a busy shared CI runner is enough to misclassify a
+rem genuinely-online host as offline (root-caused from a real self.ux.connectivity.online CI
+rem flake). Mirrors the REQ-022 detect-transient-then-retry-once idiom used elsewhere in this
+rem file (:try_conda_create/:conda_bulk_install). The counter-based loop below is safe because
+rem these lines are top-level (not nested in a parenthesized block); the "Y" retry branch
+rem further down uses literal duplication instead of a counter, since it IS nested in a block
+rem and a counter set+read inside the same block would hit CMD's parse-time %VAR% expansion
+rem trap (see docs/agent-lessons-learned.md).
 if "%HP_TEST_OFFLINE%"=="1" (
   call :log "[TEST] HP_TEST_OFFLINE: simulating ping failure for REQ-013."
   goto :cndf_ping_failed
 )
+set "HP_CONN_PING_ATTEMPT=0"
+:cndf_ping_retry
+set /a HP_CONN_PING_ATTEMPT+=1
 ping -n 1 8.8.8.8 >nul 2>&1
 if not errorlevel 1 (
   call :log "[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback."
   exit /b 0
 )
+if %HP_CONN_PING_ATTEMPT% LSS 2 goto :cndf_ping_retry
 rem ICMP may be blocked on corporate networks; try HTTPS as secondary reachability check.
+set "HP_CONN_CURL_ATTEMPT=0"
+:cndf_curl_retry
+set /a HP_CONN_CURL_ATTEMPT+=1
 curl -s --connect-timeout 5 --max-time 8 -o nul "https://conda.anaconda.org" >nul 2>&1
 if not errorlevel 1 (
   call :log "[INFO] REQ-013: Connectivity check: internet reachable via HTTPS (ICMP blocked). Cascading to fallback."
   exit /b 0
 )
+if %HP_CONN_CURL_ATTEMPT% LSS 2 goto :cndf_curl_retry
 :cndf_ping_failed
 call :log "[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed)."
 :cndf_prompt_loop
@@ -3814,9 +3879,23 @@ if /I "%HP_CONN_CHOICE:~0,1%"=="y" (
     call :log "[TEST] HP_TEST_OFFLINE: Y selected; still simulating offline."
     goto :cndf_ping_failed
   )
+  rem derived requirement: 2 literal attempts each (not a counter var) -- this whole branch is
+  rem nested inside the "y" parenthesized block, and a counter set+read inside the same block
+  rem would be frozen at the block's pre-execution value by CMD's parse-time %VAR% expansion
+  rem (see docs/agent-lessons-learned.md); literal duplication has no such variable to freeze.
   ping -n 1 8.8.8.8 >nul 2>&1
   if not errorlevel 1 (
     call :log "[INFO] REQ-013: Connectivity restored after retry."
+    exit /b 0
+  )
+  ping -n 1 8.8.8.8 >nul 2>&1
+  if not errorlevel 1 (
+    call :log "[INFO] REQ-013: Connectivity restored after retry."
+    exit /b 0
+  )
+  curl -s --connect-timeout 5 --max-time 8 -o nul "https://conda.anaconda.org" >nul 2>&1
+  if not errorlevel 1 (
+    call :log "[INFO] REQ-013: Connectivity restored after retry (HTTPS, ICMP blocked)."
     exit /b 0
   )
   curl -s --connect-timeout 5 --max-time 8 -o nul "https://conda.anaconda.org" >nul 2>&1

@@ -83,7 +83,8 @@ stale locks for other users of the same folder to wait out.
 
 ---
 
-## Standalone Python-download tier (REQ-009 Tier 5, SHIPPED)
+## Standalone Python-download tier (REQ-009 Tier 5 by naming/history; executed 3rd as of the
+## provider-chain reorder below, SHIPPED)
 
 **Status: implemented 2026-07.** `:try_embed_fallback` (new subroutine in `run_setup.bat`) is
 wired into both fallback ladders, a new `HP_ENV_MODE=embed` value flows through every call site
@@ -94,6 +95,50 @@ this tier touches -- useful for anyone extending or debugging it later, not just
 implementer. The original design-map audit covered 34 `HP_ENV_MODE` reference sites in
 `run_setup.bat`; re-verify line numbers against the current file before relying on them, since
 they will have moved.
+
+**Provider-chain reorder (follow-up pass): `uv -> conda -> embed -> venv -> system`, embed moved
+from last-resort to right after conda.** Originally embed was the final rung (reached only after
+uv, conda, venv, AND system had all failed). Reordered so a user who pinned a specific Python
+version via `runtime.txt`/`pyproject.toml` still gets it via a fresh checksummed python.org
+download when uv/conda are unreachable, instead of silently falling back to whatever's already
+ambient on the machine (venv/system just wrap the ambient interpreter, they cannot acquire a
+different one) -- conda and embed both front-load acquisition of a FRESH/pinned interpreter;
+venv/system stay the true last resort. System stays absolute final regardless, since it is the
+only tier gated by the REQ-014 consent prompt (touches the user's real environment).
+
+Both dispatch mechanisms that encode provider order moved together: `:handle_conda_failure` (the
+linear, unconditional initial fallback chain -- reorders its three `call` blocks from
+venv/system/embed to embed/venv/system) and `:provider_cascade` (the goto-based, re-entrant
+post-warnfix cascade -- `:cascade_from_conda` now targets `:try_embed_fallback` instead of
+`:try_venv_fallback`; a new `:cascade_from_embed` label + `HP_CASCADE_TRIED_EMBED` guard targets
+`:try_venv_fallback`; `:cascade_from_venv` is unchanged, still targets `:try_system_fallback`;
+`:cascade_from_system` and `HP_CASCADE_TRIED_SYSTEM` were deleted entirely, since system has no
+cascade target now -- exactly mirroring how embed had none before this reorder). Confirmed via a
+full repo-wide trace that no downstream consumer of `HP_ENV_MODE`/`HP_ENV_READY` needed to change:
+every consumer does pure exact-string-equality on `HP_ENV_MODE`, and `HP_ENV_READY` is a
+tier-agnostic boolean -- only the two dispatch chains and their explanatory comments needed to
+move. Tier numbering ("Tier 4" = system, "Tier 5" = embed) was deliberately kept as a historical/
+naming label, not renumbered to match new execution order -- renumbering would touch ~15 comment
+sites plus two docs files for zero functional benefit, since the load-bearing NDJSON `id` fields
+(`self.embed.fallback.decline`/`.real`) are not tier-numbered.
+
+**Correctness bug found and fixed in the same follow-up pass: the version-swap mechanism below
+was dead code.** The "PowerShell stage extracts latest, Python stage swaps to the user's
+requested version if different" design (point 2 below) had never actually executed, in
+production or in CI. `run_setup.bat`'s version-check-and-swap sequence was wrapped in one
+parenthesized `if not errorlevel 1 ( ... )` block; a `for /f` loop inside that block set
+`HP_EMBED_SWAP_DIR`/`_TAG`/`_MINOR` from the Python stage's output, and code later in the SAME
+block read `%HP_EMBED_SWAP_DIR%` to decide whether to swap -- but CMD's parse-time `%VAR%`
+expansion substitutes every `%VAR%` in a parenthesized block using the value from BEFORE the
+block began, not a value a `for /f` loop set during the same block's own execution (the exact bug
+class documented in `docs/agent-lessons-learned.md`'s "Provider-cascade dispatch is goto-based on
+purpose"). Since `HP_EMBED_SWAP_DIR` was never set earlier in the subroutine, that read was
+always empty, so the swap body never ran regardless of what version was actually requested. No
+test caught it because `self.embed.fallback.real` never requests a non-default version through
+this tier. Fixed via goto-based dispatch, matching this file's established fix pattern for this
+bug class -- see the "Two real implementation gotchas" list below (gotcha 1, the `._pth` patch)
+for the OTHER pre-existing hazard this tier has to handle correctly, which was unaffected by
+this bug.
 
 **Refinement made during implementation, beyond the original design map: two-stage
 PowerShell/Python split, not a single PowerShell script.** The original design map (below)
@@ -310,20 +355,27 @@ paths**, so anyone touching those paths must understand the cascade re-entry:
   are already set near line 410 even in uv-first runs, so `:select_conda_bat` / `:try_conda_install`
   work). `:try_conda_create` ends with `goto :after_env_mode_selection`, which re-runs dep
   install + build.
-- `conda -> venv`: `call :try_venv_fallback` (sets `HP_ENV_MODE=venv`), then
-  `goto :after_env_mode_selection`. Suppressed when `HP_FORCE_CONDA_ONLY=1`.
+- `conda -> embed` (reordered; was `conda -> venv` before the REQ-009 provider-chain reorder):
+  `call :try_embed_fallback` (sets `HP_ENV_MODE=embed`), then `goto :after_env_mode_selection`.
+  Suppressed when `HP_FORCE_CONDA_ONLY=1`. No `HP_OFFLINE_MODE`/consent gate of its own (mirrors
+  venv's zero-friction treatment, not system's).
+- `embed -> venv` (new edge): `call :try_venv_fallback` (sets `HP_ENV_MODE=venv`), then
+  `goto :after_env_mode_selection`.
 - `venv -> system`: `call :try_system_fallback` (sets `HP_ENV_MODE=system`), then
   `goto :after_env_mode_selection`. **Reached in any run** -- the only gate is the REQ-014
   consent prompt inside `:try_system_fallback` (no env flag; `HP_ALLOW_SYSTEM_FALLBACK` is
   deprecated/ignored). In CI the consent gate auto-declines (`HP_CI_LANE`, or an explicit
   `HP_TEST_SYSCON_ANSWER=N`), so the cascade logs `cascading provider venv to system`, the gate
   declines, and `:cascade_system_unavailable` keeps the current build -- the cascade stops at
-  system in CI without entering it. `HP_FORCE_CONDA_ONLY=1` suppresses this tier upstream (the
-  cascade never leaves `:cascade_from_conda`).
+  system in CI without entering it. `HP_FORCE_CONDA_ONLY=1` suppresses embed/venv/system upstream
+  (the cascade never leaves `:cascade_from_conda`). System has no cascade target of its own (no
+  `:cascade_from_system` label/guard exists -- deleted when this reorder made system terminal
+  instead of embed; a re-entry with `HP_ENV_MODE=system` falls straight through
+  `:provider_cascade`'s dispatch table to the "tiers exhausted" catch-all).
 
 **No-loop guarantee (touch one, understand all):** each tier is marked `HP_CASCADE_TRIED_<tier>`
 the first time it is used as a cascade source, and `HP_ENV_MODE` only ever advances
-(uv->conda->venv->system). Re-entry therefore cannot revisit a tier, and tiers exhaust to a
+(uv->conda->embed->venv->system). Re-entry therefore cannot revisit a tier, and tiers exhaust to a
 "keeping current build" terminal. If you add a new provider or reorder tiers, you MUST add a
 matching `HP_CASCADE_TRIED_*` guard and keep the order monotonic, or the cascade can loop.
 

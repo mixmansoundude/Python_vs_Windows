@@ -9,9 +9,18 @@ import hashlib
 import os
 import re
 import shutil
+import socket
 import sys
 import urllib.request
 import zipfile
+
+# derived requirement: urllib.request.urlretrieve has no timeout= parameter (verified via
+# inspect.signature -- passing one raises TypeError), so a stalled (not refused) connection
+# during download_and_verify() would otherwise hang this one-shot script forever. A global
+# default timeout is safe here since the whole script exits immediately after use -- nothing
+# else in this short-lived process is affected. Mirrors the curl --max-time 120 already used
+# for the PowerShell-stage download of the same zip family.
+socket.setdefaulttimeout(120)
 
 # minor -> (patch, sha256)
 EMBED_PYTHON_TABLE = {

@@ -806,10 +806,16 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
 }
 
 # ===== REQ-009 Tier 5: embedded Python fallback declines gracefully when all tiers fail =====
-# Forces the FULL chain to fail (conda, venv, system-decline via HP_TEST_SYSCON_ANSWER=N) and
-# then forces the new embed tier itself to fail via HP_TEST_FORCE_EMBED_FAIL=1. Proves
-# :handle_conda_failure's new embed call is wired correctly and, when every tier is exhausted,
-# the bootstrap reaches :die cleanly instead of hanging or silently reporting success.
+# Since the provider-chain reorder (uv -> conda -> embed -> venv -> system), embed is reached
+# directly after conda fails -- HP_TEST_FORCE_CONDA_FAIL=1 alone is enough to reach it. This
+# test still also forces venv-fail and system-decline (HP_TEST_SYSCON_ANSWER=N) because it wants
+# to prove TIER EXHAUSTION, not just reachability: without those, a real venv/system on the CI
+# runner could silently recover after embed's forced failure, defeating the point of this test.
+# Then forces the embed tier itself to fail via HP_TEST_FORCE_EMBED_FAIL=1. Proves
+# :handle_conda_failure's reordered embed call is wired correctly and, when every tier is
+# exhausted, the bootstrap reaches :die cleanly instead of hanging or silently reporting success.
+# Also asserts the embed attempt log line appears BEFORE the venv-fallback log line, proving the
+# new order actually executes (not just that embed is reachable at all).
 # Skipped in conda-full lane where HP_FORCE_CONDA_ONLY=1 blocks all fallbacks unconditionally.
 $embedDeclineDir = Join-Path $here '~selftest_embed_decline'
 if (Test-Path $embedDeclineDir) { Remove-Item -Recurse -Force $embedDeclineDir }
@@ -876,15 +882,24 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     # is this codebase's own documented source of truth for "did it actually fail". processExit is
     # captured in details for diagnostics only, not asserted.
     $embedDeclineDied = ($embedDeclineState -eq 'error')
-    $embedDeclinePass = ($embedDeclineAttempted -and $embedDeclineForced -and $embedDeclineDied)
+    # derived requirement: proves the reordered chain (uv -> conda -> embed -> venv -> system)
+    # actually executes in that order, not just that embed is reachable -- the embed attempt
+    # line must appear strictly before the venv-fallback line in the same log.
+    $embedDeclineVenvIdx = $embedDeclineText.IndexOf('[WARN] Attempting venv fallback')
+    $embedDeclineEmbedIdx = $embedDeclineText.IndexOf('[WARN] Attempting embedded Python download')
+    $embedDeclineOrdered = ($embedDeclineEmbedIdx -ge 0) -and ($embedDeclineVenvIdx -ge 0) -and ($embedDeclineEmbedIdx -lt $embedDeclineVenvIdx)
+    $embedDeclinePass = ($embedDeclineAttempted -and $embedDeclineForced -and $embedDeclineDied -and $embedDeclineOrdered)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.embed.fallback.decline'
         req     = 'REQ-009'
         pass    = $embedDeclinePass
-        desc    = 'REQ-009 Tier 5: embed fallback is attempted after uv/conda/venv/system all fail, and a forced embed failure reaches :die (bootstrap.status.json reports state=error)'
+        desc    = 'REQ-009 Tier 5 (reordered): embed fallback is attempted right after conda fails (before venv/system), and a forced embed failure reaches :die once venv/system also fail (bootstrap.status.json reports state=error)'
         details = [ordered]@{
             attemptedLog = $embedDeclineAttempted
             forcedLog    = $embedDeclineForced
+            orderedLog   = $embedDeclineOrdered
+            embedIdx     = $embedDeclineEmbedIdx
+            venvIdx      = $embedDeclineVenvIdx
             state        = $embedDeclineState
             exitCode     = $embedDeclineStExit
             processExit  = $embedDeclineExit
@@ -893,12 +908,15 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
 }
 
 # ===== REQ-009 Tier 5: embedded Python fallback real download-through-run path =====
-# Forces the same full chain (conda-fail, venv-fail, system-decline) but instead of forcing the
-# embed tier to fail, uses HP_TEST_FORCE_EMBED_REAL=1 -- a narrow hole through the HP_OFFLINE_MODE
-# gate for this tier only (mirrors HP_TEST_FORCE_VENV_CREATE_FAIL's existing exception for
-# :download_get_pip) -- so the real checksum-verified download, extraction, ._pth patch,
-# get-pip.py bootstrap, canary probe, dependency install, EXE build, and run all execute for
-# real. Proves the tier is not just wired but actually functional end-to-end.
+# Since the provider-chain reorder, embed is reached directly after conda fails -- only
+# HP_TEST_FORCE_CONDA_FAIL=1 is needed to reach it (HP_TEST_FORCE_VENV_FAIL/HP_TEST_SYSCON_ANSWER
+# are no longer needed here: embed succeeding short-circuits the chain before venv/system are
+# ever attempted, so forcing them to fail too would just be dead setup). Uses
+# HP_TEST_FORCE_EMBED_REAL=1 -- a narrow hole through the HP_OFFLINE_MODE gate for this tier only
+# (mirrors HP_TEST_FORCE_VENV_CREATE_FAIL's existing exception for :download_get_pip) -- so the
+# real checksum-verified download, extraction, ._pth patch, get-pip.py bootstrap, canary probe,
+# dependency install, EXE build, and run all execute for real. Proves the tier is not just wired
+# but actually functional end-to-end, and that success short-circuits before reaching venv.
 # Skipped in conda-full lane where HP_FORCE_CONDA_ONLY=1 blocks all fallbacks unconditionally.
 $embedRealDir = Join-Path $here '~selftest_embed_real'
 if (Test-Path $embedRealDir) { Remove-Item -Recurse -Force $embedRealDir }
@@ -917,15 +935,11 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 } else {
     $savedCondaFail8 = $env:HP_TEST_FORCE_CONDA_FAIL
-    $savedVenvFail8  = $env:HP_TEST_FORCE_VENV_FAIL
-    $savedSyscon8    = $env:HP_TEST_SYSCON_ANSWER
     $savedOffline8   = $env:HP_OFFLINE_MODE
     $savedSkipPR8    = $env:HP_SKIP_PIPREQS
     $savedLane8      = $env:HP_CI_LANE
     $savedEmbedReal8 = $env:HP_TEST_FORCE_EMBED_REAL
     $env:HP_TEST_FORCE_CONDA_FAIL = '1'
-    $env:HP_TEST_FORCE_VENV_FAIL  = '1'
-    $env:HP_TEST_SYSCON_ANSWER    = 'N'
     $env:HP_OFFLINE_MODE          = '1'
     $env:HP_SKIP_PIPREQS          = '1'
     $env:HP_CI_LANE               = 'test'
@@ -939,8 +953,6 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
         Pop-Location
     }
     $env:HP_TEST_FORCE_CONDA_FAIL = $savedCondaFail8
-    $env:HP_TEST_FORCE_VENV_FAIL  = $savedVenvFail8
-    if ($null -eq $savedSyscon8) { Remove-Item Env:HP_TEST_SYSCON_ANSWER -ErrorAction SilentlyContinue } else { $env:HP_TEST_SYSCON_ANSWER = $savedSyscon8 }
     $env:HP_OFFLINE_MODE          = $savedOffline8
     $env:HP_SKIP_PIPREQS          = $savedSkipPR8
     $env:HP_CI_LANE               = $savedLane8
@@ -960,17 +972,21 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     $embedRealReady     = ($embedRealSetupText -match [regex]::Escape('[INFO] embed fallback ready:'))
     $embedRealProvider  = ($embedRealSetupText -match [regex]::Escape('[BOOT] REQ-009: Selected Python provider: Embedded Python (python.org).'))
     $embedRealAppRan    = ($embedRealRunText -match [regex]::Escape('embed-real-ok'))
-    $embedRealPass = ($embedRealExtracted -and $embedRealReady -and $embedRealProvider -and $embedRealAppRan)
+    # derived requirement: proves embed's success short-circuits the reordered chain before
+    # venv is ever attempted -- the venv-fallback log line must be entirely absent.
+    $embedRealVenvAbsent = -not ($embedRealSetupText -match [regex]::Escape('[WARN] Attempting venv fallback'))
+    $embedRealPass = ($embedRealExtracted -and $embedRealReady -and $embedRealProvider -and $embedRealAppRan -and $embedRealVenvAbsent)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.embed.fallback.real'
         req     = 'REQ-009'
         pass    = $embedRealPass
-        desc    = 'REQ-009 Tier 5: real embed download/extract/patch/get-pip/canary/build/run succeeds end-to-end'
+        desc    = 'REQ-009 Tier 5 (reordered): real embed download/extract/patch/get-pip/canary/build/run succeeds end-to-end right after conda fails, short-circuiting before venv is ever attempted'
         details = [ordered]@{
             extractedLog     = $embedRealExtracted
             readyLog         = $embedRealReady
             providerLogFound = $embedRealProvider
             appRan           = $embedRealAppRan
+            venvAbsent       = $embedRealVenvAbsent
             exit             = $embedRealExit
         }
     })
