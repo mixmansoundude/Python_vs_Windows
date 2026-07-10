@@ -283,15 +283,22 @@ self.embed.fallback.decline, self.embed.fallback.real
   recovers gracefully.
 - `self.embed.fallback.decline` and `self.embed.fallback.real` (REQ-009 Tier 5, the standalone
   embeddable-Python download fallback -- see `docs/agent-interconnect.md` "Standalone
-  Python-download tier") are emitted by `selfapps_ux_hardening.ps1`. Both force the full
-  uv/conda/venv/system chain to fail first (conda-fail, venv-fail, system-decline via
-  `HP_TEST_SYSCON_ANSWER=N`) so `:try_embed_fallback` is reached the same way a real user with
-  no ambient Python and no reachable uv/conda would reach it. `.decline` additionally forces
-  `HP_TEST_FORCE_EMBED_FAIL=1` and asserts a clean `:die` (state=error, non-zero exit) instead
-  of a hang or false success. `.real` instead sets `HP_TEST_FORCE_EMBED_REAL=1` (a narrow hole
-  through the `HP_OFFLINE_MODE=1` gate for this tier only) and exercises the real
-  download-verify-extract-patch-pip-bootstrap-canary-build-run path end-to-end. Both skip with
-  `skip=true` in the conda-full lane (`HP_FORCE_CONDA_ONLY=1` blocks all non-conda fallbacks).
+  Python-download tier") are emitted by `selfapps_ux_hardening.ps1`. Since the provider-chain
+  reorder (`uv -> conda -> embed -> venv -> system`), embed is reached directly after conda fails
+  -- `HP_TEST_FORCE_CONDA_FAIL=1` alone is enough to reach it, the same way a real user with no
+  reachable uv/conda (but a working venv/system fallback still available) would reach it.
+  `.decline` ALSO forces `HP_TEST_FORCE_VENV_FAIL=1` and `HP_TEST_SYSCON_ANSWER=N` -- not to
+  reach embed (unnecessary now), but so the run doesn't silently recover through venv/system
+  after embed's forced failure (`HP_TEST_FORCE_EMBED_FAIL=1`), which would defeat the point of
+  proving tier EXHAUSTION reaches a clean `:die` (state=error, non-zero exit) instead of a hang
+  or false success. It additionally asserts the embed-attempt log line appears BEFORE the
+  venv-fallback log line, proving the new order actually executes. `.real` sets
+  `HP_TEST_FORCE_EMBED_REAL=1` (a narrow hole through the `HP_OFFLINE_MODE=1` gate for this tier
+  only) and exercises the real download-verify-extract-patch-pip-bootstrap-canary-build-run path
+  end-to-end -- `HP_TEST_FORCE_VENV_FAIL`/`HP_TEST_SYSCON_ANSWER` are NOT needed here since embed
+  succeeding short-circuits the chain before venv is ever attempted; it instead asserts the
+  venv-fallback log line is ABSENT, proving that short-circuit. Both skip with `skip=true` in the
+  conda-full lane (`HP_FORCE_CONDA_ONLY=1` blocks all non-conda fallbacks).
 
 **NDJSON files and who owns them:**
 - `tests/~test-results.ndjson` -- written by every `selfapps_*.ps1` test script during the

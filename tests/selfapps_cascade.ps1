@@ -8,9 +8,12 @@
 #
 # The app imports a nonexistent module (fake_pkg_cascade_xyz). PyInstaller's static analysis
 # writes it to the warn file, so warnfix fires under every tier and genuinely fails to install
-# it, marking a cascade candidate each time. With consent granted the run walks the priority
-# path uv -> conda (the main gain: conda is the strongest solver), then conda -> venv, then
-# venv -> system; the system tier is now reached in any run (no env flag) but its REQ-014
+# it, marking a cascade candidate each time. With consent granted the run walks the reordered
+# priority path uv -> conda (the main gain: conda is the strongest solver), then conda -> embed
+# (REQ-009 Tier 5 by naming/history, now executed 3rd -- a fresh checksummed python.org
+# download, run for real here just like venv/Miniconda already are; HP_OFFLINE_MODE is not set
+# in this test so :try_embed_fallback's offline gate does not block it), then embed -> venv,
+# then venv -> system; the system tier is reached in any run (no env flag) but its REQ-014
 # consent prompt is declined deterministically here (HP_TEST_SYSCON_ANSWER=N), so the cascade
 # stops there and the build is kept. The no-loop check still holds: each tier is used as a
 # cascade source at most once.
@@ -122,14 +125,15 @@ $combined  = ($logLines -join "`n") + "`n" + $setupText
 # line to BOTH stdout (captured in $logLines) AND ~setup.log, so counting against $combined
 # would double every occurrence and break the "-eq 1" / no-loop checks.
 $uvToConda    = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider uv to conda'))).Count
-$condaToVenv  = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider conda to venv'))).Count
+$condaToEmbed = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider conda to embed'))).Count
+$embedToVenv  = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider embed to venv'))).Count
 $venvToSystem = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider venv to system'))).Count
 # Conda was actually selected after the uv -> conda cascade.
 $condaSelected = $combined -match [regex]::Escape('REQ-009: Selected Python provider: Conda')
 # Terminal state: a "keeping current build" line means the cascade stopped (did not loop).
 $terminated = $combined -match [regex]::Escape('keeping current build')
 # No tier was used as a cascade source more than once (per-tier guard works -> no loop).
-$noLoop = ($uvToConda -le 1) -and ($condaToVenv -le 1) -and ($venvToSystem -le 1)
+$noLoop = ($uvToConda -le 1) -and ($condaToEmbed -le 1) -and ($embedToVenv -le 1) -and ($venvToSystem -le 1)
 
 # Bootstrap status: the run must end gracefully (exitCode 0) despite the unresolvable dep.
 $statusPath = Join-Path $workDir '~bootstrap.status.json'
@@ -151,8 +155,8 @@ $execPass = ($uvToConda -eq 1) -and $condaSelected -and $terminated -and $noLoop
 # the CI job log shows nothing about what the cascade actually did. Echo the computed evidence
 # and the REQ-009 / provider / warnfix lines so a failure is diagnosable from the step log alone.
 Write-Host "=== self.cascade.exec evidence ==="
-Write-Host ("uvToConda={0} condaToVenv={1} venvToSystem={2} condaSelected={3} terminated={4} noLoop={5} statusExit={6} statusState={7} runExit={8} execPass={9}" -f `
-    $uvToConda, $condaToVenv, $venvToSystem, $condaSelected, $terminated, $noLoop, $statusExit, $statusState, $runExit, $execPass)
+Write-Host ("uvToConda={0} condaToEmbed={1} embedToVenv={2} venvToSystem={3} condaSelected={4} terminated={5} noLoop={6} statusExit={7} statusState={8} runExit={9} execPass={10}" -f `
+    $uvToConda, $condaToEmbed, $embedToVenv, $venvToSystem, $condaSelected, $terminated, $noLoop, $statusExit, $statusState, $runExit, $execPass)
 Write-Host "=== REQ-009 / provider / warnfix lines (setup log) ==="
 ($setupText -split "`n") | Where-Object { $_ -match 'REQ-009|Selected Python provider|REPAIR|HP_ENV_MODE|warnfix|cascade|Trying the next Python provider|Installing Miniconda' } | Select-Object -First 80 | ForEach-Object { Write-Host $_ }
 Write-Host "=== bootstrap stdout log tail (50) ==="
@@ -163,10 +167,11 @@ Write-NdjsonRow ([ordered]@{
     id      = 'self.cascade.exec'
     req     = 'REQ-009'
     pass    = [bool]$execPass
-    desc    = 'cascade executes uv -> conda on consent, re-attempts deps, never retries a tier, ends gracefully'
+    desc    = 'cascade executes uv -> conda -> embed -> venv on consent (reordered chain), re-attempts deps, never retries a tier, ends gracefully'
     details = [ordered]@{
         uvToConda     = $uvToConda
-        condaToVenv   = $condaToVenv
+        condaToEmbed  = $condaToEmbed
+        embedToVenv   = $embedToVenv
         venvToSystem  = $venvToSystem
         condaSelected = $condaSelected
         terminated    = $terminated

@@ -1647,15 +1647,22 @@ rem REQ-009/REQ-005.10 slice 3: re-attempt the dependency phase under the next p
 rem Dispatch is goto-based (no parenthesized interdependent sets) to avoid CMD parse-time
 rem expansion traps. Each tier is marked HP_CASCADE_TRIED_<tier> the first time it is used as a
 rem cascade source; a tier is never used twice, so tiers exhaust and the run stops (no loop).
-rem HP_ENV_MODE only advances (uv -> conda -> venv -> system -> embed), so re-entry cannot
-rem revisit a tier. NOTE: the :log messages below say "uv to conda" (not "uv -> conda") on
+rem HP_ENV_MODE only advances (uv -> conda -> embed -> venv -> system), so re-entry cannot
+rem revisit a tier. conda and embed both front-load acquisition of a FRESH/pinned interpreter
+rem before falling back to venv/system, which merely wrap whatever Python is already ambient on
+rem the machine -- see docs/agent-interconnect.md "Standalone Python-download tier" for the
+rem ordering rationale. NOTE: the :log messages below say "uv to conda" (not "uv -> conda") on
 rem purpose -- :log echoes UNQUOTED, so a ">" in the message would be parsed as redirection and
 rem eat the line (see docs/agent-lessons-learned.md). Do not "fix" these to arrows.
 set "HP_CASCADE_APPROVED="
 if /i "%HP_ENV_MODE%"=="uv" goto :cascade_from_uv
 if /i "%HP_ENV_MODE%"=="conda" goto :cascade_from_conda
+if /i "%HP_ENV_MODE%"=="embed" goto :cascade_from_embed
 if /i "%HP_ENV_MODE%"=="venv" goto :cascade_from_venv
-if /i "%HP_ENV_MODE%"=="system" goto :cascade_from_system
+rem NOTE: no "system" case here, by design -- system is the absolute last resort (Tier 4 by
+rem naming/history, REQ-014-gated), no cascade target beyond it. A re-entry with
+rem HP_ENV_MODE=system falls straight through to the catch-all below, exactly as a re-entry
+rem with HP_ENV_MODE=embed used to before this reorder (when embed was terminal).
 call :log "[INFO] REQ-009: provider tiers exhausted after %HP_ENV_MODE%; keeping current build."
 goto :after_cascade_decision
 
@@ -1678,14 +1685,26 @@ goto :after_cascade_decision
 if defined HP_CASCADE_TRIED_CONDA goto :after_cascade_decision
 set "HP_CASCADE_TRIED_CONDA=1"
 if "%HP_FORCE_CONDA_ONLY%"=="1" goto :cascade_condaonly_stop
-call :log "[INFO] REQ-009: cascading provider conda to venv; re-attempting dependencies."
-echo *** [INFO] Trying the next Python provider (venv) to resolve dependencies...
-call :try_venv_fallback
-if errorlevel 1 goto :cascade_venv_unavailable
+call :log "[INFO] REQ-009: cascading provider conda to embed; re-attempting dependencies."
+echo *** [INFO] Trying the next Python provider (embed) to resolve dependencies...
+call :try_embed_fallback
+if errorlevel 1 goto :cascade_embed_unavailable
 goto :after_env_mode_selection
 :cascade_condaonly_stop
 call :log "[INFO] REQ-009: conda-only mode; cascade beyond conda suppressed; keeping current build."
 goto :after_cascade_decision
+:cascade_embed_unavailable
+call :log "[WARN] REQ-009: cascade target embedded Python unavailable; keeping current build."
+goto :after_cascade_decision
+
+:cascade_from_embed
+if defined HP_CASCADE_TRIED_EMBED goto :after_cascade_decision
+set "HP_CASCADE_TRIED_EMBED=1"
+call :log "[INFO] REQ-009: cascading provider embed to venv; re-attempting dependencies."
+echo *** [INFO] Trying the next Python provider (venv) to resolve dependencies...
+call :try_venv_fallback
+if errorlevel 1 goto :cascade_venv_unavailable
+goto :after_env_mode_selection
 :cascade_venv_unavailable
 call :log "[WARN] REQ-009: cascade target venv unavailable; keeping current build."
 goto :after_cascade_decision
@@ -1693,29 +1712,15 @@ goto :after_cascade_decision
 :cascade_from_venv
 if defined HP_CASCADE_TRIED_VENV goto :after_cascade_decision
 set "HP_CASCADE_TRIED_VENV=1"
-rem REQ-009/REQ-014: system Python is Tier 4; reached in any run and gated only by the REQ-014
-rem consent prompt inside :try_system_fallback (no env flag). A decline keeps the current build.
+rem REQ-009/REQ-014: system Python is Tier 4 (by naming/history; executed last in chain order);
+rem reached in any run and gated only by the REQ-014 consent prompt inside :try_system_fallback
+rem (no env flag). A decline keeps the current build.
 call :log "[INFO] REQ-009: cascading provider venv to system; re-attempting dependencies."
 call :try_system_fallback
 if errorlevel 1 goto :cascade_system_unavailable
 goto :after_env_mode_selection
 :cascade_system_unavailable
 call :log "[WARN] REQ-009: cascade target system Python unavailable; keeping current build."
-goto :after_cascade_decision
-
-:cascade_from_system
-if defined HP_CASCADE_TRIED_SYSTEM goto :after_cascade_decision
-set "HP_CASCADE_TRIED_SYSTEM=1"
-rem REQ-009 Tier 5: embedded Python is the final tier; no further cascade target beyond it (no
-rem "embed" case is added to the dispatch above, so a future re-entry with HP_ENV_MODE=embed
-rem falls through to the "tiers exhausted" catch-all, exactly like reaching here for real does
-rem when :try_embed_fallback itself fails).
-call :log "[INFO] REQ-009: cascading provider system to embed; re-attempting dependencies."
-call :try_embed_fallback
-if errorlevel 1 goto :cascade_embed_unavailable
-goto :after_env_mode_selection
-:cascade_embed_unavailable
-call :log "[WARN] REQ-009: cascade target embedded Python unavailable; keeping current build."
 goto :after_cascade_decision
 
 :cascade_acquire_conda
@@ -1841,24 +1846,29 @@ if "%HP_FORCE_CONDA_ONLY%"=="1" (
   exit /b 0
 )
 
-rem REQ-009: venv fallback is always attempted when conda fails; HP_ALLOW_VENV_FALLBACK is deprecated/ignored.
+rem REQ-009 (reordered): embedded Python (Tier 5 by naming/history, executed 3rd since this
+rem reorder) is attempted immediately after conda fails, ahead of venv/system -- so a user who
+rem pinned a newer-than-ambient Python version via runtime.txt/pyproject.toml still gets it via
+rem a fresh checksummed python.org download, before falling back to a tier that just wraps
+rem whatever's already on the machine. No consent gate (see :try_embed_fallback's header
+rem comment for why). See docs/agent-interconnect.md "Standalone Python-download tier" for the
+rem full ordering rationale.
+call :try_embed_fallback
+if not errorlevel 1 (
+  set "HP_ENV_READY=1"
+  exit /b 0
+)
+rem REQ-009: venv fallback is attempted when conda and embed both fail; HP_ALLOW_VENV_FALLBACK
+rem is deprecated/ignored.
 call :try_venv_fallback
 if not errorlevel 1 (
   set "HP_ENV_READY=1"
   exit /b 0
 )
-rem REQ-009/REQ-014: system Python is the last-resort Tier 4 and is always attempted when venv also
-rem fails; the REQ-014 consent prompt inside :try_system_fallback is the only gate (no env flag).
-rem HP_ALLOW_SYSTEM_FALLBACK is deprecated/ignored.
+rem REQ-009/REQ-014: system Python is Tier 4 (by naming/history) and the absolute last resort --
+rem the only tier gated by the REQ-014 consent prompt (touches the user's real environment), so
+rem it stays final regardless of embed's move. HP_ALLOW_SYSTEM_FALLBACK is deprecated/ignored.
 call :try_system_fallback
-if not errorlevel 1 (
-  set "HP_ENV_READY=1"
-  exit /b 0
-)
-rem REQ-009 Tier 5: embedded Python is the final rung, always attempted when system also fails
-rem (or no ambient interpreter exists at all -- the scenario this tier exists for). No consent
-rem gate (see :try_embed_fallback's header comment for why).
-call :try_embed_fallback
 if not errorlevel 1 (
   set "HP_ENV_READY=1"
   exit /b 0
