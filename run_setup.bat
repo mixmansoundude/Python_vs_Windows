@@ -2119,13 +2119,27 @@ rem which is exactly why the Python stage extracted into a sibling _swap directo
 rem overwriting HP_EMBED_DIR itself. See docs/agent-interconnect.md.
 if not defined HP_EMBED_SWAP_DIR goto :embed_pyver_check_tagcheck
 if not exist "%HP_EMBED_SWAP_DIR%\python.exe" goto :embed_pyver_check_tagcheck
+rem derived requirement: rd /s /q can return before an AV/indexer file handle on HP_EMBED_DIR
+rem fully releases, causing the immediately-following move /y to fail (a real, if low-severity,
+rem Windows deletion race). Already failed safely before this change (checked python.exe exists
+rem after, logged WARN, tier failed cleanly) -- this just retries the pair up to 3 total attempts
+rem with a short pause between, so a rare transient lock doesn't needlessly fail the last-resort
+rem tier. Uses ping (not timeout /t) for the pause -- this file already has a proven-safe idiom
+rem for exactly this at line 1461's VISA-detection delay; see docs/agent-lessons-learned.md.
+set "HP_EMBED_SWAP_ATTEMPT=0"
+:embed_swap_retry
+set /a HP_EMBED_SWAP_ATTEMPT+=1
 rd /s /q "%HP_EMBED_DIR%" >nul 2>&1
 move /y "%HP_EMBED_SWAP_DIR%" "%HP_EMBED_DIR%" >nul 2>&1
 if exist "%HP_EMBED_DIR%\python.exe" (
   call :log "[INFO] embed fallback: swapped to requested Python %HP_EMBED_SWAP_MINOR%."
-) else (
-  call :log "[WARN] embed fallback: swap move failed; interpreter may be missing."
+  goto :embed_pyver_check_tagcheck
 )
+if %HP_EMBED_SWAP_ATTEMPT% LSS 3 (
+  ping -n 2 127.0.0.1 >nul 2>&1
+  goto :embed_swap_retry
+)
+call :log "[WARN] embed fallback: swap move failed; interpreter may be missing."
 :embed_pyver_check_tagcheck
 if /i "%HP_EMBED_SWAP_TAG%"=="fellback" call :log "[WARN] REQ-009: requested Python not in embed table; using %HP_EMBED_SWAP_MINOR% instead."
 :embed_pyver_check_skip
