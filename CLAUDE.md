@@ -483,10 +483,7 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    `-Command` body breaks cmd.exe's naive quote-toggle tokenization, so a `.NET`-API rewrite here
    either needs to avoid literal `"` entirely or convert this to an emitted `.ps1` file (more
    invasive) -- needs its own dedicated follow-up loop.
-3. **Embed version table has no quarterly-maintenance-checklist entry.** The Tier 5 design doc
-   states the table should refresh on the same quarterly cadence as the pipreqs pin, but no
-   corresponding entry exists in "Periodic Maintenance Checks" below. Add one.
-4. **Cleanup-review findings from a background code-review pass (2026-07-10), not yet
+3. **Cleanup-review findings from a background code-review pass (2026-07-10), not yet
    implemented**: the embed zip download has no fallback/mirror URL unlike every other download
    in `run_setup.bat` (Miniconda, uv, get-pip all have one); `tests/harness.ps1`'s
    `batch.req009.provider_logs` static check (titled "all four provider log lines") was never
@@ -576,6 +573,29 @@ rather than relying on manual memory.
   `<3.13` Requires-Python situation, or whether it's been removed from PyPI (extremely unlikely)
   -- revisit the internalization decision above if either happens.
 
+### Embed version table (REQ-009 Tier 5, `tools/embed_pyver_check.py`)
+
+- **Last scanned**: 2026-07-10 (entry added this scan; first run of this specific check).
+- **Findings**: `EMBED_PYTHON_TABLE` currently spans 3.10 through 3.14 (`LATEST_MINOR="3.14"`,
+  `FLOOR_MINOR="3.10"`), pinned to patches 3.10.11 / 3.11.9 / 3.12.10 / 3.13.14 / 3.14.6 with
+  embedded SHA256 checksums, last refreshed 2026-07-09 per the file's own header comment. The
+  `"3.14"` entry's patch/sha256 must stay in sync with `HP_EMBED_LATEST_PATCH`/
+  `HP_EMBED_LATEST_SHA256` in `run_setup.bat`; `tests/test_embed_tier.py`'s
+  `BatchPythonConsistency` test enforces this automatically on every CI run, so a stale
+  cross-reference is caught in CI, not just at scan time. No CPython 3.15 has shipped yet as of
+  this scan (3.14 remains current stable), so the table's ceiling is still accurate.
+- **Going forward**: each scan, check python.org for (a) a new CPython minor release --
+  add a table entry and bump `LATEST_MINOR`/`HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256`
+  together (re-run `test_embed_tier.py` to confirm the sync); (b) any of the pinned patch
+  versions reaching end-of-life within their minor line -- bump to the latest patch of that
+  minor (embedded zips are patch-specific, not auto-updating); (c) whether `FLOOR_MINOR="3.10"`
+  should advance -- python.org's own supported-versions page lists five actively-supported
+  minors at any time, so the floor should track five minors behind latest, not stay fixed at
+  3.10 indefinitely. Re-verify each new/changed table entry's SHA256 against a fresh direct
+  download before committing, per this tier's original design principle (embedded checksums are
+  computed once at pin-time and independently verified, never trusted from a third-party
+  checksum file fetched over the same network path as the download itself).
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **User-code exit-code semantics are already correctly isolated from bootstrapper status --
@@ -654,6 +674,16 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Embed version table quarterly-maintenance-checklist entry**: the Tier 5 design doc stated
+  the `EMBED_PYTHON_TABLE` in `tools/embed_pyver_check.py` should refresh on the same quarterly
+  cadence as the pipreqs pin, but no corresponding entry existed in "Periodic Maintenance
+  Checks." Added an "Embed version table (REQ-009 Tier 5)" entry there, recording the current
+  table range (3.10-3.14) and going-forward checks (new CPython minors, patch EOL within a
+  pinned minor, whether `FLOOR_MINOR` should advance to track five-minors-behind-latest). Also
+  noted that `tests/test_embed_tier.py`'s `BatchPythonConsistency` test already catches a
+  batch/table cross-reference drift in CI automatically, independent of the quarterly scan.
+  Doc-only. CLOSED by this PR.
 
 - **REQ-009 provider-chain reorder (`uv -> conda -> embed -> venv -> system`)**: the embed tier
   (Tier 5 by naming/history) moved from last-resort (after venv and system) to right after conda,
