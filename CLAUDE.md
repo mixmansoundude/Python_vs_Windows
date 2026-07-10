@@ -465,8 +465,90 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
 "Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead
 (see those sections' own scope notes).
 
-*(Empty as of 2026-07-09 -- the last open item, the standalone Python-download tier, shipped;
-see Closed Backlog.)*
+1. **Diagnostics artifact bloat (root-caused 2026-07-09 via a debug-logging-enabled CI
+   retrigger of the merge-commit run, 29002681009 attempt 2)**: `batch-check.yml`'s "Build
+   public diagnostics tree" step (`publish_diag` job) blanket-copies the ENTIRE post-test repo
+   working tree into each lane's `diag-selftest-*` artifact --
+   `Get-ChildItem -Force | Where-Object { $_.Name -notin @('.', '..', '.git', 'site') } |
+   Copy-Item -Recurse` -- with zero exclusion for build/binary output (`dist\*.exe`, `build\`,
+   conda envs, `.venv`, `.uv_env`, `~uv_bin`, the new `~embed_python*` extraction, Miniconda3,
+   downloaded zips). Confirmed via exact per-artifact byte sizes in the debug log: per-lane
+   `diag-selftest-*` bundles total ~5.4 GB combined (real 1.48 GB, conda-full 1.17 GB,
+   contract-uv 583 MB, uv 687 MB, uv-dl-fallback 434 MB, contract-uv-fail 557 MB, justme-test
+   270 MB) while the final `github-pages` artifact that actually reaches the published site is
+   only ~32 MB -- proving the PUBLISHED SITE is not bloated (just logs/index, as intended), but
+   the raw per-lane diagnostic capture is, and `publish_diag` has to download all ~5.4 GB before
+   it can filter it down to that 32 MB. This is the most likely explanation for both the
+   `Publish diagnostics to Pages` cancellation on the merge-commit run's first attempt (disk/time
+   pressure downloading+unzipping that much data on a shared runner) and the multi-month growth
+   in overall CI wall-clock (this mechanism has silently accumulated every scratch-dir any test
+   has ever created, growing linearly with feature additions, not from a single new bug). Fix:
+   extend the existing `Where-Object` exclusion list (already excludes `.git`/`site`) to also
+   skip known scratch/binary directories and extensions before the recursive copy. This touches
+   only the CI-diagnostics YAML step, not `run_setup.bat`/Prime-Directive mechanics -- low risk.
+2. **conda-full lane duration (~80 min on both the original and retriggered attempt of run
+   29002681009)** is the dominant single contributor to overall CI wall-clock growth (20 min ->
+   1.5 h), separate from the diagnostics-bloat item above. Likely accumulated
+   feature/test-scenario growth (more selftest scripts each doing a real `conda create`), not a
+   regression from any single change. Worth periodic reassessment, no action planned yet.
+3. **REQ-009 provider-chain reorder under discussion (2026-07-10)**: whether the embed tier
+   (Tier 5) should move from last-resort (after venv and system) to between conda and
+   venv/system, so a user-requested newer-than-ambient-system Python version is satisfied by a
+   fresh managed download before falling back to a possibly-stale ambient system interpreter.
+   See the corresponding plan-mode session for the recommendation and design tradeoffs; not yet
+   implemented.
+4. **REQ-016 hidden-import auto-recovery: no dedicated user-facing message on exhaustion.**
+   Confirmed by reading `:hidden_import_recover_done` (run_setup.bat ~line 3131): when the
+   3-attempt cap is reached and `HP_EXE_EXIT` is still non-zero, the subroutine logs nothing
+   beyond the per-iteration `[REPAIR][HIDDEN_IMPORT]` lines and returns `exit /b 0` (a normal
+   subroutine return, not a failure signal) -- the user only sees the generic post-build failure
+   output, with no explicit "auto-recovery tried 3 times and gave up" message. Small, low-risk
+   addition: a `[WARN]` log line in the exhausted branch.
+5. **`:try_venv_fallback`'s `:venv_canary_fail` HP_PY leak** (documented as a known, unfixed
+   sibling of the `:try_system_fallback` leak already fixed in the Tier 5 PR --
+   see `docs/agent-lessons-learned.md` "A declined/failed fallback tier must clear HP_PY"). Pick
+   up: clear `HP_PY=` before that path's `exit /b 1`, mirroring the already-shipped fix.
+6. **`:conda_base_update`'s `Get-Content`-based `for /f` (run_setup.bat ~line 3672)** shares the
+   same `for /f` backtick-subshell invocation topology as the CONFIRMED Windows PowerShell 5.1
+   `Get-FileHash` module-autoload bug fixed in `embed_extract.ps1` this session (see
+   `docs/agent-lessons-learned.md`). Unconfirmed in this specific case (wrapped in a `try/catch`
+   that silently defaults to `'update'` on any exception, so a module-load failure here would be
+   masked, not crash), but plausible enough to warrant the same defensive rewrite to
+   `[System.IO.File]::ReadAllText` -- cheap, isolated, mirrors an already-proven fix pattern.
+7. **Embed version table has no quarterly-maintenance-checklist entry.** The Tier 5 design doc
+   states the table should refresh on the same quarterly cadence as the pipreqs pin, but no
+   corresponding entry exists in "Periodic Maintenance Checks" below. Add one.
+8. **`embed_pyver_check.py`'s `download_and_verify` has no socket timeout** (validated finding
+   from a 3rd-party review this session): `urllib.request.urlretrieve(url, dest_zip)` uses
+   Python's default (unbounded) socket timeout, so a stalled connection (not a clean refusal)
+   during the rare user-requested-non-latest-minor swap path can hang the whole bootstrap
+   indefinitely with no way out. Cheap, isolated, low-risk fix: add an explicit `timeout=`
+   (mirrors the `curl --max-time 120` already used for the PowerShell-stage download of the
+   same zip family). Recommend implementing directly rather than deferring.
+9. **`:try_embed_fallback`'s `rd /s /q` + `move /y` swap (run_setup.bat ~lines 2104-2105) is a
+   real, if low-severity, Windows deletion-race** (validated finding from a 3rd-party review):
+   `rd /s /q` can return before all file handles are released (AV/indexer lock), causing the
+   immediately-following `move /y` to fail. Confirmed this does NOT cause silent corruption --
+   the code already checks `if exist "%HP_EMBED_DIR%\python.exe"` afterward and logs a `[WARN]`
+   plus fails the tier cleanly if the swap didn't take. Still worth a small retry-with-short-delay
+   hardening (mirrors this file's other transient-retry patterns) so a rare transient lock
+   doesn't needlessly fail the last-resort tier. Backlog, not urgent given the existing
+   fail-safe.
+   - **Investigated and NOT valid, no action**: the companion 3rd-party claim that the
+     `for /f` capturing `~embed_extract.ps1`'s stdout (run_setup.bat line 2066) "swallows
+     PowerShell failures" and leaves `HP_EMBED_PY` holding stale prior state on a crash is
+     already defended against -- line 2065 explicitly does `set "HP_EMBED_PY="` immediately
+     before the `for /f` call, so a zero-output crash leaves it empty (not stale), and the
+     following `if not exist "%HP_EMBED_PY%"` check (line 2069) correctly treats an empty value
+     as a failure and retries/exits. No gap here.
+
+*(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
+briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
+other structural path-doubling exists in the PyInstaller build invocation. Most likely source is
+the "Build public diagnostics tree" step's own `DIAG CWD`/`DIAG ROOT`/`DIAG TREE` debug print
+lines, which naturally show GitHub Actions' inherent doubled checkout path
+(`.../Python_vs_Windows/Python_vs_Windows/...`) -- a runner convention, not a bug. Not chased
+further.)*
 
 ## Periodic Maintenance Checks (recurring, quarterly)
 
