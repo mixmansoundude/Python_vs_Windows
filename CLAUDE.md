@@ -488,6 +488,105 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    genuinely different set of env vars (decline: 6 vars; real: 5 different vars), so the helper
    would need real parameterization -- a small design decision, not a mechanical copy-paste
    cleanup. Cosmetic; defer unless already touching these test blocks for another reason.
+4. **PYSPEC-aware venv-vs-embed decision function (promising, deliberately not implemented yet --
+   don't add the complexity until there's a concrete reason to).** `:try_venv_fallback` currently
+   uses whatever ambient Python is on the machine unconditionally, with no check of whether it
+   actually satisfies `PYSPEC` (the same value `~detect_python.py` already computes for
+   uv/conda/embed). This means the current linear order (embed before venv) always pays embed's
+   network cost even in the common case where the ambient Python already satisfies the pin and
+   venv would have been strictly better (instant, no network dependency, no extra disk). The
+   flip side also matters: embed is reached immediately after conda, so by the time it's
+   attempted, uv and conda have already both failed -- and since all three of uv/conda/embed
+   need network, embed is disproportionately likely to fail for the *same* underlying reason
+   (see the README's REQ-009 failure-causes table), making it a low-odds attempt in exactly the
+   scenario where it's tried. A smarter design would check "does the ambient Python (if any)
+   already satisfy PYSPEC?" and prefer venv when yes, falling to embed only when the ambient
+   Python is absent or version-mismatched -- turning the fixed uv/conda/embed/venv/system chain
+   into uv/conda/(venv-if-it-already-satisfies-PYSPEC, else embed)/system. Not pursued now: it
+   changes `:try_venv_fallback`'s dispatch shape (must read `PYSPEC` before deciding, not just on
+   creation), and the current fixed order is not wrong, just not optimal in either direction.
+   Revisit if the network-correlated-embed-failure pattern shows up for real in CI or user
+   reports, rather than speculatively building it now.
+5. **`autopep723` / `uv add --script` as a PEP 723 auto-write-back mechanism (soon-ish; needs its
+   own design pass, not a quick add).** Researched at the owner's request (2026-07-11). Two
+   distinct ideas got raised together and are worth separating:
+   - As a *discovery* mechanism (an alternative to pipreqs), `autopep723` offers little: it's
+     AST-based static import scanning, the same fundamental technique pipreqs already uses, with
+     the same blind spot (dynamic/plugin-style imports it can't see without executing the code --
+     e.g. `pandas.read_excel` needing `openpyxl`, same example already documented in the
+     Dependency strategy section above). It would not catch anything warnfix's build-time trace
+     doesn't already catch.
+   - As a *write-back* mechanism, it's genuinely different from anything this repo has today:
+     `autopep723` (zero dependencies, stdlib-only AST scan) and uv's own native `uv add --script
+     script.py pkg1 pkg2` both insert/update a PEP 723 `# /// script` header **directly in the
+     user's own `.py` file**, not a separate `requirements.auto.txt`. Since PEP 723 is already
+     this bootstrapper's #1 authoritative dependency source (REQ-005.1), a write-back step would
+     *promote* pipreqs's/warnfix's inferred deps into the authoritative, persistent format instead
+     of leaving them in the non-authoritative fallback file -- a more durable fix than today's
+     `requirements.auto.txt`, and this is also the natural mechanism for the "auto insert/repair a
+     malformed PEP 723 header" idea raised separately, not a different feature.
+   - Scope for a first cut: uv lane only (`uv add --script`, or `uv tool run autopep723`, both
+     require `uv.exe` already present -- no new acquisition tier needed), best-effort/optional
+     (never gating), and it modifies the user's own source file, which is a bigger design decision
+     than anything pipreqs does today (idempotency on repeat runs, not clobbering an existing
+     malformed header incorrectly, whether it runs before or after pipreqs) -- that design work is
+     the reason this isn't a quick add despite the underlying uv command being simple. Replicating
+     to conda/venv/embed/system lanes is explicitly a later step, not part of a first cut.
+   - `pip-compile-multi` (researched, same request) is **not applicable** -- it's a multi-file
+     lockfile-DAG tool for projects with segmented requirement sets (base/dev/prod splits); this
+     bootstrapper builds one flat environment for one script, so there's no dependency-segregation
+     problem for it to solve. `vulture` (researched, same request) is **not applicable either**,
+     and for a different reason: it's a static dead-code/unused-import *linter* (finds declared-
+     but-unused code via AST, same limitation class as pipreqs/autopep723 -- it does not execute
+     code or profile runtime imports at all), not a runtime-import logger; it cannot help with
+     dependency *discovery* in the direction this repo needs. `PYTHONPROFILEIMPORTTIME=1` /
+     `sys.modules` inspection (researched, same request) is a real *runtime* signal source (unlike
+     the three static tools above), but using it as a discovery mechanism would mean executing the
+     user's script specifically to observe it -- exactly the non-idempotency risk REQ-018 already
+     exists to prevent (see item 6 below and the new README section on this). The only genuinely
+     low-risk use is piggybacking it onto the bootstrapper's *existing* single verification run
+     (the EXE/interpreter smoke test that already happens once, per REQ-018) as a supplementary
+     diagnostic capture -- no new execution, so no new idempotency risk -- but its value there is
+     limited to post-mortem diagnostics after a failure, not new discovery capability, since a
+     successful smoke run means nothing was actually missing. Way-later, diagnostic-only,
+     low-priority.
+6. **Opt-in "trust me, my script is idempotent" fast-discovery mode (way-later; needs its own
+   dedicated design loop, not a quick add).** Raised via a 3rd-party analysis the owner shared
+   (low confidence, no repo access -- see the new README section for the full non-idempotency
+   argument this responds to) proposing a `FAST_RUN=true`-style flag. The core idea has real merit
+   and fits this repo's existing patterns (opt-in, non-default, mirrors `HP_SKIP_ENTRY_SMOKE`/
+   `HP_SKIP_EXE_SMOKERUN`'s super-user-flag shape and the REQ-018 post-execution checkpoint's
+   consent-gated "run it again" pattern) -- but the 3rd party's own actual proposed mechanism (run
+   the script live, catch a `ModuleNotFoundError`, install, rerun from the top, repeat) is
+   explicitly **not adopted**: it non-idempotently re-executes the script's own side effects on
+   every retry, which is exactly the failure mode REQ-018 was built to prevent, and adopting it
+   even behind an opt-in flag would need the flag to be an extremely well-understood, deliberate
+   choice, not a casual perf toggle. If pursued, the better-scoped version combines with item 5
+   above: gate it behind an explicit, non-default flag with clear risk-acknowledging prompt text
+   (never silently defaulted on, never a Prime-Directive gate per the "Env-var flags are
+   scaffolding" rule in `docs/agent-lessons-learned.md`), bound the retry loop the same way the
+   existing hidden-import-recovery loop is bounded (a hard iteration cap, not unbounded), and use
+   it as an *alternative discovery phase* (uv lane initially, live run-catch-install-`uv add
+   --script`-rerun) rather than skipping the PyInstaller build REQ-007 still needs for the EXE
+   deliverable. This is a genuinely useful idea but is its own multi-part design effort (loop
+   bounding, consent copy, idempotency-risk disclosure, interaction with item 5's write-back) --
+   not scheduled now or soon; revisit if item 5 ships first and this becomes a natural extension
+   of it, or if enough users report the existing build-first flow feels too slow for their
+   genuinely-safe scripts.
+7. **AV-Safe Build Path (PyInstaller quarantine fallback via Nuitka)** -- full PRD at
+   `docs/prd-av-safe-build-path.md`. A large, well-specified, preemptive feature (no real user
+   report yet, a documented industry-wide problem) covering a two-tier Nuitka fallback when
+   PyInstaller's build gets AV-quarantined, including a narrow, well-justified Python-3.12 pin
+   scoped to that one fallback tier. Recommended priority: **way later, not now or soon** -- see
+   the PRD's own "Notes from Claude" section for the full reasoning (preemptive risk vs. this
+   repo's stated discipline against building ahead of an observed need, plus the PRD's own size
+   relative to this repo's "one feature slice per loop" norm). That same section also contains a
+   deliberately blunt writeup of why the PRD's narrow, well-justified Tier B version pin should
+   **never** be generalized into a bootstrapper-wide "stay a version or two behind latest" default
+   -- this repo's total absence of telemetry or an auto-update mechanism means any such pin would
+   be permanently frozen into every already-distributed copy of `run_setup.bat`, with no way to
+   walk it back later even after the reason for it stops being true. Read that section before
+   extending Tier B's pinning pattern anywhere else in this codebase.
 
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
@@ -569,6 +668,13 @@ rather than relying on manual memory.
 - **Going forward**: check whether pipreqs has a new maintainer/release that changes the
   `<3.13` Requires-Python situation, or whether it's been removed from PyPI (extremely unlikely)
   -- revisit the internalization decision above if either happens.
+- **Next-pin probe** (add to each scan going forward, see "Next-pin probe concept" below for the
+  general idea this instantiates): under the CURRENT latest target Python (not an old ambient
+  one -- this matters, see the concept note), run an unpinned `pip install pipreqs` (or
+  `pip index versions pipreqs`) and check whether the resolved version is still 0.4.13. If a
+  newer version resolves cleanly, pipreqs's own `Requires-Python` ceiling has moved -- open a
+  dedicated loop to re-evaluate the pin (do not bump it inline during a routine scan; re-pinning
+  needs its own verification pass, mirroring how the original 0.4.13 pin was chosen).
 
 ### Embed version table (REQ-009 Tier 5, `tools/embed_pyver_check.py`)
 
@@ -592,8 +698,75 @@ rather than relying on manual memory.
   download before committing, per this tier's original design principle (embedded checksums are
   computed once at pin-time and independently verified, never trusted from a third-party
   checksum file fetched over the same network path as the download itself).
+- **Next-pin probe**: this table's own quarterly refresh (checking python.org for a new minor)
+  already covers this on the "does a new version exist" axis. If REQ-AV's Tier B (see the PRD
+  link in Active Backlog) ever ships its own Python-3.12 pin for Nuitka/MinGW64 compatibility,
+  add a matching probe here: periodically check whether Nuitka's MinGW64 backend has resumed
+  Python 3.13+ support upstream, since that specific fact (not a general "try a newer version
+  and see") is what the 3.12 pin depends on -- see that PRD's "Notes from Claude" section for why
+  a pin justified by one specific, checkable fact should be revisited by re-checking that exact
+  fact, not by a generic version-bump probe.
+
+### Next-pin probe concept (general pattern, applies to any future pin)
+
+Both entries above now include a "next-pin probe": a periodic, mechanical check of whether the
+CURRENT constraint behind an existing pin still holds, run against the environment the pin would
+actually need to work in (not a stale or convenient stand-in). This section names the pattern
+explicitly so a future pin (anywhere in this repo) gets the same treatment by default rather than
+each one inventing its own ad hoc check.
+
+**The pattern**: for any pin `X` justified by "we can't use the newer version of `X` because of
+constraint `C`", the probe is: periodically attempt to use the newer version of `X` under the
+exact conditions `C` describes, and treat an unexpected *success* as the signal to open a
+re-pinning loop (this mirrors this repo's own `xfail`/XPASS vocabulary already used for the
+hidden-import-recovery tests -- an "expected failure that starts passing" is exactly the
+maintenance signal this pattern is built around). Two worked examples above: pipreqs 0.4.13
+(constraint: `Requires-Python <3.13` on 0.5.0+) probes by trying an unpinned `pip install
+pipreqs` under the bootstrapper's actual current-latest target Python, not an arbitrarily older
+one -- probing under an old Python would trivially "succeed" without proving anything about
+whether the REAL constraint (0.5.0 vs. this bootstrapper's actual target) has resolved.
+
+**Why this is maintenance-checklist work, not a CI lane**: a probe that is *expected* to fail
+under normal conditions and treated as informational-only when it does doesn't fit this repo's
+gating model (`real`/`conda-full` block merges; even the non-gating lanes exist to catch real
+regressions, not to track upstream ecosystem state). It also doesn't need to run on every push --
+upstream constraints like a `Requires-Python` ceiling or a compiler compatibility gap change on
+the timescale of months, not commits. It belongs exactly where the two entries above already put
+it: as a scripted or semi-scripted step inside the existing quarterly "Periodic Maintenance
+Checks" cadence (the same Claude Code Remote trigger already described at the top of this
+section), not a new lane in `batch-check.yml`.
+
+**Not implemented as a standalone script yet.** Both entries above describe the probe in words;
+neither has a dedicated `tools/check_next_pins.py`-style script yet. That's a reasonable, small,
+self-contained next loop if someone wants to reduce the quarterly scan from "a human runs `pip
+install pipreqs` by hand and reads the result" to "a script prints a one-line PASS/FLAG verdict
+for each tracked pin" -- worth doing, not urgent, and deliberately not built speculatively ahead
+of a second or third pin actually needing it.
 
 ## Known Findings (diagnosed, no action warranted)
+
+- **The official `irm https://astral.sh/uv/install.ps1 | iex` installer script was researched as
+  a possible replacement for the current uv acquisition method -- rejected, current approach is
+  correct.** (Note: the exact official URL is `https://astral.sh/uv/install.ps1`, not the bare
+  `https://astral.sh` domain -- verified directly against astral.sh's own installation docs.) The
+  bootstrapper currently downloads uv's release zip directly from GitHub
+  (`HP_UV_URL`/`HP_UV_FALLBACK_URL`, run_setup.bat) and extracts `uv.exe` into a private
+  `~uv_bin\` directory that is prepended to `PATH` for the current process only (REQ-010 session
+  isolation). The official installer script does something architecturally different and worse
+  for this bootstrapper's needs: it installs uv to a persistent, shared, user-global location and
+  writes a PATH update to the user's shell profile/registry -- a footprint the installer script's
+  own documentation and general Windows tooling behavior both confirm requires a **fresh terminal
+  window** to take effect, since PATH updates never propagate into an already-running process.
+  That is fundamentally incompatible with `run_setup.bat`'s zero-terminal-restart promise (the
+  same class of restart/PATH-propagation hazard flagged independently in
+  `docs/prd-av-safe-build-path.md`'s Finding 6) -- the bootstrapper needs to use uv immediately,
+  within the same running batch process, with no user interaction. It also conflicts with two of
+  this repo's own stated Bootstrap Architecture Principles in this file (above): "Never depend on
+  console scripts during bootstrap" and preferring a private, disposable footprint over a shared,
+  persistent one -- the same reasoning that separately ruled out winget/Microsoft Store Python as
+  a REQ-009 tier. Decision: keep the current direct-zip-to-private-directory approach; the
+  installer script is the right choice for a normal interactive user setting up their own
+  machine, not for a script that needs the tool usable in the same process that downloaded it.
 
 - **Embed zip download has no genuine second-host fallback available, unlike Miniconda/uv/get-pip
   -- researched, no action planned.** A background code-review pass flagged that the embed tier's
@@ -611,7 +784,36 @@ rather than relying on manual memory.
   Miniconda/uv/get-pip pattern. Decision: no forced fallback host. The existing 2-attempt
   same-URL retry (curl, then PowerShell `Invoke-WebRequest`) already covers the common transient
   failure case; a genuine second-host fallback remains possible future work if a specific mirror is
-  ever vetted, but is not a quick win and is not planned.
+  ever vetted, but is not a quick win and is not planned. **One specific candidate WAS identified
+  and considered, then rejected**: the CPython core team publishes an embeddable-equivalent build
+  to NuGet (`nuget.org/packages/python`) as part of their official release process -- a real,
+  independently-hosted, officially-maintained artifact on a different CDN (Azure-backed vs.
+  Fastly), reachable without the NuGet client via `nuget.org/api/v2/package/python/<version>`.
+  Rejected because it is not the same artifact the pinned `EMBED_PYTHON_TABLE` checksums were
+  computed against -- using it would mean maintaining a second SHA256 column per pinned version
+  going forward, doubling the table's maintenance burden for a download that's already covered by
+  the existing 2-attempt retry against a CDN that's rarely actually down. Revisit only if the
+  same-host retry proves insufficient in practice.
+
+- **winget / Microsoft Store Python evaluated as a possible additional REQ-009 tier -- rejected,
+  no action planned.** Considered whether `winget install Python.Python.3` (or the Microsoft Store
+  Python package) could serve as another fresh-acquisition fallback alongside or instead of the
+  embedded-Python tier. Researched winget's actual install behavior: without an explicit
+  `--scope machine` flag (which needs elevation), it installs **per-user** to
+  `%LOCALAPPDATA%\Programs\Python\Python3XX` -- but "per-user" is not the same axis as "isolated"
+  in the sense the embed tier cares about. Unlike embed's private, checksummed, disposable
+  `~embed_python\` directory (never registered anywhere, verified before use, gone if the app
+  stops using it), a winget/Store install is **shared and persistent**: it registers itself on
+  PATH, in Add/Remove Programs, and in the App Execution Alias registry, is discoverable by other
+  applications and future bootstrap runs of *other* projects, and its integrity is delegated
+  entirely to winget's own signature verification rather than this repo's own embedded SHA256.
+  Architecturally this makes it closer to the **system** tier (shared, uncontrolled, arguably
+  needing the same REQ-014-style consent) than to the **embed** tier (private, disposable,
+  pre-verified) -- adding it would mostly duplicate embed's job (fresh acquisition) with weaker
+  isolation, for the same underlying failure causes embed already fails for (no network, or -- for
+  winget itself -- winget/App Installer not being present on an older Windows 10 build, which is
+  its own new dependency this bootstrapper doesn't otherwise have). Decision: not worth adding as
+  a 6th tier.
 
 - **User-code exit-code semantics are already correctly isolated from bootstrapper status --
   verified, no action needed.** Traced the full flow: `HP_SMOKE_RC` is captured directly from

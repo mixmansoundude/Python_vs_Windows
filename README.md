@@ -12,6 +12,24 @@ This tool is for beginners or unfamiliar users who have been given Python code a
 
 ---
 
+### Why does this exist? (a true-to-life example)
+
+> **You:** Head of Cybersecurity Jim sent me a Python file he AI-vibe-coded to solve all my problems, but I don't know what Python is.
+>
+> **Me:** Try installing [uv](https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip), or open PowerShell, paste `irm https://astral.sh/uv/install.ps1 | iex` to install it, restart your terminal, then type `uvx autopep723 solve_my_probs.py`.
+>
+> **You:** Wow, that was fast! Worked great once I figured out how to open a terminal for the first time (never doing that again).
+>
+> *Two hours later...*
+>
+> **You:** Jim sent me multiple Python files and then won the lottery. It runs for a bit, then says something about `ModuleNotFoundError`. I'm not even sure which file to put in the `uv run` command, and Jim won't get off his yacht to help me. What do I do?
+>
+> **Me:** Try this `run_setup.bat`. Brute force is the name of the game. Stand back and give it a minute -- it should figure out something to run for you, once, and only once, by default.
+
+The first exchange is the honest, fast path for anyone who can find a terminal and doesn't mind a one-time restart -- and it's a real, good recommendation for a single self-contained script. The second is what this tool exists for: multiple files, ambiguous entry points, missing dependencies discovered mid-run, and a Jim who is unavailable. See "Why 'Build-First, Run-Once'?" near the end of this README for the deeper reasoning behind that "once, and only once" promise.
+
+---
+
 ### Armchair Vibe Coding
 
 > This project was **entirely armchair vibe coded** -- built from a mobile device using conversational AI prompts, without a traditional development setup.
@@ -100,22 +118,37 @@ trend toward this altitude -- keep the requirement crisp and let mechanism detai
 - [REQ-004] Python version detection precedence:
   1. `runtime.txt` (`python-3.x.y` or `3.x[.y]`)
   2. `pyproject.toml` `requires-python`
-  3. Otherwise let the **selected provider pick latest** (no hard-coded fallback); then **write back `runtime.txt`**. (When the conda provider is active, conda resolves the latest available Python from conda-forge.)
+  3. Otherwise let the **selected provider pick latest** (no hard-coded fallback); then **write back `runtime.txt`**. (When the conda provider is active, conda resolves the latest available Python from conda-forge; when the embedded-Python provider is active, it resolves to the newest entry in its pinned version table.)
 
 - Environment naming: env name equals the **current folder name**, sanitized (characters outside `[A-Za-z0-9_-]` (e.g. spaces) become `_`, a **leading hyphen** is replaced with `_`, and a name that reduces to only separators falls back to `env`; internal hyphens like `my-app` are preserved). When the conda provider is active, this sanitized name is passed to `conda create -n`. The derived name is logged: `[INFO] Environment name: <name>`.
 
-- **Provider independence:** The bootstrapper cannot depend exclusively on a single provider. It must be able to function with only any one of the REQ-009 providers available (uv alone, conda alone, venv alone, or system Python alone). No bootstrap path may hard-require a specific provider to be present.
-- UV is the preferred environment provider when available (cached or downloadable), as it is fast and avoids Miniconda download latency. When UV is unavailable or disabled, the bootstrapper falls back to Miniconda (conda provider), then to a local venv, and as a last resort runs the entry point under any available system Python. Every provider path preserves the Prime Directive -- at least one .py file runs with its imports satisfied.
+- **Provider independence:** The bootstrapper cannot depend exclusively on a single provider. It must be able to function with only any one of the REQ-009 providers available (uv alone, conda alone, embedded Python alone, venv alone, or system Python alone). No bootstrap path may hard-require a specific provider to be present.
+- UV is the preferred environment provider when available (cached or downloadable), as it is fast and avoids Miniconda download latency. When UV is unavailable or disabled, the bootstrapper falls back to Miniconda (conda provider); if conda also fails, it downloads a checksum-verified embeddable Python build directly from python.org (no admin rights, no pre-existing Python required); if that fails too, it falls back to a local venv built from whatever Python is already on the machine; and as a last resort runs the entry point under any available system Python. Every provider path preserves the Prime Directive -- at least one .py file runs with its imports satisfied.
 - Why multiple providers instead of only one?
   - UV is fast and increasingly well-supported; prioritizing it reduces cold-start latency for new users.
   - Conda/Miniconda has deep ecosystem support and reproducible solver behavior; it remains the authoritative provider in CI (cache and conda-full lanes) and the fallback when UV is unavailable.
-  - venv is a pragmatic fallback for networks or hosts where neither UV nor Conda can be installed or downloaded.
+  - The embedded-Python download covers a gap neither UV, Conda, nor venv can cover alone: when a specific Python version is pinned (`runtime.txt` / `pyproject.toml`) but UV and Conda are both unreachable, fetching a fresh, checksum-verified interpreter is the only way to still honor that pin, rather than silently falling back to whatever (if anything) already happens to be on the machine.
+  - venv is a pragmatic fallback for hosts that already have a working ambient Python but where UV, Conda, and the embedded-Python download are all unavailable (e.g., no network at all).
   - The fast path (reusing `dist/<envname>.exe` when non-helper sources are unchanged) sits on top of any provider, regardless of which one created the environment.
+
+  Why do these tiers tend to fail, and what does it mean when a run falls through several in a row?
+
+  | Tier | Depends on | Typical failure causes |
+  |------|-----------|------------------------|
+  | UV | network reachability, disk write | transient network blip, proxy/TLS interception, antivirus quarantining the fresh binary |
+  | Conda (Miniconda) | network (larger download), disk space, installer permissions | interrupted download, an `AllUsers` install permission failure (a `JustMe` retry mitigates this), transient index/repo errors, low disk space |
+  | Embedded Python | network (small download), checksum match | corrupted or interrupted download, a stalled connection |
+  | Local venv | an ambient Python that already works | no ambient Python at all, a broken/stripped install missing `ensurepip`, execution-policy blocks |
+  | System Python | same as venv, plus explicit consent | same as venv, or the user declining the consent prompt |
+
+  Falling through three or more tiers in one run is almost always one shared root cause rather than independent bad luck at each tier: no usable internet (or a proxy/firewall blocking the relevant domains) explains UV, Conda, and Embedded Python failing together, since all three need network; a full disk explains the same three failing together for a different reason; no admin rights mainly affects Conda's `AllUsers` install path and doesn't block any other tier, since none of the rest require elevation; and a locked-down managed image (antivirus blocking new executables, a domain allow-list) produces the same symptom as "no internet" but is a policy failure, not a resource one -- no amount of retrying fixes it. A machine where even a bare `python.exe` can't run at all is rare and correctly out of scope for this bootstrapper.
+
 - [REQ-009] Environment discovery hierarchy (priority order):
   1. **UV** -- if `uv.exe` is available (cached or downloadable), create a `.uv_env` virtual environment using UV for fast dependency installs.
   2. **Conda (Portable / Miniconda)** -- install or reuse Miniconda at `%PUBLIC%\Documents\Miniconda3` (non-admin) and create a named conda env.
-  3. **Local venv** (environment-creation fallback) -- if Conda is unavailable or fails, create a `.venv` virtual environment using whatever `python` / `py` is found on PATH (`python -m venv`). Still isolated, but depends on a pre-existing Python installation to create the env.
-  4. **System Python** (final degraded execution mode) -- if no isolated environment can be created, run the entry point directly under the first `python` / `py` on PATH with no env isolation. Dependencies may conflict with system packages. **This tier is reachable in the default (no-flag) run** and is gated **only** by the REQ-014 consent prompt -- never by an opt-in environment variable. The legacy `HP_ALLOW_SYSTEM_FALLBACK` flag is **deprecated as a gate** (accepted but ignored, mirroring `HP_ALLOW_VENV_FALLBACK`). The CI-only `HP_FORCE_CONDA_ONLY` lane still suppresses all non-conda tiers for conda diagnostics.
+  3. **Embedded Python** (fresh-acquisition fallback) -- if Conda is unavailable or fails, download the official python.org embeddable zip (checksum-verified against an embedded SHA256), extract it to a private `~embed_python\` directory, and bootstrap pip into it. Honors a pinned `runtime.txt` / `pyproject.toml` version if one is set; no admin rights and no pre-existing Python required.
+  4. **Local venv** (environment-creation fallback) -- if Conda and the embedded-Python download are both unavailable or fail, create a `.venv` virtual environment using whatever `python` / `py` is found on PATH (`python -m venv`). Still isolated, but depends on a pre-existing Python installation to create the env.
+  5. **System Python** (final degraded execution mode) -- if no isolated environment can be created, run the entry point directly under the first `python` / `py` on PATH with no env isolation. Dependencies may conflict with system packages. **This tier is reachable in the default (no-flag) run** and is gated **only** by the REQ-014 consent prompt -- never by an opt-in environment variable. The legacy `HP_ALLOW_SYSTEM_FALLBACK` flag is **deprecated as a gate** (accepted but ignored, mirroring `HP_ALLOW_VENV_FALLBACK`). The CI-only `HP_FORCE_CONDA_ONLY` lane still suppresses all non-conda tiers for conda diagnostics.
 
   **Provider selection criteria (priority order):**
 
@@ -123,10 +156,11 @@ trend toward this altitude -- keep the requirement crisp and let mechanism detai
   |----------|----------|-------|
   | UV (`.uv_env`) | 1st | REQ-009 |
   | Conda / Miniconda | 2nd | REQ-009 |
-  | Local venv (`.venv`) | 3rd | REQ-009; env creation fallback |
-  | System Python | 4th | REQ-009; degraded execution mode, no isolation |
+  | Embedded Python | 3rd | REQ-009; fresh-acquisition fallback |
+  | Local venv (`.venv`) | 4th | REQ-009; env creation fallback |
+  | System Python | 5th | REQ-009; degraded execution mode, no isolation |
 
-  **Provider fallback trigger (current behavior):** The cascade to the next provider fires on *environment creation failure* only (e.g., uv venv create fails, Miniconda download fails). A provider that successfully creates its environment is not currently abandoned if dependency installation or warnfix repair later fails -- the bootstrap continues in a degraded state within the same provider. The intended direction is that a warnfix hard failure should also cascade to the next provider (e.g., uv warnfix exhausted -> retry full dep-install under conda).
+  **Provider fallback trigger:** environment-creation failure (e.g., uv venv create fails, Miniconda download fails, the embedded-Python download fails) cascades immediately to the next provider tier. A warnfix hard failure (dependencies still unresolved after the repair loop exhausts) also cascades to the next tier and re-attempts dependency installation there, gated by explicit user consent before the run continues under a different provider (see REQ-005.10, and REQ-014 for the system tier's own consent gate).
 
 - [REQ-006] Channels policy (applies when **conda is the selected provider**; determinism and legal-friction avoidance):
   - Before any conda updates or installs, force **community conda-forge only**:
@@ -174,7 +208,7 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 
 ### Installation Strategy (provider-dependent)
 
-The install strategy varies by the active REQ-009 provider. The steps below apply when **conda is the selected provider**. When uv or venv is the provider, pip is used directly (no conda install step, no channel policy).
+The install strategy varies by the active REQ-009 provider. The steps below apply when **conda is the selected provider**. When uv, embedded Python, or venv is the provider, pip is used directly (no conda install step, no channel policy). When system Python is the provider, automatic dependency installation is skipped entirely (a deliberately minimal-footprint design for a shared, uncontrolled environment).
 
 - REQ-005.2 -- Conda bulk install (conda provider only): Attempt install from the selected dependency source:
   ```
@@ -249,7 +283,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 - REQ-005.10 -- Retry loop: After repair attempts, rebuild/re-run until:
   - Success (application runs), or
   - Hard failure (unresolvable within the current provider)
-  - On hard failure: cascade to the next REQ-009 provider (uv exhausted -> conda, conda exhausted -> venv, venv exhausted -> system Python) and re-attempt from the dependency installation phase, after explicit user consent (REQ-014 for the system tier).
+  - On hard failure: cascade to the next REQ-009 provider (uv exhausted -> conda, conda exhausted -> embedded Python, embedded Python exhausted -> venv, venv exhausted -> system Python) and re-attempt from the dependency installation phase, after explicit user consent (REQ-014 for the system tier).
 
 ---
 
@@ -356,7 +390,7 @@ At completion:
   - Covered by `self.exe.fastpath.graceful` (real/conda-full lanes): builds an EXE that fails at runtime (a `importlib.resources` package data file not bundled by PyInstaller), then re-runs the bootstrapper so the fast path reuses the broken EXE, asserting the second run discards it, rebuilds, and still exits 0.
 - **Application-complete packaging**: the produced EXE must include the dependencies the application actually uses -- including ones loaded in ways a static packager cannot see (plugin/backend systems, runtime-resolved submodules, dynamic imports). Conversely it must not bundle libraries the application does not use: a trivial app must not inherit the bulk of whatever happens to be installed in the environment.
 - **Self-healing of packaging misses**: when a freshly built EXE fails at runtime *solely* because an already-installed dependency was left out of the bundle, the bootstrapper attempts to repair the packaging and rebuild automatically, bounded so the attempt always terminates. It must not attempt repair for a failure it cannot mechanically fix -- a dependency the user never installed, or a fault in the user's own code -- which instead completes gracefully per the graceful-EXE-failure rule above. When self-healing does not apply it costs nothing (no extra rebuild).
-- **Provider-independent build.** The EXE build is attempted regardless of which REQ-009 provider created the environment (uv, conda, or venv) -- it is the same normal build step in every case, not a special path. The single exception is the system-Python degraded mode (REQ-009 Tier 4): because building would install PyInstaller into the user's existing system Python, the build there is offered behind a separate explicit consent and, if declined or non-interactive, skipped with a logged reason -- never silently.
+- **Provider-independent build.** The EXE build is attempted regardless of which REQ-009 provider created the environment (uv, conda, embedded Python, or venv) -- it is the same normal build step in every case, not a special path. The single exception is the system-Python degraded mode (REQ-009 Tier 4): because building would install PyInstaller into the user's existing system Python, the build there is offered behind a separate explicit consent and, if declined or non-interactive, skipped with a logged reason -- never silently.
 - **Explicit packaging vocabulary.** Every user-facing message about the build, verification, or failure of the standalone executable names the concrete artifact and tool in plain words -- "EXE", "PyInstaller", "standalone .exe" -- never vague phrasing like "packaging error" alone, so the user can always tell the message concerns the optional one-file executable, not their environment or dependencies (which are already installed and usable).
 
 ---
@@ -391,12 +425,14 @@ blip or a temporary outage.
   lightweight HTTPS probe if ICMP is blocked. If both fail, it prompts the user to confirm
   offline mode or retry. In offline mode, internet-dependent steps (uv download, Miniconda
   download) are skipped; an already-cached Miniconda or uv install is used as-is.
-- **Transient-failure retry**: conda environment creation, conda's bulk dependency install, and
-  the venv fallback tier's pip bootstrap (via a downloaded `get-pip.py`, used when a plain venv
-  creation attempt fails outright) each retry once on a detected transient failure before
-  falling through to the next provider tier. Download steps (Miniconda, uv, get-pip.py)
-  additionally retry across a primary URL, a PowerShell fallback method, and a secondary URL
-  before giving up.
+- **Transient-failure retry**: conda environment creation, conda's bulk dependency install, the
+  embedded-Python fallback tier's download and directory-swap steps, and the venv fallback
+  tier's pip bootstrap (via a downloaded `get-pip.py`, used when a plain venv creation attempt
+  fails outright) each retry on a detected transient failure before falling through to the next
+  provider tier. Download steps retry across a primary URL and a PowerShell fallback method;
+  Miniconda, uv, and get-pip.py additionally retry across a secondary URL before giving up (the
+  embedded-Python download has no second host to retry against -- see CLAUDE.md's Known
+  Findings for why).
 - Mechanism detail for each retry point (exact log lines, CI test flags, subroutine names) is
   intentionally not enumerated here -- see `docs/agent-lessons-learned.md` and CLAUDE.md's
   Closed Backlog, which are the authoritative source for implementation-level specifics.
@@ -413,7 +449,7 @@ blip or a temporary outage.
 
 - Before using system Python as the last-resort execution provider (REQ-009 Tier 4), the bootstrapper must obtain explicit user consent.
 - Without consent, the bootstrapper aborts rather than silently running under an unmanaged system Python.
-- **This consent prompt is the sole gate on the system tier.** It is reached in the default (no-flag) run whenever uv, conda, and venv all fail -- it is not behind an opt-in environment variable. The bootstrapper echoes the prompt string unconditionally (so it is visible even on non-interactive auto-decline), then resolves the answer; an empty/declined answer aborts the tier and keeps the current build.
+- **This consent prompt is the sole gate on the system tier.** It is reached in the default (no-flag) run whenever uv, conda, the embedded-Python download, and venv all fail -- it is not behind an opt-in environment variable. The bootstrapper echoes the prompt string unconditionally (so it is visible even on non-interactive auto-decline), then resolves the answer; an empty/declined answer aborts the tier and keeps the current build.
 - Log contract:
   - `[INFO] REQ-014: System Python fallback aborted: consent not granted.`
   - `[INFO] REQ-014: System Python consent: user accepted.`
@@ -499,7 +535,7 @@ set lives in `run_setup.bat`.
 
 - On startup, if a previously downloaded conda or uv binary is found, the bootstrapper validates it with a health check before use.
 - Corrupt conda binary: runs `conda.bat info`; on failure, halts with a user-friendly error message and offers to self-heal (re-download Miniconda). If the user declines, exits with code 2.
-- Corrupt uv binary: detected at startup by a version probe; the cached binary is evicted so the next run downloads a fresh copy. Bootstrap continues via the next available provider (conda if available, otherwise venv or system Python).
+- Corrupt uv binary: detected at startup by a version probe; the cached binary is evicted so the next run downloads a fresh copy. Bootstrap continues via the next available provider (conda if available, otherwise the embedded-Python download, venv, or system Python).
 - Log contract:
   - `[ERROR] Corrupt conda binary detected at: <path>` (real corruption)
   - `[WARN] Cached uv.exe failed health check; clearing and re-downloading.` (real uv corruption)
@@ -626,6 +662,30 @@ A branch with zero Python files still counts as healthy when:
 - Diagnostics keeps a parser-facing machine line `* Iterate logs: found|missing` in the markdown source, but the human-facing status now reports either `available`, `not needed (all checks passing)`, or `not produced yet (check batch-check run)` to avoid false alarms from the raw word `missing` alone.
 
 The only CI auto-patching agent is the **Model quick-fix (inline)** job in `.github/workflows/batch-check.yml`, which invokes `tools/inline_model_fix.py` against the `gpt-codex-5` model. It only runs when the NDJSON harness reports failures and must respect the git hygiene rules that forbid committing artifacts (tilde-prefixed logs, NDJSON outputs, etc.). See **AGENTS.md** for the full agent policy.
+
+---
+
+## Why "Build-First, Run-Once"? (Design Rationale)
+
+REQ-018 above states the rule -- the bootstrapper runs the user's code purposefully and at most once per invocation. This section explains why, since the alternative (a faster, iterative "just run it and fix errors as they come up" loop) is a real, commonly-used pattern elsewhere and deserves an honest comparison rather than an assumed answer.
+
+There are two broad ways a tool like this could resolve missing dependencies:
+
+- **Build-first, run-once (this tool's approach):** discover dependencies statically (pipreqs, PEP 723, `requirements.txt`), install them, build and verify once, then offer to run for real. Slower to the first successful run, but the user's code never executes more than once per invocation.
+- **Fail-fast, run-early (the alternative):** run the script immediately; when it crashes on a missing import, install that package and rerun from the top; repeat until it succeeds. Near-instant feedback, but every rerun re-executes everything the script already did before the point of failure.
+
+The second approach is genuinely how most professional developers iterate locally, and for a stateless, read-only script it's strictly better -- faster, and just as correct. The problem is this tool's actual target audience: a beginner who was handed a `.py` file has no way to know, and no way to verify, whether their script is stateless. A script that renames files, appends a row to a shared spreadsheet, sends an email, hits a paid API, or talks to lab hardware is not a hypothetical for this audience -- it's a common case. If that script writes a row on line 10 and crashes on a missing import on line 50, "run it early and often" means line 10 executes once for every missing package discovered, silently, with no undo. This is the same hazard idempotency-key designs in production APIs exist to prevent (see, for example, [Stripe's idempotent-request documentation](https://docs.stripe.com/api/idempotent_requests) for a well-known treatment of why retrying a non-idempotent operation is dangerous by default) -- it's a general software-engineering hazard, not one specific to this tool.
+
+|  | Build-first, run-once | Fail-fast, run-early |
+|---|---|---|
+| First-run latency | Slower (static discovery + build) | Fast (immediate feedback) |
+| Side-effect safety | Safe -- broken code never runs | Dangerous -- reruns side effects up to the crash point every retry |
+| Handling dynamic/runtime-only imports | Needs a repair loop (warnfix) since static analysis can miss them | Catches them naturally, since the code actually ran |
+| Right choice for | Unknown, possibly-non-idempotent code (this tool's actual audience) | Known-stateless scripts, or a developer who already knows their own code |
+
+Given that this tool cannot know in advance whether a given script is safe to rerun, and its whole purpose is serving people who can't answer that question themselves, defaulting to the safe option is the correct call, not merely a cautious one -- a beginner who loses data or double-sends an email because a dependency-discovery loop re-ran their script is a much worse outcome than a slower first run. This is also why the warnfix repair loop (REQ-005.9/REQ-005.10) targets *build-time* signals (the PyInstaller warn file, which is produced by static analysis, not by executing the script) rather than a live run-and-catch loop -- it gets most of the benefit of "catch what static discovery missed" without ever executing unverified code more than the one, deliberately time-boxed and announced time REQ-018 allows.
+
+None of this rules out a faster path for a user who genuinely knows their own script is side-effect-free -- see `docs/prd-av-safe-build-path.md`'s "Notes from Claude" section and the corresponding `CLAUDE.md` Active Backlog entry for a specific, opt-in (never default) design being considered for exactly that case, gated behind an explicit flag rather than silently changing this tool's default behavior for everyone.
 
 ---
 
