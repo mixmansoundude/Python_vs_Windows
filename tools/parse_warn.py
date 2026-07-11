@@ -34,6 +34,7 @@ TRANSLATIONS = {
     "win32con": "pywin32",
     "fitz": "pymupdf",
     "docx": "python-docx",
+    "pydantic_core": "pydantic-core",
 }
 
 SKIP = frozenset([

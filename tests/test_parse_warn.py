@@ -122,6 +122,9 @@ class TranslationTableTest(unittest.TestCase):
     def test_docx_maps_to_python_docx(self):
         self._assert_maps("docx", "python-docx")
 
+    def test_pydantic_core_maps_to_pydantic_core_conda_name(self):
+        self._assert_maps("pydantic_core", "pydantic-core")
+
 
 # Explicit set of all TRANSLATIONS keys tested above.
 # If a new key is added to TRANSLATIONS without adding a test here, the
@@ -129,7 +132,7 @@ class TranslationTableTest(unittest.TestCase):
 _TESTED_KEYS = frozenset({
     "cv2", "PIL", "Image", "sklearn", "bs4", "serial", "yaml", "git",
     "wx", "dateutil", "dotenv", "Crypto", "OpenSSL", "jwt", "usb",
-    "attr", "win32api", "win32con", "fitz", "docx",
+    "attr", "win32api", "win32con", "fitz", "docx", "pydantic_core",
 })
 
 

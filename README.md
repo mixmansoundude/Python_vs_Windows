@@ -12,6 +12,24 @@ This tool is for beginners or unfamiliar users who have been given Python code a
 
 ---
 
+### Why does this exist? (a true-to-life example)
+
+> **You:** Head of Cybersecurity Jim sent me a Python file he AI-vibe-coded to solve all my problems, but I don't know what Python is.
+>
+> **Me:** Try installing [uv](https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip), or open PowerShell, paste `irm https://astral.sh/uv/install.ps1 | iex` to install it, restart your terminal, then type `uvx autopep723 solve_my_probs.py`.
+>
+> **You:** Wow, that was fast! Worked great once I figured out how to open a terminal for the first time (never doing that again).
+>
+> *Two hours later...*
+>
+> **You:** Jim sent me multiple Python files and then won the lottery. It runs for a bit, then says something about `ModuleNotFoundError`. I'm not even sure which file to put in the `uv run` command, and Jim won't get off his yacht to help me. What do I do?
+>
+> **Me:** Try this `run_setup.bat`. Brute force is the name of the game. Stand back and give it a minute -- it should figure out something to run for you, once, and only once, by default.
+
+The first exchange is the honest, fast path for anyone who can find a terminal and doesn't mind a one-time restart -- and it's a real, good recommendation for a single self-contained script. The second is what this tool exists for: multiple files, ambiguous entry points, missing dependencies discovered mid-run, and a Jim who is unavailable. See "Why 'Build-First, Run-Once'?" near the end of this README for the deeper reasoning behind that "once, and only once" promise.
+
+---
+
 ### Armchair Vibe Coding
 
 > This project was **entirely armchair vibe coded** -- built from a mobile device using conversational AI prompts, without a traditional development setup.
@@ -644,6 +662,30 @@ A branch with zero Python files still counts as healthy when:
 - Diagnostics keeps a parser-facing machine line `* Iterate logs: found|missing` in the markdown source, but the human-facing status now reports either `available`, `not needed (all checks passing)`, or `not produced yet (check batch-check run)` to avoid false alarms from the raw word `missing` alone.
 
 The only CI auto-patching agent is the **Model quick-fix (inline)** job in `.github/workflows/batch-check.yml`, which invokes `tools/inline_model_fix.py` against the `gpt-codex-5` model. It only runs when the NDJSON harness reports failures and must respect the git hygiene rules that forbid committing artifacts (tilde-prefixed logs, NDJSON outputs, etc.). See **AGENTS.md** for the full agent policy.
+
+---
+
+## Why "Build-First, Run-Once"? (Design Rationale)
+
+REQ-018 above states the rule -- the bootstrapper runs the user's code purposefully and at most once per invocation. This section explains why, since the alternative (a faster, iterative "just run it and fix errors as they come up" loop) is a real, commonly-used pattern elsewhere and deserves an honest comparison rather than an assumed answer.
+
+There are two broad ways a tool like this could resolve missing dependencies:
+
+- **Build-first, run-once (this tool's approach):** discover dependencies statically (pipreqs, PEP 723, `requirements.txt`), install them, build and verify once, then offer to run for real. Slower to the first successful run, but the user's code never executes more than once per invocation.
+- **Fail-fast, run-early (the alternative):** run the script immediately; when it crashes on a missing import, install that package and rerun from the top; repeat until it succeeds. Near-instant feedback, but every rerun re-executes everything the script already did before the point of failure.
+
+The second approach is genuinely how most professional developers iterate locally, and for a stateless, read-only script it's strictly better -- faster, and just as correct. The problem is this tool's actual target audience: a beginner who was handed a `.py` file has no way to know, and no way to verify, whether their script is stateless. A script that renames files, appends a row to a shared spreadsheet, sends an email, hits a paid API, or talks to lab hardware is not a hypothetical for this audience -- it's a common case. If that script writes a row on line 10 and crashes on a missing import on line 50, "run it early and often" means line 10 executes once for every missing package discovered, silently, with no undo. This is the same hazard idempotency-key designs in production APIs exist to prevent (see, for example, [Stripe's idempotent-request documentation](https://docs.stripe.com/api/idempotent_requests) for a well-known treatment of why retrying a non-idempotent operation is dangerous by default) -- it's a general software-engineering hazard, not one specific to this tool.
+
+|  | Build-first, run-once | Fail-fast, run-early |
+|---|---|---|
+| First-run latency | Slower (static discovery + build) | Fast (immediate feedback) |
+| Side-effect safety | Safe -- broken code never runs | Dangerous -- reruns side effects up to the crash point every retry |
+| Handling dynamic/runtime-only imports | Needs a repair loop (warnfix) since static analysis can miss them | Catches them naturally, since the code actually ran |
+| Right choice for | Unknown, possibly-non-idempotent code (this tool's actual audience) | Known-stateless scripts, or a developer who already knows their own code |
+
+Given that this tool cannot know in advance whether a given script is safe to rerun, and its whole purpose is serving people who can't answer that question themselves, defaulting to the safe option is the correct call, not merely a cautious one -- a beginner who loses data or double-sends an email because a dependency-discovery loop re-ran their script is a much worse outcome than a slower first run. This is also why the warnfix repair loop (REQ-005.9/REQ-005.10) targets *build-time* signals (the PyInstaller warn file, which is produced by static analysis, not by executing the script) rather than a live run-and-catch loop -- it gets most of the benefit of "catch what static discovery missed" without ever executing unverified code more than the one, deliberately time-boxed and announced time REQ-018 allows.
+
+None of this rules out a faster path for a user who genuinely knows their own script is side-effect-free -- see `docs/prd-av-safe-build-path.md`'s "Notes from Claude" section and the corresponding `CLAUDE.md` Active Backlog entry for a specific, opt-in (never default) design being considered for exactly that case, gated behind an explicit flag rather than silently changing this tool's default behavior for everyone.
 
 ---
 
