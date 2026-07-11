@@ -471,26 +471,23 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    accumulated feature/test-scenario growth (more selftest scripts each doing a real
    `conda create`), not a regression from any single change. Worth periodic reassessment, no
    action planned yet.
-2. **`:conda_base_update`'s `Get-Content`-based `for /f` (run_setup.bat ~line 3672)** shares the
-   same `for /f` backtick-subshell invocation topology as the CONFIRMED Windows PowerShell 5.1
-   `Get-FileHash` module-autoload bug fixed in `embed_extract.ps1` this session (see
-   `docs/agent-lessons-learned.md`). Unconfirmed in this specific case (wrapped in a `try/catch`
-   that silently defaults to `'update'` on any exception, so a module-load failure here would be
-   masked, not crash), but plausible enough to warrant the same defensive rewrite. Deliberately
-   deferred (not bundled into the 2026-07-10 hardening pass): this is an inline `-Command "..."`
-   one-liner, not a separate `.ps1` file emitted via `:emit_from_base64` like `embed_extract.ps1`
-   -- per `docs/agent-lessons-learned.md`'s documented hazard, any literal `"` character inside a
-   `-Command` body breaks cmd.exe's naive quote-toggle tokenization, so a `.NET`-API rewrite here
-   either needs to avoid literal `"` entirely or convert this to an emitted `.ps1` file (more
-   invasive) -- needs its own dedicated follow-up loop.
-3. **Cleanup-review findings from a background code-review pass (2026-07-10), not yet
-   implemented**: the embed zip download has no fallback/mirror URL unlike every other download
-   in `run_setup.bat` (Miniconda, uv, get-pip all have one); `tests/harness.ps1`'s
-   `batch.req009.provider_logs` static check (titled "all four provider log lines") was never
-   extended to also assert embed's own `[BOOT]` provider-selected line; a handful of smaller
-   dead branches/duplicated boilerplate in `tools/embed_pyver_check.py` and the embed CI test
-   blocks. Logged for a future pass; not bundled into the reorder/hardening commits to keep that
-   diff reviewable and focused on what was actually discussed with the user.
+2. **`embed_pyver_check.py`'s double "unchanged" short-circuit leaves the `fell_back=True`
+   "fellback" WARN tag unreachable for above-ceiling requests (below-floor still works).**
+   `main()`'s first early-return (`requested_minor is None or requested_minor == LATEST_MINOR`)
+   is fine, but the second one (after `resolve_table_entry`, firing whenever the resolved `minor`
+   equals `LATEST_MINOR`) intercepts every above-ceiling request before it ever reaches the
+   `tag = "fellback" if fell_back else "swapped"` line -- so a user who requests a Python newer
+   than this repo's table ceiling silently gets latest with no diagnostic tag, while a
+   below-floor request still correctly reaches the tag. Low severity (the actual behavior --
+   falling back to latest -- is correct either way; only the diagnostic label is unreachable for
+   one of the two fallback directions). Low priority; fix by moving the LATEST_MINOR check inside
+   `resolve_table_entry`'s own early-return rather than duplicating it in `main()`.
+3. **~85 lines of near-duplicated env-var save/set/restore boilerplate between
+   `self.embed.fallback.decline` and `self.embed.fallback.real`** in
+   `tests/selfapps_ux_hardening.ps1`. Factorable into a shared helper, but each block forces a
+   genuinely different set of env vars (decline: 6 vars; real: 5 different vars), so the helper
+   would need real parameterization -- a small design decision, not a mechanical copy-paste
+   cleanup. Cosmetic; defer unless already touching these test blocks for another reason.
 
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
@@ -598,6 +595,24 @@ rather than relying on manual memory.
 
 ## Known Findings (diagnosed, no action warranted)
 
+- **Embed zip download has no genuine second-host fallback available, unlike Miniconda/uv/get-pip
+  -- researched, no action planned.** A background code-review pass flagged that the embed tier's
+  download (`:try_embed_fallback`, run_setup.bat) retries the *same* `HP_EMBED_URL`
+  (`www.python.org/ftp/python/...`) on failure, unlike Miniconda (has a `repo.continuum.io` legacy
+  alias), uv (has a pinned-release GitHub URL distinct from its "latest" CDN redirect), and get-pip
+  (has the get-pip project's own GitHub source as a second host). Researched whether an equivalent
+  second host exists for python.org's embeddable zip distribution: it does not, in the same sense.
+  `www.python.org/ftp` is itself the canonical, Fastly-CDN-backed distribution point for CPython
+  releases -- there is no alternate *official* domain serving the identical embeddable-zip artifact.
+  python.org does list community mirrors, but none are guaranteed to carry the embeddable-zip
+  variant specifically, or to match this repo's pinned SHA256 the way the primary source does by
+  construction (the checksum was computed directly from a `python.org/ftp` download at pin time) --
+  pointing at one would be a real trust/availability decision, not a mechanical copy of the
+  Miniconda/uv/get-pip pattern. Decision: no forced fallback host. The existing 2-attempt
+  same-URL retry (curl, then PowerShell `Invoke-WebRequest`) already covers the common transient
+  failure case; a genuine second-host fallback remains possible future work if a specific mirror is
+  ever vetted, but is not a quick win and is not planned.
+
 - **User-code exit-code semantics are already correctly isolated from bootstrapper status --
   verified, no action needed.** Traced the full flow: `HP_SMOKE_RC` is captured directly from
   `%ERRORLEVEL%` immediately after launching the user's program at every verification call site
@@ -674,6 +689,34 @@ rather than relying on manual memory.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Three small hardening/cleanup items from the reorder's research pass**: (1)
+  `:conda_base_update`'s inline `-Command` PowerShell (run_setup.bat, `:conda_base_update`)
+  rewritten to raw .NET APIs (`[System.IO.File]::Exists`/`ReadAllText`/`WriteAllText`,
+  `[datetime]::Now`) in place of `Test-Path`/`Get-Content`/`Get-Date`/`Set-Content` -- closes the
+  plausible (never confirmed; masked by an existing `try/catch`) Windows PowerShell 5.1
+  `Microsoft.PowerShell.Utility` module-autoload gap documented in
+  `docs/agent-lessons-learned.md`'s "Prefer raw .NET types over Utility-module cmdlets" entry;
+  notably `Get-Date` needed replacing too, not just `Get-Content`/`Set-Content`, since it lives in
+  the same module and would fail identically if the gap were ever triggered here. All three
+  PowerShell snippets stayed inline `-Command "..."` one-liners (not converted to an emitted
+  `.ps1` file) since the .NET replacements use only single-quoted PowerShell string literals, so
+  no literal `"` was ever introduced into the `-Command` body -- the quoting hazard that would
+  have forced the more invasive `.ps1`-file conversion never actually applied once written out
+  correctly. (2) `tests/harness.ps1`'s `batch.req009.provider_logs` static check extended with a
+  5th pattern (`Embedded Python`) and retitled "all five provider log lines" -- it previously only
+  asserted the pre-Tier-5 four providers (UV/Conda/Local venv/System Python), never covering
+  embed's own `[BOOT] REQ-009: Selected Python provider: Embedded Python (python.org).` line even
+  though embed shipped as a fifth tier. (3) The embed-tier declaration-block comment at
+  run_setup.bat ~line 163 (`rem REQ-009 Tier 5: embeddable-Python fallback...`) still read "last
+  resort when uv/conda/venv/system all fail" -- stale since the REQ-009 provider-chain reorder
+  made embed execute 3rd (right after conda), not last; this was missed during that reorder
+  because only the two dispatch-chain sections' own comments were fixed at the time, not this
+  earlier declaration-block comment. Updated to state the tier's actual position and rationale
+  (front-loaded so a pinned runtime.txt/pyproject.toml version is honored before falling back to
+  ambient venv/system Python). All three were confirmed via a dedicated research pass (which also
+  covered two items that stayed open -- see Active Backlog -- and the embed-fallback-URL question,
+  which resolved to "no action" -- see Known Findings). CLOSED by this PR.
 
 - **Embed version table quarterly-maintenance-checklist entry**: the Tier 5 design doc stated
   the `EMBED_PYTHON_TABLE` in `tools/embed_pyver_check.py` should refresh on the same quarterly

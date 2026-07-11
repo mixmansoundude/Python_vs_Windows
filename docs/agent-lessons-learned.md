@@ -636,6 +636,24 @@ PowerShell module dependency, since `System.Security.Cryptography`/`System.IO`/
 `for /f`-backtick-subshell pattern should default to .NET types for hashing/archive/file-IO
 rather than assuming the equivalent PowerShell cmdlet's module will be available.
 
+**Applied defensively to a second, pre-existing `for /f`-backtick-subshell site with the same
+topology: `:conda_base_update`'s timestamp check (run_setup.bat, was CLAUDE.md Active Backlog
+item, now closed).** This site was NEVER confirmed to have failed in CI -- it is wrapped in a
+`try/catch` that silently defaults to `'update'` on any exception, so a module-autoload failure
+here would be masked (an unnecessary conda update), not a crash, unlike the embed tier's
+unguarded `Get-FileHash` call. Rewritten anyway on the same principle: `Get-Content -Raw` ->
+`[System.IO.File]::ReadAllText(path, [System.Text.Encoding]::ASCII)`, `Test-Path` ->
+`[System.IO.File]::Exists(path)`, and -- worth calling out specifically -- `Get-Date` -> `[datetime]::Now`.
+`Get-Date` is easy to overlook here: it lives in the exact same `Microsoft.PowerShell.Utility`
+module as `Get-FileHash`/`Get-Content`/`Set-Content`, so if the module-autoload gap were ever
+triggered at this call site, `Get-Date` would fail identically -- fixing only the
+Get-Content/Set-Content calls while leaving `Get-Date` in place would have been an incomplete
+fix. All three PowerShell snippets here are inline `-Command "..."` one-liners (not an emitted
+`.ps1` file via `:emit_from_base64`), so per the quoting hazard documented elsewhere in this
+file, the .NET replacement calls stick to single-quoted PowerShell string literals throughout
+(`'...'`) to avoid introducing any literal `"` into the `-Command` body -- confirmed no such
+character was added.
+
 **A second, independent bug hid behind the first and only surfaced once diagnostics were added:**
 once `Get-FileHash` was replaced, a follow-up local `pwsh` test against the real downloaded zip
 showed extraction succeeding but the `._pth` site-imports patch silently NOT applying --

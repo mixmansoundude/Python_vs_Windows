@@ -290,9 +290,9 @@ Write-Result "batch.req011.dircheck" "REQ-011: directory integrity check present
 $req012Patterns = @('HP_SKIP_ENTRY_SMOKE set; skipping entry-script smoke', 'HP_SKIP_EXE_SMOKERUN set; skipping EXE verification')
 $hasReq012 = ($req012Patterns | Where-Object { -not ($AllText -match $_) }).Count -eq 0
 Write-Result "batch.req012.skiphooks" "REQ-012: HP_SKIP_ENTRY_SMOKE and HP_SKIP_EXE_SMOKERUN execution-skip log lines present in run_setup.bat" $hasReq012 @{}
-$req009Patterns = @('\[BOOT\] REQ-009.*Selected.*UV', '\[BOOT\] REQ-009.*Selected.*Conda', '\[BOOT\] REQ-009.*Selected.*Local venv', '\[BOOT\] REQ-009.*Selected.*System Python')
+$req009Patterns = @('\[BOOT\] REQ-009.*Selected.*UV', '\[BOOT\] REQ-009.*Selected.*Conda', '\[BOOT\] REQ-009.*Selected.*Embedded Python', '\[BOOT\] REQ-009.*Selected.*Local venv', '\[BOOT\] REQ-009.*Selected.*System Python')
 $hasReq009 = ($req009Patterns | Where-Object { -not ($AllText -match $_) }).Count -eq 0
-Write-Result "batch.req009.provider_logs" "REQ-009: all four provider log lines present in run_setup.bat" $hasReq009 @{}
+Write-Result "batch.req009.provider_logs" "REQ-009: all five provider log lines present in run_setup.bat" $hasReq009 @{}
 $venvGuardFound = $AllText -match [regex]::Escape('"%HP_ALLOW_VENV_FALLBACK%"=="1"')
 Write-Result "batch.req009.venv_unconditional" "REQ-009: venv fallback not guarded by HP_ALLOW_VENV_FALLBACK (fallback is unconditional)" (-not $venvGuardFound) @{ guardFound = $venvGuardFound }
 $cascadeDetectPatterns = @(':warnfix_cascade_detect', 'cascade candidate detected', 'HP_TEST_FORCE_WARNFIX_UNRESOLVED', 'HP_CASCADE_CANDIDATE')

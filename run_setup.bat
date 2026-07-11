@@ -161,9 +161,12 @@ rem GitHub source (the file bootstrap.pypa.io serves is generated from this repo
 rem primary-CDN + GitHub-source fallback pattern already used for Miniconda/uv above.
 if not defined HP_GETPIP_URL set "HP_GETPIP_URL=https://bootstrap.pypa.io/get-pip.py"
 set "HP_GETPIP_FALLBACK_URL=https://raw.githubusercontent.com/pypa/get-pip/main/public/get-pip.py"
-rem REQ-009 Tier 5: embeddable-Python fallback, last resort when uv/conda/venv/system all fail
-rem (or no ambient interpreter exists at all). Only a single "latest" version is ever downloaded
-rem here -- HP_EMBED_LATEST_SHA256 MUST match the "3.14" entry embedded in the Python-side
+rem REQ-009 Tier 5 (by naming/history; executed 3rd as of the provider-chain reorder): the
+rem embeddable-Python fallback, reached right after conda fails (before venv/system) so a
+rem pinned runtime.txt/pyproject.toml version is still honored via a fresh checksummed download
+rem instead of silently falling back to whatever ambient Python happens to be on the machine.
+rem Only a single "latest" version is ever downloaded here -- HP_EMBED_LATEST_SHA256 MUST match
+rem the "3.14" entry embedded in the Python-side
 rem ~embed_pyver_check.py payload below (a unit test asserts this so a refresh that updates one
 rem but not the other is caught at CI time, not discovered live). See docs/agent-interconnect.md
 rem "Standalone Python-download tier" for the two-stage PowerShell/Python design and why a
@@ -3716,21 +3719,27 @@ if "%HP_TEST_CONDA_UPDATE%"=="1" (
 )
 if defined HP_CONDA_JUST_INSTALLED goto :cbu_firstinstall
 set "HP_CONDA_UPDATE_RESULT=update"
-for /f "delims=" %%R in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%MINICONDA_ROOT%\~conda.lastupdate') { try { $d = [datetime](Get-Content '%MINICONDA_ROOT%\~conda.lastupdate' -Raw); if (((Get-Date)-$d).TotalDays -ge 30) { 'update' } else { 'skip' } } catch { 'update' } } else { 'update' }"') do set "HP_CONDA_UPDATE_RESULT=%%R"
+rem derived requirement: raw .NET File/DateTime APIs, not Get-Content/Get-Date/Test-Path --
+rem see docs/agent-lessons-learned.md "Prefer raw .NET types over Utility-module cmdlets" for
+rem the confirmed Windows PowerShell 5.1 module-autoload gap this avoids (Get-FileHash failed
+rem to autoload in the identical for-/f-backtick-subshell topology; Get-Date/Get-Content share
+rem its Microsoft.PowerShell.Utility module, so both are equally exposed, not just the one that
+rem was actually caught failing).
+for /f "delims=" %%R in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "if ([System.IO.File]::Exists('%MINICONDA_ROOT%\~conda.lastupdate')) { try { $d = [datetime]([System.IO.File]::ReadAllText('%MINICONDA_ROOT%\~conda.lastupdate', [System.Text.Encoding]::ASCII)); if (([datetime]::Now - $d).TotalDays -ge 30) { 'update' } else { 'skip' } } catch { 'update' } } else { 'update' }"') do set "HP_CONDA_UPDATE_RESULT=%%R"
 if "%HP_CONDA_UPDATE_RESULT%"=="update" goto :cbu_run
 call :log "[INFO] Conda base update: skipped (last update < 30 days ago)."
 goto :eof
 
 :cbu_firstinstall
 call :log "[INFO] Conda base update: skipped (first install)."
-powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss') | Set-Content -LiteralPath '%MINICONDA_ROOT%\~conda.lastupdate' -Encoding Ascii" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[System.IO.File]::WriteAllText('%MINICONDA_ROOT%\~conda.lastupdate', [datetime]::Now.ToString('yyyy-MM-ddTHH:mm:ss'), [System.Text.Encoding]::ASCII)" >nul 2>&1
 goto :eof
 
 :cbu_run
 call :log "[INFO] Conda base update: running (>=30 days since last update or no record)."
 call "%CONDA_BAT%" update -n base --all --override-channels -c conda-forge -y >> "%LOG%" 2>&1
 if not errorlevel 1 (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss') | Set-Content -LiteralPath '%MINICONDA_ROOT%\~conda.lastupdate' -Encoding Ascii" >nul 2>&1
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "[System.IO.File]::WriteAllText('%MINICONDA_ROOT%\~conda.lastupdate', [datetime]::Now.ToString('yyyy-MM-ddTHH:mm:ss'), [System.Text.Encoding]::ASCII)" >nul 2>&1
   call :log "[INFO] Conda base update complete."
 ) else (
   call :log "[WARN] Conda base update failed; continuing."
