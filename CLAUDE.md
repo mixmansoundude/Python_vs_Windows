@@ -488,6 +488,25 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    genuinely different set of env vars (decline: 6 vars; real: 5 different vars), so the helper
    would need real parameterization -- a small design decision, not a mechanical copy-paste
    cleanup. Cosmetic; defer unless already touching these test blocks for another reason.
+4. **PYSPEC-aware venv-vs-embed decision function (promising, deliberately not implemented yet --
+   don't add the complexity until there's a concrete reason to).** `:try_venv_fallback` currently
+   uses whatever ambient Python is on the machine unconditionally, with no check of whether it
+   actually satisfies `PYSPEC` (the same value `~detect_python.py` already computes for
+   uv/conda/embed). This means the current linear order (embed before venv) always pays embed's
+   network cost even in the common case where the ambient Python already satisfies the pin and
+   venv would have been strictly better (instant, no network dependency, no extra disk). The
+   flip side also matters: embed is reached immediately after conda, so by the time it's
+   attempted, uv and conda have already both failed -- and since all three of uv/conda/embed
+   need network, embed is disproportionately likely to fail for the *same* underlying reason
+   (see the README's REQ-009 failure-causes table), making it a low-odds attempt in exactly the
+   scenario where it's tried. A smarter design would check "does the ambient Python (if any)
+   already satisfy PYSPEC?" and prefer venv when yes, falling to embed only when the ambient
+   Python is absent or version-mismatched -- turning the fixed uv/conda/embed/venv/system chain
+   into uv/conda/(venv-if-it-already-satisfies-PYSPEC, else embed)/system. Not pursued now: it
+   changes `:try_venv_fallback`'s dispatch shape (must read `PYSPEC` before deciding, not just on
+   creation), and the current fixed order is not wrong, just not optimal in either direction.
+   Revisit if the network-correlated-embed-failure pattern shows up for real in CI or user
+   reports, rather than speculatively building it now.
 
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
@@ -611,7 +630,36 @@ rather than relying on manual memory.
   Miniconda/uv/get-pip pattern. Decision: no forced fallback host. The existing 2-attempt
   same-URL retry (curl, then PowerShell `Invoke-WebRequest`) already covers the common transient
   failure case; a genuine second-host fallback remains possible future work if a specific mirror is
-  ever vetted, but is not a quick win and is not planned.
+  ever vetted, but is not a quick win and is not planned. **One specific candidate WAS identified
+  and considered, then rejected**: the CPython core team publishes an embeddable-equivalent build
+  to NuGet (`nuget.org/packages/python`) as part of their official release process -- a real,
+  independently-hosted, officially-maintained artifact on a different CDN (Azure-backed vs.
+  Fastly), reachable without the NuGet client via `nuget.org/api/v2/package/python/<version>`.
+  Rejected because it is not the same artifact the pinned `EMBED_PYTHON_TABLE` checksums were
+  computed against -- using it would mean maintaining a second SHA256 column per pinned version
+  going forward, doubling the table's maintenance burden for a download that's already covered by
+  the existing 2-attempt retry against a CDN that's rarely actually down. Revisit only if the
+  same-host retry proves insufficient in practice.
+
+- **winget / Microsoft Store Python evaluated as a possible additional REQ-009 tier -- rejected,
+  no action planned.** Considered whether `winget install Python.Python.3` (or the Microsoft Store
+  Python package) could serve as another fresh-acquisition fallback alongside or instead of the
+  embedded-Python tier. Researched winget's actual install behavior: without an explicit
+  `--scope machine` flag (which needs elevation), it installs **per-user** to
+  `%LOCALAPPDATA%\Programs\Python\Python3XX` -- but "per-user" is not the same axis as "isolated"
+  in the sense the embed tier cares about. Unlike embed's private, checksummed, disposable
+  `~embed_python\` directory (never registered anywhere, verified before use, gone if the app
+  stops using it), a winget/Store install is **shared and persistent**: it registers itself on
+  PATH, in Add/Remove Programs, and in the App Execution Alias registry, is discoverable by other
+  applications and future bootstrap runs of *other* projects, and its integrity is delegated
+  entirely to winget's own signature verification rather than this repo's own embedded SHA256.
+  Architecturally this makes it closer to the **system** tier (shared, uncontrolled, arguably
+  needing the same REQ-014-style consent) than to the **embed** tier (private, disposable,
+  pre-verified) -- adding it would mostly duplicate embed's job (fresh acquisition) with weaker
+  isolation, for the same underlying failure causes embed already fails for (no network, or -- for
+  winget itself -- winget/App Installer not being present on an older Windows 10 build, which is
+  its own new dependency this bootstrapper doesn't otherwise have). Decision: not worth adding as
+  a 6th tier.
 
 - **User-code exit-code semantics are already correctly isolated from bootstrapper status --
   verified, no action needed.** Traced the full flow: `HP_SMOKE_RC` is captured directly from
