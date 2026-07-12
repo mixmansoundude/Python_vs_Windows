@@ -550,6 +550,60 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
      limited to post-mortem diagnostics after a failure, not new discovery capability, since a
      successful smoke run means nothing was actually missing. Way-later, diagnostic-only,
      low-priority.
+   - **Concrete design (2026-07-11 follow-up), implementation-ready.** Confirmed via uv's own
+     docs: `uv add --script <file> <pkg1> <pkg2> ...` inserts a fresh `# /// script` block if none
+     exists, or updates an existing valid one; the written constraint defaults to a lower bound
+     (`>=X.Y`, resolved against the current latest compatible version) rather than an exact pin,
+     adjustable via `--bounds`. This means the write-back step needs network access at call time
+     (to resolve the bound), so it must run **after** the dependency-install phase has already
+     succeeded, not before -- reusing network access that phase already needed, not adding a new
+     network dependency. Idempotency (re-running `uv add --script` with the same package already
+     present) is expected to be a no-op per uv's own `add` semantics, but this must be verified
+     empirically in the CI test below, not assumed from docs alone (this repo's own convention:
+     "trust but verify" cross-tool assumptions, per the `docs/agent-lessons-learned.md` precedent
+     of the `Get-FileHash` module-autoload surprise). Malformed-existing-header behavior is
+     **unconfirmed** and flagged as an open question for whoever implements this: if `uv add
+     --script` errors on a malformed block rather than repairing it, the safe fallback is to
+     delete/replace the malformed block first (REQ-005.1's parser already detects this case) so
+     uv writes a clean one, rather than relying on uv to repair in place.
+     - **Trigger point**: after `:after_env_mode_selection`'s uv-provider dependency-install call
+       succeeds, and again after a successful warnfix repair (so modules warnfix discovers, which
+       aren't in the original resolved requirements list, still get promoted into the header).
+       Package names: reuse the already-resolved direct-dependency list from REQ-005.1-005.7 (not
+       a full `pip freeze` of the transitive closure -- PEP 723 headers declare direct
+       dependencies, matching what `requirements.txt`/`pyproject.toml` would normally contain).
+     - **Scope of the *entry* file only, not every `.py` file in the folder.** PEP 723 headers are
+       only meaningful on the file actually invoked via `uv run`; write into `%HP_ENTRY%` (REQ-002's
+       already-resolved entry selection), not into helper/sibling modules.
+     - **Invocation**: `"%HP_UV_EXE%" add --script "%HP_ENTRY%" pkg1 pkg2 ...` -- via the
+       already-resolved `HP_UV_EXE` path, never a bare `uv` PATH lookup, matching this repo's
+       "interpreter-anchored execution" principle (see Bootstrap Architecture Principles above).
+     - **Skip conditions**: source is already an authoritative, unchanged PEP 723 header with
+       nothing new to add; provider is not uv (v1 scope); `HP_SKIP_PEP723_WRITEBACK=1` (new
+       suppression-only flag, per REQ-001's "flags only suppress" rule); `HP_CI_SKIP_ENV=1` (no
+       real install cycle happens on that path). Always best-effort -- any failure (network hiccup,
+       uv error) logs `[WARN]` and continues; never gates the Prime Directive.
+     - **Log contract**: `[INFO] REQ-005: Wrote inferred dependencies into <entry>.py's PEP 723
+       header (via uv add --script).` -- never silent, matching every other REQ-005 augmentation
+       step's "no silent fallback" design principle.
+     - **Test plan** (new NDJSON rows, naming mirrors the existing `self.pep723.*` family):
+       `self.pep723.writeback.fresh` (no existing header -> new block appears with expected
+       packages), `self.pep723.writeback.idempotent` (run twice -> second run doesn't grow/duplicate
+       the header -- this is the empirical check for the unverified idempotency assumption above),
+       `self.pep723.writeback.malformed` (starts malformed -> cleanly replaced, not left broken),
+       `self.pep723.writeback.skipflag` (`HP_SKIP_PEP723_WRITEBACK=1` -> entry file untouched),
+       `self.pep723.writeback.warnfix` (a warnfix-only-discovered module ends up in the header too,
+       proving the post-repair trigger point works, not just the up-front one).
+     - **Docs to update alongside implementation**: `docs/agent-ndjson.md` (new rows);
+       `docs/agent-interconnect.md` (a new section -- this touches REQ-002 entry selection, REQ-005
+       dependency resolution, and uv-only `HP_UV_EXE` availability all at once, worth its own
+       cross-reference note); `README.md` (new REQ-005 sub-bullet + the new flag added to the
+       "Advanced Environment Variables" table); move this item to Closed Backlog once shipped.
+     - **Effort estimate**: comparable to a single already-shipped REQ-013/REQ-023-style addition
+       this session (a goto-based call site, a package-list assembly step reusing already-resolved
+       data, a skip-flag check) -- most of the real effort is in the five test scenarios and
+       confirming the malformed-header behavior empirically, not in new batch logic. Fits this
+       repo's "one feature slice per loop" norm as a single loop, unlike the AV-Safe Build Path PRD.
 6. **Opt-in "trust me, my script is idempotent" fast-discovery mode (way-later; needs its own
    dedicated design loop, not a quick add).** Raised via a 3rd-party analysis the owner shared
    (low confidence, no repo access -- see the new README section for the full non-idempotency
