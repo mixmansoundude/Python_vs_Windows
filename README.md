@@ -16,7 +16,7 @@ This tool is for beginners or unfamiliar users who have been given Python code a
 
 > **You:** Head of Cybersecurity Jim sent me a Python file he AI-vibe-coded to solve all my problems, but I don't know what Python is.
 >
-> **Me:** Try installing [uv](https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip), or open PowerShell, paste `irm https://astral.sh/uv/install.ps1 | iex` to install it, restart your terminal, then type `uvx autopep723 solve_my_probs.py`.
+> **Me:** Put the Python file in its own folder, open PowerShell in that folder (Shift+right-click -> "Open PowerShell window here"), paste `irm https://astral.sh/uv/install.ps1 | iex` to install uv, restart the terminal, then type `uvx autopep723 solve_my_probs.py`. First run might take a minute or two.
 >
 > **You:** Wow, that was fast! Worked great once I figured out how to open a terminal for the first time (never doing that again).
 >
@@ -505,7 +505,7 @@ blip or a temporary outage.
 
 ---
 
-## Advanced Environment Variables (reference)
+## [REQ-019] Environment-Variable Flags Are Scaffolding, Never a Gate
 
 **Intended run paths are double-click and drag-and-drop, with no environment variables set.** All
 `HP_*` and `PVW_*` environment variables are **test/CI/super-user scaffolding only**. No intended
@@ -514,6 +514,15 @@ never block a Prime-Directive outcome: a flag may add diagnostic/CI behavior or 
 override, or suppress an optional step (so absence == full behavior), but it is never the gate for
 a behavior the Prime Directive needs. The default no-flag run must still reach every fallback tier
 that gets the code running. Requirements and tests therefore exercise the no-flag path.
+
+This is a standing design constraint, not just reference documentation -- it was previously only
+stated in this section's own prose with no requirement number, even though `docs/agent-lessons-
+learned.md` and other internal docs already cited it informally as a load-bearing rule (the "Env-
+var flags are scaffolding" principle). Promoted to `[REQ-019]` so it can be cited unambiguously
+going forward, distinct from `[REQ-001]` (the Prime Directive itself, which this rule protects but
+does not replace).
+
+## Advanced Environment Variables (reference)
 
 Operational knobs, not needed for normal double-click use:
 
@@ -617,6 +626,28 @@ PY
 ```
 
 Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` with the new base64 text. The batch file comments point back to this section when further guidance is needed.
+
+**Payload inventory and PayloadSync coverage** (added so this is visible at a glance, instead of
+needing to grep the batch file or a research pass to find out): of the 16 embedded `HP_*`
+payloads, 6 have a canonical `tools/` source file *and* a dedicated `PayloadSync` unit test that
+asserts the embedded base64 is byte-for-byte in sync with that source (`HP_COLLECT_SUBMODULES` ->
+`tools/collect_submodules.py`, `HP_EMBED_EXTRACT` -> `tools/embed_extract.ps1`,
+`HP_EMBED_PYVER_CHECK` -> `tools/embed_pyver_check.py`, `HP_FIND_ENTRY` -> `tools/find_entry.py`,
+`HP_HIDDEN_IMPORT_SCAN` -> `tools/hidden_import_scan.py`, `HP_PARSE_WARN` ->
+`tools/parse_warn.py`; each is exercised by the matching `tests/test_*.py` file). The remaining
+10 (`HP_CONDARC`, `HP_DEP_CHECK`, `HP_DETECT_PY`, `HP_DETECT_VISA`, `HP_ENV_STATE`,
+`HP_FAILFAST_PROBE`, `HP_FAST_CHECK`, `HP_PREP_REQUIREMENTS`, `HP_PRINT_PYVER`, `HP_PYPROJ_DEPS`)
+are embedded-only, with no separate canonical source to sync against -- `HP_CONDARC` is static
+config text, not code, so this doesn't apply to it; `HP_FAST_CHECK` and `HP_PREP_REQUIREMENTS` at
+least have their *logic* covered by `tests/test_fast_check_pattern.py` /
+`tests/test_heuristics.py` (extracted and tested in place, just not against a separate source
+file); `HP_DEP_CHECK`, `HP_DETECT_PY`, `HP_DETECT_VISA`, `HP_ENV_STATE`, `HP_FAILFAST_PROBE`, and
+`HP_PYPROJ_DEPS` currently have **no automated test coverage of any kind** despite several of them
+(`HP_DETECT_PY`'s multi-tier version detection, `HP_PYPROJ_DEPS`'s TOML-with-regex-fallback
+parsing) doing genuinely non-trivial logic -- see `CLAUDE.md`'s Active Backlog for the tracked
+follow-up to promote these to the same canonical-source-plus-`PayloadSync`-plus-logic-test pattern
+as the 6 above. Any *new* embedded payload should default to the canonical-source-plus-
+`PayloadSync` pattern from the start rather than adding an 11th embedded-only exception.
 
 ## How CI decides pass/fail
 

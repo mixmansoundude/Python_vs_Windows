@@ -559,6 +559,50 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    be permanently frozen into every already-distributed copy of `run_setup.bat`, with no way to
    walk it back later even after the reason for it stops being true. Read that section before
    extending Tier B's pinning pattern anywhere else in this codebase.
+8. **Cross-platform pre-flight checks (low-effort, low-risk, deliberately kept OUT of the PEP 723
+   write-back work -- its own small, fast follow-up loop once that ships).** Raised alongside a
+   3rd-party review of the PEP 723 plan (2026-07-12): three cheap, read-only checks worth adding
+   near the existing early-warning guards (OneDrive detection, path-length guard, REQ-025 disk
+   space) in `run_setup.bat`, all "observe and warn, never silently rewrite" per this repo's
+   existing posture:
+   - **Mac-garbage filter for entry detection.** `tools/find_entry.py`'s `is_py()` currently has no
+     exclusion for macOS AppleDouble files (`._main.py`) or a stray `__MACOSX/` folder left behind
+     when a Windows user unzips something a Mac user zipped -- a real, common, well-known
+     cross-platform papercut. Fix is a one-line addition to `is_py()`'s existing filter (already
+     excludes `~`-prefixed names; add a `._`-prefix exclusion the same way) plus skipping any
+     `__MACOSX` directory in the same walk. Needs a `PayloadSync`-covered re-sync of
+     `HP_FIND_ENTRY` afterward (see item 9) and a `tests/test_find_entry.py` case.
+   - **System-directory guard.** No check currently exists for the script root being under
+     `%WINDIR%`/`%PROGRAMFILES%` (a user occasionally drops a script into a system folder thinking
+     it "installs" it) -- the bootstrapper would just fail cryptically on write-permission errors
+     several steps in. A simple early check-and-abort with a clear plain-language message (mirrors
+     the existing OneDrive/path-length warnings' placement and tone) closes this.
+   - **Correction to a 3rd-party suggestion in the same review**: a "MAX_PATH warning" was also
+     proposed as new work -- **this already exists** (the path-length guard at the top of
+     `run_setup.bat`, warning when the script root approaches the 260-char cmd.exe limit). No
+     action needed there; noted here only so it isn't rediscovered as a gap later.
+9. **Promote the remaining embedded-only `HP_*` payloads to the canonical-source-plus-
+   `PayloadSync`-plus-logic-test pattern (moderate effort, not urgent, but a real, confirmed test-
+   coverage gap).** A payload-inventory audit done alongside the cross-platform-checks review
+   (2026-07-12; see README's "Rebuilding embedded helper payloads" section for the full inventory
+   table now recorded there) found that of 16 embedded `HP_*` payloads, only 6 have a canonical
+   `tools/` source file with a `PayloadSync` byte-equality test (`HP_COLLECT_SUBMODULES`,
+   `HP_EMBED_EXTRACT`, `HP_EMBED_PYVER_CHECK`, `HP_FIND_ENTRY`, `HP_HIDDEN_IMPORT_SCAN`,
+   `HP_PARSE_WARN`). Of the remaining 10 embedded-only payloads, `HP_CONDARC` is static config (not
+   code, doesn't need this), and `HP_FAST_CHECK`/`HP_PREP_REQUIREMENTS` at least have their logic
+   tested in place (`tests/test_fast_check_pattern.py`/`tests/test_heuristics.py`, just not against
+   a separate canonical source) -- but **`HP_DEP_CHECK`, `HP_DETECT_PY`, `HP_DETECT_VISA`,
+   `HP_ENV_STATE`, `HP_FAILFAST_PROBE`, and `HP_PYPROJ_DEPS` currently have zero automated test
+   coverage of any kind**, despite several doing genuinely non-trivial logic (`HP_DETECT_PY`'s
+   multi-tier `runtime.txt`/`pyproject.toml` version-detection precedence -- referenced constantly
+   elsewhere in these docs as load-bearing; `HP_PYPROJ_DEPS`'s TOML-with-regex-fallback parser).
+   Recommended approach when picked up: extract each into a `tools/<name>.py` canonical source
+   (mirroring the `collect_submodules.py`/`hidden_import_scan.py` precedent), add a `PayloadSync`
+   test asserting embedded-base64-matches-source, and add at least minimal logic-level unit tests
+   -- sized as several small, independent loops (one payload at a time), not one big one, since
+   each payload's logic is unrelated to the others. Not urgent (no bug has been traced to any of
+   these gaps), but real, and the highest-value place to start is `HP_DETECT_PY` given how central
+   its output is to the rest of the bootstrap.
 
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or

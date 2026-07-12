@@ -289,7 +289,13 @@ above.
 
 ---
 
-## Env-var flags are scaffolding, not intended run paths (REQ-001)
+## Env-var flags are scaffolding, not intended run paths (REQ-019)
+
+**Note (2026-07-12): this section's own title previously cited "(REQ-001)" ambiguously.**
+`[REQ-001]` in README.md is the Prime Directive itself, not this rule -- this rule *protects*
+REQ-001, it isn't numbered as it. The rule described here now has its own proper number,
+`[REQ-019]`, promoted from README's previously-unnumbered "Advanced Environment Variables"
+section specifically so it stops needing an ambiguous cross-reference like this one.
 
 The intended run paths are **double-click and drag-and-drop with no environment variables**.
 Every `HP_*` / `PVW_*` variable is test/CI/super-user scaffolding. **No Prime-Directive outcome

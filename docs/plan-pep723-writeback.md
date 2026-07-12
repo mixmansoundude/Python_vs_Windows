@@ -27,6 +27,46 @@ doesn't depend on `pipreqs` (which this repo already treats with some wariness -
 **entry file only** (not every `.py` file in the folder). Replicating to conda/venv/embed/system
 lanes is explicitly a later step.
 
+## Big picture: how this fits with pipreqs, `autopep723`, and the existing dependency-source chain
+
+Added 2026-07-12 in response to a direct question about how all the pieces relate -- worth stating
+plainly since it's easy to conflate this feature with a bigger discovery-mechanism change it is
+NOT:
+
+- **This is not "running `autopep723` up front."** `autopep723` (the community tool) is not used
+  anywhere in this design, in any capacity -- it was researched purely as prior art/comparison
+  (Part 1's Pass 2, finding 5). This feature calls uv's own native `uv add --script` directly.
+- **REQ-005.1's dependency-source discovery order is completely unchanged**: PEP 723 (if present
+  and valid) > `pyproject.toml` > `requirements.txt` > `requirements.auto.txt` (pipreqs, non-
+  authoritative) > empty. `pipreqs` is not being replaced, backed up, or run differently. This
+  feature does not touch discovery at all.
+- **This feature is a purely post-hoc, one-way promotion step**: it runs *after* dependencies are
+  already resolved and installed (via whichever source was actually authoritative for that run),
+  and writes the *final resolved set* into the entry file's PEP 723 header -- regardless of which
+  tier in REQ-005.1's chain actually supplied it. If PEP 723 was already the source, there's
+  nothing new to add (the "already authoritative" case, Part 2.2 point 7) and the call is a no-op.
+  If `requirements.txt` or pipreqs supplied it, this is the mechanism that promotes that inferred
+  set into the higher-priority, persistent PEP 723 form for next time.
+- **Yes, `requirements.txt`/`requirements.auto.txt` are still left behind too, unchanged, in
+  addition to the new PEP 723 header.** Nothing in this feature deletes or stops writing either
+  file -- they remain exactly as useful as they already are today (a plain-text fallback readable
+  without parsing TOML, and pipreqs's own inference record). No conflict: since PEP 723 is already
+  the *highest*-priority authoritative source per REQ-005.1, having a PEP 723 header present
+  automatically makes it win on the *next* run, with zero new precedence logic needed -- this falls
+  directly out of the existing rule, nothing new to build.
+- **"Append-only, never delete" symmetry with the `requirements.txt` process is already satisfied,
+  for free, by uv's own confirmed behavior** (Part 1, Pass 1: adding a new package never removes or
+  alters an existing entry). No additional robustness needs to be ported over from the
+  `requirements.txt`/pipreqs side -- the two processes already behave the same way on this specific
+  point, coincidentally, without either having been designed to match the other.
+- **Relationship to REQ-004's `runtime.txt` write-back**: this feature is conceptually a sibling
+  of REQ-004's existing "write back `runtime.txt` once the Python version is resolved" behavior --
+  both persist an inferred fact into an authoritative, git-committable file so a future run (by
+  this bootstrapper, or by anyone else who receives the file) starts from a documented, faster
+  starting point instead of re-inferring from scratch. The plan's REQ-005.11 write-up (Part 2.4)
+  should cross-reference REQ-004 explicitly as this pattern's existing precedent, rather than
+  presenting the write-back idea as something novel to this repo.
+
 ---
 
 ## Part 1: Empirical findings (both testing passes)
@@ -219,27 +259,87 @@ where `<packages_file>` is a plain-text file (one requirement-spec-or-bare-name 
 the batch caller has already produced by copying either `requirements.txt` (fresh trigger) or
 `~missing_modules.txt` (warnfix trigger). No parsing of loose CLI args happens on the batch side.
 
-**Helper logic:**
+**Helper logic** (steps 2-3 below added/revised 2026-07-12 per a 3rd-party technical review;
+see the Non-Goals section right after this one for what was deliberately *not* adopted from the
+same review):
 1. Read the packages file; strip blank/`#`-comment lines. If empty, print `SKIP:no_packages`,
    exit 0.
-2. Compute the lockfile sidecar path (`<entry>.py` -> `<entry>.py.lock`, confirmed convention)
+2. **Encoding pre-check (new).** Attempt `open(entry_path, encoding="utf-8").read()` in a
+   `try/except UnicodeDecodeError`. If it fails, print `SKIP:non_utf8`, exit 0, **without ever
+   invoking uv**. Rationale: uv is Rust-based and its own file I/O behavior on a non-UTF-8 source
+   (a legacy Windows-1252/"ANSI" file, or UTF-16LE from an old PowerShell `>` redirect) was not
+   empirically tested in either research pass -- it's genuinely unknown whether uv errors safely
+   or performs a lossy read/write that could silently replace non-ASCII bytes with the Unicode
+   replacement character, corrupting the user's actual source code. Given that ambiguity, a cheap
+   pre-check that sidesteps the question entirely (never hand uv a file we haven't confirmed is
+   UTF-8) is safer than relying on uv's undetermined behavior. This also means the empirical
+   re-verification step in Part 3 should add "does uv corrupt or safely reject a non-UTF-8 file"
+   as an explicit thing to test once -- if it turns out uv already handles this safely, this
+   pre-check becomes a harmless no-op, not a wrong design; if it doesn't, this pre-check is load
+   -bearing. Either way, ship the pre-check regardless of that outcome, since it costs one cheap
+   file read.
+3. **File-lock canary (new, diagnostic-quality, not a correctness fix).** Attempt
+   `open(entry_path, "r+b")` in a `try/except PermissionError`, then immediately close it without
+   writing. If it fails, print `SKIP:file_locked`, exit 0, without invoking uv. **Important
+   framing correction from the original review**: this is not closing a real safety gap -- the
+   existing "any non-zero uv exit is caught by the generic `ERROR:uv_rc_<n>` path and never
+   gates the Prime Directive" design already handles a locked file safely today, just with a less
+   specific log message (uv would presumably fail with some non-zero exit on a locked file, which
+   the catch-all in step 5 below already treats as a safe, non-fatal failure). This canary's only
+   real value is a clearer, more specific skip reason in logs/tests rather than a generic error
+   code -- worth adding since it's cheap, but not worth treating as a show-stopper fix the way the
+   original review framed it. There is an inherent, accepted TOCTOU race (the lock could be
+   acquired between this check and the actual `uv add --script` call) -- this is fine precisely
+   because the fallback for that race is the same already-safe generic error path, not a crash.
+4. Compute the lockfile sidecar path (`<entry>.py` -> `<entry>.py.lock`, confirmed convention)
    and check existence; if present, print `SKIP:lockfile`, exit 0, **without ever invoking uv**.
-3. Run `uv add --script <entry> -p <python> <packages...>` via `subprocess.run`.
+5. Run `uv add --script <entry> -p <python> <packages...>` via `subprocess.run`.
    - Exit 0: print `OK:<n>` (n = package count passed), exit 0.
-   - Exit 2 (confirmed malformed-TOML signal, on both idle-syntax-error and trailing-whitespace
-     cases): **strip the entire existing `# /// script` ... `# ///` block** from the entry file
-     (tolerant regex matching both fence lines with optional trailing whitespace), then retry the
-     *same* `uv add --script` call exactly once. If the retry also fails, print
-     `ERROR:strip_retry_failed:<rc>`, exit 1 (operate on an in-memory copy; only write the file
-     if the retry is about to actually run).
+   - Exit 2 (confirmed malformed-TOML signal, on both plain-syntax-error and trailing-whitespace
+     cases -- the latter is specifically **GitHub issue #10918**; cite that issue number in the
+     code comment next to this branch, per this repo's convention of tagging non-obvious
+     constraints with their reason): **strip the entire existing `# /// script` ... `# ///`
+     block** from the entry file, then retry the *same* `uv add --script` call exactly once.
+     **Implementation note, corrected from the original design's "tolerant regex" language**: do
+     NOT implement this as a single `re.DOTALL`-style regex spanning the whole file -- a greedy
+     match risks stripping the user's actual code that follows the block, and a lazy match risks
+     leaving a stray fence line behind (which, per **PR astral-sh/uv#19544**'s "reject duplicate
+     script metadata blocks" change, could itself become a NEW hard-error on a sufficiently recent
+     uv even though it wasn't previously -- cite that PR number in the code comment here too).
+     Instead, iterate the file **line by line**, tracking a simple `in_block` boolean: start
+     dropping lines when a line matches `^# /// script\s*$`-ish, keep dropping through and
+     including the line that matches `^# ///\s*$` (tolerant of trailing whitespace, addressing
+     #10918 directly), then stop. This is a small state machine, not a regex, and is much safer
+     against both under- and over-matching on arbitrary user code. If the retry also fails, print
+     `ERROR:strip_retry_failed:<rc>`, exit 1 (operate on an in-memory copy; only write the file if
+     the retry is about to actually run).
    - Any other non-zero exit: print `ERROR:uv_rc_<n>`, exit 1. Do not attempt further repair --
-     best-effort failure, consistent with "never gating."
-4. **Never treat stderr text as a failure signal by itself** (confirmed benign stderr can occur,
-   e.g. the `VIRTUAL_ENV` warning) -- success/failure is determined solely by the process return
-   code.
-5. Never call `uv add --script` with a package name that wasn't already present in the input
+     best-effort failure, consistent with "never gating." This is also the path a locked file or
+     a read-only file (Windows Read-Only attribute, common on files pulled from a network share or
+     extracted from a strict archive) falls into if the new canary checks above don't catch it
+     first -- already safe by construction, nothing further needed for that case.
+6. **Never treat stderr text as a failure signal by itself** (confirmed benign stderr can occur,
+   e.g. **GitHub issue #15956**'s `VIRTUAL_ENV` warning -- cite that issue number in the code
+   comment near wherever stderr is captured-but-ignored) -- success/failure is determined solely
+   by the process return code.
+7. Never call `uv add --script` with a package name that wasn't already present in the input
    file -- this helper performs zero independent package-name inference; it is purely a
    plumbing/CLI-safety layer over data the caller has already validated as "confirmed installed."
+
+### Non-Goals & Safety (added 2026-07-12, to prevent scope creep once implementation starts)
+
+- **No line-ending normalization, anywhere, ever.** The helper must never rewrite the whole
+  entry file to a consistent line-ending style, even though the inserted header uses LF while
+  the original file's body keeps whatever it already had (Part 1's confirmed mixed-line-ending
+  finding). Normalizing is explicitly out of scope: it risks disrupting the user's own git
+  history (`core.autocrlf` interactions) and breaking Docker/WSL workflows that may depend on the
+  file's existing line endings -- a much bigger, riskier scope expansion than this feature's
+  actual job. Surgical edits only: touch the metadata block, never anything else in the file.
+- **No encoding "fixes."** If the encoding pre-check (helper step 2) fails, the helper skips and
+  moves on -- it does not attempt to detect the actual encoding, transcode the file, or otherwise
+  "help." File-parsing/encoding responsibility for the user's own source stays strictly with
+  whatever the user's own tooling already does; this bootstrapper observes and skips, it does not
+  silently rewrite.
 
 The single stdout result line is read back into a batch variable via the same `for /f
 "usebackq delims=" %%R in ("~pep723_result.txt") do set "HP_PEP723_RESULT=%%R"` pattern already
@@ -260,8 +360,10 @@ established cascade-dispatch convention.
 1. `if not "%HP_ENV_MODE%"=="uv" exit /b 0` -- v1 scope gate, silent (no log line at all, to
    avoid log noise on every single non-uv run).
 2. `if defined HP_SKIP_PEP723_WRITEBACK ( call :log "[INFO] REQ-005: PEP 723 write-back skipped
-   (HP_SKIP_PEP723_WRITEBACK set)." & exit /b 0 )` -- new suppression-only flag (REQ-001 "flags
-   only suppress" rule).
+   (HP_SKIP_PEP723_WRITEBACK set)." & exit /b 0 )` -- new suppression-only flag (per README's now-
+   numbered `[REQ-019]` "flags only suppress" rule -- promoted from an unnumbered reference section
+   to its own requirement, 2026-07-12, specifically so it has a stable number to cite instead of
+   the ambiguous "see the Advanced Environment Variables section" phrasing earlier drafts used).
 3. `if defined HP_CI_SKIP_ENV exit /b 0` -- defensive; technically unreachable given call-site
    ordering, but cheap insurance against a future refactor.
 4. `if not defined HP_UV_EXE exit /b 0` / `if not defined HP_ENTRY exit /b 0` / `if not exist
@@ -272,24 +374,31 @@ established cascade-dispatch convention.
      the install did not fully succeed. `HP_UV_INSTALL_OK` is a **new** variable, set to `1`
      inside the existing uv-install branch on genuine install success, and also set to `1` when
      `HP_DEP_SKIP` short-circuited the install (already-satisfied-by-lock case -- still a
-     "confirmed installed" state). Reset to empty at the top of `:after_env_mode_selection` for
-     cascade re-entrancy correctness (2.0 point 4).
+     "confirmed installed" state). **Must be reset with the literal, explicit form
+     `set "HP_UV_INSTALL_OK="` (nothing after the `=`)** at the top of `:after_env_mode_selection`,
+     alongside the existing `HP_DEP_SKIP`/`HP_DEP_RESULT` resets, for cascade re-entrancy
+     correctness (2.0 point 4) -- called out explicitly here because a provider-cascade downgrade
+     (e.g. uv exhausted, cascading to conda) that fails to clear this variable would let a stale
+     `HP_UV_INSTALL_OK=1` from the *previous*, now-abandoned uv attempt silently satisfy this gate
+     on a later, unrelated trigger.
    - Warnfix trigger: `if exist "~warnfix_repair_failed.flag"` -> skip (all-or-nothing per
      round).
-6. **Existing `.lock` sidecar check** -- implemented inside the Python helper (2.1 step 2), not
+6. **Existing `.lock` sidecar check** -- implemented inside the Python helper (2.1 step 4), not
    in batch. Batch-side callers interpret the helper's `SKIP:lockfile` result and log accordingly
    (no filename in the message, per the `:log` unquoted-metacharacter rule).
-7. **Optional, not load-bearing for v1**: an "already-authoritative, nothing changed" no-op check
-   -- when the run's dep source was already PEP 723 and the resolved set is unchanged from what's
-   already declared, skip the uv call entirely to avoid an unnecessary file touch on every run.
-   Since `uv add --script` is independently confirmed idempotent, correctness does not depend on
-   this optimization -- cutting it for v1 still produces a correct feature, just with one extra
-   no-op uv invocation per run on already-fully-annotated scripts. **Flagged as a nice-to-have,
-   safe to defer to a later pass.**
+7. **REJECTED, not merely deferred: no "already-authoritative, nothing changed" no-op
+   optimization.** The original draft flagged this as an optional nice-to-have (skip the uv call
+   entirely when the resolved set already matches an existing PEP 723 header, to avoid an
+   unnecessary file touch). Per a 2026-07-12 review: **do not build this at all, in v1 or later.**
+   `uv add --script` is independently confirmed idempotent and fast on a no-op case -- the
+   Python-side cost of parsing the existing header, comparing it against the resolved set, and
+   branching on the result is real, ongoing code-maintenance surface for a benefit (skipping one
+   harmless, fast, idempotent uv call) that doesn't justify it. This is a permanent scope
+   decision, not a "not yet."
 
 **`HP_SKIP_PEP723_WRITEBACK` wiring**: declared alongside other `HP_SKIP_*` flags near the top of
-the file; documented in README's "Advanced Environment Variables" table as suppression-only, per
-REQ-001.
+the file; documented in README's "Advanced Environment Variables" table and cross-referenced to
+`[REQ-019]`.
 
 **Log contract (revised for `:log` safety, per 2.0 point 2):**
 - Success: `[INFO] REQ-005: PEP 723 header write-back succeeded via uv add --script.` (no entry
@@ -319,11 +428,25 @@ file mutation, so assertions must read the actual `.py` file, not just log text)
 | `self.pep723.writeback.warnfix` | Entry imports a module warnfix (not pipreqs) will discover, forcing the repair loop to fire during the build. | Both the warnfix repair AND a second write-back succeed; post-run header includes the warnfix-only-discovered module, proving the second trigger point fires. |
 | `self.pep723.writeback.trailing_ws_malformed` (new, from issue #10918) | Entry pre-seeded with an otherwise-valid header whose closing `# ///` fence has trailing whitespace. | Same success assertions as `.malformed` -- proves the strip-and-retry path handles this "looks fine to a human, invalid to a strict parser" case, and that the entire old block (not a stray remnant) got removed. |
 | `self.pep723.writeback.existing_lockfile` (new, from finding #2) | No pre-existing header, but a `<entry>.py.lock` sidecar is pre-created before the run. | Lockfile-skip log line present; entry `.py` file byte-identical before/after (no header written); the `.lock` file itself untouched -- proves the helper truly never invokes `uv add --script` in this case. |
+| `self.pep723.writeback.non_utf8` (new, added 2026-07-12 per technical review) | Entry file's body written with a deliberately non-UTF-8 encoding (e.g. Windows-1252 with a byte sequence like `\x93...\x94` "smart quotes" that isn't valid UTF-8), no pre-existing header. | Skip log line present (`SKIP:non_utf8` surfaced as an `[INFO]` line); entry file byte-identical before/after -- proves the encoding pre-check prevents ever handing a non-UTF-8 file to uv, regardless of what uv itself would have done with it. |
 
 All scenarios need `HP_ENV_MODE` to actually resolve to `uv`; each test should assert that
 precondition explicitly and emit `skip=true` with reason `provider_not_uv` if a given CI lane
 doesn't reach uv (mirroring this suite's existing non-Windows-skip pattern, applied to a
 different precondition).
+
+**Test-fixture encoding, called out explicitly (a real risk specific to the CI harness, not the
+feature itself):** the `.idempotent` and `.skipflag` scenarios assert the entry file is **byte-
+identical** before/after. PowerShell's `Set-Content`/`Out-File` cmdlets do not default to plain
+UTF-8-without-BOM -- depending on PowerShell version they can default to UTF-16LE-with-BOM or
+add a BOM to UTF-8, and always write CRLF. If the test harness stubs the `.py` file using a bare
+`Set-Content`/`Out-File` call, a later `git checkout`/`core.autocrlf` normalization or an
+incidental BOM could make a byte-comparison fail even when the content is logically identical,
+producing a flaky or wrong test independent of the feature actually working. **Every stub-writing
+step in `tests/selfapps_pep723_writeback.ps1` must use an explicit, BOM-free UTF-8 encoding**
+(`Set-Content -Encoding utf8NoBOM` on PowerShell 6+, or the raw `[System.IO.File]::WriteAllText`
+.NET-API pattern this repo already prefers per `docs/agent-lessons-learned.md`'s "Prefer raw .NET
+types" entry) -- do not rely on a cmdlet default.
 
 **CI wiring**: add step(s) invoking the new test file in `.github/workflows/batch-check.yml`,
 gated to lanes where uv is the default provider (`real`/`cache`), explicitly NOT `conda-full`
@@ -332,8 +455,8 @@ empirically (Part 3) rather than assuming.
 
 ### 2.4 Docs to update in the same commit
 
-- `docs/agent-ndjson.md`: the 7 new row IDs, in a new subsection for whichever lane(s) the CI
-  wiring lands on.
+- `docs/agent-ndjson.md`: the 8 new row IDs (7 original + `.non_utf8`), in a new subsection for
+  whichever lane(s) the CI wiring lands on.
 - `docs/agent-interconnect.md`: a new section near the existing `### warnfix install + uv mode`
   and `### dep-check + uv mode lock file interconnection` sections, since this feature is a
   direct sibling dependency of both. Cross-reference: REQ-002 entry selection, REQ-005's
@@ -342,13 +465,25 @@ empirically (Part 3) rather than assuming.
 - `docs/agent-lessons-learned.md`: consider a small addendum to the existing "`:log` echoes
   UNQUOTED" section noting this feature's near-miss (2.0 point 2), only if the implementation
   actually needed the correction (per that doc's "record hazards actually hit" convention).
-- `README.md`: new REQ-005 sub-bullet (or a standalone `[REQ-005.11]`-style section, following the
-  `## [REQ-023] Venv Fallback Canary Probe` format: title, bullets, explicit Log contract, CI test
-  flag, Test NDJSON rows); new row in the "Advanced Environment Variables" table for
-  `HP_SKIP_PEP723_WRITEBACK=1`.
+- `README.md`: new **`[REQ-005.11]`** sub-section (following the `## [REQ-023] Venv Fallback
+  Canary Probe` format: title, bullets, explicit Log contract, CI test flag, Test NDJSON rows) --
+  explicitly cross-reference **REQ-004** (`runtime.txt` write-back) as this feature's existing
+  sibling precedent, per the Big Picture section above, so a reader doesn't have to independently
+  notice the two features share a design pattern; new row in the "Advanced Environment Variables"
+  table for `HP_SKIP_PEP723_WRITEBACK=1`, cross-referenced to `[REQ-019]`.
 - `CLAUDE.md`: move the Active Backlog pointer to this document into Closed Backlog once shipped,
   following the existing Closed Backlog entry style -- what shipped, what was corrected from this
   plan during implementation, "CLOSED by this PR."
+- **Code comments citing specific GitHub issues/PRs**, per this repo's existing "tag non-obvious
+  constraints with their reason" convention (`CLAUDE.md`'s Key Conventions table) -- not optional
+  polish, an explicit implementation requirement: the trailing-whitespace-fence handling in the
+  strip step (helper step 5) must cite **astral-sh/uv#10918**; the "why a line-by-line state
+  machine instead of a DOTALL regex" comment must cite **astral-sh/uv#19544** (the duplicate-
+  block-rejection change that motivates fully removing the old block, not just approximately);
+  the "why stderr is never treated as a failure signal" comment must cite **astral-sh/uv#15956**;
+  and, if the promoted file's future-portability limitation is mentioned anywhere user-facing or
+  in this plan's own README write-up, cite **astral-sh/uv#15156** (the open cache-staleness bug)
+  as the reason it's called out as a known limitation rather than silently ignored.
 
 ---
 
@@ -364,10 +499,34 @@ behavior drift between 0.8.17 and 0.11.28, not just theoretical risk):
    and untouched-file behavior; `requires-python` one-time-write behavior and `-p` control;
    `--no-sync` no-op status; no package-existence validation; the trailing-whitespace-closing-
    fence malformed case (issue #10918); the `<script>.py.lock` filename convention and its
-   auto-rewrite side effect.
+   auto-rewrite side effect; **and, new for this pass, `uv add --script`'s actual behavior against
+   a deliberately non-UTF-8-encoded target file** (Part 2.1 step 2's rationale) -- confirm whether
+   it errors safely, corrupts silently, or does something else, since this directly determines
+   whether the encoding pre-check is purely defensive insurance or an actually-load-bearing fix.
 3. Record findings as a dated addendum to this document (in the style of Part 1's two existing
    dated passes) before writing batch/Python code, so the design's assumptions are re-validated
    against current reality rather than trusted from this document alone.
+
+## Part 3.5: ongoing drift detection, not just a one-time dev check
+
+Part 3's re-verification is a **one-time** pass done once, right before implementation starts --
+but this repo's CI always fetches whatever uv is currently latest (the uv-first REQ-009
+philosophy, no pin), which means **every real CI run of `tests/selfapps_pep723_writeback.ps1`
+after this feature ships is itself an ongoing, automatic re-verification of these same
+assumptions against whatever uv actually is at that moment** -- not a one-time gate that goes
+stale the day after implementation. This is worth stating explicitly as the feature's real
+long-term safety net, and mirrors the "next-pin probe" maintenance pattern already documented in
+`CLAUDE.md`'s Periodic Maintenance Checks section for other never-pinned dependencies (`pipreqs`,
+the embed-tier Python table): an unexpected CI failure in one of these tests down the road is
+itself the signal that uv's behavior has drifted again, not a mysterious flake to explain away.
+**If/when that happens**, the fix loop is: re-run Part 3's scratch-dir re-verification against
+the new uv version, update this document with a new dated addendum (matching Part 1's existing
+two-pass pattern), and patch `tools/pep723_writeback.py` to match -- the same loop this document
+itself has already been through twice. This is also why every design decision in Part 2 that
+traces back to a specific uv issue/PR number is tagged as such (2.4's "code comments citing
+specific issues" requirement): a future maintainer debugging a CI failure in this area should be
+able to find the relevant upstream issue by name instead of re-deriving the reasoning from
+scratch.
 
 ---
 
@@ -379,11 +538,14 @@ in this repo's "one feature slice per loop" norm. The additions from the code-gr
 push it closer to the edge of a single slice. **Recommended split if the single-loop budget feels
 tight:**
 
-- **Loop 1**: the two hook points, skip-condition logic, `tools/pep723_writeback.py`, and the
-  three simplest/most load-bearing tests (`fresh`, `idempotent`, `skipflag`) -- proves the
-  mechanism works end to end. All doc updates except the Closed Backlog move.
-- **Loop 2**: the four "resilience under adversarial input" tests (`malformed`, `warnfix`,
-  `trailing_ws_malformed`, `existing_lockfile`), CI workflow wiring, and the Closed Backlog move.
+- **Loop 1**: the two hook points, skip-condition logic, `tools/pep723_writeback.py` (including
+  the encoding pre-check and file-lock canary from the 2026-07-12 review -- both are cheap enough
+  to belong in Loop 1, not deferred), and the three simplest/most load-bearing tests (`fresh`,
+  `idempotent`, `skipflag`) -- proves the mechanism works end to end. All doc updates except the
+  Closed Backlog move.
+- **Loop 2**: the five "resilience under adversarial input" tests (`malformed`, `warnfix`,
+  `trailing_ws_malformed`, `existing_lockfile`, `non_utf8`), CI workflow wiring, and the Closed
+  Backlog move.
 
 Loop 1 alone already ships a working, tested feature; Loop 2 hardens it against the specific edge
 cases these two research passes surfaced, rather than being pure test-count padding.
