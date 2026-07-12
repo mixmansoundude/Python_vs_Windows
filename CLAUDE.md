@@ -507,152 +507,21 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    creation), and the current fixed order is not wrong, just not optimal in either direction.
    Revisit if the network-correlated-embed-failure pattern shows up for real in CI or user
    reports, rather than speculatively building it now.
-5. **`autopep723` / `uv add --script` as a PEP 723 auto-write-back mechanism (soon-ish; needs its
-   own design pass, not a quick add).** Researched at the owner's request (2026-07-11). Two
-   distinct ideas got raised together and are worth separating:
-   - As a *discovery* mechanism (an alternative to pipreqs), `autopep723` offers little: it's
-     AST-based static import scanning, the same fundamental technique pipreqs already uses, with
-     the same blind spot (dynamic/plugin-style imports it can't see without executing the code --
-     e.g. `pandas.read_excel` needing `openpyxl`, same example already documented in the
-     Dependency strategy section above). It would not catch anything warnfix's build-time trace
-     doesn't already catch.
-   - As a *write-back* mechanism, it's genuinely different from anything this repo has today:
-     `autopep723` (zero dependencies, stdlib-only AST scan) and uv's own native `uv add --script
-     script.py pkg1 pkg2` both insert/update a PEP 723 `# /// script` header **directly in the
-     user's own `.py` file**, not a separate `requirements.auto.txt`. Since PEP 723 is already
-     this bootstrapper's #1 authoritative dependency source (REQ-005.1), a write-back step would
-     *promote* pipreqs's/warnfix's inferred deps into the authoritative, persistent format instead
-     of leaving them in the non-authoritative fallback file -- a more durable fix than today's
-     `requirements.auto.txt`, and this is also the natural mechanism for the "auto insert/repair a
-     malformed PEP 723 header" idea raised separately, not a different feature.
-   - Scope for a first cut: uv lane only (`uv add --script`, or `uv tool run autopep723`, both
-     require `uv.exe` already present -- no new acquisition tier needed), best-effort/optional
-     (never gating), and it modifies the user's own source file, which is a bigger design decision
-     than anything pipreqs does today (idempotency on repeat runs, not clobbering an existing
-     malformed header incorrectly, whether it runs before or after pipreqs) -- that design work is
-     the reason this isn't a quick add despite the underlying uv command being simple. Replicating
-     to conda/venv/embed/system lanes is explicitly a later step, not part of a first cut.
-   - `pip-compile-multi` (researched, same request) is **not applicable** -- it's a multi-file
-     lockfile-DAG tool for projects with segmented requirement sets (base/dev/prod splits); this
-     bootstrapper builds one flat environment for one script, so there's no dependency-segregation
-     problem for it to solve. `vulture` (researched, same request) is **not applicable either**,
-     and for a different reason: it's a static dead-code/unused-import *linter* (finds declared-
-     but-unused code via AST, same limitation class as pipreqs/autopep723 -- it does not execute
-     code or profile runtime imports at all), not a runtime-import logger; it cannot help with
-     dependency *discovery* in the direction this repo needs. `PYTHONPROFILEIMPORTTIME=1` /
-     `sys.modules` inspection (researched, same request) is a real *runtime* signal source (unlike
-     the three static tools above), but using it as a discovery mechanism would mean executing the
-     user's script specifically to observe it -- exactly the non-idempotency risk REQ-018 already
-     exists to prevent (see item 6 below and the new README section on this). The only genuinely
-     low-risk use is piggybacking it onto the bootstrapper's *existing* single verification run
-     (the EXE/interpreter smoke test that already happens once, per REQ-018) as a supplementary
-     diagnostic capture -- no new execution, so no new idempotency risk -- but its value there is
-     limited to post-mortem diagnostics after a failure, not new discovery capability, since a
-     successful smoke run means nothing was actually missing. Way-later, diagnostic-only,
-     low-priority.
-   - **Concrete design (2026-07-11 follow-up, empirically verified 2026-07-12 against uv 0.8.17
-     in a local scratch dir -- not just uv's docs), implementation-ready.** The original design
-     pass below was written from doc summaries alone and got one detail wrong; corrected here
-     from direct testing, since this repo's own convention is "trust but verify" cross-tool
-     assumptions (see `docs/agent-lessons-learned.md`'s `Get-FileHash` module-autoload precedent).
-     **uv version caveat**: this repo intentionally never pins uv (always latest, per the uv-first
-     REQ-009 philosophy), so all of the following is confirmed against 0.8.17 specifically --
-     re-verify against whatever uv ships when this is actually implemented, using the same
-     scratch-dir method (`mkdir` a temp dir, write a throwaway `.py`, run the commands below,
-     inspect the output). None of the findings below depend on exact output formatting the
-     implementation should hard-code, though, so a future uv release changing cosmetic details
-     (e.g. the constraint format) should not break anything designed this way.
-     - **CORRECTED: no version bound is written by default.** `uv add --script file.py requests`
-       writes a bare `"requests"` line, not a `>=X.Y` lower bound -- confirmed with `--offline`
-       against an unresolved/uncached package too (still succeeded, still bare). Contrary to the
-       doc-summary-based assumption in the original design pass, this means the write-back step
-       does **not** need network access to produce a valid, useful header -- it's a metadata-only
-       operation. (It may still be *called* after a successful install for ordering/simplicity
-       reasons, just not because it structurally requires network to function.)
-     - **CONFIRMED: idempotent.** Re-running `uv add --script` with an already-present package
-       produces a byte-identical file (tested directly, not assumed).
-     - **CONFIRMED: merges into an existing valid header, doesn't touch unrelated fields.** Adding
-       a new package to a file that already has a valid `# /// script` block appends it
-       alphabetically into the existing `dependencies` list and leaves an existing
-       `requires-python` line completely untouched.
-     - **CONFIRMED: malformed existing header -> hard error, file left untouched.** Tested against
-       a deliberately broken TOML block: `uv add --script` exits 2 with a TOML parse error and
-       does **not** modify the file at all -- it does not attempt to repair in place. This makes
-       the originally-proposed fallback mandatory, not optional: the bootstrapper must detect a
-       malformed header first (REQ-005.1's parser already does this) and strip/delete the broken
-       block before calling `uv add --script`, so uv then writes a clean one from scratch --
-       confirmed this two-step repair sequence works cleanly end to end.
-     - **NEW FINDING: a fresh header also gets an auto-written `requires-python`, but only once.**
-       Creating a header from scratch (no prior block) writes `requires-python = ">=X.Y"`
-       reflecting whichever Python `uv add --script` resolves by default -- controllable
-       explicitly via `-p`/`--python "<path>"` (tested: `-p 3.11` reliably produces
-       `>=3.11`). Once a header exists, later `add` calls leave its `requires-python` alone
-       (confirmed above), so this is a one-time effect on first write-back, not a per-run
-       overwrite risk. Design implication: always pass `-p "%HP_PY%"` (the bootstrapper's own
-       already-resolved interpreter) explicitly on the first write-back, rather than letting uv
-       guess from whatever's ambient -- this makes the written `requires-python` reflect the
-       interpreter that was actually validated, and has no effect on this bootstrapper's *own*
-       REQ-004 version-selection logic (which reads `runtime.txt`/`pyproject.toml`, not PEP 723's
-       `requires-python`), so there is no correctness conflict with a pre-existing `runtime.txt`
-       pin -- it purely makes the file more self-describing for someone who later runs it directly
-       via plain `uv run` outside this bootstrapper entirely.
-     - **CONFIRMED: `--no-sync` is a no-op for `--script` mode** (uv prints its own warning saying
-       so: "a no-op for Python scripts with inline metadata, which always run in isolation").
-       `uv add --script` does not eagerly build or cache a separate environment as a side effect
-       of adding a dependency -- confirmed no new environment cache directory appears after the
-       call. This is genuinely a metadata-only operation; no redundant install/disk cost to worry
-       about, and no `--no-sync` flag needed in the actual invocation.
-     - **CONFIRMED: no package-existence validation at add time.** `uv add --script` happily wrote
-       a deliberately nonexistent package name (`this-package-definitely-does-not-exist-xyz123abc`)
-       into the header with no error. This reinforces (doesn't just theorize) that this
-       bootstrapper must only ever feed it package names it has *already confirmed installed*
-       (the resolved requirements list, or a warnfix repair that already succeeded) -- never a
-       speculative or unvalidated name -- since uv will not catch a bad name for us here.
-     - **Trigger point**: after `:after_env_mode_selection`'s uv-provider dependency-install call
-       succeeds, and again after a successful warnfix repair (so modules warnfix discovers, which
-       aren't in the original resolved requirements list, still get promoted into the header).
-       Package names: reuse the already-resolved direct-dependency list from REQ-005.1-005.7 (not
-       a full `pip freeze` of the transitive closure -- PEP 723 headers declare direct
-       dependencies, matching what `requirements.txt`/`pyproject.toml` would normally contain).
-     - **Scope of the *entry* file only, not every `.py` file in the folder.** PEP 723 headers are
-       only meaningful on the file actually invoked via `uv run`; write into `%HP_ENTRY%` (REQ-002's
-       already-resolved entry selection), not into helper/sibling modules.
-     - **Invocation**: `"%HP_UV_EXE%" add --script "%HP_ENTRY%" -p "%HP_PY%" pkg1 pkg2 ...` -- via
-       the already-resolved `HP_UV_EXE` path, never a bare `uv` PATH lookup, matching this repo's
-       "interpreter-anchored execution" principle (see Bootstrap Architecture Principles above).
-       The `-p "%HP_PY%"` is only load-bearing on the very first write-back (fresh header, no
-       prior `requires-python`) per the empirically-confirmed one-time-write behavior above; safe
-       to pass unconditionally on every call since it's a no-op once a header already exists.
-     - **Skip conditions**: source is already an authoritative, unchanged PEP 723 header with
-       nothing new to add; provider is not uv (v1 scope); `HP_SKIP_PEP723_WRITEBACK=1` (new
-       suppression-only flag, per REQ-001's "flags only suppress" rule); `HP_CI_SKIP_ENV=1` (no
-       real install cycle happens on that path). Always best-effort -- any failure (network hiccup,
-       uv error) logs `[WARN]` and continues; never gates the Prime Directive.
-     - **Log contract**: `[INFO] REQ-005: Wrote inferred dependencies into <entry>.py's PEP 723
-       header (via uv add --script).` -- never silent, matching every other REQ-005 augmentation
-       step's "no silent fallback" design principle.
-     - **Test plan** (new NDJSON rows, naming mirrors the existing `self.pep723.*` family; all five
-       scenarios below were dry-run manually in a local scratch dir against real uv 0.8.17 before
-       writing this spec, so this is now a port to `tests/selfapps_*.ps1`/NDJSON form, not fresh
-       exploration): `self.pep723.writeback.fresh` (no existing header -> new block appears with
-       expected packages and a `requires-python` matching the `-p` value passed),
-       `self.pep723.writeback.idempotent` (run twice -> second run produces a byte-identical file),
-       `self.pep723.writeback.malformed` (starts malformed -> cleanly replaced via the strip-then-add
-       sequence, not left broken -- this is the scenario that would have failed hard without the
-       repair step, since a bare `uv add --script` call against a malformed block errors out and
-       touches nothing), `self.pep723.writeback.skipflag` (`HP_SKIP_PEP723_WRITEBACK=1` -> entry
-       file untouched), `self.pep723.writeback.warnfix` (a warnfix-only-discovered module ends up in
-       the header too, proving the post-repair trigger point works, not just the up-front one).
-     - **Docs to update alongside implementation**: `docs/agent-ndjson.md` (new rows);
-       `docs/agent-interconnect.md` (a new section -- this touches REQ-002 entry selection, REQ-005
-       dependency resolution, and uv-only `HP_UV_EXE` availability all at once, worth its own
-       cross-reference note); `README.md` (new REQ-005 sub-bullet + the new flag added to the
-       "Advanced Environment Variables" table); move this item to Closed Backlog once shipped.
-     - **Effort estimate**: comparable to a single already-shipped REQ-013/REQ-023-style addition
-       this session (a goto-based call site, a package-list assembly step reusing already-resolved
-       data, a skip-flag check) -- most of the real effort is in the five test scenarios and
-       confirming the malformed-header behavior empirically, not in new batch logic. Fits this
-       repo's "one feature slice per loop" norm as a single loop, unlike the AV-Safe Build Path PRD.
+5. **PEP 723 dependency write-back via `uv add --script`** -- full implementation plan at
+   `docs/plan-pep723-writeback.md`. Promotes resolved dependencies into a persistent, authoritative
+   PEP 723 header in the user's own entry `.py` file (using uv's native `uv add --script`) instead
+   of leaving them only in non-authoritative `requirements.auto.txt` -- a second, independently-
+   maintained path to declare dependencies that doesn't depend on `pipreqs`. Scope for v1: uv lane
+   only, best-effort/non-gating, entry file only. Two research/testing passes completed (initial
+   design + scratch-dir verification against uv 0.8.17; a follow-up pass that directly compared uv
+   0.8.17 against current uv 0.11.28 and confirmed real version-drift risk -- e.g. the default
+   write changed from a bare package name to a version-bound one between those releases -- plus a
+   web/GitHub-issues research pass and a code-grounded implementation trace of the actual
+   `run_setup.bat` hook points). **Status: implementation-ready**, sized to fit this repo's "one
+   feature slice per loop" norm (with a suggested two-loop split if the single-loop budget feels
+   tight -- see the plan doc's Part 4). Not yet scheduled for a specific loop; ready whenever
+   picked up. `pip-compile-multi` and `vulture` (researched alongside this) are **not applicable**
+   to this repo (see the plan doc's summary) -- not carried forward as backlog items.
 6. **Opt-in "trust me, my script is idempotent" fast-discovery mode (way-later; needs its own
    dedicated design loop, not a quick add).** Raised via a 3rd-party analysis the owner shared
    (low confidence, no repo access -- see the new README section for the full non-idempotency
