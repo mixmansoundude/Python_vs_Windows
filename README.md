@@ -689,6 +689,34 @@ None of this rules out a faster path for a user who genuinely knows their own sc
 
 ---
 
+## Python_vs_Windows and the "Deno for Python" Question
+
+People occasionally ask whether anything plays the role for Python that [Deno](https://deno.com/) -- a zero-config, single-binary JavaScript/TypeScript runtime built by one of Node's original creators -- plays for JavaScript: no install rituals, no dependency-hell, just run the file. That question isn't hypothetical -- it's been asked directly, by name, on [Hacker News](https://news.ycombinator.com/item?id=35379227): *"Are there any efforts akin to deno for python?"* Python_vs_Windows doesn't reimplement the Python runtime the way Deno reimplemented JavaScript's, but on Windows, for the specific problem of "I was handed a `.py` file and nothing else," it answers the same question in spirit.
+
+The repository's Prime Directive: on a clean Windows 10+ machine with only a `.py` file, double-click a batch file, and it bootstraps an isolated runtime environment, installs every required dependency, and runs the script -- no manual configuration.
+
+Here's how that maps to Deno's actual design, point by point:
+
+**1. Zero-config, single-command execution**
+Deno: `deno run script.ts` downloads missing modules and executes, no setup step.
+This repo: double-click `run_setup.bat`. It scans the script, builds an isolated environment, installs what's missing, and runs it.
+
+**2. Rust-powered speed, with real fallbacks underneath**
+Deno is built in Rust end to end. This repo uses [uv](https://github.com/astral-sh/uv) -- Astral's Rust-based Python toolchain -- as its preferred, fastest environment provider. Underneath that, it doesn't depend on any single mechanism working: if uv isn't available, it cascades through several independent fallback tiers -- Conda/Miniconda, a checksum-verified embedded Python download straight from python.org, a local `venv`, and, as a last resort with explicit user consent, an unmanaged system Python. No single one of these being blocked or missing takes the whole tool down with it.
+
+**3. Automatic dependency discovery**
+Deno parses import URLs directly from the source file. This repo resolves dependencies in priority order: PEP 723 inline script metadata, then `pyproject.toml`, then `requirements.txt`, and only if none of those exist, a best-effort static-analysis scan (`pipreqs`) to infer what the script imports.
+
+**4. Compiling to a standalone executable**
+`deno compile` packages a script into a single distributable binary. This repo does the same in spirit: after setup succeeds, it bundles the app and its environment into a single-file Windows EXE via PyInstaller, so it can be handed to someone else without asking them to set anything up.
+
+**5. Controlled execution, not sandboxing**
+Deno enforces permissions by default (`--allow-net`, `--allow-read`, etc.). Python has no native equivalent, so this repo takes a different, deliberate precaution instead: it treats every run of the user's code as potentially non-idempotent -- a script can overwrite files, send an email, mutate a database, or actuate connected hardware -- so it runs that code purposefully and at most once per invocation automatically. A fresh build gets a single, time-boxed verification run; a real run is then offered, not forced; and anything beyond that single automatic run requires explicit consent that names the risk. Session isolation backs this up structurally too -- `PYTHONPATH` and `PYTHONHOME` are cleared on every run so the host system can't leak unrelated packages into the bootstrapped environment.
+
+The gap between the two projects is real -- Deno is a from-scratch runtime; this is a batch file orchestrating existing Python tooling. But for the narrow, common case this repo targets -- a non-technical user on Windows with someone else's script and nothing else -- it's the same promise: point it at the file, get a working run, no ceremony.
+
+---
+
 ## Known Limitations
 
 - **Implicit/plugin dependencies**: Dependencies that are not detected via static import analysis (for example, `pandas` needing `openpyxl` for `read_excel`) will surface as `ImportError` at runtime. See [Dependency strategy](#dependency-strategy) for detail.
