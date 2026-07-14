@@ -1,13 +1,16 @@
 # Implementation Plan: PEP 723 Dependency Write-Back via `uv add --script`
 
-**Status:** Implementation-ready. Two research/testing passes completed (2026-07-11 initial
+**Status:** Implementation-ready. Three research/testing passes completed (2026-07-11 initial
 design + local scratch-dir verification against uv 0.8.17; 2026-07-12 follow-up: web/docs/GitHub-
 issues research pass, a second local scratch-dir pass comparing uv 0.8.17 against uv 0.11.28 to
 directly test version-drift risk, and a code-grounded implementation pass tracing the actual
-`run_setup.bat` hook points). No code written yet.
+`run_setup.bat` hook points; 2026-07-14 a third, narrower pass confirming pin/custom-key
+preservation on re-add, prompted by reviewing `docs/plan-pvw-quickstart.md`). No code written yet.
 **Owner:** Python_vs_Windows maintainer
 **Related:** `CLAUDE.md` Active Backlog (this item is linked from there); `docs/prd-av-safe-build-
-path.md` (a structurally similar large design doc, for format precedent).
+path.md` (a structurally similar large design doc, for format precedent); `docs/plan-pvw-
+quickstart.md` (a standalone, non-`run_setup.bat` sibling feature for a different audience --
+see that document's own "Why this is a separate document" section for how the two relate).
 
 ---
 
@@ -186,6 +189,37 @@ Full agent report is not reproduced verbatim here; the actionable findings are:
   warning** (`does not match the script environment path ... and will be ignored`), exit code
   still 0. Confirms the design point that stderr text must never be treated as a failure signal
   by itself -- only the process exit code should determine success/failure.
+
+### Pass 3 (2026-07-14, against uv 0.8.17): pin-preservation on re-add, prompted by reviewing a
+### third-party "PVW QuickStart" design (see `docs/plan-pvw-quickstart.md`)
+
+Reviewing a user-supplied third-party document proposing a hand-rolled TOML-merge script to
+"safely" re-add dependencies without downgrading existing pins raised the question of whether
+`uv add --script` already does this natively -- Pass 2 had only confirmed this for extras syntax
+(`pandas[excel]`), not explicit version pins or custom keys. Tested directly, three scenarios:
+
+- **Re-adding an already-pinned package by its bare name does not downgrade the pin.** A header
+  with `flask>=2.0` and `click==8.1.0`, followed by `uv add --script file.py flask`, produced a
+  **byte-for-byte unchanged file**. This generalizes the Pass 2 extras finding to explicit
+  `>=`/`==` pins, not just extras syntax.
+  - **Practically-neutral (already the plan's own explicit no-op design decision) for THIS
+    feature's own trigger paths, but confirms that decision more strongly than Pass 2 alone did.**
+    Part 2.2 point 7 already commits to never comparing "what's already in the header" against
+    "what to write back" and always calling `uv add --script` with whatever the resolved set is --
+    this finding confirms that decision was safe even in its full generality (bare re-adds of
+    already-pinned packages), not just the narrower extras case Pass 2 had actually tested.
+- **Mixed re-add + genuinely-new-package call preserves old pins and adds only the new one.**
+  `uv add --script file.py flask click requests` (two already-pinned, one new) left `flask>=2.0`
+  and `click==8.1.0` untouched and added `requests` as a bare name in correct alphabetical
+  position.
+- **A hand-added custom TOML key outside `dependencies`/`requires-python` survives an `add`
+  call untouched.** Confirms `uv add --script` performs a genuine targeted merge, not a
+  rewrite-the-whole-block operation, in every dimension tested so far across all three passes.
+
+No design change follows from this pass -- it is confirmation of an already-adopted decision, not
+a new requirement. See `docs/plan-pvw-quickstart.md` for the sibling standalone feature this
+finding was originally investigated for, which -- unlike this feature -- was able to drop a whole
+hand-rolled TOML-merge step entirely as a direct result.
 
 ---
 

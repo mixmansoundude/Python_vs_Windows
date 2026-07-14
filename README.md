@@ -748,6 +748,101 @@ The gap between the two projects is real -- Deno is a from-scratch runtime; this
 
 ---
 
+## PVW QuickStart (Super-User Fast Path)
+
+The rest of this README is about `run_setup.bat`: build-first, run-once, an EXE at the end, safe
+by default for code you don't know is idempotent. If that's not you -- your script is
+self-contained, you already trust it, and you just want it running in a terminal right now with
+no EXE and no conda -- this is the "known-stateless scripts, or a developer who already knows
+their own code" column from the comparison above, and there's a faster path for it: `uv` plus
+[`autopep723`](https://github.com/pgierz/autopep723), a tool that statically scans a script's
+imports and either runs it in a throwaway environment or writes what it found into the file's own
+PEP 723 header.
+
+Every command below was tested directly against real `uv`/`autopep723` runs (not just read in
+docs) before being written here, including the two failure-handling paths (a broken existing
+header, and a non-ASCII byte in the file) -- see `docs/plan-pvw-quickstart.md` for the full
+verification trail if you want it. The one part that could not be tested in that pass is real
+Windows PowerShell 5.1 specifically (verified via `pwsh` 7 instead, which shares the same `.NET`
+APIs these commands rely on) -- if you hit something odd on an older PowerShell, that's the first
+place to look.
+
+### Just run it
+
+Open PowerShell in the folder with your script (Shift+right-click -> "Open PowerShell window
+here"), then paste:
+
+```powershell
+irm https://astral.sh/uv/install.ps1 | iex; $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"; $enc = [System.Text.Encoding]::GetEncoding("ISO-8859-1"); $f = "solve_my_probs.py"; $original = [System.IO.File]::ReadAllText((Get-Item $f).FullName, $enc); uvx autopep723 $f; if ($LASTEXITCODE -ne 0) { Write-Host "First attempt hit a snag with the file's dependency header - retrying with a clean version..."; [System.IO.File]::WriteAllText("$((Get-Item $f).FullName).bak", $original, $enc); $c = $original -replace "(?ms)^# /// script\r?\n.*?^# ///[ \t]*\r?\n?", ""; [System.IO.File]::WriteAllText((Get-Item $f).FullName, $c, $enc); uvx autopep723 $f; if ($LASTEXITCODE -ne 0) { Write-Host "Retry also failed - restoring your original file untouched."; [System.IO.File]::WriteAllText((Get-Item $f).FullName, $original, $enc) }; Remove-Item -ErrorAction SilentlyContinue "$f.bak" }
+```
+
+Change `solve_my_probs.py` to your file's name and run again if you're pasting this more than
+once. What it does: installs `uv`, scans your script's imports, provisions exactly what it needs,
+and runs it -- once. If your file already has a broken or stale PEP 723 header from a previous
+edit, it backs the file up to disk first, strips the broken header, and retries once, clean; if
+that also fails (e.g. the network drops mid-resolve), it restores your original file exactly and
+stops. It reads and writes the file byte-for-byte (not through a UTF-8-only text conversion), so a
+file saved in an older encoding is never silently corrupted along the way, and it never touches
+your file at all in the common case where nothing goes wrong.
+
+The same thing, spaced out if you'd rather read it before pasting:
+
+```powershell
+irm https://astral.sh/uv/install.ps1 | iex
+$env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
+$enc = [System.Text.Encoding]::GetEncoding("ISO-8859-1")
+$f = "solve_my_probs.py"
+$original = [System.IO.File]::ReadAllText((Get-Item $f).FullName, $enc)
+uvx autopep723 $f
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "First attempt hit a snag with the file's dependency header - retrying with a clean version..."
+    [System.IO.File]::WriteAllText("$((Get-Item $f).FullName).bak", $original, $enc)
+    $c = $original -replace "(?ms)^# /// script\r?\n.*?^# ///[ \t]*\r?\n?", ""
+    [System.IO.File]::WriteAllText((Get-Item $f).FullName, $c, $enc)
+    uvx autopep723 $f
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Retry also failed - restoring your original file untouched."
+        [System.IO.File]::WriteAllText((Get-Item $f).FullName, $original, $enc)
+    }
+    Remove-Item -ErrorAction SilentlyContinue "$f.bak"
+}
+```
+
+### Check what it would install, without running or changing anything
+
+Purely read-only -- prints a freshly-scanned dependency block to the screen for you to eyeball,
+changes nothing:
+
+```powershell
+uvx autopep723 check solve_my_probs.py
+```
+
+### Make it remember, without losing pins you already set
+
+The command above runs your script but forgets what it found the moment it's done. If you'd
+rather the file remember its dependencies for next time -- and keep any exact version pin
+(`flask>=2.0`) or hand-added TOML key you already have, adding only genuinely new dependencies --
+paste this instead:
+
+```powershell
+$f = "solve_my_probs.py"; $chk = (uvx autopep723 check $f) -join "`n"; if ($LASTEXITCODE -eq 0) { $names = [regex]::Matches($chk, '^#\s*"([^"]+)",?\s*$', 'Multiline') | ForEach-Object { $_.Groups[1].Value }; if ($names.Count -gt 0) { uv add --script $f $names } else { Write-Host "No dependencies detected." } } else { Write-Host "Could not analyze script - nothing changed." }
+```
+
+This uses `autopep723 check`'s read-only scan for discovery, then hands the result to `uv add
+--script` for the actual write -- `uv` already refuses to downgrade an existing pin when you
+re-add a package by its bare name (verified directly: re-adding `flask` when `flask>=2.0` was
+already pinned left the file byte-for-byte unchanged), so no separate merge logic is needed here.
+Safe to run more than once -- a second run changes nothing. If it fails because your file's
+*existing* header is malformed rather than missing, run the command above first (it repairs a
+broken header), then try this one again.
+
+**Fine print:** this whole section is for a script you already trust, or one you're consciously
+iterating on and accept re-running. If you were handed a `.py` file and don't know whether it's
+safe to run more than once, use `run_setup.bat` instead -- see "Why 'Build-First, Run-Once'?"
+above for why that distinction matters here specifically, not just as a generic caveat.
+
+---
+
 ## Known Limitations
 
 - **Implicit/plugin dependencies**: Dependencies that are not detected via static import analysis (for example, `pandas` needing `openpyxl` for `read_excel`) will surface as `ImportError` at runtime. See [Dependency strategy](#dependency-strategy) for detail.
