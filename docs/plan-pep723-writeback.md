@@ -6,11 +6,16 @@ issues research pass, a second local scratch-dir pass comparing uv 0.8.17 agains
 directly test version-drift risk, and a code-grounded implementation pass tracing the actual
 `run_setup.bat` hook points; 2026-07-14 a third, narrower pass confirming pin/custom-key
 preservation on re-add, prompted by reviewing `docs/plan-pvw-quickstart.md`). No code written yet.
+The empirical findings shared with that sibling doc were later consolidated into
+`docs/agent-lessons-learned.md` -- see Part 1 below.
 **Owner:** Python_vs_Windows maintainer
-**Related:** `CLAUDE.md` Active Backlog (this item is linked from there); `docs/prd-av-safe-build-
-path.md` (a structurally similar large design doc, for format precedent); `docs/plan-pvw-
-quickstart.md` (a standalone, non-`run_setup.bat` sibling feature for a different audience --
-see that document's own "Why this is a separate document" section for how the two relate).
+**Related:** `docs/agent-lessons-learned.md`'s "`uv add --script` / PEP 723 empirical behavior"
+section (the shared empirical foundation this doc and `docs/plan-pvw-quickstart.md` both depend
+on -- read that first); `CLAUDE.md` Active Backlog (this item is linked from there);
+`docs/prd-av-safe-build-path.md` (a structurally similar large design doc, for format precedent);
+`docs/plan-pvw-quickstart.md` (a standalone, non-`run_setup.bat` sibling feature for a different
+audience -- see that document's own "Why this is a separate document" section for how the two
+relate).
 
 ---
 
@@ -74,74 +79,48 @@ NOT:
 
 ## Part 1: Empirical findings (both testing passes)
 
-### Pass 1 (2026-07-11, against uv 0.8.17 only)
+**The core empirical facts about `uv add --script`'s real behavior now live in
+`docs/agent-lessons-learned.md`'s "`uv add --script` / PEP 723 empirical behavior" section** --
+consolidated there because this feature and the sibling `docs/plan-pvw-quickstart.md` both
+depended on the same facts and were independently restating them (targeted-merge/no-downgrade
+behavior on re-add, exit-code-2-means-malformed-TOML, issues #10918/#19544/#15956/#15156, the
+`.lock` sidecar side effect, the `Get-Content -Raw` encoding-corruption hazard, and the
+bare-name-vs-lower-bound version drift). **Read that section first.** What follows here is only
+what's specific to this feature -- findings the sibling doc doesn't share, and this feature's own
+design implications.
 
-- **No version bound written by default** at the time: `uv add --script file.py requests` wrote
-  a bare `"requests"` line, confirmed even with `--offline` against an uncached package.
-- **Idempotent**: re-running with an already-present package produced a byte-identical file.
-- **Merges cleanly into an existing valid header**: a new package is appended alphabetically;
-  an existing `requires-python` line is left completely untouched.
-- **Malformed existing header -> hard error, file left untouched**: exit 2, TOML parse error,
-  zero modification to the file. This makes a strip-then-retry repair sequence *mandatory*, not
-  optional, since uv will never self-repair a broken block.
+### Pass 1 (2026-07-11, against uv 0.8.17 only) -- write-back-specific findings
+
 - **`requires-python` is auto-written only on first-ever header creation**, never touched on
-  later `add` calls; fully controllable via `-p`/`--python "<path>"`.
+  later `add` calls; fully controllable via `-p`/`--python "<path>"`. Matters here specifically
+  because this feature can pass `-p`/`--python` explicitly (the bootstrapper always knows its own
+  interpreter path); the sibling QuickStart feature has no equivalent flag to set.
 - **`--no-sync` is a no-op in script mode** -- no redundant environment gets built as a side
   effect of adding a dependency; this is genuinely a metadata-only operation.
 - **No package-existence validation at add time** -- `uv add --script` happily wrote a
   deliberately nonexistent package name with no error. This bootstrapper must only ever feed it
-  package names it has *already confirmed installed*.
+  package names it has *already confirmed installed* (Part 2.2's "confirmed installed" gate is
+  built on this).
 
-### Pass 2 (2026-07-12): web/docs/GitHub research
+### Pass 2 (2026-07-12): web/docs/GitHub research -- write-back-specific findings
 
-Full agent report is not reproduced verbatim here; the actionable findings are:
+- **`autopep723` does NOT validate `uv add --script`'s write path.** It has its own, independent
+  TOML-writing code and only uses uv as an ephemeral runner (`uv run --with <deps>`), never `uv
+  add`/`uv run --script`. There is no "battle-tested by a popular third-party tool" confidence to
+  lean on here -- confidence rests solely on this repo's own direct testing plus uv's own
+  documented/changelogged behavior.
+- **Two past, now-fixed uv bugs (#13447, #12499)** about comment-deletion and TOML-block-adjacency
+  corruption around the metadata block -- evidence the header-insertion logic has had genuine
+  correctness bugs before, not a reason for present-day concern on its own.
 
-1. **Open uv bug, issue #15156 ("Cached Script Dependencies Not Properly Invalidated")**: a
-   sequence of `uv add --script` (change deps) then `uv run --script` (execute) can see a STALE
-   cached resolution even with `--refresh`/`--force-reinstall`; renaming the file "fixes" it,
-   implying the cache key is filename-derived. **This bootstrapper does not call `uv run
-   --script` on the entry file** (it runs the entry via its own separately-managed `.uv_env`
-   interpreter, or the built PyInstaller EXE), so this bug does not affect this bootstrapper's
-   own immediate execution correctness. It IS a real risk for the exact scenario this feature
-   enables: someone *later* running the promoted, self-describing file directly via `uv run
-   <entry>.py` outside this bootstrapper could hit stale cached results if a same-named file was
-   previously run with different dependencies. Document as a known limitation, don't silently
-   ignore.
-2. **Lockfile side-effect** (confirmed independently in Pass 2's local testing, see below): if a
-   `<entry>.py.lock` file already exists next to the target script, `uv add --script`
-   automatically reads and rewrites/extends that lockfile as an undocumented side effect, with no
-   flag to suppress it by default.
-3. **Version drift is real and was directly demonstrated**, not just theoretical (see local
-   testing below).
-4. **Other confirmed GitHub issues**: #10918 (open) -- a `# ///` closing fence with trailing
-   whitespace fails to parse as valid, meaning a header can become "malformed" from something as
-   innocuous as an editor adding trailing whitespace, not just from bad TOML content (confirmed
-   locally, see below). #15956 (open) -- `uv add --script` prints a benign stderr warning if
-   `VIRTUAL_ENV` is set in the calling environment; not a failure (confirmed locally, see below).
-   #13447 and #12499 were real past bugs (both fixed) about comment-deletion and TOML-block-
-   adjacency corruption around the metadata block -- evidence the header-insertion logic has had
-   genuine correctness bugs before.
-5. **autopep723 does NOT validate `uv add --script`'s write path.** It has its own, independent
-   TOML-writing code and only uses uv as an ephemeral runner (`uv run --with <deps>`), never `uv
-   add`/`uv run --script`. There is no "battle-tested by a popular third-party tool" confidence to
-   lean on here -- confidence rests solely on this repo's own direct testing plus uv's own
-   documented/changelogged behavior.
+### Pass 2 local scratch-dir testing (uv 0.8.17 vs uv 0.11.28) -- write-back-specific findings
 
-### Pass 2 local scratch-dir testing (uv 0.8.17 vs uv 0.11.28, both installed side by side)
-
-- **CONFIRMED VERSION DRIFT, directly observed, not inferred from changelog text alone**: uv
-  0.11.28's default behavior differs from 0.8.17 -- it now writes a version *lower bound*
-  (`"pandas[excel]>=3.0.3"`) where 0.8.17 wrote a bare name (`"pandas[excel]"`). This is the
-  single most important finding of this pass: the "no version bound by default" claim from Pass 1
-  was correct for 0.8.17 specifically and is **already false** for current uv. Since this repo
-  never pins uv's version, production behavior will match whatever the *current* uv does, not the
-  0.8.17 baseline. **Design implication: do not hard-code an assumption about whether a bound is
-  present in the written output -- treat "whatever uv writes" as opaque and correct by
-  construction**, which the original design already avoided asserting as a hard requirement, but
-  this confirms that caution was warranted, not excessive.
 - **Extras syntax (`pandas[excel]`) works correctly on both versions** and is correctly
   recognized as the same logical package on re-add: adding bare `pandas` after `pandas[excel]`
-  was already present did not duplicate or downgrade the entry; the extras+bound form was kept.
+  was already present did not duplicate or downgrade the entry; the extras+bound form was kept
+  (the general form of this finding -- explicit pins and custom keys too, not just extras -- is
+  now in `agent-lessons-learned.md`; this specific extras case is kept here as the original,
+  narrower observation that prompted the broader Pass 3 confirmation below).
 - **CRLF line endings are NOT preserved in the inserted header** on either version: the new `#
   /// script ... # ///` block is written with LF line endings, while the original file's body
   (below the header) keeps its original CRLF endings untouched. This produces a *mixed*
@@ -152,74 +131,33 @@ Full agent report is not reproduced verbatim here; the actionable findings are:
 - **Paths containing spaces work correctly** on both versions, given proper `"..."` quoting of
   the script path argument -- confirms the design's `"%HP_ENTRY%"` quoting approach is necessary
   and sufficient.
-- **CONFIRMED: an existing `.lock` sidecar gets silently rewritten** as an automatic side effect
-  of `uv add --script`, on both versions -- directly reproduced (mtime change, new package
-  content appearing in the lock) with zero flags set. **Confirmed the exact filename convention**:
-  `<script-name>.py` -> `<script-name>.py.lock` (verified directly, not assumed).
-  - **Also tested**: `--frozen` *does* suppress the lockfile rewrite on 0.11.28 (mtime unchanged,
-    new package not written into the lock), while still updating the `.py` header itself and
-    without raising an error -- despite uv's own stderr text calling `--frozen` "a no-op for
-    Python scripts with inline metadata." A quick follow-up check (`uv run --script ... --locked`
-    against the now-out-of-sync lock) did not immediately surface an error either, which is
-    surprising given `--locked`'s documented "assert lockfile unchanged" semantics. **This
-    `--frozen` behavior is interesting but NOT adopted for v1** -- relying on an undocumented,
-    seemingly-inconsistent interaction (a flag whose own warning text calls it a no-op, yet it
-    measurably changes behavior) is riskier than the simpler original design decision: if a
-    `.lock` file already exists, skip the write-back entirely. This respects a user who has
-    opted into uv's stricter locked workflow and avoids scope creep into lockfile maintenance
-    (hash verification, transitive pinning) which is a much bigger commitment than "write the
-    dependency list."
-- **CONFIRMED: trailing whitespace on the closing `# ///` fence causes the same hard error
-  (exit 2, file untouched)** as gross TOML syntax errors, on both versions -- directly reproduces
-  GitHub issue #10918's report. The malformed-header repair path must treat this as just another
-  case of "uv said exit 2" (see Part 2's decision not to build a bespoke pre-validator), not a
-  special case needing its own detection logic.
+- **Also tested for the `.lock` side effect: `--frozen` *does* suppress the lockfile rewrite** on
+  0.11.28 (mtime unchanged, new package not written into the lock), while still updating the `.py`
+  header itself and without raising an error -- despite uv's own stderr text calling `--frozen`
+  "a no-op for Python scripts with inline metadata." A quick follow-up check (`uv run --script
+  ... --locked` against the now-out-of-sync lock) did not immediately surface an error either,
+  which is surprising given `--locked`'s documented "assert lockfile unchanged" semantics. **This
+  `--frozen` behavior is interesting but NOT adopted for v1** -- relying on an undocumented,
+  seemingly-inconsistent interaction (a flag whose own warning text calls it a no-op, yet it
+  measurably changes behavior) is riskier than the simpler original design decision: if a `.lock`
+  file already exists, skip the write-back entirely. This respects a user who has opted into uv's
+  stricter locked workflow and avoids scope creep into lockfile maintenance (hash verification,
+  transitive pinning) which is a much bigger commitment than "write the dependency list."
 - **Duplicate-metadata-block test was inconclusive.** Attempted to reproduce the specific
-  behavior change from PR #19544 ("reject duplicate script metadata blocks," landed ~0.11.17,
-  previously silently treated as postlude). The synthetic test used (two complete, well-formed
-  `# /// script ... # ///` block pairs back to back) produced an identical hard TOML-parse error
-  on *both* 0.8.17 and 0.11.28 -- meaning this specific construction doesn't cleanly isolate the
-  changelog's described behavior difference (the "silently treated as postlude" case likely
-  requires a more specific malformed shape than what was tested here). **Do not treat this as
-  "the risk doesn't exist"** -- it's a genuine gap in this testing pass, not a disproof of the
-  changelog entry. The practical design implication stands regardless: the repair step's block-
-  stripping regex must remove the *entire* old block cleanly, with no stray remnant that could
-  read as a second block under any uv version's rules.
-- **CONFIRMED: `VIRTUAL_ENV` set in the calling environment produces only a benign stderr
-  warning** (`does not match the script environment path ... and will be ignored`), exit code
-  still 0. Confirms the design point that stderr text must never be treated as a failure signal
-  by itself -- only the process exit code should determine success/failure.
+  behavior change from PR #19544 (see `agent-lessons-learned.md`). The synthetic test used (two
+  complete, well-formed `# /// script ... # ///` block pairs back to back) produced an identical
+  hard TOML-parse error on *both* 0.8.17 and 0.11.28 -- meaning this specific construction doesn't
+  cleanly isolate the changelog's described behavior difference (the "silently treated as
+  postlude" case likely requires a more specific malformed shape than what was tested here).
+  **Do not treat this as "the risk doesn't exist"** -- it's a genuine gap in this testing pass,
+  not a disproof of the changelog entry.
 
-### Pass 3 (2026-07-14, against uv 0.8.17): pin-preservation on re-add, prompted by reviewing a
-### third-party "PVW QuickStart" design (see `docs/plan-pvw-quickstart.md`)
+### Pass 3 (2026-07-14): superseded by the lessons-learned consolidation
 
-Reviewing a user-supplied third-party document proposing a hand-rolled TOML-merge script to
-"safely" re-add dependencies without downgrading existing pins raised the question of whether
-`uv add --script` already does this natively -- Pass 2 had only confirmed this for extras syntax
-(`pandas[excel]`), not explicit version pins or custom keys. Tested directly, three scenarios:
-
-- **Re-adding an already-pinned package by its bare name does not downgrade the pin.** A header
-  with `flask>=2.0` and `click==8.1.0`, followed by `uv add --script file.py flask`, produced a
-  **byte-for-byte unchanged file**. This generalizes the Pass 2 extras finding to explicit
-  `>=`/`==` pins, not just extras syntax.
-  - **Practically-neutral (already the plan's own explicit no-op design decision) for THIS
-    feature's own trigger paths, but confirms that decision more strongly than Pass 2 alone did.**
-    Part 2.2 point 7 already commits to never comparing "what's already in the header" against
-    "what to write back" and always calling `uv add --script` with whatever the resolved set is --
-    this finding confirms that decision was safe even in its full generality (bare re-adds of
-    already-pinned packages), not just the narrower extras case Pass 2 had actually tested.
-- **Mixed re-add + genuinely-new-package call preserves old pins and adds only the new one.**
-  `uv add --script file.py flask click requests` (two already-pinned, one new) left `flask>=2.0`
-  and `click==8.1.0` untouched and added `requests` as a bare name in correct alphabetical
-  position.
-- **A hand-added custom TOML key outside `dependencies`/`requires-python` survives an `add`
-  call untouched.** Confirms `uv add --script` performs a genuine targeted merge, not a
-  rewrite-the-whole-block operation, in every dimension tested so far across all three passes.
-
-No design change follows from this pass -- it is confirmation of an already-adopted decision, not
-a new requirement. See `docs/plan-pvw-quickstart.md` for the sibling standalone feature this
-finding was originally investigated for, which -- unlike this feature -- was able to drop a whole
-hand-rolled TOML-merge step entirely as a direct result.
+The pin/custom-key preservation findings originally recorded here (prompted by reviewing the
+`docs/plan-pvw-quickstart.md` design) are now the first bullet of
+`agent-lessons-learned.md`'s consolidated section -- see that instead. No design change followed
+from this pass for this feature; it confirmed an already-adopted decision (Part 2.2 point 7).
 
 ---
 
