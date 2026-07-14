@@ -755,7 +755,7 @@ by default for code you don't know is idempotent. If that's not you -- your scri
 self-contained, you already trust it, and you just want it running in a terminal right now with
 no EXE and no conda -- this is the "known-stateless scripts, or a developer who already knows
 their own code" column from the comparison above, and there's a faster path for it: `uv` plus
-[`autopep723`](https://github.com/pgierz/autopep723), a tool that statically scans a script's
+[`autopep723`](https://github.com/mgaitan/autopep723), a tool that statically scans a script's
 imports and either runs it in a throwaway environment or writes what it found into the file's own
 PEP 723 header.
 
@@ -783,7 +783,10 @@ edit, it backs the file up to disk first, strips the broken header, and retries 
 that also fails (e.g. the network drops mid-resolve), it restores your original file exactly and
 stops. It reads and writes the file byte-for-byte (not through a UTF-8-only text conversion), so a
 file saved in an older encoding is never silently corrupted along the way, and it never touches
-your file at all in the common case where nothing goes wrong.
+your file at all in the common case where nothing goes wrong. If you ever see a `<yourfile>.bak`
+file sitting next to your script afterward, that's the safety-net copy made right before the risky
+step -- it means something interrupted the run before cleanup could finish (a closed terminal, a
+lost connection); rename it back over the current file to get back to exactly where you started.
 
 The same thing, spaced out if you'd rather read it before pasting:
 
@@ -825,16 +828,46 @@ rather the file remember its dependencies for next time -- and keep any exact ve
 paste this instead:
 
 ```powershell
-$f = "solve_my_probs.py"; $chk = (uvx autopep723 check $f) -join "`n"; if ($LASTEXITCODE -eq 0) { $names = [regex]::Matches($chk, '^#\s*"([^"]+)",?\s*$', 'Multiline') | ForEach-Object { $_.Groups[1].Value }; if ($names.Count -gt 0) { uv add --script $f $names } else { Write-Host "No dependencies detected." } } else { Write-Host "Could not analyze script - nothing changed." }
+$f = "solve_my_probs.py"; $chk = (uvx autopep723 check $f) -join "`n"; if ($LASTEXITCODE -eq 0) { $names = [regex]::Matches($chk, '^#\s*"([^"]+)",?\s*$', 'Multiline') | ForEach-Object { $_.Groups[1].Value }; if ($names.Count -gt 0) { uv add --script $f $names } else { Write-Host "No dependencies detected (or the file could not be fully analyzed)." } } else { Write-Host "Could not analyze script - nothing changed." }
+```
+
+The same thing, spaced out:
+
+```powershell
+$f = "solve_my_probs.py"
+$chk = (uvx autopep723 check $f) -join "`n"
+if ($LASTEXITCODE -eq 0) {
+    $names = [regex]::Matches($chk, '^#\s*"([^"]+)",?\s*$', 'Multiline') | ForEach-Object { $_.Groups[1].Value }
+    if ($names.Count -gt 0) {
+        uv add --script $f $names
+    } else {
+        Write-Host "No dependencies detected (or the file could not be fully analyzed)."
+    }
+} else {
+    Write-Host "Could not analyze script - nothing changed."
+}
 ```
 
 This uses `autopep723 check`'s read-only scan for discovery, then hands the result to `uv add
 --script` for the actual write -- `uv` already refuses to downgrade an existing pin when you
 re-add a package by its bare name (verified directly: re-adding `flask` when `flask>=2.0` was
 already pinned left the file byte-for-byte unchanged), so no separate merge logic is needed here.
-Safe to run more than once -- a second run changes nothing. If it fails because your file's
-*existing* header is malformed rather than missing, run the command above first (it repairs a
-broken header), then try this one again.
+A genuinely new dependency gets added too, though exactly how depends on your `uv` version --
+current `uv` tends to write an auto-resolved lower bound (`requests>=2.34.2`) rather than a bare
+name; treat whatever `uv` writes as correct by construction rather than expecting one specific
+form. Safe to run more than once -- confirmed idempotent on repeat runs, across `uv` versions. If
+it fails because your file's *existing* header is malformed rather than missing, run the command
+above first (it repairs a broken header), then try this one again.
+
+**Two things worth knowing if you use this regularly:** if a `<yourfile>.py.lock` file already
+exists next to your script (from separate `uv` usage), `uv add --script` will silently rewrite it
+as a side effect of adding a dependency -- expected `uv` behavior, not a bug in this command, but
+worth knowing if you maintain that lockfile by hand. Separately, `uv` has an open caching issue
+([astral-sh/uv#15156](https://github.com/astral-sh/uv/issues/15156)) where running the same
+filename with a different dependency set can occasionally serve a stale cached resolution on a
+later `uv run` -- exactly the scenario this command's whole point is to set up. If a promoted file
+behaves oddly after you've changed its imports, renaming the file or clearing `~/.cache/uv`
+resolves it; it's a known upstream quirk, not something wrong with your file.
 
 **Fine print:** this whole section is for a script you already trust, or one you're consciously
 iterating on and accept re-running. If you were handed a `.py` file and don't know whether it's
