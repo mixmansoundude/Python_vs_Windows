@@ -603,6 +603,36 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    each payload's logic is unrelated to the others. Not urgent (no bug has been traced to any of
    these gaps), but real, and the highest-value place to start is `HP_DETECT_PY` given how central
    its output is to the rest of the bootstrap.
+10. **PVW QuickStart -- a standalone, non-`run_setup.bat` super-user command for running/persisting
+    a `.py` file's dependencies with no EXE build (full design at
+    `docs/plan-pvw-quickstart.md`).** Reviewed and independently re-verified a user-supplied
+    third-party "PEP 723 Megacommand" document proposing a single-paste PowerShell command family
+    (install uv, run via `uvx autopep723`, optionally persist deps back into the file's PEP 723
+    header). Confirmed the core claims directly (script execution, an encoding-corruption bug in
+    naive `Get-Content` reads and its `ISO-8859-1`-round-trip fix), and found a genuine
+    simplification the source document didn't have: `uv add --script` already preserves existing
+    pins and custom TOML keys on re-add (confirmed with fresh tests, not just trusted -- see
+    `plan-pep723-writeback.md`'s new "Pass 3" entry), so the source document's hand-rolled
+    TOML-merge "Option C" script (needing `tomli-w` and manual diffing) is unnecessary --
+    `autopep723 check` for discovery piped straight into `uv add --script` gets the same
+    safety natively. **Deliberately sequenced to ship AFTER `plan-pep723-writeback.md`** (that
+    plan is already implementation-ready and serves this repo's primary beginner audience; this
+    one is a secondary, opt-in, already-know-your-own-code audience -- see the new plan doc's own
+    "Sequencing decision" section for the full reasoning, including how implementing write-back
+    first avoids re-deriving the same uv-version confidence twice). **Architecture decision:**
+    ship as a standalone `pvw_quickstart.ps1`, not a `run_setup.bat` dispatch hook -- folding it
+    into `run_setup.bat` would mean either bypassing REQ-018's build-first-run-once safety
+    reasoning for a whole new execution mode or re-deriving a parallel copy of that reasoning just
+    for itself, for a feature whose entire value proposition is skipping that ceremony; the
+    hook-in shape (an opt-in `HP_QUICKSTART_MODE` flag) is recorded in the plan doc as a
+    deliberately-deferred fallback, not implemented. **README placement, not written yet:** a new,
+    not-near-the-top section, positioned either right after `## [REQ-015] Idempotent Git Config
+    Merge` or inside/after `## Python_vs_Windows and the "Deno for Python" Question` -- final call
+    deferred to implementation time; see the plan doc's own "README placement" section for the
+    reasoning behind both candidates. Open gaps carried over honestly from the source document,
+    not yet closed: real Windows PowerShell 5.1 is untested (this whole investigation, like the
+    source document's own, ran via `pwsh` on Linux); failed-`uv`-install and missing-file error UX
+    are both known-rough, not known-broken.
 
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
