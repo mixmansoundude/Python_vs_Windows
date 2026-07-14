@@ -774,3 +774,74 @@ skipped or gated on `HP_FASTPATH_USED`. This is intentional, not an oversight: i
 entry `SyntaxError` before a doomed PyInstaller build even when the cached EXE is about to be
 reused. Cost is negligible (single-file byte-compile, ~50ms) relative to the fast path's overall
 savings. No action needed; recorded here so it isn't re-flagged as a "missing optimization" later.
+
+---
+
+## `uv add --script` / PEP 723 empirical behavior (shared foundation for two features)
+
+Two features in this repo persist resolved dependencies into a script's PEP 723 header via `uv
+add --script`: the automatic, `run_setup.bat`-integrated one (`docs/plan-pep723-writeback.md`) and
+the standalone, manual "PVW QuickStart" one (`docs/plan-pvw-quickstart.md`, partially shipped in
+README's "PVW QuickStart" section). Both depend on the same empirical facts about `uv`'s real
+behavior, established via direct testing across three separate passes (never trusted from
+documentation alone) and originally restated in each plan doc's own words. Consolidated here once
+instead, per this file's own "standalone fact" categorization principle -- each plan doc now
+points back here rather than re-deriving these.
+
+- **`uv add --script` performs a genuine targeted merge, not a rewrite.** Re-adding an
+  already-pinned package by its bare name does not downgrade the pin (confirmed: `flask>=2.0`
+  survived a bare `flask` re-add byte-for-byte). Adding a mix of already-pinned and genuinely new
+  packages in one call preserves every existing pin and adds only the new ones (as bare names, or
+  on newer `uv`, an auto-resolved lower bound -- see the version-drift note below). A hand-added
+  custom TOML key outside `dependencies`/`requires-python` survives untouched. This is what lets
+  both features skip building a hand-rolled TOML differ/merger: feed the full current dependency
+  list to `uv add --script` every time and let `uv`'s own merge logic do the rest.
+- **Exit code `2` reliably and exclusively means "the header itself is unparseable TOML."**
+  Confirmed across every malformed-header test in both features' testing, and confirmed a missing/
+  misnamed file does NOT also produce exit 2 (it's exit 1, "script does not exist"), so the signal
+  isn't accidentally shared with an unrelated failure class. Both features' malformed-header-repair
+  logic is built on this: branch on exit code 2 specifically, not "any nonzero exit," before
+  deciding whether stripping the header is safe.
+- **A closing `# ///` fence with trailing whitespace fails to parse, exit 2 -- astral-sh/uv#10918.**
+  Looks fine to a human, invalid to `uv`'s strict parser. Any header-repair logic must be tolerant
+  of this on the STRIP side (match `# ///` followed by optional trailing whitespace, not requiring
+  an exact end-of-line) even though `uv` itself won't tolerate it on write.
+- **A stray/duplicate leftover fence line can itself become a NEW hard error on newer `uv` --
+  astral-sh/uv#19544** ("reject duplicate script metadata blocks," landed ~0.11.17; previously
+  silently treated as postlude). This is why header-strip logic should be a line-by-line state
+  machine (track an `in_block` boolean, remove the whole block cleanly) rather than a regex that
+  could under- or over-match, especially a lazy regex that could leave a stray fence line behind.
+- **`VIRTUAL_ENV` set in the calling environment produces only a benign stderr warning, never a
+  failure -- astral-sh/uv#15956.** Confirms success/failure must be judged solely by exit code,
+  never by the presence of stderr text.
+- **An existing `<script>.py.lock` sidecar is silently rewritten as a side effect of `uv add
+  --script`, with no flag to suppress it.** Confirmed the exact filename convention
+  (`<script-name>.py` -> `<script-name>.py.lock`) via a real lockfile (mtime + content change).
+  Any feature that calls `uv add --script` on a file that might have a hand-maintained lock should
+  either skip when one exists, or at minimum document that it will be touched.
+- **Open caching issue -- astral-sh/uv#15156 ("Cached Script Dependencies Not Properly
+  Invalidated").** A sequence of `uv add --script` (change deps) then a later `uv run --script`
+  (or ephemeral run) on the SAME filename can serve a stale cached resolution even after the
+  header changed; renaming the file "fixes" it, implying the cache key is filename-derived. Hit
+  this repo's own testing directly: an early attempt to reproduce a design bug returned a
+  misleadingly clean result because of exactly this stale-cache effect, only resolved by using a
+  fresh filename and clearing `~/.cache/uv`. Relevant to any feature whose entire point is
+  persisting a header for a LATER, independent `uv run` to pick up.
+- **`Get-Content -Raw`'s default text handling silently replaces any invalid-UTF-8 byte with the
+  Unicode replacement character (`U+FFFD` / `EF BF BD`) the instant it reads a file** -- confirmed
+  at the raw byte level, not just visually. For a script saved in a legacy encoding, this corrupts
+  an in-memory "original" backup before any risky operation even begins, so a later "restore" can
+  silently hand back an altered file. Reading and writing via `[System.IO.File]::ReadAllText`/
+  `WriteAllText` with `[System.Text.Encoding]::GetEncoding("ISO-8859-1")` round-trips any file's
+  bytes exactly (`ISO-8859-1` maps every byte value to a distinct character 1:1), regardless of
+  the file's real encoding -- the fix PVW QuickStart uses for its own retry/restore mutation.
+  `plan-pep723-writeback.md`'s automatic feature takes a different, simpler path for the same
+  underlying hazard (skip non-UTF-8 files entirely rather than round-tripping), since it never
+  needs to mutate-then-possibly-restore the same way QuickStart's live retry does.
+- **A genuinely new dependency's written form depends on the `uv` version, not just on whether
+  it's new.** `uv` 0.8.17 wrote bare names (`"requests"`); `uv` 0.11.28 wrote an auto-resolved
+  lower bound (`"requests>=2.34.2"`) for the identical operation. Neither feature should assume or
+  document one specific form -- treat whatever `uv` writes as correct by construction.
+
+None of this is specific to either feature's own design (hook points, dispatch shape, audience) --
+that detail stays in each plan doc, with a pointer back here for the underlying `uv` facts.

@@ -14,9 +14,12 @@ single-paste PowerShell command family for running/persisting a `.py` file's dep
 `run_setup.bat` at all. That document is not reproduced here; this plan states what was verified,
 what was kept, what was simplified, and why.
 **Related:** `docs/plan-pep723-writeback.md` (the automatic, `run_setup.bat`-integrated sibling of
-this feature); README's `## Why "Build-First, Run-Once"? (Design Rationale)` section (the existing
-audience-split argument this plan leans on directly); `CLAUDE.md` Active Backlog (this item is
-linked from there).
+this feature -- shares its core `uv` empirical foundation with this doc, consolidated in
+`docs/agent-lessons-learned.md`); `docs/agent-lessons-learned.md`'s "`uv add --script` / PEP 723
+empirical behavior" section (the shared empirical foundation both this doc and the sibling depend
+on -- read that first); README's `## Why "Build-First, Run-Once"? (Design Rationale)` section (the
+existing audience-split argument this plan leans on directly); `CLAUDE.md` Active Backlog (this
+item is linked from there).
 
 ---
 
@@ -46,47 +49,28 @@ see "Architecture decision" below for the two shapes considered and why the stan
 
 Per this repo's established practice of testing third-party claims rather than accepting them on
 authority (see `docs/plan-pep723-writeback.md`'s own two-pass empirical history), the source
-document's core claims were re-run directly in this session, plus one significant simplification
-was found and verified that the source document did not have available to it.
+document's core claims were re-run directly in this session. **The empirical findings themselves
+(the encoding-corruption bug and its `ISO-8859-1` fix, and `uv add --script`'s native
+targeted-merge behavior that makes the source document's hand-rolled TOML merge unnecessary) now
+live in `docs/agent-lessons-learned.md`'s "`uv add --script` / PEP 723 empirical behavior"
+section, consolidated with the equivalent findings from `plan-pep723-writeback.md`'s own testing
+-- read that section first.** One finding specific to this document, not shared with the sibling
+feature:
 
-1. **`uvx autopep723 <file>` (no subcommand) genuinely executes the script**, confirmed directly:
-   a test file's `print()` output appeared in the terminal and the file was confirmed unchanged
-   afterward. This matches the source document's own finding and independently disproves the same
-   "doesn't execute, needs a trailing `uv run`" claim `docs/plan-pep723-writeback.md`'s Part 1
-   already flagged as false for a related reason.
-2. **The encoding-corruption bug is real and reproduces exactly as described.** Built a file with
-   one intentionally-invalid-UTF-8 byte, read it via PowerShell's default `Get-Content -Raw`, and
-   confirmed the byte is silently replaced with the Unicode replacement character (`EF BF BD`)
-   before the command ever acts on it -- verified at the raw byte level, not just visually. Reading
-   and writing the same file via `[System.IO.File]::ReadAllText`/`WriteAllText` with
-   `[System.Text.Encoding]::GetEncoding("ISO-8859-1")` round-trips it byte-for-byte identical
-   (`cmp` confirms zero difference). This is the same category of hazard
-   `plan-pep723-writeback.md`'s Non-Goals section already reasons about for the *automatic*
-   feature (which sidesteps it by skipping non-UTF-8 files entirely, never attempting a round
-   trip) -- QuickStart's problem is different in kind: it actively mutates the file in place with
-   a retry, so it needs a real round-trip guarantee, not just a skip. The ISO-8859-1 technique is
-   the right tool for that job and is adopted as-is.
-3. **`uv add --script` already does everything the source document's hand-rolled "Option C" TOML
-   merge script was built to achieve -- confirmed with three fresh, targeted tests this session,
-   going further than either document's existing testing:**
-   - Re-running `uv add --script file.py flask` when `flask>=2.0` was already pinned in the header
-     left the file **byte-for-byte unchanged** -- the existing pin was not downgraded to a bare
-     name.
-   - Running `uv add --script file.py flask click requests` (two already-pinned packages plus one
-     genuinely new one) preserved both existing pins exactly (`flask>=2.0`, `click==8.1.0`) and
-     added only `requests`, as a bare name, in its correct alphabetical position.
-   - A hand-added custom TOML key (`[tool.custom]` with its own field) outside the
-     `dependencies`/`requires-python` keys survived an `add` call untouched.
-   - This confirms `docs/plan-pep723-writeback.md`'s existing Pass 2 finding ("adding bare pandas
-     after `pandas[excel]` was already present did not duplicate or downgrade the entry") was not
-     a narrow extras-specific behavior -- it is uv's general merge policy, and it covers explicit
-     version pins (`>=`, `==`) and arbitrary custom keys too, not just extras syntax.
-   - **Design implication:** the source document's Option C script (an inline Python one-liner
-     requiring `--with tomli-w`, TOML-parsing both the old header and a fresh `autopep723 check`
-     scan, name-normalizing both sides, and manually computing a set difference before writing a
-     merged block back by hand) is solving a problem uv's own `add --script` command already
-     solves natively. QuickStart's persistence step does not need to reimplement it -- see
-     "Simplified persistence design" below.
+- **`uvx autopep723 <file>` (no subcommand) genuinely executes the script**, confirmed directly:
+  a test file's `print()` output appeared in the terminal and the file was confirmed unchanged
+  afterward. This matches the source document's own finding and independently disproves the same
+  "doesn't execute, needs a trailing `uv run`" claim `docs/plan-pep723-writeback.md`'s Part 1
+  already flagged as false for a related reason. Not relevant to `plan-pep723-writeback.md`
+  itself, since that feature never runs the entry file this way.
+
+**Design implication carried from the lessons-learned consolidation:** since `uv add --script`'s
+own merge logic already preserves existing pins/custom keys, the source document's Option C
+script (an inline Python one-liner requiring `--with tomli-w`, TOML-parsing both the old header
+and a fresh `autopep723 check` scan, name-normalizing both sides, and manually computing a set
+difference before writing a merged block back by hand) is solving a problem `uv` already solves
+natively. QuickStart's persistence step does not need to reimplement it -- see "Simplified
+persistence design" below.
 
 **Not independently re-verified in this pass** (carried over honestly from the source document,
 not silently dropped): behavior on real Windows PowerShell 5.1 (this session, like the source
@@ -116,18 +100,15 @@ but a header that only declares `flask`. Running the original blind-strip comman
   entire header (pin, `requires-python`, and the custom key all gone) and retried on a bare file.
 - Result: the script ran, but the file was left with **no header at all** where a moment before it
   had a real, correct, hand-maintained one. First reproduction attempt actually returned a
-  misleadingly clean result (the run succeeded with no visible strip) -- traced this to a stale
-  `uv` cache from reusing the same test filename across many earlier, unrelated test runs that
-  same session (the exact symptom astral-sh/uv#15156 describes, already documented in README's
-  caching callout); re-running with a genuinely fresh filename and a cleared `~/.cache/uv`
+  misleadingly clean result (the run succeeded with no visible strip) -- traced this to the
+  `astral-sh/uv#15156` stale-cache effect already noted in `agent-lessons-learned.md` (hit live,
+  not just cited); re-running with a genuinely fresh filename and a cleared `~/.cache/uv`
   reproduced the destructive strip cleanly and repeatably.
 
-**The fix**: branch on the *exit code* of the first attempt, not just success/failure.
-`autopep723`/`uv` reliably use exit code `2` specifically for "the header itself is unparseable
-TOML" -- confirmed directly across every malformed-header test in both this plan and
-`plan-pep723-writeback.md`'s own testing, and separately confirmed that a **missing file** does
-NOT produce exit code 2 (it produces exit 1 with a "script does not exist" message), so the
-distinction is not accidentally overloaded by an unrelated failure class either:
+**The fix**: branch on the *exit code* of the first attempt, not just success/failure -- using the
+exit-code-2-means-malformed-TOML fact from `agent-lessons-learned.md` (confirmed there, across
+both this plan's and `plan-pep723-writeback.md`'s testing, that a missing file does NOT also
+produce exit 2, so the signal isn't accidentally shared with an unrelated failure class):
 
 - **Exit 0** (ran clean): best-effort additive persist now that the run is confirmed working --
   the same discovery-then-`uv add --script` recipe from "Simplified persistence design" below,
@@ -153,7 +134,8 @@ time on an already-complete header produces a byte-identical file. One accepted,
 carried forward from the source document's own equivalent design decision: the "some other reason"
 branch's fill-in is not rolled back if the retry still fails for an unrelated reason (e.g. a real
 bug in the script) -- safe because `uv add --script`'s writes are already independently confirmed
-atomic (see finding 3 below), so the header at worst ends up *more* correct, never corrupted.
+atomic (see `agent-lessons-learned.md`), so the header at worst ends up *more* correct, never
+corrupted.
 
 **Design consequence carried into README, not left implicit:** this changes the previous "never
 touches your file in the common case where nothing goes wrong" framing -- the new default command
@@ -178,8 +160,8 @@ diffing logic at all. The full recipe:
    step either, since `check`'s own output format is this repo's own tool's fixed, predictable
    shape, not arbitrary user input).
 3. Feed the **entire** extracted name list to `uv add --script <file> <names...>` in one call --
-   not just the "new" subset. uv's own merge logic (finding 3) already leaves every
-   already-present, already-pinned entry untouched and only adds genuinely new ones. No set
+   not just the "new" subset. uv's own merge logic (`agent-lessons-learned.md`) already leaves
+   every already-present, already-pinned entry untouched and only adds genuinely new ones. No set
    difference, no old-header parsing, needs to happen in QuickStart's own code at all.
 
 This removes an entire class of surface area the source document's Option C carried (a second TOML
@@ -207,8 +189,9 @@ matching what's now shipped as README commands:
   that same installer is deliberately **not** used inside `run_setup.bat` itself; a live terminal
   session has none of the PATH-propagation/restart problems a background batch process does, so
   there is no conflict between the two decisions, just two different execution contexts), read the
-  target file with the ISO-8859-1 round-trip technique (finding 2) so a crash or a header repair
-  can always restore the original bytes exactly, run `uvx autopep723 <file>` (ephemeral), then
+  target file with the ISO-8859-1 round-trip technique (`agent-lessons-learned.md`) so a crash or
+  a header repair can always restore the original bytes exactly, run `uvx autopep723 <file>`
+  (ephemeral), then
   branch on the exit code per "Pass 2" above: exit 0 does a best-effort additive persist; exit 2
   (genuinely malformed TOML) is the one case where stripping and retrying from scratch is correct;
   any other nonzero exit tries an additive fill-in without ever stripping anything, then retries
