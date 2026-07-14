@@ -760,33 +760,71 @@ imports and either runs it in a throwaway environment or writes what it found in
 PEP 723 header.
 
 Every command below was tested directly against real `uv`/`autopep723` runs (not just read in
-docs) before being written here, including the two failure-handling paths (a broken existing
-header, and a non-ASCII byte in the file) -- see `docs/plan-pvw-quickstart.md` for the full
-verification trail if you want it. The one part that could not be tested in that pass is real
-Windows PowerShell 5.1 specifically (verified via `pwsh` 7 instead, which shares the same `.NET`
-APIs these commands rely on) -- if you hit something odd on an older PowerShell, that's the first
-place to look.
+docs) before being written here, including every failure-handling path (a genuinely broken
+header, a header that's merely incomplete, and a non-ASCII byte in the file) -- see
+`docs/plan-pvw-quickstart.md` for the full verification trail if you want it. The one part that
+could not be tested in that pass is real Windows PowerShell 5.1 specifically (verified via `pwsh`
+7 instead, which shares the same `.NET` APIs these commands rely on) -- if you hit something odd
+on an older PowerShell, that's the first place to look.
 
-### Just run it
+### Just run it (and remember what it needed)
 
 Open PowerShell in the folder with your script (Shift+right-click -> "Open PowerShell window
 here"), then paste:
 
 ```powershell
-irm https://astral.sh/uv/install.ps1 | iex; $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"; $enc = [System.Text.Encoding]::GetEncoding("ISO-8859-1"); $f = "solve_my_probs.py"; $original = [System.IO.File]::ReadAllText((Get-Item $f).FullName, $enc); uvx autopep723 $f; if ($LASTEXITCODE -ne 0) { Write-Host "First attempt hit a snag with the file's dependency header - retrying with a clean version..."; [System.IO.File]::WriteAllText("$((Get-Item $f).FullName).bak", $original, $enc); $c = $original -replace "(?ms)^# /// script\r?\n.*?^# ///[ \t]*\r?\n?", ""; [System.IO.File]::WriteAllText((Get-Item $f).FullName, $c, $enc); uvx autopep723 $f; if ($LASTEXITCODE -ne 0) { Write-Host "Retry also failed - restoring your original file untouched."; [System.IO.File]::WriteAllText((Get-Item $f).FullName, $original, $enc) }; Remove-Item -ErrorAction SilentlyContinue "$f.bak" }
+irm https://astral.sh/uv/install.ps1 | iex; $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"; $enc = [System.Text.Encoding]::GetEncoding("ISO-8859-1"); $f = "solve_my_probs.py"; $original = [System.IO.File]::ReadAllText((Get-Item $f).FullName, $enc); function Persist($f) { $chk = (uvx autopep723 check $f) -join "`n"; if ($LASTEXITCODE -ne 0) { return $false }; $names = [regex]::Matches($chk, '^#\s*"([^"]+)",?\s*$', 'Multiline') | ForEach-Object { $_.Groups[1].Value }; if ($names.Count -eq 0) { return $true }; uv add --script $f $names; return ($LASTEXITCODE -eq 0) }; uvx autopep723 $f; $rc = $LASTEXITCODE; if ($rc -eq 0) { if (Persist $f) { Write-Host "Ran successfully and remembered what it needed." } else { Write-Host "Ran successfully, but could not update the dependency header - nothing was changed there." } } elseif ($rc -eq 2) { Write-Host "Header is malformed - retrying with a clean version..."; [System.IO.File]::WriteAllText("$((Get-Item $f).FullName).bak", $original, $enc); $c = $original -replace "(?ms)^# /// script\r?\n.*?^# ///[ \t]*\r?\n?", ""; [System.IO.File]::WriteAllText((Get-Item $f).FullName, $c, $enc); uvx autopep723 $f; if ($LASTEXITCODE -eq 0) { if (Persist $f) { Write-Host "Ran successfully after repair and remembered a fresh header." } else { Write-Host "Ran successfully after repair, but could not update the header." } } else { Write-Host "Retry also failed - restoring your original file untouched."; [System.IO.File]::WriteAllText((Get-Item $f).FullName, $original, $enc) }; Remove-Item -ErrorAction SilentlyContinue "$f.bak" } else { Write-Host "Run failed with an existing header in place - trying to fill in any missing dependencies..."; Persist $f | Out-Null; uvx autopep723 $f; if ($LASTEXITCODE -eq 0) { Write-Host "Ran successfully after filling in missing dependencies." } else { Write-Host "Run still failed - this looks like a script-level issue, not a dependency gap, so nothing further was attempted." } }
 ```
 
 Change `solve_my_probs.py` to your file's name and run again if you're pasting this more than
-once. What it does: installs `uv`, scans your script's imports, provisions exactly what it needs,
-and runs it -- once. If your file already has a broken or stale PEP 723 header from a previous
-edit, it backs the file up to disk first, strips the broken header, and retries once, clean; if
-that also fails (e.g. the network drops mid-resolve), it restores your original file exactly and
-stops. It reads and writes the file byte-for-byte (not through a UTF-8-only text conversion), so a
-file saved in an older encoding is never silently corrupted along the way, and it never touches
-your file at all in the common case where nothing goes wrong. If you ever see a `<yourfile>.bak`
-file sitting next to your script afterward, that's the safety-net copy made right before the risky
-step -- it means something interrupted the run before cleanup could finish (a closed terminal, a
-lost connection); rename it back over the current file to get back to exactly where you started.
+once. What it does: installs `uv`, runs your script via a throwaway environment, and -- once the
+run actually succeeds -- remembers what it needed by writing (or updating) the file's own PEP 723
+header, the same **additive-merge, never-delete** approach `run_setup.bat` itself uses for
+`runtime.txt`/`requirements.txt`: an existing exact pin (`flask>=2.0`) or hand-added TOML key is
+never touched, only genuinely new dependencies get added.
+
+It only ever resets the header from scratch in one specific situation, and it's not "the run
+failed" in general: it's when the header itself is unparseable TOML (a real syntax error, not
+just an incomplete list) -- that's the one case where "keep what's there" genuinely isn't
+possible, so it backs up, replaces, and retries clean. Any *other* kind of failure -- most
+commonly a valid header that's just missing a recently-added import -- is treated as "add what's
+missing," never "start over." Concretely, it branches on *why* the first attempt failed, not just
+whether it failed:
+
+- **Ran clean:** best-effort remembers what it needed, now that the run has actually confirmed it
+  works.
+- **Header is genuinely malformed:** the one case where starting over is correct -- backs up,
+  strips the broken header, retries clean, and remembers a fresh header if the retry succeeds.
+- **Ran but failed for some other reason** (most often a valid header just missing an import):
+  fills in what's missing *without* touching anything else already in the header, then retries
+  once.
+
+If you ever see a `<yourfile>.bak` file sitting next to your script afterward, that's the
+safety-net copy made right before the one destructive step above (a genuinely malformed header) --
+it means something interrupted the run before cleanup could finish (a closed terminal, a lost
+connection); rename it back over the current file to get back to exactly where you started. It's
+never created for the other two outcomes, since neither one ever removes anything from the file to
+begin with.
+
+**One thing to know if you rename the file later:** `uv` has an open caching issue
+([astral-sh/uv#15156](https://github.com/astral-sh/uv/issues/15156)) where running the same
+filename with a different dependency set can occasionally serve a stale cached resolution --
+relevant here because this command's whole point is to leave behind a header a later, independent
+`uv run` will pick up. If a promoted file behaves oddly after you've changed its imports, renaming
+the file or clearing `~/.cache/uv` resolves it; it's a known upstream quirk, not something wrong
+with your file.
+
+It reads and writes the file byte-for-byte (not through a UTF-8-only text conversion), so a file
+saved in an older encoding is never silently corrupted along the way -- an unreadable file safely
+falls into the "some other reason" branch above and is left untouched, exactly like any other
+non-dependency failure.
+
+**Fine print:** in the "ran but failed for some other reason" branch, if the retry (after filling
+in what looked missing) *also* fails -- for instance the script has a real bug unrelated to any
+dependency -- that fill-in is not rolled back. This is deliberate, not an oversight: `uv add
+--script`'s writes are already confirmed atomic (never partial), so the header at worst ends up
+*more* correct (whatever was genuinely missing really was needed) even though the script itself
+still needs a real fix -- never silently wrong data, just not undone.
 
 The same thing, spaced out if you'd rather read it before pasting:
 
@@ -796,18 +834,51 @@ $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 $enc = [System.Text.Encoding]::GetEncoding("ISO-8859-1")
 $f = "solve_my_probs.py"
 $original = [System.IO.File]::ReadAllText((Get-Item $f).FullName, $enc)
+
+function Persist($f) {
+    $chk = (uvx autopep723 check $f) -join "`n"
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $names = [regex]::Matches($chk, '^#\s*"([^"]+)",?\s*$', 'Multiline') | ForEach-Object { $_.Groups[1].Value }
+    if ($names.Count -eq 0) { return $true }
+    uv add --script $f $names
+    return ($LASTEXITCODE -eq 0)
+}
+
 uvx autopep723 $f
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "First attempt hit a snag with the file's dependency header - retrying with a clean version..."
+$rc = $LASTEXITCODE
+
+if ($rc -eq 0) {
+    if (Persist $f) {
+        Write-Host "Ran successfully and remembered what it needed."
+    } else {
+        Write-Host "Ran successfully, but could not update the dependency header - nothing was changed there."
+    }
+} elseif ($rc -eq 2) {
+    Write-Host "Header is malformed - retrying with a clean version..."
     [System.IO.File]::WriteAllText("$((Get-Item $f).FullName).bak", $original, $enc)
     $c = $original -replace "(?ms)^# /// script\r?\n.*?^# ///[ \t]*\r?\n?", ""
     [System.IO.File]::WriteAllText((Get-Item $f).FullName, $c, $enc)
     uvx autopep723 $f
-    if ($LASTEXITCODE -ne 0) {
+    if ($LASTEXITCODE -eq 0) {
+        if (Persist $f) {
+            Write-Host "Ran successfully after repair and remembered a fresh header."
+        } else {
+            Write-Host "Ran successfully after repair, but could not update the header."
+        }
+    } else {
         Write-Host "Retry also failed - restoring your original file untouched."
         [System.IO.File]::WriteAllText((Get-Item $f).FullName, $original, $enc)
     }
     Remove-Item -ErrorAction SilentlyContinue "$f.bak"
+} else {
+    Write-Host "Run failed with an existing header in place - trying to fill in any missing dependencies..."
+    Persist $f | Out-Null
+    uvx autopep723 $f
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Ran successfully after filling in missing dependencies."
+    } else {
+        Write-Host "Run still failed - this looks like a script-level issue, not a dependency gap, so nothing further was attempted."
+    }
 }
 ```
 
@@ -820,12 +891,14 @@ changes nothing:
 uvx autopep723 check solve_my_probs.py
 ```
 
-### Make it remember, without losing pins you already set
+### Make it remember, without actually running it
 
-The command above runs your script but forgets what it found the moment it's done. If you'd
-rather the file remember its dependencies for next time -- and keep any exact version pin
-(`flask>=2.0`) or hand-added TOML key you already have, adding only genuinely new dependencies --
-paste this instead:
+The command above already remembers what it needed once it confirms the run works. Use this one
+instead if you want to update the header *without* executing the script at all -- for example,
+to check dependencies into the file for someone else before you're ready to run it yourself, or
+to prep a file for `run_setup.bat` ahead of time. Same additive-merge guarantee: it keeps any
+exact version pin (`flask>=2.0`) or hand-added TOML key you already have, adding only genuinely
+new dependencies -- paste this instead:
 
 ```powershell
 $f = "solve_my_probs.py"; $chk = (uvx autopep723 check $f) -join "`n"; if ($LASTEXITCODE -eq 0) { $names = [regex]::Matches($chk, '^#\s*"([^"]+)",?\s*$', 'Multiline') | ForEach-Object { $_.Groups[1].Value }; if ($names.Count -gt 0) { uv add --script $f $names } else { Write-Host "No dependencies detected (or the file could not be fully analyzed)." } } else { Write-Host "Could not analyze script - nothing changed." }
@@ -859,15 +932,13 @@ form. Safe to run more than once -- confirmed idempotent on repeat runs, across 
 it fails because your file's *existing* header is malformed rather than missing, run the command
 above first (it repairs a broken header), then try this one again.
 
-**Two things worth knowing if you use this regularly:** if a `<yourfile>.py.lock` file already
-exists next to your script (from separate `uv` usage), `uv add --script` will silently rewrite it
-as a side effect of adding a dependency -- expected `uv` behavior, not a bug in this command, but
-worth knowing if you maintain that lockfile by hand. Separately, `uv` has an open caching issue
-([astral-sh/uv#15156](https://github.com/astral-sh/uv/issues/15156)) where running the same
-filename with a different dependency set can occasionally serve a stale cached resolution on a
-later `uv run` -- exactly the scenario this command's whole point is to set up. If a promoted file
-behaves oddly after you've changed its imports, renaming the file or clearing `~/.cache/uv`
-resolves it; it's a known upstream quirk, not something wrong with your file.
+**Worth knowing if you use this regularly:** if a `<yourfile>.py.lock` file already exists next to
+your script (from separate `uv` usage), `uv add --script` will silently rewrite it as a side
+effect of adding a dependency -- expected `uv` behavior, not a bug in this command, but worth
+knowing if you maintain that lockfile by hand. The same caching quirk noted above (renaming a file
+after changing its imports can serve a stale cached resolution -- astral-sh/uv#15156) applies here
+too, for the same reason: this command exists specifically to leave behind a header a later `uv
+run` will pick up.
 
 **Fine print:** this whole section is for a script you already trust, or one you're consciously
 iterating on and accept re-running. If you were handed a `.py` file and don't know whether it's
