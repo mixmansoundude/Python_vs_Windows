@@ -1,9 +1,13 @@
 # Plan: PVW QuickStart -- a standalone, no-EXE super-user path
 
-**Status:** Design-only, not scheduled. Sequenced to land *after* `docs/plan-pep723-writeback.md`
-(see "Sequencing decision" below). One local verification pass completed (2026-07-14, uv 0.8.17 /
-autopep723 0.2.0, this repo's Linux sandbox) against both the source document and this plan's own
-proposed simplification.
+**Status:** The user-facing commands are shipped directly in README's "PVW QuickStart" section
+(copy-paste PowerShell, no download required); a standalone downloadable `pvw_quickstart.ps1`
+file is still not built -- see "Architecture decision" below, unchanged by this update. Two local
+verification passes completed (2026-07-14, uv 0.8.17 / autopep723 0.2.0, this repo's Linux
+sandbox): an initial pass against the source document and this plan's own proposed simplification,
+and a same-day follow-up pass (see "Pass 2: default command redesigned around exit-code branching"
+below) that replaced the default run command's retry logic after a real, reproduced destructive
+bug was found in the original design.
 **Owner:** Python_vs_Windows maintainer
 **Source material:** a user-supplied third-party document ("The PEP 723 Megacommand") proposing a
 single-paste PowerShell command family for running/persisting a `.py` file's dependencies without
@@ -92,6 +96,72 @@ remain open items -- see "Open gaps, carried over honestly" below.
 
 ---
 
+## Pass 2: default command redesigned around exit-code branching (same day, found via a real
+## reproduced bug, not a hypothetical)
+
+The originally-shipped default run command (this plan's own Shape A, and the source document's
+own Tier 1) treated *any* nonzero exit from the first run attempt identically: strip the entire
+existing `# /// script ... # ///` block and retry clean. This is correct for a genuinely malformed
+header, but wrong for the much more common failure it doesn't distinguish from: a **valid** header
+that is simply missing a recently-added import, which fails with `ModuleNotFoundError` -- a
+different problem with the same symptom (nonzero exit). The blind-strip design could not tell them
+apart and destroyed the second case as if it were the first.
+
+**Reproduced directly, not assumed.** Built a file with a real pin (`flask>=2.0`), a hand-added
+custom TOML key (`[tool.custom]`), and a script body that imports both `flask` and `requests` --
+but a header that only declares `flask`. Running the original blind-strip command against it:
+
+- First attempt: `ModuleNotFoundError: No module named 'requests'`, exit 1.
+- The blind-strip logic could not distinguish this from a malformed header, so it stripped the
+  entire header (pin, `requires-python`, and the custom key all gone) and retried on a bare file.
+- Result: the script ran, but the file was left with **no header at all** where a moment before it
+  had a real, correct, hand-maintained one. First reproduction attempt actually returned a
+  misleadingly clean result (the run succeeded with no visible strip) -- traced this to a stale
+  `uv` cache from reusing the same test filename across many earlier, unrelated test runs that
+  same session (the exact symptom astral-sh/uv#15156 describes, already documented in README's
+  caching callout); re-running with a genuinely fresh filename and a cleared `~/.cache/uv`
+  reproduced the destructive strip cleanly and repeatably.
+
+**The fix**: branch on the *exit code* of the first attempt, not just success/failure.
+`autopep723`/`uv` reliably use exit code `2` specifically for "the header itself is unparseable
+TOML" -- confirmed directly across every malformed-header test in both this plan and
+`plan-pep723-writeback.md`'s own testing, and separately confirmed that a **missing file** does
+NOT produce exit code 2 (it produces exit 1 with a "script does not exist" message), so the
+distinction is not accidentally overloaded by an unrelated failure class either:
+
+- **Exit 0** (ran clean): best-effort additive persist now that the run is confirmed working --
+  the same discovery-then-`uv add --script` recipe from "Simplified persistence design" below,
+  just triggered automatically on success instead of only via a separate opt-in command.
+- **Exit 2** (header itself is malformed): the one case where starting over is actually correct --
+  back up, strip, retry, persist a fresh header on success, restore the original byte-for-byte if
+  the retry also fails.
+- **Any other nonzero exit** (header parsed fine, something else failed -- most commonly a valid
+  header missing a recently-added import): fill in what's missing via the same additive persist
+  helper *without stripping anything*, then retry once. If that still fails, it's treated as a
+  genuine script-level problem, not a dependency gap, and nothing further is attempted
+  automatically.
+
+**Re-verified after the fix, same reproduction file plus five more scenarios (all against the
+final command as it now appears in README, not just the design):** the pin, `requires-python`, and
+custom key all survive; only `requests` gets added; the script runs. A genuinely malformed header
+(TOML syntax error) still correctly triggers strip-and-retry. A double failure (malformed header +
+a genuinely nonexistent package) still restores the original file byte-for-byte with the `.bak`
+cleaned up. A missing/misnamed file falls through to the safe "some other reason" branch rather
+than the destructive one (confirmed exit code is 1, not 2). A non-UTF-8 file falls through the
+same safe branch and is left untouched. Idempotency holds: running the finished command a second
+time on an already-complete header produces a byte-identical file. One accepted, deliberate gap
+carried forward from the source document's own equivalent design decision: the "some other reason"
+branch's fill-in is not rolled back if the retry still fails for an unrelated reason (e.g. a real
+bug in the script) -- safe because `uv add --script`'s writes are already independently confirmed
+atomic (see finding 3 below), so the header at worst ends up *more* correct, never corrupted.
+
+**Design consequence carried into README, not left implicit:** this changes the previous "never
+touches your file in the common case where nothing goes wrong" framing -- the new default command
+*does* touch the file on a successful run now, by design, additively. README's text was updated to
+say so plainly rather than quietly changing the claim underneath an unchanged sentence.
+
+---
+
 ## Simplified persistence design (this plan's contribution beyond the source document)
 
 Because `uv add --script` already preserves existing pins and custom keys on its own (see finding
@@ -128,25 +198,31 @@ Two shapes were considered, matching the two options raised when this plan was r
 ### Shape A (recommended): standalone `pvw_quickstart.ps1`, documented and optionally downloadable
 
 A single PowerShell script, independent of `run_setup.bat`, that a super user pastes or downloads
-and runs directly in a terminal they've already opened in the script's folder. Two modes:
+and runs directly in a terminal they've already opened in the script's folder. Three modes,
+matching what's now shipped as README commands:
 
-- **Default (run only, no persistence):** hardened version of the source document's Tier 1 --
-  install uv via the official installer (`irm https://astral.sh/uv/install.ps1 | iex`, already
-  this repo's own documented recommendation for an *interactive terminal* context -- see
-  `CLAUDE.md`'s "Known Findings" entry explaining why that same installer is deliberately **not**
-  used inside `run_setup.bat` itself; a live terminal session has none of the PATH-propagation/
-  restart problems a background batch process does, so there is no conflict between the two
-  decisions, just two different execution contexts), read the target file with the ISO-8859-1
-  round-trip technique (finding 2) so a crash or a bad-header retry can always restore the
-  original bytes exactly, run `uvx autopep723 <file>` (ephemeral, no persistence), and on a
-  non-zero exit, strip any existing `# /// script ... # ///` block using the **same line-by-line
-  state-machine approach** `plan-pep723-writeback.md`'s Part 2.1 step 5 already specifies for the
-  automatic feature (not the source document's own DOTALL-ish regex, which that same section
-  already reasons is riskier -- see astral-sh/uv#10918 and astral-sh/uv#19544, both already cited
-  there) and retry once. On a second failure, restore the original bytes and stop -- never leave
-  the file in a partially-stripped state.
-- **Opt-in `-Persist` switch:** after a successful run (or independently, without running), does
-  the discovery-then-`uv add --script` recipe above.
+- **Default (run, and additively remember what it needed):** install uv via the official installer
+  (`irm https://astral.sh/uv/install.ps1 | iex`, already this repo's own documented recommendation
+  for an *interactive terminal* context -- see `CLAUDE.md`'s "Known Findings" entry explaining why
+  that same installer is deliberately **not** used inside `run_setup.bat` itself; a live terminal
+  session has none of the PATH-propagation/restart problems a background batch process does, so
+  there is no conflict between the two decisions, just two different execution contexts), read the
+  target file with the ISO-8859-1 round-trip technique (finding 2) so a crash or a header repair
+  can always restore the original bytes exactly, run `uvx autopep723 <file>` (ephemeral), then
+  branch on the exit code per "Pass 2" above: exit 0 does a best-effort additive persist; exit 2
+  (genuinely malformed TOML) is the one case where stripping and retrying from scratch is correct;
+  any other nonzero exit tries an additive fill-in without ever stripping anything, then retries
+  once. The malformed-header repair path uses the **same line-by-line state-machine approach**
+  `plan-pep723-writeback.md`'s Part 2.1 step 5 already specifies for the automatic feature (not a
+  DOTALL-ish regex, which that same section already reasons is riskier -- see astral-sh/uv#10918
+  and astral-sh/uv#19544, both already cited there), and only that one path ever writes a `.bak`
+  backup or removes anything from the file.
+- **Read-only check:** `uvx autopep723 check <file>` -- prints what would be detected, changes
+  nothing. No repair/persist logic involved at all.
+- **Persist-only, without running:** the discovery-then-`uv add --script` recipe below, for when a
+  super user wants the header updated without executing the script's side effects yet (the default
+  mode already does this automatically after a successful run, so this mode exists specifically
+  for the "don't run it" case).
 
 This is what the user's own framing leaned toward ("just run this and bail out") and is the
 default recommendation here: it costs `run_setup.bat` nothing (zero lines changed, zero new
@@ -250,36 +326,38 @@ already knows how to do (Windows runners, matrix jobs, NDJSON rows):
    the code.
 
 Scenario list to adapt once implementation starts (mirrors `plan-pep723-writeback.md`'s own test
-table shape for consistency): happy path no header; existing valid pinned header (persist mode);
-malformed header (retry path); non-UTF-8 source file (round-trip path); missing/misnamed file;
-`-Persist` custom-key preservation; `-Persist` idempotency (run twice, byte-identical result).
+table shape for consistency, extended per Pass 2's exit-code branching): happy path no header;
+existing valid pinned header, no missing imports (default mode does nothing beyond confirming);
+**valid-but-incomplete header with a pin and a custom key** (Pass 2's own reproduction case -- the
+one that must NOT strip); genuinely malformed header (retry path, the one case that DOES strip);
+double failure (malformed header + a genuinely nonexistent package -- must restore byte-for-byte);
+non-UTF-8 source file (must fall into the safe non-stripping branch, not the retry branch);
+missing/misnamed file (must also fall into the safe branch -- confirm its exit code is never 2);
+persist-only mode's custom-key preservation; persist-only mode's idempotency (run twice,
+byte-identical result); default mode's idempotency on an already-complete header.
 
 ---
 
 ## Critical files for implementation (when scheduled)
 
 - `pvw_quickstart.ps1` (new, repo root or a `tools/`-adjacent location TBD at implementation time)
-  -- the standalone script itself, self-contained like `run_setup.bat` is, but far smaller.
-- `README.md` -- new user-facing section; see "README placement" below for where.
+  -- the standalone script itself, self-contained like `run_setup.bat` is, but far smaller. Would
+  wrap the same logic already shipped as README copy-paste commands, not a new design.
+- `README.md` -- the "PVW QuickStart" section already exists and ships the full command set; a
+  standalone script would be an additional, optional download of the same logic, not a rewrite.
 - `tests/` -- new CI test file(s) once a shape is chosen; no existing test file is a close enough
   structural match to extend rather than create fresh.
 - `CLAUDE.md` -- Active Backlog pointer, mirroring the existing `plan-pep723-writeback.md` entry's
   style.
 
-## README placement (backlog, not written yet)
+## README placement (shipped)
 
-Positioned **not near the top** of the README, per explicit request -- this is opt-in super-user
-material, not the beginner-facing quickstart the top of the README already owns. Two candidate
-locations, either acceptable, final call deferred to implementation time once the surrounding
-prose can be read in context:
-
-- Directly after `## [REQ-015] Idempotent Git Config Merge`, since QuickStart is itself an
-  explicitly-idempotent-by-design tool (repeated `-Persist` runs converge, per finding 3) and
-  a reader already primed on "idempotent" by that section's own title is a natural next stop.
-- Inside or directly after `## Python_vs_Windows and the "Deno for Python" Question`, since that
-  section already draws the exact audience distinction ("known-stateless scripts, or a developer
-  who already knows their own code") this whole plan is built on -- QuickStart could be introduced
-  as a concrete instance of that column, rather than a hypothetical one.
+Landed directly after `## Python_vs_Windows and the "Deno for Python" Question`, before `## Known
+Limitations` -- the second of the two candidate locations this plan originally listed, chosen
+because that section already draws the exact audience distinction ("known-stateless scripts, or a
+developer who already knows their own code") this whole plan is built on, so QuickStart reads as a
+concrete instance of that column rather than a hypothetical one. Still **not near the top** of the
+README, per the original request -- the beginner-facing quickstart at the top is untouched.
 
 Recorded in `CLAUDE.md`'s Active Backlog (see that file) so this placement decision isn't lost
 before the section is actually written.
