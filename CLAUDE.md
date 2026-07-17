@@ -522,29 +522,20 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    tight -- see the plan doc's Part 4). Not yet scheduled for a specific loop; ready whenever
    picked up. `pip-compile-multi` and `vulture` (researched alongside this) are **not applicable**
    to this repo (see the plan doc's summary) -- not carried forward as backlog items.
-6. **Opt-in "trust me, my script is idempotent" fast-discovery mode (way-later; needs its own
-   dedicated design loop, not a quick add).** Raised via a 3rd-party analysis the owner shared
-   (low confidence, no repo access -- see the new README section for the full non-idempotency
-   argument this responds to) proposing a `FAST_RUN=true`-style flag. The core idea has real merit
-   and fits this repo's existing patterns (opt-in, non-default, mirrors `HP_SKIP_ENTRY_SMOKE`/
-   `HP_SKIP_EXE_SMOKERUN`'s super-user-flag shape and the REQ-018 post-execution checkpoint's
-   consent-gated "run it again" pattern) -- but the 3rd party's own actual proposed mechanism (run
-   the script live, catch a `ModuleNotFoundError`, install, rerun from the top, repeat) is
-   explicitly **not adopted**: it non-idempotently re-executes the script's own side effects on
-   every retry, which is exactly the failure mode REQ-018 was built to prevent, and adopting it
-   even behind an opt-in flag would need the flag to be an extremely well-understood, deliberate
-   choice, not a casual perf toggle. If pursued, the better-scoped version combines with item 5
-   above: gate it behind an explicit, non-default flag with clear risk-acknowledging prompt text
-   (never silently defaulted on, never a Prime-Directive gate per the "Env-var flags are
-   scaffolding" rule in `docs/agent-lessons-learned.md`), bound the retry loop the same way the
-   existing hidden-import-recovery loop is bounded (a hard iteration cap, not unbounded), and use
-   it as an *alternative discovery phase* (uv lane initially, live run-catch-install-`uv add
-   --script`-rerun) rather than skipping the PyInstaller build REQ-007 still needs for the EXE
-   deliverable. This is a genuinely useful idea but is its own multi-part design effort (loop
-   bounding, consent copy, idempotency-risk disclosure, interaction with item 5's write-back) --
-   not scheduled now or soon; revisit if item 5 ships first and this becomes a natural extension
-   of it, or if enough users report the existing build-first flow feels too slow for their
-   genuinely-safe scripts.
+6. **Opt-in "trust me, my script is idempotent" fast-discovery mode -- now has a concrete design,
+   see `docs/plan-autopep723-two-tier.md`'s `HP_PVW_KNOWN_IDEMPOTENT` section.** Originally raised
+   via a low-confidence 3rd-party analysis with no repo access proposing a `FAST_RUN=true`-style
+   flag; that early version's actual proposed mechanism (run the script live, catch a
+   `ModuleNotFoundError`, install, rerun from the top, repeat) was correctly rejected here as
+   non-idempotently re-executing the script's own side effects on every retry -- exactly the
+   failure mode REQ-018 exists to prevent. The concrete replacement design in
+   `plan-autopep723-two-tier.md` resolves this cleanly: it does not re-invent the retry mechanism,
+   it reuses the exit-code-branching logic already built, tested across a dozen-plus scenarios,
+   and shipped in README's "PVW QuickStart" section (item 10 below) -- exit 0/2/other-nonzero, only
+   ever destructive on a genuinely malformed header -- relocated into `run_setup.bat` as an opt-in
+   flag, uv lane only, sequenced to be picked up only after both the automatic write-back (item 5)
+   and the QuickStart commands have shipped and proven out. Not scheduled now; the design work
+   itself is done, only the "when to pick this up" decision remains.
 7. **AV-Safe Build Path (PyInstaller quarantine fallback via Nuitka)** -- full PRD at
    `docs/prd-av-safe-build-path.md`. A large, well-specified, preemptive feature (no real user
    report yet, a documented industry-wide problem) covering a two-tier Nuitka fallback when
@@ -650,6 +641,52 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
     Linux); failed-`uv`-install and missing-file error UX are both known-rough, not known-broken
     (though the missing-file case is now confirmed to at least fail into the safe, non-destructive
     branch rather than the strip branch).
+11. **Two-tier `autopep723` integration for `run_setup.bat` itself -- full design at
+    `docs/plan-autopep723-two-tier.md`, deliberately sequenced LAST after items 5 and 10 above
+    both ship and prove out.** Reviewed a user-supplied third-party spec proposing (a) running
+    `autopep723 check` alongside `pipreqs` in the Default Path discovery phase for all users, and
+    (b) an opt-in `HP_PVW_KNOWN_IDEMPOTENT` flag for runtime (execute-mode) discovery inside
+    `run_setup.bat` -- this is the concrete design that supersedes item 10's own deferred "Shape
+    B." Found and fixed two real problems in the source spec before it could be treated as
+    implementation-ready, both via direct testing and source-code reading, not just review:
+    - **The proposed v1 command (`uvx autopep723 check . > requirements.autopep.txt`) is broken as
+      written.** `autopep723` is strictly single-file (confirmed via its own argument parser --
+      no directory/glob mode exists at all); passing `.` hits `Path.read_text()`'s
+      `IsADirectoryError`, silently caught and turned into an empty result with **exit code 0** --
+      confirmed directly, reproducibly. The spec's own "autopep723 fail != lane fail" fallback
+      would never even trigger, since nothing ever reports nonzero. As designed, the merge would
+      be a permanent no-op on every run. Must target the resolved entry file (`%HP_ENTRY%`), never
+      a directory.
+    - **The spec's central claim ("autopep723 check never reports delta, environment-independent")
+      is false as a blanket statement -- confirmed by reading `autopep723`'s actual source
+      (pulled from the local `uv` cache) and by direct reproduction: a venv with only `requests`
+      pre-installed running `autopep723 check` on a script importing `requests` + `click` silently
+      dropped `requests` from the output.** Root cause: `get_builtin_modules()` unions
+      `sys.builtin_module_names` with `pkgutil.iter_modules()`, which walks whatever Python
+      process is actually running the tool -- any package already installed there gets
+      misclassified as "not third-party." Confirmed this is invocation-method-dependent, not
+      universal: `uvx autopep723 check` is immune to an active `VIRTUAL_ENV` (confirmed directly)
+      but still vulnerable to a leaked `PYTHONPATH` (also confirmed directly) -- and a *direct*
+      interpreter invocation (no `uvx`) is not protected at all. Full empirical trail moved to
+      `docs/agent-lessons-learned.md` (new section) since it's a standalone, reusable fact, not
+      specific to this one plan. **Practical resolution**: the source spec's own v1 snippet
+      already used `uvx`, and `run_setup.bat` already clears `PYTHONPATH`/`PYTHONHOME` well before
+      the discovery phase (REQ-010) -- so Tier 1 as corrected is safe as scoped. The spec's own
+      "Future Lanes" section proposing `conda run python -m autopep723 check` (a direct
+      interpreter invocation) is **not** safe and was flagged as needing revision to keep using
+      `uvx` even there, before ever being built. This also resolves, not just caveats, a mystery
+      the requester raised: a collaborator suspected this exact delta bug, lost the specific
+      repro, and couldn't tell if it was a miscommunication -- it wasn't; the bug is real, it's
+      just conditional on invocation method in a way that made it easy to "fix" by accident
+      between test sessions without anyone identifying why.
+
+    What held up unchanged: `uv add --script` over `autopep723 add` for writeback (already
+    established elsewhere), UV-only writeback (no other package manager has an equivalent
+    mechanism), and `HP_PVW_KNOWN_IDEMPOTENT`'s exit-code branching being a relocation of README's
+    already-shipped, already-tested QuickStart logic rather than a new mechanism -- substantially
+    de-risking it relative to a cold proposal. Not implementation-ready (unlike item 5): no
+    code-grounded pass against the live `run_setup.bat` has happened yet; that is the first step
+    whenever this is picked up.
 
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
