@@ -76,6 +76,13 @@ class FindEntrySelection(unittest.TestCase):
         out, _ = _run({"solo.py": "print('hi')\n"})
         self.assertEqual(out, "solo.py")
 
+    def test_apple_double_metadata_file_excluded(self):
+        # "._solo.py" is a macOS AppleDouble metadata sibling left behind when a
+        # Windows user unzips something a Mac user zipped -- must not count as a
+        # second candidate or affect selection.
+        out, _ = _run({"solo.py": "print('hi')\n", "._solo.py": "junk\x00bytes"})
+        self.assertEqual(out, "solo.py")
+
     def test_preferred_wins_over_generic(self):
         out, _ = _run({"zzz.py": "x=1\n", "main.py": "x=1\n"})
         self.assertEqual(out, "main.py")
