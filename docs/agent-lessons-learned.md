@@ -845,3 +845,70 @@ points back here rather than re-deriving these.
 
 None of this is specific to either feature's own design (hook points, dispatch shape, audience) --
 that detail stays in each plan doc, with a pointer back here for the underlying `uv` facts.
+
+---
+
+## `autopep723`'s own import-detection is environment-leaky under direct invocation, safe under `uvx`
+
+Discovered while reviewing a user-supplied third-party design proposing to run `autopep723 check`
+next to `pipreqs` in `run_setup.bat`'s discovery phase (`docs/plan-autopep723-two-tier.md`). The
+third-party document made a blanket claim, backed by an 11-scenario test matrix, that `autopep723
+check` "never reports delta" and is "environment-independent" -- i.e. it always reports the
+complete set of third-party imports regardless of what's already installed. **This claim is false
+as a blanket statement, confirmed by reading `autopep723`'s actual source (pulled from the local
+`uv` cache, not guessed at) and by direct reproduction -- but the truth is narrower and still
+usable.**
+
+`autopep723`'s `get_builtin_modules()` (the function every one of its commands -- `check`, `add`,
+and the default run mode -- calls before filtering "third-party" from "already accounted for")
+does `set(sys.builtin_module_names) | {m.name for m in pkgutil.iter_modules()}`.
+`pkgutil.iter_modules()` walks `sys.path` of **whichever Python process is currently running
+`autopep723` itself** -- so any package already installed in that process's own environment gets
+silently treated as "not third-party" and dropped from the output, even though it's a real
+dependency the target script needs.
+
+**Reproduced directly**: a venv with only `requests` pre-installed, running `autopep723 check` on
+a script that imports both `requests` and `click`, reported only `click` -- `requests` vanished
+from the output with no error, no warning, nothing distinguishing it from "not needed." This is a
+real, silent under-report, not a hypothetical.
+
+**But it depends entirely on invocation method, not on the tool being unreliable in general**:
+- `uvx autopep723 check <file>` (an isolated `uv`-managed tool venv, recreated/reused per-tool
+  rather than sharing the target script's own environment) is **not** fooled by an active
+  `VIRTUAL_ENV` env var pointing at a dirty environment -- confirmed directly: with `VIRTUAL_ENV`
+  set to a venv that already had `requests` installed, `uvx autopep723 check` still correctly
+  reported both `click` and `requests`.
+- It **is** still fooled by a leaked `PYTHONPATH` -- confirmed directly: setting `PYTHONPATH` to a
+  site-packages directory containing `requests` caused `uvx autopep723 check` to drop `requests`
+  from its output, the same silent failure as the direct-invocation case.
+- A **direct** interpreter invocation (`python -m ...`, `%HP_PY% -m autopep723`, `conda run python
+  -m autopep723`, or any invocation sharing the target script's own populated environment) is
+  **not** protected at all -- it reliably reproduces the delta bug for any package already
+  installed in that interpreter's site-packages.
+
+**Practical rule**: only ever invoke `autopep723` (any subcommand) via `uvx`, never via a direct/
+shared interpreter, and only in a context where `PYTHONPATH` is already known-clear. This repo's
+existing `set "PYTHONPATH="` / `set "PYTHONHOME="` near the top of `run_setup.bat` (REQ-010
+isolation, runs long before any discovery-phase code) already satisfies the second condition for
+any `run_setup.bat`-integrated use of `autopep723`. A design that instead proposes invoking it
+directly through a lane's own interpreter (e.g. `conda run python -m autopep723 check` for a
+future conda-lane integration) is **not** safe as written and must be revised to keep using `uvx`
+even there -- see `docs/plan-autopep723-two-tier.md` for where this correction was applied.
+
+**This also resolves an apparent contradiction, not just a caveat**: a user reported working with
+a third party who suspected this exact delta bug, lost the specific reproduction, and could not
+tell whether it was a miscommunication. It wasn't -- the bug is real and reproduces reliably, it
+just depends on invocation method in a way that made it easy to "fix" by accident (switching from
+a direct interpreter to `uvx` between test sessions) without anyone identifying why the behavior
+had changed.
+
+**One more confirmed, load-bearing fact from the same source-reading pass**: `autopep723` has zero
+runtime dependencies of its own (`Requires-Dist` is empty in its distribution metadata), and is
+strictly single-file -- its argument parser (`cli.py`) has no directory, glob, or multi-file mode
+at all. Passing a directory (e.g. `.`) to any subcommand hits `Path.read_text()`'s
+`IsADirectoryError`, which `get_third_party_imports()` catches and turns into an empty result with
+**exit code 0** (not a nonzero failure) -- confirmed directly: `uvx autopep723 check .` prints an
+error to stderr but still emits a valid, empty `# /// script ... # ///` block and exits clean. Any
+design invoking `autopep723` against `run_setup.bat`'s app directory as a whole (rather than the
+specific resolved entry file, e.g. `%HP_ENTRY%`) will silently produce zero discovered
+dependencies on every run, with no error signal a caller could branch on.

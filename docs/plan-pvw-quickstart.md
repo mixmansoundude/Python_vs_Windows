@@ -17,9 +17,11 @@ what was kept, what was simplified, and why.
 this feature -- shares its core `uv` empirical foundation with this doc, consolidated in
 `docs/agent-lessons-learned.md`); `docs/agent-lessons-learned.md`'s "`uv add --script` / PEP 723
 empirical behavior" section (the shared empirical foundation both this doc and the sibling depend
-on -- read that first); README's `## Why "Build-First, Run-Once"? (Design Rationale)` section (the
-existing audience-split argument this plan leans on directly); `CLAUDE.md` Active Backlog (this
-item is linked from there).
+on -- read that first); `docs/plan-autopep723-two-tier.md` (the concrete successor to this doc's
+own "Shape B," sequenced to be picked up only after this doc's commands have had real-world use);
+README's `## Why "Build-First, Run-Once"? (Design Rationale)` section (the existing audience-split
+argument this plan leans on directly); `CLAUDE.md` Active Backlog (this item is linked from
+there).
 
 ---
 
@@ -235,6 +237,14 @@ recommended as the first move, for reasons specific to this file rather than to 
 **Recorded here as the fallback if real usage later shows a standalone script is insufficient**
 (e.g. if super users specifically want it triggered *from* an existing `run_setup.bat` folder
 without a second file to manage) -- not implemented now, not scheduled.
+
+**Superseded by a concrete design: see `docs/plan-autopep723-two-tier.md`'s `HP_PVW_KNOWN_IDEMPOTENT`
+section.** That doc takes exactly this Shape B idea and gives it a name, a precondition (uv lane
+only), and an explicit answer to the REQ-018 concern above (an opt-in, self-declaring-consent flag
+is REQ-019-compliant by construction, and the retry/branch logic it would embed is not new design
+-- it's this doc's own already-shipped, already-tested exit-code branching, just relocated into
+`run_setup.bat`). Deliberately sequenced to be picked up only after this doc's own commands have
+had real-world use -- see that doc's own "Sequencing" section.
 
 ---
 
