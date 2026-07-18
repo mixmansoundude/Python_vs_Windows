@@ -287,6 +287,25 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 
 ---
 
+### PEP 723 Header Write-Back (uv lane)
+
+- REQ-005.11 -- After a fresh, fully-successful dependency install (uv mode only, v1) or a
+  fully-successful warnfix repair round, promote the resolved dependency set into the entry
+  file's own PEP 723 header via `uv add --script`, so the pin becomes part of the user's own
+  source rather than only a transient `requirements.txt`/lock file this bootstrapper manages.
+  Complements REQ-004's PEP 723 as a Tier-1 dependency *source*: REQ-005.11 is the write-back
+  direction, promoting a *resolved* set back into that same header.
+  - Scope gate: only runs when `HP_ENV_MODE=uv`. A partially-failed install or repair round
+    never triggers a write-back (all-or-nothing per round).
+  - Delegates malformed-header detection entirely to `uv`'s own exit code (a strip-and-retry-
+    once sequence on exit 2) rather than a second, bespoke TOML validator.
+  - Best-effort and never gates the Prime Directive: any failure is logged as a `[WARN]` and
+    the run continues exactly as if the feature were absent.
+  - Opt-out: `HP_SKIP_PEP723_WRITEBACK=1` (suppression-only flag, see `[REQ-019]`).
+  - TESTED: `tests/test_pep723_writeback.py`, `tests/selfapps_pep723_writeback.ps1`.
+
+---
+
 ### Design Principles
 
 - Authoritative hierarchy is deterministic: PEP 723 > requirements.txt > pipreqs > none
@@ -531,6 +550,7 @@ Operational knobs, not needed for normal double-click use:
 | `HP_SKIP_ENTRY_SMOKE=1` | Skip the entry-script smoke test (no user code run) | REQ-012 |
 | `HP_SKIP_EXE_SMOKERUN=1` | Skip running the built/cached EXE for verification | REQ-012 |
 | `HP_SKIP_NIVISA=1` | Skip NI-VISA install even when pyvisa/visa is detected | REQ-008 |
+| `HP_SKIP_PEP723_WRITEBACK=1` | Skip the PEP 723 header write-back (`uv add --script`) after a fresh install or warnfix repair | REQ-005.11 |
 | `NOINPUT=1` / `HP_NONINTERACTIVE=1` | Skip the interactive entry picker; take the alphabetical default | REQ-002 |
 
 **This table is not exhaustive -- for awareness only.** More `HP_*` / `PVW_*` / `HP_TEST_*`

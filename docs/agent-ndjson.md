@@ -219,6 +219,18 @@ self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.ove
 self.embed.fallback.decline, self.embed.fallback.real
 ```
 
+## selfapps-pep723-writeback NDJSON rows (selfapps_pep723_writeback.ps1, uv-first lanes)
+
+**Not yet wired into `batch-check.yml`** (Loop 1 of a two-loop split; CI wiring is Loop 2 --
+see `docs/plan-pep723-writeback.md` Part 4 / CLAUDE.md Active Backlog). Run manually via
+`PEP723_SCENARIO=<fresh|idempotent|skipflag> pwsh tests/selfapps_pep723_writeback.ps1` until
+wired. Each row emits `skip=true, reason=provider_not_uv` when `HP_ENV_MODE` did not resolve to
+uv (e.g. a conda-only run), mirroring the established `Get-CondaBatPath` skip pattern.
+
+```
+self.pep723.writeback.fresh, self.pep723.writeback.idempotent, self.pep723.writeback.skipflag
+```
+
 ---
 
 ## Key facts for debugging missing rows
