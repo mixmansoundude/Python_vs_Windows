@@ -537,19 +537,20 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    extending Tier B's pinning pattern anywhere else in this codebase.
 7. **Promote the remaining embedded-only `HP_*` payloads to the canonical-source-plus-
    `PayloadSync`-plus-logic-test pattern (moderate effort, not urgent, but a real, confirmed test-
-   coverage gap) -- two of eight done (`HP_DETECT_PY`, `HP_PYPROJ_DEPS`, see Closed Backlog), four
-   remain.** A payload-inventory audit done alongside the cross-platform-checks review
-   (2026-07-12; see README's "Rebuilding embedded helper payloads" section for the full inventory
-   table now recorded there) found that of 16 embedded `HP_*` payloads, only 6 had a canonical
-   `tools/` source file with a `PayloadSync` byte-equality test (`HP_COLLECT_SUBMODULES`,
-   `HP_EMBED_EXTRACT`, `HP_EMBED_PYVER_CHECK`, `HP_FIND_ENTRY`, `HP_HIDDEN_IMPORT_SCAN`,
-   `HP_PARSE_WARN`). Of the remaining embedded-only payloads, `HP_CONDARC` is static config (not
-   code, doesn't need this), and `HP_FAST_CHECK`/`HP_PREP_REQUIREMENTS` at least have their logic
-   tested in place (`tests/test_fast_check_pattern.py`/`tests/test_heuristics.py`, just not against
-   a separate canonical source) -- but **`HP_DEP_CHECK`, `HP_DETECT_VISA`, `HP_ENV_STATE`, and
-   `HP_FAILFAST_PROBE` currently have zero automated test coverage of any kind**. Recommended
-   approach when picked up: extract each into a `tools/<name>.py` canonical source (mirroring the
-   `collect_submodules.py`/`hidden_import_scan.py` precedent), add a `PayloadSync` test asserting
+   coverage gap) -- three of eight done (`HP_DETECT_PY`, `HP_PYPROJ_DEPS`, `HP_DETECT_VISA`, see
+   Closed Backlog), three remain.** A payload-inventory audit done alongside the
+   cross-platform-checks review (2026-07-12; see README's "Rebuilding embedded helper payloads"
+   section for the full inventory table now recorded there) found that of 16 embedded `HP_*`
+   payloads, only 6 had a canonical `tools/` source file with a `PayloadSync` byte-equality test
+   (`HP_COLLECT_SUBMODULES`, `HP_EMBED_EXTRACT`, `HP_EMBED_PYVER_CHECK`, `HP_FIND_ENTRY`,
+   `HP_HIDDEN_IMPORT_SCAN`, `HP_PARSE_WARN`). Of the remaining embedded-only payloads, `HP_CONDARC`
+   is static config (not code, doesn't need this), and `HP_FAST_CHECK`/`HP_PREP_REQUIREMENTS` at
+   least have their logic tested in place (`tests/test_fast_check_pattern.py`/
+   `tests/test_heuristics.py`, just not against a separate canonical source) -- but
+   **`HP_DEP_CHECK`, `HP_ENV_STATE`, and `HP_FAILFAST_PROBE` currently have zero automated test
+   coverage of any kind**. Recommended approach when picked up: extract each into a
+   `tools/<name>.py` canonical source (mirroring the `collect_submodules.py`/
+   `hidden_import_scan.py` precedent), add a `PayloadSync` test asserting
    embedded-base64-matches-source, and add at least minimal logic-level unit tests -- sized as
    several small, independent loops (one payload at a time), not one big one, since each payload's
    logic is unrelated to the others. Not urgent (no bug has been traced to any of these gaps), but
@@ -657,6 +658,26 @@ the "Build public diagnostics tree" step's own `DIAG CWD`/`DIAG ROOT`/`DIAG TREE
 lines, which naturally show GitHub Actions' inherent doubled checkout path
 (`.../Python_vs_Windows/Python_vs_Windows/...`) -- a runner convention, not a bug. Not chased
 further.)*
+
+10. **`HP_DETECT_VISA`'s import-scan regex has no word-boundary anchor after "vis"/"pyvis" --
+    real, non-hypothetical false-positive, found while promoting the payload to
+    canonical-source-plus-test (see Closed Backlog).** `PATTERNS` in `tools/detect_visa.py` is
+    `r"(?m)^\s*(?:from\s+pyvis|import\s+pyvis)"` and `r"(?m)^\s*import\s+vis"` -- neither has a
+    `\b` after the letters they match, so any import merely STARTING with those characters also
+    triggers REQ-008's NI-VISA driver install branch, not just genuine `pyvisa`/`visa` imports.
+    Confirmed directly: `import pyvista` (a real, popular, unrelated 3D-visualization package)
+    matches both patterns, as does `import vision` or `import pyviscoelastic`. A user whose app
+    imports `pyvista` would unexpectedly hit the NI-VISA installer download/execution path for no
+    reason connected to their actual code -- extra network traffic, extra install time, cluttered
+    logs. Low-risk, well-scoped fix when picked up: add `\b` after each pattern's matched prefix
+    (`r"(?m)^\s*(?:from\s+pyvis\b|import\s+pyvis\b)"` / `r"(?m)^\s*import\s+vis\b"`) -- verify
+    against the same `test_detect_visa.py` false-positive test (currently asserts the CURRENT
+    over-broad behavior; the fix should flip that specific assertion) plus the existing
+    true-positive cases (`import pyvisa`, `from pyvisa import ...`, `import visa`) to confirm the
+    boundary doesn't also break genuine matches. Deliberately not fixed in the same pass that
+    found it (payload-promotion pass), consistent with this file's precedent for the analogous
+    `HP_PYPROJ_DEPS` escape-quote finding (see Closed Backlog) -- a regex behavior change belongs
+    in its own isolated, reviewable commit.
 
 ## Periodic Maintenance Checks (recurring, quarterly)
 
@@ -996,7 +1017,8 @@ Items completed and shipped:
   list). CLOSED by this PR (only the `HP_DETECT_PY` slice; the item stays open in Active Backlog
   for the remaining five payloads).
 - **`HP_PYPROJ_DEPS` promoted to canonical-source-plus-`PayloadSync`-plus-logic-test (second of the
-  payload-promotion backlog item, see Active Backlog item 7 for the remaining four)**: extracted
+  six-payload backlog item, now shipped alongside `HP_DETECT_VISA` below -- see Active Backlog
+  item 7 for the remaining three)**: extracted
   the embedded payload to `tools/pyproj_deps.py`, verified byte-identical to what was already
   embedded (docstring-only addition), then re-encoded and re-synced `run_setup.bat`'s
   `HP_PYPROJ_DEPS` line (3410-char margin under the CMD 8191-char budget). Added
@@ -1028,6 +1050,28 @@ Items completed and shipped:
   CLOSED by this PR (only the `HP_PYPROJ_DEPS` slice; the item stays open in Active Backlog for
   the remaining four payloads: `HP_DEP_CHECK`, `HP_DETECT_VISA`, `HP_ENV_STATE`,
   `HP_FAILFAST_PROBE`).
+- **`HP_DETECT_VISA` promoted to canonical-source-plus-`PayloadSync`-plus-logic-test (third of the
+  six-payload backlog item, see Active Backlog item 7 for the remaining three)**: extracted the
+  embedded payload to `tools/detect_visa.py`, verified byte-identical to what was already embedded
+  (docstring-only addition), then re-encoded and re-synced `run_setup.bat`'s `HP_DETECT_VISA` line
+  (5550-char margin under the CMD 8191-char budget). Added `tests/test_detect_visa.py`: 12 total
+  tests including a `PayloadSync` byte-equality check, exercised via subprocess against a crafted
+  temp project directory (mirrors `test_find_entry.py`'s pattern), covering positive/negative
+  detection, the `~`/`.`-prefixed dir/file skip rules, and recursive nesting. **Found and
+  documented, not fixed, a real (non-hypothetical) false-positive**: `PATTERNS`'s two regexes have
+  no word-boundary anchor after the letters they match (`pyvis`/`vis`), so `import pyvista` (a
+  real, popular, unrelated 3D-visualization package) -- confirmed via direct reproduction, along
+  with `import vision`/`import pyviscoelastic` -- also matches, incorrectly triggering the REQ-008
+  NI-VISA driver install branch for apps that have nothing to do with instrument control. Unlike
+  the `HP_PYPROJ_DEPS` escape-quote finding (genuinely rare in practice), this one is realistically
+  reachable by any user whose app happens to import a `vis`/`pyvis`-prefixed package -- added as a
+  new Active Backlog item 10 (not fixed in this pass, consistent with the escape-quote precedent:
+  a regex behavior change belongs in its own isolated, reviewable commit) with a concrete fix
+  shape (add `\b` after each matched prefix) and the exact existing test that should flip once
+  fixed. Updated README's inventory table (9 of 16 payloads now have canonical source +
+  `PayloadSync`). CLOSED by this PR (only the `HP_DETECT_VISA` promotion slice; the false-positive
+  fix itself is tracked separately as Active Backlog item 10; three payloads remain in item 7:
+  `HP_DEP_CHECK`, `HP_ENV_STATE`, `HP_FAILFAST_PROBE`).
 - **System-directory guard (second and final half of the Cross-platform pre-flight checks item --
   now fully closed)**: `run_setup.bat` now aborts early (`exit /b 1`, plain-language message) when
   the script root resolves under `%WINDIR%`, `%ProgramFiles%`, or `%ProgramFiles(x86)%`. Placed
