@@ -392,8 +392,15 @@ jobs:
       # the gating real lane -- lets these brand-new scenarios prove out in real Windows CI
       # without risking a merge block if an assumption needs adjusting. Promote to real/conda-
       # full once stable, mirroring how self.cascade.exec graduated from uv-lane-only.
+      # derived requirement: each of these 8 steps has its own continue-on-error: true, not
+      # just the job-level one -- confirmed directly via a real CI run that GitHub Actions'
+      # job-level continue-on-error does NOT make sibling steps in the same job resilient to
+      # an earlier step's failure; without a per-step flag, one failing scenario here silently
+      # skipped every step after it in the SAME job, including pre-existing, unrelated tests
+      # (selfapps_warnfix.ps1, selfapps_collect.ps1, selfapps_hidden_import.ps1, ...).
       - name: "Self-test: PEP 723 write-back FRESH scenario (uv lane only)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         env:
           PEP723_SCENARIO: fresh
         shell: pwsh
@@ -402,6 +409,7 @@ jobs:
 
       - name: "Self-test: PEP 723 write-back IDEMPOTENT scenario (uv lane only)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         env:
           PEP723_SCENARIO: idempotent
         shell: pwsh
@@ -410,6 +418,7 @@ jobs:
 
       - name: "Self-test: PEP 723 write-back SKIPFLAG scenario (uv lane only)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         env:
           PEP723_SCENARIO: skipflag
         shell: pwsh
@@ -418,6 +427,7 @@ jobs:
 
       - name: "Self-test: PEP 723 write-back MALFORMED scenario (uv lane only)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         env:
           PEP723_SCENARIO: malformed
         shell: pwsh
@@ -426,6 +436,7 @@ jobs:
 
       - name: "Self-test: PEP 723 write-back TRAILING_WS_MALFORMED scenario (uv lane only)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         env:
           PEP723_SCENARIO: trailing_ws_malformed
         shell: pwsh
@@ -434,6 +445,7 @@ jobs:
 
       - name: "Self-test: PEP 723 write-back EXISTING_LOCKFILE scenario (uv lane only)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         env:
           PEP723_SCENARIO: existing_lockfile
         shell: pwsh
@@ -442,6 +454,7 @@ jobs:
 
       - name: "Self-test: PEP 723 write-back NON_UTF8 scenario (uv lane only)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         env:
           PEP723_SCENARIO: non_utf8
         shell: pwsh
@@ -450,6 +463,7 @@ jobs:
 
       - name: "Self-test: PEP 723 write-back WARNFIX scenario (uv lane only)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         env:
           PEP723_SCENARIO: warnfix
         shell: pwsh

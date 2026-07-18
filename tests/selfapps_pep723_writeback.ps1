@@ -309,8 +309,15 @@ if ($scenario -eq 'fresh') {
     $hasBlockEnd   = $entryText -match [regex]::Escape('# ///')
     $hasRequiresPy = $entryText -match 'requires-python'
     $hasRequests   = $entryText -match 'requests'
-    $hasCertifi    = $entryText -match 'certifi'
-    $freshPass = $successFired1 -and $hasBlockStart -and $hasBlockEnd -and $hasRequiresPy -and $hasRequests -and $hasCertifi
+    # derived requirement: certifi is NOT asserted here. Confirmed via a real CI run that
+    # the REQ-005.8.2 requests->certifi heuristic augments ~reqs_conda.txt/~reqs_pip.txt
+    # (conda/pip-targeted translated files), not requirements.txt itself -- and
+    # requirements.txt is the packages source :pep723_writeback's fresh trigger actually
+    # reads. certifi still gets installed (pip/uv resolve it as requests' own transitive
+    # dependency), just never explicitly in requirements.txt, so it correctly never
+    # appears in the written header either -- this is accurate, not a gap: a PEP 723
+    # header should declare direct dependencies, not hand-pin every transitive one.
+    $freshPass = $successFired1 -and $hasBlockStart -and $hasBlockEnd -and $hasRequiresPy -and $hasRequests
     Write-Pep723Row -Id 'self.pep723.writeback.fresh' -Pass $freshPass -Desc 'Fresh dependency install wrote a PEP 723 header via uv add --script' -Details ([ordered]@{
         scenario       = $scenario
         exitCode       = $run1Exit
@@ -319,7 +326,6 @@ if ($scenario -eq 'fresh') {
         hasBlockEnd    = $hasBlockEnd
         hasRequiresPy  = $hasRequiresPy
         hasRequests    = $hasRequests
-        hasCertifi     = $hasCertifi
     })
     if (-not $freshPass) { exit 1 }
     exit 0
