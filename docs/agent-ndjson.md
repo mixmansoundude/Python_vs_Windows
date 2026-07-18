@@ -221,14 +221,18 @@ self.embed.fallback.decline, self.embed.fallback.real
 
 ## selfapps-pep723-writeback NDJSON rows (selfapps_pep723_writeback.ps1, uv-first lanes)
 
-**Not yet wired into `batch-check.yml`** (Loop 1 of a two-loop split; CI wiring is Loop 2 --
-see `docs/plan-pep723-writeback.md` Part 4 / CLAUDE.md Active Backlog). Run manually via
-`PEP723_SCENARIO=<fresh|idempotent|skipflag> pwsh tests/selfapps_pep723_writeback.ps1` until
-wired. Each row emits `skip=true, reason=provider_not_uv` when `HP_ENV_MODE` did not resolve to
-uv (e.g. a conda-only run), mirroring the established `Get-CondaBatPath` skip pattern.
+Eight scenarios (`PEP723_SCENARIO` env var; see the file's own header comment for the full
+setup/assertion table). `fresh`/`idempotent`/`skipflag` are Loop 1 (the simplest, most
+load-bearing cases); `malformed`/`trailing_ws_malformed`/`existing_lockfile`/`non_utf8`/`warnfix`
+are Loop 2's adversarial-input scenarios (see `docs/plan-pep723-writeback.md` Part 2.3 / Part 4).
+Each row emits `skip=true, reason=provider_not_uv` when `HP_ENV_MODE` did not resolve to uv
+(e.g. a conda-only run), mirroring the established `Get-CondaBatPath` skip pattern.
 
 ```
-self.pep723.writeback.fresh, self.pep723.writeback.idempotent, self.pep723.writeback.skipflag
+self.pep723.writeback.fresh, self.pep723.writeback.idempotent, self.pep723.writeback.skipflag,
+self.pep723.writeback.malformed, self.pep723.writeback.trailing_ws_malformed,
+self.pep723.writeback.existing_lockfile, self.pep723.writeback.non_utf8,
+self.pep723.writeback.warnfix
 ```
 
 ---

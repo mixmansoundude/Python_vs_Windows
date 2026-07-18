@@ -387,6 +387,75 @@ jobs:
         run: |
           & tests\selfapps_warnfix.ps1
 
+      # REQ-005.11: PEP 723 header write-back (uv add --script). v1-scoped to HP_ENV_MODE=uv,
+      # so wired to the dedicated uv lane only (non-gating) for this first CI pass rather than
+      # the gating real lane -- lets these brand-new scenarios prove out in real Windows CI
+      # without risking a merge block if an assumption needs adjusting. Promote to real/conda-
+      # full once stable, mirroring how self.cascade.exec graduated from uv-lane-only.
+      - name: "Self-test: PEP 723 write-back FRESH scenario (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        env:
+          PEP723_SCENARIO: fresh
+        shell: pwsh
+        run: |
+          & tests\selfapps_pep723_writeback.ps1
+
+      - name: "Self-test: PEP 723 write-back IDEMPOTENT scenario (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        env:
+          PEP723_SCENARIO: idempotent
+        shell: pwsh
+        run: |
+          & tests\selfapps_pep723_writeback.ps1
+
+      - name: "Self-test: PEP 723 write-back SKIPFLAG scenario (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        env:
+          PEP723_SCENARIO: skipflag
+        shell: pwsh
+        run: |
+          & tests\selfapps_pep723_writeback.ps1
+
+      - name: "Self-test: PEP 723 write-back MALFORMED scenario (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        env:
+          PEP723_SCENARIO: malformed
+        shell: pwsh
+        run: |
+          & tests\selfapps_pep723_writeback.ps1
+
+      - name: "Self-test: PEP 723 write-back TRAILING_WS_MALFORMED scenario (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        env:
+          PEP723_SCENARIO: trailing_ws_malformed
+        shell: pwsh
+        run: |
+          & tests\selfapps_pep723_writeback.ps1
+
+      - name: "Self-test: PEP 723 write-back EXISTING_LOCKFILE scenario (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        env:
+          PEP723_SCENARIO: existing_lockfile
+        shell: pwsh
+        run: |
+          & tests\selfapps_pep723_writeback.ps1
+
+      - name: "Self-test: PEP 723 write-back NON_UTF8 scenario (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        env:
+          PEP723_SCENARIO: non_utf8
+        shell: pwsh
+        run: |
+          & tests\selfapps_pep723_writeback.ps1
+
+      - name: "Self-test: PEP 723 write-back WARNFIX scenario (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        env:
+          PEP723_SCENARIO: warnfix
+        shell: pwsh
+        run: |
+          & tests\selfapps_pep723_writeback.ps1
+
       - name: "Self-test: pre-build collect-submodules double-gate (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh

@@ -507,22 +507,7 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    creation), and the current fixed order is not wrong, just not optimal in either direction.
    Revisit if the network-correlated-embed-failure pattern shows up for real in CI or user
    reports, rather than speculatively building it now.
-5. **PEP 723 dependency write-back via `uv add --script`** -- full implementation plan at
-   `docs/plan-pep723-writeback.md`. Promotes resolved dependencies into a persistent, authoritative
-   PEP 723 header in the user's own entry `.py` file (using uv's native `uv add --script`) instead
-   of leaving them only in non-authoritative `requirements.auto.txt` -- a second, independently-
-   maintained path to declare dependencies that doesn't depend on `pipreqs`. Scope for v1: uv lane
-   only, best-effort/non-gating, entry file only. Two research/testing passes completed (initial
-   design + scratch-dir verification against uv 0.8.17; a follow-up pass that directly compared uv
-   0.8.17 against current uv 0.11.28 and confirmed real version-drift risk -- e.g. the default
-   write changed from a bare package name to a version-bound one between those releases -- plus a
-   web/GitHub-issues research pass and a code-grounded implementation trace of the actual
-   `run_setup.bat` hook points). **Status: implementation-ready**, sized to fit this repo's "one
-   feature slice per loop" norm (with a suggested two-loop split if the single-loop budget feels
-   tight -- see the plan doc's Part 4). Not yet scheduled for a specific loop; ready whenever
-   picked up. `pip-compile-multi` and `vulture` (researched alongside this) are **not applicable**
-   to this repo (see the plan doc's summary) -- not carried forward as backlog items.
-6. **Opt-in "trust me, my script is idempotent" fast-discovery mode -- now has a concrete design,
+5. **Opt-in "trust me, my script is idempotent" fast-discovery mode -- now has a concrete design,
    see `docs/plan-autopep723-two-tier.md`'s `HP_PVW_KNOWN_IDEMPOTENT` section.** Originally raised
    via a low-confidence 3rd-party analysis with no repo access proposing a `FAST_RUN=true`-style
    flag; that early version's actual proposed mechanism (run the script live, catch a
@@ -531,12 +516,12 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    failure mode REQ-018 exists to prevent. The concrete replacement design in
    `plan-autopep723-two-tier.md` resolves this cleanly: it does not re-invent the retry mechanism,
    it reuses the exit-code-branching logic already built, tested across a dozen-plus scenarios,
-   and shipped in README's "PVW QuickStart" section (item 10 below) -- exit 0/2/other-nonzero, only
+   and shipped in README's "PVW QuickStart" section (item 9 below) -- exit 0/2/other-nonzero, only
    ever destructive on a genuinely malformed header -- relocated into `run_setup.bat` as an opt-in
-   flag, uv lane only, sequenced to be picked up only after both the automatic write-back (item 5)
-   and the QuickStart commands have shipped and proven out. Not scheduled now; the design work
-   itself is done, only the "when to pick this up" decision remains.
-7. **AV-Safe Build Path (PyInstaller quarantine fallback via Nuitka)** -- full PRD at
+   flag, uv lane only, sequenced to be picked up only after both the automatic write-back (now
+   shipped -- REQ-005.11, see Closed Backlog) and the QuickStart commands have proven out. Not
+   scheduled now; the design work itself is done, only the "when to pick this up" decision remains.
+6. **AV-Safe Build Path (PyInstaller quarantine fallback via Nuitka)** -- full PRD at
    `docs/prd-av-safe-build-path.md`. A large, well-specified, preemptive feature (no real user
    report yet, a documented industry-wide problem) covering a two-tier Nuitka fallback when
    PyInstaller's build gets AV-quarantined, including a narrow, well-justified Python-3.12 pin
@@ -550,8 +535,9 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    be permanently frozen into every already-distributed copy of `run_setup.bat`, with no way to
    walk it back later even after the reason for it stops being true. Read that section before
    extending Tier B's pinning pattern anywhere else in this codebase.
-8. **Cross-platform pre-flight checks (low-effort, low-risk, deliberately kept OUT of the PEP 723
-   write-back work -- its own small, fast follow-up loop once that ships).** Raised alongside a
+7. **Cross-platform pre-flight checks (low-effort, low-risk, deliberately kept OUT of the PEP 723
+   write-back work as its own small, fast follow-up loop -- REQ-005.11 has now shipped, see
+   Closed Backlog, so this is ready to pick up).** Raised alongside a
    3rd-party review of the PEP 723 plan (2026-07-12): three cheap, read-only checks worth adding
    near the existing early-warning guards (OneDrive detection, path-length guard, REQ-025 disk
    space) in `run_setup.bat`, all "observe and warn, never silently rewrite" per this repo's
@@ -562,7 +548,7 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
      cross-platform papercut. Fix is a one-line addition to `is_py()`'s existing filter (already
      excludes `~`-prefixed names; add a `._`-prefix exclusion the same way) plus skipping any
      `__MACOSX` directory in the same walk. Needs a `PayloadSync`-covered re-sync of
-     `HP_FIND_ENTRY` afterward (see item 9) and a `tests/test_find_entry.py` case.
+     `HP_FIND_ENTRY` afterward (see item 8) and a `tests/test_find_entry.py` case.
    - **System-directory guard.** No check currently exists for the script root being under
      `%WINDIR%`/`%PROGRAMFILES%` (a user occasionally drops a script into a system folder thinking
      it "installs" it) -- the bootstrapper would just fail cryptically on write-permission errors
@@ -572,7 +558,7 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
      proposed as new work -- **this already exists** (the path-length guard at the top of
      `run_setup.bat`, warning when the script root approaches the 260-char cmd.exe limit). No
      action needed there; noted here only so it isn't rediscovered as a gap later.
-9. **Promote the remaining embedded-only `HP_*` payloads to the canonical-source-plus-
+8. **Promote the remaining embedded-only `HP_*` payloads to the canonical-source-plus-
    `PayloadSync`-plus-logic-test pattern (moderate effort, not urgent, but a real, confirmed test-
    coverage gap).** A payload-inventory audit done alongside the cross-platform-checks review
    (2026-07-12; see README's "Rebuilding embedded helper payloads" section for the full inventory
@@ -594,7 +580,7 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    each payload's logic is unrelated to the others. Not urgent (no bug has been traced to any of
    these gaps), but real, and the highest-value place to start is `HP_DETECT_PY` given how central
    its output is to the rest of the bootstrap.
-10. **PVW QuickStart -- a super-user command set for running/persisting a `.py` file's
+9. **PVW QuickStart -- a super-user command set for running/persisting a `.py` file's
     dependencies with no EXE build, shipped as copy-paste README commands (full design at
     `docs/plan-pvw-quickstart.md`; user-facing commands live in README's "PVW QuickStart" section).**
     Reviewed and independently re-verified a user-supplied third-party "PEP 723 Megacommand"
@@ -641,12 +627,13 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
     Linux); failed-`uv`-install and missing-file error UX are both known-rough, not known-broken
     (though the missing-file case is now confirmed to at least fail into the safe, non-destructive
     branch rather than the strip branch).
-11. **Two-tier `autopep723` integration for `run_setup.bat` itself -- full design at
-    `docs/plan-autopep723-two-tier.md`, deliberately sequenced LAST after items 5 and 10 above
-    both ship and prove out.** Reviewed a user-supplied third-party spec proposing (a) running
+10. **Two-tier `autopep723` integration for `run_setup.bat` itself -- full design at
+    `docs/plan-autopep723-two-tier.md`, deliberately sequenced LAST after the write-back
+    (REQ-005.11, shipped) and item 9 (QuickStart) above both ship and prove out.** Reviewed a
+    user-supplied third-party spec proposing (a) running
     `autopep723 check` alongside `pipreqs` in the Default Path discovery phase for all users, and
     (b) an opt-in `HP_PVW_KNOWN_IDEMPOTENT` flag for runtime (execute-mode) discovery inside
-    `run_setup.bat` -- this is the concrete design that supersedes item 10's own deferred "Shape
+    `run_setup.bat` -- this is the concrete design that supersedes item 9's own deferred "Shape
     B." Found and fixed two real problems in the source spec before it could be treated as
     implementation-ready, both via direct testing and source-code reading, not just review:
     - **The proposed v1 command (`uvx autopep723 check . > requirements.autopep.txt`) is broken as
@@ -684,8 +671,9 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
     established elsewhere), UV-only writeback (no other package manager has an equivalent
     mechanism), and `HP_PVW_KNOWN_IDEMPOTENT`'s exit-code branching being a relocation of README's
     already-shipped, already-tested QuickStart logic rather than a new mechanism -- substantially
-    de-risking it relative to a cold proposal. Not implementation-ready (unlike item 5): no
-    code-grounded pass against the live `run_setup.bat` has happened yet; that is the first step
+    de-risking it relative to a cold proposal. Not implementation-ready (unlike the write-back,
+    REQ-005.11, which shipped via a code-grounded implementation pass): no code-grounded pass
+    against the live `run_setup.bat` has happened yet for this item; that is the first step
     whenever this is picked up.
 
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
@@ -992,6 +980,45 @@ of a second or third pin actually needing it.
 
 Items completed and shipped:
 
+- **PEP 723 dependency write-back via `uv add --script` (REQ-005.11)**: full design at
+  `docs/plan-pep723-writeback.md`. Promotes a resolved dependency set into the entry file's own
+  PEP 723 header after a fresh, fully-successful uv-mode dependency install or a fully-successful
+  warnfix repair round, so the pin becomes part of the user's own source rather than only a
+  transient `requirements.txt`/lock file this bootstrapper manages. v1 scope: `HP_ENV_MODE=uv`
+  only, best-effort/non-gating (any failure logs a `[WARN]` and the run continues unaffected).
+  Shipped in two loops per the plan's own Part 4 sizing split:
+  - **Loop 1** (PR #349): the two hook points (`:pep723_writeback`, called from `:lock_done` for
+    the fresh trigger and from the warnfix repair block for the warnfix trigger), the
+    `HP_UV_INSTALL_OK` confirmed-installed gate (reset on every `:after_env_mode_selection` entry
+    for REQ-009 cascade re-entrancy), `tools/pep723_writeback.py` (embedded as
+    `HP_PEP723_WRITEBACK`; strip-and-retry-once on uv's exit code 2, encoding pre-check, file-lock
+    canary, `.py.lock` sidecar check), the `HP_SKIP_PEP723_WRITEBACK` opt-out flag (`[REQ-019]`),
+    and the three simplest/most load-bearing test scenarios (`fresh`/`idempotent`/`skipflag`).
+    A same-PR self code-review pass (Codex reviewer was unavailable/rate-limited; 8 parallel
+    finder-angle agents against the diff) found and fixed two real, confirmed correctness bugs
+    before merge: `read_packages()` didn't filter pip-only requirement-file directives (`-e`,
+    `--hash`, ...), which exit uv's clap parser with the SAME code 2 used to detect a malformed
+    existing header -- confirmed directly against a real `uv` binary that this would wrongly
+    strip a perfectly valid header; and the exit-code-2 strip/retry path read the entry file in
+    text mode without `newline=""`, silently collapsing all CRLF in the whole file to LF on both
+    the stripped write and the restore-on-double-failure write, violating the feature's own "no
+    line-ending normalization, anywhere, ever" rule -- also confirmed via direct repro. Also added
+    a `subprocess` timeout on the `uv add --script` call (same bug class already fixed once for
+    `tools/embed_pyver_check.py`) and reordered `:pep723_writeback`'s gate checks so a
+    dependency-free (stdlib-only) app no longer gets a misleading "install did not fully succeed"
+    log line.
+  - **Loop 2**: the five adversarial-input test scenarios (`malformed`, `trailing_ws_malformed`,
+    `existing_lockfile`, `non_utf8`, `warnfix`) and CI wiring. Confirmed via direct local testing
+    (a scratch `pipreqs` 0.4.13 venv, built from wheels since docopt's sdist doesn't build under
+    modern setuptools) that pipreqs crashes with an unhandled `UnicodeDecodeError` on non-UTF-8
+    source regardless of a PEP 263 coding-cookie override -- a pre-existing limitation independent
+    of this feature, not fixed here -- so the `non_utf8` and `warnfix` scenarios set
+    `HP_SKIP_PIPREQS=1` to keep pipreqs away from the crafted entry file entirely. Wired into the
+    non-gating `uv` lane only for this first CI pass (not the gating `real` lane) so these
+    brand-new scenarios can prove out in real Windows CI without risking a merge block; promoting
+    to `real`/`conda-full` is a natural follow-up once stable, mirroring how `self.cascade.exec`
+    graduated from uv-lane-only. `pip-compile-multi` and `vulture` (researched alongside the
+    original design) were **not applicable** to this repo and were not carried forward.
 - **Three small hardening/cleanup items from the reorder's research pass**: (1)
   `:conda_base_update`'s inline `-Command` PowerShell (run_setup.bat, `:conda_base_update`)
   rewritten to raw .NET APIs (`[System.IO.File]::Exists`/`ReadAllText`/`WriteAllText`,
