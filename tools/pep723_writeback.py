@@ -21,6 +21,11 @@ def read_packages(path):
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
+                # pip directives (-e, -r, --hash, ...) exit 2 from uv's clap
+                # parser same as malformed TOML -- filter or main() wrongly
+                # strips a valid header. Real specs never start with '-'.
+                if line.startswith("-"):
+                    continue
                 packages.append(line)
     except OSError:
         pass
@@ -54,7 +59,12 @@ def strip_pep723_block(text):
 def run_uv_add(entry_path, uv_exe, python_exe, packages):
     """Invoke `uv add --script` once; return (returncode, stderr_text)."""
     cmd = [uv_exe, "add", "--script", entry_path, "-p", python_exe] + packages
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        # Bounded like other network-touching helpers here (embed_pyver_check.py
+        # socket timeout) -- a stalled uv call must not hang the bootstrap.
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return 1, "timeout"
     # astral-sh/uv#15956: a benign VIRTUAL_ENV mismatch warning can appear on stderr
     # with exit code 0 -- stderr text is never itself a failure signal, only the
     # process return code is.
@@ -77,17 +87,13 @@ def main(argv=None):
     try:
         with open(entry_path, encoding="utf-8") as fh:
             fh.read()
-    except UnicodeDecodeError:
-        print("SKIP:non_utf8")
-        return 0
-    except OSError:
+    except (UnicodeDecodeError, OSError):
         print("SKIP:non_utf8")
         return 0
 
-    # File-lock canary: diagnostic-quality only. A locked file already falls safely
-    # into the generic ERROR:uv_rc_<n> path below; this just gives a clearer reason.
-    # Accepted TOCTOU race: the lock could be acquired after this check and before
-    # the uv call -- the fallback is the same already-safe generic error path.
+    # File-lock canary: diagnostic-quality only, gives a clearer reason than the
+    # generic ERROR:uv_rc_<n> path below. Accepted TOCTOU race (lock could be
+    # acquired after this check) falls back to that same safe generic path.
     try:
         with open(entry_path, "r+b"):
             pass
@@ -106,13 +112,14 @@ def main(argv=None):
         print("OK:%d" % len(packages))
         return 0
     if rc == 2:
-        # astral-sh/uv#10918 / astral-sh/uv#19544: exit 2 is uv's own signal that the
-        # existing header is unparseable TOML -- the one case where starting over is
-        # correct. Any other exit code is a different failure class and must not
-        # strip anything (see docs/plan-pep723-writeback.md Part 3 addendum: exit 2
-        # is also produced by a non-UTF-8 file, already intercepted above).
+        # astral-sh/uv#10918 / #19544: exit 2 is uv's signal the existing header
+        # is unparseable TOML -- the one case where starting over is correct.
+        # Any other exit code must not strip anything.
         try:
-            with open(entry_path, "r", encoding="utf-8", errors="ignore") as fh:
+            # newline="" keeps CRLF intact on read -- without it, both the
+            # stripped write and the restore-on-double-failure write below
+            # would silently normalize the whole file's line endings to LF.
+            with open(entry_path, "r", encoding="utf-8", errors="ignore", newline="") as fh:
                 original = fh.read()
         except OSError:
             print("ERROR:strip_retry_failed:read")
@@ -128,11 +135,9 @@ def main(argv=None):
         if rc2 == 0:
             print("OK:%d" % len(packages))
             return 0
-        # Retry also failed -- restore the original (still-malformed) header rather
-        # than leave the file permanently stripped. Matches the same restore-on-
-        # double-failure guarantee already established for the standalone PVW
-        # QuickStart commands (docs/plan-pvw-quickstart.md); never delete more of
-        # the user's file than the feature actually needed to.
+        # Retry also failed -- restore original (still-malformed) content rather
+        # than leave the file permanently stripped (mirrors PVW QuickStart's own
+        # restore-on-double-failure guarantee).
         try:
             with open(entry_path, "w", encoding="utf-8", newline="") as fh:
                 fh.write(original)

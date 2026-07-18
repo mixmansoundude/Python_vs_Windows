@@ -9,6 +9,7 @@ test_hidden_import_scan.py).
 """
 import base64
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +44,19 @@ class ReadPackages(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = self._write(tmp, "  requests  \n\tclick\t\n")
             self.assertEqual(read_packages(path), ["requests", "click"])
+
+    def test_pip_directives_filtered(self):
+        # -e, -r, --hash, --index-url etc. are not PEP 508 specs and make uv's
+        # clap parser exit 2 (the same code used to detect a malformed existing
+        # header) -- confirmed directly against a real uv binary. Must be
+        # filtered so a user's own requirements.txt containing one of these
+        # doesn't cause main() to wrongly strip a valid header.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(
+                tmp,
+                "requests\n-e .\n--hash=sha256:deadbeef\n-r other.txt\ncertifi\n",
+            )
+            self.assertEqual(read_packages(path), ["requests", "certifi"])
 
 
 class StripPep723Block(unittest.TestCase):
@@ -170,7 +184,7 @@ class MainUvDispatch(unittest.TestCase):
             )
             calls = {"n": 0}
 
-            def fake_run(cmd, capture_output, text):
+            def fake_run(cmd, capture_output, text, timeout=None):
                 calls["n"] += 1
                 result = unittest.mock.Mock()
                 result.returncode = 2 if calls["n"] == 1 else 0
@@ -191,7 +205,7 @@ class MainUvDispatch(unittest.TestCase):
             original = "# /// script\nbroken toml (((\n# ///\nprint('hi')\n"
             entry, pkgs = self._entry_and_pkgs(tmp, entry_text=original)
 
-            def fake_run(cmd, capture_output, text):
+            def fake_run(cmd, capture_output, text, timeout=None):
                 result = unittest.mock.Mock()
                 result.returncode = 2
                 result.stderr = ""
@@ -204,6 +218,64 @@ class MainUvDispatch(unittest.TestCase):
             mock_print.assert_called_once_with("ERROR:strip_retry_failed:2")
             # Original (still-malformed) content must be restored byte-for-byte.
             self.assertEqual(entry.read_text(encoding="utf-8"), original)
+
+    def test_malformed_header_strip_and_retry_preserves_crlf(self):
+        # Regression test: a text-mode read without newline="" would collapse
+        # all CRLF in the file to LF before the stripped write, silently
+        # violating the "no line-ending normalization, anywhere, ever" rule.
+        with tempfile.TemporaryDirectory() as tmp:
+            entry, pkgs = self._entry_and_pkgs(tmp)
+            entry.write_bytes(
+                b"# /// script\r\nbroken toml (((\r\n# ///\r\nprint('hi')\r\n"
+            )
+            calls = {"n": 0}
+
+            def fake_run(cmd, capture_output, text, timeout=None):
+                calls["n"] += 1
+                result = unittest.mock.Mock()
+                result.returncode = 2 if calls["n"] == 1 else 0
+                result.stderr = ""
+                return result
+
+            with patch("tools.pep723_writeback.subprocess.run", side_effect=fake_run):
+                with patch("builtins.print"):
+                    rc = main([str(entry), "uv", "python3", str(pkgs)])
+            self.assertEqual(rc, 0)
+            after = entry.read_bytes()
+            self.assertIn(b"\r\n", after)
+            self.assertNotIn(b"# /// script", after)
+
+    def test_double_failure_restore_preserves_crlf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            entry, pkgs = self._entry_and_pkgs(tmp)
+            original = b"# /// script\r\nbroken toml (((\r\n# ///\r\nprint('hi')\r\n"
+            entry.write_bytes(original)
+
+            def fake_run(cmd, capture_output, text, timeout=None):
+                result = unittest.mock.Mock()
+                result.returncode = 2
+                result.stderr = ""
+                return result
+
+            with patch("tools.pep723_writeback.subprocess.run", side_effect=fake_run):
+                with patch("builtins.print"):
+                    rc = main([str(entry), "uv", "python3", str(pkgs)])
+            self.assertEqual(rc, 1)
+            self.assertEqual(entry.read_bytes(), original)
+
+    def test_timeout_treated_as_generic_error_no_hang(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            entry, pkgs = self._entry_and_pkgs(tmp)
+            before = entry.read_bytes()
+            with patch(
+                "tools.pep723_writeback.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="uv", timeout=120),
+            ):
+                with patch("builtins.print") as mock_print:
+                    rc = main([str(entry), "uv", "python3", str(pkgs)])
+            self.assertEqual(rc, 1)
+            mock_print.assert_called_once_with("ERROR:uv_rc_1")
+            self.assertEqual(entry.read_bytes(), before)
 
     def test_other_nonzero_exit_is_generic_error_no_mutation(self):
         with tempfile.TemporaryDirectory() as tmp:
