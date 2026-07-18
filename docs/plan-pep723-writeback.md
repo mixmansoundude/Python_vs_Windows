@@ -459,6 +459,34 @@ empirically (Part 3) rather than assuming.
 
 ---
 
+## Part 3 addendum (2026-07-18, against uv 0.8.17): re-verification before Loop 1 implementation
+
+Re-ran the checklist below directly before writing any code, per this section's own instruction.
+No design changes resulted -- every assumption Part 2 depends on still holds under current `uv`.
+
+- **Idempotency, malformed-header exit 2 + untouched-file, and the trailing-whitespace fence
+  (#10918) case**: all reconfirmed directly in this session (multiple independent tests across
+  the PVW QuickStart and two-tier-autopep723 research phases), consistent with Part 1's findings.
+- **`requires-python` one-time-write + `-p` control, reconfirmed freshly for this pass**: `uv add
+  --script file.py -p 3.12 requests` set `requires-python = ">=3.12"` on first creation; a second
+  `add` with `-p 3.11 click` did NOT change it (stayed `>=3.12`, uv printed a compatibility warning
+  but proceeded) -- confirms the plan's assumption that `-p` only matters on first-ever creation.
+- **New for this pass, resolving Part 2.1 step 2's open question: `uv add --script` on a
+  deliberately non-UTF-8-encoded file errors safely, exit code 2, file left byte-for-byte
+  untouched** (`error: invalid utf-8 sequence of 1 bytes from index 38`). This confirms the
+  encoding pre-check is not purely defensive insurance the way the original text hedged -- **exit
+  code 2 is not exclusive to malformed TOML; a non-UTF-8 file also produces it.** Without the
+  encoding pre-check running *before* the uv call (helper step 2, which it already does per the
+  design), a non-UTF-8 file would be indistinguishable from a malformed header at the exit-code
+  level and would incorrectly enter the strip-and-retry path. The pre-check is load-bearing, not
+  optional insurance -- ship it as designed, and treat this as confirmation rather than a required
+  design change.
+- **`--no-sync` no-op status and no-package-existence-validation**: not independently re-run this
+  pass (both are low-risk, stable, and orthogonal to everything re-tested above); carried forward
+  from Pass 1 without fresh re-verification.
+- **`.py.lock` filename convention and auto-rewrite side effect**: reconfirmed earlier in this same
+  session (mtime/content-hash change on an existing lockfile after an unrelated `add` call).
+
 ## Part 3: Required first step before writing any code
 
 Before writing any `run_setup.bat` or helper code, the implementer must re-run an abbreviated

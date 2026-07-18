@@ -264,6 +264,11 @@ rem HP_TEST_CHECKPOINT_ANSWER=Y|N: bypasses the REQ-018 post-execution checkpoin
 rem testing (mirrors HP_TEST_SYSBUILD_ANSWER/HP_TEST_SYSCON_ANSWER). Checked before HP_CI_LANE so
 rem an explicit Y reaches the accept branch even in CI.
 set "HP_TEST_CHECKPOINT_ANSWER=%HP_TEST_CHECKPOINT_ANSWER%"
+rem HP_SKIP_PEP723_WRITEBACK=1: REQ-005.11/[REQ-019] opt-out -- skip the PEP 723 header
+rem write-back (uv add --script) that otherwise runs after a fresh dependency install or a
+rem successful warnfix repair in uv mode. Suppression-only, per [REQ-019]: absence never
+rem blocks a Prime-Directive-needed behavior; setting this only disables an optional step.
+set "HP_SKIP_PEP723_WRITEBACK=%HP_SKIP_PEP723_WRITEBACK%"
 
 rem derived requirement: CI's conda-only lane must surface conda regressions instead of masking them with opt-in fallbacks.
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
@@ -1249,6 +1254,10 @@ rem environment lock file already contains every package pipreqs detected.
 rem goto is used to avoid %errorlevel% parse-time expansion inside parenthesized blocks.
 set "HP_DEP_SKIP="
 set "HP_DEP_RESULT="
+rem REQ-005.11: reset on every entry to this label (including REQ-009 provider-cascade
+rem re-entry) so a stale HP_UV_INSTALL_OK from a previous, now-abandoned uv attempt can
+rem never satisfy :pep723_writeback's confirmed-installed gate for an unrelated trigger.
+set "HP_UV_INSTALL_OK="
 if not "%HP_ENV_MODE%"=="conda" if not "%HP_ENV_MODE%"=="uv" goto :dep_check_done
 call :emit_from_base64 "~dep_check.py" HP_DEP_CHECK
 if errorlevel 1 goto :dep_check_done
@@ -1316,7 +1325,14 @@ if exist "requirements.txt" (
         call :log "[WARN] uv pip install -r requirements.txt failed; some packages may be missing."
         set "UV_FALLBACK_REASON=dep_install_failed"
         call :log "[WARN] UV_FALLBACK reason=dep_install_failed"
+      ) else (
+        rem REQ-005.11: install fully succeeded; PEP 723 write-back may run for this round.
+        set "HP_UV_INSTALL_OK=1"
       )
+    ) else (
+      rem REQ-005.11: HP_DEP_SKIP means the lock already satisfied every package -- still a
+      rem confirmed-installed state, not a failure to distinguish from a genuine install.
+      set "HP_UV_INSTALL_OK=1"
     )
     call :log "[INFO] UV_USED=1"
   ) else if "%HP_ENV_MODE%"=="embed" (
@@ -1379,6 +1395,10 @@ if "%HP_LOCK_RC%"=="0" (
   if exist "~environment.lock.txt" del "~environment.lock.txt" >nul 2>&1
 )
 :lock_done
+rem REQ-005.11: fresh-install PEP 723 write-back trigger. Must run after the lock
+rem snapshot above (HP_UV_INSTALL_OK is set during dependency install, further up
+rem this same :after_env_mode_selection scope) and before pyvisa detection below.
+call :pep723_writeback fresh
 rem Detect pyvisa/visa usage so harness sees NI-VISA requirements
 
 call :emit_from_base64 "~detect_visa.py" HP_DETECT_VISA
@@ -2927,6 +2947,10 @@ if not defined HP_BUILD_OK (
       call :log "[INFO] Rebuilding standalone executable after warnfix -- this may take a minute or two..."
       "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
       call :log "[REPAIR] rebuild complete after warnfix."
+      rem REQ-005.11: warnfix-trigger PEP 723 write-back. Must run here, not later --
+      rem ~missing_modules.txt and ~warnfix_repair_failed.flag are both still on disk at
+      rem this point and are deleted shortly after (see below).
+      call :pep723_writeback warnfix
       rem REQ-009/REQ-005.10 (slice 1: detect only): flag when this provider could not
       rem resolve all modules. Must run before the repair-failed flag is deleted (next line).
       call :warnfix_cascade_detect
@@ -3104,6 +3128,86 @@ if defined HP_CASCADE_APPROVED call :log "[INFO] REQ-009: cascade approved; will
 if defined HP_CASCADE_CANDIDATE if not defined HP_CASCADE_APPROVED call :log "[INFO] REQ-009: cascade declined; keeping current build."
 if exist "~missing_after.txt" del "~missing_after.txt" >nul 2>&1
 exit /b 0
+:pep723_writeback
+rem REQ-005.11: promotes resolved dependencies into %HP_ENTRY%'s PEP 723 header via
+rem uv add --script; see docs/plan-pep723-writeback.md Part 2. Called with one argument,
+rem 'fresh' or 'warnfix', for log-message differentiation only. Goto-based dispatch, not
+rem nested parens, per the established cascade-dispatch convention (docs/agent-lessons-
+rem learned.md "Provider-cascade dispatch is goto-based on purpose").
+set "HP_PEP723_TRIGGER=%~1"
+rem v1 scope gate: uv lane only. Silent -- no log line, to avoid noise on every non-uv run.
+if not "%HP_ENV_MODE%"=="uv" exit /b 0
+if defined HP_SKIP_PEP723_WRITEBACK (
+  call :log "[INFO] REQ-005.11: PEP 723 write-back skipped (HP_SKIP_PEP723_WRITEBACK set)."
+  exit /b 0
+)
+rem Defensive; technically unreachable given call-site ordering, cheap insurance only.
+if defined HP_CI_SKIP_ENV exit /b 0
+if not defined HP_UV_EXE exit /b 0
+if not defined HP_ENTRY exit /b 0
+if not exist "%HP_ENTRY%" exit /b 0
+rem All-or-nothing confirmed-installed gate per trigger (see Part 2.0 point 3): never
+rem write back from a partially-failed round.
+if /I "%HP_PEP723_TRIGGER%"=="fresh" if not defined HP_UV_INSTALL_OK (
+  call :log "[INFO] REQ-005.11: PEP 723 write-back skipped (dependency install did not fully succeed)."
+  exit /b 0
+)
+if /I "%HP_PEP723_TRIGGER%"=="warnfix" if exist "~warnfix_repair_failed.flag" (
+  call :log "[INFO] REQ-005.11: PEP 723 write-back skipped (one or more warnfix repairs failed)."
+  exit /b 0
+)
+set "HP_PEP723_PKGS_SRC="
+if /I "%HP_PEP723_TRIGGER%"=="fresh" set "HP_PEP723_PKGS_SRC=requirements.txt"
+if /I "%HP_PEP723_TRIGGER%"=="warnfix" set "HP_PEP723_PKGS_SRC=~missing_modules.txt"
+if not defined HP_PEP723_PKGS_SRC exit /b 0
+if not exist "%HP_PEP723_PKGS_SRC%" exit /b 0
+if exist "~pep723_pkgs.txt" del "~pep723_pkgs.txt" >nul 2>&1
+copy /y "%HP_PEP723_PKGS_SRC%" "~pep723_pkgs.txt" >nul 2>&1
+if errorlevel 1 goto :pep723_writeback_cleanup
+call :emit_from_base64 "~pep723_writeback.py" HP_PEP723_WRITEBACK
+if errorlevel 1 goto :pep723_writeback_cleanup
+if exist "~pep723_result.txt" del "~pep723_result.txt" >nul 2>&1
+"%HP_PY%" "~pep723_writeback.py" "%HP_ENTRY%" "%HP_UV_EXE%" "%HP_PY%" "~pep723_pkgs.txt" > "~pep723_result.txt" 2>> "%LOG%"
+set "HP_PEP723_RESULT="
+for /f "usebackq delims=" %%R in ("~pep723_result.txt") do set "HP_PEP723_RESULT=%%R"
+if exist "~pep723_result.txt" del "~pep723_result.txt" >nul 2>&1
+if exist "~pep723_writeback.py" del "~pep723_writeback.py" >nul 2>&1
+if not defined HP_PEP723_RESULT (
+  call :log "[WARN] REQ-005.11: PEP 723 write-back helper produced no output; continuing."
+  goto :pep723_writeback_cleanup
+)
+if "%HP_PEP723_RESULT:~0,3%"=="OK:" (
+  call :log "[INFO] REQ-005.11: PEP 723 header write-back succeeded via uv add --script."
+  goto :pep723_writeback_cleanup
+)
+if "%HP_PEP723_RESULT%"=="SKIP:no_packages" (
+  call :log "[INFO] REQ-005.11: PEP 723 write-back skipped (no packages to write)."
+  goto :pep723_writeback_cleanup
+)
+if "%HP_PEP723_RESULT%"=="SKIP:non_utf8" (
+  call :log "[INFO] REQ-005.11: PEP 723 write-back skipped (entry file is not UTF-8)."
+  goto :pep723_writeback_cleanup
+)
+if "%HP_PEP723_RESULT%"=="SKIP:file_locked" (
+  call :log "[INFO] REQ-005.11: PEP 723 write-back skipped (entry file is locked)."
+  goto :pep723_writeback_cleanup
+)
+if "%HP_PEP723_RESULT%"=="SKIP:lockfile" (
+  call :log "[INFO] REQ-005.11: PEP 723 write-back skipped (a .py.lock sidecar already exists)."
+  goto :pep723_writeback_cleanup
+)
+if "%HP_PEP723_RESULT:~0,6%"=="ERROR:" (
+  call :log "[WARN] REQ-005.11: PEP 723 header write-back failed (%HP_PEP723_RESULT%); continuing."
+  goto :pep723_writeback_cleanup
+)
+call :log "[WARN] REQ-005.11: PEP 723 header write-back returned an unrecognized result; continuing."
+:pep723_writeback_cleanup
+if exist "~pep723_pkgs.txt" del "~pep723_pkgs.txt" >nul 2>&1
+set "HP_PEP723_TRIGGER="
+set "HP_PEP723_PKGS_SRC="
+set "HP_PEP723_RESULT="
+exit /b 0
+
 :cascade_consent_gate
 rem REQ-009/REQ-005.10: require explicit consent before cascading to the next provider tier.
 rem CI-safe (mirrors :conda_binary_corrupt heal prompt): HP_TEST_CASCADE_ANSWER (Y/N) overrides;
@@ -3451,6 +3555,9 @@ set "HP_COLLECT_SUBMODULES=IiIiY29sbGVjdF9zdWJtb2R1bGVzIHYxICgyMDI2LTA2LTI3KQpQc
 rem ~hidden_import_scan.py decides the next --hidden-import target from a frozen EXE
 rem stderr: strict ModuleNotFoundError + the module must be installed in the build env.
 set "HP_HIDDEN_IMPORT_SCAN=IiIiaGlkZGVuX2ltcG9ydF9zY2FuIHYxICgyMDI2LTA2LTI4KQpEZWNpZGUgdGhlIG5leHQgLS1oaWRkZW4taW1wb3J0IHRhcmdldCBmcm9tIGEgZnJvemVuIEVYRSdzIHN0ZGVyciwgZm9yIHRoZQpTbGljZSAyIGF1dG8tcmVjb3ZlcnkgbG9vcCBpbiBydW5fc2V0dXAuYmF0LgoKU1RSSUNUIGFuZCBET1VCTEUtR0FURUQgb24gcHVycG9zZToKICAoMSkgVGhlIEVYRSBzdGRlcnIgbXVzdCBjb250YWluIGBNb2R1bGVOb3RGb3VuZEVycm9yOiBObyBtb2R1bGUgbmFtZWQgJ1gnYC4KICAgICAgVGhhdCBpcyB0aGUgZGV0ZXJtaW5pc3RpYyAiWCdzIGNvZGUgaXMgbm90IGluIHRoZSBidW5kbGUiIHNpZ25hbCAtLQogICAgICBQeUluc3RhbGxlciBsZWZ0IFggb3V0LCBhbmQgYC0taGlkZGVuLWltcG9ydD1YYCBpcyB0aGUgZXhhY3Qgc3RydWN0dXJhbCBmaXguCiAgKDIpIFggKGl0cyB0b3AtbGV2ZWwgcGFja2FnZSkgbXVzdCBiZSBpbXBvcnRhYmxlIGluIHRoZSBCVUlMRCBpbnRlcnByZXRlcgogICAgICAoZmluZF9zcGVjKS4gSWYgWCBpcyBub3QgaW5zdGFsbGVkLCB0aGlzIGlzIGEgdXNlciB0eXBvIG9yIGEgZ2VudWluZWx5CiAgICAgIG1pc3NpbmcgZGVwZW5kZW5jeSAtLSBOT1QgYSBwYWNrYWdpbmcgbWlzcyAtLSBzbyB3ZSBlbWl0IG5vdGhpbmcgYW5kIGxldAogICAgICB0aGUgcG9zdC1mbGlnaHQgaGludHMgc3VyZmFjZSB0aGUgc3RhY2sgdHJhY2UuIFRoaXMgaXMgd2hhdCBtYWtlcyBhIHR5cG8KICAgICAgbGlrZSBgaW1wb3J0IG5vbmV4aXN0YW50YCBjb3N0IFpFUk8gcmVidWlsZHMuCiAgKDMpIFggbXVzdCBub3QgYWxyZWFkeSBiZSBpbiB0aGUgYWxyZWFkeS10cmllZCBsaXN0IChubyBsb29wcykuCiAgKDQpIFggbXVzdCBub3QgYmUgYSBwbGF0Zm9ybS9zdGRsaWIgc2hpbSBsZWdpdGltYXRlbHkgYWJzZW50IG9uIFdpbmRvd3MuCgpEZWxpYmVyYXRlbHkgTk9UIGhhbmRsZWQ6IGBJbXBvcnRFcnJvcjogY2Fubm90IGltcG9ydCBuYW1lICdZJyBmcm9tICdaJ2AuIFogaXMKYWxyZWFkeSBidW5kbGVkIGFuZCBZIGlzIGFuIGF0dHJpYnV0ZSwgbm90IGEgbW9kdWxlLCBzbyBubyAtLWhpZGRlbi1pbXBvcnQKdGFyZ2V0IGlzIGRlcml2YWJsZSBhbmQgYSByZWJ1aWxkIGNhbm5vdCBmaXggaXQuIFN1Y2ggZXJyb3JzIGFyZSB1c2VyIGNvZGUKKHR5cG9zLCBjaXJjdWxhciBpbXBvcnRzLCB2ZXJzaW9uIGRyaWZ0KSBvciBkeW5hbWljLXN1Ym1vZHVsZSBnYXBzIGJldHRlciBmaXhlZApieSAtLWNvbGxlY3Qtc3VibW9kdWxlcyAoaGFuZGxlZCBzZXBhcmF0ZWx5KS4gVGhleSByb3V0ZSB0byBoaW50cyB1bmNoYW5nZWQuCgpVc2FnZTogcHl0aG9uIH5oaWRkZW5faW1wb3J0X3NjYW4ucHkgPHN0ZGVycl9maWxlPiBbYWxyZWFkeV90cmllZCAuLi5dClByaW50cyB0aGUgbmV4dCBoaWRkZW4taW1wb3J0IG1vZHVsZSBuYW1lIChvciBub3RoaW5nKSB0byBzdGRvdXQuCiIiIgpfX3ZlcnNpb25fXyA9ICJoaWRkZW5faW1wb3J0X3NjYW4gdjEgKDIwMjYtMDYtMjgpIgpfX2FsbF9fID0gWyJTS0lQIiwgIm5leHRfaGlkZGVuX2ltcG9ydCIsICJtYWluIl0KCmltcG9ydCBpbXBvcnRsaWIudXRpbAppbXBvcnQgcmUKaW1wb3J0IHN5cwoKIyBQbGF0Zm9ybS9zdGRsaWIgbW9kdWxlcyBsZWdpdGltYXRlbHkgYWJzZW50IG9uIFdpbmRvd3MgLS0gbmV2ZXIgYSBwYWNrYWdpbmcKIyBtaXNzLCBzbyBuZXZlciBoaWRkZW4taW1wb3J0IHRoZW0gKG1pcnJvciBvZiB0aGUgcGFyc2Vfd2FybiB1bml4LW9ubHkgc2V0KS4KU0tJUCA9IGZyb3plbnNldChbCiAgICAiZ3JwIiwgInB3ZCIsICJwb3NpeCIsICJyZXNvdXJjZSIsICJmY250bCIsICJyZWFkbGluZSIsICJ0ZXJtaW9zIiwgInR0eSIsCiAgICAicHR5IiwgImNyeXB0IiwgInNwd2QiLCAibmlzIiwgInN5c2xvZyIsICJvc3NhdWRpb2RldiIsCiAgICAiX3Bvc2l4c3VicHJvY2VzcyIsICJfc2Nwcm94eSIsICJfZnJvemVuX2ltcG9ydGxpYl9leHRlcm5hbCIsCl0pCgojIE9ubHkgTW9kdWxlTm90Rm91bmRFcnJvciAtLSBOT1QgYSBiYXJlIEltcG9ydEVycm9yIChzZWUgbW9kdWxlIGRvY3N0cmluZykuCl9QQVRURVJOID0gcmUuY29tcGlsZSgKICAgIHIiTW9kdWxlTm90Rm91bmRFcnJvcjogTm8gbW9kdWxlIG5hbWVkIFsnXCJdKFteJ1wiXSspWydcIl0iCikKCgpkZWYgX2lzX2luc3RhbGxlZChuYW1lKToKICAgICIiIlRydWUgaWYgbmFtZSBpcyBpbXBvcnRhYmxlIGluIHRoZSBjdXJyZW50IChidWlsZCkgaW50ZXJwcmV0ZXIuIiIiCiAgICB0cnk6CiAgICAgICAgcmV0dXJuIGltcG9ydGxpYi51dGlsLmZpbmRfc3BlYyhuYW1lKSBpcyBub3QgTm9uZQogICAgZXhjZXB0IChJbXBvcnRFcnJvciwgVmFsdWVFcnJvciwgQXR0cmlidXRlRXJyb3IpOgogICAgICAgIHJldHVybiBGYWxzZQoKCmRlZiBuZXh0X2hpZGRlbl9pbXBvcnQoc3RkZXJyX3RleHQsIGFscmVhZHlfdHJpZWQ9KCksIGluc3RhbGxlZF9jaGVjaz1Ob25lKToKICAgICIiIlJldHVybiB0aGUgbmV4dCAtLWhpZGRlbi1pbXBvcnQgbW9kdWxlIG5hbWUsIG9yICIiIGlmIG5vbmUgaXMgZml4YWJsZS4KCiAgICBpbnN0YWxsZWRfY2hlY2sgaXMgaW5qZWN0YWJsZSBmb3IgdGVzdGluZyBzbyB0aGUgZmluZF9zcGVjIGdhdGUgY2FuIGJlCiAgICBleGVyY2lzZWQgd2l0aG91dCBpbnN0YWxsaW5nIHBhY2thZ2VzLiBJdCBpcyBjYWxsZWQgd2l0aCB0aGUgVE9QLUxFVkVMCiAgICBwYWNrYWdlIG5hbWUgKG5vdCB0aGUgZG90dGVkIHN1Ym1vZHVsZSkgdG8gYXZvaWQgaW1wb3J0aW5nIHRoZSBwYXJlbnQKICAgIHBhY2thZ2UncyBzaWRlIGVmZmVjdHMgZHVyaW5nIGRldGVjdGlvbi4KICAgICIiIgogICAgaWYgaW5zdGFsbGVkX2NoZWNrIGlzIE5vbmU6CiAgICAgICAgaW5zdGFsbGVkX2NoZWNrID0gX2lzX2luc3RhbGxlZAogICAgdHJpZWQgPSBzZXQoYWxyZWFkeV90cmllZCkKICAgIGZvciBtYXRjaCBpbiBfUEFUVEVSTi5maW5kaXRlcihzdGRlcnJfdGV4dCk6CiAgICAgICAgbW9kID0gbWF0Y2guZ3JvdXAoMSkuc3RyaXAoKQogICAgICAgIGlmIG5vdCBtb2Qgb3IgbW9kIGluIHRyaWVkOgogICAgICAgICAgICBjb250aW51ZQogICAgICAgIHRvcCA9IG1vZC5zcGxpdCgiLiIpWzBdCiAgICAgICAgaWYgdG9wIGluIFNLSVAgb3IgbW9kIGluIFNLSVAgb3IgdG9wLnN0YXJ0c3dpdGgoIl8iKToKICAgICAgICAgICAgY29udGludWUKICAgICAgICAjIEdhdGUgKDIpOiB0aGUgdG9wLWxldmVsIHBhY2thZ2UgbXVzdCBiZSBpbnN0YWxsZWQgaW4gdGhlIGJ1aWxkIGludGVycC4KICAgICAgICAjIFdlIGVtaXQgdGhlIEZVTEwgZG90dGVkIG5hbWUgYXMgdGhlIGhpZGRlbi1pbXBvcnQgdGFyZ2V0IGJ1dCBnYXRlIG9uCiAgICAgICAgIyB0aGUgdG9wLWxldmVsIHBhY2thZ2Ugc28gZGV0ZWN0aW9uIG5ldmVyIGltcG9ydHMgYSBoZWF2eSBzdWJtb2R1bGUuCiAgICAgICAgaWYgaW5zdGFsbGVkX2NoZWNrKHRvcCk6CiAgICAgICAgICAgIHJldHVybiBtb2QKICAgIHJldHVybiAiIgoKCmRlZiBtYWluKGFyZ3Y9Tm9uZSk6CiAgICBhcmdzID0gbGlzdChzeXMuYXJndlsxOl0gaWYgYXJndiBpcyBOb25lIGVsc2UgYXJndikKICAgIGlmIG5vdCBhcmdzOgogICAgICAgIHJldHVybgogICAgc3RkZXJyX2ZpbGUgPSBhcmdzWzBdCiAgICBhbHJlYWR5ID0gYXJnc1sxOl0KICAgIHRyeToKICAgICAgICB3aXRoIG9wZW4oc3RkZXJyX2ZpbGUsICJyIiwgZW5jb2Rpbmc9InV0Zi04IiwgZXJyb3JzPSJpZ25vcmUiKSBhcyBmaDoKICAgICAgICAgICAgdGV4dCA9IGZoLnJlYWQoKQogICAgZXhjZXB0IE9TRXJyb3I6CiAgICAgICAgcmV0dXJuCiAgICBzeXMuc3Rkb3V0LndyaXRlKG5leHRfaGlkZGVuX2ltcG9ydCh0ZXh0LCBhbHJlYWR5KSkKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgbWFpbigpCg=="
+rem ~pep723_writeback.py promotes resolved dependencies into the entry file's
+rem PEP 723 header via uv add --script; see docs/plan-pep723-writeback.md Part 2.1.
+set "HP_PEP723_WRITEBACK=IiIicGVwNzIzX3dyaXRlYmFjayB2MSAoMjAyNi0wNy0xOCkKUHJvbW90ZXMgYSByZXNvbHZlZCBkZXBlbmRlbmN5IGxpc3QgaW50byB0aGUgZW50cnkgZmlsZSdzIFBFUCA3MjMgaGVhZGVyIHZpYQpgdXYgYWRkIC0tc2NyaXB0YC4gU2VlIGRvY3MvcGxhbi1wZXA3MjMtd3JpdGViYWNrLm1kIFBhcnQgMi4xIGZvciB0aGUgZnVsbCBkZXNpZ24uClVzYWdlOiBweXRob24gcGVwNzIzX3dyaXRlYmFjay5weSA8ZW50cnkucHk+IDx1dl9leGU+IDxweXRob25fZXhlPiA8cGFja2FnZXNfZmlsZT4KUHJpbnRzIG9uZSByZXN1bHQgbGluZSB0byBzdGRvdXQ6IE9LOjxuPiAvIFNLSVA6PHJlYXNvbj4gLyBFUlJPUjo8cmVhc29uPi4KIiIiCl9fdmVyc2lvbl9fID0gInBlcDcyM193cml0ZWJhY2sgdjEgKDIwMjYtMDctMTgpIgpfX2FsbF9fID0gWyJyZWFkX3BhY2thZ2VzIiwgInN0cmlwX3BlcDcyM19ibG9jayIsICJtYWluIl0KCmltcG9ydCBvcwppbXBvcnQgc3VicHJvY2VzcwppbXBvcnQgc3lzCgoKZGVmIHJlYWRfcGFja2FnZXMocGF0aCk6CiAgICAiIiJSZXR1cm4gYSBsaXN0IG9mIG5vbi1ibGFuaywgbm9uLWNvbW1lbnQgbGluZXMgZnJvbSBhIHBhY2thZ2VzIGZpbGUuIiIiCiAgICBwYWNrYWdlcyA9IFtdCiAgICB0cnk6CiAgICAgICAgd2l0aCBvcGVuKHBhdGgsICJyIiwgZW5jb2Rpbmc9InV0Zi04IiwgZXJyb3JzPSJpZ25vcmUiKSBhcyBmaDoKICAgICAgICAgICAgZm9yIGxpbmUgaW4gZmg6CiAgICAgICAgICAgICAgICBsaW5lID0gbGluZS5zdHJpcCgpCiAgICAgICAgICAgICAgICBpZiBub3QgbGluZSBvciBsaW5lLnN0YXJ0c3dpdGgoIiMiKToKICAgICAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICAgICAgcGFja2FnZXMuYXBwZW5kKGxpbmUpCiAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICBwYXNzCiAgICByZXR1cm4gcGFja2FnZXMKCgpkZWYgc3RyaXBfcGVwNzIzX2Jsb2NrKHRleHQpOgogICAgIiIiUmVtb3ZlIGFuIGV4aXN0aW5nICcjIC8vLyBzY3JpcHQnIC4uLiAnIyAvLy8nIGJsb2NrLCBsaW5lIGJ5IGxpbmUuCgogICAgQSBsaW5lLWJ5LWxpbmUgc3RhdGUgbWFjaGluZSwgbm90IGEgcmVnZXg6IGEgZ3JlZWR5IHJlZ2V4IHJpc2tzIHN0cmlwcGluZwogICAgY29kZSBhZnRlciB0aGUgYmxvY2ssIGFuZCBhIGxhenkgb25lIGNhbiBsZWF2ZSBhIHN0cmF5IGZlbmNlIGxpbmUgYmVoaW5kLAogICAgd2hpY2ggbmV3ZXIgdXYgdHJlYXRzIGFzIGEgaGFyZCBlcnJvciAoYXN0cmFsLXNoL3V2IzE5NTQ0KS4gVGhlIGNsb3NpbmcKICAgIGZlbmNlIG1hdGNoIHRvbGVyYXRlcyB0cmFpbGluZyB3aGl0ZXNwYWNlIChhc3RyYWwtc2gvdXYjMTA5MTgpLgogICAgIiIiCiAgICBsaW5lcyA9IHRleHQuc3BsaXRsaW5lcyhrZWVwZW5kcz1UcnVlKQogICAgb3V0ID0gW10KICAgIGluX2Jsb2NrID0gRmFsc2UKICAgIGZvciBsaW5lIGluIGxpbmVzOgogICAgICAgIHN0cmlwcGVkID0gbGluZS5yc3RyaXAoIlxyXG4iKQogICAgICAgIGlmIG5vdCBpbl9ibG9jayBhbmQgc3RyaXBwZWQgPT0gIiMgLy8vIHNjcmlwdCI6CiAgICAgICAgICAgIGluX2Jsb2NrID0gVHJ1ZQogICAgICAgICAgICBjb250aW51ZQogICAgICAgIGlmIGluX2Jsb2NrOgogICAgICAgICAgICBpZiBzdHJpcHBlZC5yc3RyaXAoKSA9PSAiIyAvLy8iOgogICAgICAgICAgICAgICAgaW5fYmxvY2sgPSBGYWxzZQogICAgICAgICAgICBjb250aW51ZQogICAgICAgIG91dC5hcHBlbmQobGluZSkKICAgIHJldHVybiAiIi5qb2luKG91dCkKCgpkZWYgcnVuX3V2X2FkZChlbnRyeV9wYXRoLCB1dl9leGUsIHB5dGhvbl9leGUsIHBhY2thZ2VzKToKICAgICIiIkludm9rZSBgdXYgYWRkIC0tc2NyaXB0YCBvbmNlOyByZXR1cm4gKHJldHVybmNvZGUsIHN0ZGVycl90ZXh0KS4iIiIKICAgIGNtZCA9IFt1dl9leGUsICJhZGQiLCAiLS1zY3JpcHQiLCBlbnRyeV9wYXRoLCAiLXAiLCBweXRob25fZXhlXSArIHBhY2thZ2VzCiAgICBwcm9jID0gc3VicHJvY2Vzcy5ydW4oY21kLCBjYXB0dXJlX291dHB1dD1UcnVlLCB0ZXh0PVRydWUpCiAgICAjIGFzdHJhbC1zaC91diMxNTk1NjogYSBiZW5pZ24gVklSVFVBTF9FTlYgbWlzbWF0Y2ggd2FybmluZyBjYW4gYXBwZWFyIG9uIHN0ZGVycgogICAgIyB3aXRoIGV4aXQgY29kZSAwIC0tIHN0ZGVyciB0ZXh0IGlzIG5ldmVyIGl0c2VsZiBhIGZhaWx1cmUgc2lnbmFsLCBvbmx5IHRoZQogICAgIyBwcm9jZXNzIHJldHVybiBjb2RlIGlzLgogICAgcmV0dXJuIHByb2MucmV0dXJuY29kZSwgcHJvYy5zdGRlcnIKCgpkZWYgbWFpbihhcmd2PU5vbmUpOgogICAgYXJncyA9IGxpc3Qoc3lzLmFyZ3ZbMTpdIGlmIGFyZ3YgaXMgTm9uZSBlbHNlIGFyZ3YpCiAgICBpZiBsZW4oYXJncykgPCA0OgogICAgICAgIHByaW50KCJFUlJPUjpiYWRfYXJncyIpCiAgICAgICAgcmV0dXJuIDEKICAgIGVudHJ5X3BhdGgsIHV2X2V4ZSwgcHl0aG9uX2V4ZSwgcGFja2FnZXNfZmlsZSA9IGFyZ3NbMF0sIGFyZ3NbMV0sIGFyZ3NbMl0sIGFyZ3NbM10KCiAgICBwYWNrYWdlcyA9IHJlYWRfcGFja2FnZXMocGFja2FnZXNfZmlsZSkKICAgIGlmIG5vdCBwYWNrYWdlczoKICAgICAgICBwcmludCgiU0tJUDpub19wYWNrYWdlcyIpCiAgICAgICAgcmV0dXJuIDAKCiAgICAjIEVuY29kaW5nIHByZS1jaGVjazogbmV2ZXIgaGFuZCB1diBhIGZpbGUgd2hvc2UgVVRGLTgtbmVzcyBpcyB1bmNvbmZpcm1lZC4KICAgIHRyeToKICAgICAgICB3aXRoIG9wZW4oZW50cnlfcGF0aCwgZW5jb2Rpbmc9InV0Zi04IikgYXMgZmg6CiAgICAgICAgICAgIGZoLnJlYWQoKQogICAgZXhjZXB0IFVuaWNvZGVEZWNvZGVFcnJvcjoKICAgICAgICBwcmludCgiU0tJUDpub25fdXRmOCIpCiAgICAgICAgcmV0dXJuIDAKICAgIGV4Y2VwdCBPU0Vycm9yOgogICAgICAgIHByaW50KCJTS0lQOm5vbl91dGY4IikKICAgICAgICByZXR1cm4gMAoKICAgICMgRmlsZS1sb2NrIGNhbmFyeTogZGlhZ25vc3RpYy1xdWFsaXR5IG9ubHkuIEEgbG9ja2VkIGZpbGUgYWxyZWFkeSBmYWxscyBzYWZlbHkKICAgICMgaW50byB0aGUgZ2VuZXJpYyBFUlJPUjp1dl9yY188bj4gcGF0aCBiZWxvdzsgdGhpcyBqdXN0IGdpdmVzIGEgY2xlYXJlciByZWFzb24uCiAgICAjIEFjY2VwdGVkIFRPQ1RPVSByYWNlOiB0aGUgbG9jayBjb3VsZCBiZSBhY3F1aXJlZCBhZnRlciB0aGlzIGNoZWNrIGFuZCBiZWZvcmUKICAgICMgdGhlIHV2IGNhbGwgLS0gdGhlIGZhbGxiYWNrIGlzIHRoZSBzYW1lIGFscmVhZHktc2FmZSBnZW5lcmljIGVycm9yIHBhdGguCiAgICB0cnk6CiAgICAgICAgd2l0aCBvcGVuKGVudHJ5X3BhdGgsICJyK2IiKToKICAgICAgICAgICAgcGFzcwogICAgZXhjZXB0IFBlcm1pc3Npb25FcnJvcjoKICAgICAgICBwcmludCgiU0tJUDpmaWxlX2xvY2tlZCIpCiAgICAgICAgcmV0dXJuIDAKICAgIGV4Y2VwdCBPU0Vycm9yOgogICAgICAgIHBhc3MKCiAgICBpZiBlbnRyeV9wYXRoLmVuZHN3aXRoKCIucHkiKSBhbmQgX2xvY2tfc2lkZWNhcl9leGlzdHMoZW50cnlfcGF0aCk6CiAgICAgICAgcHJpbnQoIlNLSVA6bG9ja2ZpbGUiKQogICAgICAgIHJldHVybiAwCgogICAgcmMsIF9zdGRlcnIgPSBydW5fdXZfYWRkKGVudHJ5X3BhdGgsIHV2X2V4ZSwgcHl0aG9uX2V4ZSwgcGFja2FnZXMpCiAgICBpZiByYyA9PSAwOgogICAgICAgIHByaW50KCJPSzolZCIgJSBsZW4ocGFja2FnZXMpKQogICAgICAgIHJldHVybiAwCiAgICBpZiByYyA9PSAyOgogICAgICAgICMgYXN0cmFsLXNoL3V2IzEwOTE4IC8gYXN0cmFsLXNoL3V2IzE5NTQ0OiBleGl0IDIgaXMgdXYncyBvd24gc2lnbmFsIHRoYXQgdGhlCiAgICAgICAgIyBleGlzdGluZyBoZWFkZXIgaXMgdW5wYXJzZWFibGUgVE9NTCAtLSB0aGUgb25lIGNhc2Ugd2hlcmUgc3RhcnRpbmcgb3ZlciBpcwogICAgICAgICMgY29ycmVjdC4gQW55IG90aGVyIGV4aXQgY29kZSBpcyBhIGRpZmZlcmVudCBmYWlsdXJlIGNsYXNzIGFuZCBtdXN0IG5vdAogICAgICAgICMgc3RyaXAgYW55dGhpbmcgKHNlZSBkb2NzL3BsYW4tcGVwNzIzLXdyaXRlYmFjay5tZCBQYXJ0IDMgYWRkZW5kdW06IGV4aXQgMgogICAgICAgICMgaXMgYWxzbyBwcm9kdWNlZCBieSBhIG5vbi1VVEYtOCBmaWxlLCBhbHJlYWR5IGludGVyY2VwdGVkIGFib3ZlKS4KICAgICAgICB0cnk6CiAgICAgICAgICAgIHdpdGggb3BlbihlbnRyeV9wYXRoLCAiciIsIGVuY29kaW5nPSJ1dGYtOCIsIGVycm9ycz0iaWdub3JlIikgYXMgZmg6CiAgICAgICAgICAgICAgICBvcmlnaW5hbCA9IGZoLnJlYWQoKQogICAgICAgIGV4Y2VwdCBPU0Vycm9yOgogICAgICAgICAgICBwcmludCgiRVJST1I6c3RyaXBfcmV0cnlfZmFpbGVkOnJlYWQiKQogICAgICAgICAgICByZXR1cm4gMQogICAgICAgIHN0cmlwcGVkID0gc3RyaXBfcGVwNzIzX2Jsb2NrKG9yaWdpbmFsKQogICAgICAgIHRyeToKICAgICAgICAgICAgd2l0aCBvcGVuKGVudHJ5X3BhdGgsICJ3IiwgZW5jb2Rpbmc9InV0Zi04IiwgbmV3bGluZT0iIikgYXMgZmg6CiAgICAgICAgICAgICAgICBmaC53cml0ZShzdHJpcHBlZCkKICAgICAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICAgICAgcHJpbnQoIkVSUk9SOnN0cmlwX3JldHJ5X2ZhaWxlZDp3cml0ZSIpCiAgICAgICAgICAgIHJldHVybiAxCiAgICAgICAgcmMyLCBfc3RkZXJyMiA9IHJ1bl91dl9hZGQoZW50cnlfcGF0aCwgdXZfZXhlLCBweXRob25fZXhlLCBwYWNrYWdlcykKICAgICAgICBpZiByYzIgPT0gMDoKICAgICAgICAgICAgcHJpbnQoIk9LOiVkIiAlIGxlbihwYWNrYWdlcykpCiAgICAgICAgICAgIHJldHVybiAwCiAgICAgICAgIyBSZXRyeSBhbHNvIGZhaWxlZCAtLSByZXN0b3JlIHRoZSBvcmlnaW5hbCAoc3RpbGwtbWFsZm9ybWVkKSBoZWFkZXIgcmF0aGVyCiAgICAgICAgIyB0aGFuIGxlYXZlIHRoZSBmaWxlIHBlcm1hbmVudGx5IHN0cmlwcGVkLiBNYXRjaGVzIHRoZSBzYW1lIHJlc3RvcmUtb24tCiAgICAgICAgIyBkb3VibGUtZmFpbHVyZSBndWFyYW50ZWUgYWxyZWFkeSBlc3RhYmxpc2hlZCBmb3IgdGhlIHN0YW5kYWxvbmUgUFZXCiAgICAgICAgIyBRdWlja1N0YXJ0IGNvbW1hbmRzIChkb2NzL3BsYW4tcHZ3LXF1aWNrc3RhcnQubWQpOyBuZXZlciBkZWxldGUgbW9yZSBvZgogICAgICAgICMgdGhlIHVzZXIncyBmaWxlIHRoYW4gdGhlIGZlYXR1cmUgYWN0dWFsbHkgbmVlZGVkIHRvLgogICAgICAgIHRyeToKICAgICAgICAgICAgd2l0aCBvcGVuKGVudHJ5X3BhdGgsICJ3IiwgZW5jb2Rpbmc9InV0Zi04IiwgbmV3bGluZT0iIikgYXMgZmg6CiAgICAgICAgICAgICAgICBmaC53cml0ZShvcmlnaW5hbCkKICAgICAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICAgICAgcGFzcwogICAgICAgIHByaW50KCJFUlJPUjpzdHJpcF9yZXRyeV9mYWlsZWQ6JWQiICUgcmMyKQogICAgICAgIHJldHVybiAxCiAgICBwcmludCgiRVJST1I6dXZfcmNfJWQiICUgcmMpCiAgICByZXR1cm4gMQoKCmRlZiBfbG9ja19zaWRlY2FyX2V4aXN0cyhlbnRyeV9wYXRoKToKICAgIHJldHVybiBvcy5wYXRoLmV4aXN0cyhlbnRyeV9wYXRoICsgIi5sb2NrIikKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgc3lzLmV4aXQobWFpbigpKQo="
 exit /b 0
 :log
 set "MSG=%~1"

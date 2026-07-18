@@ -483,6 +483,52 @@ This means `selfapps_warnfix.ps1` works correctly in uv-first lanes without any 
 the full bootstrapper handles the uv/conda split internally. The test only checks for log
 phrases (`[REPAIR] missing modules detected`) and EXE success, both of which work in uv mode.
 
+### PEP 723 write-back (REQ-005.11) touches two hook points and the warnfix/lock flow
+
+`:pep723_writeback` (new subroutine, called from two sites) is deliberately narrow --
+v1-scoped to `HP_ENV_MODE=uv` only -- but both call sites sit inside code this section and the
+one above already document, so a future change to either must re-check this feature too:
+
+- **Fresh-install trigger, at `:lock_done`.** This label is the shared fallthrough for BOTH
+  the conda and uv dependency-install paths (see "Provider cascade execution re-enters
+  env-create" above for the general `:after_env_mode_selection` re-entrancy this label already
+  has to handle). `call :pep723_writeback fresh` is placed immediately after `:lock_done`,
+  before the pyvisa/visa detection block -- the v1 scope gate (`if not "%HP_ENV_MODE%"=="uv"
+  exit /b 0`, first line of the subroutine) makes this a no-op on the conda path without an
+  extra guard at the call site.
+- **Warnfix trigger, inside the warnfix repair block.** `call :pep723_writeback warnfix` sits
+  between the `[REPAIR] rebuild complete after warnfix.` log line and the `:warnfix_cascade_detect`
+  call documented above -- `~missing_modules.txt` and `~warnfix_repair_failed.flag` are both
+  still on disk at that exact point (both are deleted a few lines later, right after
+  `:warnfix_cascade_detect` returns), so this is the only safe window to read them. Because this
+  call sits inside the same `if defined HP_WARNFIX_NEEDED ( ... )` parenthesized block as the
+  `for /f` loops that populate those two files, the subroutine call itself is safe from the
+  parse-time-`%VAR%`-expansion trap (`docs/agent-lessons-learned.md` "Provider-cascade dispatch
+  is goto-based on purpose") only because it passes a literal argument (`warnfix`) and reads
+  `~warnfix_repair_failed.flag`/`~missing_modules.txt` via runtime `if exist` checks inside its
+  OWN separate `call` frame, not via `%VAR%` substitution in the outer block.
+- **`HP_UV_INSTALL_OK` reset lives in `:after_env_mode_selection`'s existing reset block**,
+  alongside `HP_DEP_SKIP`/`HP_DEP_RESULT` (same re-entrancy reasoning as those two: a REQ-009
+  provider-cascade retry re-enters this label from scratch, and a stale `HP_UV_INSTALL_OK=1`
+  from a previous, now-abandoned uv attempt must never silently satisfy the fresh-trigger
+  "confirmed installed" gate on a later, unrelated cascade tier). It is set to `1` in exactly
+  two places inside the uv dependency-install branch: the genuine-install-succeeded `else`
+  branch of the `uv pip install -r requirements.txt` call, and the `HP_DEP_SKIP`-short-circuited
+  branch (already-satisfied-by-lock is still a confirmed-installed state, not a failure).
+- **Packages-file staging is a plain `copy`, not a re-derivation.** The subroutine never
+  re-resolves what was installed -- it copies whichever source file the trigger implies
+  (`requirements.txt` for fresh, `~missing_modules.txt` for warnfix) to `~pep723_pkgs.txt` and
+  hands that straight to the embedded helper. This is the "all-or-nothing per round" design
+  from `docs/plan-pep723-writeback.md` Part 2.0 point 3: neither trigger point can know which
+  subset of N packages in a single failed bulk install actually succeeded, so a failed round
+  (uv install errorlevel 1, or a `~warnfix_repair_failed.flag` present) skips the write-back
+  entirely rather than guessing a partial set.
+- **v1 does not touch venv/conda/embed/system modes at all.** A future extension of this
+  feature to another provider (if ever undertaken) would need a mechanism analogous to
+  `HP_UV_INSTALL_OK` for whichever provider's own install branch, plus a corresponding v1
+  scope-gate relaxation in `:pep723_writeback`'s first line -- currently that gate is the
+  single point controlling the feature's entire footprint.
+
 ### dep-check + uv mode lock file interconnection
 
 `~environment.lock.txt` is the dep-check cache key. In conda mode it is written via
