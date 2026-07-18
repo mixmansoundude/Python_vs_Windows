@@ -596,6 +596,52 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($odWarnFound -and ($odExit -eq 0)) { $summary.Add('OneDrive path warning: PASS') } else { $summary.Add('OneDrive path warning: FAIL') }
 
+# --- System-directory guard test ---
+# Arrange: run from a real folder under %WINDIR% (Windows\Temp is writable without elevation,
+#          unlike Program Files) so the check-and-abort guard fires for real -- same "real
+#          environmental trigger" approach as the OneDrive test above, not a test-hook flag.
+# Assert:  "[ERROR] System-directory guard" appears in log and bootstrap exits 1 -- unlike the
+#          OneDrive/path-length/disk-space guards (warn-only, exit 0), this one aborts.
+$sdWindir = [Environment]::GetEnvironmentVariable('WINDIR')
+if ($sdWindir) {
+  $sysDir = Join-Path $sdWindir 'Temp\~selftest_sysdir_guard'
+  if (Test-Path $sysDir) { Remove-Item -Recurse -Force $sysDir }
+  New-Item -ItemType Directory -Force -Path $sysDir | Out-Null
+  Copy-Item -Path $BatchPath -Destination $sysDir -Force
+  $sdLogName = '~sysdir_bootstrap.log'
+  Push-Location $sysDir
+  try {
+    cmd /c "call run_setup.bat > $sdLogName 2>&1"
+    $sdExit = $LASTEXITCODE
+  } finally {
+    Pop-Location
+  }
+  $sdLogPath = Join-Path $sysDir $sdLogName
+  $sdLines = @()
+  if (Test-Path $sdLogPath) { $sdLines = Get-Content -LiteralPath $sdLogPath -Encoding ASCII }
+  $sdErrFound = ($sdLines | Where-Object { $_ -like '*System-directory guard*' }).Count -gt 0
+  $sdPass = ($sdErrFound -and ($sdExit -eq 1))
+  Remove-Item -Recurse -Force $sysDir -ErrorAction SilentlyContinue
+  Write-NdjsonRow ([ordered]@{
+    id = 'self.warn.sysdir'
+    pass = $sdPass
+    desc = 'Bootstrap emits system-directory guard error and aborts (exit 1) when script root is under a Windows system folder'
+    details = [ordered]@{
+      errFound = $sdErrFound
+      exitCode = $sdExit
+    }
+  })
+  if ($sdPass) { $summary.Add('System-directory guard: PASS') } else { $summary.Add('System-directory guard: FAIL') }
+} else {
+  Write-NdjsonRow ([ordered]@{
+    id = 'self.warn.sysdir'
+    pass = $true
+    desc = 'System-directory guard test skipped (WINDIR not set)'
+    details = [ordered]@{ skip = $true; reason = 'no-windir' }
+  })
+  $summary.Add('System-directory guard: SKIP (no WINDIR)')
+}
+
 # --- Long-path (>260 chars / MAX_PATH) warning test ---
 # Arrange: run from a directory whose full path exceeds 260 chars (Windows MAX_PATH).
 # Assert:  no crash; either "[WARN] Script path is N chars" appears and exit 0, or

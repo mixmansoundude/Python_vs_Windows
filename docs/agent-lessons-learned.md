@@ -163,6 +163,48 @@ workflows.
 
 ---
 
+## A single trailing backslash before a closing quote silently corrupts a subprocess argument
+
+**Discovered 2026-07-18 via a real CI failure** on the REQ-025-family system-directory guard
+(`self.warn.sysdir`, `run_setup.bat`): `findstr /I /C:"%WINDIR%\" >nul` never matched, even
+against a script root genuinely under `%WINDIR%\Temp\...` in real Windows CI -- the guard
+silently never fired (`errFound: false, exitCode: 0` on every lane) despite `HP_SCRIPT_ROOT`
+being provably correct (the OneDrive guard's own substring check, running moments earlier in
+the same file, passed normally).
+
+**Root cause: this is NOT a cmd.exe `%VAR%`-expansion bug (the class already documented above)
+-- it's the separate, standard Windows C-runtime argv-parsing rule that `findstr.exe` (like
+nearly every native Windows console app) applies to ITS OWN command line after cmd.exe hands it
+off.** That rule: N backslashes immediately followed by a `"` collapse to `N/2` literal
+backslashes, and if N is ODD, the trailing backslash "escapes" the quote -- the quote becomes a
+literal character instead of closing the string. `%WINDIR%\"` expands to `C:\Windows\"`: a
+single (odd) backslash before the quote, so the quote does NOT close -- the rest of the line,
+including the trailing `>nul`, gets silently absorbed into the (now-corrupted, never-matching)
+search pattern. No error, no crash -- the check just quietly never works. Confirmed by directly
+implementing the parsing rule in Python and running both the old and new pattern through it (see
+PR that added this entry for the exact repro) -- verified the OLD pattern indeed fails to close
+the quote, and the FIX (see below) closes it correctly with a single literal trailing backslash
+as intended.
+
+**Fix: double the trailing backslash** (`%WINDIR%\\"` instead of `%WINDIR%\"`) -- an EVEN count
+(2) collapses to exactly one literal backslash and the quote closes normally, giving the intended
+search text (`C:\Windows\`) with the trailing-slash anchor still doing its job of preventing a
+same-prefix false match (e.g. `C:\WindowsFooBar\` does not contain the substring `C:\Windows\`).
+
+**Rule of thumb for ANY future `findstr /C:"...%VAR%..."` (or any other native-exe subprocess
+argument) whose value can end in a backslash**: never let a `%VAR%`-expanded value that might end
+in `\` sit immediately before the closing `"` with nothing in between. Either double the trailing
+backslash defensively, or restructure so the closing quote is never adjacent to a variable-derived
+trailing backslash. This is a DIFFERENT hazard from cmd.exe's own parse-time `%VAR%` expansion
+(the "Parse-time vs. runtime variable expansion" entry above) -- that one is about WHEN a `%VAR%`
+gets substituted; this one is about HOW the resulting text is re-parsed by the child process cmd
+hands it to. Existing `findstr /C:"..."` call sites in this file (the UNC-path check at the very
+top, `\\\\`, and the `.gitignore`/`.gitattributes` signature checks) happen to be safe already --
+none of their literal search strings end in an odd number of backslashes -- but this was luck, not
+design, until this entry documented the rule explicitly.
+
+---
+
 ## `:log` echoes UNQUOTED -- never route shell metacharacters through it
 
 `:log` in `run_setup.bat` does `set "MSG=%~1"` then `echo %date% %time% %MSG%` -- the message

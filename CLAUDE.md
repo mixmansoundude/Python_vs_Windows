@@ -516,7 +516,7 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    failure mode REQ-018 exists to prevent. The concrete replacement design in
    `plan-autopep723-two-tier.md` resolves this cleanly: it does not re-invent the retry mechanism,
    it reuses the exit-code-branching logic already built, tested across a dozen-plus scenarios,
-   and shipped in README's "PVW QuickStart" section (item 9 below) -- exit 0/2/other-nonzero, only
+   and shipped in README's "PVW QuickStart" section (item 8 below) -- exit 0/2/other-nonzero, only
    ever destructive on a genuinely malformed header -- relocated into `run_setup.bat` as an opt-in
    flag, uv lane only, sequenced to be picked up only after both the automatic write-back (now
    shipped -- REQ-005.11, see Closed Backlog) and the QuickStart commands have proven out. Not
@@ -535,22 +535,7 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    be permanently frozen into every already-distributed copy of `run_setup.bat`, with no way to
    walk it back later even after the reason for it stops being true. Read that section before
    extending Tier B's pinning pattern anywhere else in this codebase.
-7. **Cross-platform pre-flight checks -- one of two items shipped (Mac-garbage filter, see Closed
-   Backlog), one remains.** Raised alongside a
-   3rd-party review of the PEP 723 plan (2026-07-12): three cheap, read-only checks worth adding
-   near the existing early-warning guards (OneDrive detection, path-length guard, REQ-025 disk
-   space) in `run_setup.bat`, all "observe and warn, never silently rewrite" per this repo's
-   existing posture:
-   - **System-directory guard.** No check currently exists for the script root being under
-     `%WINDIR%`/`%PROGRAMFILES%` (a user occasionally drops a script into a system folder thinking
-     it "installs" it) -- the bootstrapper would just fail cryptically on write-permission errors
-     several steps in. A simple early check-and-abort with a clear plain-language message (mirrors
-     the existing OneDrive/path-length warnings' placement and tone) closes this.
-   - **Correction to a 3rd-party suggestion in the same review**: a "MAX_PATH warning" was also
-     proposed as new work -- **this already exists** (the path-length guard at the top of
-     `run_setup.bat`, warning when the script root approaches the 260-char cmd.exe limit). No
-     action needed there; noted here only so it isn't rediscovered as a gap later.
-8. **Promote the remaining embedded-only `HP_*` payloads to the canonical-source-plus-
+7. **Promote the remaining embedded-only `HP_*` payloads to the canonical-source-plus-
    `PayloadSync`-plus-logic-test pattern (moderate effort, not urgent, but a real, confirmed test-
    coverage gap).** A payload-inventory audit done alongside the cross-platform-checks review
    (2026-07-12; see README's "Rebuilding embedded helper payloads" section for the full inventory
@@ -572,7 +557,7 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    each payload's logic is unrelated to the others. Not urgent (no bug has been traced to any of
    these gaps), but real, and the highest-value place to start is `HP_DETECT_PY` given how central
    its output is to the rest of the bootstrap.
-9. **PVW QuickStart -- a super-user command set for running/persisting a `.py` file's
+8. **PVW QuickStart -- a super-user command set for running/persisting a `.py` file's
     dependencies with no EXE build, shipped as copy-paste README commands (full design at
     `docs/plan-pvw-quickstart.md`; user-facing commands live in README's "PVW QuickStart" section).**
     Reviewed and independently re-verified a user-supplied third-party "PEP 723 Megacommand"
@@ -619,13 +604,13 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
     Linux); failed-`uv`-install and missing-file error UX are both known-rough, not known-broken
     (though the missing-file case is now confirmed to at least fail into the safe, non-destructive
     branch rather than the strip branch).
-10. **Two-tier `autopep723` integration for `run_setup.bat` itself -- full design at
+9. **Two-tier `autopep723` integration for `run_setup.bat` itself -- full design at
     `docs/plan-autopep723-two-tier.md`, deliberately sequenced LAST after the write-back
-    (REQ-005.11, shipped) and item 9 (QuickStart) above both ship and prove out.** Reviewed a
+    (REQ-005.11, shipped) and item 8 (QuickStart) above both ship and prove out.** Reviewed a
     user-supplied third-party spec proposing (a) running
     `autopep723 check` alongside `pipreqs` in the Default Path discovery phase for all users, and
     (b) an opt-in `HP_PVW_KNOWN_IDEMPOTENT` flag for runtime (execute-mode) discovery inside
-    `run_setup.bat` -- this is the concrete design that supersedes item 9's own deferred "Shape
+    `run_setup.bat` -- this is the concrete design that supersedes item 8's own deferred "Shape
     B." Found and fixed two real problems in the source spec before it could be treated as
     implementation-ready, both via direct testing and source-code reading, not just review:
     - **The proposed v1 command (`uvx autopep723 check . > requirements.autopep.txt`) is broken as
@@ -986,6 +971,43 @@ Items completed and shipped:
   can never match `is_py()` regardless of any prefix filter, since `os.path.isfile()` already
   excludes it by construction. No code change was needed or made for this half of the original
   item; noted here so it is not mistaken for an oversight later.
+- **System-directory guard (second and final half of the Cross-platform pre-flight checks item --
+  now fully closed)**: `run_setup.bat` now aborts early (`exit /b 1`, plain-language message) when
+  the script root resolves under `%WINDIR%`, `%ProgramFiles%`, or `%ProgramFiles(x86)%`. Placed
+  right after the existing OneDrive guard, matching its style, but check-and-abort rather than
+  warn-only -- unlike the OneDrive/path-length/disk-space guards (marginal conditions that MIGHT
+  fail), a script dropped into a system folder without elevation will essentially always fail on
+  write-permission errors several steps in (creating `~setup.log`, `~uv_bin`, `.uv_env`, etc. right
+  next to itself), so a clear early abort is kinder than a cryptic failure deep in the bootstrap.
+  Detection uses `findstr` substring matching (mirrors the existing top-of-file UNC-path check)
+  rather than the `%VAR:%OTHER%=%` nested-substitution idiom, since the latter has no existing
+  precedent anywhere in this file and could not be verified against a real cmd.exe from this
+  sandbox. **A real bug shipped in the first version and was caught by the new test's own first
+  real CI run**: the `findstr /C:"..."` search patterns originally ended in a single backslash
+  immediately before the closing quote (e.g. `%WINDIR%\"`), which per the standard Windows
+  argv-parsing rule `findstr.exe` itself applies to its own command line, escapes the quote
+  instead of closing it -- silently corrupting the search pattern (and swallowing the trailing
+  `>nul`) so the guard could never fire. Fixed by doubling the trailing backslash
+  (`%WINDIR%\\"`), which collapses to the intended single literal backslash while letting the
+  quote close normally; verified against a direct Python re-implementation of the parsing rule,
+  not just asserted. See `docs/agent-lessons-learned.md`'s new "A single trailing backslash
+  before a closing quote silently corrupts a subprocess argument" entry for the full mechanism
+  and a rule of thumb for future `findstr`/subprocess-argument call sites. `%WINDIR%`/
+  `%ProgramFiles%` are each guarded with their own `if defined` check before the `findstr` call
+  (an undefined variable would otherwise expand to an empty search pattern, which is not itself
+  a false-positive risk here since `HP_SCRIPT_ROOT` always ends with a trailing backslash the
+  pattern also requires, but the guard is kept anyway for defensive parity with the disk-space
+  guard's own `if defined HP_FREE_GB` gate). `%ProgramFiles(x86)%` is copied to a plain-named
+  `HP_PF86` variable first, since referencing `%ProgramFiles(x86)%` directly as a bare token inside
+  `if defined ...` risks cmd's parser misreading the literal parentheses in the variable name.
+  New behavioral test `self.warn.sysdir` (`tests/selftest.ps1`) creates a real directory under
+  `%WINDIR%\Temp` (writable without elevation, unlike Program Files) and runs the bootstrapper
+  there for real -- the same "real environmental trigger" approach as the existing OneDrive test,
+  not a new `HP_TEST_FORCE_*` scaffolding flag -- asserting the `[ERROR] System-directory guard`
+  message appears and the process exits 1. No static `harness.ps1` check was added, matching the
+  existing precedent that the OneDrive/path-length/disk-space guards are covered by behavioral
+  tests only, not a static string-presence check. CLOSED by this PR (both halves of the
+  Cross-platform pre-flight checks backlog item are now shipped).
 - **PEP 723 dependency write-back via `uv add --script` (REQ-005.11)**: full design at
   `docs/plan-pep723-writeback.md`. Promotes a resolved dependency set into the entry file's own
   PEP 723 header after a fresh, fully-successful uv-mode dependency install or a fully-successful

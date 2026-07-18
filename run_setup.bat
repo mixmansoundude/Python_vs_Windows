@@ -91,6 +91,49 @@ if /I not "%HP_SCRIPT_ROOT:OneDrive=%"=="%HP_SCRIPT_ROOT%" (
   echo *** WARNING: Script appears to be in a OneDrive folder. File locking may cause failures.
   call :log "[WARN] OneDrive path detected; file locking may cause failures."
 )
+rem --- System-directory guard: check-and-abort (not warn-only) if the script root is under a
+rem Windows system folder. Unlike the OneDrive/path-length/disk-space guards above (marginal
+rem conditions that MIGHT cause a failure), a user occasionally drops this script into
+rem %WINDIR%/%PROGRAMFILES% thinking it "installs" there -- without elevation this will
+rem essentially always fail on write-permission errors several steps in (creating ~setup.log,
+rem ~uv_bin, .uv_env, etc. right next to itself), so a clear early abort is kinder than a
+rem cryptic failure deep in the bootstrap. findstr substring match mirrors the UNC-path check
+rem at the top of this file; HP_SCRIPT_ROOT always has a trailing backslash (see above), so a
+rem trailing backslash on the search pattern prevents a same-prefix false match (e.g.
+rem "C:\WindowsFooBar\" does not contain the substring "C:\Windows\").
+set "HP_SYSDIR_HIT="
+set "HP_PF86=%ProgramFiles(x86)%"
+rem derived requirement: the search pattern ends in "\\" (two backslashes), not "\" -- a
+rem SINGLE backslash immediately before the closing quote is a classic Windows argv-parsing
+rem trap: findstr.exe (like most native console apps) follows the standard C-runtime rule
+rem that an ODD number of backslashes right before a closing quote escapes the quote instead
+rem of closing the string, silently corrupting the whole /C: argument (and swallowing the
+rem trailing ">nul" into the search pattern) so the match can never succeed. An EVEN count
+rem (here, two) collapses to a single literal backslash and the quote closes normally.
+if defined WINDIR (
+  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%WINDIR%\\" >nul
+  if not errorlevel 1 set "HP_SYSDIR_HIT=1"
+)
+if defined ProgramFiles (
+  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%ProgramFiles%\\" >nul
+  if not errorlevel 1 set "HP_SYSDIR_HIT=1"
+)
+if defined HP_PF86 (
+  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%HP_PF86%\\" >nul
+  if not errorlevel 1 set "HP_SYSDIR_HIT=1"
+)
+set "HP_PF86="
+if defined HP_SYSDIR_HIT (
+  echo *** ERROR: This script is located inside a Windows system folder.
+  echo *** Placing it here does not "install" it. Windows restricts writes to this location
+  echo *** without administrator rights, and this bootstrapper needs to create files right
+  echo *** next to itself to work.
+  echo *** Please move this script ^(and your .py files^) to a normal folder -- your Desktop
+  echo *** or Documents folder both work well -- then run it again from there.
+  call :log "[ERROR] System-directory guard: script root is under a Windows system folder; aborting."
+  exit /b 1
+)
+set "HP_SYSDIR_HIT="
 rem --- Free-disk-space guard: warn (never abort) if the script's drive looks low on space ---
 rem derived requirement: Miniconda download/install plus conda env creation can together need
 rem several hundred MB to a few GB; a low-disk-space beginner machine would otherwise see whatever
