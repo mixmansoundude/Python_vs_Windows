@@ -23,7 +23,14 @@ PREFERRED = ("main.py", "app.py", "run.py", "cli.py")
 
 def is_py(name):
     lower = name.lower()
-    return lower.endswith(".py") and not lower.startswith("~") and os.path.isfile(name)
+    # "._"-prefix: macOS AppleDouble metadata files (e.g. "._main.py"), a common
+    # cross-platform papercut when a Windows user unzips something a Mac user zipped.
+    return (
+        lower.endswith(".py")
+        and not lower.startswith("~")
+        and not lower.startswith("._")
+        and os.path.isfile(name)
+    )
 
 
 def _is_main_guard(test):

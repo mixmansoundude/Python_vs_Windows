@@ -535,20 +535,12 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    be permanently frozen into every already-distributed copy of `run_setup.bat`, with no way to
    walk it back later even after the reason for it stops being true. Read that section before
    extending Tier B's pinning pattern anywhere else in this codebase.
-7. **Cross-platform pre-flight checks (low-effort, low-risk, deliberately kept OUT of the PEP 723
-   write-back work as its own small, fast follow-up loop -- REQ-005.11 has now shipped, see
-   Closed Backlog, so this is ready to pick up).** Raised alongside a
+7. **Cross-platform pre-flight checks -- one of two items shipped (Mac-garbage filter, see Closed
+   Backlog), one remains.** Raised alongside a
    3rd-party review of the PEP 723 plan (2026-07-12): three cheap, read-only checks worth adding
    near the existing early-warning guards (OneDrive detection, path-length guard, REQ-025 disk
    space) in `run_setup.bat`, all "observe and warn, never silently rewrite" per this repo's
    existing posture:
-   - **Mac-garbage filter for entry detection.** `tools/find_entry.py`'s `is_py()` currently has no
-     exclusion for macOS AppleDouble files (`._main.py`) or a stray `__MACOSX/` folder left behind
-     when a Windows user unzips something a Mac user zipped -- a real, common, well-known
-     cross-platform papercut. Fix is a one-line addition to `is_py()`'s existing filter (already
-     excludes `~`-prefixed names; add a `._`-prefix exclusion the same way) plus skipping any
-     `__MACOSX` directory in the same walk. Needs a `PayloadSync`-covered re-sync of
-     `HP_FIND_ENTRY` afterward (see item 8) and a `tests/test_find_entry.py` case.
    - **System-directory guard.** No check currently exists for the script root being under
      `%WINDIR%`/`%PROGRAMFILES%` (a user occasionally drops a script into a system folder thinking
      it "installs" it) -- the bootstrapper would just fail cryptically on write-permission errors
@@ -980,6 +972,20 @@ of a second or third pin actually needing it.
 
 Items completed and shipped:
 
+- **Mac-garbage filter for entry detection (first of the two Cross-platform pre-flight checks
+  items, see the remaining System-directory guard bullet in Active Backlog)**: `tools/find_entry.py`'s
+  `is_py()` now excludes `._`-prefixed names (macOS AppleDouble metadata files, e.g. `._main.py`)
+  the same way it already excluded `~`-prefixed names, closing a real, common cross-platform
+  papercut when a Windows user unzips something a Mac user zipped. `HP_FIND_ENTRY`'s embedded
+  base64 payload re-synced to match (`tests/test_find_entry.py`'s `PayloadSync` test confirms
+  byte-equality); new `test_apple_double_metadata_file_excluded` case added.
+  **Investigated and found NOT applicable, no action needed**: the backlog item's original text
+  also called for "skipping any `__MACOSX` directory in the same walk." Traced `main()`'s actual
+  file discovery (`os.listdir(".")`, non-recursive, filtered through `is_py()`'s own
+  `os.path.isfile()` check) and confirmed a `__MACOSX` folder -- a directory, not a `.py` file --
+  can never match `is_py()` regardless of any prefix filter, since `os.path.isfile()` already
+  excludes it by construction. No code change was needed or made for this half of the original
+  item; noted here so it is not mistaken for an oversight later.
 - **PEP 723 dependency write-back via `uv add --script` (REQ-005.11)**: full design at
   `docs/plan-pep723-writeback.md`. Promotes a resolved dependency set into the entry file's own
   PEP 723 header after a fresh, fully-successful uv-mode dependency install or a fully-successful
