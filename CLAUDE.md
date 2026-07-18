@@ -982,7 +982,17 @@ Items completed and shipped:
   Detection uses `findstr` substring matching (mirrors the existing top-of-file UNC-path check)
   rather than the `%VAR:%OTHER%=%` nested-substitution idiom, since the latter has no existing
   precedent anywhere in this file and could not be verified against a real cmd.exe from this
-  sandbox; `findstr`'s literal-argument expansion sidesteps that risk entirely. `%WINDIR%`/
+  sandbox. **A real bug shipped in the first version and was caught by the new test's own first
+  real CI run**: the `findstr /C:"..."` search patterns originally ended in a single backslash
+  immediately before the closing quote (e.g. `%WINDIR%\"`), which per the standard Windows
+  argv-parsing rule `findstr.exe` itself applies to its own command line, escapes the quote
+  instead of closing it -- silently corrupting the search pattern (and swallowing the trailing
+  `>nul`) so the guard could never fire. Fixed by doubling the trailing backslash
+  (`%WINDIR%\\"`), which collapses to the intended single literal backslash while letting the
+  quote close normally; verified against a direct Python re-implementation of the parsing rule,
+  not just asserted. See `docs/agent-lessons-learned.md`'s new "A single trailing backslash
+  before a closing quote silently corrupts a subprocess argument" entry for the full mechanism
+  and a rule of thumb for future `findstr`/subprocess-argument call sites. `%WINDIR%`/
   `%ProgramFiles%` are each guarded with their own `if defined` check before the `findstr` call
   (an undefined variable would otherwise expand to an empty search pattern, which is not itself
   a false-positive risk here since `HP_SCRIPT_ROOT` always ends with a trailing backslash the

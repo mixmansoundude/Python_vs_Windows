@@ -103,16 +103,23 @@ rem trailing backslash on the search pattern prevents a same-prefix false match 
 rem "C:\WindowsFooBar\" does not contain the substring "C:\Windows\").
 set "HP_SYSDIR_HIT="
 set "HP_PF86=%ProgramFiles(x86)%"
+rem derived requirement: the search pattern ends in "\\" (two backslashes), not "\" -- a
+rem SINGLE backslash immediately before the closing quote is a classic Windows argv-parsing
+rem trap: findstr.exe (like most native console apps) follows the standard C-runtime rule
+rem that an ODD number of backslashes right before a closing quote escapes the quote instead
+rem of closing the string, silently corrupting the whole /C: argument (and swallowing the
+rem trailing ">nul" into the search pattern) so the match can never succeed. An EVEN count
+rem (here, two) collapses to a single literal backslash and the quote closes normally.
 if defined WINDIR (
-  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%WINDIR%\" >nul
+  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%WINDIR%\\" >nul
   if not errorlevel 1 set "HP_SYSDIR_HIT=1"
 )
 if defined ProgramFiles (
-  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%ProgramFiles%\" >nul
+  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%ProgramFiles%\\" >nul
   if not errorlevel 1 set "HP_SYSDIR_HIT=1"
 )
 if defined HP_PF86 (
-  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%HP_PF86%\" >nul
+  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%HP_PF86%\\" >nul
   if not errorlevel 1 set "HP_SYSDIR_HIT=1"
 )
 set "HP_PF86="
