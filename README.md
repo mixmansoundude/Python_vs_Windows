@@ -649,25 +649,25 @@ Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` w
 
 **Payload inventory and PayloadSync coverage** (added so this is visible at a glance, instead of
 needing to grep the batch file or a research pass to find out): of the 16 embedded `HP_*`
-payloads, 6 have a canonical `tools/` source file *and* a dedicated `PayloadSync` unit test that
+payloads, 7 have a canonical `tools/` source file *and* a dedicated `PayloadSync` unit test that
 asserts the embedded base64 is byte-for-byte in sync with that source (`HP_COLLECT_SUBMODULES` ->
-`tools/collect_submodules.py`, `HP_EMBED_EXTRACT` -> `tools/embed_extract.ps1`,
-`HP_EMBED_PYVER_CHECK` -> `tools/embed_pyver_check.py`, `HP_FIND_ENTRY` -> `tools/find_entry.py`,
-`HP_HIDDEN_IMPORT_SCAN` -> `tools/hidden_import_scan.py`, `HP_PARSE_WARN` ->
-`tools/parse_warn.py`; each is exercised by the matching `tests/test_*.py` file). The remaining
-10 (`HP_CONDARC`, `HP_DEP_CHECK`, `HP_DETECT_PY`, `HP_DETECT_VISA`, `HP_ENV_STATE`,
+`tools/collect_submodules.py`, `HP_DETECT_PY` -> `tools/detect_python.py`, `HP_EMBED_EXTRACT` ->
+`tools/embed_extract.ps1`, `HP_EMBED_PYVER_CHECK` -> `tools/embed_pyver_check.py`, `HP_FIND_ENTRY`
+-> `tools/find_entry.py`, `HP_HIDDEN_IMPORT_SCAN` -> `tools/hidden_import_scan.py`,
+`HP_PARSE_WARN` -> `tools/parse_warn.py`; each is exercised by the matching `tests/test_*.py`
+file). The remaining 9 (`HP_CONDARC`, `HP_DEP_CHECK`, `HP_DETECT_VISA`, `HP_ENV_STATE`,
 `HP_FAILFAST_PROBE`, `HP_FAST_CHECK`, `HP_PREP_REQUIREMENTS`, `HP_PRINT_PYVER`, `HP_PYPROJ_DEPS`)
 are embedded-only, with no separate canonical source to sync against -- `HP_CONDARC` is static
 config text, not code, so this doesn't apply to it; `HP_FAST_CHECK` and `HP_PREP_REQUIREMENTS` at
 least have their *logic* covered by `tests/test_fast_check_pattern.py` /
 `tests/test_heuristics.py` (extracted and tested in place, just not against a separate source
-file); `HP_DEP_CHECK`, `HP_DETECT_PY`, `HP_DETECT_VISA`, `HP_ENV_STATE`, `HP_FAILFAST_PROBE`, and
-`HP_PYPROJ_DEPS` currently have **no automated test coverage of any kind** despite several of them
-(`HP_DETECT_PY`'s multi-tier version detection, `HP_PYPROJ_DEPS`'s TOML-with-regex-fallback
-parsing) doing genuinely non-trivial logic -- see `CLAUDE.md`'s Active Backlog for the tracked
-follow-up to promote these to the same canonical-source-plus-`PayloadSync`-plus-logic-test pattern
-as the 6 above. Any *new* embedded payload should default to the canonical-source-plus-
-`PayloadSync` pattern from the start rather than adding an 11th embedded-only exception.
+file); `HP_DEP_CHECK`, `HP_DETECT_VISA`, `HP_ENV_STATE`, `HP_FAILFAST_PROBE`, and `HP_PYPROJ_DEPS`
+currently have **no automated test coverage of any kind** despite `HP_PYPROJ_DEPS`'s
+TOML-with-regex-fallback parsing doing genuinely non-trivial logic -- see `CLAUDE.md`'s Active
+Backlog for the tracked follow-up to promote these to the same canonical-source-plus-`PayloadSync`
+-plus-logic-test pattern as the 7 above. Any *new* embedded payload should default to the
+canonical-source-plus-`PayloadSync` pattern from the start rather than adding an 11th
+embedded-only exception.
 
 ## How CI decides pass/fail
 
