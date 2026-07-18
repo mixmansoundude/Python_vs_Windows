@@ -537,24 +537,23 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    extending Tier B's pinning pattern anywhere else in this codebase.
 7. **Promote the remaining embedded-only `HP_*` payloads to the canonical-source-plus-
    `PayloadSync`-plus-logic-test pattern (moderate effort, not urgent, but a real, confirmed test-
-   coverage gap) -- one of seven done (`HP_DETECT_PY`, see Closed Backlog), six remain.** A
-   payload-inventory audit done alongside the cross-platform-checks review (2026-07-12; see
-   README's "Rebuilding embedded helper payloads" section for the full inventory table now
-   recorded there) found that of 16 embedded `HP_*` payloads, only 6 had a canonical `tools/`
-   source file with a `PayloadSync` byte-equality test (`HP_COLLECT_SUBMODULES`, `HP_EMBED_EXTRACT`,
-   `HP_EMBED_PYVER_CHECK`, `HP_FIND_ENTRY`, `HP_HIDDEN_IMPORT_SCAN`, `HP_PARSE_WARN`). Of the
-   remaining embedded-only payloads, `HP_CONDARC` is static config (not code, doesn't need this),
-   and `HP_FAST_CHECK`/`HP_PREP_REQUIREMENTS` at least have their logic tested in place
-   (`tests/test_fast_check_pattern.py`/`tests/test_heuristics.py`, just not against a separate
-   canonical source) -- but **`HP_DEP_CHECK`, `HP_DETECT_VISA`, `HP_ENV_STATE`,
-   `HP_FAILFAST_PROBE`, and `HP_PYPROJ_DEPS` currently have zero automated test coverage of any
-   kind**, despite `HP_PYPROJ_DEPS`'s TOML-with-regex-fallback parser doing genuinely non-trivial
-   logic. Recommended approach when picked up: extract each into a `tools/<name>.py` canonical
-   source (mirroring the `collect_submodules.py`/`hidden_import_scan.py` precedent), add a
-   `PayloadSync` test asserting embedded-base64-matches-source, and add at least minimal
-   logic-level unit tests -- sized as several small, independent loops (one payload at a time),
-   not one big one, since each payload's logic is unrelated to the others. Not urgent (no bug has
-   been traced to any of these gaps), but real.
+   coverage gap) -- two of eight done (`HP_DETECT_PY`, `HP_PYPROJ_DEPS`, see Closed Backlog), four
+   remain.** A payload-inventory audit done alongside the cross-platform-checks review
+   (2026-07-12; see README's "Rebuilding embedded helper payloads" section for the full inventory
+   table now recorded there) found that of 16 embedded `HP_*` payloads, only 6 had a canonical
+   `tools/` source file with a `PayloadSync` byte-equality test (`HP_COLLECT_SUBMODULES`,
+   `HP_EMBED_EXTRACT`, `HP_EMBED_PYVER_CHECK`, `HP_FIND_ENTRY`, `HP_HIDDEN_IMPORT_SCAN`,
+   `HP_PARSE_WARN`). Of the remaining embedded-only payloads, `HP_CONDARC` is static config (not
+   code, doesn't need this), and `HP_FAST_CHECK`/`HP_PREP_REQUIREMENTS` at least have their logic
+   tested in place (`tests/test_fast_check_pattern.py`/`tests/test_heuristics.py`, just not against
+   a separate canonical source) -- but **`HP_DEP_CHECK`, `HP_DETECT_VISA`, `HP_ENV_STATE`, and
+   `HP_FAILFAST_PROBE` currently have zero automated test coverage of any kind**. Recommended
+   approach when picked up: extract each into a `tools/<name>.py` canonical source (mirroring the
+   `collect_submodules.py`/`hidden_import_scan.py` precedent), add a `PayloadSync` test asserting
+   embedded-base64-matches-source, and add at least minimal logic-level unit tests -- sized as
+   several small, independent loops (one payload at a time), not one big one, since each payload's
+   logic is unrelated to the others. Not urgent (no bug has been traced to any of these gaps), but
+   real.
 8. **PVW QuickStart -- a super-user command set for running/persisting a `.py` file's
     dependencies with no EXE build, shipped as copy-paste README commands (full design at
     `docs/plan-pvw-quickstart.md`; user-facing commands live in README's "PVW QuickStart" section).**
@@ -970,7 +969,8 @@ Items completed and shipped:
   excludes it by construction. No code change was needed or made for this half of the original
   item; noted here so it is not mistaken for an oversight later.
 - **`HP_DETECT_PY` promoted to canonical-source-plus-`PayloadSync`-plus-logic-test (first of the
-  six-payload backlog item, see Active Backlog item 7 for the remaining five)**: extracted the
+  six-payload backlog item, now shipped alongside `HP_PYPROJ_DEPS` below -- see Active Backlog item
+  7 for the remaining four)**: extracted the
   embedded payload to `tools/detect_python.py`, verified the functional code is byte-identical to
   what was already embedded (only a new module docstring was added, mirroring the
   `find_entry.py`/`collect_submodules.py` header convention), then re-encoded and re-synced
@@ -995,6 +995,39 @@ Items completed and shipped:
   have canonical source + `PayloadSync`, not 6; `HP_DETECT_PY` moved out of the zero-coverage
   list). CLOSED by this PR (only the `HP_DETECT_PY` slice; the item stays open in Active Backlog
   for the remaining five payloads).
+- **`HP_PYPROJ_DEPS` promoted to canonical-source-plus-`PayloadSync`-plus-logic-test (second of the
+  payload-promotion backlog item, see Active Backlog item 7 for the remaining four)**: extracted
+  the embedded payload to `tools/pyproj_deps.py`, verified byte-identical to what was already
+  embedded (docstring-only addition), then re-encoded and re-synced `run_setup.bat`'s
+  `HP_PYPROJ_DEPS` line (3410-char margin under the CMD 8191-char budget). Added
+  `tests/test_pyproj_deps.py`: 16 total tests including a `PayloadSync` byte-equality check. The
+  script is a flat, top-level `sys.exit()`-based script with no importable functions (unlike
+  `find_entry.py`/`detect_python.py`), so it is exercised via subprocess, mirroring
+  `test_find_entry.py`'s pattern. The interesting code path -- the regex-based char-by-char
+  dependency-array walk that only runs when `tomllib` is unavailable -- turned out to be
+  essentially untestable via the obvious route (this sandbox and real CI both run Python 3.11+,
+  so `tomllib` is always importable, and a `[project].dependencies` key that tomllib CAN parse
+  never falls through to the regex path at all). Solved by shadowing `tomllib` with a stub module
+  (`raise ImportError` at import time) placed on `PYTHONPATH` ahead of the real stdlib path for
+  the subprocess call -- confirmed directly that this reliably reproduces the script's own
+  `try: import tomllib / except ImportError: tomllib = None` branch without needing an actual
+  pre-3.11 interpreter. This let 9 of the 16 tests exercise the fallback path for real, including
+  its own independent malformed-`[project`-header detection (a second, narrower TOML-parse-error
+  check that only matters when tomllib itself isn't there to catch it) and the double-gate that
+  `[tool.other].dependencies` never bleeds into a `[project]` table lacking its own key.
+  **Found and documented, not fixed, a genuine pre-existing minor behavioral difference between
+  the two paths**: tomllib properly unescapes a backslash-escaped quote inside a dependency
+  string (`weird\"quote` -> `weird"quote`), but the regex fallback's char-by-char walk only skips
+  over the escaped character to avoid stopping early -- it does not strip the backslash from the
+  collected text, so the same input comes out as `weird\"quote` (backslash intact) via the
+  fallback. Confirmed via direct side-by-side reproduction, not just inferred from reading the
+  code. Left as-is and captured in a test asserting the fallback's actual behavior, since
+  "fixing" it would be a functional change out of scope for a payload-promotion pass, and
+  real-world `pyproject.toml` dependency strings essentially never contain escaped quotes.
+  Updated README's inventory table (8 of 16 payloads now have canonical source + `PayloadSync`).
+  CLOSED by this PR (only the `HP_PYPROJ_DEPS` slice; the item stays open in Active Backlog for
+  the remaining four payloads: `HP_DEP_CHECK`, `HP_DETECT_VISA`, `HP_ENV_STATE`,
+  `HP_FAILFAST_PROBE`).
 - **System-directory guard (second and final half of the Cross-platform pre-flight checks item --
   now fully closed)**: `run_setup.bat` now aborts early (`exit /b 1`, plain-language message) when
   the script root resolves under `%WINDIR%`, `%ProgramFiles%`, or `%ProgramFiles(x86)%`. Placed
