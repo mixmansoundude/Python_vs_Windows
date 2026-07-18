@@ -159,7 +159,15 @@ function Write-Utf8NoBom {
 # tools/pep723_writeback.py or a different :pep723_writeback trigger.
 switch ($scenario) {
     'malformed' {
-        Write-Utf8NoBom -Path $appPath -Text "# /// script`nbroken toml (((`n# ///`nimport requests`nprint('hi')`n"
+        # derived requirement: the broken-TOML line MUST carry a leading '#' -- without it,
+        # this stops being a malformed PEP 723 comment block and becomes literal Python source
+        # with an unclosed '(', which crashes pipreqs's ast.parse() with an unhandled
+        # SyntaxError (confirmed via a real CI run) before dependency discovery ever runs, so
+        # requirements.txt stays empty and :pep723_writeback never even attempts uv add
+        # --script. Confirmed via a local repro: the '#'-prefixed form parses fine under
+        # ast.parse (safe for pipreqs) while still making `uv add --script` exit 2 (still
+        # exercises the real strip-and-retry path this scenario exists to test).
+        Write-Utf8NoBom -Path $appPath -Text "# /// script`n# broken toml (((`n# ///`nimport requests`nprint('hi')`n"
     }
     'trailing_ws_malformed' {
         # Trailing whitespace on the closing fence line, built explicitly (not via a
