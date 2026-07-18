@@ -537,26 +537,24 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    extending Tier B's pinning pattern anywhere else in this codebase.
 7. **Promote the remaining embedded-only `HP_*` payloads to the canonical-source-plus-
    `PayloadSync`-plus-logic-test pattern (moderate effort, not urgent, but a real, confirmed test-
-   coverage gap).** A payload-inventory audit done alongside the cross-platform-checks review
-   (2026-07-12; see README's "Rebuilding embedded helper payloads" section for the full inventory
-   table now recorded there) found that of 16 embedded `HP_*` payloads, only 6 have a canonical
-   `tools/` source file with a `PayloadSync` byte-equality test (`HP_COLLECT_SUBMODULES`,
-   `HP_EMBED_EXTRACT`, `HP_EMBED_PYVER_CHECK`, `HP_FIND_ENTRY`, `HP_HIDDEN_IMPORT_SCAN`,
-   `HP_PARSE_WARN`). Of the remaining 10 embedded-only payloads, `HP_CONDARC` is static config (not
-   code, doesn't need this), and `HP_FAST_CHECK`/`HP_PREP_REQUIREMENTS` at least have their logic
-   tested in place (`tests/test_fast_check_pattern.py`/`tests/test_heuristics.py`, just not against
-   a separate canonical source) -- but **`HP_DEP_CHECK`, `HP_DETECT_PY`, `HP_DETECT_VISA`,
-   `HP_ENV_STATE`, `HP_FAILFAST_PROBE`, and `HP_PYPROJ_DEPS` currently have zero automated test
-   coverage of any kind**, despite several doing genuinely non-trivial logic (`HP_DETECT_PY`'s
-   multi-tier `runtime.txt`/`pyproject.toml` version-detection precedence -- referenced constantly
-   elsewhere in these docs as load-bearing; `HP_PYPROJ_DEPS`'s TOML-with-regex-fallback parser).
-   Recommended approach when picked up: extract each into a `tools/<name>.py` canonical source
-   (mirroring the `collect_submodules.py`/`hidden_import_scan.py` precedent), add a `PayloadSync`
-   test asserting embedded-base64-matches-source, and add at least minimal logic-level unit tests
-   -- sized as several small, independent loops (one payload at a time), not one big one, since
-   each payload's logic is unrelated to the others. Not urgent (no bug has been traced to any of
-   these gaps), but real, and the highest-value place to start is `HP_DETECT_PY` given how central
-   its output is to the rest of the bootstrap.
+   coverage gap) -- one of seven done (`HP_DETECT_PY`, see Closed Backlog), six remain.** A
+   payload-inventory audit done alongside the cross-platform-checks review (2026-07-12; see
+   README's "Rebuilding embedded helper payloads" section for the full inventory table now
+   recorded there) found that of 16 embedded `HP_*` payloads, only 6 had a canonical `tools/`
+   source file with a `PayloadSync` byte-equality test (`HP_COLLECT_SUBMODULES`, `HP_EMBED_EXTRACT`,
+   `HP_EMBED_PYVER_CHECK`, `HP_FIND_ENTRY`, `HP_HIDDEN_IMPORT_SCAN`, `HP_PARSE_WARN`). Of the
+   remaining embedded-only payloads, `HP_CONDARC` is static config (not code, doesn't need this),
+   and `HP_FAST_CHECK`/`HP_PREP_REQUIREMENTS` at least have their logic tested in place
+   (`tests/test_fast_check_pattern.py`/`tests/test_heuristics.py`, just not against a separate
+   canonical source) -- but **`HP_DEP_CHECK`, `HP_DETECT_VISA`, `HP_ENV_STATE`,
+   `HP_FAILFAST_PROBE`, and `HP_PYPROJ_DEPS` currently have zero automated test coverage of any
+   kind**, despite `HP_PYPROJ_DEPS`'s TOML-with-regex-fallback parser doing genuinely non-trivial
+   logic. Recommended approach when picked up: extract each into a `tools/<name>.py` canonical
+   source (mirroring the `collect_submodules.py`/`hidden_import_scan.py` precedent), add a
+   `PayloadSync` test asserting embedded-base64-matches-source, and add at least minimal
+   logic-level unit tests -- sized as several small, independent loops (one payload at a time),
+   not one big one, since each payload's logic is unrelated to the others. Not urgent (no bug has
+   been traced to any of these gaps), but real.
 8. **PVW QuickStart -- a super-user command set for running/persisting a `.py` file's
     dependencies with no EXE build, shipped as copy-paste README commands (full design at
     `docs/plan-pvw-quickstart.md`; user-facing commands live in README's "PVW QuickStart" section).**
@@ -971,6 +969,32 @@ Items completed and shipped:
   can never match `is_py()` regardless of any prefix filter, since `os.path.isfile()` already
   excludes it by construction. No code change was needed or made for this half of the original
   item; noted here so it is not mistaken for an oversight later.
+- **`HP_DETECT_PY` promoted to canonical-source-plus-`PayloadSync`-plus-logic-test (first of the
+  six-payload backlog item, see Active Backlog item 7 for the remaining five)**: extracted the
+  embedded payload to `tools/detect_python.py`, verified the functional code is byte-identical to
+  what was already embedded (only a new module docstring was added, mirroring the
+  `find_entry.py`/`collect_submodules.py` header convention), then re-encoded and re-synced
+  `run_setup.bat`'s `HP_DETECT_PY` line (well within the CMD 8191-char budget -- 1552-char
+  margin). Added `tests/test_detect_python.py`: a `PayloadSync` byte-equality test plus 20 total
+  unit tests covering `pep440_to_conda` (the same 6 cases already exercised by
+  `tests/dynamic_tests.py`'s `dp.pep440` rows, kept in sync rather than duplicated, plus 5 new
+  edge cases: single-digit `~=`, empty spec, unmatched clause, duplicate-clause dedup, comma
+  whitespace tolerance) and `detect_requires_python`'s REQ-004 Tier 1/2 precedence (runtime.txt
+  wins over pyproject.toml when both exist; pyproject.toml alone; missing files; a patch version
+  in runtime.txt is accepted but not forwarded, since providers pin by minor only; an unparseable
+  runtime.txt falls through to pyproject.toml rather than failing; single- vs double-quoted
+  `requires-python` values). **Correction to this backlog item's own original wording**: it
+  previously said `HP_DETECT_PY` had "zero automated test coverage of any kind" -- not quite
+  accurate even before this change: `tests/dynamic_tests.py` already exercised
+  `pep440_to_conda`/`detect_requires_python` via `dp.pep440`/`dp.detect.runtime`/
+  `dp.detect.pyproject` rows (decoding and importing the embedded payload at real-CI runtime).
+  That coverage is real but Windows-CI-only, has no `PayloadSync` guarantee, and is thinner than a
+  dedicated suite -- the distinction this backlog item is actually drawing is the dedicated,
+  cross-platform, locally-runnable `pytest tests/test_*.py` pattern, not "any coverage at all".
+  Updated README's "Rebuilding embedded helper payloads" inventory table (7 of 16 payloads now
+  have canonical source + `PayloadSync`, not 6; `HP_DETECT_PY` moved out of the zero-coverage
+  list). CLOSED by this PR (only the `HP_DETECT_PY` slice; the item stays open in Active Backlog
+  for the remaining five payloads).
 - **System-directory guard (second and final half of the Cross-platform pre-flight checks item --
   now fully closed)**: `run_setup.bat` now aborts early (`exit /b 1`, plain-language message) when
   the script root resolves under `%WINDIR%`, `%ProgramFiles%`, or `%ProgramFiles(x86)%`. Placed
