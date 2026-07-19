@@ -73,16 +73,28 @@ class VisaDetection(unittest.TestCase):
         # import inside a function body is still detected.
         self.assertEqual(_run({"app.py": "def load():\n    import pyvisa\n"}), "1")
 
-    def test_import_pyvista_false_positive_documented_not_fixed(self):
-        # derived requirement (observed, not changed): PATTERNS has no
-        # word-boundary anchor after "vis"/"pyvis", so an unrelated import
-        # merely starting with those letters -- e.g. "import pyvista", a
-        # real, popular, unrelated 3D-visualization package -- also matches.
-        # This is a genuine, pre-existing false-positive risk; documented
-        # here rather than fixed, since a regex change is a functional
-        # behavior change out of scope for a payload-promotion pass. See
-        # CLAUDE.md's Active Backlog for the tracked follow-up.
-        self.assertEqual(_run({"app.py": "import pyvista\n"}), "1")
+    def test_import_pyvista_false_positive_fixed(self):
+        # PATTERNS now anchors on the full module name ("pyvisa") with a
+        # trailing \b instead of a truncated "pyvis" prefix, so an unrelated
+        # import merely starting with those letters -- e.g. "import
+        # pyvista", a real, popular, unrelated 3D-visualization package --
+        # no longer matches. This assertion previously documented the
+        # opposite (over-broad) behavior; see CLAUDE.md's Closed Backlog for
+        # the fix.
+        self.assertEqual(_run({"app.py": "import pyvista\n"}), "0")
+
+    def test_import_vision_false_positive_fixed(self):
+        self.assertEqual(_run({"app.py": "import vision\n"}), "0")
+
+    def test_import_pyviscoelastic_false_positive_fixed(self):
+        self.assertEqual(_run({"app.py": "import pyviscoelastic\n"}), "0")
+
+    def test_dotted_submodule_import_still_matches(self):
+        # \b after the full word ("pyvisa") still allows a dotted submodule
+        # import to match, since "." is a non-word character.
+        self.assertEqual(_run({"app.py": "import pyvisa.constants\n"}), "1")
+        self.assertEqual(
+            _run({"app.py": "from pyvisa.constants import StatusCode\n"}), "1")
 
 
 class PayloadSync(unittest.TestCase):
