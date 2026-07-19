@@ -471,17 +471,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    accumulated feature/test-scenario growth (more selftest scripts each doing a real
    `conda create`), not a regression from any single change. Worth periodic reassessment, no
    action planned yet.
-2. **`embed_pyver_check.py`'s double "unchanged" short-circuit leaves the `fell_back=True`
-   "fellback" WARN tag unreachable for above-ceiling requests (below-floor still works).**
-   `main()`'s first early-return (`requested_minor is None or requested_minor == LATEST_MINOR`)
-   is fine, but the second one (after `resolve_table_entry`, firing whenever the resolved `minor`
-   equals `LATEST_MINOR`) intercepts every above-ceiling request before it ever reaches the
-   `tag = "fellback" if fell_back else "swapped"` line -- so a user who requests a Python newer
-   than this repo's table ceiling silently gets latest with no diagnostic tag, while a
-   below-floor request still correctly reaches the tag. Low severity (the actual behavior --
-   falling back to latest -- is correct either way; only the diagnostic label is unreachable for
-   one of the two fallback directions). Low priority; fix by moving the LATEST_MINOR check inside
-   `resolve_table_entry`'s own early-return rather than duplicating it in `main()`.
 3. **~85 lines of near-duplicated env-var save/set/restore boilerplate between
    `self.embed.fallback.decline` and `self.embed.fallback.real`** in
    `tests/selfapps_ux_hardening.ps1`. Factorable into a shared helper, but each block forces a
@@ -935,6 +924,30 @@ of a second or third pin actually needing it.
 
 Items completed and shipped:
 
+- **`embed_pyver_check.py`'s unreachable "fellback" tag for above-ceiling requests (Active
+  Backlog item 2)**: `main()`'s second early-return (after `resolve_table_entry`, firing when the
+  resolved `minor` equals `LATEST_MINOR`) previously always wrote `"unchanged|{minor}"`, even
+  when `resolve_table_entry` reached that branch via its own fallback path (`fell_back=True` --
+  an above-ceiling request, e.g. `python>=3.99`). Confirmed via `ResolveTableEntry`'s existing
+  tests that this early-return is ONLY reachable through the fallback path (an exact match for
+  `LATEST_MINOR` is already intercepted by `main()`'s first early-return, one guard clause
+  earlier) -- so `fell_back` is always `True` here, and the fix writes `"fellback|{minor}"`
+  unconditionally rather than adding a now-always-true conditional. This makes the
+  `:embed_pyver_check_tagcheck` WARN (`run_setup.bat`, "requested Python not in embed table;
+  using ... instead") reachable for an above-ceiling request too, matching the below-floor
+  request's already-correct behavior -- purely a diagnostic-visibility fix, the actual behavior
+  (falling back to latest, no swap needed) is unchanged either way. Added `MainDispatch` to
+  `tests/test_embed_tier.py` (3 new tests) exercising `main()`'s two early-return branches
+  directly, including the specific regression this fix targets
+  (`test_above_ceiling_request_is_fellback_not_unchanged`); the actual swap path (exact in-table
+  match or below-floor fallback) is untouched by this fix and already has real end-to-end CI
+  coverage via `self.embed.fallback.real`, so it wasn't re-tested here with mocked network calls.
+  **Hit the CMD 8191-char line-length budget for real while writing this**: an initial, more
+  verbose comment explaining the fix pushed `HP_EMBED_PYVER_CHECK`'s line to 8395 chars (204 over
+  budget) -- trimmed to a 2-line comment, landing at 452-char margin. Re-encoded and re-synced
+  `run_setup.bat`'s `HP_EMBED_PYVER_CHECK` line; `test_embed_tier.py`'s existing
+  `BatchPythonConsistency`/`PayloadSync` tests confirm the batch-side constants and payload stay
+  in sync. CLOSED by this PR.
 - **`HP_DETECT_VISA` false-positive regex fix (Active Backlog item 10, found during the payload
   promotion above, fixed in its own isolated commit per that entry's own stated precedent)**:
   `PATTERNS` in `tools/detect_visa.py` now anchors on the FULL module name (`pyvisa`/`visa`) with

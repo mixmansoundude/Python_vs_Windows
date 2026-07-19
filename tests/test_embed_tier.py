@@ -7,14 +7,20 @@ HP_EMBED_LATEST_PATCH/HP_EMBED_LATEST_SHA256 constants agree with the Python tab
 entry -- a refresh that updates one but not the other must be caught here, not discovered live.
 """
 import base64
+import io
+import os
 import re
+import sys
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from tools.embed_pyver_check import (
     EMBED_PYTHON_TABLE,
     FLOOR_MINOR,
     LATEST_MINOR,
+    main,
     resolve_requested_minor,
     resolve_table_entry,
 )
@@ -82,6 +88,43 @@ class BatchPythonConsistency(unittest.TestCase):
             sha_m.group(1), table_sha256,
             "HP_EMBED_LATEST_SHA256 is out of sync with embed_pyver_check.py's LATEST_MINOR entry.",
         )
+
+
+class MainDispatch(unittest.TestCase):
+    # Exercises main()'s two early-return branches directly (no network I/O -- both return
+    # before download_and_verify/extract_and_patch are ever called). The actual swap path
+    # (exact in-table match or below-floor fallback) is untouched by this fix and already has
+    # real end-to-end CI coverage via self.embed.fallback.real (selfapps_ux_hardening.ps1), so
+    # it is not re-tested here with mocked network calls.
+    def _run_main(self, argv, env):
+        buf = io.StringIO()
+        with patch.object(sys, "argv", argv), \
+             patch.dict(os.environ, env, clear=True), \
+             redirect_stdout(buf):
+            rc = main()
+        return rc, buf.getvalue().strip()
+
+    def test_no_pyspec_is_unchanged(self):
+        rc, out = self._run_main(["embed_pyver_check.py", "/dest"], {})
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "unchanged|{}".format(LATEST_MINOR))
+
+    def test_exact_latest_request_is_unchanged(self):
+        rc, out = self._run_main(
+            ["embed_pyver_check.py", "/dest"], {"PYSPEC": "python={}".format(LATEST_MINOR)})
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "unchanged|{}".format(LATEST_MINOR))
+
+    def test_above_ceiling_request_is_fellback_not_unchanged(self):
+        # derived requirement (the fix): previously this branch emitted "unchanged", making the
+        # "fellback" WARN tag unreachable for above-ceiling requests even though a below-floor
+        # request already correctly reached it (see ResolveTableEntry.test_above_ceiling_falls_
+        # back_to_latest / test_below_floor_falls_back_to_floor for the table-resolution half of
+        # this, which was already correct -- only main()'s dispatch was wrong).
+        rc, out = self._run_main(
+            ["embed_pyver_check.py", "/dest"], {"PYSPEC": "python>=3.99"})
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "fellback|{}".format(LATEST_MINOR))
 
 
 class PayloadSync(unittest.TestCase):
