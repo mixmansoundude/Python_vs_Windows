@@ -1,10 +1,13 @@
 # Plan: Two-Tier `autopep723` Integration (Default Path discovery + `HP_PVW_KNOWN_IDEMPOTENT`)
 
-**Status:** Design-only, not scheduled, **sequenced last** in the PEP 723 work: after
-`docs/plan-pep723-writeback.md` is implemented AND `docs/plan-pvw-quickstart.md`'s shipped README
-commands have had time to prove out, per the user's own explicit sequencing. Supersedes
-`plan-pvw-quickstart.md`'s "Shape B" (a vaguely-specified, deliberately-deferred `run_setup.bat`
-hook) with a concrete design -- see that doc's own Shape B section, now pointing here.
+**Status:** Both prerequisites shipped (`plan-pep723-writeback.md`'s write-back, REQ-005.11; and
+`plan-pvw-quickstart.md`'s README commands, now with a standalone CI dry-run proof too --
+`tests/selfapps_pvw_quickstart.ps1`, 2026-07-19). **Tier 1's own code-grounded pass is now
+complete** (see that section below, 2026-07-19) -- implementation-ready, not yet built. **Tier 2
+remains not-yet-prepped**, per its own section's explicit dependency on Tier 1 landing first --
+still **sequenced after Tier 1** within this doc. Supersedes `plan-pvw-quickstart.md`'s "Shape B"
+(a vaguely-specified, deliberately-deferred `run_setup.bat` hook) with a concrete design -- see
+that doc's own Shape B section, now pointing here.
 **Owner:** Python_vs_Windows maintainer
 **Source material:** a user-supplied third-party spec ("Two-Tier autopep723 Strategy for PVW").
 Not reproduced verbatim here; this doc states what was verified, what was corrected, and why, per
@@ -126,14 +129,35 @@ behavior changed.
 for all users, on all lanes eventually (v1: uv lane, matching `plan-pep723-writeback.md`'s own v1
 scope decision) -- non-gating, never a cause of lane failure on its own.
 
-**Insertion point**: after pipreqs completes and `requirements.txt` is finalized, before the
-existing dependency-optimization/heuristics steps -- re-verify the exact label names against the
-live `run_setup.bat` at implementation time (this repo's docs consistently warn that line/label
-anchors drift; treat any specific label name here as illustrative, not guaranteed-current).
+**Insertion point (code-grounded, 2026-07-19 -- re-verify line numbers before implementing,
+they drift):** right after `:after_pipreqs_run`'s `requirements.txt`/`requirements.auto.txt`
+finalization and diff computation (the `fc` comparison, `run_setup.bat` ~line 1290-1293), before
+the dep-check fast-path setup (`set "HP_DEP_SKIP="`, ~line 1294/1298). This is genuinely "after
+pipreqs completes and requirements.txt is finalized, before the existing
+dependency-optimization/heuristics steps" as originally described -- the heuristic augmentation
+(`~prep_requirements.py`) and dependency install don't start until ~line 1330.
+
+**`%HP_ENTRY%` availability confirmed** via a dedicated control-flow trace (not just grep): the
+`:determine_entry` call at ~line 975 runs strictly before the pipreqs block, on the SAME straight-
+line path with no intervening `goto`, and reliably leaves `HP_ENTRY` set to a real, existing file
+path by the time execution reaches `:after_pipreqs_run`. Two things that could have broken this
+assumption were checked and ruled out: (1) a SECOND `:determine_entry` call exists at ~line 1662,
+but it only runs ~400 lines later, after the entire dependency-install/PEP-723-writeback block has
+already finished -- it cannot affect the value read at this insertion point. (2) `HP_CI_SKIP_ENV=1`
+bypasses the ENTIRE block this insertion point lives in (a `goto` at ~line 431 jumps straight to
+`:ci_skip_entry`) -- that lane never reaches this code at all, so it's a non-issue, not something
+needing special-case handling.
+
+**One narrow, pre-existing edge case to guard against defensively**: if a repo's only top-level
+`.py` file(s) are `._`-prefixed macOS AppleDouble shadow files (no real `.py` present), `PYCOUNT`
+(which gates the whole block) can be >=1 while `tools/find_entry.py`'s own filtering excludes them,
+leaving `HP_ENTRY` empty at this point. This is an existing gap unrelated to this feature -- the
+new code should simply `if defined HP_ENTRY` before invoking `autopep723 check`, both to handle
+this case and as ordinary defensive coding.
 
 **Corrected invocation** (fixing Correction 1):
 ```
-uvx autopep723 check "%HP_ENTRY%" > "requirements.autopep.txt" 2>>"%LOG%"
+if defined HP_ENTRY uvx autopep723 check "%HP_ENTRY%" > "requirements.autopep.txt" 2>>"%LOG%"
 ```
 Never `.`, never a bare directory. `%HP_ENTRY%` is this repo's existing resolved-entry-file
 variable (REQ-002) -- reuse it, do not re-derive an entry path independently.
@@ -144,15 +168,36 @@ never propagate to lane failure. Fall back to pipreqs-only results and continue.
 already has its own established fallback path in this repo; `autopep723` is strictly additive on
 top of that, never a replacement for it.
 
+**Merge target decision (code-grounded, 2026-07-19): `requirements.txt` only, not
+`requirements.auto.txt`.** Traced what actually consumes each file: `tools/dep_check.py`'s fast
+path (`HP_DEP_SKIP`) reads `requirements.auto.txt` (pipreqs's raw output) to decide whether the
+slow conda bulk-install solver can be skipped on a repeat run -- but even when it fires and skips
+conda, the existing UNCONDITIONAL "pip gap-fill" step right after it (`%HP_PY% -m pip install -r
+requirements.txt`, `run_setup.bat` ~line 1348) still runs regardless, and it reads the MERGED
+`requirements.txt`, not `requirements.auto.txt`. So merging autopep's discoveries into
+`requirements.txt` alone is sufficient for correctness -- anything autopep-only-discovered still
+gets installed either way, no `requirements.auto.txt` change needed for v1.
+**Known, accepted trade-off, not a bug**: on a repeat run where the dep-check fast path fires
+(pipreqs's OWN detected set is already satisfied by the lock), an autopep-only-discovered package
+will always go through the pip gap-fill path rather than conda, since `dep_check.py`'s own
+comparison never sees it. This mirrors this repo's existing, already-documented "pip gap-fill
+safety net" pattern (`selfapps_pipgap.ps1`: "conda misses opencv-python, pip fills it") rather than
+introducing a new failure mode -- acceptable for v1, worth revisiting only if it proves disruptive
+in practice.
+
 **Merge**: union of pipreqs's and `autopep723 check`'s package lists, deduplicated. A dedicated
 small Python helper (mirroring `tools/prep_requirements.py`'s existing role, not a from-scratch
 design) is the right shape for this -- simple set-union logic, no TOML parsing needed since this
 touches `requirements.txt`, not a PEP 723 header.
 
-**Not yet implementation-ready**: unlike `plan-pep723-writeback.md`, this section has not had a
-code-grounded pass against the live `run_setup.bat` (exact insertion label, exact variable names,
-exact merge-helper shape). That pass is the first step whenever this is picked up, matching the
-pattern `plan-pep723-writeback.md`'s own Part 2 already establishes.
+**Status: code-grounded pass complete, implementation-ready** (2026-07-19) -- insertion point,
+`%HP_ENTRY%` availability (including the one edge case to guard), and the merge-target decision are
+all now settled against the live file, matching the readiness bar `plan-pep723-writeback.md`'s own
+Part 2 already established before ITS implementation began. Not yet built: the actual
+`run_setup.bat` edit, the merge helper itself, and CI test coverage (see "Open questions" below,
+still open) -- see `tests/selfapps_pvw_quickstart.ps1` (shipped 2026-07-19) for an isolated,
+already-passing proof that the `uvx autopep723 check <file>` call this tier makes behaves exactly
+as expected in this exact CI environment, before any of the above gets built.
 
 ---
 
@@ -201,14 +246,24 @@ since it depends on Tier 1 (and both prerequisite plans) shipping first per the 
 
 ## Open questions for whenever this is picked up
 
-- Exact `run_setup.bat` insertion label for Tier 1 (re-verify against the live file, not this doc).
-- Exact shape of the merge helper (new `tools/` file vs. extending `prep_requirements.py`).
+- ~~Exact `run_setup.bat` insertion label for Tier 1~~ -- **resolved 2026-07-19**, see Tier 1's own
+  section above (`:after_pipreqs_run`'s diff computation, before the dep-check fast-path setup).
+- ~~Exact shape of the merge helper~~ -- **partially resolved 2026-07-19**: a new small `tools/`
+  file (mirroring `prep_requirements.py`'s role), not an extension of that existing file, since the
+  merge logic (simple set-union, no TOML) is unrelated to what `prep_requirements.py` already does
+  (heuristic dep augmentation). Exact filename/function shape still not written -- that's the next
+  step, not this doc's job to pre-decide further.
 - Whether Tier 2's embedded helper should be Python (matching most of this repo's other embedded
   helpers) or a translated PowerShell approach closer to README's shipped commands -- Python is
   likely the better fit given `run_setup.bat`'s existing conventions, but the README commands are
-  the proven reference implementation either way.
+  the proven reference implementation either way. Still open -- Tier 2 has not been picked up.
 - CI test plan for both tiers (not drafted here -- follow the pattern established in
-  `plan-pep723-writeback.md`'s Part 2.3 and `plan-pvw-quickstart.md`'s CI test plan section).
+  `plan-pep723-writeback.md`'s Part 2.3 and `plan-pvw-quickstart.md`'s CI test plan section). Note:
+  `tests/selfapps_pvw_quickstart.ps1` (2026-07-19) already covers the underlying `uv`/`autopep723`
+  mechanics both tiers depend on -- it is NOT a substitute for either tier's own eventual CI test
+  plan (which needs to test the bootstrapper-integrated behavior, not just the standalone tool
+  calls), but it means both tiers' CI test plans can assume those mechanics already work rather
+  than needing to re-prove them from scratch.
 
 ---
 

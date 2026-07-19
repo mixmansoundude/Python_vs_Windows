@@ -615,10 +615,28 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
     established elsewhere), UV-only writeback (no other package manager has an equivalent
     mechanism), and `HP_PVW_KNOWN_IDEMPOTENT`'s exit-code branching being a relocation of README's
     already-shipped, already-tested QuickStart logic rather than a new mechanism -- substantially
-    de-risking it relative to a cold proposal. Not implementation-ready (unlike the write-back,
-    REQ-005.11, which shipped via a code-grounded implementation pass): no code-grounded pass
-    against the live `run_setup.bat` has happened yet for this item; that is the first step
-    whenever this is picked up.
+    de-risking it relative to a cold proposal.
+
+    **Update 2026-07-19: Tier 1's code-grounded pass is now done; Tier 2 remains deliberately
+    unstarted.** Per direct request, traced the exact `run_setup.bat` insertion point (right after
+    `:after_pipreqs_run`'s `requirements.txt`/`requirements.auto.txt` diff computation, before the
+    dep-check fast-path setup), confirmed `%HP_ENTRY%` is reliably set there across every reachable
+    code path (one narrow pre-existing edge case -- AppleDouble `._`-prefixed shadow files as the
+    only top-level `.py` match -- needs a defensive `if defined HP_ENTRY` guard, not a design
+    change), and settled the merge-target question left open in the doc (`requirements.txt` only,
+    not `requirements.auto.txt` -- the existing unconditional pip gap-fill step already covers the
+    correctness gap that would otherwise create, with one documented, accepted trade-off on
+    conda-vs-pip installation path for a narrow repeat-run case). Full detail moved into
+    `docs/plan-autopep723-two-tier.md`'s Tier 1 section itself, now marked implementation-ready,
+    rather than duplicated here. Also shipped `tests/selfapps_pvw_quickstart.ps1` (see Closed
+    Backlog) as an isolated, already-passing dry-run proof that the underlying `uv`/`autopep723`
+    mechanics both tiers depend on work correctly in this exact CI environment, sequenced BEFORE
+    either tier's own bootstrapper-integrated code -- explicitly requested as a lower-risk
+    verification step, not a substitute for either tier's eventual CI test plan. **Tier 1 is not
+    yet built** (the doc update was scoped as prep/research, not implementation, per explicit
+    instruction) -- the actual `run_setup.bat` edit and merge helper remain the next step whenever
+    this is picked up for real. **Tier 2 remains untouched and unprepped**, consistent with its own
+    explicit dependency on Tier 1 shipping first.
 
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
