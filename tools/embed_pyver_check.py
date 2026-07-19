@@ -109,7 +109,9 @@ def main():
 
     minor, patch, sha256, fell_back = resolve_table_entry(requested_minor)
     if minor == LATEST_MINOR:
-        sys.stdout.write("unchanged|{}\n".format(minor))
+        # Above-ceiling request (only path here, since exact-match-latest is handled above):
+        # no swap needed, but tag "fellback" not "unchanged" so the caller's WARN still fires.
+        sys.stdout.write("fellback|{}\n".format(minor))
         return 0
 
     url = "https://www.python.org/ftp/python/{p}/python-{p}-embed-amd64.zip".format(p=patch)
