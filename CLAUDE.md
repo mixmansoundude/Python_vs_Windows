@@ -924,6 +924,49 @@ of a second or third pin actually needing it.
 
 Items completed and shipped:
 
+- **PVW QuickStart CI dry-run test (`tests/selfapps_pvw_quickstart.ps1`, new, uv lane only)**:
+  requested directly by the maintainer as "a good isolated dry run for the next two before any
+  bootstrapper integration" -- i.e. proof, in real CI, that the underlying `uv`/`autopep723`
+  mechanics README's "PVW QuickStart" section documents actually work as written, BEFORE
+  `docs/plan-autopep723-two-tier.md`'s Tier 1 and Tier 2 build bootstrapper-integrated logic on
+  top of the same mechanics. Two scenarios (`QUICKSTART_SCENARIO=check`/`run`), each copying the
+  relevant README command close to verbatim (the "spaced out" form for `run`, filename
+  substituted only) -- including README's own `irm https://astral.sh/uv/install.ps1 | iex`
+  uv-acquisition line, so the test is self-contained and does not depend on any other CI step's
+  PATH state (`run_setup.bat`'s own uv download is process-local PATH, invisible to a separate
+  PowerShell CI step). Not a `run_setup.bat` test at all -- standalone `uv`/`autopep723` usage
+  only. `check` validates the read-only `uvx autopep723 check <file>` command (exit 0, dependency
+  discovered, file byte-for-byte unchanged) -- this is the exact call Tier 1 will make against
+  `%HP_ENTRY%`. `run` validates the full persist-on-success one-liner (script's own stdout came
+  through, proving real execution; success message printed; PEP 723 header now contains the
+  dependency; no `.bak` left behind on the clean-header path) -- this is the exact logic Tier 2's
+  `HP_PVW_KNOWN_IDEMPOTENT` relocates into `run_setup.bat`. Verified locally before shipping: the
+  underlying `uv`/`autopep723` round-trip (check -> extract dependency names via regex -> `uv add
+  --script`) reproduced directly against a real `uv` 0.8.17 binary, then the actual `.ps1` file's
+  own logic re-verified end-to-end via `pwsh` (both scenarios, `pass:true`, real NDJSON rows) --
+  the only piece that could not be locally verified is the `irm | iex` uv-acquisition line itself,
+  blocked by this sandbox's proxy restrictions on `releases.astral.sh`/`github.com` (identical
+  limitation to every other network-dependent CI step in this repo, e.g. Miniconda/embed-Python
+  downloads -- not something local testing has ever been able to cover). **Found and fixed one
+  real scanner-compatibility bug before shipping**: the first draft computed the NDJSON row id
+  once into a `$ndjsonId` variable and passed it via `-Id $ndjsonId` at both call sites --
+  `tools/check_ndjson_registry.py`'s PowerShell scanner only matches a LITERAL `-Id '...'` string
+  at the call site (documented in `selfapps_pep723_writeback.ps1`'s own `Write-Pep723Row` comment,
+  which this file should have followed from the start), so the scanner reported both new rows as
+  "registered in docs but no matching code emission site found" on the very first
+  `check_ndjson_registry.py` run. Fixed by branching on `$scenario` and using a literal `-Id`
+  string in each branch instead -- confirmed the registry check goes clean afterward. Wired into
+  `batch-check.yml` as two new non-gating steps (own `continue-on-error: true` each, matching the
+  sibling PEP 723 write-back steps' established per-step pattern) right after the write-back
+  block. `docs/agent-ndjson.md` updated with the two new row IDs in the same commit. Deliberately
+  does not add explicit `upload-artifact` path entries for this test's scratch directories (unlike
+  most sibling tests) -- there is no `run_setup.bat` bootstrap log to capture here, and the NDJSON
+  `details` field already carries the load-bearing evidence (exit codes, stdout matches, the exact
+  success/failure message); the full-tree `diag-selftest-*` artifact still captures everything at
+  a coarser level if ever needed. Distinct from the still-not-built "standalone downloadable
+  `pvw_quickstart.ps1` file" mentioned in Active Backlog item 8's history (a packaged script FOR
+  END USERS to run themselves) -- this is a CI test, not a user-facing deliverable. CLOSED by this
+  PR.
 - **`embed_pyver_check.py`'s unreachable "fellback" tag for above-ceiling requests (Active
   Backlog item 2)**: `main()`'s second early-return (after `resolve_table_entry`, firing when the
   resolved `minor` equals `LATEST_MINOR`) previously always wrote `"unchanged|{minor}"`, even
