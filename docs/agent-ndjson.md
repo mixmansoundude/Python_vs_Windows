@@ -235,6 +235,20 @@ self.pep723.writeback.existing_lockfile, self.pep723.writeback.non_utf8,
 self.pep723.writeback.warnfix
 ```
 
+## selfapps-pvw-quickstart NDJSON rows (selfapps_pvw_quickstart.ps1, uv lane only)
+
+Two scenarios (`QUICKSTART_SCENARIO` env var). A dry-run test for README's "PVW QuickStart"
+copy-paste commands (standalone uv/autopep723 usage, no `run_setup.bat` involved) -- see that
+file's own header comment for the full setup/assertion detail. Both scenarios include their own
+`irm https://astral.sh/uv/install.ps1 | iex` uv-acquisition line (copied from README), so this
+test is self-contained and does not depend on any other CI step's PATH state. Skips with
+`skip=true, reason=non-windows-host` on non-Windows (mirrors this suite's usual convention, even
+though the underlying uv/autopep723 CLI mechanics are cross-platform in principle).
+
+```
+self.pvw_quickstart.check, self.pvw_quickstart.run
+```
+
 ---
 
 ## Key facts for debugging missing rows

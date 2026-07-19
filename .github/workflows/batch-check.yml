@@ -470,6 +470,29 @@ jobs:
         run: |
           & tests\selfapps_pep723_writeback.ps1
 
+      # derived requirement: dry-run test for the README "PVW QuickStart" copy-paste
+      # commands (uv/autopep723, no run_setup.bat involved) -- an isolated proof that the
+      # underlying tool mechanics work before docs/plan-autopep723-two-tier.md's Tier 1/2
+      # reuse them inside the bootstrapper. Own per-step continue-on-error, matching the
+      # sibling PEP 723 write-back steps above (see that block's own comment for why).
+      - name: "Self-test: PVW QuickStart check-only command (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        env:
+          QUICKSTART_SCENARIO: check
+        shell: pwsh
+        run: |
+          & tests\selfapps_pvw_quickstart.ps1
+
+      - name: "Self-test: PVW QuickStart just-run-it command (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        env:
+          QUICKSTART_SCENARIO: run
+        shell: pwsh
+        run: |
+          & tests\selfapps_pvw_quickstart.ps1
+
       - name: "Self-test: pre-build collect-submodules double-gate (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh
