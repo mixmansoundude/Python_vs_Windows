@@ -8,11 +8,17 @@ usual scratch-file convention) and prints "1" to stdout (no trailing
 newline) if any scanned .py file's source matches a pyvisa-style import,
 else "0".
 
-Note: PATTERNS has no word-boundary anchor after "vis"/"pyvis", so an
-unrelated import merely starting with those letters (e.g. "import pyvista",
-a real, popular, unrelated 3D-visualization package) also matches -- a
-known, pre-existing false-positive risk, not something this promotion pass
-changes. See CLAUDE.md's Active Backlog for the tracked follow-up.
+PATTERNS anchor on the full module name ("pyvisa"/"visa") with a trailing
+\b, not a truncated "pyvis"/"vis" prefix -- this deliberately excludes an
+unrelated import that merely STARTS with those letters (e.g. "import
+pyvista", a real, popular, unrelated 3D-visualization package; "import
+vision"; "import pyviscoelastic"). \b after the full word also allows a
+dotted submodule import ("import pyvisa.constants") to still match, since
+"." is a non-word character. Note: anchoring \b right after the truncated
+"vis"/"pyvis" prefix (rather than the full word) would NOT work here -- \b
+only matches at a word/non-word transition, and there is no such boundary
+between "vis" and the "a" in "visa" (both are word characters), so a
+"vis\b" pattern would fail to match the genuine "import visa" case.
 
 This is the canonical source for the HP_DETECT_VISA base64 payload embedded
 in run_setup.bat. After editing, re-encode and paste it into the
@@ -23,8 +29,8 @@ import os, re, sys
 
 ROOT = os.getcwd()
 PATTERNS = [
-    r"(?m)^\s*(?:from\s+pyvis|import\s+pyvis)",
-    r"(?m)^\s*import\s+vis",
+    r"(?m)^\s*(?:from\s+pyvisa\b|import\s+pyvisa\b)",
+    r"(?m)^\s*import\s+visa\b",
 ]
 
 def needs_visa():

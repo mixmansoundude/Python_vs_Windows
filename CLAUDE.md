@@ -639,26 +639,6 @@ lines, which naturally show GitHub Actions' inherent doubled checkout path
 (`.../Python_vs_Windows/Python_vs_Windows/...`) -- a runner convention, not a bug. Not chased
 further.)*
 
-10. **`HP_DETECT_VISA`'s import-scan regex has no word-boundary anchor after "vis"/"pyvis" --
-    real, non-hypothetical false-positive, found while promoting the payload to
-    canonical-source-plus-test (see Closed Backlog).** `PATTERNS` in `tools/detect_visa.py` is
-    `r"(?m)^\s*(?:from\s+pyvis|import\s+pyvis)"` and `r"(?m)^\s*import\s+vis"` -- neither has a
-    `\b` after the letters they match, so any import merely STARTING with those characters also
-    triggers REQ-008's NI-VISA driver install branch, not just genuine `pyvisa`/`visa` imports.
-    Confirmed directly: `import pyvista` (a real, popular, unrelated 3D-visualization package)
-    matches both patterns, as does `import vision` or `import pyviscoelastic`. A user whose app
-    imports `pyvista` would unexpectedly hit the NI-VISA installer download/execution path for no
-    reason connected to their actual code -- extra network traffic, extra install time, cluttered
-    logs. Low-risk, well-scoped fix when picked up: add `\b` after each pattern's matched prefix
-    (`r"(?m)^\s*(?:from\s+pyvis\b|import\s+pyvis\b)"` / `r"(?m)^\s*import\s+vis\b"`) -- verify
-    against the same `test_detect_visa.py` false-positive test (currently asserts the CURRENT
-    over-broad behavior; the fix should flip that specific assertion) plus the existing
-    true-positive cases (`import pyvisa`, `from pyvisa import ...`, `import visa`) to confirm the
-    boundary doesn't also break genuine matches. Deliberately not fixed in the same pass that
-    found it (payload-promotion pass), consistent with this file's precedent for the analogous
-    `HP_PYPROJ_DEPS` escape-quote finding (see Closed Backlog) -- a regex behavior change belongs
-    in its own isolated, reviewable commit.
-
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -955,6 +935,32 @@ of a second or third pin actually needing it.
 
 Items completed and shipped:
 
+- **`HP_DETECT_VISA` false-positive regex fix (Active Backlog item 10, found during the payload
+  promotion above, fixed in its own isolated commit per that entry's own stated precedent)**:
+  `PATTERNS` in `tools/detect_visa.py` now anchors on the FULL module name (`pyvisa`/`visa`) with
+  a trailing `\b`, instead of the truncated `pyvis`/`vis` prefixes that previously had no boundary
+  at all. **The exact regex shipped differs from the backlog entry's own literal suggestion, and
+  deliberately so**: that entry proposed adding `\b` immediately after the truncated prefixes
+  (`pyvis\b`, `vis\b`) -- verified directly, before writing any code, that this literal suggestion
+  is wrong and would have introduced a regression: `\b` only matches at a word/non-word character
+  transition, and there is no such transition between "vis" and the "a" in "visa" (both are word
+  characters), so a `vis\b` pattern fails to match the genuine, already-tested `import visa` case.
+  The correct fix anchors the boundary after the COMPLETE correct word instead of after a
+  truncated prefix (`pyvisa\b`, `visa\b`) -- confirmed via direct regex testing before implementing
+  that this excludes all three cited false positives (`import pyvista`, `import vision`,
+  `import pyviscoelastic` -- none of these contain "pyvisa"/"visa" as a literal substring, so the
+  fix rejects them structurally, not just via the boundary) while still matching every existing
+  true-positive case (`import pyvisa`, `from pyvisa import ...`, `import visa`) AND a dotted
+  submodule import (`import pyvisa.constants`, `from pyvisa.constants import ...` -- `\b` still
+  matches before a non-word `.` character). `tests/test_detect_visa.py`'s
+  `test_import_pyvista_false_positive_documented_not_fixed` flipped to
+  `test_import_pyvista_false_positive_fixed` (now asserts `"0"` instead of `"1"`) exactly as that
+  entry predicted; added `test_import_vision_false_positive_fixed`,
+  `test_import_pyviscoelastic_false_positive_fixed`, and `test_dotted_submodule_import_still_matches`
+  as new coverage (15 total tests, up from 12). Re-encoded and re-synced `run_setup.bat`'s
+  `HP_DETECT_VISA` line (4958-char margin under the CMD 8191-char budget). Audited
+  `tests/selfapps_pyvisa.ps1` (the only other test file referencing pyvisa/NI-VISA behavior) and
+  confirmed it only ever uses plain `import pyvisa`, unaffected by the fix. CLOSED by this PR.
 - **Mac-garbage filter for entry detection (first of the two Cross-platform pre-flight checks
   items, see the remaining System-directory guard bullet in Active Backlog)**: `tools/find_entry.py`'s
   `is_py()` now excludes `._`-prefixed names (macOS AppleDouble metadata files, e.g. `._main.py`)
