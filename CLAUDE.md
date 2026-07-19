@@ -537,8 +537,8 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    extending Tier B's pinning pattern anywhere else in this codebase.
 7. **Promote the remaining embedded-only `HP_*` payloads to the canonical-source-plus-
    `PayloadSync`-plus-logic-test pattern (moderate effort, not urgent, but a real, confirmed test-
-   coverage gap) -- three of eight done (`HP_DETECT_PY`, `HP_PYPROJ_DEPS`, `HP_DETECT_VISA`, see
-   Closed Backlog), three remain.** A payload-inventory audit done alongside the
+   coverage gap) -- four of six done (`HP_DETECT_PY`, `HP_PYPROJ_DEPS`, `HP_DETECT_VISA`,
+   `HP_DEP_CHECK`, see Closed Backlog), two remain.** A payload-inventory audit done alongside the
    cross-platform-checks review (2026-07-12; see README's "Rebuilding embedded helper payloads"
    section for the full inventory table now recorded there) found that of 16 embedded `HP_*`
    payloads, only 6 had a canonical `tools/` source file with a `PayloadSync` byte-equality test
@@ -547,13 +547,13 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    is static config (not code, doesn't need this), and `HP_FAST_CHECK`/`HP_PREP_REQUIREMENTS` at
    least have their logic tested in place (`tests/test_fast_check_pattern.py`/
    `tests/test_heuristics.py`, just not against a separate canonical source) -- but
-   **`HP_DEP_CHECK`, `HP_ENV_STATE`, and `HP_FAILFAST_PROBE` currently have zero automated test
-   coverage of any kind**. Recommended approach when picked up: extract each into a
-   `tools/<name>.py` canonical source (mirroring the `collect_submodules.py`/
-   `hidden_import_scan.py` precedent), add a `PayloadSync` test asserting
-   embedded-base64-matches-source, and add at least minimal logic-level unit tests -- sized as
-   several small, independent loops (one payload at a time), not one big one, since each payload's
-   logic is unrelated to the others. Not urgent (no bug has been traced to any of these gaps), but
+   **`HP_ENV_STATE` and `HP_FAILFAST_PROBE` currently have zero automated test coverage of any
+   kind**. Recommended approach when picked up: extract each into a `tools/<name>.py` canonical
+   source (mirroring the `collect_submodules.py`/`hidden_import_scan.py` precedent), add a
+   `PayloadSync` test asserting embedded-base64-matches-source, and add at least minimal
+   logic-level unit tests -- sized as several small, independent loops (one payload at a time),
+   not one big one, since each payload's logic is unrelated to the others. Not urgent (no bug has
+   been traced to any of these gaps), but
    real.
 8. **PVW QuickStart -- a super-user command set for running/persisting a `.py` file's
     dependencies with no EXE build, shipped as copy-paste README commands (full design at
@@ -1072,6 +1072,22 @@ Items completed and shipped:
   `PayloadSync`). CLOSED by this PR (only the `HP_DETECT_VISA` promotion slice; the false-positive
   fix itself is tracked separately as Active Backlog item 10; three payloads remain in item 7:
   `HP_DEP_CHECK`, `HP_ENV_STATE`, `HP_FAILFAST_PROBE`).
+- **`HP_DEP_CHECK` promoted to canonical-source-plus-`PayloadSync`-plus-logic-test (fourth of the
+  six-payload backlog item, see Active Backlog item 7 for the remaining two)**: extracted the
+  embedded payload to `tools/dep_check.py` -- unlike the previous three payloads, this one already
+  had a proper functional docstring (matching the `parse_warn.py` precedent), so the only addition
+  was a short "canonical source" note for consistency with the other promotions, and it already
+  exposes importable functions (`parse_lock`, `parse_reqs`, `main`) rather than being a flat
+  script. Re-encoded and re-synced `run_setup.bat`'s `HP_DEP_CHECK` line (4604-char margin under
+  the CMD 8191-char budget). Added `tests/test_dep_check.py`: 16 total tests -- `parse_lock`/
+  `parse_reqs` take an explicit path argument, so most are called directly (name normalization,
+  version-specifier and extras stripping, comment/blank-line skipping, missing-file handling);
+  `main()` reads hardcoded relative filenames from the current directory, so its six run-vs-skip
+  decision paths (no lock file, lock present with no reqs file, empty lock, empty reqs, all reqs
+  covered, a genuinely missing req) are exercised via subprocess with `cwd` set to a crafted temp
+  directory, mirroring `test_find_entry.py`'s pattern. Updated README's inventory table (10 of 16
+  payloads now have canonical source + `PayloadSync`). CLOSED by this PR (only the `HP_DEP_CHECK`
+  promotion slice; two payloads remain in item 7: `HP_ENV_STATE`, `HP_FAILFAST_PROBE`).
 - **System-directory guard (second and final half of the Cross-platform pre-flight checks item --
   now fully closed)**: `run_setup.bat` now aborts early (`exit /b 1`, plain-language message) when
   the script root resolves under `%WINDIR%`, `%ProgramFiles%`, or `%ProgramFiles(x86)%`. Placed
