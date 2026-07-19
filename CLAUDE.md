@@ -535,26 +535,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    be permanently frozen into every already-distributed copy of `run_setup.bat`, with no way to
    walk it back later even after the reason for it stops being true. Read that section before
    extending Tier B's pinning pattern anywhere else in this codebase.
-7. **Promote the remaining embedded-only `HP_*` payloads to the canonical-source-plus-
-   `PayloadSync`-plus-logic-test pattern (moderate effort, not urgent, but a real, confirmed test-
-   coverage gap) -- five of six done (`HP_DETECT_PY`, `HP_PYPROJ_DEPS`, `HP_DETECT_VISA`,
-   `HP_DEP_CHECK`, `HP_ENV_STATE`, see Closed Backlog), one remains.** A payload-inventory audit
-   done alongside the cross-platform-checks review (2026-07-12; see README's "Rebuilding embedded
-   helper payloads" section for the full inventory table now recorded there) found that of 16
-   embedded `HP_*` payloads, only 6 had a canonical `tools/` source file with a `PayloadSync`
-   byte-equality test (`HP_COLLECT_SUBMODULES`, `HP_EMBED_EXTRACT`, `HP_EMBED_PYVER_CHECK`,
-   `HP_FIND_ENTRY`, `HP_HIDDEN_IMPORT_SCAN`, `HP_PARSE_WARN`). Of the remaining embedded-only
-   payloads, `HP_CONDARC` is static config (not code, doesn't need this), and
-   `HP_FAST_CHECK`/`HP_PREP_REQUIREMENTS` at least have their logic tested in place
-   (`tests/test_fast_check_pattern.py`/`tests/test_heuristics.py`, just not against a separate
-   canonical source) -- but **`HP_FAILFAST_PROBE` currently has zero automated test coverage of
-   any kind**. Recommended approach when picked up: extract it into a `tools/<name>.ps1`
-   canonical source (it is PowerShell, not Python -- mirrors the `embed_extract.ps1` precedent
-   including its CRLF-normalization PayloadSync gotcha, see
-   `docs/agent-lessons-learned.md`), add a `PayloadSync` test asserting
-   embedded-base64-matches-source, and add at least minimal logic-level tests. Not urgent (no bug
-   has been traced to this gap), but
-   real.
 8. **PVW QuickStart -- a super-user command set for running/persisting a `.py` file's
     dependencies with no EXE build, shipped as copy-paste README commands (full design at
     `docs/plan-pvw-quickstart.md`; user-facing commands live in README's "PVW QuickStart" section).**
@@ -1106,6 +1086,43 @@ Items completed and shipped:
   inventory table (11 of 16 payloads now have canonical source + `PayloadSync`). CLOSED by this PR
   (only the `HP_ENV_STATE` promotion slice; `HP_FAILFAST_PROBE` -- PowerShell, not Python -- is
   the only payload remaining in item 7).
+- **`HP_FAILFAST_PROBE` promoted to canonical-source-plus-`PayloadSync`-plus-logic-test (sixth and
+  final payload of the six-payload backlog item -- item 7 is now fully CLOSED)**: extracted the
+  embedded payload to `tools/failfast_probe.ps1` -- the first PowerShell (not Python) canonical
+  source in this promotion sequence, mirroring the `tools/embed_extract.ps1` precedent: the
+  script itself never had a standalone source file or a header comment (only a `rem`-prefixed
+  "decoded content" echo block sitting next to the `set "HP_FAILFAST_PROBE=..."` line in
+  `run_setup.bat`, the same convention `HP_FAST_CHECK` still uses), so the new file's header
+  comment folds that existing decoded-content block's information into a proper docstring-style
+  comment (purpose, the never-`Kill()` invariant, the env-var input contract, the
+  single-argument-only constraint on `HP_PROBE_ARGS`, and a "canonical source" pointer) while
+  keeping the functional body byte-identical (diffed directly against the prior embedded payload
+  before re-encoding). The redundant `rem HP_FAILFAST_PROBE decoded content:` echo block in
+  `run_setup.bat` was removed in the same pass, since the same information now lives in the
+  payload's own header comment (matching how `HP_EMBED_EXTRACT`/`HP_EMBED_PYVER_CHECK` already
+  carry their own header comments instead of a separate `rem` block). Re-encoded and re-synced
+  `run_setup.bat`'s `HP_FAILFAST_PROBE` line (4439-char margin under the CMD 8191-char budget).
+  Added `tests/test_failfast_probe.py`: 8 tests, all exercised end-to-end via a real `pwsh`
+  subprocess (no importable functions exist -- the script reads env vars and prints one line to
+  stdout) covering fast-exit classification (`exceeded=0`) with both zero and nonzero exit-code
+  passthrough, probe-window-exceeded classification (`exceeded=1`) with the true final exit code
+  still captured after the unbounded second wait, default-vs-caller-specified output-path
+  behavior, stdout/stderr capture content, and a `PayloadSync` byte-equality check
+  (CRLF/LF-normalized, per the `.ps1` `.gitattributes` `eol=crlf` gotcha documented in
+  `docs/agent-lessons-learned.md` "Embedded Helper Update Workflow"). **One test iteration
+  surfaced a real, pre-existing constraint the script's own header comment already documented but
+  this promotion pass is the first to have verified empirically**: an initial test attempt passed
+  a two-token string (`"<path> 5"`) via `HP_PROBE_ARGS` expecting it to arrive as two CLI
+  arguments; because `$si.Arguments = '"' + $rawArgs + '"'` wraps the ENTIRE string in one pair of
+  quotes, the whole two-token string is handed to the child process as a single literal
+  (nonexistent) filename, which the child interpreter reports as exit code 2 ("can't open file"),
+  not as a second positional argument. This is not a bug -- it is exactly the documented
+  single-argument-only contract -- but the test suite now asserts this behavior explicitly
+  (`ArgsIsSingleArgumentOnly`) rather than silently avoiding it, so a future change to the
+  quoting logic that relaxes or breaks this constraint is caught either way. Updated README's
+  inventory table (12 of 16 payloads now have canonical source + `PayloadSync`; the "no automated
+  test coverage" list is now empty -- `HP_CONDARC` remains static config, correctly out of scope).
+  CLOSED by this PR (final slice of Active Backlog item 7; item removed from Active Backlog).
 - **System-directory guard (second and final half of the Cross-platform pre-flight checks item --
   now fully closed)**: `run_setup.bat` now aborts early (`exit /b 1`, plain-language message) when
   the script root resolves under `%WINDIR%`, `%ProgramFiles%`, or `%ProgramFiles(x86)%`. Placed
