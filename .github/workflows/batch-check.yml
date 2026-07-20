@@ -504,6 +504,16 @@ jobs:
         run: |
           & tests\selfapps_autopep_discovery.ps1
 
+      # derived requirement: REQ-005.13 (Tier 2, docs/plan-autopep723-two-tier.md) -- proves
+      # HP_PVW_KNOWN_IDEMPOTENT actually runs the entry live (stdout inherited, not captured)
+      # and persists what it needed, and the app builds/runs from it alone.
+      - name: "Self-test: HP_PVW_KNOWN_IDEMPOTENT execute-mode discovery (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_pvw_idempotent.ps1
+
       - name: "Self-test: pre-build collect-submodules double-gate (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh

@@ -7,11 +7,14 @@
 the `run_setup.bat` insertion at `:after_pipreqs_run`, `tests/test_autopep_merge.py` (18 unit
 tests), `tests/selfapps_autopep_discovery.ps1` (uv lane, non-gating CI proof), and doc updates
 (README's REQ-005.12 section, `docs/agent-ndjson.md`, `docs/agent-interconnect.md`) all landed
-together. See Tier 1's own section below for what was built exactly as designed vs. what changed
-during implementation. **Tier 2's own code-grounded pass is now done (2026-07-20, prep only)** --
-hook point, data-flow (requirements.txt population), and reuse points are settled; implementation
-itself is intentionally on hold until Tier 1's PR actually merges, per this doc's own explicit
-sequencing dependency -- still **sequenced after Tier 1** within this doc.
+together. **Tier 2 (REQ-005.13) is also now SHIPPED** (2026-07-20, same day as Tier 1 --
+implementation resumed immediately once Tier 1's PR merged, satisfying this doc's own sequencing
+dependency): `tools/pvw_known_idempotent.py` (canonical source + `HP_PVW_IDEMPOTENT` PayloadSync),
+the `:pvw_known_idempotent_run` insertion right after `:determine_entry` returns,
+`tests/test_pvw_known_idempotent.py` (16 unit tests), `tests/selfapps_pvw_idempotent.ps1` (uv
+lane, non-gating CI proof), and doc updates all landed together. See both tiers' own sections
+below for what was built exactly as designed vs. what changed during implementation -- Tier 2 in
+particular surfaced a real stdout/stderr file-descriptor-inheritance bug, fixed before shipping.
 Supersedes `plan-pvw-quickstart.md`'s "Shape B" (a vaguely-specified, deliberately-deferred
 `run_setup.bat` hook) with a concrete design -- see that doc's own Shape B section, now pointing
 here.
@@ -35,9 +38,9 @@ is linked from there).
 3. **This doc's Tier 1**: add `autopep723 check` alongside `pipreqs` in the Default Path discovery
    phase, for all users, non-gating. **SHIPPED 2026-07-20.**
 4. **This doc's Tier 2**: `HP_PVW_KNOWN_IDEMPOTENT`, an opt-in flag enabling runtime
-   (execute-mode) discovery inside `run_setup.bat` itself. Not yet started.
+   (execute-mode) discovery inside `run_setup.bat` itself. **SHIPPED 2026-07-20.**
 
-Tier 2 is the next step whenever picked up.
+Both tiers of this doc are now shipped.
 
 ---
 
@@ -250,11 +253,9 @@ is already documented in README's "PVW QuickStart" section and `docs/plan-pvw-qu
   same `uvx`-only, `%HP_ENTRY%`-targeted invocation rule from Tier 1 applies here too, for the same
   reasons.
 
-**Code-grounded pass (2026-07-20, prep only -- no `run_setup.bat` code written).** Tier 1
-(REQ-005.12) has shipped its code but not yet merged (open PR as of this writing) -- per the
-sequencing above, Tier 2 implementation itself should not begin until that lands. This section
-records the hook-point research done in the meantime, so Tier 2 is ready to implement as soon as
-Tier 1 merges, mirroring how Tier 1's own prep phase preceded its implementation by one day.
+**Code-grounded pass (2026-07-20).** Recorded here as the historical research record; Tier 2 has
+since shipped (see the Status note above this section) once Tier 1's PR actually merged, per this
+doc's own sequencing dependency -- implementation followed the hook-point research below exactly.
 
 **Hook point: right after `:determine_entry` returns (`run_setup.bat` ~line 977), before the
 `HP_PYPROJ_REQ`/pyproject.toml block begins.** This is EARLIER than Tier 1's own insertion point
@@ -315,10 +316,29 @@ flag's name asks the user to consent to, and does not need a special REQ-018 car
 one already described above ("the flag's very name is the user's own explicit, self-declared
 consent").
 
-**Remaining before this is fully implementation-ready** (unlike Tier 1, which reached that bar):
-the exact embedded-helper shape (Python is still the likely choice, per the still-open language
-question below) has not been written, and the CI test plan has not been drafted. Both are smaller
-remaining steps than the hook-point/data-flow questions this pass resolved.
+**Status: SHIPPED** (2026-07-20, immediately after Tier 1 merged). Built exactly as designed
+above, including the resolved data-flow wrinkle (`:extract_pep723_requirements` reuse). The
+embedded-helper language question resolved to Python, as anticipated -- `tools/pvw_known_
+idempotent.py` (embedded as `HP_PVW_IDEMPOTENT`), with `strip_pep723_block` deliberately
+duplicated (not imported) from `tools/pep723_writeback.py`'s function of the same name, since
+independently-decoded single-file embedded payloads cannot share imports at runtime.
+
+**One real bug found and fixed before shipping, worth recording as a general lesson for any
+future embedded helper that both runs a child process with inherited stdio AND needs to report
+its own result back to the batch caller.** The first draft had the batch caller redirect the
+helper's stdout to a result file to capture its printed `RAN:`/`ERROR:` marker -- exactly
+matching `tools/pep723_writeback.py`'s own proven pattern. But `pep723_writeback.py` never
+inherits a child's stdio (its own `uv add --script` call is always `capture_output=True`), while
+this helper's `run_script()` deliberately inherits stdio for the "run the user's script live"
+step. Redirecting the OUTER Python process's stdout to a file meant the INNER `uvx autopep723
+<entry>` child process -- which inherits whatever stdio its own parent has -- would have had its
+stdout silently redirected into that same result file too, swallowing the user's live script
+output instead of showing it on the console. Caught via direct reasoning about file-descriptor
+inheritance before it ever ran on real CI, not via a test failure. Fixed by moving the helper's
+own result marker to **stderr** and having the batch caller redirect only stderr
+(`2> "~pvw_idempotent_result.txt"`), leaving stdout completely unredirected end-to-end.
+`tests/selfapps_pvw_idempotent.ps1` asserts the stub app's own `print()` output appears directly
+in the bootstrap log, specifically to guard against this exact regression recurring.
 
 ---
 
@@ -332,17 +352,16 @@ remaining steps than the hook-point/data-flow questions this pass resolved.
 - ~~CI test plan for Tier 1~~ -- **resolved and shipped 2026-07-20**: `tests/selfapps_autopep_discovery.ps1`
   (uv lane, non-gating), following the `HP_SKIP_PIPREQS=1`-isolation pattern already established by
   `plan-pep723-writeback.md`'s `non_utf8`/`warnfix` scenarios.
-- Whether Tier 2's embedded helper should be Python (matching most of this repo's other embedded
-  helpers) or a translated PowerShell approach closer to README's shipped commands -- Python is
-  likely the better fit given `run_setup.bat`'s existing conventions, but the README commands are
-  the proven reference implementation either way. Still open -- Tier 2 has not been picked up.
-- CI test plan for Tier 2 (not drafted here -- follow the pattern established in
-  `plan-pep723-writeback.md`'s Part 2.3 and Tier 1's own now-shipped test above). Note:
-  `tests/selfapps_pvw_quickstart.ps1` (2026-07-19) already covers the underlying `uv`/`autopep723`
-  mechanics Tier 2 depends on -- it is NOT a substitute for Tier 2's own eventual CI test plan
-  (which needs to test the bootstrapper-integrated behavior, not just the standalone tool calls),
-  but it means Tier 2's CI test plan can assume those mechanics already work rather than needing
-  to re-prove them from scratch.
+- ~~Whether Tier 2's embedded helper should be Python or a translated PowerShell approach~~ --
+  **resolved and shipped 2026-07-20: Python** (`tools/pvw_known_idempotent.py`), matching most of
+  this repo's other embedded helpers.
+- ~~CI test plan for Tier 2~~ -- **resolved and shipped 2026-07-20**:
+  `tests/selfapps_pvw_idempotent.ps1` (uv lane, non-gating), following the same
+  `HP_SKIP_PIPREQS=1`-isolation pattern as Tier 1's own test, plus an assertion that the stub
+  app's own `print()` output appears in the bootstrap log (guards the stdout/stderr
+  file-descriptor bug found and fixed during implementation -- see Tier 2's own section above).
+
+Both tiers of this doc are now fully implemented; no open questions remain for this doc.
 
 ---
 
@@ -356,12 +375,13 @@ remaining steps than the hook-point/data-flow questions this pass resolved.
 - `tests/selfapps_autopep_discovery.ps1` -- uv-lane, non-gating CI proof.
 - `README.md`, `docs/agent-ndjson.md`, `docs/agent-interconnect.md`, `CLAUDE.md` -- doc updates.
 
-**Tier 2 (not yet started):**
-- `run_setup.bat` -- new `HP_PVW_KNOWN_IDEMPOTENT` dispatch and embedded-helper payload
-  declaration.
-- A new embedded helper following the `tools/collect_submodules.py` /
-  `tools/hidden_import_scan.py` canonical-source-plus-`PayloadSync` pattern.
-- `tests/` -- new CI test file(s).
+**Tier 2 (shipped 2026-07-20):**
+- `run_setup.bat` -- the `:pvw_known_idempotent_run` insertion (REQ-005.13, right after
+  `:determine_entry` returns) and `HP_PVW_IDEMPOTENT` payload declaration.
+- `tools/pvw_known_idempotent.py` -- the execute-mode discovery helper's canonical source.
+- `tests/test_pvw_known_idempotent.py` -- unit tests + `PayloadSync`.
+- `tests/selfapps_pvw_idempotent.ps1` -- uv-lane, non-gating CI proof.
+- `README.md`, `docs/agent-ndjson.md`, `docs/agent-interconnect.md`, `CLAUDE.md` -- doc updates.
 - `README.md` -- `HP_PVW_KNOWN_IDEMPOTENT` flag documented alongside the existing "Advanced
   Environment Variables" table; cross-reference the already-shipped PVW QuickStart section rather
   than re-explaining the branch logic.
