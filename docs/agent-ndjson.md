@@ -19,7 +19,7 @@ self.harness.started, self.bootstrap.state, self.empty_repo.msg,
 self.empty_repo.no_spurious_warn,
 self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv, envsmoke.run,
 self.uv.managed.interpreter,
-self.exe.build, self.exe.run,
+self.exe.build, self.exe.run, self.exe.build.xfail,
 self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exedyn.xfail,
 self.exe.fastpath.graceful, self.skiphooks.combined,
 self.fastpath,
@@ -286,6 +286,26 @@ full-tree-artifact-capture pattern as `selfapps_autopep_discovery.ps1` -- no ind
 
 ```
 self.pvw_idempotent.discovery
+```
+
+## selfapps-pyinstaller-fail NDJSON rows (selfapps_pyinstaller_fail.ps1, real/conda-full lanes)
+
+Two scenarios (`PYI_FAIL_SCENARIO` env var: `execfail` / `output_vanish`), both emitting the
+same row id. XFAIL-style, mirroring `selfapps_exefail.ps1`'s sibling pattern but testing the
+PyInstaller BUILD step failing outright (not a successfully-built EXE crashing at runtime).
+Regression test for a real bug found 2026-07-20 while scoping the AV-Safe Build Path PRD's
+requirement-1 failure-simulation tests (`docs/prd-av-safe-build-path.md`): a genuine PyInstaller
+build failure previously fell through `:die`'s call-frame-only `exit /b` (it never halts the
+process) all the way to `:after_cascade_decision`, which unconditionally overwrote
+`~bootstrap.status.json` back to `state=ok` and exited 0 -- silently masking the failure. Fixed
+by setting `HP_BOOTSTRAP_STATE=error` at the build call site. This test asserts the fix: process
+exits non-zero, `~bootstrap.status.json` genuinely reads `state=error` (not overwritten), and the
+correct `[ERROR]` message is present. See `docs/agent-lessons-learned.md`'s `:die` entry for the
+full trace of why the pre-fix behavior was wrong. No individual `upload-artifact` wiring, same
+as `selfapps_exefail.ps1` -- covered by the coarser full-tree `diag-selftest-*` capture.
+
+```
+self.exe.build.xfail
 ```
 
 ---

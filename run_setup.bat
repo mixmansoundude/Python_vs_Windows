@@ -272,6 +272,17 @@ rem HP_TEST_SKIP_EVICT=1: CI-only; skips the rmdir and Miniconda re-download in 
 rem Use with HP_TEST_CORRUPT_CONDA=1 + HP_TEST_HEAL_ANSWER=Y to test the accept branch without
 rem deleting the real CI Miniconda installation. The eviction log line is still emitted.
 set "HP_TEST_SKIP_EVICT=%HP_TEST_SKIP_EVICT%"
+rem HP_TEST_FORCE_PYINSTALLER_FAIL=1: CI-only; forces the PyInstaller build command itself to
+rem fail (errorlevel 1) without touching the real invocation. Branch coverage for the
+rem PyInstaller-build-failure -> HP_BOOTSTRAP_STATE=error path (see the "derived requirement"
+rem comment right before the PyInstaller build call, inside :run_entry_smoke's else-branch,
+rem for the bug this guards against).
+set "HP_TEST_FORCE_PYINSTALLER_FAIL=%HP_TEST_FORCE_PYINSTALLER_FAIL%"
+rem HP_TEST_FORCE_OUTPUT_VANISH=1: CI-only; deletes the freshly-built dist\<env>.exe immediately
+rem after a genuinely successful PyInstaller build, before the exist-check that follows --
+rem simulates AV-style post-creation removal (research Finding 2 in docs/prd-av-safe-build-path.md)
+rem as a distinct scenario from the build command itself failing.
+set "HP_TEST_FORCE_OUTPUT_VANISH=%HP_TEST_FORCE_OUTPUT_VANISH%"
 rem HP_SKIP_NIVISA=1: REQ-008 opt-out -- skip the NI-VISA driver install even when pyvisa/visa is detected (debugging)
 set "HP_SKIP_NIVISA=%HP_SKIP_NIVISA%"
 rem HP_NIVISA_WAIT_SECS=<n>: REQ-008 diagnostic -- post-install registry poll budget in seconds.
@@ -2967,10 +2978,44 @@ if not defined HP_BUILD_OK (
       "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
     )
     if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
-    "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
-    if errorlevel 1 call :die "[ERROR] PyInstaller execution failed."
-    if not exist "dist\%ENVNAME%.exe" call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
-    call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+    rem derived requirement: a real bug (found 2026-07-20 while scoping the AV-Safe Build Path
+    rem PRD's failure-simulation tests, docs/prd-av-safe-build-path.md requirement 1): :die only
+    rem returns from its own `call` frame (see docs/agent-lessons-learned.md's ":die uses exit
+    rem /b" note) -- it does NOT halt the process, and nothing downstream re-checked
+    rem dist\%ENVNAME%.exe or this call's outcome. Without HP_BOOTSTRAP_STATE=error, a genuine
+    rem PyInstaller build failure fell through to :run_exe_smokerun (silent no-op skip when the
+    rem EXE is missing) and :verify_no_exe_interpreter (runs the raw entry via the interpreter
+    rem instead), then :after_cascade_decision unconditionally overwrote ~bootstrap.status.json
+    rem back to state=ok and the process exited 0 -- silently masking the failed EXE build the
+    rem user explicitly consented to (HP_BUILD_OK). Mirrors the existing, already-correct
+    rem HP_BOOTSTRAP_STATE=error precedent in :run_entry_smoke's preflight-failure branch.
+    rem Nested if/else (no goto) is used deliberately: a goto that jumps to a label inside this
+    rem same parenthesized else-block risks the class of paren-tracking corruption documented
+    rem under "Provider-cascade dispatch is goto-based on purpose" -- this block instead stays
+    rem entirely within ordinary if/else nesting, using only call/if-errorlevel/if-defined/set,
+    rem all of which are already-confirmed runtime-safe inside a parenthesized block.
+    if defined HP_TEST_FORCE_PYINSTALLER_FAIL (
+      call :log "[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure."
+      call :die "[ERROR] PyInstaller execution failed."
+      set "HP_BOOTSTRAP_STATE=error"
+    ) else (
+      "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+      if errorlevel 1 (
+        call :die "[ERROR] PyInstaller execution failed."
+        set "HP_BOOTSTRAP_STATE=error"
+      ) else (
+        if defined HP_TEST_FORCE_OUTPUT_VANISH if exist "dist\%ENVNAME%.exe" (
+          call :log "[TEST] HP_TEST_FORCE_OUTPUT_VANISH: deleting freshly-built EXE to simulate post-creation removal."
+          del "dist\%ENVNAME%.exe" >nul 2>&1
+        )
+        if not exist "dist\%ENVNAME%.exe" (
+          call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
+          set "HP_BOOTSTRAP_STATE=error"
+        ) else (
+          call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+        )
+      )
+    )
     rem parse_warn: check PyInstaller warn file for missing modules before cleanup
     rem derived requirement: build\ must still exist when ~parse_warn.py runs.
     rem derived requirement: use %ENVNAME% (set before this block) as the inline
