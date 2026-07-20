@@ -524,6 +524,18 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    be permanently frozen into every already-distributed copy of `run_setup.bat`, with no way to
    walk it back later even after the reason for it stops being true. Read that section before
    extending Tier B's pinning pattern anywhere else in this codebase.
+
+   **Downtime re-check, 2026-07-20 (research only, no code written, priority unchanged):**
+   verified against Nuitka's live changelog/issue tracker that Finding 1's core blocker (MinGW64
+   doesn't support Python 3.13+) is still unresolved as of Nuitka 4.1.2 -- no change to the
+   PRD's design. One narrower update folded into the PRD in place: a real Nuitka 4.0.4 bug fix
+   ("compiling with newer Python versions did not fall back to Zig when MSVC/MinGW64 was
+   unusable") means Tier A's own compiler-discovery chain may now land on Zig automatically more
+   often than Finding 1's original "not mature enough" framing assumed, and the specific crash
+   report Finding 1 cited turned out to be macOS/M3-scoped, not Windows. See the PRD's own inline
+   "Re-checked 2026-07-20" note under Finding 1 for the full detail -- flagged for confirmation
+   whenever Phase 1 is actually implemented, not verified end-to-end here (no Windows machine
+   available for this research pass).
 8. **PVW QuickStart -- a super-user command set for running/persisting a `.py` file's
     dependencies with no EXE build, shipped as copy-paste README commands (full design at
     `docs/plan-pvw-quickstart.md`; user-facing commands live in README's "PVW QuickStart" section).**
