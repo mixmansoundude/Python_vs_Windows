@@ -94,9 +94,23 @@ try {
 
     $attemptLogged  = $combined -match [regex]::Escape('attempting a fallback build')
     $successLogged  = $combined -match [regex]::Escape('Fallback build succeeded')
-    $exePath        = Join-Path $workDir 'dist\~selftest_nuitka_tiera.exe'
+
+    # ENVNAME is derived from the workDir leaf name with every non-alnum/underscore/hyphen
+    # character (including the leading '~') sanitized to '_' (run_setup.bat lines ~350-356) --
+    # mirrors the established pattern in selfapps_collect.ps1/selfapps_envsmoke.ps1/etc. rather
+    # than hardcoding the literal tilde-prefixed folder name.
+    $envLeaf  = Split-Path $workDir -Leaf
+    $envName  = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
+    if (-not $envName) { $envName = '_env' }
+    $exePath        = Join-Path $workDir "dist\$envName.exe"
     $exeExists      = Test-Path -LiteralPath $exePath
-    $appStdoutFound = $combined -match [regex]::Escape('nuitka-fallback-ok')
+
+    # The EXE's own stdout is captured to ~run.out.txt in the app root (not echoed into the
+    # console-redirected bootstrap log) -- see :run_exe_smokerun's PowerShell capture. Read it
+    # directly rather than searching $combined, matching selfapps_envsmoke.ps1's own pattern.
+    $runOutPath     = Join-Path $workDir '~run.out.txt'
+    $runOutText     = if (Test-Path -LiteralPath $runOutPath) { Get-Content -LiteralPath $runOutPath -Raw -Encoding ASCII } else { '' }
+    $appStdoutFound = $runOutText -match [regex]::Escape('nuitka-fallback-ok')
 
     $statusPath = Join-Path $workDir '~bootstrap.status.json'
     $statusText = if (Test-Path -LiteralPath $statusPath) { Get-Content -LiteralPath $statusPath -Raw } else { $null }
