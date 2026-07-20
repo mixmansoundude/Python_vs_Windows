@@ -267,6 +267,27 @@ wiring.
 self.autopep_discovery.merge
 ```
 
+## selfapps-pvw-idempotent NDJSON rows (selfapps_pvw_idempotent.ps1, uv lane only)
+
+Single deterministic scenario (REQ-005.13, Tier 2 of `docs/plan-autopep723-two-tier.md`): proves
+`HP_PVW_KNOWN_IDEMPOTENT` actually runs the entry file live via `uvx autopep723 <entry>` (the
+`:pvw_known_idempotent_run` subroutine, `run_setup.bat` ~line 3289, hooked in right after
+`:determine_entry` returns -- earlier than Tier 1's own insertion point), persists what it
+needed via `uv add --script`, and the app builds/runs from it afterward. `HP_SKIP_PIPREQS=1` is
+test-level isolation only (matching `selfapps_autopep_discovery.ps1`'s own technique) -- it is
+NOT how Tier 2 behaves by default in production; pipreqs runs normally alongside Tier 2 there.
+Also asserts the stub app's own `print()` output appears directly in the bootstrap log, proving
+the execute-mode discovery run's stdout was genuinely inherited/passed through live rather than
+captured or suppressed -- the specific design point `tools/pvw_known_idempotent.py`'s helper
+exists to preserve (see its module docstring: result markers print to stderr specifically so
+they never collide with the passed-through script's own stdout). Same scratch-dir/coarser
+full-tree-artifact-capture pattern as `selfapps_autopep_discovery.ps1` -- no individual
+`upload-artifact` wiring.
+
+```
+self.pvw_idempotent.discovery
+```
+
 ---
 
 ## Key facts for debugging missing rows

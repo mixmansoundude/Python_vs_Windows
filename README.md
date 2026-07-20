@@ -323,6 +323,30 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 
 ---
 
+### Execute-Mode Dependency Discovery (opt-in, uv lane)
+
+- REQ-005.13 -- `HP_PVW_KNOWN_IDEMPOTENT=1` (opt-in only, never a default): actually run the
+  entry script via `uvx autopep723 <entry>` as a dependency-discovery mechanism, for users who
+  have explicitly declared their own script safe to run more than once. Relocates the "Just run
+  it (and remember what it needed)" logic from README's PVW QuickStart section into
+  `run_setup.bat` itself -- same exit-code branching (0 = ran clean, best-effort persist; 2 =
+  malformed header, strip-and-retry-once; other nonzero = fill in what's missing without
+  stripping, retry once), not a new mechanism.
+  - The script's own output prints live to the console -- stdout is never captured or
+    suppressed, exactly like running it directly with `python entry.py`.
+  - Additive, not a replacement: pipreqs and the REQ-005.12 discovery merge still run normally
+    afterward, catching anything a single execution path didn't happen to exercise.
+  - Runs before pyproject.toml/PEP 723 header/pipreqs discovery, not after -- see
+    `docs/agent-interconnect.md`'s "HP_PVW_KNOWN_IDEMPOTENT execute-mode discovery" section for
+    the full hook-point rationale.
+  - Scope gate: only runs when `HP_ENV_MODE=uv` (v1, matching REQ-005.11/REQ-005.12's own scope
+    decision).
+  - Never gates the Prime Directive: the flag's very absence leaves this whole step a no-op, and
+    any failure here falls back gracefully to the Default Path.
+  - TESTED: `tests/test_pvw_known_idempotent.py`, `tests/selfapps_pvw_idempotent.ps1`.
+
+---
+
 ### Design Principles
 
 - Authoritative hierarchy is deterministic: PEP 723 > requirements.txt > pipreqs > none
@@ -564,6 +588,7 @@ Operational knobs, not needed for normal double-click use:
 
 | Variable | Effect | REQ |
 |----------|--------|-----|
+| `HP_PVW_KNOWN_IDEMPOTENT=1` | Opt-in: run the entry live via `uvx autopep723` for execute-mode dependency discovery (uv lane only) | REQ-005.13 |
 | `HP_SKIP_AUTOPEP_DISCOVERY=1` | Skip the `autopep723 check` discovery-merge augmentation of pipreqs (uv lane only) | REQ-005.12 |
 | `HP_SKIP_ENTRY_SMOKE=1` | Skip the entry-script smoke test (no user code run) | REQ-012 |
 | `HP_SKIP_EXE_SMOKERUN=1` | Skip running the built/cached EXE for verification | REQ-012 |
@@ -666,8 +691,8 @@ PY
 Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` with the new base64 text. The batch file comments point back to this section when further guidance is needed.
 
 **Payload inventory and PayloadSync coverage** (added so this is visible at a glance, instead of
-needing to grep the batch file or a research pass to find out): of the 17 embedded `HP_*`
-payloads, 13 have a canonical `tools/` source file *and* a dedicated `PayloadSync` unit test that
+needing to grep the batch file or a research pass to find out): of the 18 embedded `HP_*`
+payloads, 14 have a canonical `tools/` source file *and* a dedicated `PayloadSync` unit test that
 asserts the embedded base64 is byte-for-byte in sync with that source (`HP_AUTOPEP_MERGE` ->
 `tools/autopep_merge.py`, `HP_COLLECT_SUBMODULES` ->
 `tools/collect_submodules.py`, `HP_DEP_CHECK` -> `tools/dep_check.py`, `HP_DETECT_PY` ->
@@ -675,8 +700,9 @@ asserts the embedded base64 is byte-for-byte in sync with that source (`HP_AUTOP
 `tools/embed_extract.ps1`, `HP_EMBED_PYVER_CHECK` -> `tools/embed_pyver_check.py`, `HP_ENV_STATE`
 -> `tools/env_state.py`, `HP_FAILFAST_PROBE` -> `tools/failfast_probe.ps1`, `HP_FIND_ENTRY` ->
 `tools/find_entry.py`, `HP_HIDDEN_IMPORT_SCAN` -> `tools/hidden_import_scan.py`, `HP_PARSE_WARN`
--> `tools/parse_warn.py`, `HP_PYPROJ_DEPS` -> `tools/pyproj_deps.py`; each is exercised by the
-matching `tests/test_*.py` file). The remaining 4 (`HP_CONDARC`, `HP_FAST_CHECK`,
+-> `tools/parse_warn.py`, `HP_PVW_IDEMPOTENT` -> `tools/pvw_known_idempotent.py`, `HP_PYPROJ_DEPS`
+-> `tools/pyproj_deps.py`; each is exercised by the matching `tests/test_*.py` file). The
+remaining 4 (`HP_CONDARC`, `HP_FAST_CHECK`,
 `HP_PREP_REQUIREMENTS`, `HP_PRINT_PYVER`) are embedded-only, with no separate canonical source to
 sync against -- `HP_CONDARC` is static config text, not code, so this doesn't apply to it;
 `HP_FAST_CHECK` and `HP_PREP_REQUIREMENTS` at least have their *logic* covered by

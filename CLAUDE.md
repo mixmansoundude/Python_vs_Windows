@@ -583,18 +583,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
     Linux); failed-`uv`-install and missing-file error UX are both known-rough, not known-broken
     (though the missing-file case is now confirmed to at least fail into the safe, non-destructive
     branch rather than the strip branch).
-9. **Two-tier `autopep723` integration -- Tier 1 (REQ-005.12) SHIPPED 2026-07-20, see Closed
-    Backlog for the full history. Tier 2 (`HP_PVW_KNOWN_IDEMPOTENT`) remains open, not yet
-    prepped**, consistent with its own explicit dependency on Tier 1 shipping first (now
-    satisfied). Full design at `docs/plan-autopep723-two-tier.md`'s Tier 2 section. When picked
-    up: decide the embedded-helper language (Python is likely the better fit given
-    `run_setup.bat`'s existing conventions -- see the design doc's own still-open question),
-    write the helper plus canonical source, `PayloadSync` test, and CI coverage following the
-    now-shipped Tier 1 pattern, and wire the `HP_PVW_KNOWN_IDEMPOTENT` opt-in flag into
-    `run_setup.bat`'s dispatch -- reusing README's already-shipped, already-tested exit-code
-    branching (0 / 2 / other-nonzero) verbatim rather than inventing new logic, per the design
-    doc's own "What holds up, re-confirmed or already established elsewhere" section.
-
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is
@@ -899,11 +887,79 @@ of a second or third pin actually needing it.
 
 Items completed and shipped:
 
+- **Two-tier `autopep723` integration, Tier 2 (REQ-005.13, `HP_PVW_KNOWN_IDEMPOTENT`) -- an
+  opt-in flag causing `run_setup.bat` to actually run the entry script live via `uvx autopep723
+  <entry>` as execute-mode dependency discovery, now SHIPPED, same day as Tier 1 (below).** Full
+  design at `docs/plan-autopep723-two-tier.md`'s Tier 2 section. Picked back up immediately once
+  Tier 1's PR merged, satisfying this doc's own explicit sequencing dependency. Relocates
+  README's already-shipped, already-tested "Just run it (and remember what it needed)" QuickStart
+  logic into `run_setup.bat` itself -- same exit-code branching (0 = ran clean, best-effort
+  persist; 2 = malformed header, strip-and-retry-once; other nonzero = fill in what's missing
+  without stripping, retry once), not a new mechanism.
+
+  **Hook point: right after `:determine_entry` returns (`run_setup.bat` ~line 980), before the
+  pyproject.toml/PEP 723 header/pipreqs block even begins** -- earlier than Tier 1's own insertion
+  at `:after_pipreqs_run`, since Tier 2's whole premise is "skip static discovery, use execution
+  instead," so it must run before any static-analysis-based source gets a chance to populate
+  `requirements.txt` first. Does not need its own PEP-723-awareness: `uvx autopep723 <entry>`
+  already respects an existing header on its own.
+
+  **Real design wrinkle resolved during the code-grounded pass (before implementation): `uv add
+  --script` only updates the PEP 723 header, not `requirements.txt`.** A naive "run, persist,
+  continue" implementation would have left `requirements.txt` empty, since everything downstream
+  (the dep-check fast path, heuristic augmentation, the actual install step) all operate on
+  `requirements.txt`, never the header directly. Fixed by reusing the ALREADY-EXISTING
+  `:extract_pep723_requirements` subroutine (the same one the pre-existing-header case already
+  uses) to re-extract the just-updated header straight into `requirements.txt` -- no second
+  requirements.txt-writing mechanism was added.
+
+  **Deliberately does NOT set `HP_SKIP_PIPREQS`** -- additive layering, not a replacement:
+  pipreqs and Tier 1's own `autopep723 check` merge still run normally afterward, catching
+  anything a single execution path didn't happen to exercise (e.g. a conditionally imported
+  module whose branch wasn't hit during this particular run). Mirrors Tier 1's own "augment,
+  never replace" philosophy.
+
+  **A real, non-hypothetical bug was found and fixed before shipping, via direct reasoning about
+  file-descriptor inheritance, not via a test failure.** The Tier 2 helper's `run_script()`
+  deliberately inherits stdio for the "run the user's script live" step, so the user sees their
+  own program's output exactly like a normal `python entry.py` run. The first draft had the batch
+  caller redirect the helper's stdout to a result file to capture its printed result marker --
+  copying `tools/pep723_writeback.py`'s proven pattern verbatim. But `pep723_writeback.py` never
+  inherits a child's stdio (its own `uv add --script` call is always `capture_output=True`),
+  while Tier 2's helper does. Redirecting the OUTER Python process's stdout to a file would have
+  meant the INNER `uvx autopep723 <entry>` child process -- which inherits whatever stdio its own
+  parent has -- silently redirected its stdout into that same result file too, swallowing the
+  user's live script output instead of showing it on the console. Fixed by moving the helper's
+  own result marker to **stderr** and having the batch caller redirect only stderr, leaving
+  stdout completely unredirected end-to-end. `tests/selfapps_pvw_idempotent.ps1` asserts the stub
+  app's own `print()` output appears directly in the bootstrap log, specifically to guard against
+  this exact regression recurring.
+
+  **What shipped**: `tools/pvw_known_idempotent.py` (new, canonical source for
+  `HP_PVW_IDEMPOTENT`) -- `strip_pep723_block` deliberately duplicated (not imported) from
+  `tools/pep723_writeback.py`'s function of the same name, since independently-decoded
+  single-file embedded payloads cannot share imports at runtime. The `:pvw_known_idempotent_run`
+  subroutine, gated on `HP_PVW_KNOWN_IDEMPOTENT` defined AND `HP_ENV_MODE=uv` AND `HP_ENTRY`
+  defined AND the derived `uvx.exe` path existing on disk -- never gates the lane; any failure
+  (the run itself failing even after its one retry, the helper payload failing to write) falls
+  back gracefully to the Default Path. `tests/test_pvw_known_idempotent.py` (16 unit tests:
+  `strip_pep723_block`, dependency-name extraction from `autopep723 check` output, the
+  discover-and-persist sequence, and all three exit-code branches via a mocked `subprocess.run`
+  that dispatches on argv shape, plus `PayloadSync`). `tests/selfapps_pvw_idempotent.ps1` (new,
+  uv lane, non-gating): `HP_SKIP_PIPREQS=1` isolates Tier 2's own contribution (test-level only,
+  not how Tier 2 behaves in production), asserts the discovery-succeeded log line, the stub app's
+  own stdout passthrough, `requirements.txt` population, and that the app actually builds and
+  runs afterward. Doc updates: README's new REQ-005.13 section and `HP_PVW_KNOWN_IDEMPOTENT`
+  table row, `docs/agent-ndjson.md`'s new `self.pvw_idempotent.discovery` row registration,
+  `docs/agent-interconnect.md`'s new "HP_PVW_KNOWN_IDEMPOTENT execute-mode discovery" section, and
+  `docs/plan-autopep723-two-tier.md` itself updated to SHIPPED status throughout -- both tiers of
+  that doc are now fully implemented. CLOSED by this PR.
+
 - **Two-tier `autopep723` integration, Tier 1 (REQ-005.12) -- "add `autopep723 check` alongside
   `pipreqs` in the Default Path discovery phase," now SHIPPED.** Full design at
   `docs/plan-autopep723-two-tier.md`; this entry is the historical record of the whole
-  investigation through Tier 1 shipping (Tier 2, `HP_PVW_KNOWN_IDEMPOTENT`, remains open --
-  see Active Backlog item 9). Originated from a user-supplied third-party spec proposing (a) this
+  investigation through Tier 1 shipping (Tier 2, `HP_PVW_KNOWN_IDEMPOTENT`, shipped the same day
+  -- see the entry directly above). Originated from a user-supplied third-party spec proposing (a) this
   Tier 1 discovery augmentation and (b) an opt-in Tier 2 runtime-discovery flag -- the concrete
   design that supersedes `plan-pvw-quickstart.md`'s deferred "Shape B." Found and fixed two real
   problems in the source spec before it could be treated as implementation-ready, both via direct
@@ -976,9 +1032,9 @@ Items completed and shipped:
   What held up unchanged from the original spec review: `uv add --script` over `autopep723 add`
   for writeback (already established elsewhere), UV-only writeback (no other package manager has
   an equivalent mechanism), and Tier 2's exit-code branching being a relocation of README's
-  already-shipped, already-tested QuickStart logic rather than a new mechanism -- still applies
-  when Tier 2 is picked up. CLOSED by this PR (Tier 1 only; Tier 2 remains open, Active Backlog
-  item 9).
+  already-shipped, already-tested QuickStart logic rather than a new mechanism -- confirmed true
+  when Tier 2 shipped the same day (see the entry directly above). CLOSED by this PR (Tier 1
+  only; Tier 2 shipped separately, same day).
 
 - **PVW QuickStart CI dry-run test (`tests/selfapps_pvw_quickstart.ps1`, new, uv lane only)**:
   requested directly by the maintainer as "a good isolated dry run for the next two before any

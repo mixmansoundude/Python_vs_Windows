@@ -527,6 +527,64 @@ failed, found nothing, or the block was skipped entirely) is a silent no-op. The
 branch (`autopep723 merge helper failed`) is defensive only; nothing in the merge helper's own
 design can produce a nonzero exit under normal operation.
 
+### HP_PVW_KNOWN_IDEMPOTENT execute-mode discovery (REQ-005.13, Tier 2) hooks in earlier than Tier 1
+
+`:pvw_known_idempotent_run` (`run_setup.bat` ~line 3289) is called from a gate right after
+`:determine_entry` returns (~line 980), BEFORE the pyproject.toml/PEP 723 header/pipreqs block
+even begins -- earlier than Tier 1's own insertion at `:after_pipreqs_run`. This is deliberate:
+Tier 2's whole premise is "skip static discovery, use execution instead," so it must run before
+any static-analysis-based dependency source gets a chance to populate `requirements.txt` first.
+It does NOT need its own PEP-723-awareness, though -- `uvx autopep723 <entry>` already respects
+an existing header on its own (uses declared deps to set up the run, only surfaces something new
+via a real `ModuleNotFoundError` at runtime), so Tier 2 inherits that correct behavior for free.
+
+**`HP_UVX_EXE` is computed a second time here, independently of Tier 1's own computation.**
+Both insertion points derive it the same way (`%HP_UV_EXE:uv.exe=uvx.exe%`), but since Tier 2's
+gate is earlier in the file than Tier 1's, it cannot reuse Tier 1's copy of the variable -- this
+is intentional duplication (a cheap string substitution), not a bug to consolidate.
+
+**The real design wrinkle this hook point has to handle: `uv add --script` only updates the PEP
+723 header, not `requirements.txt`.** A naive "run, persist, continue" implementation would leave
+`requirements.txt` empty, since everything downstream of this point (`:after_pipreqs_run`'s own
+dep-check fast path, `~prep_requirements.py`'s heuristic augmentation, the actual install step)
+all operate on `requirements.txt`, never the header directly. Fixed by reusing the ALREADY-EXISTING
+`:extract_pep723_requirements` subroutine (same one the pre-existing-header case at ~line 1017
+already uses) to re-extract the just-updated header straight into `requirements.txt` after a
+successful Tier 2 run -- no second requirements.txt-writing mechanism was added.
+
+**Deliberately does NOT set `HP_SKIP_PIPREQS`.** Unlike the test file's own isolation technique
+(`selfapps_pvw_idempotent.ps1` sets it for test purposes only), production Tier 2 code leaves
+pipreqs free to run normally afterward -- it's additive layering, not a replacement: Tier 2
+anchors `requirements.txt` with what execution-based discovery found, and pipreqs/Tier 1's own
+`autopep723 check` merge (REQ-005.12, which runs later at `:after_pipreqs_run`) still get their
+normal chance to catch anything a single execution path didn't exercise (e.g. a conditionally
+imported module whose branch wasn't hit during this particular run). This mirrors Tier 1's own
+"augment, never replace" philosophy rather than introducing a new one.
+
+**Only stderr is redirected when the batch caller captures the helper's own result marker,
+never stdout.** `tools/pvw_known_idempotent.py`'s `run_script()` deliberately leaves the child
+`uvx autopep723 <entry>` process's stdio fully inherited (no `capture_output`) so the user's own
+script output prints live to the console, exactly like a normal `python entry.py` run -- this is
+the entire point of the "execute-mode" framing. Because of that, the helper's own one-line
+`RAN:<detail>` / `ERROR:<reason>` result marker is printed to **stderr**, not stdout (see the
+helper's own module docstring) -- if a future edit ever redirects the batch call's stdout instead
+of stderr to capture that marker, it would silently swallow the user's live script output into a
+throwaway result file instead of showing it on the console. `tests/selfapps_pvw_idempotent.ps1`
+guards against this regression directly: it asserts the stub app's own `print()` output appears
+in the bootstrap log itself, not just that the run "succeeded."
+
+**Double-execution under this flag is intentional, not a REQ-018 gap.** The script runs once here
+(via `uvx`, ephemeral tool venv, for discovery) and again later during the normal PyInstaller EXE
+build's smoke-test verification (the real, persistent environment, producing the actual
+deliverable). `HP_PVW_KNOWN_IDEMPOTENT`'s own name is the user's explicit, self-declared consent
+to exactly this -- REQ-019's "flags only suppress, or add an alternate opt-in behavior, never gate
+the default" already covers it; no additional REQ-018 carve-out was needed.
+
+**Never gates the lane.** Any nonzero outcome (the run itself failing even after its one retry,
+the helper payload failing to write, etc.) is logged as a `[WARN]` and the subroutine returns 0
+unconditionally -- the Default Path (pyproject.toml/PEP 723 header/pipreqs/Tier 1, all still to
+come) picks up exactly as if `HP_PVW_KNOWN_IDEMPOTENT` had never been set.
+
 ### PEP 723 write-back (REQ-005.11) touches two hook points and the warnfix/lock flow
 
 `:pep723_writeback` (new subroutine, called from two sites) is deliberately narrow --
