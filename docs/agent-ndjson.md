@@ -298,9 +298,12 @@ requirement-1 failure-simulation tests (`docs/prd-av-safe-build-path.md`): a gen
 build failure previously fell through `:die`'s call-frame-only `exit /b` (it never halts the
 process) all the way to `:after_cascade_decision`, which unconditionally overwrote
 `~bootstrap.status.json` back to `state=ok` and exited 0 -- silently masking the failure. Fixed
-by setting `HP_BOOTSTRAP_STATE=error` at the build call site. This test asserts the fix: process
-exits non-zero, `~bootstrap.status.json` genuinely reads `state=error` (not overwritten), and the
-correct `[ERROR]` message is present. See `docs/agent-lessons-learned.md`'s `:die` entry for the
+by setting `HP_BOOTSTRAP_STATE=error` at the build call site. This test asserts the fix:
+`~bootstrap.status.json` genuinely reads `state=error` (not overwritten). It does NOT assert a
+non-zero process exit code -- `:success`'s own `exit /b 0` runs unconditionally regardless of
+`HP_BOOTSTRAP_STATE`, matching this repo's established "graceful stop" contract for this failure
+class (see `selfapps_preflight.ps1`'s sibling test, which likewise never checks exit code). See
+`docs/agent-lessons-learned.md`'s `:die` entry for the
 full trace of why the pre-fix behavior was wrong. No individual `upload-artifact` wiring, same
 as `selfapps_exefail.ps1` -- covered by the coarser full-tree `diag-selftest-*` capture.
 

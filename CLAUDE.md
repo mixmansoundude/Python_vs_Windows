@@ -855,8 +855,13 @@ Items completed and shipped:
   already-confirmed runtime-safe inside a block, so the fix needed no goto at all. Two new test
   hooks (`HP_TEST_FORCE_PYINSTALLER_FAIL`, `HP_TEST_FORCE_OUTPUT_VANISH`) and a new
   `tests/selfapps_pyinstaller_fail.ps1` (two scenarios, real/conda-full lanes, matching
-  `selfapps_exefail.ps1`'s sibling pattern) assert the fix: process exits non-zero and
-  `~bootstrap.status.json` genuinely reads `state=error`, not silently overwritten. This
+  `selfapps_exefail.ps1`'s sibling pattern) assert the fix: `~bootstrap.status.json` genuinely
+  reads `state=error`, not silently overwritten (the process's own exit code stays 0 either way
+  -- `:success`'s `exit /b 0` runs unconditionally regardless of `HP_BOOTSTRAP_STATE`, matching
+  the pre-existing `selfapps_preflight.ps1` precedent's own contract, which never checks exit
+  code either; caught and corrected in this same PR after the first real-CI run's `bootstrapExit`
+  detail showed 0, initially misread as a test failure before tracing it to an over-specified
+  assertion, not a bug in the fix itself). This
   simultaneously ships requirement 1's first fixture from `docs/prd-av-safe-build-path.md`
   ("a generic PyInstaller build failure... confirmed [to fail] in the expected way") -- "the
   expected way" is now a correct, visible failure rather than the bug this entry describes; the
