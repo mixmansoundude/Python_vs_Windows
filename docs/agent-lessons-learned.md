@@ -868,7 +868,20 @@ points back here rather than re-deriving these.
   this repo's own testing directly: an early attempt to reproduce a design bug returned a
   misleadingly clean result because of exactly this stale-cache effect, only resolved by using a
   fresh filename and clearing `~/.cache/uv`. Relevant to any feature whose entire point is
-  persisting a header for a LATER, independent `uv run` to pick up.
+  persisting a header for a LATER, independent `uv run` to pick up. **Confirmed to bite a real,
+  shipped call site, not just a dev-testing artifact: `tools/pvw_known_idempotent.py`'s
+  (`HP_PVW_KNOWN_IDEMPOTENT`, REQ-005.13) retry paths.** `uvx autopep723 <entry>` (read from
+  its actual source, `autopep723/__init__.py`'s `run_with_uv`) shells out to `uv run` itself
+  (`--with dep` flags when no header exists yet, or letting `uv` parse an embedded header once
+  one does). `main()`'s "other nonzero" and post-strip-repair branches both call `persist()`
+  (writes a NEW header via `uv add --script`) then immediately re-run the SAME entry file --
+  exactly the change-then-rerun-same-filename trigger this bug describes. Fixed by adding a
+  `force_fresh` parameter to `run_script()` that sets `UV_NO_CACHE=1` in the subprocess env,
+  used ONLY on the two post-persist retry calls (never the first attempt, so the common
+  single-pass case keeps normal caching speed). `tests/test_pvw_known_idempotent.py`'s
+  `RunScript` class and the two retry-branch `MainDispatch` tests assert the env split
+  directly (first call gets no `env` override, the retry gets `UV_NO_CACHE=1`), so a future
+  edit that drops `force_fresh` from either retry call site is caught in CI.
 - **`Get-Content -Raw`'s default text handling silently replaces any invalid-UTF-8 byte with the
   Unicode replacement character (`U+FFFD` / `EF BF BD`) the instant it reads a file** -- confirmed
   at the raw byte level, not just visually. For a script saved in a legacy encoding, this corrupts

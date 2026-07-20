@@ -340,6 +340,24 @@ own result marker to **stderr** and having the batch caller redirect only stderr
 `tests/selfapps_pvw_idempotent.ps1` asserts the stub app's own `print()` output appears directly
 in the bootstrap log, specifically to guard against this exact regression recurring.
 
+**A second real bug found and fixed post-merge, during a refinement pass (2026-07-20): the
+retry paths were exposed to a real, still-open uv caching bug (astral-sh/uv#15156).** Reading
+`autopep723`'s own source (`autopep723/__init__.py`'s `run_with_uv`) confirmed its default "run"
+mode shells out to `uv run` itself (`--with dep` flags before a header exists, or letting `uv`
+parse an embedded header once `persist()` has written one). `main()`'s "other nonzero" and
+post-strip-repair branches both call `persist()` (writes a NEW header via `uv add --script`)
+then immediately re-run the SAME entry file via `run_script()` -- exactly the
+change-then-rerun-same-filename sequence #15156 describes, already documented in
+`docs/agent-lessons-learned.md` from an unrelated dev-testing repro. Fixed by adding a
+`force_fresh` parameter to `run_script()` that sets `UV_NO_CACHE=1` in the subprocess
+environment, applied ONLY to the two post-persist retry calls -- the first attempt (the common,
+successful case, since the whole premise of `HP_PVW_KNOWN_IDEMPOTENT` is "trust me, my script
+already works") keeps normal caching for speed. `tests/test_pvw_known_idempotent.py` gained a
+dedicated `RunScript` test class plus assertions in both retry-branch `MainDispatch` tests
+confirming the env split. Re-synced the `HP_PVW_IDEMPOTENT` payload (CMD 8191-char budget
+required trimming several comments to restore a safe margin -- see the commit for the exact
+before/after).
+
 ---
 
 ## Open questions for whenever this is picked up

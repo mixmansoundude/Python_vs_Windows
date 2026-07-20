@@ -1,21 +1,22 @@
 """pvw_known_idempotent v1 -- Tier 2, docs/plan-autopep723-two-tier.md (HP_PVW_KNOWN_IDEMPOTENT).
-Runs the entry script via `uvx autopep723 <entry>` as execute-mode dependency discovery, for
-users who opted in (HP_PVW_KNOWN_IDEMPOTENT=1). Relocates README's shipped "Just run it"
-QuickStart logic into run_setup.bat: same exit-code branching (0 / 2 / other-nonzero), same
-strip-and-retry-once-on-malformed-header handling. strip_pep723_block mirrors
-tools/pep723_writeback.py's function of the same name (not imported -- embedded single-file
+Runs the entry via `uvx autopep723 <entry>` as execute-mode discovery for opted-in users
+(HP_PVW_KNOWN_IDEMPOTENT=1); relocates README's "Just run it" QuickStart logic into
+run_setup.bat (same 0/2/other-nonzero branching, same strip-and-retry-once).
+strip_pep723_block mirrors tools/pep723_writeback.py's function (not imported -- embedded
 payloads can't share imports at runtime).
 
-The run step inherits stdout so the user sees their own program's output live -- never
-captured. Only internal `autopep723 check` calls (discovering names to persist) capture
-output. Result markers (RAN:<detail> / ERROR:<reason>) print to STDERR, not stdout, since
-stdout is reserved for the passed-through script -- caller redirects stderr to read them.
+Run inherits stdout live; only `autopep723 check` calls capture output. Result markers
+(RAN:<detail>/ERROR:<reason>) go to STDERR since stdout is reserved for the passthrough script.
+
+Post-persist retries pass UV_NO_CACHE=1 (force_fresh) to dodge astral-sh/uv#15156: persist()
+rewrites the header then run_script() reruns the same file -- the bug's exact trigger. Only
+retries pay the no-cache cost; the first attempt keeps normal caching.
 
 Usage: python pvw_known_idempotent.py <entry.py> <uvx_exe> <uv_exe> <python_exe>
-Exit 0 = script ran (regardless of persist outcome); nonzero = run failed after one retry.
-Canonical source for HP_PVW_IDEMPOTENT in run_setup.bat; tests/test_pvw_known_idempotent.py
-asserts the embedded payload matches this file.
+Exit 0 = ran (regardless of persist outcome); nonzero = failed after one retry.
+Canonical source for HP_PVW_IDEMPOTENT; tests/test_pvw_known_idempotent.py checks payload sync.
 """
+import os
 import re
 import subprocess
 import sys
@@ -24,12 +25,9 @@ DEP_LINE_RE = re.compile(r'^#\s*"([^"]+)",?\s*$')
 
 
 def strip_pep723_block(text):
-    """Remove an existing '# /// script' ... '# ///' block, line by line.
-
-    Mirrors tools/pep723_writeback.py's function of the same name (see that file's docstring
-    for the full rationale: a line-by-line state machine, not a regex, tolerant of trailing
-    whitespace on the closing fence per astral-sh/uv#10918).
-    """
+    """Remove an existing '# /// script' ... '# ///' block, line by line. Mirrors
+    tools/pep723_writeback.py's function (state machine, tolerant of trailing whitespace
+    on the closing fence per astral-sh/uv#10918)."""
     lines = text.splitlines(keepends=True)
     out = []
     in_block = False
@@ -46,10 +44,15 @@ def strip_pep723_block(text):
     return "".join(out)
 
 
-def run_script(uvx_exe, entry_path):
-    """Actually execute the user's script via `uvx autopep723 <entry>`, inheriting stdio."""
+def run_script(uvx_exe, entry_path, force_fresh=False):
+    """Execute via `uvx autopep723 <entry>`, inheriting stdio. force_fresh=True sets
+    UV_NO_CACHE=1 (see module docstring); only used on post-persist retries."""
+    env = None
+    if force_fresh:
+        env = dict(os.environ)
+        env["UV_NO_CACHE"] = "1"
     try:
-        proc = subprocess.run([uvx_exe, "autopep723", entry_path])
+        proc = subprocess.run([uvx_exe, "autopep723", entry_path], env=env)
     except OSError:
         return 1
     return proc.returncode
@@ -119,15 +122,14 @@ def main(argv=None):
         except OSError:
             print("ERROR:strip_retry_failed:write", file=sys.stderr)
             return rc
-        rc2 = run_script(uvx_exe, entry_path)
+        rc2 = run_script(uvx_exe, entry_path, force_fresh=True)
         if rc2 == 0:
             if persist(uvx_exe, uv_exe, python_exe, entry_path):
                 print("RAN:persisted_after_repair", file=sys.stderr)
             else:
                 print("RAN:persist_failed_after_repair", file=sys.stderr)
             return 0
-        # Retry also failed -- restore the original (still-malformed) content rather than
-        # leave the file permanently stripped.
+        # Retry also failed -- restore original content rather than leave it stripped.
         try:
             with open(entry_path, "w", encoding="utf-8", newline="") as fh:
                 fh.write(original)
@@ -136,11 +138,10 @@ def main(argv=None):
         print("ERROR:strip_retry_failed:%d" % rc2, file=sys.stderr)
         return rc2
 
-    # Other nonzero: an existing header (if any) is presumably still valid TOML, but the run
-    # failed for some other reason -- most commonly a missing dependency. Best-effort fill-in
-    # without stripping anything, then retry once.
+    # Other nonzero: header (if any) is presumably valid; run failed for another reason --
+    # most commonly a missing dependency. Best-effort fill-in without stripping, retry once.
     persist(uvx_exe, uv_exe, python_exe, entry_path)
-    rc3 = run_script(uvx_exe, entry_path)
+    rc3 = run_script(uvx_exe, entry_path, force_fresh=True)
     if rc3 == 0:
         print("RAN:persisted_after_fillin", file=sys.stderr)
         return 0
