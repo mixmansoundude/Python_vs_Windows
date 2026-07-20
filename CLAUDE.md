@@ -524,6 +524,18 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    be permanently frozen into every already-distributed copy of `run_setup.bat`, with no way to
    walk it back later even after the reason for it stops being true. Read that section before
    extending Tier B's pinning pattern anywhere else in this codebase.
+
+   **Downtime re-check, 2026-07-20 (research only, no code written, priority unchanged):**
+   verified against Nuitka's live changelog/issue tracker that Finding 1's core blocker (MinGW64
+   doesn't support Python 3.13+) is still unresolved as of Nuitka 4.1.2 -- no change to the
+   PRD's design. One narrower update folded into the PRD in place: a real Nuitka 4.0.4 bug fix
+   ("compiling with newer Python versions did not fall back to Zig when MSVC/MinGW64 was
+   unusable") means Tier A's own compiler-discovery chain may now land on Zig automatically more
+   often than Finding 1's original "not mature enough" framing assumed, and the specific crash
+   report Finding 1 cited turned out to be macOS/M3-scoped, not Windows. See the PRD's own inline
+   "Re-checked 2026-07-20" note under Finding 1 for the full detail -- flagged for confirmation
+   whenever Phase 1 is actually implemented, not verified end-to-end here (no Windows machine
+   available for this research pass).
 8. **PVW QuickStart -- a super-user command set for running/persisting a `.py` file's
     dependencies with no EXE build, shipped as copy-paste README commands (full design at
     `docs/plan-pvw-quickstart.md`; user-facing commands live in README's "PVW QuickStart" section).**
@@ -571,72 +583,17 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
     Linux); failed-`uv`-install and missing-file error UX are both known-rough, not known-broken
     (though the missing-file case is now confirmed to at least fail into the safe, non-destructive
     branch rather than the strip branch).
-9. **Two-tier `autopep723` integration for `run_setup.bat` itself -- full design at
-    `docs/plan-autopep723-two-tier.md`, deliberately sequenced LAST after the write-back
-    (REQ-005.11, shipped) and item 8 (QuickStart) above both ship and prove out.** Reviewed a
-    user-supplied third-party spec proposing (a) running
-    `autopep723 check` alongside `pipreqs` in the Default Path discovery phase for all users, and
-    (b) an opt-in `HP_PVW_KNOWN_IDEMPOTENT` flag for runtime (execute-mode) discovery inside
-    `run_setup.bat` -- this is the concrete design that supersedes item 8's own deferred "Shape
-    B." Found and fixed two real problems in the source spec before it could be treated as
-    implementation-ready, both via direct testing and source-code reading, not just review:
-    - **The proposed v1 command (`uvx autopep723 check . > requirements.autopep.txt`) is broken as
-      written.** `autopep723` is strictly single-file (confirmed via its own argument parser --
-      no directory/glob mode exists at all); passing `.` hits `Path.read_text()`'s
-      `IsADirectoryError`, silently caught and turned into an empty result with **exit code 0** --
-      confirmed directly, reproducibly. The spec's own "autopep723 fail != lane fail" fallback
-      would never even trigger, since nothing ever reports nonzero. As designed, the merge would
-      be a permanent no-op on every run. Must target the resolved entry file (`%HP_ENTRY%`), never
-      a directory.
-    - **The spec's central claim ("autopep723 check never reports delta, environment-independent")
-      is false as a blanket statement -- confirmed by reading `autopep723`'s actual source
-      (pulled from the local `uv` cache) and by direct reproduction: a venv with only `requests`
-      pre-installed running `autopep723 check` on a script importing `requests` + `click` silently
-      dropped `requests` from the output.** Root cause: `get_builtin_modules()` unions
-      `sys.builtin_module_names` with `pkgutil.iter_modules()`, which walks whatever Python
-      process is actually running the tool -- any package already installed there gets
-      misclassified as "not third-party." Confirmed this is invocation-method-dependent, not
-      universal: `uvx autopep723 check` is immune to an active `VIRTUAL_ENV` (confirmed directly)
-      but still vulnerable to a leaked `PYTHONPATH` (also confirmed directly) -- and a *direct*
-      interpreter invocation (no `uvx`) is not protected at all. Full empirical trail moved to
-      `docs/agent-lessons-learned.md` (new section) since it's a standalone, reusable fact, not
-      specific to this one plan. **Practical resolution**: the source spec's own v1 snippet
-      already used `uvx`, and `run_setup.bat` already clears `PYTHONPATH`/`PYTHONHOME` well before
-      the discovery phase (REQ-010) -- so Tier 1 as corrected is safe as scoped. The spec's own
-      "Future Lanes" section proposing `conda run python -m autopep723 check` (a direct
-      interpreter invocation) is **not** safe and was flagged as needing revision to keep using
-      `uvx` even there, before ever being built. This also resolves, not just caveats, a mystery
-      the requester raised: a collaborator suspected this exact delta bug, lost the specific
-      repro, and couldn't tell if it was a miscommunication -- it wasn't; the bug is real, it's
-      just conditional on invocation method in a way that made it easy to "fix" by accident
-      between test sessions without anyone identifying why.
-
-    What held up unchanged: `uv add --script` over `autopep723 add` for writeback (already
-    established elsewhere), UV-only writeback (no other package manager has an equivalent
-    mechanism), and `HP_PVW_KNOWN_IDEMPOTENT`'s exit-code branching being a relocation of README's
-    already-shipped, already-tested QuickStart logic rather than a new mechanism -- substantially
-    de-risking it relative to a cold proposal.
-
-    **Update 2026-07-19: Tier 1's code-grounded pass is now done; Tier 2 remains deliberately
-    unstarted.** Per direct request, traced the exact `run_setup.bat` insertion point (right after
-    `:after_pipreqs_run`'s `requirements.txt`/`requirements.auto.txt` diff computation, before the
-    dep-check fast-path setup), confirmed `%HP_ENTRY%` is reliably set there across every reachable
-    code path (one narrow pre-existing edge case -- AppleDouble `._`-prefixed shadow files as the
-    only top-level `.py` match -- needs a defensive `if defined HP_ENTRY` guard, not a design
-    change), and settled the merge-target question left open in the doc (`requirements.txt` only,
-    not `requirements.auto.txt` -- the existing unconditional pip gap-fill step already covers the
-    correctness gap that would otherwise create, with one documented, accepted trade-off on
-    conda-vs-pip installation path for a narrow repeat-run case). Full detail moved into
-    `docs/plan-autopep723-two-tier.md`'s Tier 1 section itself, now marked implementation-ready,
-    rather than duplicated here. Also shipped `tests/selfapps_pvw_quickstart.ps1` (see Closed
-    Backlog) as an isolated, already-passing dry-run proof that the underlying `uv`/`autopep723`
-    mechanics both tiers depend on work correctly in this exact CI environment, sequenced BEFORE
-    either tier's own bootstrapper-integrated code -- explicitly requested as a lower-risk
-    verification step, not a substitute for either tier's eventual CI test plan. **Tier 1 is not
-    yet built** (the doc update was scoped as prep/research, not implementation, per explicit
-    instruction) -- the actual `run_setup.bat` edit and merge helper remain the next step whenever
-    this is picked up for real. **Tier 2 remains untouched and unprepped**, consistent with its own
-    explicit dependency on Tier 1 shipping first.
+9. **Two-tier `autopep723` integration -- Tier 1 (REQ-005.12) SHIPPED 2026-07-20, see Closed
+    Backlog for the full history. Tier 2 (`HP_PVW_KNOWN_IDEMPOTENT`) remains open, not yet
+    prepped**, consistent with its own explicit dependency on Tier 1 shipping first (now
+    satisfied). Full design at `docs/plan-autopep723-two-tier.md`'s Tier 2 section. When picked
+    up: decide the embedded-helper language (Python is likely the better fit given
+    `run_setup.bat`'s existing conventions -- see the design doc's own still-open question),
+    write the helper plus canonical source, `PayloadSync` test, and CI coverage following the
+    now-shipped Tier 1 pattern, and wire the `HP_PVW_KNOWN_IDEMPOTENT` opt-in flag into
+    `run_setup.bat`'s dispatch -- reusing README's already-shipped, already-tested exit-code
+    branching (0 / 2 / other-nonzero) verbatim rather than inventing new logic, per the design
+    doc's own "What holds up, re-confirmed or already established elsewhere" section.
 
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
@@ -941,6 +898,87 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Two-tier `autopep723` integration, Tier 1 (REQ-005.12) -- "add `autopep723 check` alongside
+  `pipreqs` in the Default Path discovery phase," now SHIPPED.** Full design at
+  `docs/plan-autopep723-two-tier.md`; this entry is the historical record of the whole
+  investigation through Tier 1 shipping (Tier 2, `HP_PVW_KNOWN_IDEMPOTENT`, remains open --
+  see Active Backlog item 9). Originated from a user-supplied third-party spec proposing (a) this
+  Tier 1 discovery augmentation and (b) an opt-in Tier 2 runtime-discovery flag -- the concrete
+  design that supersedes `plan-pvw-quickstart.md`'s deferred "Shape B." Found and fixed two real
+  problems in the source spec before it could be treated as implementation-ready, both via direct
+  testing and source-code reading, not just review:
+  - **The proposed v1 command (`uvx autopep723 check . > requirements.autopep.txt`) was broken as
+    written.** `autopep723` is strictly single-file (confirmed via its own argument parser -- no
+    directory/glob mode exists at all); passing `.` hits `Path.read_text()`'s
+    `IsADirectoryError`, silently caught and turned into an empty result with **exit code 0** --
+    confirmed directly, reproducibly. The spec's own "autopep723 fail != lane fail" fallback
+    would never even trigger, since nothing ever reports nonzero. As designed, the merge would
+    have been a permanent no-op on every run. Fixed by targeting the resolved entry file
+    (`%HP_ENTRY%`) as shipped, never a directory.
+  - **The spec's central claim ("autopep723 check never reports delta, environment-independent")
+    is false as a blanket statement -- confirmed by reading `autopep723`'s actual source (pulled
+    from the local `uv` cache) and by direct reproduction: a venv with only `requests`
+    pre-installed running `autopep723 check` on a script importing `requests` + `click` silently
+    dropped `requests` from the output.** Root cause: `get_builtin_modules()` unions
+    `sys.builtin_module_names` with `pkgutil.iter_modules()`, which walks whatever Python process
+    is actually running the tool -- any package already installed there gets misclassified as
+    "not third-party." Confirmed this is invocation-method-dependent, not universal: `uvx
+    autopep723 check` is immune to an active `VIRTUAL_ENV` (confirmed directly) but still
+    vulnerable to a leaked `PYTHONPATH` (also confirmed directly) -- and a *direct* interpreter
+    invocation (no `uvx`) is not protected at all. Full empirical trail lives in
+    `docs/agent-lessons-learned.md`'s autopep723 section since it's a standalone, reusable fact,
+    not specific to this one plan. **Practical resolution, shipped as designed**: `run_setup.bat`
+    invokes via `uvx` (resolved as `%HP_UV_EXE:uv.exe=uvx.exe%`, not a bare PATH lookup or a path
+    derived from `HP_UV_BIN` directly -- the latter would silently break under the `PVW_UV_EXE`
+    super-user override), and `run_setup.bat` already clears `PYTHONPATH`/`PYTHONHOME` well before
+    the discovery phase (REQ-010) -- so Tier 1 as shipped is safe from this hazard as scoped. This
+    also resolves, not just caveats, a mystery the original requester raised: a collaborator
+    suspected this exact delta bug, lost the specific repro, and couldn't tell if it was a
+    miscommunication -- it wasn't; the bug is real, it's just conditional on invocation method in
+    a way that made it easy to "fix" by accident between test sessions without anyone identifying
+    why.
+
+  **Code-grounded pass (2026-07-19), then implementation (2026-07-20).** Traced the exact
+  `run_setup.bat` insertion point (`:after_pipreqs_run`'s `requirements.txt`/
+  `requirements.auto.txt` diff computation, before the dep-check fast-path setup), confirmed
+  `%HP_ENTRY%` is reliably set there across every reachable code path (one narrow pre-existing
+  edge case -- AppleDouble `._`-prefixed shadow files as the only top-level `.py` match -- handled
+  via a defensive `if defined HP_ENTRY` guard, not a design change), and settled the merge-target
+  question (`requirements.txt` only, not `requirements.auto.txt` -- the existing unconditional pip
+  gap-fill step already covers the correctness gap that would otherwise create, with one
+  documented, accepted trade-off on conda-vs-pip installation path for a narrow repeat-run case).
+  `tests/selfapps_pvw_quickstart.ps1` (Closed Backlog, above) served as the isolated, already-
+  passing dry-run proof that the underlying `uv`/`autopep723` mechanics work correctly in this
+  exact CI environment, sequenced before this tier's own bootstrapper-integrated code, exactly as
+  intended.
+
+  **What shipped**: `tools/autopep_merge.py` (new, canonical source for `HP_AUTOPEP_MERGE`) --
+  a small, dedicated helper doing case-insensitive set-union against `requirements.txt`'s existing
+  top-level names, plus a defensive trailing-newline repair before appending; always exits 0
+  (best-effort, additive-only, never removes or reorders existing content). The `run_setup.bat`
+  insertion sits between the REQ-005.5 diff-computation log line and the dep-check fast-path
+  reset, gated on `HP_ENV_MODE=uv` AND `HP_ENTRY` defined AND the derived `uvx.exe` path existing
+  on disk AND `HP_SKIP_AUTOPEP_DISCOVERY` unset (new suppression-only flag, REQ-019-compliant).
+  `tests/test_autopep_merge.py` (18 unit tests: PEP-723-style dependency-array extraction
+  including the no-dependencies-key and malformed/error-output cases, name-collision dedup,
+  missing-file handling for both inputs, trailing-newline repair, and `PayloadSync`).
+  `tests/selfapps_autopep_discovery.ps1` (new, uv lane, non-gating): isolates Tier 1's own
+  contribution by setting `HP_SKIP_PIPREQS=1` so the merged `requirements.txt` is populated by
+  autopep723 discovery alone (no other source present), then asserts the app actually builds and
+  runs from it -- not just that a log line appears. Doc updates: README's new REQ-005.12 section
+  and `HP_SKIP_AUTOPEP_DISCOVERY` table row, `docs/agent-ndjson.md`'s new
+  `self.autopep_discovery.merge` row registration, `docs/agent-interconnect.md`'s new "autopep723
+  discovery merge (REQ-005.12, Tier 1)" section (documents the `:after_pipreqs_run` neighbor
+  dependency and the `HP_UVX_EXE`-derivation-from-`HP_UV_EXE` decision), and
+  `docs/plan-autopep723-two-tier.md` itself updated to SHIPPED status throughout.
+
+  What held up unchanged from the original spec review: `uv add --script` over `autopep723 add`
+  for writeback (already established elsewhere), UV-only writeback (no other package manager has
+  an equivalent mechanism), and Tier 2's exit-code branching being a relocation of README's
+  already-shipped, already-tested QuickStart logic rather than a new mechanism -- still applies
+  when Tier 2 is picked up. CLOSED by this PR (Tier 1 only; Tier 2 remains open, Active Backlog
+  item 9).
 
 - **PVW QuickStart CI dry-run test (`tests/selfapps_pvw_quickstart.ps1`, new, uv lane only)**:
   requested directly by the maintainer as "a good isolated dry run for the next two before any

@@ -1,6 +1,6 @@
 # PRD: AV-Safe Build Path (Opt-In / Fallback EXE Backend)
 
-**Status:** Draft v5 -- added explicit PATH/VIRTUAL_ENV cleanliness requirement for Tier B; confidence held at Yellow against a third-party Green recommendation, with reasoning documented. Two previously-open engineering/product questions resolved below by a repo agent with direct codebase access (see "Notes from Claude" at the end).
+**Status:** Draft v5 -- added explicit PATH/VIRTUAL_ENV cleanliness requirement for Tier B; confidence held at Yellow against a third-party Green recommendation, with reasoning documented. Two previously-open engineering/product questions resolved below by a repo agent with direct codebase access (see "Notes from Claude" at the end). **Priority recommendation unchanged: way later, not now or soon** (see "Notes from Claude"). Re-checked 2026-07-20 against Nuitka's live changelog/issue tracker (downtime research, no code written) -- Finding 1's core MinGW64/3.13+ blocker still holds, but a narrower Zig-fallback data point was updated in place; see the inline "Re-checked 2026-07-20" note under Finding 1.
 **Owner:** Supervisor (Python_vs_Windows)
 **Related:** Competitive Brief -- Python_vs_Windows (July 2026), PyInstaller AV false-positive research
 
@@ -34,6 +34,36 @@ This is strictly cheaper than always reprovisioning, and doesn't require Python_
 > **Repo-agent note (see "Notes from Claude" at the end of this document):** the owner pushed back hard on the idea of this scoped resolution ever generalizing into a bootstrapper-wide "always lag behind latest by a version or two" default. That pushback is recorded in full at the end of this file, including the specific worst-case scenario the owner wants any future reader of this PRD to weigh before extending Tier B's pinning logic anywhere else.
 
 The Zig backend was also investigated as an alternative to MinGW64. It's not a reliable substitute right now -- Windows support is currently limited to x64 only, and there are recent open crash reports against `--zig`, suggesting it isn't mature enough to be the primary fallback compiler today. Worth re-checking in 6 months; not worth building around now.
+
+> **Re-checked 2026-07-20 (downtime research pass, no code changes made):** confirmed via Nuitka's
+> own changelog and GitHub issue tracker that the MinGW64/Python 3.13+ restriction Finding 1 cites
+> is still unresolved as of Nuitka 4.1.2 (the latest release, June 2026) -- the "Restore MinGW64
+> compiler support for Python 3.13 and later" tracking issue (Nuitka's own GitHub issue #3654)
+> remains open, and the changelog itself notes the fix "was supposed to appear in Nuitka 2.8, but
+> unfortunately it didn't happen." No change to Tier A/
+> Tier B's design is warranted from this alone -- the core assumption still holds.
+>
+> **One narrower, genuinely new data point worth flagging for whoever picks this PRD up: Zig may be
+> a more viable *automatic* fallback than Finding 1 assumed, specifically for Tier A.** Nuitka's
+> changelog confirms a real bug fix in 4.0.4 -- "compiling with newer Python versions did not fall
+> back to Zig when [MSVC/MinGW64] was unusable" -- meaning Nuitka's own internal compiler-discovery
+> chain (which Tier A already relies on entirely, by design, per requirement 4's "let Nuitka do its
+> own internal compiler discovery... do not build an independent detection check") may now
+> correctly land on Zig automatically on a clean Windows x64 machine with no MSVC, rather than
+> failing outright and forcing the more expensive Tier B reprovisioning. Separately, the specific
+> "--zig crashes" issue that most recently surfaced in a search (issue #3725, opened January 2026)
+> turned out to be scoped to macOS on Apple Silicon (M3), not Windows -- so Finding 1's "recent open
+> crash reports against --zig" citation should be re-verified for Windows-x64 specificity before
+> being repeated as a blanket maturity concern; it may not generalize to this project's actual
+> target platform as cleanly as originally stated. **This does not change any requirement or
+> acceptance criterion above** -- Tier A's design already defers entirely to Nuitka's own compiler
+> discovery and doesn't need to know or care whether that lands on MSVC, MinGW64, or Zig
+> specifically -- but it's a reason for cautious optimism that Tier A's real-world success rate
+> (see the Success Metrics section's "% of simulated fallback runs that resolve via Tier A alone"
+> leading indicator) may be higher than Finding 1's original framing implied. Not independently
+> verified end-to-end (no Windows machine available in this research pass); flagged for
+> confirmation whenever Phase 1 is actually implemented and its CI failure-simulation tests
+> (requirement 1) can observe this for real.
 
 ### Finding 2 -- AV interference is hard to fingerprint precisely, so don't try
 

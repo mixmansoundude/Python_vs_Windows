@@ -306,6 +306,23 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 
 ---
 
+### autopep723 Discovery Augmentation (uv lane)
+
+- REQ-005.12 -- Alongside pipreqs's own scan, run `uvx autopep723 check <entry>` against the
+  resolved entry file and merge any additionally-discovered dependency names into
+  `requirements.txt` (union, deduplicated, additive-only -- never removes or reorders anything
+  already there). Non-gating and never a cause of lane failure on its own: a missing, empty, or
+  failed `autopep723 check` result is a silent no-op and pipreqs's own results stand unchanged.
+  - `uvx` runs `autopep723` in an isolated tool venv rather than a direct interpreter
+    invocation, avoiding a real environment-leak hazard where a direct invocation silently
+    under-reports already-installed packages as "not third-party" (see
+    `docs/agent-lessons-learned.md`'s autopep723 section for the full empirical trail).
+  - Scope gate: only runs when `HP_ENV_MODE=uv` (v1, matching REQ-005.11's own scope decision).
+  - Opt-out: `HP_SKIP_AUTOPEP_DISCOVERY=1` (suppression-only flag, see `[REQ-019]`).
+  - TESTED: `tests/test_autopep_merge.py`, `tests/selfapps_autopep_discovery.ps1`.
+
+---
+
 ### Design Principles
 
 - Authoritative hierarchy is deterministic: PEP 723 > requirements.txt > pipreqs > none
@@ -547,6 +564,7 @@ Operational knobs, not needed for normal double-click use:
 
 | Variable | Effect | REQ |
 |----------|--------|-----|
+| `HP_SKIP_AUTOPEP_DISCOVERY=1` | Skip the `autopep723 check` discovery-merge augmentation of pipreqs (uv lane only) | REQ-005.12 |
 | `HP_SKIP_ENTRY_SMOKE=1` | Skip the entry-script smoke test (no user code run) | REQ-012 |
 | `HP_SKIP_EXE_SMOKERUN=1` | Skip running the built/cached EXE for verification | REQ-012 |
 | `HP_SKIP_NIVISA=1` | Skip NI-VISA install even when pyvisa/visa is detected | REQ-008 |
@@ -648,9 +666,10 @@ PY
 Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` with the new base64 text. The batch file comments point back to this section when further guidance is needed.
 
 **Payload inventory and PayloadSync coverage** (added so this is visible at a glance, instead of
-needing to grep the batch file or a research pass to find out): of the 16 embedded `HP_*`
-payloads, 12 have a canonical `tools/` source file *and* a dedicated `PayloadSync` unit test that
-asserts the embedded base64 is byte-for-byte in sync with that source (`HP_COLLECT_SUBMODULES` ->
+needing to grep the batch file or a research pass to find out): of the 17 embedded `HP_*`
+payloads, 13 have a canonical `tools/` source file *and* a dedicated `PayloadSync` unit test that
+asserts the embedded base64 is byte-for-byte in sync with that source (`HP_AUTOPEP_MERGE` ->
+`tools/autopep_merge.py`, `HP_COLLECT_SUBMODULES` ->
 `tools/collect_submodules.py`, `HP_DEP_CHECK` -> `tools/dep_check.py`, `HP_DETECT_PY` ->
 `tools/detect_python.py`, `HP_DETECT_VISA` -> `tools/detect_visa.py`, `HP_EMBED_EXTRACT` ->
 `tools/embed_extract.ps1`, `HP_EMBED_PYVER_CHECK` -> `tools/embed_pyver_check.py`, `HP_ENV_STATE`

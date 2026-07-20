@@ -249,6 +249,24 @@ though the underlying uv/autopep723 CLI mechanics are cross-platform in principl
 self.pvw_quickstart.check, self.pvw_quickstart.run
 ```
 
+## selfapps-autopep-discovery NDJSON rows (selfapps_autopep_discovery.ps1, uv lane only)
+
+Single deterministic scenario (REQ-005.12, Tier 1 of `docs/plan-autopep723-two-tier.md`): proves
+the bootstrapper-integrated `autopep723 check`-and-merge block (`run_setup.bat` ~line 1294,
+`:after_pipreqs_run`) actually populates `requirements.txt` and the app builds/runs from it
+alone. `HP_SKIP_PIPREQS=1` isolates Tier 1's own contribution from pipreqs's overlapping
+discovery -- with pipreqs skipped and no other requirements source present, the only way the
+stub app's `requests` import ends up installed is via this new merge step. Unlike
+`selfapps_pvw_quickstart.ps1`, this test DOES run `run_setup.bat` (copies it into a scratch dir,
+same pattern as `selfapps_pep723_writeback.ps1`), so it relies on the coarser full-tree
+`diag-selftest-*` artifact capture rather than per-path `upload-artifact` wiring, matching that
+file's own Loop-1 scratch dirs (`~selftest_pep723_fresh` etc.), which also have no individual
+wiring.
+
+```
+self.autopep_discovery.merge
+```
+
 ---
 
 ## Key facts for debugging missing rows

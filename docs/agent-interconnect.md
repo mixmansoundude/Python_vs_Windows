@@ -483,6 +483,50 @@ This means `selfapps_warnfix.ps1` works correctly in uv-first lanes without any 
 the full bootstrapper handles the uv/conda split internally. The test only checks for log
 phrases (`[REPAIR] missing modules detected`) and EXE success, both of which work in uv mode.
 
+### autopep723 discovery merge (REQ-005.12, Tier 1) sits inside the pipreqs diff-computation block
+
+`:after_pipreqs_run` (`run_setup.bat` ~line 1258) is the shared fallthrough every pipreqs
+code path funnels to (success/skip/failure all `goto` here -- see the `if
+"%HP_PIPREQS_PHASE_RESULT%"=="ok" (...) else (...)` dispatch right at the top of the label). The
+new Tier 1 block (docs/plan-autopep723-two-tier.md) is inserted immediately after the REQ-005.5
+`fc`-based diff computation and its `[INFO] REQ-005.5: dependency source diff computed` log line,
+and immediately before the dep-check fast-path reset (`set "HP_DEP_SKIP="`) -- **any future edit
+to either neighbor must re-verify this block still sits between them**, since the block's own
+correctness depends on `requirements.txt` already being finalized by pipreqs (or copied from
+`requirements.auto.txt`) by the time it runs, and on running strictly before `HP_DEP_SKIP`/
+`HP_DEP_RESULT`/`HP_UV_INSTALL_OK` are reset for the dep-check fast path below it.
+
+**v1-scoped to `HP_ENV_MODE=uv` only**, matching `plan-pep723-writeback.md`'s own v1 scope
+decision -- the block computes `HP_UVX_EXE` unconditionally (a cheap string substitution,
+`%HP_UV_EXE:uv.exe=uvx.exe%`) but only ever invokes it when `HP_ENV_MODE` is `uv` AND `HP_ENTRY`
+is defined AND the derived `uvx.exe` path actually exists on disk -- the last check makes the
+whole block a silent no-op under conda/venv/system/embed modes (where `HP_UV_EXE` is empty or
+undefined, so `HP_UVX_EXE` is empty too) with no separate mode-gate needed beyond the `HP_ENV_MODE`
+check itself. **`HP_UVX_EXE` is derived from `HP_UV_EXE`, not from `HP_UV_BIN` directly** --
+this matters for the `PVW_UV_EXE` super-user override (`run_setup.bat` ~line 449): when that
+override is set, `HP_UV_BIN` never gets a `uvx.exe` extracted into it at all (the whole download
+step is skipped), so deriving from `HP_UV_BIN` directly would silently break Tier 1 under that
+override. Deriving from `HP_UV_EXE` via substring substitution works for both the normal
+downloaded-zip case and the override case, since official `uv` distributions always ship
+`uv.exe`/`uvx.exe` as sibling files in the same directory.
+
+**Writes to `requirements.txt`, not `requirements.auto.txt`** -- a deliberate merge-target
+decision (see the plan doc's own "Merge target decision" section for the full trace of why this
+is sufficient): the unconditional pip gap-fill step later in `:after_env_mode_selection`
+(`%HP_PY% -m pip install -r requirements.txt`) reads the merged file regardless of whether the
+dep-check fast path (`HP_DEP_SKIP`, which reads `requirements.auto.txt` instead) fires or not, so
+anything Tier 1 adds is installed either way. The known, accepted trade-off: on a repeat run
+where the dep-check fast path fires, an autopep-only-discovered package always goes through pip
+rather than conda, mirroring this repo's existing "pip gap-fill safety net" pattern rather than
+introducing a new failure mode.
+
+**Never gates the lane.** The merge helper (`tools/autopep_merge.py`, embedded as
+`HP_AUTOPEP_MERGE`) always exits 0 and is purely additive -- it never removes or reorders
+existing `requirements.txt` content, and a missing/empty `requirements.autopep.txt` (autopep723
+failed, found nothing, or the block was skipped entirely) is a silent no-op. The one `[WARN]` log
+branch (`autopep723 merge helper failed`) is defensive only; nothing in the merge helper's own
+design can produce a nonzero exit under normal operation.
+
 ### PEP 723 write-back (REQ-005.11) touches two hook points and the warnfix/lock flow
 
 `:pep723_writeback` (new subroutine, called from two sites) is deliberately narrow --

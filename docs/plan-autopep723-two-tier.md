@@ -1,13 +1,20 @@
 # Plan: Two-Tier `autopep723` Integration (Default Path discovery + `HP_PVW_KNOWN_IDEMPOTENT`)
 
 **Status:** Both prerequisites shipped (`plan-pep723-writeback.md`'s write-back, REQ-005.11; and
-`plan-pvw-quickstart.md`'s README commands, now with a standalone CI dry-run proof too --
-`tests/selfapps_pvw_quickstart.ps1`, 2026-07-19). **Tier 1's own code-grounded pass is now
-complete** (see that section below, 2026-07-19) -- implementation-ready, not yet built. **Tier 2
-remains not-yet-prepped**, per its own section's explicit dependency on Tier 1 landing first --
-still **sequenced after Tier 1** within this doc. Supersedes `plan-pvw-quickstart.md`'s "Shape B"
-(a vaguely-specified, deliberately-deferred `run_setup.bat` hook) with a concrete design -- see
-that doc's own Shape B section, now pointing here.
+`plan-pvw-quickstart.md`'s README commands, with a standalone CI dry-run proof too --
+`tests/selfapps_pvw_quickstart.ps1`, 2026-07-19). **Tier 1 (REQ-005.12) is now SHIPPED**
+(2026-07-20) -- `tools/autopep_merge.py` (canonical source + `HP_AUTOPEP_MERGE` PayloadSync),
+the `run_setup.bat` insertion at `:after_pipreqs_run`, `tests/test_autopep_merge.py` (18 unit
+tests), `tests/selfapps_autopep_discovery.ps1` (uv lane, non-gating CI proof), and doc updates
+(README's REQ-005.12 section, `docs/agent-ndjson.md`, `docs/agent-interconnect.md`) all landed
+together. See Tier 1's own section below for what was built exactly as designed vs. what changed
+during implementation. **Tier 2's own code-grounded pass is now done (2026-07-20, prep only)** --
+hook point, data-flow (requirements.txt population), and reuse points are settled; implementation
+itself is intentionally on hold until Tier 1's PR actually merges, per this doc's own explicit
+sequencing dependency -- still **sequenced after Tier 1** within this doc.
+Supersedes `plan-pvw-quickstart.md`'s "Shape B" (a vaguely-specified, deliberately-deferred
+`run_setup.bat` hook) with a concrete design -- see that doc's own Shape B section, now pointing
+here.
 **Owner:** Python_vs_Windows maintainer
 **Source material:** a user-supplied third-party spec ("Two-Tier autopep723 Strategy for PVW").
 Not reproduced verbatim here; this doc states what was verified, what was corrected, and why, per
@@ -23,15 +30,14 @@ is linked from there).
 
 ## Sequencing (explicit, per the request that raised this)
 
-1. `plan-pep723-writeback.md` ships (automatic write-back inside `run_setup.bat`, uv lane).
-2. `plan-pvw-quickstart.md`'s commands, already shipped in README, get real-world use and comfort.
+1. `plan-pep723-writeback.md` ships (automatic write-back inside `run_setup.bat`, uv lane). SHIPPED.
+2. `plan-pvw-quickstart.md`'s commands, already shipped in README, get real-world use and comfort. SHIPPED.
 3. **This doc's Tier 1**: add `autopep723 check` alongside `pipreqs` in the Default Path discovery
-   phase, for all users, non-gating.
+   phase, for all users, non-gating. **SHIPPED 2026-07-20.**
 4. **This doc's Tier 2**: `HP_PVW_KNOWN_IDEMPOTENT`, an opt-in flag enabling runtime
-   (execute-mode) discovery inside `run_setup.bat` itself.
+   (execute-mode) discovery inside `run_setup.bat` itself. Not yet started.
 
-Not scheduled for a specific loop. This document exists so the corrected design is available
-whenever the team is ready to pick up step 3.
+Tier 2 is the next step whenever picked up.
 
 ---
 
@@ -190,14 +196,19 @@ small Python helper (mirroring `tools/prep_requirements.py`'s existing role, not
 design) is the right shape for this -- simple set-union logic, no TOML parsing needed since this
 touches `requirements.txt`, not a PEP 723 header.
 
-**Status: code-grounded pass complete, implementation-ready** (2026-07-19) -- insertion point,
-`%HP_ENTRY%` availability (including the one edge case to guard), and the merge-target decision are
-all now settled against the live file, matching the readiness bar `plan-pep723-writeback.md`'s own
-Part 2 already established before ITS implementation began. Not yet built: the actual
-`run_setup.bat` edit, the merge helper itself, and CI test coverage (see "Open questions" below,
-still open) -- see `tests/selfapps_pvw_quickstart.ps1` (shipped 2026-07-19) for an isolated,
-already-passing proof that the `uvx autopep723 check <file>` call this tier makes behaves exactly
-as expected in this exact CI environment, before any of the above gets built.
+**Status: SHIPPED** (2026-07-20). Built exactly as designed above, with one refinement worth
+recording: the invocation resolves `uvx` as `%HP_UV_EXE:uv.exe=uvx.exe%` (a substring
+substitution on the already-resolved `HP_UV_EXE`, guarded by `if exist` before use) rather than a
+bare `uvx` on PATH or a path derived from `HP_UV_BIN` directly -- the latter would silently break
+under the `PVW_UV_EXE` super-user override, where `HP_UV_BIN` never gets anything extracted into
+it at all. See `docs/agent-interconnect.md`'s "autopep723 discovery merge (REQ-005.12, Tier 1)"
+section for the full reasoning. `tools/autopep_merge.py` (the merge helper, embedded as
+`HP_AUTOPEP_MERGE`) is a small, dedicated `tools/` file as anticipated, not an extension of
+`prep_requirements.py` -- simple case-insensitive set-union against `requirements.txt`'s existing
+top-level names, with a defensive trailing-newline repair before appending. CI proof:
+`tests/selfapps_autopep_discovery.ps1` (uv lane, non-gating) isolates Tier 1's own contribution by
+setting `HP_SKIP_PIPREQS=1` so the merged `requirements.txt` is populated by autopep723 discovery
+alone, then asserts the app actually builds and runs from it -- not just that a log line appears.
 
 ---
 
@@ -239,8 +250,75 @@ is already documented in README's "PVW QuickStart" section and `docs/plan-pvw-qu
   same `uvx`-only, `%HP_ENTRY%`-targeted invocation rule from Tier 1 applies here too, for the same
   reasons.
 
-**Not yet implementation-ready.** This is a design sketch, deliberately less detailed than Tier 1,
-since it depends on Tier 1 (and both prerequisite plans) shipping first per the sequencing above.
+**Code-grounded pass (2026-07-20, prep only -- no `run_setup.bat` code written).** Tier 1
+(REQ-005.12) has shipped its code but not yet merged (open PR as of this writing) -- per the
+sequencing above, Tier 2 implementation itself should not begin until that lands. This section
+records the hook-point research done in the meantime, so Tier 2 is ready to implement as soon as
+Tier 1 merges, mirroring how Tier 1's own prep phase preceded its implementation by one day.
+
+**Hook point: right after `:determine_entry` returns (`run_setup.bat` ~line 977), before the
+`HP_PYPROJ_REQ`/pyproject.toml block begins.** This is EARLIER than Tier 1's own insertion point
+(`:after_pipreqs_run`, ~line 1294) -- Tier 2 needs to run before requirements.txt/pyproject.toml/
+PEP 723/pipreqs are even considered, not after, because its entire premise is "skip static
+discovery, use execution instead." `%HP_ENTRY%` is confirmed available here (this is literally the
+line immediately following the `call :determine_entry "%~1"` / errorlevel-checks that set it) and
+`%HP_PY%`/`%HP_ENV_MODE%` are both already confirmed set well before this point (the `if not
+defined HP_PY (call :die ...)` guard sits a few lines above `:determine_entry`'s call site, and
+`HP_ENV_MODE=uv` is set during provider selection around lines 738-811, long before either).
+
+**Does NOT need to bypass PEP 723 handling as a separate concern.** `uvx autopep723 <file>` (bare
+run mode, no `check`) already respects an existing PEP 723 header on its own -- it uses the
+header's declared dependencies to set up the run, and only surfaces something new via a
+`ModuleNotFoundError` during actual execution. So Tier 2 doesn't need its own PEP-723-awareness;
+it inherits `autopep723`'s already-correct behavior for that case for free.
+
+**The real design wrinkle, found by tracing what happens AFTER this hook point returns.**
+Skipping straight to `:after_pipreqs_run` (as an initial sketch of "just run it, then rejoin the
+normal flow" might assume) would be wrong: `:after_pipreqs_run` onward -- the dep-check fast path,
+`~prep_requirements.py`'s heuristic augmentation, and the actual `pip`/`conda install` step -- all
+operate on `requirements.txt`, not on the entry file's PEP 723 header directly. Tier 2's
+`uv add --script` persist step (the exact same mechanism `tools/pep723_writeback.py` already uses)
+only updates the HEADER, not `requirements.txt` -- so a naive "run, persist, jump to
+`:after_pipreqs_run`" would leave `requirements.txt` empty and the normal install phase would have
+nothing to install. **Fix, confirmed reusable rather than needing new code**: after persisting,
+call the ALREADY-EXISTING `:extract_pep723_requirements` subroutine (`run_setup.bat` ~line 2423,
+already used at line 1017 for the pre-existing "entry file already has a PEP 723 header" case) to
+re-extract the just-updated header straight into `requirements.txt` -- identical shape to what the
+existing PEP 723 detection branch already does when a header exists on entry, just triggered from
+the Tier 2 branch instead. This means Tier 2 does not need a second requirements.txt-writing
+mechanism of its own; it reuses the one already there.
+
+**`HP_SKIP_PIPREQS=1` should be set internally (not just user-settable) once Tier 2's run
+completes**, so the normal pipreqs block further down the file doesn't redundantly re-scan a
+script whose dependencies are now already fully known via the just-updated header -- mirrors how
+the `non_utf8`/`warnfix` test scenarios in `selfapps_pep723_writeback.ps1` already use
+`HP_SKIP_PIPREQS=1` to isolate a single discovery mechanism, just set by the bootstrapper itself
+here rather than by a test.
+
+**Strip-and-retry logic should be reused, not reimplemented.** The exit-code branching (0 / 2 /
+other-nonzero) and the malformed-header strip-and-retry-once sequence are BOTH already implemented
+twice in this codebase -- once in `tools/pep723_writeback.py` (the `run_setup.bat`-integrated
+version, REQ-005.11) and once in README's shipped QuickStart PowerShell commands (proven end-to-end
+by `tests/selfapps_pvw_quickstart.ps1`'s `run` scenario). Tier 2's own embedded helper should be
+structured as closely as possible to `tools/pep723_writeback.py`'s existing shape (same strip
+state-machine, same encoding pre-check, same `.py.lock` sidecar check) rather than a fresh
+implementation of the same logic a third time -- the difference is WHEN it fires (proactively, as
+the discovery mechanism itself, vs. reactively, after a normal install already succeeded) and WHAT
+it wraps (`uvx autopep723 <file>` execution, vs. a plain `uv add --script` call against an
+already-resolved dependency set), not the branching logic itself.
+
+**Double-execution is intentional, not a REQ-018 gap.** Under `HP_PVW_KNOWN_IDEMPOTENT=1`, the
+user's script runs twice: once here (via `uvx`, in an ephemeral uv-managed tool venv, for
+discovery) and once later during the normal PyInstaller EXE build's smoke-test verification (in
+the real, persistent environment, producing the actual deliverable). This is exactly what the
+flag's name asks the user to consent to, and does not need a special REQ-018 carve-out beyond the
+one already described above ("the flag's very name is the user's own explicit, self-declared
+consent").
+
+**Remaining before this is fully implementation-ready** (unlike Tier 1, which reached that bar):
+the exact embedded-helper shape (Python is still the likely choice, per the still-open language
+question below) has not been written, and the CI test plan has not been drafted. Both are smaller
+remaining steps than the hook-point/data-flow questions this pass resolved.
 
 ---
 
@@ -248,34 +326,43 @@ since it depends on Tier 1 (and both prerequisite plans) shipping first per the 
 
 - ~~Exact `run_setup.bat` insertion label for Tier 1~~ -- **resolved 2026-07-19**, see Tier 1's own
   section above (`:after_pipreqs_run`'s diff computation, before the dep-check fast-path setup).
-- ~~Exact shape of the merge helper~~ -- **partially resolved 2026-07-19**: a new small `tools/`
-  file (mirroring `prep_requirements.py`'s role), not an extension of that existing file, since the
-  merge logic (simple set-union, no TOML) is unrelated to what `prep_requirements.py` already does
-  (heuristic dep augmentation). Exact filename/function shape still not written -- that's the next
-  step, not this doc's job to pre-decide further.
+- ~~Exact shape of the merge helper~~ -- **resolved and shipped 2026-07-20**: `tools/autopep_merge.py`,
+  a new small `tools/` file (not an extension of `prep_requirements.py`), matching the anticipated
+  shape exactly.
+- ~~CI test plan for Tier 1~~ -- **resolved and shipped 2026-07-20**: `tests/selfapps_autopep_discovery.ps1`
+  (uv lane, non-gating), following the `HP_SKIP_PIPREQS=1`-isolation pattern already established by
+  `plan-pep723-writeback.md`'s `non_utf8`/`warnfix` scenarios.
 - Whether Tier 2's embedded helper should be Python (matching most of this repo's other embedded
   helpers) or a translated PowerShell approach closer to README's shipped commands -- Python is
   likely the better fit given `run_setup.bat`'s existing conventions, but the README commands are
   the proven reference implementation either way. Still open -- Tier 2 has not been picked up.
-- CI test plan for both tiers (not drafted here -- follow the pattern established in
-  `plan-pep723-writeback.md`'s Part 2.3 and `plan-pvw-quickstart.md`'s CI test plan section). Note:
+- CI test plan for Tier 2 (not drafted here -- follow the pattern established in
+  `plan-pep723-writeback.md`'s Part 2.3 and Tier 1's own now-shipped test above). Note:
   `tests/selfapps_pvw_quickstart.ps1` (2026-07-19) already covers the underlying `uv`/`autopep723`
-  mechanics both tiers depend on -- it is NOT a substitute for either tier's own eventual CI test
-  plan (which needs to test the bootstrapper-integrated behavior, not just the standalone tool
-  calls), but it means both tiers' CI test plans can assume those mechanics already work rather
-  than needing to re-prove them from scratch.
+  mechanics Tier 2 depends on -- it is NOT a substitute for Tier 2's own eventual CI test plan
+  (which needs to test the bootstrapper-integrated behavior, not just the standalone tool calls),
+  but it means Tier 2's CI test plan can assume those mechanics already work rather than needing
+  to re-prove them from scratch.
 
 ---
 
-## Critical files for implementation (when scheduled)
+## Critical files
 
-- `run_setup.bat` -- Tier 1's discovery-phase insertion; Tier 2's new `HP_PVW_KNOWN_IDEMPOTENT`
-  dispatch and embedded-helper payload declaration.
-- A new or extended `tools/` helper for Tier 1's merge logic.
-- A new embedded helper (Tier 2) following the `tools/collect_submodules.py` /
+**Tier 1 (shipped 2026-07-20):**
+- `run_setup.bat` -- the `:after_pipreqs_run` insertion (REQ-005.12) and `HP_AUTOPEP_MERGE`
+  payload declaration.
+- `tools/autopep_merge.py` -- the merge helper's canonical source.
+- `tests/test_autopep_merge.py` -- unit tests + `PayloadSync`.
+- `tests/selfapps_autopep_discovery.ps1` -- uv-lane, non-gating CI proof.
+- `README.md`, `docs/agent-ndjson.md`, `docs/agent-interconnect.md`, `CLAUDE.md` -- doc updates.
+
+**Tier 2 (not yet started):**
+- `run_setup.bat` -- new `HP_PVW_KNOWN_IDEMPOTENT` dispatch and embedded-helper payload
+  declaration.
+- A new embedded helper following the `tools/collect_submodules.py` /
   `tools/hidden_import_scan.py` canonical-source-plus-`PayloadSync` pattern.
-- `tests/` -- new CI test file(s) for both tiers.
-- `README.md` -- Tier 2's `HP_PVW_KNOWN_IDEMPOTENT` flag documented alongside the existing
-  "Advanced Environment Variables" table; cross-reference the already-shipped PVW QuickStart
-  section rather than re-explaining the branch logic.
+- `tests/` -- new CI test file(s).
+- `README.md` -- `HP_PVW_KNOWN_IDEMPOTENT` flag documented alongside the existing "Advanced
+  Environment Variables" table; cross-reference the already-shipped PVW QuickStart section rather
+  than re-explaining the branch logic.
 - `CLAUDE.md` -- Active Backlog pointer, mirroring the existing sibling-plan entries' style.
