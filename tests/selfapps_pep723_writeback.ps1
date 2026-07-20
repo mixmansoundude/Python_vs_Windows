@@ -233,6 +233,21 @@ if ($scenario -eq 'non_utf8' -or $scenario -eq 'warnfix') {
 } else {
     Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue
 }
+# derived requirement: warnfix specifically also needs REQ-005.12's autopep723-check
+# discovery (uv lane, default-on) kept away from the entry file -- that mechanism statically
+# scans the entry's own imports independently of pipreqs, so without this it would ALSO
+# discover xlrd directly and merge it into requirements.txt before the build, installing it
+# normally and starving the warnfix repair loop of the trigger this scenario exists to test
+# (confirmed via a real CI failure in the sibling tests/selfapps_warnfix.ps1's 'real'
+# scenario, same root cause). non_utf8 does not need this: it tests pep723_writeback.py's own
+# encoding pre-check, not warnfix/heuristic firing, and a failed autopep723-check read of a
+# non-UTF-8 file is just Tier 1's own silent no-op, not a correctness risk here.
+$prevSkipAutopep = if (Test-Path Env:HP_SKIP_AUTOPEP_DISCOVERY) { $env:HP_SKIP_AUTOPEP_DISCOVERY } else { $null }
+if ($scenario -eq 'warnfix') {
+    $env:HP_SKIP_AUTOPEP_DISCOVERY = '1'
+} else {
+    Remove-Item Env:HP_SKIP_AUTOPEP_DISCOVERY -ErrorAction SilentlyContinue
+}
 
 function Invoke-Bootstrap {
     param([string]$LogName)
@@ -268,6 +283,11 @@ try {
         Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue
     } else {
         $env:HP_SKIP_PIPREQS = $prevSkipPipreqs
+    }
+    if ($null -eq $prevSkipAutopep) {
+        Remove-Item Env:HP_SKIP_AUTOPEP_DISCOVERY -ErrorAction SilentlyContinue
+    } else {
+        $env:HP_SKIP_AUTOPEP_DISCOVERY = $prevSkipAutopep
     }
 }
 

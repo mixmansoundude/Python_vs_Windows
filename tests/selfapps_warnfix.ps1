@@ -269,6 +269,16 @@ Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
 # real: ensures openpyxl is only installed via the heuristic (pandas in requirements.txt).
 $prev = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
 $env:HP_SKIP_PIPREQS = '1'
+# derived requirement: HP_SKIP_AUTOPEP_DISCOVERY=1 for the same reason as HP_SKIP_PIPREQS
+# above -- REQ-005.12's autopep723-check discovery (uv lane, default-on, no opt-in needed)
+# statically scans the entry file's own imports independently of pipreqs, so without this
+# flag it would ALSO discover openpyxl/xlrd directly (the stub app imports them at module
+# scope) and merge them into requirements.txt before the heuristic/warnfix mechanisms this
+# file exists to test ever get a chance to prove themselves -- defeating every scenario's own
+# "isolate exactly one repair path" premise, not just 'real'. Confirmed via a real CI failure
+# (self.exe.warnfix.real: heuristicFired=false, warnInstallFired=true) before this was added.
+$prevSkipAutopep = if (Test-Path Env:HP_SKIP_AUTOPEP_DISCOVERY) { $env:HP_SKIP_AUTOPEP_DISCOVERY } else { $null }
+$env:HP_SKIP_AUTOPEP_DISCOVERY = '1'
 # HP_DISABLE_HEURISTICS=1 for pass/xfail so warnfix is the only repair path.
 # real: leave heuristics enabled so the Req 5.1 heuristic can pre-install openpyxl.
 # real_warnfix/real_warnfix_delayed: heuristics enabled but xlrd is not heuristic-covered
@@ -301,6 +311,11 @@ try {
         Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue
     } else {
         $env:HP_SKIP_PIPREQS = $prev
+    }
+    if ($null -eq $prevSkipAutopep) {
+        Remove-Item Env:HP_SKIP_AUTOPEP_DISCOVERY -ErrorAction SilentlyContinue
+    } else {
+        $env:HP_SKIP_AUTOPEP_DISCOVERY = $prevSkipAutopep
     }
     if ($null -eq $prevDisableH) {
         Remove-Item Env:HP_DISABLE_HEURISTICS -ErrorAction SilentlyContinue
