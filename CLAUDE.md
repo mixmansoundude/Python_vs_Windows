@@ -529,6 +529,25 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    "Re-checked 2026-07-20" note under Finding 1 for the full detail -- flagged for confirmation
    whenever Tier A is actually implemented, not verified end-to-end here (no Windows machine
    available for this research pass).
+7. **CI job steps in `batch-check.yml` don't use `if: always()`, so one failing self-test step
+   silently cascade-skips every subsequent step in the same job -- observed directly, not
+   theorized.** While landing item 6's requirement-1 tests (PR #368), a bug in the new
+   `selfapps_pyinstaller_fail.ps1` test itself (see Closed Backlog) caused its own step to fail
+   in the `real` lane -- and the resulting `ci_test_results-selftest-real-*` artifact showed only
+   ~59 rows total, ending abruptly right at the failing step, with ~40+ unrelated, pre-existing
+   test rows expected afterward (the `self.stub.*`/`self.warn.*`/`self.guardrail.*`/
+   `self.pep723.*` families and more) completely absent -- not failed, just never run. This is a
+   pre-existing, repo-wide characteristic of the whole job (none of the ~50+ steps in the `real`/
+   `conda-full` lane's step sequence use `if: always()`), not something introduced by that PR;
+   it just happened to be the first time a step failure actually surfaced it. **Not fixed now,
+   two reasons**: (a) `continue-on-error: true` is the wrong fix -- these are GATING lane steps
+   specifically so a real regression blocks merges, and `continue-on-error` would silently defeat
+   that; the real fix is `if: always()` on steps after the risk point (or all of them), which is
+   a genuine, valuable hardening pass but touches ~50 existing step definitions across a job that
+   already works today when nothing fails -- disproportionate to fold into an unrelated feature
+   PR. (b) No user report or observed instance of this actually hiding a REAL regression yet
+   (this instance was a test-bug false alarm, immediately visible via the job's own failure
+   status) -- worth fixing deliberately, in its own reviewed pass, not as a rushed side effect.
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is
