@@ -8,8 +8,10 @@ the `run_setup.bat` insertion at `:after_pipreqs_run`, `tests/test_autopep_merge
 tests), `tests/selfapps_autopep_discovery.ps1` (uv lane, non-gating CI proof), and doc updates
 (README's REQ-005.12 section, `docs/agent-ndjson.md`, `docs/agent-interconnect.md`) all landed
 together. See Tier 1's own section below for what was built exactly as designed vs. what changed
-during implementation. **Tier 2 remains not-yet-prepped**, per its own section's explicit
-dependency on Tier 1 landing first -- still **sequenced after Tier 1** within this doc.
+during implementation. **Tier 2's own code-grounded pass is now done (2026-07-20, prep only)** --
+hook point, data-flow (requirements.txt population), and reuse points are settled; implementation
+itself is intentionally on hold until Tier 1's PR actually merges, per this doc's own explicit
+sequencing dependency -- still **sequenced after Tier 1** within this doc.
 Supersedes `plan-pvw-quickstart.md`'s "Shape B" (a vaguely-specified, deliberately-deferred
 `run_setup.bat` hook) with a concrete design -- see that doc's own Shape B section, now pointing
 here.
@@ -248,8 +250,75 @@ is already documented in README's "PVW QuickStart" section and `docs/plan-pvw-qu
   same `uvx`-only, `%HP_ENTRY%`-targeted invocation rule from Tier 1 applies here too, for the same
   reasons.
 
-**Not yet implementation-ready.** This is a design sketch, deliberately less detailed than Tier 1,
-since it depends on Tier 1 (and both prerequisite plans) shipping first per the sequencing above.
+**Code-grounded pass (2026-07-20, prep only -- no `run_setup.bat` code written).** Tier 1
+(REQ-005.12) has shipped its code but not yet merged (open PR as of this writing) -- per the
+sequencing above, Tier 2 implementation itself should not begin until that lands. This section
+records the hook-point research done in the meantime, so Tier 2 is ready to implement as soon as
+Tier 1 merges, mirroring how Tier 1's own prep phase preceded its implementation by one day.
+
+**Hook point: right after `:determine_entry` returns (`run_setup.bat` ~line 977), before the
+`HP_PYPROJ_REQ`/pyproject.toml block begins.** This is EARLIER than Tier 1's own insertion point
+(`:after_pipreqs_run`, ~line 1294) -- Tier 2 needs to run before requirements.txt/pyproject.toml/
+PEP 723/pipreqs are even considered, not after, because its entire premise is "skip static
+discovery, use execution instead." `%HP_ENTRY%` is confirmed available here (this is literally the
+line immediately following the `call :determine_entry "%~1"` / errorlevel-checks that set it) and
+`%HP_PY%`/`%HP_ENV_MODE%` are both already confirmed set well before this point (the `if not
+defined HP_PY (call :die ...)` guard sits a few lines above `:determine_entry`'s call site, and
+`HP_ENV_MODE=uv` is set during provider selection around lines 738-811, long before either).
+
+**Does NOT need to bypass PEP 723 handling as a separate concern.** `uvx autopep723 <file>` (bare
+run mode, no `check`) already respects an existing PEP 723 header on its own -- it uses the
+header's declared dependencies to set up the run, and only surfaces something new via a
+`ModuleNotFoundError` during actual execution. So Tier 2 doesn't need its own PEP-723-awareness;
+it inherits `autopep723`'s already-correct behavior for that case for free.
+
+**The real design wrinkle, found by tracing what happens AFTER this hook point returns.**
+Skipping straight to `:after_pipreqs_run` (as an initial sketch of "just run it, then rejoin the
+normal flow" might assume) would be wrong: `:after_pipreqs_run` onward -- the dep-check fast path,
+`~prep_requirements.py`'s heuristic augmentation, and the actual `pip`/`conda install` step -- all
+operate on `requirements.txt`, not on the entry file's PEP 723 header directly. Tier 2's
+`uv add --script` persist step (the exact same mechanism `tools/pep723_writeback.py` already uses)
+only updates the HEADER, not `requirements.txt` -- so a naive "run, persist, jump to
+`:after_pipreqs_run`" would leave `requirements.txt` empty and the normal install phase would have
+nothing to install. **Fix, confirmed reusable rather than needing new code**: after persisting,
+call the ALREADY-EXISTING `:extract_pep723_requirements` subroutine (`run_setup.bat` ~line 2423,
+already used at line 1017 for the pre-existing "entry file already has a PEP 723 header" case) to
+re-extract the just-updated header straight into `requirements.txt` -- identical shape to what the
+existing PEP 723 detection branch already does when a header exists on entry, just triggered from
+the Tier 2 branch instead. This means Tier 2 does not need a second requirements.txt-writing
+mechanism of its own; it reuses the one already there.
+
+**`HP_SKIP_PIPREQS=1` should be set internally (not just user-settable) once Tier 2's run
+completes**, so the normal pipreqs block further down the file doesn't redundantly re-scan a
+script whose dependencies are now already fully known via the just-updated header -- mirrors how
+the `non_utf8`/`warnfix` test scenarios in `selfapps_pep723_writeback.ps1` already use
+`HP_SKIP_PIPREQS=1` to isolate a single discovery mechanism, just set by the bootstrapper itself
+here rather than by a test.
+
+**Strip-and-retry logic should be reused, not reimplemented.** The exit-code branching (0 / 2 /
+other-nonzero) and the malformed-header strip-and-retry-once sequence are BOTH already implemented
+twice in this codebase -- once in `tools/pep723_writeback.py` (the `run_setup.bat`-integrated
+version, REQ-005.11) and once in README's shipped QuickStart PowerShell commands (proven end-to-end
+by `tests/selfapps_pvw_quickstart.ps1`'s `run` scenario). Tier 2's own embedded helper should be
+structured as closely as possible to `tools/pep723_writeback.py`'s existing shape (same strip
+state-machine, same encoding pre-check, same `.py.lock` sidecar check) rather than a fresh
+implementation of the same logic a third time -- the difference is WHEN it fires (proactively, as
+the discovery mechanism itself, vs. reactively, after a normal install already succeeded) and WHAT
+it wraps (`uvx autopep723 <file>` execution, vs. a plain `uv add --script` call against an
+already-resolved dependency set), not the branching logic itself.
+
+**Double-execution is intentional, not a REQ-018 gap.** Under `HP_PVW_KNOWN_IDEMPOTENT=1`, the
+user's script runs twice: once here (via `uvx`, in an ephemeral uv-managed tool venv, for
+discovery) and once later during the normal PyInstaller EXE build's smoke-test verification (in
+the real, persistent environment, producing the actual deliverable). This is exactly what the
+flag's name asks the user to consent to, and does not need a special REQ-018 carve-out beyond the
+one already described above ("the flag's very name is the user's own explicit, self-declared
+consent").
+
+**Remaining before this is fully implementation-ready** (unlike Tier 1, which reached that bar):
+the exact embedded-helper shape (Python is still the likely choice, per the still-open language
+question below) has not been written, and the CI test plan has not been drafted. Both are smaller
+remaining steps than the hook-point/data-flow questions this pass resolved.
 
 ---
 
