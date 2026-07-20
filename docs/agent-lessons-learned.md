@@ -154,7 +154,29 @@ list; the recurring traps that have actually bitten us:
   before git normalizes them on commit.
 - **`:die` uses `exit /b`** (subroutine return), so the batch process can still exit 0 even
   after a logical failure -- check `~bootstrap.status.json` / log markers, not just the
-  process exit code, when reasoning about success.
+  process exit code, when reasoning about success. **Caveat, confirmed 2026-07-20: even
+  `~bootstrap.status.json` is not automatically reliable either.** `call :die "..."` only
+  writes `state=error` transiently -- `:after_cascade_decision` (right before `:success`)
+  unconditionally rewrites the status file from whatever `HP_BOOTSTRAP_STATE` currently holds
+  (`if /i "%HP_BOOTSTRAP_STATE%"=="ok" ( call :write_status ok 0 ... )`), and `:die` itself
+  never touches `HP_BOOTSTRAP_STATE` -- so a `call :die "..."` whose caller doesn't ALSO set
+  `HP_BOOTSTRAP_STATE=error` gets silently clobbered back to `state=ok` by the time the
+  process actually exits. Found via a real, live instance: the PyInstaller build-failure call
+  sites (`if errorlevel 1 call :die "..."` / `if not exist dist\...exe call :die "..."`, in
+  the else-branch of `:run_entry_smoke`) had exactly this gap -- neither set
+  `HP_BOOTSTRAP_STATE`, so a genuine build failure fell through to `:run_exe_smokerun`
+  (silent no-op skip when the EXE is missing), then `:verify_no_exe_interpreter` (ran the raw
+  entry via the interpreter instead), then `:after_cascade_decision` overwrote the status file
+  back to `state=ok` and the process exited 0 -- masking a build failure the user had
+  explicitly consented to (`HP_BUILD_OK`). Fixed by setting `HP_BOOTSTRAP_STATE=error`
+  alongside each `call :die` at that call site, mirroring the pre-existing, already-correct
+  precedent in the SAME subroutine's preflight-failure branch (`if defined
+  HP_PREFLIGHT_FAILED ( set "HP_BOOTSTRAP_STATE=error" ... )`). **Rule of thumb: `call :die
+  "..."` alone is never sufficient to guarantee a call site's failure survives to the final
+  process exit code/status file -- always also set `HP_BOOTSTRAP_STATE=error` (or confirm the
+  call site is inside a code path `:after_cascade_decision` cannot fall through to
+  unconditionally) at any NEW `:die` call site you add.** Regression test:
+  `tests/selfapps_pyinstaller_fail.ps1`.
 
 **PowerShell adjacent traps:** `-or`/`-and` outside a conditional are parsed as parameter
 names ("parameter name 'or'"); `tools/check_delimiters.py` flags these. Multi-line `run:`

@@ -541,6 +541,22 @@ jobs:
         run: |
           & tests\selfapps_exefail.ps1
 
+      - name: "Self-test: PyInstaller build failure correctly reported, not masked (execfail, real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        env:
+          PYI_FAIL_SCENARIO: execfail
+        run: |
+          & tests\selfapps_pyinstaller_fail.ps1
+
+      - name: "Self-test: PyInstaller build failure correctly reported, not masked (output_vanish, real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        env:
+          PYI_FAIL_SCENARIO: output_vanish
+        run: |
+          & tests\selfapps_pyinstaller_fail.ps1
+
       - name: "Self-test: REQ-021 py_compile pre-flight syntax error (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh

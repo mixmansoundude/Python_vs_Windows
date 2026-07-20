@@ -500,18 +500,25 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    `docs/prd-av-safe-build-path.md`. A large, well-specified, preemptive feature (no real user
    report yet, a documented industry-wide problem) covering a two-tier Nuitka fallback when
    PyInstaller's build gets AV-quarantined, including a narrow, well-justified Python-3.12 pin
-   scoped to that one fallback tier. Recommended priority: **way later, not now or soon** -- see
-   the PRD's own "Notes from Claude" section for the full reasoning (preemptive risk vs. this
-   repo's stated discipline against building ahead of an observed need, plus the PRD's own size
-   relative to this repo's "one feature slice per loop" norm). That same section also contains a
-   deliberately blunt writeup of why the PRD's narrow, well-justified Tier B version pin should
-   **never** be generalized into a bootstrapper-wide "stay a version or two behind latest" default
-   -- this repo's total absence of telemetry or an auto-update mechanism means any such pin would
-   be permanently frozen into every already-distributed copy of `run_setup.bat`, with no way to
-   walk it back later even after the reason for it stops being true. Read that section before
-   extending Tier B's pinning pattern anywhere else in this codebase.
+   scoped to that one fallback tier. The PRD's own "Notes from Claude" section has the original
+   "way later" priority reasoning and a deliberately blunt writeup of why the PRD's narrow,
+   well-justified Tier B version pin should **never** be generalized into a bootstrapper-wide
+   "stay a version or two behind latest" default -- this repo's total absence of telemetry or an
+   auto-update mechanism means any such pin would be permanently frozen into every
+   already-distributed copy of `run_setup.bat`, with no way to walk it back later even after the
+   reason for it stops being true. Read that section before extending Tier B's pinning pattern
+   anywhere else in this codebase.
 
-   **Downtime re-check, 2026-07-20 (research only, no code written, priority unchanged):**
+   **Implementation started 2026-07-20 (owner green light, after a refinement pass on the
+   just-shipped autopep723 work held up cleanly -- see the Closed Backlog entry directly above
+   this one).** Phase 1 requirement 1 (failure-simulation tests, test-first per the PRD's own
+   sequencing note) is SHIPPED -- see the separate Closed Backlog entry for the real,
+   independent correctness bug found and fixed while scoping it. Requirements 2-8 (the actual
+   Tier A/B fallback dispatch, loop-avoidance marker, messaging, connectivity gate) are NOT yet
+   started; each is its own future loop, per this repo's "one feature slice per loop" norm and
+   the PRD reviewer's own note that even "Phase 1" is multi-loop-sized.
+
+   **Downtime re-check, 2026-07-20 (research only, no code written):**
    verified against Nuitka's live changelog/issue tracker that Finding 1's core blocker (MinGW64
    doesn't support Python 3.13+) is still unresolved as of Nuitka 4.1.2 -- no change to the
    PRD's design. One narrower update folded into the PRD in place: a real Nuitka 4.0.4 bug fix
@@ -520,8 +527,27 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    often than Finding 1's original "not mature enough" framing assumed, and the specific crash
    report Finding 1 cited turned out to be macOS/M3-scoped, not Windows. See the PRD's own inline
    "Re-checked 2026-07-20" note under Finding 1 for the full detail -- flagged for confirmation
-   whenever Phase 1 is actually implemented, not verified end-to-end here (no Windows machine
+   whenever Tier A is actually implemented, not verified end-to-end here (no Windows machine
    available for this research pass).
+7. **CI job steps in `batch-check.yml` don't use `if: always()`, so one failing self-test step
+   silently cascade-skips every subsequent step in the same job -- observed directly, not
+   theorized.** While landing item 6's requirement-1 tests (PR #368), a bug in the new
+   `selfapps_pyinstaller_fail.ps1` test itself (see Closed Backlog) caused its own step to fail
+   in the `real` lane -- and the resulting `ci_test_results-selftest-real-*` artifact showed only
+   ~59 rows total, ending abruptly right at the failing step, with ~40+ unrelated, pre-existing
+   test rows expected afterward (the `self.stub.*`/`self.warn.*`/`self.guardrail.*`/
+   `self.pep723.*` families and more) completely absent -- not failed, just never run. This is a
+   pre-existing, repo-wide characteristic of the whole job (none of the ~50+ steps in the `real`/
+   `conda-full` lane's step sequence use `if: always()`), not something introduced by that PR;
+   it just happened to be the first time a step failure actually surfaced it. **Not fixed now,
+   two reasons**: (a) `continue-on-error: true` is the wrong fix -- these are GATING lane steps
+   specifically so a real regression blocks merges, and `continue-on-error` would silently defeat
+   that; the real fix is `if: always()` on steps after the risk point (or all of them), which is
+   a genuine, valuable hardening pass but touches ~50 existing step definitions across a job that
+   already works today when nothing fails -- disproportionate to fold into an unrelated feature
+   PR. (b) No user report or observed instance of this actually hiding a REAL regression yet
+   (this instance was a test-bug false alarm, immediately visible via the job's own failure
+   status) -- worth fixing deliberately, in its own reviewed pass, not as a rushed side effect.
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is
@@ -825,6 +851,42 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **PyInstaller build-failure silently masked as success -- real, independent correctness bug,
+  found while scoping AV-Safe Build Path (item 6) requirement 1's failure-simulation tests, fixed
+  before those tests were written.** Traced (via a dedicated static-analysis pass, since no
+  Windows machine is available in this sandbox) exactly what happens today when the PyInstaller
+  build command genuinely fails (nonzero exit, or never produces `dist\<env>.exe`): the two
+  `call :die "..."` sites at that call site only return from `:die`'s own `call` frame (see
+  `docs/agent-lessons-learned.md`'s `:die` entry) -- nothing downstream re-checks the outcome, so
+  execution falls through to a misleading `[INFO] PyInstaller produced...` log line,
+  `:run_exe_smokerun` silently no-ops (EXE missing), `:verify_no_exe_interpreter` runs the raw
+  entry via the interpreter instead, and `:after_cascade_decision` unconditionally overwrites
+  `~bootstrap.status.json` back to `state=ok` and the process exits 0 -- completely masking a
+  build failure the user had explicitly consented to (`HP_BUILD_OK`). Fixed by setting
+  `HP_BOOTSTRAP_STATE=error` at the PyInstaller call site (in `:run_entry_smoke`'s else-branch),
+  mirroring the pre-existing, already-correct precedent in the SAME subroutine's
+  preflight-failure branch. Deliberately restructured as nested `if/else` (not `goto`+labels)
+  to avoid introducing labels inside the enclosing parenthesized block -- see the inline comment
+  at the fix site and `docs/agent-lessons-learned.md`'s "Provider-cascade dispatch is goto-based
+  on purpose" entry for why that specific combination (goto targeting a label inside the same
+  block) is a known risk class in this file; `call`/`if errorlevel`/`if defined`/`set` are all
+  already-confirmed runtime-safe inside a block, so the fix needed no goto at all. Two new test
+  hooks (`HP_TEST_FORCE_PYINSTALLER_FAIL`, `HP_TEST_FORCE_OUTPUT_VANISH`) and a new
+  `tests/selfapps_pyinstaller_fail.ps1` (two scenarios, real/conda-full lanes, matching
+  `selfapps_exefail.ps1`'s sibling pattern) assert the fix: `~bootstrap.status.json` genuinely
+  reads `state=error`, not silently overwritten (the process's own exit code stays 0 either way
+  -- `:success`'s `exit /b 0` runs unconditionally regardless of `HP_BOOTSTRAP_STATE`, matching
+  the pre-existing `selfapps_preflight.ps1` precedent's own contract, which never checks exit
+  code either; caught and corrected in this same PR after the first real-CI run's `bootstrapExit`
+  detail showed 0, initially misread as a test failure before tracing it to an over-specified
+  assertion, not a bug in the fix itself). This
+  simultaneously ships requirement 1's first fixture from `docs/prd-av-safe-build-path.md`
+  ("a generic PyInstaller build failure... confirmed [to fail] in the expected way") -- "the
+  expected way" is now a correct, visible failure rather than the bug this entry describes; the
+  second fixture (output vanishing immediately after creation, research Finding 2) ships in the
+  same test file via the `output_vanish` scenario. No Tier A/B fallback logic exists yet; that's
+  future work under item 6. CLOSED by this PR (this bug-fix slice only).
 
 - **Post-ship refinement pass on the two-tier `autopep723` work (both PR #365/Tier 1 and PR
   #366/Tier 2, requested directly by the maintainer after both merged) -- one real bug found and
