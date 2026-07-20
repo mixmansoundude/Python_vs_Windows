@@ -496,20 +496,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    creation), and the current fixed order is not wrong, just not optimal in either direction.
    Revisit if the network-correlated-embed-failure pattern shows up for real in CI or user
    reports, rather than speculatively building it now.
-5. **Opt-in "trust me, my script is idempotent" fast-discovery mode -- now has a concrete design,
-   see `docs/plan-autopep723-two-tier.md`'s `HP_PVW_KNOWN_IDEMPOTENT` section.** Originally raised
-   via a low-confidence 3rd-party analysis with no repo access proposing a `FAST_RUN=true`-style
-   flag; that early version's actual proposed mechanism (run the script live, catch a
-   `ModuleNotFoundError`, install, rerun from the top, repeat) was correctly rejected here as
-   non-idempotently re-executing the script's own side effects on every retry -- exactly the
-   failure mode REQ-018 exists to prevent. The concrete replacement design in
-   `plan-autopep723-two-tier.md` resolves this cleanly: it does not re-invent the retry mechanism,
-   it reuses the exit-code-branching logic already built, tested across a dozen-plus scenarios,
-   and shipped in README's "PVW QuickStart" section (item 8 below) -- exit 0/2/other-nonzero, only
-   ever destructive on a genuinely malformed header -- relocated into `run_setup.bat` as an opt-in
-   flag, uv lane only, sequenced to be picked up only after both the automatic write-back (now
-   shipped -- REQ-005.11, see Closed Backlog) and the QuickStart commands have proven out. Not
-   scheduled now; the design work itself is done, only the "when to pick this up" decision remains.
 6. **AV-Safe Build Path (PyInstaller quarantine fallback via Nuitka)** -- full PRD at
    `docs/prd-av-safe-build-path.md`. A large, well-specified, preemptive feature (no real user
    report yet, a documented industry-wide problem) covering a two-tier Nuitka fallback when
@@ -536,53 +522,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    "Re-checked 2026-07-20" note under Finding 1 for the full detail -- flagged for confirmation
    whenever Phase 1 is actually implemented, not verified end-to-end here (no Windows machine
    available for this research pass).
-8. **PVW QuickStart -- a super-user command set for running/persisting a `.py` file's
-    dependencies with no EXE build, shipped as copy-paste README commands (full design at
-    `docs/plan-pvw-quickstart.md`; user-facing commands live in README's "PVW QuickStart" section).**
-    Reviewed and independently re-verified a user-supplied third-party "PEP 723 Megacommand"
-    document proposing a single-paste PowerShell command family. Confirmed the core claims directly
-    (script execution, an encoding-corruption bug in naive `Get-Content` reads and its
-    `ISO-8859-1`-round-trip fix), and found a genuine simplification the source document didn't
-    have: `uv add --script` already preserves existing pins and custom TOML keys on re-add
-    (confirmed with fresh tests, not just trusted -- see `plan-pep723-writeback.md`'s "Pass 3"
-    entry), so the source document's hand-rolled TOML-merge "Option C" script (needing `tomli-w`
-    and manual diffing) is unnecessary -- `autopep723 check` for discovery piped straight into
-    `uv add --script` gets the same safety natively.
-
-    **Found and fixed a real, reproduced destructive-strip bug before shipping the default
-    command** (plan doc's "Pass 2"): the first version treated any nonzero exit from the initial
-    run identically -- strip the whole PEP 723 header and retry. Reproduced directly: a file with a
-    real pin, a custom TOML key, and a header merely missing one recently-added import triggered
-    the same blind strip as a genuinely malformed header, destroying the pin and custom key even
-    though the header itself was valid. Fixed by branching on the *exit code* (confirmed reliably
-    distinct: `2` means the header is unparseable TOML; any other nonzero means something else
-    failed, most commonly a valid-but-incomplete header) -- exit 0 does a best-effort additive
-    persist, exit 2 is the one case where stripping is correct, any other nonzero fills in what's
-    missing without ever stripping. Re-verified against the original reproduction case plus five
-    more scenarios (malformed header, double failure, missing file, non-UTF-8, idempotency) against
-    the exact command as shipped in README. This also changed the command's own contract: the
-    default "just run it" command now additively persists a header on every successful run, not
-    just on request -- README's text was updated to state this plainly rather than leave a stale
-    "never touches your file" claim in place.
-
-    **Deliberately sequenced to ship its design work AFTER `plan-pep723-writeback.md`** (that plan
-    is already implementation-ready and serves this repo's primary beginner audience; this one is a
-    secondary, opt-in, already-know-your-own-code audience -- see the plan doc's own "Sequencing
-    decision" section). **Architecture decision:** the shipped form is copy-paste README commands,
-    not a `run_setup.bat` dispatch hook -- folding it into `run_setup.bat` would mean either
-    bypassing REQ-018's build-first-run-once safety reasoning for a whole new execution mode or
-    re-deriving a parallel copy of that reasoning just for itself, for a feature whose entire value
-    proposition is skipping that ceremony; the hook-in shape (an opt-in `HP_QUICKSTART_MODE` flag)
-    is recorded in the plan doc as a deliberately-deferred fallback, not implemented. A standalone
-    downloadable `pvw_quickstart.ps1` file (same logic, packaged as a script instead of copy-paste
-    text) also remains not-yet-built -- see the plan doc's own "Critical files" list. **README
-    placement (shipped):** landed directly after `## Python_vs_Windows and the "Deno for Python"
-    Question`, before `## Known Limitations` -- not near the top, per the original request. Open
-    gaps carried over honestly from the source document, not yet closed: real Windows PowerShell
-    5.1 is untested (this whole investigation, like the source document's own, ran via `pwsh` on
-    Linux); failed-`uv`-install and missing-file error UX are both known-rough, not known-broken
-    (though the missing-file case is now confirmed to at least fail into the safe, non-destructive
-    branch rather than the strip branch).
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is
@@ -886,6 +825,52 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Post-ship refinement pass on the two-tier `autopep723` work (both PR #365/Tier 1 and PR
+  #366/Tier 2, requested directly by the maintainer after both merged) -- one real bug found and
+  fixed, plus closes out backlog items 5 and 8, both now fully satisfied by the shipped tiers.**
+  - **Real bug: `tools/pvw_known_idempotent.py`'s retry paths were exposed to a live, still-open
+    uv caching bug (astral-sh/uv#15156, "Cached Script Dependencies Not Properly Invalidated"),
+    already documented in `docs/agent-lessons-learned.md` from an unrelated dev-testing repro but
+    never checked against this specific shipped call site until now.** Read `autopep723`'s own
+    source (`autopep723/__init__.py`'s `run_with_uv`, pulled from the local `uv` cache) and
+    confirmed its default "run" mode shells out to `uv run` itself. `main()`'s "other nonzero" and
+    post-strip-repair branches both call `persist()` (writes a NEW header via `uv add --script`)
+    then immediately re-run the SAME entry file via `run_script()` -- exactly the
+    change-then-rerun-same-filename sequence #15156 describes. Fixed by adding a `force_fresh`
+    parameter to `run_script()` that sets `UV_NO_CACHE=1` in the subprocess env, applied ONLY to
+    the two post-persist retry calls (the first attempt -- the common, successful case, since the
+    whole premise of the flag is "trust me, my script already works" -- keeps normal caching for
+    speed). `tests/test_pvw_known_idempotent.py` gained a dedicated `RunScript` class plus
+    assertions in both retry-branch `MainDispatch` tests confirming the env split, so a future
+    edit that drops `force_fresh` from either retry call site is caught in CI. Re-synced
+    `HP_PVW_IDEMPOTENT` (had to trim several comments to restore budget under the CMD 8191-char
+    line limit -- see `docs/agent-lessons-learned.md`'s budget table).
+  - **Investigated and found NOT a bug, correctly consistent with pre-existing architecture**: Tier
+    2's unconditional `copy /y` of the entry's (now-updated) PEP 723 header into `requirements.txt`
+    (no `if not exist` guard, unlike Tier 1's additive merge) initially looked like a destructive
+    overwrite risk for a multi-file app whose `requirements.txt` covers more than the entry file's
+    own direct imports. Traced the pre-existing (pre-Tier-2) PEP-723-header-in-source and
+    `pyproject.toml` paths (`run_setup.bat` ~line 1008-1119) and confirmed this repo already treats
+    a PEP 723 header as the AUTHORITATIVE, self-contained dependency declaration for a script --
+    both paths already do an unconditional overwrite of `requirements.txt` when active, by
+    long-standing, deliberate design (matches PEP 723's own single-file-script intent). Tier 2 is
+    correctly consistent with this existing precedence system, not a new hazard.
+  - **One asymmetry noted, not fixed (too small/speculative to act on without a concrete report)**:
+    the pre-existing PEP-723-header-in-source path also syncs `requirements.auto.txt` (line 1119)
+    so dep-check's own next-run comparison stays aware of it; neither Tier 1 nor Tier 2 do this --
+    both only ever touch `requirements.txt`. This is the SAME accepted trade-off Tier 1's own
+    Closed Backlog entry already documents (a repeat-run's dep-check gate is scoped to what pipreqs
+    itself finds, not the full `requirements.txt`; the unconditional pip-gap-fill step is what
+    actually covers the gap in practice), so Tier 2 sharing it is consistent, not a regression.
+  - **Backlog items 5 and 8 closed**: item 5 ("opt-in trust-me-idempotent fast-discovery mode")
+    described exactly what Tier 2 (`HP_PVW_KNOWN_IDEMPOTENT`) now ships; item 8's own remaining
+    open piece (README QuickStart, `tests/selfapps_pvw_quickstart.ps1` as its CI proof) is also
+    fully shipped. Confirmed with the maintainer directly: the still-not-built standalone
+    downloadable `pvw_quickstart.ps1` (a packaged-script alternative to the copy-paste README
+    commands, for end users rather than CI) and the deferred `HP_QUICKSTART_MODE` `run_setup.bat`
+    hook remain deliberately not pursued -- both were always recorded as optional fallbacks, not
+    required scope, and nothing else was outstanding under either item.
 
 - **Two-tier `autopep723` integration, Tier 2 (REQ-005.13, `HP_PVW_KNOWN_IDEMPOTENT`) -- an
   opt-in flag causing `run_setup.bat` to actually run the entry script live via `uvx autopep723

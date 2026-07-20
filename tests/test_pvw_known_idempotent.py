@@ -3,9 +3,10 @@ docs/plan-autopep723-two-tier.md (HP_PVW_KNOWN_IDEMPOTENT).
 
 Covers strip_pep723_block (mirrors tools/pep723_writeback.py's version -- same test shapes),
 discover_dep_names's PEP-723-style output parsing, persist's discovery+uv-add-script sequence,
-and main()'s three exit-code branches (0 / 2 / other-nonzero) via a mocked subprocess.run that
-dispatches on argv shape (run vs. check vs. add), plus the base64
-HP_PVW_IDEMPOTENT payload sync.
+main()'s three exit-code branches (0 / 2 / other-nonzero) via a mocked subprocess.run that
+dispatches on argv shape (run vs. check vs. add), run_script's force_fresh=True UV_NO_CACHE
+workaround for astral-sh/uv#15156 (only used on post-persist retries, never the first attempt),
+and the base64 HP_PVW_IDEMPOTENT payload sync.
 """
 import base64
 import re
@@ -19,6 +20,7 @@ from tools.pvw_known_idempotent import (
     discover_dep_names,
     main,
     persist,
+    run_script,
     strip_pep723_block,
 )
 
@@ -38,6 +40,25 @@ class StripPep723Block(unittest.TestCase):
     def test_no_block_present_unchanged(self):
         text = "import os\nprint('hi')\n"
         self.assertEqual(strip_pep723_block(text), text)
+
+
+class RunScript(unittest.TestCase):
+    """astral-sh/uv#15156 workaround: force_fresh must be opt-in and env-scoped only to that
+    one call, never leaking UV_NO_CACHE into the default (first-attempt) invocation."""
+
+    def test_default_call_passes_no_env_override(self):
+        with patch("tools.pvw_known_idempotent.subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=0)
+            run_script("uvx", "app.py")
+        _, kwargs = mock_run.call_args
+        self.assertIsNone(kwargs.get("env"))
+
+    def test_force_fresh_sets_uv_no_cache(self):
+        with patch("tools.pvw_known_idempotent.subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=0)
+            run_script("uvx", "app.py", force_fresh=True)
+        _, kwargs = mock_run.call_args
+        self.assertEqual(kwargs.get("env", {}).get("UV_NO_CACHE"), "1")
 
 
 class DiscoverDepNames(unittest.TestCase):
@@ -108,11 +129,13 @@ class MainDispatch(unittest.TestCase):
         original = '# /// script\n# broken (((\n# ///\nimport requests\nprint("hi")\n'
         self.entry.write_text(original, encoding="utf-8")
         calls = {"run_count": 0}
+        run_call_kwargs = []
 
         def fake_run(cmd, **kwargs):
             if "check" in cmd or "add" in cmd:
                 return _run_result(cmd, returncode=0)
             calls["run_count"] += 1
+            run_call_kwargs.append(kwargs)
             # First run (before strip) -> 2 (malformed); second run (after strip) -> 0 (clean).
             return Mock(returncode=2 if calls["run_count"] == 1 else 0)
 
@@ -123,6 +146,10 @@ class MainDispatch(unittest.TestCase):
         mock_print.assert_called_once_with("RAN:persisted_after_repair", file=sys.stderr)
         # Header block was actually stripped from the file.
         self.assertNotIn("broken (((", self.entry.read_text(encoding="utf-8"))
+        # First attempt uses normal caching; the post-persist retry forces UV_NO_CACHE=1
+        # (astral-sh/uv#15156 workaround).
+        self.assertIsNone(run_call_kwargs[0].get("env"))
+        self.assertEqual(run_call_kwargs[1].get("env", {}).get("UV_NO_CACHE"), "1")
 
     def test_rc2_malformed_header_retry_also_fails_restores_original(self):
         original = '# /// script\n# broken (((\n# ///\nimport requests\nprint("hi")\n'
@@ -143,11 +170,13 @@ class MainDispatch(unittest.TestCase):
 
     def test_other_nonzero_fillin_succeeds(self):
         calls = {"run_count": 0}
+        run_call_kwargs = []
 
         def fake_run(cmd, **kwargs):
             if "check" in cmd or "add" in cmd:
                 return _run_result(cmd, returncode=0)
             calls["run_count"] += 1
+            run_call_kwargs.append(kwargs)
             return Mock(returncode=1 if calls["run_count"] == 1 else 0)
 
         with patch("tools.pvw_known_idempotent.subprocess.run", side_effect=fake_run):
@@ -155,6 +184,8 @@ class MainDispatch(unittest.TestCase):
                 rc = main([str(self.entry), "uvx", "uv", "python"])
         self.assertEqual(rc, 0)
         mock_print.assert_called_once_with("RAN:persisted_after_fillin", file=sys.stderr)
+        self.assertIsNone(run_call_kwargs[0].get("env"))
+        self.assertEqual(run_call_kwargs[1].get("env", {}).get("UV_NO_CACHE"), "1")
 
     def test_other_nonzero_fillin_also_fails(self):
         def fake_run(cmd, **kwargs):
