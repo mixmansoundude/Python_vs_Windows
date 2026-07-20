@@ -535,6 +535,17 @@ jobs:
         run: |
           & tests\selfapps_cascade.ps1
 
+      # AV-Safe Build Path (docs/prd-av-safe-build-path.md) requirements 2-4, Tier A: proves a
+      # real Nuitka fallback build succeeds and is used when PyInstaller's own build fails.
+      # Non-gating for its first landing -- unlike self.exe.build.xfail (real/conda-full,
+      # gating), this exercises a genuine Nuitka build whose CLI flags/compiler availability
+      # could not be verified locally. Promote once proven stable across several real runs.
+      - name: "Self-test: AV-Safe Build Path Tier A -- real Nuitka fallback build (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_nuitka_tiera.ps1
+
       - name: "Self-test: EXE smokerun XFAIL bad import (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh
