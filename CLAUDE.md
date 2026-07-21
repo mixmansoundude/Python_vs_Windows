@@ -515,11 +515,22 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    sequencing note) is SHIPPED -- see the separate Closed Backlog entry for the real,
    independent correctness bug found and fixed while scoping it. **Requirements 2-4 (dispatch +
    Tier A: real Nuitka fallback build in the existing environment, no reprovisioning) are ALSO
-   now SHIPPED** -- see the dedicated Closed Backlog entry. Requirements 5-8 (Tier B
-   reprovisioning via the existing provider chain, loop-avoidance marker, messaging polish,
-   connectivity gate) are NOT yet started; each is its own future loop, per this repo's "one
-   feature slice per loop" norm and the PRD reviewer's own note that even "Phase 1" is
-   multi-loop-sized.
+   now SHIPPED** -- see the dedicated Closed Backlog entry. **Requirement 9 (P1, the elective
+   "want an optimized build too?" post-success upsell) is ALSO now SHIPPED** -- see its own
+   dedicated Closed Backlog entry.
+
+   **Requirement 5 (Tier B, reprovisioned pinned-3.12 environment via the existing provider
+   chain) is explicitly DEFERRED, owner's direct instruction (2026-07-21): "Until I run the
+   bootstrapper myself and have real problems, I don't want to do the reprovision rollback."**
+   This is not "not started yet" in the usual backlog sense -- it is a deliberate decision not
+   to build it speculatively before a real, owner-observed failure justifies the added
+   complexity (a second provider-chain traversal, a pinned-version environment, the
+   stale-PATH/VIRTUAL_ENV hazard research Finding 6 already flagged). Requirements 6 (loop
+   avoidance) and 8 (connectivity check before Tier B) both depend on Tier B existing and are
+   deferred with it. Do not start Tier B without a fresh, explicit go-ahead -- this differs from
+   how items 2-4 and 9 were greenlit (a broad "go as far as you can" authorization for the PRD
+   generally); Tier B specifically was carved back out after that authorization, so it needs its
+   own separate green light, not inference from the general one.
 
    **Downtime re-check, 2026-07-20 (research only, no code written):**
    verified against Nuitka's live changelog/issue tracker that Finding 1's core blocker (MinGW64
@@ -854,6 +865,54 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **AV-Safe Build Path requirement 9 (P1): the elective "want an optimized build too?" upsell
+  after a normal successful PyInstaller build.** Owner explicitly greenlit this ("go ahead and
+  do requirement 9 ... I personally want the optimized build") in the same message that
+  explicitly DEFERRED requirement 5/Tier B (see the updated Active Backlog item 6 note above).
+  New `:offer_optimized_build` subroutine (`run_setup.bat`, called from `:smokerun_ndjson` right
+  after `call :run_postexec_checkpoint exe`, while `HP_EXE_EXIT` still holds this run's real
+  outcome). Gated on `HP_NUITKA_FALLBACK_USED` being unset (skip if Tier A already ran -- the
+  user already has an optimized build) and `HP_EXE_EXIT` genuinely `"0"` (skip on a failed/timed
+  -out run). Reuses `:run_postexec_checkpoint`'s exact CI-safe 4-way auto-decline consent gate
+  (`HP_TEST_OPTBUILD_ANSWER` override, then `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE`
+  auto-decline, then interactive `set /p`) with the PRD's own suggested copy.
+
+  **Strictly safer than Tier A's own build sequence, and deliberately so**: Tier A is free to
+  delete-then-rebuild `dist\%ENVNAME%.exe` because the original PyInstaller build already
+  failed there -- nothing working to lose. Requirement 9 runs in the OPPOSITE situation (a
+  confirmed-working, already-smoke-tested EXE already exists), so it never touches the original
+  until a replacement is PROVEN good: builds to a distinct temp filename
+  (`%ENVNAME%.optimized_build.exe`), runs its own internal 30s-capped verification launch
+  against that temp file (same `ProcessStartInfo`/`WaitForExit(30000)`/`Kill()`-on-timeout
+  pattern `:run_exe_smokerun` already uses), and only on confirmed build-AND-run success does
+  `move /y` swap it into place. Every failure branch deletes only the temp file and leaves the
+  original completely untouched, with a plain-language "your app is still ready to use as-is"
+  message -- matching requirement 7's plain-language, no-safety-framing messaging rule. On
+  success, sets `HP_NUITKA_FALLBACK_USED=1` too (semantically accurate; harmless this late in
+  the flow since hidden-import recovery has already completed for this pass).
+
+  **Reactive-only Visual Studio hint added to both this subroutine's and `:try_nuitka_tier_a`'s
+  failure paths, per direct owner question about whether Nuitka auto-detects an installed VS2022
+  and whether to hint proactively or reactively.** Researched via Nuitka's own GitHub issue
+  tracker (Nuitka/Nuitka#3317): confirmed Nuitka auto-detects an installed Visual Studio via the
+  registry with no need for a Developer Command Prompt or `vcvarsall.bat` -- a plain VS2022
+  install with the "Desktop development with C++" workload (which includes a Windows SDK by
+  default) should have Nuitka "just work" via MSVC with zero extra setup. Per the owner's own
+  framing ("we said probing wasn't a great idea... blindly proactive, failure reactive?"), the
+  hint is a static `[WARN]` line that only prints AFTER Nuitka's own build already failed --
+  never a proactive nag on a successful run, and no new detection/fingerprinting logic added
+  (research Finding 2 already argued against that class of probing; Tier A's own design already
+  committed to trusting Nuitka's internal discovery entirely).
+
+  New test hooks `HP_TEST_OPTBUILD_ANSWER`/`HP_TEST_FORCE_OPTBUILD_FAIL` and
+  `tests/selfapps_optimized_build.ps1` (uv lane, non-gating, `self.optbuild.offer`, three
+  scenarios via `OPTBUILD_SCENARIO`): `accept` proves a REAL Nuitka build succeeds, verifies,
+  and swaps in; `forcefail` proves a forced failure leaves the original PyInstaller EXE
+  completely untouched and still runnable (re-executed directly by the test after the bootstrap
+  completes, not just checked for existence); `decline` proves the default/CI path shows the
+  prompt but never attempts a build. See `docs/agent-interconnect.md`'s new "AV-Safe Build Path
+  requirement 9" section for the full design rationale. CLOSED by this pass.
 
 - **Refinement pass on shipped Tier A: real bug found and fixed -- `:hidden_import_recover` had no
   guard against rebuilding via PyInstaller against a Nuitka-built EXE.** While doing a requested

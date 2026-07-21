@@ -49,6 +49,7 @@ self.cascade.detect, self.cascade.consent,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
 self.exe.tiera.hidden_skip (uv lane only -- selfapps_nuitka_tiera_hidden_skip.ps1; non-gating),
+self.optbuild.offer (uv lane only -- selfapps_optimized_build.ps1; non-gating),
 self.parse_warn.table.v6, self.parse_warn.pytest,
 self.heuristics.pytest,
 self.pytest.unit,
@@ -367,6 +368,37 @@ build succeeding).
 
 ```
 self.exe.tiera.hidden_skip
+```
+
+## selfapps-optimized-build NDJSON rows (selfapps_optimized_build.ps1, uv lane only, non-gating)
+
+Proves AV-Safe Build Path requirement 9 (P1): after a NORMAL, verified-successful PyInstaller
+build (never after Tier A -- gated on `HP_NUITKA_FALLBACK_USED` being unset), `:offer_optimized_
+build` offers an elective, human-only, auto-declined-in-CI upsell to also build a Nuitka-optimized
+version. Unlike Tier A (free to delete-then-rebuild since the original build already failed),
+this feature builds to a distinct temp filename, verifies the new build actually runs, and only
+then swaps it into `dist\<env>.exe` -- on any failure at any stage the original, already-working
+EXE is left completely untouched.
+
+Three scenarios (`OPTBUILD_SCENARIO` env var), all in this one file/lane:
+- `accept` (`HP_TEST_OPTBUILD_ANSWER=Y`, no forced failure): a REAL Nuitka build runs, is
+  verified, and is swapped into place. Same non-gating reasoning as `self.exe.build.tiera` --
+  depends on a real Nuitka build succeeding, which could not be verified locally.
+- `forcefail` (`HP_TEST_OPTBUILD_ANSWER=Y` + `HP_TEST_FORCE_OPTBUILD_FAIL=1`): the optimized
+  build is forced to fail deterministically (no real Nuitka attempt); asserts the original
+  PyInstaller-built `dist\<env>.exe` is left completely untouched and still runs (re-executed
+  directly by the test after the bootstrap completes, not just checked for existence).
+- `decline` (neither env var set): falls through to the ambient `HP_CI_LANE` auto-decline, the
+  same mechanism `selfapps_postexec_checkpoint.ps1`'s own `self.checkpoint.decline` scenario
+  relies on; asserts the prompt is shown but no build is ever attempted.
+
+All three deliberately kept in one file/lane rather than split across gating/non-gating lanes by
+determinism, matching this repo's established multi-scenario pattern (e.g.
+`selfapps_pyinstaller_fail.ps1`'s `PYI_FAIL_SCENARIO`) -- promote once proven stable, matching
+this repo's established graduation pattern.
+
+```
+self.optbuild.offer
 ```
 
 ---

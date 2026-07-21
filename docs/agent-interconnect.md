@@ -131,6 +131,66 @@ extended to check it, not just the one existing flag.
 
 ---
 
+## AV-Safe Build Path requirement 9 (`:offer_optimized_build`) -- a strictly safer sibling of Tier A
+
+**Shares `:try_nuitka_tier_a`'s Nuitka invocation but NOT its "delete first, build second" safety
+posture, and that difference is the entire point.** Tier A runs only after the PyInstaller build
+already failed, so it is free to `del "dist\%ENVNAME%.exe"` before attempting a replacement --
+there is nothing working to lose. `:offer_optimized_build` (requirement 9, called from
+`:smokerun_ndjson` right after `call :run_postexec_checkpoint exe`, before `HP_EXE_EXIT` is
+cleared) runs in the OPPOSITE situation: PyInstaller already succeeded AND the EXE already passed
+its smoke-test verification. A design that deleted/overwrote `dist\%ENVNAME%.exe` up front (Tier
+A's own pattern) would risk losing a confirmed-working build to an elective, human-declinable
+upsell -- unacceptable. Instead it builds to a distinct temp name
+(`%ENVNAME%.optimized_build.exe`), runs its own internal 30s-capped verification launch against
+that temp file (same `ProcessStartInfo`/`WaitForExit(30000)`/`Kill()`-on-timeout pattern
+`:run_exe_smokerun` uses), and only on CONFIRMED build-and-run success does `move /y` swap it over
+the original. Every failure branch (`goto :optbuild_cleanup`) deletes only the temp file and
+leaves `dist\%ENVNAME%.exe` completely untouched -- see the subroutine's own header comment in
+`run_setup.bat` for the full branch-by-branch trace.
+
+**Gated on the SAME `HP_NUITKA_FALLBACK_USED` flag Tier A sets, but for the opposite reason.**
+Tier A's hidden-import-recovery guard (section above) checks the flag to SKIP a PyInstaller-only
+repair mechanism against a Nuitka EXE. This subroutine checks the flag to SKIP OFFERING THE PROMPT
+AT ALL when Tier A already ran -- if `dist\%ENVNAME%.exe` is already a Nuitka build, requirement
+9's "want an optimized version too?" question doesn't apply (the user already has one). On its own
+success path it sets `HP_NUITKA_FALLBACK_USED=1` too, for the same semantic reason (the file at
+`dist\%ENVNAME%.exe` genuinely is now Nuitka-built) -- this happens late enough in the flow
+(after `:run_exe_smokerun`/`:hidden_import_recover` have already completed for this pass) that it
+has no retroactive effect on anything in the SAME run, but keeps the flag accurate for any code
+that might read it later.
+
+**Consent-gate pattern mirrors `:run_postexec_checkpoint`'s BROADER 4-way auto-decline set, not
+the narrower 3-branch gates elsewhere in this file** (`:system_build_consent_gate` etc.) -- see
+that subroutine's own header comment for why: like the checkpoint, this prompt fires on
+essentially every successful bootstrap run (not a narrow edge-case path), so it also auto-declines
+on `NOINPUT`/`HP_NONINTERACTIVE` in addition to `HP_CI_LANE`, matching `:compute_interactive_run`'s
+own authoritative non-interactivity signals elsewhere in this file.
+
+**Cascade re-entry can offer this prompt more than once per bootstrap, same as the checkpoint.**
+Since this is called from the exact same call site as `:run_postexec_checkpoint exe` (right after
+it), a REQ-009 provider cascade that reaches a NEW verification pass under a different provider
+tier re-offers BOTH prompts fresh each time -- intentional, not a bug, for the same reason
+documented in the "Post-execution checkpoint" section below (each cascade tier is a genuinely
+different build).
+
+**Nuitka/MSVC auto-detection research (informs the reactive-only hint text on failure, added to
+both this subroutine and `:try_nuitka_tier_a`):** confirmed via Nuitka's own GitHub issue tracker
+(Nuitka/Nuitka#3317) that Nuitka auto-detects an installed Visual Studio via the registry with NO
+need to run from a Developer Command Prompt or set up `vcvarsall.bat` first -- a user with a plain
+VS2022 install and the "Desktop development with C++" workload (which includes a Windows SDK by
+default) should have Nuitka "just work" via MSVC with zero extra setup. Deliberately did NOT add
+any proactive detection/fingerprinting of the user's installed compiler to decide behavior --
+research Finding 2 in `docs/prd-av-safe-build-path.md` already argued against that class of
+fingerprinting, and this repo's Tier A design (requirement 4) already committed to trusting
+Nuitka's own internal discovery entirely. The hint text is REACTIVE ONLY (a static `[WARN]` line
+that only prints after Nuitka's OWN build already failed), never a proactive nag shown on a
+successful run or unconditionally on every bootstrap -- this keeps the "probing isn't a great
+idea" principle intact (no active detection of what's on the machine) while still surfacing a
+genuinely actionable, low-noise hint exactly when it would help.
+
+---
+
 ## Standalone Python-download tier (REQ-009 Tier 5 by naming/history; executed 3rd as of the
 ## provider-chain reorder below, SHIPPED)
 
