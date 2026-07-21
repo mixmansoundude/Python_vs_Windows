@@ -874,13 +874,21 @@ Items completed and shipped:
   existing warn-file/smoke-test code already degrades gracefully when no warn file exists, and
   the EXE smoke-test itself doesn't care which tool built the file).
 
-  **Explicit, stated-plainly caveat: the exact Nuitka CLI flags above are unverified against a
-  real Nuitka installation** -- no Windows machine is available in this sandbox, so they're
-  written from documented Nuitka CLI knowledge, not confirmed empirically before shipping. This
-  is exactly the kind of batch-file/tooling behavior that can only be verified for real on
-  Windows CI, matching this repo's own established pattern for every other change of this shape
-  this session (the requirement-1 goto/nested-if fix, the CMD line-length budget, etc.) --
-  watched closely via the first real CI run rather than assumed correct.
+  **Verified 2026-07-20 against real Windows CI (run 29788624195, `self.exe.build.tiera`,
+  uv lane): the Nuitka CLI flags above are correct as written.** No Windows machine was
+  available in this sandbox to confirm them before shipping, so this was written from
+  documented Nuitka CLI knowledge only -- the first real run genuinely built
+  `dist\_selftest_nuitka_tiera.exe` via Nuitka 4.1.3, ran it, and the stub app's stdout came
+  through cleanly. The FIRST real run of this new test did fail, but the root cause was a test
+  bug, not a `run_setup.bat`/Nuitka-flags bug: `tests/selfapps_nuitka_tiera.ps1` hardcoded the
+  expected EXE path as `dist\~selftest_nuitka_tiera.exe` (the literal tilde-prefixed workDir
+  name) instead of the sanitized `dist\_selftest_nuitka_tiera.exe` that `run_setup.bat`'s
+  ENVNAME derivation actually produces (every non-alnum/underscore/hyphen character, including
+  the leading `~`, is replaced with `_` -- see run_setup.bat lines ~350-356), and it searched
+  the console-redirected bootstrap log for the app's stdout instead of the `~run.out.txt`
+  capture file where `:run_exe_smokerun` actually writes it. Fixed to compute the sanitized
+  name the same way `selfapps_collect.ps1`/`selfapps_envsmoke.ps1` already do, and to read
+  `~run.out.txt` directly. Second run (29788624195) passed clean.
 
   New test hook `HP_TEST_FORCE_NUITKA_FAIL` (forces Tier A to fail deterministically, without a
   real Nuitka attempt) and a new `tests/selfapps_nuitka_tiera.ps1` (uv lane, deliberately
