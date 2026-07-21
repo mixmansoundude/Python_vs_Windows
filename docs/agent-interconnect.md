@@ -83,6 +83,54 @@ stale locks for other users of the same folder to wait out.
 
 ---
 
+## AV-Safe Build Path Tier A (`:try_nuitka_tier_a`) and hidden-import auto-recovery
+
+**Touch either subroutine, must understand the other.** `:try_nuitka_tier_a` (AV-Safe Build Path
+requirements 2-4, `docs/prd-av-safe-build-path.md`) attempts a Nuitka fallback build when
+PyInstaller's own build fails; on success it sets `HP_NUITKA_FALLBACK_USED=1` and
+`dist\<env>.exe` is a Nuitka-produced binary, not a PyInstaller one. `:hidden_import_recover`
+(REQ-016 Slice 2, see `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay
+STRICT" entry) is the ONLY post-build repair mechanism this bootstrapper has for a frozen EXE
+that fails at runtime with a `ModuleNotFoundError` for an installed module -- and its repair
+action is a PyInstaller-specific rebuild (`--hidden-import=X`), which does not apply to a
+Nuitka-built EXE at all (Nuitka has its own, structurally different `--include-module`/
+`--follow-import-to` mechanism, not wired up here).
+
+**Real bug found and fixed via a refinement pass, 2026-07-21 (same day Tier A shipped):**
+`:hidden_import_recover` had no check for `HP_NUITKA_FALLBACK_USED` before its first line of real
+work -- it would unconditionally re-run the EXE, scan for a fixable `ModuleNotFoundError`, and (if
+found) rebuild via `PyInstaller -y --onefile ... --hidden-import=X`, silently discarding the
+Nuitka-built `dist\<env>.exe` and replacing it with a fresh PyInstaller attempt. Since Tier A only
+runs when the ORIGINAL PyInstaller build already failed once this run, this PyInstaller rebuild
+inside the recovery loop had a real chance of reproducing the exact failure Tier A exists to route
+around (e.g. AV quarantine), or at minimum wasting the loop's 3-attempt budget on the wrong tool
+while leaving the working Nuitka EXE's fate undefined mid-rebuild. `HP_NUITKA_FALLBACK_USED` is
+process-global and safely readable at `:hidden_import_recover`'s entry point (only one `setlocal`
+exists in the whole file, at the very top, disabling delayed expansion -- no scoping boundary sits
+between the build block that sets the variable and this subroutine).
+
+**Fix**: `:hidden_import_recover` now checks `if defined HP_NUITKA_FALLBACK_USED` immediately
+after its existing `if not exist "dist\%ENVNAME%.exe" exit /b 0` early-return, and exits `/b 0`
+immediately (skip, not attempt-and-fail) with an `[INFO][HIDDEN_IMPORT]` log line explaining why.
+This is deliberately a SKIP, not a Nuitka-aware repair -- wiring up Nuitka's own missing-import
+recovery mechanism is out of scope for this fix and would be its own future feature if ever
+needed. Regression test: `tests/selfapps_nuitka_tiera_hidden_skip.ps1` (uv lane, non-gating,
+`self.exe.tiera.hidden_skip`) -- forces Tier A via `HP_TEST_FORCE_PYINSTALLER_FAIL=1`, lets a real
+Nuitka build succeed, and has the stub app print a FABRICATED
+`ModuleNotFoundError: No module named 'nuitka'` to stderr before exiting 1 (`nuitka` is guaranteed
+installed in the exact build interpreter Tier A just used, so the scanner's `find_spec` gate would
+treat it as fixable if the skip guard were missing or broken) -- then asserts the skip log line
+fires and the OLD `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=` rebuild line does NOT.
+
+**If a future Tier B (requirement 5, reprovisioned pinned-3.12 environment) or any other
+alternate-build-tool path is added, it needs this same guard.** The check belongs on
+`HP_NUITKA_FALLBACK_USED` specifically (or an equivalent "the EXE currently at `dist\<env>.exe`
+was NOT built by PyInstaller" signal) -- any future subroutine that can produce `dist\<env>.exe`
+via something other than PyInstaller should set an analogous marker and this guard should be
+extended to check it, not just the one existing flag.
+
+---
+
 ## Standalone Python-download tier (REQ-009 Tier 5 by naming/history; executed 3rd as of the
 ## provider-chain reorder below, SHIPPED)
 

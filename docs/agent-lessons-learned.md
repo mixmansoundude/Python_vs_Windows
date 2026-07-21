@@ -529,6 +529,12 @@ It is deliberately gated on TWO conditions and it is a mistake to relax either:
    `import nonexistant` cost **ZERO rebuilds** -- the typo'd module is not installed, so the helper
    emits nothing and the failure routes straight to the post-flight hints. It also excludes a
    genuinely-missing dependency (warnfix's job, not this loop's).
+3. **`dist\<env>.exe` must have been built by PyInstaller, not Nuitka (AV-Safe Build Path Tier A,
+   `HP_NUITKA_FALLBACK_USED`).** Added when Tier A shipped -- see
+   `docs/agent-interconnect.md`'s "Tier A and hidden-import auto-recovery" section for the full
+   interaction and the fix. The loop's only repair mechanism is `--hidden-import`, a
+   PyInstaller-specific flag; it does nothing useful against a Nuitka-built EXE and risks
+   rebuilding via the wrong tool.
 
 No-loop guarantee: the helper takes an already-tried list and the batch caps at 3 iterations, so
 a pathological "different missing module every rebuild" app stops at 3 and a "same module repeats"

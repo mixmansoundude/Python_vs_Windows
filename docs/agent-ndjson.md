@@ -48,6 +48,7 @@ self.preflight.syntax,
 self.cascade.detect, self.cascade.consent,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
+self.exe.tiera.hidden_skip (uv lane only -- selfapps_nuitka_tiera_hidden_skip.ps1; non-gating),
 self.parse_warn.table.v6, self.parse_warn.pytest,
 self.heuristics.pytest,
 self.pytest.unit,
@@ -334,6 +335,38 @@ graduation pattern (see `CLAUDE.md`'s "CI lane gating maturity" periodic check).
 
 ```
 self.exe.build.tiera
+```
+
+## selfapps-nuitka-tiera-hidden-skip NDJSON rows (selfapps_nuitka_tiera_hidden_skip.ps1, uv lane only, non-gating)
+
+Regression test for a real bug found via a refinement pass on the shipped Tier A code:
+`:hidden_import_recover` (the `--hidden-import` auto-recovery loop, REQ-016 Slice 2)
+unconditionally rebuilt via PyInstaller on a recoverable missing-import failure, with no check
+for whether `dist\<env>.exe` was actually built by Nuitka (Tier A, `HP_NUITKA_FALLBACK_USED=1`)
+rather than PyInstaller -- PyInstaller's `--hidden-import` flag does not apply to a
+Nuitka-produced EXE, so silently rebuilding via PyInstaller there risked reproducing the very
+failure Tier A exists to route around, or clobbering a working Nuitka build with a broken
+PyInstaller one. Fixed with an early-skip guard at the top of `:hidden_import_recover`.
+
+Same `HP_TEST_FORCE_PYINSTALLER_FAIL=1` technique as `selfapps_nuitka_tiera.ps1` to force Tier A,
+with a real (unforced) Nuitka build. The stub app deliberately prints a fabricated, exact-format
+`ModuleNotFoundError: No module named 'nuitka'` to stderr and exits 1 -- `nuitka` itself is
+guaranteed to be pip-installed into the same build interpreter Tier A just used, so
+`~hidden_import_scan.py`'s `find_spec` gate would treat this as a genuinely fixable target if the
+recovery loop were mistakenly attempted; since the scanner is a pure text-based regex match
+against captured process output (not real Python introspection), this fabricated signal
+deterministically constructs the exact trigger condition the skip guard must catch, without
+depending on genuine (fragile, non-deterministic) Nuitka missing-import behavior.
+
+Asserts: Tier A succeeds (same checks as `self.exe.build.tiera`), the EXE genuinely runs and
+exits non-zero, the new skip log line fires, the OLD `[REPAIR][HIDDEN_IMPORT]` PyInstaller-rebuild
+log line does NOT fire, and `~bootstrap.status.json` still reads `state=ok` (the user program's
+own non-zero exit is not a bootstrapper failure -- see CLAUDE.md's "User-code exit-code semantics"
+Known Finding). Same non-gating reasoning as `self.exe.build.tiera` (depends on a real Nuitka
+build succeeding).
+
+```
+self.exe.tiera.hidden_skip
 ```
 
 ---

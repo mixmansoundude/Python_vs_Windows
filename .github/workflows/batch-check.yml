@@ -546,6 +546,17 @@ jobs:
         run: |
           & tests\selfapps_nuitka_tiera.ps1
 
+      # Regression test for a real bug found via a refinement pass on the shipped Tier A code:
+      # the --hidden-import auto-recovery loop unconditionally rebuilt via PyInstaller on a
+      # recoverable missing-import failure, with no check for whether the current EXE was
+      # actually built by Nuitka (Tier A). Same non-gating reasoning as the sibling step above
+      # (depends on a real Nuitka build succeeding).
+      - name: "Self-test: Tier A / hidden-import-recovery skip guard (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_nuitka_tiera_hidden_skip.ps1
+
       - name: "Self-test: EXE smokerun XFAIL bad import (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh

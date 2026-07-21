@@ -3436,6 +3436,18 @@ rem helper's already-tried list plus the iter cap guarantee the loop cannot run 
 rem Sets HP_EXE_EXIT to the final EXE exit so the caller re-checks success. goto-based
 rem (not a parenthesized block) so each %VAR% reads its runtime value, not a parse-time one.
 if not exist "dist\%ENVNAME%.exe" exit /b 0
+rem AV-Safe Build Path (requirement 4 follow-up): this loop's ONLY repair mechanism is a
+rem PyInstaller rebuild with --hidden-import flags -- a PyInstaller-specific mechanism that
+rem does not apply to a Nuitka-produced EXE. If dist\%ENVNAME%.exe was built via Tier A
+rem (:try_nuitka_tier_a, HP_NUITKA_FALLBACK_USED=1), skip entirely rather than silently
+rem rebuilding via PyInstaller here -- that would risk reproducing the very failure Tier A
+rem exists to route around, or clobbering a working Nuitka build with a broken PyInstaller
+rem one. Nuitka has its own, different missing-import mechanism (--include-module /
+rem --follow-import-to); wiring that up is out of scope for this fix.
+if defined HP_NUITKA_FALLBACK_USED (
+  call :log "[INFO][HIDDEN_IMPORT] Skipping --hidden-import auto-recovery: dist\%ENVNAME%.exe was built via the fallback build system (Nuitka), which uses a different missing-import mechanism than PyInstaller's --hidden-import flag."
+  exit /b 0
+)
 set "HP_PYI_HIDDEN_IMPORTS="
 set "HP_HIDDEN_ITER=0"
 set "HP_HIDDEN_TRIED="
