@@ -562,6 +562,15 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    PR. (b) No user report or observed instance of this actually hiding a REAL regression yet
    (this instance was a test-bug false alarm, immediately visible via the job's own failure
    status) -- worth fixing deliberately, in its own reviewed pass, not as a rushed side effect.
+   **Second real-world occurrence, 2026-07-21 (CI run 29829724937, uv lane, job 88632292427):**
+   `self.optbuild.offer`'s `accept` scenario step (`tests/selfapps_optimized_build.ps1`) failed on
+   a test-authoring bug (see the Closed Backlog entry for the AV-Safe Build Path requirement-9
+   work), and because it was the first of three sequential `OPTBUILD_SCENARIO` steps in the same
+   job with no `if: always()`, the `forcefail` and `decline` steps never ran at all -- same
+   mechanism, same job, different test file. Still not fixed for the same two reasons above; two
+   independent real instances in two different features is worth noting as it strengthens the
+   case for eventually doing the dedicated hardening pass, but is not itself a reason to rush it
+   into an unrelated diff.
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is

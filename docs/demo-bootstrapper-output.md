@@ -190,7 +190,7 @@ with no list actually above it on their screen. See Finding 2.
 
 ---
 
-## Scenario 3: Tier A + hidden-import auto-recovery skip guard -- PENDING real CI confirmation
+## Scenario 3: Tier A + hidden-import auto-recovery skip guard -- CONFIRMED (real run, log not dumped)
 
 **What's tested:** `self.exe.tiera.hidden_skip` (`tests/selfapps_nuitka_tiera_hidden_skip.ps1`, uv
 lane, non-gating). Forces Tier A to trigger and succeed for real, then has the stub app fabricate
@@ -198,55 +198,111 @@ a `ModuleNotFoundError: No module named 'nuitka'` on stderr and exit 1 -- delibe
 constructing the exact signature that used to (before this fix) trigger an incorrect PyInstaller
 rebuild attempt against a Nuitka-built EXE.
 
-**Source:** pushed as commit `933bd81` (folded into `c84b20e`); CI run `29828596006` was still
-`in_progress` at the time this doc was first written. **The lines below are the literal strings
-from `run_setup.bat`'s source as of this commit -- NOT yet confirmed against a completed CI run.**
-Replace this block with a real log excerpt once that run finishes.
+**Source:** commit `933bd81` (folded into `c84b20e`); confirmed in real CI run `29829724937`, uv
+lane, job `88632292427`. Real, verbatim NDJSON row from that job's log:
+```
+{"id":"self.exe.tiera.hidden_skip","req":"REQ-AV","details":{"log":"~nuitka_tiera_hidden_skip_bootstrap.log","exeExists":true,"successLogged":true,"smokerunNonzeroLogged":true,"skipGuardLogged":true,"attemptLogged":true,"bootstrapExit":0,"statusState":"ok","appStdoutFound":true,"noRepairRebuild":true},"lane":"uv","pass":true,"desc":"AV-Safe Build Path Tier A: hidden-import auto-recovery correctly skips (never rebuilds via PyInstaller) against a Nuitka-built EXE"}
+```
+**Caveat on this section's sourcing:** because this scenario PASSED, the test script (matching
+this suite's established pattern) never dumps the full bootstrap log to the CI console -- only a
+failing scenario's log gets echoed for debugging (see Scenario 4a below, which failed on this same
+run and DOES have a full console dump). So the exact literal console text below is reconstructed
+from `run_setup.bat`'s source as of this commit, not copied from a console dump -- but
+`skipGuardLogged:true` and `noRepairRebuild:true` in the real row above are the test's own
+regex-verified confirmation that these exact strings were present (and the repair line was absent)
+in the real `~nuitka_tiera_hidden_skip_bootstrap.log` file on that run.
 
 ```
-[PENDING -- exact wording expected, sourced from run_setup.bat, not yet CI-verified]
-Tue ...  [INFO] Building standalone executable -- this may take a minute or two...
-Tue ...  [TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
-Tue ...  [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-Tue ...  [INFO] Fallback build succeeded: dist\<env>.exe was produced using the fallback build system.
-Tue ...  [INFO] EXE smokerun: testing dist\<env>.exe
-Tue ...  [WARN] EXE smokerun: exited 1 (non-zero)
-Tue ...  [INFO][HIDDEN_IMPORT] Skipping --hidden-import auto-recovery: dist\<env>.exe was built via the fallback build system (Nuitka), which uses a different missing-import mechanism than PyInstaller's --hidden-import flag.
+Tue 07/21/2026 ... [INFO] Building standalone executable -- this may take a minute or two...
+Tue 07/21/2026 ... [TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
+Tue 07/21/2026 ... [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
+Tue 07/21/2026 ... [INFO] Fallback build succeeded: dist\<env>.exe was produced using the fallback build system.
+Tue 07/21/2026 ... [INFO] EXE smokerun: testing dist\<env>.exe
+Tue 07/21/2026 ... [WARN] EXE smokerun: exited 1 (non-zero)
+Tue 07/21/2026 ... [INFO][HIDDEN_IMPORT] Skipping --hidden-import auto-recovery: dist\<env>.exe was built via the fallback build system (Nuitka), which uses a different missing-import mechanism than PyInstaller's --hidden-import flag.
 ```
 
-**What this proves once confirmed:** the OLD behavior (before this session's fix) would have
+**What this proves, now confirmed:** the OLD behavior (before this session's fix) would have
 printed `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=nuitka; rebuilding EXE (iter 1/3)` at this
-point and attempted a PyInstaller rebuild against a Nuitka-built EXE. The test's whole point is
-asserting that line never appears and the skip line does instead.
+point and attempted a PyInstaller rebuild against a Nuitka-built EXE. The real CI row's
+`noRepairRebuild:true` confirms that line never appeared and the skip guard fired instead.
 
 ---
 
-## Scenario 4: Requirement 9 -- elective "want an optimized build too?" offer -- PENDING real CI confirmation
+## Scenario 4: Requirement 9 -- elective "want an optimized build too?" offer -- 4a CONFIRMED, 4b/4c still pending
 
 **What's tested:** `self.optbuild.offer` (`tests/selfapps_optimized_build.ps1`, uv lane,
 non-gating), three scenarios sharing one row id.
 
-**Source:** pushed as commit `c84b20e`; CI run `29828596006` was still `in_progress` at the time
-this doc was first written. **All three blocks below are literal strings from `run_setup.bat`'s
-source, NOT yet confirmed against a completed CI run.**
+**Source:** commit `c84b20e`; CI run `29829724937`, uv lane, job `88632292427`. **Important
+finding from this run, not just a status update:** only the `accept` scenario's CI step actually
+executed. It failed (see below -- a genuine test-script bug, not a `run_setup.bat` bug), and
+because no step in this job uses `if: always()`, every subsequent step -- including the
+`forcefail` and `decline` scenario steps -- was silently skipped entirely. This is the same,
+already-documented gap tracked as `CLAUDE.md` Active Backlog item 7 ("CI job steps in
+`batch-check.yml` don't use `if: always()`..."), now observed for a second real time. So 4b/4c
+below remain genuinely unconfirmed -- not because the run hasn't finished, but because those
+steps never ran at all this time. They'll get filled in on a future clean run.
 
-### 4a. `accept` -- user says yes, a real optimized build succeeds and is swapped in [PENDING]
+### 4a. `accept` -- user says yes, a real optimized build succeeds and is swapped in -- CONFIRMED
+
+This is a real, verbatim console dump from job `88632292427`
+(`~selftest_optbuild_accept\~optbuild_accept_bootstrap.log`), reproduced exactly (only the
+mid-run `[INFO]`/route-finding lines between "Entry selected" and "Building standalone
+executable" are omitted with `...` for brevity -- nothing altered):
 
 ```
+Tue 07/21/2026 12:46:19.52 [INFO] Building standalone executable -- this may take a minute or two...
+The system cannot find the drive specified.
+The system cannot find the drive specified.
+Tue 07/21/2026 12:46:27.09 [INFO] PyInstaller produced dist\_selftest_optbuild_accept.exe
+Tue 07/21/2026 12:46:27.10 [INFO] warnfix: Platform-specific modules in the list above are expected on Windows: posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external. These will be filtered out automatically.
+Tue 07/21/2026 12:46:27.37 [INFO] PyInstaller build artifacts cleaned up.
+Tue 07/21/2026 12:46:27.37 [INFO] EXE smokerun: testing dist\_selftest_optbuild_accept.exe
+Tue 07/21/2026 12:46:27.38 [INFO] Running entry script smoke test via packaged EXE.
+Tue 07/21/2026 12:46:27.39 [WARN] Verifying the built standalone EXE (PyInstaller) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost.
+Tue 07/21/2026 12:46:28.68 [INFO] EXE smokerun: exited 0 (ok)
+Tue 07/21/2026 12:46:28.68 [INFO] Entry smoke exit=0
+Tue 07/21/2026 12:46:28.69 [STATUS] Run Status: SUCCESS (Exit Code: 0)
+
+*** Verification finished -- see the Run Status above. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+Tue 07/21/2026 12:46:28.71 [INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
+
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. ***
-  Build the optimized version now? [Y/N]
-[INFO] Optimized build: accepted; building now (this may take a minute or two).
-[INFO] Optimized build succeeded and verified: dist\<env>.exe now uses the fallback build system.
+Tue 07/21/2026 12:46:28.72 [INFO] Optimized build: accepted; building now (this may take a minute or two).
+Tue 07/21/2026 12:46:48.88 [INFO] Optimized build succeeded and verified: dist\_selftest_optbuild_accept.exe now uses the fallback build system.
 ```
 
-### 4b. `forcefail` -- accepted, but the build fails; original EXE is left untouched [PENDING]
+**Note on the `Y/N` prompt text and CI's echo-only behavior:** the interactive `  Build the
+optimized version now? [Y/N]` line is echoed unconditionally by design (same pattern as
+`:run_postexec_checkpoint` -- see `docs/agent-interconnect.md`), but it did not appear literally
+in this particular captured log; only the accept/decline resolution lines did. This is consistent
+with the rest of this file's captures (CI answers via `HP_TEST_OPTBUILD_ANSWER`, not `set /p`) --
+worth a closer look in a future pass to confirm the prompt text itself does reach the console on a
+real interactive run, not just its resolution.
+
+**Real bug this run surfaced, not in `run_setup.bat` -- in the test script itself:** the NDJSON
+row for this scenario read `"pass":false` with `"appStillRuns":false`, despite every other field
+(`successLogged`, `acceptedLogged`, `tmpExeGone`, `exeExists`) being `true` and the log above
+plainly showing the optimized build succeeded, verified, and swapped in correctly.
+Root cause: `tests/selfapps_optimized_build.ps1` re-executed the swapped-in EXE via PowerShell's
+`& "$envName.exe"` (a bare relative filename) from inside the `dist\` directory --
+but unlike `cmd.exe`, PowerShell's `&` operator does not implicitly search the current directory
+for an executable without a `.\` prefix or a PATH entry, so the call threw and was silently
+swallowed by the surrounding `catch { $appStillRuns = $false }`. Fixed (this session, not yet
+re-verified in CI) by switching to `cmd /c "` + backtick-escaped-quote + `$envName.exe` + ..." +
+`"` (i.e. `cmd /c "\"$envName.exe\""`), matching the established pattern already used in
+`tests/selfapps_collect.ps1`. `run_setup.bat`'s own behavior was correct throughout -- this was a
+test-authoring bug, not a product bug.
+
+### 4b. `forcefail` -- accepted, but the build fails; original EXE is left untouched [PENDING -- step never ran this CI run, see above]
 
 ```
 *** Your app is ready. ***
 *** Want to build an optimized version too? ... ***
-  Build the optimized version now? [Y/N]
 [INFO] Optimized build: accepted; building now (this may take a minute or two).
 [TEST] HP_TEST_FORCE_OPTBUILD_FAIL: simulating optimized-build failure.
 ```
@@ -256,7 +312,7 @@ returns silently after the forced-fail log line. Worth checking once real CI con
 that silence reads as "did nothing happen?" to a real user, versus the more explicit "your app is
 still ready to use as-is" wording used on the REAL failure branches below it.)
 
-### 4c. `decline` -- default/CI path, prompt shown but nothing built [PENDING]
+### 4c. `decline` -- default/CI path, prompt shown but nothing built [PENDING -- step never ran this CI run, see above]
 
 ```
 *** Your app is ready. ***
@@ -264,7 +320,7 @@ still ready to use as-is" wording used on the REAL failure branches below it.)
 [INFO] Optimized build: declined.
 ```
 
-### Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths) [PENDING]
+### Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths) [PENDING -- no real build failure observed yet in either scenario]
 
 ```
 [WARN] Optimized build did not complete; your app is still ready to use as-is.
@@ -303,6 +359,25 @@ no doc/code registry mismatches found.` Confirms `self.exe.tiera.hidden_skip` an
 `self.optbuild.offer` are both correctly documented in `docs/agent-ndjson.md` and correctly
 discovered by the scanner's PowerShell-source scan -- no silent registry drift introduced by this
 session's additions.
+
+**2026-07-21, first real CI run (`29829724937`) -- hidden-import skip guard fully confirmed;
+requirement 9's `accept` scenario failed on a test-script bug, `forcefail`/`decline` never ran.**
+See Scenario 3 and Scenario 4 above for the confirmed quotes and full detail. Two things worth
+calling out here specifically since they're about the demo-doc process itself, not the feature:
+- The `accept` scenario's failure was in `tests/selfapps_optimized_build.ps1`, not in
+  `run_setup.bat` -- a PowerShell `&`-operator-vs-bare-relative-filename resolution difference
+  from `cmd.exe` (see Scenario 4a for the full explanation). Fixed locally (`cmd /c` instead of
+  `&`, matching `selfapps_collect.ps1`'s established pattern); full local sanity sweep re-run
+  clean (`compileall`, `pyflakes`, PS AST parse, `pytest` all pass); not yet re-verified in CI as
+  of this doc update.
+- Because `accept` failed and no step in the uv-lane job uses `if: always()`, the `forcefail` and
+  `decline` CI steps never executed at all -- not "pending," genuinely skipped. This is a second,
+  independent real-world instance of the exact gap `CLAUDE.md`'s Active Backlog item 7 already
+  documents (first observed while landing PR #368). Not fixed here, consistent with that item's
+  own stated reasoning (the real fix touches ~50 existing step definitions and deserves its own
+  reviewed pass, not a drive-by fix bundled into unrelated feature work) -- but it's now been
+  observed twice in real CI, which is worth noting as it strengthens the case for eventually
+  doing that hardening pass.
 
 ---
 

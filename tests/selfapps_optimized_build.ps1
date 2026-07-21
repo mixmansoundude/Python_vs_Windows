@@ -128,12 +128,17 @@ try {
         $acceptedLogged = $combined -match [regex]::Escape('Optimized build: accepted')
         $successLogged  = $combined -match [regex]::Escape('Optimized build succeeded and verified')
 
+        # Use cmd /c with the exe's full path rather than PowerShell's & operator against a
+        # bare relative filename -- unlike cmd.exe, PowerShell does not implicitly search the
+        # current directory for executables (no ".\" prefix / no PATH entry means "term not
+        # recognized"), which silently threw into the catch block below on the first CI attempt
+        # of this test. Matches the established pattern in selfapps_collect.ps1.
         $appStillRuns = $false
         if ($exeExists) {
             try {
                 Push-Location (Join-Path $workDir 'dist')
                 try {
-                    $out = & "$envName.exe" 2>&1
+                    $out = cmd /c "`"$envName.exe`"" 2>&1
                     $appStillRuns = ($LASTEXITCODE -eq 0) -and ($out -join "`n") -match [regex]::Escape('optbuild-app-ok')
                 } finally { Pop-Location }
             } catch { $appStillRuns = $false }
@@ -156,12 +161,13 @@ try {
         $testHookFired  = $combined -match [regex]::Escape('HP_TEST_FORCE_OPTBUILD_FAIL')
         $noSuccessMsg   = -not ($combined -match [regex]::Escape('Optimized build succeeded and verified'))
 
+        # Same cmd /c fix as the accept scenario above -- see that block's comment.
         $originalStillRuns = $false
         if ($exeExists) {
             try {
                 Push-Location (Join-Path $workDir 'dist')
                 try {
-                    $out = & "$envName.exe" 2>&1
+                    $out = cmd /c "`"$envName.exe`"" 2>&1
                     $originalStillRuns = ($LASTEXITCODE -eq 0) -and ($out -join "`n") -match [regex]::Escape('optbuild-app-ok')
                 } finally { Pop-Location }
             } catch { $originalStillRuns = $false }
