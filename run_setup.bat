@@ -323,6 +323,15 @@ rem HP_TEST_CHECKPOINT_ANSWER=Y|N: bypasses the REQ-018 post-execution checkpoin
 rem testing (mirrors HP_TEST_SYSBUILD_ANSWER/HP_TEST_SYSCON_ANSWER). Checked before HP_CI_LANE so
 rem an explicit Y reaches the accept branch even in CI.
 set "HP_TEST_CHECKPOINT_ANSWER=%HP_TEST_CHECKPOINT_ANSWER%"
+rem HP_TEST_OPTBUILD_ANSWER=Y|N: bypasses the AV-Safe Build Path requirement 9 "want an
+rem optimized build too?" prompt for CI testing (mirrors HP_TEST_CHECKPOINT_ANSWER). Checked
+rem before HP_CI_LANE so an explicit Y reaches the accept branch even in CI.
+set "HP_TEST_OPTBUILD_ANSWER=%HP_TEST_OPTBUILD_ANSWER%"
+rem HP_TEST_FORCE_OPTBUILD_FAIL=1: CI-only; forces the requirement-9 optimized build to fail
+rem deterministically (without attempting a real Nuitka build), so the "original EXE left
+rem completely untouched on failure" guarantee can be tested without depending on a real,
+rem environment-dependent Nuitka build outcome. Mirrors HP_TEST_FORCE_NUITKA_FAIL.
+set "HP_TEST_FORCE_OPTBUILD_FAIL=%HP_TEST_FORCE_OPTBUILD_FAIL%"
 rem HP_SKIP_PEP723_WRITEBACK=1: REQ-005.11/[REQ-019] opt-out -- skip the PEP 723 header
 rem write-back (uv add --script) that otherwise runs after a fresh dependency install or a
 rem successful warnfix repair in uv mode. Suppression-only, per [REQ-019]: absence never
@@ -2793,6 +2802,111 @@ set "HP_CHECKPOINT_SITE="
 set "HP_CHECKPOINT_RAW="
 set "HP_CHECKPOINT_CHOICE="
 exit /b 0
+:offer_optimized_build
+rem AV-Safe Build Path requirement 9 (P1, docs/prd-av-safe-build-path.md): after a NORMAL,
+rem verified-successful PyInstaller build (never after Tier A, which already produced a Nuitka
+rem EXE -- see the HP_NUITKA_FALLBACK_USED guard below), offer an ELECTIVE, human-only,
+rem auto-declined-in-CI upsell: build a second, Nuitka-optimized version and swap it into place
+rem ONLY if it is confirmed to build AND run successfully. On any failure at any stage, the
+rem original (already-verified) EXE is left completely untouched and the user is told their app
+rem is still ready to use as-is -- this is a strictly safer sequence than Tier A's (which is
+rem free to delete-then-rebuild because the original PyInstaller build already failed there).
+rem
+rem Mirrors :run_postexec_checkpoint's exact CI-safe consent-gate pattern one call site above
+rem (auto-decline on HP_CI_LANE/NOINPUT/HP_NONINTERACTIVE, since like the checkpoint this fires
+rem on essentially every successful bootstrap run) -- see that subroutine's own header comment
+rem for why this broader 4-way auto-decline set is used here instead of the narrower 3-branch
+rem gates elsewhere in this file (:system_build_consent_gate etc.).
+if defined HP_NUITKA_FALLBACK_USED exit /b 0
+if not "%HP_EXE_EXIT%"=="0" exit /b 0
+echo.
+echo *** Your app is ready. ***
+echo *** Want to build an optimized version too? It takes a bit longer to build right now, ***
+echo *** but it starts up more reliably on Windows and runs faster once it is built. ***
+set "HP_OPTBUILD_RAW="
+if defined HP_TEST_OPTBUILD_ANSWER (
+  set "HP_OPTBUILD_RAW=%HP_TEST_OPTBUILD_ANSWER%"
+) else if defined HP_CI_LANE (
+  set "HP_OPTBUILD_RAW=n"
+) else if defined NOINPUT (
+  set "HP_OPTBUILD_RAW=n"
+) else if defined HP_NONINTERACTIVE (
+  set "HP_OPTBUILD_RAW=n"
+) else (
+  set /p "HP_OPTBUILD_RAW=  Build the optimized version now? [Y/N] "
+)
+set "HP_OPTBUILD_CHOICE=%HP_OPTBUILD_RAW:~0,1%"
+if /I not "%HP_OPTBUILD_CHOICE%"=="Y" (
+  call :log "[INFO] Optimized build: declined."
+  set "HP_OPTBUILD_RAW="
+  set "HP_OPTBUILD_CHOICE="
+  exit /b 0
+)
+set "HP_OPTBUILD_RAW="
+set "HP_OPTBUILD_CHOICE="
+call :log "[INFO] Optimized build: accepted; building now (this may take a minute or two)."
+rem Build to a distinct temp filename first -- the already-working dist\%ENVNAME%.exe is never
+rem touched until a build AND a verification run both succeed. HP_OPTBUILD_TMP is set before
+rem the test-hook check below so :optbuild_cleanup can always reference it safely, including in
+rem the forced-fail case where it names a file that was never created (a no-op exist check).
+set "HP_OPTBUILD_TMP=%ENVNAME%.optimized_build.exe"
+if exist "dist\%HP_OPTBUILD_TMP%" del "dist\%HP_OPTBUILD_TMP%" >nul 2>&1
+if defined HP_TEST_FORCE_OPTBUILD_FAIL (
+  call :log "[TEST] HP_TEST_FORCE_OPTBUILD_FAIL: simulating optimized-build failure."
+  goto :optbuild_cleanup
+)
+if "%HP_ENV_MODE%"=="uv" (
+  "%HP_UV_EXE%" pip install --python "%HP_PY%" -q nuitka >> "%LOG%" 2>&1
+) else (
+  "%HP_PY%" -m pip install -q nuitka >> "%LOG%" 2>&1
+)
+if errorlevel 1 (
+  call :log "[WARN] Optimized build: could not install the build tool; your app is still ready to use as-is."
+  goto :optbuild_cleanup
+)
+rem Same --assume-yes-for-downloads rationale as :try_nuitka_tier_a: Nuitka must never prompt
+rem interactively here.
+"%HP_PY%" -m nuitka --onefile --assume-yes-for-downloads --remove-output --output-dir=dist -o "%HP_OPTBUILD_TMP%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "[WARN] Optimized build did not complete; your app is still ready to use as-is."
+  call :log "[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help."
+  goto :optbuild_cleanup
+)
+if not exist "dist\%HP_OPTBUILD_TMP%" (
+  call :log "[WARN] Optimized build finished but did not produce output; your app is still ready to use as-is."
+  goto :optbuild_cleanup
+)
+rem Verify the new build actually runs before touching the already-working original. Same
+rem 30s-cap / Kill()-on-timeout pattern as :run_exe_smokerun -- this is a genuine internal
+rem verification run (not the user's own session), so the same allowed-to-kill reasoning
+rem applies (see HP_FAILFAST_PROBE_MS's header comment on the two classes of run in this file).
+set "HP_OPTBUILD_VERIFY_EXIT=-1"
+pushd dist
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%HP_OPTBUILD_TMP%';$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};$so.Result|Out-Null;$se.Result|Out-Null;if($done){$p.ExitCode}else{-1}"`) do set "HP_OPTBUILD_VERIFY_EXIT=%%X"
+popd
+if not defined HP_OPTBUILD_VERIFY_EXIT set "HP_OPTBUILD_VERIFY_EXIT=-1"
+if not "%HP_OPTBUILD_VERIFY_EXIT%"=="0" (
+  call :log "[WARN] Optimized build verification did not pass (exit %HP_OPTBUILD_VERIFY_EXIT%); your app is still ready to use as-is."
+  goto :optbuild_cleanup
+)
+rem Verified good: swap it into place. A same-drive move is a fast rename on NTFS; /y overwrites
+rem the existing (already-verified) dist\%ENVNAME%.exe.
+move /y "dist\%HP_OPTBUILD_TMP%" "dist\%ENVNAME%.exe" >nul 2>&1
+if not exist "dist\%ENVNAME%.exe" (
+  call :log "[WARN] Optimized build verified successfully but could not be swapped into place; rebuilding is recommended."
+  set "HP_OPTBUILD_TMP="
+  set "HP_OPTBUILD_VERIFY_EXIT="
+  exit /b 0
+)
+set "HP_NUITKA_FALLBACK_USED=1"
+call :log "[INFO] Optimized build succeeded and verified: dist\%ENVNAME%.exe now uses the fallback build system."
+set "HP_OPTBUILD_TMP="
+set "HP_OPTBUILD_VERIFY_EXIT="
+exit /b 0
+:optbuild_cleanup
+if exist "dist\%HP_OPTBUILD_TMP%" del "dist\%HP_OPTBUILD_TMP%" >nul 2>&1
+set "HP_OPTBUILD_TMP="
+exit /b 0
 :try_fast_exe
 set "HP_FASTPATH_USED="
 set "HP_FAST_EXE="
@@ -3436,6 +3550,18 @@ rem helper's already-tried list plus the iter cap guarantee the loop cannot run 
 rem Sets HP_EXE_EXIT to the final EXE exit so the caller re-checks success. goto-based
 rem (not a parenthesized block) so each %VAR% reads its runtime value, not a parse-time one.
 if not exist "dist\%ENVNAME%.exe" exit /b 0
+rem AV-Safe Build Path (requirement 4 follow-up): this loop's ONLY repair mechanism is a
+rem PyInstaller rebuild with --hidden-import flags -- a PyInstaller-specific mechanism that
+rem does not apply to a Nuitka-produced EXE. If dist\%ENVNAME%.exe was built via Tier A
+rem (:try_nuitka_tier_a, HP_NUITKA_FALLBACK_USED=1), skip entirely rather than silently
+rem rebuilding via PyInstaller here -- that would risk reproducing the very failure Tier A
+rem exists to route around, or clobbering a working Nuitka build with a broken PyInstaller
+rem one. Nuitka has its own, different missing-import mechanism (--include-module /
+rem --follow-import-to); wiring that up is out of scope for this fix.
+if defined HP_NUITKA_FALLBACK_USED (
+  call :log "[INFO][HIDDEN_IMPORT] Skipping --hidden-import auto-recovery: dist\%ENVNAME%.exe was built via the fallback build system (Nuitka), which uses a different missing-import mechanism than PyInstaller's --hidden-import flag."
+  exit /b 0
+)
 set "HP_PYI_HIDDEN_IMPORTS="
 set "HP_HIDDEN_ITER=0"
 set "HP_HIDDEN_TRIED="
@@ -3569,6 +3695,10 @@ if defined HP_NDJSON (
     "Add-Content -Path '%HP_NDJSON%' -Value $r -Encoding ASCII" >> "%LOG%" 2>&1
 )
 call :run_postexec_checkpoint exe
+rem AV-Safe Build Path requirement 9 (P1): offer an elective optimized build right after the
+rem verification telemetry above, while %HP_EXE_EXIT% still holds this run's real outcome (the
+rem next line clears it). See :offer_optimized_build's own header comment for the full gating.
+call :offer_optimized_build
 set "HP_EXE_EXIT="
 exit /b 0
 :exe_smokerun_hints
@@ -3911,10 +4041,12 @@ rem non-interactive double-click user; the Prime Directive tolerates zero prompt
 "%HP_PY%" -m nuitka --onefile --assume-yes-for-downloads --remove-output --output-dir=dist -o "%ENVNAME%.exe" "%HP_ENTRY%" >> "%LOG%" 2>&1
 if errorlevel 1 (
   call :log "[WARN] Fallback build did not complete successfully."
+  call :log "[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this fallback should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help this fallback succeed."
   exit /b 1
 )
 if not exist "dist\%ENVNAME%.exe" (
   call :log "[WARN] Fallback build finished but did not produce dist\%ENVNAME%.exe."
+  call :log "[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this fallback should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help this fallback succeed."
   exit /b 1
 )
 call :log "[INFO] Fallback build succeeded: dist\%ENVNAME%.exe was produced using the fallback build system."

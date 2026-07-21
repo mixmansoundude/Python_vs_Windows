@@ -546,6 +546,46 @@ jobs:
         run: |
           & tests\selfapps_nuitka_tiera.ps1
 
+      # Regression test for a real bug found via a refinement pass on the shipped Tier A code:
+      # the --hidden-import auto-recovery loop unconditionally rebuilt via PyInstaller on a
+      # recoverable missing-import failure, with no check for whether the current EXE was
+      # actually built by Nuitka (Tier A). Same non-gating reasoning as the sibling step above
+      # (depends on a real Nuitka build succeeding).
+      - name: "Self-test: Tier A / hidden-import-recovery skip guard (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_nuitka_tiera_hidden_skip.ps1
+
+      # AV-Safe Build Path requirement 9 (P1): the elective "want an optimized build too?"
+      # upsell after a normal successful PyInstaller build. Three scenarios in one file/lane
+      # (uv, non-gating) -- 'accept' depends on a real Nuitka build succeeding (same reasoning
+      # as the Tier A steps above); 'forcefail'/'decline' are deterministic but kept in the same
+      # lane for consistency with the shared NDJSON row id.
+      - name: "Self-test: optimized-build offer, accept (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        shell: pwsh
+        env:
+          OPTBUILD_SCENARIO: accept
+        run: |
+          & tests\selfapps_optimized_build.ps1
+
+      - name: "Self-test: optimized-build offer, forced failure leaves original untouched (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        shell: pwsh
+        env:
+          OPTBUILD_SCENARIO: forcefail
+        run: |
+          & tests\selfapps_optimized_build.ps1
+
+      - name: "Self-test: optimized-build offer, decline (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        shell: pwsh
+        env:
+          OPTBUILD_SCENARIO: decline
+        run: |
+          & tests\selfapps_optimized_build.ps1
+
       - name: "Self-test: EXE smokerun XFAIL bad import (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh
