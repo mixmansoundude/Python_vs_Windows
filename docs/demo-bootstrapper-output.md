@@ -229,20 +229,29 @@ point and attempted a PyInstaller rebuild against a Nuitka-built EXE. The real C
 
 ---
 
-## Scenario 4: Requirement 9 -- elective "want an optimized build too?" offer -- 4a CONFIRMED, 4b/4c still pending
+## Scenario 4: Requirement 9 -- elective "want an optimized build too?" offer -- ALL THREE CONFIRMED
 
 **What's tested:** `self.optbuild.offer` (`tests/selfapps_optimized_build.ps1`, uv lane,
 non-gating), three scenarios sharing one row id.
 
-**Source:** commit `c84b20e`; CI run `29829724937`, uv lane, job `88632292427`. **Important
-finding from this run, not just a status update:** only the `accept` scenario's CI step actually
-executed. It failed (see below -- a genuine test-script bug, not a `run_setup.bat` bug), and
-because no step in this job uses `if: always()`, every subsequent step -- including the
-`forcefail` and `decline` scenario steps -- was silently skipped entirely. This is the same,
-already-documented gap tracked as `CLAUDE.md` Active Backlog item 7 ("CI job steps in
-`batch-check.yml` don't use `if: always()`..."), now observed for a second real time. So 4b/4c
-below remain genuinely unconfirmed -- not because the run hasn't finished, but because those
-steps never ran at all this time. They'll get filled in on a future clean run.
+**Source, first attempt:** commit `c84b20e`; CI run `29829724937`, uv lane, job `88632292427`.
+Only the `accept` scenario's CI step actually executed that time -- it failed on a genuine
+test-script bug (a PowerShell `&`-operator-vs-bare-relative-filename issue, not a
+`run_setup.bat` bug; see the "Real bug this run surfaced" callout under 4a below), and because
+no step in that job used `if: always()`, the subsequent `forcefail`/`decline` steps were
+silently skipped entirely -- the same, already-documented gap tracked as `CLAUDE.md` Active
+Backlog item 7, observed for a second real time.
+
+**Source, fix + re-run:** the test-script bug was fixed (switched to `cmd /c` with the exe's
+full path, matching `selfapps_collect.ps1`'s established pattern) and pushed as commit `e7af66f`.
+CI run `29836090112`, uv lane, job `88652684374` -- **all three scenarios now ran and passed**:
+```
+{"pass":true,"details":{"bootstrapExit":0,"promptShown":true,"statusState":"ok","scenario":"accept","appStillRuns":true,"tmpExeGone":true,"successLogged":true,"log":"~optbuild_accept_bootstrap.log","exeExists":true,"acceptedLogged":true},"lane":"uv","req":"REQ-AV","desc":"AV-Safe Build Path requirement 9 (accept): a real optimized build succeeds, verifies, and is swapped into place","id":"self.optbuild.offer"}
+{"desc":"AV-Safe Build Path requirement 9 (forcefail): a failed optimized build leaves the original PyInstaller EXE completely untouched","req":"REQ-AV","id":"self.optbuild.offer","lane":"uv","details":{"exeExists":true,"testHookFired":true,"originalStillRuns":true,"log":"~optbuild_forcefail_bootstrap.log","tmpExeGone":true,"bootstrapExit":0,"noSuccessMsg":true,"promptShown":true,"statusState":"ok","scenario":"forcefail"},"pass":true}
+{"lane":"uv","req":"REQ-AV","details":{"bootstrapExit":0,"scenario":"decline","declinedLogged":true,"exeExists":true,"log":"~optbuild_decline_bootstrap.log","tmpExeGone":true,"promptShown":true,"statusState":"ok","noBuildAttempt":true},"desc":"AV-Safe Build Path requirement 9 (decline): default/CI path shows the prompt but never attempts a build","id":"self.optbuild.offer","pass":true}
+```
+Note `"appStillRuns":true` for `accept` this time (was `false` before the fix) -- direct
+confirmation the fix worked and the swapped-in optimized EXE genuinely runs correctly.
 
 ### 4a. `accept` -- user says yes, a real optimized build succeeds and is swapped in -- CONFIRMED
 
@@ -284,43 +293,73 @@ with the rest of this file's captures (CI answers via `HP_TEST_OPTBUILD_ANSWER`,
 worth a closer look in a future pass to confirm the prompt text itself does reach the console on a
 real interactive run, not just its resolution.
 
-**Real bug this run surfaced, not in `run_setup.bat` -- in the test script itself:** the NDJSON
-row for this scenario read `"pass":false` with `"appStillRuns":false`, despite every other field
-(`successLogged`, `acceptedLogged`, `tmpExeGone`, `exeExists`) being `true` and the log above
-plainly showing the optimized build succeeded, verified, and swapped in correctly.
-Root cause: `tests/selfapps_optimized_build.ps1` re-executed the swapped-in EXE via PowerShell's
-`& "$envName.exe"` (a bare relative filename) from inside the `dist\` directory --
-but unlike `cmd.exe`, PowerShell's `&` operator does not implicitly search the current directory
-for an executable without a `.\` prefix or a PATH entry, so the call threw and was silently
-swallowed by the surrounding `catch { $appStillRuns = $false }`. Fixed (this session, not yet
-re-verified in CI) by switching to `cmd /c "` + backtick-escaped-quote + `$envName.exe` + ..." +
-`"` (i.e. `cmd /c "\"$envName.exe\""`), matching the established pattern already used in
-`tests/selfapps_collect.ps1`. `run_setup.bat`'s own behavior was correct throughout -- this was a
-test-authoring bug, not a product bug.
+**Real bug this run surfaced, not in `run_setup.bat` -- in the test script itself, now fixed and
+re-confirmed:** the first attempt's NDJSON row for this scenario read `"pass":false` with
+`"appStillRuns":false`, despite every other field (`successLogged`, `acceptedLogged`,
+`tmpExeGone`, `exeExists`) being `true` and the log above plainly showing the optimized build
+succeeded, verified, and swapped in correctly. Root cause: `tests/selfapps_optimized_build.ps1`
+re-executed the swapped-in EXE via PowerShell's `& "$envName.exe"` (a bare relative filename)
+from inside the `dist\` directory -- but unlike `cmd.exe`, PowerShell's `&` operator does not
+implicitly search the current directory for an executable without a `.\` prefix or a PATH entry,
+so the call threw and was silently swallowed by the surrounding `catch { $appStillRuns = $false
+}`. Fixed by switching to `cmd /c` with the exe's full quoted path, matching the established
+pattern already used in `tests/selfapps_collect.ps1`. `run_setup.bat`'s own behavior was correct
+throughout -- this was a test-authoring bug, not a product bug. The re-run (job `88652684374`,
+quoted above) confirms `"appStillRuns":true` now.
 
-### 4b. `forcefail` -- accepted, but the build fails; original EXE is left untouched [PENDING -- step never ran this CI run, see above]
+### 4b. `forcefail` -- accepted, but the build fails; original EXE is left untouched -- CONFIRMED
 
-```
-*** Your app is ready. ***
-*** Want to build an optimized version too? ... ***
-[INFO] Optimized build: accepted; building now (this may take a minute or two).
-[TEST] HP_TEST_FORCE_OPTBUILD_FAIL: simulating optimized-build failure.
-```
-
-(No further message prints in this path today -- the subroutine cleans up the temp file and
-returns silently after the forced-fail log line. Worth checking once real CI confirms whether
-that silence reads as "did nothing happen?" to a real user, versus the more explicit "your app is
-still ready to use as-is" wording used on the REAL failure branches below it.)
-
-### 4c. `decline` -- default/CI path, prompt shown but nothing built [PENDING -- step never ran this CI run, see above]
+Real, verbatim console dump from job `88652684374`
+(`~selftest_optbuild_forcefail\~optbuild_forcefail_bootstrap.log`):
 
 ```
 *** Your app is ready. ***
-*** Want to build an optimized version too? ... ***
-[INFO] Optimized build: declined.
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
+Tue 07/21/2026 14:08:43.15 [INFO] Optimized build: accepted; building now (this may take a minute or two).
+Tue 07/21/2026 14:08:43.16 [TEST] HP_TEST_FORCE_OPTBUILD_FAIL: simulating optimized-build failure.
+Tue 07/21/2026 14:08:43.23 [INFO] REQ-016: Post-flight briefing printed.
 ```
 
-### Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths) [PENDING -- no real build failure observed yet in either scenario]
+Confirms what the earlier PENDING note predicted: no further message prints between the forced-
+fail log line and the (unrelated, always-present) post-flight briefing -- the subroutine cleans
+up the temp file and returns silently. `originalStillRuns:true` and `tmpExeGone:true` in the
+NDJSON row confirm the original PyInstaller-built EXE was genuinely left untouched and still
+runs. **Worth a second look**: this silence reads as "did nothing happen?" to a real user,
+versus the more explicit "your app is still ready to use as-is" wording used on the REAL
+build-failure branches (see the reactive hint below) -- a forced-test-hook failure and a genuine
+build failure currently produce different amounts of user-facing reassurance for what is, from
+the user's perspective, the same outcome (declined optimized build, original app still works).
+
+### 4c. `decline` -- default/CI path, prompt shown but nothing built -- CONFIRMED
+
+Real, verbatim console dump from job `88652684374`
+(`~selftest_optbuild_decline\~optbuild_decline_bootstrap.log`):
+
+```
+*** Your app is ready. ***
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
+Tue 07/21/2026 14:09:06.52 [INFO] Optimized build: declined.
+```
+
+**Open question now answered, across all three scenarios:** the interactive `  Build the
+optimized version now? [Y/N]` prompt line does NOT appear literally in any of the three real
+captured logs (accept/forcefail/decline) -- only the accept/decline/forced-fail resolution lines
+do. This is because CI answers via the `HP_TEST_OPTBUILD_ANSWER` env-var override, not the
+interactive `set /p` path, so the prompt text itself is never actually echoed to the CI console
+in any of these captures. Confirming the prompt text reaches a real user's screen on a genuine
+interactive run remains unverified by CI (expected -- CI is non-interactive by design); this is
+consistent with how `:run_postexec_checkpoint`'s own prompt is documented elsewhere in this repo.
+
+### Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths) -- still not observed in any real CI run
+
+Confirmed via source (`run_setup.bat`'s `:offer_optimized_build`) that this hint is deliberately
+NOT printed on the `forcefail` scenario above -- `HP_TEST_FORCE_OPTBUILD_FAIL`'s branch jumps
+straight to `:optbuild_cleanup`, bypassing the hint entirely, since that path simulates a test
+hook rather than a genuine Nuitka build failure. No CI run to date (Tier A's real-Nuitka-build
+tests and requirement 9's tests alike) has exercised a GENUINE Nuitka compiler failure, so this
+block remains sourced from `run_setup.bat` rather than a real log capture:
 
 ```
 [WARN] Optimized build did not complete; your app is still ready to use as-is.
@@ -366,18 +405,25 @@ See Scenario 3 and Scenario 4 above for the confirmed quotes and full detail. Tw
 calling out here specifically since they're about the demo-doc process itself, not the feature:
 - The `accept` scenario's failure was in `tests/selfapps_optimized_build.ps1`, not in
   `run_setup.bat` -- a PowerShell `&`-operator-vs-bare-relative-filename resolution difference
-  from `cmd.exe` (see Scenario 4a for the full explanation). Fixed locally (`cmd /c` instead of
-  `&`, matching `selfapps_collect.ps1`'s established pattern); full local sanity sweep re-run
-  clean (`compileall`, `pyflakes`, PS AST parse, `pytest` all pass); not yet re-verified in CI as
-  of this doc update.
+  from `cmd.exe` (see Scenario 4a for the full explanation). Fixed (`cmd /c` instead of `&`,
+  matching `selfapps_collect.ps1`'s established pattern), pushed as commit `e7af66f`, and
+  re-confirmed green in CI run `29836090112`/job `88652684374` -- see the updated Scenario 4
+  above for the real re-run quotes.
 - Because `accept` failed and no step in the uv-lane job uses `if: always()`, the `forcefail` and
-  `decline` CI steps never executed at all -- not "pending," genuinely skipped. This is a second,
-  independent real-world instance of the exact gap `CLAUDE.md`'s Active Backlog item 7 already
-  documents (first observed while landing PR #368). Not fixed here, consistent with that item's
-  own stated reasoning (the real fix touches ~50 existing step definitions and deserves its own
-  reviewed pass, not a drive-by fix bundled into unrelated feature work) -- but it's now been
-  observed twice in real CI, which is worth noting as it strengthens the case for eventually
-  doing that hardening pass.
+  `decline` CI steps never executed on the first attempt -- not "pending," genuinely skipped.
+  This is a second, independent real-world instance of the exact gap `CLAUDE.md`'s Active
+  Backlog item 7 already documents (first observed while landing PR #368). Not fixed here,
+  consistent with that item's own stated reasoning (the real fix touches ~50 existing step
+  definitions and deserves its own reviewed pass, not a drive-by fix bundled into unrelated
+  feature work) -- but it's now been observed twice in real CI, which is worth noting as it
+  strengthens the case for eventually doing that hardening pass. Once `accept` was fixed, both
+  `forcefail` and `decline` ran normally on the re-run and passed.
+
+**2026-07-21, second CI run (`29836090112`) -- all remaining scenarios confirmed.** `uv`, `real`,
+and `cache`/`uv-dl-fallback`/`contract-uv`/`contract-uv-fail`/`justme-test` lanes all green;
+`conda-full` (the ~80-minute lane) was still running as of this doc update but this commit never
+touched anything conda-full-specific, so no regression is expected there. All Scenario 3/4
+PENDING blocks are now filled in with real quotes.
 
 ---
 
