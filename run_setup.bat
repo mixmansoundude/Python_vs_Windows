@@ -332,6 +332,14 @@ rem deterministically (without attempting a real Nuitka build), so the "original
 rem completely untouched on failure" guarantee can be tested without depending on a real,
 rem environment-dependent Nuitka build outcome. Mirrors HP_TEST_FORCE_NUITKA_FAIL.
 set "HP_TEST_FORCE_OPTBUILD_FAIL=%HP_TEST_FORCE_OPTBUILD_FAIL%"
+rem HP_TEST_FORCE_OPTBUILD_SWAP_FAIL=1: CI-only; forces the requirement-9 post-verification
+rem swap (move /y the verified temp EXE into place) to fail deterministically, by skipping the
+rem real move and leaving the temp file in place -- reproducing the exact "source still exists
+rem after move" signature a genuine failed swap (e.g. an AV/indexer lock on the destination)
+rem would leave, without depending on an artificial OS-level file lock. Proves the original EXE
+rem is left untouched and HP_NUITKA_FALLBACK_USED is never set when the swap itself fails, even
+rem though the build and verification both succeeded.
+set "HP_TEST_FORCE_OPTBUILD_SWAP_FAIL=%HP_TEST_FORCE_OPTBUILD_SWAP_FAIL%"
 rem HP_SKIP_PEP723_WRITEBACK=1: REQ-005.11/[REQ-019] opt-out -- skip the PEP 723 header
 rem write-back (uv add --script) that otherwise runs after a fresh dependency install or a
 rem successful warnfix repair in uv mode. Suppression-only, per [REQ-019]: absence never
@@ -2891,12 +2899,22 @@ if not "%HP_OPTBUILD_VERIFY_EXIT%"=="0" (
 )
 rem Verified good: swap it into place. A same-drive move is a fast rename on NTFS; /y overwrites
 rem the existing (already-verified) dist\%ENVNAME%.exe.
-move /y "dist\%HP_OPTBUILD_TMP%" "dist\%ENVNAME%.exe" >nul 2>&1
-if not exist "dist\%ENVNAME%.exe" (
-  call :log "[WARN] Optimized build verified successfully but could not be swapped into place; rebuilding is recommended."
-  set "HP_OPTBUILD_TMP="
-  set "HP_OPTBUILD_VERIFY_EXIT="
-  exit /b 0
+if defined HP_TEST_FORCE_OPTBUILD_SWAP_FAIL (
+  call :log "[TEST] HP_TEST_FORCE_OPTBUILD_SWAP_FAIL: simulating a failed swap (temp file deliberately left in place)."
+) else (
+  move /y "dist\%HP_OPTBUILD_TMP%" "dist\%ENVNAME%.exe" >nul 2>&1
+)
+rem A same-volume "move /y" onto an ALREADY-EXISTING destination is an atomic rename-replace:
+rem on success the source is consumed (gone); on failure (e.g. an AV/indexer lock on the
+rem destination -- the exact hazard class already documented for :try_embed_fallback's own
+rem rd/move swap in docs/agent-lessons-learned.md) the whole operation is rejected and the
+rem source is left untouched. Checking "does the destination exist" is NOT a valid success
+rem proxy here (unlike embed's fresh-destination case): the destination is the already-working
+rem original EXE, so it already exists before this line runs, success or failure alike. The
+rem correct check is whether the SOURCE is now gone.
+if exist "dist\%HP_OPTBUILD_TMP%" (
+  call :log "[WARN] Optimized build verified successfully but could not be swapped into place; your app is still ready to use as-is."
+  goto :optbuild_cleanup
 )
 set "HP_NUITKA_FALLBACK_USED=1"
 call :log "[INFO] Optimized build succeeded and verified: dist\%ENVNAME%.exe now uses the fallback build system."
@@ -2906,6 +2924,7 @@ exit /b 0
 :optbuild_cleanup
 if exist "dist\%HP_OPTBUILD_TMP%" del "dist\%HP_OPTBUILD_TMP%" >nul 2>&1
 set "HP_OPTBUILD_TMP="
+set "HP_OPTBUILD_VERIFY_EXIT="
 exit /b 0
 :try_fast_exe
 set "HP_FASTPATH_USED="

@@ -15,16 +15,28 @@
 #   forcefail - HP_TEST_OPTBUILD_ANSWER=Y + HP_TEST_FORCE_OPTBUILD_FAIL=1: the optimized build is
 #               forced to fail deterministically (no real Nuitka attempt). Asserts the ORIGINAL
 #               PyInstaller-built dist\<env>.exe is left completely untouched and still runs.
+#   swapfail  - HP_TEST_OPTBUILD_ANSWER=Y + HP_TEST_FORCE_OPTBUILD_SWAP_FAIL=1: a REAL Nuitka
+#               build runs and verifies successfully (same as 'accept'), but the final move-into-
+#               place step is forced to fail (temp file deliberately left in place instead of
+#               being moved). Regression test for a real bug found via refinement review: the
+#               original "did the swap succeed" check tested whether dist\<env>.exe (the
+#               destination) existed -- but that file already exists BEFORE the move (it's the
+#               already-working original), so the check could never actually detect a failed
+#               move; a failed swap was silently misreported as success. Asserts the ORIGINAL EXE
+#               is left completely untouched and still runs, the leftover temp file is cleaned up
+#               (also part of the fix -- the old failure branch never routed through the shared
+#               cleanup label), and the "succeeded and verified" message is NOT logged.
 #   decline   - No HP_TEST_OPTBUILD_ANSWER set: falls through to the ambient HP_CI_LANE
 #               auto-decline (same mechanism selfapps_postexec_checkpoint.ps1's own
 #               self.checkpoint.decline scenario relies on). Asserts the prompt is shown but no
 #               build is attempted at all.
 #
-# All three scenarios in one file/lane for simplicity, matching this repo's established pattern
+# All four scenarios in one file/lane for simplicity, matching this repo's established pattern
 # for multi-scenario tests (e.g. selfapps_pyinstaller_fail.ps1's PYI_FAIL_SCENARIO). Kept entirely
-# in the uv lane (non-gating) so the 'accept' scenario's real-Nuitka-build dependency doesn't need
-# separate lane wiring from its two deterministic siblings; promote once proven stable, matching
-# this repo's established graduation pattern (see CLAUDE.md's "CI lane gating maturity" check).
+# in the uv lane (non-gating) so the 'accept'/'swapfail' scenarios' real-Nuitka-build dependency
+# doesn't need separate lane wiring from their two fully-deterministic siblings; promote once
+# proven stable, matching this repo's established graduation pattern (see CLAUDE.md's "CI lane
+# gating maturity" check).
 #
 # Emits: self.optbuild.offer
 param()
@@ -84,12 +96,16 @@ $bootstrapLog = "~optbuild_${scenario}_bootstrap.log"
 $prevSkipPipreqs   = if (Test-Path Env:HP_SKIP_PIPREQS)             { $env:HP_SKIP_PIPREQS }             else { $null }
 $prevOptAnswer     = if (Test-Path Env:HP_TEST_OPTBUILD_ANSWER)     { $env:HP_TEST_OPTBUILD_ANSWER }     else { $null }
 $prevForceOptFail  = if (Test-Path Env:HP_TEST_FORCE_OPTBUILD_FAIL) { $env:HP_TEST_FORCE_OPTBUILD_FAIL } else { $null }
+$prevForceSwapFail = if (Test-Path Env:HP_TEST_FORCE_OPTBUILD_SWAP_FAIL) { $env:HP_TEST_FORCE_OPTBUILD_SWAP_FAIL } else { $null }
 $env:HP_SKIP_PIPREQS = '1'
 if ($scenario -eq 'accept') {
     $env:HP_TEST_OPTBUILD_ANSWER = 'Y'
 } elseif ($scenario -eq 'forcefail') {
     $env:HP_TEST_OPTBUILD_ANSWER = 'Y'
     $env:HP_TEST_FORCE_OPTBUILD_FAIL = '1'
+} elseif ($scenario -eq 'swapfail') {
+    $env:HP_TEST_OPTBUILD_ANSWER = 'Y'
+    $env:HP_TEST_FORCE_OPTBUILD_SWAP_FAIL = '1'
 }
 # 'decline' scenario: deliberately leaves both unset, relying on the ambient HP_CI_LANE
 # auto-decline the same way selfapps_postexec_checkpoint.ps1's self.checkpoint.decline does.
@@ -186,6 +202,37 @@ try {
             statusState        = $statusState
             log                = $bootstrapLog
         })
+    } elseif ($scenario -eq 'swapfail') {
+        $acceptedLogged = $combined -match [regex]::Escape('Optimized build: accepted')
+        $swapFailLogged = $combined -match [regex]::Escape('could not be swapped into place')
+        $noSuccessMsg   = -not ($combined -match [regex]::Escape('Optimized build succeeded and verified'))
+
+        # Same cmd /c fix as the accept/forcefail scenarios above -- see the accept block's comment.
+        $originalStillRuns = $false
+        if ($exeExists) {
+            try {
+                Push-Location (Join-Path $workDir 'dist')
+                try {
+                    $out = cmd /c "`"$envName.exe`"" 2>&1
+                    $originalStillRuns = ($LASTEXITCODE -eq 0) -and ($out -join "`n") -match [regex]::Escape('optbuild-app-ok')
+                } finally { Pop-Location }
+            } catch { $originalStillRuns = $false }
+        }
+
+        $pass = $promptShown -and $acceptedLogged -and $swapFailLogged -and $noSuccessMsg -and $exeExists -and $tmpExeGone -and $originalStillRuns -and ($statusState -eq 'ok')
+        Write-OptBuildRow -Pass $pass -Desc 'AV-Safe Build Path requirement 9 (swapfail): a verified optimized build whose final swap fails leaves the original PyInstaller EXE completely untouched and cleans up the leftover temp file' -Details ([ordered]@{
+            scenario           = $scenario
+            bootstrapExit      = $runExit
+            promptShown        = [bool]$promptShown
+            acceptedLogged     = [bool]$acceptedLogged
+            swapFailLogged     = [bool]$swapFailLogged
+            noSuccessMsg       = [bool]$noSuccessMsg
+            exeExists          = [bool]$exeExists
+            tmpExeGone         = [bool]$tmpExeGone
+            originalStillRuns  = [bool]$originalStillRuns
+            statusState        = $statusState
+            log                = $bootstrapLog
+        })
     } else {
         $declinedLogged = $combined -match [regex]::Escape('Optimized build: declined')
         $noBuildAttempt = -not ($combined -match [regex]::Escape('Optimized build: accepted'))
@@ -204,9 +251,10 @@ try {
         })
     }
 } finally {
-    if ($null -eq $prevSkipPipreqs)  { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue }             else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }
-    if ($null -eq $prevOptAnswer)    { Remove-Item Env:HP_TEST_OPTBUILD_ANSWER -ErrorAction SilentlyContinue }     else { $env:HP_TEST_OPTBUILD_ANSWER = $prevOptAnswer }
-    if ($null -eq $prevForceOptFail) { Remove-Item Env:HP_TEST_FORCE_OPTBUILD_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_OPTBUILD_FAIL = $prevForceOptFail }
+    if ($null -eq $prevSkipPipreqs)   { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue }                  else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }
+    if ($null -eq $prevOptAnswer)     { Remove-Item Env:HP_TEST_OPTBUILD_ANSWER -ErrorAction SilentlyContinue }          else { $env:HP_TEST_OPTBUILD_ANSWER = $prevOptAnswer }
+    if ($null -eq $prevForceOptFail)  { Remove-Item Env:HP_TEST_FORCE_OPTBUILD_FAIL -ErrorAction SilentlyContinue }      else { $env:HP_TEST_FORCE_OPTBUILD_FAIL = $prevForceOptFail }
+    if ($null -eq $prevForceSwapFail) { Remove-Item Env:HP_TEST_FORCE_OPTBUILD_SWAP_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_OPTBUILD_SWAP_FAIL = $prevForceSwapFail }
 }
 
 if (-not $pass) { exit 1 }
