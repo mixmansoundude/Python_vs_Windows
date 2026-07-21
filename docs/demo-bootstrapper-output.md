@@ -273,6 +273,39 @@ still ready to use as-is" wording used on the REAL failure branches below it.)
 
 ---
 
+## Refinement pass log
+
+Small, targeted checks run against the shipped code while waiting on CI, logged here as they
+happen rather than only reporting the end state. These are verification passes (did the new code
+break something already relied on), not new scenarios with their own screen output.
+
+**2026-07-21, requirement 9 vs. the existing checkpoint test -- checked, no interference.**
+`:offer_optimized_build` fires immediately after `:run_postexec_checkpoint` on every successful
+build, so `tests/selfapps_postexec_checkpoint.ps1` (`self.checkpoint.accept`/`.decline`) now runs
+with a second prompt-and-decline sequence tacked on right after its own. Traced both scenarios by
+hand against the actual regexes that test uses:
+- `self.checkpoint.accept` sets `HP_TEST_CHECKPOINT_ANSWER=Y` but not `HP_TEST_OPTBUILD_ANSWER`,
+  so `:offer_optimized_build` hits its own `HP_CI_LANE` auto-decline branch (the test sets
+  `HP_CI_LANE=test`) and never runs a build -- no extra `Entry smoke exit=0` line, so the
+  `$accRunCount -ge 2` assertion is unaffected. The test's `$accAccepted` regex
+  (`'post-execution checkpoint \((exe|interpreter)\): accepted; running a second time...'`) only
+  matches `:run_postexec_checkpoint`'s own log line, which `:offer_optimized_build`'s
+  `[INFO] Optimized build: accepted; building now...` text does not resemble.
+- `self.checkpoint.decline`'s `$decRunCount -eq 1` assertion holds for the same reason (the new
+  prompt's decline path runs nothing).
+- The static check in `tests/harness.ps1` (`batch.postexec.checkpoint`) counts occurrences of the
+  literal string `call :run_postexec_checkpoint` (`$cpCallCount -ge 3`) -- the new
+  `call :offer_optimized_build` line does not match that string, so the count is unaffected.
+
+**2026-07-21, NDJSON registry check -- ran locally, clean.** `python tools/check_ndjson_registry.py`
+against the working tree (both new test files' rows included): `Doc-registered IDs: 268 ... PASS:
+no doc/code registry mismatches found.` Confirms `self.exe.tiera.hidden_skip` and
+`self.optbuild.offer` are both correctly documented in `docs/agent-ndjson.md` and correctly
+discovered by the scanner's PowerShell-source scan -- no silent registry drift introduced by this
+session's additions.
+
+---
+
 ## Findings worth a second look
 
 1. **"The system cannot find the drive specified." prints twice, on-screen, right before every
