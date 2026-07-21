@@ -513,10 +513,13 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    just-shipped autopep723 work held up cleanly -- see the Closed Backlog entry directly above
    this one).** Phase 1 requirement 1 (failure-simulation tests, test-first per the PRD's own
    sequencing note) is SHIPPED -- see the separate Closed Backlog entry for the real,
-   independent correctness bug found and fixed while scoping it. Requirements 2-8 (the actual
-   Tier A/B fallback dispatch, loop-avoidance marker, messaging, connectivity gate) are NOT yet
-   started; each is its own future loop, per this repo's "one feature slice per loop" norm and
-   the PRD reviewer's own note that even "Phase 1" is multi-loop-sized.
+   independent correctness bug found and fixed while scoping it. **Requirements 2-4 (dispatch +
+   Tier A: real Nuitka fallback build in the existing environment, no reprovisioning) are ALSO
+   now SHIPPED** -- see the dedicated Closed Backlog entry. Requirements 5-8 (Tier B
+   reprovisioning via the existing provider chain, loop-avoidance marker, messaging polish,
+   connectivity gate) are NOT yet started; each is its own future loop, per this repo's "one
+   feature slice per loop" norm and the PRD reviewer's own note that even "Phase 1" is
+   multi-loop-sized.
 
    **Downtime re-check, 2026-07-20 (research only, no code written):**
    verified against Nuitka's live changelog/issue tracker that Finding 1's core blocker (MinGW64
@@ -851,6 +854,57 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **AV-Safe Build Path requirements 2-4: automatic dispatch + Tier A (real Nuitka fallback build
+  in the existing environment, no reprovisioning).** New `:try_nuitka_tier_a` subroutine
+  (`run_setup.bat`, placed right before `:die`) is `call`ed (never `goto`'d, so it's safe
+  regardless of the caller's block depth) from all three of requirement 1's converging failure
+  points (forced-fail test hook, real PyInstaller build errorlevel, missing/vanished output --
+  requirement 3's single trigger category) before any of them falls through to `:die`. It
+  installs Nuitka into the CURRENT environment (uv or pip, matching `HP_ENV_MODE` -- no
+  reprovisioning, per requirement 4), then runs `python -m nuitka --onefile
+  --assume-yes-for-downloads --remove-output --output-dir=dist -o "<env>.exe" <entry>`, doing
+  no independent compiler probing (Nuitka's own MSVC-then-MinGW64 discovery is trusted
+  entirely, exactly as requirement 4 specifies -- the same "don't fingerprint" principle
+  research Finding 2 already established). `--assume-yes-for-downloads` is load-bearing: without
+  it, Nuitka can prompt interactively to confirm its own dependency downloads, which would hang
+  both CI and a real non-interactive double-click run -- a Prime Directive violation. On success,
+  `HP_NUITKA_FALLBACK_USED=1` is set and the produced `dist\<env>.exe` is treated exactly like a
+  PyInstaller-produced one by the rest of the pipeline; no special-casing needed downstream (the
+  existing warn-file/smoke-test code already degrades gracefully when no warn file exists, and
+  the EXE smoke-test itself doesn't care which tool built the file).
+
+  **Verified 2026-07-20 against real Windows CI (run 29788624195, `self.exe.build.tiera`,
+  uv lane): the Nuitka CLI flags above are correct as written.** No Windows machine was
+  available in this sandbox to confirm them before shipping, so this was written from
+  documented Nuitka CLI knowledge only -- the first real run genuinely built
+  `dist\_selftest_nuitka_tiera.exe` via Nuitka 4.1.3, ran it, and the stub app's stdout came
+  through cleanly. The FIRST real run of this new test did fail, but the root cause was a test
+  bug, not a `run_setup.bat`/Nuitka-flags bug: `tests/selfapps_nuitka_tiera.ps1` hardcoded the
+  expected EXE path as `dist\~selftest_nuitka_tiera.exe` (the literal tilde-prefixed workDir
+  name) instead of the sanitized `dist\_selftest_nuitka_tiera.exe` that `run_setup.bat`'s
+  ENVNAME derivation actually produces (every non-alnum/underscore/hyphen character, including
+  the leading `~`, is replaced with `_` -- see run_setup.bat lines ~350-356), and it searched
+  the console-redirected bootstrap log for the app's stdout instead of the `~run.out.txt`
+  capture file where `:run_exe_smokerun` actually writes it. Fixed to compute the sanitized
+  name the same way `selfapps_collect.ps1`/`selfapps_envsmoke.ps1` already do, and to read
+  `~run.out.txt` directly. Second run (29788624195) passed clean.
+
+  New test hook `HP_TEST_FORCE_NUITKA_FAIL` (forces Tier A to fail deterministically, without a
+  real Nuitka attempt) and a new `tests/selfapps_nuitka_tiera.ps1` (uv lane, deliberately
+  non-gating for its first landing -- promote once proven stable across several real runs,
+  matching this repo's established lane-graduation pattern) prove the Tier A SUCCESS path for
+  real: forces PyInstaller to "fail," lets a genuine Nuitka build run, and asserts the fallback
+  succeeds, `dist\<env>.exe` exists, the stub app's own stdout came through the existing
+  (unmodified) EXE smoke-test path, and `~bootstrap.status.json` reads `state=ok` (a successful
+  fallback is bootstrap SUCCESS, not the error case). `tests/selfapps_pyinstaller_fail.ps1`
+  (requirement 1's test, real/conda-full, gating) was updated to ALSO set
+  `HP_TEST_FORCE_NUITKA_FAIL=1`, so it keeps testing tier EXHAUSTION (both PyInstaller and the
+  fallback fail) rather than being accidentally saved by a real fallback success once Tier A
+  existed -- without this update, that test would have silently started testing a different
+  scenario than it was designed for. Tier B (requirement 5, reprovisioned pinned-3.12
+  environment via the existing provider chain) is NOT implemented yet; a Tier A failure
+  currently falls through to the pre-existing `:die` path, unchanged from before this feature.
 
 - **PyInstaller build-failure silently masked as success -- real, independent correctness bug,
   found while scoping AV-Safe Build Path (item 6) requirement 1's failure-simulation tests, fixed

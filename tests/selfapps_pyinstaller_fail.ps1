@@ -29,6 +29,13 @@
 # codebase in the expected way, confirmed before any fallback code is written") -- "the expected
 # way" is now a clean, correctly-reported failure, not the masked-success bug this test guards.
 #
+# Also sets HP_TEST_FORCE_NUITKA_FAIL=1 (requirements 2-4, Tier A, shipped after this test was
+# first written): once :try_nuitka_tier_a existed, a real Nuitka build against the trivial stub
+# app below would likely succeed for real on a Windows CI runner with MSVC available, silently
+# turning this "everything fails, report error correctly" test into a fallback-success case --
+# a different scenario with its own test (self.exe.build.tiera). Forcing the fallback to also
+# fail keeps this test's original scope: tier EXHAUSTION still reaches a correctly-reported error.
+#
 # Lane: real and conda-full only (matches selfapps_exefail.ps1 and siblings).
 param()
 $ErrorActionPreference = 'Continue'
@@ -87,7 +94,9 @@ $bootstrapLog = "~pyi_fail_${scenario}_bootstrap.log"
 $prevSkipPipreqs = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
 $prevForceExecfail = if (Test-Path Env:HP_TEST_FORCE_PYINSTALLER_FAIL) { $env:HP_TEST_FORCE_PYINSTALLER_FAIL } else { $null }
 $prevForceVanish = if (Test-Path Env:HP_TEST_FORCE_OUTPUT_VANISH) { $env:HP_TEST_FORCE_OUTPUT_VANISH } else { $null }
+$prevForceNuitkaFail = if (Test-Path Env:HP_TEST_FORCE_NUITKA_FAIL) { $env:HP_TEST_FORCE_NUITKA_FAIL } else { $null }
 $env:HP_SKIP_PIPREQS = '1'
+$env:HP_TEST_FORCE_NUITKA_FAIL = '1'
 if ($scenario -eq 'execfail') {
     $env:HP_TEST_FORCE_PYINSTALLER_FAIL = '1'
 } else {
@@ -141,6 +150,7 @@ try {
     if ($null -eq $prevSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }
     if ($null -eq $prevForceExecfail) { Remove-Item Env:HP_TEST_FORCE_PYINSTALLER_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_PYINSTALLER_FAIL = $prevForceExecfail }
     if ($null -eq $prevForceVanish) { Remove-Item Env:HP_TEST_FORCE_OUTPUT_VANISH -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_OUTPUT_VANISH = $prevForceVanish }
+    if ($null -eq $prevForceNuitkaFail) { Remove-Item Env:HP_TEST_FORCE_NUITKA_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_NUITKA_FAIL = $prevForceNuitkaFail }
 }
 
 if (-not $xfailPass) { exit 1 }

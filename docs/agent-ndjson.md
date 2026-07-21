@@ -47,6 +47,7 @@ self.exe.hidden_import,
 self.preflight.syntax,
 self.cascade.detect, self.cascade.consent,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
+self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
 self.parse_warn.table.v6, self.parse_warn.pytest,
 self.heuristics.pytest,
 self.pytest.unit,
@@ -307,8 +308,32 @@ class (see `selfapps_preflight.ps1`'s sibling test, which likewise never checks 
 full trace of why the pre-fix behavior was wrong. No individual `upload-artifact` wiring, same
 as `selfapps_exefail.ps1` -- covered by the coarser full-tree `diag-selftest-*` capture.
 
+**Updated when Tier A shipped**: also sets `HP_TEST_FORCE_NUITKA_FAIL=1` so the new
+`:try_nuitka_tier_a` fallback is deterministically forced to fail too -- once Tier A existed, a
+real Nuitka build against this test's trivial stub app would likely succeed on a Windows CI
+runner with MSVC, silently turning this "everything fails" test into a fallback-success case
+(a different scenario, covered separately by `self.exe.build.tiera` below).
+
 ```
 self.exe.build.xfail
+```
+
+## selfapps-nuitka-tiera NDJSON rows (selfapps_nuitka_tiera.ps1, uv lane only, non-gating)
+
+Proves AV-Safe Build Path requirements 2-4 (Tier A) work end to end: `HP_TEST_FORCE_PYINSTALLER_
+FAIL=1` forces the primary build to "fail" deterministically, `HP_TEST_FORCE_NUITKA_FAIL` is
+deliberately left unset so a REAL Nuitka build runs in the same environment (no reprovisioning),
+and asserts the fallback succeeds, `dist\<env>.exe` exists, the stub app's own stdout came
+through the existing (unmodified) EXE smoke-test path, and the final `~bootstrap.status.json`
+reads `state=ok` (a successful fallback is bootstrap SUCCESS, distinct from `self.exe.build.xfail`
+where every tier failing is the error case). Deliberately non-gating for its first landing --
+unlike `self.exe.build.xfail`, this exercises genuine Nuitka CLI flags and MSVC/compiler
+availability that could not be verified locally (no Windows machine in this sandbox); promote to
+a gating lane once proven stable across several real runs, matching this repo's established
+graduation pattern (see `CLAUDE.md`'s "CI lane gating maturity" periodic check).
+
+```
+self.exe.build.tiera
 ```
 
 ---

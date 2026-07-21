@@ -283,6 +283,11 @@ rem after a genuinely successful PyInstaller build, before the exist-check that 
 rem simulates AV-style post-creation removal (research Finding 2 in docs/prd-av-safe-build-path.md)
 rem as a distinct scenario from the build command itself failing.
 set "HP_TEST_FORCE_OUTPUT_VANISH=%HP_TEST_FORCE_OUTPUT_VANISH%"
+rem HP_TEST_FORCE_NUITKA_FAIL=1: CI-only; forces the AV-Safe Build Path Tier A fallback
+rem (:try_nuitka_tier_a) to fail without attempting a real Nuitka build. Used to test
+rem tier-exhaustion (both PyInstaller and the fallback fail) independently of a real,
+rem environment-dependent Nuitka build outcome.
+set "HP_TEST_FORCE_NUITKA_FAIL=%HP_TEST_FORCE_NUITKA_FAIL%"
 rem HP_SKIP_NIVISA=1: REQ-008 opt-out -- skip the NI-VISA driver install even when pyvisa/visa is detected (debugging)
 set "HP_SKIP_NIVISA=%HP_SKIP_NIVISA%"
 rem HP_NIVISA_WAIT_SECS=<n>: REQ-008 diagnostic -- post-install registry poll budget in seconds.
@@ -2994,23 +2999,46 @@ if not defined HP_BUILD_OK (
     rem under "Provider-cascade dispatch is goto-based on purpose" -- this block instead stays
     rem entirely within ordinary if/else nesting, using only call/if-errorlevel/if-defined/set,
     rem all of which are already-confirmed runtime-safe inside a parenthesized block.
+    rem AV-Safe Build Path requirements 2-4 (Tier A): each of the three failure points below
+    rem (forced-fail test hook, real build errorlevel, missing/vanished output -- requirement 3's
+    rem single trigger category) now attempts :try_nuitka_tier_a before declaring final failure,
+    rem instead of going straight to :die. On Tier A success, HP_NUITKA_FALLBACK_USED=1 and
+    rem dist\%ENVNAME%.exe exists (built by Nuitka); the rest of this block treats it exactly
+    rem like a PyInstaller-produced EXE (parse_warn/warnfix below is a no-op for it: no warn
+    rem file exists, so that block already degrades gracefully per its own "not found" branch).
+    set "HP_NUITKA_FALLBACK_USED="
     if defined HP_TEST_FORCE_PYINSTALLER_FAIL (
       call :log "[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure."
-      call :die "[ERROR] PyInstaller execution failed."
-      set "HP_BOOTSTRAP_STATE=error"
-    ) else (
-      "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+      call :try_nuitka_tier_a
       if errorlevel 1 (
         call :die "[ERROR] PyInstaller execution failed."
         set "HP_BOOTSTRAP_STATE=error"
+      ) else (
+        set "HP_NUITKA_FALLBACK_USED=1"
+      )
+    ) else (
+      "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+      if errorlevel 1 (
+        call :try_nuitka_tier_a
+        if errorlevel 1 (
+          call :die "[ERROR] PyInstaller execution failed."
+          set "HP_BOOTSTRAP_STATE=error"
+        ) else (
+          set "HP_NUITKA_FALLBACK_USED=1"
+        )
       ) else (
         if defined HP_TEST_FORCE_OUTPUT_VANISH if exist "dist\%ENVNAME%.exe" (
           call :log "[TEST] HP_TEST_FORCE_OUTPUT_VANISH: deleting freshly-built EXE to simulate post-creation removal."
           del "dist\%ENVNAME%.exe" >nul 2>&1
         )
         if not exist "dist\%ENVNAME%.exe" (
-          call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
-          set "HP_BOOTSTRAP_STATE=error"
+          call :try_nuitka_tier_a
+          if errorlevel 1 (
+            call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
+            set "HP_BOOTSTRAP_STATE=error"
+          ) else (
+            set "HP_NUITKA_FALLBACK_USED=1"
+          )
         ) else (
           call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
         )
@@ -3847,6 +3875,50 @@ echo *** Package installation could not complete. This may be a temporary networ
 echo *** See log file for details: ~setup.log
 call :log "[WARN] conda bulk: retry after transient failure also failed."
 exit /b 1
+
+:try_nuitka_tier_a
+rem AV-Safe Build Path (docs/prd-av-safe-build-path.md) requirements 2-4, Tier A only: when the
+rem PyInstaller build fails for any reason (build error, or output missing/vanished -- both
+rem paths above converge here, per requirement 3's "single trigger category" design), attempt a
+rem fallback build via Nuitka directly inside the SAME environment already used for the
+rem PyInstaller attempt -- same Python, same installed packages, no reprovisioning. Nuitka does
+rem its own internal compiler discovery (MSVC first, then MinGW64 auto-download); per requirement
+rem 4's own explicit instruction, this subroutine does NOT probe for a compiler itself -- that
+rem kind of fingerprinting is exactly what research Finding 2 already argued against. Tier B
+rem (reprovisioned pinned-3.12 environment for the no-compiler-found case) is NOT implemented
+rem yet -- this is Tier A only; a Tier A failure currently falls through to the caller's existing
+rem :die path, same as before this feature existed.
+rem Called via `call` (never `goto`) from inside the PyInstaller-build if/else nesting above, so
+rem it is safe regardless of block depth -- see the "Nested if/else (no goto)" comment there.
+call :log "[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two)."
+if defined HP_TEST_FORCE_NUITKA_FAIL (
+  call :log "[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure."
+  exit /b 1
+)
+if "%HP_ENV_MODE%"=="uv" (
+  "%HP_UV_EXE%" pip install --python "%HP_PY%" -q nuitka >> "%LOG%" 2>&1
+) else (
+  "%HP_PY%" -m pip install -q nuitka >> "%LOG%" 2>&1
+)
+if errorlevel 1 (
+  call :log "[WARN] Fallback build: could not install the fallback build tool; fallback unavailable."
+  exit /b 1
+)
+if exist "dist\%ENVNAME%.exe" del "dist\%ENVNAME%.exe" >nul 2>&1
+rem --assume-yes-for-downloads: Nuitka can otherwise prompt interactively to confirm its own
+rem dependency downloads (e.g. the MinGW64 compiler) -- fatal for both CI and a real
+rem non-interactive double-click user; the Prime Directive tolerates zero prompts here.
+"%HP_PY%" -m nuitka --onefile --assume-yes-for-downloads --remove-output --output-dir=dist -o "%ENVNAME%.exe" "%HP_ENTRY%" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "[WARN] Fallback build did not complete successfully."
+  exit /b 1
+)
+if not exist "dist\%ENVNAME%.exe" (
+  call :log "[WARN] Fallback build finished but did not produce dist\%ENVNAME%.exe."
+  exit /b 1
+)
+call :log "[INFO] Fallback build succeeded: dist\%ENVNAME%.exe was produced using the fallback build system."
+exit /b 0
 
 :die
 set "MSG=%~1"
