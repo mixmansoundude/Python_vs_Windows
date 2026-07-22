@@ -567,10 +567,27 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    a test-authoring bug (see the Closed Backlog entry for the AV-Safe Build Path requirement-9
    work), and because it was the first of three sequential `OPTBUILD_SCENARIO` steps in the same
    job with no `if: always()`, the `forcefail` and `decline` steps never ran at all -- same
-   mechanism, same job, different test file. Still not fixed for the same two reasons above; two
-   independent real instances in two different features is worth noting as it strengthens the
-   case for eventually doing the dedicated hardening pass, but is not itself a reason to rush it
-   into an unrelated diff.
+   mechanism, same job, different test file.
+
+   **Partially closed, 2026-07-22: the non-gating-lane half of this gap is now fixed; the
+   gating-lane half remains open exactly as before.** Re-examined the actual workflow YAML rather
+   than relying on memory of the original reasoning, and found `continue-on-error` is already set
+   at the JOB level for six of eight matrix lanes (`cache`, `justme-test`, `uv`, `contract-uv`,
+   `contract-uv-fail`, `uv-dl-fallback`) -- only `real`/`conda-full` are true gating lanes. This
+   means the original "continue-on-error would silently defeat gating" reasoning above applies
+   ONLY to steps that can run under `real`/`conda-full`; it never applied to steps restricted to
+   the six already-non-gating lanes, since those never gated merges to begin with. Surveyed every
+   step's `if:` condition and found 33 steps restricted to non-gating lanes only, of which the PEP
+   723 write-back / PVW QuickStart / autopep723-discovery steps already carried per-step
+   `continue-on-error: true` (established precedent, not invented for this pass) while 9 others
+   (uv-contract assertions, JustMe/download-fallback self-tests, the provider-cascade-exec step,
+   both Tier A steps, all 4 `self.optbuild.offer` scenarios) were missing it. Added it to those 9
+   -- this is a narrower, safe subset of the originally-declined blanket fix: it changes nothing
+   about merge gating (never gated anything) and only stops one failing self-test from hiding its
+   siblings' results within the same non-gating-lane job run. The `real`/`conda-full` gating-lane
+   half of this backlog item is untouched and remains deliberately deferred for the same two
+   reasons as before -- do not extrapolate this fix onto the gating lanes without the same kind of
+   deliberate, reviewed pass the original reasoning called for.
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is
@@ -874,6 +891,63 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **User-facing messaging cleanup pass, requested directly by the owner via a detailed
+  question-and-answer message reviewing several prior findings.** Four small, independent
+  wording fixes plus a documentation restructuring:
+  - `:warn_user_code_launch`'s "Verifying the built standalone EXE (PyInstaller) now" message now
+    branches on `HP_NUITKA_FALLBACK_USED` and says "(fallback build system)" instead when the EXE
+    being verified was actually Nuitka-built (Tier A or requirement 9's optimized build) -- this
+    subroutine fires for both cases and previously always claimed PyInstaller regardless. The
+    postflight briefing's "PyInstaller build cache" line for `build\` was deliberately left
+    unchanged: Nuitka never creates a `build\<env>\` folder of its own (its `--remove-output`
+    flag cleans up its own intermediates), so that line stays literally true either way -- if a
+    `build\` folder exists at all, it's PyInstaller's, confirmed by tracing both build paths
+    before deciding not to touch it.
+  - The warnfix console message ("Platform-specific modules in the list above are expected on
+    Windows...") referenced a "list above" that was never actually on the console -- the raw
+    warn-file dump immediately before it (`type "build\<env>\warn-<env>.txt" >> "%LOG%"`) is
+    redirected straight into `~setup.log` only, confirmed by tracing the exact redirect operator.
+    Reworded to drop the false "above" reference and instead point at `~warnfile.txt` (already
+    copied next to the app a few lines earlier) and `~setup.log` for the full list.
+  - Added a one-line reassurance right after "[INFO] Building standalone executable..." for the
+    benign "The system cannot find the drive specified." message that appears on-screen near
+    almost every build attempt (confirmed already known-harmless and allowlisted by
+    `tests/selfapps_envsmoke.ps1`). Researched the likely source before adding this: confirmed via
+    direct code tracing (not assumption) that ALL of PyInstaller's own subprocess invocations in
+    `run_setup.bat`, and `:compute_collect_flags`'s own Python subprocess call, have both
+    stdout AND stderr fully redirected -- so the message cannot be literal PyInstaller output
+    leaking through the normal redirect, and `:compute_collect_flags` runs before (not after) the
+    log line the message appears near, ruling that subroutine out as the direct cause too. Root
+    cause remains unconfirmed (most likely an unrelated background process whose output happens
+    to flush around the same wall-clock window); not chased further per explicit instruction not
+    to go deep (this exact investigation had already stalled in a prior pass) -- the message
+    itself is the fix, not a suppression attempt. **Found and fixed a self-inflicted near-miss
+    while writing this message**: the first draft quoted the trigger phrase verbatim inside the
+    reassurance text, which would have made `tests/selfapps_envsmoke.ps1`'s unanchored
+    `Get-LineSnippet` substring search capture the REASSURANCE line itself (appearing earlier in
+    the transcript) instead of the real system-generated line, fail the exact-match allowlist
+    check against it, and produce a false test failure. Reworded to avoid the literal trigger
+    substrings entirely; grepped the whole test suite for both trigger phrases afterward to
+    confirm no other detector collides. See `docs/agent-scratchlog.md` for the full trace.
+  - **Documentation restructuring, per direct owner instruction**: `docs/demo-bootstrapper-output.md`
+    is now latest-state-only (quotes updated in place, no historical narrative, no per-session
+    dated log). Removed its "Refinement pass log" and "Findings worth a second look" sections
+    entirely -- their still-relevant content was either folded into the demo doc's own scenario
+    write-ups (as plain current-state notes, not history) or moved to one of two new files:
+    `docs/agent-scratchlog.md` (internal working notes -- verification checks, dead ends, things
+    ruled out; not user-facing, freely prunable) and `docs/open-questions.md` (unresolved
+    questions needing a maintainer decision only; answered questions get removed from it and
+    folded into wherever they actually belong once resolved). Two genuinely open questions moved
+    into the new file: whether total EXE-packaging failure should change the final on-screen
+    `[STATUS]` wording (recommended yes, not implemented pending confirmation), and the
+    CLI-args-only-programs architecture question (tabled by the owner for a future dedicated
+    discussion, not sized yet).
+  - **Partial fix for CLAUDE.md Active Backlog item 7** (see that item's own updated entry above)
+    landed in this same pass: `continue-on-error: true` added to 9 CI steps restricted to
+    already-non-gating lanes, so one failing self-test scenario no longer hides its siblings'
+    results within the same lane run. Does not touch the gating (`real`/`conda-full`) lanes, which
+    remain deliberately deferred.
 
 - **Refinement-pass fix on shipped requirement 9: the post-swap "did it work" check tested the
   wrong file, silently misreporting a failed swap as success.** Found via a self-directed

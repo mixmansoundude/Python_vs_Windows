@@ -319,18 +319,21 @@ jobs:
 
       - name: "Self-test: uv contract assertions (contract-uv* only)"
         if: ${{ matrix.mode == 'contract-uv' || matrix.mode == 'contract-uv-fail' }}
+        continue-on-error: true
         shell: pwsh
         run: |
           & tests\selfapps_contract_uv.ps1
 
       - name: "Self-test: JustMe install path (justme-test only)"
         if: ${{ matrix.mode == 'justme-test' }}
+        continue-on-error: true
         shell: pwsh
         run: |
           & tests\selfapps_justme.ps1
 
       - name: "Self-test: download fallback paths (justme-test/uv-dl-fallback)"
         if: ${{ matrix.mode == 'justme-test' || matrix.mode == 'uv-dl-fallback' }}
+        continue-on-error: true
         shell: pwsh
         run: |
           & tests\selfapps_dl_fallback.ps1
@@ -531,6 +534,7 @@ jobs:
       # venv -> stop. Heavy and provider-dependent, hence non-gating (uv lane continue-on-error).
       - name: "Self-test: provider cascade EXECUTION uv -> conda (uv lane, non-gating)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         shell: pwsh
         run: |
           & tests\selfapps_cascade.ps1
@@ -542,6 +546,7 @@ jobs:
       # could not be verified locally. Promote once proven stable across several real runs.
       - name: "Self-test: AV-Safe Build Path Tier A -- real Nuitka fallback build (uv lane, non-gating)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         shell: pwsh
         run: |
           & tests\selfapps_nuitka_tiera.ps1
@@ -553,6 +558,7 @@ jobs:
       # (depends on a real Nuitka build succeeding).
       - name: "Self-test: Tier A / hidden-import-recovery skip guard (uv lane, non-gating)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         shell: pwsh
         run: |
           & tests\selfapps_nuitka_tiera_hidden_skip.ps1
@@ -564,6 +570,7 @@ jobs:
       # the same lane for consistency with the shared NDJSON row id.
       - name: "Self-test: optimized-build offer, accept (uv lane, non-gating)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         shell: pwsh
         env:
           OPTBUILD_SCENARIO: accept
@@ -572,6 +579,7 @@ jobs:
 
       - name: "Self-test: optimized-build offer, forced failure leaves original untouched (uv lane, non-gating)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         shell: pwsh
         env:
           OPTBUILD_SCENARIO: forcefail
@@ -580,6 +588,7 @@ jobs:
 
       - name: "Self-test: optimized-build offer, swap failure leaves original untouched (uv lane, non-gating)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         shell: pwsh
         env:
           OPTBUILD_SCENARIO: swapfail
@@ -588,6 +597,7 @@ jobs:
 
       - name: "Self-test: optimized-build offer, decline (uv lane, non-gating)"
         if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
         shell: pwsh
         env:
           OPTBUILD_SCENARIO: decline

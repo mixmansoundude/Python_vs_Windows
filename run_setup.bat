@@ -3106,6 +3106,16 @@ if not defined HP_BUILD_OK (
     rem derived requirement: PyInstaller install + build can take a minute or more; emit a
     rem user-facing message before the silent operation so the script never looks hung.
     call :log "[INFO] Building standalone executable -- this may take a minute or two..."
+    rem derived requirement: on many machines, a benign one-line Windows message about a
+    rem missing drive prints here from an unrelated background process around this same
+    rem window (confirmed harmless and already tolerated by tests/selfapps_envsmoke.ps1's
+    rem unexpectedSystemErrorIgnored allowlist) -- not from this build command itself, whose
+    rem own stdout/stderr are fully redirected to %LOG% below. A beginner watching the console
+    rem could mistake it for a real error, so name it explicitly -- worded to avoid literally
+    rem reproducing the trigger phrase, so this reassurance line itself is never mistaken by
+    rem selfapps_envsmoke.ps1's Get-LineSnippet substring search for the real system line it
+    rem allowlists (which would misfire on the FIRST matching line, not necessarily this one).
+    call :log "[INFO] (A stray one-line Windows message about a missing drive may appear next -- that is a known side effect from an unrelated background process, unrelated to your app; safe to ignore.)"
     :: derived requirement: ~parse_warn.py was written against PyInstaller 5.x and 6.x warn-file formats.
     :: Version is intentionally unpinned so future PyInstaller releases are adopted automatically.
     :: If CI starts failing parse_warn tests after a PyInstaller update, review ~parse_warn.py
@@ -3186,7 +3196,11 @@ if not defined HP_BUILD_OK (
       call :log "[DEBUG] warnfix: warn file found"
       type "build\%ENVNAME%\warn-%ENVNAME%.txt" >> "%LOG%"
       copy "build\%ENVNAME%\warn-%ENVNAME%.txt" "~warnfile.txt" >nul 2>&1
-      call :log "[INFO] warnfix: Platform-specific modules in the list above are expected on Windows: posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external. These will be filtered out automatically."
+      rem derived requirement: the raw warn-file dump right above this line goes only to
+      rem ~setup.log (type ... >> "%LOG%" has no console echo), so "the list above" was
+      rem misleading on the console -- a user watching only the window never saw a list.
+      rem Point at ~warnfile.txt (already copied next to the app a few lines up) instead.
+      call :log "[INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically."
       if defined HP_NDJSON (
         powershell -NoProfile -ExecutionPolicy Bypass -Command ^
           "$row = @{ id='self.warnfix.platform_filter'; pass=$true; detail='posix_modules_expected_on_windows' } | ConvertTo-Json -Compress -Depth 8;" ^
@@ -3641,7 +3655,14 @@ rem REQ-016: tightly-scoped heads-up before a launch that is force-stopped at ~3
 rem user does not mistake a verification run for finished setup and start real work in it
 rem (which would be lost when the run is killed). Called only where a 30s kill actually
 rem happens -- the EXE smoke and hidden-import recovery -- not at the untimed entry smoke.
-call :log "[WARN] Verifying the built standalone EXE (PyInstaller) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost."
+rem derived requirement: this is called for BOTH a normal PyInstaller build and an AV-Safe
+rem Build Path Tier A fallback build (HP_NUITKA_FALLBACK_USED=1) -- the message previously
+rem hardcoded "(PyInstaller)" even when the EXE being verified was actually Nuitka-built.
+if defined HP_NUITKA_FALLBACK_USED (
+  call :log "[WARN] Verifying the built standalone EXE (fallback build system) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost."
+) else (
+  call :log "[WARN] Verifying the built standalone EXE (PyInstaller) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost."
+)
 exit /b 0
 :run_exe_smokerun
 if not exist "dist\%ENVNAME%.exe" (

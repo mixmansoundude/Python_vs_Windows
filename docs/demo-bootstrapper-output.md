@@ -1,34 +1,34 @@
 # Demo: what the user actually sees
 
-**Status: living demo report, NOT an authoritative or direction-providing document.** This
-walks through specific tested scenarios and shows, with real quotes pulled from actual CI runs
-(never invented or paraphrased), exactly what text lands on the user's screen. Purpose: make it
-easy for a human to review the actual console output, spot anything confusing or alarming, and
-catch code paths that report something unexpected. Update this as code changes rather than
-treating it as fixed -- if a quoted message changes, re-pull it from a fresh CI run rather than
-hand-editing the quote.
+**Status: living demo report, NOT an authoritative or direction-providing document.** This walks
+through specific tested scenarios and shows exactly what text lands on the user's screen. Purpose:
+let a human review the actual console output, spot anything confusing or alarming, and catch code
+paths that report something unexpected. **This doc reflects the LATEST state of the code only --
+it is not a history of how things changed.** When a message's wording changes, replace the quote
+in place; don't keep the old one around for context. Ongoing investigation notes, dead ends, and
+day-to-day refinement-pass checks belong in `docs/agent-scratchlog.md` (internal working notes),
+not here. Unresolved design questions belong in `docs/open-questions.md`, not here.
 
-**Sourcing convention used throughout:** every quoted block below is copied verbatim from a real
-GitHub Actions job log (via the GitHub API), with the exact run ID, job ID, lane, and test file
-cited immediately above it. Where a scenario's CI run had not yet completed as of this writing,
-the section says so explicitly and shows the literal source-code string instead of a real log
-excerpt -- clearly marked as **PENDING**, to be replaced once the run finishes.
+**Sourcing convention:** every quoted block is either copied verbatim from a real GitHub Actions
+job log (cited with run ID, job ID, lane, and test file) or, where noted, taken directly from
+`run_setup.bat`'s current source because no CI run has exercised that exact wording yet -- always
+labeled explicitly which case applies, never presented as a real capture when it isn't.
 
-**First-pass scope:** this covers the AV-Safe Build Path work from 2026-07-20/21 (Tier A Nuitka
-fallback, its interaction with hidden-import auto-recovery, and the requirement-9 optimized-build
-offer) -- the most recent, most user-facing-behavior-changing work at the time this doc started.
-Later passes should extend it to other areas (REQ-009 provider cascade, warnfix, the REQ-018
-post-execution checkpoint on its own, etc.).
+**Scope so far:** covers the AV-Safe Build Path work (Tier A Nuitka fallback, its interaction
+with hidden-import auto-recovery, and the requirement-9 optimized-build offer) -- the most recent,
+most user-facing-behavior-changing area at the time this doc started. Extend to other areas
+(REQ-009 provider cascade, warnfix, the REQ-018 post-execution checkpoint on its own, etc.) as
+they're reviewed.
 
-**Important distinction this doc surfaced early, worth keeping in mind throughout:** the
-bootstrapper writes to two different places that are easy to conflate:
+**Console vs. `~setup.log`:** the bootstrapper writes to two different places that are easy to
+conflate:
 - The **live console** (what a real user watching the window sees) -- everything `:log` echoes,
   plus a handful of raw tool-output lines that aren't redirected.
-- **`~setup.log`** (the internal file record) -- receives everything the console does, PLUS
-  extra content that's deliberately redirected away from the console (e.g. the full raw
-  PyInstaller warn-file dump -- see Finding 2 below). A CI test's "bootstrap log" capture
-  (`cmd /c "call run_setup.bat > log 2>&1"`) matches the CONSOLE view, not `~setup.log`. Quotes
-  below are from the console-equivalent capture unless stated otherwise.
+- **`~setup.log`** (the internal file record) -- receives everything the console does, PLUS extra
+  content deliberately redirected away from the console (e.g. the full raw PyInstaller warn-file
+  dump). A CI test's "bootstrap log" capture (`cmd /c "call run_setup.bat > log 2>&1"`) matches the
+  CONSOLE view, not `~setup.log`. Quotes below are from the console-equivalent capture unless
+  stated otherwise.
 
 ---
 
@@ -38,40 +38,40 @@ bootstrapper writes to two different places that are easy to conflate:
 non-gating). `HP_TEST_FORCE_PYINSTALLER_FAIL=1` forces the primary build to fail deterministically;
 the Nuitka fallback (`:try_nuitka_tier_a`) then runs for real -- a genuine compile, not simulated.
 
-**Source:** run `29788624195`, job `88506013149` ("uv" lane), commit `d12a80e`. NDJSON row:
-`{"lane":"uv","pass":true,"desc":"AV-Safe Build Path Tier A: real Nuitka fallback build succeeds and is used as the standalone EXE","id":"self.exe.build.tiera",...}`
-
-**What appears on screen**, from the moment PyInstaller's build is attempted through to the
-final summary:
+**What appears on screen**, from the moment PyInstaller's build is attempted through to the final
+summary. Sourced from real CI (run `29788624195`, job `88506013149`), with the "(PyInstaller)"
+verification line and the drive-message reassurance line updated to reflect a wording fix made
+after that run -- not yet re-confirmed against a fresh CI capture:
 
 ```
-Tue 07/21/2026  0:16:59.09 [INFO] Building standalone executable -- this may take a minute or two...
+[INFO] Building standalone executable -- this may take a minute or two...
+[INFO] (A stray one-line Windows message about a missing drive may appear next -- that is a known side effect from an unrelated background process, unrelated to your app; safe to ignore.)
 The system cannot find the drive specified.
 The system cannot find the drive specified.
-Tue 07/21/2026  0:16:59.77 [TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
-Tue 07/21/2026  0:16:59.79 [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-Tue 07/21/2026  0:18:45.56 [INFO] Fallback build succeeded: dist\_selftest_nuitka_tiera.exe was produced using the fallback build system.
-Tue 07/21/2026  0:18:45.56 [DEBUG] warnfix: warn file not found
-Tue 07/21/2026  0:18:45.88 [INFO] PyInstaller build artifacts cleaned up.
-Tue 07/21/2026  0:18:45.88 [INFO] EXE smokerun: testing dist\_selftest_nuitka_tiera.exe
-Tue 07/21/2026  0:18:45.89 [INFO] Running entry script smoke test via packaged EXE.
-Tue 07/21/2026  0:18:45.90 [WARN] Verifying the built standalone EXE (PyInstaller) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost.
-Tue 07/21/2026  0:18:47.26 [INFO] EXE smokerun: exited 0 (ok)
-Tue 07/21/2026  0:18:47.27 [INFO] Entry smoke exit=0
-Tue 07/21/2026  0:18:47.27 [STATUS] Run Status: SUCCESS (Exit Code: 0)
+[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
+[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
+[INFO] Fallback build succeeded: dist\<env>.exe was produced using the fallback build system.
+[DEBUG] warnfix: warn file not found
+[INFO] PyInstaller build artifacts cleaned up.
+[INFO] EXE smokerun: testing dist\<env>.exe
+[INFO] Running entry script smoke test via packaged EXE.
+[WARN] Verifying the built standalone EXE (fallback build system) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost.
+[INFO] EXE smokerun: exited 0 (ok)
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
 
 *** Verification finished -- see the Run Status above. ***
 *** You can run your program again now via the interpreter as an extra diagnostic check. ***
-Tue 07/21/2026  0:18:47.29 [INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
+[INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
 
 ============================================================
  SETUP COMPLETE
 ============================================================
  Your standalone application is ready:
-   dist\_selftest_nuitka_tiera.exe
+   dist\<env>.exe
 
  RUNNING YOUR APP
-   Double-click dist\_selftest_nuitka_tiera.exe to run it.
+   Double-click dist\<env>.exe to run it.
 
    STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
    starts, so allow 10-15 seconds (longer for big libraries like
@@ -82,7 +82,7 @@ Tue 07/21/2026  0:18:47.29 [INFO] REQ-018: post-execution checkpoint (exe): decl
    your program finished quickly or hit an error before printing
    anything. To see what happened, open Command Prompt, cd to
    this folder, and run:
-     dist\_selftest_nuitka_tiera.exe
+     dist\<env>.exe
    This keeps the window open so you can read any messages.
 
    A progress indicator that updates in place may appear all at
@@ -100,16 +100,13 @@ Tue 07/21/2026  0:18:47.29 [INFO] REQ-018: post-execution checkpoint (exe): decl
 ============================================================
 ```
 
-**Observation A (Finding 1 below has more detail):** the "The system cannot find the drive
-specified." pair right after "Building standalone executable..." is real, on-screen text a user
-would see -- confirmed harmless (see Findings), but currently unexplained.
-
-**Observation B:** the "Verifying the built standalone EXE (PyInstaller) now" line and the
-postflight briefing's "RUNNING YOUR APP" section both say "PyInstaller" / talk about `.exe`
-startup unpacking generically -- nothing on screen tells the user this particular EXE was built
-by the Nuitka fallback rather than PyInstaller. Not wrong (both are onefile EXEs with similar
-unpack behavior), but worth a deliberate decision on whether that distinction should ever surface
-to the user, or is intentionally kept invisible ("just works" either way).
+The "Verifying the built standalone EXE" line now correctly says "(fallback build system)"
+instead of a hardcoded "(PyInstaller)" when the EXE being verified was actually Nuitka-built
+(`:warn_user_code_launch` branches on `HP_NUITKA_FALLBACK_USED`). The postflight briefing's
+"PyInstaller build cache" line is left as-is -- Nuitka never creates a `build\<env>\` folder of
+its own (its `--remove-output` flag cleans up its own intermediates), so that line stays literally
+true regardless of which tool actually built the current EXE: if a `build\` folder exists, it's
+PyInstaller's.
 
 ---
 
@@ -119,267 +116,177 @@ to the user, or is intentionally kept invisible ("just works" either way).
 lanes, gating). Two sub-scenarios share one NDJSON row id: `execfail` (the PyInstaller build
 command itself fails) and `output_vanish` (PyInstaller succeeds, then the output EXE vanishes
 immediately -- simulating AV-style post-creation removal). Both additionally force
-`HP_TEST_FORCE_NUITKA_FAIL=1` so the fallback also fails, proving genuine tier exhaustion rather
-than being saved by a real Nuitka success.
-
-**Source:** run `29788624195`, job `88506013028` ("real" lane), commit `d12a80e`. NDJSON rows:
-`{"lane":"real","id":"self.exe.build.xfail","details":{...,"scenario":"execfail","xfailPass":true,"statusState":"error",...}}`
-and the `output_vanish` sibling, both `"pass":true`.
+`HP_TEST_FORCE_NUITKA_FAIL=1` so the fallback also fails, proving genuine tier exhaustion.
 
 ### 2a. `execfail` -- the PyInstaller build command itself fails
 
-```
-Tue 07/21/2026  0:09:58.94 [INFO] Building standalone executable -- this may take a minute or two...
-Tue 07/21/2026  0:09:59.76 [TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
-Tue 07/21/2026  0:09:59.78 [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-Tue 07/21/2026  0:09:59.80 [TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure.
-Tue 07/21/2026  0:09:59.81 [ERROR] PyInstaller execution failed.
-Tue 07/21/2026  0:09:59.83 [DEBUG] warnfix: warn file not found
-Tue 07/21/2026  0:10:00.16 [INFO] PyInstaller build artifacts cleaned up.
-Tue 07/21/2026  0:10:00.17 [WARN] EXE smokerun: dist\_selftest_pyi_fail_execfail.exe not found; skipping
-Tue 07/21/2026  0:10:00.18 [INFO] Running entry script smoke test via uv interpreter.
-Tue 07/21/2026  0:10:00.23 [INFO] Entry smoke exit=0
-Tue 07/21/2026  0:10:00.24 [STATUS] Run Status: SUCCESS (Exit Code: 0)
+Real CI capture, run `29788624195`, job `88506013028` ("real" lane):
 
-Tue 07/21/2026  0:10:00.26 [INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
+```
+[INFO] Building standalone executable -- this may take a minute or two...
+[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
+[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
+[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure.
+[ERROR] PyInstaller execution failed.
+[DEBUG] warnfix: warn file not found
+[INFO] PyInstaller build artifacts cleaned up.
+[WARN] EXE smokerun: dist\<env>.exe not found; skipping
+[INFO] Running entry script smoke test via uv interpreter.
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+
+[INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
 ```
 
-**This is the single most important behavior to flag for review, even though it is intentional
-and already documented** (CLAUDE.md's "User-code exit-code semantics are already correctly
-isolated from bootstrapper status" Known Finding): when BOTH the PyInstaller build AND the Nuitka
-fallback fail outright, the bootstrapper does not stop. It falls through to running the entry
-script directly via the interpreter, and if that trivial script runs cleanly, the FINAL line the
-user sees is `[STATUS] Run Status: SUCCESS (Exit Code: 0)` -- with no EXE ever having been
-produced. The internal `~bootstrap.status.json` correctly records `state=error` (confirmed by
-the NDJSON row's `"statusState":"error"`), so this is not silently swallowed at the machine-
-readable level, but a real user watching only the console would see "SUCCESS" as the last thing
-printed for a run where EXE packaging completely failed. Worth a team discussion on whether the
-console-visible wording should distinguish "your code ran fine via the interpreter, but we could
-not produce a double-clickable EXE" from a true clean-EXE success -- right now both print
-identically.
+When BOTH the PyInstaller build and the Nuitka fallback fail outright, the bootstrapper does not
+stop -- it falls through to running the entry script directly via the interpreter, and since that
+trivial script runs cleanly, the final line is `[STATUS] Run Status: SUCCESS (Exit Code: 0)` --
+identical wording to a genuine clean-EXE success, with no on-screen summary reminding the user
+that no `.exe` was produced. This is intentional, documented design (see CLAUDE.md's Known
+Finding on user-code exit-code semantics); whether the final wording should change is tracked as
+an open question -- see `docs/open-questions.md` item 1.
 
 ### 2b. `output_vanish` -- PyInstaller succeeds, then the EXE disappears immediately
 
+Real CI capture, same run/job as 2a, with the warnfix message updated to reflect a wording fix
+made after this run (removes a stale "in the list above" reference, since the raw warn-file dump
+that phrase pointed at only ever went to `~setup.log`, never the console) -- not yet re-confirmed
+against a fresh CI capture:
+
 ```
-Tue 07/21/2026  0:10:08.90 [INFO] Building standalone executable -- this may take a minute or two...
-The system cannot find the drive specified.
-The system cannot find the drive specified.
-Tue 07/21/2026  0:10:18.38 [TEST] HP_TEST_FORCE_OUTPUT_VANISH: deleting freshly-built EXE to simulate post-creation removal.
-Tue 07/21/2026  0:10:18.40 [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-Tue 07/21/2026  0:10:18.42 [TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure.
-Tue 07/21/2026  0:10:18.43 [ERROR] PyInstaller did not produce dist\_selftest_pyi_fail_output_vanish.exe
-Tue 07/21/2026  0:10:18.45 [DEBUG] warnfix: warn file found
-Tue 07/21/2026  0:10:18.46 [INFO] warnfix: Platform-specific modules in the list above are expected on Windows: posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external. These will be filtered out automatically.
-Tue 07/21/2026  0:10:18.78 [INFO] PyInstaller build artifacts cleaned up.
-Tue 07/21/2026  0:10:18.79 [WARN] EXE smokerun: dist\_selftest_pyi_fail_output_vanish.exe not found; skipping
-Tue 07/21/2026  0:10:18.80 [INFO] Running entry script smoke test via uv interpreter.
-Tue 07/21/2026  0:10:18.85 [INFO] Entry smoke exit=0
-Tue 07/21/2026  0:10:18.86 [STATUS] Run Status: SUCCESS (Exit Code: 0)
+[INFO] Building standalone executable -- this may take a minute or two...
+[TEST] HP_TEST_FORCE_OUTPUT_VANISH: deleting freshly-built EXE to simulate post-creation removal.
+[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
+[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure.
+[ERROR] PyInstaller did not produce dist\<env>.exe
+[DEBUG] warnfix: warn file found
+[INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically.
+[INFO] PyInstaller build artifacts cleaned up.
+[WARN] EXE smokerun: dist\<env>.exe not found; skipping
+[INFO] Running entry script smoke test via uv interpreter.
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
 
 *** Verification finished -- see the Run Status above. ***
 *** You can run your program again now via the interpreter as an extra diagnostic check. ***
-Tue 07/21/2026  0:10:18.88 [INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
+[INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
 ```
-
-**Notable line:** `warnfix: Platform-specific modules in the list above are expected on Windows:
-posix, fcntl, grp, ...` -- this says "in the list above" but, per the console/`~setup.log` split
-noted at the top of this doc, the actual list it refers to (the raw PyInstaller warn-file dump,
-"missing module named 'collections.abc' - imported by...", etc.) is NOT printed to the console at
-all -- it only exists in `~setup.log`. A user watching just the console sees this "above" claim
-with no list actually above it on their screen. See Finding 2.
 
 ---
 
-## Scenario 3: Tier A + hidden-import auto-recovery skip guard -- CONFIRMED (real run, log not dumped)
+## Scenario 3: Tier A + hidden-import auto-recovery skip guard
 
 **What's tested:** `self.exe.tiera.hidden_skip` (`tests/selfapps_nuitka_tiera_hidden_skip.ps1`, uv
 lane, non-gating). Forces Tier A to trigger and succeed for real, then has the stub app fabricate
-a `ModuleNotFoundError: No module named 'nuitka'` on stderr and exit 1 -- deliberately
-constructing the exact signature that used to (before this fix) trigger an incorrect PyInstaller
-rebuild attempt against a Nuitka-built EXE.
+a `ModuleNotFoundError: No module named 'nuitka'` on stderr and exit 1 -- the exact signature that
+used to (before this fix) trigger an incorrect PyInstaller rebuild attempt against a Nuitka-built
+EXE.
 
-**Source:** commit `933bd81` (folded into `c84b20e`); confirmed in real CI run `29829724937`, uv
-lane, job `88632292427`. Real, verbatim NDJSON row from that job's log:
+**Source:** confirmed in real CI run `29877805447`, uv lane, job `88792048278`:
 ```
-{"id":"self.exe.tiera.hidden_skip","req":"REQ-AV","details":{"log":"~nuitka_tiera_hidden_skip_bootstrap.log","exeExists":true,"successLogged":true,"smokerunNonzeroLogged":true,"skipGuardLogged":true,"attemptLogged":true,"bootstrapExit":0,"statusState":"ok","appStdoutFound":true,"noRepairRebuild":true},"lane":"uv","pass":true,"desc":"AV-Safe Build Path Tier A: hidden-import auto-recovery correctly skips (never rebuilds via PyInstaller) against a Nuitka-built EXE"}
+{"details":{"appStdoutFound":true,"noRepairRebuild":true,"successLogged":true,"skipGuardLogged":true,"exeExists":true,"statusState":"ok","bootstrapExit":0,"smokerunNonzeroLogged":true,"attemptLogged":true,"log":"~nuitka_tiera_hidden_skip_bootstrap.log"},"req":"REQ-AV","pass":true,"desc":"AV-Safe Build Path Tier A: hidden-import auto-recovery correctly skips (never rebuilds via PyInstaller) against a Nuitka-built EXE","id":"self.exe.tiera.hidden_skip","lane":"uv"}
 ```
-**Caveat on this section's sourcing:** because this scenario PASSED, the test script (matching
-this suite's established pattern) never dumps the full bootstrap log to the CI console -- only a
-failing scenario's log gets echoed for debugging (see Scenario 4a below, which failed on this same
-run and DOES have a full console dump). So the exact literal console text below is reconstructed
-from `run_setup.bat`'s source as of this commit, not copied from a console dump -- but
-`skipGuardLogged:true` and `noRepairRebuild:true` in the real row above are the test's own
-regex-verified confirmation that these exact strings were present (and the repair line was absent)
-in the real `~nuitka_tiera_hidden_skip_bootstrap.log` file on that run.
+The test only dumps a full console log to CI when a scenario fails; since this one passes, the
+exact console text below is reconstructed from `run_setup.bat`'s source rather than copied from a
+console dump -- the NDJSON row's `skipGuardLogged`/`noRepairRebuild` fields are the test's own
+regex-verified confirmation that these exact lines were present/absent in the real captured log:
 
 ```
-Tue 07/21/2026 ... [INFO] Building standalone executable -- this may take a minute or two...
-Tue 07/21/2026 ... [TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
-Tue 07/21/2026 ... [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-Tue 07/21/2026 ... [INFO] Fallback build succeeded: dist\<env>.exe was produced using the fallback build system.
-Tue 07/21/2026 ... [INFO] EXE smokerun: testing dist\<env>.exe
-Tue 07/21/2026 ... [WARN] EXE smokerun: exited 1 (non-zero)
-Tue 07/21/2026 ... [INFO][HIDDEN_IMPORT] Skipping --hidden-import auto-recovery: dist\<env>.exe was built via the fallback build system (Nuitka), which uses a different missing-import mechanism than PyInstaller's --hidden-import flag.
+[INFO] Building standalone executable -- this may take a minute or two...
+[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
+[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
+[INFO] Fallback build succeeded: dist\<env>.exe was produced using the fallback build system.
+[INFO] EXE smokerun: testing dist\<env>.exe
+[WARN] EXE smokerun: exited 1 (non-zero)
+[INFO][HIDDEN_IMPORT] Skipping --hidden-import auto-recovery: dist\<env>.exe was built via the fallback build system (Nuitka), which uses a different missing-import mechanism than PyInstaller's --hidden-import flag.
 ```
 
-**What this proves, now confirmed:** the OLD behavior (before this session's fix) would have
-printed `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=nuitka; rebuilding EXE (iter 1/3)` at this
-point and attempted a PyInstaller rebuild against a Nuitka-built EXE. The real CI row's
-`noRepairRebuild:true` confirms that line never appeared and the skip guard fired instead.
+Without this guard, the OLD behavior would have printed
+`[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=nuitka; rebuilding EXE (iter 1/3)` here and
+attempted a PyInstaller rebuild against a Nuitka-built EXE.
 
 ---
 
-## Scenario 4: Requirement 9 -- elective "want an optimized build too?" offer -- 4a/4b/4c CONFIRMED, 4d new/pending
+## Scenario 4: Requirement 9 -- elective "want an optimized build too?" offer
 
 **What's tested:** `self.optbuild.offer` (`tests/selfapps_optimized_build.ps1`, uv lane,
-non-gating), three scenarios sharing one row id.
+non-gating), four scenarios sharing one row id.
 
-**Source, first attempt:** commit `c84b20e`; CI run `29829724937`, uv lane, job `88632292427`.
-Only the `accept` scenario's CI step actually executed that time -- it failed on a genuine
-test-script bug (a PowerShell `&`-operator-vs-bare-relative-filename issue, not a
-`run_setup.bat` bug; see the "Real bug this run surfaced" callout under 4a below), and because
-no step in that job used `if: always()`, the subsequent `forcefail`/`decline` steps were
-silently skipped entirely -- the same, already-documented gap tracked as `CLAUDE.md` Active
-Backlog item 7, observed for a second real time.
-
-**Source, fix + re-run:** the test-script bug was fixed (switched to `cmd /c` with the exe's
-full path, matching `selfapps_collect.ps1`'s established pattern) and pushed as commit `e7af66f`.
-CI run `29836090112`, uv lane, job `88652684374` -- **all three scenarios now ran and passed**:
+**Source:** confirmed in real CI run `29877805447`, uv lane, job `88792048278`, all four scenarios
+passing:
 ```
-{"pass":true,"details":{"bootstrapExit":0,"promptShown":true,"statusState":"ok","scenario":"accept","appStillRuns":true,"tmpExeGone":true,"successLogged":true,"log":"~optbuild_accept_bootstrap.log","exeExists":true,"acceptedLogged":true},"lane":"uv","req":"REQ-AV","desc":"AV-Safe Build Path requirement 9 (accept): a real optimized build succeeds, verifies, and is swapped into place","id":"self.optbuild.offer"}
-{"desc":"AV-Safe Build Path requirement 9 (forcefail): a failed optimized build leaves the original PyInstaller EXE completely untouched","req":"REQ-AV","id":"self.optbuild.offer","lane":"uv","details":{"exeExists":true,"testHookFired":true,"originalStillRuns":true,"log":"~optbuild_forcefail_bootstrap.log","tmpExeGone":true,"bootstrapExit":0,"noSuccessMsg":true,"promptShown":true,"statusState":"ok","scenario":"forcefail"},"pass":true}
-{"lane":"uv","req":"REQ-AV","details":{"bootstrapExit":0,"scenario":"decline","declinedLogged":true,"exeExists":true,"log":"~optbuild_decline_bootstrap.log","tmpExeGone":true,"promptShown":true,"statusState":"ok","noBuildAttempt":true},"desc":"AV-Safe Build Path requirement 9 (decline): default/CI path shows the prompt but never attempts a build","id":"self.optbuild.offer","pass":true}
+{"lane":"uv","details":{"log":"~optbuild_accept_bootstrap.log","statusState":"ok","scenario":"accept","successLogged":true,"promptShown":true,"tmpExeGone":true,"exeExists":true,"bootstrapExit":0,"acceptedLogged":true,"appStillRuns":true},"desc":"AV-Safe Build Path requirement 9 (accept): a real optimized build succeeds, verifies, and is swapped into place","req":"REQ-AV","id":"self.optbuild.offer","pass":true}
+{"req":"REQ-AV","lane":"uv","desc":"AV-Safe Build Path requirement 9 (forcefail): a failed optimized build leaves the original PyInstaller EXE completely untouched","id":"self.optbuild.offer","details":{"originalStillRuns":true,"bootstrapExit":0,"log":"~optbuild_forcefail_bootstrap.log","tmpExeGone":true,"promptShown":true,"exeExists":true,"testHookFired":true,"scenario":"forcefail","statusState":"ok","noSuccessMsg":true},"pass":true}
+{"req":"REQ-AV","id":"self.optbuild.offer","lane":"uv","pass":true,"details":{"bootstrapExit":0,"acceptedLogged":true,"originalStillRuns":true,"log":"~optbuild_swapfail_bootstrap.log","promptShown":true,"exeExists":true,"tmpExeGone":true,"scenario":"swapfail","statusState":"ok","noSuccessMsg":true,"swapFailLogged":true},"desc":"AV-Safe Build Path requirement 9 (swapfail): a verified optimized build whose final swap fails leaves the original PyInstaller EXE completely untouched and cleans up the leftover temp file"}
+{"desc":"AV-Safe Build Path requirement 9 (decline): default/CI path shows the prompt but never attempts a build","lane":"uv","details":{"statusState":"ok","noBuildAttempt":true,"tmpExeGone":true,"scenario":"decline","log":"~optbuild_decline_bootstrap.log","bootstrapExit":0,"exeExists":true,"declinedLogged":true,"promptShown":true},"req":"REQ-AV","id":"self.optbuild.offer","pass":true}
 ```
-Note `"appStillRuns":true` for `accept` this time (was `false` before the fix) -- direct
-confirmation the fix worked and the swapped-in optimized EXE genuinely runs correctly.
 
-### 4a. `accept` -- user says yes, a real optimized build succeeds and is swapped in -- CONFIRMED
+### 4a. `accept` -- a real optimized build succeeds and is swapped in
 
-This is a real, verbatim console dump from job `88632292427`
-(`~selftest_optbuild_accept\~optbuild_accept_bootstrap.log`), reproduced exactly (only the
-mid-run `[INFO]`/route-finding lines between "Entry selected" and "Building standalone
-executable" are omitted with `...` for brevity -- nothing altered):
+Real, verbatim console dump (`~selftest_optbuild_accept\~optbuild_accept_bootstrap.log`):
 
 ```
-Tue 07/21/2026 12:46:19.52 [INFO] Building standalone executable -- this may take a minute or two...
+[INFO] Building standalone executable -- this may take a minute or two...
 The system cannot find the drive specified.
 The system cannot find the drive specified.
-Tue 07/21/2026 12:46:27.09 [INFO] PyInstaller produced dist\_selftest_optbuild_accept.exe
-Tue 07/21/2026 12:46:27.10 [INFO] warnfix: Platform-specific modules in the list above are expected on Windows: posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external. These will be filtered out automatically.
-Tue 07/21/2026 12:46:27.37 [INFO] PyInstaller build artifacts cleaned up.
-Tue 07/21/2026 12:46:27.37 [INFO] EXE smokerun: testing dist\_selftest_optbuild_accept.exe
-Tue 07/21/2026 12:46:27.38 [INFO] Running entry script smoke test via packaged EXE.
-Tue 07/21/2026 12:46:27.39 [WARN] Verifying the built standalone EXE (PyInstaller) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost.
-Tue 07/21/2026 12:46:28.68 [INFO] EXE smokerun: exited 0 (ok)
-Tue 07/21/2026 12:46:28.68 [INFO] Entry smoke exit=0
-Tue 07/21/2026 12:46:28.69 [STATUS] Run Status: SUCCESS (Exit Code: 0)
+[INFO] PyInstaller produced dist\<env>.exe
+[INFO] warnfix: Platform-specific modules in the list above are expected on Windows: posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external. These will be filtered out automatically.
+[INFO] PyInstaller build artifacts cleaned up.
+[INFO] EXE smokerun: testing dist\<env>.exe
+[INFO] Running entry script smoke test via packaged EXE.
+[WARN] Verifying the built standalone EXE (PyInstaller) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost.
+[INFO] EXE smokerun: exited 0 (ok)
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
 
 *** Verification finished -- see the Run Status above. ***
 *** You can run your program again now via the interpreter as an extra diagnostic check. ***
-Tue 07/21/2026 12:46:28.71 [INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
+[INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
 
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. ***
-Tue 07/21/2026 12:46:28.72 [INFO] Optimized build: accepted; building now (this may take a minute or two).
-Tue 07/21/2026 12:46:48.88 [INFO] Optimized build succeeded and verified: dist\_selftest_optbuild_accept.exe now uses the fallback build system.
+[INFO] Optimized build: accepted; building now (this may take a minute or two).
+[INFO] Optimized build succeeded and verified: dist\<env>.exe now uses the fallback build system.
 ```
 
-**Note on the `Y/N` prompt text and CI's echo-only behavior:** the interactive `  Build the
-optimized version now? [Y/N]` line is echoed unconditionally by design (same pattern as
-`:run_postexec_checkpoint` -- see `docs/agent-interconnect.md`), but it did not appear literally
-in this particular captured log; only the accept/decline resolution lines did. This is consistent
-with the rest of this file's captures (CI answers via `HP_TEST_OPTBUILD_ANSWER`, not `set /p`) --
-worth a closer look in a future pass to confirm the prompt text itself does reach the console on a
-real interactive run, not just its resolution.
+Note the "warnfix: Platform-specific modules..." line above still shows the OLD wording (this
+capture predates the messaging fix described in Scenario 2b) -- the NEW wording is the one shown
+there; re-pull this capture once a fresh CI run exercises this path again.
 
-**Real bug this run surfaced, not in `run_setup.bat` -- in the test script itself, now fixed and
-re-confirmed:** the first attempt's NDJSON row for this scenario read `"pass":false` with
-`"appStillRuns":false`, despite every other field (`successLogged`, `acceptedLogged`,
-`tmpExeGone`, `exeExists`) being `true` and the log above plainly showing the optimized build
-succeeded, verified, and swapped in correctly. Root cause: `tests/selfapps_optimized_build.ps1`
-re-executed the swapped-in EXE via PowerShell's `& "$envName.exe"` (a bare relative filename)
-from inside the `dist\` directory -- but unlike `cmd.exe`, PowerShell's `&` operator does not
-implicitly search the current directory for an executable without a `.\` prefix or a PATH entry,
-so the call threw and was silently swallowed by the surrounding `catch { $appStillRuns = $false
-}`. Fixed by switching to `cmd /c` with the exe's full quoted path, matching the established
-pattern already used in `tests/selfapps_collect.ps1`. `run_setup.bat`'s own behavior was correct
-throughout -- this was a test-authoring bug, not a product bug. The re-run (job `88652684374`,
-quoted above) confirms `"appStillRuns":true` now.
+**The interactive `Build the optimized version now? [Y/N]` prompt line is echoed unconditionally
+by design** (same pattern as `:run_postexec_checkpoint`), but does not appear literally in any
+CI capture -- CI answers via the `HP_TEST_OPTBUILD_ANSWER` env-var override, not the interactive
+`set /p` path, so only the resolution lines (`accepted`/`declined`) show up in these logs. This is
+expected (CI is non-interactive by design), not a gap.
 
-### 4b. `forcefail` -- accepted, but the build fails; original EXE is left untouched -- CONFIRMED
+### 4b. `forcefail` -- accepted, but the build fails; original EXE is left untouched
 
-Real, verbatim console dump from job `88652684374`
-(`~selftest_optbuild_forcefail\~optbuild_forcefail_bootstrap.log`):
+Real, verbatim console dump (`~selftest_optbuild_forcefail\~optbuild_forcefail_bootstrap.log`):
 
 ```
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. ***
-Tue 07/21/2026 14:08:43.15 [INFO] Optimized build: accepted; building now (this may take a minute or two).
-Tue 07/21/2026 14:08:43.16 [TEST] HP_TEST_FORCE_OPTBUILD_FAIL: simulating optimized-build failure.
-Tue 07/21/2026 14:08:43.23 [INFO] REQ-016: Post-flight briefing printed.
+[INFO] Optimized build: accepted; building now (this may take a minute or two).
+[TEST] HP_TEST_FORCE_OPTBUILD_FAIL: simulating optimized-build failure.
+[INFO] REQ-016: Post-flight briefing printed.
 ```
 
-Confirms what the earlier PENDING note predicted: no further message prints between the forced-
-fail log line and the (unrelated, always-present) post-flight briefing -- the subroutine cleans
-up the temp file and returns silently. `originalStillRuns:true` and `tmpExeGone:true` in the
-NDJSON row confirm the original PyInstaller-built EXE was genuinely left untouched and still
-runs. **Worth a second look**: this silence reads as "did nothing happen?" to a real user,
-versus the more explicit "your app is still ready to use as-is" wording used on the REAL
-build-failure branches (see the reactive hint below) -- a forced-test-hook failure and a genuine
-build failure currently produce different amounts of user-facing reassurance for what is, from
-the user's perspective, the same outcome (declined optimized build, original app still works).
+No further message prints between the forced-fail log line and the (unrelated, always-present)
+post-flight briefing -- the subroutine cleans up the temp file and returns silently. This is a
+narrower silence than the wording used on a REAL build-failure branch (which explicitly says
+"your app is still ready to use as-is" -- see the reactive hint below); a forced-test-hook failure
+and a genuine build failure currently give the user different amounts of reassurance for what is,
+from their perspective, the same outcome.
 
-### 4c. `decline` -- default/CI path, prompt shown but nothing built -- CONFIRMED
+### 4c. `swapfail` -- verified build, but the final swap step fails; original EXE is left untouched
 
-Real, verbatim console dump from job `88652684374`
-(`~selftest_optbuild_decline\~optbuild_decline_bootstrap.log`):
-
-```
-*** Your app is ready. ***
-*** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
-Tue 07/21/2026 14:09:06.52 [INFO] Optimized build: declined.
-```
-
-**Open question now answered, across all three scenarios:** the interactive `  Build the
-optimized version now? [Y/N]` prompt line does NOT appear literally in any of the three real
-captured logs (accept/forcefail/decline) -- only the accept/decline/forced-fail resolution lines
-do. This is because CI answers via the `HP_TEST_OPTBUILD_ANSWER` env-var override, not the
-interactive `set /p` path, so the prompt text itself is never actually echoed to the CI console
-in any of these captures. Confirming the prompt text reaches a real user's screen on a genuine
-interactive run remains unverified by CI (expected -- CI is non-interactive by design); this is
-consistent with how `:run_postexec_checkpoint`'s own prompt is documented elsewhere in this repo.
-
-### Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths) -- still not observed in any real CI run
-
-Confirmed via source (`run_setup.bat`'s `:offer_optimized_build`) that this hint is deliberately
-NOT printed on the `forcefail` scenario above -- `HP_TEST_FORCE_OPTBUILD_FAIL`'s branch jumps
-straight to `:optbuild_cleanup`, bypassing the hint entirely, since that path simulates a test
-hook rather than a genuine Nuitka build failure. No CI run to date (Tier A's real-Nuitka-build
-tests and requirement 9's tests alike) has exercised a GENUINE Nuitka compiler failure, so this
-block remains sourced from `run_setup.bat` rather than a real log capture:
-
-```
-[WARN] Optimized build did not complete; your app is still ready to use as-is.
-[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help.
-```
-
-### 4d. `swapfail` -- verified build, but the final swap step fails -- new scenario, real bug fixed, not yet CI-confirmed
-
-Found via a refinement-pass code review of the just-merged PR #370: the original "did the swap
-succeed" check (`if not exist "dist\<env>.exe"` after `move /y`) tested the DESTINATION -- but
-that file is the already-working original EXE this whole subroutine exists to maybe replace, so
-it already exists before the move runs, success or failure alike. A genuinely failed swap (e.g.
-an AV/indexer lock on the destination) would have been silently misreported as success, telling
-the user their app now uses the optimized build when it actually doesn't, and incorrectly
-disabling the hidden-import auto-recovery loop for what is still a PyInstaller-built EXE. Fixed by
-checking whether the SOURCE (the temp file) is gone instead, which correctly distinguishes success
-from failure regardless of whether the destination pre-existed. New test hook
-`HP_TEST_FORCE_OPTBUILD_SWAP_FAIL` and a new `swapfail` scenario reproduce this deterministically
-(skip the real `move`, leave the temp file in place) without depending on an artificial file lock.
-Not yet run in real CI as of this doc update -- expected message, sourced from `run_setup.bat`:
+Regression test for a real bug: the swap-verification check used to test the DESTINATION file
+(which already exists before the move, success or failure alike) instead of the SOURCE (which
+should be gone only on success) -- a genuinely failed swap would have been silently misreported
+as success. Fixed; console text (expected from source, not yet dumped in a CI console capture
+since this scenario has passed on every run so far):
 
 ```
 *** Your app is ready. ***
@@ -388,108 +295,24 @@ Not yet run in real CI as of this doc update -- expected message, sourced from `
 [WARN] Optimized build verified successfully but could not be swapped into place; your app is still ready to use as-is.
 ```
 
-See `docs/agent-interconnect.md`'s requirement 9 section and `CLAUDE.md`'s Closed Backlog for the
-full trace.
+### 4d. `decline` -- default/CI path, prompt shown but nothing built
 
----
+Real, verbatim console dump (`~selftest_optbuild_decline\~optbuild_decline_bootstrap.log`):
 
-## Refinement pass log
+```
+*** Your app is ready. ***
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
+[INFO] Optimized build: declined.
+```
 
-Small, targeted checks run against the shipped code while waiting on CI, logged here as they
-happen rather than only reporting the end state. These are verification passes (did the new code
-break something already relied on), not new scenarios with their own screen output.
+### Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths)
 
-**2026-07-21, requirement 9 vs. the existing checkpoint test -- checked, no interference.**
-`:offer_optimized_build` fires immediately after `:run_postexec_checkpoint` on every successful
-build, so `tests/selfapps_postexec_checkpoint.ps1` (`self.checkpoint.accept`/`.decline`) now runs
-with a second prompt-and-decline sequence tacked on right after its own. Traced both scenarios by
-hand against the actual regexes that test uses:
-- `self.checkpoint.accept` sets `HP_TEST_CHECKPOINT_ANSWER=Y` but not `HP_TEST_OPTBUILD_ANSWER`,
-  so `:offer_optimized_build` hits its own `HP_CI_LANE` auto-decline branch (the test sets
-  `HP_CI_LANE=test`) and never runs a build -- no extra `Entry smoke exit=0` line, so the
-  `$accRunCount -ge 2` assertion is unaffected. The test's `$accAccepted` regex
-  (`'post-execution checkpoint \((exe|interpreter)\): accepted; running a second time...'`) only
-  matches `:run_postexec_checkpoint`'s own log line, which `:offer_optimized_build`'s
-  `[INFO] Optimized build: accepted; building now...` text does not resemble.
-- `self.checkpoint.decline`'s `$decRunCount -eq 1` assertion holds for the same reason (the new
-  prompt's decline path runs nothing).
-- The static check in `tests/harness.ps1` (`batch.postexec.checkpoint`) counts occurrences of the
-  literal string `call :run_postexec_checkpoint` (`$cpCallCount -ge 3`) -- the new
-  `call :offer_optimized_build` line does not match that string, so the count is unaffected.
+Fires only on a GENUINE Nuitka compiler failure (not the `forcefail` test hook, which bypasses it
+entirely). No CI run to date has exercised a real Nuitka compiler failure, so this is sourced from
+`run_setup.bat` rather than a console capture:
 
-**2026-07-21, NDJSON registry check -- ran locally, clean.** `python tools/check_ndjson_registry.py`
-against the working tree (both new test files' rows included): `Doc-registered IDs: 268 ... PASS:
-no doc/code registry mismatches found.` Confirms `self.exe.tiera.hidden_skip` and
-`self.optbuild.offer` are both correctly documented in `docs/agent-ndjson.md` and correctly
-discovered by the scanner's PowerShell-source scan -- no silent registry drift introduced by this
-session's additions.
-
-**2026-07-21, first real CI run (`29829724937`) -- hidden-import skip guard fully confirmed;
-requirement 9's `accept` scenario failed on a test-script bug, `forcefail`/`decline` never ran.**
-See Scenario 3 and Scenario 4 above for the confirmed quotes and full detail. Two things worth
-calling out here specifically since they're about the demo-doc process itself, not the feature:
-- The `accept` scenario's failure was in `tests/selfapps_optimized_build.ps1`, not in
-  `run_setup.bat` -- a PowerShell `&`-operator-vs-bare-relative-filename resolution difference
-  from `cmd.exe` (see Scenario 4a for the full explanation). Fixed (`cmd /c` instead of `&`,
-  matching `selfapps_collect.ps1`'s established pattern), pushed as commit `e7af66f`, and
-  re-confirmed green in CI run `29836090112`/job `88652684374` -- see the updated Scenario 4
-  above for the real re-run quotes.
-- Because `accept` failed and no step in the uv-lane job uses `if: always()`, the `forcefail` and
-  `decline` CI steps never executed on the first attempt -- not "pending," genuinely skipped.
-  This is a second, independent real-world instance of the exact gap `CLAUDE.md`'s Active
-  Backlog item 7 already documents (first observed while landing PR #368). Not fixed here,
-  consistent with that item's own stated reasoning (the real fix touches ~50 existing step
-  definitions and deserves its own reviewed pass, not a drive-by fix bundled into unrelated
-  feature work) -- but it's now been observed twice in real CI, which is worth noting as it
-  strengthens the case for eventually doing that hardening pass. Once `accept` was fixed, both
-  `forcefail` and `decline` ran normally on the re-run and passed.
-
-**2026-07-21, second CI run (`29836090112`) -- all remaining scenarios confirmed.** `uv`, `real`,
-and `cache`/`uv-dl-fallback`/`contract-uv`/`contract-uv-fail`/`justme-test` lanes all green;
-`conda-full` (the ~80-minute lane) was still running as of this doc update but this commit never
-touched anything conda-full-specific, so no regression is expected there. All Scenario 3/4
-PENDING blocks are now filled in with real quotes.
-
----
-
-## Findings worth a second look
-
-1. **"The system cannot find the drive specified." prints twice, on-screen, right before every
-   PyInstaller build starts -- confirmed pre-existing and harmless, not introduced by this
-   session's work, but not explained to the user.** Occurs 97 times in the `real` lane job log and
-   81 times in the `uv` lane job log for the SAME CI run (`29788624195`) -- far too common to be
-   Tier-A-specific; it precedes essentially every "Building standalone executable..." line,
-   success or failure alike. An existing test (`self.env.smoke.conda`/`self.prime.bootstrap` in
-   `tests/selfapps_envsmoke.ps1`) already explicitly whitelists it:
-   `"unexpectedSystemErrorLine":"The system cannot find the drive specified.","unexpectedSystemErrorIgnored":"drive-specified-nonfatal"`.
-   Root cause not chased down here (likely some PyInstaller-internal drive/cache probe on the
-   GitHub Actions Windows runner's particular drive layout), but since it's already known-benign
-   and already silently tolerated by tests, it may be worth either suppressing it at the source
-   (redirect that specific subprocess's stderr) or adding one reassuring line so a real user
-   doesn't mistake it for an error. Low priority, cosmetic only.
-
-2. **The raw PyInstaller warn-file dump never reaches the live console -- confirmed directly by
-   comparing the console-capture group against the `~setup.log` dump group for the SAME test
-   run.** `type "build\<env>\warn-<env>.txt" >> "%LOG%"` in `run_setup.bat` redirects the warn
-   file's content straight into `~setup.log`, bypassing the console entirely. The very next line,
-   `[INFO] warnfix: Platform-specific modules in the list above are expected on Windows: ...`,
-   DOES print to the console and says "in the list above" -- but for a user watching only the
-   console (not opening `~setup.log`), there is no list above it. This isn't a functional bug
-   (the filtering logic itself works correctly, confirmed by Scenario 2b passing), just a
-   messaging inconsistency between what's promised on-screen and what's actually visible there.
-
-3. **Total EXE-packaging failure (PyInstaller AND Tier A both exhausted) still ends with
-   `[STATUS] Run Status: SUCCESS`** if the entry script itself runs cleanly via the interpreter
-   fallback -- see Scenario 2a's callout. Intentional, already-documented design (packaging
-   failure is tracked separately from user-code outcome, per CLAUDE.md's Known Finding), but
-   worth keeping in view: the ONLY on-screen signal that packaging failed is the earlier
-   `[ERROR] PyInstaller execution failed.` line a few seconds before -- there's no summary at the
-   very end reminding the user "by the way, no .exe was produced; here's why."
-
-4. **Nothing on screen distinguishes a Nuitka-fallback-built EXE from a normal PyInstaller-built
-   one** -- see Scenario 1's Observation B. The postflight briefing's language ("PyInstaller
-   build cache" in the SAFE-TO-DELETE section, "Verifying the built standalone EXE (PyInstaller)
-   now" during smoke-test) is generic and technically slightly inaccurate when Tier A or
-   requirement 9's optimized build produced the file instead. Not necessarily wrong to keep
-   invisible (the PRD's own framing is "it just works, don't make the user care which tool built
-   it"), but worth a deliberate yes/no rather than an accidental omission.
+```
+[WARN] Optimized build did not complete; your app is still ready to use as-is.
+[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help.
+```
