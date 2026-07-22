@@ -229,7 +229,7 @@ point and attempted a PyInstaller rebuild against a Nuitka-built EXE. The real C
 
 ---
 
-## Scenario 4: Requirement 9 -- elective "want an optimized build too?" offer -- ALL THREE CONFIRMED
+## Scenario 4: Requirement 9 -- elective "want an optimized build too?" offer -- 4a/4b/4c CONFIRMED, 4d new/pending
 
 **What's tested:** `self.optbuild.offer` (`tests/selfapps_optimized_build.ps1`, uv lane,
 non-gating), three scenarios sharing one row id.
@@ -365,6 +365,31 @@ block remains sourced from `run_setup.bat` rather than a real log capture:
 [WARN] Optimized build did not complete; your app is still ready to use as-is.
 [WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help.
 ```
+
+### 4d. `swapfail` -- verified build, but the final swap step fails -- new scenario, real bug fixed, not yet CI-confirmed
+
+Found via a refinement-pass code review of the just-merged PR #370: the original "did the swap
+succeed" check (`if not exist "dist\<env>.exe"` after `move /y`) tested the DESTINATION -- but
+that file is the already-working original EXE this whole subroutine exists to maybe replace, so
+it already exists before the move runs, success or failure alike. A genuinely failed swap (e.g.
+an AV/indexer lock on the destination) would have been silently misreported as success, telling
+the user their app now uses the optimized build when it actually doesn't, and incorrectly
+disabling the hidden-import auto-recovery loop for what is still a PyInstaller-built EXE. Fixed by
+checking whether the SOURCE (the temp file) is gone instead, which correctly distinguishes success
+from failure regardless of whether the destination pre-existed. New test hook
+`HP_TEST_FORCE_OPTBUILD_SWAP_FAIL` and a new `swapfail` scenario reproduce this deterministically
+(skip the real `move`, leave the temp file in place) without depending on an artificial file lock.
+Not yet run in real CI as of this doc update -- expected message, sourced from `run_setup.bat`:
+
+```
+*** Your app is ready. ***
+*** Want to build an optimized version too? ... ***
+[INFO] Optimized build: accepted; building now (this may take a minute or two).
+[WARN] Optimized build verified successfully but could not be swapped into place; your app is still ready to use as-is.
+```
+
+See `docs/agent-interconnect.md`'s requirement 9 section and `CLAUDE.md`'s Closed Backlog for the
+full trace.
 
 ---
 

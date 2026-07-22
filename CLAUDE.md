@@ -875,6 +875,32 @@ of a second or third pin actually needing it.
 
 Items completed and shipped:
 
+- **Refinement-pass fix on shipped requirement 9: the post-swap "did it work" check tested the
+  wrong file, silently misreporting a failed swap as success.** Found via a self-directed
+  refinement/code-review pass on the just-merged PR #370 (`:offer_optimized_build`), requested
+  directly by the owner ("do some more refinement iterations on latest work"). The original check
+  was `if not exist "dist\%ENVNAME%.exe"` after `move /y "dist\%HP_OPTBUILD_TMP%"
+  "dist\%ENVNAME%.exe"` -- but `dist\%ENVNAME%.exe` is the DESTINATION, the already-working
+  original EXE this subroutine exists to (maybe) replace, so it already exists BEFORE the move
+  runs, success or failure alike. A same-volume `move /y` onto an existing destination is an
+  atomic rename-replace: on success the SOURCE is consumed; on failure (e.g. an AV/indexer lock on
+  the destination -- the exact hazard class already documented for `:try_embed_fallback`'s own
+  `rd`/`move` swap, see `docs/agent-lessons-learned.md`) the whole operation is rejected and the
+  source is left untouched, with the destination unaffected either way -- so the old
+  destination-existence check could never actually detect a failed swap. A real failure would have
+  been silently misreported as `[INFO] Optimized build succeeded and verified...`,
+  `HP_NUITKA_FALLBACK_USED` would be wrongly set (incorrectly disabling
+  `:hidden_import_recover`'s auto-recovery for what is still a PyInstaller-built EXE), and the
+  leftover temp file would never be cleaned up (the old failure branch didn't route through the
+  shared `:optbuild_cleanup` label either). Fixed by checking whether the SOURCE is gone instead,
+  and by routing this failure through `:optbuild_cleanup` like every other failure branch (fixes
+  the temp-file leak too). New test hook `HP_TEST_FORCE_OPTBUILD_SWAP_FAIL` (skips the real
+  `move`, deliberately leaving the temp file in place to reproduce the exact "source still exists
+  after move" failure signature without depending on an artificial OS-level file lock) and a new
+  `swapfail` scenario in `tests/selfapps_optimized_build.ps1` (uv lane, non-gating, real Nuitka
+  build + verify, like `accept`) prove the fix. See `docs/agent-interconnect.md`'s requirement 9
+  section for the full trace. CLOSED by this pass.
+
 - **AV-Safe Build Path requirement 9 (P1): the elective "want an optimized build too?" upsell
   after a normal successful PyInstaller build.** Owner explicitly greenlit this ("go ahead and
   do requirement 9 ... I personally want the optimized build") in the same message that

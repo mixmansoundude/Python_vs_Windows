@@ -558,10 +558,10 @@ jobs:
           & tests\selfapps_nuitka_tiera_hidden_skip.ps1
 
       # AV-Safe Build Path requirement 9 (P1): the elective "want an optimized build too?"
-      # upsell after a normal successful PyInstaller build. Three scenarios in one file/lane
-      # (uv, non-gating) -- 'accept' depends on a real Nuitka build succeeding (same reasoning
-      # as the Tier A steps above); 'forcefail'/'decline' are deterministic but kept in the same
-      # lane for consistency with the shared NDJSON row id.
+      # upsell after a normal successful PyInstaller build. Four scenarios in one file/lane
+      # (uv, non-gating) -- 'accept'/'swapfail' depend on a real Nuitka build succeeding (same
+      # reasoning as the Tier A steps above); 'forcefail'/'decline' are deterministic but kept in
+      # the same lane for consistency with the shared NDJSON row id.
       - name: "Self-test: optimized-build offer, accept (uv lane, non-gating)"
         if: ${{ matrix.mode == 'uv' }}
         shell: pwsh
@@ -575,6 +575,14 @@ jobs:
         shell: pwsh
         env:
           OPTBUILD_SCENARIO: forcefail
+        run: |
+          & tests\selfapps_optimized_build.ps1
+
+      - name: "Self-test: optimized-build offer, swap failure leaves original untouched (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        shell: pwsh
+        env:
+          OPTBUILD_SCENARIO: swapfail
         run: |
           & tests\selfapps_optimized_build.ps1
 

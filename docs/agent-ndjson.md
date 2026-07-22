@@ -380,7 +380,7 @@ this feature builds to a distinct temp filename, verifies the new build actually
 then swaps it into `dist\<env>.exe` -- on any failure at any stage the original, already-working
 EXE is left completely untouched.
 
-Three scenarios (`OPTBUILD_SCENARIO` env var), all in this one file/lane:
+Four scenarios (`OPTBUILD_SCENARIO` env var), all in this one file/lane:
 - `accept` (`HP_TEST_OPTBUILD_ANSWER=Y`, no forced failure): a REAL Nuitka build runs, is
   verified, and is swapped into place. Same non-gating reasoning as `self.exe.build.tiera` --
   depends on a real Nuitka build succeeding, which could not be verified locally.
@@ -388,11 +388,22 @@ Three scenarios (`OPTBUILD_SCENARIO` env var), all in this one file/lane:
   build is forced to fail deterministically (no real Nuitka attempt); asserts the original
   PyInstaller-built `dist\<env>.exe` is left completely untouched and still runs (re-executed
   directly by the test after the bootstrap completes, not just checked for existence).
+- `swapfail` (`HP_TEST_OPTBUILD_ANSWER=Y` + `HP_TEST_FORCE_OPTBUILD_SWAP_FAIL=1`): a REAL Nuitka
+  build runs and verifies successfully (same as `accept`), but the final move-into-place step is
+  forced to fail. Regression test for a real bug found via a refinement-pass code review (see
+  Closed Backlog): the original "did the swap succeed" check tested whether `dist\<env>.exe` (the
+  destination) existed -- but that file already exists BEFORE the move (it's the already-working
+  original), so a genuinely failed `move /y` (e.g. an AV/indexer lock on the destination -- the
+  same hazard class already documented for `:try_embed_fallback`'s own swap in
+  `docs/agent-lessons-learned.md`) was silently misreported as success. Asserts the original EXE
+  is left completely untouched and still runs, the leftover temp file is cleaned up (also part of
+  the fix -- the old failure branch never routed through the shared `:optbuild_cleanup` label),
+  and the "succeeded and verified" message is never logged.
 - `decline` (neither env var set): falls through to the ambient `HP_CI_LANE` auto-decline, the
   same mechanism `selfapps_postexec_checkpoint.ps1`'s own `self.checkpoint.decline` scenario
   relies on; asserts the prompt is shown but no build is ever attempted.
 
-All three deliberately kept in one file/lane rather than split across gating/non-gating lanes by
+All four deliberately kept in one file/lane rather than split across gating/non-gating lanes by
 determinism, matching this repo's established multi-scenario pattern (e.g.
 `selfapps_pyinstaller_fail.ps1`'s `PYI_FAIL_SCENARIO`) -- promote once proven stable, matching
 this repo's established graduation pattern.

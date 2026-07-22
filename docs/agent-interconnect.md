@@ -149,6 +149,31 @@ the original. Every failure branch (`goto :optbuild_cleanup`) deletes only the t
 leaves `dist\%ENVNAME%.exe` completely untouched -- see the subroutine's own header comment in
 `run_setup.bat` for the full branch-by-branch trace.
 
+**Real bug found and fixed via a refinement-pass code review, same day as PR #370 merged: the
+post-swap "did it work" check tested the wrong file.** The original code checked `if not exist
+"dist\%ENVNAME%.exe"` after the `move /y` to decide whether the swap succeeded -- but
+`dist\%ENVNAME%.exe` is the DESTINATION, which is the already-working original EXE this whole
+subroutine exists to (maybe) replace, so it already exists BEFORE the move runs, success or
+failure alike. A same-volume `move /y` onto an existing destination is an atomic rename-replace:
+on success the SOURCE (`dist\%HP_OPTBUILD_TMP%`) is consumed; on failure (e.g. an AV/indexer lock
+on the destination -- the exact hazard class already documented immediately below for
+`:try_embed_fallback`'s own `rd`/`move` swap) the whole operation is rejected and the source is
+left untouched, with the destination unaffected either way. The old destination-existence check
+could therefore never actually detect a failed swap -- a real failure would be silently
+misreported as `[INFO] Optimized build succeeded and verified...`, `HP_NUITKA_FALLBACK_USED`
+would be wrongly set (incorrectly disabling `:hidden_import_recover`'s auto-recovery for what is
+still a PyInstaller-built EXE, per the section above), and the leftover temp file at
+`dist\%HP_OPTBUILD_TMP%` would never be cleaned up (the old failure branch didn't route through
+`:optbuild_cleanup` either). Fixed by checking whether the SOURCE is gone instead, and by routing
+this failure through the shared `:optbuild_cleanup` label like every other failure branch (which
+also fixes the temp-file leak as a side effect). New test hook
+`HP_TEST_FORCE_OPTBUILD_SWAP_FAIL` (skips the real `move` and deliberately leaves the temp file in
+place, reproducing the exact "source still exists after move" failure signature without depending
+on an artificial OS-level file lock) and a new `swapfail` scenario in
+`tests/selfapps_optimized_build.ps1` (uv lane, non-gating, real Nuitka build + verify, like
+`accept`) prove the fix: the original EXE is left completely untouched and still runs, the
+leftover temp file is cleaned up, and the success message never logs.
+
 **Gated on the SAME `HP_NUITKA_FALLBACK_USED` flag Tier A sets, but for the opposite reason.**
 Tier A's hidden-import-recovery guard (section above) checks the flag to SKIP a PyInstaller-only
 repair mechanism against a Nuitka EXE. This subroutine checks the flag to SKIP OFFERING THE PROMPT
