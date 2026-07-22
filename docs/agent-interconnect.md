@@ -273,6 +273,43 @@ bug class -- see the "Two real implementation gotchas" list below (gotcha 1, the
 for the OTHER pre-existing hazard this tier has to handle correctly, which was unaffected by
 this bug.
 
+**Second correctness issue found via a later deep-dive review pass -- NOT the same fix shape as
+requirement 9, despite an initial attempt to mirror it, because this is a DIRECTORY move, not a
+FILE move.** `:embed_swap_retry` checked `if exist "%HP_EMBED_DIR%\python.exe"` after `rd /s /q
+"%HP_EMBED_DIR%"` + `move /y "%HP_EMBED_SWAP_DIR%" "%HP_EMBED_DIR%"` to decide whether the swap
+succeeded. A first pass "fixed" this by checking whether the SOURCE was gone instead, mirroring
+requirement 9's own swap-verification fix -- but that mirroring does not actually hold here.
+Requirement 9's fix works because a same-volume FILE `move /y` onto an existing destination is
+atomic: it either fully replaces the destination (source consumed) or fully fails (source
+untouched, destination unaffected) -- no third outcome. A DIRECTORY `move` onto a destination
+that still exists behaves differently: it silently NESTS the source inside the destination
+(`HP_EMBED_SWAP_DIR` ends up living at `HP_EMBED_DIR\<its own name>`, not replacing
+`HP_EMBED_DIR`'s contents). If `rd /s /q` fails to fully clear `HP_EMBED_DIR` (the exact
+AV/indexer-lock race this code already anticipates), the destination still exists when `move`
+runs, so nesting occurs -- and in that scenario BOTH candidate checks read as false success: the
+STALE prior `python.exe` is still sitting at `HP_EMBED_DIR`'s top level regardless of what the
+nested move did (so "does the destination exist" is wrong), and `HP_EMBED_SWAP_DIR` as an exact
+path also no longer exists, since it got renamed away into the nested subfolder rather than
+genuinely swapped (so "is the source gone" is ALSO wrong, for a different reason). Neither
+post-hoc check can distinguish "swap genuinely succeeded" from "rd failed and the source got
+silently nested instead."
+
+**The actually-correct fix: gate `move` on `rd` having genuinely cleared the destination first,**
+so `move` only ever runs onto a nonexistent target (pure rename semantics, nesting structurally
+impossible) -- which is what makes a post-hoc destination check reliable again. `:embed_swap_retry`
+now does `rd /s /q "%HP_EMBED_DIR%"` then `if exist "%HP_EMBED_DIR%" goto :embed_swap_rd_failed`
+(skip `move` entirely and go straight to the retry-count check) before ever attempting `move`; only
+when `rd` is confirmed to have cleared the directory does `move` run, and only then is `if exist
+"%HP_EMBED_DIR%\python.exe"` trustworthy as a success signal. **This is NOT CI-confirmed** --
+`self.embed.fallback.real` still never requests a non-default Python version through this tier
+(same gap the first correctness bug's own fix description already noted), so the swap branch this
+check lives in remains untested by any real CI run; the fix is based on static reasoning about
+Windows `move`/`rd` semantics (verified against documented Windows directory-move behavior, not a
+live Windows reproduction from this sandbox). Building a dedicated test (pinning a non-latest
+Python version through a real embed-tier download) would be the natural next step if this tier's
+real-world trigger rate ever justifies the investment -- not undertaken here, matching this tier's
+existing low-priority status elsewhere in this repo's own research notes.
+
 **Refinement made during implementation, beyond the original design map: two-stage
 PowerShell/Python split, not a single PowerShell script.** The original design map (below)
 assumed one implementation stage. Building it surfaced a chicken-and-egg problem the design map
@@ -705,6 +742,22 @@ of stderr to capture that marker, it would silently swallow the user's live scri
 throwaway result file instead of showing it on the console. `tests/selfapps_pvw_idempotent.ps1`
 guards against this regression directly: it asserts the stub app's own `print()` output appears
 in the bootstrap log itself, not just that the run "succeeded."
+
+**`run_script()`'s live execution is bounded by a 120s timeout, found missing via a bug-hunt
+pass and fixed.** This call genuinely runs the user's entry script (not a smoke test) as the
+whole point of execute-mode discovery -- but unlike `discover_dep_names()`/`persist()` in the
+same file (60s/120s timeouts respectively), it originally had none at all. A GUI-mainloop app or
+a script that blocks on `input()` -- both completely ordinary Python programs -- would hang this
+call, and therefore the entire bootstrap, forever with zero feedback, since this runs before any
+build/verification phase and nothing downstream would ever get a chance to run. This is distinct
+from the "never kill the user's real run" principle covering `:run_failfast_probe`'s later
+verification runs (see "Fail-fast probe (Slice 2b-C)" below) -- THAT principle protects the run
+that produces the user's actual deliverable output; this call is a throwaway discovery pass that
+happens twice more anyway (the real, persistent-environment run comes later), so bounding it does
+not cost the user anything a real run needs. On timeout, `run_script()` returns `1` (routing
+through `main()`'s existing "other nonzero" best-effort-fillin-and-retry branch, same as any
+other non-2 failure) rather than raising -- `tests/test_pvw_known_idempotent.py`'s `RunScript`
+class asserts both that a timeout is set and that `subprocess.TimeoutExpired` is caught cleanly.
 
 **Double-execution under this flag is intentional, not a REQ-018 gap.** The script runs once here
 (via `uvx`, ephemeral tool venv, for discovery) and again later during the normal PyInstaller EXE

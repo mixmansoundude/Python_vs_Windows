@@ -79,6 +79,7 @@ jobs:
       - name: Restore Miniconda cache
         if: ${{ matrix.mode == 'cache' }}
         id: conda_cache_restore
+        continue-on-error: true
         uses: actions/cache/restore@v5
         with:
           path: C:\Users\Public\Documents\Miniconda3
@@ -89,6 +90,7 @@ jobs:
       - name: Validate restored conda binary
         if: ${{ matrix.mode == 'cache' }}
         id: cache_health
+        continue-on-error: true
         shell: pwsh
         run: |
           $condaMain = 'C:\Users\Public\Documents\Miniconda3\condabin\conda.bat'

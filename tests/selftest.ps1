@@ -21,10 +21,17 @@ $ciNd = Join-Path $RepoDir  'ci_test_results.ndjson'
 if (-not (Test-Path $nd))   { New-Item -ItemType File -Path $nd   -Force | Out-Null }
 if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
 
+$script:AnyRowFailed = $false
 function Write-NdjsonRow {
     param([hashtable]$Row)
     $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
     if ($lane -and -not $Row.ContainsKey('lane')) { $Row['lane'] = $lane }
+    # derived requirement: this file has no other central point where every one of its ~40+
+    # scenarios converges -- every scenario calls this function, so tracking pass/fail here
+    # (rather than at each of the ~40+ individual call sites) is what lets the script's own
+    # exit code (see end of file) actually reflect whether anything failed, instead of always
+    # returning PowerShell's default 0 regardless of scenario outcomes.
+    if ($Row.ContainsKey('pass') -and $Row['pass'] -eq $false) { $script:AnyRowFailed = $true }
     $json = $Row | ConvertTo-Json -Compress -Depth 8
     Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
@@ -1353,3 +1360,13 @@ Write-NdjsonRow ([ordered]@{
 if ($perpkgExit -eq 0 -and $perpkgMsgFound) { $summary.Add('Conda per-pkg fallback: PASS') } else { $summary.Add('Conda per-pkg fallback: FAIL') }
 
 $summary | Set-Content -Path $summaryPath -Encoding ASCII
+
+# derived requirement: this script previously had no exit statement at all, so PowerShell's
+# default exit code (0, absent an unhandled exception) was returned regardless of how many
+# of the scenarios above failed. run_tests.bat's own exit code depends on this ("if errorlevel
+# 1 set ERR=1" right after invoking this file), and that in turn is the "Run tests" CI step's
+# own exit code in every lane including the real/conda-full gating ones -- so a genuinely
+# broken scenario here was previously invisible to both a human scanning the Actions UI and to
+# the CI step's own pass/fail status, not just to the NDJSON-content-based verdict mechanisms.
+if ($script:AnyRowFailed) { exit 1 }
+exit 0

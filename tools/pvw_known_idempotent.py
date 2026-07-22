@@ -2,8 +2,6 @@
 Runs the entry via `uvx autopep723 <entry>` as execute-mode discovery for opted-in users
 (HP_PVW_KNOWN_IDEMPOTENT=1); relocates README's "Just run it" QuickStart logic into
 run_setup.bat (same 0/2/other-nonzero branching, same strip-and-retry-once).
-strip_pep723_block mirrors tools/pep723_writeback.py's function (not imported -- embedded
-payloads can't share imports at runtime).
 
 Run inherits stdout live; only `autopep723 check` calls capture output. Result markers
 (RAN:<detail>/ERROR:<reason>) go to STDERR since stdout is reserved for the passthrough script.
@@ -52,8 +50,8 @@ def run_script(uvx_exe, entry_path, force_fresh=False):
         env = dict(os.environ)
         env["UV_NO_CACHE"] = "1"
     try:
-        proc = subprocess.run([uvx_exe, "autopep723", entry_path], env=env)
-    except OSError:
+        proc = subprocess.run([uvx_exe, "autopep723", entry_path], env=env, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
         return 1
     return proc.returncode
 
@@ -110,8 +108,11 @@ def main(argv=None):
 
     if rc == 2:
         try:
-            with open(entry_path, "r", encoding="utf-8", errors="ignore", newline="") as fh:
+            with open(entry_path, "r", encoding="utf-8", newline="") as fh:
                 original = fh.read()
+        except UnicodeDecodeError:
+            print("ERROR:strip_retry_skipped:non_utf8", file=sys.stderr)
+            return rc
         except OSError:
             print("ERROR:strip_retry_failed:read", file=sys.stderr)
             return rc
