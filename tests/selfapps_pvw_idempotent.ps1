@@ -114,4 +114,5 @@ try {
     if ($null -eq $prevKnownIdempotent) { Remove-Item Env:HP_PVW_KNOWN_IDEMPOTENT -ErrorAction SilentlyContinue } else { $env:HP_PVW_KNOWN_IDEMPOTENT = $prevKnownIdempotent }
 }
 
+if (-not $pass) { exit 1 }
 exit 0

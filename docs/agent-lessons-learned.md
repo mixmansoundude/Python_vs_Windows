@@ -154,34 +154,79 @@ list; the recurring traps that have actually bitten us:
   before git normalizes them on commit.
 - **`:die` uses `exit /b`** (subroutine return), so the batch process can still exit 0 even
   after a logical failure -- check `~bootstrap.status.json` / log markers, not just the
-  process exit code, when reasoning about success. **Caveat, confirmed 2026-07-20: even
-  `~bootstrap.status.json` is not automatically reliable either.** `call :die "..."` only
-  writes `state=error` transiently -- `:after_cascade_decision` (right before `:success`)
-  unconditionally rewrites the status file from whatever `HP_BOOTSTRAP_STATE` currently holds
-  (`if /i "%HP_BOOTSTRAP_STATE%"=="ok" ( call :write_status ok 0 ... )`), and `:die` itself
-  never touches `HP_BOOTSTRAP_STATE` -- so a `call :die "..."` whose caller doesn't ALSO set
-  `HP_BOOTSTRAP_STATE=error` gets silently clobbered back to `state=ok` by the time the
-  process actually exits. Found via a real, live instance: the PyInstaller build-failure call
-  sites (`if errorlevel 1 call :die "..."` / `if not exist dist\...exe call :die "..."`, in
-  the else-branch of `:run_entry_smoke`) had exactly this gap -- neither set
-  `HP_BOOTSTRAP_STATE`, so a genuine build failure fell through to `:run_exe_smokerun`
-  (silent no-op skip when the EXE is missing), then `:verify_no_exe_interpreter` (ran the raw
-  entry via the interpreter instead), then `:after_cascade_decision` overwrote the status file
-  back to `state=ok` and the process exited 0 -- masking a build failure the user had
-  explicitly consented to (`HP_BUILD_OK`). Fixed by setting `HP_BOOTSTRAP_STATE=error`
-  alongside each `call :die` at that call site, mirroring the pre-existing, already-correct
-  precedent in the SAME subroutine's preflight-failure branch (`if defined
-  HP_PREFLIGHT_FAILED ( set "HP_BOOTSTRAP_STATE=error" ... )`). **Rule of thumb: `call :die
-  "..."` alone is never sufficient to guarantee a call site's failure survives to the final
-  process exit code/status file -- always also set `HP_BOOTSTRAP_STATE=error` (or confirm the
-  call site is inside a code path `:after_cascade_decision` cannot fall through to
-  unconditionally) at any NEW `:die` call site you add.** Regression test:
-  `tests/selfapps_pyinstaller_fail.ps1`.
+  process exit code, when reasoning about success. **2026-07-20: this previously also meant
+  `~bootstrap.status.json` itself could be wrong; fixed at the source 2026-07-22.** `call :die
+  "..."` writes `state=error` transiently, but `:after_cascade_decision`/`:after_env_skip`
+  (both right before `:success`) unconditionally rewrite the status file from whatever
+  `HP_BOOTSTRAP_STATE` currently holds. First discovered via the PyInstaller build-failure call
+  sites (`:run_entry_smoke`'s else-branch): neither set `HP_BOOTSTRAP_STATE`, so a genuine build
+  failure fell through to `:run_exe_smokerun` (silent no-op skip when the EXE is missing), then
+  `:verify_no_exe_interpreter` (ran the raw entry via the interpreter instead), then
+  `:after_cascade_decision` overwrote the status file back to `state=ok` and the process exited
+  0 -- masking a build failure the user had explicitly consented to (`HP_BUILD_OK`). Fixed at
+  the time by setting `HP_BOOTSTRAP_STATE=error` alongside those 3 call sites individually.
+  **A later bug-hunt pass (2026-07-22) confirmed this was a systemic gap, not limited to those 3
+  sites** -- roughly 22 of the file's ~26 `call :die` sites had no companion set, and several
+  (e.g. `:handle_conda_failure`'s own exhausted-fallback `call :die` at the end of the initial
+  conda-create chain) fall through directly into code that keeps using a now-broken `HP_PY`,
+  eventually reaching `:after_cascade_decision` with `HP_BOOTSTRAP_STATE` still at its line-163
+  default of `"ok"`. Several of these were saved from being an OBSERVABLE bug only by accident:
+  a broken `HP_PY` downstream usually causes the PyInstaller build itself to fail later, which
+  hits one of the 3 already-fixed sites and "rescues" the final state via a code path unrelated
+  to the actual original failure -- but any run where the pipeline never reaches that rescue
+  point (e.g. `:determine_entry` finds no entry file, so PyInstaller is never invoked at all)
+  would still silently report `state=ok`. **Fixed centrally instead of per-call-site**: `:die`
+  itself now sets `HP_BOOTSTRAP_STATE=error` unconditionally as its first action, before its
+  existing `call :write_status "error" ...` line -- since `:die`'s entire purpose is representing
+  a fatal failure, this is a one-line fix covering every existing AND future `call :die` site,
+  rather than requiring each one to remember an easy-to-forget companion `set`. The 3
+  already-fixed sites' explicit `set "HP_BOOTSTRAP_STATE=error"` lines are now redundant but
+  harmless (left in place -- no reason to touch already-correct, already-tested code). Regression
+  test: `tests/selfapps_pyinstaller_fail.ps1` (unaffected by this change, still passes via the
+  same mechanism); `self.embed.fallback.decline`/`self.ux.system.gate.real`-style tests that
+  already asserted `state=='error'` continue to pass, now via the direct mechanism instead of the
+  PyInstaller-failure "rescue" coincidence.
 
 **PowerShell adjacent traps:** `-or`/`-and` outside a conditional are parsed as parameter
 names ("parameter name 'or'"); `tools/check_delimiters.py` flags these. Multi-line `run:`
 PowerShell in YAML interacts badly with quote nesting -- run `actionlint` on changed
 workflows.
+
+---
+
+## Windows `move` onto an existing destination: atomic replace for FILES, silent NESTING for DIRECTORIES -- do not assume the same post-check works for both
+
+**Discovered while reviewing the embed tier's `:embed_swap_retry` swap logic (`run_setup.bat`).**
+Requirement 9's swap-verification fix (`:offer_optimized_build`, see its own section below)
+established a correct, well-tested pattern: for a same-volume FILE `move /y` onto an existing
+destination, the operation is atomic (fully replaces the destination, source consumed) or fully
+fails (source AND destination both untouched) -- so checking whether the SOURCE is now gone
+reliably tells you whether the move succeeded, when the destination itself can't be trusted (it
+existed before the move regardless of outcome).
+
+**That reasoning does NOT carry over to a DIRECTORY move, and assuming it does is itself a bug** --
+caught here specifically because an initial fix mirrored the file-move pattern onto a directory
+swap without re-verifying the underlying OS semantics first. A `move` of a directory onto a
+destination that still exists does not fail cleanly and does not atomically replace it either: it
+silently NESTS the source directory inside the destination (`move srcdir destdir` where `destdir`
+already exists produces `destdir\srcdir\...`, not `destdir` becoming `srcdir`'s contents). This
+creates a THIRD outcome neither the "check destination" nor the "check source gone" pattern
+detects correctly: if a preceding `rd /s /q` on the destination fails to fully clear it (a lock),
+the subsequent `move` nests rather than erroring -- the stale prior destination content is still
+present at the top level (so "check destination exists" reads false-success), AND the source path
+itself no longer exists as such, since it just got renamed into the nested subfolder (so "check
+source gone" ALSO reads false-success, for an unrelated reason).
+
+**The only reliable fix for a directory swap: verify the PRECONDITION (destination actually
+cleared) before attempting the move, not the move's own outcome afterward.** Gate `move` itself on
+`if exist "%DEST%" goto :skip_move_this_attempt` right after the `rd`, so `move` only ever runs
+onto a confirmed-nonexistent target -- at that point it degenerates to a pure rename (nesting is
+structurally impossible), and a post-hoc "does the destination exist now" check becomes trustworthy
+again. **Rule of thumb: before reusing a Windows move/swap verification pattern proven for a FILE
+on a DIRECTORY (or vice versa), re-derive the semantics for the new case explicitly -- do not
+assume the same post-condition check transfers.** `:offer_optimized_build`'s file-swap pattern and
+`:embed_swap_retry`'s directory-swap pattern are the two examples of each shape in this repo; if a
+third swap site is ever added, classify it as file-vs-directory first before picking a check.
 
 ---
 

@@ -10,6 +10,7 @@ and the base64 HP_PVW_IDEMPOTENT payload sync.
 """
 import base64
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -59,6 +60,22 @@ class RunScript(unittest.TestCase):
             run_script("uvx", "app.py", force_fresh=True)
         _, kwargs = mock_run.call_args
         self.assertEqual(kwargs.get("env", {}).get("UV_NO_CACHE"), "1")
+
+    def test_call_is_bounded_by_a_timeout(self):
+        # A GUI-mainloop or input()-waiting entry script must not hang the bootstrap
+        # forever -- run_script is the live-execution call and had no timeout at all.
+        with patch("tools.pvw_known_idempotent.subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=0)
+            run_script("uvx", "app.py")
+        _, kwargs = mock_run.call_args
+        self.assertIsNotNone(kwargs.get("timeout"))
+        self.assertGreater(kwargs["timeout"], 0)
+
+    def test_timeout_expired_returns_1_not_raise(self):
+        with patch("tools.pvw_known_idempotent.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd=["uvx"], timeout=120)
+            rc = run_script("uvx", "app.py")
+        self.assertEqual(rc, 1)
 
 
 class DiscoverDepNames(unittest.TestCase):
@@ -186,6 +203,26 @@ class MainDispatch(unittest.TestCase):
         mock_print.assert_called_once_with("RAN:persisted_after_fillin", file=sys.stderr)
         self.assertIsNone(run_call_kwargs[0].get("env"))
         self.assertEqual(run_call_kwargs[1].get("env", {}).get("UV_NO_CACHE"), "1")
+
+    def test_rc2_non_utf8_entry_skips_strip_and_leaves_file_untouched(self):
+        # Encoding pre-check mirrors tools/pep723_writeback.py: a non-UTF-8 entry file
+        # must never be read with errors="ignore" and rewritten -- that would silently
+        # drop undecodable bytes, corrupting the file even on the "restore" path.
+        raw = b"# /// script\n# broken (((\n# ///\nimport requests\n# non-utf8: \xff\xfe\n"
+        self.entry.write_bytes(raw)
+
+        def fake_run(cmd, **kwargs):
+            if "check" in cmd or "add" in cmd:
+                return _run_result(cmd, returncode=0)
+            return Mock(returncode=2)
+
+        with patch("tools.pvw_known_idempotent.subprocess.run", side_effect=fake_run):
+            with patch("builtins.print") as mock_print:
+                rc = main([str(self.entry), "uvx", "uv", "python"])
+        self.assertEqual(rc, 2)
+        mock_print.assert_called_once_with("ERROR:strip_retry_skipped:non_utf8", file=sys.stderr)
+        # File must be byte-for-byte untouched -- no read-with-ignore, no rewrite at all.
+        self.assertEqual(self.entry.read_bytes(), raw)
 
     def test_other_nonzero_fillin_also_fails(self):
         def fake_run(cmd, **kwargs):

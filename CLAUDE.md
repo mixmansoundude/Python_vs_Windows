@@ -567,10 +567,39 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    a test-authoring bug (see the Closed Backlog entry for the AV-Safe Build Path requirement-9
    work), and because it was the first of three sequential `OPTBUILD_SCENARIO` steps in the same
    job with no `if: always()`, the `forcefail` and `decline` steps never ran at all -- same
-   mechanism, same job, different test file. Still not fixed for the same two reasons above; two
-   independent real instances in two different features is worth noting as it strengthens the
-   case for eventually doing the dedicated hardening pass, but is not itself a reason to rush it
-   into an unrelated diff.
+   mechanism, same job, different test file.
+
+   **Partially closed, 2026-07-22: the non-gating-lane half of this gap is now fixed; the
+   gating-lane half remains open exactly as before.** Re-examined the actual workflow YAML rather
+   than relying on memory of the original reasoning, and found `continue-on-error` is already set
+   at the JOB level for six of eight matrix lanes (`cache`, `justme-test`, `uv`, `contract-uv`,
+   `contract-uv-fail`, `uv-dl-fallback`) -- only `real`/`conda-full` are true gating lanes. This
+   means the original "continue-on-error would silently defeat gating" reasoning above applies
+   ONLY to steps that can run under `real`/`conda-full`; it never applied to steps restricted to
+   the six already-non-gating lanes, since those never gated merges to begin with. Surveyed every
+   step's `if:` condition and found 33 steps restricted to non-gating lanes only, of which the PEP
+   723 write-back / PVW QuickStart / autopep723-discovery steps already carried per-step
+   `continue-on-error: true` (established precedent, not invented for this pass) while 9 others
+   (uv-contract assertions, JustMe/download-fallback self-tests, the provider-cascade-exec step,
+   both Tier A steps, all 4 `self.optbuild.offer` scenarios) were missing it. Added it to those 9
+   -- this is a narrower, safe subset of the originally-declined blanket fix: it changes nothing
+   about merge gating (never gated anything) and only stops one failing self-test from hiding its
+   siblings' results within the same non-gating-lane job run. The `real`/`conda-full` gating-lane
+   half of this backlog item is untouched and remains deliberately deferred for the same two
+   reasons as before -- do not extrapolate this fix onto the gating lanes without the same kind of
+   deliberate, reviewed pass the original reasoning called for.
+
+   **Two more missed instances found and fixed in a follow-up bug-hunt pass, same day.** A
+   dedicated CI-YAML bug-hunt agent re-surveyed the file with fresh eyes and found the `cache`-lane
+   `Restore Miniconda cache` step (`uses: actions/cache/restore@v5`) and its sibling `Validate
+   restored conda binary` step both missing `continue-on-error: true` despite being restricted to
+   the (non-gating) `cache` lane -- the same bug class, just missed in the original 9-step sweep.
+   This instance is more severe than the previously-fixed ones: `actions/cache/restore@v5` is a
+   real network/service call (GitHub's cache backend has known transient failures) sitting near the
+   very START of the job, before roughly a dozen unconditional (non-`always()`) steps including the
+   bootstrapper run itself -- a single transient cache-restore failure would silently skip the
+   entire cache-lane self-test battery, not just a handful of sibling scenario steps. Fixed the
+   same way (added `continue-on-error: true` to both steps); `cache` remains non-gating either way.
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is
@@ -874,6 +903,195 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **Multi-agent parallel bug-hunt pass, requested directly by the owner ("Do several refinement
+  and iteration passes. Do deep dives to find bugs and potential issues. Dig in... launch some
+  agents if you want").** Five parallel research-only agents swept `run_setup.bat`, `tools/*.py`,
+  `tests/*.ps1`, `.github/workflows/*.yml`, and `tools/diag/*.py` respectively for new bugs beyond
+  what earlier passes had already found; every finding was independently re-verified by direct code
+  tracing before being acted on (two agent findings that didn't hold up on verification are noted
+  below, not silently accepted). Six real, fixed issues:
+  - **`:die`'s `HP_BOOTSTRAP_STATE=error` gap was systemic, not limited to the 3 already-fixed
+    PyInstaller call sites -- fixed centrally instead of per-call-site.** Confirmed via direct
+    tracing (not just the agent's claim) that `call :die "[ERROR] conda env create failed."` at
+    the end of `:handle_conda_failure`'s exhausted-fallback chain falls straight through to
+    `:conda_create_done` with `HP_PY` left pointing at a nonexistent interpreter path, and if
+    execution eventually reaches `:after_cascade_decision`/`:after_env_skip` with
+    `HP_BOOTSTRAP_STATE` still at its line-163 default of `"ok"`, the final status write silently
+    reverts a real failure back to reported success -- the identical bug class already fixed for
+    PyInstaller build failures (see "PyInstaller build-failure silently masked as success" below),
+    just present at roughly 22 of the file's ~26 `call :die` sites instead of 3. Several of these
+    were saved from being an OBSERVABLE bug purely by accident: a broken `HP_PY` downstream usually
+    makes the later PyInstaller build itself fail too, which hits one of the 3 already-fixed sites
+    and "rescues" the final state via a code path unrelated to the actual original failure -- but
+    any run where the pipeline never reaches that rescue point (e.g. no entry file ever resolved,
+    so PyInstaller is never invoked) would still silently report `state=ok`. Rather than touching
+    ~22 call sites individually, fixed at the single point all of them funnel through: `:die` itself
+    now sets `HP_BOOTSTRAP_STATE=error` unconditionally as its first action, before its existing
+    `call :write_status "error" ...` line -- covering every existing AND future `call :die` site
+    with one line. Verified this doesn't change any currently-passing test's outcome: tests like
+    `self.embed.fallback.decline` that already assert `state=='error'` for an exhausted-fallback
+    scenario were previously passing only via the PyInstaller-failure "rescue" coincidence; they now
+    pass via the direct, reliable mechanism instead. See `docs/agent-lessons-learned.md`'s `:die`
+    entry for the full trace.
+  - **`tools/pvw_known_idempotent.py`'s live execute-mode discovery run had no timeout, unlike its
+    own sibling calls in the same file (60s/120s).** `run_script()` genuinely executes the user's
+    entry script (not a smoke test -- that's the whole point of `HP_PVW_KNOWN_IDEMPOTENT`'s
+    execute-mode discovery). A GUI-mainloop app or a script blocking on `input()` -- both ordinary
+    Python programs -- would hang this call, and therefore the entire bootstrap, forever with zero
+    feedback, since it runs before any build/verification phase. Unlike `:run_failfast_probe`'s
+    later verification runs (which must never be killed, since they represent the user's real
+    deliverable output), this is a throwaway discovery pass that happens before two more runs of
+    the same script anyway, so bounding it costs nothing a real run needs. Fixed with a 120s
+    timeout, `subprocess.TimeoutExpired` caught and mapped to return code 1 (routing through
+    `main()`'s existing "other nonzero" best-effort-fillin-and-retry branch, same as any other
+    non-2 failure) rather than raising. New tests in `RunScript` assert both that a timeout is set
+    and that it's caught cleanly.
+  - **The same file's malformed-header strip-and-retry path could silently corrupt a non-UTF-8
+    entry file, on both the success AND the double-failure "restore original" paths.** Unlike its
+    sibling `tools/pep723_writeback.py` (which validates UTF-8-ness before ever opening the file
+    for a destructive write), this file read with `errors="ignore"` with no prior validation --
+    for a non-UTF-8 file, this silently drops invalid bytes on the very first read, so the
+    in-memory "original" used for the failure-path restore was itself already corrupted before any
+    write happened. Fixed by removing the ignoring read entirely and instead catching
+    `UnicodeDecodeError` on a strict read, bailing out before any write -- simpler than the sibling
+    file's two-open pre-check-then-read pattern while providing the identical guarantee. New
+    regression test confirms a non-UTF-8 file is left byte-for-byte untouched.
+  - **The embed tier's version-swap directory-move fix from an earlier pass was itself wrong, and
+    a second pass caught it before it reached CI.** An earlier session had "fixed" `:embed_swap_
+    retry`'s unreliable post-move success check by mirroring requirement 9's file-move pattern
+    (check whether the source is gone instead of the destination). That mirroring doesn't actually
+    hold: requirement 9 is a FILE move (atomic replace-or-noop onto an existing destination,
+    verified via direct Windows `move` semantics), but this is a DIRECTORY move, and a directory
+    `move` onto an existing destination silently NESTS the source inside it instead of failing --
+    so if the preceding `rd /s /q` fails to fully clear the destination (the exact lock race this
+    code exists to handle), BOTH "check destination" and "check source gone" read as false success,
+    for different reasons (the stale prior destination content is still there either way; the
+    source path is gone either way, since it got renamed into the nested subfolder rather than
+    genuinely swapped). Fixed by gating `move` on `rd` having actually cleared the destination
+    first, so `move` only ever runs onto a confirmed-nonexistent target (nesting becomes
+    structurally impossible), making the destination-existence check reliable again. New general
+    lesson added to `docs/agent-lessons-learned.md`: a Windows move/swap verification pattern
+    proven for a FILE does not automatically transfer to a DIRECTORY (or vice versa) -- re-derive
+    the semantics explicitly rather than assuming. Not CI-confirmed (no test currently exercises
+    a non-default Python version through this tier), based on static reasoning about documented
+    Windows `move`/`rd` semantics.
+  - **Three `selfapps_*.ps1` test scripts always exited 0 regardless of their own computed
+    `$pass`, silently masking a genuinely broken feature as a green CI step.** Every sibling test
+    file in this batch ends with `if (-not $pass) { exit 1 }` before the final `exit 0` --
+    `selfapps_pvw_idempotent.ps1`, `selfapps_autopep_discovery.ps1`, and `selfapps_pvw_quickstart.ps1`
+    were each missing this guard (an omission, confirmed by comparing against every sibling file's
+    identical ending pattern). Each already computes `$pass` correctly and writes it into the
+    correct NDJSON row -- so the machine-readable signal was never wrong -- but a human scanning
+    the GitHub Actions UI, or any tooling checking step-level (not NDJSON-content-level) status,
+    would see a passing green step for a broken REQ-005.12/REQ-005.13/PVW-QuickStart feature. All
+    three steps already carry `continue-on-error: true` in CI (non-gating `uv` lane), so this fix
+    changes zero merge-gating behavior -- it only restores accurate step-level signal.
+  - **`tests/selftest.ps1` -- the largest, oldest, most heavily-used self-test file, run in EVERY
+    lane including the two true gating lanes -- had no exit statement at all, and this one DOES
+    affect merge gating, not just step-level display.** Found via manual follow-up after the
+    PS-test agent's finding above prompted checking every OTHER test file, not just the three
+    newest ones the agent was scoped to. Confirmed via direct tracing: `run_tests.bat` (this
+    file's own caller) does `if errorlevel 1 set ERR=1` right after invoking `selftest.ps1`, and
+    the "Run tests (map empty repo to success)" CI step (`batch-check.yml`) does `exit $rc` using
+    `run_tests.bat`'s own exit code, with NO `continue-on-error` -- so for `real`/`conda-full`
+    (the lanes with no job-level `continue-on-error` either), this step's exit code directly
+    determines job success/failure. Since `selftest.ps1` never had an `exit` statement, PowerShell's
+    default (0, absent an unhandled exception) was always returned regardless of how many of its
+    ~40+ internal scenarios (`self.stub.*`, `self.warn.*`, `self.guardrail.*`, `self.pep723.*`,
+    `self.corrupt.*`, etc.) computed `pass=$false` -- a genuinely broken scenario here was
+    previously invisible to the GATING mechanism itself, not just to a human eyeballing the Actions
+    UI. Fixed at the single choke point every scenario already funnels through (`Write-NdjsonRow`,
+    called by all ~40+ scenarios) rather than touching each one: the function now sets a
+    script-scoped `$script:AnyRowFailed` flag whenever a row's `pass` is `$false`, and the file's
+    final lines check it and `exit 1`/`exit 0` accordingly. Chose this central-choke-point approach
+    specifically because retrofitting each of the ~40+ scenario blocks individually would have been
+    a much larger, higher-risk change to the repo's oldest and most load-bearing test file for the
+    same outcome. Verified the tracking logic in isolation (a standalone `pwsh` repro of the exact
+    pattern, confirming both the failure-detection and all-pass cases) since the full file can't run
+    end-to-end outside real Windows CI. No xfail/expected-failure scenarios exist in this file (
+    confirmed via search), so `pass=$false` unambiguously means "this scenario's assertion did not
+    hold" everywhere in it -- no risk of the aggregate flag misfiring on an intentional-failure row.
+  - **`tools/diag/publish_index.py`'s NDJSON summary silently miscounted rows/pass/fail when
+    multiple JSON objects were concatenated onto one physical line.** `tools/diag/ndjson_fail_list.py`
+    already has a brace-depth-aware, string-escape-aware splitter (`_ndjson_segments`) specifically
+    because real NDJSON artifacts in this repo can have `{...}{...}` on one line -- but
+    `_summarize_ndjson_file` (which feeds the live public dashboard's `rows=X pass=Y fail=Z`
+    summary block) used a naive `json.loads(line)` with no such splitting, so a concatenated line
+    threw `JSONDecodeError` and the whole blob (potentially dozens of real rows) was silently
+    counted as a single row/failure -- understating row counts and inflating the apparent fail
+    rate with no error surfaced anywhere. Fixed by importing and reusing the existing splitter
+    (same package, same established cross-module-import pattern already used for
+    `generate_fail_list`) instead of writing a second, divergent implementation. New
+    `SummarizeNdjsonFileTest` class (3 tests) covers the concatenated-line case directly, plus the
+    normal one-object-per-line and `status`-field-fallback paths that had no prior coverage either.
+
+  **Two agent findings investigated and NOT acted on, verification failed or impact judged
+  too low relative to risk**: a `detect_python.py` PEP 440 wildcard-clause regex claim was traced
+  and found to be a real but narrow silent-misparse (`!=3.0.*` truncates to `!=3.0`) -- correct as
+  described but low real-world impact (wildcard exclusions are rare in `requires-python` fields
+  specifically) and not fixed in this pass, left as a candidate for a future dedicated loop rather
+  than folded in here. A `pyproj_deps.py` ASCII-with-`errors='replace'` output-encoding claim (a
+  non-ASCII character in a dependency string silently becomes `?` on write) is real but requires an
+  adversarial non-ASCII `pyproject.toml` dependency string, an uncommon real-world case; also left
+  for a future pass rather than expanding this one's scope further.
+
+- **User-facing messaging cleanup pass, requested directly by the owner via a detailed
+  question-and-answer message reviewing several prior findings.** Four small, independent
+  wording fixes plus a documentation restructuring:
+  - `:warn_user_code_launch`'s "Verifying the built standalone EXE (PyInstaller) now" message now
+    branches on `HP_NUITKA_FALLBACK_USED` and says "(fallback build system)" instead when the EXE
+    being verified was actually Nuitka-built (Tier A or requirement 9's optimized build) -- this
+    subroutine fires for both cases and previously always claimed PyInstaller regardless. The
+    postflight briefing's "PyInstaller build cache" line for `build\` was deliberately left
+    unchanged: Nuitka never creates a `build\<env>\` folder of its own (its `--remove-output`
+    flag cleans up its own intermediates), so that line stays literally true either way -- if a
+    `build\` folder exists at all, it's PyInstaller's, confirmed by tracing both build paths
+    before deciding not to touch it.
+  - The warnfix console message ("Platform-specific modules in the list above are expected on
+    Windows...") referenced a "list above" that was never actually on the console -- the raw
+    warn-file dump immediately before it (`type "build\<env>\warn-<env>.txt" >> "%LOG%"`) is
+    redirected straight into `~setup.log` only, confirmed by tracing the exact redirect operator.
+    Reworded to drop the false "above" reference and instead point at `~warnfile.txt` (already
+    copied next to the app a few lines earlier) and `~setup.log` for the full list.
+  - Added a one-line reassurance right after "[INFO] Building standalone executable..." for the
+    benign "The system cannot find the drive specified." message that appears on-screen near
+    almost every build attempt (confirmed already known-harmless and allowlisted by
+    `tests/selfapps_envsmoke.ps1`). Researched the likely source before adding this: confirmed via
+    direct code tracing (not assumption) that ALL of PyInstaller's own subprocess invocations in
+    `run_setup.bat`, and `:compute_collect_flags`'s own Python subprocess call, have both
+    stdout AND stderr fully redirected -- so the message cannot be literal PyInstaller output
+    leaking through the normal redirect, and `:compute_collect_flags` runs before (not after) the
+    log line the message appears near, ruling that subroutine out as the direct cause too. Root
+    cause remains unconfirmed (most likely an unrelated background process whose output happens
+    to flush around the same wall-clock window); not chased further per explicit instruction not
+    to go deep (this exact investigation had already stalled in a prior pass) -- the message
+    itself is the fix, not a suppression attempt. **Found and fixed a self-inflicted near-miss
+    while writing this message**: the first draft quoted the trigger phrase verbatim inside the
+    reassurance text, which would have made `tests/selfapps_envsmoke.ps1`'s unanchored
+    `Get-LineSnippet` substring search capture the REASSURANCE line itself (appearing earlier in
+    the transcript) instead of the real system-generated line, fail the exact-match allowlist
+    check against it, and produce a false test failure. Reworded to avoid the literal trigger
+    substrings entirely; grepped the whole test suite for both trigger phrases afterward to
+    confirm no other detector collides. See `docs/agent-scratchlog.md` for the full trace.
+  - **Documentation restructuring, per direct owner instruction**: `docs/demo-bootstrapper-output.md`
+    is now latest-state-only (quotes updated in place, no historical narrative, no per-session
+    dated log). Removed its "Refinement pass log" and "Findings worth a second look" sections
+    entirely -- their still-relevant content was either folded into the demo doc's own scenario
+    write-ups (as plain current-state notes, not history) or moved to one of two new files:
+    `docs/agent-scratchlog.md` (internal working notes -- verification checks, dead ends, things
+    ruled out; not user-facing, freely prunable) and `docs/open-questions.md` (unresolved
+    questions needing a maintainer decision only; answered questions get removed from it and
+    folded into wherever they actually belong once resolved). Two genuinely open questions moved
+    into the new file: whether total EXE-packaging failure should change the final on-screen
+    `[STATUS]` wording (recommended yes, not implemented pending confirmation), and the
+    CLI-args-only-programs architecture question (tabled by the owner for a future dedicated
+    discussion, not sized yet).
+  - **Partial fix for CLAUDE.md Active Backlog item 7** (see that item's own updated entry above)
+    landed in this same pass: `continue-on-error: true` added to 9 CI steps restricted to
+    already-non-gating lanes, so one failing self-test scenario no longer hides its siblings'
+    results within the same lane run. Does not touch the gating (`real`/`conda-full`) lanes, which
+    remain deliberately deferred.
 
 - **Refinement-pass fix on shipped requirement 9: the post-swap "did it work" check tested the
   wrong file, silently misreporting a failed swap as success.** Found via a self-directed

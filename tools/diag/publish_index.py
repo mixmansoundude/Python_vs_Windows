@@ -89,7 +89,7 @@ if str(REPO_ROOT) not in sys.path:
     # load sibling helpers even when publish_index.py runs as a script.
     sys.path.insert(0, str(REPO_ROOT))
 
-from tools.diag.ndjson_fail_list import generate_fail_list
+from tools.diag.ndjson_fail_list import _ndjson_segments, generate_fail_list
 from tools.req_coverage import compute_coverage
 
 
@@ -2671,6 +2671,34 @@ def _find_ndjson_candidate(diag: Optional[Path], filename: str, *, prefer_real: 
     return candidates[0][1]
 
 
+def _ndjson_row_passed(obj: dict) -> bool:
+    passed: Optional[bool]
+    value = obj.get("pass")
+    if isinstance(value, bool):
+        passed = value
+    elif isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered == "true":
+            passed = True
+        elif lowered == "false":
+            passed = False
+        else:
+            passed = None
+    else:
+        passed = None
+
+    if passed is None:
+        status = obj.get("status")
+        if isinstance(status, str):
+            lowered = status.lower()
+            if lowered in {"pass", "success"}:
+                passed = True
+            elif lowered in {"fail", "failure"}:
+                passed = False
+
+    return bool(passed)
+
+
 def _summarize_ndjson_file(path: Path) -> Optional[dict]:
     rows = 0
     pass_count = 0
@@ -2682,44 +2710,23 @@ def _summarize_ndjson_file(path: Path) -> Optional[dict]:
                 line = raw_line.strip()
                 if not line:
                     continue
-                rows += 1
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    fail_count += 1
-                    continue
-
-                passed: Optional[bool]
-                value = obj.get("pass")
-                if isinstance(value, bool):
-                    passed = value
-                elif isinstance(value, str):
-                    lowered = value.strip().lower()
-                    if lowered == "true":
-                        passed = True
-                    elif lowered == "false":
-                        passed = False
+                # derived requirement: upstream NDJSON artifacts sometimes concatenate
+                # multiple JSON objects onto one physical line ("{...}{...}") -- a naive
+                # json.loads(line) then threw, and the whole blob (possibly dozens of
+                # real rows) was silently counted as a single row/failure. Reuse the
+                # brace-depth-aware splitter ndjson_fail_list.py already has for the same
+                # reason, instead of a second, divergent implementation.
+                for segment in _ndjson_segments(line):
+                    rows += 1
+                    try:
+                        obj = json.loads(segment)
+                    except json.JSONDecodeError:
+                        fail_count += 1
+                        continue
+                    if _ndjson_row_passed(obj):
+                        pass_count += 1
                     else:
-                        passed = None
-                else:
-                    passed = None
-
-                if passed is None:
-                    status = obj.get("status")
-                    if isinstance(status, str):
-                        lowered = status.lower()
-                        if lowered in {"pass", "success"}:
-                            passed = True
-                        elif lowered in {"fail", "failure"}:
-                            passed = False
-
-                if passed is None:
-                    passed = False
-
-                if passed:
-                    pass_count += 1
-                else:
-                    fail_count += 1
+                        fail_count += 1
     except OSError:
         return None
 

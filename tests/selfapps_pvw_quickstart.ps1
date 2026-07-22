@@ -160,4 +160,5 @@ try {
     Pop-Location
 }
 
+if (-not $pass) { exit 1 }
 exit 0

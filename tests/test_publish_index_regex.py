@@ -18,6 +18,7 @@ from tools.diag.publish_index import (
     _ensure_repo_index,
     _iterate_status_display,
     _extract_uv_signals,
+    _summarize_ndjson_file,
     _validate_iterate_status_line,
     _write_global_txt_mirrors,
     _write_html,
@@ -1006,6 +1007,43 @@ class NdjsonRegistryReportLinkTest(unittest.TestCase):
             self.assertIsNotNone(entry)
             self.assertEqual(entry["label"], "NDJSON registry cross-check report (advisory)")
             self.assertEqual(entry["path"].name, "~ndjson-registry-report.txt")
+
+
+class SummarizeNdjsonFileTest(unittest.TestCase):
+    """Regression coverage: upstream NDJSON artifacts sometimes concatenate multiple JSON
+    objects onto one physical line ("{...}{...}"); a naive json.loads(line) throws and the
+    whole blob was silently counted as a single row/failure on the public dashboard."""
+
+    def test_one_object_per_line_counts_normally(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "results.ndjson"
+            path.write_text(
+                '{"id":"a","pass":true}\n{"id":"b","pass":false}\n', encoding="utf-8"
+            )
+            summary = _summarize_ndjson_file(path)
+            self.assertEqual(summary, {"rows": 2, "pass": 1, "fail": 1})
+
+    def test_concatenated_objects_on_one_line_are_split_and_counted_individually(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "results.ndjson"
+            # Three real rows squashed onto a single physical line -- the exact shape
+            # ndjson_fail_list.py's own _ndjson_segments docstring describes.
+            path.write_text(
+                '{"id":"a","pass":true}{"id":"b","pass":true}{"id":"c","pass":false}\n',
+                encoding="utf-8",
+            )
+            summary = _summarize_ndjson_file(path)
+            self.assertEqual(summary, {"rows": 3, "pass": 2, "fail": 1})
+
+    def test_status_field_fallback_when_pass_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "results.ndjson"
+            path.write_text(
+                '{"id":"a","status":"success"}\n{"id":"b","status":"failure"}\n',
+                encoding="utf-8",
+            )
+            summary = _summarize_ndjson_file(path)
+            self.assertEqual(summary, {"rows": 2, "pass": 1, "fail": 1})
 
 
 if __name__ == "__main__":

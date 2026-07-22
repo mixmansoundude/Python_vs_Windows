@@ -115,4 +115,5 @@ try {
     if ($null -eq $prevSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }
 }
 
+if (-not $pass) { exit 1 }
 exit 0
