@@ -7,9 +7,28 @@ hold, and the caller no longer wraps this script's invocation in a for /f stdout
 tools/failfast_probe.ps1's sibling test module docstring for the full for /f-capture-vs-tee
 conflict this also applies to).
 
-No importable functions exist -- exercised end-to-end via a real `pwsh` subprocess against a
-small "exe" (a real executable script with a shebang, since HP_SMOKERUN_EXE is invoked directly
-with no separate arguments field, matching the frozen EXE's own invocation shape).
+No importable functions exist -- exercised end-to-end via a real `pwsh` subprocess.
+
+derived requirement: HP_SMOKERUN_EXE is invoked directly with no separate Arguments field
+(matching the frozen EXE's own invocation shape), so the fake "exe" must be a genuinely,
+directly-executable file under `UseShellExecute = $false` -- a POSIX shebang script (chmod +x)
+works on Linux but is NOT executable on Windows this way, and a .bat/.cmd launcher does not work
+either (confirmed against Microsoft's own ProcessStartInfo.UseShellExecute guidance: with
+UseShellExecute=false, Process.Start becomes a direct CreateProcess call, which can only launch
+genuine executables, not scripts needing a command interpreter). First draft of this test file
+used the shebang/chmod approach and failed on every real Windows CI lane
+(FileNotFoundError-equivalent: the "exe" simply never started, so nothing was captured) --
+confirmed and root-caused via real CI logs, not just reasoned about.
+
+Fix: use `sys.executable` itself (a real, directly-executable binary on every platform) as
+HP_SMOKERUN_EXE, and feed it the actual Python logic via its INHERITED stdin instead of a CLI
+argument -- `exe_smokerun.ps1` never sets RedirectStandardInput on the grandchild, so it inherits
+whatever stdin the pwsh process itself has, and subprocess.run's own `stdin=` parameter can point
+that at an open script file. `python` invoked with zero arguments and a non-tty stdin reads and
+executes exactly that stdin stream as its program (documented CPython CLI behavior, confirmed
+directly: `python3 < script.py` runs `script.py`) -- this reproduces through the full pwsh ->
+grandchild chain identically on Windows and Linux, with no shebang/chmod/.bat trickery, and no
+change to exe_smokerun.ps1 itself.
 
 Covers: normal fast exit (result file + captured output), the Kill()-after-timeout path (via the
 HP_SMOKERUN_KILL_MS test-only override -- production always uses the unset default, 30000ms,
@@ -19,10 +38,8 @@ CRLF/LF-normalized, mirroring the .ps1 PayloadSync convention used across this r
 docs/agent-lessons-learned.md "Embedded Helper Update Workflow").
 """
 import base64
-import os
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -33,14 +50,14 @@ REPO = Path(__file__).resolve().parent.parent
 SOURCE = REPO / "tools" / "exe_smokerun.ps1"
 PWSH = shutil.which("pwsh")
 
-FAST_EXE = """#!{python}
+FAST_SCRIPT = """
 import sys
 print("fast-hello")
 print("fast-hello-err", file=sys.stderr)
 sys.exit(3)
 """
 
-HANG_EXE = """#!{python}
+HANG_SCRIPT = """
 import sys, time
 print("about-to-hang", flush=True)
 time.sleep(120)
@@ -48,30 +65,30 @@ sys.exit(0)
 """
 
 
-def _make_exe(d, name, template):
-    path = Path(d) / name
-    path.write_text(template.format(python=sys.executable), encoding="utf-8")
-    st = os.stat(path)
-    os.chmod(path, st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+def _make_script(d, name, body):
+    path = Path(d) / (name + ".py")
+    path.write_text(body, encoding="utf-8")
     return path
 
 
-def _run_smokerun(d, env_extra, timeout=15):
+def _run_smokerun(d, script, env_extra, timeout=15):
     # Mirrors :run_exe_smokerun's own `pushd dist` convention (REQ-018 2b-A.2): default output
     # paths are `..\~run.out.txt` / `..\~run.err.txt`, relative to a dist\ subdirectory -- so the
     # default-path tests run with cwd=d/dist to land the defaults at d/~run.out.txt etc.
     dist = Path(d) / "dist"
     dist.mkdir(exist_ok=True)
-    env = {"PATH": "/usr/bin:/bin:/usr/local/bin"}
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HP_SMOKERUN_EXE": sys.executable}
     env.update(env_extra)
-    return subprocess.run(
-        [PWSH, "-NoProfile", "-NonInteractive", "-File", str(SOURCE)],
-        cwd=str(dist),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    with open(script, "r", encoding="utf-8") as stdin_src:
+        return subprocess.run(
+            [PWSH, "-NoProfile", "-NonInteractive", "-File", str(SOURCE)],
+            cwd=str(dist),
+            env=env,
+            stdin=stdin_src,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
 
 
 def _result(d, env_extra):
@@ -87,9 +104,9 @@ def _result(d, env_extra):
 class FastExit(unittest.TestCase):
     def test_fast_exit_result_and_output_captured(self):
         with tempfile.TemporaryDirectory() as d:
-            exe = _make_exe(d, "fast_exe", FAST_EXE)
-            env = {"HP_SMOKERUN_EXE": str(exe)}
-            proc = _run_smokerun(d, env)
+            script = _make_script(d, "fast", FAST_SCRIPT)
+            env = {}
+            proc = _run_smokerun(d, script, env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(_result(d, env), "3")
             self.assertIn("fast-hello", (Path(d) / "~run.out.txt").read_text(encoding="ascii"))
@@ -100,8 +117,8 @@ class FastExit(unittest.TestCase):
         # this to an emitted helper with event-driven reads is that a real user watching the
         # console sees the child's own output live, not only captured to disk after exit.
         with tempfile.TemporaryDirectory() as d:
-            exe = _make_exe(d, "fast_exe", FAST_EXE)
-            proc = _run_smokerun(d, {"HP_SMOKERUN_EXE": str(exe)})
+            script = _make_script(d, "fast", FAST_SCRIPT)
+            proc = _run_smokerun(d, script, {})
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("fast-hello", proc.stdout)
             self.assertIn("fast-hello-err", proc.stderr)
@@ -114,9 +131,9 @@ class KillTimeout(unittest.TestCase):
         # 30000ms default -- unchanged from the prior inline implementation -- always applies);
         # this exercises the Kill() branch without a real 30s wait.
         with tempfile.TemporaryDirectory() as d:
-            exe = _make_exe(d, "hang_exe", HANG_EXE)
-            env = {"HP_SMOKERUN_EXE": str(exe), "HP_SMOKERUN_KILL_MS": "500"}
-            proc = _run_smokerun(d, env)
+            script = _make_script(d, "hang", HANG_SCRIPT)
+            env = {"HP_SMOKERUN_KILL_MS": "500"}
+            proc = _run_smokerun(d, script, env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(_result(d, env), "-1")
             # The pre-sleep output must still have been captured/teed before the kill.
@@ -134,17 +151,16 @@ class KillTimeout(unittest.TestCase):
 class OutputPaths(unittest.TestCase):
     def test_caller_specified_output_and_result_paths(self):
         with tempfile.TemporaryDirectory() as d:
-            exe = _make_exe(d, "fast_exe", FAST_EXE)
+            script = _make_script(d, "fast", FAST_SCRIPT)
             out_path = Path(d) / "custom.out.txt"
             err_path = Path(d) / "custom.err.txt"
             result_path = Path(d) / "custom.result.txt"
             env = {
-                "HP_SMOKERUN_EXE": str(exe),
                 "HP_SMOKERUN_OUT": str(out_path),
                 "HP_SMOKERUN_ERR": str(err_path),
                 "HP_SMOKERUN_RESULT": str(result_path),
             }
-            _run_smokerun(d, env)
+            _run_smokerun(d, script, env)
             self.assertIn("fast-hello", out_path.read_text(encoding="ascii"))
             self.assertIn("fast-hello-err", err_path.read_text(encoding="ascii"))
             self.assertEqual(_result(d, env), "3")
