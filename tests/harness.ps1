@@ -432,11 +432,17 @@ Write-Result 'batch.smoke.telemetry' 'REQ-018: single-verification telemetry rea
 # interpreter smoke and :try_entry_smoke_after_warnfix are removed; the timed EXE smoke is the sole
 # verification in the EXE path (and captures the app stdout to ~run.out.txt), while the no-EXE path
 # runs the interpreter once via :verify_no_exe_interpreter. Guard against reverting to the double-run.
+# The literal 'Set-Content -Path ..\~run.out.txt' this check used to match moved into the emitted
+# ~exe_smokerun.ps1 helper (tools/exe_smokerun.ps1, HP_EXE_SMOKERUN base64 payload) as part of the
+# live-echo redesign (docs/plan-cli-interactive-verification.md) -- it is no longer plain text in
+# run_setup.bat itself, so this now checks the wiring that emits and invokes that helper instead;
+# the helper's own capture behavior is verified by tests/test_exe_smokerun.py (PayloadSync +
+# FastExit/OutputPaths), a stronger check than a fragile plain-text substring match ever was.
 $svNoExeLabel = $AllText -match '(?m)^:verify_no_exe_interpreter'
 $svNoExeCall  = $AllText -match 'call :verify_no_exe_interpreter'
 $svOldGone    = -not ($AllText -match 'try_entry_smoke_after_warnfix')
 $svExeVocab   = $AllText -match [regex]::Escape('Running entry script smoke test via packaged EXE')
-$svExeCapture = $AllText -match [regex]::Escape("Set-Content -Path '..\~run.out.txt'")
+$svExeCapture = ($AllText -match [regex]::Escape('call :emit_from_base64 "~exe_smokerun.ps1" HP_EXE_SMOKERUN')) -and ($AllText -match [regex]::Escape('powershell -NoProfile -ExecutionPolicy Bypass -File "~exe_smokerun.ps1"'))
 $hasSingleVerify = $svNoExeLabel -and $svNoExeCall -and $svOldGone -and $svExeVocab -and $svExeCapture
 Write-Result 'batch.smoke.single_verify' 'REQ-018: single-verification pass wired (no-EXE interpreter subroutine + EXE smoke captures ~run.out.txt + unified vocab); legacy post-warnfix interpreter retry removed' $hasSingleVerify @{ noExeLabel=$svNoExeLabel; noExeCall=$svNoExeCall; oldRemoved=$svOldGone; exeVocab=$svExeVocab; exeCapture=$svExeCapture }
 # derived requirement: Slice 2b-C fail-fast probe -- guard against silent removal of the shared
