@@ -614,13 +614,19 @@ further.)*
    reach the visible console; the primary EXE verification (`:run_exe_smokerun`) additionally
    force-kills after a hard 30s, which would kill a program correctly waiting on its first
    `input()` prompt. This is the owner's own original target shape for this repo (a program that
-   asks setup questions, then loops on stdin until a quit command), not an edge case. Owner has
-   greenlit the planning doc's direction (P0: live-echo the redirected output + confirm stdin
-   passthrough on real Windows + revisit the 30s kill; P1: an argv-passthrough escape hatch for
-   programs that need launch arguments; P2: honest messaging for the residual ambiguous-exit
-   case) but implementation has not started -- three open design questions remain in the doc
-   (what the 30s kill should become, terminology, how P2's messaging avoids conflating three
-   different root causes for an ambiguous exit). Not sized into loops yet.
+   asks setup questions, then loops on stdin until a quit command), not an edge case.
+
+   **P0 requirement 1 (live-echo + stop passing results through `for /f`-captured stdout) is
+   SHIPPED (2026-07-23)** -- see the Closed Backlog entry below for what shipped and the real,
+   non-obvious async-output-drain race found and fixed along the way (not anticipated by the
+   original plan). **Requirement 2 (confirm stdin passthrough on real Windows CI) and requirement
+   3 (revisit the 30s kill, Open Question 1) remain OPEN** -- requirement 2 specifically needs a
+   real Windows run, not just local `pwsh` testing, since the remaining unknown is cmd.exe's own
+   console/stdin semantics for a double-clicked `.bat`'s process tree, which cannot be reproduced
+   in this sandbox. P1 (argv-passthrough escape hatch) and P2 (honest ambiguous-exit messaging)
+   are both still un-started, per the plan's own recommended P0-first sequencing. Not sized into
+   further loops yet -- the natural next step is a non-gating Windows CI experiment for
+   requirement 2, per the plan doc's own "Notes from Claude" update.
 
 ## Periodic Maintenance Checks (recurring, quarterly)
 
@@ -917,6 +923,61 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **CLI-args/stdin-interactive support, P0 requirement 1 (live-echo + result-file redesign) --
+  Active Backlog item 8's first shipped slice.** Owner asked to empirically validate the proposed
+  fix locally with `pwsh` before implementing, then said "proceed with whatever you are confident
+  on" once that testing (documented in PR #373's own commits to
+  `docs/plan-cli-interactive-verification.md`, Findings 5b/6/7) held up. Implemented and shipped:
+  - `tools/failfast_probe.ps1` (the shared, never-kills helper behind `:run_failfast_probe`, used
+    by the cached-EXE fast path / interpreter fallback / postexec checkpoint) rewritten to
+    live-tee the child's stdout/stderr via `Register-ObjectEvent` (polling `WaitForExit(100)`
+    loop, never a single blocking wait -- confirmed both empirically and against
+    PowerShell/PowerShell#11065 that a blocking wait prevents event dispatch) instead of only
+    writing captured output to disk at exit.
+  - **New `tools/exe_smokerun.ps1`**: `:run_exe_smokerun`'s old inline `-Command "..."`
+    one-liner converted to a proper emitted `.ps1` helper (via the existing `:emit_from_base64`
+    mechanism) -- required because `Register-ObjectEvent`'s `-Action { ... }` needs
+    literal-quote-containing PowerShell an inline `-Command` string can't safely hold. Same
+    live-tee pattern, with the one intentional behavioral difference preserved exactly: still
+    calls `$p.Kill()` after 30s (now `HP_SMOKERUN_KILL_MS`, default 30000 when unset -- production
+    behavior byte-for-byte unchanged; the override exists purely for
+    `tests/test_exe_smokerun.py` to exercise the `Kill()` branch without a real 30s wait).
+  - **Both callers in `run_setup.bat` (`:run_failfast_probe`, `:run_exe_smokerun`) stopped
+    wrapping their helper invocation in `for /f ('powershell ...') do (...)`.** `for /f` captures
+    the ENTIRE stdout of the wrapped command -- which would swallow every live-teed line (never
+    shown to the user) and corrupt the `exceeded|exitcode`/exit-code result parsing (every teed
+    line misparsed as a candidate result). Confirmed with a bash proxy of the identical
+    command-substitution shape before touching production code (see the plan doc's Finding 6).
+    Fixed by invoking each helper directly (a plain top-level `powershell -File ...` statement)
+    and having each write its result to a dedicated file (`HP_PROBE_RESULT`/
+    `HP_SMOKERUN_RESULT`) read afterward via a separate, safe (static-file) `for /f`.
+  - **A second, independent race was found and fixed while empirically testing the above in
+    `pwsh` -- not anticipated by the original plan.** Microsoft's own documented guidance for
+    async-redirected output ("call the no-arg `WaitForExit()` after a timed one returns `true`,
+    to ensure async event handling has completed") was empirically PROVEN INSUFFICIENT in this
+    environment: a direct repro showed the final `OutputDataReceived` event (carrying a line
+    Python only flushed at process exit -- an ordinary unflushed `print()` before a
+    redirected/non-tty stdout) firing AFTER both `WaitForExit()` calls had already returned,
+    silently losing that line from the captured buffer/file. Fixed by tracking each stream's own
+    null-`Data` EOF event explicitly and adding a bounded drain-wait poll for both streams before
+    reading the buffers -- see `docs/agent-lessons-learned.md`'s new ".NET Process
+    async-redirected-output" entry for the full mechanism, a companion confirmed fact (Python's
+    `input()` DOES flush stdout before blocking on stdin, even when redirected -- so the owner's
+    actual target use case, `input()`-driven prompts, isn't at risk of this specific hazard), and
+    a rule of thumb for any future `Register-ObjectEvent` consumer in this repo.
+  - Both embedded payloads hit the CMD 8191-char line-length budget for real during this work
+    (`HP_FAILFAST_PROBE`'s first draft exceeded it by 2021 chars) -- both header comments were
+    trimmed to the terse, point-to-docs style already used by `HP_EMBED_PYVER_CHECK`.
+  - `tests/test_failfast_probe.py` updated (result now read from a file, not `proc.stdout`; new
+    `LiveTee` test class asserting live output reaches the script's own stdout/stderr) and new
+    `tests/test_exe_smokerun.py` added (fast-exit, `Kill()`-timeout, output-path overrides,
+    `PayloadSync`) -- both exercise the real scripts end-to-end via `pwsh` subprocesses.
+  - **Requirement 2 (confirm stdin passthrough on real Windows CI) and requirement 3 (revisit the
+    30s kill, Open Question 1) remain OPEN**, as does all of P1 (argv passthrough) and P2 (honest
+    ambiguous-exit messaging) -- see the updated Active Backlog item 8. Requirement 2 specifically
+    needs a real Windows run (cmd.exe's own console/stdin semantics for a double-clicked `.bat`
+    cannot be reproduced in this sandbox), flagged as the natural next non-gating CI experiment.
 
 - **No-EXE postflight briefing panel (docs/open-questions.md item 1, owner-approved "just better
   UX, go for it").** When BOTH PyInstaller and the Nuitka Tier A fallback fail outright and the

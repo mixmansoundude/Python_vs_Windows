@@ -268,6 +268,15 @@ it manually.
 
 ### P0 -- fixes the owner's actual target shape (stdin-interactive)
 
+**Requirement 1: SHIPPED (2026-07-23).** Both helper scripts (`tools/failfast_probe.ps1`,
+new `tools/exe_smokerun.ps1`) now live-tee + write results to a file, invoked directly (no
+`for /f` capture) by `run_setup.bat`. A second race, not anticipated in Finding 6, was found and
+fixed during implementation: Microsoft's documented "call `WaitForExit()` twice" guidance for
+async-redirected output was empirically proven insufficient on its own -- see
+`docs/agent-lessons-learned.md`'s new ".NET Process async-redirected-output" entry and
+`docs/agent-interconnect.md`'s "Live-echo redesign" section for the full mechanism and the fix
+(explicit per-stream EOF-flag drain-wait). Requirements 2 and 3 below remain open.
+
 1. **Live echo (tee) instead of buffer-then-write, AND stop passing the result value through
    `for /f`-captured stdout (Finding 6).** Two changes that must ship together, not
    independently -- shipping the tee alone without the result-passing change would break both

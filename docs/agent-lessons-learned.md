@@ -21,6 +21,58 @@ leaving stale guidance.**
 
 ---
 
+## .NET Process async-redirected-output: "call WaitForExit() twice" is NOT sufficient on its own to guarantee the buffers are drained
+
+Discovered 2026-07-23 while empirically testing (in `pwsh`, per direct request) the live-tee
+mechanism built for `tools/failfast_probe.ps1`/`tools/exe_smokerun.ps1`
+(`docs/plan-cli-interactive-verification.md` P0). Microsoft's own documentation for
+`Process.WaitForExit(Int32)` says: "When standard output has been redirected to asynchronous
+event handlers, it is possible that output processing will not have completed when this method
+returns. To ensure that asynchronous event handling has been completed, call the `WaitForExit()`
+overload that takes no parameter after receiving a `true` from this overload." Followed this
+literally (`$p.WaitForExit($ms)` then `$p.WaitForExit()`) and it was **empirically proven
+insufficient**: a direct repro with `Register-ObjectEvent` on `OutputDataReceived` showed the
+FINAL event (carrying a line the child process only flushed at exit -- e.g. an ordinary
+`print("x")` with no `flush=True`, redirected/non-tty stdout) firing AFTER both `WaitForExit()`
+calls had already returned. Reading the accumulated buffer immediately after those two calls
+silently produced an EMPTY/truncated result -- no exception, no warning, just missing data.
+Confirmed deterministic (5/5 repro), not a rare flake, specifically when the whole
+`pwsh`-launching-a-grandchild chain was itself launched via Python's `subprocess.run(...,
+capture_output=True)` (did NOT reproduce when the same `pwsh` command was run directly from an
+interactive shell) -- the exact class of "works differently depending on invocation shape" this
+repo has hit before with `Get-FileHash`'s module-autoload gap.
+
+**Fix: don't trust the wait-call side effect at all. Track each stream's own EOF signal
+explicitly.** `OutputDataReceived`/`ErrorDataReceived` fire with `$EventArgs.Data -eq $null`
+exactly once, when that stream reaches end-of-file -- this is .NET's own definitive "this stream
+is fully drained" signal, independent of any wait-call timing assumption. Set a `Done` flag in
+each event's `-Action` on that null-Data event, then poll (bounded, e.g. 5000ms via
+`Start-Sleep -Milliseconds 20` in a loop -- `Start-Sleep` yields to PowerShell's event dispatch the
+same way a polling `WaitForExit(100)` loop does; see the companion fact below: a hard BLOCKING
+wait, unlike `Start-Sleep` or a polling `WaitForExit(ms)`, does NOT yield and so prevents
+`Register-ObjectEvent` actions from running at all until it returns -- confirmed both empirically
+and against PowerShell/PowerShell#11065) until BOTH flags are set before reading the accumulated
+buffers. The documented double-`WaitForExit()` call is still worth keeping as a first attempt
+(harmless, may help on some platforms), but the actual correctness guarantee is the explicit
+EOF-flag drain-wait, not the .NET docs' own stated guarantee.
+
+**Separately confirmed, worth remembering as a companion fact**: Python's `input(prompt)` builtin
+DOES flush stdout before blocking on stdin, even when stdout is redirected/non-tty (confirmed via
+direct reproduction: a prompt printed via `input()` was readable from a piped child's stdout
+BEFORE any stdin was sent). This means the specific real-world scenario this live-tee work exists
+for -- a program that asks setup questions via `input()` then loops until quit -- is NOT at risk
+of the buffering hazard described above; that hazard mainly bites `print()` calls made well
+before the next `input()`/exit, not the interactive prompts themselves. Don't over-generalize the
+async-drain fix's importance to "every Python script needs `flush=True` everywhere" -- the
+specific target use case is already safe by construction.
+
+**Rule of thumb for any future `Register-ObjectEvent`-based async output consumer in this repo**:
+never assume the buffer is complete just because a wait call returned, regardless of what its
+documentation promises about "async handling has completed" -- track the stream's own EOF signal
+explicitly and wait on that instead.
+
+---
+
 ## Ambient Python path leakage in uv sub-bootstrap venvs (fixed via `UV_PYTHON_PREFERENCE=only-managed`)
 
 **This was an isolation-boundary leak in our bootstrapper, NOT a uv defect.** uv was doing

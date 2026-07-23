@@ -1145,6 +1145,93 @@ never a ceiling) then, if the process is still running, a SECOND, UNBOUNDED `Wai
   subroutine, the shared probe subroutine, the test override, the default probe window, the
   `HP_PROBE_EXCEEDED` state var, and the decoupling fix.
 
+### Live-echo redesign (docs/plan-cli-interactive-verification.md P0, requirement 1) -- touches BOTH `~failfast_probe.ps1` and the new `~exe_smokerun.ps1`, plus their callers
+
+**Status: the tee/result-passing mechanism is implemented; the real-Windows stdin confirmation
+(requirement 2) and the 30s-kill revisit (requirement 3, Open Question 1) remain open -- see the
+plan doc.** Two changes shipped together, since neither works without the other:
+
+1. **Both helper scripts now live-tee the child's stdout/stderr** (`Register-ObjectEvent` on
+   `OutputDataReceived`/`ErrorDataReceived`, printing each line via `Write-Host`/
+   `[Console]::Error.WriteLine` as it arrives) instead of only writing captured output to disk
+   after the process exits -- otherwise a stdin-interactive program's own prompts never reach a
+   real double-clicked user. Uses a **polling** `while (-not $p.WaitForExit(100)) { }` loop, never
+   a single blocking `$p.WaitForExit()` -- confirmed both empirically and against
+   PowerShell/PowerShell#11065 that a blocking wait does not yield to PowerShell's own
+   event-dispatch loop, so registered `-Action` scriptblocks queue but never run until it returns.
+2. **A second, independent race was found and fixed while empirically testing this in `pwsh`**:
+   Microsoft's own documented guidance for async-redirected output ("call the no-argument
+   `WaitForExit()` overload after a timed one returns `true`, to ensure async event handling has
+   completed" -- `Process.WaitForExit(Int32)` Remarks) was **empirically proven insufficient** in
+   this environment. A direct repro showed the final `OutputDataReceived` event (carrying a line
+   Python only flushed at process exit -- e.g. an ordinary unflushed `print()` before a redirected,
+   non-tty stdout) firing AFTER both `WaitForExit()` calls had already returned, silently losing
+   that line from the captured buffer/file. Fixed by tracking each stream's own null-`Data` EOF
+   event explicitly (`$outCtx.Done`/`$errCtx.Done`) and adding a short bounded poll after
+   `WaitForExit()` that waits for BOTH flags before the accumulated buffers are considered final
+   and safe to read/write -- deterministic (based on the streams' own actual EOF signal), not an
+   indirect side effect of a wait call whose cross-platform guarantee did not hold up under test.
+   **Separately confirmed reassuring for the actual target use case**: Python's `input(prompt)`
+   builtin DOES flush stdout before blocking on stdin, even when stdout is redirected/non-tty (this
+   is a real, if under-documented, CPython behavior, confirmed via direct reproduction) -- so a
+   program built around the owner's actual target shape (ask setup questions via `input()`, loop
+   until quit) does not depend on the user remembering to flush; the buffering hazard above mainly
+   affects `print()` calls made well before a program's next `input()`/exit, not the prompts
+   themselves.
+3. **Removed the `for /f`-captures-stdout result-passing mechanism entirely, at both call sites.**
+   Both `~failfast_probe.ps1` and the new `~exe_smokerun.ps1` used to print their
+   `"$exceeded|$exitcode"` (or, for the old inline `-Command`, an implicit last-expression value)
+   as their OWN final stdout line, captured by the caller via
+   `for /f "...delims=" %%X in (\`powershell ...\`) do (...)`. `for /f` captures the ENTIRE stdout
+   of the wrapped command and runs its `do` body once per line -- which would swallow every
+   live-teed line (never shown to the user) and corrupt the `exceeded|exitcode` split (each teed
+   line misparsed as a candidate result). Confirmed with a bash proxy of the identical
+   command-substitution shape before touching production code. Fixed by having both callers invoke
+   their helper DIRECTLY (a plain top-level `powershell -NoProfile -ExecutionPolicy Bypass -File
+   "..."` statement, no backtick/`for /f` wrapping at all) so live output flows straight to the
+   console, and each helper now writes its result to a dedicated file instead
+   (`HP_PROBE_RESULT`/`HP_SMOKERUN_RESULT`, defaulting to `~probe_result.txt`/
+   `~smokerun_result.txt`) which the caller reads afterward via a SEPARATE, safe `for /f` (safe
+   because it targets a static, fully-written file, not a live process's stdout -- no capture
+   conflict). This incidentally also removes the specific stdin-inheritance worry Finding 1 of the
+   plan doc originally flagged (a directly-invoked PowerShell process is a strictly more favorable
+   shape for stdin passthrough than one nested inside a command-substitution construct), though the
+   full chain still needs real-Windows confirmation.
+4. **`:run_exe_smokerun`'s inline `-Command "..."` one-liner became a proper emitted helper,
+   `tools/exe_smokerun.ps1` (`HP_EXE_SMOKERUN`, embedded via the same `:emit_from_base64`
+   mechanism as `~failfast_probe.ps1`).** Required independently of point 3 above, per
+   `docs/agent-lessons-learned.md`'s existing "prefer an emitted `.ps1` file over inline `-Command`
+   with literal quotes" rule -- `Register-ObjectEvent`'s `-Action { ... }` scriptblock needs quoted
+   PowerShell strings that an inline `-Command "..."` argument cannot safely hold (the exact hazard
+   that already drove `~failfast_probe.ps1` to be a real file instead of an inline command).
+   `~exe_smokerun.ps1` is `:run_exe_smokerun`'s OWN dedicated helper, not a reuse of
+   `~failfast_probe.ps1` -- the one behavioral difference is preserved exactly: after
+   `HP_SMOKERUN_KILL_MS` (env var, default 30000 when unset -- `run_setup.bat` never sets it, so
+   production behavior is byte-for-byte unchanged from the prior hardcoded 30s; the override exists
+   purely so `tests/test_exe_smokerun.py` can exercise the `Kill()` branch without a real 30s wait),
+   this script calls `$p.Kill()` -- `:run_exe_smokerun` is the sole verification pass for a build
+   that has never been confirmed working, unlike the untimed call sites `~failfast_probe.ps1`
+   covers, so an unresponsive process here cannot be trusted to eventually finish. Revisiting the
+   30s value/behavior itself is Open Question 1 in the plan doc, explicitly NOT decided by this
+   change -- this was a mechanical conversion of HOW output is captured/shown and HOW the result is
+   signaled back, not a change to WHEN or WHETHER the process gets killed.
+
+Both helper scripts hit the CMD 8191-char line-length budget for real while writing the
+live-tee+drain-wait logic (`HP_FAILFAST_PROBE`'s first draft exceeded the limit by 2021 chars) --
+see `docs/agent-lessons-learned.md`'s "CMD.EXE 8191-Character Line Limit" entry; both header
+comments were trimmed to the terse, point-to-docs style already used by
+`HP_EMBED_PYVER_CHECK`/`HP_EMBED_EXTRACT` rather than inlining the full rationale (which lives
+here and in the plan doc instead).
+
+Test coverage: `tests/test_failfast_probe.py` (updated) and `tests/test_exe_smokerun.py` (new)
+exercise both scripts end-to-end via real `pwsh` subprocesses -- fast-exit classification,
+probe-window-exceeded classification, the `Kill()`-after-timeout path, output-path overrides, live
+output reaching the SCRIPT'S OWN stdout/stderr (not just the captured files), and `PayloadSync`
+byte-equality for both embedded payloads. No Windows-CI-only assertions were added in this pass
+(the `for /f`-capture-vs-tee conflict and the async-drain race were both provable with static
+analysis / local `pwsh` reproduction); the still-open stdin-passthrough confirmation (requirement 2)
+is real Windows CI work for a future pass, per the plan doc's own sequencing note.
+
 ## Post-execution checkpoint (Slice 2b-C, second half): the elective second run
 
 `:run_postexec_checkpoint` is the other half of 2b-C promised by the original REQ-018 design doc
