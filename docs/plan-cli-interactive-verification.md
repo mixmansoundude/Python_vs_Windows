@@ -183,6 +183,45 @@ more structural change than "add event handlers to the existing script" -- it to
 call sites signal their result back to the caller, not just how they read child output. Flagged
 here rather than silently expanding scope mid-implementation.
 
+### Finding 7 -- external research corroborates both Finding 5b's fix and Finding 6's diagnosis
+
+Checked the local, empirical findings above against primary sources rather than relying on the
+sandbox repro alone:
+
+- **[PowerShell/PowerShell#11065](https://github.com/PowerShell/PowerShell/issues/11065)**
+  ("Waiting on C# Events Causes Deadlocks", filed against the official PowerShell repo): confirms
+  that `Register-ObjectEvent` event actions do not fire while the main thread is blocked in a
+  synchronous wait (`Task.Wait()`/equivalent to a blocking `WaitForExit()`) -- this is a known,
+  filed limitation, not an artifact of this sandbox's specific pwsh version. Directly backs the
+  polling `while (-not $p.WaitForExit(100)) { }` fix validated in Finding 5b as the correct
+  pattern, not a workaround for a local quirk.
+- **[dotnet/runtime#1147](https://github.com/dotnet/runtime/issues/1147)**: `RedirectStandardInput
+  = false` (the default, "inherited") does **not** guarantee the child receives a live console
+  handle -- it inherits whatever stdin-redirection *state* the parent process itself has
+  (`Console.IsInputRedirected`). This gives a concrete mechanism for Finding 1's original worry:
+  it's not that `for /f`-wrapped invocation is vaguely "risky," it's that the parent PowerShell
+  process's own `Console.IsInputRedirected` state (set by however cmd.exe launched it) propagates
+  straight down to the grandchild, with no way for `RedirectStandardInput = false` on the
+  grandchild to override it.
+- Community accounts (multiple, informal but consistent) describe exactly this failure mode for
+  `for /f "..." in ('powershell ...') do ...` wrapping a script that calls `Read-Host`: the
+  interactive read hangs or fails because the `for /f` construct's own child cmd.exe does not
+  connect a real, interactive console to the wrapped process. This corroborates Finding 6's
+  diagnosis independently of the tee/capture-conflict angle -- removing the `for /f` wrapper is
+  not just required to stop swallowing tee'd output, it is independently the standard, known fix
+  for interactive-input-through-`for /f` failures generally.
+
+**Net effect on confidence**: the Finding 6 redesign (direct invocation, no `for /f`/backtick
+wrapping, result passed via a file) is now supported by three independent lines of evidence
+(local empirical repro, this sandbox's bash-proxy demonstration of the capture conflict, and
+primary-source confirmation of both the event-dispatch blocking issue and the stdin-inheritance
+mechanism) rather than reasoning alone. What remains genuinely unconfirmed -- because it depends
+on the specific, real ancestor chain of a double-clicked `.bat` file's own console, which no
+Linux sandbox can reproduce -- is whether `run_setup.bat`'s own top-level console (when launched
+by an actual double-click, not `cmd /c` from a test harness or CI runner) has an unredirected
+stdin all the way down once the `for /f` wrapper is removed. The mechanism now points the right
+direction; only a real Windows run confirms the full chain.
+
 ### Finding 5 -- argv passthrough into the bootstrapper is a clean, detection-free escape hatch
 
 Today `run_setup.bat` accepts exactly one positional argument (`%~1`, the dragged-and-dropped or
