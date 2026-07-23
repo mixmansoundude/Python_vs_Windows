@@ -1760,9 +1760,17 @@ if not "%DEP_SOURCE%"=="unknown" (
   echo dependency_source=%DEP_SOURCE%> "dependency_source.txt"
   echo *** [INFO] Dependency source logged to dependency_source.txt
 )
-rem REQ-016: show post-flight briefing when a full EXE build completed.
-if not defined HP_FASTPATH_USED if exist "dist\%ENVNAME%.exe" (
-  call :print_postflight_briefing
+rem REQ-016: show post-flight briefing when a full EXE build completed. HP_BUILD_OK is only
+rem set once :run_entry_smoke actually attempts a build (undefined if no entry file was ever
+rem found), so "HP_BUILD_OK defined AND no EXE exists" precisely means packaging was attempted
+rem and failed outright (both PyInstaller and the Nuitka fallback) -- distinct from "no entry
+rem file" or a declined system-Python build, where no briefing of either kind applies.
+if not defined HP_FASTPATH_USED (
+  if exist "dist\%ENVNAME%.exe" (
+    call :print_postflight_briefing
+  ) else if defined HP_BUILD_OK (
+    call :print_no_exe_briefing
+  )
 )
 call :release_lock
 rem REQ-016: retain terminal window on success so user can read the output.
@@ -4339,6 +4347,37 @@ call :log "[INFO] REQ-016: Post-flight briefing printed."
 exit /b 0
 :pfb_log_caveat
 call :log "[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run."
+exit /b 0
+
+:print_no_exe_briefing
+rem docs/open-questions.md item 1: when PyInstaller AND the Nuitka fallback both fail outright
+rem (no dist\%ENVNAME%.exe at all), the run still succeeds via the interpreter fallback and the
+rem final [STATUS] line reads identically to a real EXE success, with the only prior signal
+rem being one [ERROR] line several seconds earlier. This panel closes that gap -- purely
+rem additive, does not touch success/failure semantics (~bootstrap.status.json already
+rem correctly records state=error via :die's own HP_BOOTSTRAP_STATE=error).
+echo.
+echo ============================================================
+echo  YOUR CODE RAN -- BUT NO STANDALONE .EXE WAS PRODUCED
+echo ============================================================
+echo  We could not package your app into a double-clickable .exe
+echo  (see the ERROR message above for why), but your code ran
+echo  successfully just now using the prepared Python environment.
+echo  Your environment and dependencies ARE installed correctly.
+echo.
+echo  RUNNING YOUR APP (without an .exe)
+echo    "%HP_PY%" "%HP_ENTRY%"
+echo.
+echo  KEEP these files with your project:
+echo    requirements.txt  -- packages your app depends on
+echo    runtime.txt       -- Python version pin
+echo.
+echo  SAFE TO DELETE to reclaim disk space:
+echo    .*_env\ folders   -- environment directories
+echo    ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+echo ============================================================
+echo.
+call :log "[WARN] REQ-016: Post-flight briefing printed; no EXE produced, advised direct interpreter run."
 exit /b 0
 
 :check_net_after_dl_fail

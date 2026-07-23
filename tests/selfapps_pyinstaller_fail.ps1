@@ -19,10 +19,14 @@
 # post-creation removal as a distinct trigger condition from the build command failing outright.
 #
 # Asserts (both scenarios): the final ~bootstrap.status.json reads state=error (not silently
-# overwritten back to ok), and the correct [ERROR] message appears in the log. Does NOT assert
-# a non-zero process exit code -- :success's own `exit /b 0` runs unconditionally regardless of
-# HP_BOOTSTRAP_STATE, matching this repo's established "graceful stop" contract for this class
-# of failure (see selfapps_preflight.ps1's sibling test, which likewise never checks exit code).
+# overwritten back to ok), the correct [ERROR] message appears in the log, and (docs/
+# open-questions.md item 1) the dedicated :print_no_exe_briefing panel is shown -- since the
+# stub app runs cleanly via the interpreter fallback despite total packaging failure, the final
+# console [STATUS] line alone would otherwise read identically to a real success. Does NOT
+# assert a non-zero process exit code -- :success's own `exit /b 0` runs unconditionally
+# regardless of HP_BOOTSTRAP_STATE, matching this repo's established "graceful stop" contract
+# for this class of failure (see selfapps_preflight.ps1's sibling test, which likewise never
+# checks exit code).
 #
 # This also directly satisfies requirement 1's first fixture from the AV-Safe Build Path PRD
 # ("a generic PyInstaller build failure... confirmed [to fail] against the current (pre-fallback)
@@ -119,6 +123,10 @@ try {
     $expectedMsg = if ($scenario -eq 'execfail') { 'PyInstaller execution failed' } else { 'PyInstaller did not produce dist' }
     $expectedMsgFound = $combined -match [regex]::Escape($expectedMsg)
     $testHookFired = $combined -match [regex]::Escape('HP_TEST_FORCE')
+    # docs/open-questions.md item 1: when packaging fails outright but the interpreter fallback
+    # still runs cleanly, :print_no_exe_briefing (run_setup.bat) prints a dedicated panel instead
+    # of leaving the bare "[STATUS] Run Status: SUCCESS" line as the only thing the user sees.
+    $noExeBriefingFound = $combined -match [regex]::Escape('YOUR CODE RAN -- BUT NO STANDALONE .EXE WAS PRODUCED')
 
     $statusPath = Join-Path $workDir '~bootstrap.status.json'
     $statusText = if (Test-Path -LiteralPath $statusPath) { Get-Content -LiteralPath $statusPath -Raw } else { $null }
@@ -135,16 +143,17 @@ try {
     # "graceful stop" contract for this class of failure -- see selfapps_preflight.ps1's own
     # $pass condition, the sibling test for the pre-existing HP_BOOTSTRAP_STATE=error precedent,
     # which likewise never checks the process exit code).
-    $xfailPass = $testHookFired -and $expectedMsgFound -and ($statusState -eq 'error')
+    $xfailPass = $testHookFired -and $expectedMsgFound -and ($statusState -eq 'error') -and $noExeBriefingFound
 
     Write-PyiFailRow -Pass $xfailPass -Desc "PyInstaller build XFAIL ($scenario): build failure correctly reported, not masked as success" -Details ([ordered]@{
-        scenario          = $scenario
-        bootstrapExit     = $runExit
-        testHookFired     = [bool]$testHookFired
-        expectedMsgFound  = [bool]$expectedMsgFound
-        statusState       = $statusState
-        xfailPass         = $xfailPass
-        log               = $bootstrapLog
+        scenario           = $scenario
+        bootstrapExit      = $runExit
+        testHookFired      = [bool]$testHookFired
+        expectedMsgFound   = [bool]$expectedMsgFound
+        statusState        = $statusState
+        noExeBriefingFound = [bool]$noExeBriefingFound
+        xfailPass          = $xfailPass
+        log                = $bootstrapLog
     })
 } finally {
     if ($null -eq $prevSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }

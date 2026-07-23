@@ -9,47 +9,23 @@ changelog-style sections are for.
 
 ---
 
-## 1. Should total EXE-packaging failure change the final on-screen wording?
+## 1. CLI / stdin-interactive Python programs -- design doc in progress
 
-When BOTH the PyInstaller build and the Nuitka Tier A fallback fail outright, the bootstrapper
-falls through to running the entry script via the interpreter, and if that runs cleanly, the
-final line the user sees is `[STATUS] Run Status: SUCCESS (Exit Code: 0)` -- identical to a
-genuine clean-EXE run. The only on-screen signal that packaging failed is one `[ERROR]
-PyInstaller execution failed.` line printed a few seconds earlier, with no closing summary
-reminding the user "by the way, no .exe was produced."
+Two genuinely different program "shapes" this bootstrapper's verification runs don't yet handle
+well, confirmed real by tracing the actual `ProcessStartInfo` code (not hypothesized):
 
-This is intentional, existing, documented design (see CLAUDE.md's "User-code exit-code
-semantics are already correctly isolated from bootstrapper status" Known Finding) -- the
-internal `~bootstrap.status.json` correctly records `state=error` regardless, so nothing is
-silently lost at the machine-readable level, and the design deliberately treats "did your code
-run" as a separate question from "did we also manage to produce a double-clickable .exe." The
-open question is narrower than "should the bootstrapper ever exit non-zero" (that was decided
-long ago, and the reasoning above still holds: a script that ultimately runs fine via the
-interpreter fallback IS a real success for the user, even without an EXE) -- it's specifically
-whether the console's FINAL summary line should say something more like "your code ran, but no
-standalone .exe was produced (see the ERROR above)" instead of a bare "SUCCESS," so a user
-skimming only the last line doesn't miss that packaging failed.
+1. **Argv-required at launch** -- a program that needs command-line arguments to do anything
+   useful (e.g. `argparse`/`click`-driven tools). No fix shape agreed yet.
+2. **Stdin-interactive after launch** -- a program that starts with zero arguments but then
+   prompts for input via `input()`/similar and runs a loop until the user types a quit command.
+   Confirmed bug: every verification launch point redirects the child's stdout/stderr into an
+   in-memory buffer only written to disk after the process exits (`RedirectStandardOutput` /
+   `RedirectStandardError = $true`, then `ReadToEndAsync()`), so prompts never reach the visible
+   console. The primary EXE verification (`:run_exe_smokerun`) additionally force-kills after a
+   hard 30s, which would kill a program correctly waiting on its first prompt.
 
-**Recommendation:** worth doing -- it's a small, additive change (one extra conditional line at
-the very end of the run, gated on packaging having failed) that doesn't touch the actual
-success/failure semantics, just closes the "only signal is one line several seconds earlier"
-gap. Not implemented yet pending confirmation this is wanted (it's a user-facing wording change
-to the final summary, worth a deliberate yes before touching it).
-
----
-
-## 2. CLI-args-only Python programs (no GUI) -- tabled, needs its own discussion pass
-
-All of this project's design so far (fast-path reuse, the postexec checkpoint, requirement 9's
-optional-optimized-build offer, the ~30s verification kill-window) implicitly assumes the target
-program either exits on its own or is a long-running/GUI-style app where a bounded verification
-run is a reasonable thing to force-kill. A program that requires command-line arguments to do
-anything useful is a different shape entirely: the bootstrapper's own verification runs
-(`:run_exe_smokerun`, the interpreter fallback, the postexec checkpoint's second run) all invoke
-the entry point with NO arguments, so a CLI-args-required program would either exit immediately
-with a "missing required argument" error (misread as a build failure) or print a usage/help
-message that gets swallowed into the smoke-test capture and treated as ordinary output. No
-research done yet on how big a gap this actually is in practice, or what the right fix would
-look like (skip verification entirely for such programs? detect argparse/click usage and skip
-smoke-run? prompt the user for args once and remember them?). Flagged for a dedicated future
-discussion, not sized or scoped yet.
+Owner-agreed direction (2026-07-22): live-echo the redirected output (tee to console, not just
+buffer-then-write) to fix prompt visibility; verify stdin actually reaches the child process on
+real Windows before relying on it; separately consider an argv-passthrough escape hatch for the
+launch-args case. Full design write-up: `docs/plan-cli-interactive-verification.md`. Not
+implemented yet -- that doc is where the phased scope and open sub-decisions live now.

@@ -607,6 +607,20 @@ the "Build public diagnostics tree" step's own `DIAG CWD`/`DIAG ROOT`/`DIAG TREE
 lines, which naturally show GitHub Actions' inherent doubled checkout path
 (`.../Python_vs_Windows/Python_vs_Windows/...`) -- a runner convention, not a bug. Not chased
 further.)*
+8. **CLI-args and stdin-interactive Python program support.** Full plan at
+   `docs/plan-cli-interactive-verification.md`. Confirmed real (not hypothetical) via direct code
+   tracing: every verification launch point redirects the child's stdout/stderr into an in-memory
+   buffer only written to disk after the process exits, so an interactive program's prompts never
+   reach the visible console; the primary EXE verification (`:run_exe_smokerun`) additionally
+   force-kills after a hard 30s, which would kill a program correctly waiting on its first
+   `input()` prompt. This is the owner's own original target shape for this repo (a program that
+   asks setup questions, then loops on stdin until a quit command), not an edge case. Owner has
+   greenlit the planning doc's direction (P0: live-echo the redirected output + confirm stdin
+   passthrough on real Windows + revisit the 30s kill; P1: an argv-passthrough escape hatch for
+   programs that need launch arguments; P2: honest messaging for the residual ambiguous-exit
+   case) but implementation has not started -- three open design questions remain in the doc
+   (what the 30s kill should become, terminology, how P2's messaging avoids conflating three
+   different root causes for an ambiguous exit). Not sized into loops yet.
 
 ## Periodic Maintenance Checks (recurring, quarterly)
 
@@ -903,6 +917,25 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **No-EXE postflight briefing panel (docs/open-questions.md item 1, owner-approved "just better
+  UX, go for it").** When BOTH PyInstaller and the Nuitka Tier A fallback fail outright and the
+  interpreter fallback then runs cleanly, the final console line previously read a bare
+  `[STATUS] Run Status: SUCCESS (Exit Code: 0)` -- identical to a genuine EXE success, with the
+  only prior signal being one `[ERROR]` line several seconds earlier. Traced the actual gap:
+  `:print_postflight_briefing` (the existing "SETUP COMPLETE" panel) is only ever called `if
+  exist "dist\%ENVNAME%.exe"`, so when no EXE was ever produced at all, no briefing panel is
+  shown at all -- not even the existing "SETUP COMPLETE -- WITH A CAVEAT" variant, since that one
+  also assumes an EXE artifact exists. Fixed by adding a sibling `:print_no_exe_briefing` panel,
+  gated on `HP_BUILD_OK` being defined (a build was actually attempted -- distinguishes this from
+  "no entry file found" or a declined system-Python build, neither of which set it) AND
+  `dist\%ENVNAME%.exe` not existing (distinguishes it from a real EXE success). Purely additive:
+  does not touch `~bootstrap.status.json`'s `state=error` (already correct, via `:die`'s own
+  `HP_BOOTSTRAP_STATE=error`) or the process exit code. Extended `selfapps_pyinstaller_fail.ps1`'s
+  existing xfail scenarios (which already force total packaging failure via
+  `HP_TEST_FORCE_PYINSTALLER_FAIL`/`HP_TEST_FORCE_OUTPUT_VANISH` + `HP_TEST_FORCE_NUITKA_FAIL`) to
+  also assert the new panel's header text appears in the log, folded into the existing
+  `$xfailPass` condition.
 
 - **Multi-agent parallel bug-hunt pass, requested directly by the owner ("Do several refinement
   and iteration passes. Do deep dives to find bugs and potential issues. Dig in... launch some
