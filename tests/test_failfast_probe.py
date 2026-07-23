@@ -4,13 +4,23 @@ finished -> discard-and-rebuild candidate) vs. "still running" (the user's real,
 long-running program -- never touched again, no Kill() anywhere), and captures stdout/stderr to
 caller-specified files.
 
-No importable functions exist (the script reads its inputs from env vars and prints a single
-"$exceeded|$exitcode" line to stdout) -- this is exercised end-to-end via a real `pwsh`
-subprocess, mirroring tests/test_pyproj_deps.py's subprocess-based pattern for a flat script.
+No importable functions exist (the script reads its inputs from env vars) -- this is exercised
+end-to-end via a real `pwsh` subprocess, mirroring tests/test_pyproj_deps.py's subprocess-based
+pattern for a flat script.
+
+Per docs/plan-cli-interactive-verification.md Finding 6, the script now live-echoes the child's
+stdout/stderr to its own stdout/stderr AS IT ARRIVES (instead of only writing captured output to
+disk after exit) and writes its "$exceeded|$exitcode" classification result to a dedicated result
+file (HP_PROBE_RESULT, default ~probe_result.txt) instead of printing it as the final stdout line
+-- the caller no longer wraps this script in a `for /f` stdout-capture, which would otherwise
+swallow the live-teed lines and corrupt the result parsing. Tests read the result file, not
+`proc.stdout`, for the classification outcome; `proc.stdout`/`proc.stderr` are asserted to contain
+the live-teed child output instead.
 
 Covers the fast-exit / probe-window-exceeded classification, exit-code passthrough in both
-cases, default vs. caller-specified output-path behavior, stdout/stderr capture content, and the
-base64 HP_FAILFAST_PROBE payload sync (byte-equality of the embedded payload vs this source,
+cases, default vs. caller-specified output-path behavior, stdout/stderr capture content (both the
+live-teed process output and the ~run.out.txt/~run.err.txt file capture), and the base64
+HP_FAILFAST_PROBE payload sync (byte-equality of the embedded payload vs this source,
 CRLF/LF-normalized -- mirrors test_embed_tier.py's PayloadSync pattern for a .ps1 canonical
 source, since *.ps1 carries `.gitattributes`' `eol=crlf`).
 """
@@ -64,19 +74,28 @@ def _run_probe(d, env_extra, timeout=15):
     return proc
 
 
+def _result(d, env_extra):
+    # HP_PROBE_RESULT defaults to ~probe_result.txt in the cwd; honor a caller override the same
+    # way the script does, so callers testing a custom path can still retrieve it.
+    override = env_extra.get("HP_PROBE_RESULT")
+    result_path = Path(override) if override else (Path(d) / "~probe_result.txt")
+    return result_path.read_text(encoding="ascii").strip()
+
+
 @unittest.skipUnless(PWSH, "pwsh not available")
 class FastExitClassification(unittest.TestCase):
     def test_fast_exit_zero_not_exceeded(self):
         with tempfile.TemporaryDirectory() as d:
             script = Path(d) / "fast.py"
             script.write_text(FAST_SCRIPT, encoding="utf-8")
-            proc = _run_probe(d, {
+            env = {
                 "HP_PROBE_EXE": sys.executable,
                 "HP_PROBE_ARGS": str(script),
                 "HP_PROBE_CWD": d,
-            })
+            }
+            proc = _run_probe(d, env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertEqual(proc.stdout.strip(), "0|0")
+            self.assertEqual(_result(d, env), "0|0")
 
     def test_fast_exit_nonzero_passthrough(self):
         # derived requirement: HP_PROBE_ARGS is a SINGLE path argument only (the script's own
@@ -87,13 +106,14 @@ class FastExitClassification(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             script = Path(d) / "fast_nonzero.py"
             script.write_text(FAST_NONZERO_SCRIPT, encoding="utf-8")
-            proc = _run_probe(d, {
+            env = {
                 "HP_PROBE_EXE": sys.executable,
                 "HP_PROBE_ARGS": str(script),
                 "HP_PROBE_CWD": d,
-            })
+            }
+            proc = _run_probe(d, env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertEqual(proc.stdout.strip(), "0|5")
+            self.assertEqual(_result(d, env), "0|5")
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
@@ -107,18 +127,42 @@ class ArgsIsSingleArgumentOnly(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             script = Path(d) / "fast.py"
             script.write_text(FAST_SCRIPT, encoding="utf-8")
-            proc = _run_probe(d, {
+            env = {
                 "HP_PROBE_EXE": sys.executable,
                 "HP_PROBE_ARGS": "{} 5".format(script),
                 "HP_PROBE_CWD": d,
-            })
+            }
+            proc = _run_probe(d, env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertEqual(proc.stdout.strip(), "0|2")
+            self.assertEqual(_result(d, env), "0|2")
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
 class SlowExitClassification(unittest.TestCase):
     def test_probe_window_exceeded_but_final_rc_captured(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "slow.py"
+            script.write_text(SLOW_SCRIPT, encoding="utf-8")
+            env = {
+                "HP_PROBE_EXE": sys.executable,
+                "HP_PROBE_ARGS": str(script),
+                "HP_PROBE_CWD": d,
+            }
+            proc = _run_probe(d, env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(_result(d, env), "1|7")
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class LiveTee(unittest.TestCase):
+    def test_child_output_reaches_scripts_own_stdout_stderr_live(self):
+        # docs/plan-cli-interactive-verification.md Finding 5b/6: the whole point of this
+        # requirement is that a real user watching the console sees the child's prompts as they
+        # happen, not only after it exits. This can't assert *timing* through a captured
+        # subprocess.run() call the way the sandbox pwsh repro did, but it can assert the
+        # mechanism used (Register-ObjectEvent + Write-Host/[Console]::Error.WriteLine) actually
+        # lands the child's own stdout/stderr on this script's own stdout/stderr at all -- the
+        # previous ReadToEndAsync()-only design never wrote anything to its own stdout/stderr.
         with tempfile.TemporaryDirectory() as d:
             script = Path(d) / "slow.py"
             script.write_text(SLOW_SCRIPT, encoding="utf-8")
@@ -128,7 +172,8 @@ class SlowExitClassification(unittest.TestCase):
                 "HP_PROBE_CWD": d,
             })
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertEqual(proc.stdout.strip(), "1|7")
+            self.assertIn("hello-stdout", proc.stdout)
+            self.assertIn("hello-stderr", proc.stderr)
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
@@ -151,16 +196,20 @@ class OutputCapture(unittest.TestCase):
             script.write_text(SLOW_SCRIPT, encoding="utf-8")
             out_path = Path(d) / "custom.out.txt"
             err_path = Path(d) / "custom.err.txt"
+            result_path = Path(d) / "custom.result.txt"
             _run_probe(d, {
                 "HP_PROBE_EXE": sys.executable,
                 "HP_PROBE_ARGS": str(script),
                 "HP_PROBE_CWD": d,
                 "HP_PROBE_OUT": str(out_path),
                 "HP_PROBE_ERR": str(err_path),
+                "HP_PROBE_RESULT": str(result_path),
             })
             self.assertIn("hello-stdout", out_path.read_text(encoding="ascii"))
             self.assertIn("hello-stderr", err_path.read_text(encoding="ascii"))
+            self.assertEqual(result_path.read_text(encoding="ascii").strip(), "1|7")
             self.assertFalse((Path(d) / "~run.out.txt").exists())
+            self.assertFalse((Path(d) / "~probe_result.txt").exists())
 
     def test_single_argument_path_with_spaces_quoted_correctly(self):
         with tempfile.TemporaryDirectory() as d:
@@ -168,13 +217,14 @@ class OutputCapture(unittest.TestCase):
             subdir.mkdir()
             script = subdir / "fast.py"
             script.write_text(FAST_SCRIPT, encoding="utf-8")
-            proc = _run_probe(d, {
+            env = {
                 "HP_PROBE_EXE": sys.executable,
                 "HP_PROBE_ARGS": str(script),
                 "HP_PROBE_CWD": d,
-            })
+            }
+            proc = _run_probe(d, env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertEqual(proc.stdout.strip(), "0|0")
+            self.assertEqual(_result(d, env), "0|0")
 
 
 class PayloadSync(unittest.TestCase):
