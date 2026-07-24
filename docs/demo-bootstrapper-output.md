@@ -40,8 +40,10 @@ the Nuitka fallback (`:try_nuitka_tier_a`) then runs for real -- a genuine compi
 
 **What appears on screen**, from the moment PyInstaller's build is attempted through to the final
 summary. Sourced from real CI (run `29788624195`, job `88506013149`), with the "(PyInstaller)"
-verification line and the drive-message reassurance line updated to reflect a wording fix made
-after that run -- not yet re-confirmed against a fresh CI capture:
+verification line, the drive-message reassurance line, and the "Verifying the built standalone
+EXE" line (now conditional -- see `docs/plan-cli-interactive-verification.md` requirement 3 and
+`docs/agent-interconnect.md`'s "Activity-aware EXE-smoke kill") updated to reflect wording fixes
+made after that run -- not yet re-confirmed against a fresh CI capture:
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
@@ -55,7 +57,7 @@ The system cannot find the drive specified.
 [INFO] PyInstaller build artifacts cleaned up.
 [INFO] EXE smokerun: testing dist\<env>.exe
 [INFO] Running entry script smoke test via packaged EXE.
-[WARN] Verifying the built standalone EXE (fallback build system) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost.
+[WARN] Verifying the built standalone EXE (fallback build system) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. Either way, do not start real work in it yet or any unsaved work will be lost.
 [INFO] EXE smokerun: exited 0 (ok)
 [INFO] Entry smoke exit=0
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
@@ -234,7 +236,7 @@ The system cannot find the drive specified.
 [INFO] PyInstaller build artifacts cleaned up.
 [INFO] EXE smokerun: testing dist\<env>.exe
 [INFO] Running entry script smoke test via packaged EXE.
-[WARN] Verifying the built standalone EXE (PyInstaller) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost.
+[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. Either way, do not start real work in it yet or any unsaved work will be lost.
 [INFO] EXE smokerun: exited 0 (ok)
 [INFO] Entry smoke exit=0
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
@@ -252,7 +254,10 @@ The system cannot find the drive specified.
 
 Note the "warnfix: Platform-specific modules..." line above still shows the OLD wording (this
 capture predates the messaging fix described in Scenario 2b) -- the NEW wording is the one shown
-there; re-pull this capture once a fresh CI run exercises this path again.
+there. The "Verifying the built standalone EXE (PyInstaller)" line has ALSO been updated in place
+to the new conditional wording (requirement 3, `docs/plan-cli-interactive-verification.md`) --
+this capture predates that fix too, so it no longer matches verbatim what a fresh run would show
+for either line; re-pull this capture once a fresh CI run exercises this path again.
 
 **The interactive `Build the optimized version now? [Y/N]` prompt line is echoed unconditionally
 by design** (same pattern as `:run_postexec_checkpoint`), but does not appear literally in any

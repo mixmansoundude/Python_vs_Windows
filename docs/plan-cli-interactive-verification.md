@@ -240,6 +240,69 @@ per-provider repeat would exercise the same code path, not a different one. It d
 cannot, prove a live human's own typing timing -- see requirement 2's own text below for what
 remains open after this test's first real CI run confirms the mechanism.
 
+### Finding 9 -- CRITICAL, newly discovered 2026-07-24: `ReadLineAsync()` is line-buffered, so a prompt with no trailing newline is INVISIBLE until something else flushes a line -- affects both the merged live-tee (requirement 1) and the just-shipped activity-aware kill (requirement 3)
+
+Found during a requested research/refinement pass on the already-shipped work, not while building
+a new feature -- confirmed empirically with a local `pwsh` + Python repro (not reasoned about),
+following this repo's own established practice of never trusting an assumption about async I/O
+behavior without a direct test.
+
+**The problem:** Python's canonical `input(prompt)` idiom -- the exact pattern this entire plan is
+built around (`name = input("Enter your name: ")`) -- writes the prompt text to stdout and flushes
+it, but WITHOUT a trailing newline (the cursor is meant to stay on the same line waiting for typed
+input). `StreamReader.ReadLineAsync()` (the read primitive both `tools/failfast_probe.ps1` and
+`tools/exe_smokerun.ps1` use, per the Finding 8 rewrite) does not return ANYTHING for a given
+stream until it has accumulated a full newline-terminated line, or the stream reaches EOF. A
+direct repro confirmed this precisely: a child process that writes `"Enter your name: "` (no `\n`)
+and then blocks on stdin produces **zero** completed `ReadLineAsync()` reads for at least 2 full
+seconds of silence -- the bytes ARE sitting in the OS pipe (confirmed via `CanRead`), but our
+reading mechanism will not surface them. They only appear once EITHER (a) the program's own LATER
+output includes a newline (at which point the prompt and that later text arrive concatenated as
+ONE "line" -- e.g. `"Enter your name: Hello, Alice!"` as a single chunk, not two), or (b) the
+process exits (confirmed separately: `ReadLineAsync()` DOES return a final partial/unterminated
+line at EOF, so the content is never permanently lost -- only delayed).
+
+**Consequence for requirement 1 (live-tee, already merged in #374):** a real user watching the
+console during verification of a program whose first action is `input("some prompt")` sees
+**nothing** until after they've already blindly typed an answer and pressed Enter -- at which
+point the prompt and the program's next line of output suddenly appear together, out of order
+relative to when they were actually meant to be seen. This significantly undercuts the stated goal
+of requirement 1 ("a stdin-interactive program can be verified with its prompts visible") for the
+single most common way Python programs prompt for input.
+
+**Consequence for requirement 3 (activity-aware kill, just shipped in #375):** `$sawOutput` is
+driven by the exact same `ReadLineAsync()`-completion signal, so it ALSO stays `$false` while a
+process is sitting at an `input()` prompt with no later newline yet -- meaning the 30s kill can
+still fire for the canonical target scenario (a program silently waiting at its very first
+prompt), which is the exact case requirement 3 was written to protect. The existing
+`tests/test_exe_smokerun.py::ActivityAwareStop` test does NOT catch this, because its script uses
+`print(..., flush=True)` (a newline-terminated line) rather than `input(prompt)` -- it validates
+the mechanism correctly for output that ends in a newline, but doesn't exercise the no-newline
+prompt case at all.
+
+**Why the existing interactive-round-trip tests (local unit test AND the new real-CI
+`selfapps_interactive_stdin.ps1`) didn't catch this:** both feed the ENTIRE scripted answer
+sequence through stdin essentially instantly (no simulated human typing delay), so the
+prompt-then-response round-trip completes in well under a second regardless of the buffering
+behavior described above -- the concatenated "line" still contains both substrings in the right
+relative order, so substring/ordering assertions pass. This is a real blind spot in test coverage,
+not a flaw in those tests' own design: they correctly prove the plumbing doesn't drop or reorder
+data, which was their stated goal, but they cannot and do not model realistic human-speed typing
+latency, which is exactly the condition under which this bug actually bites a real user.
+
+**Fix shape (not yet implemented):** replace the line-based `ReadLineAsync()` polling with
+raw character/byte-based reads (e.g. `StreamReader.ReadAsync(buffer, offset, count)` on a fixed
+buffer, called in the same polling loop shape) so ANY available bytes are surfaced and displayed
+immediately, without waiting for a delimiter -- matching how a real terminal actually behaves.
+This would touch the read loop in BOTH `tools/failfast_probe.ps1` and `tools/exe_smokerun.ps1`
+(both already-merged, production-critical files), needs care around: `Write-Host`'s automatic
+newline (would need `[Console]::Write()`/`-NoNewline` to avoid inserting spurious line breaks that
+aren't in the original output), how EOF is signaled for `ReadAsync` (a zero-length read, not a
+null result the way `ReadLineAsync` signals it), and re-verifying the existing 20/20-clean
+interactive round-trip test still passes with a fundamentally different read primitive. Not a
+small change, and it touches code two PRs (#374 and this one) already shipped/shipping into
+production -- flagged here for owner visibility rather than implemented silently mid-refinement-pass.
+
 ### Finding 7 -- external research corroborates both Finding 5b's fix and Finding 6's diagnosis
 
 Checked the local, empirical findings above against primary sources rather than relying on the
@@ -393,6 +456,11 @@ own entry below) -- all of P0 now has an implementation; P1 and P2 remain to be 
    30s -- see `docs/agent-interconnect.md` "Activity-aware EXE-smoke kill" for the full mechanism
    and `:warn_user_code_launch`'s updated messaging (now accurately describes the conditional
    behavior instead of overclaiming an unconditional 30s kill).
+   **Caveat discovered 2026-07-24, AFTER shipping (Finding 9): the `$sawOutput` proxy inherits
+   `ReadLineAsync()`'s line-buffering limitation**, so it does not actually detect the canonical
+   `input("prompt")` case (no trailing newline) until something else flushes a line -- meaning the
+   kill can still fire for the exact scenario this requirement targets. Not yet fixed; tracked as
+   part of Finding 9's fix (touches the shared read mechanism in both helper scripts).
 
 ### P1 -- argv passthrough escape hatch (shape #1, no detection needed)
 
