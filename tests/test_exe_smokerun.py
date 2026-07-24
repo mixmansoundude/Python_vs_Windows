@@ -73,6 +73,22 @@ print("after-hang", flush=True)
 sys.exit(7)
 """
 
+# Regression script for Finding 9 (docs/plan-cli-interactive-verification.md): writes WITHOUT a
+# trailing newline (mirroring input("prompt")'s own no-newline-by-design behavior) and flushes,
+# then sleeps well past a short kill window before ever completing a line. Under the old
+# ReadLineAsync()-based reader, $sawOutput would stay false until the LATER bare print() finally
+# terminates the line -- by which point a short kill window would already have fired. Under the
+# chunk-based reader, the initial unterminated write is itself enough to set $sawOutput.
+NO_NEWLINE_THEN_LONG_SCRIPT = """
+import sys, time
+sys.stdout.write("partial-no-newline-prompt")
+sys.stdout.flush()
+time.sleep(0.8)
+print()
+print("after-hang", flush=True)
+sys.exit(9)
+"""
+
 
 def _make_script(d, name, body):
     path = Path(d) / (name + ".py")
@@ -174,6 +190,22 @@ class ActivityAwareStop(unittest.TestCase):
             self.assertIn("after-hang", out_text)
             self.assertIn("prompt-shown", proc.stdout)
             self.assertIn("after-hang", proc.stdout)
+
+    def test_output_with_no_trailing_newline_still_prevents_kill(self):
+        # Regression test for Finding 9: a chunk with NO trailing newline (the exact shape of
+        # input("prompt")'s own output) must still set $sawOutput immediately -- not only once a
+        # LATER newline happens to terminate the line. Confirmed this test fails against the
+        # pre-Finding-9 ReadLineAsync()-based implementation (the process gets killed, result
+        # "-1") and passes against the chunk-based fix (result "9", the script's real exit code).
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "nonewlinehang", NO_NEWLINE_THEN_LONG_SCRIPT)
+            env = {"HP_SMOKERUN_KILL_MS": "300"}
+            proc = _run_smokerun(d, script, env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(_result(d, env), "9")
+            out_text = (Path(d) / "~run.out.txt").read_text(encoding="ascii")
+            self.assertIn("partial-no-newline-prompt", out_text)
+            self.assertIn("after-hang", out_text)
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")

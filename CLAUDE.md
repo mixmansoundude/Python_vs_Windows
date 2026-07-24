@@ -635,10 +635,21 @@ further.)*
    (2026-07-24), per direct owner decision** -- see the dedicated Closed Backlog entry below for
    the full mechanism (the 30s window itself is unchanged; `Kill()` now only fires if the process
    has produced zero output by the deadline; any output observed switches to an unbounded wait,
-   mirroring the fail-fast probe's own philosophy). **All of P0 now has a shipped
-   implementation.** P1 (argv-passthrough escape hatch) and P2 (honest ambiguous-exit messaging)
-   are the remaining un-started slices, per the plan's own recommended P0-first sequencing, and
-   are the owner-approved next work ("P1 and p2 at least look good enough to try", 2026-07-24).
+   mirroring the fail-fast probe's own philosophy). **A real gap in that same-day work was found
+   and fixed within hours, during a requested research/refinement pass (Finding 9): the live-tee
+   and `$sawOutput` mechanisms both relied on `ReadLineAsync()`, which does not surface a prompt
+   with no trailing newline (the exact shape of Python's own `input("prompt")`) until something
+   else later flushes a line.** Fixed by switching both `tools/failfast_probe.ps1` and
+   `tools/exe_smokerun.ps1` to chunk-based `ReadAsync()` reads, empirically confirmed both ways
+   (fails against the pre-fix code, passes against the fix) with two new regression tests that
+   drive stdin live (not via a pre-loaded answers file, which cannot distinguish the timing bug at
+   all) -- see the dedicated Closed Backlog entry below,
+   `docs/plan-cli-interactive-verification.md` Finding 9, and `docs/agent-lessons-learned.md`'s new
+   "`StreamReader.ReadLineAsync()` is line-buffered" entry for the full trace. **All of P0 now has
+   a shipped, verified implementation.** P1 (argv-passthrough escape hatch) and P2 (honest
+   ambiguous-exit messaging) are the remaining un-started slices, per the plan's own recommended
+   P0-first sequencing, and are the owner-approved next work ("P1 and p2 at least look good enough
+   to try", 2026-07-24).
    **Confirmed via source-reading
    that the separate "PVW QuickStart" (`HP_PVW_KNOWN_IDEMPOTENT`, REQ-005.13) execute-mode
    discovery path was never affected by any of this** -- `tools/pvw_known_idempotent.py`'s
@@ -941,6 +952,52 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **CLI-args/stdin-interactive support, Finding 9 -- `ReadLineAsync()` line-buffering hid
+  no-newline prompts from BOTH the live-tee and the activity-aware kill, found during a
+  requested research/refinement pass and fixed the same day, with owner authorization
+  ("if you think the raw character read is the fix then go for it and test locally and let CI
+  confirm").** While reviewing the just-shipped requirement-3 work, confirmed empirically
+  (standalone `pwsh` + Python repro, not assumption) that Python's canonical `input("prompt")`
+  idiom -- the pattern this whole plan is built around -- writes its prompt WITHOUT a trailing
+  newline by design, and `StreamReader.ReadLineAsync()` (the read primitive both
+  `tools/failfast_probe.ps1` and `tools/exe_smokerun.ps1` used, per the just-prior
+  `Register-ObjectEvent` fix) does not surface ANY text for a stream until it sees a full
+  newline-terminated line. A child process writing `"Enter your name: "` and blocking on stdin
+  produced zero completed reads for 2+ seconds even though the bytes were genuinely flushed and
+  sitting in the OS pipe. Two real consequences: (1) a real user watching the console during
+  verification would see nothing until AFTER blindly typing an answer, undercutting requirement
+  1's whole stated goal; (2) `$sawOutput` (requirement 3's activity-aware kill flag, shipped
+  hours earlier) inherited the same blind spot, meaning the 30s kill could still fire for the
+  EXACT scenario requirement 3 was built to protect. The owner independently confirmed hitting a
+  closely related symptom in their own code (progress dots not appearing until later when
+  frozen into an EXE, fixed by an explicit flush) -- separately caused by Python's OWN writer-side
+  buffering, not this bug, but the two together motivated a careful investigation of the actual
+  reading mechanism rather than assuming it was already correct.
+
+  **Fix**: replaced `ReadLineAsync()` with `StreamReader.ReadAsync(char[], int, int)` chunk reads
+  on a 4096-char buffer in both helper scripts (same single-read-in-flight polling shape the
+  `Register-ObjectEvent` fix already established -- only the read primitive changed).
+  `[Console]::Out.Write($chunk)`/`[Console]::Error.Write($chunk)` (no auto-newline) replace
+  `Write-Host`/`WriteLine`, since chunks now arrive at arbitrary boundaries; EOF became a
+  0-length read instead of a null result. Verified the fix empirically before touching
+  production code (a no-newline prompt became readable in single-digit milliseconds, versus
+  never within 2s before), then wrote two NEW regression tests specifically targeting the
+  no-newline-chunk case (existing tests all use newline-terminated output, so none of them
+  exercised this) -- `tests/test_failfast_probe.py::NoNewlinePromptVisibility` (drives stdin via
+  a live, test-controlled pipe using raw `os.read`/`select`, not a pre-loaded answers file, since
+  a static file makes the whole answer available to the OS instantly regardless of read strategy
+  and cannot distinguish the timing bug at all) and
+  `tests/test_exe_smokerun.py::ActivityAwareStop::test_output_with_no_trailing_newline_still_
+  prevents_kill`. Both new tests were confirmed to genuinely FAIL when checked out against the
+  pre-fix implementation (from the actual merge commits) and PASS against the fix -- proven
+  regression tests, not new tests that happen to pass. Full existing suite (19 tests across both
+  files, including the pre-existing 20/20-clean interactive round-trip test) re-verified clean
+  with the new read primitive, run 3x with no flakiness. See
+  `docs/plan-cli-interactive-verification.md` Finding 9, `docs/agent-interconnect.md`'s "Live-echo
+  redesign" (point 6) and "Activity-aware EXE-smoke kill" sections, and
+  `docs/agent-lessons-learned.md`'s new dedicated entry for the full trace and a reusable rule of
+  thumb for future async-output consumers in this repo.
 
 - **CLI-args/stdin-interactive support, P0 requirement 3 (activity-aware EXE-smoke kill) --
   resolves Open Question 1, direct owner decision.** Owner's exact framing: "I think don't change

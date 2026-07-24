@@ -88,6 +88,13 @@ ordering bug below by construction, and needs no event-subscription bookkeeping 
 
 ## `Register-ObjectEvent` on `OutputDataReceived`/`ErrorDataReceived` can reorder lines WITHIN a single stream -- confirmed upstream bug, fixed by switching to `ReadLineAsync()` polling
 
+**Superseded again, same day (2026-07-24): `ReadLineAsync()` was itself replaced by chunk-based
+`ReadAsync()` reads -- see the next entry below for why.** The lesson in THIS entry (don't trust
+`Register-ObjectEvent`'s ordering, poll a single in-flight async read instead) remains valid and
+is still exactly why the fix below polls a single in-flight `ReadAsync()` rather than going back
+to events -- only the specific read PRIMITIVE changed (line-based to chunk-based), not the
+single-read-in-flight polling pattern itself.
+
 Discovered 2026-07-24 while building the interactive round-trip test requested to gain confidence
 in the live-tee mechanism above (`tests/test_failfast_probe.py`'s `InteractiveRoundTrip` class --
 a script that does `input()` for a name, prints a greeting, then loops `input()`/`print()` for a
@@ -141,6 +148,72 @@ failures (versus 2/5 before). 5 repeated full runs of `tests/test_failfast_probe
 `tests/test_exe_smokerun.py`, all clean. See `docs/plan-cli-interactive-verification.md` Finding
 8 and `docs/agent-interconnect.md`'s "Live-echo redesign" section for the full context this bug
 was found in and how it connects to the rest of the stdin/tee feature.
+
+---
+
+## `StreamReader.ReadLineAsync()` is line-buffered: a prompt with no trailing newline is invisible until something else flushes a line -- fixed by switching to `ReadAsync()` chunk reads
+
+Discovered 2026-07-24 during a requested research/refinement pass on already-shipped work (not
+while building a new feature) -- the owner independently confirmed hitting a related symptom
+themselves (progress dots not appearing until much later when running as a frozen EXE, fixed by
+adding an explicit `.flush()` in their own code), which prompted a closer look at this repo's own
+read mechanism rather than assuming it was already correct.
+
+**The problem**: Python's canonical `input(prompt)` idiom -- `name = input("Enter your name: ")`
+-- writes the prompt to stdout and flushes it immediately (confirmed elsewhere in this file), but
+WITHOUT a trailing newline, by design: the cursor is meant to stay on the same line waiting for
+typed input. `StreamReader.ReadLineAsync()` does not return anything for a stream until it has
+accumulated a full newline-terminated line, or the stream reaches EOF -- so even though the
+prompt's bytes are genuinely sitting in the OS pipe, flushed and ready to read, `ReadLineAsync()`
+won't surface them. Confirmed directly: a child process writing `"Enter your name: "` and then
+blocking on stdin produced ZERO completed `ReadLineAsync()` reads for at least 2 full seconds of
+silence (`CanRead` on the underlying stream confirmed the bytes WERE there). The text only
+appears once EITHER a later write includes a newline (at which point the prompt and that later
+text arrive concatenated as ONE line -- e.g. `"Enter your name: Hello, Alice!"` as a single
+chunk, not two, silently reordering when things "appear" relative to when they were actually
+printed) OR the process exits (`ReadLineAsync()` DOES return a final unterminated line at EOF, so
+content is delayed, never permanently lost).
+
+**Why this stayed hidden through two prior rounds of interactive-round-trip testing**: both the
+local unit test and the real-CI `selfapps_interactive_stdin.ps1` feed the ENTIRE scripted answer
+sequence through stdin essentially instantly (a pre-loaded file, not a human typing), so the
+prompt-then-response round-trip completes in well under a second regardless of the buffering
+behavior above -- the concatenated "line" still contains both substrings in the right relative
+order, so substring/ordering assertions pass. This is a real, structural blind spot in
+timing-insensitive tests, not a flaw in those specific tests' own design (they correctly proved
+the plumbing doesn't drop or reorder data, which was their stated goal) -- any test that supplies
+an entire answer sequence up front cannot distinguish "surfaced instantly" from "surfaced only
+once something else happened to flush a line," because both produce the same final captured text.
+
+**Fix: replace `ReadLineAsync()` with `StreamReader.ReadAsync(char[], int, int)` on a fixed
+buffer** (kept the same single-read-in-flight polling shape from the entry above -- only the
+primitive changed), so ANY available bytes are surfaced and displayed the moment they arrive,
+matching how a real terminal behaves. Consequences of the switch: `Write-Host`/`WriteLine` (which
+auto-append a newline) must become `[Console]::Out.Write($chunk)`/`[Console]::Error.Write($chunk)`
+(no auto-newline), since chunks now arrive at arbitrary boundaries, not line boundaries; EOF
+becomes a 0-length read (`$n -eq 0`) rather than a `$null` result.
+
+**How to actually TEST for this class of bug -- a pre-loaded answers file cannot catch it.**
+Since the whole reason this stayed hidden is that a static, fully-available-up-front stdin file
+makes read-timing invisible, the regression test has to drive stdin itself, live, via a
+`Popen`/`Process`-style pipe the TEST controls, and assert something is readable on the far end
+BEFORE the test writes anything to stdin. On the Python-test side this means raw, unbuffered
+`os.read(fd, n)` reads gated by `select.select(..., timeout)` -- NOT `subprocess.run(...,
+capture_output=True)` or `proc.communicate()`, both of which block until the whole exchange
+finishes and only then hand back combined output, exactly the property that hides this bug.
+Verified both regression tests added for this fix (`tests/test_failfast_probe.py::
+NoNewlinePromptVisibility`, `tests/test_exe_smokerun.py::ActivityAwareStop::
+test_output_with_no_trailing_newline_still_prevents_kill`) genuinely FAIL when checked out
+against the pre-fix implementation and PASS against the fix -- proven regression tests, not new
+tests that happen to pass by coincidence.
+
+**Rule of thumb for any future async-output consumer in this repo**: prefer chunk/byte-based
+reads (`ReadAsync(buffer, offset, count)`) over line-based reads (`ReadLineAsync()`) whenever the
+producer might legitimately write meaningful, already-flushed content without a trailing
+newline -- an interactive prompt is the common case, but any progress indicator or partial-status
+line has the same shape. Line-based reads are only safe when every producer write is known to
+always end in a newline, which cannot be assumed for arbitrary Python programs (or arbitrary
+programs in general).
 
 ---
 

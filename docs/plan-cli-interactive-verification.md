@@ -290,18 +290,34 @@ not a flaw in those tests' own design: they correctly prove the plumbing doesn't
 data, which was their stated goal, but they cannot and do not model realistic human-speed typing
 latency, which is exactly the condition under which this bug actually bites a real user.
 
-**Fix shape (not yet implemented):** replace the line-based `ReadLineAsync()` polling with
-raw character/byte-based reads (e.g. `StreamReader.ReadAsync(buffer, offset, count)` on a fixed
-buffer, called in the same polling loop shape) so ANY available bytes are surfaced and displayed
-immediately, without waiting for a delimiter -- matching how a real terminal actually behaves.
-This would touch the read loop in BOTH `tools/failfast_probe.ps1` and `tools/exe_smokerun.ps1`
-(both already-merged, production-critical files), needs care around: `Write-Host`'s automatic
-newline (would need `[Console]::Write()`/`-NoNewline` to avoid inserting spurious line breaks that
-aren't in the original output), how EOF is signaled for `ReadAsync` (a zero-length read, not a
-null result the way `ReadLineAsync` signals it), and re-verifying the existing 20/20-clean
-interactive round-trip test still passes with a fundamentally different read primitive. Not a
-small change, and it touches code two PRs (#374 and this one) already shipped/shipping into
-production -- flagged here for owner visibility rather than implemented silently mid-refinement-pass.
+**Fix shape: SHIPPED 2026-07-24, owner-authorized ("if you think the raw character read is the
+fix then go for it and test locally and let CI confirm").** Replaced the line-based
+`ReadLineAsync()` polling with raw character-based reads
+(`StreamReader.ReadAsync(char[], int, int)` on a 4096-char buffer, same one-read-in-flight polling
+shape Finding 8 already established) in BOTH `tools/failfast_probe.ps1` and
+`tools/exe_smokerun.ps1`, so ANY available bytes are surfaced and displayed the moment they arrive,
+without waiting for a delimiter -- matching how a real terminal actually behaves. `[Console]::Out
+.Write($chunk)`/`[Console]::Error.Write($chunk)` (no newline appended) replace `Write-Host
+$line`/`[Console]::Error.WriteLine($line)`, since chunks now arrive at arbitrary boundaries, not
+line boundaries. EOF is now a 0-length read (`$n -eq 0`), not a null result. `$sawOutput` (the
+activity-aware kill's proxy, requirement 3) is now set on any non-empty chunk, immediately fixing
+the exact gap this finding describes.
+
+**Empirically validated BOTH ways before and after the fix**, matching this repo's own established
+practice: confirmed the fix works (a no-newline prompt is now readable within single-digit
+milliseconds, vs. never within 2s under the old reader) via a standalone `pwsh` repro; then wrote
+two new regression tests targeting the EXACT gap this finding describes (a no-newline chunk, not
+just any output) --
+`tests/test_failfast_probe.py::NoNewlinePromptVisibility` (drives stdin itself via a live,
+test-controlled pipe -- not a pre-loaded answers file, which cannot distinguish the timing bug at
+all -- and asserts the prompt is readable from the probe's own live output BEFORE any answer is
+sent) and `tests/test_exe_smokerun.py::ActivityAwareStop::test_output_with_no_trailing_newline_
+still_prevents_kill` (a script that writes an unterminated chunk, sleeps well past a short kill
+window, then completes normally) -- and confirmed BOTH new tests genuinely fail against the
+pre-fix implementation (checked out from the merge commits directly) and pass against the fix,
+so they are proven regression tests, not just new tests that happen to pass. Full existing suite
+(19 tests across both files, including the pre-existing 20/20-clean interactive round-trip test)
+re-verified clean with the new read primitive; no regressions. This closes the last open gap in P0.
 
 ### Finding 7 -- external research corroborates both Finding 5b's fix and Finding 6's diagnosis
 
@@ -456,11 +472,12 @@ own entry below) -- all of P0 now has an implementation; P1 and P2 remain to be 
    30s -- see `docs/agent-interconnect.md` "Activity-aware EXE-smoke kill" for the full mechanism
    and `:warn_user_code_launch`'s updated messaging (now accurately describes the conditional
    behavior instead of overclaiming an unconditional 30s kill).
-   **Caveat discovered 2026-07-24, AFTER shipping (Finding 9): the `$sawOutput` proxy inherits
-   `ReadLineAsync()`'s line-buffering limitation**, so it does not actually detect the canonical
-   `input("prompt")` case (no trailing newline) until something else flushes a line -- meaning the
-   kill can still fire for the exact scenario this requirement targets. Not yet fixed; tracked as
-   part of Finding 9's fix (touches the shared read mechanism in both helper scripts).
+   **Gap found and fixed same day (Finding 9): the `$sawOutput` proxy originally inherited
+   `ReadLineAsync()`'s line-buffering limitation**, so it did not actually detect the canonical
+   `input("prompt")` case (no trailing newline) until something else flushed a line -- meaning the
+   kill could still fire for the exact scenario this requirement targets. Fixed by switching both
+   helper scripts to chunk-based reads (see Finding 9 above); `$sawOutput` now sets on any
+   non-empty chunk, closing the gap for real.
 
 ### P1 -- argv passthrough escape hatch (shape #1, no detection needed)
 

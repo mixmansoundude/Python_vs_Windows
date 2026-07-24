@@ -25,11 +25,14 @@ CRLF/LF-normalized -- mirrors test_embed_tier.py's PayloadSync pattern for a .ps
 source, since *.ps1 carries `.gitattributes`' `eol=crlf`).
 """
 import base64
+import os
 import re
+import select
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -100,6 +103,22 @@ def _result(d, env_extra):
     override = env_extra.get("HP_PROBE_RESULT")
     result_path = Path(override) if override else (Path(d) / "~probe_result.txt")
     return result_path.read_text(encoding="ascii").strip()
+
+
+def _read_available(fileobj, timeout):
+    """Raw, unbuffered read of whatever is currently available on fileobj's fd.
+
+    Returns None if select() timed out with nothing readable yet (keep waiting), or the bytes
+    read (b"" specifically means EOF -- distinct from None/timeout). Used instead of
+    proc.communicate()/text-mode reads so tests can observe partial, non-newline-terminated
+    output exactly as it arrives, without Python's own io layer buffering it -- the same class
+    of buffering this repo's Finding 9 fix (docs/plan-cli-interactive-verification.md) exists to
+    avoid on the PowerShell reading side.
+    """
+    readable, _, _ = select.select([fileobj], [], [], timeout)
+    if not readable:
+        return None
+    return os.read(fileobj.fileno(), 65536)
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
@@ -239,6 +258,69 @@ class InteractiveRoundTrip(unittest.TestCase):
             self.assertIn("Hello, Alice!", captured)
             self.assertIn("pong", captured)
             self.assertIn("Goodbye!", captured)
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class NoNewlinePromptVisibility(unittest.TestCase):
+    # Regression test for Finding 9 (docs/plan-cli-interactive-verification.md): input("text")
+    # prints its prompt WITHOUT a trailing newline by design (the cursor stays on the same line
+    # waiting for typed input). The old ReadLineAsync()-based reader would not surface that text
+    # until a LATER newline arrived or the process exited -- meaning a real user would see
+    # nothing until after they'd already blindly typed an answer. InteractiveRoundTrip above
+    # cannot catch this: it feeds the whole answer sequence via a pre-loaded file, so the OS
+    # makes it available to the reader near-instantly regardless of read strategy, masking the
+    # timing bug entirely. This test instead drives stdin itself via a live pipe and asserts the
+    # prompt is readable BEFORE any answer is sent -- the one thing a static-file test can't
+    # distinguish.
+    def test_prompt_without_trailing_newline_is_visible_before_input_is_sent(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "interactive.py"
+            script.write_text(INTERACTIVE_SCRIPT, encoding="utf-8")
+            env = {
+                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "HP_FAILFAST_PROBE_MS": "300",
+                "HP_PROBE_EXE": sys.executable,
+                "HP_PROBE_ARGS": str(script),
+                "HP_PROBE_CWD": d,
+            }
+            proc = subprocess.Popen(
+                [PWSH, "-NoProfile", "-NonInteractive", "-File", str(SOURCE)],
+                cwd=d,
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+            try:
+                chunk = _read_available(proc.stdout, 5.0)
+                self.assertIsNotNone(
+                    chunk,
+                    "no output observed within 5s before any input was sent -- "
+                    "Finding 9 regression (prompt invisible without a trailing newline)",
+                )
+                self.assertIn(b"Enter your name:", chunk)
+
+                proc.stdin.write(b"Alice\nping\nexit\n")
+                proc.stdin.flush()
+                proc.stdin.close()
+
+                all_output = chunk
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    more = _read_available(proc.stdout, 1.0)
+                    if more is None:
+                        continue
+                    if more == b"":
+                        break
+                    all_output += more
+                proc.wait(timeout=5)
+            finally:
+                proc.stdout.close()
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn(b"Hello, Alice!", all_output)
+            self.assertIn(b"pong", all_output)
+            self.assertIn(b"Goodbye!", all_output)
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")

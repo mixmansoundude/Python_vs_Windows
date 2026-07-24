@@ -18,18 +18,17 @@
 # must pre-truncate the output/result files before invoking, same as ~failfast_probe.ps1.
 #
 # Same live-tee as ~failfast_probe.ps1 -- see that file's header comment for the full rationale
-# (self-sequenced StreamReader.ReadLineAsync() polling, NOT Register-ObjectEvent: that dispatches
-# via ThreadPool.QueueUserWorkItem, a confirmed, filed PowerShell bug -- PowerShell/PowerShell#11937
-# -- that can deliver lines out of order within a single stream when several arrive close
-# together; only ever one read in flight per stream here, so no reordering is possible).
+# (self-sequenced chunk reads via StreamReader.ReadAsync(char[], int, int), NOT
+# Register-ObjectEvent or ReadLineAsync() -- PowerShell/PowerShell#11937 and Finding 9,
+# docs/plan-cli-interactive-verification.md, cover why).
 #
 # derived requirement (Open Question 1, owner decision 2026-07-24): HP_SMOKERUN_KILL_MS (default
-# 30000, unchanged) is now a classification checkpoint, not an unconditional deadline -- Kill()
-# fires only if $sawOutput is still false at killMs (a fully silent process = presumed hung).
-# Once any output line is observed (the best available proxy for "alive / likely at an
-# interactive prompt" -- stdin itself isn't observable here, see docs/agent-interconnect.md
-# "Activity-aware EXE-smoke kill" for the full rationale and accepted trade-off), the kill is
-# skipped and the wait becomes unbounded, mirroring ~failfast_probe.ps1's own philosophy.
+# 30000, unchanged) is a classification checkpoint, not an unconditional deadline -- Kill() fires
+# only if $sawOutput is still false at killMs (fully silent = presumed hung). Any bytes observed
+# on either stream skips the kill and the wait becomes unbounded, mirroring
+# ~failfast_probe.ps1's philosophy -- see docs/agent-interconnect.md "Activity-aware EXE-smoke
+# kill" for the full rationale/trade-off. Chunk-based (not line-based) reads are what make this
+# actually fire for the canonical `input("prompt")` case -- see Finding 9 in the plan doc above.
 #
 # This is the canonical source for the HP_EXE_SMOKERUN base64 payload embedded in run_setup.bat.
 # After editing, re-encode and paste it into the `set "HP_EXE_SMOKERUN=..."` line;
@@ -57,8 +56,10 @@ $p.Start() | Out-Null
 
 $outBuf = New-Object System.Text.StringBuilder
 $errBuf = New-Object System.Text.StringBuilder
-$outTask = $p.StandardOutput.ReadLineAsync()
-$errTask = $p.StandardError.ReadLineAsync()
+$outChunkBuf = New-Object char[] 4096
+$errChunkBuf = New-Object char[] 4096
+$outTask = $p.StandardOutput.ReadAsync($outChunkBuf, 0, $outChunkBuf.Length)
+$errTask = $p.StandardError.ReadAsync($errChunkBuf, 0, $errChunkBuf.Length)
 $outDone = $false
 $errDone = $false
 
@@ -67,25 +68,27 @@ $killed = $false
 $sawOutput = $false
 while ((-not $p.HasExited) -or (-not $outDone) -or (-not $errDone)) {
     if ((-not $outDone) -and $outTask.IsCompleted) {
-        $line = $outTask.Result
-        if ($null -eq $line) {
+        $n = $outTask.Result
+        if ($n -eq 0) {
             $outDone = $true
         } else {
             $sawOutput = $true
-            Write-Host $line
-            $null = $outBuf.Append($line + "`n")
-            $outTask = $p.StandardOutput.ReadLineAsync()
+            $chunk = [string]::new($outChunkBuf, 0, $n)
+            [Console]::Out.Write($chunk)
+            $null = $outBuf.Append($chunk)
+            $outTask = $p.StandardOutput.ReadAsync($outChunkBuf, 0, $outChunkBuf.Length)
         }
     }
     if ((-not $errDone) -and $errTask.IsCompleted) {
-        $line = $errTask.Result
-        if ($null -eq $line) {
+        $n = $errTask.Result
+        if ($n -eq 0) {
             $errDone = $true
         } else {
             $sawOutput = $true
-            [Console]::Error.WriteLine($line)
-            $null = $errBuf.Append($line + "`n")
-            $errTask = $p.StandardError.ReadLineAsync()
+            $chunk = [string]::new($errChunkBuf, 0, $n)
+            [Console]::Error.Write($chunk)
+            $null = $errBuf.Append($chunk)
+            $errTask = $p.StandardError.ReadAsync($errChunkBuf, 0, $errChunkBuf.Length)
         }
     }
     if ((-not $killed) -and (-not $sawOutput) -and (-not $p.HasExited) -and ($sw.ElapsedMilliseconds -ge $killMs)) {
