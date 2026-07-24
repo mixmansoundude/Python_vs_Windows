@@ -412,6 +412,32 @@ this repo's established graduation pattern.
 self.optbuild.offer
 ```
 
+## selfapps-interactive-stdin NDJSON rows (selfapps_interactive_stdin.ps1, uv lane only, non-gating)
+
+Closes the remaining gap in `docs/plan-cli-interactive-verification.md`'s live-echo redesign
+(P0 requirement 1 shipped the tee mechanism; this test proves the full real-Windows nesting a
+double-clicked `run_setup.bat` actually uses -- `cmd.exe -> :run_exe_smokerun -> the emitted
+~exe_smokerun.ps1 helper -> the built EXE` -- carries genuine interactive stdin all the way
+through, not just that output is teed). Builds a real PyInstaller EXE from a multi-round
+`input()`-driven stub app (the owner's actual target program shape: no launch args, ask setup
+questions, loop on stdin until a quit command) and pipes a scripted sequence of answers into
+`cmd.exe`'s own stdin. Provider-agnostic by construction (`:run_exe_smokerun`/`~exe_smokerun.ps1`
+run identically regardless of which REQ-009 tier built the environment), so one passing run in
+one lane is representative of the mechanism working across all lanes -- a per-provider repeat
+would not exercise any different code path. Asserts ORDERING (each answer consumed by the right
+prompt in the right round via `IndexOf` comparisons on the bootstrap log), not just presence of
+expected substrings, plus that the EXE was genuinely built and the bootstrap reports `state=ok`.
+
+Does NOT prove a live human's own typing timing (impossible to automate) -- it proves the
+plumbing does not silently drop or reorder stdin/stdout, which was the genuinely unconfirmed
+part. See `docs/plan-cli-interactive-verification.md` requirement 2 for what remains open (a
+Windows-CI-only stdin confirmation was exactly what this test set out to provide; it is not a
+substitute for a human's own interactive session).
+
+```
+self.interactive.stdin.roundtrip
+```
+
 ---
 
 ## Key facts for debugging missing rows

@@ -619,14 +619,26 @@ further.)*
    **P0 requirement 1 (live-echo + stop passing results through `for /f`-captured stdout) is
    SHIPPED (2026-07-23)** -- see the Closed Backlog entry below for what shipped and the real,
    non-obvious async-output-drain race found and fixed along the way (not anticipated by the
-   original plan). **Requirement 2 (confirm stdin passthrough on real Windows CI) and requirement
-   3 (revisit the 30s kill, Open Question 1) remain OPEN** -- requirement 2 specifically needs a
-   real Windows run, not just local `pwsh` testing, since the remaining unknown is cmd.exe's own
-   console/stdin semantics for a double-clicked `.bat`'s process tree, which cannot be reproduced
-   in this sandbox. P1 (argv-passthrough escape hatch) and P2 (honest ambiguous-exit messaging)
-   are both still un-started, per the plan's own recommended P0-first sequencing. Not sized into
-   further loops yet -- the natural next step is a non-gating Windows CI experiment for
-   requirement 2, per the plan doc's own "Notes from Claude" update.
+   original plan). **A second, more serious bug in that same mechanism was found and fixed
+   2026-07-24** while building a requested interactive round-trip test: `Register-ObjectEvent`
+   (the tee mechanism itself) can reorder lines WITHIN a single stream, a confirmed upstream
+   PowerShell bug -- fixed by replacing it entirely with self-sequenced `StreamReader.
+   ReadLineAsync()` polling. See the dedicated Closed Backlog entry below and
+   `docs/agent-lessons-learned.md`'s new "`Register-ObjectEvent` ... can reorder lines" entry for
+   the full trace. **Requirement 2 (confirm stdin passthrough on real Windows CI) now has a
+   dedicated CI test (`tests/selfapps_interactive_stdin.ps1`, uv lane, non-gating) but is not yet
+   fully CLOSED pending that test's first observed real-CI pass** -- it pipes a scripted answer
+   sequence into `cmd.exe`'s own stdin and exercises the full `cmd.exe -> :run_exe_smokerun ->
+   ~exe_smokerun.ps1 -> the built EXE` chain end to end, closing the "cannot be reproduced in this
+   sandbox" gap this item previously described with an automated, provider-agnostic proof rather
+   than a manual one-off. **Requirement 3 (revisit the 30s kill, Open Question 1) remains OPEN.**
+   P1 (argv-passthrough escape hatch) and P2 (honest ambiguous-exit messaging) are both still
+   un-started, per the plan's own recommended P0-first sequencing. **Confirmed via source-reading
+   that the separate "PVW QuickStart" (`HP_PVW_KNOWN_IDEMPOTENT`, REQ-005.13) execute-mode
+   discovery path was never affected by any of this** -- `tools/pvw_known_idempotent.py`'s
+   `run_script()` uses a plain `subprocess.run(..., timeout=120)` with full stdio inheritance and
+   zero redirection, so neither the tee mechanism nor its ordering bug ever applied there; it does
+   carry its own, unrelated `timeout=120` risk (noted, not yet acted on).
 
 ## Periodic Maintenance Checks (recurring, quarterly)
 
@@ -923,6 +935,50 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **CLI-args/stdin-interactive support: `Register-ObjectEvent` line-reordering bug found and
+  fixed, plus a real interactive round-trip test added -- direct follow-up to requirement 1's
+  shipment, requested by the owner ("Do we have a test to fake a selected entry py that uses
+  output and input()... Would the command line interface input() tee stuff work on the QuickStart
+  uv and all lanes and such?").** Building the requested test (a multi-round `input()`-driven stub
+  script: ask for a name, greet, then loop `ping`/`exit`) surfaced a genuine, previously-unknown
+  bug in the just-shipped live-tee mechanism: `Register-ObjectEvent` on
+  `OutputDataReceived`/`ErrorDataReceived` dispatches via `ThreadPool.QueueUserWorkItem`, which
+  gives no ordering guarantee between events -- a confirmed, filed upstream PowerShell bug
+  (PowerShell/PowerShell#11937) that reordered lines WITHIN a single stream when several arrived
+  close together (round 2 of the test conversation appearing before round 1's in the captured/teed
+  text, non-deterministically -- 2 failures out of 5 local runs). Fixed by replacing
+  `Register-ObjectEvent` entirely in both `tools/failfast_probe.ps1` and `tools/exe_smokerun.ps1`
+  with self-sequenced `StreamReader.ReadLineAsync()` polling (only ever one read in flight per
+  stream, so no out-of-order delivery is possible by construction) -- this also subsumes and
+  removes the separate async-drain-race workaround from requirement 1's own original fix, since a
+  completed `ReadLineAsync()` task with a `$null` result IS the stream's definitive EOF signal.
+  Verified with 20 repeated runs of the new interactive round-trip test (0/20 failures after the
+  fix, versus 2/5 before) and 5 repeated full test-suite runs. See
+  `docs/agent-lessons-learned.md`'s new dedicated entry and `docs/plan-cli-interactive-verification.md`
+  Finding 8 for the full trace.
+
+  **New CI test closes (pending its first observed real run) the remaining confirmation gap for
+  requirement 2**: `tests/selfapps_interactive_stdin.ps1` (new, uv lane, non-gating) builds a real
+  PyInstaller EXE from the same multi-round `input()`-driven stub shape and pipes a scripted
+  answer sequence into `cmd.exe`'s own stdin, exercising the FULL real chain (`cmd.exe ->
+  :run_exe_smokerun -> ~exe_smokerun.ps1 -> the built EXE`) rather than a simplified local proxy --
+  asserting ordering (via `IndexOf` comparisons on the bootstrap log), that the EXE was genuinely
+  built, and that the bootstrap reports `state=ok`. Provider-agnostic by construction
+  (`:run_exe_smokerun`/`~exe_smokerun.ps1` behave identically regardless of which REQ-009 tier
+  built the environment), so one passing run in the uv lane is representative of every lane -- a
+  per-provider repeat would exercise the same code path, not a different one. New NDJSON row
+  `self.interactive.stdin.roundtrip`, registered in `docs/agent-ndjson.md`.
+
+  **Answered the owner's third question directly, via source-reading, not assumption**: the
+  separate "PVW QuickStart" (`HP_PVW_KNOWN_IDEMPOTENT`, REQ-005.13) execute-mode discovery path
+  was NEVER affected by this bug (or by any tee mechanism at all) -- `tools/pvw_known_idempotent.py`'s
+  `run_script()` invokes `uvx autopep723 <entry>` via a plain `subprocess.run(..., timeout=120)`
+  with full stdio inheritance and zero redirection, so both the original drain-race and the
+  Finding-8 reordering bug are entirely out of scope for it; its output/input always passed
+  straight through unmodified. Flagged, not fixed here: that helper carries its own separate
+  `timeout=120` risk (a genuinely slow interactive session during discovery could be killed by it)
+  -- a distinct, not-yet-actioned observation, out of scope for this pass.
 
 - **CLI-args/stdin-interactive support, P0 requirement 1 (live-echo + result-file redesign) --
   Active Backlog item 8's first shipped slice.** Owner asked to empirically validate the proposed

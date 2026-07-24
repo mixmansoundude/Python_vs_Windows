@@ -183,6 +183,63 @@ more structural change than "add event handlers to the existing script" -- it to
 call sites signal their result back to the caller, not just how they read child output. Flagged
 here rather than silently expanding scope mid-implementation.
 
+### Finding 8 -- CRITICAL: `Register-ObjectEvent` itself reorders lines within a single stream; requirement 1's actual shipped mechanism is `ReadLineAsync()` polling, not event handlers
+
+Found 2026-07-24, directly as a result of building the interactive round-trip test the owner
+asked for (a script mirroring the owner's real target shape: `input()` for a name, then a
+`ping`/`exit` loop) to gain confidence in requirement 1. The test initially failed
+non-deterministically (2 out of 5 local runs) with output from a LATER round of the conversation
+appearing BEFORE an EARLIER round's output in the captured/teed text -- e.g. round 2's `"pong"`
+landing ahead of round 1's `"Hello, Alice!"`. This is not a hang or a dropped line; it is a pure
+reordering, which is a materially different (and more dangerous) failure mode than anything
+Findings 1-7 anticipated: a human watching the live tee would see their own conversation printed
+out of sequence.
+
+Root-caused to a confirmed, filed upstream bug:
+**[PowerShell/PowerShell#11937](https://github.com/PowerShell/PowerShell/issues/11937)**.
+`Register-ObjectEvent` on `OutputDataReceived`/`ErrorDataReceived` dispatches each event via
+`ThreadPool.QueueUserWorkItem` internally -- the .NET thread pool provides no ordering guarantee
+between queued work items, so when two lines arrive close together (a common case for any script
+that prints two or three lines back-to-back, e.g. a prompt immediately followed by its own
+response), their `-Action` callbacks can run in either order. This is a real, documented
+limitation of the mechanism requirement 1 shipped with, not an artifact of this sandbox.
+
+**Fix: replace `Register-ObjectEvent` entirely with self-sequenced `StreamReader.ReadLineAsync()`
+polling.** Both `tools/failfast_probe.ps1` and `tools/exe_smokerun.ps1` were rewritten to issue
+only ONE async read per stream at a time: check `.IsCompleted`, consume `.Result`, print it, then
+immediately issue the next `ReadLineAsync()` call for that same stream. Because there is never
+more than one outstanding read racing against itself, a single stream's lines cannot be delivered
+out of order -- ordering is enforced by construction (each read literally cannot start until the
+previous one's result has been consumed), not by hoping the runtime's own callback scheduler
+happens to preserve it. Cross-stream (stdout vs. stderr) interleaving was never guaranteed and
+still isn't -- that reflects the child's own two independent OS pipes, not a defect.
+
+Verified the fix with 20 repeated local runs of the new interactive round-trip test (0/20
+failures, versus 2/5 failures before) plus 5 repeated full-suite runs (`tests/test_failfast_probe.py`,
+`tests/test_exe_smokerun.py`), all clean. This also simplified the code: no
+`Register-ObjectEvent`/`Unregister-Event`/`Get-EventSubscriber` bookkeeping, no separate EOF-flag
+tracking for the drain-wait race documented in `docs/agent-lessons-learned.md`'s ".NET Process
+async-redirected-output" entry (`ReadLineAsync()` returning `$null` on a completed task IS the
+EOF signal, with no separate polled-wait-after-`WaitForExit()` step needed) -- the new mechanism
+is strictly simpler as well as strictly more correct. `docs/agent-lessons-learned.md`'s existing
+async-output-drain entry was left in place since its core lesson (don't trust `WaitForExit()`'s
+own documented "call it twice" guidance blindly) remains true and instructive, even though the
+specific implementation it was written against has since been replaced by this fix.
+
+**A new test closes the remaining confirmation gap for requirement 2 (partially, pending real CI):**
+`tests/selfapps_interactive_stdin.ps1` (new, uv lane, non-gating) builds a real PyInstaller EXE
+from a multi-round `input()`-driven stub app mirroring the owner's actual target shape (no launch
+args, ask a setup question, loop on stdin until a quit command) and pipes a scripted answer
+sequence into `cmd.exe`'s own stdin for the FULL real chain: `cmd.exe -> :run_exe_smokerun ->
+the emitted ~exe_smokerun.ps1 helper -> the built EXE`. It asserts ordering (not just presence)
+via `IndexOf` comparisons on the bootstrap log, that the EXE was genuinely built, and that the
+bootstrap reports `state=ok`. This is provider-agnostic by construction (`:run_exe_smokerun`/
+`~exe_smokerun.ps1` behave identically regardless of which REQ-009 tier built the environment),
+so one passing run in one lane represents the mechanism working across every lane -- a
+per-provider repeat would exercise the same code path, not a different one. It does not, and
+cannot, prove a live human's own typing timing -- see requirement 2's own text below for what
+remains open after this test's first real CI run confirms the mechanism.
+
 ### Finding 7 -- external research corroborates both Finding 5b's fix and Finding 6's diagnosis
 
 Checked the local, empirical findings above against primary sources rather than relying on the
@@ -268,14 +325,18 @@ it manually.
 
 ### P0 -- fixes the owner's actual target shape (stdin-interactive)
 
-**Requirement 1: SHIPPED (2026-07-23).** Both helper scripts (`tools/failfast_probe.ps1`,
-new `tools/exe_smokerun.ps1`) now live-tee + write results to a file, invoked directly (no
-`for /f` capture) by `run_setup.bat`. A second race, not anticipated in Finding 6, was found and
-fixed during implementation: Microsoft's documented "call `WaitForExit()` twice" guidance for
-async-redirected output was empirically proven insufficient on its own -- see
-`docs/agent-lessons-learned.md`'s new ".NET Process async-redirected-output" entry and
-`docs/agent-interconnect.md`'s "Live-echo redesign" section for the full mechanism and the fix
-(explicit per-stream EOF-flag drain-wait). Requirements 2 and 3 below remain open.
+**Requirement 1: SHIPPED (2026-07-23), mechanism replaced 2026-07-24 (Finding 8).** Both helper
+scripts (`tools/failfast_probe.ps1`, `tools/exe_smokerun.ps1`) live-tee + write results to a
+file, invoked directly (no `for /f` capture) by `run_setup.bat`. Two races were found and fixed
+during implementation, in two separate passes: the original `WaitForExit()`-twice drain race
+(see `docs/agent-lessons-learned.md`'s ".NET Process async-redirected-output" entry) was fixed
+first, then a SECOND, more serious bug -- `Register-ObjectEvent` reordering lines within a single
+stream, a confirmed upstream PowerShell bug (Finding 8 above) -- was found while building the
+interactive round-trip test requested for requirement 2's confirmation, and led to replacing
+`Register-ObjectEvent` entirely with self-sequenced `StreamReader.ReadLineAsync()` polling (which
+also subsumes and simplifies away the original drain-race fix, see Finding 8 for detail).
+Requirement 2 has a real-Windows CI test now in place (see Finding 8's last paragraph) but is not
+yet CLOSED pending that test's first real CI run. Requirement 3 remains open.
 
 1. **Live echo (tee) instead of buffer-then-write, AND stop passing the result value through
    `for /f`-captured stdout (Finding 6).** Two changes that must ship together, not
@@ -306,6 +367,13 @@ async-redirected output was empirically proven insufficient on its own -- see
    byproduct, which should make production stdin passthrough at least as favorable as the tested
    case -- but the exact cmd.exe/console behavior for a real double-clicked `.bat` still needs a
    real Windows confirmation (see Finding 1's update), not just the Linux-sandbox proxy result.
+   **`tests/selfapps_interactive_stdin.ps1` (new, uv lane, non-gating, see Finding 8) now exists
+   to provide exactly this confirmation** -- it pipes scripted answers into `cmd.exe`'s own stdin
+   and asserts a multi-round `input()` conversation is received correctly, in order, through the
+   FULL real chain (`cmd.exe -> :run_exe_smokerun -> ~exe_smokerun.ps1 -> the built EXE`), not a
+   simplified proxy. This requirement moves from "open" to "verification test shipped, pending its
+   first real Windows CI run" -- it is not fully CLOSED until that run is observed passing, since
+   nothing in this sandbox can execute `run_setup.bat`/a real cmd.exe console end-to-end.
 3. **Revisit `:run_exe_smokerun`'s 30s kill for this case.** Once output is live, a human watching
    the console can *see* a prompt and knows to respond -- which resolves most of the practical
    problem even without solving "detect blocked-on-stdin vs. hung" in the abstract. Whether the
@@ -391,19 +459,38 @@ requirement 1's shape from "add event handlers" to "add event handlers AND restr
 result is signaled back to the caller" -- still P0, still one requirement, but a bigger diff than
 the original wording implied.
 
-**What's still untested, and can only be tested on real Windows:** whether stdin genuinely reaches
-a grandchild process through the *actual* production shape (a `.bat` launched via double-click,
-invoking `powershell -File ...` directly per the Finding 6 redesign, launching a further
-grandchild via `Process.Start`) -- the Linux-sandbox proxy (bash pipe -> pwsh -> python3) validates
-the .NET-level mechanism but not cmd.exe's own console/stdin semantics for a batch file's fresh
-console window. A non-gating Windows CI lane exercising the redesigned probe end-to-end (piping a
-canned answer sequence into a stdin-interactive stub app, asserting the app's own prompts appear
-in the captured/live output and that it receives and acts on the piped answers) would be the
-natural next validation step once the redesign is actually implemented -- not before, since there's
-no code to exercise yet. This matches the owner's own suggested fallback ("CI as non-gating
-experimenting") for exactly the piece that can't be resolved locally.
+**What's still untested, and can only be confirmed by watching real Windows CI:** whether stdin
+genuinely reaches a grandchild process through the *actual* production shape (a `.bat` launched
+via `cmd.exe`, invoking `powershell -File ...` directly per the Finding 6 redesign, launching a
+further grandchild via `Process.Start`) -- the Linux-sandbox proxy (bash pipe -> pwsh -> python3)
+validates the .NET-level mechanism but not cmd.exe's own console/stdin semantics end-to-end.
+**This is no longer a gap with no test plan**: `tests/selfapps_interactive_stdin.ps1` (added
+2026-07-24, see Finding 8) is exactly the "non-gating Windows CI lane exercising the redesigned
+probe end-to-end" this paragraph previously called for -- it pipes a canned multi-round answer
+sequence into a real bootstrap run and asserts the built EXE's own prompts/responses appear in
+order in the captured output. What remains is watching its first real CI run; a human's own live
+typing timing still can't be automated (and isn't attempted here), but the plumbing question this
+plan opened with now has a concrete, automated answer pending confirmation, not just a proposal.
+
+**Answering a question this plan didn't originally ask: does any of this differ across CI
+lanes/providers, or between `run_setup.bat`'s own verification and the separate "PVW QuickStart"
+(`HP_PVW_KNOWN_IDEMPOTENT`, REQ-005.13) execute-mode discovery path?** No, for two different
+reasons. `run_setup.bat`'s own verification chain (`:run_exe_smokerun`/`~exe_smokerun.ps1`,
+`:run_failfast_probe`/`~failfast_probe.ps1`) is provider-agnostic by construction -- see Finding
+8's last paragraph -- so the new CI test's single uv-lane run is representative of every REQ-009
+tier (uv/conda/embed/venv/system alike), not just the lane it happens to run in. Separately,
+`tools/pvw_known_idempotent.py`'s `run_script()` (the QuickStart/Tier-2 execute-mode discovery
+helper) was NEVER part of this bug at all: it invokes `uvx autopep723 <entry>` via a plain
+`subprocess.run(..., timeout=120)` call with full stdio inheritance and zero redirection --
+neither `Register-ObjectEvent` nor any tee mechanism sits in that path, so both the Finding-8
+reordering bug and its fix are irrelevant to it; its output and input were always passed straight
+through to the console/terminal unmodified. That helper does carry its own, unrelated
+`timeout=120` risk (a genuinely slow interactive session could be killed by the discovery pass's
+own timeout) -- noted here as a distinct, not-yet-actioned observation, not folded into this
+plan's scope.
 
 Not sized into loops/slices yet -- this doc exists to fix the shared understanding and terminology
 before implementation starts, per the owner's own request to plan first rather than solve inline.
-Given the added complexity Finding 6 surfaced, implementation is still recommended as its own
-follow-up pass, not folded into this planning turn.
+Requirement 1 (including its Finding-8 mechanism replacement) and the requirement-2 verification
+test are both implemented; requirement 3 (the 30s-kill question) and P1/P2 remain their own
+follow-up passes.

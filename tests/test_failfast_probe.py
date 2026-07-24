@@ -56,8 +56,27 @@ time.sleep(1.5)
 sys.exit(7)
 """
 
+# The owner's actual target program shape for this repo: no launch arguments, asks setup
+# questions via input(), loops on stdin until a quit command. HP_PROBE_ARGS points at this file
+# on disk (not stdin -- see test_exe_smokerun.py's module docstring for why a script fed via
+# stdin can't also read its own input() calls from that same, already-consumed stream), so
+# stdin stays completely free for the script's own prompts.
+INTERACTIVE_SCRIPT = """
+name = input("Enter your name: ")
+print("Hello, " + name + "!")
+while True:
+    cmd = input("Type 'ping' or 'exit': ")
+    if cmd == "exit":
+        print("Goodbye!")
+        break
+    elif cmd == "ping":
+        print("pong")
+    else:
+        print("unknown command: " + cmd)
+"""
 
-def _run_probe(d, env_extra, timeout=15):
+
+def _run_probe(d, env_extra, timeout=15, stdin=None):
     env = {
         "PATH": "/usr/bin:/bin:/usr/local/bin",
         "HP_FAILFAST_PROBE_MS": "300",
@@ -67,6 +86,7 @@ def _run_probe(d, env_extra, timeout=15):
         [PWSH, "-NoProfile", "-NonInteractive", "-File", str(SOURCE)],
         cwd=d,
         env=env,
+        stdin=stdin,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -174,6 +194,51 @@ class LiveTee(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("hello-stdout", proc.stdout)
             self.assertIn("hello-stderr", proc.stderr)
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class InteractiveRoundTrip(unittest.TestCase):
+    # Answers the actual question this repo's live-echo work exists to answer: not just "is
+    # output visible," but "can a real multi-round input()-driven program be watched AND
+    # answered through this exact mechanism." RedirectStandardInput is never set on the
+    # grandchild in failfast_probe.ps1, so it inherits whatever stdin this pwsh process itself
+    # has -- subprocess.run's own stdin= parameter points that at a file containing only the
+    # ANSWERS (never the script source; see INTERACTIVE_SCRIPT's own comment for why those two
+    # must stay on separate channels). This does not prove a live human's typing timing (that
+    # needs a real Windows double-click, still open -- see
+    # docs/plan-cli-interactive-verification.md requirement 2), but it does prove the mechanism
+    # (Register-ObjectEvent tee + inherited/piped stdin together, not one or the other in
+    # isolation) carries a genuine multi-round conversation correctly end to end.
+    def test_multi_round_input_conversation_completes_correctly(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "interactive.py"
+            script.write_text(INTERACTIVE_SCRIPT, encoding="utf-8")
+            answers = Path(d) / "answers.txt"
+            answers.write_text("Alice\nping\nexit\n", encoding="utf-8")
+            with open(answers, "r", encoding="utf-8") as stdin_src:
+                proc = _run_probe(d, {
+                    "HP_PROBE_EXE": sys.executable,
+                    "HP_PROBE_ARGS": str(script),
+                    "HP_PROBE_CWD": d,
+                }, stdin=stdin_src)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            # Ordering, not just presence: proves each answer was consumed by the RIGHT prompt,
+            # not just that all expected substrings happen to appear somewhere in the output.
+            out = proc.stdout
+            i1 = out.index("Enter your name:")
+            i2 = out.index("Hello, Alice!")
+            i3 = out.index("Type 'ping' or 'exit':")
+            i4 = out.index("pong")
+            i5 = out.index("Goodbye!")
+            self.assertLess(i1, i2)
+            self.assertLess(i2, i3)
+            self.assertLess(i3, i4)
+            self.assertLess(i4, i5)
+            # Same round trip landed in the captured file, not just the live-teed console stream.
+            captured = (Path(d) / "~run.out.txt").read_text(encoding="ascii")
+            self.assertIn("Hello, Alice!", captured)
+            self.assertIn("pong", captured)
+            self.assertIn("Goodbye!", captured)
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
