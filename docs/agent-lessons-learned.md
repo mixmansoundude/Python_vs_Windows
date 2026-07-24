@@ -198,14 +198,38 @@ Since the whole reason this stayed hidden is that a static, fully-available-up-f
 makes read-timing invisible, the regression test has to drive stdin itself, live, via a
 `Popen`/`Process`-style pipe the TEST controls, and assert something is readable on the far end
 BEFORE the test writes anything to stdin. On the Python-test side this means raw, unbuffered
-`os.read(fd, n)` reads gated by `select.select(..., timeout)` -- NOT `subprocess.run(...,
-capture_output=True)` or `proc.communicate()`, both of which block until the whole exchange
-finishes and only then hand back combined output, exactly the property that hides this bug.
-Verified both regression tests added for this fix (`tests/test_failfast_probe.py::
-NoNewlinePromptVisibility`, `tests/test_exe_smokerun.py::ActivityAwareStop::
+`os.read(fd, n)` reads with a timed wait -- NOT `subprocess.run(..., capture_output=True)` or
+`proc.communicate()`, both of which block until the whole exchange finishes and only then hand
+back combined output, exactly the property that hides this bug. Verified both regression tests
+added for this fix (`tests/test_failfast_probe.py::NoNewlinePromptVisibility`,
+`tests/test_exe_smokerun.py::ActivityAwareStop::
 test_output_with_no_trailing_newline_still_prevents_kill`) genuinely FAIL when checked out
 against the pre-fix implementation and PASS against the fix -- proven regression tests, not new
 tests that happen to pass by coincidence.
+
+**The timed wait itself must NOT be `select.select()` on the pipe object -- confirmed broken on
+real Windows CI, not just a theoretical concern.** The first version of
+`NoNewlinePromptVisibility` used `select.select([fileobj], [], [], timeout)` against
+`proc.stdout` (a `subprocess.Popen` pipe), which passed every local run on this Linux sandbox but
+failed on 4 separate Windows CI lanes (`contract-uv`, `contract-uv-fail`, `justme-test`,
+`uv-dl-fallback`) on its very first real run, all with the identical error:
+`OSError: [WinError 10038] An operation was attempted on something that is not a socket`. This is
+a well-known, if easy-to-forget, CPython `select` module limitation: on Windows, `select.select()`
+only supports actual socket objects -- it cannot poll an arbitrary file/pipe handle the way it can
+on POSIX, where "everything is a file descriptor" makes pipes, sockets, and regular files
+interchangeable to `select()`. **Fixed by replacing `select.select()` with a background
+`threading.Thread` that does blocking `os.read()` calls and pushes each chunk onto a
+`queue.Queue`, with the main thread calling `q.get(timeout=N)` instead of `select()`** -- this
+is portable (works identically on Windows and POSIX) and preserves the exact same live-timing
+sensitivity: a blocking `os.read()` that returns near-instantly still delivers the chunk to the
+queue near-instantly, so `q.get(timeout=N)` still distinguishes "visible almost immediately" from
+"never became visible within N seconds," the whole point of the test. **Rule of thumb: never use
+`select.select()` on a `subprocess.Popen` pipe object in code that must run on Windows** (this
+repo's test suite does, via `windows-latest` CI runners) -- use a reader-thread-plus-queue instead
+for any timed/non-blocking pipe read. This also means: any local-sandbox-only verification of a
+new test that reads a subprocess pipe with a timeout is not sufficient proof it will pass on the
+real target platform if it uses `select()` -- this specific bug passed 8 repeated local runs
+before shipping and only surfaced on the very first real Windows CI run.
 
 **Rule of thumb for any future async-output consumer in this repo**: prefer chunk/byte-based
 reads (`ReadAsync(buffer, offset, count)`) over line-based reads (`ReadLineAsync()`) whenever the

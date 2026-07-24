@@ -26,12 +26,13 @@ source, since *.ps1 carries `.gitattributes`' `eol=crlf`).
 """
 import base64
 import os
+import queue
 import re
-import select
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -105,20 +106,41 @@ def _result(d, env_extra):
     return result_path.read_text(encoding="ascii").strip()
 
 
-def _read_available(fileobj, timeout):
-    """Raw, unbuffered read of whatever is currently available on fileobj's fd.
-
-    Returns None if select() timed out with nothing readable yet (keep waiting), or the bytes
-    read (b"" specifically means EOF -- distinct from None/timeout). Used instead of
-    proc.communicate()/text-mode reads so tests can observe partial, non-newline-terminated
-    output exactly as it arrives, without Python's own io layer buffering it -- the same class
-    of buffering this repo's Finding 9 fix (docs/plan-cli-interactive-verification.md) exists to
-    avoid on the PowerShell reading side.
+def _start_reader_thread(fileobj):
+    """Background thread doing blocking os.read() on fileobj's fd, pushing each chunk onto a
+    queue.Queue -- the portable (Windows + POSIX) way to get timed/non-blocking reads on a
+    subprocess pipe. select.select() only supports socket objects on Windows (a pipe raises
+    OSError: [WinError 10038] An operation was attempted on something that is not a socket --
+    confirmed via a real Windows CI failure), so this thread+queue approach replaces it. A
+    blocking os.read() returning near-instantly and pushing onto the queue preserves the same
+    live-timing sensitivity select() gave on POSIX: the caller's queue.get(timeout=N) still
+    distinguishes "visible almost immediately" from "never became visible within N seconds."
     """
-    readable, _, _ = select.select([fileobj], [], [], timeout)
-    if not readable:
+    q = queue.Queue()
+
+    def _reader():
+        try:
+            while True:
+                chunk = os.read(fileobj.fileno(), 65536)
+                q.put(chunk)
+                if chunk == b"":
+                    break
+        except OSError:
+            q.put(b"")
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+    return q
+
+
+def _read_available(q, timeout):
+    """Returns None if nothing arrived within timeout (keep waiting), or the bytes read (b""
+    specifically means EOF -- distinct from None/timeout). See _start_reader_thread for why this
+    reads from a queue fed by a background thread instead of select()."""
+    try:
+        return q.get(timeout=timeout)
+    except queue.Empty:
         return None
-    return os.read(fileobj.fileno(), 65536)
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
@@ -293,7 +315,8 @@ class NoNewlinePromptVisibility(unittest.TestCase):
                 bufsize=0,
             )
             try:
-                chunk = _read_available(proc.stdout, 5.0)
+                q = _start_reader_thread(proc.stdout)
+                chunk = _read_available(q, 5.0)
                 self.assertIsNotNone(
                     chunk,
                     "no output observed within 5s before any input was sent -- "
@@ -308,7 +331,7 @@ class NoNewlinePromptVisibility(unittest.TestCase):
                 all_output = chunk
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:
-                    more = _read_available(proc.stdout, 1.0)
+                    more = _read_available(q, 1.0)
                     if more is None:
                         continue
                     if more == b"":
