@@ -1267,6 +1267,68 @@ one passing run in the uv lane represents the mechanism working across every lan
 (`self.interactive.stdin.roundtrip`) and further detail. Requirement 2 remains open until this
 test's first real CI run is observed passing.
 
+### Activity-aware EXE-smoke kill (docs/plan-cli-interactive-verification.md P0, requirement 3) -- resolves Open Question 1, touches `~exe_smokerun.ps1` and `:warn_user_code_launch`
+
+**Status: SHIPPED 2026-07-24, owner decision.** The exact prompt: "don't change the timeout if
+they were told at the beginning that it was timed. At best, if interactive input was received
+then extend or stop the timeout." Two pieces shipped together, since the messaging change only
+makes sense once the behavior it describes actually exists:
+
+1. **`tools/exe_smokerun.ps1`'s `Kill()` is now conditional on a new `$sawOutput` flag.** The
+   `HP_SMOKERUN_KILL_MS` window itself is UNCHANGED (still 30000ms default) -- per the owner's own
+   "don't change the timeout" instruction, this stays a fixed classification checkpoint, not a
+   value that grows. What changed is what happens AT that checkpoint: `Kill()` now only fires if
+   the process has produced ZERO output (stdout or stderr) by that point. If ANY output line has
+   been observed, the kill is skipped entirely for the rest of the run -- the wait becomes
+   unbounded, mirroring `~failfast_probe.ps1`'s own "classify once, then never kill" philosophy
+   (see the "Fail-fast probe" section above). This is deliberately the ONLY subroutine that still
+   has a real `Kill()` in this file family; `~failfast_probe.ps1`'s three call sites never killed
+   to begin with, so they needed no change.
+2. **Why "any output" is the chosen proxy for "interactive input was received."** The parent
+   process cannot observe stdin directly -- `RedirectStandardInput` is deliberately left unset
+   (inherited) so real keystrokes reach the child without being routed through this script, a
+   design choice from the requirement-1 live-tee work that this change does NOT reopen (redirecting
+   stdin ourselves here would reintroduce the exact stdin-passthrough risk that work just fixed).
+   Given that constraint, the best available signal is whether the process has said anything at
+   all: Python's own `input(prompt)` flushes stdout before blocking on stdin, confirmed directly
+   (see `docs/agent-lessons-learned.md`), so a process sitting at its very first prompt has
+   ALREADY printed something by definition -- a process that is STILL completely silent past the
+   deadline is the genuine hung/deadlocked/crashed-before-any-output case this cap exists to
+   catch, and that case is unaffected by this change (still killed, byte-for-byte as before).
+3. **"Stop" was chosen over "extend by a fixed increment."** The prompt offered both as
+   acceptable ("extend or stop"). A bounded extension (e.g. +30s) just relocates the same
+   ambiguity to a later deadline -- if the program is still going at the new deadline, the same
+   question recurs. "Stop" (switch to fully unbounded once alive) is simpler, reuses an
+   already-proven pattern in this same file family, and directly serves the owner's actual target
+   use case (an `input()`-driven setup-questions-then-loop program, which could legitimately run
+   for as long as the user is answering prompts). **Accepted trade-off, not a free win**: a
+   process that prints something once (e.g. a startup banner) and then genuinely deadlocks for a
+   reason unrelated to stdin will now hang the bootstrap indefinitely instead of being caught at
+   30s. This is Open Question 1's own previously-listed option (b), now the shipped behavior, not
+   a new risk introduced without warning.
+4. **`:warn_user_code_launch` (`run_setup.bat`) now takes a parameter (`main` or `hidden_import`)
+   and shows a DIFFERENT message per caller, because the two callers now have genuinely different
+   behavior.** `:run_exe_smokerun` (the primary EXE verification, passes `main`) gets the new
+   conditional wording ("if it stays completely silent for about 30 seconds it will be
+   force-stopped, but any output... keeps it running as long as needed"). The hidden-import
+   recovery loop's own separate, still-unconditional 30s check (`:hidden_import_loop`, an OLDER,
+   never-migrated inline `-Command` block that still always kills at 30s regardless of output --
+   see its own comment: "once recovery fixes a missing import the app may proceed into a
+   long-running phase... an uncapped run would hang the bootstrapper") passes `hidden_import` and
+   keeps the ORIGINAL unconditional wording, since that path's actual behavior is genuinely
+   unchanged by this work -- giving it the new conditional message would be dishonest. **This
+   inline block was deliberately NOT migrated to the activity-aware behavior or to
+   `~exe_smokerun.ps1`/`ReadLineAsync()` in this pass** -- it is a bounded repair-verification
+   check (does this specific `--hidden-import` fix work), not a full run, and Open Question 1 was
+   scoped to `:run_exe_smokerun` specifically; revisit only if a real need for interactive-friendly
+   behavior surfaces there too.
+
+Test coverage: `tests/test_exe_smokerun.py`'s `KillTimeout` class was split -- the pre-existing
+hung-process test now uses a genuinely SILENT script (no output at all) to keep testing the "still
+killed" case correctly; a new `ActivityAwareStop` class proves a process that prints, then runs
+well PAST a short `HP_SMOKERUN_KILL_MS` window, then exits on its own with a distinguishable real
+exit code, is never force-stopped -- the result file shows the real exit code, not `-1`.
+
 ## Post-execution checkpoint (Slice 2b-C, second half): the elective second run
 
 `:run_postexec_checkpoint` is the other half of 2b-C promised by the original REQ-018 design doc

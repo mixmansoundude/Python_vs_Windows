@@ -30,9 +30,12 @@ directly: `python3 < script.py` runs `script.py`) -- this reproduces through the
 grandchild chain identically on Windows and Linux, with no shebang/chmod/.bat trickery, and no
 change to exe_smokerun.ps1 itself.
 
-Covers: normal fast exit (result file + captured output), the Kill()-after-timeout path (via the
-HP_SMOKERUN_KILL_MS test-only override -- production always uses the unset default, 30000ms,
-matching the prior inline implementation exactly; see the script's own header comment), caller
+Covers: normal fast exit (result file + captured output), the Kill()-after-timeout path for a
+genuinely SILENT hang (via the HP_SMOKERUN_KILL_MS test-only override -- production always uses
+the unset default, 30000ms), the activity-aware "stop" path added 2026-07-24 (Open Question 1,
+owner decision) where a process that has produced ANY output before the deadline is never killed
+even if it keeps running well past HP_SMOKERUN_KILL_MS -- see the script's own header comment and
+docs/agent-interconnect.md "Activity-aware EXE-smoke kill" for the full rationale -- caller
 output-path overrides, and the base64 HP_EXE_SMOKERUN payload sync (byte-equality vs this source,
 CRLF/LF-normalized, mirroring the .ps1 PayloadSync convention used across this repo -- see
 docs/agent-lessons-learned.md "Embedded Helper Update Workflow").
@@ -57,11 +60,17 @@ print("fast-hello-err", file=sys.stderr)
 sys.exit(3)
 """
 
-HANG_SCRIPT = """
-import sys, time
-print("about-to-hang", flush=True)
+HANG_SILENT_SCRIPT = """
+import time
 time.sleep(120)
-sys.exit(0)
+"""
+
+OUTPUT_THEN_LONG_SCRIPT = """
+import sys, time
+print("prompt-shown", flush=True)
+time.sleep(0.8)
+print("after-hang", flush=True)
+sys.exit(7)
 """
 
 
@@ -126,25 +135,45 @@ class FastExit(unittest.TestCase):
 
 @unittest.skipUnless(PWSH, "pwsh not available")
 class KillTimeout(unittest.TestCase):
-    def test_hung_process_is_killed_and_result_is_negative_one(self):
+    def test_silent_hang_is_killed_and_result_is_negative_one(self):
         # HP_SMOKERUN_KILL_MS is a test-only override (production never sets it, so the real
-        # 30000ms default -- unchanged from the prior inline implementation -- always applies);
-        # this exercises the Kill() branch without a real 30s wait.
+        # 30000ms default -- unchanged -- always applies). A process that has produced ZERO
+        # output by the deadline is the case this cap still exists to catch (Open Question 1's
+        # activity-aware "stop" behavior below only applies once output has been observed).
         with tempfile.TemporaryDirectory() as d:
-            script = _make_script(d, "hang", HANG_SCRIPT)
+            script = _make_script(d, "hang", HANG_SILENT_SCRIPT)
             env = {"HP_SMOKERUN_KILL_MS": "500"}
             proc = _run_smokerun(d, script, env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(_result(d, env), "-1")
-            # The pre-sleep output must still have been captured/teed before the kill.
-            self.assertIn("about-to-hang", (Path(d) / "~run.out.txt").read_text(encoding="ascii"))
-            self.assertIn("about-to-hang", proc.stdout)
 
     def test_default_kill_ms_unset_means_30000(self):
         # Confirms the env var is genuinely optional and the script's own default matches the
         # prior hardcoded 30s -- not a change in behavior when run_setup.bat doesn't set it.
         text = SOURCE.read_text(encoding="utf-8")
         self.assertIn("$killMs = 30000", text)
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class ActivityAwareStop(unittest.TestCase):
+    def test_output_before_deadline_prevents_kill_even_past_deadline(self):
+        # docs/plan-cli-interactive-verification.md Open Question 1 (owner decision 2026-07-24):
+        # once ANY output has been observed before HP_SMOKERUN_KILL_MS elapses, the kill is
+        # skipped entirely and the wait becomes unbounded -- proxy for "likely at an interactive
+        # prompt" per Python's own input() flush-before-block behavior. This script deliberately
+        # prints, then runs well PAST a short kill window, then exits on its own with a real,
+        # distinguishable exit code (7) -- proving it was never force-stopped.
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "outlonghang", OUTPUT_THEN_LONG_SCRIPT)
+            env = {"HP_SMOKERUN_KILL_MS": "300"}
+            proc = _run_smokerun(d, script, env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(_result(d, env), "7")
+            out_text = (Path(d) / "~run.out.txt").read_text(encoding="ascii")
+            self.assertIn("prompt-shown", out_text)
+            self.assertIn("after-hang", out_text)
+            self.assertIn("prompt-shown", proc.stdout)
+            self.assertIn("after-hang", proc.stdout)
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")

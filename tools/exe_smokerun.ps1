@@ -1,9 +1,9 @@
 # :run_exe_smokerun's dedicated helper -- the ONLY place in this file family allowed to
-# force-kill (Kill()) the verification run, after a hard 30s cap. Unlike ~failfast_probe.ps1
-# (never kills -- covers the untimed fastpath/interpreter/checkpoint call sites), this IS the
-# fresh-build verification run itself: nothing else will ever confirm this particular build
-# worked, so an unresponsive process here cannot be trusted to eventually finish the way a
-# previously-verified cached artifact or interpreter run can.
+# force-kill (Kill()) the verification run. Unlike ~failfast_probe.ps1 (never kills -- covers
+# the untimed fastpath/interpreter/checkpoint call sites), this IS the fresh-build verification
+# run itself: nothing else will ever confirm this particular build worked, so an unresponsive
+# process here cannot be trusted to eventually finish the way a previously-verified cached
+# artifact or interpreter run can.
 #
 # Reads inputs from env vars (same cmd.exe-quoting-hazard-avoidance reasoning as
 # ~failfast_probe.ps1's own header comment): HP_SMOKERUN_EXE (bare filename; caller runs this
@@ -21,17 +21,15 @@
 # (self-sequenced StreamReader.ReadLineAsync() polling, NOT Register-ObjectEvent: that dispatches
 # via ThreadPool.QueueUserWorkItem, a confirmed, filed PowerShell bug -- PowerShell/PowerShell#11937
 # -- that can deliver lines out of order within a single stream when several arrive close
-# together; only ever one read in flight per stream here, so no reordering is possible). The one
-# behavioral difference from ~failfast_probe.ps1: after HP_SMOKERUN_KILL_MS (env var, default
-# 30000 when unset -- run_setup.bat never sets it, so production behavior is unchanged from the
-# prior inline -Command implementation's hardcoded 30s; the override exists purely so a test can
-# exercise the Kill() branch without a real 30s wait), this script calls $p.Kill() --
-# :run_exe_smokerun is the sole verification pass for a build that has never been confirmed
-# working, unlike the untimed call sites ~failfast_probe.ps1 covers. The 30s default and the
-# Kill() behavior itself are UNCHANGED from the prior inline -Command implementation -- this
-# helper only changes HOW output is captured/shown and HOW the result is signaled back, per
-# docs/plan-cli-interactive-verification.md's Non-Goals (revisiting the 30s cap itself is
-# Open Question 1 in that doc, not decided here).
+# together; only ever one read in flight per stream here, so no reordering is possible).
+#
+# derived requirement (Open Question 1, owner decision 2026-07-24): HP_SMOKERUN_KILL_MS (default
+# 30000, unchanged) is now a classification checkpoint, not an unconditional deadline -- Kill()
+# fires only if $sawOutput is still false at killMs (a fully silent process = presumed hung).
+# Once any output line is observed (the best available proxy for "alive / likely at an
+# interactive prompt" -- stdin itself isn't observable here, see docs/agent-interconnect.md
+# "Activity-aware EXE-smoke kill" for the full rationale and accepted trade-off), the kill is
+# skipped and the wait becomes unbounded, mirroring ~failfast_probe.ps1's own philosophy.
 #
 # This is the canonical source for the HP_EXE_SMOKERUN base64 payload embedded in run_setup.bat.
 # After editing, re-encode and paste it into the `set "HP_EXE_SMOKERUN=..."` line;
@@ -66,12 +64,14 @@ $errDone = $false
 
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $killed = $false
+$sawOutput = $false
 while ((-not $p.HasExited) -or (-not $outDone) -or (-not $errDone)) {
     if ((-not $outDone) -and $outTask.IsCompleted) {
         $line = $outTask.Result
         if ($null -eq $line) {
             $outDone = $true
         } else {
+            $sawOutput = $true
             Write-Host $line
             $null = $outBuf.Append($line + "`n")
             $outTask = $p.StandardOutput.ReadLineAsync()
@@ -82,12 +82,13 @@ while ((-not $p.HasExited) -or (-not $outDone) -or (-not $errDone)) {
         if ($null -eq $line) {
             $errDone = $true
         } else {
+            $sawOutput = $true
             [Console]::Error.WriteLine($line)
             $null = $errBuf.Append($line + "`n")
             $errTask = $p.StandardError.ReadLineAsync()
         }
     }
-    if ((-not $killed) -and (-not $p.HasExited) -and ($sw.ElapsedMilliseconds -ge $killMs)) {
+    if ((-not $killed) -and (-not $sawOutput) -and (-not $p.HasExited) -and ($sw.ElapsedMilliseconds -ge $killMs)) {
         try { $p.Kill() } catch {}
         $killed = $true
     }

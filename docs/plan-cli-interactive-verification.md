@@ -336,7 +336,8 @@ interactive round-trip test requested for requirement 2's confirmation, and led 
 `Register-ObjectEvent` entirely with self-sequenced `StreamReader.ReadLineAsync()` polling (which
 also subsumes and simplifies away the original drain-race fix, see Finding 8 for detail).
 Requirement 2 has a real-Windows CI test now in place (see Finding 8's last paragraph) but is not
-yet CLOSED pending that test's first real CI run. Requirement 3 remains open.
+yet CLOSED pending that test's first real CI run. **Requirement 3 SHIPPED 2026-07-24** (see its
+own entry below) -- all of P0 now has an implementation; P1 and P2 remain to be implemented.
 
 1. **Live echo (tee) instead of buffer-then-write, AND stop passing the result value through
    `for /f`-captured stdout (Finding 6).** Two changes that must ship together, not
@@ -374,12 +375,24 @@ yet CLOSED pending that test's first real CI run. Requirement 3 remains open.
    simplified proxy. This requirement moves from "open" to "verification test shipped, pending its
    first real Windows CI run" -- it is not fully CLOSED until that run is observed passing, since
    nothing in this sandbox can execute `run_setup.bat`/a real cmd.exe console end-to-end.
-3. **Revisit `:run_exe_smokerun`'s 30s kill for this case.** Once output is live, a human watching
-   the console can *see* a prompt and knows to respond -- which resolves most of the practical
-   problem even without solving "detect blocked-on-stdin vs. hung" in the abstract. Whether the
-   30s cap should be removed, lengthened, or replaced with something closer to the fail-fast
-   probe's own "classify fast-exit, then never kill" philosophy is an open design question (see
-   below), not a decided part of this requirement.
+3. **SHIPPED (2026-07-24), resolves Open Question 1.** Owner decision: "don't change the timeout
+   if they were told at the beginning that it was timed; at best, if interactive input was
+   received then extend or stop the timeout." Implemented in `tools/exe_smokerun.ps1`: the
+   `HP_SMOKERUN_KILL_MS` window (still 30000ms, unchanged) is now a classification checkpoint, not
+   an unconditional deadline -- `Kill()` fires only if the process has produced ZERO output by
+   that point. The parent cannot observe stdin directly (redirecting it would reintroduce the
+   exact risk the live-tee redesign just fixed), so "interactive input was received" is
+   approximated by the best available proxy: any output observed at all, since Python's own
+   `input(prompt)` flushes stdout before blocking (confirmed, see
+   `docs/agent-lessons-learned.md`) -- a process at its first prompt has already printed
+   something. Chosen behavior once output is seen: **stop** (unbounded wait, mirroring
+   `~failfast_probe.ps1`'s own "classify once, then never kill" pattern) rather than a fixed
+   extension, since a bounded extension just relocates the same ambiguity to a later deadline.
+   Accepted trade-off, per the owner's own direction: a process that prints something and then
+   genuinely deadlocks for a non-stdin reason now hangs the bootstrap rather than being caught at
+   30s -- see `docs/agent-interconnect.md` "Activity-aware EXE-smoke kill" for the full mechanism
+   and `:warn_user_code_launch`'s updated messaging (now accurately describes the conditional
+   behavior instead of overclaiming an unconditional 30s kill).
 
 ### P1 -- argv passthrough escape hatch (shape #1, no detection needed)
 
@@ -408,15 +421,18 @@ yet CLOSED pending that test's first real CI run. Requirement 3 remains open.
 
 ## Open Questions
 
-### 1. What should the 30s kill become for `:run_exe_smokerun`?
+### 1. What should the 30s kill become for `:run_exe_smokerun`? -- RESOLVED 2026-07-24
 
-Options, none decided: (a) lengthen it substantially (e.g. to match how long a person might take
-to notice a prompt and respond -- but any fixed number is still a guess); (b) adopt the fail-fast
-probe's "classify fast-exit within N ms, then never kill" pattern here too, accepting that a
-genuinely-hung EXE would then hang the bootstrap rather than being caught -- a real trade-off, not
-a free win; (c) something conditional on whether the program is suspected interactive (circles
-back to detection, which this plan explicitly defers). Needs a decision before requirement 3 can
-be implemented.
+Owner decision: don't change the fixed 30s number itself (keep the messaging that this run is
+timed), but if the process shows evidence of being alive/interacting before the deadline, extend
+or stop the kill rather than force-stopping it. Implemented as option (b)'s "stop" variant,
+gated on output having been observed (the closest available proxy for "interactive input was
+received" given stdin itself isn't observable by the parent) -- see requirement 3 above and
+`docs/agent-interconnect.md` "Activity-aware EXE-smoke kill" for the shipped mechanism and its
+accepted trade-off (a silently-deadlocked-after-printing-something process now hangs the
+bootstrap rather than being caught). A bounded "extend by N seconds" variant was considered and
+not implemented (a fixed extension just relocates the same ambiguity to a later deadline) -- if
+this trade-off proves wrong in practice, that's the natural fallback to revisit.
 
 ### 2. Terminology
 

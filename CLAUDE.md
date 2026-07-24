@@ -631,9 +631,15 @@ further.)*
    sequence into `cmd.exe`'s own stdin and exercises the full `cmd.exe -> :run_exe_smokerun ->
    ~exe_smokerun.ps1 -> the built EXE` chain end to end, closing the "cannot be reproduced in this
    sandbox" gap this item previously described with an automated, provider-agnostic proof rather
-   than a manual one-off. **Requirement 3 (revisit the 30s kill, Open Question 1) remains OPEN.**
-   P1 (argv-passthrough escape hatch) and P2 (honest ambiguous-exit messaging) are both still
-   un-started, per the plan's own recommended P0-first sequencing. **Confirmed via source-reading
+   than a manual one-off. **Requirement 3 (revisit the 30s kill, Open Question 1) is now SHIPPED
+   (2026-07-24), per direct owner decision** -- see the dedicated Closed Backlog entry below for
+   the full mechanism (the 30s window itself is unchanged; `Kill()` now only fires if the process
+   has produced zero output by the deadline; any output observed switches to an unbounded wait,
+   mirroring the fail-fast probe's own philosophy). **All of P0 now has a shipped
+   implementation.** P1 (argv-passthrough escape hatch) and P2 (honest ambiguous-exit messaging)
+   are the remaining un-started slices, per the plan's own recommended P0-first sequencing, and
+   are the owner-approved next work ("P1 and p2 at least look good enough to try", 2026-07-24).
+   **Confirmed via source-reading
    that the separate "PVW QuickStart" (`HP_PVW_KNOWN_IDEMPOTENT`, REQ-005.13) execute-mode
    discovery path was never affected by any of this** -- `tools/pvw_known_idempotent.py`'s
    `run_script()` uses a plain `subprocess.run(..., timeout=120)` with full stdio inheritance and
@@ -935,6 +941,34 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **CLI-args/stdin-interactive support, P0 requirement 3 (activity-aware EXE-smoke kill) --
+  resolves Open Question 1, direct owner decision.** Owner's exact framing: "I think don't change
+  the timeout if they were told at the beginning that it was timed. At best, if interactive input
+  was received then extend or stop the timeout." Implemented in `tools/exe_smokerun.ps1`: the
+  `HP_SMOKERUN_KILL_MS` window stays fixed at 30000ms (unchanged, per "don't change the timeout"),
+  but it is now a classification checkpoint rather than an unconditional deadline -- `Kill()` only
+  fires if the process has produced ZERO output by that point. The parent cannot observe stdin
+  directly without reintroducing the exact risk the requirement-1 live-tee redesign just fixed
+  (`RedirectStandardInput` is deliberately left inherited), so "interactive input was received" is
+  approximated by the best available proxy: any output at all, since Python's `input(prompt)`
+  flushes stdout before blocking (confirmed) -- a process at its first prompt has already printed
+  something. Chose "stop" (unbounded wait once alive, mirroring `~failfast_probe.ps1`'s own
+  philosophy) over "extend by a fixed increment," since a bounded extension only relocates the
+  same ambiguity to a later deadline. Accepted trade-off, matching Open Question 1's own
+  previously-listed option (b): a process that prints something once and then genuinely
+  deadlocks for a non-stdin reason now hangs the bootstrap instead of being caught at 30s.
+  `:warn_user_code_launch` now takes a parameter (`main`/`hidden_import`) so each of its two
+  callers gets accurate messaging -- the main EXE smoke describes the new conditional behavior;
+  the separate, still-unconditional hidden-import recovery loop (a bounded repair-verification
+  check, deliberately out of this requirement's scope) keeps its original wording, since its
+  actual behavior didn't change. `tests/test_exe_smokerun.py`'s `KillTimeout` class was split so
+  the pre-existing "hung process is killed" test uses a genuinely silent script (the case still
+  correctly caught); a new `ActivityAwareStop` class proves a process that prints, then runs well
+  past a short kill window, then exits on its own, is never force-stopped. See
+  `docs/agent-interconnect.md`'s new "Activity-aware EXE-smoke kill" section for the full
+  mechanism. This closes out all of P0 in `docs/plan-cli-interactive-verification.md`; P1 and P2
+  are the next owner-approved slices ("P1 and p2 at least look good enough to try").
 
 - **CLI-args/stdin-interactive support: `Register-ObjectEvent` line-reordering bug found and
   fixed, plus a real interactive round-trip test added -- direct follow-up to requirement 1's
