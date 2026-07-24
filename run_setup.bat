@@ -3754,9 +3754,9 @@ if "%~1"=="hidden_import" (
   )
 ) else (
   if defined HP_NUITKA_FALLBACK_USED (
-    call :log "[WARN] Verifying the built standalone EXE (fallback build system) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. Either way, do not start real work in it yet or any unsaved work will be lost."
+    call :log "[WARN] Verifying the built standalone EXE (fallback build system) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost."
   ) else (
-    call :log "[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. Either way, do not start real work in it yet or any unsaved work will be lost."
+    call :log "[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost."
   )
 )
 exit /b 0
@@ -4497,17 +4497,24 @@ echo  We could not package your app into a double-clickable .exe
 echo  (see the ERROR message above for why). We also just ran it
 echo  directly via the prepared Python environment, and it exited
 echo  with an error (see the [STATUS] line above) -- so we can't
-echo  tell whether that's a bug in your own code or something this
-echo  bootstrapper missed. Your environment and dependencies ARE
-echo  still installed correctly; run it yourself below to see the
-echo  full output.
+echo  tell whether that's a bug in the Python code we tried to run
+echo  or something this bootstrapper missed. Your environment and
+echo  dependencies ARE still installed correctly; run it yourself
+echo  below to see the full output.
 :noexe_runapp
 echo.
-echo  RUNNING YOUR APP (without an .exe)
+echo  RUNNING YOUR APP (without an .exe) -- the most direct option
 echo    "%HP_PY%" "%HP_ENTRY%"
 echo    Need launch arguments? Add them directly after that command, e.g.
 echo      "%HP_PY%" "%HP_ENTRY%" --input file.csv
 echo.
+if defined HP_NOEXE_VERIFY_FAILED (
+  echo  Want to try different arguments through the bootstrapper itself
+  echo  instead? Your already-installed environment is reused either
+  echo  way; it will just attempt the .exe build again too:
+  echo    run_setup.bat "%HP_ENTRY%" arg1 arg2
+  echo.
+)
 echo  KEEP these files with your project:
 echo    requirements.txt  -- packages your app depends on
 echo    runtime.txt       -- Python version pin
@@ -4540,15 +4547,19 @@ echo  SETUP COMPLETE -- BUT WE CAN'T CONFIRM YOUR LAST RUN WORKED
 echo ============================================================
 echo  Your existing standalone application was reused (dist\%ENVNAME%.exe),
 echo  and it exited with an error just now (see the [STATUS] line
-echo  above) -- so we can't tell whether that's a bug in your own
-echo  code, or something else. Your environment and dependencies ARE
-echo  still installed correctly.
+echo  above) -- so we can't tell whether that's a bug in the Python
+echo  code we tried to run, or something else. Your environment and
+echo  dependencies ARE still installed correctly.
 echo.
 echo  RUNNING YOUR APP
 echo    Double-click dist\%ENVNAME%.exe to run it, or run it from a
 echo    Command Prompt to see the full output.
 echo.
-echo  WANT A FRESH BUILD (re-checks all dependencies from scratch)?
+echo  WANT TO TRY AGAIN? You do not have to start over from scratch --
+echo    just run this bootstrapper again the same way you did before;
+echo    your already-installed environment and built .exe are reused.
+echo.
+echo  WANT A FRESH BUILD instead (re-checks all dependencies from scratch)?
 echo    Delete dist\%ENVNAME%.exe and run this bootstrapper again.
 echo ============================================================
 echo.
