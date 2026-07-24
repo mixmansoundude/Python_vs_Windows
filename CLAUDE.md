@@ -646,10 +646,12 @@ further.)*
    all) -- see the dedicated Closed Backlog entry below,
    `docs/plan-cli-interactive-verification.md` Finding 9, and `docs/agent-lessons-learned.md`'s new
    "`StreamReader.ReadLineAsync()` is line-buffered" entry for the full trace. **All of P0 now has
-   a shipped, verified implementation.** P1 (argv-passthrough escape hatch) and P2 (honest
-   ambiguous-exit messaging) are the remaining un-started slices, per the plan's own recommended
-   P0-first sequencing, and are the owner-approved next work ("P1 and p2 at least look good enough
-   to try", 2026-07-24).
+   a shipped, verified implementation.** **P1 (argv-passthrough escape hatch, requirement 4) is
+   ALSO now SHIPPED (2026-07-24)**, per the owner-approved next work ("P1 and p2 at least look
+   good enough to try", 2026-07-24) -- see the dedicated Closed Backlog entry below for the full
+   mechanism, including the real `HP_PROBE_ARGS` contract change this required (not just new
+   callers) and the two existing tests it had to fix, not just extend. **P2 (honest
+   ambiguous-exit messaging) is the one remaining un-started slice.**
    **Confirmed via source-reading
    that the separate "PVW QuickStart" (`HP_PVW_KNOWN_IDEMPOTENT`, REQ-005.13) execute-mode
    discovery path was never affected by any of this** -- `tools/pvw_known_idempotent.py`'s
@@ -952,6 +954,78 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **CLI-args/stdin-interactive support, P1 requirement 4 (argv passthrough escape hatch) --
+  owner-approved next work after all of P0 shipped ("P1 and p2 at least look good enough to
+  try", 2026-07-24).** `HP_APP_ARGS` is captured once, at the very top of `run_setup.bat` (right
+  after `set "DEP_SOURCE=unknown"`), from `%2`-`%9` directly -- deliberately NOT via `shift`,
+  since `%~1` (the entry file) is read directly by several later call sites in this file (the
+  top-of-file UNC check, both `:determine_entry` call sites), and shifting would silently change
+  what those later `"%~1"` reads see. This caps the feature at 8 extra arguments, a documented
+  limitation, not a silent one. Each present token is individually re-quoted at capture time so a
+  token containing spaces survives as one argv element to the target program.
+
+  **Required changing `HP_PROBE_ARGS`'s own contract in `tools/failfast_probe.ps1`, not just
+  wiring up new callers.** The script used to wrap WHATEVER was in `HP_PROBE_ARGS` in exactly one
+  extra pair of quotes (`$si.Arguments = '"' + $rawArgs + '"'`) -- correct only for a single
+  token (a path, possibly with spaces); wrapping a multi-token string the same way would collapse
+  it into one literal argv element instead of several. Fixed by using `$rawArgs` verbatim as
+  `$si.Arguments`, shifting the quoting responsibility to the caller (`run_setup.bat`). Every
+  existing `HP_PROBE_ARGS` assignment site had to be re-audited under the new contract: the EXE
+  fast-path probe (`:try_fast_exe_probe`) now sets it to `%HP_APP_ARGS%` alone (no entry-file
+  prefix needed, the EXE is self-contained); the interpreter probe (`:verify_no_exe_probe`) and
+  the post-execution checkpoint's second run (`:run_postexec_checkpoint`) both now set it to
+  `"%HP_ENTRY%"%HP_APP_ARGS%` (the entry path explicitly re-quoted at the call site, since the
+  script no longer does this implicitly). The two DIRECT invocation sites that never went through
+  the probe helper at all (`:try_fast_exe`'s legacy/CI branch,
+  `:verify_no_exe_interpreter`'s legacy branch) got `%HP_APP_ARGS%` appended straight to their
+  command lines instead. `tools/exe_smokerun.ps1` gained a NEW variable, `HP_SMOKERUN_ARGS`
+  (it never had any `Arguments` handling before -- the EXE smoke previously always ran with zero
+  argv), using the same "caller provides a ready string" contract.
+
+  **`:log` echoes UNQUOTED (documented in `docs/agent-lessons-learned.md`), so the one new log
+  line this feature adds (confirming forwarding is active right after `:determine_entry`
+  succeeds) is deliberately content-free** -- it never interpolates `%HP_APP_ARGS%` itself, since
+  a user-supplied argument could legitimately contain `<`/`>`/`|`/`&` and corrupt the line the
+  same way `%HP_ENTRY%`'s own already-documented "accepted risk" does at its 4 existing call
+  sites.
+
+  **Test-suite consequence: this REPLACED an existing test that had documented the OLD contract
+  as correct, not just added new ones.** `tests/test_failfast_probe.py`'s
+  `ArgsIsSingleArgumentOnly` class explicitly asserted that a multi-token `HP_PROBE_ARGS` was
+  misparsed as one argument -- true before this change, actively WRONG after. Replaced with
+  `ArgvPassthrough` (proves multiple pre-quoted tokens now forward as separate argv elements, and
+  documents that an unquoted token containing a space is now the CALLER's responsibility to
+  quote, not a script bug). A second, previously-passing test
+  (`test_single_argument_path_with_spaces_quoted_correctly`) also needed a fix: it relied on the
+  script's own old auto-quoting for an unquoted path with spaces, which now fails under the new
+  contract -- fixed by having the test quote the path itself, matching production usage.
+  `tests/test_exe_smokerun.py` gained its own `ArgvPassthrough` class; its existing test harness
+  (launches `sys.executable` fed the test program via inherited stdin, with zero CLI args, to
+  mimic a frozen EXE's own invocation shape -- see that file's module docstring) had no spare
+  "script path" slot to attach extra CLI args to the normal way. Solved with CPython's own
+  documented `python - arg1 arg2` form (a literal `-` as the script name means "read the program
+  from stdin," with everything after becoming `sys.argv[1:]`), confirmed directly
+  (`python3 - --foo "bar baz" < script.py` -> `ARGV:--foo|bar baz`) before relying on it in the
+  test.
+
+  **Documented in README's new `[REQ-026]` section and both postflight briefing panels**,
+  including the practical 8-argument limit, the unsupported-embedded-quote limitation, and an
+  explicit correction that forwarding does NOT persist into how a later plain double-click of the
+  built EXE launches it (an early draft of the briefing text incorrectly implied it would be
+  "baked into" future re-runs -- caught and fixed before shipping, since that would have been a
+  materially misleading claim about what the feature actually does).
+
+  **Deliberately out of scope, matching precedent already established for this class of
+  decision**: the two internal, bounded repair/optimization verification loops
+  (`:hidden_import_recover`'s own re-run, `:offer_optimized_build`'s internal verify launch) do
+  NOT receive `HP_APP_ARGS` -- both are diagnostic checks against an already-confirmed-working
+  build, not the user's primary run. The `HP_CI_SKIP_ENV=1` CI-only test path
+  (`:ci_skip_entry`'s system-Python launch) was also left out -- test infrastructure, not one of
+  the plan's four named real launch sites, and CI has no interactive terminal to benefit from it
+  anyway. See `docs/agent-interconnect.md`'s new "Argv passthrough escape hatch (REQ-026, P1)"
+  section for the full call-site-by-call-site trace. P2 (honest ambiguous-exit messaging) is the
+  one remaining un-started P0/P1/P2 slice from the plan.
 
 - **CLI-args/stdin-interactive support, Finding 9 -- `ReadLineAsync()` line-buffering hid
   no-newline prompts from BOTH the live-tee and the activity-aware kill, found during a
