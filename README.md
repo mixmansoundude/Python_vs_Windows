@@ -633,6 +633,42 @@ set lives in `run_setup.bat`.
 
 ---
 
+## [REQ-026] Argv Passthrough Escape Hatch
+
+- A user who already knows their program needs launch arguments (e.g. `--input file.csv`) can
+  supply them on `run_setup.bat`'s own command line, after the entry file: `run_setup.bat
+  myapp.py --input file.csv`. This works whether the entry file was typed, dragged onto a
+  shortcut with args added to its Target field, or is a positional argument in any other manual
+  invocation -- a plain drag-and-drop of a single file still only ever passes that one argument
+  (Windows Explorer's own behavior, not something this bootstrapper controls).
+- The extra arguments are forwarded VERBATIM to the target program at every real launch site
+  during this bootstrap run: the EXE smoke verification, the cached-EXE fast-path reuse, the
+  interpreter verification run (used when no EXE is built), and the post-execution checkpoint's
+  elective second run. No detection or heuristics are involved -- this is a documented, opt-in
+  escape hatch, not automatic argument discovery (see `docs/plan-cli-interactive-verification.md`
+  Finding 4/5 for why automatic detection was deliberately not attempted).
+- **This does not persist.** Forwarding only happens during the bootstrap run that received the
+  arguments -- it does not change how a later plain double-click of `dist\<env>.exe` launches it
+  (double-clicking never passes arguments to anything). To always launch the built EXE with the
+  same arguments afterward, make a Windows shortcut to it and add the arguments to the shortcut's
+  Target field, or launch it from a Command Prompt.
+- **Practical limit: up to 8 extra arguments** (CMD batch files address positional parameters
+  `%2`-`%9` directly; going further would require `shift`, which is deliberately not used here
+  since it would also shift `%~1`, the entry-file argument several other parts of this file read
+  directly). If your program needs more than 8 launch arguments, this escape hatch does not cover
+  that case yet.
+- **A token containing a literal `"` character is not supported** -- each extra argument is
+  individually re-quoted for the target program (so an argument containing spaces survives as one
+  argv element, matching ordinary Windows command-line quoting), but an embedded double-quote
+  inside an argument's own value is a documented limitation, not silently mishandled.
+- Not currently forwarded into the two INTERNAL, bounded repair/optimization verification loops
+  (the `--hidden-import` auto-recovery re-run, and the elective optimized-build's own internal
+  verify launch) -- both are diagnostic/repair checks against a build already confirmed working,
+  not the user's primary run, matching how those subroutines already scope themselves elsewhere
+  (see `docs/agent-interconnect.md`).
+
+---
+
 ## Maintenance, Logging, and Lessons Learned
 
 - Update conda base periodically (~30 days), but **skip on first Miniconda install**. Ensure base is configured to conda-forge before updating to avoid prompts.

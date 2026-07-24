@@ -60,6 +60,11 @@ print("fast-hello-err", file=sys.stderr)
 sys.exit(3)
 """
 
+ARGV_ECHO_SCRIPT = """
+import sys
+print("ARGV:" + "|".join(sys.argv[1:]))
+"""
+
 HANG_SILENT_SCRIPT = """
 import time
 time.sleep(120)
@@ -206,6 +211,41 @@ class ActivityAwareStop(unittest.TestCase):
             out_text = (Path(d) / "~run.out.txt").read_text(encoding="ascii")
             self.assertIn("partial-no-newline-prompt", out_text)
             self.assertIn("after-hang", out_text)
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class ArgvPassthrough(unittest.TestCase):
+    # [REQ-026] argv passthrough (docs/plan-cli-interactive-verification.md P1): HP_SMOKERUN_ARGS,
+    # if set, is used verbatim as $si.Arguments -- the EXE is self-contained, so no separate
+    # entry-file argv is needed here (unlike tools/failfast_probe.ps1's interpreter call sites).
+    # This harness's own stand-in "EXE" is `sys.executable` fed the actual program via inherited
+    # stdin (see the module docstring for why -- a real frozen EXE needs no such trick, but a bare
+    # `python` with zero positional args and non-tty stdin can't ALSO accept extra CLI args, since
+    # it has no script-path slot to attach them after). Fixed by using CPython's own `python -
+    # arg1 arg2` form (a literal `-` as the script name means "read the program from stdin," with
+    # every argument AFTER it becoming sys.argv[1:] for that program) -- confirmed directly
+    # (`python3 - --foo "bar baz" < script.py` prints ARGV:--foo|bar baz) before relying on it.
+    def test_extra_args_forwarded_as_separate_argv(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "argv", ARGV_ECHO_SCRIPT)
+            env = {"HP_SMOKERUN_ARGS": '"-" "--foo" "bar baz"'}
+            proc = _run_smokerun(d, script, env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(_result(d, env), "0")
+            out = (Path(d) / "~run.out.txt").read_text(encoding="utf-8")
+            self.assertIn("ARGV:--foo|bar baz", out)
+
+    def test_unset_means_no_arguments(self):
+        # HP_SMOKERUN_ARGS unset (production's default when the user passed no extra args) must
+        # not set $si.Arguments at all -- exercised via the plain FAST_SCRIPT invocation every
+        # other test in this file already uses, confirming this new code path is a true no-op
+        # when there is nothing to forward.
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "fast", FAST_SCRIPT)
+            env = {}
+            proc = _run_smokerun(d, script, env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(_result(d, env), "3")
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")

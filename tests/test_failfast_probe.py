@@ -46,6 +46,12 @@ import sys
 sys.exit(0)
 """
 
+ARGV_ECHO_SCRIPT = """
+import sys
+print("ARGV:" + "|".join(sys.argv[1:]))
+sys.exit(0)
+"""
+
 FAST_NONZERO_SCRIPT = """
 import sys
 sys.exit(5)
@@ -178,24 +184,48 @@ class FastExitClassification(unittest.TestCase):
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
-class ArgsIsSingleArgumentOnly(unittest.TestCase):
-    def test_multi_token_args_misparsed_as_one_argument(self):
-        # Documents, rather than silently works around, the constraint in the script's own
-        # header comment: HP_PROBE_ARGS must be a single path, never a multi-token command
-        # line. Passing "<path> 5" here is NOT two arguments -- it is wrapped whole in quotes
-        # and handed to python3 as one literal (nonexistent) filename, which python3 reports
-        # as exit code 2 ("can't open file"), not as sys.argv[1]=="5".
+class ArgvPassthrough(unittest.TestCase):
+    # [REQ-026] argv passthrough (docs/plan-cli-interactive-verification.md P1): HP_PROBE_ARGS is
+    # now a full, already-quoted Windows Arguments string used verbatim as $si.Arguments --
+    # superseding the old contract (this class used to be ArgsIsSingleArgumentOnly, documenting
+    # that a multi-token HP_PROBE_ARGS was misparsed as one literal path because the script
+    # wrapped the whole value in one extra pair of quotes). The caller (run_setup.bat's
+    # HP_APP_ARGS) is responsible for quoting each individual token.
+    def test_multiple_pre_quoted_tokens_forwarded_as_separate_argv(self):
         with tempfile.TemporaryDirectory() as d:
-            script = Path(d) / "fast.py"
-            script.write_text(FAST_SCRIPT, encoding="utf-8")
+            script = Path(d) / "argv.py"
+            script.write_text(ARGV_ECHO_SCRIPT, encoding="utf-8")
             env = {
                 "HP_PROBE_EXE": sys.executable,
-                "HP_PROBE_ARGS": "{} 5".format(script),
+                "HP_PROBE_ARGS": '"{}" "--foo" "bar baz"'.format(script),
                 "HP_PROBE_CWD": d,
             }
             proc = _run_probe(d, env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertEqual(_result(d, env), "0|2")
+            self.assertEqual(_result(d, env), "0|0")
+            out = (Path(d) / "~run.out.txt").read_text(encoding="utf-8")
+            self.assertIn("ARGV:--foo|bar baz", out)
+
+    def test_unquoted_token_with_space_is_caller_responsibility_not_script_bug(self):
+        # Documents the contract, not a bug: this script does zero re-quoting or re-tokenizing
+        # of HP_PROBE_ARGS -- if the caller forgets to quote a token that itself contains a
+        # space, the CHILD's own argv parser splits it there, same as typing it unquoted at a
+        # real command line. run_setup.bat's HP_APP_ARGS always quotes each token individually
+        # specifically to avoid this; it is exercised here to prove the underlying mechanism
+        # behaves exactly as a normal Windows command line would, not something special-cased.
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "argv.py"
+            script.write_text(ARGV_ECHO_SCRIPT, encoding="utf-8")
+            env = {
+                "HP_PROBE_EXE": sys.executable,
+                "HP_PROBE_ARGS": '"{}" bar baz'.format(script),
+                "HP_PROBE_CWD": d,
+            }
+            proc = _run_probe(d, env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(_result(d, env), "0|0")
+            out = (Path(d) / "~run.out.txt").read_text(encoding="utf-8")
+            self.assertIn("ARGV:bar|baz", out)
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
@@ -382,6 +412,9 @@ class OutputCapture(unittest.TestCase):
             self.assertFalse((Path(d) / "~probe_result.txt").exists())
 
     def test_single_argument_path_with_spaces_quoted_correctly(self):
+        # [REQ-026] argv passthrough changed this contract: HP_PROBE_ARGS is now used verbatim
+        # (no re-quoting by this script), so the CALLER must quote a path containing spaces --
+        # matching how run_setup.bat's HP_APP_ARGS / "%HP_ENTRY%" construction already does.
         with tempfile.TemporaryDirectory() as d:
             subdir = Path(d) / "dir with spaces"
             subdir.mkdir()
@@ -389,7 +422,7 @@ class OutputCapture(unittest.TestCase):
             script.write_text(FAST_SCRIPT, encoding="utf-8")
             env = {
                 "HP_PROBE_EXE": sys.executable,
-                "HP_PROBE_ARGS": str(script),
+                "HP_PROBE_ARGS": '"{}"'.format(script),
                 "HP_PROBE_CWD": d,
             }
             proc = _run_probe(d, env)

@@ -479,12 +479,47 @@ own entry below) -- all of P0 now has an implementation; P1 and P2 remain to be 
    helper scripts to chunk-based reads (see Finding 9 above); `$sawOutput` now sets on any
    non-empty chunk, closing the gap for real.
 
-### P1 -- argv passthrough escape hatch (shape #1, no detection needed)
+### P1 -- argv passthrough escape hatch (shape #1, no detection needed) -- SHIPPED 2026-07-24
 
-4. Accept trailing arguments after the entry-file argument on `run_setup.bat`'s own command line
-   and/or drag-and-drop-plus-typed-args flow, and forward them verbatim to the target program at
-   every launch site (smoke test, EXE run, interpreter run, checkpoint's second run). Document in
-   the README/postflight briefing how to use it.
+4. **SHIPPED.** Accept trailing arguments after the entry-file argument on `run_setup.bat`'s own
+   command line and forward them verbatim to the target program at every real launch site (EXE
+   smoke, cached-EXE fast-path reuse, interpreter run, checkpoint's second run). Implemented as
+   `HP_APP_ARGS`, captured once near the very top of the file from `%2`-`%9` (no `shift`, since
+   that would also shift `%~1` -- the entry file -- which several later call sites read directly;
+   practical limit of 8 extra arguments as a result). Each present token is individually
+   re-quoted at capture time so a token containing spaces survives as one argv element.
+   Documented in README `[REQ-026]` and both postflight briefing panels.
+
+   **Required changing `HP_PROBE_ARGS`'s own contract** (`tools/failfast_probe.ps1`, shared by
+   the fastpath/interpreter/checkpoint launch sites): it used to be a single bare path that the
+   script itself wrapped in one extra pair of quotes (`$si.Arguments = '"' + $rawArgs + '"'`) --
+   fine for exactly one argument, but wrapping a multi-token string the same way collapses it
+   into ONE literal argv element instead of several. Changed to `$si.Arguments = $rawArgs`
+   directly: the caller (`run_setup.bat`) is now responsible for providing a fully-quoted,
+   ready-to-use Windows Arguments string. `tools/exe_smokerun.ps1` gained the equivalent
+   `HP_SMOKERUN_ARGS` (the EXE is self-contained, so no separate entry-file prefix is needed
+   there, just the forwarded extra args or nothing). Both existing test suites needed updating to
+   match: `tests/test_failfast_probe.py`'s old `ArgsIsSingleArgumentOnly` class documented the
+   OLD misparse-as-one-token behavior as correct -- replaced with `ArgvPassthrough`, which proves
+   multiple pre-quoted tokens ARE now forwarded as separate argv elements, and that an unquoted
+   token containing a space is the CALLER's responsibility to quote (the child's own argv parser
+   splits it, same as typing it unquoted at a real command line -- not a bug in this script).
+   `tests/test_exe_smokerun.py` gained its own `ArgvPassthrough` class; its test harness launches
+   `sys.executable` with the actual test program fed via inherited stdin (see that file's module
+   docstring), which has no spare "script path" slot to hang extra CLI args off of the normal
+   way -- solved with CPython's own `python - arg1 arg2` form (a literal `-` as the script name
+   means "read the program from stdin," with everything after it becoming `sys.argv[1:]`),
+   confirmed directly (`python3 - --foo "bar baz" < script.py` prints `ARGV:--foo|bar baz`)
+   before relying on it in the test.
+
+   Deliberately does NOT forward into the two internal, bounded repair/optimization verification
+   loops (`--hidden-import` auto-recovery's own re-run, the elective optimized build's internal
+   verify launch) -- both are diagnostic checks against an already-confirmed-working build, not
+   the user's primary run, matching how those subroutines already scope themselves (see
+   `docs/agent-interconnect.md`'s own established precedent for this class of scoping decision).
+   The `HP_CI_SKIP_ENV=1` CI-only test path (`:ci_skip_entry`'s system-Python launch) was also
+   left out of scope -- it is test infrastructure, not one of the plan's four named real launch
+   sites, and there is no interactive terminal in CI to benefit from it.
 
 ### P2 -- honest messaging for the residual ambiguous case
 

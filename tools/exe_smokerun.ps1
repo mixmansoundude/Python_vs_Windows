@@ -35,9 +35,14 @@
 # tests/test_exe_smokerun.py asserts the embedded payload matches this file (CRLF/LF normalized,
 # per the .ps1 PayloadSync convention -- see docs/agent-lessons-learned.md
 # "Embedded Helper Update Workflow").
+#
+# derived requirement ([REQ-026] argv passthrough): HP_SMOKERUN_ARGS, if set, is a full,
+# already-quoted Windows Arguments string (the EXE is self-contained, so no separate entry-file
+# argv is needed here -- just any forwarded extra args). Used verbatim, no re-quoting.
 $exe = $env:HP_SMOKERUN_EXE
 $killMs = 30000
 if ($env:HP_SMOKERUN_KILL_MS) { $killMs = [int]$env:HP_SMOKERUN_KILL_MS }
+$argsRaw = $env:HP_SMOKERUN_ARGS
 $outPath = $env:HP_SMOKERUN_OUT
 if (-not $outPath) { $outPath = '..\~run.out.txt' }
 $errPath = $env:HP_SMOKERUN_ERR
@@ -47,6 +52,7 @@ if (-not $resultPath) { $resultPath = '~smokerun_result.txt' }
 
 $si = New-Object System.Diagnostics.ProcessStartInfo
 $si.FileName = $exe
+if ($argsRaw) { $si.Arguments = $argsRaw }
 $si.UseShellExecute = $false
 $si.RedirectStandardOutput = $true
 $si.RedirectStandardError = $true

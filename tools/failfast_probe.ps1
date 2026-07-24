@@ -4,11 +4,14 @@
 # calls $p.Kill() -- past the probe window the wait is unbounded so a healthy app is never
 # force-stopped.
 #
-# Inputs via env vars (avoids cmd.exe quoting hazards): HP_PROBE_EXE, HP_PROBE_ARGS (raw,
-# unquoted -- SINGLE path argument only; $si.Arguments = '"' + $rawArgs + '"' mis-tokenizes a
-# multi-token value), HP_PROBE_CWD, HP_FAILFAST_PROBE_MS, HP_PROBE_OUT/HP_PROBE_ERR (default
-# ~run.out.txt/~run.err.txt), HP_PROBE_RESULT (default ~probe_result.txt -- "$exceeded|$exitcode",
-# NOT stdout). Caller must pre-truncate output/result files before invoking.
+# Inputs via env vars (avoids cmd.exe quoting hazards): HP_PROBE_EXE, HP_PROBE_ARGS, HP_PROBE_CWD,
+# HP_FAILFAST_PROBE_MS, HP_PROBE_OUT/HP_PROBE_ERR (default ~run.out.txt/~run.err.txt),
+# HP_PROBE_RESULT (default ~probe_result.txt -- "$exceeded|$exitcode", NOT stdout). Caller must
+# pre-truncate output/result files before invoking.
+#
+# derived requirement ([REQ-026] argv passthrough): HP_PROBE_ARGS is now a full, already-quoted
+# Arguments string (e.g. `"entry.py" "--foo" "bar"`), used verbatim -- not a single bare path
+# re-quoted here. Caller quotes each token; see run_setup.bat's HP_APP_ARGS.
 #
 # Live-tees the child's stdout/stderr so a stdin-interactive program's prompts reach a real
 # double-clicked user, instead of only writing captured output to disk at exit.
@@ -55,7 +58,7 @@ if (-not $resultPath) { $resultPath = '~probe_result.txt' }
 
 $si = New-Object System.Diagnostics.ProcessStartInfo
 $si.FileName = $exe
-if ($rawArgs) { $si.Arguments = '"' + $rawArgs + '"' }
+if ($rawArgs) { $si.Arguments = $rawArgs }
 $si.WorkingDirectory = $workDir
 $si.UseShellExecute = $false
 $si.RedirectStandardOutput = $true
