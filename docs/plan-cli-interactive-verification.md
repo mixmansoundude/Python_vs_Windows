@@ -521,15 +521,46 @@ own entry below) -- all of P0 now has an implementation; P1 and P2 remain to be 
    left out of scope -- it is test infrastructure, not one of the plan's four named real launch
    sites, and there is no interactive terminal in CI to benefit from it.
 
-### P2 -- honest messaging for the residual ambiguous case
+### P2 -- honest messaging for the residual ambiguous case -- SHIPPED 2026-07-24
 
-5. When a verification run ends ambiguously (nonzero exit, or the interpreter-fallback path with
-   no argv-passthrough and no confirmed stdin support), replace the bare `[STATUS]` line with
-   something closer to: "the environment appears to be set up correctly, but since your program
-   didn't exit cleanly we can't tell if it actually worked. You can run it yourself now (here's
-   how), or [if applicable] let us try a deeper dependency-resolution pass." The "deeper pass"
-   offer should only appear when it could plausibly help (see Open Question 3) -- not as a
-   default reflex offered for every ambiguous exit.
+5. **SHIPPED, narrower in scope than originally sketched -- see Open Question 3's own resolution
+   note below for why.** Tracing the actual control flow (both P0 and P1 already shipped by this
+   point) found that the "let us try a deeper dependency-resolution pass" offer already exists
+   and already fires at its own natural point earlier in the flow (`:warnfix_cascade_detect` +
+   `:cascade_consent_gate`, build-time, triggered by warnfix's own missing-module detection) --
+   by the time the FINAL `[STATUS]` line prints, that offer (if applicable at all) has already
+   been made and resolved once. Re-offering it again post-hoc would need much more plumbing (the
+   whole dependency-install phase re-run from a point after the program has already executed) for
+   uncertain benefit, and would risk exactly the "reflex offered for every ambiguous exit" the
+   plan's own text warned against. So P2 shipped as MESSAGING ONLY, per its own name -- no new
+   consent gate, no new "try again" mechanism -- targeting the two call sites that traced out as
+   genuinely having no honest signal at all:
+   - **A real, pre-existing bug in `:print_no_exe_briefing`**: its header text unconditionally
+     claimed "your code ran successfully just now" whenever no EXE was produced, with ZERO
+     awareness of whether the interpreter fallback that runs immediately before this panel
+     (`:verify_no_exe_interpreter`) actually exited 0. A new flag, `HP_NOEXE_VERIFY_FAILED` (set
+     in both of that subroutine's branches whenever `HP_SMOKE_RC` is nonzero, mirroring the
+     already-existing `HP_EXE_VERIFY_FAILED` pattern for the EXE path), now gates a caveat
+     variant of the panel's header -- honest about not knowing whether the failure is a bug in
+     the user's own code or something this bootstrapper missed, per Open Question 3's own (a)/
+     (b)/(c) framing, without asserting which.
+   - **A genuine, previously-unsignaled gap for the fast-path-kept-despite-failure case**: when
+     the fail-fast probe classifies a reused cached EXE as alive/healthy (so it is kept, not
+     discarded+rebuilt -- see requirement-3-era work) and it later exits non-zero, the postflight
+     briefing was skipped ENTIRELY (`if not defined HP_FASTPATH_USED` gates both existing
+     panels) -- the only signal was one WARN log line among other console output. A new plain
+     informational panel, `:print_fastpath_ambiguous_note`, closes this without adding a PROMPT
+     (a print-only panel does not violate the fast path's own "zero friction" design requirement,
+     which is specifically about not adding consent gates/questions to that path).
+   - Both new panels are deliberately modest about root cause (never claim which of (a)/(b)/(c)
+     happened), give the user the direct-run command so they can see full output themselves, and
+     for the fastpath case, note that deleting the cached EXE and re-running forces a genuinely
+     fresh dependency check if the user wants to rule out an environment issue.
+   - New CI coverage: `tests/selfapps_pyinstaller_fail.ps1` gained a third scenario
+     (`execfail_runtimefail`) proving the no-EXE caveat fires correctly; `tests/
+     selfapps_failfast_probe.ps1`'s existing `self.failfast.probe.alive` scenario (which already
+     produces the exact "kept cached EXE, later exits non-zero" condition) was extended with an
+     assertion for the new fastpath note.
 
 ### Explicitly NOT attempted here
 
@@ -561,7 +592,7 @@ the owner has a preference -- these aren't standardized industry terms as far as
 found ("CLI program" is ambiguous between the two in common usage, which is part of what made
 this hard to discuss precisely in the first place).
 
-### 3. How does the P2 messaging avoid conflating three different root causes?
+### 3. How does the P2 messaging avoid conflating three different root causes? -- RESOLVED 2026-07-24
 
 A nonzero/ambiguous exit could mean: (a) a real bug in the user's own code, (b) an unresolved
 dependency that a deeper solve (the REQ-009 provider cascade, already-existing warnfix logic)
@@ -570,9 +601,15 @@ Offering "try a deeper solve?" is only sensible for (b) -- offering it reflexive
 would be confusing/unhelpful. The owner's own framing (if uv and conda already installed and
 activated correctly, embedded/venv/system don't add solving power, they only matter when uv/conda
 can't run at all) is accurate and matches how REQ-009's cascade already works -- but distinguishing
-which of (a)/(b)/(c) actually happened is not solved by this plan. Likely sequencing: ship P0
-first (removes most of (c) as a source of false ambiguity for the owner's actual use case), then
-revisit this messaging question with a narrower, cleaner problem.
+which of (a)/(b)/(c) actually happened is still not solved by this plan, and P2 as shipped does
+not attempt to. Resolved by NOT trying to answer "which of (a)/(b)/(c) happened" at all: (c) is
+now genuinely rare (P0's activity-aware kill + live tee remove most of it), and (b)'s own "try a
+deeper solve" offer already exists and already fires at its own natural point earlier in the flow
+(`:warnfix_cascade_detect`, build-time) -- by the time the final `[STATUS]` line prints, that
+offer has already happened if it was ever going to. So P2's two new messages (see requirement 5's
+own SHIPPED note above) never claim to know which cause applies -- they only state plainly that
+the outcome is ambiguous and point the user at running it themselves, which is honest regardless
+of which of (a)/(b)/(c) is the real explanation.
 
 ## Notes from Claude
 

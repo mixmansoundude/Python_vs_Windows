@@ -429,6 +429,10 @@ set "HP_FASTPATH_USED="
 rem REQ-016: start clean so an inherited env var can never trigger a false "EXE
 rem unverified" caveat; :run_exe_smokerun sets this only on a real non-zero EXE exit.
 set "HP_EXE_VERIFY_FAILED="
+rem [REQ-027] P2 honest messaging: mirrors HP_EXE_VERIFY_FAILED above, but for the NO-EXE
+rem interpreter path -- :verify_no_exe_interpreter sets this only on a real non-zero
+rem interpreter exit, so :print_no_exe_briefing can stop unconditionally claiming success.
+set "HP_NOEXE_VERIFY_FAILED="
 rem REQ-012: HP_EXE_SKIPPED records that EXE verification was skipped by request
 rem (HP_SKIP_EXE_SMOKERUN) -- distinct from "failed" -- for the post-flight note.
 set "HP_EXE_SKIPPED="
@@ -1796,6 +1800,13 @@ if not defined HP_FASTPATH_USED (
   ) else if defined HP_BUILD_OK (
     call :print_no_exe_briefing
   )
+) else if defined HP_FASTPATH_RUN_FAILED (
+  rem [REQ-027] P2 honest messaging: the fast path stays zero-friction for its own PROMPTS (no
+  rem consent gate added here), but a print-only informational note costs nothing and closes a
+  rem genuine gap -- before this, a cached EXE kept-despite-a-later-nonzero-exit (classified
+  rem alive/healthy at the fail-fast probe, so never discarded/rebuilt -- see :try_fast_exe) had
+  rem NO postflight signal at all beyond one WARN log line buried among other console output.
+  call :print_fastpath_ambiguous_note
 )
 call :release_lock
 rem REQ-016: retain terminal window on success so user can read the output.
@@ -2707,8 +2718,9 @@ rem inside ~failfast_probe.ps1 (HP_FAILFAST_PROBE): WaitForExit(HP_FAILFAST_PROB
 rem classifies a fast exit vs. still-running; if still running, a SECOND, UNBOUNDED
 rem WaitForExit() follows and the process is NEVER killed -- this is the only difference
 rem from :run_exe_smokerun, which stays the sole place in this file allowed to force-kill
-rem (the fresh-build verification run). Caller sets HP_PROBE_EXE / HP_PROBE_ARGS (raw,
-rem unquoted -- the helper quotes it) / HP_PROBE_CWD before calling; %1 is a short site tag
+rem (the fresh-build verification run). Caller sets HP_PROBE_EXE / HP_PROBE_ARGS ([REQ-026]:
+rem a full, pre-quoted Windows Arguments string used verbatim -- the CALLER quotes each token,
+rem not this subroutine) / HP_PROBE_CWD before calling; %1 is a short site tag
 rem ('fastpath'|'interpreter'|'checkpoint' -- the last added by :run_postexec_checkpoint,
 rem Slice 2b-C's post-execution checkpoint) used only for the NDJSON row and log text. Always
 rem leaves HP_SMOKE_RC set to the true final exit code and HP_PROBE_EXCEEDED set (1) iff the probe
@@ -2736,8 +2748,9 @@ call :emit_from_base64 "%HP_PROBE_PS%" HP_FAILFAST_PROBE
 if errorlevel 1 (
   rem Extremely rare (disk/permission failure writing a work file); mirror :try_fast_exe's own
   rem emit-failure convention of skipping gracefully rather than hand-rolling an unsafe manual
-  rem launch here (HP_PROBE_ARGS is intentionally unquoted raw text -- only the .ps1 helper
-  rem quotes it safely; a direct cmd invocation would mis-tokenize an entry path with spaces).
+  rem launch here ([REQ-026]: HP_PROBE_ARGS is now a full, pre-quoted Windows Arguments string
+  rem the CALLER is responsible for quoting correctly -- see this subroutine's own header
+  rem comment; a direct cmd invocation here would still need that same care).
   rem HP_SMOKE_RC stays unset; the safety net below turns that into -1 so callers still see a
   rem defined, non-zero, non-"exceeded" outcome (:try_fast_exe's discard-and-rebuild fires).
   call :log "[WARN] Fail-fast probe: could not emit ~failfast_probe.ps1; treating as a failed run."
@@ -3427,6 +3440,9 @@ if "%HP_SMOKE_RC%"=="0" (
   call :log "[STATUS] Run Status: SUCCESS (Exit Code: 0)"
 ) else (
   call :log "[STATUS] Run Status: FAILED (Exit Code: %HP_SMOKE_RC%)"
+  rem [REQ-027] P2 honest messaging: :print_no_exe_briefing reads this to stop claiming
+  rem "your code ran successfully" when it did not.
+  set "HP_NOEXE_VERIFY_FAILED=1"
 )
 call :run_postexec_checkpoint interpreter
 exit /b 0
@@ -3445,6 +3461,10 @@ set "HP_PROBE_EXE=%HP_PY%"
 set "HP_PROBE_ARGS="%HP_ENTRY%"%HP_APP_ARGS%"
 set "HP_PROBE_CWD=%CD%"
 call :run_failfast_probe interpreter
+rem [REQ-027] P2 honest messaging: same flag as the legacy branch above. No -1/timeout
+rem ambiguity at this call site -- :run_failfast_probe never kills, so HP_SMOKE_RC is always
+rem the interpreter's true final exit code once it exits, not a force-stopped placeholder.
+if not "%HP_SMOKE_RC%"=="0" set "HP_NOEXE_VERIFY_FAILED=1"
 call :run_postexec_checkpoint interpreter
 exit /b 0
 :warnfix_cascade_detect
@@ -4454,14 +4474,34 @@ rem final [STATUS] line reads identically to a real EXE success, with the only p
 rem being one [ERROR] line several seconds earlier. This panel closes that gap -- purely
 rem additive, does not touch success/failure semantics (~bootstrap.status.json already
 rem correctly records state=error via :die's own HP_BOOTSTRAP_STATE=error).
+rem [REQ-027] P2 honest messaging: the header text below used to unconditionally claim "your
+rem code ran successfully" regardless of whether the interpreter run (:verify_no_exe_interpreter,
+rem which always runs immediately before this panel on the no-EXE path) actually exited 0 -- a
+rem real, pre-existing dishonest claim, confirmed by tracing that HP_NOEXE_VERIFY_FAILED is the
+rem ONLY signal this panel previously ignored. Branches on it now, mirroring
+rem :print_postflight_briefing's own :pfb_caveat dispatch shape.
 echo.
 echo ============================================================
+if defined HP_NOEXE_VERIFY_FAILED goto :noexe_caveat
 echo  YOUR CODE RAN -- BUT NO STANDALONE .EXE WAS PRODUCED
 echo ============================================================
 echo  We could not package your app into a double-clickable .exe
 echo  (see the ERROR message above for why), but your code ran
 echo  successfully just now using the prepared Python environment.
 echo  Your environment and dependencies ARE installed correctly.
+goto :noexe_runapp
+:noexe_caveat
+echo  NO STANDALONE .EXE -- AND WE CAN'T CONFIRM YOUR CODE RAN CLEANLY
+echo ============================================================
+echo  We could not package your app into a double-clickable .exe
+echo  (see the ERROR message above for why). We also just ran it
+echo  directly via the prepared Python environment, and it exited
+echo  with an error (see the [STATUS] line above) -- so we can't
+echo  tell whether that's a bug in your own code or something this
+echo  bootstrapper missed. Your environment and dependencies ARE
+echo  still installed correctly; run it yourself below to see the
+echo  full output.
+:noexe_runapp
 echo.
 echo  RUNNING YOUR APP (without an .exe)
 echo    "%HP_PY%" "%HP_ENTRY%"
@@ -4477,7 +4517,42 @@ echo    .*_env\ folders   -- environment directories
 echo    ~* files          -- tilde-prefix work files (e.g. ~setup.log)
 echo ============================================================
 echo.
-call :log "[WARN] REQ-016: Post-flight briefing printed; no EXE produced, advised direct interpreter run."
+if defined HP_NOEXE_VERIFY_FAILED (
+  call :log "[WARN] REQ-016: Post-flight briefing printed; no EXE produced, interpreter run also unverified."
+) else (
+  call :log "[WARN] REQ-016: Post-flight briefing printed; no EXE produced, advised direct interpreter run."
+)
+exit /b 0
+
+:print_fastpath_ambiguous_note
+rem [REQ-027] P2 honest messaging (docs/plan-cli-interactive-verification.md): the cached-EXE
+rem fast path is deliberately zero-friction for PROMPTS (never a consent gate, per
+rem docs/agent-interconnect.md's "Fast path = ZERO friction" design requirement) -- this is a
+rem plain informational print, not a question, so it does not violate that requirement. Fires
+rem only when the fail-fast probe classified the reused EXE as alive/healthy (so it was kept,
+rem not discarded+rebuilt) and it later exited non-zero -- see :try_fast_exe. Whether that
+rem non-zero exit means a real bug in the user's own code, an unresolved dependency, or
+rem something else entirely is NOT something this bootstrapper can determine (Open Question 3,
+rem same plan doc) -- this note is deliberately honest about that limit, not a diagnosis.
+echo.
+echo ============================================================
+echo  SETUP COMPLETE -- BUT WE CAN'T CONFIRM YOUR LAST RUN WORKED
+echo ============================================================
+echo  Your existing standalone application was reused (dist\%ENVNAME%.exe),
+echo  and it exited with an error just now (see the [STATUS] line
+echo  above) -- so we can't tell whether that's a bug in your own
+echo  code, or something else. Your environment and dependencies ARE
+echo  still installed correctly.
+echo.
+echo  RUNNING YOUR APP
+echo    Double-click dist\%ENVNAME%.exe to run it, or run it from a
+echo    Command Prompt to see the full output.
+echo.
+echo  WANT A FRESH BUILD (re-checks all dependencies from scratch)?
+echo    Delete dist\%ENVNAME%.exe and run this bootstrapper again.
+echo ============================================================
+echo.
+call :log "[WARN] REQ-016: Post-flight note printed; cached EXE kept despite a non-zero exit after the fail-fast probe."
 exit /b 0
 
 :check_net_after_dl_fail

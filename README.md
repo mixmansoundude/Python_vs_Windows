@@ -669,6 +669,27 @@ set lives in `run_setup.bat`.
 
 ---
 
+## [REQ-027] Honest Ambiguous-Exit Messaging
+
+- When a verification run ends ambiguously (your program exited with an error, and neither
+  automatic repair -- `--hidden-import` auto-recovery, the dependency-resolution cascade -- fixed
+  it), the bootstrapper no longer claims success it can't actually confirm:
+  - **No-EXE path**: if packaging failed outright (both PyInstaller and the Nuitka fallback) AND
+    the interpreter fallback that then ran your program also exited non-zero, the post-flight
+    panel says so plainly instead of claiming "your code ran successfully."
+  - **Cached-EXE fast path**: if a reused `dist\<env>.exe` was classified alive/healthy by the
+    fail-fast probe (so it was kept, not rebuilt) and it later exited non-zero, a short
+    informational panel now appears -- previously this case had no signal beyond one log line.
+- Neither message claims to know *why* the run was ambiguous (a bug in your own code vs.
+  something this bootstrapper missed) -- both point you at running the program yourself to see
+  the full output, and the fast-path note additionally suggests deleting `dist\<env>.exe` and
+  re-running the bootstrapper if you want a fully fresh dependency check.
+- This is messaging only -- it does not change `~bootstrap.status.json` semantics, the process
+  exit code, or add any new consent prompt (the cached-EXE note is a plain print, preserving the
+  fast path's zero-friction design).
+
+---
+
 ## Maintenance, Logging, and Lessons Learned
 
 - Update conda base periodically (~30 days), but **skip on first Miniconda install**. Ensure base is configured to conda-forge before updating to avoid prompts.

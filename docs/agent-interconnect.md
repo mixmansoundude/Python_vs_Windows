@@ -1473,6 +1473,75 @@ CI-only test path (`:ci_skip_entry`'s system-Python launch, see "uv-First Provid
 narrow REQ-010 isolation scenario, not one of the plan's four named real launch sites, and CI has
 no interactive terminal to benefit from argument forwarding there.
 
+## Honest ambiguous-exit messaging (REQ-027, P2) -- two panels, two independent gaps found by tracing what P1/P0 already changed
+
+**Status: SHIPPED 2026-07-24**, the plan's P2 requirement 5 (`docs/plan-cli-interactive-verification.md`).
+Deliberately scoped narrower than the plan originally sketched -- see that doc's own P2 and Open
+Question 3 sections for why "offer a deeper dependency-resolution pass" was dropped from scope
+(the offer already exists and already fires earlier in the flow, at `:warnfix_cascade_detect`;
+re-offering it post-hoc at the final `[STATUS]` line would need much more plumbing for uncertain
+benefit). What shipped is messaging-only, touching two genuinely gapped panels found by tracing
+the ACTUAL control flow rather than assuming the plan's original framing still applied once P0
+and P1 had both shipped.
+
+**Gap 1, a real pre-existing bug: `:print_no_exe_briefing`'s header unconditionally claimed "your
+code ran successfully."** This panel fires whenever `HP_BUILD_OK` is defined (a build was
+attempted) and no EXE exists (`run_setup.bat` ~line 1797-1802, `:success`'s dispatch). It always
+runs AFTER `:verify_no_exe_interpreter` has already executed the entry via the interpreter
+fallback (the only way to reach the no-EXE branch with an entry file defined) -- but the panel's
+own text had zero awareness of whether that interpreter run's `HP_SMOKE_RC` was actually 0. Fixed
+with a new flag, `HP_NOEXE_VERIFY_FAILED`, set in BOTH of `:verify_no_exe_interpreter`'s branches
+(the legacy/non-interactive branch right after `HP_SMOKE_RC` is captured; the
+`:verify_no_exe_probe` branch right after `:run_failfast_probe interpreter` returns) whenever
+`HP_SMOKE_RC` is nonzero -- mirroring the already-existing `HP_EXE_VERIFY_FAILED` pattern for the
+EXE path exactly (same declare-clean-at-top-of-file, set-only-on-failure shape). No `-1`/timeout
+ambiguity to worry about at either branch: `:run_failfast_probe` never kills, so `HP_SMOKE_RC` is
+always the interpreter's true final exit code once it exits. `:print_no_exe_briefing` now
+goto-dispatches its header text on this flag (mirroring `:print_postflight_briefing`'s own
+`:pfb_caveat` shape) -- the caveat variant never claims success and never asserts WHY the run
+failed (real bug vs. something this bootstrapper missed), matching Open Question 3's own framing
+that distinguishing root cause is out of scope.
+
+**Gap 2, a genuinely unsignaled path: the fast-path-kept-despite-failure case had NO postflight
+panel at all.** `:success`'s dispatch (`run_setup.bat` ~line 1797) is gated on `if not defined
+HP_FASTPATH_USED (...)` -- when the fast path IS used (a cached EXE reused, whether the fail-fast
+probe classified it as a fast-fail-and-discard candidate or as alive/healthy-and-kept -- see the
+"Fail-fast probe" section above), NEITHER `:print_postflight_briefing` NOR `:print_no_exe_briefing`
+ever fires, by design (the fast path is meant to be zero-friction, on the theory the user has
+already seen a full briefing on a prior run). But for the specific "kept despite a later non-zero
+exit" sub-case (`HP_FASTPATH_RUN_FAILED` set -- see the "Fail-fast probe" section's own
+`HP_FASTPATH_RUN_FAILED` decoupling fix for how this flag is computed and why it reliably survives
+to `:success`), that meant literally NO postflight signal beyond one `[WARN]` log line buried
+among other console output. New subroutine `:print_fastpath_ambiguous_note`, called from a new
+`else if defined HP_FASTPATH_RUN_FAILED` branch alongside the existing `if not defined
+HP_FASTPATH_USED` dispatch -- deliberately a PLAIN INFORMATIONAL PRINT, no `set /p`, no consent
+gate, so it does not violate the fast path's own "zero friction, no prompts" design requirement
+(that requirement is specifically about not adding QUESTIONS to the fast path; a print-only panel
+costs nothing and asks nothing). Points the user at the direct-run command AND at deleting
+`dist\<env>.exe` + re-running the bootstrapper if they want a genuinely fresh dependency check --
+the closest honest equivalent to "try a deeper pass" this call site can offer without inventing a
+new re-solve mechanism.
+
+**Neither panel asserts a root cause.** Both stay deliberately agnostic about whether the ambiguous
+exit is (a) a real bug in the user's own code, (b) an unresolved dependency, or (c) something else
+entirely -- Open Question 3 in the plan doc explicitly says distinguishing these is not solved by
+this plan, and neither panel pretends otherwise.
+
+**Test coverage, both reusing/extending existing scenarios rather than net-new test files.**
+`tests/selfapps_pyinstaller_fail.ps1` gained a third `PYI_FAIL_SCENARIO` value,
+`execfail_runtimefail` -- identical to `execfail` (forces the PyInstaller build itself to fail via
+`HP_TEST_FORCE_PYINSTALLER_FAIL=1`, with `HP_TEST_FORCE_NUITKA_FAIL=1` keeping Tier A from rescuing
+it) except the stub app ALSO exits non-zero (`sys.exit(3)`) so the interpreter fallback that runs
+next is a genuine failure too -- asserting the caveat header text appears instead of the two other
+scenarios' plain "your code ran successfully" text (which those two still correctly assert
+unchanged, since their trivial stub app still exits 0 via the interpreter fallback). Wired into
+`batch-check.yml` as a third step alongside the existing `execfail`/`output_vanish` steps, same
+`real`/`conda-full` gating lanes. `tests/selfapps_failfast_probe.ps1`'s existing `self.failfast.
+probe.alive` scenario already produces the EXACT "cached EXE kept, later exits non-zero" condition
+`:print_fastpath_ambiguous_note` targets (it exists to prove the decoupling fix from the "Fail-fast
+probe" section above) -- extended with one new assertion for the new panel's text rather than
+writing a fourth, largely-duplicate scenario.
+
 ## Post-execution checkpoint (Slice 2b-C, second half): the elective second run
 
 `:run_postexec_checkpoint` is the other half of 2b-C promised by the original REQ-018 design doc

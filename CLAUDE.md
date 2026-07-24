@@ -607,58 +607,6 @@ the "Build public diagnostics tree" step's own `DIAG CWD`/`DIAG ROOT`/`DIAG TREE
 lines, which naturally show GitHub Actions' inherent doubled checkout path
 (`.../Python_vs_Windows/Python_vs_Windows/...`) -- a runner convention, not a bug. Not chased
 further.)*
-8. **CLI-args and stdin-interactive Python program support.** Full plan at
-   `docs/plan-cli-interactive-verification.md`. Confirmed real (not hypothetical) via direct code
-   tracing: every verification launch point redirects the child's stdout/stderr into an in-memory
-   buffer only written to disk after the process exits, so an interactive program's prompts never
-   reach the visible console; the primary EXE verification (`:run_exe_smokerun`) additionally
-   force-kills after a hard 30s, which would kill a program correctly waiting on its first
-   `input()` prompt. This is the owner's own original target shape for this repo (a program that
-   asks setup questions, then loops on stdin until a quit command), not an edge case.
-
-   **P0 requirement 1 (live-echo + stop passing results through `for /f`-captured stdout) is
-   SHIPPED (2026-07-23)** -- see the Closed Backlog entry below for what shipped and the real,
-   non-obvious async-output-drain race found and fixed along the way (not anticipated by the
-   original plan). **A second, more serious bug in that same mechanism was found and fixed
-   2026-07-24** while building a requested interactive round-trip test: `Register-ObjectEvent`
-   (the tee mechanism itself) can reorder lines WITHIN a single stream, a confirmed upstream
-   PowerShell bug -- fixed by replacing it entirely with self-sequenced `StreamReader.
-   ReadLineAsync()` polling. See the dedicated Closed Backlog entry below and
-   `docs/agent-lessons-learned.md`'s new "`Register-ObjectEvent` ... can reorder lines" entry for
-   the full trace. **Requirement 2 (confirm stdin passthrough on real Windows CI) now has a
-   dedicated CI test (`tests/selfapps_interactive_stdin.ps1`, uv lane, non-gating) but is not yet
-   fully CLOSED pending that test's first observed real-CI pass** -- it pipes a scripted answer
-   sequence into `cmd.exe`'s own stdin and exercises the full `cmd.exe -> :run_exe_smokerun ->
-   ~exe_smokerun.ps1 -> the built EXE` chain end to end, closing the "cannot be reproduced in this
-   sandbox" gap this item previously described with an automated, provider-agnostic proof rather
-   than a manual one-off. **Requirement 3 (revisit the 30s kill, Open Question 1) is now SHIPPED
-   (2026-07-24), per direct owner decision** -- see the dedicated Closed Backlog entry below for
-   the full mechanism (the 30s window itself is unchanged; `Kill()` now only fires if the process
-   has produced zero output by the deadline; any output observed switches to an unbounded wait,
-   mirroring the fail-fast probe's own philosophy). **A real gap in that same-day work was found
-   and fixed within hours, during a requested research/refinement pass (Finding 9): the live-tee
-   and `$sawOutput` mechanisms both relied on `ReadLineAsync()`, which does not surface a prompt
-   with no trailing newline (the exact shape of Python's own `input("prompt")`) until something
-   else later flushes a line.** Fixed by switching both `tools/failfast_probe.ps1` and
-   `tools/exe_smokerun.ps1` to chunk-based `ReadAsync()` reads, empirically confirmed both ways
-   (fails against the pre-fix code, passes against the fix) with two new regression tests that
-   drive stdin live (not via a pre-loaded answers file, which cannot distinguish the timing bug at
-   all) -- see the dedicated Closed Backlog entry below,
-   `docs/plan-cli-interactive-verification.md` Finding 9, and `docs/agent-lessons-learned.md`'s new
-   "`StreamReader.ReadLineAsync()` is line-buffered" entry for the full trace. **All of P0 now has
-   a shipped, verified implementation.** **P1 (argv-passthrough escape hatch, requirement 4) is
-   ALSO now SHIPPED (2026-07-24)**, per the owner-approved next work ("P1 and p2 at least look
-   good enough to try", 2026-07-24) -- see the dedicated Closed Backlog entry below for the full
-   mechanism, including the real `HP_PROBE_ARGS` contract change this required (not just new
-   callers) and the two existing tests it had to fix, not just extend. **P2 (honest
-   ambiguous-exit messaging) is the one remaining un-started slice.**
-   **Confirmed via source-reading
-   that the separate "PVW QuickStart" (`HP_PVW_KNOWN_IDEMPOTENT`, REQ-005.13) execute-mode
-   discovery path was never affected by any of this** -- `tools/pvw_known_idempotent.py`'s
-   `run_script()` uses a plain `subprocess.run(..., timeout=120)` with full stdio inheritance and
-   zero redirection, so neither the tee mechanism nor its ordering bug ever applied there; it does
-   carry its own, unrelated `timeout=120` risk (noted, not yet acted on).
-
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -954,6 +902,61 @@ of a second or third pin actually needing it.
 ## Closed Backlog
 
 Items completed and shipped:
+
+- **CLI-args/stdin-interactive support, P2 (honest ambiguous-exit messaging) -- final slice,
+  `docs/plan-cli-interactive-verification.md`'s plan is now FULLY SHIPPED (P0, P1, P2 all
+  complete).** Scope was narrowed from the plan's literal wording during implementation: the
+  original sketch suggested a NEW "let us try a deeper dependency-resolution pass?" prompt at the
+  final `[STATUS]` line, but tracing the actual code flow found this mechanism already exists and
+  fires EARLIER, at build time (`:warnfix_cascade_detect` + `:cascade_consent_gate`, the REQ-009
+  provider cascade) -- re-offering it post-hoc at the final status line would be redundant and
+  architecturally awkward (it would need to re-enter build/dependency-install logic from a point
+  that currently only prints and exits). Documented this scope decision in both
+  `docs/plan-cli-interactive-verification.md` (Open Question 3, now marked RESOLVED) and
+  `docs/agent-interconnect.md` rather than silently deviating from the plan's wording.
+
+  What P2 actually ships instead: two real, previously-undiscovered honesty gaps found by tracing
+  what P0/P1 had already changed, both fixed with a new outcome-tracking flag apiece, no new
+  consent prompts, no `~bootstrap.status.json`/exit-code changes -- messaging only.
+  - **Gap 1**: `:print_no_exe_briefing` (the no-EXE postflight panel, shipped earlier this same
+    day -- see the "No-EXE postflight briefing panel" Closed Backlog entry above) unconditionally
+    claimed "your code ran successfully just now" regardless of whether the interpreter fallback
+    run that immediately precedes it (`:verify_no_exe_interpreter`) actually exited 0 -- a real,
+    pre-existing dishonest claim. Fixed with a new `HP_NOEXE_VERIFY_FAILED` flag (set in both of
+    `:verify_no_exe_interpreter`'s branches -- the legacy/CI branch on a non-zero `HP_SMOKE_RC`,
+    and the interactive fail-fast-probe branch the same way, noting that call site has zero
+    `-1`/timeout ambiguity since `:run_failfast_probe` never kills, so `HP_SMOKE_RC` is always the
+    interpreter's true final exit code once observed). `:print_no_exe_briefing` was rewritten with
+    goto-based dispatch (mirroring `:print_postflight_briefing`'s own `:pfb_caveat` shape) into a
+    new `:noexe_caveat` branch when the flag is set, replacing the false success claim with
+    "NO STANDALONE .EXE -- AND WE CAN'T CONFIRM YOUR CODE RAN CLEANLY" and honest wording that
+    points the user at running the program themselves.
+  - **Gap 2**: the cached-EXE fast path (`:try_fast_exe`) had NO postflight signal at all -- beyond
+    one WARN log line buried among other console output -- for the case where the fail-fast probe
+    classifies a reused `dist\<env>.exe` as alive/healthy (so it is kept, never discarded/rebuilt)
+    and it later exits non-zero. Fixed with a new `:print_fastpath_ambiguous_note` subroutine,
+    called from `:success`'s dispatch only when `HP_FASTPATH_USED` AND `HP_FASTPATH_RUN_FAILED`
+    are both set -- a plain informational print, never a consent gate, preserving the fast path's
+    "zero friction for PROMPTS" design invariant (`docs/agent-interconnect.md`). Suggests deleting
+    `dist\<env>.exe` and re-running for a fully fresh dependency check.
+
+  **Neither panel claims to know WHY the run was ambiguous** (a bug in the user's own code vs.
+  something this bootstrapper missed vs. an unresolved dependency) -- both are deliberately honest
+  about that limit rather than attempting a diagnosis, which is what Open Question 3 asked and is
+  now resolved by: P2 does not attempt to distinguish root causes, it only states the outcome
+  honestly and points the user at the full output.
+
+  Test coverage extends existing scenarios rather than adding net-new test files, matching this
+  repo's established convention: `tests/selfapps_failfast_probe.ps1`'s existing "alive" scenario
+  (already produces the exact "cached EXE kept, later exits non-zero" condition via a stub that
+  sleeps 6s then exits 7) gained an assertion that the new fastpath-ambiguous-note text appears;
+  `tests/selfapps_pyinstaller_fail.ps1` gained a third `PYI_FAIL_SCENARIO` value,
+  `execfail_runtimefail` (both PyInstaller and the Nuitka fallback fail, AND the interpreter
+  fallback that runs afterward also exits non-zero via a stub that prints then
+  `sys.exit(3)`), wired into `real`/`conda-full` in `batch-check.yml`, asserting the new
+  `:noexe_caveat` text appears instead of the false-success text -- reuses the existing
+  `self.exe.build.xfail` NDJSON row id, matching the file's established multi-scenario-same-row
+  pattern. `docs/agent-ndjson.md` updated to describe all three `PYI_FAIL_SCENARIO` values.
 
 - **CLI-args/stdin-interactive support, P1 requirement 4 (argv passthrough escape hatch) --
   owner-approved next work after all of P0 shipped ("P1 and p2 at least look good enough to
