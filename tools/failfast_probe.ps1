@@ -19,13 +19,23 @@
 # captured/teed text, non-deterministically) -- root-caused to a confirmed, filed PowerShell bug
 # (PowerShell/PowerShell#11937): those events dispatch via ThreadPool.QueueUserWorkItem, which
 # does not guarantee delivery order when several lines arrive close together. Fixed by polling
-# StreamReader.ReadLineAsync() directly instead: only ONE read is ever in flight per stream at a
-# time (the next read is not issued until the current one is consumed), so there is no possible
-# out-of-order delivery for a single stream -- ordering is self-sequenced, not dependent on any
-# runtime's callback-scheduling guarantee. Cross-stream (stdout vs stderr) interleaving was never
+# reads directly instead: only ONE read is ever in flight per stream at a time (the next read is
+# not issued until the current one is consumed), so there is no possible out-of-order delivery
+# for a single stream -- ordering is self-sequenced, not dependent on any runtime's
+# callback-scheduling guarantee. Cross-stream (stdout vs stderr) interleaving was never
 # guaranteed and still isn't -- that reflects the child's own two independent pipes, not a bug.
 #
-# Full rationale + citations: docs/plan-cli-interactive-verification.md Findings 5b/6/7/8.
+# derived requirement (Finding 9, 2026-07-24): reads via StreamReader.ReadAsync(char[], int, int)
+# (raw chunks), NOT ReadLineAsync(). ReadLineAsync() only returns once it sees a full
+# newline-terminated line -- confirmed empirically that Python's own `input("prompt")` (no
+# trailing newline by design, so the cursor stays on the same line) is genuinely flushed to the
+# OS pipe immediately but stays invisible to a ReadLineAsync-based reader until something else
+# later flushes a newline, or the process exits. A chunk-based read surfaces whatever bytes are
+# actually available the moment they arrive, matching how a real terminal behaves. EOF is a
+# 0-length read (not a null result the way ReadLineAsync signals it). See
+# docs/plan-cli-interactive-verification.md Finding 9 for the full empirical trace.
+#
+# Full rationale + citations: docs/plan-cli-interactive-verification.md Findings 5b/6/7/8/9.
 #
 # This is the canonical source for the HP_FAILFAST_PROBE base64 payload embedded in
 # run_setup.bat. After editing, re-encode and paste it into the `set "HP_FAILFAST_PROBE=..."`
@@ -56,8 +66,10 @@ $p.Start() | Out-Null
 
 $outBuf = New-Object System.Text.StringBuilder
 $errBuf = New-Object System.Text.StringBuilder
-$outTask = $p.StandardOutput.ReadLineAsync()
-$errTask = $p.StandardError.ReadLineAsync()
+$outChunkBuf = New-Object char[] 4096
+$errChunkBuf = New-Object char[] 4096
+$outTask = $p.StandardOutput.ReadAsync($outChunkBuf, 0, $outChunkBuf.Length)
+$errTask = $p.StandardError.ReadAsync($errChunkBuf, 0, $errChunkBuf.Length)
 $outDone = $false
 $errDone = $false
 
@@ -65,23 +77,25 @@ $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $exceeded = 0
 while ((-not $p.HasExited) -or (-not $outDone) -or (-not $errDone)) {
     if ((-not $outDone) -and $outTask.IsCompleted) {
-        $line = $outTask.Result
-        if ($null -eq $line) {
+        $n = $outTask.Result
+        if ($n -eq 0) {
             $outDone = $true
         } else {
-            Write-Host $line
-            $null = $outBuf.Append($line + "`n")
-            $outTask = $p.StandardOutput.ReadLineAsync()
+            $chunk = [string]::new($outChunkBuf, 0, $n)
+            [Console]::Out.Write($chunk)
+            $null = $outBuf.Append($chunk)
+            $outTask = $p.StandardOutput.ReadAsync($outChunkBuf, 0, $outChunkBuf.Length)
         }
     }
     if ((-not $errDone) -and $errTask.IsCompleted) {
-        $line = $errTask.Result
-        if ($null -eq $line) {
+        $n = $errTask.Result
+        if ($n -eq 0) {
             $errDone = $true
         } else {
-            [Console]::Error.WriteLine($line)
-            $null = $errBuf.Append($line + "`n")
-            $errTask = $p.StandardError.ReadLineAsync()
+            $chunk = [string]::new($errChunkBuf, 0, $n)
+            [Console]::Error.Write($chunk)
+            $null = $errBuf.Append($chunk)
+            $errTask = $p.StandardError.ReadAsync($errChunkBuf, 0, $errChunkBuf.Length)
         }
     }
     if ((-not $exceeded) -and ($sw.ElapsedMilliseconds -ge $probeMs)) {

@@ -240,6 +240,85 @@ per-provider repeat would exercise the same code path, not a different one. It d
 cannot, prove a live human's own typing timing -- see requirement 2's own text below for what
 remains open after this test's first real CI run confirms the mechanism.
 
+### Finding 9 -- CRITICAL, newly discovered 2026-07-24: `ReadLineAsync()` is line-buffered, so a prompt with no trailing newline is INVISIBLE until something else flushes a line -- affects both the merged live-tee (requirement 1) and the just-shipped activity-aware kill (requirement 3)
+
+Found during a requested research/refinement pass on the already-shipped work, not while building
+a new feature -- confirmed empirically with a local `pwsh` + Python repro (not reasoned about),
+following this repo's own established practice of never trusting an assumption about async I/O
+behavior without a direct test.
+
+**The problem:** Python's canonical `input(prompt)` idiom -- the exact pattern this entire plan is
+built around (`name = input("Enter your name: ")`) -- writes the prompt text to stdout and flushes
+it, but WITHOUT a trailing newline (the cursor is meant to stay on the same line waiting for typed
+input). `StreamReader.ReadLineAsync()` (the read primitive both `tools/failfast_probe.ps1` and
+`tools/exe_smokerun.ps1` use, per the Finding 8 rewrite) does not return ANYTHING for a given
+stream until it has accumulated a full newline-terminated line, or the stream reaches EOF. A
+direct repro confirmed this precisely: a child process that writes `"Enter your name: "` (no `\n`)
+and then blocks on stdin produces **zero** completed `ReadLineAsync()` reads for at least 2 full
+seconds of silence -- the bytes ARE sitting in the OS pipe (confirmed via `CanRead`), but our
+reading mechanism will not surface them. They only appear once EITHER (a) the program's own LATER
+output includes a newline (at which point the prompt and that later text arrive concatenated as
+ONE "line" -- e.g. `"Enter your name: Hello, Alice!"` as a single chunk, not two), or (b) the
+process exits (confirmed separately: `ReadLineAsync()` DOES return a final partial/unterminated
+line at EOF, so the content is never permanently lost -- only delayed).
+
+**Consequence for requirement 1 (live-tee, already merged in #374):** a real user watching the
+console during verification of a program whose first action is `input("some prompt")` sees
+**nothing** until after they've already blindly typed an answer and pressed Enter -- at which
+point the prompt and the program's next line of output suddenly appear together, out of order
+relative to when they were actually meant to be seen. This significantly undercuts the stated goal
+of requirement 1 ("a stdin-interactive program can be verified with its prompts visible") for the
+single most common way Python programs prompt for input.
+
+**Consequence for requirement 3 (activity-aware kill, just shipped in #375):** `$sawOutput` is
+driven by the exact same `ReadLineAsync()`-completion signal, so it ALSO stays `$false` while a
+process is sitting at an `input()` prompt with no later newline yet -- meaning the 30s kill can
+still fire for the canonical target scenario (a program silently waiting at its very first
+prompt), which is the exact case requirement 3 was written to protect. The existing
+`tests/test_exe_smokerun.py::ActivityAwareStop` test does NOT catch this, because its script uses
+`print(..., flush=True)` (a newline-terminated line) rather than `input(prompt)` -- it validates
+the mechanism correctly for output that ends in a newline, but doesn't exercise the no-newline
+prompt case at all.
+
+**Why the existing interactive-round-trip tests (local unit test AND the new real-CI
+`selfapps_interactive_stdin.ps1`) didn't catch this:** both feed the ENTIRE scripted answer
+sequence through stdin essentially instantly (no simulated human typing delay), so the
+prompt-then-response round-trip completes in well under a second regardless of the buffering
+behavior described above -- the concatenated "line" still contains both substrings in the right
+relative order, so substring/ordering assertions pass. This is a real blind spot in test coverage,
+not a flaw in those tests' own design: they correctly prove the plumbing doesn't drop or reorder
+data, which was their stated goal, but they cannot and do not model realistic human-speed typing
+latency, which is exactly the condition under which this bug actually bites a real user.
+
+**Fix shape: SHIPPED 2026-07-24, owner-authorized ("if you think the raw character read is the
+fix then go for it and test locally and let CI confirm").** Replaced the line-based
+`ReadLineAsync()` polling with raw character-based reads
+(`StreamReader.ReadAsync(char[], int, int)` on a 4096-char buffer, same one-read-in-flight polling
+shape Finding 8 already established) in BOTH `tools/failfast_probe.ps1` and
+`tools/exe_smokerun.ps1`, so ANY available bytes are surfaced and displayed the moment they arrive,
+without waiting for a delimiter -- matching how a real terminal actually behaves. `[Console]::Out
+.Write($chunk)`/`[Console]::Error.Write($chunk)` (no newline appended) replace `Write-Host
+$line`/`[Console]::Error.WriteLine($line)`, since chunks now arrive at arbitrary boundaries, not
+line boundaries. EOF is now a 0-length read (`$n -eq 0`), not a null result. `$sawOutput` (the
+activity-aware kill's proxy, requirement 3) is now set on any non-empty chunk, immediately fixing
+the exact gap this finding describes.
+
+**Empirically validated BOTH ways before and after the fix**, matching this repo's own established
+practice: confirmed the fix works (a no-newline prompt is now readable within single-digit
+milliseconds, vs. never within 2s under the old reader) via a standalone `pwsh` repro; then wrote
+two new regression tests targeting the EXACT gap this finding describes (a no-newline chunk, not
+just any output) --
+`tests/test_failfast_probe.py::NoNewlinePromptVisibility` (drives stdin itself via a live,
+test-controlled pipe -- not a pre-loaded answers file, which cannot distinguish the timing bug at
+all -- and asserts the prompt is readable from the probe's own live output BEFORE any answer is
+sent) and `tests/test_exe_smokerun.py::ActivityAwareStop::test_output_with_no_trailing_newline_
+still_prevents_kill` (a script that writes an unterminated chunk, sleeps well past a short kill
+window, then completes normally) -- and confirmed BOTH new tests genuinely fail against the
+pre-fix implementation (checked out from the merge commits directly) and pass against the fix,
+so they are proven regression tests, not just new tests that happen to pass. Full existing suite
+(19 tests across both files, including the pre-existing 20/20-clean interactive round-trip test)
+re-verified clean with the new read primitive; no regressions. This closes the last open gap in P0.
+
 ### Finding 7 -- external research corroborates both Finding 5b's fix and Finding 6's diagnosis
 
 Checked the local, empirical findings above against primary sources rather than relying on the
@@ -336,7 +415,8 @@ interactive round-trip test requested for requirement 2's confirmation, and led 
 `Register-ObjectEvent` entirely with self-sequenced `StreamReader.ReadLineAsync()` polling (which
 also subsumes and simplifies away the original drain-race fix, see Finding 8 for detail).
 Requirement 2 has a real-Windows CI test now in place (see Finding 8's last paragraph) but is not
-yet CLOSED pending that test's first real CI run. Requirement 3 remains open.
+yet CLOSED pending that test's first real CI run. **Requirement 3 SHIPPED 2026-07-24** (see its
+own entry below) -- all of P0 now has an implementation; P1 and P2 remain to be implemented.
 
 1. **Live echo (tee) instead of buffer-then-write, AND stop passing the result value through
    `for /f`-captured stdout (Finding 6).** Two changes that must ship together, not
@@ -374,12 +454,30 @@ yet CLOSED pending that test's first real CI run. Requirement 3 remains open.
    simplified proxy. This requirement moves from "open" to "verification test shipped, pending its
    first real Windows CI run" -- it is not fully CLOSED until that run is observed passing, since
    nothing in this sandbox can execute `run_setup.bat`/a real cmd.exe console end-to-end.
-3. **Revisit `:run_exe_smokerun`'s 30s kill for this case.** Once output is live, a human watching
-   the console can *see* a prompt and knows to respond -- which resolves most of the practical
-   problem even without solving "detect blocked-on-stdin vs. hung" in the abstract. Whether the
-   30s cap should be removed, lengthened, or replaced with something closer to the fail-fast
-   probe's own "classify fast-exit, then never kill" philosophy is an open design question (see
-   below), not a decided part of this requirement.
+3. **SHIPPED (2026-07-24), resolves Open Question 1.** Owner decision: "don't change the timeout
+   if they were told at the beginning that it was timed; at best, if interactive input was
+   received then extend or stop the timeout." Implemented in `tools/exe_smokerun.ps1`: the
+   `HP_SMOKERUN_KILL_MS` window (still 30000ms, unchanged) is now a classification checkpoint, not
+   an unconditional deadline -- `Kill()` fires only if the process has produced ZERO output by
+   that point. The parent cannot observe stdin directly (redirecting it would reintroduce the
+   exact risk the live-tee redesign just fixed), so "interactive input was received" is
+   approximated by the best available proxy: any output observed at all, since Python's own
+   `input(prompt)` flushes stdout before blocking (confirmed, see
+   `docs/agent-lessons-learned.md`) -- a process at its first prompt has already printed
+   something. Chosen behavior once output is seen: **stop** (unbounded wait, mirroring
+   `~failfast_probe.ps1`'s own "classify once, then never kill" pattern) rather than a fixed
+   extension, since a bounded extension just relocates the same ambiguity to a later deadline.
+   Accepted trade-off, per the owner's own direction: a process that prints something and then
+   genuinely deadlocks for a non-stdin reason now hangs the bootstrap rather than being caught at
+   30s -- see `docs/agent-interconnect.md` "Activity-aware EXE-smoke kill" for the full mechanism
+   and `:warn_user_code_launch`'s updated messaging (now accurately describes the conditional
+   behavior instead of overclaiming an unconditional 30s kill).
+   **Gap found and fixed same day (Finding 9): the `$sawOutput` proxy originally inherited
+   `ReadLineAsync()`'s line-buffering limitation**, so it did not actually detect the canonical
+   `input("prompt")` case (no trailing newline) until something else flushed a line -- meaning the
+   kill could still fire for the exact scenario this requirement targets. Fixed by switching both
+   helper scripts to chunk-based reads (see Finding 9 above); `$sawOutput` now sets on any
+   non-empty chunk, closing the gap for real.
 
 ### P1 -- argv passthrough escape hatch (shape #1, no detection needed)
 
@@ -408,15 +506,18 @@ yet CLOSED pending that test's first real CI run. Requirement 3 remains open.
 
 ## Open Questions
 
-### 1. What should the 30s kill become for `:run_exe_smokerun`?
+### 1. What should the 30s kill become for `:run_exe_smokerun`? -- RESOLVED 2026-07-24
 
-Options, none decided: (a) lengthen it substantially (e.g. to match how long a person might take
-to notice a prompt and respond -- but any fixed number is still a guess); (b) adopt the fail-fast
-probe's "classify fast-exit within N ms, then never kill" pattern here too, accepting that a
-genuinely-hung EXE would then hang the bootstrap rather than being caught -- a real trade-off, not
-a free win; (c) something conditional on whether the program is suspected interactive (circles
-back to detection, which this plan explicitly defers). Needs a decision before requirement 3 can
-be implemented.
+Owner decision: don't change the fixed 30s number itself (keep the messaging that this run is
+timed), but if the process shows evidence of being alive/interacting before the deadline, extend
+or stop the kill rather than force-stopping it. Implemented as option (b)'s "stop" variant,
+gated on output having been observed (the closest available proxy for "interactive input was
+received" given stdin itself isn't observable by the parent) -- see requirement 3 above and
+`docs/agent-interconnect.md` "Activity-aware EXE-smoke kill" for the shipped mechanism and its
+accepted trade-off (a silently-deadlocked-after-printing-something process now hangs the
+bootstrap rather than being caught). A bounded "extend by N seconds" variant was considered and
+not implemented (a fixed extension just relocates the same ambiguity to a later deadline) -- if
+this trade-off proves wrong in practice, that's the natural fallback to revisit.
 
 ### 2. Terminology
 

@@ -1235,26 +1235,55 @@ changes shipped together across two passes, since none work without the others:
    30s value/behavior itself is Open Question 1 in the plan doc, explicitly NOT decided by this
    change -- this was a mechanical conversion of HOW output is captured/shown and HOW the result is
    signaled back, not a change to WHEN or WHETHER the process gets killed.
+6. **Point 2's `ReadLineAsync()` was itself replaced, 2026-07-24, by chunk-based reads (Finding
+   9) -- superseding it for a similar reason to why point 2 superseded `Register-ObjectEvent`: a
+   real, previously-undetected bug.** `ReadLineAsync()` only returns once it has accumulated a
+   FULL newline-terminated line -- but Python's own `input("prompt")` idiom (the pattern this
+   whole plan is built around) writes its prompt WITHOUT a trailing newline by design (the cursor
+   stays on the same line waiting for typed input). Confirmed empirically: a child process that
+   writes `"Enter your name: "` and blocks on stdin produces ZERO completed `ReadLineAsync()`
+   reads for at least 2 seconds, even though the bytes are genuinely sitting in the OS pipe --
+   they only surface once a LATER newline arrives or the process exits. This meant a real user
+   watching the console would see nothing until AFTER blindly typing an answer, and it meant
+   `$sawOutput` (point 5's activity-aware kill flag) could stay false for the exact scenario
+   requirement 3 exists to protect. Fixed by replacing `ReadLineAsync()` with
+   `StreamReader.ReadAsync(char[], int, int)` on a 4096-char buffer, same one-read-in-flight
+   polling shape -- `[Console]::Out.Write($chunk)`/`[Console]::Error.Write($chunk)` (no
+   auto-appended newline) replace `Write-Host`/`WriteLine`, since chunks now arrive at arbitrary
+   boundaries rather than line boundaries; EOF is a 0-length read (`$n -eq 0`), not a null
+   result. Found via a requested research/refinement pass (not while building a new feature),
+   confirmed both ways with direct `pwsh` repros (fails against the pre-fix code, passes against
+   the fix), and implemented with owner authorization once the fix shape was confirmed. See
+   `docs/plan-cli-interactive-verification.md` Finding 9 for the full trace.
 
 Both helper scripts hit the CMD 8191-char line-length budget for real while writing the original
 live-tee+drain-wait logic (`HP_FAILFAST_PROBE`'s first draft exceeded the limit by 2021 chars) --
 see `docs/agent-lessons-learned.md`'s "CMD.EXE 8191-Character Line Limit" entry; both header
 comments were trimmed to the terse, point-to-docs style already used by
 `HP_EMBED_PYVER_CHECK`/`HP_EMBED_EXTRACT` rather than inlining the full rationale (which lives
-here and in the plan doc instead). The `ReadLineAsync()`-based rewrite (point 2 above) stayed
-comfortably under budget (`HP_FAILFAST_PROBE` line_len 6220, margin 1971; `HP_EXE_SMOKERUN`
-line_len 7406, margin 785) -- no further trimming was needed for that pass.
+here and in the plan doc instead). Both the `ReadLineAsync()`-based rewrite (point 2) and the
+later chunk-based rewrite (point 6, Finding 9) stayed comfortably under budget without needing
+further trimming (`HP_FAILFAST_PROBE` line_len 7668, margin 523; `HP_EXE_SMOKERUN` line_len 7394,
+margin 797, after the point-6 rewrite).
 
 Test coverage: `tests/test_failfast_probe.py` (updated, including a new `InteractiveRoundTrip`
 test class -- a multi-round `input()`-driven conversation script asserting output ORDER via
-`.index()` comparisons, the exact test that found the Finding-8 reordering bug) and
-`tests/test_exe_smokerun.py` exercise both scripts end-to-end via real `pwsh` subprocesses --
-fast-exit classification, probe-window-exceeded classification, the `Kill()`-after-timeout path,
-output-path overrides, live output reaching the SCRIPT'S OWN stdout/stderr (not just the captured
-files), `PayloadSync` byte-equality for both embedded payloads, and now ordering correctness under
-repeated runs. The `for /f`-capture-vs-tee conflict, the original async-drain race, and the
-Finding-8 reordering bug were all provable/found with static analysis and local `pwsh`
-reproduction; the still-open piece is real Windows CI confirmation of the FULL production chain
+`.index()` comparisons, the exact test that found the Finding-8 reordering bug -- and a new
+`NoNewlinePromptVisibility` class, Finding 9's regression test, which drives stdin via a live,
+test-controlled pipe rather than a pre-loaded answers file, specifically so it can assert the
+prompt is readable BEFORE any answer is sent) and `tests/test_exe_smokerun.py` (similarly gained
+`ActivityAwareStop::test_output_with_no_trailing_newline_still_prevents_kill`) exercise both
+scripts end-to-end via real `pwsh` subprocesses -- fast-exit classification, probe-window-exceeded
+classification, the `Kill()`-after-timeout path, output-path overrides, live output reaching the
+SCRIPT'S OWN stdout/stderr (not just the captured files), `PayloadSync` byte-equality for both
+embedded payloads, ordering correctness under repeated runs, and (new) no-newline-chunk
+visibility/activity-detection. Both new Finding-9 regression tests were confirmed to genuinely
+fail against the pre-fix (`ReadLineAsync()`-based) implementation and pass against the fix,
+checked out directly from the relevant merge commits -- proven regression tests, not tests that
+happen to pass. The `for /f`-capture-vs-tee conflict, the original async-drain race, the
+Finding-8 reordering bug, and the Finding-9 line-buffering gap were all provable/found with static
+analysis and local `pwsh` reproduction; the still-open piece is real Windows CI confirmation of
+the FULL production chain
 (cmd.exe's own console/stdin semantics for a double-clicked `.bat`, which cannot be reproduced in
 this sandbox). `tests/selfapps_interactive_stdin.ps1` (new, uv lane, non-gating) now provides
 exactly that: it builds a real PyInstaller EXE from a multi-round `input()`-driven stub app and
@@ -1266,6 +1295,80 @@ one passing run in the uv lane represents the mechanism working across every lan
 `docs/agent-ndjson.md`'s "selfapps-interactive-stdin NDJSON rows" section for the row registered
 (`self.interactive.stdin.roundtrip`) and further detail. Requirement 2 remains open until this
 test's first real CI run is observed passing.
+
+### Activity-aware EXE-smoke kill (docs/plan-cli-interactive-verification.md P0, requirement 3) -- resolves Open Question 1, touches `~exe_smokerun.ps1` and `:warn_user_code_launch`
+
+**Status: SHIPPED 2026-07-24, owner decision.** The exact prompt: "don't change the timeout if
+they were told at the beginning that it was timed. At best, if interactive input was received
+then extend or stop the timeout." Two pieces shipped together, since the messaging change only
+makes sense once the behavior it describes actually exists:
+
+1. **`tools/exe_smokerun.ps1`'s `Kill()` is now conditional on a new `$sawOutput` flag.** The
+   `HP_SMOKERUN_KILL_MS` window itself is UNCHANGED (still 30000ms default) -- per the owner's own
+   "don't change the timeout" instruction, this stays a fixed classification checkpoint, not a
+   value that grows. What changed is what happens AT that checkpoint: `Kill()` now only fires if
+   the process has produced ZERO output (stdout or stderr) by that point. If ANY output has
+   been observed, the kill is skipped entirely for the rest of the run -- the wait becomes
+   unbounded, mirroring `~failfast_probe.ps1`'s own "classify once, then never kill" philosophy
+   (see the "Fail-fast probe" section above). This is deliberately the ONLY subroutine that still
+   has a real `Kill()` in this file family; `~failfast_probe.ps1`'s three call sites never killed
+   to begin with, so they needed no change.
+   **Gap found and fixed same day (Finding 9, docs/plan-cli-interactive-verification.md): as
+   originally shipped, `$sawOutput` was driven by `ReadLineAsync()`-completion, so it stayed
+   false for a no-trailing-newline chunk (the exact shape of `input("prompt")`'s own output)
+   until a LATER newline arrived -- meaning the kill could still fire for the canonical scenario
+   this requirement exists to protect. Fixed by switching to chunk-based reads (see the
+   "Live-echo redesign" section's point 6 above); `$sawOutput` now sets on any non-empty chunk,
+   regardless of whether it ends in a newline.
+2. **Why "any output" is the chosen proxy for "interactive input was received."** The parent
+   process cannot observe stdin directly -- `RedirectStandardInput` is deliberately left unset
+   (inherited) so real keystrokes reach the child without being routed through this script, a
+   design choice from the requirement-1 live-tee work that this change does NOT reopen (redirecting
+   stdin ourselves here would reintroduce the exact stdin-passthrough risk that work just fixed).
+   Given that constraint, the best available signal is whether the process has said anything at
+   all: Python's own `input(prompt)` flushes stdout before blocking on stdin, confirmed directly
+   (see `docs/agent-lessons-learned.md`), so a process sitting at its very first prompt has
+   ALREADY printed something by definition -- a process that is STILL completely silent past the
+   deadline is the genuine hung/deadlocked/crashed-before-any-output case this cap exists to
+   catch, and that case is unaffected by this change (still killed, byte-for-byte as before).
+3. **"Stop" was chosen over "extend by a fixed increment."** The prompt offered both as
+   acceptable ("extend or stop"). A bounded extension (e.g. +30s) just relocates the same
+   ambiguity to a later deadline -- if the program is still going at the new deadline, the same
+   question recurs. "Stop" (switch to fully unbounded once alive) is simpler, reuses an
+   already-proven pattern in this same file family, and directly serves the owner's actual target
+   use case (an `input()`-driven setup-questions-then-loop program, which could legitimately run
+   for as long as the user is answering prompts). **Accepted trade-off, not a free win**: a
+   process that prints something once (e.g. a startup banner) and then genuinely deadlocks for a
+   reason unrelated to stdin will now hang the bootstrap indefinitely instead of being caught at
+   30s. This is Open Question 1's own previously-listed option (b), now the shipped behavior, not
+   a new risk introduced without warning.
+4. **`:warn_user_code_launch` (`run_setup.bat`) now takes a parameter (`main` or `hidden_import`)
+   and shows a DIFFERENT message per caller, because the two callers now have genuinely different
+   behavior.** `:run_exe_smokerun` (the primary EXE verification, passes `main`) gets the new
+   conditional wording ("if it stays completely silent for about 30 seconds it will be
+   force-stopped, but any output... keeps it running as long as needed"). The hidden-import
+   recovery loop's own separate, still-unconditional 30s check (`:hidden_import_loop`, an OLDER,
+   never-migrated inline `-Command` block that still always kills at 30s regardless of output --
+   see its own comment: "once recovery fixes a missing import the app may proceed into a
+   long-running phase... an uncapped run would hang the bootstrapper") passes `hidden_import` and
+   keeps the ORIGINAL unconditional wording, since that path's actual behavior is genuinely
+   unchanged by this work -- giving it the new conditional message would be dishonest. **This
+   inline block was deliberately NOT migrated to the activity-aware behavior or to
+   `~exe_smokerun.ps1`/`ReadLineAsync()` in this pass** -- it is a bounded repair-verification
+   check (does this specific `--hidden-import` fix work), not a full run, and Open Question 1 was
+   scoped to `:run_exe_smokerun` specifically; revisit only if a real need for interactive-friendly
+   behavior surfaces there too.
+
+Test coverage: `tests/test_exe_smokerun.py`'s `KillTimeout` class was split -- the pre-existing
+hung-process test now uses a genuinely SILENT script (no output at all) to keep testing the "still
+killed" case correctly; a new `ActivityAwareStop` class proves a process that prints, then runs
+well PAST a short `HP_SMOKERUN_KILL_MS` window, then exits on its own with a distinguishable real
+exit code, is never force-stopped -- the result file shows the real exit code, not `-1`. That
+class gained a second test for Finding 9 specifically
+(`test_output_with_no_trailing_newline_still_prevents_kill`): a script that writes an
+unterminated chunk, sleeps well past a short kill window, then completes normally -- confirmed to
+genuinely fail (result `-1`, killed) against the pre-Finding-9 implementation and pass (real exit
+code) against the fix.
 
 ## Post-execution checkpoint (Slice 2b-C, second half): the elective second run
 

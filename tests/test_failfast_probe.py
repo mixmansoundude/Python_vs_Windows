@@ -25,11 +25,15 @@ CRLF/LF-normalized -- mirrors test_embed_tier.py's PayloadSync pattern for a .ps
 source, since *.ps1 carries `.gitattributes`' `eol=crlf`).
 """
 import base64
+import os
+import queue
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -100,6 +104,43 @@ def _result(d, env_extra):
     override = env_extra.get("HP_PROBE_RESULT")
     result_path = Path(override) if override else (Path(d) / "~probe_result.txt")
     return result_path.read_text(encoding="ascii").strip()
+
+
+def _start_reader_thread(fileobj):
+    """Background thread doing blocking os.read() on fileobj's fd, pushing each chunk onto a
+    queue.Queue -- the portable (Windows + POSIX) way to get timed/non-blocking reads on a
+    subprocess pipe. select.select() only supports socket objects on Windows (a pipe raises
+    OSError: [WinError 10038] An operation was attempted on something that is not a socket --
+    confirmed via a real Windows CI failure), so this thread+queue approach replaces it. A
+    blocking os.read() returning near-instantly and pushing onto the queue preserves the same
+    live-timing sensitivity select() gave on POSIX: the caller's queue.get(timeout=N) still
+    distinguishes "visible almost immediately" from "never became visible within N seconds."
+    """
+    q = queue.Queue()
+
+    def _reader():
+        try:
+            while True:
+                chunk = os.read(fileobj.fileno(), 65536)
+                q.put(chunk)
+                if chunk == b"":
+                    break
+        except OSError:
+            q.put(b"")
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+    return q
+
+
+def _read_available(q, timeout):
+    """Returns None if nothing arrived within timeout (keep waiting), or the bytes read (b""
+    specifically means EOF -- distinct from None/timeout). See _start_reader_thread for why this
+    reads from a queue fed by a background thread instead of select()."""
+    try:
+        return q.get(timeout=timeout)
+    except queue.Empty:
+        return None
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
@@ -239,6 +280,70 @@ class InteractiveRoundTrip(unittest.TestCase):
             self.assertIn("Hello, Alice!", captured)
             self.assertIn("pong", captured)
             self.assertIn("Goodbye!", captured)
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class NoNewlinePromptVisibility(unittest.TestCase):
+    # Regression test for Finding 9 (docs/plan-cli-interactive-verification.md): input("text")
+    # prints its prompt WITHOUT a trailing newline by design (the cursor stays on the same line
+    # waiting for typed input). The old ReadLineAsync()-based reader would not surface that text
+    # until a LATER newline arrived or the process exited -- meaning a real user would see
+    # nothing until after they'd already blindly typed an answer. InteractiveRoundTrip above
+    # cannot catch this: it feeds the whole answer sequence via a pre-loaded file, so the OS
+    # makes it available to the reader near-instantly regardless of read strategy, masking the
+    # timing bug entirely. This test instead drives stdin itself via a live pipe and asserts the
+    # prompt is readable BEFORE any answer is sent -- the one thing a static-file test can't
+    # distinguish.
+    def test_prompt_without_trailing_newline_is_visible_before_input_is_sent(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "interactive.py"
+            script.write_text(INTERACTIVE_SCRIPT, encoding="utf-8")
+            env = {
+                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "HP_FAILFAST_PROBE_MS": "300",
+                "HP_PROBE_EXE": sys.executable,
+                "HP_PROBE_ARGS": str(script),
+                "HP_PROBE_CWD": d,
+            }
+            proc = subprocess.Popen(
+                [PWSH, "-NoProfile", "-NonInteractive", "-File", str(SOURCE)],
+                cwd=d,
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+            try:
+                q = _start_reader_thread(proc.stdout)
+                chunk = _read_available(q, 5.0)
+                self.assertIsNotNone(
+                    chunk,
+                    "no output observed within 5s before any input was sent -- "
+                    "Finding 9 regression (prompt invisible without a trailing newline)",
+                )
+                self.assertIn(b"Enter your name:", chunk)
+
+                proc.stdin.write(b"Alice\nping\nexit\n")
+                proc.stdin.flush()
+                proc.stdin.close()
+
+                all_output = chunk
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    more = _read_available(q, 1.0)
+                    if more is None:
+                        continue
+                    if more == b"":
+                        break
+                    all_output += more
+                proc.wait(timeout=5)
+            finally:
+                proc.stdout.close()
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn(b"Hello, Alice!", all_output)
+            self.assertIn(b"pong", all_output)
+            self.assertIn(b"Goodbye!", all_output)
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
