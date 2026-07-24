@@ -12,17 +12,24 @@
 # consented to (HP_BUILD_OK). Fixed by setting HP_BOOTSTRAP_STATE=error at the PyInstaller
 # build call site, mirroring the existing preflight-failure precedent in :run_entry_smoke.
 #
-# Two scenarios via PYI_FAIL_SCENARIO env var (research Finding 2,
+# Three scenarios via PYI_FAIL_SCENARIO env var (research Finding 2,
 # docs/prd-av-safe-build-path.md): "execfail" forces the build command itself to fail
 # (HP_TEST_FORCE_PYINSTALLER_FAIL=1); "output_vanish" lets a real build succeed, then deletes
 # dist\<env>.exe immediately after (HP_TEST_FORCE_OUTPUT_VANISH=1) to simulate AV-style
-# post-creation removal as a distinct trigger condition from the build command failing outright.
+# post-creation removal as a distinct trigger condition from the build command failing outright;
+# "execfail_runtimefail" (added for [REQ-027] P2 honest messaging) is "execfail" PLUS a stub app
+# that ALSO exits non-zero when run via the interpreter fallback, exercising the compound
+# failure the other two scenarios' clean-exiting stub app never reaches.
 #
-# Asserts (both scenarios): the final ~bootstrap.status.json reads state=error (not silently
+# Asserts (all scenarios): the final ~bootstrap.status.json reads state=error (not silently
 # overwritten back to ok), the correct [ERROR] message appears in the log, and (docs/
-# open-questions.md item 1) the dedicated :print_no_exe_briefing panel is shown -- since the
-# stub app runs cleanly via the interpreter fallback despite total packaging failure, the final
-# console [STATUS] line alone would otherwise read identically to a real success. Does NOT
+# open-questions.md item 1) the dedicated :print_no_exe_briefing panel is shown. For "execfail"/
+# "output_vanish", the stub app runs cleanly via the interpreter fallback despite total packaging
+# failure, so the final console [STATUS] line alone would otherwise read identically to a real
+# success -- the plain (non-caveat) panel text is asserted. For "execfail_runtimefail", the
+# interpreter fallback ALSO exits non-zero -- [REQ-027]'s HP_NOEXE_VERIFY_FAILED-gated caveat
+# panel text is asserted instead, confirming the panel no longer claims "your code ran
+# successfully" when it did not (a real, pre-existing dishonest claim this closes). Does NOT
 # assert a non-zero process exit code -- :success's own `exit /b 0` runs unconditionally
 # regardless of HP_BOOTSTRAP_STATE, matching this repo's established "graceful stop" contract
 # for this class of failure (see selfapps_preflight.ps1's sibling test, which likewise never
@@ -89,9 +96,17 @@ if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 Copy-Item -Path $batchPath -Destination $workDir -Force
 
-Set-Content -Path (Join-Path $workDir 'app.py') -Value @'
+if ($scenario -eq 'execfail_runtimefail') {
+    Set-Content -Path (Join-Path $workDir 'app.py') -Value @'
+import sys
+print("i-tried-but-failed")
+sys.exit(3)
+'@ -Encoding ASCII
+} else {
+    Set-Content -Path (Join-Path $workDir 'app.py') -Value @'
 print("should-not-matter")
 '@ -Encoding ASCII
+}
 
 $bootstrapLog = "~pyi_fail_${scenario}_bootstrap.log"
 
@@ -101,7 +116,7 @@ $prevForceVanish = if (Test-Path Env:HP_TEST_FORCE_OUTPUT_VANISH) { $env:HP_TEST
 $prevForceNuitkaFail = if (Test-Path Env:HP_TEST_FORCE_NUITKA_FAIL) { $env:HP_TEST_FORCE_NUITKA_FAIL } else { $null }
 $env:HP_SKIP_PIPREQS = '1'
 $env:HP_TEST_FORCE_NUITKA_FAIL = '1'
-if ($scenario -eq 'execfail') {
+if ($scenario -eq 'execfail' -or $scenario -eq 'execfail_runtimefail') {
     $env:HP_TEST_FORCE_PYINSTALLER_FAIL = '1'
 } else {
     $env:HP_TEST_FORCE_OUTPUT_VANISH = '1'
@@ -120,13 +135,20 @@ try {
     $logLines = if (Test-Path $logPath) { Get-Content -LiteralPath $logPath -Encoding ASCII } else { @() }
     $combined = $logLines -join "`n"
 
-    $expectedMsg = if ($scenario -eq 'execfail') { 'PyInstaller execution failed' } else { 'PyInstaller did not produce dist' }
+    $expectedMsg = if ($scenario -eq 'execfail' -or $scenario -eq 'execfail_runtimefail') { 'PyInstaller execution failed' } else { 'PyInstaller did not produce dist' }
     $expectedMsgFound = $combined -match [regex]::Escape($expectedMsg)
     $testHookFired = $combined -match [regex]::Escape('HP_TEST_FORCE')
     # docs/open-questions.md item 1: when packaging fails outright but the interpreter fallback
     # still runs cleanly, :print_no_exe_briefing (run_setup.bat) prints a dedicated panel instead
     # of leaving the bare "[STATUS] Run Status: SUCCESS" line as the only thing the user sees.
-    $noExeBriefingFound = $combined -match [regex]::Escape('YOUR CODE RAN -- BUT NO STANDALONE .EXE WAS PRODUCED')
+    # [REQ-027] P2 honest messaging: "execfail_runtimefail" makes the interpreter fallback ALSO
+    # fail, so the panel must show the HP_NOEXE_VERIFY_FAILED-gated caveat text instead of the
+    # plain "your code ran successfully" text the other two scenarios still correctly expect.
+    $noExeBriefingFound = if ($scenario -eq 'execfail_runtimefail') {
+        $combined -match [regex]::Escape("NO STANDALONE .EXE -- AND WE CAN'T CONFIRM YOUR CODE RAN CLEANLY")
+    } else {
+        $combined -match [regex]::Escape('YOUR CODE RAN -- BUT NO STANDALONE .EXE WAS PRODUCED')
+    }
 
     $statusPath = Join-Path $workDir '~bootstrap.status.json'
     $statusText = if (Test-Path -LiteralPath $statusPath) { Get-Content -LiteralPath $statusPath -Raw } else { $null }

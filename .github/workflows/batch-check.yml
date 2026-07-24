@@ -643,6 +643,14 @@ jobs:
         run: |
           & tests\selfapps_pyinstaller_fail.ps1
 
+      - name: "Self-test: no-EXE briefing is honest when the interpreter fallback also fails (execfail_runtimefail, real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        env:
+          PYI_FAIL_SCENARIO: execfail_runtimefail
+        run: |
+          & tests\selfapps_pyinstaller_fail.ps1
+
       - name: "Self-test: REQ-021 py_compile pre-flight syntax error (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh

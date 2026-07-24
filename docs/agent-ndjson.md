@@ -293,9 +293,14 @@ self.pvw_idempotent.discovery
 
 ## selfapps-pyinstaller-fail NDJSON rows (selfapps_pyinstaller_fail.ps1, real/conda-full lanes)
 
-Two scenarios (`PYI_FAIL_SCENARIO` env var: `execfail` / `output_vanish`), both emitting the
-same row id. XFAIL-style, mirroring `selfapps_exefail.ps1`'s sibling pattern but testing the
-PyInstaller BUILD step failing outright (not a successfully-built EXE crashing at runtime).
+Three scenarios (`PYI_FAIL_SCENARIO` env var: `execfail` / `output_vanish` /
+`execfail_runtimefail`), all emitting the same row id. XFAIL-style, mirroring
+`selfapps_exefail.ps1`'s sibling pattern but testing the PyInstaller BUILD step failing outright
+(not a successfully-built EXE crashing at runtime). `execfail_runtimefail` (added for [REQ-027]
+P2 honest messaging) is `execfail` plus a stub app that ALSO exits non-zero via the interpreter
+fallback, asserting the `HP_NOEXE_VERIFY_FAILED`-gated caveat panel text appears instead of the
+other two scenarios' plain "your code ran successfully" text -- see the Closed Backlog entry for
+the real, pre-existing dishonest-claim bug this closes.
 Regression test for a real bug found 2026-07-20 while scoping the AV-Safe Build Path PRD's
 requirement-1 failure-simulation tests (`docs/prd-av-safe-build-path.md`): a genuine PyInstaller
 build failure previously fell through `:die`'s call-frame-only `exit /b` (it never halts the

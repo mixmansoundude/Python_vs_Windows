@@ -221,8 +221,13 @@ sys.exit(0)
     $alNotDiscarded = -not ($alRun2Text -match [regex]::Escape('discarding cached EXE and rebuilding'))
     $alExeStillPresent = $alExeCandidates.Count -gt 0
     $alBootstrapStayedOk = ($alStatusState -eq 'ok')
+    # [REQ-027] P2 honest messaging: before this fix, run 2's cached-EXE-kept-despite-failure
+    # outcome had NO postflight signal beyond the WARN log line already asserted above --
+    # :print_fastpath_ambiguous_note (run_setup.bat) closes that gap with a plain informational
+    # panel (no consent prompt, so it does not touch the fast path's zero-friction guarantee).
+    $alAmbiguousNoteFound = $alRun2Text -match [regex]::Escape('WANT A FRESH BUILD (re-checks all dependencies from scratch)?')
 
-    $alivePass = ($alRun1Exit -eq 0) -and ($alRun2Exit -eq 0) -and $alLaunchedInteractive -and $alAliveMsg -and $alStatusFailed -and $alNotDiscarded -and $alExeStillPresent -and $alBootstrapStayedOk
+    $alivePass = ($alRun1Exit -eq 0) -and ($alRun2Exit -eq 0) -and $alLaunchedInteractive -and $alAliveMsg -and $alStatusFailed -and $alNotDiscarded -and $alExeStillPresent -and $alBootstrapStayedOk -and $alAmbiguousNoteFound
     $aliveDetails = [ordered]@{
         run1Exit             = $alRun1Exit
         run2Exit             = $alRun2Exit
@@ -232,6 +237,7 @@ sys.exit(0)
         notDiscarded         = $alNotDiscarded
         exeStillPresent      = $alExeStillPresent
         bootstrapState       = $alStatusState
+        ambiguousNoteFound   = $alAmbiguousNoteFound
         run2Log              = '~al_run2.log'
     }
 } catch {
