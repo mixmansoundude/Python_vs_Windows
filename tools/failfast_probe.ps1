@@ -10,24 +10,22 @@
 # ~run.out.txt/~run.err.txt), HP_PROBE_RESULT (default ~probe_result.txt -- "$exceeded|$exitcode",
 # NOT stdout). Caller must pre-truncate output/result files before invoking.
 #
-# Live-tees the child's stdout/stderr (Register-ObjectEvent) instead of only writing to disk at
-# exit, so a stdin-interactive program's prompts reach a real double-clicked user. Uses a POLLING
-# `while (-not $p.WaitForExit(100)) {}` loop, never a single blocking WaitForExit() -- that would
-# not yield to PowerShell's event dispatch, so -Action scriptblocks would queue but never run
-# until it returns (PowerShell/PowerShell#11065).
+# Live-tees the child's stdout/stderr so a stdin-interactive program's prompts reach a real
+# double-clicked user, instead of only writing captured output to disk at exit.
 #
-# Does NOT trust ".NET docs say call WaitForExit() twice" alone to mean the async buffers are
-# drained -- empirically proven insufficient (a final unflushed-then-exit-flushed line's event can
-# fire AFTER both WaitForExit() calls return). Instead each stream's own null-Data EOF event sets
-# $outCtx.Done/$errCtx.Done, and a bounded poll waits for both before the buffers are read.
+# derived requirement: does NOT use Register-ObjectEvent on OutputDataReceived/ErrorDataReceived.
+# That was the original design and was found, via this repo's own local pwsh testing, to
+# reorder lines WITHIN a single stream (e.g. round 2's output landing before round 1's in the
+# captured/teed text, non-deterministically) -- root-caused to a confirmed, filed PowerShell bug
+# (PowerShell/PowerShell#11937): those events dispatch via ThreadPool.QueueUserWorkItem, which
+# does not guarantee delivery order when several lines arrive close together. Fixed by polling
+# StreamReader.ReadLineAsync() directly instead: only ONE read is ever in flight per stream at a
+# time (the next read is not issued until the current one is consumed), so there is no possible
+# out-of-order delivery for a single stream -- ordering is self-sequenced, not dependent on any
+# runtime's callback-scheduling guarantee. Cross-stream (stdout vs stderr) interleaving was never
+# guaranteed and still isn't -- that reflects the child's own two independent pipes, not a bug.
 #
-# Result goes to $resultPath, not stdout: the caller used to wrap this script in a
-# `for /f ('powershell...') do` to capture one final stdout line, but for /f captures the ENTIRE
-# stdout, which would swallow every teed line and corrupt the exceeded|exitcode split. The caller
-# now invokes this script directly (no for /f) so live output reaches the console, then reads
-# $resultPath with a separate, safe (static-file) for /f.
-#
-# Full rationale + citations: docs/plan-cli-interactive-verification.md Findings 5b/6/7.
+# Full rationale + citations: docs/plan-cli-interactive-verification.md Findings 5b/6/7/8.
 #
 # This is the canonical source for the HP_FAILFAST_PROBE base64 payload embedded in
 # run_setup.bat. After editing, re-encode and paste it into the `set "HP_FAILFAST_PROBE=..."`
@@ -54,54 +52,45 @@ $si.RedirectStandardOutput = $true
 $si.RedirectStandardError = $true
 $p = New-Object System.Diagnostics.Process
 $p.StartInfo = $si
+$p.Start() | Out-Null
 
 $outBuf = New-Object System.Text.StringBuilder
 $errBuf = New-Object System.Text.StringBuilder
-$outCtx = [PSCustomObject]@{ Buf = $outBuf; Done = $false }
-$errCtx = [PSCustomObject]@{ Buf = $errBuf; Done = $false }
-Register-ObjectEvent -InputObject $p -EventName OutputDataReceived -MessageData $outCtx -Action {
-    if ($null -ne $EventArgs.Data) {
-        Write-Host $EventArgs.Data
-        $null = $Event.MessageData.Buf.Append($EventArgs.Data + "`n")
-    } else {
-        $Event.MessageData.Done = $true
-    }
-} | Out-Null
-Register-ObjectEvent -InputObject $p -EventName ErrorDataReceived -MessageData $errCtx -Action {
-    if ($null -ne $EventArgs.Data) {
-        [Console]::Error.WriteLine($EventArgs.Data)
-        $null = $Event.MessageData.Buf.Append($EventArgs.Data + "`n")
-    } else {
-        $Event.MessageData.Done = $true
-    }
-} | Out-Null
-
-$p.Start() | Out-Null
-$p.BeginOutputReadLine()
-$p.BeginErrorReadLine()
+$outTask = $p.StandardOutput.ReadLineAsync()
+$errTask = $p.StandardError.ReadLineAsync()
+$outDone = $false
+$errDone = $false
 
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $exceeded = 0
-while (-not $p.WaitForExit(100)) {
-    if (-not $exceeded -and $sw.ElapsedMilliseconds -ge $probeMs) {
+while ((-not $p.HasExited) -or (-not $outDone) -or (-not $errDone)) {
+    if ((-not $outDone) -and $outTask.IsCompleted) {
+        $line = $outTask.Result
+        if ($null -eq $line) {
+            $outDone = $true
+        } else {
+            Write-Host $line
+            $null = $outBuf.Append($line + "`n")
+            $outTask = $p.StandardOutput.ReadLineAsync()
+        }
+    }
+    if ((-not $errDone) -and $errTask.IsCompleted) {
+        $line = $errTask.Result
+        if ($null -eq $line) {
+            $errDone = $true
+        } else {
+            [Console]::Error.WriteLine($line)
+            $null = $errBuf.Append($line + "`n")
+            $errTask = $p.StandardError.ReadLineAsync()
+        }
+    }
+    if ((-not $exceeded) -and ($sw.ElapsedMilliseconds -ge $probeMs)) {
         $exceeded = 1
     }
-}
-# Documented best practice for async-redirected output (Process.WaitForExit(Int32) Remarks); kept
-# as a first attempt, but the explicit drain-wait below is the actual correctness guarantee (see
-# header comment).
-$p.WaitForExit()
-
-# Deterministic drain-wait: block (bounded) until BOTH streams have signaled their own EOF via a
-# null-Data event, not just until WaitForExit() has returned. Start-Sleep yields to PowerShell's
-# event-dispatch loop the same way the polling WaitForExit(100) loop above does.
-$drainSw = [System.Diagnostics.Stopwatch]::StartNew()
-while ((-not $outCtx.Done -or -not $errCtx.Done) -and $drainSw.ElapsedMilliseconds -lt 5000) {
     Start-Sleep -Milliseconds 20
 }
+$p.WaitForExit()
 
 $outBuf.ToString() | Set-Content -Path $outPath -Encoding ASCII
 $errBuf.ToString() | Set-Content -Path $errPath -Encoding ASCII
 "$exceeded|$($p.ExitCode)" | Set-Content -Path $resultPath -Encoding ASCII
-
-Get-EventSubscriber -ErrorAction SilentlyContinue | Unregister-Event -ErrorAction SilentlyContinue

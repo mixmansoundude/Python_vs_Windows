@@ -23,6 +23,16 @@ leaving stale guidance.**
 
 ## .NET Process async-redirected-output: "call WaitForExit() twice" is NOT sufficient on its own to guarantee the buffers are drained
 
+**Superseded 2026-07-24 (see the "`Register-ObjectEvent` reorders lines within a single stream"
+entry below): the `Register-ObjectEvent` mechanism this entry was written against has since been
+replaced entirely by `StreamReader.ReadLineAsync()` polling in `tools/failfast_probe.ps1`/
+`tools/exe_smokerun.ps1`, which has no drain-race to guard against (a completed read task with a
+`$null` result IS the stream's own EOF signal, no separate post-`WaitForExit()` poll needed).**
+Kept here because the underlying lesson -- don't trust a documented "this guarantees completion"
+claim without empirical verification -- remains true and instructive for any future
+`Register-ObjectEvent` use in this repo, even though the specific implementation that motivated
+it is gone.
+
 Discovered 2026-07-23 while empirically testing (in `pwsh`, per direct request) the live-tee
 mechanism built for `tools/failfast_probe.ps1`/`tools/exe_smokerun.ps1`
 (`docs/plan-cli-interactive-verification.md` P0). Microsoft's own documentation for
@@ -69,7 +79,68 @@ specific target use case is already safe by construction.
 **Rule of thumb for any future `Register-ObjectEvent`-based async output consumer in this repo**:
 never assume the buffer is complete just because a wait call returned, regardless of what its
 documentation promises about "async handling has completed" -- track the stream's own EOF signal
-explicitly and wait on that instead.
+explicitly and wait on that instead. **Stronger rule of thumb after the entry below: prefer
+`StreamReader.ReadLineAsync()` polling over `Register-ObjectEvent` entirely** for any new
+line-oriented async output consumer in this repo -- it sidesteps both this drain race and the
+ordering bug below by construction, and needs no event-subscription bookkeeping at all.
+
+---
+
+## `Register-ObjectEvent` on `OutputDataReceived`/`ErrorDataReceived` can reorder lines WITHIN a single stream -- confirmed upstream bug, fixed by switching to `ReadLineAsync()` polling
+
+Discovered 2026-07-24 while building the interactive round-trip test requested to gain confidence
+in the live-tee mechanism above (`tests/test_failfast_probe.py`'s `InteractiveRoundTrip` class --
+a script that does `input()` for a name, prints a greeting, then loops `input()`/`print()` for a
+`ping`/`exit` conversation). The test failed non-deterministically: 2 out of 5 local runs showed
+output from a LATER round of the conversation appearing BEFORE an EARLIER round's output in the
+captured/teed text (e.g. round 2's `"pong"` landing ahead of round 1's `"Hello, Alice!"`). This is
+qualitatively worse than a dropped line or a late line -- it is a silent, in-place transposition
+that a human watching the live tee would see as their own conversation printed out of order.
+
+**Root cause: `Register-ObjectEvent` dispatches each event via `ThreadPool.QueueUserWorkItem`
+internally, and the .NET thread pool provides no ordering guarantee between queued work items.**
+When two lines from the same stream arrive close together (a common case -- a prompt immediately
+followed by its own response, or two `print()` calls back-to-back), their `-Action` callbacks can
+be scheduled to run on different pool threads in either order. This is a real, documented,
+upstream limitation, not an artifact of this sandbox or this repo's specific usage --
+[PowerShell/PowerShell#11937](https://github.com/PowerShell/PowerShell/issues/11937) is a filed
+issue describing exactly this behavior.
+
+**Fix: stop using `Register-ObjectEvent` for this purpose. Poll `StreamReader.ReadLineAsync()`
+directly instead, issuing only ONE async read per stream at a time.** The pattern:
+```powershell
+$outTask = $p.StandardOutput.ReadLineAsync()
+# ... in the polling loop ...
+if ((-not $outDone) -and $outTask.IsCompleted) {
+    $line = $outTask.Result
+    if ($null -eq $line) { $outDone = $true }
+    else {
+        Write-Host $line
+        $outTask = $p.StandardOutput.ReadLineAsync()   # only issue the NEXT read after consuming this one
+    }
+}
+```
+Because a new read is never issued until the previous one's result has been consumed, there is
+never more than one outstanding read racing against itself for a given stream -- ordering is
+enforced by construction, not by hoping the runtime's callback scheduler happens to preserve it.
+Cross-stream (stdout vs. stderr) interleaving was never guaranteed by either mechanism and still
+isn't under this fix -- that reflects the child process's own two independent OS pipes, not a
+defect to fix.
+
+**This fix also subsumes and eliminates the separate drain-race workaround documented in the
+entry above** (tracking each stream's own null-`Data` EOF event and polling for both flags before
+trusting the buffer): under `ReadLineAsync()`, a completed task with a `$null` `.Result` IS the
+stream's own definitive EOF signal, with no separate "did async handling actually finish"
+question to answer -- the new mechanism is simpler as well as more correct. Applied to both
+`tools/failfast_probe.ps1` and `tools/exe_smokerun.ps1` (the only two `Register-ObjectEvent`
+consumers in this repo at the time of the fix); if a THIRD one is ever added, use
+`ReadLineAsync()` polling from the start rather than reintroducing this bug class.
+
+**Verification**: 20 repeated local runs of the interactive round-trip test after the fix, 0/20
+failures (versus 2/5 before). 5 repeated full runs of `tests/test_failfast_probe.py` and
+`tests/test_exe_smokerun.py`, all clean. See `docs/plan-cli-interactive-verification.md` Finding
+8 and `docs/agent-interconnect.md`'s "Live-echo redesign" section for the full context this bug
+was found in and how it connects to the rest of the stdin/tee feature.
 
 ---
 

@@ -606,6 +606,21 @@ jobs:
         run: |
           & tests\selfapps_optimized_build.ps1
 
+      # docs/plan-cli-interactive-verification.md requirement 2: proves piped stdin flows
+      # unbroken through the real cmd.exe -> :run_exe_smokerun -> ~exe_smokerun.ps1 -> EXE chain
+      # for a genuine multi-round input()-driven program, closing the gap the unit tests
+      # (tests/test_failfast_probe.py, tests/test_exe_smokerun.py) can't reach on their own
+      # (those invoke the .ps1 helpers directly via pwsh, not through the full production
+      # nesting). Provider-agnostic by construction -- see the test file's own header comment
+      # for why one uv-lane pass is representative of every lane. Non-gating for its first
+      # landing, matching this repo's established graduation pattern.
+      - name: "Self-test: interactive stdin round-trip through the full EXE verification chain (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_interactive_stdin.ps1
+
       - name: "Self-test: EXE smokerun XFAIL bad import (real/conda-full only)"
         if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
         shell: pwsh

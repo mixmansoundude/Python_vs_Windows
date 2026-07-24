@@ -17,12 +17,11 @@
 # reaches the console instead of being silently swallowed and corrupting result parsing). Caller
 # must pre-truncate the output/result files before invoking, same as ~failfast_probe.ps1.
 #
-# Same live-tee (Register-ObjectEvent + Write-Host/[Console]::Error.WriteLine) and deterministic
-# EOF-flag drain-wait as ~failfast_probe.ps1 -- see that file's header comment for the full
-# rationale (a blocking WaitForExit() prevents PowerShell's own event dispatch from running;
-# Microsoft's documented "call WaitForExit() twice" guidance for async-redirected output was
-# empirically proven insufficient on its own, so both streams' own null-Data EOF events are
-# tracked explicitly and waited on before the accumulated buffers are considered final). The one
+# Same live-tee as ~failfast_probe.ps1 -- see that file's header comment for the full rationale
+# (self-sequenced StreamReader.ReadLineAsync() polling, NOT Register-ObjectEvent: that dispatches
+# via ThreadPool.QueueUserWorkItem, a confirmed, filed PowerShell bug -- PowerShell/PowerShell#11937
+# -- that can deliver lines out of order within a single stream when several arrive close
+# together; only ever one read in flight per stream here, so no reordering is possible). The one
 # behavioral difference from ~failfast_probe.ps1: after HP_SMOKERUN_KILL_MS (env var, default
 # 30000 when unset -- run_setup.bat never sets it, so production behavior is unchanged from the
 # prior inline -Command implementation's hardcoded 30s; the override exists purely so a test can
@@ -56,47 +55,45 @@ $si.RedirectStandardOutput = $true
 $si.RedirectStandardError = $true
 $p = New-Object System.Diagnostics.Process
 $p.StartInfo = $si
+$p.Start() | Out-Null
 
 $outBuf = New-Object System.Text.StringBuilder
 $errBuf = New-Object System.Text.StringBuilder
-$outCtx = [PSCustomObject]@{ Buf = $outBuf; Done = $false }
-$errCtx = [PSCustomObject]@{ Buf = $errBuf; Done = $false }
-Register-ObjectEvent -InputObject $p -EventName OutputDataReceived -MessageData $outCtx -Action {
-    if ($null -ne $EventArgs.Data) {
-        Write-Host $EventArgs.Data
-        $null = $Event.MessageData.Buf.Append($EventArgs.Data + "`n")
-    } else {
-        $Event.MessageData.Done = $true
-    }
-} | Out-Null
-Register-ObjectEvent -InputObject $p -EventName ErrorDataReceived -MessageData $errCtx -Action {
-    if ($null -ne $EventArgs.Data) {
-        [Console]::Error.WriteLine($EventArgs.Data)
-        $null = $Event.MessageData.Buf.Append($EventArgs.Data + "`n")
-    } else {
-        $Event.MessageData.Done = $true
-    }
-} | Out-Null
-
-$p.Start() | Out-Null
-$p.BeginOutputReadLine()
-$p.BeginErrorReadLine()
+$outTask = $p.StandardOutput.ReadLineAsync()
+$errTask = $p.StandardError.ReadLineAsync()
+$outDone = $false
+$errDone = $false
 
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $killed = $false
-while (-not $p.WaitForExit(100)) {
-    if ($sw.ElapsedMilliseconds -ge $killMs) {
+while ((-not $p.HasExited) -or (-not $outDone) -or (-not $errDone)) {
+    if ((-not $outDone) -and $outTask.IsCompleted) {
+        $line = $outTask.Result
+        if ($null -eq $line) {
+            $outDone = $true
+        } else {
+            Write-Host $line
+            $null = $outBuf.Append($line + "`n")
+            $outTask = $p.StandardOutput.ReadLineAsync()
+        }
+    }
+    if ((-not $errDone) -and $errTask.IsCompleted) {
+        $line = $errTask.Result
+        if ($null -eq $line) {
+            $errDone = $true
+        } else {
+            [Console]::Error.WriteLine($line)
+            $null = $errBuf.Append($line + "`n")
+            $errTask = $p.StandardError.ReadLineAsync()
+        }
+    }
+    if ((-not $killed) -and (-not $p.HasExited) -and ($sw.ElapsedMilliseconds -ge $killMs)) {
         try { $p.Kill() } catch {}
         $killed = $true
-        break
     }
-}
-$p.WaitForExit()
-
-$drainSw = [System.Diagnostics.Stopwatch]::StartNew()
-while ((-not $outCtx.Done -or -not $errCtx.Done) -and $drainSw.ElapsedMilliseconds -lt 5000) {
     Start-Sleep -Milliseconds 20
 }
+$p.WaitForExit()
 
 $outBuf.ToString() | Set-Content -Path $outPath -Encoding ASCII
 $errBuf.ToString() | Set-Content -Path $errPath -Encoding ASCII
