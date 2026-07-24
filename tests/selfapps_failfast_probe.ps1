@@ -225,7 +225,7 @@ sys.exit(0)
     # outcome had NO postflight signal beyond the WARN log line already asserted above --
     # :print_fastpath_ambiguous_note (run_setup.bat) closes that gap with a plain informational
     # panel (no consent prompt, so it does not touch the fast path's zero-friction guarantee).
-    $alAmbiguousNoteFound = $alRun2Text -match [regex]::Escape('WANT A FRESH BUILD (re-checks all dependencies from scratch)?')
+    $alAmbiguousNoteFound = $alRun2Text -match [regex]::Escape('WANT A FRESH BUILD instead (re-checks all dependencies from scratch)?')
 
     $alivePass = ($alRun1Exit -eq 0) -and ($alRun2Exit -eq 0) -and $alLaunchedInteractive -and $alAliveMsg -and $alStatusFailed -and $alNotDiscarded -and $alExeStillPresent -and $alBootstrapStayedOk -and $alAmbiguousNoteFound
     $aliveDetails = [ordered]@{
