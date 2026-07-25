@@ -575,22 +575,9 @@ lines, which naturally show GitHub Actions' inherent doubled checkout path
 further.)*
 9. **Cascade consent (REQ-009/REQ-005.10) is granted BEFORE the current build's own postexec
    offers fire, so a user can be asked to rerun/optimize a build the bootstrapper already knows
-   is about to be discarded.** Found via the 2026-07-25 deep research pass (see Closed Backlog
-   for the two sibling findings from the same investigation that WERE fixed). Confirmed via
-   direct tracing: `:warnfix_cascade_detect` (which can set `HP_CASCADE_APPROVED` via
-   `:cascade_consent_gate`) runs strictly before `call :run_exe_smokerun`, which flows into
-   `:smokerun_ndjson` -> `call :run_postexec_checkpoint exe` -> `call :offer_optimized_build` --
-   only after `:run_entry_smoke` returns does the main line check `HP_CASCADE_APPROVED` and jump
-   to `:provider_cascade`. So within one build attempt: build -> warnfix detects unresolved deps
-   -> user consents to cascade to the NEXT provider -> the SAME, about-to-be-superseded EXE still
-   gets a full verification run, then is offered "run it again?" and "build an optimized version
-   too?" (which can take a minute or more) -- neither consent gate currently checks
-   `HP_CASCADE_APPROVED`/`HP_CASCADE_CANDIDATE` before prompting. Not fixed in the same pass that
-   found it: a correct fix means either reordering when cascade consent is asked relative to the
-   postexec offers, or gating the offers on `HP_CASCADE_APPROVED` -- and there's a real UX
-   question either way (does a user who already said "yes, try the next provider" still want to
-   see how the CURRENT, soon-to-be-replaced build performs?) that deserves a deliberate, reviewed
-   pass rather than a rushed fix folded into an unrelated research sweep. See
+   is about to be discarded.** This is a genuine open UX/design question, not a one-line fix --
+   posed in full, with the plain-language context, two options, tradeoffs, and a recommendation,
+   in `docs/open-questions.md` item 1. No code change made pending that answer. See
    `docs/agent-interconnect.md`'s "Post-execution checkpoint" and "AV-Safe Build Path
    requirement 9" sections for the exact call chain if picking this up.
 ## Periodic Maintenance Checks (recurring, quarterly)
