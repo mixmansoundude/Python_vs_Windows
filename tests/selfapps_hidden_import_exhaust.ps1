@@ -126,7 +126,14 @@ $logLines  = if (Test-Path $logPath)  { Get-Content -LiteralPath $logPath  -Enco
 $setupText = if (Test-Path $setupLog) { Get-Content -LiteralPath $setupLog -Raw -Encoding ASCII } else { '' }
 $combined  = ($logLines -join "`n") + "`n" + $setupText
 
-$addingCount    = ([regex]::Matches($combined, [regex]::Escape('[REPAIR][HIDDEN_IMPORT] Adding --hidden-import='))).Count
+# derived requirement: real Windows CI caught this -- run_setup.bat's :log subroutine writes
+# every message to BOTH the console (captured into $logLines/$bootstrapLog, unbracketed
+# timestamp) AND ~setup.log ($setupText, bracketed timestamp), so a substring-MATCH-COUNT
+# against $combined double-counts every line (confirmed directly: a real run producing exactly
+# 3 "Adding --hidden-import=" lines reported addingCount=6). Presence checks (-match, below)
+# are unaffected by this and correctly reuse $combined; only the COUNT must be scoped to a
+# single source -- $logLines alone (the bootstrap console capture).
+$addingCount    = ([regex]::Matches(($logLines -join "`n"), [regex]::Escape('[REPAIR][HIDDEN_IMPORT] Adding --hidden-import='))).Count
 $exhaustedFired = $combined -match [regex]::Escape('[WARN][HIDDEN_IMPORT] Auto-recovery exhausted after 3 attempts; module(s) still missing.')
 $recoveredFired = $combined -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] EXE verified after hidden-import recovery')
 $infraError     = $combined -match 'Failed to parse|uv error|pip error'
