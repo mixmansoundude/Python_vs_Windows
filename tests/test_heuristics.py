@@ -218,5 +218,29 @@ class TestRequirementsWriteback(_Base):
         self.assertEqual(lines, ["flask"])
 
 
+class PayloadSync(unittest.TestCase):
+    # CLAUDE.md Active Backlog item 8: HP_PREP_REQUIREMENTS is the last of the 13 embedded
+    # payloads to gain a canonical tools/ source with a PayloadSync guard -- deliberately a
+    # byte-for-byte decode of the CURRENTLY embedded payload with no header comment added, since
+    # this payload's CMD 8191-char line budget is the tightest in the whole file (304-char
+    # margin as of this promotion, vs. 1500+ typical for the other 12 promoted payloads) -- even
+    # a minimal "canonical source" pointer comment (the convention every other promoted payload
+    # carries) would cost more margin than is safely available. A future pass that shrinks this
+    # file's own helper functions (_enforce_bounds_order, _spec_sort_key, canonical_ops all have
+    # room to be more compact) can add the header once real headroom exists; until then this
+    # test only guarantees the source and the embedded payload never silently drift apart.
+    def test_embedded_base64_matches_source(self):
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        source_path = os.path.join(repo, "tools", "prep_requirements.py")
+        with open(source_path, "rb") as fh:
+            source = fh.read()
+        decoded = _extract_payload("HP_PREP_REQUIREMENTS")
+        self.assertEqual(
+            decoded, source,
+            "HP_PREP_REQUIREMENTS base64 is out of sync with tools/prep_requirements.py; "
+            "re-sync with tools/sync_payload.py.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

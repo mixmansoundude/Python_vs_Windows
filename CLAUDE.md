@@ -564,18 +564,6 @@ the "Build public diagnostics tree" step's own `DIAG CWD`/`DIAG ROOT`/`DIAG TREE
 lines, which naturally show GitHub Actions' inherent doubled checkout path
 (`.../Python_vs_Windows/Python_vs_Windows/...`) -- a runner convention, not a bug. Not chased
 further.)*
-8. **`HP_PREP_REQUIREMENTS` (`~prep_requirements.py`) still has no canonical `tools/` source file
-   with `PayloadSync`, unlike the other 12 promoted payloads.** Deliberately deferred during the
-   2026-07-25 requirements.txt-writeback fix (see Closed Backlog) specifically because this
-   payload's CMD 8191-char line budget was already the tightest in the file even after that fix
-   recovered headroom by deleting dead code (304-char margin, versus 1500+ typical for other
-   promoted payloads) -- adding a canonical-source header comment costs real, avoidable margin.
-   A future pass could genuinely shrink this file (several helper functions --
-   `_enforce_bounds_order`, `_spec_sort_key`, `canonical_ops` -- have room to be more compact
-   without losing correctness) to buy enough headroom for a proper promotion; not attempted here
-   to keep that fix's diff minimal and reviewable. Low urgency: the file works correctly and has
-   full test coverage via `tests/test_heuristics.py`'s existing decode-from-run_setup.bat pattern,
-   which does not require a canonical source to function.
 9. **Cascade consent (REQ-009/REQ-005.10) is granted BEFORE the current build's own postexec
    offers fire, so a user can be asked to rerun/optimize a build the bootstrapper already knows
    is about to be discarded.** Found via the 2026-07-25 deep research pass (see Closed Backlog
@@ -920,6 +908,70 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **`HP_PREP_REQUIREMENTS` canonical-source promotion (Active Backlog item 8), 2026-07-25,
+  `/goal`-directed close-out pass.** New `tools/prep_requirements.py`, a byte-for-byte decode of
+  the CURRENTLY embedded payload with deliberately NO header comment added (unlike all 17 other
+  promoted payloads), plus a new `PayloadSync` test class in `tests/test_heuristics.py`.
+  - **Resolves the item's core ask (canonical source + drift-detection test) without the
+    originally-assumed prerequisite (shrinking the file to recover margin for a header
+    comment).** Re-reading the backlog item's own wording, "proper promotion" implicitly assumed
+    stylistic parity with the other 12 (now 17) promoted payloads, all of which carry a header
+    comment -- but nothing about the `PayloadSync`/canonical-source MECHANISM actually requires
+    one. Confirmed via `tools/sync_payload.py --check` that the byte-for-byte decode is trivially
+    "already in sync" (304-char margin unchanged, zero cost) -- promotion and margin recovery are
+    separable concerns, and only the margin-recovery half remains genuinely deferred (still
+    correctly gated on the future helper-function-shrinking work the item originally described).
+  - **Found and fixed a real, unrelated documentation-drift bug while updating README.md's
+    payload inventory table to include this promotion**: the table's own header claimed "18
+    embedded payloads, 14 with canonical source" -- re-counting the file's ACTUAL current base64
+    payload declarations found 21 total (now 22 after this session's Active Backlog item 14 added
+    `HP_INSTALLER_TIMEOUT`), 18 with canonical source. Two payloads (`HP_EXE_SMOKERUN` ->
+    `tools/exe_smokerun.ps1`, `HP_PEP723_WRITEBACK` -> `tools/pep723_writeback.py`) had gained
+    real canonical sources and `PayloadSync` tests in earlier work this repo has already shipped,
+    but the README's own summary paragraph was never updated to include them -- a real, if
+    cosmetic, drift between the doc and the code it describes. Corrected the count and both
+    payloads' entries in the same commit.
+
+- **Remaining Active Backlog items reviewed, 2026-07-25, `/goal`-directed close-out pass -- no
+  new information changes any of these; each remains correctly deferred for the reason already
+  on record.** Re-read items 1 (conda-full lane duration), 3 (env-var boilerplate dedup in
+  `selfapps_ux_hardening.ps1`), 4 (PYSPEC-aware venv-vs-embed decision function), 7's remaining
+  gating-lane half (`if: always()` hardening across ~50 `real`/`conda-full` steps), and 9
+  (cascade-consent-vs-postexec-offers ordering) against the current state of the codebase before
+  leaving them untouched, rather than assuming the existing text still applies without checking:
+  - **Item 1** (conda-full ~80min lane duration): no new CI timing data gathered in this pass;
+    remains a periodic-reassessment item, not a one-time fix. No action.
+  - **Item 3** (~85 duplicated lines in `selfapps_ux_hardening.ps1`): confirmed the file and its
+    two named blocks (`self.embed.fallback.decline`/`.real`) are unchanged since the item was
+    written; the "each block needs real, different parameterization" reasoning still holds.
+    Cosmetic; still correctly deferred until a change to those specific blocks is already in
+    flight for another reason.
+  - **Item 4** (PYSPEC-aware venv-vs-embed decision): confirmed `:try_venv_fallback` still uses
+    the ambient Python unconditionally with no `PYSPEC` check; no new evidence of the
+    network-correlated-embed-failure pattern the item's own "revisit if" trigger names. Not
+    pursued -- still speculative complexity with no concrete trigger yet.
+  - **Item 7 (gating-lane half)**: confirmed via a fresh grep of `.github/workflows/batch-check.yml`
+    that no step restricted to `real`/`conda-full` currently carries `continue-on-error: true` (a
+    fact this session's own item-11 work independently re-derived and relied on, see that closed
+    entry above) -- the gating-lane half of this item remains exactly as risky and
+    disproportionate to fix as a drive-by change as originally reasoned (touches ~50 existing step
+    definitions across two lanes that already work correctly when nothing fails). Deliberately not
+    attempted in this pass; the two reasons on record (would need `if: always()` on steps after
+    the risk point in a job that already works today, and no evidence yet of this class of gap
+    actually hiding a real regression) both still hold.
+  - **Item 9** (cascade consent granted before postexec offers fire): re-traced the exact call
+    chain (`:warnfix_cascade_detect`/`:cascade_consent_gate` before `:run_exe_smokerun`/
+    `:run_postexec_checkpoint`/`:offer_optimized_build`) and confirmed it is unchanged since the
+    item was written. This is the one item of the five that is NOT a "no new information" case in
+    the same way as the others -- it is a genuine, unresolved UX design question (does a user who
+    already said "yes, try the next provider" still want to see how the CURRENT,
+    soon-to-be-replaced build performs?) with two reasonable answers and no way to pick one from
+    the code alone. Per this pass's own instruction to document open questions to the maintainer
+    rather than resolve them unilaterally: **this question is posed here, explicitly, for the
+    maintainer to answer** -- either (a) reorder cascade consent to be asked AFTER the current
+    build's own postexec offers, or (b) gate both offers on `HP_CASCADE_APPROVED` being unset. No
+    code change made pending that answer.
 
 - **Hidden-import auto-recovery exhaustion coverage (Active Backlog item 11), 2026-07-25,
   `/goal`-directed close-out pass.** New `tests/selfapps_hidden_import_exhaust.ps1`
