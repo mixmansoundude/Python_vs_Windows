@@ -140,9 +140,17 @@ class FastExit(unittest.TestCase):
 @unittest.skipUnless(PWSH, "pwsh not available")
 class TimeoutDetection(unittest.TestCase):
     def test_hung_process_reports_timeout_in_result_file(self):
+        # derived requirement: a real Windows CI run caught this at 300ms -- CPython's own
+        # interpreter startup (module imports, etc.) can plausibly exceed 300ms under a loaded
+        # CI runner, so taskkill could kill the process before it ever reaches its first
+        # executable line, leaving hang_started.txt never written even though the timeout/kill
+        # mechanism itself worked correctly (proc.returncode==0 and _result(d)=="1|1" both
+        # passed in that failure -- only the "did it start" check failed). 2000ms gives real
+        # interpreter startup a comfortable margin while staying far short of HANG_SCRIPT's own
+        # 60s sleep, so the timeout path is still genuinely exercised.
         with tempfile.TemporaryDirectory() as d:
             script = _make_script(d, "hang", HANG_SCRIPT)
-            proc = _run_installer(d, sys.executable, str(script), 300, wait=15, capture=False)
+            proc = _run_installer(d, sys.executable, str(script), 2000, wait=20, capture=False)
             self.assertEqual(proc.returncode, 0)
             self.assertEqual(_result(d), "1|1")
             # Confirm the process genuinely started (proves this is a real timeout being

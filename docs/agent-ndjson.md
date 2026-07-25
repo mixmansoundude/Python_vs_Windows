@@ -43,7 +43,7 @@ self.exe.warnfix.install, self.exe.warnfix.pass, self.exe.warnfix.xfail,
 self.exe.warnfix.real, self.exe.warnfix.real_warnfix,
 self.exe.warnfix.real_warnfix_delayed,
 self.collect.submodules,
-self.exe.hidden_import,
+self.exe.hidden_import, self.exe.hidden_import.exhaust,
 self.preflight.syntax,
 self.cascade.detect, self.cascade.consent,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
@@ -493,6 +493,15 @@ self.interactive.stdin.roundtrip
 
 ## Key facts for debugging missing rows
 
+- `self.exe.hidden_import.exhaust` (CLAUDE.md Active Backlog item 11, `tests/selfapps_
+  hidden_import_exhaust.ps1`, real/conda-full lanes) proves `--hidden-import` auto-recovery
+  reaches its 3-attempt cap for real, unlike its sibling `self.exe.hidden_import` (one-shot
+  success only). The stub app rotates through 3 distinct, always-installed
+  (`colorama`/`six`/`certifi`, all declared in `requirements.txt`) fabricated
+  `ModuleNotFoundError` messages via a small state file next to the EXE that survives across the
+  recovery loop's own rebuilds -- a REPEATED module name would be rejected by
+  `~hidden_import_scan.py`'s own tried-list exclusion and stop the loop early via "no next hidden
+  import found", never reaching the iteration cap this test needs to exercise.
 - A row absent from the diag site means the test script either was not reached, threw
   before the `Write-NdjsonRow` call, or the lane skipped that selfapps file.
 - Rows gated by `pyFileCount` (e.g. `entry.single.direct`) will be absent whenever the

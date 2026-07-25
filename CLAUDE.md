@@ -596,14 +596,6 @@ further.)*
    pass rather than a rushed fix folded into an unrelated research sweep. See
    `docs/agent-interconnect.md`'s "Post-execution checkpoint" and "AV-Safe Build Path
    requirement 9" sections for the exact call chain if picking this up.
-11. **Hidden-import auto-recovery's 3-attempt exhaustion WARN line (added in an earlier Closed
-    Backlog entry) has no test that actually drives the loop to exhaustion.** Found via the same
-    audit. `tests/selfapps_hidden_import.ps1` only exercises the one-shot-recoverable success
-    path (a single dynamically-imported, installed-but-uncollected module, fixed by one
-    `--hidden-import` rebuild) -- no test app rotates through 3+ distinct fabricated missing
-    modules to force `HP_HIDDEN_ITER` to hit its cap without ever exiting 0. Needs a stub app
-    that reports a DIFFERENT fabricated `ModuleNotFoundError` each rebuild (e.g. rotating through
-    a small state file), forcing exhaustion for real. Not built speculatively in the audit pass.
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -928,6 +920,29 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **Hidden-import auto-recovery exhaustion coverage (Active Backlog item 11), 2026-07-25,
+  `/goal`-directed close-out pass.** New `tests/selfapps_hidden_import_exhaust.ps1`
+  (real/conda-full lanes, same gating as its sibling `selfapps_hidden_import.ps1`): a stub app
+  rotates through 3 distinct, always-installed (`colorama`/`six`/`certifi`, declared in
+  `requirements.txt`) fabricated `ModuleNotFoundError` messages via a small state file next to
+  the EXE that survives across the recovery loop's own rebuilds. **Distinctness is load-bearing,
+  not cosmetic**: `~hidden_import_scan.py`'s own tried-list exclusion means a REPEATED module
+  name is treated as already-fixed and returns nothing, which would stop the loop via the
+  existing "no next hidden import found" exit well before the 3-iteration cap this test needs to
+  reach -- traced the exact launch sequence (the pre-loop smoke run's fabricated module is never
+  scanned at all, so only the loop's own 4 launches matter) to confirm 3 rotating modules,
+  starting at state index 1 for the loop's first launch, produces exactly 3 distinct discoveries
+  before the 4th launch hits the iteration cap. Asserts exactly 3 `Adding --hidden-import=`
+  lines (proves the loop stopped at the cap, not an early exhaustion-of-distinct-modules exit),
+  the exhaustion WARN line, the absence of the recovery-succeeded line, and
+  `~bootstrap.status.json` still reading `state=ok` (the user program's own perpetual failure is
+  not a bootstrapper failure, per the existing "User-code exit-code semantics" Known Finding).
+  Landed directly in the gating `real`/`conda-full` lanes (no `continue-on-error`), matching its
+  sibling test exactly -- confirmed no existing precedent in this repo for step-level
+  `continue-on-error` within those two lanes (Active Backlog item 7's own gating-lane distinction
+  applies at job level, not step level), and the underlying mechanism (fabricated stderr text +
+  requirements.txt-declared modules) is already proven safe by the sibling test.
 
 - **`PVW_CONDA_EXE` super-user-override's corrupt-conda path (`:corrupt_override_exit`) CI
   coverage (Active Backlog item 12), 2026-07-25, `/goal`-directed close-out pass.** New 4th

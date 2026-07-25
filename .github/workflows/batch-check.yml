@@ -531,6 +531,15 @@ jobs:
         run: |
           & tests\selfapps_hidden_import.ps1
 
+      # CLAUDE.md Active Backlog item 11: no test previously drove the --hidden-import
+      # auto-recovery loop to its 3-attempt cap without ever succeeding (its sibling above only
+      # covers the one-shot-recoverable success path).
+      - name: "Self-test: strict --hidden-import auto-recovery exhaustion (real/conda-full only)"
+        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_hidden_import_exhaust.ps1
+
       # CLAUDE.md Active Backlog item 10: :tci_both_failed (both AllUsers and JustMe Miniconda
       # installs fail) had zero CI coverage. Miniconda installs to the SHARED, machine-wide
       # %PUBLIC%\Documents\Miniconda3 path -- this step MUST run before any earlier step that
