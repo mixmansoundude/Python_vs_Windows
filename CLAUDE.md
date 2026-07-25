@@ -592,6 +592,46 @@ further.)*
    pass rather than a rushed fix folded into an unrelated research sweep. See
    `docs/agent-interconnect.md`'s "Post-execution checkpoint" and "AV-Safe Build Path
    requirement 9" sections for the exact call chain if picking this up.
+10. **`:tci_both_failed` (Miniconda install fails under BOTH AllUsers and JustMe) has zero CI
+    coverage.** Found via the 2026-07-25 branch-coverage audit (see Closed Backlog for the
+    sibling dead-flag removal from the same audit). This is a real, reachable production branch
+    (a machine where both install types genuinely fail -- corrupted installer, unusual ACLs) with
+    no `HP_TEST_*` hook to force it deterministically; `tests/selfapps_justme.ps1`'s
+    `HP_TEST_NOT_ELEVATED=1` only proves the JustMe install SUCCEEDS. Needs a new
+    `HP_TEST_FORCE_JUSTME_FAIL=1`-style hook that skips the real `start /wait` call and forces a
+    nonzero result, plus a new or extended selfapps scenario asserting the `:die` message and
+    exit code. Not built speculatively in the audit pass itself.
+11. **Hidden-import auto-recovery's 3-attempt exhaustion WARN line (added in an earlier Closed
+    Backlog entry) has no test that actually drives the loop to exhaustion.** Found via the same
+    audit. `tests/selfapps_hidden_import.ps1` only exercises the one-shot-recoverable success
+    path (a single dynamically-imported, installed-but-uncollected module, fixed by one
+    `--hidden-import` rebuild) -- no test app rotates through 3+ distinct fabricated missing
+    modules to force `HP_HIDDEN_ITER` to hit its cap without ever exiting 0. Needs a stub app
+    that reports a DIFFERENT fabricated `ModuleNotFoundError` each rebuild (e.g. rotating through
+    a small state file), forcing exhaustion for real. Not built speculatively in the audit pass.
+12. **The `PVW_CONDA_EXE` super-user-override's corrupt-conda path (`:corrupt_override_exit`,
+    distinct "fix manually, do not self-heal" messaging) has no CI coverage.** Found via the same
+    audit. `tests/selftest.ps1`'s three existing corruption scenarios
+    (`self.corrupt.conda.detect`/`.heal.decline`/`.heal.accept`) all set `HP_TEST_CORRUPT_CONDA=1`
+    but never `PVW_CONDA_EXE`, so this branch (which deliberately skips self-healing eviction
+    entirely, since the conda root is user-managed, not bootstrapper-owned) is never reached.
+    Needs a 4th scenario setting both `HP_TEST_CORRUPT_CONDA=1` AND `PVW_CONDA_EXE=<path>`,
+    asserting exit code 2 and the manual-fix message. Not built speculatively in the audit pass.
+13. **`pyproj_deps.py`'s regex-fallback TOML parser (used only when `tomllib` is unavailable)
+    can silently truncate a dependency list if a comment inside the `dependencies = [...]` array
+    contains an unquoted `]`.** Found via the 2026-07-25 Python-helper edge-case research
+    (real, independently verified, but low real-world likelihood -- not fixed in this pass). The
+    char-walk loop treats any unquoted `]` as end-of-array (`elif c == ']': break`), with no
+    comment-awareness; a line like `"requests",  # supports array syntax e.g. [1,2]` inside the
+    array contains exactly such an unquoted `]` in its comment text, silently dropping every
+    dependency listed after that line (exit 0, no error surfaced). Only triggers on the
+    older-Python fallback path (rare given the uv-first/managed-CPython default -- this repo's
+    orchestration layer always targets the latest managed CPython, which has `tomllib`) combined
+    with a comment referencing bracket syntax -- a real but narrow-precondition combination.
+    A fix would need the char-walk to track whether it's inside a `#`-to-end-of-line comment
+    (respecting that `#` itself can appear inside a quoted string) before treating `]` as
+    terminal. Not attempted here to keep this pass's remaining time focused on higher-likelihood
+    findings; a good candidate for a future dedicated pass on this file.
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -916,6 +956,59 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **`dep_check.py` name normalization (PEP-503-style): the dep-check fast-path skip could
+  false-negative on separator-style mismatches**, another finding from the 2026-07-25 Python
+  helper edge-case research. `parse_lock`/`parse_reqs` only `.lower()`ed extracted names, with no
+  `-`/`_`/`.` folding -- conda-forge and PyPI sometimes spell the same logical package with
+  different separators for the same name (e.g. `typing_extensions` in a conda lock vs.
+  `typing-extensions` in pipreqs output), which would look "missing" from the lock on every run,
+  forcing an unnecessary reinstall and defeating the fast path's whole purpose (not a
+  correctness break -- the reinstall is idempotent -- just wasted time on affected package
+  names). Fixed with a small `_norm()` helper (`re.sub(r"[-_.]+", "-", name).lower()`, PEP 503's
+  own normalization rule) applied consistently in both functions. `tools/dep_check.py` is an
+  already-promoted canonical source with `PayloadSync`; margin was comfortable (4604 chars
+  before, 4000 after). 5 new tests in `tests/test_dep_check.py` (unit-level normalization in
+  both functions, a repeated-separator collapse case, and two `main()`-level end-to-end
+  regressions proving the fast path now correctly skips across a hyphen/underscore and a
+  hyphen/dot mismatch) -- 21/21 passing (up from 16).
+  - **A related agent finding -- adding PyQt5/PySide6 to `tools/collect_submodules.py`'s
+    `DYNAMIC_PKGS` curated set, to fix the well-known "could not find or load the Qt platform
+    plugin" PyInstaller runtime crash -- was investigated and NOT implemented, because it does
+    not actually fix that problem.** Read `collect_submodules.py`'s own module docstring
+    carefully before acting: `--collect-submodules` collects a package's PYTHON submodules
+    (the exact gap sklearn/matplotlib/scipy/plotly genuinely have -- dynamically-dispatched
+    Python code PyInstaller's static tracer can't see). Qt's platform-plugin loading is a
+    completely different, NATIVE plugin-loading mechanism (DLLs, not Python submodules) that
+    `--collect-submodules` has no ability to address at all -- PyInstaller's own bundled
+    PyQt5/PySide6 hooks (or `--collect-data`) are the actual correct fix for that specific
+    crash, a mechanism this file doesn't touch. Adding PyQt5/PySide6 here would have bloated
+    GUI-app EXEs (a large framework) without fixing the real issue the finding was aimed at --
+    a case where verifying an agent's suggestion against the actual mechanism it proposes using
+    caught a misdiagnosis before it shipped.
+
+- **`HP_TEST_JUSTME_FALLBACK` removed as vestigial dead test-scaffolding**, found by a
+  background research agent auditing `run_setup.bat` against AGENTS.md's own "Branch coverage
+  policy" (every branch needs a CI test). Confirmed via a repo-wide grep that no test file
+  anywhere referenced this flag; it sat in `:try_conda_install` as a THIRD, redundant way to
+  reach `:tci_justme` (skip straight to the JustMe Miniconda install), alongside the genuine
+  elevation-check failure and the already-tested `HP_TEST_NOT_ELEVATED` flag (covered by
+  `tests/selfapps_justme.ps1`) -- both of which already reach the exact same destination with
+  real coverage. Rather than build a redundant test for a flag that added no coverage value
+  beyond what `HP_TEST_NOT_ELEVATED` already provides, removed the flag entirely. `AGENTS.md`'s
+  own "Branch coverage policy" section cited this flag by name as its example -- updated to cite
+  `HP_TEST_NOT_ELEVATED` instead, a still-live flag with real test coverage.
+  - **Three sibling findings from the same branch-coverage audit were NOT acted on in this pass,
+    logged as new Active Backlog items instead**: `:tci_both_failed` (both AllUsers and JustMe
+    Miniconda install fail -- no `HP_TEST_*` hook exists to force this deterministically),
+    the hidden-import auto-recovery exhaustion WARN line (no test drives the loop to its 3-attempt
+    cap without ever succeeding), and the `PVW_CONDA_EXE` super-user-override corrupt-conda path
+    (`:corrupt_override_exit`, distinct "fix manually" messaging never exercised by
+    `tests/selftest.ps1`'s existing corruption scenarios, which never set `PVW_CONDA_EXE`). All
+    three are real, reachable production branches with zero CI coverage, but each needs a new
+    `HP_TEST_*` hook plus a new or extended selfapps scenario -- real, if modest, engineering
+    investment better sequenced as its own dedicated pass than rushed alongside this session's
+    other fixes. See Active Backlog for the full reasoning per item.
 
 - **Two more findings from the same 2026-07-25 deep research pass, both in the REQ-027/AV-Safe
   Build Path area** -- a background research agent specifically tasked with finding interaction
