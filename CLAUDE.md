@@ -474,7 +474,16 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    1.5 h), separate from the (now-fixed, see Closed Backlog) diagnostics-bloat item. Likely
    accumulated feature/test-scenario growth (more selftest scripts each doing a real
    `conda create`), not a regression from any single change. Worth periodic reassessment, no
-   action planned yet.
+   action planned yet. **Fresh data point, 2026-07-25 `/goal`-directed review**: pulled
+   created/updated timestamps for the 18 most recent successful full-workflow runs on this
+   branch via the GitHub API (`workflow_runs` list) -- overall wall-clock (all 8 matrix lanes
+   run in parallel, so this reflects whichever lane is slowest, not conda-full's own duration in
+   isolation) ranged 85-110 minutes, averaging ~92 minutes, consistent with the original ~80 min
+   observation and not showing runaway growth since. Confirms the item's own "worth periodic
+   reassessment, no action planned" framing is still the right call -- still no single-lane
+   breakdown gathered (would need per-job, not per-run, timestamps to isolate conda-full
+   specifically), and still not pursued as a separate investigation given no action is planned
+   either way.
 3. **~85 lines of near-duplicated env-var save/set/restore boilerplate between
    `self.embed.fallback.decline` and `self.embed.fallback.real`** in
    `tests/selfapps_ux_hardening.ps1`. Factorable into a shared helper, but each block forces a
