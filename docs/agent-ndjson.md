@@ -43,10 +43,11 @@ self.exe.warnfix.install, self.exe.warnfix.pass, self.exe.warnfix.xfail,
 self.exe.warnfix.real, self.exe.warnfix.real_warnfix,
 self.exe.warnfix.real_warnfix_delayed,
 self.collect.submodules,
-self.exe.hidden_import,
+self.exe.hidden_import, self.exe.hidden_import.exhaust,
 self.preflight.syntax,
 self.cascade.detect, self.cascade.consent,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
+self.conda.bothfail (uv lane only -- selfapps_conda_bothfail.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
 self.exe.tiera.hidden_skip (uv lane only -- selfapps_nuitka_tiera_hidden_skip.ps1; non-gating),
 self.optbuild.offer (uv lane only -- selfapps_optimized_build.ps1; non-gating),
@@ -204,8 +205,19 @@ self.pyproject.malformed,
 self.corrupt.conda.detect,
 self.corrupt.conda.heal.decline,
 self.corrupt.conda.heal.accept,
+self.corrupt.conda.override_exit,
 self.corrupt.uv.detect
 ```
+
+`self.corrupt.conda.override_exit` (CLAUDE.md Active Backlog item 12) covers the
+`PVW_CONDA_EXE` super-user-override's corrupt-conda path (`:corrupt_override_exit`, distinct
+"fix manually, do not self-heal" messaging) -- unlike its three `self.corrupt.conda.*` siblings
+above, this scenario is NOT gated on Miniconda already being on disk: setting `PVW_CONDA_EXE`
+(to any path, real or not) unconditionally sets `CONDA_BAT=%PVW_CONDA_EXE%` in `run_setup.bat`
+before the Miniconda install-if-missing block even runs, so the corruption-check gate
+(`if defined CONDA_BAT ...`) fires regardless of whether Miniconda was ever installed anywhere
+in the job -- self-contained by construction, no CI-ordering dependency (unlike
+`self.conda.bothfail`, above).
 
 ## selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes)
 
@@ -289,6 +301,40 @@ full-tree-artifact-capture pattern as `selfapps_autopep_discovery.ps1` -- no ind
 
 ```
 self.pvw_idempotent.discovery
+```
+
+## selfapps-conda-bothfail NDJSON rows (selfapps_conda_bothfail.ps1, uv lane only, non-gating)
+
+Closes CLAUDE.md Active Backlog item 10: `:tci_both_failed` (both Miniconda AllUsers and JustMe
+install types fail) previously had zero CI coverage. New hook `HP_TEST_FORCE_JUSTME_FAIL=1`
+(`run_setup.bat`, `:tci_justme`) deterministically skips the real JustMe `start "" /wait` call and
+forces a nonzero result; combined with `HP_TEST_NOT_ELEVATED=1` (already reaches `:tci_justme` by
+skipping straight past the AllUsers attempt), the sub-bootstrap reaches `:tci_both_failed ->
+:die "[ERROR] Miniconda install failed (both AllUsers and JustMe)."` without depending on a
+genuinely broken installer/ACL environment.
+
+**Placement is load-bearing, not arbitrary.** Miniconda installs to the SHARED, machine-wide
+`%PUBLIC%\Documents\Miniconda3` path, not a per-test-directory location -- if Miniconda was
+already installed by an EARLIER step in the same CI job (the main "Bootstrap environment" step,
+or an earlier selfapps script that forces conda), `:try_conda_install`'s own top-level gate
+(`if not defined CONDA_BAT (...)`) would find `conda.bat` already present and skip the install
+block entirely, so this test's hooks would never fire. Wired into `batch-check.yml` immediately
+BEFORE the provider-cascade-exec step (`self.cascade.exec`, which cascades uv -> conda and would
+install Miniconda for real if it ran first) -- the `uv` lane's own main bootstrap step normally
+succeeds via uv alone (no Miniconda installed), so by the time this step runs, conda.bat
+genuinely does not exist yet on the runner. If a future CI change reorders steps within the `uv`
+lane, re-verify this ordering constraint still holds.
+
+Asserts: the `HP_TEST_NOT_ELEVATED` skip line, the `HP_TEST_FORCE_JUSTME_FAIL` hook-fired line,
+the exact `:tci_both_failed` `[ERROR]` message, and `~bootstrap.status.json` reading `state=error`
+(not silently overwritten back to `ok` -- see `docs/agent-lessons-learned.md`'s `:die` entry).
+Does NOT assert process exit code -- `:success`'s own `exit /b 0` runs unconditionally regardless
+of `HP_BOOTSTRAP_STATE`, matching this repo's established "graceful stop" contract for this
+failure class (see `selfapps_pyinstaller_fail.ps1`'s sibling reasoning). Non-gating: the
+CI-ordering assumption above needs to soak before considering gating-lane promotion.
+
+```
+self.conda.bothfail
 ```
 
 ## selfapps-pyinstaller-fail NDJSON rows (selfapps_pyinstaller_fail.ps1, real/conda-full lanes)
@@ -447,6 +493,15 @@ self.interactive.stdin.roundtrip
 
 ## Key facts for debugging missing rows
 
+- `self.exe.hidden_import.exhaust` (CLAUDE.md Active Backlog item 11, `tests/selfapps_
+  hidden_import_exhaust.ps1`, real/conda-full lanes) proves `--hidden-import` auto-recovery
+  reaches its 3-attempt cap for real, unlike its sibling `self.exe.hidden_import` (one-shot
+  success only). The stub app rotates through 3 distinct, always-installed
+  (`colorama`/`six`/`certifi`, all declared in `requirements.txt`) fabricated
+  `ModuleNotFoundError` messages via a small state file next to the EXE that survives across the
+  recovery loop's own rebuilds -- a REPEATED module name would be rejected by
+  `~hidden_import_scan.py`'s own tried-list exclusion and stop the loop early via "no next hidden
+  import found", never reaching the iteration cap this test needs to exercise.
 - A row absent from the diag site means the test script either was not reached, threw
   before the `Write-NdjsonRow` call, or the lane skipped that selfapps file.
 - Rows gated by `pyFileCount` (e.g. `entry.single.direct`) will be absent whenever the

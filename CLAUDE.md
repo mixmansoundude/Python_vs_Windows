@@ -474,7 +474,16 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    1.5 h), separate from the (now-fixed, see Closed Backlog) diagnostics-bloat item. Likely
    accumulated feature/test-scenario growth (more selftest scripts each doing a real
    `conda create`), not a regression from any single change. Worth periodic reassessment, no
-   action planned yet.
+   action planned yet. **Fresh data point, 2026-07-25 `/goal`-directed review**: pulled
+   created/updated timestamps for the 18 most recent successful full-workflow runs on this
+   branch via the GitHub API (`workflow_runs` list) -- overall wall-clock (all 8 matrix lanes
+   run in parallel, so this reflects whichever lane is slowest, not conda-full's own duration in
+   isolation) ranged 85-110 minutes, averaging ~92 minutes, consistent with the original ~80 min
+   observation and not showing runaway growth since. Confirms the item's own "worth periodic
+   reassessment, no action planned" framing is still the right call -- still no single-lane
+   breakdown gathered (would need per-job, not per-run, timestamps to isolate conda-full
+   specifically), and still not pursued as a separate investigation given no action is planned
+   either way.
 3. **~85 lines of near-duplicated env-var save/set/restore boilerplate between
    `self.embed.fallback.decline` and `self.embed.fallback.real`** in
    `tests/selfapps_ux_hardening.ps1`. Factorable into a shared helper, but each block forces a
@@ -564,78 +573,13 @@ the "Build public diagnostics tree" step's own `DIAG CWD`/`DIAG ROOT`/`DIAG TREE
 lines, which naturally show GitHub Actions' inherent doubled checkout path
 (`.../Python_vs_Windows/Python_vs_Windows/...`) -- a runner convention, not a bug. Not chased
 further.)*
-8. **`HP_PREP_REQUIREMENTS` (`~prep_requirements.py`) still has no canonical `tools/` source file
-   with `PayloadSync`, unlike the other 12 promoted payloads.** Deliberately deferred during the
-   2026-07-25 requirements.txt-writeback fix (see Closed Backlog) specifically because this
-   payload's CMD 8191-char line budget was already the tightest in the file even after that fix
-   recovered headroom by deleting dead code (304-char margin, versus 1500+ typical for other
-   promoted payloads) -- adding a canonical-source header comment costs real, avoidable margin.
-   A future pass could genuinely shrink this file (several helper functions --
-   `_enforce_bounds_order`, `_spec_sort_key`, `canonical_ops` -- have room to be more compact
-   without losing correctness) to buy enough headroom for a proper promotion; not attempted here
-   to keep that fix's diff minimal and reviewable. Low urgency: the file works correctly and has
-   full test coverage via `tests/test_heuristics.py`'s existing decode-from-run_setup.bat pattern,
-   which does not require a canonical source to function.
 9. **Cascade consent (REQ-009/REQ-005.10) is granted BEFORE the current build's own postexec
    offers fire, so a user can be asked to rerun/optimize a build the bootstrapper already knows
-   is about to be discarded.** Found via the 2026-07-25 deep research pass (see Closed Backlog
-   for the two sibling findings from the same investigation that WERE fixed). Confirmed via
-   direct tracing: `:warnfix_cascade_detect` (which can set `HP_CASCADE_APPROVED` via
-   `:cascade_consent_gate`) runs strictly before `call :run_exe_smokerun`, which flows into
-   `:smokerun_ndjson` -> `call :run_postexec_checkpoint exe` -> `call :offer_optimized_build` --
-   only after `:run_entry_smoke` returns does the main line check `HP_CASCADE_APPROVED` and jump
-   to `:provider_cascade`. So within one build attempt: build -> warnfix detects unresolved deps
-   -> user consents to cascade to the NEXT provider -> the SAME, about-to-be-superseded EXE still
-   gets a full verification run, then is offered "run it again?" and "build an optimized version
-   too?" (which can take a minute or more) -- neither consent gate currently checks
-   `HP_CASCADE_APPROVED`/`HP_CASCADE_CANDIDATE` before prompting. Not fixed in the same pass that
-   found it: a correct fix means either reordering when cascade consent is asked relative to the
-   postexec offers, or gating the offers on `HP_CASCADE_APPROVED` -- and there's a real UX
-   question either way (does a user who already said "yes, try the next provider" still want to
-   see how the CURRENT, soon-to-be-replaced build performs?) that deserves a deliberate, reviewed
-   pass rather than a rushed fix folded into an unrelated research sweep. See
+   is about to be discarded.** This is a genuine open UX/design question, not a one-line fix --
+   posed in full, with the plain-language context, two options, tradeoffs, and a recommendation,
+   in `docs/open-questions.md` item 1. No code change made pending that answer. See
    `docs/agent-interconnect.md`'s "Post-execution checkpoint" and "AV-Safe Build Path
    requirement 9" sections for the exact call chain if picking this up.
-10. **`:tci_both_failed` (Miniconda install fails under BOTH AllUsers and JustMe) has zero CI
-    coverage.** Found via the 2026-07-25 branch-coverage audit (see Closed Backlog for the
-    sibling dead-flag removal from the same audit). This is a real, reachable production branch
-    (a machine where both install types genuinely fail -- corrupted installer, unusual ACLs) with
-    no `HP_TEST_*` hook to force it deterministically; `tests/selfapps_justme.ps1`'s
-    `HP_TEST_NOT_ELEVATED=1` only proves the JustMe install SUCCEEDS. Needs a new
-    `HP_TEST_FORCE_JUSTME_FAIL=1`-style hook that skips the real `start /wait` call and forces a
-    nonzero result, plus a new or extended selfapps scenario asserting the `:die` message and
-    exit code. Not built speculatively in the audit pass itself.
-11. **Hidden-import auto-recovery's 3-attempt exhaustion WARN line (added in an earlier Closed
-    Backlog entry) has no test that actually drives the loop to exhaustion.** Found via the same
-    audit. `tests/selfapps_hidden_import.ps1` only exercises the one-shot-recoverable success
-    path (a single dynamically-imported, installed-but-uncollected module, fixed by one
-    `--hidden-import` rebuild) -- no test app rotates through 3+ distinct fabricated missing
-    modules to force `HP_HIDDEN_ITER` to hit its cap without ever exiting 0. Needs a stub app
-    that reports a DIFFERENT fabricated `ModuleNotFoundError` each rebuild (e.g. rotating through
-    a small state file), forcing exhaustion for real. Not built speculatively in the audit pass.
-12. **The `PVW_CONDA_EXE` super-user-override's corrupt-conda path (`:corrupt_override_exit`,
-    distinct "fix manually, do not self-heal" messaging) has no CI coverage.** Found via the same
-    audit. `tests/selftest.ps1`'s three existing corruption scenarios
-    (`self.corrupt.conda.detect`/`.heal.decline`/`.heal.accept`) all set `HP_TEST_CORRUPT_CONDA=1`
-    but never `PVW_CONDA_EXE`, so this branch (which deliberately skips self-healing eviction
-    entirely, since the conda root is user-managed, not bootstrapper-owned) is never reached.
-    Needs a 4th scenario setting both `HP_TEST_CORRUPT_CONDA=1` AND `PVW_CONDA_EXE=<path>`,
-    asserting exit code 2 and the manual-fix message. Not built speculatively in the audit pass.
-14. **The three `start "" /wait` external-installer launches (NI-VISA, Miniconda AllUsers,
-    Miniconda JustMe) have no process-level timeout, unlike this file's deliberately-wrapped
-    user-code launches.** Found via the 2026-07-25 retry/loop-bound audit (see Closed Backlog for
-    the sibling NI-VISA curl-download timeout fix from the same audit, already shipped). Not fixed
-    here on purpose: these launch REAL installer processes, and force-killing one mid-write (the
-    same `.NET Process` + `WaitForExit(ms)` + `Kill()` pattern already used for user-code
-    verification runs) risks leaving a genuinely corrupted, half-installed target directory --
-    registry entries written but files missing, or vice versa -- a materially worse outcome than
-    the installer simply hanging. A correct fix needs real design work first (e.g., detecting a
-    stalled install via some other signal and surfacing it to the user rather than force-killing,
-    or a much longer grace period than the ~30s used for user-code verification), not a mechanical
-    copy of the existing kill-after-timeout pattern. Revisit if a real stuck-installer report ever
-    surfaces (this repo's own Known Findings entry on NI-VISA already documents that the one
-    tested environment fails FAST, ~10s, not slow -- so this is a theoretical risk so far, not an
-    observed one).
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -960,6 +904,210 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **`HP_PREP_REQUIREMENTS` canonical-source promotion (Active Backlog item 8), 2026-07-25,
+  `/goal`-directed close-out pass.** New `tools/prep_requirements.py`, a byte-for-byte decode of
+  the CURRENTLY embedded payload with deliberately NO header comment added (unlike all 17 other
+  promoted payloads), plus a new `PayloadSync` test class in `tests/test_heuristics.py`.
+  - **Resolves the item's core ask (canonical source + drift-detection test) without the
+    originally-assumed prerequisite (shrinking the file to recover margin for a header
+    comment).** Re-reading the backlog item's own wording, "proper promotion" implicitly assumed
+    stylistic parity with the other 12 (now 17) promoted payloads, all of which carry a header
+    comment -- but nothing about the `PayloadSync`/canonical-source MECHANISM actually requires
+    one. Confirmed via `tools/sync_payload.py --check` that the byte-for-byte decode is trivially
+    "already in sync" (304-char margin unchanged, zero cost) -- promotion and margin recovery are
+    separable concerns, and only the margin-recovery half remains genuinely deferred (still
+    correctly gated on the future helper-function-shrinking work the item originally described).
+  - **Found and fixed a real, unrelated documentation-drift bug while updating README.md's
+    payload inventory table to include this promotion**: the table's own header claimed "18
+    embedded payloads, 14 with canonical source" -- re-counting the file's ACTUAL current base64
+    payload declarations found 21 total (now 22 after this session's Active Backlog item 14 added
+    `HP_INSTALLER_TIMEOUT`), 18 with canonical source. Two payloads (`HP_EXE_SMOKERUN` ->
+    `tools/exe_smokerun.ps1`, `HP_PEP723_WRITEBACK` -> `tools/pep723_writeback.py`) had gained
+    real canonical sources and `PayloadSync` tests in earlier work this repo has already shipped,
+    but the README's own summary paragraph was never updated to include them -- a real, if
+    cosmetic, drift between the doc and the code it describes. Corrected the count and both
+    payloads' entries in the same commit.
+
+- **Remaining Active Backlog items reviewed, 2026-07-25, `/goal`-directed close-out pass -- no
+  new information changes any of these; each remains correctly deferred for the reason already
+  on record.** Re-read items 1 (conda-full lane duration), 3 (env-var boilerplate dedup in
+  `selfapps_ux_hardening.ps1`), 4 (PYSPEC-aware venv-vs-embed decision function), 7's remaining
+  gating-lane half (`if: always()` hardening across ~50 `real`/`conda-full` steps), and 9
+  (cascade-consent-vs-postexec-offers ordering) against the current state of the codebase before
+  leaving them untouched, rather than assuming the existing text still applies without checking:
+  - **Item 1** (conda-full ~80min lane duration): no new CI timing data gathered in this pass;
+    remains a periodic-reassessment item, not a one-time fix. No action.
+  - **Item 3** (~85 duplicated lines in `selfapps_ux_hardening.ps1`): confirmed the file and its
+    two named blocks (`self.embed.fallback.decline`/`.real`) are unchanged since the item was
+    written; the "each block needs real, different parameterization" reasoning still holds.
+    Cosmetic; still correctly deferred until a change to those specific blocks is already in
+    flight for another reason.
+  - **Item 4** (PYSPEC-aware venv-vs-embed decision): confirmed `:try_venv_fallback` still uses
+    the ambient Python unconditionally with no `PYSPEC` check; no new evidence of the
+    network-correlated-embed-failure pattern the item's own "revisit if" trigger names. Not
+    pursued -- still speculative complexity with no concrete trigger yet.
+  - **Item 7 (gating-lane half)**: confirmed via a fresh grep of `.github/workflows/batch-check.yml`
+    that no step restricted to `real`/`conda-full` currently carries `continue-on-error: true` (a
+    fact this session's own item-11 work independently re-derived and relied on, see that closed
+    entry above) -- the gating-lane half of this item remains exactly as risky and
+    disproportionate to fix as a drive-by change as originally reasoned (touches ~50 existing step
+    definitions across two lanes that already work correctly when nothing fails). Deliberately not
+    attempted in this pass; the two reasons on record (would need `if: always()` on steps after
+    the risk point in a job that already works today, and no evidence yet of this class of gap
+    actually hiding a real regression) both still hold.
+  - **Item 9** (cascade consent granted before postexec offers fire): re-traced the exact call
+    chain (`:warnfix_cascade_detect`/`:cascade_consent_gate` before `:run_exe_smokerun`/
+    `:run_postexec_checkpoint`/`:offer_optimized_build`) and confirmed it is unchanged since the
+    item was written. This is the one item of the five that is NOT a "no new information" case in
+    the same way as the others -- it is a genuine, unresolved UX design question (does a user who
+    already said "yes, try the next provider" still want to see how the CURRENT,
+    soon-to-be-replaced build performs?) with two reasonable answers and no way to pick one from
+    the code alone. Per this pass's own instruction to document open questions to the maintainer
+    rather than resolve them unilaterally: **this question is posed here, explicitly, for the
+    maintainer to answer** -- either (a) reorder cascade consent to be asked AFTER the current
+    build's own postexec offers, or (b) gate both offers on `HP_CASCADE_APPROVED` being unset. No
+    code change made pending that answer.
+
+- **Hidden-import auto-recovery exhaustion coverage (Active Backlog item 11), 2026-07-25,
+  `/goal`-directed close-out pass.** New `tests/selfapps_hidden_import_exhaust.ps1`
+  (real/conda-full lanes, same gating as its sibling `selfapps_hidden_import.ps1`): a stub app
+  rotates through 3 distinct, always-installed (`colorama`/`six`/`certifi`, declared in
+  `requirements.txt`) fabricated `ModuleNotFoundError` messages via a small state file next to
+  the EXE that survives across the recovery loop's own rebuilds. **Distinctness is load-bearing,
+  not cosmetic**: `~hidden_import_scan.py`'s own tried-list exclusion means a REPEATED module
+  name is treated as already-fixed and returns nothing, which would stop the loop via the
+  existing "no next hidden import found" exit well before the 3-iteration cap this test needs to
+  reach -- traced the exact launch sequence (the pre-loop smoke run's fabricated module is never
+  scanned at all, so only the loop's own 4 launches matter) to confirm 3 rotating modules,
+  starting at state index 1 for the loop's first launch, produces exactly 3 distinct discoveries
+  before the 4th launch hits the iteration cap. Asserts exactly 3 `Adding --hidden-import=`
+  lines (proves the loop stopped at the cap, not an early exhaustion-of-distinct-modules exit),
+  the exhaustion WARN line, the absence of the recovery-succeeded line, and
+  `~bootstrap.status.json` still reading `state=ok` (the user program's own perpetual failure is
+  not a bootstrapper failure, per the existing "User-code exit-code semantics" Known Finding).
+  Landed directly in the gating `real`/`conda-full` lanes (no `continue-on-error`), matching its
+  sibling test exactly -- confirmed no existing precedent in this repo for step-level
+  `continue-on-error` within those two lanes (Active Backlog item 7's own gating-lane distinction
+  applies at job level, not step level), and the underlying mechanism (fabricated stderr text +
+  requirements.txt-declared modules) is already proven safe by the sibling test.
+
+- **`PVW_CONDA_EXE` super-user-override's corrupt-conda path (`:corrupt_override_exit`) CI
+  coverage (Active Backlog item 12), 2026-07-25, `/goal`-directed close-out pass.** New 4th
+  scenario in `tests/selftest.ps1` (`self.corrupt.conda.override_exit`), added right after the
+  three existing `self.corrupt.conda.*` scenarios: sets `PVW_CONDA_EXE=<a placeholder path that
+  does not need to exist>` + `HP_TEST_CORRUPT_CONDA=1`, asserting exit code 2, the distinct
+  `[ERROR] Corrupt user-managed conda (PVW_CONDA_EXE); fix manually.` log message, and the
+  on-screen "Automatic self-healing is not available for user-managed conda." guidance.
+  - **Turned out simpler than item 10 (no CI-ordering dependency), confirmed by tracing the code
+    rather than assuming symmetry with the other three scenarios.** The three existing
+    `self.corrupt.conda.*` scenarios are gated on `$condaBatOnDisk` (real Miniconda already
+    installed from an earlier step in the same job) because they rely on `:select_conda_bat`
+    finding a genuine `conda.bat` on disk. This new scenario does NOT need that: `run_setup.bat`
+    unconditionally sets `CONDA_BAT=%PVW_CONDA_EXE%` the moment `PVW_CONDA_EXE` is defined
+    (`run_setup.bat` ~line 651), BEFORE the Miniconda install-if-missing block even runs -- so
+    `if defined CONDA_BAT` (the corruption-check gate) is satisfied regardless of whether
+    Miniconda was ever installed anywhere in the job, and `HP_TEST_CORRUPT_CONDA=1` routes
+    straight to `:conda_binary_corrupt` before `"%CONDA_BAT%" info` is ever actually invoked --
+    so the placeholder path never needs to exist or be a real conda binary. Self-contained by
+    construction; not gated on `$condaBatOnDisk` at all.
+
+- **`:tci_both_failed` (Miniconda install fails under BOTH AllUsers and JustMe) CI coverage
+  (Active Backlog item 10), 2026-07-25, `/goal`-directed close-out pass.** New hook
+  `HP_TEST_FORCE_JUSTME_FAIL=1` (`run_setup.bat`, `:tci_justme`) deterministically skips the real
+  JustMe `start "" /wait` call and forces a nonzero result; combined with the already-existing
+  `HP_TEST_NOT_ELEVATED=1` (reaches `:tci_justme` by skipping straight past the AllUsers attempt),
+  reaches `:tci_both_failed -> :die "[ERROR] Miniconda install failed (both AllUsers and
+  JustMe)."` without depending on a genuinely broken installer/ACL environment.
+  - **A real CI-ordering constraint was discovered while scoping the test, not anticipated by
+    the original backlog text** ("plus a new or extended selfapps scenario" undersold the actual
+    difficulty): Miniconda installs to the SHARED, machine-wide `%PUBLIC%\Documents\Miniconda3`
+    path, not a per-test-directory location. If Miniconda was already installed by an EARLIER
+    step in the same CI job (the main "Bootstrap environment" step, or an earlier selfapps script
+    that forces conda -- e.g. `self.cascade.exec`, which cascades uv -> conda), `:try_conda_
+    install`'s own top-level gate (`if not defined CONDA_BAT (...)`) would find `conda.bat`
+    already present and skip the install block entirely, silently making this test's hooks
+    unreachable regardless of how correct they are. New `tests/selfapps_conda_bothfail.ps1`
+    (uv lane, non-gating) is wired into `batch-check.yml` immediately BEFORE the provider-
+    cascade-exec step specifically to guarantee conda genuinely isn't installed yet when it
+    runs -- the `uv` lane's own main bootstrap step normally succeeds via uv alone (no Miniconda
+    installed), so this ordering reliably holds today. Documented as load-bearing in both the
+    workflow YAML's own comment and `docs/agent-ndjson.md`'s new section, so a future CI reorder
+    doesn't silently break this test's premise.
+  - Asserts the `HP_TEST_NOT_ELEVATED` skip line, the `HP_TEST_FORCE_JUSTME_FAIL` hook-fired
+    line, the exact `:tci_both_failed` `[ERROR]` message, and `~bootstrap.status.json` reading
+    `state=error` -- not process exit code, matching this repo's established "graceful stop"
+    contract for `:die`-triggered failures (`:success`'s own `exit /b 0` runs unconditionally
+    regardless of `HP_BOOTSTRAP_STATE`).
+
+- **Timeout ceiling for the three `start "" /wait` external-installer launches (Active Backlog
+  item 14), owner-directed via `/goal` ("It's ok to make the start "" /wait timeout extra long
+  to be conservative... check online for times... visa and Conda likely take longest, ni at
+  least half hour"), 2026-07-25.** Reopens and resolves the item this same doc had previously
+  closed-as-deliberately-deferred: the earlier reasoning (force-killing a real installer
+  mid-write risks a worse outcome than a slow-but-succeeding install -- a genuinely corrupted
+  half-installed target) is still correct and is exactly why this fix is a *generous safety
+  ceiling*, not a responsiveness check -- but the owner's explicit direction to research real
+  durations and pick a conservative-but-bounded value removed the "needs real design work
+  first" blocker that had stalled it.
+  - **Research (not guessed)**: Miniconda's Windows silent installer has a directly-corroborated
+    real-world report of a 40+ minute install (Travis CI Community forum, "Installing
+    Anaconda/Miniconda times out after 40 minutes"), plus multiple `conda/conda` and
+    `ContinuumIO/anaconda-issues` GitHub issues reporting the installer hanging indefinitely at
+    extraction or the post-install script (no duration, but confirms "eventually finishes" is
+    not guaranteed). NI-VISA itself has no hard duration figure in public reports (only
+    "stuck at 0%" complaints with no elapsed time), but the shared underlying NI
+    Package-Manager-family installer stack has a directly-relevant NI Community report of
+    installs/repairs taking multi-hour durations, explicitly attributed to antivirus scanning
+    every file the installer writes.
+  - **Chosen ceilings**: 60 minutes (3,600,000 ms) for both Miniconda AllUsers and Miniconda
+    JustMe (generous headroom above the documented ~40 min real-world duration); 90 minutes
+    (5,400,000 ms) for NI-VISA (satisfies the owner's explicit "at least half hour" floor with
+    real margin for the AV-scanning-heavy scenarios the NI Package Manager family reports show,
+    while staying well short of that family's multi-hour extreme outlier -- this repo's own
+    Known Findings entry separately confirms NI-VISA fails FAST, ~10s, in THIS CI environment,
+    so 90 minutes is deliberately generous headroom for a real user's machine, not a value tuned
+    to this repo's own CI experience).
+  - **Implementation**: new `tools/run_installer_with_timeout.ps1` (canonical source for the new
+    `HP_INSTALLER_TIMEOUT` embedded payload, added via `tools/sync_payload.py` -- the first real
+    user of the tool built in the immediately-preceding tooling pass), following the established
+    `.NET Process` + `WaitForExit(ms)` pattern from `tools/exe_smokerun.ps1`/
+    `tools/failfast_probe.ps1`, but with two deliberate differences from those: (1)
+    `UseShellExecute=$true` (not `$false`) to preserve the same UAC-elevation-via-manifest
+    behavior plain `start "" /wait` already had -- these installers may need elevation, unlike
+    user-code launches; no stdout/stderr redirection is needed since the installers run silently
+    (`/S`, `--quiet`); (2) on timeout, `taskkill.exe /F /T /PID <pid>` instead of
+    `$p.Kill()` -- Windows PowerShell 5.1 (.NET Framework)'s `Process.Kill()` has no
+    process-tree-kill overload (that's a .NET Core 3.0+ addition this runtime doesn't have), and
+    this repo's own existing NI-VISA comment already notes "NI installers may spawn child
+    processes," so a tree-kill is needed to avoid orphaning a sub-installer. New
+    `:run_installer_timeout` subroutine in `run_setup.bat` (goto-based dispatch throughout, per
+    "Provider-cascade dispatch is goto-based on purpose" in `docs/agent-lessons-learned.md` --
+    the result-file read via `for /f` sets two variables that a later top-level, freshly-parsed
+    line then reads, never inside the same parenthesized block) wraps all three call sites;
+    returns the installer's real exit code (or `1` on timeout) via errorlevel, so each caller's
+    existing `if errorlevel 1 goto ...` needed no change. Falls back to the OLD untimed
+    `start "" /wait` behavior if the helper payload cannot be emitted to disk (extremely rare --
+    disk/permission failure), so a helper-emission problem can never make an installer
+    unreachable outright.
+  - **Tests**: new `tests/test_run_installer_with_timeout.py` (8 tests, exercised end-to-end via
+    real `pwsh` subprocesses, mirroring `tests/test_exe_smokerun.py`'s established pattern) --
+    fast-exit result capture, argument forwarding (a single pre-assembled Arguments string,
+    matching `HP_PROBE_ARGS`'s own "caller provides a ready string" contract), the
+    timeout-detection path (confirmed the result file correctly reports `1|1` even on this
+    non-Windows test host, where `taskkill.exe` genuinely doesn't exist and the script's own
+    `try/catch` swallows that cleanly -- the actual process-tree kill itself can only be
+    confirmed on real Windows CI), result-path override, `PayloadSync` byte-equality, and a
+    regression guard scanning `run_setup.bat` for any bare (untimed) `start "" /wait` installer
+    launch that should have been routed through the subroutine. **Found and fixed two of my own
+    test-authoring bugs while verifying locally, both before committing**: (1) an argv-forwarding
+    assertion expected the script's own path to appear in `sys.argv[1:]`, which is wrong --
+    `sys.argv[0]` is the script path, excluded from the `[1:]` slice the stub script actually
+    writes; (2) the timeout-path test hung past its own `subprocess.run(timeout=...)` because
+    `capture_output=True`'s real pipes block on EOF, and the orphaned grandchild (left running
+    since `taskkill.exe` isn't present on this Linux test host) inherits and holds those pipes
+    open even after the direct `pwsh` child has exited -- fixed by redirecting to `DEVNULL`
+    instead of a pipe for that one test, which doesn't block on EOF.
 
 - **Tooling pass, owner-requested 2026-07-25 ("Update check delimiters to catch the rem space...
   see if there are any other lessons learned that can be baked into tools... expand the tools

@@ -1172,6 +1172,59 @@ if ($healAcceptExit -eq 0 -and $healAcceptEvictMsgFound -and $healAcceptState -e
   $summary.Add('Corrupt conda tests: SKIP (miniconda-not-on-disk)')
 }
 
+# --- Conda binary corruption, PVW_CONDA_EXE super-user-override path (CLAUDE.md Active
+#     Backlog item 12) ---
+# Arrange: PVW_CONDA_EXE=<any path, does not need to exist -- HP_TEST_CORRUPT_CONDA=1 routes
+#          straight to :conda_binary_corrupt before "%CONDA_BAT%" info is ever actually called>
+#          + HP_TEST_CORRUPT_CONDA=1. Unlike the three scenarios above, this one does NOT need
+#          real Miniconda pre-installed on disk: run_setup.bat unconditionally sets
+#          CONDA_BAT=%PVW_CONDA_EXE% the moment PVW_CONDA_EXE is defined (before the Miniconda
+#          install-if-missing block even runs), so "if defined CONDA_BAT" is satisfied and the
+#          corruption-check gate fires regardless of whether Miniconda was ever installed
+#          anywhere in this job -- self-contained by construction, no CI-ordering dependency.
+# Assert:  :conda_binary_corrupt routes to :corrupt_override_exit (skipping self-heal entirely,
+#          since the conda root is user-managed, not bootstrapper-owned) -- bootstrap exits 2,
+#          logs the distinct "fix manually" error, and the on-screen guidance names the
+#          PVW_CONDA_EXE path and says automatic self-healing is unavailable.
+$overrideDir = Join-Path $TestsDir '~selftest_corrupt_override'
+if (Test-Path $overrideDir) { Remove-Item -Recurse -Force $overrideDir }
+New-Item -ItemType Directory -Force -Path $overrideDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $overrideDir -Force
+Set-Content -Path (Join-Path $overrideDir 'app_corrupt_override_test.py') -Value 'print("should-not-reach")' -Encoding ASCII
+$overrideLogName = '~corrupt_override_bootstrap.log'
+$fakeCondaExe = Join-Path $overrideDir 'fake_user_managed_conda.bat'
+$env:HP_TEST_CORRUPT_CONDA = '1'
+$prevPvwCondaExe = if (Test-Path Env:PVW_CONDA_EXE) { $env:PVW_CONDA_EXE } else { $null }
+$env:PVW_CONDA_EXE = $fakeCondaExe
+$prevCILaneOverride = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $overrideDir
+try {
+  cmd /c "call run_setup.bat > $overrideLogName 2>&1"
+  $overrideExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_CORRUPT_CONDA = ''
+  if ($null -eq $prevPvwCondaExe) { Remove-Item Env:PVW_CONDA_EXE -ErrorAction SilentlyContinue } else { $env:PVW_CONDA_EXE = $prevPvwCondaExe }
+  $env:HP_CI_LANE = $prevCILaneOverride
+}
+$overrideLogPath = Join-Path $overrideDir $overrideLogName
+$overrideLines = if (Test-Path $overrideLogPath) { Get-Content -LiteralPath $overrideLogPath -Encoding ASCII } else { @() }
+$overrideMsgFound = ($overrideLines | Where-Object { $_ -like '*Corrupt user-managed conda (PVW_CONDA_EXE); fix manually.*' }).Count -gt 0
+$overrideGuidanceFound = ($overrideLines | Where-Object { $_ -like '*Automatic self-healing is not available for user-managed conda.*' }).Count -gt 0
+Write-NdjsonRow ([ordered]@{
+  id      = 'self.corrupt.conda.override_exit'
+  req     = 'REQ-020'
+  pass    = ($overrideExit -eq 2 -and $overrideMsgFound -and $overrideGuidanceFound)
+  desc    = 'PVW_CONDA_EXE + HP_TEST_CORRUPT_CONDA=1: self-heal skipped for user-managed conda, exits 2 with manual-fix guidance'
+  details = [ordered]@{ exitCode = $overrideExit; msgFound = $overrideMsgFound; guidanceFound = $overrideGuidanceFound }
+})
+if ($overrideExit -eq 2 -and $overrideMsgFound -and $overrideGuidanceFound) {
+  $summary.Add('Corrupt conda PVW_CONDA_EXE override: PASS')
+} else {
+  $summary.Add('Corrupt conda PVW_CONDA_EXE override: FAIL')
+}
+
 # --- UV binary corruption eviction test (REQ-020 Task 4) ---
 # Arrange: create fake ~uv_bin\uv.exe + HP_TEST_CORRUPT_UV=1 simulates corrupt cached uv binary.
 # Assert:  bootstrap logs the eviction warning.

@@ -748,26 +748,34 @@ PY
 Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` with the new base64 text. The batch file comments point back to this section when further guidance is needed.
 
 **Payload inventory and PayloadSync coverage** (added so this is visible at a glance, instead of
-needing to grep the batch file or a research pass to find out): of the 18 embedded `HP_*`
-payloads, 14 have a canonical `tools/` source file *and* a dedicated `PayloadSync` unit test that
-asserts the embedded base64 is byte-for-byte in sync with that source (`HP_AUTOPEP_MERGE` ->
-`tools/autopep_merge.py`, `HP_COLLECT_SUBMODULES` ->
+needing to grep the batch file or a research pass to find out; re-audited 2026-07-25 against the
+file's actual current contents rather than trusting the previous count, which had drifted --
+`HP_EXE_SMOKERUN` and `HP_PEP723_WRITEBACK` had gained canonical sources without this paragraph
+ever being updated). Of the 21 embedded `HP_*` payloads, 18 have a canonical `tools/` source file
+*and* a dedicated `PayloadSync` unit test that asserts the embedded base64 is byte-for-byte in
+sync with that source (`HP_AUTOPEP_MERGE` -> `tools/autopep_merge.py`, `HP_COLLECT_SUBMODULES` ->
 `tools/collect_submodules.py`, `HP_DEP_CHECK` -> `tools/dep_check.py`, `HP_DETECT_PY` ->
 `tools/detect_python.py`, `HP_DETECT_VISA` -> `tools/detect_visa.py`, `HP_EMBED_EXTRACT` ->
 `tools/embed_extract.ps1`, `HP_EMBED_PYVER_CHECK` -> `tools/embed_pyver_check.py`, `HP_ENV_STATE`
--> `tools/env_state.py`, `HP_FAILFAST_PROBE` -> `tools/failfast_probe.ps1`, `HP_FIND_ENTRY` ->
-`tools/find_entry.py`, `HP_HIDDEN_IMPORT_SCAN` -> `tools/hidden_import_scan.py`, `HP_PARSE_WARN`
--> `tools/parse_warn.py`, `HP_PVW_IDEMPOTENT` -> `tools/pvw_known_idempotent.py`, `HP_PYPROJ_DEPS`
--> `tools/pyproj_deps.py`; each is exercised by the matching `tests/test_*.py` file). The
-remaining 4 (`HP_CONDARC`, `HP_FAST_CHECK`,
-`HP_PREP_REQUIREMENTS`, `HP_PRINT_PYVER`) are embedded-only, with no separate canonical source to
-sync against -- `HP_CONDARC` is static config text, not code, so this doesn't apply to it;
-`HP_FAST_CHECK` and `HP_PREP_REQUIREMENTS` at least have their *logic* covered by
-`tests/test_fast_check_pattern.py` / `tests/test_heuristics.py` (extracted and tested in place,
-just not against a separate source file). `HP_PRINT_PYVER` is a trivial one-liner
+-> `tools/env_state.py`, `HP_EXE_SMOKERUN` -> `tools/exe_smokerun.ps1`, `HP_FAILFAST_PROBE` ->
+`tools/failfast_probe.ps1`, `HP_FIND_ENTRY` -> `tools/find_entry.py`, `HP_HIDDEN_IMPORT_SCAN` ->
+`tools/hidden_import_scan.py`, `HP_INSTALLER_TIMEOUT` -> `tools/run_installer_with_timeout.ps1`,
+`HP_PARSE_WARN` -> `tools/parse_warn.py`, `HP_PEP723_WRITEBACK` -> `tools/pep723_writeback.py`,
+`HP_PREP_REQUIREMENTS` -> `tools/prep_requirements.py`, `HP_PVW_IDEMPOTENT` ->
+`tools/pvw_known_idempotent.py`, `HP_PYPROJ_DEPS` -> `tools/pyproj_deps.py`; each is exercised by
+the matching `tests/test_*.py` file). `HP_PREP_REQUIREMENTS` is a deliberate partial case: its
+canonical source is a byte-for-byte decode of the currently embedded payload with NO header
+comment added (unlike the other 17), since this payload's CMD 8191-char line budget is the
+tightest in the whole file (304-char margin) -- even a minimal "canonical source" pointer would
+cost more margin than is safely available; see the `PayloadSync` test in
+`tests/test_heuristics.py` for the full reasoning. The remaining 3 (`HP_CONDARC`, `HP_FAST_CHECK`,
+`HP_PRINT_PYVER`) are embedded-only, with no separate canonical source to sync against --
+`HP_CONDARC` is static config text, not code, so this doesn't apply to it; `HP_FAST_CHECK` at
+least has its *logic* covered by `tests/test_fast_check_pattern.py` (extracted and tested in
+place, just not against a separate source file). `HP_PRINT_PYVER` is a trivial one-liner
 (`print(f"python-{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")`) with no
 branching logic to test. Any *new* embedded payload should default to the
-canonical-source-plus-`PayloadSync` pattern from the start rather than adding a 5th embedded-only
+canonical-source-plus-`PayloadSync` pattern from the start rather than adding a 4th embedded-only
 exception.
 
 ## How CI decides pass/fail
