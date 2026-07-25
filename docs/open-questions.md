@@ -9,119 +9,100 @@ changelog-style sections are for.
 
 ---
 
-## 1. Cascade-to-next-provider prompt fires before the user has seen the current build run -- what should happen to the two follow-up offers?
+## 1. Should the cascade decision remain an interruptive consent prompt at all?
 
-**Status: open, needs a maintainer decision. No code has been changed for this yet.**
+**Status: open, needs a maintainer decision. No code changed for this specific question.**
 
-### Plain-language summary of what's actually happening
+**Context**: the original version of this item (cascade prompt firing before the postexec
+offers, wasting the user's time on a build they'd already opted away from) is now RESOLVED and
+shipped -- see CLAUDE.md's Closed Backlog "Cascade-vs-postexec fix" entry and
+`docs/agent-interconnect.md`'s matching subsection for what changed (option (b) was implemented:
+the two elective postexec offers are now skipped once cascade is approved; the smoke run itself
+is deliberately still always run, since skipping it too would leave a kept-on-exhaustion build
+unverified). This item is the narrower, harder question that surfaced while investigating that
+fix: should the underlying signal (`HP_CASCADE_CANDIDATE`) keep triggering an interruptive
+consent prompt at all, given how mixed its reliability actually is once traced through?
 
-The bootstrapper tries a sequence of ways to get Python and your packages working, in this
-order: **uv** (fastest, tried first) -> **conda** (Miniconda) -> a fresh **embedded Python**
-download -> a plain **venv** -> whatever Python is **already on the machine** (last resort).
-Each of these is called a "provider." Most runs succeed on the first provider (uv) and never
-touch any of this.
+### What "couldn't get everything working" actually means, precisely
 
-After building the `.exe` (via PyInstaller, the packaging tool), the bootstrapper checks
-PyInstaller's own "this module wasn't found" warnings and tries to install anything obviously
-missing, then rebuilds once (this repair step is called "warnfix"). If that repair *still*
-can't resolve everything under the CURRENT provider, the bootstrapper can offer to retry the
-whole dependency-install step again from scratch under the NEXT provider in the list (e.g. "uv
-couldn't get everything working, want to try conda instead?"). That retry offer is called the
-**cascade consent prompt**.
+Two build-time, static signals, BOTH required before a cascade is even offered (`:warnfix_
+cascade_detect` in `run_setup.bat`):
+- **Signal A**: PyInstaller's own warn file (a list of imports its static analyzer couldn't
+  resolve while building the `.exe`) still lists something, even AFTER a repair-install attempt
+  and a rebuild.
+- **Signal B**: at least one specific `pip install <package>` / `conda install <package>` repair
+  command, during that same repair round, itself returned a real, nonzero exit code.
 
-Separately, AFTER the `.exe` has been run once to confirm it works ("post-execution", or
-**postexec**), there are two more OPTIONAL, purely elective prompts a real (non-CI) user can
-see:
-- The **postexec checkpoint**: "want to run your program again right now, just to double
-  check?"
-- The **optimized-build offer** (requirement 9): "want me to also build a second, faster/leaner
-  version of your `.exe` using a different build tool (Nuitka)?" -- this one can take a minute
-  or more.
+This is **never based on running the `.exe`** -- the cascade decision happens entirely before
+the app is ever launched. It's also **narrower than "any warnfix repair failure"**: most apps
+that need any repair at all get fixed cleanly by a single install (case 1 below) -- the
+requirement for BOTH signals together is what makes this genuinely uncommon, not the base rate
+of warnfix repairs needed.
 
-### The actual question
+### Truth table: what each combination means and how confident the signal actually is
 
-Traced directly in the code (`run_setup.bat`, high confidence -- this is a literal read of the
-call order, not an inference): the **cascade consent prompt is asked FIRST**, before the `.exe`
-is even run to verify it. Then, regardless of whether the user said yes or no to the cascade,
-the bootstrapper goes ahead and runs the `.exe` anyway (it always has to, for its own logging),
-and then shows BOTH of the postexec prompts above -- for the SAME build the user may have just
-said "no thanks, try something else" to. Only after all of that does the bootstrapper actually
-act on the cascade answer and retry under the next provider.
+| Signal A (still unresolved) | Signal B (an install genuinely failed) | Cascade offered? | What it usually means | Est. odds the `.exe` still runs fine |
+|---|---|---|---|---|
+| No | No | No | Repair fully worked, or nothing was needed. The common case. | Very high (~95%+) |
+| No | Yes | No | An install command failed, but the rebuild's own scan came back clean anyway -- either that import was a false positive PyInstaller flags but doesn't actually need, or something else in the same round resolved it. Matches the "the failure flag was wrong / it wasn't actually needed" scenario directly. | High (~80-90%) |
+| Yes | No | No | A real gap the design doesn't catch: the repair round's OWN installs can pull in a brand-new import PyInstaller now also flags, which the repair loop never targeted (so nothing "failed" for it) -- the confidence gate doesn't distinguish this from noise. | Medium (~60-70%) |
+| Yes | Yes | **Yes** | The actual trigger: a real install failure AND a persistent static-analysis gap. The strongest available signal, but still not proof the app will crash. | Lower, and audience-dependent (~25-40% -- see below) |
 
-So a real interactive user who hits this can see, in order: "Want to try a different way?" ->
-(says yes) -> "Want to run this one again?" -> "Want to spend a minute building an optimized
-version of this one?" -> *then* it finally moves on to the different way they asked for two
-questions ago. See `docs/agent-interconnect.md`'s "Post-execution checkpoint" and "AV-Safe
-Build Path requirement 9" sections for the exact subroutine-by-subroutine trace
-(`:warnfix_cascade_detect` / `:cascade_consent_gate` -> `:run_exe_smokerun` ->
-`:run_postexec_checkpoint` -> `:offer_optimized_build`, with the cascade retry only happening
-after all of that returns to the main line).
+### Row 4 in more depth (the one that actually reaches the user)
 
-### Why is the cascade question asked before the user has even seen the current build run?
+**Could the `.exe` still succeed even with a genuine (A=yes, B=yes) signal?** Yes, plausibly --
+PyInstaller's warn file is a whole-codebase static scan, not proof a specific code path
+executes. An optional feature behind `try/except ImportError`, a rarely-used branch, or a
+type-checking-only import would all trigger this signal without the main flow ever needing it.
+Against that: this bootstrapper's own stated audience is beginners with straightforward scripts,
+where a top-level, unconditionally-used import is common -- so an outright crash is plausibly
+MORE likely than not, just not overwhelming. These percentages are informed estimates from
+reasoning through the mechanism, not measured production telemetry -- there's no real usage data
+to check them against.
 
-This is not an oversight so much as an unresolved design tension. The cascade question is
-triggered by objective evidence the bootstrapper already has -- warnfix's own repair-install
-attempt genuinely failed to resolve a dependency -- not a guess. In that sense, asking early is
-defensible: the tool already knows this build probably won't work right, so there's an argument
-for offering an alternative before spending more of the user's time on it. The problem isn't
-really the early ask; it's that the bootstrapper doesn't *also* remember that answer when it
-gets to the two follow-up prompts a few seconds later.
+**Could the NEXT provider actually help, given this signal?** It depends entirely on WHICH hop,
+and the bootstrapper has no way to tell which:
+- **uv -> conda**: the one hop with real, mechanism-level justification. conda-forge is a
+  genuinely different package index from PyPI, with different maintainers and (crucially)
+  pre-built binaries for some native-extension packages that are notoriously hard to get right
+  via pip on Windows. A meaningfully better chance here, though 0% if the package is genuinely
+  absent from every index (a translation-table bug, or a nonexistent/private package name).
+- **conda -> embed -> venv -> system**: all of these still install via plain pip against PyPI
+  once bootstrapped -- functionally the SAME resolution mechanism uv already tried, just in a
+  fresh environment. They only help if the root cause was environment-specific (a stale cache, a
+  `PYTHONPATH`/`VIRTUAL_ENV` conflict, a uv-specific bug), not genuine package unavailability --
+  and if uv AND conda have BOTH already reached this exact state, that's some evidence against a
+  simple environment glitch. Meaningfully lower odds of success on these later hops.
 
-### What actually happens if the user proceeds anyway (today's behavior, unfixed)
+This directly supports (with a real mechanism behind it, not just intuition) the "extra credit"
+idea floated alongside the original question: telling the user conda has a decent, justified
+chance while later tiers don't. **Deliberately not implemented in this pass** -- it was flagged
+as possibly too risky to be wrong and too complex to be robust, and this analysis doesn't fully
+resolve that concern: it supports the GENERAL, qualitative claim (a different package index has
+real value; retrying the same one doesn't), but the bootstrapper still has no way to know the
+TRUE root cause for any specific package, so a stronger per-package claim would be overreach.
 
-Nothing breaks, and nothing is lost -- this is a UX/wasted-time issue, not a correctness bug:
-- Declining both follow-up prompts: harmless. Just two extra, confusing y/n prompts to read and
-  click through for a build the user just moved on from. Costs a few seconds of attention.
-- Accepting "run it again?": harmless. Wastes a few seconds re-running a build already known to
-  have an issue; that run's result is tracked separately and never affects the final outcome.
-- Accepting "build an optimized version?": the costliest case. Nuitka (the alternate build tool)
-  can take a minute or more, and the resulting optimized `.exe` almost certainly has the exact
-  same missing-dependency problem, since nothing about the environment has changed yet -- the
-  cascade retry hasn't happened. Worse, even if it somehow succeeds, this optimized build gets
-  silently overwritten once the cascade to the next provider actually runs and rebuilds from
-  scratch -- so accepting it is pure wasted time with zero lasting benefit.
+### The actual open question
 
-In short: proceeding "wrong" here never produces an incorrect final result or a stuck bootstrap
--- it only burns a real, watching user's time and attention on decisions about a build the tool
-has already provisionally written off. This never happens in CI (all these prompts auto-decline
-under `HP_CI_LANE`), and it only happens at all when warnfix's own repair genuinely fails to fix
-everything -- most runs never reach this path.
+Given how mixed row 4's own reliability is (an estimated 60-75% chance of a real problem, not a
+certainty), is an INTERRUPTIVE consent prompt still the right mechanism for this signal? Three
+shapes this could take, roughly in order of how much they change from today:
+1. **Keep it exactly as-is** (current shipped state): a timed, decline-by-default consent
+   prompt, with the "dependencies may be incomplete" note now added for the decline path (see
+   the Closed Backlog entry). Simple, already shipped, but still asks a yes/no question based on
+   a signal that's wrong roughly a quarter to two-fifths of the time.
+2. **Auto-cascade without asking**, at least for the highest-value uv->conda hop specifically,
+   since that hop has real mechanism-level justification and conda is the strongest solver this
+   bootstrapper has. Removes an interruption for a genuinely-likely-to-help case, but takes away
+   the user's chance to say "no, I know this is fine, don't waste time redoing the whole
+   dependency install."
+3. **Downgrade to a passive note only**, never a prompt: build once, tell the user honestly that
+   dependencies may be incomplete and cascading MIGHT help, and let them decide to re-run with an
+   explicit opt-in flag if they want the cascade tried, rather than interrupting the default flow
+   at all.
 
-### Options and tradeoffs
-
-**(a) Reorder: ask the cascade question AFTER the postexec offers**, so the flow becomes "verify
-the current build -> offer to run it again / optimize it -> *then* ask about trying a different
-provider."
-- Feels more natural: try the current thing, see how it does, then decide whether to move on.
-- Bigger, riskier change -- touches the call order across several places in `run_setup.bat`, the
-  exact "frail" mechanism there's already reluctance to touch casually.
-- Doesn't actually remove the wasted-time problem, just relocates it: the postexec offers are
-  still made for a build the tool already suspects is broken. If the user accepts the optimized
-  build and THEN says "yes, try a different provider," that optimized build is still thrown away
-  moments later -- same waste, different order.
-
-**(b) Gate: keep the cascade question first (as today), but skip both postexec offers whenever
-the user already agreed to cascade.**
-- Small, self-contained, low-risk fix -- roughly a one-line guard added to two existing
-  subroutine call sites.
-- Directly removes the actual harm: once the user says "yes, try something else," they are not
-  asked two more questions about the thing they're leaving behind.
-- The `.exe` verification run itself still happens quietly in the background either way (it's
-  needed for the bootstrapper's own logging regardless) -- this only suppresses the two OPTIONAL
-  follow-up prompts, not any required plumbing.
-- Leaves the "cascade asked before the build is verified" ordering as-is -- but per the
-  reasoning above, that ordering is arguably already correct, since it's based on real evidence
-  rather than a guess.
-
-### Recommendation
-
-**Option (b).** It is the smaller, safer, more targeted fix -- it removes the actual wasted-time
-problem (two unnecessary prompts about an abandoned build) without reordering the trickier call
-chain in the part of the file everyone is already cautious about touching. The early cascade ask
-isn't really a flaw to fix; asking based on real, already-gathered evidence rather than making
-the user watch a near-certain failure play out first is reasonable on its own. The fix that's
-actually needed is just making the two later, optional prompts respect an answer the bootstrapper
-already has.
-
-If you'd rather have option (a), or a third approach, say so and it can be implemented instead --
-nothing has been changed in the code for this yet.
+No recommendation is made here on this specific question -- unlike the now-resolved postexec
+question, this one trades off real things (interruption cost vs. informed consent vs. wasted
+compute on a cascade that might not help) without an obviously-safer default the way skipping
+two elective prompts was. Says so explicitly rather than picking one to avoid presenting a
+guess as a recommendation.

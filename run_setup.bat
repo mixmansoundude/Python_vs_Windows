@@ -3242,6 +3242,12 @@ if not defined HP_BUILD_OK (
     rem like a PyInstaller-produced EXE (parse_warn/warnfix below is a no-op for it: no warn
     rem file exists, so that block already degrades gracefully per its own "not found" branch).
     set "HP_NUITKA_FALLBACK_USED="
+    rem REQ-009/REQ-005.10 (cascade-vs-postexec fix): reset the "this provider's dependencies
+    rem look incomplete" flag at the start of every fresh build attempt, not just when warnfix
+    rem happens to run again -- a provider that needs no warnfix repair at all must not inherit
+    rem a stale flag left by an earlier, cascaded-away provider's failure. Set (if warranted) and
+    rem consumed further down; see :warnfix_cascade_detect and :warn_user_code_launch.
+    set "HP_DEP_MAYBE_INCOMPLETE="
     if defined HP_TEST_FORCE_PYINSTALLER_FAIL (
       call :log "[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure."
       call :try_nuitka_tier_a
@@ -3374,6 +3380,14 @@ if not defined HP_BUILD_OK (
     set "HP_SPEC_PREEXIST="
     if exist "build\%ENVNAME%" rd /s /q "build\%ENVNAME%" >nul 2>&1
     call :log "[INFO] PyInstaller build artifacts cleaned up."
+    rem REQ-009/REQ-005.10 (cascade-vs-postexec fix): the smoke run itself is NOT skipped here,
+    rem even when HP_CASCADE_APPROVED is set -- approval only means the NEXT provider tier will
+    rem be TRIED; :provider_cascade (reached later, from the top-level main line, once this whole
+    rem subroutine returns) can still find every remaining tier unavailable/declined and fall
+    rem back to "keeping current build" -- the build this smoke run is about to verify. Skipping
+    rem it here would leave that kept build completely unverified in the exhaustion case. Only
+    rem the two ELECTIVE follow-up offers (postexec checkpoint, optimized build) are suppressed,
+    rem inside :smokerun_ndjson below -- see that label's own comment for why that scope is safe.
     call :run_exe_smokerun
   )
 )
@@ -3554,6 +3568,14 @@ if defined HP_CASCADE_CANDIDATE call :cascade_consent_gate
 if defined HP_CASCADE_CANDIDATE if not errorlevel 1 set "HP_CASCADE_APPROVED=1"
 if defined HP_CASCADE_APPROVED call :log "[INFO] REQ-009: cascade approved; will re-attempt under the next provider tier."
 if defined HP_CASCADE_CANDIDATE if not defined HP_CASCADE_APPROVED call :log "[INFO] REQ-009: cascade declined; keeping current build."
+rem Not approved (declined, timed out, or auto-declined in CI) but the candidate signal was
+rem real: set a flag that persists for the rest of THIS provider's attempt (reset at the top of
+rem every fresh build attempt -- see HP_NUITKA_FALLBACK_USED's neighbor above) so later
+rem user-facing messages (:warn_user_code_launch) can add context the bootstrapper otherwise has
+rem no other way to surface. The user may know something the automated install missed and want
+rem to push through anyway -- this is a note, never a second gate.
+if defined HP_CASCADE_CANDIDATE if not defined HP_CASCADE_APPROVED set "HP_DEP_MAYBE_INCOMPLETE=1"
+if defined HP_CASCADE_CANDIDATE if not defined HP_CASCADE_APPROVED call :log "[WARN] REQ-009: dependencies for this provider may still be incomplete. If the run below fails or behaves unexpectedly, re-run and accept the cascade prompt to try a different provider, or check/edit requirements.txt yourself if you believe the automatic install missed something it shouldn't have."
 if exist "~missing_after.txt" del "~missing_after.txt" >nul 2>&1
 exit /b 0
 :pep723_writeback
@@ -3689,20 +3711,48 @@ exit /b 0
 :cascade_consent_gate
 rem REQ-009/REQ-005.10: require explicit consent before cascading to the next provider tier.
 rem CI-safe (mirrors :conda_binary_corrupt heal prompt): HP_TEST_CASCADE_ANSWER (Y/N) overrides;
-rem otherwise HP_CI_LANE auto-declines with no prompt (no set /p hang in CI); interactive users
-rem get a Y/N prompt. exit 0 = approved (cascade), exit 1 = declined (keep the current build).
+rem otherwise HP_CI_LANE auto-declines with no prompt (no wait in CI) UNLESS
+rem HP_TEST_FORCE_INTERACTIVE_CASCADE forces the real-user branch for deterministic CI coverage
+rem of the timed prompt itself (mirrors HP_TEST_FORCE_PICKER's use for :pick_entry_interactive).
+rem A real interactive user gets a TIMED choice /T prompt (default: 30s), not an unbounded
+rem set /p -- if nobody answers in time it defaults to N (decline), so an unattended run still
+rem tries the current build once rather than hanging the whole bootstrap forever. Goto-based
+rem dispatch throughout (not nested parens) so `choice` + `if errorlevel` reads are never inside
+rem a block that could freeze an earlier value -- see docs/agent-lessons-learned.md's
+rem "Provider-cascade dispatch is goto-based on purpose". exit 0 = approved, exit 1 = declined.
 echo.
 echo *** Some dependencies could not be installed under the current Python provider. ***
 echo.
-set "HP_CASCADE_RAW="
-if defined HP_TEST_CASCADE_ANSWER (
-  set "HP_CASCADE_RAW=%HP_TEST_CASCADE_ANSWER%"
-) else if defined HP_CI_LANE (
-  set "HP_CASCADE_RAW=n"
-) else (
-  set /p "HP_CASCADE_RAW=  Try the next Python provider to resolve them? [Y/N] "
-)
+set "HP_CASCADE_CHOICE="
+if defined HP_TEST_CASCADE_ANSWER goto :cascade_consent_from_override
+if defined HP_CI_LANE if not defined HP_TEST_FORCE_INTERACTIVE_CASCADE goto :cascade_consent_ci_decline
+goto :cascade_consent_interactive
+
+:cascade_consent_from_override
+set "HP_CASCADE_RAW=%HP_TEST_CASCADE_ANSWER%"
 set "HP_CASCADE_CHOICE=%HP_CASCADE_RAW:~0,1%"
+goto :cascade_consent_resolve
+
+:cascade_consent_ci_decline
+set "HP_CASCADE_CHOICE=N"
+goto :cascade_consent_resolve
+
+:cascade_consent_interactive
+set "HP_CASCADE_T=30"
+if defined HP_TEST_FORCE_INTERACTIVE_CASCADE set "HP_CASCADE_T=2"
+where choice >nul 2>&1
+if errorlevel 1 goto :cascade_consent_no_choice_exe
+choice /C YN /N /T %HP_CASCADE_T% /D N /M "  Try the next Python provider to resolve them? [Y/N, defaults to N after %HP_CASCADE_T%s] "
+if errorlevel 2 goto :cascade_consent_ci_decline
+set "HP_CASCADE_CHOICE=Y"
+goto :cascade_consent_resolve
+
+:cascade_consent_no_choice_exe
+rem no choice.exe on this image (stripped install) -- keep the safe default (decline).
+set "HP_CASCADE_CHOICE=N"
+goto :cascade_consent_resolve
+
+:cascade_consent_resolve
 if /I "%HP_CASCADE_CHOICE%"=="Y" (
   call :log "[INFO] REQ-009: cascade consent: accepted."
   exit /b 0
@@ -3815,6 +3865,11 @@ if "%~1"=="hidden_import" (
     call :log "[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost."
   )
 )
+rem REQ-009/REQ-005.10 (cascade-vs-postexec fix): carry the "dependencies may be incomplete"
+rem context (set in :warnfix_cascade_detect when a cascade was offered but not approved) into
+rem this launch warning too, so a confusing runtime failure right after is not mistaken for a
+rem bug in the user's own code.
+if defined HP_DEP_MAYBE_INCOMPLETE call :log "[WARN] Note: dependency installation for this run may be incomplete (see the earlier warning above) -- unexpected behavior below could stem from that rather than a bug in your own code."
 exit /b 0
 :run_exe_smokerun
 if not exist "dist\%ENVNAME%.exe" (
@@ -3914,11 +3969,23 @@ if defined HP_NDJSON (
     "$r=[ordered]@{id='self.exe.smokerun';pass=($c -eq 0);details=[ordered]@{exitCode=$c}}|ConvertTo-Json -Compress -Depth 8;" ^
     "Add-Content -Path '%HP_NDJSON%' -Value $r -Encoding ASCII" >> "%LOG%" 2>&1
 )
-call :run_postexec_checkpoint exe
-rem AV-Safe Build Path requirement 9 (P1): offer an elective optimized build right after the
-rem verification telemetry above, while %HP_EXE_EXIT% still holds this run's real outcome (the
-rem next line clears it). See :offer_optimized_build's own header comment for the full gating.
-call :offer_optimized_build
+rem REQ-009/REQ-005.10 (cascade-vs-postexec fix, CLAUDE.md docs/open-questions.md item 1):
+rem when the user has already agreed to cascade to the next provider tier, this build is about
+rem to be replaced -- do not also ask them to verify-again or optimize a build they just opted
+rem away from. Both offers are purely elective (never required for correctness; the smoke run
+rem above already happened regardless -- see the comment at its call site for why THAT must
+rem never be skipped), so suppressing them here costs nothing if :provider_cascade later finds
+rem every remaining tier unavailable and keeps this build after all -- the user was never asked
+rem to verify/optimize it, but it was still verified once, just without the elective extras.
+if defined HP_CASCADE_APPROVED (
+  call :log "[INFO] REQ-009: cascade approved; skipping the post-verification offers for this build."
+) else (
+  call :run_postexec_checkpoint exe
+  rem AV-Safe Build Path requirement 9 (P1): offer an elective optimized build right after the
+  rem verification telemetry above, while %HP_EXE_EXIT% still holds this run's real outcome (the
+  rem next line clears it). See :offer_optimized_build's own header comment for the full gating.
+  call :offer_optimized_build
+)
 set "HP_EXE_EXIT="
 exit /b 0
 :exe_smokerun_hints

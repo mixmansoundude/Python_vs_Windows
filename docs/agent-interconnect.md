@@ -1702,3 +1702,69 @@ asserting the prompt is shown in both cases and the run footprint is exactly two
 `Entry smoke exit=0` occurrences. `tests/harness.ps1`'s `batch.postexec.checkpoint` statically
 guards the subroutine, the test override, the unconditional prompt echo, both log lines, and that
 all three call sites are still wired (`call :run_postexec_checkpoint` count `-ge 3`).
+
+**Cascade-vs-postexec fix (CLAUDE.md item 9 / docs/open-questions.md item 1) -- the checkpoint and
+requirement 9's optimized-build offer are now both skipped, but ONLY at the `exe` call site, and
+ONLY when the CURRENT provider's own cascade was just approved.** The original open question
+(closed by this fix) was: cascade consent is asked BEFORE the EXE smoke run, so a user who already
+said "yes, try the next provider" would still be shown two more elective prompts (`:run_postexec_
+checkpoint`, `:offer_optimized_build`) about the build they just opted away from, wasting real time
+(the optimized-build offer alone can take a minute or more compiling something about to be
+discarded once the cascade rebuilds under the next tier).
+
+**The smoke run ITSELF is deliberately NOT skipped, even when cascade is approved -- this was the
+first, wrong design attempted, caught before shipping.** `HP_CASCADE_APPROVED` (set inside
+`:warnfix_cascade_detect`, well before `:run_exe_smokerun` is even called) only means the NEXT
+provider tier will be TRIED -- it does not guarantee the cascade actually reaches a new tier.
+`:provider_cascade` (reached later, from the top-level main line, only after `:run_entry_smoke`
+fully returns -- see "Provider cascade execution re-enters env-create" above) can still find every
+remaining tier unavailable or declined (e.g. the terminal system tier's own REQ-014 consent gate
+being declined) and fall back to one of its six "keeping current build" exhaustion messages
+(`run_setup.bat` lines ~1853/1868/1881/1884/1896/1910) -- at which point the CURRENT build (the
+one whose smoke run would have been skipped) is what actually ships. Skipping the smoke run
+entirely would leave that kept-on-exhaustion build completely unverified, a real regression from
+the pre-fix behavior (which always verified at least once, just sometimes for a build that turned
+out to be discarded moments later). Fix: `:run_exe_smokerun` always runs; only the two ELECTIVE
+follow-up calls inside `:smokerun_ndjson` (`:run_postexec_checkpoint exe`, `:offer_optimized_
+build`) are wrapped in `if defined HP_CASCADE_APPROVED (...) else (...)`, so the mandatory
+diagnostic step never disappears but the two optional prompts do, exactly when they'd otherwise be
+asked about a build the user has already opted away from.
+
+**The "declined/timed-out" side got two companion pieces, both requested directly:**
+1. **`:cascade_consent_gate`'s real-interactive-user branch now uses a TIMED `choice /T` prompt
+   (default 30s) instead of an unbounded `set /p`**, mirroring `:pick_entry_interactive`'s own
+   established `choice /T %HP_PICK_T% /D %HP_PICK_DEFAULT%` pattern (the entry picker is the only
+   OTHER consent-style prompt in this file that was already timed -- every sibling gate
+   (`:run_postexec_checkpoint`, `:offer_optimized_build`, `:system_build_consent_gate`,
+   `:conda_binary_corrupt`'s heal prompt, `:check_net_after_dl_fail`, `:system_python_consent_gate`)
+   still uses a bare, unbounded `set /p` and shares this same "hangs forever if nobody's at the
+   keyboard" characteristic -- fixing all of them was judged out of scope for this pass; flagged
+   here so a future pass doesn't have to rediscover the pattern). On timeout with no answer, `/D N`
+   resolves to decline -- an unattended interactive run still tries the current build once,
+   unprompted, rather than hanging the whole bootstrap indefinitely. `HP_TEST_FORCE_INTERACTIVE_
+   CASCADE=1` forces this branch to be reached even under `HP_CI_LANE` (mirrors `HP_TEST_FORCE_
+   PICKER`) and shrinks the timeout to 2s for CI. Rewritten with goto-based dispatch throughout
+   (not nested parens) per "Provider-cascade dispatch is goto-based on purpose" in
+   `docs/agent-lessons-learned.md` -- a `choice` call followed by an `%ERRORLEVEL%`-reading `set`
+   is exactly the bug class that lesson documents when nested inside a shared parenthesized block;
+   `if errorlevel N` (the special comparison form, not `%ERRORLEVEL%` text substitution) is used
+   instead specifically to sidestep it, matching `:pick_entry_interactive`'s own established idiom.
+2. **A new "dependencies may be incomplete" note** (`HP_DEP_MAYBE_INCOMPLETE`), set in
+   `:warnfix_cascade_detect` whenever a cascade candidate was detected but NOT approved (declined,
+   timed out, or auto-declined in CI) -- reset to unset at the top of every FRESH build attempt
+   (alongside `HP_NUITKA_FALLBACK_USED`'s own reset) so a provider that needs no warnfix repair at
+   all doesn't inherit a stale flag from an earlier, cascaded-away provider's failure. Consumed at
+   two points: an immediate `[WARN]` right where the decision was made, and a second reminder line
+   in `:warn_user_code_launch` (right before the EXE actually launches) so the context survives to
+   the moment it's most useful -- a confusing runtime failure right after is not mistaken for a bug
+   in the user's own code. Deliberately a NOTE, never a second gate: the user may know something the
+   automated install missed and want to push through anyway. The "extra credit" idea discussed
+   alongside this (telling the user their odds of a DIFFERENT specific next tier helping) was
+   investigated but not implemented -- see docs/open-questions.md's remaining open item for the
+   supporting analysis and why it was left out of this pass specifically.
+
+Test coverage: `tests/selfapps_cascade.ps1`'s existing `self.cascade.exec` (uv lane, non-gating)
+gained an assertion that all 4 approved-cascade builds (uv, conda, embed, venv) correctly skip
+their postexec offers (`offersSkipped` count, expected exactly 4). New `tests/selfapps_cascade_
+timed.ps1` (conda-full lane) proves the timed-choice mechanism and the dirty-flag note positively;
+see `docs/agent-ndjson.md`'s own section on it for the full assertion list.
