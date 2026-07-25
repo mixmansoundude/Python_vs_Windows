@@ -560,6 +560,18 @@ the "Build public diagnostics tree" step's own `DIAG CWD`/`DIAG ROOT`/`DIAG TREE
 lines, which naturally show GitHub Actions' inherent doubled checkout path
 (`.../Python_vs_Windows/Python_vs_Windows/...`) -- a runner convention, not a bug. Not chased
 further.)*
+8. **`HP_PREP_REQUIREMENTS` (`~prep_requirements.py`) still has no canonical `tools/` source file
+   with `PayloadSync`, unlike the other 12 promoted payloads.** Deliberately deferred during the
+   2026-07-25 requirements.txt-writeback fix (see Closed Backlog) specifically because this
+   payload's CMD 8191-char line budget was already the tightest in the file even after that fix
+   recovered headroom by deleting dead code (304-char margin, versus 1500+ typical for other
+   promoted payloads) -- adding a canonical-source header comment costs real, avoidable margin.
+   A future pass could genuinely shrink this file (several helper functions --
+   `_enforce_bounds_order`, `_spec_sort_key`, `canonical_ops` -- have room to be more compact
+   without losing correctness) to buy enough headroom for a proper promotion; not attempted here
+   to keep that fix's diff minimal and reviewable. Low urgency: the file works correctly and has
+   full test coverage via `tests/test_heuristics.py`'s existing decode-from-run_setup.bat pattern,
+   which does not require a canonical source to function.
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -884,6 +896,82 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **Deep research/review pass, owner-requested ("general research refinement and code review...
+  shoring up and checking if things are really the way they need to be... burn cheap promo time
+  this week"), 2026-07-25.** Ran three parallel background research agents (run_setup.bat branch
+  coverage, Python-helper edge cases, CLI-interactive-verification feature interactions) plus
+  independent direct-code-tracing investigation. All findings independently re-verified before
+  acting, per this repo's established practice -- see the sibling entries below for the individual
+  fixes; this entry covers the single highest-value finding from the pass.
+  - **`~prep_requirements.py`'s heuristic dependency-augmentation output (REQ-005.8: pandas,
+    sqlalchemy, requests, matplotlib, cryptography/pycryptodome rules) was silently dead for
+    every non-conda provider -- uv/venv/system/embed, the DEFAULT since the REQ-009 uv-first
+    reorder -- confirmed via direct tracing, not assumption.** The helper writes two files:
+    `~reqs_conda.txt` (genuinely consumed, by `:conda_bulk_install`) and `~reqs_pip.txt` -- which,
+    confirmed via `grep -rn "reqs_pip" run_setup.bat tests/`, is **written but never read anywhere
+    else in the entire repo**. Every pip-based install branch in `:after_env_mode_selection`
+    (conda's own "pip gap fill", venv, uv, embed) installs from `requirements.txt` directly,
+    unaugmented -- confirmed by reading each branch's exact command
+    (`"%HP_PY%" -m pip install -r requirements.txt` / `uv pip install ... -r requirements.txt`).
+    This means a pandas+`pd.read_excel()` app bootstrapped via the now-default uv path never got
+    `openpyxl`/`xlsxwriter` installed by this mechanism at all -- exactly the runtime-dependency
+    class (CLAUDE.md's own "Dependency Discovery" section) this heuristic exists to catch, silently
+    not firing for most real users. A prior agent's own comment in
+    `tests/selfapps_pep723_writeback.ps1` (found while investigating) had already partially
+    diagnosed this for the `requests->certifi` rule specifically and correctly judged it harmless
+    THERE ONLY because `certifi` happens to already be a real transitive dependency of `requests`,
+    so pip/uv installs it anyway regardless of the heuristic -- that reasoning does NOT extend to
+    `openpyxl`/`xlsxwriter` (neither is a `pandas` dependency; both are optional, lazily-imported
+    Excel-engine packages pandas' own metadata never declares) or `pymysql` (not a `sqlalchemy`
+    dependency; a DB-driver choice sqlalchemy is deliberately agnostic about) -- both are genuine,
+    silently-unfixed gaps for non-conda providers before this fix.
+  - **A second, independent bug was compounding in the same code and is fixed by the same
+    change**: the `matplotlib->tk` rule's `pip_specs.append('tk')` line. Researched (not assumed)
+    whether `pip install tk` fails cleanly: it does not -- there IS a real, unrelated third-party
+    PyPI package literally named `tk` (confirmed via web search), so this heuristic would have
+    silently installed the WRONG package while giving the false impression the Tk-backend
+    dependency was handled, had `~reqs_pip.txt` ever been wired up naively without also fixing
+    this. `tk` is correctly conda-only (it maps to the real Tcl/Tk system libraries via
+    conda-forge, with no correct pip equivalent at all) -- removed `pip_specs.append('tk')`
+    entirely; `conda_specs.extend(format_line('tk', []))` (the correct, still-needed path) is
+    unchanged.
+  - **Fix**: after the six heuristic rules run, `main()` now additively merges any package
+    genuinely NEW to `pip_specs` (tracked via a pre-heuristics length marker, `n0 = len(pip_specs)`,
+    then `added = pip_specs[n0:]`) back into `requirements.txt` itself -- the one file every
+    provider's install step already reads, so no `run_setup.bat` install-branch code needed to
+    change at all. Idempotent by construction: a second run re-reads the now-augmented
+    `requirements.txt`, so `names_lower` already contains the added package and the corresponding
+    `if 'X' in names_lower and 'Y' not in names_lower:` guard correctly skips re-adding it --
+    exactly mirroring the established idempotent-additive-merge pattern already used by
+    `tools/autopep_merge.py` (REQ-005.12) and `tools/pep723_writeback.py` (REQ-005.11), just without
+    a shared helper (this payload has no canonical `tools/` source, see below).
+  - **This payload's CMD 8191-char line-length budget was the tightest in the whole file
+    (188-char margin per the existing table in this doc) and the fix initially blew it by 48
+    chars.** Recovered margin by finding and removing a second, independent piece of dead code in
+    the same file: `normalize_specifiers()`, a fully-defined function with zero call sites anywhere
+    in the file (confirmed via a call-site grep of every function in the module) -- its removal
+    alone recovered enough space to land the fix with a healthier 304-char margin than the
+    ORIGINAL (pre-fix) payload had, a net improvement in future edit headroom despite adding real
+    functionality. Verified via the same `base64.b64encode(...)`-length-measurement method this
+    doc's own "CMD.EXE 8191-Character Line Limit" section already documents.
+  - **Deliberately NOT promoted to a canonical `tools/prep_requirements.py` source file with
+    `PayloadSync` in this pass**, unlike the 6 other payloads already promoted -- this payload's
+    extraordinarily tight budget makes even a single-line header comment a real, avoidable risk
+    (a `# canonical source: ...` pointer line would cost real margin that a future functional
+    edit might need more), and mid-way through this exact fix a careless verification script
+    accidentally truncated `run_setup.bat` to zero bytes (caught immediately via `git status`/
+    `wc -l`, restored losslessly from the last commit with zero data loss -- see
+    `docs/agent-lessons-learned.md`'s new entry on this near-miss) -- a second reminder that this
+    file deserves extra care, not additional edit surface, until a dedicated pass can also address
+    the budget itself (e.g. trimming other helper functions, which was NOT attempted here to keep
+    this fix's own diff minimal and reviewable). Tracked as a new Active Backlog item.
+  - Five new regression tests in `tests/test_heuristics.py` (`TestRequirementsWriteback`): the
+    pandas rule's additive writeback, idempotency across two runs, `tk`'s exclusion from
+    `requirements.txt` specifically (not just from `~reqs_pip.txt`), the kill-switch leaving
+    `requirements.txt` untouched, and an unrelated package (`flask`) leaving it untouched too. All
+    20 tests in the file (15 pre-existing + 5 new) pass with zero regressions.
+
 
 Items completed and shipped:
 

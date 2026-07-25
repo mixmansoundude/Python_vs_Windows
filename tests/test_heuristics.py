@@ -167,5 +167,56 @@ class TestNoFalsePositives(_Base):
             self.assertFalse(_has(pip, pkg), f"unexpected {pkg} in pip")
 
 
+class TestRequirementsWriteback(_Base):
+    # Regression coverage for a real bug: every non-conda provider (uv/venv/system/
+    # embed -- the default since the uv-first REQ-009 reorder) installs directly from
+    # requirements.txt, never from ~reqs_pip.txt. Before this fix, heuristic-added
+    # packages (pandas->openpyxl etc.) were computed and written to ~reqs_pip.txt but
+    # never actually installed for those providers -- silently dead for the majority
+    # of real bootstrap runs. The fix additively merges new heuristic packages back
+    # into requirements.txt itself, the file every provider's pip install actually reads.
+    def _req_path(self):
+        return os.path.join(self._tmp, "requirements.txt")
+
+    def test_pandas_writeback_adds_openpyxl_and_xlsxwriter(self):
+        _run(self._tmp, "pandas\n")
+        with open(self._req_path(), encoding="ascii") as fh:
+            body = fh.read()
+        self.assertIn("openpyxl", body)
+        self.assertIn("xlsxwriter", body)
+
+    def test_writeback_idempotent_no_duplicate_on_rerun(self):
+        _run(self._tmp, "pandas\n")
+        with open(self._req_path(), encoding="ascii") as fh:
+            augmented = fh.read()
+        _run(self._tmp, augmented)
+        with open(self._req_path(), encoding="ascii") as fh:
+            lines = [ln.strip() for ln in fh.read().splitlines() if ln.strip()]
+        self.assertEqual(lines.count("openpyxl"), 1)
+        self.assertEqual(lines.count("xlsxwriter"), 1)
+
+    def test_matplotlib_writeback_excludes_tk(self):
+        # tk is a conda-only system package (Tcl/Tk bindings), not a real PyPI package --
+        # a literal PyPI package named "tk" exists but is an unrelated third-party wrapper,
+        # not tkinter itself. It must never land in requirements.txt where a pip-based
+        # provider would install it, believing the matplotlib Tk-backend need was satisfied.
+        _run(self._tmp, "matplotlib\n")
+        with open(self._req_path(), encoding="ascii") as fh:
+            lines = [ln.strip() for ln in fh.read().splitlines() if ln.strip()]
+        self.assertNotIn("tk", lines)
+
+    def test_kill_switch_leaves_requirements_untouched(self):
+        _run(self._tmp, "pandas\n", extra_env={"HP_DISABLE_HEURISTICS": "1"})
+        with open(self._req_path(), encoding="ascii") as fh:
+            body = fh.read()
+        self.assertNotIn("openpyxl", body)
+
+    def test_unrelated_package_leaves_requirements_untouched(self):
+        _run(self._tmp, "flask\n")
+        with open(self._req_path(), encoding="ascii") as fh:
+            lines = [ln.strip() for ln in fh.read().splitlines() if ln.strip()]
+        self.assertEqual(lines, ["flask"])
+
+
 if __name__ == "__main__":
     unittest.main()
