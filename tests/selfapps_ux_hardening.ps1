@@ -18,6 +18,33 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
+# CLAUDE.md Active Backlog item 3: shared save/set/restore helper for the two REQ-009 Tier 5
+# scenarios below (self.embed.fallback.decline / .real), each of which forces a genuinely
+# different set of env vars (decline: 6; real: 5 different ones) -- so this takes a hashtable
+# rather than a fixed var list. [Environment]::SetEnvironmentVariable($name, $null) both restores
+# an unset var to unset AND sets a var to a value uniformly, so no separate "was it null before"
+# branch is needed on restore (verified locally via pwsh before relying on it here). Runs the body
+# via the call operator inside try/finally so overrides are restored even if the body throws, and
+# returns whatever the body scriptblock returns so callers can still capture e.g. an exit code.
+function Invoke-WithEnvOverrides {
+    param(
+        [Parameter(Mandatory)][hashtable]$Overrides,
+        [Parameter(Mandatory)][scriptblock]$Body
+    )
+    $saved = @{}
+    foreach ($name in $Overrides.Keys) {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+        [Environment]::SetEnvironmentVariable($name, [string]$Overrides[$name])
+    }
+    try {
+        & $Body
+    } finally {
+        foreach ($name in $saved.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $saved[$name])
+        }
+    }
+}
+
 # Non-Windows skip
 if (-not $IsWindows) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
@@ -833,32 +860,23 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
         details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-prohibits-non-conda-fallbacks' }
     })
 } else {
-    $savedCondaFail7 = $env:HP_TEST_FORCE_CONDA_FAIL
-    $savedVenvFail7  = $env:HP_TEST_FORCE_VENV_FAIL
-    $savedSyscon7    = $env:HP_TEST_SYSCON_ANSWER
-    $savedOffline7   = $env:HP_OFFLINE_MODE
-    $savedLane7      = $env:HP_CI_LANE
-    $savedEmbedFail7 = $env:HP_TEST_FORCE_EMBED_FAIL
-    $env:HP_TEST_FORCE_CONDA_FAIL = '1'
-    $env:HP_TEST_FORCE_VENV_FAIL  = '1'
-    $env:HP_TEST_SYSCON_ANSWER    = 'N'
-    $env:HP_OFFLINE_MODE          = '1'
-    $env:HP_CI_LANE               = 'test'
-    $env:HP_TEST_FORCE_EMBED_FAIL = '1'
     $embedDeclineLog = Join-Path $embedDeclineDir '~embed_decline.log'
-    Push-Location -LiteralPath $embedDeclineDir
-    try {
-        cmd /c "run_setup.bat > ~embed_decline.log 2>&1"
-        $embedDeclineExit = $LASTEXITCODE
-    } finally {
-        Pop-Location
+    $embedDeclineExit = Invoke-WithEnvOverrides -Overrides @{
+        HP_TEST_FORCE_CONDA_FAIL = '1'
+        HP_TEST_FORCE_VENV_FAIL  = '1'
+        HP_TEST_SYSCON_ANSWER    = 'N'
+        HP_OFFLINE_MODE          = '1'
+        HP_CI_LANE               = 'test'
+        HP_TEST_FORCE_EMBED_FAIL = '1'
+    } -Body {
+        Push-Location -LiteralPath $embedDeclineDir
+        try {
+            cmd /c "run_setup.bat > ~embed_decline.log 2>&1"
+            $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
     }
-    $env:HP_TEST_FORCE_CONDA_FAIL = $savedCondaFail7
-    $env:HP_TEST_FORCE_VENV_FAIL  = $savedVenvFail7
-    if ($null -eq $savedSyscon7) { Remove-Item Env:HP_TEST_SYSCON_ANSWER -ErrorAction SilentlyContinue } else { $env:HP_TEST_SYSCON_ANSWER = $savedSyscon7 }
-    $env:HP_OFFLINE_MODE          = $savedOffline7
-    $env:HP_CI_LANE               = $savedLane7
-    if ($null -eq $savedEmbedFail7) { Remove-Item Env:HP_TEST_FORCE_EMBED_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_EMBED_FAIL = $savedEmbedFail7 }
 
     $embedDeclineText = ''
     if (Test-Path -LiteralPath $embedDeclineLog) {
@@ -934,29 +952,22 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
         details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-prohibits-non-conda-fallbacks' }
     })
 } else {
-    $savedCondaFail8 = $env:HP_TEST_FORCE_CONDA_FAIL
-    $savedOffline8   = $env:HP_OFFLINE_MODE
-    $savedSkipPR8    = $env:HP_SKIP_PIPREQS
-    $savedLane8      = $env:HP_CI_LANE
-    $savedEmbedReal8 = $env:HP_TEST_FORCE_EMBED_REAL
-    $env:HP_TEST_FORCE_CONDA_FAIL = '1'
-    $env:HP_OFFLINE_MODE          = '1'
-    $env:HP_SKIP_PIPREQS          = '1'
-    $env:HP_CI_LANE               = 'test'
-    $env:HP_TEST_FORCE_EMBED_REAL = '1'
     $embedRealLog = Join-Path $embedRealDir '~embed_real.log'
-    Push-Location -LiteralPath $embedRealDir
-    try {
-        cmd /c "run_setup.bat > ~embed_real.log 2>&1"
-        $embedRealExit = $LASTEXITCODE
-    } finally {
-        Pop-Location
+    $embedRealExit = Invoke-WithEnvOverrides -Overrides @{
+        HP_TEST_FORCE_CONDA_FAIL = '1'
+        HP_OFFLINE_MODE          = '1'
+        HP_SKIP_PIPREQS          = '1'
+        HP_CI_LANE               = 'test'
+        HP_TEST_FORCE_EMBED_REAL = '1'
+    } -Body {
+        Push-Location -LiteralPath $embedRealDir
+        try {
+            cmd /c "run_setup.bat > ~embed_real.log 2>&1"
+            $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
     }
-    $env:HP_TEST_FORCE_CONDA_FAIL = $savedCondaFail8
-    $env:HP_OFFLINE_MODE          = $savedOffline8
-    $env:HP_SKIP_PIPREQS          = $savedSkipPR8
-    $env:HP_CI_LANE               = $savedLane8
-    if ($null -eq $savedEmbedReal8) { Remove-Item Env:HP_TEST_FORCE_EMBED_REAL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_EMBED_REAL = $savedEmbedReal8 }
 
     $embedRealSetupLog = Join-Path $embedRealDir '~setup.log'
     $embedRealSetupText = ''
