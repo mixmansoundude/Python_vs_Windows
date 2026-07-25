@@ -39,6 +39,22 @@
 # run_setup.bat. After editing, re-sync with tools/sync_payload.py; tests/test_run_installer_
 # with_timeout.py asserts the embedded payload matches this file (CRLF/LF normalized, per the
 # .ps1 PayloadSync convention).
+#
+# derived requirement: a real Windows CI run caught a genuine bug this repo's other emitted
+# .ps1 helpers never hit: when a native EXE invoked via the "&" call operator (taskkill.exe
+# here -- the ONLY native-command invocation in this file; exe_smokerun.ps1/failfast_probe.ps1
+# only ever launch their monitored process via .NET's Process API, which does not set
+# $LASTEXITCODE) sets $LASTEXITCODE to a nonzero value, pwsh -File silently inherits that as
+# ITS OWN process exit code when the script ends without an explicit "exit" statement -- even
+# though taskkill was not the last statement executed and its own failure was already caught
+# and swallowed by try/catch. This is a well-known PowerShell gotcha, not specific to taskkill:
+# any earlier native-command failure can leak through as the whole script's exit code unless
+# explicitly reset. taskkill can legitimately return nonzero here (e.g. the timed-out process
+# already exited on its own in the race between WaitForExit(timeoutMs) returning false and
+# taskkill actually running) without that being a real problem -- the result FILE (not the
+# script's own process exit code) is this script's real contract with its caller, so the fix is
+# an explicit "exit 0" as the script's last statement, guaranteeing pwsh's own exit code is
+# always clean regardless of what $LASTEXITCODE happened to be left holding.
 $exe = $env:HP_INSTALLER_EXE
 $argStr = $env:HP_INSTALLER_ARGS
 $timeoutMs = [int]$env:HP_INSTALLER_TIMEOUT_MS
@@ -59,3 +75,4 @@ if ($p.WaitForExit($timeoutMs)) {
     try { & taskkill.exe /F /T /PID $p.Id 2>$null | Out-Null } catch {}
     "1|1" | Set-Content -Path $resultPath -Encoding ASCII
 }
+exit 0
