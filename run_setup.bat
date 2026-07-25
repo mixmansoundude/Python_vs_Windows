@@ -3319,8 +3319,8 @@ if not defined HP_BUILD_OK (
       rem :try_nuitka_tier_a here (unlike the original build) -- this rebuild only exists to
       rem bundle a module warnfix already installed into an EXE that was already confirmed
       rem working before this rebuild attempt; the conservative, honest response to a failure
-      rem is to report it, not to speculatively rebuild via a second tool inside an already
-      rem-nested failure path.
+      rem is to report it, not to speculatively rebuild via a second tool inside an
+      rem already-nested failure path.
       if errorlevel 1 (
         call :log "[ERROR] PyInstaller execution failed during warnfix rebuild; the previous build may no longer be valid."
         set "HP_BOOTSTRAP_STATE=error"
