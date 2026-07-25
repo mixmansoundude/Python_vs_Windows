@@ -1488,17 +1488,35 @@ this harness already relies on), and everything AFTER that `-` becomes `sys.argv
 program -- confirmed directly (`python3 - --foo "bar baz" < script.py` prints
 `ARGV:--foo|bar baz`) before relying on it in `ArgvPassthrough::test_extra_args_forwarded_as_separate_argv`.
 
-**Deliberately out of scope, matching precedent already established elsewhere in this file for
-the same class of decision**: the two internal, bounded repair/optimization verification loops
-(`:hidden_import_recover`'s own re-run of the EXE, and `:offer_optimized_build`'s internal
-build-verify launch) do NOT receive `HP_APP_ARGS` -- both are diagnostic/repair checks against a
-build already confirmed working, not the user's primary run, exactly the same reasoning the
-"AV-Safe Build Path Tier A and hidden-import auto-recovery" section above already applies to that
-first loop for an unrelated reason (Nuitka-vs-PyInstaller awareness). The `HP_CI_SKIP_ENV=1`
+**`:hidden_import_recover`'s own re-run of the EXE deliberately does NOT receive `HP_APP_ARGS`,
+matching precedent already established elsewhere in this file** -- it is a diagnostic/repair
+check against a build ALREADY CONFIRMED WORKING, not the user's primary run, the same reasoning
+the "AV-Safe Build Path Tier A and hidden-import auto-recovery" section above already applies to
+that loop for an unrelated reason (Nuitka-vs-PyInstaller awareness). The `HP_CI_SKIP_ENV=1`
 CI-only test path (`:ci_skip_entry`'s system-Python launch, see "uv-First Provider Architecture"
 -> "selfapps_isolation.ps1" above) was also left out -- it is test infrastructure exercising a
 narrow REQ-010 isolation scenario, not one of the plan's four named real launch sites, and CI has
 no interactive terminal to benefit from argument forwarding there.
+
+**`:offer_optimized_build`'s internal build-verify launch was ALSO missing `HP_APP_ARGS` at
+first, but this doc's own earlier reasoning for lumping it in with `:hidden_import_recover` above
+was wrong for this specific call site -- found and fixed 2026-07-25 via a deep research pass.**
+The two loops are NOT the same shape: `:hidden_import_recover` re-runs the ALREADY-VERIFIED
+original PyInstaller EXE (genuinely a repair check against known-working code), but
+`:offer_optimized_build`'s internal verify launches a BRAND-NEW Nuitka binary that has never
+itself been executed before -- for any program that requires launch arguments just to start
+cleanly (a common CLI-tool shape), omitting `HP_APP_ARGS` here meant this verification would
+ALWAYS report a nonzero exit and decline the optimized build, regardless of whether the Nuitka
+build itself was actually fine. Fixed by having the inline PowerShell `-Command` one-liner read
+`$env:HP_APP_ARGS` directly (PowerShell's own inherited-environment access) rather than having
+cmd.exe substitute `%HP_APP_ARGS%` into the command text -- `HP_APP_ARGS` already contains
+literal embedded double-quotes per forwarded token (see its definition near the top of
+`run_setup.bat`), and cmd.exe's naive quote-toggle parser has no concept of "this quote belongs
+to a PowerShell string," so direct substitution would have corrupted the `-Command` argument
+exactly like the hazard `docs/agent-lessons-learned.md` already documents for
+`HP_FAILFAST_PROBE`'s original inline-vs-emitted-`.ps1` design decision -- reading it as an
+inherited environment variable at PowerShell runtime sidesteps the whole hazard class, since
+cmd.exe's own command-line text never needs to contain the quote-laden content at all.
 
 ## Honest ambiguous-exit messaging (REQ-027, P2) -- two panels, two independent gaps found by tracing what P1/P0 already changed
 

@@ -116,14 +116,50 @@ class TranslationTableTest(unittest.TestCase):
     def test_win32con_maps_to_pywin32(self):
         self._assert_maps("win32con", "pywin32")
 
+    def test_win32com_maps_to_pywin32(self):
+        self._assert_maps("win32com", "pywin32")
+
+    def test_win32gui_maps_to_pywin32(self):
+        self._assert_maps("win32gui", "pywin32")
+
+    def test_win32file_maps_to_pywin32(self):
+        self._assert_maps("win32file", "pywin32")
+
+    def test_win32process_maps_to_pywin32(self):
+        self._assert_maps("win32process", "pywin32")
+
+    def test_win32event_maps_to_pywin32(self):
+        self._assert_maps("win32event", "pywin32")
+
+    def test_pywintypes_maps_to_pywin32(self):
+        self._assert_maps("pywintypes", "pywin32")
+
+    def test_pythoncom_maps_to_pywin32(self):
+        self._assert_maps("pythoncom", "pywin32")
+
+    def test_winerror_maps_to_pywin32(self):
+        self._assert_maps("winerror", "pywin32")
+
     def test_fitz_maps_to_pymupdf(self):
         self._assert_maps("fitz", "pymupdf")
 
     def test_docx_maps_to_python_docx(self):
         self._assert_maps("docx", "python-docx")
 
+    def test_pptx_maps_to_python_pptx(self):
+        self._assert_maps("pptx", "python-pptx")
+
     def test_pydantic_core_maps_to_pydantic_core_conda_name(self):
         self._assert_maps("pydantic_core", "pydantic-core")
+
+    def test_skimage_maps_to_scikit_image(self):
+        self._assert_maps("skimage", "scikit-image")
+
+    def test_Cryptodome_maps_to_pycryptodome(self):
+        self._assert_maps("Cryptodome", "pycryptodome")
+
+    def test_zmq_maps_to_pyzmq(self):
+        self._assert_maps("zmq", "pyzmq")
 
 
 # Explicit set of all TRANSLATIONS keys tested above.
@@ -132,7 +168,9 @@ class TranslationTableTest(unittest.TestCase):
 _TESTED_KEYS = frozenset({
     "cv2", "PIL", "Image", "sklearn", "bs4", "serial", "yaml", "git",
     "wx", "dateutil", "dotenv", "Crypto", "OpenSSL", "jwt", "usb",
-    "attr", "win32api", "win32con", "fitz", "docx", "pydantic_core",
+    "attr", "win32api", "win32con", "win32com", "win32gui", "win32file",
+    "win32process", "win32event", "pywintypes", "pythoncom", "winerror",
+    "fitz", "docx", "pptx", "pydantic_core", "skimage", "Cryptodome", "zmq",
 })
 
 

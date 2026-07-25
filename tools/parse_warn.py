@@ -32,9 +32,21 @@ TRANSLATIONS = {
     "attr": "attrs",
     "win32api": "pywin32",
     "win32con": "pywin32",
+    "win32com": "pywin32",
+    "win32gui": "pywin32",
+    "win32file": "pywin32",
+    "win32process": "pywin32",
+    "win32event": "pywin32",
+    "pywintypes": "pywin32",
+    "pythoncom": "pywin32",
+    "winerror": "pywin32",
     "fitz": "pymupdf",
     "docx": "python-docx",
+    "pptx": "python-pptx",
     "pydantic_core": "pydantic-core",
+    "skimage": "scikit-image",
+    "Cryptodome": "pycryptodome",
+    "zmq": "pyzmq",
 }
 
 SKIP = frozenset([

@@ -572,6 +572,26 @@ further.)*
    to keep that fix's diff minimal and reviewable. Low urgency: the file works correctly and has
    full test coverage via `tests/test_heuristics.py`'s existing decode-from-run_setup.bat pattern,
    which does not require a canonical source to function.
+9. **Cascade consent (REQ-009/REQ-005.10) is granted BEFORE the current build's own postexec
+   offers fire, so a user can be asked to rerun/optimize a build the bootstrapper already knows
+   is about to be discarded.** Found via the 2026-07-25 deep research pass (see Closed Backlog
+   for the two sibling findings from the same investigation that WERE fixed). Confirmed via
+   direct tracing: `:warnfix_cascade_detect` (which can set `HP_CASCADE_APPROVED` via
+   `:cascade_consent_gate`) runs strictly before `call :run_exe_smokerun`, which flows into
+   `:smokerun_ndjson` -> `call :run_postexec_checkpoint exe` -> `call :offer_optimized_build` --
+   only after `:run_entry_smoke` returns does the main line check `HP_CASCADE_APPROVED` and jump
+   to `:provider_cascade`. So within one build attempt: build -> warnfix detects unresolved deps
+   -> user consents to cascade to the NEXT provider -> the SAME, about-to-be-superseded EXE still
+   gets a full verification run, then is offered "run it again?" and "build an optimized version
+   too?" (which can take a minute or more) -- neither consent gate currently checks
+   `HP_CASCADE_APPROVED`/`HP_CASCADE_CANDIDATE` before prompting. Not fixed in the same pass that
+   found it: a correct fix means either reordering when cascade consent is asked relative to the
+   postexec offers, or gating the offers on `HP_CASCADE_APPROVED` -- and there's a real UX
+   question either way (does a user who already said "yes, try the next provider" still want to
+   see how the CURRENT, soon-to-be-replaced build performs?) that deserves a deliberate, reviewed
+   pass rather than a rushed fix folded into an unrelated research sweep. See
+   `docs/agent-interconnect.md`'s "Post-execution checkpoint" and "AV-Safe Build Path
+   requirement 9" sections for the exact call chain if picking this up.
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -896,6 +916,71 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **Two more findings from the same 2026-07-25 deep research pass, both in the REQ-027/AV-Safe
+  Build Path area** -- a background research agent specifically tasked with finding interaction
+  gaps between the newest, least-battle-tested features (live-tee, argv passthrough, honest
+  messaging, the elective second/optimized-build runs) found two real, independently-verified
+  bugs:
+  - **`HP_NOEXE_VERIFY_FAILED` was never cleared on success, unlike its sibling
+    `HP_EXE_VERIFY_FAILED`.** `:smokerun_ok` explicitly clears `HP_EXE_VERIFY_FAILED` on a clean
+    EXE run; both call sites that set `HP_NOEXE_VERIFY_FAILED` (the legacy and probe branches of
+    `:verify_no_exe_interpreter`/`:verify_no_exe_probe`) only ever SET it on failure, never
+    cleared it on success. Since the variable is a process-global initialized once at the top of
+    the file, a stale `1` from an earlier REQ-009 cascade tier's failed no-EXE run could in
+    principle survive into a later tier's genuinely successful run (requires `HP_SKIP_EXE_SMOKERUN`
+    plus a cascade spanning a failing-then-succeeding tier -- narrow, but real, and directly
+    falsifies the flag's own code comment claiming it mirrors `HP_EXE_VERIFY_FAILED`'s behavior).
+    Fixed by adding the matching clear on both success branches. No dedicated new CI test added
+    (the trigger condition is narrow and hard to construct deterministically without a purpose-
+    built multi-tier-cascade fixture) -- consistent with this repo's established practice of not
+    building speculative test scaffolding for a narrow, low-frequency correctness path; flagged
+    here for a future dedicated pass if this path's real-world trigger rate ever justifies it.
+  - **`:offer_optimized_build`'s internal build-verify launch never forwarded `HP_APP_ARGS`, and
+    this doc's own prior reasoning for treating that as intentional (grouped with
+    `:hidden_import_recover`'s unrelated omission) did not actually hold for this call site.**
+    See `docs/agent-interconnect.md`'s "AV-Safe Build Path requirement 9" section for the full
+    fix and the corrected "Argv passthrough escape hatch" text -- in short: unlike
+    `:hidden_import_recover`'s repair-check-on-an-already-working-build, this call site verifies
+    a BRAND-NEW, never-before-run Nuitka binary, so any program requiring launch arguments to
+    even start would always fail this check regardless of whether the build itself was fine.
+    Fixed by having the inline PowerShell `-Command` read `$env:HP_APP_ARGS` (PowerShell's own
+    inherited-environment access) rather than having cmd.exe substitute the batch variable
+    directly -- `HP_APP_ARGS` contains literal embedded double-quotes per token, which would have
+    corrupted the `-Command` argument via the same quote-parsing hazard already documented in
+    `docs/agent-lessons-learned.md` for `HP_FAILFAST_PROBE`'s inline-vs-emitted-`.ps1` history.
+  - **A third finding from the same agent (cascade consent granted before the current tier's own
+    postexec offers fire, so a user can be asked to build/rerun a soon-to-be-discarded EXE) was
+    investigated but NOT fixed in this pass** -- the sequencing is real (confirmed via direct
+    tracing: `:warnfix_cascade_detect`/`:cascade_consent_gate` run before `:run_exe_smokerun`/
+    `:run_postexec_checkpoint`/`:offer_optimized_build` within the same build attempt), but a
+    correct fix requires either reordering when cascade consent is asked relative to postexec
+    offers, or gating the offers on `HP_CASCADE_APPROVED` -- a genuine design decision with
+    UX tradeoffs (e.g. does the user still want to see how the CURRENT build performs even
+    though it's about to be superseded?) that deserves its own dedicated, reviewed pass rather
+    than a rushed fix folded into an unrelated research sweep. Logged as a new Active Backlog
+    item with the full reasoning preserved.
+
+- **`HP_PARSE_WARN` TRANSLATIONS table: 12 new import-name-to-package mappings**, second finding
+  from the same 2026-07-25 deep research pass (see the sibling entry below for the pass's
+  headline finding). A background research agent flagged several common import/package-name
+  mismatches missing from the warnfix repair table; each was independently verified (correct
+  conda-forge/PyPI package name, real mismatch) before adding. New entries: `win32com`,
+  `win32gui`, `win32file`, `win32process`, `win32event`, `pywintypes`, `pythoncom`, `winerror`
+  (all -> `pywin32` -- the table previously only covered `win32api`/`win32con`, but COM
+  automation via `win32com.client` and other common pywin32 usage patterns are at least as likely
+  in a beginner Windows-automation script), `pptx` -> `python-pptx` (direct analog of the
+  existing `docx` -> `python-docx` entry), `skimage` -> `scikit-image` (direct analog of the
+  existing `sklearn` -> `scikit-learn` entry), `Cryptodome` -> `pycryptodome` (pycryptodome's own
+  dedicated import namespace, used specifically to avoid pycrypto/pycryptodome conflicts -- the
+  table already had `Crypto` -> `pycryptodome` for the other import spelling), and
+  `zmq` -> `pyzmq`. `tools/parse_warn.py` is an already-promoted canonical source with
+  `PayloadSync` (`tests/test_parse_warn.py::ParseWarnPayloadSync`), so this was a normal
+  edit-reencode-verify cycle, not a payload-promotion project -- margin was comfortable (2603
+  chars before, 2151 after). `TranslationTableCompletenessTest` (an existing guard requiring
+  every `TRANSLATIONS` key to have a dedicated test) forced -- correctly -- a matching test method
+  and `_TESTED_KEYS` entry per new mapping; all added. 12 new tests, 55/55 passing in
+  `tests/test_parse_warn.py` (up from 43).
 
 - **Deep research/review pass, owner-requested ("general research refinement and code review...
   shoring up and checking if things are really the way they need to be... burn cheap promo time
