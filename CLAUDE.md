@@ -604,14 +604,6 @@ further.)*
     modules to force `HP_HIDDEN_ITER` to hit its cap without ever exiting 0. Needs a stub app
     that reports a DIFFERENT fabricated `ModuleNotFoundError` each rebuild (e.g. rotating through
     a small state file), forcing exhaustion for real. Not built speculatively in the audit pass.
-12. **The `PVW_CONDA_EXE` super-user-override's corrupt-conda path (`:corrupt_override_exit`,
-    distinct "fix manually, do not self-heal" messaging) has no CI coverage.** Found via the same
-    audit. `tests/selftest.ps1`'s three existing corruption scenarios
-    (`self.corrupt.conda.detect`/`.heal.decline`/`.heal.accept`) all set `HP_TEST_CORRUPT_CONDA=1`
-    but never `PVW_CONDA_EXE`, so this branch (which deliberately skips self-healing eviction
-    entirely, since the conda root is user-managed, not bootstrapper-owned) is never reached.
-    Needs a 4th scenario setting both `HP_TEST_CORRUPT_CONDA=1` AND `PVW_CONDA_EXE=<path>`,
-    asserting exit code 2 and the manual-fix message. Not built speculatively in the audit pass.
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -936,6 +928,26 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **`PVW_CONDA_EXE` super-user-override's corrupt-conda path (`:corrupt_override_exit`) CI
+  coverage (Active Backlog item 12), 2026-07-25, `/goal`-directed close-out pass.** New 4th
+  scenario in `tests/selftest.ps1` (`self.corrupt.conda.override_exit`), added right after the
+  three existing `self.corrupt.conda.*` scenarios: sets `PVW_CONDA_EXE=<a placeholder path that
+  does not need to exist>` + `HP_TEST_CORRUPT_CONDA=1`, asserting exit code 2, the distinct
+  `[ERROR] Corrupt user-managed conda (PVW_CONDA_EXE); fix manually.` log message, and the
+  on-screen "Automatic self-healing is not available for user-managed conda." guidance.
+  - **Turned out simpler than item 10 (no CI-ordering dependency), confirmed by tracing the code
+    rather than assuming symmetry with the other three scenarios.** The three existing
+    `self.corrupt.conda.*` scenarios are gated on `$condaBatOnDisk` (real Miniconda already
+    installed from an earlier step in the same job) because they rely on `:select_conda_bat`
+    finding a genuine `conda.bat` on disk. This new scenario does NOT need that: `run_setup.bat`
+    unconditionally sets `CONDA_BAT=%PVW_CONDA_EXE%` the moment `PVW_CONDA_EXE` is defined
+    (`run_setup.bat` ~line 651), BEFORE the Miniconda install-if-missing block even runs -- so
+    `if defined CONDA_BAT` (the corruption-check gate) is satisfied regardless of whether
+    Miniconda was ever installed anywhere in the job, and `HP_TEST_CORRUPT_CONDA=1` routes
+    straight to `:conda_binary_corrupt` before `"%CONDA_BAT%" info` is ever actually invoked --
+    so the placeholder path never needs to exist or be a real conda binary. Self-contained by
+    construction; not gated on `$condaBatOnDisk` at all.
 
 - **`:tci_both_failed` (Miniconda install fails under BOTH AllUsers and JustMe) CI coverage
   (Active Backlog item 10), 2026-07-25, `/goal`-directed close-out pass.** New hook

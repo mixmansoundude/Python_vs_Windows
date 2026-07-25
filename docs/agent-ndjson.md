@@ -205,8 +205,19 @@ self.pyproject.malformed,
 self.corrupt.conda.detect,
 self.corrupt.conda.heal.decline,
 self.corrupt.conda.heal.accept,
+self.corrupt.conda.override_exit,
 self.corrupt.uv.detect
 ```
+
+`self.corrupt.conda.override_exit` (CLAUDE.md Active Backlog item 12) covers the
+`PVW_CONDA_EXE` super-user-override's corrupt-conda path (`:corrupt_override_exit`, distinct
+"fix manually, do not self-heal" messaging) -- unlike its three `self.corrupt.conda.*` siblings
+above, this scenario is NOT gated on Miniconda already being on disk: setting `PVW_CONDA_EXE`
+(to any path, real or not) unconditionally sets `CONDA_BAT=%PVW_CONDA_EXE%` in `run_setup.bat`
+before the Miniconda install-if-missing block even runs, so the corruption-check gate
+(`if defined CONDA_BAT ...`) fires regardless of whether Miniconda was ever installed anywhere
+in the job -- self-contained by construction, no CI-ordering dependency (unlike
+`self.conda.bothfail`, above).
 
 ## selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes)
 
