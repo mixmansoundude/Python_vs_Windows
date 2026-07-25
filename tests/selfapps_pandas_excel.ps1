@@ -6,9 +6,11 @@ $ciNd = Join-Path $repo 'ci_test_results.ndjson'
 if (-not (Test-Path -LiteralPath $nd)) { New-Item -ItemType File -Path $nd -Force | Out-Null }
 if (-not (Test-Path -LiteralPath $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
 
+$script:AnyRowFailed = $false
 function Write-NdjsonRow {
     param([hashtable]$Row)
 
+    if ($Row.ContainsKey('pass') -and -not $Row['pass']) { $script:AnyRowFailed = $true }
     $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
     if ($lane -and -not $Row.ContainsKey('lane')) { $Row['lane'] = $lane }
     $json = $Row | ConvertTo-Json -Compress -Depth 8
@@ -154,6 +156,7 @@ if (-not $condaBat) {
         Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.install'; req = 'REQ-005'; pass = $false; desc = 'pandas and openpyxl both present in conda env after install'; details = ([ordered]@{ skip = $false; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) })
         Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.import';  req = 'REQ-005'; pass = $false; desc = 'import pandas; import openpyxl succeeds in conda env'; details = ([ordered]@{ skip = $false; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) })
     }
+    if ($script:AnyRowFailed) { exit 1 }
     exit 0
 }
 
@@ -266,3 +269,6 @@ $importPass   = ($importDetails.exitCode -eq 0)
 
 Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.install'; req = 'REQ-005'; pass = $envListPass; desc = 'pandas and openpyxl both present in conda env after install'; details = $envListDetails })
 Write-NdjsonRow ([ordered]@{ id = 'self.pandas.openpyxl.import';  req = 'REQ-005'; pass = $importPass;  desc = 'import pandas; import openpyxl succeeds in conda env'; details = $importDetails })
+
+if ($script:AnyRowFailed) { exit 1 }
+exit 0

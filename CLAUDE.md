@@ -887,6 +887,87 @@ of a second or third pin actually needing it.
 
 Items completed and shipped:
 
+- **Multi-agent parallel bug-hunt pass, requested directly by the owner ("general research
+  refinement and code review... shoring up and checking if things are really the way they need to
+  be"), 2026-07-24.** Two parallel research-only agents (`run_setup.bat` itself; CI workflow +
+  test infrastructure) swept the codebase for new bugs beyond what earlier passes had already
+  found. Every finding was independently re-verified by direct code tracing before being acted on.
+  - **8 `selfapps_*.ps1` files never propagated their computed `$pass` to a process exit code --
+    a NEW instance of the exact bug class already found and fixed twice before (3 files, then
+    separately `tests/selftest.ps1`, per the earlier Closed Backlog entries).** A fresh sweep found
+    `selfapps_contract_uv.ps1`, `selfapps_entry.ps1`, `selfapps_envsmoke.ps1`,
+    `selfapps_pandas_excel.ps1`, `selfapps_pipgap.ps1`, `selfapps_reqspec.ps1`, and
+    `selfapps_runtime_writeback.ps1` all missing `if (-not $pass) { exit 1 }; exit 0` at the end --
+    confirmed via `grep` that none contained any final exit statement (a few had only mid-file
+    `exit 0` skip-guards for non-Windows hosts or missing conda, all writing `pass=$true` rows
+    only, genuinely safe as unconditional exits). Four of these files (`entry`, `envsmoke`,
+    `reqspec`, `runtime_writeback`) run unconditionally in the GATING `real`/`conda-full` lanes
+    with no `continue-on-error`, meaning a real regression in entry selection, env-smoke
+    verification, requirement-spec translation, or runtime.txt write-back could compute
+    `pass=$false`, write it correctly into the NDJSON row -- and the step, job, and PR check would
+    still report green. **`selfapps_pandas_excel.ps1` had the more severe variant already seen
+    once before in `reqspec.ps1`'s own conda-not-found branch**: its `HP_FORCE_CONDA_ONLY -eq '1'`
+    branch (the conda-full gating lane, where conda genuinely missing IS a real failure) writes
+    six `pass=$false` NDJSON rows and then unconditionally `exit 0`s -- and `reqspec.ps1`'s own
+    structurally identical conda-not-found branch (line 347-353, same `HP_FORCE_CONDA_ONLY -eq '1'`
+    condition, same pattern of real `pass=$false` rows via `Write-ReqspecRows`) turned out to have
+    the SAME gap, caught in a follow-up self-check rather than the original sweep, and fixed the
+    same way. **A follow-up, targeted grep pass (files with zero `exit 1` occurrences anywhere,
+    run after the first 7 were fixed) found an 8th instance the two research agents both missed:
+    `selfapps_single.ps1`** (REQ-002, `entry.single.direct`/`helper.invoke`/`pipreqs.run`/
+    `entry.expected` rows) -- unconditional `exit 0` at end of file with zero `exit 1` anywhere,
+    despite four call sites that can write `pass=$false`. Lower real-world severity than the other
+    7 (this file's own header docstring notes it's gated on `pyFiles==1`, which the bootstrapper
+    repo's own multi-file CI runs never satisfy -- so this repo's CI has likely never actually
+    exercised the buggy branch -- but the file is an explicit template "In consumer repos it checks
+    the entry selection breadcrumbs when exactly one Python file is present," where the gap is
+    real). Fixed via the identical central-choke-point pattern: each file's `Write-NdjsonRow`
+    function now sets a script-scoped `$script:AnyRowFailed` flag whenever a row's `pass` is
+    `$false`, and every exit site (final, plus the genuinely-unsafe mid-file ones in
+    `pandas_excel.ps1` and `reqspec.ps1`) checks it -- chosen over hand-deriving each file's own
+    "real" aggregate pass condition, since `reqspec.ps1`'s own ingest rows use locally-scoped pass
+    variables that are NOT folded into its `$overallPass`, making a per-file manual aggregation
+    riskier to get right than the already-proven central-tracking mechanism. This pass's own
+    lesson: a grep for "zero `exit 1` occurrences despite `pass=$false` literals present" is a
+    cheap, mechanical way to re-run this exact check in the future without needing a fresh agent
+    sweep -- worth remembering as the go-to verification method if this bug class is ever
+    suspected to have a 9th instance.
+  - **`tests/harness.ps1`'s `$allowedStates` for the `bootstrap.state` check was missing
+    `'embed_env'`** -- the state value `:try_embed_fallback` (REQ-009 Tier 5) sets on a successful
+    embed-tier fallback, confirmed present in `run_setup.bat` alongside the already-allowlisted
+    `venv_env`/`degraded_env` sibling states. Since the provider chain is
+    `uv -> conda -> embed -> venv -> system`, a genuine (non-test-forced) double failure of uv and
+    conda in the `real` (gating) lane would legitimately land here -- and would have been reported
+    as a `harness.ps1` failure despite being correct, designed fallback behavior, exactly mirroring
+    the already-allowlisted `venv_env`/`degraded_env` cases. Fixed by adding it to the allowlist.
+  - **The warnfix-triggered PyInstaller rebuild (`run_setup.bat`, inside the `HP_WARNFIX_NEEDED`
+    block) had zero failure handling, unlike its sibling original-build call a few dozen lines
+    earlier.** See `docs/agent-interconnect.md`'s "AV-Safe Build Path Tier A and hidden-import
+    auto-recovery" section for the full trace, failure scenario, and fix (mirrors the original
+    build's `if errorlevel 1 (...) else if not exist ... (...) else (...)` shape and
+    `HP_BOOTSTRAP_STATE=error` handling, deliberately without a `:try_nuitka_tier_a` retry; also
+    clears `HP_NUITKA_FALLBACK_USED` on a genuine PyInstaller rebuild success so
+    `:hidden_import_recover`'s existing Nuitka-skip guard doesn't misfire afterward). No dedicated
+    CI test added -- flagged here as a candidate for a future dedicated test pass (a
+    `HP_TEST_FORCE_WARNFIX_REBUILD_FAIL` hook mirroring the existing
+    `HP_TEST_FORCE_PYINSTALLER_FAIL` pattern) if this path's real-world trigger rate ever
+    justifies the investment; not built speculatively here, consistent with this repo's general
+    bias against untriggered speculative work.
+  - **Investigated and found NOT a new issue, no action**: the `real`-lane review agent's other
+    observations (a loose substring match in `selfapps_pyinstaller_fail.ps1`'s `$testHookFired`
+    clause, two cache-lane steps still missing `continue-on-error`) were both judged low-impact
+    (the loose match is ANDed with 3 other specific assertions so the test as a whole isn't
+    tautological; the cache-lane gap sits right before a step that already has `if: always()`) and
+    left for a future pass rather than expanding this one's scope further. The `run_setup.bat`
+    review agent's broader sweep (parse-time `%VAR%` freezing, fallback-tier state consistency,
+    unquoted risky `:log`/`echo` values, `move`/`rd` swap verification, guaranteed-vs-assumed-set
+    variables, and the newest REQ-026/REQ-027/activity-aware-kill code) found the codebase
+    consistently applying its own already-documented defensive patterns everywhere else traced,
+    including a specific check of whether `HP_NOEXE_VERIFY_FAILED`/`HP_FASTPATH_RUN_FAILED` could
+    go stale across a REQ-009 provider-cascade re-entry (confirmed they cannot, since
+    `HP_CASCADE_APPROVED` is unconditionally cleared at the top of `:provider_cascade` on every
+    re-entry) -- no further findings surfaced there.
+
 - **CLI-args/stdin-interactive support, P2 (honest ambiguous-exit messaging) -- final slice,
   `docs/plan-cli-interactive-verification.md`'s plan is now FULLY SHIPPED (P0, P1, P2 all
   complete).** Scope was narrowed from the plan's literal wording during implementation: the

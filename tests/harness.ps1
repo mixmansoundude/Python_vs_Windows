@@ -108,9 +108,9 @@ if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
   Write-Host ("SHA256 (fallback): {0}" -f $sha)
 }
 Write-Result "file.hash" "SHA256 of run_setup.bat" $true @{ sha256 = $sha }
-$allowedStates = @('ok','no_python_files','venv_env','degraded_env','cache_corrupted')
+$allowedStates = @('ok','no_python_files','venv_env','degraded_env','embed_env','cache_corrupted')
 $stateOk = $allowedStates -contains $BootstrapStatus.state
-Write-Result "bootstrap.state" "Bootstrap status state is ok/no_python_files/venv_env/degraded_env" $stateOk @{ state=$BootstrapStatus.state; exitCode=$BootstrapStatus.exitCode; pyFiles=$BootstrapStatus.pyFiles; allowed=$allowedStates }
+Write-Result "bootstrap.state" "Bootstrap status state is ok/no_python_files/venv_env/degraded_env/embed_env" $stateOk @{ state=$BootstrapStatus.state; exitCode=$BootstrapStatus.exitCode; pyFiles=$BootstrapStatus.pyFiles; allowed=$allowedStates }
 Write-Result "bootstrap.exit" "Bootstrap exitCode is 0" ($BootstrapStatus.exitCode -eq 0) @{ exitCode=$BootstrapStatus.exitCode }
 $payloads = @{}
 foreach ($line in $Lines) {

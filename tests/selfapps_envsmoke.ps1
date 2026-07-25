@@ -6,9 +6,11 @@ $ciNd = Join-Path $repo 'ci_test_results.ndjson'
 if (-not (Test-Path $nd)) { New-Item -ItemType File -Path $nd -Force | Out-Null }
 if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
 
+$script:AnyRowFailed = $false
 function Write-NdjsonRow {
     param([hashtable]$Row)
 
+    if ($Row.ContainsKey('pass') -and -not $Row['pass']) { $script:AnyRowFailed = $true }
     $json = $Row | ConvertTo-Json -Compress -Depth 8
     Add-Content -LiteralPath $nd -Value $json -Encoding Ascii
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
@@ -787,3 +789,6 @@ Write-NdjsonRow ([ordered]@{
         interpreterPath=$spaceInterpreterPath
     }
 })
+
+if ($script:AnyRowFailed) { exit 1 }
+exit 0

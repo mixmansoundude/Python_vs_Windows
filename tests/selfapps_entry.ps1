@@ -21,9 +21,11 @@ if (-not (Test-Path -LiteralPath $ciNd)) {
 }
 
 
+$script:AnyRowFailed = $false
 function Write-NdjsonRow {
     param([hashtable]$Row)
 
+    if ($Row.ContainsKey('pass') -and -not $Row['pass']) { $script:AnyRowFailed = $true }
     $json = $Row | ConvertTo-Json -Compress -Depth 8
     Add-Content -LiteralPath $nd -Value $json -Encoding Ascii
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
@@ -359,3 +361,6 @@ Write-NdjsonRow ([ordered]@{
     desc    = 'Entry scenarios emitted breadcrumbs and passed'
     details = @{ issues = $issues }
 })
+
+if ($script:AnyRowFailed) { exit 1 }
+exit 0
