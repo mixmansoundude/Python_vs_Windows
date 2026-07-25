@@ -942,6 +942,36 @@ of a second or third pin actually needing it.
 
 ## Closed Backlog
 
+- **`dep_check.py` name normalization (PEP-503-style): the dep-check fast-path skip could
+  false-negative on separator-style mismatches**, another finding from the 2026-07-25 Python
+  helper edge-case research. `parse_lock`/`parse_reqs` only `.lower()`ed extracted names, with no
+  `-`/`_`/`.` folding -- conda-forge and PyPI sometimes spell the same logical package with
+  different separators for the same name (e.g. `typing_extensions` in a conda lock vs.
+  `typing-extensions` in pipreqs output), which would look "missing" from the lock on every run,
+  forcing an unnecessary reinstall and defeating the fast path's whole purpose (not a
+  correctness break -- the reinstall is idempotent -- just wasted time on affected package
+  names). Fixed with a small `_norm()` helper (`re.sub(r"[-_.]+", "-", name).lower()`, PEP 503's
+  own normalization rule) applied consistently in both functions. `tools/dep_check.py` is an
+  already-promoted canonical source with `PayloadSync`; margin was comfortable (4604 chars
+  before, 4000 after). 5 new tests in `tests/test_dep_check.py` (unit-level normalization in
+  both functions, a repeated-separator collapse case, and two `main()`-level end-to-end
+  regressions proving the fast path now correctly skips across a hyphen/underscore and a
+  hyphen/dot mismatch) -- 21/21 passing (up from 16).
+  - **A related agent finding -- adding PyQt5/PySide6 to `tools/collect_submodules.py`'s
+    `DYNAMIC_PKGS` curated set, to fix the well-known "could not find or load the Qt platform
+    plugin" PyInstaller runtime crash -- was investigated and NOT implemented, because it does
+    not actually fix that problem.** Read `collect_submodules.py`'s own module docstring
+    carefully before acting: `--collect-submodules` collects a package's PYTHON submodules
+    (the exact gap sklearn/matplotlib/scipy/plotly genuinely have -- dynamically-dispatched
+    Python code PyInstaller's static tracer can't see). Qt's platform-plugin loading is a
+    completely different, NATIVE plugin-loading mechanism (DLLs, not Python submodules) that
+    `--collect-submodules` has no ability to address at all -- PyInstaller's own bundled
+    PyQt5/PySide6 hooks (or `--collect-data`) are the actual correct fix for that specific
+    crash, a mechanism this file doesn't touch. Adding PyQt5/PySide6 here would have bloated
+    GUI-app EXEs (a large framework) without fixing the real issue the finding was aimed at --
+    a case where verifying an agent's suggestion against the actual mechanism it proposes using
+    caught a misdiagnosis before it shipped.
+
 - **`HP_TEST_JUSTME_FALLBACK` removed as vestigial dead test-scaffolding**, found by a
   background research agent auditing `run_setup.bat` against AGENTS.md's own "Branch coverage
   policy" (every branch needs a CI test). Confirmed via a repo-wide grep that no test file

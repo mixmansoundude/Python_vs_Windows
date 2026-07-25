@@ -20,8 +20,19 @@ REQ_FILE = "requirements.auto.txt"
 LOCK_FILE = "~environment.lock.txt"
 
 
+def _norm(name):
+    """PEP 503 style normalization: runs of -_. collapse to one '-', lowercased.
+
+    conda-forge and PyPI sometimes spell the same logical package with
+    different separators for the same name (e.g. typing_extensions vs.
+    typing-extensions) -- without this, such a package looks "missing" from
+    the lock on every run, defeating the fast-path skip this file exists for.
+    """
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
 def parse_lock(path):
-    """Return frozenset of lowercase package names from conda list --export."""
+    """Return frozenset of normalized package names from conda list --export."""
     names = set()
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as fh:
@@ -30,7 +41,7 @@ def parse_lock(path):
                 if not line or line.startswith("#"):
                     continue
                 # conda list --export: name=version=build[=channel]
-                name = line.split("=")[0].strip().lower()
+                name = _norm(line.split("=")[0].strip())
                 if name:
                     names.add(name)
     except OSError:
@@ -39,7 +50,7 @@ def parse_lock(path):
 
 
 def parse_reqs(path):
-    """Return list of lowercase package names from pip-style requirements file."""
+    """Return list of normalized package names from pip-style requirements file."""
     names = []
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as fh:
@@ -48,7 +59,7 @@ def parse_reqs(path):
                 if not line or line.startswith("#"):
                     continue
                 # Strip version specifier: numpy>=1.20 -> numpy
-                name = re.split(r"[>=<!~,;\s\[]", line, maxsplit=1)[0].strip().lower()
+                name = _norm(re.split(r"[>=<!~,;\s\[]", line, maxsplit=1)[0].strip())
                 if name:
                     names.append(name)
     except OSError:

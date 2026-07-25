@@ -125,6 +125,47 @@ class MainDecision(unittest.TestCase):
             (Path(d) / "requirements.auto.txt").write_text("numpy\nrequests\n", encoding="ascii")
             self.assertEqual(_run_main(d), "run")
 
+    def test_hyphen_vs_underscore_separator_mismatch_skips(self):
+        # Regression: conda-forge and PyPI sometimes spell the same logical
+        # package with different separators for the same name (e.g.
+        # typing_extensions vs. typing-extensions). Before PEP-503-style
+        # normalization, this pair looked "missing" from the lock on every
+        # run, forcing an unnecessary reinstall and defeating the fast path.
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "~environment.lock.txt").write_text(
+                "typing_extensions=4.9.0=pyh0\n", encoding="ascii")
+            (Path(d) / "requirements.auto.txt").write_text(
+                "typing-extensions>=4.0\n", encoding="ascii")
+            self.assertEqual(_run_main(d), "skip")
+
+    def test_dot_separator_mismatch_skips(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "~environment.lock.txt").write_text(
+                "ruamel.yaml=0.18.0=pyh0\n", encoding="ascii")
+            (Path(d) / "requirements.auto.txt").write_text(
+                "ruamel-yaml\n", encoding="ascii")
+            self.assertEqual(_run_main(d), "skip")
+
+
+class Normalization(unittest.TestCase):
+    def test_parse_lock_normalizes_underscore_to_hyphen(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("typing_extensions=4.9.0=pyh0\n")
+            path = f.name
+        self.assertEqual(parse_lock(path), frozenset({"typing-extensions"}))
+
+    def test_parse_reqs_normalizes_underscore_to_hyphen(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("typing_extensions>=4.0\n")
+            path = f.name
+        self.assertEqual(parse_reqs(path), ["typing-extensions"])
+
+    def test_repeated_separators_collapse_to_one_hyphen(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("a__b--c\n")
+            path = f.name
+        self.assertEqual(parse_reqs(path), ["a-b-c"])
+
 
 class PayloadSync(unittest.TestCase):
     def test_embedded_base64_matches_source(self):
