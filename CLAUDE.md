@@ -892,7 +892,7 @@ Items completed and shipped:
   be"), 2026-07-24.** Two parallel research-only agents (`run_setup.bat` itself; CI workflow +
   test infrastructure) swept the codebase for new bugs beyond what earlier passes had already
   found. Every finding was independently re-verified by direct code tracing before being acted on.
-  - **7 `selfapps_*.ps1` files never propagated their computed `$pass` to a process exit code --
+  - **8 `selfapps_*.ps1` files never propagated their computed `$pass` to a process exit code --
     a NEW instance of the exact bug class already found and fixed twice before (3 files, then
     separately `tests/selftest.ps1`, per the earlier Closed Backlog entries).** A fresh sweep found
     `selfapps_contract_uv.ps1`, `selfapps_entry.ps1`, `selfapps_envsmoke.ps1`,
@@ -908,14 +908,30 @@ Items completed and shipped:
     still report green. **`selfapps_pandas_excel.ps1` had the more severe variant already seen
     once before in `reqspec.ps1`'s own conda-not-found branch**: its `HP_FORCE_CONDA_ONLY -eq '1'`
     branch (the conda-full gating lane, where conda genuinely missing IS a real failure) writes
-    six `pass=$false` NDJSON rows and then unconditionally `exit 0`s. Fixed via the SAME
-    central-choke-point pattern already proven correct for `tests/selftest.ps1`: each file's
-    `Write-NdjsonRow` function now sets a script-scoped `$script:AnyRowFailed` flag whenever a
-    row's `pass` is `$false`, and every exit site (both the final one and, for `pandas_excel.ps1`,
-    the one genuinely-unsafe mid-file one) checks it -- chosen over hand-deriving each file's own
+    six `pass=$false` NDJSON rows and then unconditionally `exit 0`s -- and `reqspec.ps1`'s own
+    structurally identical conda-not-found branch (line 347-353, same `HP_FORCE_CONDA_ONLY -eq '1'`
+    condition, same pattern of real `pass=$false` rows via `Write-ReqspecRows`) turned out to have
+    the SAME gap, caught in a follow-up self-check rather than the original sweep, and fixed the
+    same way. **A follow-up, targeted grep pass (files with zero `exit 1` occurrences anywhere,
+    run after the first 7 were fixed) found an 8th instance the two research agents both missed:
+    `selfapps_single.ps1`** (REQ-002, `entry.single.direct`/`helper.invoke`/`pipreqs.run`/
+    `entry.expected` rows) -- unconditional `exit 0` at end of file with zero `exit 1` anywhere,
+    despite four call sites that can write `pass=$false`. Lower real-world severity than the other
+    7 (this file's own header docstring notes it's gated on `pyFiles==1`, which the bootstrapper
+    repo's own multi-file CI runs never satisfy -- so this repo's CI has likely never actually
+    exercised the buggy branch -- but the file is an explicit template "In consumer repos it checks
+    the entry selection breadcrumbs when exactly one Python file is present," where the gap is
+    real). Fixed via the identical central-choke-point pattern: each file's `Write-NdjsonRow`
+    function now sets a script-scoped `$script:AnyRowFailed` flag whenever a row's `pass` is
+    `$false`, and every exit site (final, plus the genuinely-unsafe mid-file ones in
+    `pandas_excel.ps1` and `reqspec.ps1`) checks it -- chosen over hand-deriving each file's own
     "real" aggregate pass condition, since `reqspec.ps1`'s own ingest rows use locally-scoped pass
     variables that are NOT folded into its `$overallPass`, making a per-file manual aggregation
-    riskier to get right than the already-proven central-tracking mechanism.
+    riskier to get right than the already-proven central-tracking mechanism. This pass's own
+    lesson: a grep for "zero `exit 1` occurrences despite `pass=$false` literals present" is a
+    cheap, mechanical way to re-run this exact check in the future without needing a fresh agent
+    sweep -- worth remembering as the go-to verification method if this bug class is ever
+    suspected to have a 9th instance.
   - **`tests/harness.ps1`'s `$allowedStates` for the `bootstrap.state` check was missing
     `'embed_env'`** -- the state value `:try_embed_fallback` (REQ-009 Tier 5) sets on a successful
     embed-tier fallback, confirmed present in `run_setup.bat` alongside the already-allowlisted

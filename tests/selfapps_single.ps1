@@ -51,9 +51,11 @@ if ($null -ne $pyFileCount -and $pyFileCount -ne 1) {
     exit 0
 }
 
+$script:AnyRowFailed = $false
 function Write-NdjsonRow {
     param([hashtable]$Row)
 
+    if ($Row.ContainsKey('pass') -and -not $Row['pass']) { $script:AnyRowFailed = $true }
     $json = $Row | ConvertTo-Json -Compress
     Add-Content -LiteralPath $nd -Value $json -Encoding Ascii
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
@@ -248,4 +250,5 @@ finally {
     }
 }
 
+if ($script:AnyRowFailed) { exit 1 }
 exit 0
