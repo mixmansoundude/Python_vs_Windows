@@ -3308,7 +3308,34 @@ if not defined HP_BUILD_OK (
       if exist "~warnfix_repair_failed.flag" call :log "[WARN] One or more repair attempts failed"
       call :log "[INFO] Rebuilding standalone executable after warnfix -- this may take a minute or two..."
       "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
-      call :log "[REPAIR] rebuild complete after warnfix."
+      rem derived requirement (bug-hunt pass): unlike the ORIGINAL build a few dozen lines
+      rem above (which routes every failure through :try_nuitka_tier_a / :die /
+      rem HP_BOOTSTRAP_STATE=error), this warnfix-triggered rebuild previously had NO failure
+      rem handling at all -- the log line below always said "rebuild complete" and nothing
+      rem re-checked dist\%ENVNAME%.exe, so a genuine rebuild failure (e.g. the exact AV-lock
+      rem class the whole AV-Safe Build Path PRD exists to route around) fell through to
+      rem :run_exe_smokerun's silent no-op-when-missing skip, then a clean interpreter-fallback
+      rem run, ending in a false ~bootstrap.status.json state=ok. Deliberately NOT retried via
+      rem :try_nuitka_tier_a here (unlike the original build) -- this rebuild only exists to
+      rem bundle a module warnfix already installed into an EXE that was already confirmed
+      rem working before this rebuild attempt; the conservative, honest response to a failure
+      rem is to report it, not to speculatively rebuild via a second tool inside an already
+      rem-nested failure path.
+      if errorlevel 1 (
+        call :log "[ERROR] PyInstaller execution failed during warnfix rebuild; the previous build may no longer be valid."
+        set "HP_BOOTSTRAP_STATE=error"
+      ) else if not exist "dist\%ENVNAME%.exe" (
+        call :log "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe during warnfix rebuild."
+        set "HP_BOOTSTRAP_STATE=error"
+      ) else (
+        call :log "[REPAIR] rebuild complete after warnfix."
+        rem The warnfix rebuild always uses PyInstaller -- if the EXE it just replaced was
+        rem previously Nuitka-built (Tier A), it no longer is; clear the flag so
+        rem :hidden_import_recover's Nuitka-skip guard doesn't wrongly skip repair on what is
+        rem now genuinely a PyInstaller-built EXE (see docs/agent-interconnect.md "Tier A and
+        rem hidden-import auto-recovery").
+        set "HP_NUITKA_FALLBACK_USED="
+      )
       rem REQ-005.11: warnfix-trigger PEP 723 write-back. Must run here, not later --
       rem ~missing_modules.txt and ~warnfix_repair_failed.flag are both still on disk at
       rem this point and are deleted shortly after (see below).

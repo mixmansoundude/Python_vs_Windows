@@ -19,8 +19,10 @@ $ciNd = Join-Path -Path $repoRoot -ChildPath 'ci_test_results.ndjson'
 if (-not (Test-Path -LiteralPath $nd))   { New-Item -ItemType File -Path $nd   -Force | Out-Null }
 if (-not (Test-Path -LiteralPath $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
 
+$script:AnyRowFailed = $false
 function Write-NdjsonRow {
     param([hashtable]$Row)
+    if ($Row.ContainsKey('pass') -and -not $Row['pass']) { $script:AnyRowFailed = $true }
     $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
     if ($lane -and -not $Row.ContainsKey('lane')) { $Row['lane'] = $lane }
     $json = $Row | ConvertTo-Json -Compress -Depth 8
@@ -121,3 +123,6 @@ Write-NdjsonRow ([ordered]@{
 if (-not $condaMissPass) { Write-Host '[pipgap] conda did not miss opencv-python as expected' }
 if (-not $pipFillPass)   { Write-Host '[pipgap] pip gap-fill did not install opencv-python' }
 if (-not $importPass)    { Write-Host '[pipgap] import cv2 sentinel not found in entry smoke output' }
+
+if ($script:AnyRowFailed) { exit 1 }
+exit 0

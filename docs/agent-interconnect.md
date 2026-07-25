@@ -122,8 +122,35 @@ installed in the exact build interpreter Tier A just used, so the scanner's `fin
 treat it as fixable if the skip guard were missing or broken) -- then asserts the skip log line
 fires and the OLD `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=` rebuild line does NOT.
 
-**If a future Tier B (requirement 5, reprovisioned pinned-3.12 environment) or any other
-alternate-build-tool path is added, it needs this same guard.** The check belongs on
+**The warnfix-triggered rebuild (a SECOND PyInstaller rebuild call site, inside the
+`HP_WARNFIX_NEEDED` block) had the mirror-image gap, found via a later bug-hunt review pass: no
+failure handling at all, and no `HP_NUITKA_FALLBACK_USED` clearing on success.** Unlike the
+original build a few dozen lines earlier (which routes every failure through `:try_nuitka_tier_a`
+/ `:die` / `HP_BOOTSTRAP_STATE=error`), the warnfix rebuild's `"%HP_PY%" -m PyInstaller ...`
+call had no `if errorlevel 1` check at all -- the very next line unconditionally logged
+`[REPAIR] rebuild complete after warnfix.` regardless of whether it actually did, and nothing
+re-checked `dist\%ENVNAME%.exe`. A genuine rebuild failure here (e.g. the exact AV-lock class the
+whole PRD exists to route around) fell through to `:run_exe_smokerun`'s silent no-op-when-missing
+skip, then a clean interpreter-fallback run, ending in a false `state=ok`. Fixed with the same
+`if errorlevel 1 (...) else if not exist "dist\%ENVNAME%.exe" (...) else (...)` shape, nested
+if/else (no goto, matching the "safe inside a parenthesized block" pattern the original build's
+own comment documents) -- **deliberately NOT retried via `:try_nuitka_tier_a`** unlike the
+original build: this rebuild only exists to bundle an already-installed warnfix module into an
+EXE that was already confirmed working before this attempt, so the conservative, honest response
+to a failure is to report it via `HP_BOOTSTRAP_STATE=error`, not to speculatively invoke a second
+build tool inside an already-nested failure path. On a SUCCESSFUL rebuild, the fix also clears
+`HP_NUITKA_FALLBACK_USED` -- this rebuild always uses PyInstaller, so if the EXE it just replaced
+was previously Nuitka-built (a stale PyInstaller `build\%ENVNAME%\warn-%ENVNAME%.txt` can survive
+a Tier-A-rescued build and still trigger this warnfix block), the flag must reflect that the file
+at `dist\%ENVNAME%.exe` is now genuinely PyInstaller-built, or `:hidden_import_recover`'s own
+guard above would wrongly keep skipping repair on it. No dedicated CI test added for this specific
+fix (a review-pass correctness fix reusing an already-thoroughly-tested failure-handling shape,
+not a new feature) -- flagged in CLAUDE.md as a candidate for a future dedicated test pass if this
+path's real-world trigger rate ever justifies it.
+
+**If a future Tier B (requirement 5, reprovisioned pinned-3.12 environment, dropped from the
+backlog -- see CLAUDE.md's Known Findings) or any other alternate-build-tool path is added, it
+needs this same guard.** The check belongs on
 `HP_NUITKA_FALLBACK_USED` specifically (or an equivalent "the EXE currently at `dist\<env>.exe`
 was NOT built by PyInstaller" signal) -- any future subroutine that can produce `dist\<env>.exe`
 via something other than PyInstaller should set an analogous marker and this guard should be

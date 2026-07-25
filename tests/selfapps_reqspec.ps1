@@ -6,9 +6,11 @@ $ciNd = Join-Path $repo 'ci_test_results.ndjson'
 if (-not (Test-Path -LiteralPath $nd)) { New-Item -ItemType File -Path $nd -Force | Out-Null }
 if (-not (Test-Path -LiteralPath $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
 
+$script:AnyRowFailed = $false
 function Write-NdjsonRow {
     param([hashtable]$Row)
 
+    if ($Row.ContainsKey('pass') -and -not $Row['pass']) { $script:AnyRowFailed = $true }
     $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
     if ($lane -and -not $Row.ContainsKey('lane')) { $Row['lane'] = $lane }
     $json = $Row | ConvertTo-Json -Compress -Depth 8
@@ -349,6 +351,7 @@ if (-not $condaBat) {
         Write-ReqspecRows -Pass $true -Skip $true -Reason 'conda-not-installed-uv-first' -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails ([ordered]@{ exitCode = -1; expectedFailure = $true; constraint = 'six<1.0'; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) -ChannelPinDetails ([ordered]@{ channel = 'conda-forge'; exitCode = -1; defaultsFound = $false; pkgsMainFound = $false; outputMatched = $false; solverOutputSnippet = ''; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot })
         Write-ReqspecIngestRows -Skip $true -Reason 'conda-not-installed-uv-first' -TranslateDetails ([ordered]@{ source = 'requirements.txt'; translated = $false; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) -DryRunDetails ([ordered]@{ exitCode = -1; source = 'requirements.txt'; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot }) -ImportDetails ([ordered]@{ package = 'six'; importable = $false; exitCode = -1; reason = 'conda-not-found'; condaBatCandidates = $condaInfo.candidates; publicRoot = $condaInfo.publicRoot })
     }
+    if ($script:AnyRowFailed) { exit 1 }
     exit 0
 }
 
@@ -668,3 +671,6 @@ try {
 
 Write-ReqspecRows -Pass $overallPass -TranslationChecks $translationChecks -DryRunDetails $dryRunDetails -InstallDetails $installDetails -FailcaseDetails $failcaseDetails -ChannelPinDetails $channelPinDetails
 Write-ReqspecIngestRows -TranslateDetails $ingestTranslateDetails -DryRunDetails $ingestDryRunDetails -ImportDetails $ingestImportDetails
+
+if ($script:AnyRowFailed) { exit 1 }
+exit 0
