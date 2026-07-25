@@ -496,53 +496,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    creation), and the current fixed order is not wrong, just not optimal in either direction.
    Revisit if the network-correlated-embed-failure pattern shows up for real in CI or user
    reports, rather than speculatively building it now.
-6. **AV-Safe Build Path (PyInstaller quarantine fallback via Nuitka)** -- full PRD at
-   `docs/prd-av-safe-build-path.md`. A large, well-specified, preemptive feature (no real user
-   report yet, a documented industry-wide problem) covering a two-tier Nuitka fallback when
-   PyInstaller's build gets AV-quarantined, including a narrow, well-justified Python-3.12 pin
-   scoped to that one fallback tier. The PRD's own "Notes from Claude" section has the original
-   "way later" priority reasoning and a deliberately blunt writeup of why the PRD's narrow,
-   well-justified Tier B version pin should **never** be generalized into a bootstrapper-wide
-   "stay a version or two behind latest" default -- this repo's total absence of telemetry or an
-   auto-update mechanism means any such pin would be permanently frozen into every
-   already-distributed copy of `run_setup.bat`, with no way to walk it back later even after the
-   reason for it stops being true. Read that section before extending Tier B's pinning pattern
-   anywhere else in this codebase.
-
-   **Implementation started 2026-07-20 (owner green light, after a refinement pass on the
-   just-shipped autopep723 work held up cleanly -- see the Closed Backlog entry directly above
-   this one).** Phase 1 requirement 1 (failure-simulation tests, test-first per the PRD's own
-   sequencing note) is SHIPPED -- see the separate Closed Backlog entry for the real,
-   independent correctness bug found and fixed while scoping it. **Requirements 2-4 (dispatch +
-   Tier A: real Nuitka fallback build in the existing environment, no reprovisioning) are ALSO
-   now SHIPPED** -- see the dedicated Closed Backlog entry. **Requirement 9 (P1, the elective
-   "want an optimized build too?" post-success upsell) is ALSO now SHIPPED** -- see its own
-   dedicated Closed Backlog entry.
-
-   **Requirement 5 (Tier B, reprovisioned pinned-3.12 environment via the existing provider
-   chain) is explicitly DEFERRED, owner's direct instruction (2026-07-21): "Until I run the
-   bootstrapper myself and have real problems, I don't want to do the reprovision rollback."**
-   This is not "not started yet" in the usual backlog sense -- it is a deliberate decision not
-   to build it speculatively before a real, owner-observed failure justifies the added
-   complexity (a second provider-chain traversal, a pinned-version environment, the
-   stale-PATH/VIRTUAL_ENV hazard research Finding 6 already flagged). Requirements 6 (loop
-   avoidance) and 8 (connectivity check before Tier B) both depend on Tier B existing and are
-   deferred with it. Do not start Tier B without a fresh, explicit go-ahead -- this differs from
-   how items 2-4 and 9 were greenlit (a broad "go as far as you can" authorization for the PRD
-   generally); Tier B specifically was carved back out after that authorization, so it needs its
-   own separate green light, not inference from the general one.
-
-   **Downtime re-check, 2026-07-20 (research only, no code written):**
-   verified against Nuitka's live changelog/issue tracker that Finding 1's core blocker (MinGW64
-   doesn't support Python 3.13+) is still unresolved as of Nuitka 4.1.2 -- no change to the
-   PRD's design. One narrower update folded into the PRD in place: a real Nuitka 4.0.4 bug fix
-   ("compiling with newer Python versions did not fall back to Zig when MSVC/MinGW64 was
-   unusable") means Tier A's own compiler-discovery chain may now land on Zig automatically more
-   often than Finding 1's original "not mature enough" framing assumed, and the specific crash
-   report Finding 1 cited turned out to be macOS/M3-scoped, not Windows. See the PRD's own inline
-   "Re-checked 2026-07-20" note under Finding 1 for the full detail -- flagged for confirmation
-   whenever Tier A is actually implemented, not verified end-to-end here (no Windows machine
-   available for this research pass).
 7. **CI job steps in `batch-check.yml` don't use `if: always()`, so one failing self-test step
    silently cascade-skips every subsequent step in the same job -- observed directly, not
    theorized.** While landing item 6's requirement-1 tests (PR #368), a bug in the new
@@ -710,8 +663,9 @@ rather than relying on manual memory.
   computed once at pin-time and independently verified, never trusted from a third-party
   checksum file fetched over the same network path as the download itself).
 - **Next-pin probe**: this table's own quarterly refresh (checking python.org for a new minor)
-  already covers this on the "does a new version exist" axis. If REQ-AV's Tier B (see the PRD
-  link in Active Backlog) ever ships its own Python-3.12 pin for Nuitka/MinGW64 compatibility,
+  already covers this on the "does a new version exist" axis. If REQ-AV's Tier B (dropped from the
+  backlog entirely -- see the Known Findings entry below for why and what restarts it; PRD at
+  `docs/prd-av-safe-build-path.md`) ever ships its own Python-3.12 pin for Nuitka/MinGW64 compatibility,
   add a matching probe here: periodically check whether Nuitka's MinGW64 backend has resumed
   Python 3.13+ support upstream, since that specific fact (not a general "try a newer version
   and see") is what the 3.12 pin depends on -- see that PRD's "Notes from Claude" section for why
@@ -755,6 +709,36 @@ for each tracked pin" -- worth doing, not urgent, and deliberately not built spe
 of a second or third pin actually needing it.
 
 ## Known Findings (diagnosed, no action warranted)
+
+- **AV-Safe Build Path Tier B (reprovisioned pinned-3.12 environment) dropped from the backlog
+  entirely, 2026-07-24 owner instruction -- not deferred-with-intent-to-revisit, genuinely not
+  planned unless one of two specific triggers occurs.** Full PRD at
+  `docs/prd-av-safe-build-path.md`; Tier A (real Nuitka fallback build in the existing
+  environment) and requirement 9 (the elective "optimized build?" upsell) are both SHIPPED --
+  see their own dedicated Closed Backlog entries -- and remain the complete, working AV-quarantine
+  mitigation this repo ships today. Tier B was the PRD's second tier: a reprovisioned environment
+  pinned to Python 3.12 specifically to route around Nuitka's MinGW64 backend not supporting
+  Python 3.13+ (Finding 1 in the PRD, last re-confirmed unresolved as of Nuitka 4.1.2 in the
+  2026-07-20 downtime re-check). Building it means a second provider-chain traversal, a
+  pinned-version environment, and the stale-PATH/`VIRTUAL_ENV` hazard research Finding 6 already
+  flagged -- real complexity with no user-observed need yet (the PRD itself notes it as
+  preemptive, "no real user report yet, a documented industry-wide problem").
+  **Two, and only two, conditions restart this work**: (a) the owner personally hits a real
+  PyInstaller AV-quarantine failure that Tier A does not already resolve, giving the reprovision
+  complexity a concrete justification instead of a speculative one; or (b) Nuitka's own upstream
+  MinGW64 backend gains Python 3.13+ support, which would remove the entire reason Tier B needs a
+  narrow version pin in the first place -- at that point Tier B's whole design would need
+  re-evaluating (it might not need a pin at all anymore), not just a version bump. Condition (b)
+  is exactly what the "Next-pin probe concept" section above already tracks quarterly for any
+  future pin justified by one specific, checkable fact -- re-check that same fact each scan
+  (Nuitka's MinGW64 Python-version support), not a generic "try a newer Nuitka" probe. If either
+  condition fires, read the PRD's own "Notes from Claude" section before restarting Tier B -- it
+  has the original reasoning plus a deliberately blunt writeup of why Tier B's narrow, well-
+  justified 3.12 pin should **never** be generalized into a bootstrapper-wide "stay a version or
+  two behind latest" default (this repo has no telemetry or auto-update mechanism, so any such
+  pin freezes permanently into every already-distributed copy of `run_setup.bat`). Requirements 6
+  (loop avoidance) and 8 (connectivity check before Tier B) depend on Tier B existing and are
+  dropped with it, for the same reason.
 
 - **The official `irm https://astral.sh/uv/install.ps1 | iex` installer script was researched as
   a possible replacement for the current uv acquisition method -- rejected, current approach is
