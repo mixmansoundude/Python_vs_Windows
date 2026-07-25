@@ -21,6 +21,33 @@ leaving stale guidance.**
 
 ---
 
+## Never open a real source file in Python `'w'` mode as part of a "dry run" -- write to a NEW path and diff before overwriting
+
+**Discovered 2026-07-25 as a genuine near-miss while fixing the `HP_PREP_REQUIREMENTS` payload
+(see CLAUDE.md's Closed Backlog entry for the fix itself).** A quick verification script meant to
+preview a payload-line swap included `with open('run_setup.bat', 'w', encoding='ascii',
+newline='\r\n') as fh: ... pass` -- the intent was to check line lengths first and fill in the
+write logic afterward, but Python's `'w'` mode truncates the file to zero bytes THE MOMENT
+`open()` succeeds, regardless of whether anything is ever written to the handle. The `pass` body
+meant nothing was written back, so `run_setup.bat` (~4715 lines, the repo's entire deliverable)
+was left at 0 bytes. Caught immediately via `wc -l run_setup.bat` / `git status` (both are cheap,
+fast checks worth running reflexively after ANY script that touches a tracked file) and restored
+losslessly via `git checkout -- run_setup.bat`, since the file had no uncommitted changes at the
+moment of the mistake -- if it had, those would have been lost with it.
+
+**Rule of thumb: a script whose job is to INSPECT or PREVIEW a change to an existing tracked file
+must never open that file in a write/truncate mode (`'w'`, `'wb'`) at all, even speculatively or
+as a scaffold to fill in later.** The safe pattern used to actually land this specific fix
+afterward: read the original file as bytes, construct the modified bytes entirely in memory (or
+write them to a brand-new path under `/tmp`), THEN diff the candidate against the original
+(`diff old new | grep -c '^[<>]'` or equivalent) to confirm only the intended lines changed,
+and only copy the verified candidate over the real file as the very last step. For a large
+generated/embedded-payload file like `run_setup.bat` specifically, also re-run
+`tools/check_delimiters.py` and confirm the line count is unchanged immediately after any such
+swap, before doing anything else.
+
+---
+
 ## .NET Process async-redirected-output: "call WaitForExit() twice" is NOT sufficient on its own to guarantee the buffers are drained
 
 **Superseded 2026-07-24 (see the "`Register-ObjectEvent` reorders lines within a single stream"
