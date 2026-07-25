@@ -154,6 +154,31 @@ class RegexFallbackPath(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual((Path(d) / "out.txt").read_text(encoding="ascii"), "click\n")
 
+    def test_comment_referencing_bracket_syntax_inside_array_not_truncated(self):
+        # Regression for CLAUDE.md Active Backlog item 13: a comment INSIDE the
+        # dependencies array containing an unquoted "]" (e.g. explaining array
+        # syntax) used to be misread as the array's own closing bracket, silently
+        # dropping every dependency listed after that comment line.
+        with tempfile.TemporaryDirectory() as d:
+            _write(Path(d) / "pyproject.toml",
+                   '[project]\ndependencies = [\n'
+                   '    "requests",  # supports array syntax e.g. [1,2]\n'
+                   '    "click",\n'
+                   ']\n')
+            rc, _, _ = _run(d, ["out.txt"], no_tomllib=True)
+            self.assertEqual(rc, 0)
+            self.assertEqual((Path(d) / "out.txt").read_text(encoding="ascii"),
+                              "requests\nclick\n")
+
+    def test_hash_inside_quoted_string_not_treated_as_comment(self):
+        with tempfile.TemporaryDirectory() as d:
+            _write(Path(d) / "pyproject.toml",
+                   '[project]\ndependencies = ["pkg; marker == \'a#b\'"]\n')
+            rc, _, _ = _run(d, ["out.txt"], no_tomllib=True)
+            self.assertEqual(rc, 0)
+            self.assertEqual((Path(d) / "out.txt").read_text(encoding="ascii"),
+                              "pkg; marker == 'a#b'\n")
+
     def test_no_project_section_exits_1(self):
         with tempfile.TemporaryDirectory() as d:
             _write(Path(d) / "pyproject.toml", '[tool.other]\nname = "app"\n')

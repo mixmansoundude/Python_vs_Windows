@@ -241,14 +241,43 @@ THEN stop and open/append a PR. One loop = one change set.
   - If the release tarball resolves to "Not Found" due to proxy filtering, install with Go instead: `go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.1` and add `/root/.local/share/mise/installs/go/1.24.3/bin` to `PATH` before running `actionlint`. On this runner `go env GOPATH` resolves to `/root/go`, so the compiled binary also lives under `/root/go/bin` -- add that directory to `PATH` if the mise shim is absent.
   - JSON: `jq -e .` over `*.json`.
   - Generic paired-delimiter scan for `.bat`, `.cmd`, `.ps1`, `.py`, `.yml`, `.yaml`, `.json`:
-    - Provide a helper such as `tools/check_delimiters.py` that validates (), {}, [], and quotes " ' (handle escapes and ignore comments when practical).
+    - `tools/check_delimiters.py` validates (), {}, [], and quotes " ' (handle escapes and ignore comments when practical), plus a growing set of targeted `.bat`/`.cmd`/`.ps1` heuristics for regressions that have actually bitten this repo -- each one has a `# derived requirement:` comment in the source explaining the exact incident it guards against. Current heuristics: `-like` PowerShell wildcard patterns embedded in batch strings with an unmatched `[`; `set VAR="value"` instead of `set "VAR=value"`; unquoted `%VAR%` in a file-system command (`del`/`if exist`/`mkdir`/`copy`/`move`/`pushd`); unescaped `|` inside a `for /f` backtick subshell; PowerShell `-or`/`-and` outside a conditional; and (added 2026-07-25, see docs/agent-lessons-learned.md's "`rem` needs a space after it" entry) a `rem` comment line whose very next character is not whitespace, which cmd.exe parses as an attempt to run a literal command rather than a comment.
     - For `.bat/.cmd`, treat `^` as escape and `REM`/`::` as comment starts; avoid over-parsing redirection symbols.
     - For `.ps1`, respect `#` comments and here-strings (@'...'@, @"..."@) when counting delimiters.
+    - **When a real bug is found only via a real Windows CI run (not catchable by any local static check that existed at the time), treat "can this become a `check_delimiters.py` heuristic" as a standing question before closing out the fix.** Not every lesson generalizes into a safe, low-false-positive static check -- see docs/agent-lessons-learned.md's "Prefer raw .NET types over Utility-module cmdlets" entry for an example that was deliberately NOT automated (the root cause is scoped to a specific invocation topology under Windows PowerShell 5.1 that a text-level scanner cannot reliably detect; a blanket flag on `Get-FileHash`/`Get-Content`/etc. usage across every `.ps1` file would be mostly false positives, confirmed by grepping the current `tools/*.ps1` files before deciding against it) -- but when a check is both cheap and has zero observed false positives against the real codebase (as with the `rem`-spacing check), add it.
+
+## Recurring tooling (do not re-derive these procedures by hand)
+
+Two scripts exist specifically because their underlying procedure was being re-derived ad hoc,
+repeatedly, across sessions -- formalizing them removes the risk of a slightly-wrong one-off
+version (see docs/agent-lessons-learned.md's "Never open a real source file in Python `'w'` mode"
+entry for a near-miss this class of mistake actually caused). If you find yourself writing a
+similar one-off script for the third time in a session, consider whether it belongs here instead.
+
+- **`tools/run_sanity_sweep.sh`** -- runs the full "Mandatory Sanity Checks" block from
+  `CLAUDE.md` (compileall, pyflakes, `check_delimiters.py`, yamllint, actionlint, the ASCII
+  sweep, `git diff --stat`, the PowerShell AST parse sweep, pytest) as one command with a clear
+  per-check pass/fail summary at the end, instead of copy-pasting the block by hand before every
+  commit. Pass extra touched files as arguments to extend the ASCII sweep's file list (CLAUDE.md:
+  "illustrative, not exhaustive -- extend it to cover whatever files the current change actually
+  touches"). Exit code reflects overall pass/fail. Does not auto-install missing tools (`pwsh`,
+  `actionlint`, `yamllint`, `pyflakes`) -- a missing tool is reported as a failed check with a
+  pointer back to this file's own install instructions above.
+- **`tools/sync_payload.py`** -- the ONLY sanctioned way to re-sync an embedded `HP_*` base64
+  payload line in `run_setup.bat` after editing its canonical `tools/` source. Never hand-roll
+  the read/re-encode/splice/write sequence with a one-off `python -c` snippet -- that is exactly
+  what caused the near-miss documented in docs/agent-lessons-learned.md. Usage:
+  `python tools/sync_payload.py HP_VARNAME tools/the_file.py` (add `--check` to verify without
+  writing). It refuses to write if the target line isn't found exactly once, if the resulting
+  diff touches anything other than the one intended line, or if the line would exceed the CMD
+  8191-character budget (unless `--force`). See "Embedded Helper Update Workflow" in
+  docs/agent-lessons-learned.md for the full procedure, including the no-canonical-source case.
 
 - Work in an explicit loop: **Plan -> Check the plan -> Execute -> Self-check/tests**. Document the plan before coding, verify it against requirements, act, then rerun the listed sanity checks.
 - When fixing bugs, leave professional comments that explain why the change is structured the way it is so future readers understand the constraint.
 - You may add helper utilities under `tools/` (preferred over embedding long scripts inside YAML/PowerShell/batch files). Run helpers from there freely, but update existing tools carefully to avoid regressions.
 - **Cite `run_setup.bat` locations by label/subroutine name (a hard anchor), not by exact line number, in CLAUDE.md/docs/README.** A line number drifts on every unrelated edit above the citation, so every prior insertion into this file has forced a re-verification sweep across every existing citation before a commit could land -- real, recurring cost for a soft benefit. Prefer `` `:try_venv_fallback` `` or `` `:download_get_pip` `` alone (`grep -n '^:label_name'` always finds it, drift-proof by construction). If a single statement inside a long subroutine genuinely needs pinpointing, describe it by nearby log text or purpose instead of a line number (e.g. "the get-pip.py bootstrap call inside `:try_venv_fallback`"). Only include a line number when it adds real, immediate value for the one commit introducing it, and never treat it as something a later, unrelated commit is obligated to keep in sync.
+- **Push every commit before it can be lost -- a local-only commit does not survive a branch reset.** A follow-up docs commit was made locally, never pushed, and then silently discarded when the next iteration ran `git checkout -B <branch> origin/main` to start a fresh slice -- `git log`/`git status` showed nothing wrong locally (the commit existed right up until the branch was reset), and the loss was only noticed later, by chance, when re-reading the "current" file and finding the content missing despite a commit message claiming it was there. If a turn ends (a wakeup is scheduled, control returns to the user, etc.) with any commit sitting unpushed, push it first -- do not rely on remembering to push it "next time."
 
 ## Embedded payload inventory (run_setup.bat)
 

@@ -18,7 +18,9 @@ tomllib's own return value, so the fallback always re-scans in that case --
 harmless, since a genuinely-absent key also finds nothing via regex). The
 fallback's dependency-array walk is char-by-char over quoted strings (not a
 naive comma/newline split) so it preserves extras ("pkg[all]") and
-multi-constraint specifiers ("pkg>=4,<5") intact.
+multi-constraint specifiers ("pkg>=4,<5") intact, and skips "#"-to-end-of-
+line comments (outside of quotes) so a comment mentioning bracket syntax
+cannot be mistaken for the array's own closing "]".
 
 This is the canonical source for the HP_PYPROJ_DEPS base64 payload embedded
 in run_setup.bat. After editing, re-encode and paste it into the
@@ -77,6 +79,18 @@ try:
                     i += 1
                 deps.append(rest[start:i])
                 i += 1
+            elif c == '#':
+                # TOML comments run from # to end of line and cannot appear
+                # inside a string (the branch above already consumed any #
+                # that was quoted). Without this, a comment referencing array
+                # syntax -- e.g. '"requests",  # supports [1,2] syntax' --
+                # would have its unquoted "]" wrongly treated as the end of
+                # the dependencies array, silently dropping every dependency
+                # listed after that line.
+                nl = rest.find('\n', i)
+                if nl == -1:
+                    break
+                i = nl + 1
             elif c == ']':
                 break
             else:

@@ -133,6 +133,12 @@ The ASCII sweep's file list is illustrative, not exhaustive -- extend it to cove
 files the current change actually touches. `actionlint`/`pwsh` install methods (if not already
 present in the environment) are documented in **AGENTS.md**.
 
+**`tools/run_sanity_sweep.sh` runs this exact block as one command** (`tools/run_sanity_sweep.sh
+[extra-file ...]`, extra args extend the ASCII sweep's file list), with a clear per-check
+pass/fail summary instead of scrolling raw tool output -- prefer it over copy-pasting the block
+above by hand. See AGENTS.md's "Recurring tooling" section for what it does and does not do
+(it does not auto-install missing tools).
+
 ---
 
 ## Key Conventions
@@ -157,12 +163,10 @@ Full rules in **AGENTS.md**. The most critical:
 This is the deliverable. Treat changes carefully.
 
 1. **Self-contained**: no committed helper files; all helpers are base64-encoded inside
-   the batch file under `:define_helper_payloads`. To refresh a helper:
-   ```python
-   import base64, pathlib
-   print(base64.b64encode(pathlib.Path('path/to/helper.py').read_bytes()).decode('ascii'))
-   ```
-   Paste output into the matching `set "HP_*"=...` line.
+   the batch file under `:define_helper_payloads`. To refresh a helper with a canonical
+   `tools/` source, use `python tools/sync_payload.py HP_VARNAME tools/the_file.py` -- do not
+   hand-roll the encode/splice/write sequence (see docs/agent-lessons-learned.md's "Embedded
+   Helper Update Workflow" and the near-miss that motivated automating it).
 
    Current embedded payloads (in addition to legacy HP_FAST_CHECK):
    - `HP_DEP_CHECK` -- decodes to `~dep_check.py`; compares pipreqs output against
@@ -617,21 +621,6 @@ further.)*
     entirely, since the conda root is user-managed, not bootstrapper-owned) is never reached.
     Needs a 4th scenario setting both `HP_TEST_CORRUPT_CONDA=1` AND `PVW_CONDA_EXE=<path>`,
     asserting exit code 2 and the manual-fix message. Not built speculatively in the audit pass.
-13. **`pyproj_deps.py`'s regex-fallback TOML parser (used only when `tomllib` is unavailable)
-    can silently truncate a dependency list if a comment inside the `dependencies = [...]` array
-    contains an unquoted `]`.** Found via the 2026-07-25 Python-helper edge-case research
-    (real, independently verified, but low real-world likelihood -- not fixed in this pass). The
-    char-walk loop treats any unquoted `]` as end-of-array (`elif c == ']': break`), with no
-    comment-awareness; a line like `"requests",  # supports array syntax e.g. [1,2]` inside the
-    array contains exactly such an unquoted `]` in its comment text, silently dropping every
-    dependency listed after that line (exit 0, no error surfaced). Only triggers on the
-    older-Python fallback path (rare given the uv-first/managed-CPython default -- this repo's
-    orchestration layer always targets the latest managed CPython, which has `tomllib`) combined
-    with a comment referencing bracket syntax -- a real but narrow-precondition combination.
-    A fix would need the char-walk to track whether it's inside a `#`-to-end-of-line comment
-    (respecting that `#` itself can appear inside a quoted string) before treating `]` as
-    terminal. Not attempted here to keep this pass's remaining time focused on higher-likelihood
-    findings; a good candidate for a future dedicated pass on this file.
 14. **The three `start "" /wait` external-installer launches (NI-VISA, Miniconda AllUsers,
     Miniconda JustMe) have no process-level timeout, unlike this file's deliberately-wrapped
     user-code launches.** Found via the 2026-07-25 retry/loop-bound audit (see Closed Backlog for
@@ -971,6 +960,68 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **Tooling pass, owner-requested 2026-07-25 ("Update check delimiters to catch the rem space...
+  see if there are any other lessons learned that can be baked into tools... expand the tools
+  and agents.md"), directly following the PR #380 rem-comment CI catch.** Three concrete
+  deliverables plus one honest bookkeeping fix:
+  - **`tools/check_delimiters.py` gained `_check_bat_rem_comment_spacing`**, a new heuristic
+    (matching the file's existing `# derived requirement:` convention) that flags any
+    `.bat`/`.cmd` line whose first token starts with `rem` immediately followed by a non-
+    whitespace character -- exactly the pattern that caused the PR #380 near-miss (see
+    docs/agent-lessons-learned.md's "`rem` needs a space after it" entry). Verified it fires on
+    a synthetic reproduction of the exact original bug and produces zero false positives against
+    the real `run_setup.bat`. 4 new tests in `tests/test_check_delimiters_import.py`.
+  - **New `tools/sync_payload.py`**: formalizes the "read run_setup.bat as bytes, build the
+    candidate in memory, diff-verify exactly one line changed, only then write" safe procedure
+    (previously hand-rolled via one-off `python -c` snippets every time) into a reusable,
+    defensively-verified tool -- refuses to write if the target `set "HP_VARNAME=..."` line isn't
+    found exactly once, if any OTHER line would change, or if the CMD 8191-char budget would be
+    exceeded (without `--force`). 10 tests in `tests/test_sync_payload.py`, all against synthetic
+    `.bat` files (never the real `run_setup.bat`). Dogfooded against the real repo (round-tripped
+    a deliberate corruption of `HP_PYPROJ_DEPS` back to the byte-identical correct state) before
+    committing. `docs/agent-lessons-learned.md`'s "Embedded Helper Update Workflow" and the
+    original near-miss entry both updated to point at it as the required method going forward.
+  - **New `tools/run_sanity_sweep.sh`**: runs CLAUDE.md's "Mandatory Sanity Checks" block (a
+    block copy-pasted by hand dozens of times across this session alone) as one command with a
+    clear per-check pass/fail summary. Deliberately does NOT auto-install missing tools
+    (`pwsh`/`actionlint`/`yamllint`/`pyflakes`) -- installing system packages is a real,
+    side-effect-having action a sweep script should not take silently; a missing tool is reported
+    as a failed check pointing back to AGENTS.md's install instructions. Verified against both a
+    clean pass (real repo, all 9 checks OK) and a genuine failure (a synthetic broken-Python fake
+    repo, confirmed non-zero exit and correct FAIL reporting per check) before relying on it.
+  - **Two entries from commit `17c483c` (the original PR #380 rem-comment docs writeup) were
+    discovered to be completely missing from `main` and had to be restored.** Root cause: that
+    commit was made LOCALLY but never pushed before the turn ended (a `ScheduleWakeup` call was
+    made without a preceding `git push`); when the next turn ran
+    `git checkout -B <branch> origin/main` to start slice 2, the local-only commit was silently
+    discarded (this is expected, correct git behavior for `checkout -B` -- the loss was a process
+    error, not a git bug). Found only by chance, while trying to update the very entries this
+    pass was already updating and discovering they didn't exist. Restored both the
+    `docs/agent-lessons-learned.md` entry (corrected in the process -- it originally said no
+    local tool could catch this; that's no longer true now that `check_delimiters.py` does) and
+    the `CLAUDE.md` Closed Backlog addendum, with a note on both explaining the loss and recovery
+    so a future reader isn't confused by the discrepancy between the commit history and the
+    restoration date. Added a new AGENTS.md rule ("Push every commit before it can be lost") to
+    reduce the odds of a repeat.
+
+- **`pyproj_deps.py`'s regex-fallback TOML parser could silently truncate a dependency list if a
+  comment inside the `dependencies = [...]` array contained an unquoted `]`** (closes Active
+  Backlog item 13). The char-walk loop treated any unquoted `]` as end-of-array with no
+  comment-awareness, so a line like `"requests",  # supports array syntax e.g. [1,2]` inside the
+  array had its comment's own `]` misread as the array's real closing bracket, silently dropping
+  every dependency listed after that line (exit 0, no error surfaced). Fixed by adding a `#`
+  branch to the char-walk: outside of a quoted string, `#` now skips to the next `\n` (or end of
+  input) before continuing, matching TOML's own comment syntax (comments run to end of line and
+  cannot appear inside a string -- confirmed the fix doesn't need to special-case `#` inside a
+  string, since the existing quote-handling branch already consumes to the closing quote before
+  this new branch is ever reached). Re-synced `HP_PYPROJ_DEPS`'s embedded payload (2346-char
+  margin under the CMD 8191-char budget, comfortable). Two new tests in
+  `tests/test_pyproj_deps.py`'s `RegexFallbackPath` class: the exact backlog-described scenario
+  (comment-with-bracket inside the array, previously-dropped dependency now correctly captured),
+  and a companion case confirming a `#` genuinely inside a quoted string (e.g. an environment
+  marker like `"pkg; marker == 'a#b'"`) is still treated as ordinary string content, not
+  mistakenly read as a comment start. 18/18 tests passing (up from 16), including `PayloadSync`.
 
 - **Retry/loop-bound audit across `run_setup.bat` (owner-requested, "check for infinite or too
   many loops in bootstrapper like retries"), 2026-07-25 -- came back clean, with two real
@@ -1313,6 +1364,27 @@ Items completed and shipped:
     `HP_TEST_FORCE_PYINSTALLER_FAIL` pattern) if this path's real-world trigger rate ever
     justifies the investment; not built speculatively here, consistent with this repo's general
     bias against untriggered speculative work.
+  - **Real bug in this exact fix, caught on the very first real Windows CI run (PR #380,
+    2026-07-25): a `rem` comment split a hyphenated word across two lines, and the second line
+    (`rem-nested failure path.`) was missing the space `rem` needs to be treated as a comment --
+    cmd.exe ran it as a literal (nonexistent) command instead, leaving a nonzero errorlevel sitting
+    right in front of the brand-new `if errorlevel 1` check this same fix added.** This made the
+    check fire on every run, including fully successful ones -- confirmed via the real
+    `~warnfix_bootstrap.log` from the failed CI run (downloaded directly via
+    `mcp__github__actions_get`'s `download_workflow_run_artifact` method): PyInstaller had already
+    produced the EXE successfully, and the only actual error was the stray
+    `'rem-nested' is not recognized as an internal or external command` line. Fixed by keeping
+    "already-nested" together instead of splitting it across two `rem` lines; confirmed via
+    `grep -nP '^\s*rem\S' run_setup.bat` that no other line in the file has the same "rem
+    immediately followed by a non-space character" pattern. See
+    `docs/agent-lessons-learned.md`'s new "`rem` needs a space after it" entry for the full
+    mechanism and a reusable grep-based check for future multi-line `rem` comment edits.
+    **This was originally documented here in commit 17c483c, but that commit was never pushed
+    before the branch was reset for the next slice, silently discarding it -- restored 2026-07-25
+    during a tooling/documentation pass that also formalized `tools/check_delimiters.py`'s
+    `_check_bat_rem_comment_spacing` check (which now catches this exact class of bug locally,
+    before any CI push) and `tools/sync_payload.py` (which would have made the original mistake
+    structurally harder to repeat, though it doesn't guard against an unpushed commit).**
   - **Investigated and found NOT a new issue, no action**: the `real`-lane review agent's other
     observations (a loose substring match in `selfapps_pyinstaller_fail.ps1`'s `$testHookFired`
     clause, two cache-lane steps still missing `continue-on-error`) were both judged low-impact

@@ -359,6 +359,7 @@ class DelimiterChecker:
                 self._check_bat_ps_like_brackets(line_no, line)
                 self._check_bat_set_quoting(line_no, line)
                 self._check_bat_unquoted_path_var(line_no, line)
+                self._check_bat_rem_comment_spacing(line_no, line)
 
         return self.issues
 
@@ -451,6 +452,44 @@ class DelimiterChecker:
                 'Batch: path variable appears unquoted in a file-system command; '
                 'use "%VAR%" to handle paths containing spaces.',
             )
+
+    def _check_bat_rem_comment_spacing(self, line_no: int, line: str) -> None:
+        """Flag a line whose first token starts with "rem" but has no space after it.
+
+        cmd.exe only treats "rem" as a comment when it is followed by whitespace
+        (or is the entire line) -- "rem-nested" or "rem;foo" is parsed as an
+        attempt to run a literal (almost always nonexistent) command named
+        "rem-nested"/"rem;foo", NOT as a comment. This is easy to introduce by
+        accident when a multi-line prose comment wraps a hyphenated (or otherwise
+        glued-together) word across two "rem" lines.
+        """
+        # derived requirement: a real regression (caught only on real Windows CI,
+        # not by any static check that existed at the time) split "already-nested"
+        # across two rem lines, leaving the second line reading
+        # "rem-nested failure path." cmd.exe printed
+        # "'rem-nested' is not recognized as an internal or external command..."
+        # and left a stray nonzero errorlevel sitting in front of the very next
+        # "if errorlevel 1" check, silently corrupting its result. See
+        # docs/agent-lessons-learned.md's "rem needs a space after it" entry for
+        # the full trace. This check is intentionally blunt (no attempt to
+        # distinguish "meant to be a comment" from "a real command that happens
+        # to start with rem") -- no command in this codebase legitimately starts
+        # with the bare letters "rem" glued to more characters, so a match here
+        # is always worth a human's attention.
+        stripped = line.lstrip()
+        match = re.match(r"(rem)(\S)", stripped, re.IGNORECASE)
+        if not match:
+            return
+        column = len(line) - len(stripped) + 1
+        self.add_issue(
+            line_no,
+            column,
+            f"Batch: \"{match.group(0)}...\" -- \"rem\" must be followed by whitespace "
+            "(or be the entire line) to be treated as a comment; cmd.exe will instead "
+            f"try to run \"{match.group(1)}{match.group(2)}...\" as a literal command, "
+            "leaving a stray nonzero errorlevel behind. Add a space after \"rem\" if "
+            "this was meant to be a comment.",
+        )
 
     def _check_ps1_boolean_operators(self, line_no: int, line: str) -> None:
         # derived requirement: Windows runners surfaced "parameter name 'or'" faults whenever -or/-and sat

@@ -46,6 +46,59 @@ generated/embedded-payload file like `run_setup.bat` specifically, also re-run
 `tools/check_delimiters.py` and confirm the line count is unchanged immediately after any such
 swap, before doing anything else.
 
+**Automated, 2026-07-25: `tools/sync_payload.py` now implements this exact safe procedure as a
+reusable tool, so it never has to be hand-rolled again.** It reads `run_setup.bat` as bytes,
+builds the candidate content entirely in memory, verifies the diff touches EXACTLY the one target
+`set "HP_VARNAME=..."` line, checks the CMD 8191-char budget, and only then writes -- refusing
+(non-zero exit, no write) if any of those checks fail. See "Embedded Helper Update Workflow"
+below for usage; use it instead of a one-off inline snippet for every future payload swap.
+
+---
+
+## `rem` needs a space after it -- `rem-word` is parsed as a command, not a comment
+
+**Discovered 2026-07-25 via a real CI failure on PR #380, caught within minutes of the very
+first Windows CI run of this exact code path.** A multi-line `rem` comment explaining why the
+warnfix-triggered PyInstaller rebuild's new error handling deliberately does not retry via
+`:try_nuitka_tier_a` wrapped the phrase "an already-nested failure path" across two comment
+lines, splitting the hyphenated word at the hyphen:
+```bat
+rem is to report it, not to speculatively rebuild via a second tool inside an already
+rem-nested failure path.
+```
+cmd.exe only treats a line as a comment when `rem` is followed by whitespace (or end of line) --
+`rem-nested` has no space between `rem` and the rest, so cmd.exe parsed it as an attempt to run a
+command literally named `rem-nested`, which does not exist:
+`'rem-nested' is not recognized as an internal or external command, operable program or batch
+file.` This left a **nonzero errorlevel** sitting immediately before the very next line, which
+happened to be a freshly-added `if errorlevel 1 (...)` check for the PyInstaller rebuild's own
+exit code (see `docs/agent-interconnect.md`'s `:die`/warnfix-rebuild-failure-handling history) --
+so the stray comment line's own failure was silently misattributed to PyInstaller, even though
+the real bootstrap log confirmed PyInstaller had already produced the EXE successfully moments
+earlier. Confirmed by downloading the actual `diag-selftest-real-*` CI artifact and reading the
+sub-bootstrap's own `~warnfix_bootstrap.log` directly (via
+`mcp__github__actions_get` method `download_workflow_run_artifact`) -- the stray
+"not recognized as an internal or external command" line was sitting right there between the
+"Rebuilding standalone executable..." line and the false "[ERROR] PyInstaller execution failed"
+line the new code produced.
+
+**Rule of thumb: never split a hyphenated word across two `rem` comment lines by putting the
+second half directly at the start of the next line.** More generally: any time a `rem` comment
+line's very next character after "rem" is NOT whitespace, cmd.exe does not treat the line as a
+comment at all -- it is executed as a command line with that leading token as the program name.
+This is easy to introduce by accident when wrapping prose across multiple `rem` lines (a
+justified/reflowed paragraph can end a line exactly at a hyphenated compound word).
+
+**Automated, 2026-07-25 (same day): `tools/check_delimiters.py`'s `_check_bat_rem_comment_spacing`
+now catches this exact pattern -- it is no longer true that no local tool catches it.** The
+original version of this entry said this was undetectable by any local tool short of a real
+Windows CI run; that gap is closed. Any `.bat`/`.cmd` line whose first token starts with `rem`
+immediately followed by a non-whitespace character is now flagged by
+`python tools/check_delimiters.py run_setup.bat`, part of the standard sweep
+(`tools/run_sanity_sweep.sh` / CLAUDE.md's "Mandatory Sanity Checks"). The old manual defensive
+check (`grep -nP '^\s*rem\S' run_setup.bat`) still works as a quick one-off, but is no longer
+necessary -- the sanity sweep now catches this automatically on every run.
+
 ---
 
 ## .NET Process async-redirected-output: "call WaitForExit() twice" is NOT sufficient on its own to guarantee the buffers are drained
@@ -903,27 +956,42 @@ pushed the line to 8215 chars. Fixed in `d8f313c` by removing the redundant func
 
 ## Embedded Helper Update Workflow
 
-All helpers embedded in `run_setup.bat` as `HP_*` base64 vars have NO standalone source file.
-The canonical source is the decoded base64. To update a helper:
+**Preferred method (has a canonical `tools/` source, the common case -- 12 of 16 payloads
+as of 2026-07): edit the source file, then run `tools/sync_payload.py`.** This is now the
+required method for any payload with a canonical source -- do not hand-roll the
+read/re-encode/splice/write sequence below for these; `tools/sync_payload.py` was written
+specifically to eliminate the risk class described in "Never open a real source file in
+Python 'w' mode as part of a 'dry run'" above (a careless one-off script truncated
+`run_setup.bat` to zero bytes doing this by hand).
+```bash
+# 1. Edit the canonical source (e.g. tools/pyproj_deps.py) directly.
+# 2. Re-sync the embedded payload -- reads run_setup.bat as bytes, verifies EXACTLY the
+#    target line changes, checks the CMD 8191-char budget, and only then writes:
+python tools/sync_payload.py HP_PYPROJ_DEPS tools/pyproj_deps.py
+# 3. Verify without writing (e.g. to check a claim before touching anything):
+python tools/sync_payload.py HP_PYPROJ_DEPS tools/pyproj_deps.py --check
+```
+Then run `python tools/check_delimiters.py run_setup.bat` and the payload's own
+`PayloadSync` unit test (e.g. `python -m pytest tests/test_pyproj_deps.py -k PayloadSync`).
 
-1. Extract + decode:
-   ```python
-   import base64, re
-   with open('run_setup.bat', 'r', encoding='ascii', errors='ignore') as f:
-       for line in f:
-           m = re.match(r'^set "HP_VARNAME=(.*)"$', line.rstrip('\r\n'))
-           if m:
-               print(base64.b64decode(m.group(1)).decode('ascii'))
-               break
-   ```
-2. Edit the decoded Python source.
-3. Re-encode:
-   ```python
-   import base64
-   new_b64 = base64.b64encode(open('helper.py', 'rb').read()).decode('ascii')
-   ```
-4. Replace the `set "HP_VARNAME=..."` line in run_setup.bat.
-5. Run `python tools/check_delimiters.py run_setup.bat` and the relevant unit test.
+**No canonical source yet (a shrinking minority -- see AGENTS.md's embedded payload
+inventory table for which payloads still lack one):** decode to a scratch file, edit that,
+then still hand it to `tools/sync_payload.py` for the actual write -- never open
+`run_setup.bat` in write mode by hand, even for a payload with no canonical source.
+```python
+import base64, re
+with open('run_setup.bat', 'r', encoding='ascii', errors='ignore') as f:
+    for line in f:
+        m = re.match(r'^set "HP_VARNAME=(.*)"$', line.rstrip('\r\n'))
+        if m:
+            open('/tmp/decoded_helper.py', 'w').write(base64.b64decode(m.group(1)).decode('ascii'))
+            break
+```
+Edit `/tmp/decoded_helper.py`, then:
+```bash
+python tools/sync_payload.py HP_VARNAME /tmp/decoded_helper.py
+python tools/check_delimiters.py run_setup.bat
+```
 
 **PayloadSync tests for a `.ps1` canonical source must normalize CRLF/LF before comparing bytes.**
 All prior PayloadSync precedents (`test_collect_submodules.py`, `test_hidden_import_scan.py`)
