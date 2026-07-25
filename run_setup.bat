@@ -2953,9 +2953,18 @@ rem Verify the new build actually runs before touching the already-working origi
 rem 30s-cap / Kill()-on-timeout pattern as :run_exe_smokerun -- this is a genuine internal
 rem verification run (not the user's own session), so the same allowed-to-kill reasoning
 rem applies (see HP_FAILFAST_PROBE_MS's header comment on the two classes of run in this file).
+rem derived requirement: HP_APP_ARGS is read via $env:HP_APP_ARGS (PowerShell's own inherited-
+rem environment access), never substituted by cmd.exe's %VAR% expansion into this -Command
+rem string -- HP_APP_ARGS already contains literal embedded double-quotes per token (see its
+rem definition near the top of this file), and cmd.exe's naive quote-toggle parser has no
+rem concept of "this quote is inside a PowerShell string"; interpolating it directly would
+rem corrupt this -Command argument exactly like the hazard docs/agent-lessons-learned.md
+rem already documents for HP_FAILFAST_PROBE. Without this, a program that requires launch
+rem arguments to start would always fail this verification, regardless of whether the
+rem Nuitka build itself is fine.
 set "HP_OPTBUILD_VERIFY_EXIT=-1"
 pushd dist
-for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%HP_OPTBUILD_TMP%';$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};$so.Result|Out-Null;$se.Result|Out-Null;if($done){$p.ExitCode}else{-1}"`) do set "HP_OPTBUILD_VERIFY_EXIT=%%X"
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%HP_OPTBUILD_TMP%';if($env:HP_APP_ARGS){$si.Arguments=$env:HP_APP_ARGS};$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};$so.Result|Out-Null;$se.Result|Out-Null;if($done){$p.ExitCode}else{-1}"`) do set "HP_OPTBUILD_VERIFY_EXIT=%%X"
 popd
 if not defined HP_OPTBUILD_VERIFY_EXIT set "HP_OPTBUILD_VERIFY_EXIT=-1"
 if not "%HP_OPTBUILD_VERIFY_EXIT%"=="0" (
@@ -3465,6 +3474,9 @@ set "HP_SMOKE_RC=%ERRORLEVEL%"
 call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
 if "%HP_SMOKE_RC%"=="0" (
   call :log "[STATUS] Run Status: SUCCESS (Exit Code: 0)"
+  rem derived requirement: clear a stale flag from an earlier failed REQ-009 cascade tier's
+  rem no-EXE run -- mirrors HP_EXE_VERIFY_FAILED's own clear-on-success at :smokerun_ok.
+  set "HP_NOEXE_VERIFY_FAILED="
 ) else (
   call :log "[STATUS] Run Status: FAILED (Exit Code: %HP_SMOKE_RC%)"
   rem [REQ-027] P2 honest messaging: :print_no_exe_briefing reads this to stop claiming
@@ -3492,6 +3504,9 @@ rem [REQ-027] P2 honest messaging: same flag as the legacy branch above. No -1/t
 rem ambiguity at this call site -- :run_failfast_probe never kills, so HP_SMOKE_RC is always
 rem the interpreter's true final exit code once it exits, not a force-stopped placeholder.
 if not "%HP_SMOKE_RC%"=="0" set "HP_NOEXE_VERIFY_FAILED=1"
+rem derived requirement: clear a stale flag from an earlier failed REQ-009 cascade tier's
+rem no-EXE run -- mirrors HP_EXE_VERIFY_FAILED's own clear-on-success at :smokerun_ok.
+if "%HP_SMOKE_RC%"=="0" set "HP_NOEXE_VERIFY_FAILED="
 call :run_postexec_checkpoint interpreter
 exit /b 0
 :warnfix_cascade_detect
