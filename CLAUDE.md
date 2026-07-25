@@ -596,15 +596,6 @@ further.)*
    pass rather than a rushed fix folded into an unrelated research sweep. See
    `docs/agent-interconnect.md`'s "Post-execution checkpoint" and "AV-Safe Build Path
    requirement 9" sections for the exact call chain if picking this up.
-10. **`:tci_both_failed` (Miniconda install fails under BOTH AllUsers and JustMe) has zero CI
-    coverage.** Found via the 2026-07-25 branch-coverage audit (see Closed Backlog for the
-    sibling dead-flag removal from the same audit). This is a real, reachable production branch
-    (a machine where both install types genuinely fail -- corrupted installer, unusual ACLs) with
-    no `HP_TEST_*` hook to force it deterministically; `tests/selfapps_justme.ps1`'s
-    `HP_TEST_NOT_ELEVATED=1` only proves the JustMe install SUCCEEDS. Needs a new
-    `HP_TEST_FORCE_JUSTME_FAIL=1`-style hook that skips the real `start /wait` call and forces a
-    nonzero result, plus a new or extended selfapps scenario asserting the `:die` message and
-    exit code. Not built speculatively in the audit pass itself.
 11. **Hidden-import auto-recovery's 3-attempt exhaustion WARN line (added in an earlier Closed
     Backlog entry) has no test that actually drives the loop to exhaustion.** Found via the same
     audit. `tests/selfapps_hidden_import.ps1` only exercises the one-shot-recoverable success
@@ -945,6 +936,34 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **`:tci_both_failed` (Miniconda install fails under BOTH AllUsers and JustMe) CI coverage
+  (Active Backlog item 10), 2026-07-25, `/goal`-directed close-out pass.** New hook
+  `HP_TEST_FORCE_JUSTME_FAIL=1` (`run_setup.bat`, `:tci_justme`) deterministically skips the real
+  JustMe `start "" /wait` call and forces a nonzero result; combined with the already-existing
+  `HP_TEST_NOT_ELEVATED=1` (reaches `:tci_justme` by skipping straight past the AllUsers attempt),
+  reaches `:tci_both_failed -> :die "[ERROR] Miniconda install failed (both AllUsers and
+  JustMe)."` without depending on a genuinely broken installer/ACL environment.
+  - **A real CI-ordering constraint was discovered while scoping the test, not anticipated by
+    the original backlog text** ("plus a new or extended selfapps scenario" undersold the actual
+    difficulty): Miniconda installs to the SHARED, machine-wide `%PUBLIC%\Documents\Miniconda3`
+    path, not a per-test-directory location. If Miniconda was already installed by an EARLIER
+    step in the same CI job (the main "Bootstrap environment" step, or an earlier selfapps script
+    that forces conda -- e.g. `self.cascade.exec`, which cascades uv -> conda), `:try_conda_
+    install`'s own top-level gate (`if not defined CONDA_BAT (...)`) would find `conda.bat`
+    already present and skip the install block entirely, silently making this test's hooks
+    unreachable regardless of how correct they are. New `tests/selfapps_conda_bothfail.ps1`
+    (uv lane, non-gating) is wired into `batch-check.yml` immediately BEFORE the provider-
+    cascade-exec step specifically to guarantee conda genuinely isn't installed yet when it
+    runs -- the `uv` lane's own main bootstrap step normally succeeds via uv alone (no Miniconda
+    installed), so this ordering reliably holds today. Documented as load-bearing in both the
+    workflow YAML's own comment and `docs/agent-ndjson.md`'s new section, so a future CI reorder
+    doesn't silently break this test's premise.
+  - Asserts the `HP_TEST_NOT_ELEVATED` skip line, the `HP_TEST_FORCE_JUSTME_FAIL` hook-fired
+    line, the exact `:tci_both_failed` `[ERROR]` message, and `~bootstrap.status.json` reading
+    `state=error` -- not process exit code, matching this repo's established "graceful stop"
+    contract for `:die`-triggered failures (`:success`'s own `exit /b 0` runs unconditionally
+    regardless of `HP_BOOTSTRAP_STATE`).
 
 - **Timeout ceiling for the three `start "" /wait` external-installer launches (Active Backlog
   item 14), owner-directed via `/goal` ("It's ok to make the start "" /wait timeout extra long

@@ -531,6 +531,21 @@ jobs:
         run: |
           & tests\selfapps_hidden_import.ps1
 
+      # CLAUDE.md Active Backlog item 10: :tci_both_failed (both AllUsers and JustMe Miniconda
+      # installs fail) had zero CI coverage. Miniconda installs to the SHARED, machine-wide
+      # %PUBLIC%\Documents\Miniconda3 path -- this step MUST run before any earlier step that
+      # would install Miniconda for real (e.g. the provider-cascade-exec step directly below,
+      # which cascades uv -> conda), or :try_conda_install's own top-level gate would find
+      # conda.bat already present and skip the install block this test needs to exercise. The
+      # uv lane's own main bootstrap step succeeds via uv alone (no Miniconda installed), so by
+      # the time this step runs conda.bat genuinely does not exist yet on the runner.
+      - name: "Self-test: Miniconda both-install-types-fail (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_conda_bothfail.ps1
+
       # REQ-009/REQ-005.10 slice 3: provider-cascade EXECUTION. Runs only in the uv lane
       # (uv-first, non-gating). The cascade walks uv -> conda (Miniconda download mid-run) ->
       # venv -> stop. Heavy and provider-dependent, hence non-gating (uv lane continue-on-error).

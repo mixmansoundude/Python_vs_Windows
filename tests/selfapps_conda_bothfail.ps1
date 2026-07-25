@@ -1,0 +1,148 @@
+# ASCII only
+# selfapps_conda_bothfail.ps1 - Regression coverage for CLAUDE.md Active Backlog item 10:
+# :tci_both_failed (both AllUsers and JustMe Miniconda installs fail) previously had zero CI
+# coverage. This is a real, reachable production branch (a machine where both install types
+# genuinely fail -- corrupted installer, unusual ACLs) with no deterministic HP_TEST_* hook to
+# force it -- tests/selfapps_justme.ps1's HP_TEST_NOT_ELEVATED=1 only proves the JustMe install
+# SUCCEEDS.
+#
+# New hook: HP_TEST_FORCE_JUSTME_FAIL=1 (run_setup.bat, :tci_justme) skips the real JustMe
+# `start "" /wait` call and forces a nonzero result deterministically. Combined with
+# HP_TEST_NOT_ELEVATED=1 (already reaches :tci_justme by skipping straight past the AllUsers
+# attempt), this reaches :tci_both_failed -> :die "[ERROR] Miniconda install failed (both
+# AllUsers and JustMe)." without depending on a genuinely broken installer/ACL environment.
+#
+# derived requirement: Miniconda installs to the SHARED, machine-wide %PUBLIC%\Documents\
+# Miniconda3 path, not a per-test-directory location -- if an EARLIER step in the same CI job
+# (the main "Bootstrap environment" step, or an earlier selfapps script) already installed
+# Miniconda there, :try_conda_install's own top-level gate (`if not defined CONDA_BAT (...)`,
+# run_setup.bat ~line 655) would find conda.bat already present and skip the install block
+# entirely -- this test's hooks would never fire. This is WHY this test is wired into the `uv`
+# lane specifically, placed BEFORE any earlier selfapps step that forces conda (e.g. the
+# provider-cascade-exec step, which cascades uv -> conda and would install Miniconda first if it
+# ran earlier) -- see docs/agent-ndjson.md for the exact placement constraint. The `uv` lane's own
+# main bootstrap step normally succeeds via uv alone (no Miniconda installed), so by the time this
+# step runs, conda.bat genuinely does not exist yet on the runner.
+#
+# Runs a FRESH, isolated sub-bootstrap (own temp dir) with HP_FORCE_CONDA_ONLY=1 (self-contained
+# override per docs/agent-interconnect.md's "HP_FORCE_CONDA_ONLY as a test-override pattern" --
+# this test genuinely needs conda's own install path exercised, not uv's).
+#
+# Asserts: the HP_TEST_FORCE_JUSTME_FAIL hook fired, the exact :tci_both_failed [ERROR] message
+# appears, and ~bootstrap.status.json reads state=error (not silently overwritten back to ok --
+# the same class of bug CLAUDE.md's ":die" entry in docs/agent-lessons-learned.md documents).
+# Does NOT assert process exit code -- :success's own `exit /b 0` runs unconditionally regardless
+# of HP_BOOTSTRAP_STATE (this repo's established "graceful stop" contract for this failure class;
+# see selfapps_pyinstaller_fail.ps1's sibling reasoning).
+#
+# Lane: uv only, non-gating (real Miniconda download+install-attempt cost; unproven CI-ordering
+# assumption above needs to soak before considering gating-lane promotion).
+param()
+$ErrorActionPreference = 'Continue'
+$here = $PSScriptRoot
+$repo = Split-Path -Path $here -Parent
+$nd   = Join-Path $here '~test-results.ndjson'
+$ciNd = Join-Path $repo 'ci_test_results.ndjson'
+if (-not (Test-Path $nd))   { New-Item -ItemType File -Path $nd   -Force | Out-Null }
+if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
+
+function Write-NdjsonRow {
+    param([hashtable]$Row)
+    $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
+    if ($lane -and -not $Row.ContainsKey('lane')) { $Row['lane'] = $lane }
+    $json = $Row | ConvertTo-Json -Compress -Depth 8
+    Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii
+    Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
+}
+
+# Non-Windows skip
+if (-not $IsWindows) {
+    $platform = [System.Environment]::OSVersion.Platform.ToString()
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.conda.bothfail'
+        req     = 'REQ-003'
+        pass    = $true
+        desc    = 'Miniconda both-install-types-fail path (skipped on non-Windows)'
+        details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
+    })
+    exit 0
+}
+
+$batchPath = Join-Path $repo 'run_setup.bat'
+if (-not (Test-Path $batchPath)) {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.conda.bothfail'
+        req     = 'REQ-003'
+        pass    = $false
+        desc    = 'Miniconda both-install-types-fail: run_setup.bat not found'
+        details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
+    })
+    exit 1
+}
+
+$workDir = Join-Path $here '~selftest_conda_bothfail'
+if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
+New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+Copy-Item -Path $batchPath -Destination $workDir -Force
+Set-Content -Path (Join-Path $workDir 'app.py') -Value 'print("should-not-matter")' -Encoding ASCII
+
+$bootstrapLog = '~conda_bothfail_bootstrap.log'
+
+$prevForceCondaOnly = if (Test-Path Env:HP_FORCE_CONDA_ONLY) { $env:HP_FORCE_CONDA_ONLY } else { $null }
+$prevNotElevated = if (Test-Path Env:HP_TEST_NOT_ELEVATED) { $env:HP_TEST_NOT_ELEVATED } else { $null }
+$prevForceJustmeFail = if (Test-Path Env:HP_TEST_FORCE_JUSTME_FAIL) { $env:HP_TEST_FORCE_JUSTME_FAIL } else { $null }
+$prevSkipPipreqs = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
+$env:HP_FORCE_CONDA_ONLY = '1'
+$env:HP_TEST_NOT_ELEVATED = '1'
+$env:HP_TEST_FORCE_JUSTME_FAIL = '1'
+$env:HP_SKIP_PIPREQS = '1'
+
+try {
+    Push-Location $workDir
+    try {
+        cmd /c "call run_setup.bat > $bootstrapLog 2>&1"
+        $runExit = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+
+    $logPath  = Join-Path $workDir $bootstrapLog
+    $logLines = if (Test-Path $logPath) { Get-Content -LiteralPath $logPath -Encoding ASCII } else { @() }
+    $combined = $logLines -join "`n"
+
+    $notElevatedSkip = $combined -match [regex]::Escape('Not elevated; skipping AllUsers Miniconda install.')
+    $justmeFailHookFired = $combined -match [regex]::Escape('HP_TEST_FORCE_JUSTME_FAIL=1; simulating JustMe install failure')
+    $bothFailedMsgFound = $combined -match [regex]::Escape('Miniconda install failed (both AllUsers and JustMe)')
+
+    $statusPath = Join-Path $workDir '~bootstrap.status.json'
+    $statusText = if (Test-Path -LiteralPath $statusPath) { Get-Content -LiteralPath $statusPath -Raw } else { $null }
+    $statusState = $null
+    if ($statusText) {
+        try { $statusState = ($statusText | ConvertFrom-Json).state } catch { $statusState = $null }
+    }
+
+    $pass = $notElevatedSkip -and $justmeFailHookFired -and $bothFailedMsgFound -and ($statusState -eq 'error')
+
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.conda.bothfail'
+        req     = 'REQ-003'
+        pass    = $pass
+        desc    = 'Miniconda both-install-types-fail (:tci_both_failed) correctly reported, state=error'
+        details = [ordered]@{
+            notElevatedSkip      = [bool]$notElevatedSkip
+            justmeFailHookFired  = [bool]$justmeFailHookFired
+            bothFailedMsgFound   = [bool]$bothFailedMsgFound
+            statusState          = $statusState
+            bootstrapExit        = $runExit
+            log                  = $bootstrapLog
+        }
+    })
+} finally {
+    if ($null -eq $prevForceCondaOnly) { Remove-Item Env:HP_FORCE_CONDA_ONLY -ErrorAction SilentlyContinue } else { $env:HP_FORCE_CONDA_ONLY = $prevForceCondaOnly }
+    if ($null -eq $prevNotElevated) { Remove-Item Env:HP_TEST_NOT_ELEVATED -ErrorAction SilentlyContinue } else { $env:HP_TEST_NOT_ELEVATED = $prevNotElevated }
+    if ($null -eq $prevForceJustmeFail) { Remove-Item Env:HP_TEST_FORCE_JUSTME_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_JUSTME_FAIL = $prevForceJustmeFail }
+    if ($null -eq $prevSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }
+}
+
+if (-not $pass) { exit 1 }
+exit 0
