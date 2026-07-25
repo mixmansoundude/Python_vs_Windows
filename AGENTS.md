@@ -46,7 +46,7 @@ detectable by an assertion. Silent features are forbidden.
 Every code branch added to run_setup.bat or related helpers must have a
 corresponding test that exercises that branch in CI. This includes:
 
-- Feature flags and fallback paths (e.g. HP_TEST_JUSTME_FALLBACK)
+- Feature flags and fallback paths (e.g. HP_TEST_NOT_ELEVATED)
 - Error recovery paths (e.g. retry logic, warn-file driven installs)
 - Fast path vs full path branches (e.g. env-state fast path, dep-check skip)
 

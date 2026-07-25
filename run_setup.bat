@@ -4351,10 +4351,6 @@ if errorlevel 1 (
   call :log "[INFO] Not elevated; skipping AllUsers Miniconda install."
   goto :tci_justme
 )
-if "%HP_TEST_JUSTME_FALLBACK%"=="1" (
-  call :log "[INFO] HP_TEST_JUSTME_FALLBACK: skipping AllUsers, forcing JustMe path."
-  goto :tci_justme
-)
 start "" /wait "%TEMP%\miniconda.exe" /InstallationType=AllUsers /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%
 if errorlevel 1 goto :tci_justme
 set "HP_CONDA_INSTALL_MODE=AllUsers"
