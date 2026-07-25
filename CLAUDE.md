@@ -617,21 +617,6 @@ further.)*
     entirely, since the conda root is user-managed, not bootstrapper-owned) is never reached.
     Needs a 4th scenario setting both `HP_TEST_CORRUPT_CONDA=1` AND `PVW_CONDA_EXE=<path>`,
     asserting exit code 2 and the manual-fix message. Not built speculatively in the audit pass.
-13. **`pyproj_deps.py`'s regex-fallback TOML parser (used only when `tomllib` is unavailable)
-    can silently truncate a dependency list if a comment inside the `dependencies = [...]` array
-    contains an unquoted `]`.** Found via the 2026-07-25 Python-helper edge-case research
-    (real, independently verified, but low real-world likelihood -- not fixed in this pass). The
-    char-walk loop treats any unquoted `]` as end-of-array (`elif c == ']': break`), with no
-    comment-awareness; a line like `"requests",  # supports array syntax e.g. [1,2]` inside the
-    array contains exactly such an unquoted `]` in its comment text, silently dropping every
-    dependency listed after that line (exit 0, no error surfaced). Only triggers on the
-    older-Python fallback path (rare given the uv-first/managed-CPython default -- this repo's
-    orchestration layer always targets the latest managed CPython, which has `tomllib`) combined
-    with a comment referencing bracket syntax -- a real but narrow-precondition combination.
-    A fix would need the char-walk to track whether it's inside a `#`-to-end-of-line comment
-    (respecting that `#` itself can appear inside a quoted string) before treating `]` as
-    terminal. Not attempted here to keep this pass's remaining time focused on higher-likelihood
-    findings; a good candidate for a future dedicated pass on this file.
 14. **The three `start "" /wait` external-installer launches (NI-VISA, Miniconda AllUsers,
     Miniconda JustMe) have no process-level timeout, unlike this file's deliberately-wrapped
     user-code launches.** Found via the 2026-07-25 retry/loop-bound audit (see Closed Backlog for
@@ -971,6 +956,24 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **`pyproj_deps.py`'s regex-fallback TOML parser could silently truncate a dependency list if a
+  comment inside the `dependencies = [...]` array contained an unquoted `]`** (closes Active
+  Backlog item 13). The char-walk loop treated any unquoted `]` as end-of-array with no
+  comment-awareness, so a line like `"requests",  # supports array syntax e.g. [1,2]` inside the
+  array had its comment's own `]` misread as the array's real closing bracket, silently dropping
+  every dependency listed after that line (exit 0, no error surfaced). Fixed by adding a `#`
+  branch to the char-walk: outside of a quoted string, `#` now skips to the next `\n` (or end of
+  input) before continuing, matching TOML's own comment syntax (comments run to end of line and
+  cannot appear inside a string -- confirmed the fix doesn't need to special-case `#` inside a
+  string, since the existing quote-handling branch already consumes to the closing quote before
+  this new branch is ever reached). Re-synced `HP_PYPROJ_DEPS`'s embedded payload (2346-char
+  margin under the CMD 8191-char budget, comfortable). Two new tests in
+  `tests/test_pyproj_deps.py`'s `RegexFallbackPath` class: the exact backlog-described scenario
+  (comment-with-bracket inside the array, previously-dropped dependency now correctly captured),
+  and a companion case confirming a `#` genuinely inside a quoted string (e.g. an environment
+  marker like `"pkg; marker == 'a#b'"`) is still treated as ordinary string content, not
+  mistakenly read as a comment start. 18/18 tests passing (up from 16), including `PayloadSync`.
 
 - **Retry/loop-bound audit across `run_setup.bat` (owner-requested, "check for infinite or too
   many loops in bootstrapper like retries"), 2026-07-25 -- came back clean, with two real
