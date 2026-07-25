@@ -897,6 +897,27 @@ of a second or third pin actually needing it.
 
 ## Closed Backlog
 
+- **`HP_PARSE_WARN` TRANSLATIONS table: 12 new import-name-to-package mappings**, second finding
+  from the same 2026-07-25 deep research pass (see the sibling entry below for the pass's
+  headline finding). A background research agent flagged several common import/package-name
+  mismatches missing from the warnfix repair table; each was independently verified (correct
+  conda-forge/PyPI package name, real mismatch) before adding. New entries: `win32com`,
+  `win32gui`, `win32file`, `win32process`, `win32event`, `pywintypes`, `pythoncom`, `winerror`
+  (all -> `pywin32` -- the table previously only covered `win32api`/`win32con`, but COM
+  automation via `win32com.client` and other common pywin32 usage patterns are at least as likely
+  in a beginner Windows-automation script), `pptx` -> `python-pptx` (direct analog of the
+  existing `docx` -> `python-docx` entry), `skimage` -> `scikit-image` (direct analog of the
+  existing `sklearn` -> `scikit-learn` entry), `Cryptodome` -> `pycryptodome` (pycryptodome's own
+  dedicated import namespace, used specifically to avoid pycrypto/pycryptodome conflicts -- the
+  table already had `Crypto` -> `pycryptodome` for the other import spelling), and
+  `zmq` -> `pyzmq`. `tools/parse_warn.py` is an already-promoted canonical source with
+  `PayloadSync` (`tests/test_parse_warn.py::ParseWarnPayloadSync`), so this was a normal
+  edit-reencode-verify cycle, not a payload-promotion project -- margin was comfortable (2603
+  chars before, 2151 after). `TranslationTableCompletenessTest` (an existing guard requiring
+  every `TRANSLATIONS` key to have a dedicated test) forced -- correctly -- a matching test method
+  and `_TESTED_KEYS` entry per new mapping; all added. 12 new tests, 55/55 passing in
+  `tests/test_parse_warn.py` (up from 43).
+
 - **Deep research/review pass, owner-requested ("general research refinement and code review...
   shoring up and checking if things are really the way they need to be... burn cheap promo time
   this week"), 2026-07-25.** Ran three parallel background research agents (run_setup.bat branch
