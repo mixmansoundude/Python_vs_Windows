@@ -621,21 +621,6 @@ further.)*
     entirely, since the conda root is user-managed, not bootstrapper-owned) is never reached.
     Needs a 4th scenario setting both `HP_TEST_CORRUPT_CONDA=1` AND `PVW_CONDA_EXE=<path>`,
     asserting exit code 2 and the manual-fix message. Not built speculatively in the audit pass.
-14. **The three `start "" /wait` external-installer launches (NI-VISA, Miniconda AllUsers,
-    Miniconda JustMe) have no process-level timeout, unlike this file's deliberately-wrapped
-    user-code launches.** Found via the 2026-07-25 retry/loop-bound audit (see Closed Backlog for
-    the sibling NI-VISA curl-download timeout fix from the same audit, already shipped). Not fixed
-    here on purpose: these launch REAL installer processes, and force-killing one mid-write (the
-    same `.NET Process` + `WaitForExit(ms)` + `Kill()` pattern already used for user-code
-    verification runs) risks leaving a genuinely corrupted, half-installed target directory --
-    registry entries written but files missing, or vice versa -- a materially worse outcome than
-    the installer simply hanging. A correct fix needs real design work first (e.g., detecting a
-    stalled install via some other signal and surfacing it to the user rather than force-killing,
-    or a much longer grace period than the ~30s used for user-code verification), not a mechanical
-    copy of the existing kill-after-timeout pattern. Revisit if a real stuck-installer report ever
-    surfaces (this repo's own Known Findings entry on NI-VISA already documents that the one
-    tested environment fails FAST, ~10s, not slow -- so this is a theoretical risk so far, not an
-    observed one).
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -960,6 +945,75 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **Timeout ceiling for the three `start "" /wait` external-installer launches (Active Backlog
+  item 14), owner-directed via `/goal` ("It's ok to make the start "" /wait timeout extra long
+  to be conservative... check online for times... visa and Conda likely take longest, ni at
+  least half hour"), 2026-07-25.** Reopens and resolves the item this same doc had previously
+  closed-as-deliberately-deferred: the earlier reasoning (force-killing a real installer
+  mid-write risks a worse outcome than a slow-but-succeeding install -- a genuinely corrupted
+  half-installed target) is still correct and is exactly why this fix is a *generous safety
+  ceiling*, not a responsiveness check -- but the owner's explicit direction to research real
+  durations and pick a conservative-but-bounded value removed the "needs real design work
+  first" blocker that had stalled it.
+  - **Research (not guessed)**: Miniconda's Windows silent installer has a directly-corroborated
+    real-world report of a 40+ minute install (Travis CI Community forum, "Installing
+    Anaconda/Miniconda times out after 40 minutes"), plus multiple `conda/conda` and
+    `ContinuumIO/anaconda-issues` GitHub issues reporting the installer hanging indefinitely at
+    extraction or the post-install script (no duration, but confirms "eventually finishes" is
+    not guaranteed). NI-VISA itself has no hard duration figure in public reports (only
+    "stuck at 0%" complaints with no elapsed time), but the shared underlying NI
+    Package-Manager-family installer stack has a directly-relevant NI Community report of
+    installs/repairs taking multi-hour durations, explicitly attributed to antivirus scanning
+    every file the installer writes.
+  - **Chosen ceilings**: 60 minutes (3,600,000 ms) for both Miniconda AllUsers and Miniconda
+    JustMe (generous headroom above the documented ~40 min real-world duration); 90 minutes
+    (5,400,000 ms) for NI-VISA (satisfies the owner's explicit "at least half hour" floor with
+    real margin for the AV-scanning-heavy scenarios the NI Package Manager family reports show,
+    while staying well short of that family's multi-hour extreme outlier -- this repo's own
+    Known Findings entry separately confirms NI-VISA fails FAST, ~10s, in THIS CI environment,
+    so 90 minutes is deliberately generous headroom for a real user's machine, not a value tuned
+    to this repo's own CI experience).
+  - **Implementation**: new `tools/run_installer_with_timeout.ps1` (canonical source for the new
+    `HP_INSTALLER_TIMEOUT` embedded payload, added via `tools/sync_payload.py` -- the first real
+    user of the tool built in the immediately-preceding tooling pass), following the established
+    `.NET Process` + `WaitForExit(ms)` pattern from `tools/exe_smokerun.ps1`/
+    `tools/failfast_probe.ps1`, but with two deliberate differences from those: (1)
+    `UseShellExecute=$true` (not `$false`) to preserve the same UAC-elevation-via-manifest
+    behavior plain `start "" /wait` already had -- these installers may need elevation, unlike
+    user-code launches; no stdout/stderr redirection is needed since the installers run silently
+    (`/S`, `--quiet`); (2) on timeout, `taskkill.exe /F /T /PID <pid>` instead of
+    `$p.Kill()` -- Windows PowerShell 5.1 (.NET Framework)'s `Process.Kill()` has no
+    process-tree-kill overload (that's a .NET Core 3.0+ addition this runtime doesn't have), and
+    this repo's own existing NI-VISA comment already notes "NI installers may spawn child
+    processes," so a tree-kill is needed to avoid orphaning a sub-installer. New
+    `:run_installer_timeout` subroutine in `run_setup.bat` (goto-based dispatch throughout, per
+    "Provider-cascade dispatch is goto-based on purpose" in `docs/agent-lessons-learned.md` --
+    the result-file read via `for /f` sets two variables that a later top-level, freshly-parsed
+    line then reads, never inside the same parenthesized block) wraps all three call sites;
+    returns the installer's real exit code (or `1` on timeout) via errorlevel, so each caller's
+    existing `if errorlevel 1 goto ...` needed no change. Falls back to the OLD untimed
+    `start "" /wait` behavior if the helper payload cannot be emitted to disk (extremely rare --
+    disk/permission failure), so a helper-emission problem can never make an installer
+    unreachable outright.
+  - **Tests**: new `tests/test_run_installer_with_timeout.py` (8 tests, exercised end-to-end via
+    real `pwsh` subprocesses, mirroring `tests/test_exe_smokerun.py`'s established pattern) --
+    fast-exit result capture, argument forwarding (a single pre-assembled Arguments string,
+    matching `HP_PROBE_ARGS`'s own "caller provides a ready string" contract), the
+    timeout-detection path (confirmed the result file correctly reports `1|1` even on this
+    non-Windows test host, where `taskkill.exe` genuinely doesn't exist and the script's own
+    `try/catch` swallows that cleanly -- the actual process-tree kill itself can only be
+    confirmed on real Windows CI), result-path override, `PayloadSync` byte-equality, and a
+    regression guard scanning `run_setup.bat` for any bare (untimed) `start "" /wait` installer
+    launch that should have been routed through the subroutine. **Found and fixed two of my own
+    test-authoring bugs while verifying locally, both before committing**: (1) an argv-forwarding
+    assertion expected the script's own path to appear in `sys.argv[1:]`, which is wrong --
+    `sys.argv[0]` is the script path, excluded from the `[1:]` slice the stub script actually
+    writes; (2) the timeout-path test hung past its own `subprocess.run(timeout=...)` because
+    `capture_output=True`'s real pipes block on EOF, and the orphaned grandchild (left running
+    since `taskkill.exe` isn't present on this Linux test host) inherits and holds those pipes
+    open even after the direct `pwsh` child has exited -- fixed by redirecting to `DEVNULL`
+    instead of a pipe for that one test, which doesn't block on EOF.
 
 - **Tooling pass, owner-requested 2026-07-25 ("Update check delimiters to catch the rem space...
   see if there are any other lessons learned that can be baked into tools... expand the tools
