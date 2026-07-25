@@ -632,6 +632,21 @@ further.)*
     (respecting that `#` itself can appear inside a quoted string) before treating `]` as
     terminal. Not attempted here to keep this pass's remaining time focused on higher-likelihood
     findings; a good candidate for a future dedicated pass on this file.
+14. **The three `start "" /wait` external-installer launches (NI-VISA, Miniconda AllUsers,
+    Miniconda JustMe) have no process-level timeout, unlike this file's deliberately-wrapped
+    user-code launches.** Found via the 2026-07-25 retry/loop-bound audit (see Closed Backlog for
+    the sibling NI-VISA curl-download timeout fix from the same audit, already shipped). Not fixed
+    here on purpose: these launch REAL installer processes, and force-killing one mid-write (the
+    same `.NET Process` + `WaitForExit(ms)` + `Kill()` pattern already used for user-code
+    verification runs) risks leaving a genuinely corrupted, half-installed target directory --
+    registry entries written but files missing, or vice versa -- a materially worse outcome than
+    the installer simply hanging. A correct fix needs real design work first (e.g., detecting a
+    stalled install via some other signal and surfacing it to the user rather than force-killing,
+    or a much longer grace period than the ~30s used for user-code verification), not a mechanical
+    copy of the existing kill-after-timeout pattern. Revisit if a real stuck-installer report ever
+    surfaces (this repo's own Known Findings entry on NI-VISA already documents that the one
+    tested environment fails FAST, ~10s, not slow -- so this is a theoretical risk so far, not an
+    observed one).
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -956,6 +971,85 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **Retry/loop-bound audit across `run_setup.bat` (owner-requested, "check for infinite or too
+  many loops in bootstrapper like retries"), 2026-07-25 -- came back clean, with two real
+  no-timeout findings unrelated to loops.** A dedicated research agent inventoried every
+  goto-based retry/cascade mechanism in the file (REQ-022 conda create/bulk-install retry, REQ-013
+  connectivity checks, the embed-tier download/swap retries, venv creation retry, the Miniconda
+  AllUsers->JustMe fallback, the `--hidden-import` auto-recovery loop, the REQ-009 provider
+  cascade, the corrupt-conda self-heal, the REQ-024 lock acquire/stale-evict) and confirmed EVERY
+  ONE has a hard, provably-reachable cap (a counter incremented on a line always reached before
+  its check, or a "tried" flag set unconditionally with no code path ever clearing it) -- this
+  codebase's prior hardening passes (see the many "Provider-cascade dispatch is goto-based on
+  purpose" / "No-loop guarantee" entries already in this file and docs/agent-lessons-learned.md)
+  have genuinely eliminated the counter-bypass bug class they were designed to catch. No new fix
+  needed for the loop-bound question itself.
+  - **Two real findings surfaced, both about a DIFFERENT hazard class (single blocking calls with
+    no timeout, not loops) -- one fixed, one deferred with reasoning.** (1) The NI-VISA installer
+    download (`curl` at `run_setup.bat` ~line 1571, plus its PowerShell `Invoke-WebRequest`
+    fallback) was the ONE download in the entire file missing the `--retry 3 --retry-delay 5
+    --max-time 120` pattern every sibling download (uv/Miniconda/get-pip/embed) already carries --
+    a stalled connection (e.g. a captive-portal network that completes the TCP handshake but never
+    finishes the HTTP response) could hang the whole bootstrap indefinitely. Fixed by adding the
+    same flags to the curl call and `-TimeoutSec 120` to the PowerShell fallback, matching the
+    established sibling pattern exactly. (2) The three `start "" /wait` external-installer
+    launches (NI-VISA installer, Miniconda AllUsers, Miniconda JustMe) have NO process-level
+    timeout at all, unlike the deliberately-wrapped user-code launches elsewhere in this file
+    (`.NET Process` + `WaitForExit(ms)` + `Kill()`). **Not fixed in this pass, deliberately**: these
+    are REAL installer processes, not a stuck user script -- force-killing a Miniconda/NI-VISA
+    installer mid-write risks leaving a genuinely corrupted, half-installed target directory
+    (registry entries written but files missing, or vice versa), a materially worse outcome than
+    the installer simply hanging. A correct fix needs real design work (e.g. detecting a stalled
+    install and telling the user to intervene, rather than force-killing it), not a mechanical
+    copy of the existing Kill()-after-timeout pattern. Logged as a new Active Backlog item with
+    this reasoning attached so a future pass doesn't reach for the wrong fix shape.
+
+- **PID display for stuck user programs (owner-requested), 2026-07-25 -- a deliberately simpler
+  and safer alternative to process-group Ctrl+C isolation.** Follow-up to this session's earlier
+  Ctrl+C research (see the Known Findings-style writeup in this session's own chat history):
+  Ctrl+C broadcasts `CTRL_C_EVENT` to the ENTIRE console process group by default (confirmed via
+  Microsoft's own docs), so a user pressing it to stop a stuck program would also risk killing
+  `run_setup.bat` itself and `cmd.exe`'s own "Terminate batch job (Y/N)?" prompt -- making it
+  fundamentally unsuited to "stop just my program" without real process-group-isolation
+  engineering (P/Invoke `CREATE_NEW_PROCESS_GROUP`, `SetConsoleCtrlHandler`), which was assessed
+  as disproportionate and left unbuilt.
+  - **The chosen fix instead: print the real Windows Process ID and point the user at Task
+    Manager's "End Task."** `TerminateProcess` (what Task Manager's End Task calls) targets a
+    single PID directly -- it is NOT a console-signal broadcast, so it surgically kills only the
+    stuck program, never touching `cmd.exe`/`powershell.exe`/the bootstrapper itself. This
+    requires zero new isolation machinery (no P/Invoke, no signal handlers) since the PID is
+    already sitting in the existing `$p` (`System.Diagnostics.Process`) object at both of this
+    file's "never kill the process ourselves" launch points.
+  - Added `Write-Host "[INFO] Process ID $($p.Id). If it seems stuck: Task Manager > Details tab >
+    find this PID > End Task (this window stays open)."` immediately after `$p.Start()` in both
+    `tools/exe_smokerun.ps1` (the primary fresh-build verification run -- the "activity-aware"
+    kill from Requirement 3 means once output starts, this becomes genuinely unbounded) and
+    `tools/failfast_probe.ps1` (covers the cached-EXE-reuse fast path, the no-EXE interpreter run,
+    and the elective postexec-checkpoint second run -- all of which never kill at all past their
+    classification window). **Deliberately `Write-Host`, not `[Console]::Out.Write`**: unlike the
+    per-chunk child-output passthrough (which must avoid an auto-appended newline since chunks
+    arrive at arbitrary boundaries), this is one complete, bootstrapper-generated line -- verified
+    empirically (real `pwsh` runs) that it never lands in `~run.out.txt`/`~run.err.txt` (the files
+    that specifically capture the CHILD's own output), so it cannot be mistaken for the user's
+    program output or contaminate anything downstream that reads those files.
+  - **Both payloads have the tightest CMD line-length budgets in the file** (per the existing
+    table in this doc); the message was written to be maximally compact while still actionable,
+    landing at 145/151-char margins after the addition -- tight but workable, verified via the
+    established `base64.b64encode(...)`-length-measurement method.
+  - **A real, pre-existing test bug was found and fixed while verifying this, not caused by this
+    change**: `tests/test_failfast_probe.py`'s `NoNewlinePromptVisibility` test assumed the FIRST
+    chunk read from the child process's stdout would be the child's own prompt text -- true before
+    this change (nothing printed before the child), but now the new PID line is genuinely the
+    first thing written. Fixed by having the test accumulate reads until the prompt substring
+    appears (matching the pattern the same test already used for its own second phase), rather
+    than assuming any single read IS the complete answer -- this is a more correct test regardless
+    of the PID-message change, since assuming a single `os.read()` call returns exactly one
+    logical unit of output was never guaranteed by the underlying pipe semantics to begin with.
+  - 4 new regression tests (2 per file): the PID line appears with a real positive numeric PID and
+    mentions "Task Manager"/"End Task", and the PID line never contaminates the captured output
+    file. All existing tests re-verified passing (22/22 combined across both files, including
+    `PayloadSync`).
 
 - **`dep_check.py` name normalization (PEP-503-style): the dep-check fast-path skip could
   false-negative on separator-style mismatches**, another finding from the 2026-07-25 Python

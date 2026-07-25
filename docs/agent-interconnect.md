@@ -1397,6 +1397,66 @@ unterminated chunk, sleeps well past a short kill window, then completes normall
 genuinely fail (result `-1`, killed) against the pre-Finding-9 implementation and pass (real exit
 code) against the fix.
 
+### Process-ID display for stuck-program recovery (owner-requested, 2026-07-25) -- touches both `~exe_smokerun.ps1` and `~failfast_probe.ps1`
+
+**Direct follow-up to the "accepted trade-off" above**: once a process has printed anything at
+all, both this file's `:run_exe_smokerun` AND `~failfast_probe.ps1`'s three call sites
+(`:try_fast_exe`'s interactive branch, `:verify_no_exe_probe`, `:run_postexec_checkpoint`'s
+elective second run) become genuinely unbounded -- by design, per Open Question 1's resolution --
+so a real deadlock unrelated to stdin now has no automatic recovery. The owner asked what else
+could help a stuck user without reverting that decision, "even if not super elegant."
+
+**Ctrl+C was researched and rejected as the fix, in favor of something simpler.** `CTRL_C_EVENT`
+broadcasts to the WHOLE console process group by default (confirmed via Microsoft's own Windows
+Console docs) -- `cmd.exe` running `run_setup.bat`, `powershell.exe` running the helper script,
+AND the grandchild program all receive it simultaneously, not sequentially via the parent
+choosing to forward it. Making Ctrl+C "safe" (kill only the grandchild) would require real
+process-group-isolation engineering: launching with `CREATE_NEW_PROCESS_GROUP` (not exposed on
+`System.Diagnostics.ProcessStartInfo` -- needs a raw P/Invoke into `CreateProcess`), plus
+`SetConsoleCtrlHandler(NULL, TRUE)` in this file's own layers to ignore the signal themselves.
+Assessed as disproportionate for this ask and left unbuilt; logged in chat history for a future
+revisit if ever justified by a real need.
+
+**What shipped instead: printing the real Windows PID and pointing the user at Task Manager's
+"End Task."** `TerminateProcess` -- what Task Manager's End Task actually calls -- targets a
+single PID directly. It is NOT a console-signal broadcast, so it is inherently more surgical than
+any Ctrl+C-based approach: it can never touch `cmd.exe`/`powershell.exe`/the bootstrapper, no
+matter what. This sidesteps the entire hazard class Ctrl+C research uncovered, at zero new
+isolation-engineering cost -- the PID is already sitting in the existing `$p =
+[System.Diagnostics.Process]::Start(...)` object at both never-kill call sites in this file
+family; nothing new needs to be tracked or isolated.
+
+Added `Write-Host "[INFO] Process ID $($p.Id). If it seems stuck: Task Manager > Details tab >
+find this PID > End Task (this window stays open)."` immediately after `Start()` in both
+`tools/exe_smokerun.ps1` and `tools/failfast_probe.ps1`. **Deliberately `Write-Host`, not
+`[Console]::Out.Write`** (the mechanism this file family otherwise uses for the child's own
+per-chunk output passthrough, per Finding 9): `Write-Host` auto-appends a newline, correct here
+since this is one complete, bootstrapper-generated line, not an arbitrary-boundary chunk of the
+child's own stream -- and critically, `Write-Host` output is never captured into `$outBuf`/
+`$errBuf` (the buffers that become `~run.out.txt`/`~run.err.txt`), confirmed empirically via real
+`pwsh` runs, so this new line can never be mistaken for the user's own program output by anything
+downstream that reads those files.
+
+**Budget was the binding constraint, not design.** Both payloads already had the tightest
+CMD-line-length margins in the file (see the budget table elsewhere in this doc); the message was
+written for maximum compactness while staying actionable, landing the payloads at 145/151-char
+margins -- tight but workable, verified via the standard `base64.b64encode(...)`-length
+measurement method before committing to the wording.
+
+**A genuine, pre-existing test bug was found and fixed while verifying this empirically, not
+introduced by this change**: `tests/test_failfast_probe.py`'s `NoNewlinePromptVisibility` test
+(Finding 9's own regression test) assumed the FIRST chunk read from the child's stdout pipe would
+BE the child's prompt text -- true before this change (nothing printed before the child got a
+chance to), but no longer true once the PID line prints first. This assumption was never actually
+guaranteed by pipe semantics in the first place (a single `os.read()` call returning exactly one
+logical unit of output was coincidental, not contractual); fixed by accumulating reads until the
+expected substring appears, mirroring the pattern the same test already used for its own later
+phase -- a more correct test regardless of this specific change.
+
+Both files' full test suites re-verified passing (22 combined, including `PayloadSync` for both
+payloads), plus 4 new tests (2 per file): the PID line appears with a real positive numeric PID
+and mentions "Task Manager"/"End Task," and it never contaminates the captured output file.
+
 ## Argv passthrough escape hatch (REQ-026, P1) -- touches HP_PROBE_ARGS's own contract, not just new callers
 
 **Status: SHIPPED 2026-07-24**, the plan's P1 requirement 4

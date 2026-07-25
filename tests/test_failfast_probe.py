@@ -268,6 +268,46 @@ class LiveTee(unittest.TestCase):
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
+class ProcessIdMessage(unittest.TestCase):
+    # A user whose program stays silent forever past the probe window has no clean way to get
+    # back to the bootstrapper -- Ctrl+C broadcasts to the whole console process group (killing
+    # the bootstrapper too), and this file family deliberately never Kill()s the process itself
+    # (see the module header). Printing the real Windows PID lets a stuck user End Task it via
+    # Task Manager's Details tab -- a precise, single-process kill, unlike Ctrl+C.
+    def test_pid_message_printed_with_real_numeric_pid(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "fast.py"
+            script.write_text(FAST_SCRIPT, encoding="utf-8")
+            proc = _run_probe(d, {
+                "HP_PROBE_EXE": sys.executable,
+                "HP_PROBE_ARGS": str(script),
+                "HP_PROBE_CWD": d,
+            })
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            m = re.search(r"\[INFO\] Process ID (\d+)\.", proc.stdout)
+            self.assertIsNotNone(m, "PID message not found in stdout: " + proc.stdout)
+            self.assertGreater(int(m.group(1)), 0)
+            self.assertIn("Task Manager", proc.stdout)
+            self.assertIn("End Task", proc.stdout)
+
+    def test_pid_message_never_lands_in_captured_output_file(self):
+        # The PID line is bootstrapper-generated console guidance, not part of the user's own
+        # program output -- it must never contaminate ~run.out.txt (the file downstream checks
+        # read as "what did the user's program print").
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "fast.py"
+            script.write_text(FAST_SCRIPT, encoding="utf-8")
+            proc = _run_probe(d, {
+                "HP_PROBE_EXE": sys.executable,
+                "HP_PROBE_ARGS": str(script),
+                "HP_PROBE_CWD": d,
+            })
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            captured = (Path(d) / "~run.out.txt").read_text(encoding="ascii")
+            self.assertNotIn("Process ID", captured)
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
 class InteractiveRoundTrip(unittest.TestCase):
     # Answers the actual question this repo's live-echo work exists to answer: not just "is
     # output visible," but "can a real multi-round input()-driven program be watched AND
@@ -346,19 +386,28 @@ class NoNewlinePromptVisibility(unittest.TestCase):
             )
             try:
                 q = _start_reader_thread(proc.stdout)
-                chunk = _read_available(q, 5.0)
-                self.assertIsNotNone(
-                    chunk,
-                    "no output observed within 5s before any input was sent -- "
+                # derived requirement: the helper now prints its own "[INFO] Process ID ..."
+                # line (Task Manager kill-by-PID guidance) as the very first output, before the
+                # child process's own prompt -- accumulate reads until the prompt text shows up
+                # instead of assuming the first chunk IS the prompt.
+                preinput = b""
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline and b"Enter your name:" not in preinput:
+                    chunk = _read_available(q, max(0.1, deadline - time.monotonic()))
+                    if chunk is None:
+                        continue
+                    preinput += chunk
+                self.assertIn(
+                    b"Enter your name:", preinput,
+                    "no prompt observed within 5s before any input was sent -- "
                     "Finding 9 regression (prompt invisible without a trailing newline)",
                 )
-                self.assertIn(b"Enter your name:", chunk)
 
                 proc.stdin.write(b"Alice\nping\nexit\n")
                 proc.stdin.flush()
                 proc.stdin.close()
 
-                all_output = chunk
+                all_output = preinput
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:
                     more = _read_available(q, 1.0)

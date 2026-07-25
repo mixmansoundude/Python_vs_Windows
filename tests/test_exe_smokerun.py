@@ -269,6 +269,37 @@ class OutputPaths(unittest.TestCase):
             self.assertFalse((Path(d) / "~smokerun_result.txt").exists())
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
+class ProcessIdMessage(unittest.TestCase):
+    # A user with no cached EXE watching a genuinely stuck verification run has no clean way to
+    # get back to the bootstrapper -- Ctrl+C broadcasts to the whole console process group
+    # (killing the bootstrapper too), and past the probe window this file only Kill()s on a
+    # fully-silent timeout, never once real output has appeared. Printing the real Windows PID
+    # lets a stuck user End Task it via Task Manager's Details tab -- a precise, single-process
+    # kill, unlike Ctrl+C.
+    def test_pid_message_printed_with_real_numeric_pid(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "fast", FAST_SCRIPT)
+            proc = _run_smokerun(d, script, {})
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            m = re.search(r"\[INFO\] Process ID (\d+)\.", proc.stdout)
+            self.assertIsNotNone(m, "PID message not found in stdout: " + proc.stdout)
+            self.assertGreater(int(m.group(1)), 0)
+            self.assertIn("Task Manager", proc.stdout)
+            self.assertIn("End Task", proc.stdout)
+
+    def test_pid_message_never_lands_in_captured_output_file(self):
+        # The PID line is bootstrapper-generated console guidance, not part of the user's own
+        # program output -- it must never contaminate ~run.out.txt (the file downstream checks
+        # read as "what did the user's program print").
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "fast", FAST_SCRIPT)
+            proc = _run_smokerun(d, script, {})
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            captured = (Path(d) / "~run.out.txt").read_text(encoding="ascii")
+            self.assertNotIn("Process ID", captured)
+
+
 class PayloadSync(unittest.TestCase):
     def test_embedded_base64_matches_source(self):
         # derived requirement: tools/exe_smokerun.ps1 carries .gitattributes' `*.ps1 text

@@ -66,6 +66,7 @@ $si.RedirectStandardError = $true
 $p = New-Object System.Diagnostics.Process
 $p.StartInfo = $si
 $p.Start() | Out-Null
+Write-Host "[INFO] Process ID $($p.Id). If it seems stuck: Task Manager > Details tab > find this PID > End Task (this window stays open)."
 
 $outBuf = New-Object System.Text.StringBuilder
 $errBuf = New-Object System.Text.StringBuilder
