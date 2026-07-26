@@ -466,35 +466,10 @@ See **AGENTS.md** section Iteration Contract for the full policy. Key points:
 
 Items deferred to future loops. This list is for genuine future work -- a decision already made,
 a fact confirmed with no action needed, or a recurring/periodic check belongs in
-"Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead
-(see those sections' own scope notes).
+"Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead;
+a promising idea deliberately shelved pending a specific, named trigger belongs in "Cold Storage"
+below instead of here (see that section's own scope note for the distinction from this one).
 
-4. **PYSPEC-aware venv-vs-embed decision function (promising, deliberately not implemented yet --
-   don't add the complexity until there's a concrete reason to).** `:try_venv_fallback` currently
-   uses whatever ambient Python is on the machine unconditionally, with no check of whether it
-   actually satisfies `PYSPEC` (the same value `~detect_python.py` already computes for
-   uv/conda/embed). This means the current linear order (embed before venv) always pays embed's
-   network cost even in the common case where the ambient Python already satisfies the pin and
-   venv would have been strictly better (instant, no network dependency, no extra disk). The
-   flip side also matters: embed is reached immediately after conda, so by the time it's
-   attempted, uv and conda have already both failed -- and since all three of uv/conda/embed
-   need network, embed is disproportionately likely to fail for the *same* underlying reason
-   (see the README's REQ-009 failure-causes table), making it a low-odds attempt in exactly the
-   scenario where it's tried. A smarter design would check "does the ambient Python (if any)
-   already satisfy PYSPEC?" and prefer venv when yes, falling to embed only when the ambient
-   Python is absent or version-mismatched -- turning the fixed uv/conda/embed/venv/system chain
-   into uv/conda/(venv-if-it-already-satisfies-PYSPEC, else embed)/system. Not pursued now: it
-   changes `:try_venv_fallback`'s dispatch shape (must read `PYSPEC` before deciding, not just on
-   creation), and the current fixed order is not wrong, just not optimal in either direction.
-   Revisit if the network-correlated-embed-failure pattern shows up for real in CI or user
-   reports, rather than speculatively building it now.
-   **Re-examined 2026-07-25 per an owner request to raise confidence-to-implement wherever
-   possible**: this is not actually a confidence question -- the design sketch above is sound and
-   could be implemented with reasonable confidence in its own correctness. What's missing is
-   evidence that it's WORTH the added complexity: the item's own "revisit if" trigger (a real,
-   observed network-correlated-embed-failure pattern) has not occurred, in CI or in any user
-   report, since this was written. Raising implementation confidence doesn't manufacture that
-   evidence -- still correctly deferred, for the reason already on record, not a new one.
 7. **CI job steps in `batch-check.yml` don't use `if: always()`, so one failing self-test step
    silently cascade-skips every subsequent step in the same job -- observed directly, not
    theorized.** While landing item 6's requirement-1 tests (PR #368), a bug in the new
@@ -592,6 +567,106 @@ the "Build public diagnostics tree" step's own `DIAG CWD`/`DIAG ROOT`/`DIAG TREE
 lines, which naturally show GitHub Actions' inherent doubled checkout path
 (`.../Python_vs_Windows/Python_vs_Windows/...`) -- a runner convention, not a bug. Not chased
 further.)*
+
+## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
+
+**Scope, and how this differs from Active Backlog and Known Findings**: an Active Backlog item is
+work this repo intends to get to eventually, with no special precondition beyond bandwidth. A
+Known Finding is a settled decision with genuinely no action ever planned. This section is a
+third category: a real, technically-sound idea that is NOT being pursued right now, gated on one
+or more SPECIFIC, checkable triggers -- not "eventually," not "never," but "only if X happens."
+2026-07-26 owner instruction: park these here (rather than either of the other two sections) so
+they stay visible without implying either imminent work or a closed door, and thaw one only when
+its own named trigger genuinely fires -- do not speculatively build any of these ahead of that.
+
+- **PYSPEC-aware venv-vs-embed decision function.** `:try_venv_fallback` currently uses whatever
+  ambient Python is on the machine unconditionally, with no check of whether it actually
+  satisfies `PYSPEC` (the same value `~detect_python.py` already computes for uv/conda/embed).
+  This means the current linear order (embed before venv) always pays embed's network cost even
+  in the common case where the ambient Python already satisfies the pin and venv would have been
+  strictly better (instant, no network dependency, no extra disk). The flip side also matters:
+  embed is reached immediately after conda, so by the time it's attempted, uv and conda have
+  already both failed -- and since all three of uv/conda/embed need network, embed is
+  disproportionately likely to fail for the *same* underlying reason (see the README's REQ-009
+  failure-causes table), making it a low-odds attempt in exactly the scenario where it's tried. A
+  smarter design would check "does the ambient Python (if any) already satisfy PYSPEC?" and
+  prefer venv when yes, falling to embed only when the ambient Python is absent or
+  version-mismatched -- turning the fixed uv/conda/embed/venv/system chain into
+  uv/conda/(venv-if-it-already-satisfies-PYSPEC, else embed)/system. Not pursued now: it changes
+  `:try_venv_fallback`'s dispatch shape (must read `PYSPEC` before deciding, not just on
+  creation), and the current fixed order is not wrong, just not optimal in either direction.
+  **Trigger to thaw**: the network-correlated-embed-failure pattern this item predicts shows up
+  for real, in CI or in an actual user report -- not a speculative build ahead of that evidence.
+  **Re-examined 2026-07-25 per an owner request to raise confidence-to-implement wherever
+  possible**: this was never actually a confidence question -- the design sketch above is sound
+  and could be implemented with reasonable confidence in its own correctness. What was missing is
+  evidence that it's WORTH the added complexity; raising implementation confidence doesn't
+  manufacture that evidence, which is exactly why this belongs in Cold Storage rather than Active
+  Backlog -- the blocker is the trigger, not readiness to build.
+
+- **AV-Safe Build Path Tier B (reprovisioned pinned-3.12 environment).** Full PRD at
+  `docs/prd-av-safe-build-path.md`; Tier A (real Nuitka fallback build in the existing
+  environment) and requirement 9 (the elective "optimized build?" upsell) are both SHIPPED --
+  see their own dedicated Closed Backlog entries -- and remain the complete, working AV-quarantine
+  mitigation this repo ships today. Tier B was the PRD's second tier: a reprovisioned environment
+  pinned to Python 3.12 specifically to route around Nuitka's MinGW64 backend not supporting
+  Python 3.13+ (Finding 1 in the PRD, last re-confirmed unresolved as of Nuitka 4.1.2 in the
+  2026-07-20 downtime re-check). Building it means a second provider-chain traversal, a
+  pinned-version environment, and the stale-PATH/`VIRTUAL_ENV` hazard research Finding 6 already
+  flagged -- real complexity with no user-observed need yet (the PRD itself notes it as
+  preemptive, "no real user report yet, a documented industry-wide problem").
+  **Trigger to thaw, two and only two conditions**: (a) the owner personally hits a real
+  PyInstaller AV-quarantine failure that Tier A does not already resolve, giving the reprovision
+  complexity a concrete justification instead of a speculative one; or (b) Nuitka's own upstream
+  MinGW64 backend gains Python 3.13+ support, which would remove the entire reason Tier B needs a
+  narrow version pin in the first place -- at that point Tier B's whole design would need
+  re-evaluating (it might not need a pin at all anymore), not just a version bump. Condition (b)
+  is exactly what the "Next-pin probe concept" section (under Periodic Maintenance Checks) already
+  tracks quarterly for any future pin justified by one specific, checkable fact -- re-check that
+  same fact each scan (Nuitka's MinGW64 Python-version support), not a generic "try a newer
+  Nuitka" probe. If either condition fires, read the PRD's own "Notes from Claude" section before
+  restarting Tier B -- it has the original reasoning plus a deliberately blunt writeup of why
+  Tier B's narrow, well-justified 3.12 pin should **never** be generalized into a
+  bootstrapper-wide "stay a version or two behind latest" default (this repo has no telemetry or
+  auto-update mechanism, so any such pin freezes permanently into every already-distributed copy
+  of `run_setup.bat`). Requirements 6 (loop avoidance) and 8 (connectivity check before Tier B)
+  depend on Tier B existing and thaw with it, for the same reason.
+
+- **pipreqs internalization (clean-room AST-based scanner + mapping table, replacing pipreqs as
+  the primary dependency-discovery tool).** pipreqs (bndr/pipreqs) is stagnant (maintenance-only,
+  looking for maintainers) but not at risk of disappearing from PyPI outright -- PyPI does not
+  delete established packages. The real risk the community cites is future-Python bitrot (an AST
+  parser silently failing on new syntax), which this repo has already pre-empted twice over: the
+  0.4.13 pin (see "pipreqs pin rationale" above) avoids 0.5.0's `<3.13` Requires-Python ceiling,
+  and the warnfix build-time safety net (see "Dependency Discovery Fallback: warnfix" above) means
+  the bootstrap **never hard-fails** even if pipreqs is 100% unavailable -- confirmed by
+  `self.stub.pipreqs_version_fail` (Closed Backlog), which forces pipreqs's own install to fail via
+  `HP_PIPREQS_VERSION=99.99.99` (already an env-overridable variable, no code change needed to
+  trigger this) and proves the bootstrap still reaches a working, fully-run EXE via warnfix alone.
+  It is technically feasible and roughly the size a 3rd-party estimate suggested (a few hundred
+  lines + a small mapping table), but it duplicates a safety net that already works and is tested,
+  and is its own nontrivial project (matching pipreqs's accumulated edge-case handling: encoding
+  fallback, syntax-error tolerance, stdlib filtering).
+  **Trigger to thaw**: a real user run (not just CI) hits a pipreqs failure the warnfix safety net
+  doesn't cleanly cover, OR pipreqs is genuinely removed from PyPI, OR the quarterly "next-pin
+  probe" (Periodic Maintenance Checks, "pipreqs ecosystem status") finds pipreqs's own
+  Requires-Python ceiling has moved in a way that reopens the future-Python-bitrot risk this
+  section exists to track. A one-off CI observation is not enough on its own -- this needs a
+  signal from how the tool behaves for a real user, or a concrete ecosystem change.
+  **When it is eventually undertaken**: write a **clean-room** scanner rather than copying
+  pipreqs's actual source or mapping file (pipreqs is MIT-licensed; copying it verbatim would
+  require carrying its copyright notice -- a clean-room reimplementation sidesteps this entirely,
+  though crediting pipreqs by name/link as prior art in a code comment is a fair courtesy). Seed
+  the mapping table by extending this repo's own already-license-clear `tools/parse_warn.py`
+  `TRANSLATIONS` dict rather than importing external mapping databases (showmereqs/FawltyDeps/
+  marimo/Grayskull all carry their own licenses needing separate audit, and none of those tables
+  have been vetted against this repo's actual needs). Use `sys.stdlib_module_names` with a
+  `try/except ImportError` guard per the existing "Embedded-helper Python baseline" convention
+  (it's a 3.10+ feature; must degrade gracefully on an older ambient interpreter on the
+  venv/system fallback tiers). Do not chase alternative tools as a wholesale replacement: `pigar`
+  was correctly ruled out elsewhere (its wheel bundles an ~40 MB SQLite package database, a
+  non-starter for a single-file bootstrapper).
+
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -773,35 +848,28 @@ of a second or third pin actually needing it.
 
 ## Known Findings (diagnosed, no action warranted)
 
-- **AV-Safe Build Path Tier B (reprovisioned pinned-3.12 environment) dropped from the backlog
-  entirely, 2026-07-24 owner instruction -- not deferred-with-intent-to-revisit, genuinely not
-  planned unless one of two specific triggers occurs.** Full PRD at
-  `docs/prd-av-safe-build-path.md`; Tier A (real Nuitka fallback build in the existing
-  environment) and requirement 9 (the elective "optimized build?" upsell) are both SHIPPED --
-  see their own dedicated Closed Backlog entries -- and remain the complete, working AV-quarantine
-  mitigation this repo ships today. Tier B was the PRD's second tier: a reprovisioned environment
-  pinned to Python 3.12 specifically to route around Nuitka's MinGW64 backend not supporting
-  Python 3.13+ (Finding 1 in the PRD, last re-confirmed unresolved as of Nuitka 4.1.2 in the
-  2026-07-20 downtime re-check). Building it means a second provider-chain traversal, a
-  pinned-version environment, and the stale-PATH/`VIRTUAL_ENV` hazard research Finding 6 already
-  flagged -- real complexity with no user-observed need yet (the PRD itself notes it as
-  preemptive, "no real user report yet, a documented industry-wide problem").
-  **Two, and only two, conditions restart this work**: (a) the owner personally hits a real
-  PyInstaller AV-quarantine failure that Tier A does not already resolve, giving the reprovision
-  complexity a concrete justification instead of a speculative one; or (b) Nuitka's own upstream
-  MinGW64 backend gains Python 3.13+ support, which would remove the entire reason Tier B needs a
-  narrow version pin in the first place -- at that point Tier B's whole design would need
-  re-evaluating (it might not need a pin at all anymore), not just a version bump. Condition (b)
-  is exactly what the "Next-pin probe concept" section above already tracks quarterly for any
-  future pin justified by one specific, checkable fact -- re-check that same fact each scan
-  (Nuitka's MinGW64 Python-version support), not a generic "try a newer Nuitka" probe. If either
-  condition fires, read the PRD's own "Notes from Claude" section before restarting Tier B -- it
-  has the original reasoning plus a deliberately blunt writeup of why Tier B's narrow, well-
-  justified 3.12 pin should **never** be generalized into a bootstrapper-wide "stay a version or
-  two behind latest" default (this repo has no telemetry or auto-update mechanism, so any such
-  pin freezes permanently into every already-distributed copy of `run_setup.bat`). Requirements 6
-  (loop avoidance) and 8 (connectivity check before Tier B) depend on Tier B existing and are
-  dropped with it, for the same reason.
+- **Cascade consent gate design (timed prompt, decline-by-default) kept exactly as shipped,
+  2026-07-26 owner decision -- closes `docs/open-questions.md` item 1.** Following the
+  cascade-vs-postexec fix (see Closed Backlog), a deeper investigation into the reliability of
+  the `HP_CASCADE_CANDIDATE` signal was requested and completed -- a full truth table over its
+  two constituent build-time static signals, with estimated odds the `.exe` still runs fine and
+  odds each next provider tier would actually help, now preserved in
+  `docs/agent-interconnect.md`'s "Cascade signal reliability" subsection (under "Post-execution
+  checkpoint") rather than in the open-questions file, per that file's own convention of folding
+  resolved questions into wherever they actually belong. Headline finding: the signal is real but
+  imperfect (an estimated 60-75% chance of a genuine problem when it fires, not a certainty), and
+  the uv->conda hop specifically has real, mechanism-level justification (a genuinely different
+  package index) that later hops (conda->embed->venv->system, all pip/PyPI-based once bootstrapped)
+  largely lack.
+  - **Considered, not adopted**: flipping the timed prompt's default from decline (N) to accept
+    (Y), specifically for the uv->conda hop, on the strength of that hop's own justification.
+  - **Decision: keep `:cascade_consent_gate` exactly as shipped** -- the timed `choice /T` prompt,
+    defaulting to decline (N) on timeout, unchanged for every hop including uv->conda. No code
+    change resulted from this investigation.
+  - Also considered and left out of the same pass, for a different reason (flagged as possibly
+    too risky to be wrong and too complex to be robust, and the analysis didn't fully resolve
+    that concern): telling the user their specific odds that the NEXT tier would help. Still not
+    implemented.
 
 - **The official `irm https://astral.sh/uv/install.ps1 | iex` installer script was researched as
   a possible replacement for the current uv acquisition method -- rejected, current approach is
@@ -912,40 +980,6 @@ of a second or third pin actually needing it.
     off-CI (expected ~30-45 min per the maintainer's prior experience). Until then, treat the
     "environmental" classification as strongly-supported-but-provisional.
 
-- **pipreqs dead-or-not / internalization decision (2026-07, moved here from Active Backlog
-  during a 2026-07 documentation thinning pass -- this is a decision already made with no
-  action pending, not open future work).** pipreqs (bndr/pipreqs) is stagnant
-  (maintenance-only, looking for maintainers) but not at risk of disappearing from PyPI
-  outright -- PyPI does not delete established packages. The real risk the community cites is
-  future-Python bitrot (an AST parser silently failing on new syntax), which this repo has
-  already pre-empted twice over: the 0.4.13 pin (see "pipreqs pin rationale" above) avoids
-  0.5.0's `<3.13` Requires-Python ceiling, and the warnfix build-time safety net (see
-  "Dependency Discovery Fallback: warnfix" above) means the bootstrap **never hard-fails** even
-  if pipreqs is 100% unavailable -- confirmed by `self.stub.pipreqs_version_fail` (Closed
-  Backlog), which forces pipreqs's own install to fail via `HP_PIPREQS_VERSION=99.99.99`
-  (already an env-overridable variable, no code change needed to trigger this; a nonexistent
-  version number was chosen over pipreqs 0.5.0's real `<3.13` cap after CI showed the cap alone
-  does not reliably fail across every lane's ambient Python) and proves the bootstrap still
-  reaches a working, fully-run EXE via warnfix alone. Decision: **defer full internalization**
-  (embedding a native AST-based scanner + mapping table to replace pipreqs entirely). It is
-  technically feasible and roughly the size a 3rd-party estimate suggested (a few hundred lines
-  + a small mapping table), but it duplicates a safety net that already works and is tested,
-  and is its own nontrivial project (matching pipreqs's accumulated edge-case handling:
-  encoding fallback, syntax-error tolerance, stdlib filtering). When it is eventually
-  undertaken: write a **clean-room** scanner rather than copying pipreqs's actual source or
-  mapping file (pipreqs is MIT-licensed; copying it verbatim would require carrying its
-  copyright notice -- a clean-room reimplementation sidesteps this entirely, though crediting
-  pipreqs by name/link as prior art in a code comment is a fair courtesy). Seed the mapping
-  table by extending this repo's own already-license-clear `tools/parse_warn.py`
-  `TRANSLATIONS` dict rather than importing external mapping databases (showmereqs/
-  FawltyDeps/marimo/Grayskull all carry their own licenses needing separate audit, and none of
-  those tables have been vetted against this repo's actual needs). Use
-  `sys.stdlib_module_names` with a `try/except ImportError` guard per the existing
-  "Embedded-helper Python baseline" convention (it's a 3.10+ feature; must degrade gracefully
-  on an older ambient interpreter on the venv/system fallback tiers). Do not chase alternative
-  tools as a wholesale replacement: `pigar` was correctly ruled out elsewhere (its wheel
-  bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
-
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a
@@ -987,12 +1021,15 @@ of a second or third pin actually needing it.
     (`:warn_user_code_launch`) -- deliberately a note, never a second gate, since the user may know
     something the automated install missed and want to push through anyway.
   - **The "extra credit" idea (tell the user their odds of a specific next tier helping) was
-    investigated with a real mechanism-level analysis, not implemented in this pass.** See
-    `docs/open-questions.md`'s remaining open item for the full reasoning: cascading uv->conda has
-    real, mechanism-justified value (a genuinely different package index), but conda->embed and
-    beyond are all pip/PyPI-based and add comparatively little once uv and conda have both already
-    struggled -- a well-supported qualitative claim, but left out of this pass at the owner's own
-    flagged hesitation about complexity/risk, pending their read of the full analysis.
+    investigated with a real mechanism-level analysis, not implemented in this pass.** At the time
+    this was written, the full reasoning lived as an open item in `docs/open-questions.md`; that
+    item is now resolved (see this file's own Known Findings entry) and the analysis itself now
+    lives in `docs/agent-interconnect.md`'s "Cascade signal reliability" subsection. Headline:
+    cascading uv->conda has real, mechanism-justified value (a genuinely different package index),
+    but conda->embed and beyond are all pip/PyPI-based and add comparatively little once uv and
+    conda have both already struggled -- a well-supported qualitative claim, but left out of this
+    pass at the owner's own flagged hesitation about complexity/risk, and still not implemented
+    after the follow-up review that closed the broader question.
   - Test coverage: `tests/selfapps_cascade.ps1`'s existing `self.cascade.exec` (uv lane) gained an
     assertion that all 4 approved-cascade builds correctly skip their postexec offers (exactly 4
     occurrences, one per real cascade hop). New `tests/selfapps_cascade_timed.ps1` (conda-full
