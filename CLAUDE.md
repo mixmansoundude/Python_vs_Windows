@@ -680,14 +680,28 @@ below instead of here (see that section's own scope note for the distinction fro
    with an already-untested precedent in the same file (the "Validate restored conda binary"
    step's own identical dual-path pattern has no dedicated test either).
 
-   **STATUS: gating-lane half of this item is now substantially closed.** 41 of the ~67
-   candidate steps are converted (5 zero-risk + 36 lane-aware); the ~26 remaining are each
-   excluded for a specific, documented reason above, not left over by oversight. **One small,
-   genuinely open residual**: hardening `tests/harness.ps1`'s two `throw` sites (missing
-   `.ci_bootstrap_marker` / `~bootstrap.status.json`) so `Run dynamic tests (if present)` and
-   `Run tests (map empty repo to success)` could also safely go `always()` -- a self-contained,
-   low-effort follow-up (add an early existence check with a clean early-return instead of a raw
-   `throw`), not attempted here to keep this already-large diff reviewable.
+   **STATUS: gating-lane half of this item is now fully closed, including the one residual noted
+   above.** 41 of the ~67 candidate steps were converted in the pass documented above (5 zero-risk
+   + 36 lane-aware); the remaining 2 (`Run dynamic tests (if present)`, `Run tests (map empty repo
+   to success)`) are now also `!cancelled()`-gated, closing the loop. **Correction to the original
+   residual note**: it named `tests/harness.ps1`'s own two `throw` sites (missing
+   `.ci_bootstrap_marker` / `~bootstrap.status.json`) as the blocker -- re-reading the actual code
+   before fixing it found this was imprecise. Those two `harness.ps1` throws are reached only via
+   `Run tests (map empty repo to success)`'s `cmd /c run_tests.bat` call, a genuine subprocess
+   boundary: `run_tests.bat` invokes `powershell -File tests\harness.ps1` as its own process, so an
+   uncaught `throw` inside it just becomes that process's exit code (captured via `%ERRORLEVEL%`,
+   then `$rc`), never an uncaught exception in the CALLING GH Actions step -- that step was already
+   safe to `!cancelled()`-gate exactly as-is. The REAL risk was three separate, unrelated `throw`
+   statements inline in `Run dynamic tests (if present)`'s own PowerShell block (not in
+   `harness.ps1` at all, and not run via a subprocess) -- `~bootstrap.status.json not found`,
+   a JSON-parse failure, and `Bootstrap state '{0}' blocks dynamic tests execution`, all reachable
+   for the first time once this step could run even after an earlier "Bootstrap environment"
+   failure. Fixed by converting those three specifically to `Write-Host "::error::..."` + `exit 1`
+   -- same final outcome (the step still fails when the precondition genuinely isn't met), just
+   without an uncaught-exception stack trace obscuring the real cause. Two later, unrelated
+   `throw`s in the same step (`dynamic_tests.bat`/`.py failed with exit code N`) were deliberately
+   left alone -- they only fire once dynamic tests actually ran, meaning the precondition race this
+   fix targets never applies to them.
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is

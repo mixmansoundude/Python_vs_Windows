@@ -1053,7 +1053,7 @@ jobs:
           retention-days: 7
 
       - name: Run dynamic tests (if present)
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -1088,7 +1088,13 @@ jobs:
           if (-not (Test-Path $statusPath)) {
             Show-LogTail '.\bootstrap.log' 'bootstrap.log (tail)'
             Show-LogTail '.\~setup.log' '~setup.log (tail)'
-            throw "~bootstrap.status.json not found; bootstrapper did not record status."
+            # derived requirement: a plain Write-Host+exit here (not `throw`) keeps this
+            # step's failure signal a clean, informative one instead of an uncaught-exception
+            # stack trace -- this step runs under !cancelled(), so it is now reached even when
+            # the earlier "Bootstrap environment" step itself failed, and a missing status file
+            # in that case is a real, expected consequence, not a scripting bug.
+            Write-Host "::error::~bootstrap.status.json not found; bootstrapper did not record status."
+            exit 1
           }
 
           try {
@@ -1096,7 +1102,8 @@ jobs:
           } catch {
             Show-LogTail '.\bootstrap.log' 'bootstrap.log (tail)'
             Show-LogTail '.\~setup.log' '~setup.log (tail)'
-            throw "Failed to parse ~bootstrap.status.json: $($_.Exception.Message)"
+            Write-Host ("::error::Failed to parse ~bootstrap.status.json: {0}" -f $_.Exception.Message)
+            exit 1
           }
 
           $state = if ($null -ne $status.state) { [string]$status.state } else { '' }
@@ -1113,7 +1120,8 @@ jobs:
           if ($state -ne 'ok') {
             Show-LogTail '.\bootstrap.log' 'bootstrap.log (tail)'
             Show-LogTail '.\~setup.log' '~setup.log (tail)'
-            throw ("Bootstrap state '{0}' blocks dynamic tests execution." -f $state)
+            Write-Host ("::error::Bootstrap state '{0}' blocks dynamic tests execution." -f $state)
+            exit 1
           }
 
           if (-not (Test-Path $extractDir)) {
@@ -1177,7 +1185,7 @@ jobs:
           }
 
       - name: Run tests (map empty repo to success)
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         env:
           SCRIPT: run_tests.bat
