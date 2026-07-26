@@ -560,6 +560,57 @@ below instead of here (see that section's own scope note for the distinction fro
      two original reasons for deferral (a wide, ~50-step blast radius; no observed instance of
      this class of gap hiding a real regression yet) both still hold, now with a clearer picture
      of what a future dedicated pass would actually need to verify before shipping.
+
+   **Partially closed, 2026-07-26: the dedicated scoping pass this item asked for, owner-
+   requested directly ("Item 7 scoping pass").** Catalogued all 123 steps in the `selftest` job
+   by exact `if:` condition, not from memory: ~44 (steps ~84-123, plus the two harness-parse
+   steps near the top) already carry `always()`/`failure()` -- the summary/verdict/upload/
+   diagnostics tail of the job is already fully hardened. The real risk band is steps ~17-83
+   (~67 steps, gated on `env.HP_CACHE_CORRUPTED != '1'` or a specific `matrix.mode` match, no
+   `always()`), all downstream of the single "Bootstrap environment (run_setup.bat)" step.
+   - **Traced every one of those ~67 steps to its underlying script and found exactly 5 that are
+     provably zero-risk** -- they never execute `run_setup.bat` as a subprocess at all, so
+     `always()` cannot trigger a redundant real bootstrap for them, only surface a result that
+     was previously silently skipped: `selfapps_size.ps1` (a static byte-size tripwire, REQ-017),
+     `selfapps_parse_warn_table.ps1` (decodes the embedded `HP_PARSE_WARN` base64 payload as
+     static text, never runs the bootstrapper), and the three pure `python -m unittest`/`pytest`
+     steps against this repo's own `tests/test_*.py` suite (`test_parse_warn.py`,
+     `test_heuristics.py`, the cross-platform pytest step). **Shipped in this pass**: all 5
+     converted to `if: always() && <existing lane condition>`, each with an inline comment
+     recording why it's safe (verified via `yamllint`/`actionlint`, both clean). Real, if modest,
+     immediate hardening at zero duration risk -- a bug in `tools/parse_warn.py` or
+     `tools/prep_requirements.py` that coincides with an unrelated bootstrap failure is no longer
+     silently invisible.
+   - **The remaining ~62 steps all genuinely spin up their own scratch-dir `run_setup.bat`
+     invocation** (confirmed via `grep` for each script's actual execution pattern, e.g.
+     `cmd /c .\run_setup.bat`, not just a textual mention) -- this is the real, still-open blast
+     radius the original backlog text worried about, essentially unchanged in size.
+   - **The duration-inflation risk itself is now sharper, not just "lower," thanks to two
+     concrete pieces of new evidence.** First, this repo's own already-documented fact (see the
+     `:tci_both_failed` Closed Backlog entry) that Miniconda installs to a SHARED, machine-wide
+     path (`%PUBLIC%\Documents\Miniconda3`), not a per-test-directory one -- meaning once the main
+     bootstrap step gets far enough to install Miniconda successfully, every downstream
+     conda-dependent selfapps step finds `conda.bat` already present and skips its own install
+     block entirely, at zero extra cost. Second, this session's own owner-authorized CI
+     fault-injection experiment (three throwaway-branch probes, see chat history) produced live
+     confirmation of BOTH ends of this: a probe that broke `run_setup.bat` before Miniconda is
+     ever touched (an unbalanced paren) failed in under a second via cmd.exe's own native parser,
+     and a probe that broke it well after Miniconda/conda would already be installed (a corrupted
+     PyInstaller flag) also failed fast and deterministically, not via a slow network timeout.
+     **Net conclusion: the duration-inflation risk is not "any bootstrap failure," it is
+     specifically scoped to the one case where Miniconda itself fails to install** (a real,
+     if narrower, failure mode this repo has hit before -- see the REQ-013 connectivity-check
+     retry-hardening entry's `conda.anaconda.org` 403 example) -- only THAT case would make every
+     downstream conda-dependent step redundantly retry a slow install in lockstep.
+   - **Concrete follow-on design for the remaining ~62 steps, not implemented in this pass**: a
+     shared, fast pre-check (a single new early step, or a helper both `run_setup.bat` and the
+     selfapps scripts could consult) that tests whether `conda.bat` already exists at the shared
+     Miniconda path; steps converted to `always()` would consult it and skip cleanly with an
+     honest `pass=false`/`skip=true` NDJSON row (never blindly retry) when Miniconda itself is
+     confirmed absent. This targets the ACTUAL risk precisely instead of either doing nothing
+     (today) or a blanket conversion (still not proven safe). Sizing this precisely (touching
+     dozens of scripts, even if each edit is small) is its own dedicated pass -- correctly still
+     deferred, but with a real design now instead of an open question.
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is
