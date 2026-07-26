@@ -308,7 +308,10 @@ jobs:
           & tests\selfapps_envname.ps1
 
       - name: "Self-test: bootstrapper size tripwire (REQ-017)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        # derived requirement (item 7 scoping pass): this step never executes run_setup.bat
+        # (a static byte-size check only), so always() carries zero duration-inflation risk --
+        # it is safe to surface even when an earlier step (e.g. Bootstrap environment) failed.
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           & tests\selfapps_size.ps1
@@ -742,13 +745,19 @@ jobs:
           & tests\selfapps_pipgap.ps1
 
       - name: "Self-test: parse_warn TRANSLATIONS table coverage"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        # derived requirement (item 7 scoping pass): this step only decodes the embedded
+        # HP_PARSE_WARN base64 payload out of run_setup.bat as static text -- it never executes
+        # run_setup.bat -- so always() carries zero duration-inflation risk.
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           & tests\selfapps_parse_warn_table.ps1
 
       - name: "Self-test: parse_warn pytest (test_parse_warn.py)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        # derived requirement (item 7 scoping pass): pure `python -m unittest` against this
+        # repo's own tools/parse_warn.py -- no dependency on run_setup.bat/conda/Miniconda at
+        # all, so always() carries zero duration-inflation risk.
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           $nd   = "tests\~test-results.ndjson"
@@ -777,7 +786,10 @@ jobs:
           if (-not $pass) { Write-Host $outStr; exit 1 }
 
       - name: "Self-test: heuristics unittest (test_heuristics.py)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        # derived requirement (item 7 scoping pass): pure `python -m unittest` against this
+        # repo's own tools/prep_requirements.py -- no dependency on run_setup.bat/conda/Miniconda
+        # at all, so always() carries zero duration-inflation risk.
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           $nd   = "tests\~test-results.ndjson"
@@ -806,7 +818,10 @@ jobs:
           if (-not $pass) { Write-Host $outStr; exit 1 }
 
       - name: "Self-test: Python unit tests (pytest cross-platform)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        # derived requirement (item 7 scoping pass): pure `pytest` against this repo's own
+        # tests/test_*.py suite -- no dependency on run_setup.bat/conda/Miniconda at all, so
+        # always() carries zero duration-inflation risk.
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           $nd   = "tests\~test-results.ndjson"
