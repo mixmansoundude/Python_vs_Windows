@@ -645,6 +645,41 @@ below instead of here (see that section's own scope note for the distinction fro
    correctly, does a genuine conda-full run behave identically to before when conda IS available)
    is the one thing that can't be verified locally -- watch the next `conda-full` run closely.
 
+   **Two CodeRabbit findings on PR #390's first real-CI pass, both verified independently before
+   acting, not taken on faith.** (1) **Real bug, fixed**: the new `conda_avail` check only tested
+   `condabin\conda.bat`, but `run_setup.bat`'s own `:select_conda_bat` (`CONDA_MAIN`/`CONDA_ALT`)
+   and the pre-existing "Validate restored conda binary" step both already treat
+   `Scripts\conda.bat` as an equally valid fallback -- confirmed by reading `:select_conda_bat`
+   directly (lines ~1934-1938) before fixing; an install that only landed via the fallback path
+   would have made `conda-full`'s own bootstrap succeed while `conda_avail` wrongly reported
+   unavailable, silently skipping every newly-gated conda-full self-test. (2) **Real, separately-
+   scoped finding, extended and shipped in the same pass**: `always()` keeps a step running even
+   after the WORKFLOW ITSELF is cancelled (e.g. a newer push superseding an in-flight run via this
+   file's own `cancel-in-progress: true` concurrency group) -- `!cancelled()` is GitHub's own
+   documented idiom for "run regardless of prior step outcome, but still respect cancellation."
+   This is a real, well-established GitHub Actions semantic distinction, not specific to CI-time
+   cost (which this repo's owner has separately said isn't a constraint) -- it's about not letting
+   an already-abandoned run's steps keep grinding for no reason. CodeRabbit's own finding was
+   scoped to 3 example steps with a note to "apply to the other long-running self-tests in this
+   job"; verified this cleanly generalizes to EVERY `always()` in the `selftest` job (84 total,
+   none of which hold or release any cross-run resource the way `run_setup.bat`'s own `:acquire_
+   lock`/`:release_lock` does -- these are all self-contained diagnostic/self-test steps) and
+   applied it uniformly via a scripted replace, not just the 3 cited examples. **A second, real
+   bug surfaced during this exact fix, caught by `actionlint` before it shipped**: a bare `if:
+   always()` (no `${{ }}` wrapper) is safe YAML since it starts with a letter, but a bare `if:
+   !cancelled()` is NOT -- a leading `!` is a YAML tag indicator, so unquoted `!cancelled()`
+   fails to parse. 17 of the 84 replacements were bare and needed wrapping in `${{ !cancelled()
+   }}`; the other 67 were already inside a `${{ ... }}` compound expression and needed no extra
+   wrapping. Verified via `yamllint`/`actionlint` (clean) and an exact before/after occurrence
+   count (84 `always()` removed, 84 `!cancelled()` added, 0 stray edits) before committing.
+   Deliberately scoped to the `selftest` job only, matching the review's own scope -- the other
+   4 jobs in this file (`selftest-gate`, `ndjson-registry-check`, `model-quick-fix`,
+   `publish_diag`) have 25 more `always()` occurrences between them, not touched in this pass.
+   The suggested dedicated regression test for `conda_avail`'s own dual-path logic (a third
+   CodeRabbit comment) was NOT implemented -- disproportionate scope for a 4-line inline check
+   with an already-untested precedent in the same file (the "Validate restored conda binary"
+   step's own identical dual-path pattern has no dedicated test either).
+
    **STATUS: gating-lane half of this item is now substantially closed.** 41 of the ~67
    candidate steps are converted (5 zero-risk + 36 lane-aware); the ~26 remaining are each
    excluded for a specific, documented reason above, not left over by oversight. **One small,
