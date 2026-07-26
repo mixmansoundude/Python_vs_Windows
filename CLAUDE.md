@@ -605,26 +605,30 @@ below instead of here (see that section's own scope note for the distinction fro
    **Closed same day, follow-up slice: the remaining ~36 steps converted too, owner-directed
    ("if confidence is high then proceed to next slice and drive to completion").** Built the
    shared pre-check the paragraph above proposed -- a new `Check Miniconda availability` step
-   (`id: conda_avail`, `if: always()`, a `Test-Path` against BOTH the shared
+   (`id: conda_avail`, a `Test-Path` against BOTH the shared
    `%PUBLIC%\Documents\Miniconda3\condabin\conda.bat` and its `Scripts\conda.bat` fallback --
    matching `run_setup.bat`'s own `:select_conda_bat` (`CONDA_MAIN`/`CONDA_ALT`) and the existing
    "Validate restored conda binary" step's dual-path check, caught by CodeRabbit on PR #390's
    first real-CI pass -- zero execution/network cost either way) placed right after the main
-   bootstrap step -- then converted 36 of the remaining candidates to `always()`, each gated
-   through it with a LANE-AWARE condition, not a uniform one:
+   bootstrap step -- then converted 36 of the remaining candidates, each gated
+   through it with a LANE-AWARE condition, not a uniform one. **Shown here in their final,
+   shipped form (`!cancelled()`, not the `always()` these were first written with -- see the
+   "Two CodeRabbit findings" paragraph below for why the whole job was converted from one to the
+   other in the same pass; this section is kept in sync with the actual condition strings rather
+   than describing an intermediate state)**:
    - Steps restricted to `real || conda-full` (22 steps: warnfix family, hidden-import family,
-     the PyInstaller-failure family, EXE-smokerun xfails, etc.): `always() && (matrix.mode ==
+     the PyInstaller-failure family, EXE-smokerun xfails, etc.): `!cancelled() && (matrix.mode ==
      'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true'))`.
      The `real` lane is uv-first (see REQ-009 provider order), so it needs no conda gate at all --
      its own redundant-retry worst case is bounded by uv's existing `--retry`/`--max-time` budget
      (seconds to low minutes), not conda's. Only the `conda-full` half of the condition needs the
      pre-check, since that lane unconditionally forces conda for the whole job.
    - Steps restricted to `conda-full` only (5 steps: skiphooks, entry picker, cascade-timed,
-     pandas/openpyxl, pip gap-fill): `always() && matrix.mode == 'conda-full' &&
+     pandas/openpyxl, pip gap-fill): `!cancelled() && matrix.mode == 'conda-full' &&
      steps.conda_avail.outputs.available == 'true'`.
    - Steps that run on every non-corrupted lane (9 steps: empty-repo, single-entry, entry
      selection, isolation, env-name, real-env-smoke, reqspec, UX hardening, system-Python
-     consent): `always() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' ||
+     consent): `!cancelled() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' ||
      steps.conda_avail.outputs.available == 'true')` -- only conda-full among the lanes this
      condition reaches needs the extra guard.
    **Deliberately NOT converted, three distinct reasons, not oversight**: (1) the three
