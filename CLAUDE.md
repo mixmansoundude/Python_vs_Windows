@@ -602,15 +602,54 @@ below instead of here (see that section's own scope note for the distinction fro
      if narrower, failure mode this repo has hit before -- see the REQ-013 connectivity-check
      retry-hardening entry's `conda.anaconda.org` 403 example) -- only THAT case would make every
      downstream conda-dependent step redundantly retry a slow install in lockstep.
-   - **Concrete follow-on design for the remaining ~62 steps, not implemented in this pass**: a
-     shared, fast pre-check (a single new early step, or a helper both `run_setup.bat` and the
-     selfapps scripts could consult) that tests whether `conda.bat` already exists at the shared
-     Miniconda path; steps converted to `always()` would consult it and skip cleanly with an
-     honest `pass=false`/`skip=true` NDJSON row (never blindly retry) when Miniconda itself is
-     confirmed absent. This targets the ACTUAL risk precisely instead of either doing nothing
-     (today) or a blanket conversion (still not proven safe). Sizing this precisely (touching
-     dozens of scripts, even if each edit is small) is its own dedicated pass -- correctly still
-     deferred, but with a real design now instead of an open question.
+   **Closed same day, follow-up slice: the remaining ~36 steps converted too, owner-directed
+   ("if confidence is high then proceed to next slice and drive to completion").** Built the
+   shared pre-check the paragraph above proposed -- a new `Check Miniconda availability` step
+   (`id: conda_avail`, `if: always()`, a single `Test-Path` against the shared
+   `%PUBLIC%\Documents\Miniconda3\condabin\conda.bat`, zero execution/network cost) placed right
+   after the main bootstrap step -- then converted 36 of the remaining candidates to `always()`,
+   each gated through it with a LANE-AWARE condition, not a uniform one:
+   - Steps restricted to `real || conda-full` (22 steps: warnfix family, hidden-import family,
+     the PyInstaller-failure family, EXE-smokerun xfails, etc.): `always() && (matrix.mode ==
+     'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true'))`.
+     The `real` lane is uv-first (see REQ-009 provider order), so it needs no conda gate at all --
+     its own redundant-retry worst case is bounded by uv's existing `--retry`/`--max-time` budget
+     (seconds to low minutes), not conda's. Only the `conda-full` half of the condition needs the
+     pre-check, since that lane unconditionally forces conda for the whole job.
+   - Steps restricted to `conda-full` only (5 steps: skiphooks, entry picker, cascade-timed,
+     pandas/openpyxl, pip gap-fill): `always() && matrix.mode == 'conda-full' &&
+     steps.conda_avail.outputs.available == 'true'`.
+   - Steps that run on every non-corrupted lane (9 steps: empty-repo, single-entry, entry
+     selection, isolation, env-name, real-env-smoke, reqspec, UX hardening, system-Python
+     consent): `always() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' ||
+     steps.conda_avail.outputs.available == 'true')` -- only conda-full among the lanes this
+     condition reaches needs the extra guard.
+   **Deliberately NOT converted, three distinct reasons, not oversight**: (1) the three
+   pre-bootstrap/setup steps (`Enable Miniconda probe`, `Force conda-only bootstrap`, `Bootstrap
+   environment (run_setup.bat)` itself) -- these must run in ORDER, before anything else; `always()`
+   on the root step itself is a no-op at best; (2) `Run dynamic tests (if present)` and `Run tests
+   (map empty repo to success)` -- confirmed via direct reading that `tests/harness.ps1` `throw`s
+   on a missing `~bootstrap.status.json` (lines ~67/71), so `always()`-ing these without ALSO
+   hardening that guard risks trading a clean skip for a confusing uncaught-exception failure;
+   correctly left for its own small follow-up rather than risking it in this already-large diff;
+   (3) `Validate Miniconda before cache save`/`Save Miniconda cache` -- restricted to the `cache`
+   lane, which is non-gating (job-level `continue-on-error`), so out of this item's scope entirely.
+   Verified via `yamllint`/`actionlint` (clean) and a scripted diff-scope check (exactly 36 `if:`
+   lines changed, matching the 36 target steps, no stray edits) before committing -- the same
+   "verify the diff touches exactly what's intended" discipline this file's own
+   `docs/agent-lessons-learned.md` documents for `run_setup.bat` edits, applied here to YAML.
+   Real-CI confirmation (does the `conda_avail` output actually read as `'true'`/`'false'`
+   correctly, does a genuine conda-full run behave identically to before when conda IS available)
+   is the one thing that can't be verified locally -- watch the next `conda-full` run closely.
+
+   **STATUS: gating-lane half of this item is now substantially closed.** 41 of the ~67
+   candidate steps are converted (5 zero-risk + 36 lane-aware); the ~26 remaining are each
+   excluded for a specific, documented reason above, not left over by oversight. **One small,
+   genuinely open residual**: hardening `tests/harness.ps1`'s two `throw` sites (missing
+   `.ci_bootstrap_marker` / `~bootstrap.status.json`) so `Run dynamic tests (if present)` and
+   `Run tests (map empty repo to success)` could also safely go `always()` -- a self-contained,
+   low-effort follow-up (add an early existence check with a clean early-return instead of a raw
+   `throw`), not attempted here to keep this already-large diff reviewable.
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is

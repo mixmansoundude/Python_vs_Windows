@@ -270,15 +270,33 @@ jobs:
             'pipreqs summary not generated.' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           }
 
+      - name: Check Miniconda availability (for downstream always() gating)
+        # derived requirement (item 7 scoping-pass follow-on): Miniconda installs to a SHARED,
+        # machine-wide path (%PUBLIC%\Documents\Miniconda3), not per-test-directory -- see the
+        # :tci_both_failed CLAUDE.md entry. This is a single, cheap Test-Path (no execution of
+        # run_setup.bat, no network) that downstream always()-converted steps consult before
+        # attempting their own conda-dependent selfapps script, so a genuine "Miniconda itself
+        # failed to install" failure produces one clean skip per step instead of dozens of
+        # steps EACH redundantly retrying a real (up to 60-90 min per HP_INSTALLER_TIMEOUT)
+        # Miniconda install. Always() so it runs even when Bootstrap environment itself failed.
+        if: always()
+        id: conda_avail
+        shell: pwsh
+        run: |
+          $condaPath = 'C:\Users\Public\Documents\Miniconda3\condabin\conda.bat'
+          $avail = Test-Path -LiteralPath $condaPath
+          "available=$($avail.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          Write-Host "Miniconda available at shared path: $avail"
+
       - name: "Self-test: empty repo behavior"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & .\tests\selftests.ps1
           Get-Content -LiteralPath tests\~selftest_empty\~empty_bootstrap.log -Tail 60 -ErrorAction SilentlyContinue
 
       - name: "Self-test: single .py entry (CI-only)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         env:
           HP_CI_SKIP_ENV: '1'
         shell: pwsh
@@ -286,7 +304,7 @@ jobs:
           & tests\selfapps_single.ps1
 
       - name: "Self-test: entry selection (CI-only)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         env:
           HP_CI_SKIP_ENV: '1'
         shell: pwsh
@@ -294,7 +312,7 @@ jobs:
           & tests\selfapps_entry.ps1
 
       - name: "Self-test: isolation and directory integrity (CI-only)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         env:
           HP_CI_SKIP_ENV: '1'
         shell: pwsh
@@ -302,7 +320,7 @@ jobs:
           & tests\selfapps_isolation.ps1
 
       - name: "Self-test: env-name sanitization (leading hyphen)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & tests\selfapps_envname.ps1
@@ -317,7 +335,7 @@ jobs:
           & tests\selfapps_size.ps1
 
       - name: "Self-test: real env smoke (CI-only)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & tests\selfapps_envsmoke.ps1
@@ -344,19 +362,19 @@ jobs:
           & tests\selfapps_dl_fallback.ps1
 
       - name: "Self-test: requirements specifier coverage"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & tests\selfapps_reqspec.ps1
 
       - name: "Self-test: dep-check skip scenario (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_depcheck.ps1
 
       - name: "Self-test: warnfix PASS scenario (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: pass
         shell: pwsh
@@ -364,7 +382,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix XFAIL scenario (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: xfail
         shell: pwsh
@@ -372,7 +390,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix REAL scenario - heuristic prevents warnfix (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: real
         shell: pwsh
@@ -380,7 +398,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix REAL_WARNFIX scenario - warnfix fixes non-heuristic dep (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: real_warnfix
         shell: pwsh
@@ -388,7 +406,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix REAL_WARNFIX_DELAYED scenario - warnfix processes delayed imports (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: real_warnfix_delayed
         shell: pwsh
@@ -523,13 +541,13 @@ jobs:
           & tests\selfapps_pvw_idempotent.ps1
 
       - name: "Self-test: pre-build collect-submodules double-gate (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_collect.ps1
 
       - name: "Self-test: strict --hidden-import auto-recovery (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_hidden_import.ps1
@@ -538,7 +556,7 @@ jobs:
       # auto-recovery loop to its 3-attempt cap without ever succeeding (its sibling above only
       # covers the one-shot-recoverable success path).
       - name: "Self-test: strict --hidden-import auto-recovery exhaustion (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_hidden_import_exhaust.ps1
@@ -649,13 +667,13 @@ jobs:
           & tests\selfapps_interactive_stdin.ps1
 
       - name: "Self-test: EXE smokerun XFAIL bad import (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exefail.ps1
 
       - name: "Self-test: PyInstaller build failure correctly reported, not masked (execfail, real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         env:
           PYI_FAIL_SCENARIO: execfail
@@ -663,7 +681,7 @@ jobs:
           & tests\selfapps_pyinstaller_fail.ps1
 
       - name: "Self-test: PyInstaller build failure correctly reported, not masked (output_vanish, real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         env:
           PYI_FAIL_SCENARIO: output_vanish
@@ -671,7 +689,7 @@ jobs:
           & tests\selfapps_pyinstaller_fail.ps1
 
       - name: "Self-test: no-EXE briefing is honest when the interpreter fallback also fails (execfail_runtimefail, real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         env:
           PYI_FAIL_SCENARIO: execfail_runtimefail
@@ -679,67 +697,67 @@ jobs:
           & tests\selfapps_pyinstaller_fail.ps1
 
       - name: "Self-test: REQ-021 py_compile pre-flight syntax error (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_preflight.ps1
 
       - name: "Self-test: EXE smokerun XFAIL missing data file (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exedata_fail.ps1
 
       - name: "Self-test: EXE smokerun XFAIL dynamic import not bundled (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exedyn_fail.ps1
 
       - name: "Self-test: fast-path broken-EXE graceful fallback (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exefastpath.ps1
 
       - name: "Self-test: fail-fast probe -- fast-failure discard and alive-past-probe no-discard (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_failfast_probe.ps1
 
       - name: "Self-test: post-execution checkpoint -- accept and decline (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_postexec_checkpoint.ps1
 
       - name: "Self-test: super-user skip hooks (conda-full only)"
-        if: ${{ matrix.mode == 'conda-full' }}
+        if: ${{ always() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_skiphooks.ps1
 
       - name: "Self-test: REQ-002 timed entry picker (conda-full only)"
-        if: ${{ matrix.mode == 'conda-full' }}
+        if: ${{ always() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_entry_picker.ps1
 
       - name: "Self-test: REQ-009 cascade consent timed prompt (conda-full only)"
-        if: ${{ matrix.mode == 'conda-full' }}
+        if: ${{ always() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_cascade_timed.ps1
 
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
-        if: ${{ matrix.mode == 'conda-full' }}
+        if: ${{ always() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_pandas_excel.ps1
 
       - name: "Test pip gap-fill safety net (conda-full only)"
-        if: ${{ matrix.mode == 'conda-full' }}
+        if: ${{ always() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_pipgap.ps1
@@ -873,31 +891,31 @@ jobs:
           if (-not $pass) { Write-Host $outStr; exit 1 }
 
       - name: "Self-test: runtime.txt write-back (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_runtime_writeback.ps1
 
       - name: "Self-test: pyvisa NI-VISA detection (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_pyvisa.ps1
 
       - name: "Self-test: pyproject.toml Python version precedence (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ always() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_pyproject_precedence.ps1
 
       - name: "Self-test: UX hardening (git config merge)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & tests\selfapps_ux_hardening.ps1
 
       - name: "Self-test: REQ-007 system-Python build consent gate (non-conda-full)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & tests\selfapps_sysbuild.ps1
