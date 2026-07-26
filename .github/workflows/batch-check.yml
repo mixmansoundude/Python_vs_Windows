@@ -723,6 +723,12 @@ jobs:
         run: |
           & tests\selfapps_entry_picker.ps1
 
+      - name: "Self-test: REQ-009 cascade consent timed prompt (conda-full only)"
+        if: ${{ matrix.mode == 'conda-full' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_cascade_timed.ps1
+
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
         if: ${{ matrix.mode == 'conda-full' }}
         shell: pwsh

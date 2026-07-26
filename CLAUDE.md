@@ -469,27 +469,6 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
 "Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead
 (see those sections' own scope notes).
 
-1. **conda-full lane duration (~80 min on both the original and retriggered attempt of run
-   29002681009)** is the dominant single contributor to overall CI wall-clock growth (20 min ->
-   1.5 h), separate from the (now-fixed, see Closed Backlog) diagnostics-bloat item. Likely
-   accumulated feature/test-scenario growth (more selftest scripts each doing a real
-   `conda create`), not a regression from any single change. Worth periodic reassessment, no
-   action planned yet. **Fresh data point, 2026-07-25 `/goal`-directed review**: pulled
-   created/updated timestamps for the 18 most recent successful full-workflow runs on this
-   branch via the GitHub API (`workflow_runs` list) -- overall wall-clock (all 8 matrix lanes
-   run in parallel, so this reflects whichever lane is slowest, not conda-full's own duration in
-   isolation) ranged 85-110 minutes, averaging ~92 minutes, consistent with the original ~80 min
-   observation and not showing runaway growth since. Confirms the item's own "worth periodic
-   reassessment, no action planned" framing is still the right call -- still no single-lane
-   breakdown gathered (would need per-job, not per-run, timestamps to isolate conda-full
-   specifically), and still not pursued as a separate investigation given no action is planned
-   either way.
-3. **~85 lines of near-duplicated env-var save/set/restore boilerplate between
-   `self.embed.fallback.decline` and `self.embed.fallback.real`** in
-   `tests/selfapps_ux_hardening.ps1`. Factorable into a shared helper, but each block forces a
-   genuinely different set of env vars (decline: 6 vars; real: 5 different vars), so the helper
-   would need real parameterization -- a small design decision, not a mechanical copy-paste
-   cleanup. Cosmetic; defer unless already touching these test blocks for another reason.
 4. **PYSPEC-aware venv-vs-embed decision function (promising, deliberately not implemented yet --
    don't add the complexity until there's a concrete reason to).** `:try_venv_fallback` currently
    uses whatever ambient Python is on the machine unconditionally, with no check of whether it
@@ -509,6 +488,13 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    creation), and the current fixed order is not wrong, just not optimal in either direction.
    Revisit if the network-correlated-embed-failure pattern shows up for real in CI or user
    reports, rather than speculatively building it now.
+   **Re-examined 2026-07-25 per an owner request to raise confidence-to-implement wherever
+   possible**: this is not actually a confidence question -- the design sketch above is sound and
+   could be implemented with reasonable confidence in its own correctness. What's missing is
+   evidence that it's WORTH the added complexity: the item's own "revisit if" trigger (a real,
+   observed network-correlated-embed-failure pattern) has not occurred, in CI or in any user
+   report, since this was written. Raising implementation confidence doesn't manufacture that
+   evidence -- still correctly deferred, for the reason already on record, not a new one.
 7. **CI job steps in `batch-check.yml` don't use `if: always()`, so one failing self-test step
    silently cascade-skips every subsequent step in the same job -- observed directly, not
    theorized.** While landing item 6's requirement-1 tests (PR #368), a bug in the new
@@ -566,6 +552,39 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
    bootstrapper run itself -- a single transient cache-restore failure would silently skip the
    entire cache-lane self-test battery, not just a handful of sibling scenario steps. Fixed the
    same way (added `continue-on-error: true` to both steps); `cache` remains non-gating either way.
+
+   **Re-examined 2026-07-25 per an owner request to raise confidence-to-implement wherever
+   possible, gating-lane half only.** Found real, previously-uninvestigated information in both
+   directions -- net effect: still not implemented, but for a more precise reason than before.
+   - **Lower risk than originally feared, confirmed by actually reading the step definitions
+     rather than assuming**: `steps.X.outputs` cross-references and `GITHUB_ENV` state-passing
+     inside the `selftest` job are minimal and almost entirely early/self-contained (lane-config
+     flags set before the main bootstrap step, plus the already-`always()`-guarded `cache`-lane
+     corruption chain) -- confirming the established "every selfapps_*.ps1 test creates its own
+     `~selftest_X` scratch directory, independent of sibling steps" convention genuinely holds at
+     the CI-step level too, not just within a single test file. This means the originally-feared
+     failure mode (step N's crash corrupting step N+1's inputs, producing confusing, misattributed
+     secondary failures) is less likely than assumed -- most conda-dependent tests already have
+     their own defensive "conda not found" handling (see "Test files that assume conda is present"
+     above), which would produce an accurate, if repetitive, `pass=false` rather than a nonsensical
+     crash.
+   - **A genuinely NEW risk surfaced that the original reasoning never considered**: `if:
+     always()` does not just control whether a step RUNS, it can change HOW LONG a job takes to
+     FAIL. If the root cause is the top-level "Bootstrap environment" step itself (e.g. Miniconda
+     failing to install), a blanket `if: always()` would mean dozens of downstream steps EACH
+     attempt their own real sub-bootstrap (each potentially retrying its own slow Miniconda/
+     conda-forge network operations) before finally completing, rather than failing fast as today.
+     This directly compounds with item 1's own concern (below, now under Periodic Maintenance
+     Checks) about CI wall-clock growth -- turning a fast single-step failure into a much longer
+     one specifically in the failure case, which is exactly when a contributor is waiting on the
+     signal most.
+   - **Net assessment: medium, not high, confidence** -- the coupling risk is lower than
+     originally assumed, but the newly-found duration-inflation risk is real and unquantified
+     (verifying it would need deliberately breaking a real CI run and observing actual timing
+     across ~40 downstream steps, not something to do casually). Still correctly deferred; the
+     two original reasons for deferral (a wide, ~50-step blast radius; no observed instance of
+     this class of gap hiding a real regression yet) both still hold, now with a clearer picture
+     of what a future dedicated pass would actually need to verify before shipping.
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is
@@ -573,13 +592,6 @@ the "Build public diagnostics tree" step's own `DIAG CWD`/`DIAG ROOT`/`DIAG TREE
 lines, which naturally show GitHub Actions' inherent doubled checkout path
 (`.../Python_vs_Windows/Python_vs_Windows/...`) -- a runner convention, not a bug. Not chased
 further.)*
-9. **Cascade consent (REQ-009/REQ-005.10) is granted BEFORE the current build's own postexec
-   offers fire, so a user can be asked to rerun/optimize a build the bootstrapper already knows
-   is about to be discarded.** This is a genuine open UX/design question, not a one-line fix --
-   posed in full, with the plain-language context, two options, tradeoffs, and a recommendation,
-   in `docs/open-questions.md` item 1. No code change made pending that answer. See
-   `docs/agent-interconnect.md`'s "Post-execution checkpoint" and "AV-Safe Build Path
-   requirement 9" sections for the exact call chain if picking this up.
 ## Periodic Maintenance Checks (recurring, quarterly)
 
 This section is for checks that need to be **repeated on a schedule** because they track
@@ -641,6 +653,37 @@ rather than relying on manual memory.
   `uv-dl-fallback` non-gating indefinitely (their non-gating status is explicitly load-bearing,
   not provisional). `ndjson-registry-check` needs several more real-CI runs at clean PASS before
   even considering gating -- one green run is not a trend.
+
+### CI wall-clock duration (conda-full lane growth)
+
+This tracks a genuine periodic-reassessment concern, not a one-time backlog item -- moved here
+2026-07-25 from Active Backlog (it was originally filed as a backlog item, but "worth periodic
+reassessment, no action planned" is exactly what this section exists for, and letting it grow
+stale as a single never-closed backlog entry was the wrong home for it).
+
+**What this tracks and why it matters**: `conda-full` (the lane that forces every dependency
+install through real conda, no fallbacks -- the slowest of the 8 matrix lanes, since conda's own
+dependency solver is materially slower than pip/uv) is the dominant single contributor to overall
+CI wall-clock time, which grew from ~20 min to ~1.5h historically. Since all 8 matrix lanes run in
+parallel, the WHOLE workflow's wall-clock is bounded by whichever lane is slowest -- almost always
+`conda-full` -- so this lane's own growth directly sets how long every contributor waits for a PR
+to go green. This matters for development velocity (a slower feedback loop costs real time on
+every single PR), not correctness -- nothing about the lane itself is broken.
+
+- **Last scanned**: 2026-07-25. Pulled created/updated timestamps for the 18 most recent
+  successful full-workflow runs on this branch via the GitHub API (`workflow_runs` list) --
+  overall wall-clock ranged 85-110 minutes, averaging ~92 minutes, consistent with the original
+  ~80 min observation and not showing runaway growth since. No single-lane breakdown gathered yet
+  (would need per-job, not per-run, timestamps to isolate `conda-full` specifically from the
+  other 7 lanes running alongside it).
+- **Findings**: likely accumulated feature/test-scenario growth over time (more selftest scripts
+  each doing a real `conda create`/`conda install`), not a regression traceable to any single
+  change -- no evidence of a single fixable root cause has surfaced across multiple scans.
+- **Going forward**: re-check the same 18-run wall-clock sample each scan; flag if the average
+  climbs meaningfully above ~92 minutes (would suggest either unchecked growth or an actual
+  regression, not just noise) rather than plateauing. If a real investigation is ever warranted,
+  it needs per-job (not per-run) timestamps to isolate `conda-full`'s own duration from the other
+  7 lanes -- not yet gathered, since no action has been planned either way.
 
 ### pipreqs ecosystem status
 
@@ -904,6 +947,72 @@ of a second or third pin actually needing it.
   bundles an ~40 MB SQLite package database, a non-starter for a single-file bootstrapper).
 
 ## Closed Backlog
+
+- **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a
+  question posed for maintainer decision the same day.** The owner reviewed
+  `docs/open-questions.md` item 1 and directly instructed: implement the "skip both postexec
+  offers once cascade is approved" piece (their own framing: "once they ask for cascade, then
+  immediately cascade and don't do anything else"), and separately, make the cascade consent gate
+  timed like sibling prompts plus add a persistent "dependencies may be incomplete" note for the
+  decline path.
+  - **The literal "don't do anything else" framing was investigated and found unsafe as a literal
+    instruction -- caught before shipping, not after.** A first draft skipped `:run_exe_smokerun`
+    itself (not just the two elective postexec offers) whenever `HP_CASCADE_APPROVED` was set.
+    Tracing the actual control flow found a real regression: `HP_CASCADE_APPROVED` only means the
+    NEXT provider tier will be TRIED -- `:provider_cascade` (reached later, from the top-level main
+    line, only after the whole build+warnfix subroutine returns) can still find every remaining
+    tier unavailable/declined (e.g. the terminal system tier's own REQ-014 consent being declined)
+    and fall back to one of its six "keeping current build" exhaustion messages. Skipping the
+    smoke run unconditionally would have left that KEPT build completely unverified in the
+    exhaustion case -- a real regression from the pre-fix behavior, which always verified at least
+    once even when the verified build later turned out to be replaced. Fixed by keeping the smoke
+    run unconditional and only wrapping the two ELECTIVE follow-ups (`:run_postexec_checkpoint`,
+    `:offer_optimized_build`, both called from `:smokerun_ndjson`) in the `HP_CASCADE_APPROVED`
+    check. See `docs/agent-interconnect.md`'s new "Cascade-vs-postexec fix" subsection (under
+    "Post-execution checkpoint") for the full trace.
+  - **`:cascade_consent_gate` now uses a TIMED `choice /T` prompt** (default 30s,
+    `HP_TEST_FORCE_INTERACTIVE_CASCADE=1` forces the branch under CI and shrinks it to 2s) instead
+    of an unbounded `set /p`, mirroring `:pick_entry_interactive`'s own established pattern -- an
+    unattended interactive user no longer hangs the whole bootstrap forever; on timeout it
+    defaults to decline (N), so the current build is still tried once, unprompted. Rewritten with
+    goto-based dispatch (not nested parens) per "Provider-cascade dispatch is goto-based on
+    purpose" in `docs/agent-lessons-learned.md` -- `choice` followed by an `%ERRORLEVEL%`-reading
+    `set` is exactly the bug class that lesson warns about inside a shared parenthesized block;
+    `if errorlevel N` is used instead to sidestep it entirely.
+  - **New `HP_DEP_MAYBE_INCOMPLETE` note**: set in `:warnfix_cascade_detect` when a cascade
+    candidate was detected but not approved (declined, timed out, or CI auto-declined); reset at
+    the top of every fresh build attempt so a provider needing no warnfix repair doesn't inherit a
+    stale flag from an earlier, cascaded-away provider. Surfaced at two points -- an immediate
+    `[WARN]` at decision time and a second reminder right before the EXE launches
+    (`:warn_user_code_launch`) -- deliberately a note, never a second gate, since the user may know
+    something the automated install missed and want to push through anyway.
+  - **The "extra credit" idea (tell the user their odds of a specific next tier helping) was
+    investigated with a real mechanism-level analysis, not implemented in this pass.** See
+    `docs/open-questions.md`'s remaining open item for the full reasoning: cascading uv->conda has
+    real, mechanism-justified value (a genuinely different package index), but conda->embed and
+    beyond are all pip/PyPI-based and add comparatively little once uv and conda have both already
+    struggled -- a well-supported qualitative claim, but left out of this pass at the owner's own
+    flagged hesitation about complexity/risk, pending their read of the full analysis.
+  - Test coverage: `tests/selfapps_cascade.ps1`'s existing `self.cascade.exec` (uv lane) gained an
+    assertion that all 4 approved-cascade builds correctly skip their postexec offers (exactly 4
+    occurrences, one per real cascade hop). New `tests/selfapps_cascade_timed.ps1` (conda-full
+    lane, `self.cascade.timed`) proves the timed-choice mechanism and both dirty-flag injection
+    points positively, and that the offers-skip message correctly does NOT fire on decline.
+
+- **Env-var save/set/restore boilerplate dedup (Active Backlog item 3), 2026-07-25, owner-approved
+  after confidence was raised to high.** New `Invoke-WithEnvOverrides` helper in
+  `tests/selfapps_ux_hardening.ps1` (test-only, zero `run_setup.bat` risk) replaces the ~85 lines
+  of near-identical save/set/restore code duplicated between `self.embed.fallback.decline` (6 env
+  vars) and `self.embed.fallback.real` (5 different env vars) with a single hashtable-driven
+  helper: `[Environment]::SetEnvironmentVariable($name, $null)` uniformly both unsets a
+  previously-unset var and restores a previously-set one on the way out, removing the need for the
+  original code's special-cased `if ($null -eq $saved) { Remove-Item } else { set }` branches
+  entirely. Confirmed correct via direct local `pwsh` verification before touching the real file:
+  proper unset-on-restore for a var that wasn't set before, proper restore-to-original-value for a
+  var that was, and correct closure-scoping (the body scriptblock can read caller-scope variables
+  like `$embedDeclineDir`, and its return value -- `$LASTEXITCODE` from inside a `try/finally` --
+  propagates back through `& $Body` to the caller's own assignment) -- this is what raised
+  confidence from "reasonable design" to "verified correct" before landing it.
 
 - **`HP_PREP_REQUIREMENTS` canonical-source promotion (Active Backlog item 8), 2026-07-25,
   `/goal`-directed close-out pass.** New `tools/prep_requirements.py`, a byte-for-byte decode of

@@ -45,7 +45,7 @@ self.exe.warnfix.real_warnfix_delayed,
 self.collect.submodules,
 self.exe.hidden_import, self.exe.hidden_import.exhaust,
 self.preflight.syntax,
-self.cascade.detect, self.cascade.consent,
+self.cascade.detect, self.cascade.consent, self.cascade.timed,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
 self.conda.bothfail (uv lane only -- selfapps_conda_bothfail.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
@@ -301,6 +301,32 @@ full-tree-artifact-capture pattern as `selfapps_autopep_discovery.ps1` -- no ind
 
 ```
 self.pvw_idempotent.discovery
+```
+
+## selfapps-cascade-timed NDJSON rows (selfapps_cascade_timed.ps1, conda-full lane only)
+
+CLAUDE.md item 9 / docs/open-questions.md item 1 follow-up: `:cascade_consent_gate` previously used
+an unbounded `set /p` for a real interactive user, unlike sibling prompts such as
+`:pick_entry_interactive`'s own `choice /T` timed prompt -- an unattended real user (not physically
+present when the prompt appeared) would hang the whole bootstrap forever. Now uses the same
+`choice /T` pattern (default 30s, mirrors `:pick_entry_interactive`'s HP_PICK_T convention),
+defaulting to N (decline) on timeout so an unattended run still tries the current build once rather
+than hanging. `HP_TEST_FORCE_INTERACTIVE_CASCADE=1` forces the timed-choice branch to be reached
+even under `HP_CI_LANE` (mirrors `HP_TEST_FORCE_PICKER`'s own established pattern for
+`:pick_entry_interactive`, see `tests/selfapps_entry_picker.ps1`) and shrinks the timeout to 2s.
+With no interactive console and no `HP_TEST_CASCADE_ANSWER` override, `choice` degrades to its
+default (N) within ~2s, proving the mechanism reaches the prompt and resolves without hanging.
+
+Also proves the companion "dependencies may be incomplete" note (`HP_DEP_MAYBE_INCOMPLETE`, set
+only when a cascade candidate was detected but NOT approved) fires at both its injection points
+(the decline-time WARN in `:warnfix_cascade_detect` and the pre-launch reminder in
+`:warn_user_code_launch`), and that the postexec-offers-skip message (proven positively by
+`self.cascade.exec`'s approved-cascade path, below) correctly does NOT fire here, since only
+cascade *approval* -- not detection alone -- skips the elective postexec checkpoint/optimized-build
+offers.
+
+```
+self.cascade.timed
 ```
 
 ## selfapps-conda-bothfail NDJSON rows (selfapps_conda_bothfail.ps1, uv lane only, non-gating)

@@ -135,6 +135,14 @@ $terminated = $combined -match [regex]::Escape('keeping current build')
 # No tier was used as a cascade source more than once (per-tier guard works -> no loop).
 $noLoop = ($uvToConda -le 1) -and ($condaToEmbed -le 1) -and ($embedToVenv -le 1) -and ($venvToSystem -le 1)
 
+# CLAUDE.md item 9 (docs/open-questions.md item 1, cascade-vs-postexec fix): every one of the 4
+# cascade-approved builds in this test (uv, conda, embed, venv, each answered Y via
+# HP_TEST_CASCADE_ANSWER) must skip its own postexec checkpoint/optimized-build offers, since
+# each is about to be replaced by the next tier. Counted against the single-source $setupText,
+# same reasoning as the phrases above.
+$offersSkipped = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascade approved; skipping the post-verification offers'))).Count
+$offersSkippedOk = ($offersSkipped -eq 4)
+
 # Bootstrap status: the run must end gracefully (exitCode 0) despite the unresolvable dep.
 $statusPath = Join-Path $workDir '~bootstrap.status.json'
 $statusExit = $null
@@ -148,15 +156,16 @@ if (Test-Path $statusPath) {
 }
 
 # Primary criteria: the priority uv -> conda cascade executed and selected conda, the run
-# terminated (did not loop), no tier was retried, and the bootstrap ended gracefully (exit 0).
-$execPass = ($uvToConda -eq 1) -and $condaSelected -and $terminated -and $noLoop -and ($statusExit -eq 0)
+# terminated (did not loop), no tier was retried, every approved-cascade build correctly
+# skipped its own postexec offers, and the bootstrap ended gracefully (exit 0).
+$execPass = ($uvToConda -eq 1) -and $condaSelected -and $terminated -and $noLoop -and $offersSkippedOk -and ($statusExit -eq 0)
 
 # Self-diagnosis: run_setup.bat output is redirected to the bootstrap log file, so without this
 # the CI job log shows nothing about what the cascade actually did. Echo the computed evidence
 # and the REQ-009 / provider / warnfix lines so a failure is diagnosable from the step log alone.
 Write-Host "=== self.cascade.exec evidence ==="
-Write-Host ("uvToConda={0} condaToEmbed={1} embedToVenv={2} venvToSystem={3} condaSelected={4} terminated={5} noLoop={6} statusExit={7} statusState={8} runExit={9} execPass={10}" -f `
-    $uvToConda, $condaToEmbed, $embedToVenv, $venvToSystem, $condaSelected, $terminated, $noLoop, $statusExit, $statusState, $runExit, $execPass)
+Write-Host ("uvToConda={0} condaToEmbed={1} embedToVenv={2} venvToSystem={3} condaSelected={4} terminated={5} noLoop={6} offersSkipped={7} statusExit={8} statusState={9} runExit={10} execPass={11}" -f `
+    $uvToConda, $condaToEmbed, $embedToVenv, $venvToSystem, $condaSelected, $terminated, $noLoop, $offersSkipped, $statusExit, $statusState, $runExit, $execPass)
 Write-Host "=== REQ-009 / provider / warnfix lines (setup log) ==="
 ($setupText -split "`n") | Where-Object { $_ -match 'REQ-009|Selected Python provider|REPAIR|HP_ENV_MODE|warnfix|cascade|Trying the next Python provider|Installing Miniconda' } | Select-Object -First 80 | ForEach-Object { Write-Host $_ }
 Write-Host "=== bootstrap stdout log tail (50) ==="
@@ -176,6 +185,7 @@ Write-NdjsonRow ([ordered]@{
         condaSelected = $condaSelected
         terminated    = $terminated
         noLoop        = $noLoop
+        offersSkipped = $offersSkipped
         statusExit    = $statusExit
         statusState   = $statusState
         runExit       = $runExit
