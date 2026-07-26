@@ -605,10 +605,13 @@ below instead of here (see that section's own scope note for the distinction fro
    **Closed same day, follow-up slice: the remaining ~36 steps converted too, owner-directed
    ("if confidence is high then proceed to next slice and drive to completion").** Built the
    shared pre-check the paragraph above proposed -- a new `Check Miniconda availability` step
-   (`id: conda_avail`, `if: always()`, a single `Test-Path` against the shared
-   `%PUBLIC%\Documents\Miniconda3\condabin\conda.bat`, zero execution/network cost) placed right
-   after the main bootstrap step -- then converted 36 of the remaining candidates to `always()`,
-   each gated through it with a LANE-AWARE condition, not a uniform one:
+   (`id: conda_avail`, `if: always()`, a `Test-Path` against BOTH the shared
+   `%PUBLIC%\Documents\Miniconda3\condabin\conda.bat` and its `Scripts\conda.bat` fallback --
+   matching `run_setup.bat`'s own `:select_conda_bat` (`CONDA_MAIN`/`CONDA_ALT`) and the existing
+   "Validate restored conda binary" step's dual-path check, caught by CodeRabbit on PR #390's
+   first real-CI pass -- zero execution/network cost either way) placed right after the main
+   bootstrap step -- then converted 36 of the remaining candidates to `always()`, each gated
+   through it with a LANE-AWARE condition, not a uniform one:
    - Steps restricted to `real || conda-full` (22 steps: warnfix family, hidden-import family,
      the PyInstaller-failure family, EXE-smokerun xfails, etc.): `always() && (matrix.mode ==
      'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true'))`.

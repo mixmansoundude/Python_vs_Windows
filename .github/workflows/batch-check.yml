@@ -279,12 +279,17 @@ jobs:
         # failed to install" failure produces one clean skip per step instead of dozens of
         # steps EACH redundantly retrying a real (up to 60-90 min per HP_INSTALLER_TIMEOUT)
         # Miniconda install. Always() so it runs even when Bootstrap environment itself failed.
+        # Checks both condabin\conda.bat and the Scripts\conda.bat fallback -- matches
+        # run_setup.bat's own :select_conda_bat (CONDA_MAIN/CONDA_ALT) and the "Validate restored
+        # conda binary" step above, so an install that only landed via the fallback path (a real,
+        # accepted-elsewhere possibility) isn't misreported as unavailable here.
         if: always()
         id: conda_avail
         shell: pwsh
         run: |
-          $condaPath = 'C:\Users\Public\Documents\Miniconda3\condabin\conda.bat'
-          $avail = Test-Path -LiteralPath $condaPath
+          $condaMain = 'C:\Users\Public\Documents\Miniconda3\condabin\conda.bat'
+          $condaAlt  = 'C:\Users\Public\Documents\Miniconda3\Scripts\conda.bat'
+          $avail = (Test-Path -LiteralPath $condaMain) -or (Test-Path -LiteralPath $condaAlt)
           "available=$($avail.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           Write-Host "Miniconda available at shared path: $avail"
 
