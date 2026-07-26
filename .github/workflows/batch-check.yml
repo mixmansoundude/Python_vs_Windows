@@ -278,7 +278,8 @@ jobs:
         # attempting their own conda-dependent selfapps script, so a genuine "Miniconda itself
         # failed to install" failure produces one clean skip per step instead of dozens of
         # steps EACH redundantly retrying a real (up to 60-90 min per HP_INSTALLER_TIMEOUT)
-        # Miniconda install. Always() so it runs even when Bootstrap environment itself failed.
+        # Miniconda install. !cancelled() so it still runs even when Bootstrap environment
+        # itself failed, but is skipped (like every other step here) if the run is cancelled.
         # Checks both condabin\conda.bat and the Scripts\conda.bat fallback -- matches
         # run_setup.bat's own :select_conda_bat (CONDA_MAIN/CONDA_ALT) and the "Validate restored
         # conda binary" step above, so an install that only landed via the fallback path (a real,
