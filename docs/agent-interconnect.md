@@ -1760,11 +1760,68 @@ asked about a build the user has already opted away from.
    in the user's own code. Deliberately a NOTE, never a second gate: the user may know something the
    automated install missed and want to push through anyway. The "extra credit" idea discussed
    alongside this (telling the user their odds of a DIFFERENT specific next tier helping) was
-   investigated but not implemented -- see docs/open-questions.md's remaining open item for the
-   supporting analysis and why it was left out of this pass specifically.
+   investigated but not implemented -- see the "Cascade signal reliability" subsection below for
+   the supporting analysis and why it was left out.
 
 Test coverage: `tests/selfapps_cascade.ps1`'s existing `self.cascade.exec` (uv lane, non-gating)
 gained an assertion that all 4 approved-cascade builds (uv, conda, embed, venv) correctly skip
 their postexec offers (`offersSkipped` count, expected exactly 4). New `tests/selfapps_cascade_
 timed.ps1` (conda-full lane) proves the timed-choice mechanism and the dirty-flag note positively;
 see `docs/agent-ndjson.md`'s own section on it for the full assertion list.
+
+### Cascade signal reliability -- why `HP_CASCADE_CANDIDATE` is a strong-but-imperfect signal
+
+Investigated 2026-07-25/26, in response to a maintainer question about how confident this signal
+actually is, and whether the cascade consent gate's design (timed prompt, defaults to decline)
+should change as a result. **Outcome: kept exactly as shipped -- see CLAUDE.md's Known Findings
+entry for the decision.** This subsection preserves the supporting mechanism-level analysis, since
+it is useful background for anyone touching the cascade signal again later.
+
+`HP_CASCADE_CANDIDATE` requires BOTH of two build-time, static signals (`:warnfix_cascade_detect`):
+- **Signal A**: PyInstaller's own warn file still lists an unresolved import even AFTER a
+  repair-install attempt and a rebuild.
+- **Signal B**: at least one specific `pip install <package>` / `conda install <package>` repair
+  command, during that same repair round, itself returned a real, nonzero exit code.
+
+This is never based on running the `.exe` -- the cascade decision happens entirely before the app
+is ever launched. It is also narrower than "any warnfix repair failure": most apps needing any
+repair at all get fixed cleanly by a single install (both signals false) -- requiring BOTH signals
+together is what makes a genuine candidate uncommon, not the base rate of repairs needed.
+
+| Signal A (still unresolved) | Signal B (an install genuinely failed) | Cascade offered? | What it usually means | Est. odds the `.exe` still runs fine |
+|---|---|---|---|---|
+| No | No | No | Repair fully worked, or nothing was needed. The common case. | Very high (~95%+) |
+| No | Yes | No | An install command failed, but the rebuild's own scan came back clean anyway -- either that import was a false positive PyInstaller flags but doesn't actually need, or something else in the same round resolved it. | High (~80-90%) |
+| Yes | No | No | A real gap the design doesn't catch: the repair round's OWN installs can pull in a brand-new import PyInstaller now also flags, which the repair loop never targeted (so nothing "failed" for it) -- the confidence gate doesn't distinguish this from noise. | Medium (~60-70%) |
+| Yes | Yes | **Yes** | The actual trigger: a real install failure AND a persistent static-analysis gap. The strongest available signal, but still not proof the app will crash. | Lower, and audience-dependent (~25-40%) |
+
+**Row 4 in more depth (the one that actually reaches the user).** Could the `.exe` still succeed
+even with a genuine (A=yes, B=yes) signal? Yes, plausibly -- PyInstaller's warn file is a
+whole-codebase static scan, not proof a specific code path executes; an optional feature behind
+`try/except ImportError`, a rarely-used branch, or a type-checking-only import would all trigger
+this signal without the main flow ever needing it. Against that: this bootstrapper's own stated
+audience is beginners with straightforward scripts, where a top-level, unconditionally-used import
+is common -- so an outright crash is plausibly more likely than not, just not overwhelming. These
+percentages are informed estimates from reasoning through the mechanism, not measured production
+telemetry -- there is no real usage data to check them against.
+
+Could the NEXT provider actually help, given this signal? Depends entirely on WHICH hop, and the
+bootstrapper has no way to tell which:
+- **uv -> conda**: the one hop with real, mechanism-level justification. conda-forge is a
+  genuinely different package index from PyPI, with different maintainers and (crucially)
+  pre-built binaries for some native-extension packages notoriously hard to get right via pip on
+  Windows. A meaningfully better chance here, though 0% if the package is genuinely absent from
+  every index (a translation-table bug, or a nonexistent/private package name).
+- **conda -> embed -> venv -> system**: all of these still install via plain pip against PyPI once
+  bootstrapped -- functionally the SAME resolution mechanism uv already tried, just in a fresh
+  environment. They only help if the root cause was environment-specific (a stale cache, a
+  `PYTHONPATH`/`VIRTUAL_ENV` conflict, a uv-specific bug), not genuine package unavailability --
+  and if uv AND conda have BOTH already reached this exact state, that's some evidence against a
+  simple environment glitch. Meaningfully lower odds of success on these later hops.
+
+This supports, with a real mechanism behind it rather than just intuition, the idea that cascading
+specifically to conda has real, justified value while later hops add comparatively little. The
+maintainer considered flipping the timed prompt's default from decline (N) to accept (Y)
+specifically for the uv->conda hop on this basis, but decided to keep `:cascade_consent_gate`
+exactly as shipped (see CLAUDE.md's Known Findings entry for the full reasoning) -- no code
+change resulted from this investigation.
