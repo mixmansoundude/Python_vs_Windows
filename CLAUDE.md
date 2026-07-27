@@ -812,6 +812,27 @@ further.)*
   currently-unused `conda_avail` step to right after `selfapps_envsmoke.ps1`, re-point the same
   36 `if:` conditions at it), pending the owner's explicit go-ahead.
 
+  **Owner explicitly authorized proceeding ("if confident then implement or register open
+  question," same day) -- split into two staged PRs rather than one shot, since one shot is
+  exactly the pattern that produced both prior bugs.** Step 1 (this commit): moved the existing
+  `conda_avail` step from right after "Bootstrap environment" to right after "Self-test: real env
+  smoke (CI-only)" (`selfapps_envsmoke.ps1`) -- **deliberately left completely unwired, zero `if:`
+  conditions reference it yet.** A genuinely new wrinkle surfaced mid-implementation, worth
+  recording since it wasn't visible from the trace alone: in the ORIGINAL (buggy) design,
+  `selfapps_envsmoke.ps1` itself was one of the 9 "every non-corrupted lane" steps gated behind
+  `conda_avail` -- but envsmoke is now the PRODUCER of the signal this step reads, not a consumer,
+  so it must stay unconditional (`!cancelled() && env.HP_CACHE_CORRUPTED != '1'`, no `conda_avail`
+  clause) or the exact same circularity would return in a new spot. The other 8 steps in that
+  "every lane" category (empty-repo, single-entry, entry-selection, isolation, env-name, reqspec,
+  UX-hardening, system-Python-consent) are likewise NOT candidates for the gate going forward --
+  the real target is specifically the 27 steps already enumerated above as "silently skipped"
+  (22 `real/conda-full` + 5 `conda-full`-only), which all sit after envsmoke in file order.
+  Landing the corrected POSITION on its own first, with nothing depending on it, lets the very
+  next `conda-full` CI run prove (via its own step log) that `available` now correctly flips to
+  `'true'` once envsmoke's real install succeeds -- before any gating logic is re-added in a
+  follow-up commit. Watch that first run closely before proceeding to step 2 (wiring the 27
+  conditions).
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 **Scope, and how this differs from Active Backlog and Known Findings**: an Active Backlog item is

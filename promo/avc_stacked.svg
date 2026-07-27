@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!-- Armchair Vibe Coding logo kit (v1) — 2025-10-25 02:46:35
+<!-- Armchair Vibe Coding logo kit (v1) - 2025-10-25 02:46:35
 Palette:
   Deep Violet #5B2A86
   Electric Cyan #00D1FF
   Charcoal #222428
   Soft Gray #8A8F98
 Guidelines:
-  • Transparent background. Flat shapes, no gradients.
-  • Icon is readable from 32px up. Keep ≥12px margin when placed in a circle/square.
-  • Primary on light: Deep Violet fills, Cyan accents. Invert for dark backgrounds.
+  - Transparent background. Flat shapes, no gradients.
+  - Icon is readable from 32px up. Keep >=12px margin when placed in a circle/square.
+  - Primary on light: Deep Violet fills, Cyan accents. Invert for dark backgrounds.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
 <g transform="translate(0,-24)">

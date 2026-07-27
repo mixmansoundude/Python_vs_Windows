@@ -63,10 +63,10 @@ function Get-TableRow {
     )
 
     switch ($Status) {
-        'passed' { return '✅ Passed' }
-        'failed' { return '❌ Failed' }
-        'warning' { return '⚠️ Warning' }
-        'skipped' { return '➖ Skipped' }
+        'passed' { return '[PASS] Passed' }
+        'failed' { return '[FAIL] Failed' }
+        'warning' { return '[WARN] Warning' }
+        'skipped' { return '[-] Skipped' }
         default { return $Status }
     }
 }

@@ -206,7 +206,8 @@ self.corrupt.conda.detect,
 self.corrupt.conda.heal.decline,
 self.corrupt.conda.heal.accept,
 self.corrupt.conda.override_exit,
-self.corrupt.uv.detect
+self.corrupt.uv.detect,
+diag.conda.available
 ```
 
 `self.corrupt.conda.override_exit` (CLAUDE.md Active Backlog item 12) covers the
@@ -528,6 +529,16 @@ self.interactive.stdin.roundtrip
   recovery loop's own rebuilds -- a REPEATED module name would be rejected by
   `~hidden_import_scan.py`'s own tried-list exclusion and stop the loop early via "no next hidden
   import found", never reaching the iteration cap this test needs to exercise.
+- `diag.conda.available` (inline `.github/workflows/batch-check.yml`, the "Check Miniconda
+  availability (diagnostic only -- not yet wired to any if: condition)" step -- see CLAUDE.md
+  Active Backlog item 7's `conda_avail` history) is always `pass: true` (non-gating; the step
+  itself never fails the job) and carries `details.available` (`true`/`false`) reflecting whether
+  Miniconda was found at the shared `%PUBLIC%\Documents\Miniconda3` path at that point in the job.
+  Added on PR #394 per a CodeRabbit finding: the step's own `Write-Host`/output had been observable
+  since PR #390 with no NDJSON row. Present in every non-`HP_CACHE_CORRUPTED` lane run regardless
+  of `matrix.mode`, since the step itself has no lane restriction (only its future `if:` wiring,
+  deferred pending owner sign-off per the same backlog item, will restrict its meaning to
+  `real`/`conda-full`).
 - A row absent from the diag site means the test script either was not reached, threw
   before the `Write-NdjsonRow` call, or the lane skipped that selfapps file.
 - Rows gated by `pyFileCount` (e.g. `entry.single.direct`) will be absent whenever the
