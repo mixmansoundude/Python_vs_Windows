@@ -87,6 +87,26 @@ check_actionlint() {
   actionlint -oneline .github/workflows/*.yml
 }
 
+check_markdownlint() {
+  if ! command -v markdownlint-cli2 >/dev/null 2>&1; then
+    echo "markdownlint-cli2 not installed (npm install -g markdownlint-cli2) -- skipping (advisory only)."
+    return 0
+  fi
+  # Advisory only, matches PYFLAKES's own non-gating precedent -- always return 0.
+  # Scoped to MD029 only via .markdownlint-cli2.jsonc; that file's own header explains why
+  # (this repo's docs don't follow a general markdown style gate) and documents the one
+  # PERMANENT, EXPECTED finding (item 7's own solo "7." entry in CLAUDE.md's Active
+  # Backlog). Treat any additional finding on CLAUDE.md as worth investigating.
+  #
+  # Deliberately scoped to CLAUDE.md only, not README.md/docs/*.md -- those files use their
+  # own non-sequential numbering schemes (e.g. "Finding N") for reasons not reviewed here;
+  # a blanket docs/*.md scan surfaced several pre-existing MD029 hits there unrelated to the
+  # stable-ID convention this check exists to backstop. Widen the scope only after reviewing
+  # whether those other schemes should follow the same bullet-with-number-in-prose pattern.
+  markdownlint-cli2 CLAUDE.md 2>&1
+  return 0
+}
+
 check_ascii_sweep() {
   local bad=0
   for f in "${ASCII_FILES[@]}"; do
@@ -142,6 +162,7 @@ check_pytest() {
 step "COMPILEALL" check_compileall
 step "PYFLAKES" check_pyflakes
 step "DELIMITER CHECK" check_delimiters
+step "MARKDOWNLINT (advisory, MD029 only)" check_markdownlint
 step "YAMLLINT" check_yamllint
 step "ACTIONLINT" check_actionlint
 step "ASCII SWEEP" check_ascii_sweep
