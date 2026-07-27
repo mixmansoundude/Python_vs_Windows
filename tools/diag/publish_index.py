@@ -1621,7 +1621,7 @@ def _iterate_status_display(
     lowered = normalized.lower()
     # derived requirement: people and agents routinely escalated on the word
     # "missing" when CI was actually green and iterate intentionally skipped.
-    # Only treat the run as green when there is explicit success evidence —
+    # Only treat the run as green when there is explicit success evidence --
     # either the STATUS.txt keyword or a confirmed success conclusion from run.json
     # (batch_passed=True). A bare run-id format is NOT sufficient because
     # _batch_status emits that format whenever an archive exists, even for
@@ -2060,7 +2060,7 @@ def _as_text_preview(path: Path, max_bytes: int = MIRROR_TEXT_LIMIT) -> str:
         ]
         for info in infos[:200]:
             lines.append(
-                "- {0} (compressed {1:,} bytes → {2:,} bytes)".format(
+                "- {0} (compressed {1:,} bytes -> {2:,} bytes)".format(
                     info.filename, info.compress_size, info.file_size
                 )
             )
@@ -3767,16 +3767,16 @@ def _build_markdown(
             normalized = _absolute_site_href(context, rel, run_scoped=True)
             display_name = Path(rel).name
             size_bytes = _safe_file_size(file)
-            size = f"{size_bytes:,} bytes" if size_bytes is not None else "—"
+            size = f"{size_bytes:,} bytes" if size_bytes is not None else "--"
             mirror_obj = ensure_txt_mirror(file)
             if mirror_obj and mirror_obj.exists():
                 mirror_rel = _relative_to_diag(mirror_obj, diag)
                 mirror_link = _absolute_site_href(context, mirror_rel, run_scoped=True)
                 lines.append(
-                    f"- {display_name}: [Preview (.txt)]({mirror_link}) ([Download]({normalized})) — {size}"
+                    f"- {display_name}: [Preview (.txt)]({mirror_link}) ([Download]({normalized})) -- {size}"
                 )
             else:
-                lines.append(f"- {display_name}: [Download]({normalized}) — {size}")
+                lines.append(f"- {display_name}: [Download]({normalized}) -- {size}")
 
     inventory_lines = _resolve_inventory_lines(context)
     if inventory_lines:
@@ -4186,7 +4186,7 @@ def _write_html(
             href = _escape_href(normalized)
             text = _escape_html(Path(rel).as_posix())
             size_bytes = _safe_file_size(file)
-            size_text = f"{size_bytes:,} bytes" if size_bytes is not None else "—"
+            size_text = f"{size_bytes:,} bytes" if size_bytes is not None else "--"
             size = _escape_html(size_text)
             mirror_obj = ensure_txt_mirror(file)
             if mirror_obj and mirror_obj.exists():
@@ -4195,7 +4195,7 @@ def _write_html(
                 mirror_href = _escape_href(mirror_norm)
                 html.append(
                     "<li>{0}: <a href=\"{1}\">Preview (.txt)</a> "
-                    "(<a href=\"{2}\">Download</a>) — {3}</li>".format(
+                    "(<a href=\"{2}\">Download</a>) -- {3}</li>".format(
                         text,
                         mirror_href or "",
                         href or "",
@@ -4204,7 +4204,7 @@ def _write_html(
                 )
             else:
                 html.append(
-                    f"<li>{text}: <a href=\"{href}\">Download</a> — {size}</li>"
+                    f"<li>{text}: <a href=\"{href}\">Download</a> -- {size}</li>"
                 )
         html.append("</ul>")
         html.append("</section>")

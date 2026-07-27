@@ -1961,7 +1961,7 @@ jobs:
             Add-Content $env:GITHUB_STEP_SUMMARY -Value "_tests\\~test-summary.txt not found_"
           }
 
-      - name: Summarize self-tests (NDJSON → Job Summary)
+      - name: Summarize self-tests (NDJSON -> Job Summary)
         if: ${{ !cancelled() }}
         uses: actions/github-script@v8
         with:
@@ -1985,8 +1985,8 @@ jobs:
             rows.sort((a,b) => rank(a) - rank(b) || String(a.id||'').localeCompare(String(b.id||'')));
 
             const bullets = rows.map(r => {
-              const icon = r.pass === true ? '✅' : r.pass === false ? '❌' : '•';
-              const desc = r.desc ? ` — ${r.desc}` : '';
+              const icon = r.pass === true ? '[PASS]' : r.pass === false ? '[FAIL]' : '[-]';
+              const desc = r.desc ? ` -- ${r.desc}` : '';
               return `${icon} ${r.id || '(no id)'}${desc}`;
             });
 
@@ -1994,7 +1994,7 @@ jobs:
             await summary
               .addHeading('Self-test results', 2)
               .addList(bullets)
-              .addRaw(`\n**Totals:** PASS ${passCt} · FAIL ${failCt}\n`)
+              .addRaw(`\n**Totals:** PASS ${passCt} - FAIL ${failCt}\n`)
               .write();
 
             // Optional tails (non-fatal if missing)
@@ -2043,7 +2043,7 @@ jobs:
             $text = Get-Content -Raw -LiteralPath $found
             if ($null -eq $text) { $text = "" }
             if ($text.Length -eq 0) {
-              "### $title ($found — empty)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+              "### $title ($found -- empty)" | Out-File -Append $env:GITHUB_STEP_SUMMARY
               return
             }
             if ($text.Length -gt $max) { $text = $text.Substring(0,$max) + "`n... [truncated]" }
@@ -2686,7 +2686,7 @@ jobs:
           $html = @"
           <!doctype html>
           <meta charset="utf-8">
-          <title>CI Diagnostics — run ${{ github.run_id }}</title>
+          <title>CI Diagnostics -- run ${{ github.run_id }}</title>
           <style>
             body{font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;margin:24px}
             h1,h2{font-family:ui-sans-serif,system-ui}
