@@ -1885,6 +1885,7 @@ jobs:
             tests\~selftest-summary.txt
             tests/~test-summary.txt
             tests/~test-results.ndjson
+            tests\~test-results.ndjson
             tests/extracted/**
           if-no-files-found: ignore
           include-hidden-files: true
