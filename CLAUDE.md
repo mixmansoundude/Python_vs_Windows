@@ -744,8 +744,8 @@ further.)*
   `no_python_files` graceful-exit path, not a real target app), so it never installs Miniconda
   at all. Worse, every downstream selfapps step capable of performing the FIRST real install
   was ALSO gated behind this same `conda_avail` check -- a circular self-skip with no way to
-  ever break out of it. Confirmed directly via the GitHub Actions API against two real runs
-  (`efd7a5c` and `fd7a046`, both PR #390): all ~27 `real/conda-full`-only steps showed
+  ever break out of it. Confirmed directly via the GitHub Actions API against the CI runs for two
+  real commits on PR #390 (`efd7a5c` and `fd7a046`): all ~27 `real/conda-full`-only steps showed
   `"conclusion":"skipped"` at the identical timestamp on the `conda-full` lane in BOTH runs
   (dep-check, all 5 warnfix scenarios, pre-build collect-submodules, both hidden-import
   auto-recovery scenarios, all EXE-smokerun/PyInstaller-failure xfails, py_compile preflight,
