@@ -270,37 +270,6 @@ jobs:
             'pipreqs summary not generated.' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           }
 
-      - name: Check Miniconda availability (diagnostic only -- no longer gates downstream steps)
-        # derived requirement (found 2026-07-27, real-CI-confirmed): this check's own premise was
-        # wrong for THIS repo's own CI shape. It was designed on the assumption that the earlier
-        # "Bootstrap environment (run_setup.bat)" step (matrix.mode == conda-full, HP_FORCE_CONDA_
-        # ONLY=1) would itself perform the first real Miniconda install, so gating downstream
-        # conda-dependent steps on "is conda already on disk" would only ever skip in the rare
-        # case that install genuinely failed. In reality that step runs against THIS repo's own
-        # root (no loose .py files -- it's testing the empty-repo/no_python_files graceful-exit
-        # path, not a real app), so it NEVER installs Miniconda -- and because every downstream
-        # selfapps step capable of performing the FIRST real install was ALSO gated on this same
-        # check, the conda-full lane could never bootstrap conda for the first time again: a
-        # circular self-skip. Confirmed via the GitHub Actions API against two real runs (efd7a5c
-        # and fd7a046, PR #390) -- ~27 real/conda-full-only self-tests silently "skipped" every
-        # single run, at the exact same timestamp, with the job still reporting overall SUCCESS
-        # (skipped steps don't fail a job), so it merged without the coverage loss ever surfacing.
-        # Downstream !cancelled()-conditions were reverted to their pre-item-7 unconditional form
-        # (matrix.mode == 'conda-full', no conda_avail dependency) -- see CLAUDE.md Active Backlog
-        # for the follow-up: either wire this check in at a point where a real install has
-        # actually had a chance to happen, or remove it if the redundant-retry risk it was meant
-        # to prevent doesn't materialize in practice. The step itself is left in place (harmless,
-        # informational Write-Host only) since nothing currently consumes its output.
-        if: ${{ !cancelled() }}
-        id: conda_avail
-        shell: pwsh
-        run: |
-          $condaMain = 'C:\Users\Public\Documents\Miniconda3\condabin\conda.bat'
-          $condaAlt  = 'C:\Users\Public\Documents\Miniconda3\Scripts\conda.bat'
-          $avail = (Test-Path -LiteralPath $condaMain) -or (Test-Path -LiteralPath $condaAlt)
-          "available=$($avail.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
-          Write-Host "Miniconda available at shared path: $avail"
-
       - name: "Self-test: empty repo behavior"
         if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
@@ -352,6 +321,46 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_envsmoke.ps1
+
+      - name: "Check Miniconda availability (diagnostic only -- not yet wired to any if: condition)"
+        # derived requirement (moved here 2026-07-27, correcting item 7's original placement): this
+        # check previously ran right after "Bootstrap environment (run_setup.bat)" -- but that step
+        # runs against THIS repo's own root (no loose .py files, the empty-repo/no_python_files
+        # graceful-exit path), so it never installs Miniconda. Every downstream selfapps step
+        # capable of performing the FIRST real install was ALSO gated on that same premature check,
+        # producing a circular self-skip: confirmed via the GitHub Actions API against the CI runs
+        # for two real commits on PR #390 (efd7a5c, fd7a046) that ~27 real/conda-full-only self-
+        # tests silently "skipped" every run while the job still reported overall SUCCESS. See
+        # CLAUDE.md's Active Backlog item 7 for the full incident writeup and PR #391 for the
+        # revert that restored those steps to unconditional (matrix.mode == 'conda-full') form.
+        #
+        # This step is now positioned right after "Self-test: real env smoke (CI-only)"
+        # (selfapps_envsmoke.ps1) instead -- traced 2026-07-27 as the genuine first selfapps step
+        # that performs a REAL, unconditional run_setup.bat bootstrap under HP_FORCE_CONDA_ONLY=1
+        # (its own script comment: "FULL bootstrap here: do NOT set HP_CI_SKIP_ENV"; every earlier
+        # candidate -- selfapps_single.ps1/selfapps_entry.ps1/selfapps_isolation.ps1/
+        # selfapps_envname.ps1 -- sets HP_CI_SKIP_ENV=1 and never touches conda at all; selftests.ps1
+        # only replays a captured log; selfapps_size.ps1 is a static byte-size check). Under
+        # conda-full specifically, HP_FORCE_CONDA_ONLY=1 blocks every venv/system fallback envsmoke's
+        # own script would otherwise allow, so a nonzero exit there can only mean the conda install
+        # itself failed -- making this the correct point to sample "is conda now really available."
+        #
+        # Deliberately NOT yet wired to any if: condition in this same commit. This mechanism has
+        # already produced two real, independently-discovered bugs in quick succession (the
+        # premature-gate bug this comment describes, and a distinct CodeRabbit-caught wording slip
+        # on the PR that reverted it) -- landing the corrected POSITION on its own first, with zero
+        # steps depending on it yet, lets the very first conda-full run after this change prove
+        # (via the job summary / step logs) that `available` now correctly flips to 'true' once
+        # envsmoke's real install succeeds, before any gating logic is re-added in a follow-up PR.
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
+        id: conda_avail
+        shell: pwsh
+        run: |
+          $condaMain = 'C:\Users\Public\Documents\Miniconda3\condabin\conda.bat'
+          $condaAlt  = 'C:\Users\Public\Documents\Miniconda3\Scripts\conda.bat'
+          $avail = (Test-Path -LiteralPath $condaMain) -or (Test-Path -LiteralPath $condaAlt)
+          "available=$($avail.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          Write-Host "Miniconda available at shared path: $avail"
 
       - name: "Self-test: uv contract assertions (contract-uv* only)"
         if: ${{ matrix.mode == 'contract-uv' || matrix.mode == 'contract-uv-fail' }}
