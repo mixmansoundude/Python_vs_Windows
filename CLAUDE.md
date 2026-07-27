@@ -833,6 +833,18 @@ further.)*
   follow-up commit. Watch that first run closely before proceeding to step 2 (wiring the 27
   conditions).
 
+  **First real `conda-full` run watched, 2026-07-27 (PR #395's merge run, run 30266482736):
+  confirmed positive.** Downloaded the `ci_test_results-selftest-conda-full-30266482736-1`
+  artifact directly (not just the console log) and read the `diag.conda.available` NDJSON row:
+  `{"id":"diag.conda.available","pass":true,"desc":"Miniconda availability diagnostic
+  (non-gating, unwired)","details":{"available":true}}` -- `available` flips to `true` exactly as
+  predicted, confirming the relocated step's premise now genuinely holds in this repo's real CI
+  shape. **This is read-only verification only, not authorization to proceed to step 2.** The
+  owner's explicit go-ahead already covered (and was scoped to) step 1's move; step 2 (wiring the
+  27 `if:` conditions) still needs its own separate, explicit go-ahead per the reasoning above --
+  two independent bugs from this exact mechanism is reason enough to keep that a deliberate,
+  owner-confirmed step rather than something a single green run alone unlocks.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 **Scope, and how this differs from Active Backlog and Known Findings**: an Active Backlog item is
