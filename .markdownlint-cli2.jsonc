@@ -1,0 +1,37 @@
+// Deliberately narrow, NOT a general markdown style gate.
+//
+// This repo's docs (CLAUDE.md especially) are a long-form historical record, not
+// GitHub-flavored-markdown-polished prose -- a full default markdownlint pass produces
+// ~2700 hits on CLAUDE.md alone, ~99% MD013 (80-char line length), a rule this repo has
+// never followed and has no interest in enforcing. Even with MD013 off, the remaining
+// ~54 hits are almost all cosmetic (blank lines around lists/fences/tables, table pipe
+// alignment) with no functional consequence -- not worth a disruptive reformatting pass.
+//
+// MD029 (ordered-list-item-prefix) is the one exception, kept enabled here: it is the
+// exact rule that caught a real, if minor, semantic issue on PR #391 -- CLAUDE.md's
+// "Active Backlog" section uses numbers as STABLE IDENTIFIERS (cross-referenced from
+// Closed Backlog by number), not literal sequential list order, so a second numbered
+// item added there can silently collide with markdown's own ordered-list numbering
+// rules. See docs/agent-lessons-learned.md and AGENTS.md's "Recurring tooling" section
+// for the convention this backstops: new Active Backlog items should be bullets with
+// the number spelled out in prose, not literal "N." markers -- reserve literal ordered-
+// list syntax for the historically-grandfathered item 7.
+//
+// One PERMANENT, EXPECTED finding: item 7's own solo "7." entry. Every MD029 style
+// (tested: one, ordered, one_or_ordered, zero) requires a list -- even a one-item list --
+// to start at "1."/"0.", so there is no style option that accepts "7." as a valid lone
+// starting number. Rewriting item 7's own giant, heavily-cross-referenced entry to a
+// bullet (like item 15) was judged disproportionate risk for a lint cosmetic given its
+// size -- so this ONE finding on line ~473 is a known, accepted baseline, not a bug.
+// Treat any OTHER finding (a 2nd hit) as the thing actually worth investigating.
+//
+// Run via `tools/run_sanity_sweep.sh` (advisory only, never fails the sweep) or directly:
+//   markdownlint-cli2 CLAUDE.md
+// (Scoped to CLAUDE.md only -- README.md/docs/*.md use their own non-sequential numbering
+// schemes unrelated to this convention; see tools/run_sanity_sweep.sh's own comment on why.)
+{
+  "config": {
+    "default": false,
+    "MD029": true
+  }
+}
