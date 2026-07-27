@@ -322,7 +322,7 @@ jobs:
         run: |
           & tests\selfapps_envsmoke.ps1
 
-      - name: "Check Miniconda availability (diagnostic only -- not yet wired to any if: condition)"
+      - name: "Check Miniconda availability (diagnostic; gates 27 conda-full self-tests + a loud tripwire)"
         # derived requirement (moved here 2026-07-27, correcting item 7's original placement): this
         # check previously ran right after "Bootstrap environment (run_setup.bat)" -- but that step
         # runs against THIS repo's own root (no loose .py files, the empty-repo/no_python_files
@@ -345,13 +345,17 @@ jobs:
         # own script would otherwise allow, so a nonzero exit there can only mean the conda install
         # itself failed -- making this the correct point to sample "is conda now really available."
         #
-        # Deliberately NOT yet wired to any if: condition in this same commit. This mechanism has
-        # already produced two real, independently-discovered bugs in quick succession (the
-        # premature-gate bug this comment describes, and a distinct CodeRabbit-caught wording slip
-        # on the PR that reverted it) -- landing the corrected POSITION on its own first, with zero
-        # steps depending on it yet, lets the very first conda-full run after this change prove
-        # (via the job summary / step logs) that `available` now correctly flips to 'true' once
-        # envsmoke's real install succeeds, before any gating logic is re-added in a follow-up PR.
+        # Re-wired 2026-07-27 (owner sign-off, full risk/benefit assessment in chat -- see CLAUDE.md
+        # Active Backlog item 7's own closing entry for the summary) after the corrected POSITION
+        # above was empirically confirmed working across two real conda-full runs (PR #395, #396:
+        # `available` correctly read `true` both times). The 27 downstream conda-full-only self-test
+        # steps below now gate on `steps.conda_avail.outputs.available == 'true'` -- BUT this alone
+        # would reintroduce exactly the PR #390 risk (a wrong condition silently skips real tests
+        # while the job stays green), so it never ships without its paired tripwire: the very next
+        # step unconditionally FAILS THE JOB (not skip-silently) whenever this reads anything other
+        # than 'true' in the conda-full lane, regardless of whether the root cause is a genuine
+        # Miniconda install failure or a bug in this gating mechanism itself -- owner's explicit
+        # direction was to default to a loud failure in either case, not a graceful/silent one.
         if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         id: conda_avail
         shell: pwsh
@@ -362,17 +366,78 @@ jobs:
           "available=$($avail.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           Write-Host "Miniconda available at shared path: $avail"
           # derived requirement: this diagnostic's own output was previously observable
-          # (Write-Host + step output) but had no NDJSON row -- CodeRabbit flagged the gap on
-          # PR #394. Non-gating (pass is always true; this step never fails the job), so it is
-          # safe to record even before any downstream if: condition depends on it.
+          # (Write-Host + step output) had no NDJSON row -- CodeRabbit flagged the gap on
+          # PR #394. This step itself never fails the job (that judgment now lives in the
+          # paired tripwire step immediately below) -- it only ever reports the observed fact.
           $row = [ordered]@{
             id      = 'diag.conda.available'
             pass    = $true
-            desc    = 'Miniconda availability diagnostic (non-gating, unwired)'
+            desc    = 'Miniconda availability diagnostic (raw fact only; see diag.conda.available.gate for the enforced judgment)'
             details = [ordered]@{ available = $avail }
           } | ConvertTo-Json -Compress -Depth 8
           $row | Add-Content 'tests\~test-results.ndjson' -Encoding Ascii
           $row | Add-Content 'ci_test_results.ndjson' -Encoding Ascii
+
+      - name: "Enforce Miniconda availability (conda-full only; fails loud, never skips silently)"
+        # derived requirement: this is the tripwire that makes the conda_avail gate above safe to
+        # use. It intentionally does NOT try to distinguish "Miniconda genuinely failed to install"
+        # (which already independently fails the "Self-test: real env smoke (CI-only)" step's own
+        # self.env.smoke.conda NDJSON row today, via $bootstrapPass requiring a clean interpreter +
+        # entry-run + no [ERROR] lines, not just a zero exit code -- see selfapps_envsmoke.ps1) from
+        # "a bug in this gating mechanism itself" (the PR #390 failure class: a wrong lane/step/
+        # output reference that silently skips real tests while the job stays green). Per the
+        # owner's explicit direction, BOTH cases fail this step loudly and unconditionally, even
+        # though the first case is technically "not our fault" (a transient external Miniconda/
+        # network issue) -- a loud, attributable failure on a rare true negative is preferred over
+        # any risk of a silent false negative recurring. Runs in every lane (matching conda_avail's
+        # own if:) so its own NDJSON row is always present in every artifact, uniformly skip=true
+        # outside conda-full per this repo's established skip-pattern convention (see
+        # docs/agent-interconnect.md "Skip pattern template").
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
+        id: conda_avail_gate
+        shell: pwsh
+        run: |
+          $avail = '${{ steps.conda_avail.outputs.available }}'
+          if ($env:HP_CI_LANE -ne 'conda-full') {
+            $row = [ordered]@{
+              id      = 'diag.conda.available.gate'
+              pass    = $true
+              desc    = 'Miniconda availability gate (enforced judgment; conda-full only)'
+              details = [ordered]@{ skip = $true; reason = 'not-conda-full'; lane = $env:HP_CI_LANE }
+            } | ConvertTo-Json -Compress -Depth 8
+            $row | Add-Content 'tests\~test-results.ndjson' -Encoding Ascii
+            $row | Add-Content 'ci_test_results.ndjson' -Encoding Ascii
+            exit 0
+          }
+          if ($avail -eq 'true') {
+            $row = [ordered]@{
+              id      = 'diag.conda.available.gate'
+              pass    = $true
+              desc    = 'Miniconda availability gate (enforced judgment; conda-full only)'
+              details = [ordered]@{ available = $avail }
+            } | ConvertTo-Json -Compress -Depth 8
+            $row | Add-Content 'tests\~test-results.ndjson' -Encoding Ascii
+            $row | Add-Content 'ci_test_results.ndjson' -Encoding Ascii
+            exit 0
+          }
+          $row = [ordered]@{
+            id      = 'diag.conda.available.gate'
+            pass    = $false
+            desc    = 'Miniconda availability gate (enforced judgment; conda-full only)'
+            details = [ordered]@{ available = $avail }
+          } | ConvertTo-Json -Compress -Depth 8
+          $row | Add-Content 'tests\~test-results.ndjson' -Encoding Ascii
+          $row | Add-Content 'ci_test_results.ndjson' -Encoding Ascii
+          Write-Host '::error::Miniconda was NOT detected at the shared install path after "Self-test: real env smoke (CI-only)" completed. 27 downstream conda-full self-tests are gated on this and will have been skipped.'
+          Write-Host '::error::Two possible root causes, both must be checked: (1) a genuine Miniconda install failure during real env smoke -- this already independently fails that step''s own self.env.smoke.conda NDJSON row, so if that row also failed, this is likely just secondary confirmation; check tests\~envsmoke\~envsmoke_bootstrap.log and tests\~envsmoke\~setup.log below and in the job artifacts. (2) a bug in this gating mechanism itself (wrong lane/step/output reference) -- if the env-smoke step passed cleanly, treat this as case (2) and investigate the conda_avail / conda_avail_gate steps and the 27 if: conditions before assuming this is safe to ignore. See CLAUDE.md Active Backlog item 7 for the documented history of exactly this failure class (PR #390).'
+          $envsmokeLog = 'tests\~envsmoke\~envsmoke_bootstrap.log'
+          if (Test-Path -LiteralPath $envsmokeLog) {
+            Write-Host '--- tail of tests\~envsmoke\~envsmoke_bootstrap.log ---'
+            Get-Content -LiteralPath $envsmokeLog -Tail 40 -ErrorAction SilentlyContinue
+          } else {
+            Write-Host '(tests\~envsmoke\~envsmoke_bootstrap.log not found -- real env smoke may not have run at all)'
+          }
+          exit 1
 
       - name: "Self-test: uv contract assertions (contract-uv* only)"
         if: ${{ matrix.mode == 'contract-uv' || matrix.mode == 'contract-uv-fail' }}
@@ -402,13 +467,13 @@ jobs:
           & tests\selfapps_reqspec.ps1
 
       - name: "Self-test: dep-check skip scenario (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_depcheck.ps1
 
       - name: "Self-test: warnfix PASS scenario (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: pass
         shell: pwsh
@@ -416,7 +481,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix XFAIL scenario (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: xfail
         shell: pwsh
@@ -424,7 +489,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix REAL scenario - heuristic prevents warnfix (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: real
         shell: pwsh
@@ -432,7 +497,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix REAL_WARNFIX scenario - warnfix fixes non-heuristic dep (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: real_warnfix
         shell: pwsh
@@ -440,7 +505,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix REAL_WARNFIX_DELAYED scenario - warnfix processes delayed imports (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: real_warnfix_delayed
         shell: pwsh
@@ -575,13 +640,13 @@ jobs:
           & tests\selfapps_pvw_idempotent.ps1
 
       - name: "Self-test: pre-build collect-submodules double-gate (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_collect.ps1
 
       - name: "Self-test: strict --hidden-import auto-recovery (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_hidden_import.ps1
@@ -590,7 +655,7 @@ jobs:
       # auto-recovery loop to its 3-attempt cap without ever succeeding (its sibling above only
       # covers the one-shot-recoverable success path).
       - name: "Self-test: strict --hidden-import auto-recovery exhaustion (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_hidden_import_exhaust.ps1
@@ -701,13 +766,13 @@ jobs:
           & tests\selfapps_interactive_stdin.ps1
 
       - name: "Self-test: EXE smokerun XFAIL bad import (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exefail.ps1
 
       - name: "Self-test: PyInstaller build failure correctly reported, not masked (execfail, real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         env:
           PYI_FAIL_SCENARIO: execfail
@@ -715,7 +780,7 @@ jobs:
           & tests\selfapps_pyinstaller_fail.ps1
 
       - name: "Self-test: PyInstaller build failure correctly reported, not masked (output_vanish, real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         env:
           PYI_FAIL_SCENARIO: output_vanish
@@ -723,7 +788,7 @@ jobs:
           & tests\selfapps_pyinstaller_fail.ps1
 
       - name: "Self-test: no-EXE briefing is honest when the interpreter fallback also fails (execfail_runtimefail, real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         env:
           PYI_FAIL_SCENARIO: execfail_runtimefail
@@ -731,67 +796,67 @@ jobs:
           & tests\selfapps_pyinstaller_fail.ps1
 
       - name: "Self-test: REQ-021 py_compile pre-flight syntax error (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_preflight.ps1
 
       - name: "Self-test: EXE smokerun XFAIL missing data file (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exedata_fail.ps1
 
       - name: "Self-test: EXE smokerun XFAIL dynamic import not bundled (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exedyn_fail.ps1
 
       - name: "Self-test: fast-path broken-EXE graceful fallback (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exefastpath.ps1
 
       - name: "Self-test: fail-fast probe -- fast-failure discard and alive-past-probe no-discard (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_failfast_probe.ps1
 
       - name: "Self-test: post-execution checkpoint -- accept and decline (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_postexec_checkpoint.ps1
 
       - name: "Self-test: super-user skip hooks (conda-full only)"
-        if: ${{ !cancelled() && matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_skiphooks.ps1
 
       - name: "Self-test: REQ-002 timed entry picker (conda-full only)"
-        if: ${{ !cancelled() && matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_entry_picker.ps1
 
       - name: "Self-test: REQ-009 cascade consent timed prompt (conda-full only)"
-        if: ${{ !cancelled() && matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_cascade_timed.ps1
 
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
-        if: ${{ !cancelled() && matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_pandas_excel.ps1
 
       - name: "Test pip gap-fill safety net (conda-full only)"
-        if: ${{ !cancelled() && matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_pipgap.ps1
@@ -925,19 +990,19 @@ jobs:
           if (-not $pass) { Write-Host $outStr; exit 1 }
 
       - name: "Self-test: runtime.txt write-back (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_runtime_writeback.ps1
 
       - name: "Self-test: pyvisa NI-VISA detection (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_pyvisa.ps1
 
       - name: "Self-test: pyproject.toml Python version precedence (real/conda-full only)"
-        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_pyproject_precedence.ps1

@@ -207,7 +207,7 @@ self.corrupt.conda.heal.decline,
 self.corrupt.conda.heal.accept,
 self.corrupt.conda.override_exit,
 self.corrupt.uv.detect,
-diag.conda.available
+diag.conda.available, diag.conda.available.gate
 ```
 
 `self.corrupt.conda.override_exit` (CLAUDE.md Active Backlog item 12) covers the
@@ -530,15 +530,25 @@ self.interactive.stdin.roundtrip
   `~hidden_import_scan.py`'s own tried-list exclusion and stop the loop early via "no next hidden
   import found", never reaching the iteration cap this test needs to exercise.
 - `diag.conda.available` (inline `.github/workflows/batch-check.yml`, the "Check Miniconda
-  availability (diagnostic only -- not yet wired to any if: condition)" step -- see CLAUDE.md
-  Active Backlog item 7's `conda_avail` history) is always `pass: true` (non-gating; the step
-  itself never fails the job) and carries `details.available` (`true`/`false`) reflecting whether
-  Miniconda was found at the shared `%PUBLIC%\Documents\Miniconda3` path at that point in the job.
-  Added on PR #394 per a CodeRabbit finding: the step's own `Write-Host`/output had been observable
-  since PR #390 with no NDJSON row. Present in every non-`HP_CACHE_CORRUPTED` lane run regardless
-  of `matrix.mode`, since the step itself has no lane restriction (only its future `if:` wiring,
-  deferred pending owner sign-off per the same backlog item, will restrict its meaning to
-  `real`/`conda-full`).
+  availability" step -- see CLAUDE.md Active Backlog item 7's `conda_avail` history) is always
+  `pass: true` (this step itself never fails the job, by design -- it only reports the observed
+  fact) and carries `details.available` (`true`/`false`) reflecting whether Miniconda was found at
+  the shared `%PUBLIC%\Documents\Miniconda3` path at that point in the job. Added on PR #394 per a
+  CodeRabbit finding: the step's own `Write-Host`/output had been observable since PR #390 with no
+  NDJSON row. Present in every non-`HP_CACHE_CORRUPTED` lane run regardless of `matrix.mode`, since
+  the step itself has no lane restriction.
+- `diag.conda.available.gate` (inline `.github/workflows/batch-check.yml`, the "Enforce Miniconda
+  availability" step immediately after `diag.conda.available`'s own step) is the ENFORCED judgment
+  that gates 27 `conda-full`-only self-test steps and, unlike its sibling above, DOES fail the job
+  when it reads `pass: false` (`Write-Host '::error::...'` + `exit 1`, no `continue-on-error`).
+  `skip: true, reason: 'not-conda-full'` in every lane except `conda-full`, where it re-reads the
+  same `steps.conda_avail.outputs.available` value and requires exactly `'true'` -- anything else
+  (including a never-set/empty value) fails loud, deliberately without distinguishing "Miniconda
+  genuinely failed to install" from "a bug in this gating mechanism itself" (both are surfaced the
+  same way, per an explicit owner decision to prefer a loud failure over any risk of a silent one
+  recurring -- see CLAUDE.md's Active Backlog item 7 for the full PR #390 incident this protects
+  against and the risk/benefit assessment behind this design). On failure it also prints the tail
+  of `tests\~envsmoke\~envsmoke_bootstrap.log` inline for immediate root-cause visibility.
 - A row absent from the diag site means the test script either was not reached, threw
   before the `Write-NdjsonRow` call, or the lane skipped that selfapps file.
 - Rows gated by `pyFileCount` (e.g. `entry.single.direct`) will be absent whenever the
