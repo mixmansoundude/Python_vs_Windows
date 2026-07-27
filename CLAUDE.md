@@ -706,6 +706,22 @@ below instead of here (see that section's own scope note for the distinction fro
    `throw`s in the same step (`dynamic_tests.bat`/`.py failed with exit code N`) were deliberately
    left alone -- they only fire once dynamic tests actually ran, meaning the precondition race this
    fix targets never applies to them.
+
+   **CORRECTION, 2026-07-27 (CodeRabbit-flagged on PR #391, verified before acting): the
+   `conda_avail` mechanism this item introduced (see the "shared pre-check" paragraph above) was
+   itself broken from the day it shipped -- do not treat it as a working part of this item's
+   history.** Its premise ("the main bootstrap step installs Miniconda first, so this check only
+   ever needs to catch a genuine install failure") is false for this repo's own CI shape: the main
+   "Bootstrap environment (run_setup.bat)" step runs against this repo's own empty root (the
+   `no_python_files` graceful-exit path), never touches conda, and every downstream selfapps step
+   capable of performing the FIRST real install was ALSO gated behind this same check -- a
+   circular self-skip that silently disabled ~27 `real/conda-full`-only self-tests on every run
+   since this item closed, invisible because a skipped step doesn't fail the job. See Active
+   Backlog item 15 for the full diagnosis and fix (PR #391): all 36 `conda_avail`-dependent `if:`
+   clauses were reverted to their pre-item-7 unconditional form, keeping only the `!cancelled()`
+   half of this item's own work (which IS correct and unaffected by this correction). The
+   `conda_avail` step itself remains in the file, unused, pending the re-wiring item 15 defers.
+
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is
@@ -714,51 +730,51 @@ lines, which naturally show GitHub Actions' inherent doubled checkout path
 (`.../Python_vs_Windows/Python_vs_Windows/...`) -- a runner convention, not a bug. Not chased
 further.)*
 
-15. **`conda_avail`'s own gating premise was wrong for this repo's actual CI shape, and it merged
-    (PR #390) before this was caught -- found 2026-07-27 via a direct owner question ("are we
-    sure we aren't shorting conda-full?") that prompted re-checking real step-level conclusions
-    instead of trusting the job's overall green status.** Item 7's `conda_avail` check (`id:
-    conda_avail`, a `Test-Path` against the shared `%PUBLIC%\Documents\Miniconda3\condabin\
-    conda.bat`/`Scripts\conda.bat`) was designed on the assumption that the earlier "Bootstrap
-    environment (run_setup.bat)" step performs the first real Miniconda install for the
-    `conda-full` lane, so gating ~27 downstream `real/conda-full`-restricted self-test steps on
-    "is conda already on disk" would only ever skip in the rare case that install genuinely
-    failed. **That assumption is false**: the "Bootstrap environment" step runs against THIS
-    repo's own root (no loose `.py` files there -- it's exercising the empty-repo/
-    `no_python_files` graceful-exit path, not a real target app), so it never installs Miniconda
-    at all. Worse, every downstream selfapps step capable of performing the FIRST real install
-    was ALSO gated behind this same `conda_avail` check -- a circular self-skip with no way to
-    ever break out of it. Confirmed directly via the GitHub Actions API against two real runs
-    (`efd7a5c` and `fd7a046`, both PR #390): all ~27 `real/conda-full`-only steps showed
-    `"conclusion":"skipped"` at the identical timestamp on the `conda-full` lane in BOTH runs
-    (dep-check, all 5 warnfix scenarios, pre-build collect-submodules, both hidden-import
-    auto-recovery scenarios, all EXE-smokerun/PyInstaller-failure xfails, py_compile preflight,
-    fast-path graceful fallback, fail-fast probe, post-execution checkpoint, super-user skip
-    hooks, REQ-002 timed picker, REQ-009 cascade timed prompt, pandas/openpyxl, pip gap-fill,
-    runtime.txt write-back, pyvisa detection, pyproject precedence, UX hardening). The job still
-    reported overall SUCCESS both times (a skipped step doesn't fail a job), so this silent,
-    100%-reproducible coverage loss on a GATING lane produced no automated signal at all and
-    merged via auto-merge before it was noticed -- exactly the failure mode the owner's question
-    was worried about, and the CI-time-is-free/watch-for-skips instinct behind it was correct.
-    **Fix, pushed as a follow-up commit on a fresh branch (the merged PR's branch can't be reused
-    per this repo's own stacking rule)**: reverted all 36 `conda_avail`-dependent `if:` clauses
-    to their pre-item-7 unconditional form (`matrix.mode == 'conda-full'`, no `conda_avail`
-    dependency), while KEEPING the `!cancelled()` half of each condition (the part of item 7 that
-    is actually correct and validated -- it still prevents one failing step from cascade-skipping
-    every subsequent step in the job). The `conda_avail` step itself is left in place, unused,
-    with a comment explaining why and pointing here -- removing it outright was judged riskier
-    than leaving a harmless, informational `Write-Host` step for a fix meant to land fast.
-    **Deliberately not attempted in this pass: correctly re-wiring `conda_avail` to fire at a
-    point where a real install has actually had a chance to happen.** The redundant-retry risk it
-    was meant to prevent ("dozens of steps each independently retrying a genuinely failed,
-    up-to-90-minute Miniconda install") is real in principle, but finding the right insertion
-    point requires identifying which selfapps step is genuinely first to trigger a real install
-    for a non-empty app under `HP_FORCE_CONDA_ONLY=1` -- multiple candidates already inspected
-    (`selfapps_single.ps1`, `selfapps_entry.ps1`, `selfapps_isolation.ps1`) turned out to run under
-    `HP_CI_SKIP_ENV=1` themselves (system-Python bypass, never touches conda), so this needs a
-    proper trace, not a guess, before being reintroduced. Revisit as its own dedicated, reviewed
-    pass -- the same "disproportionate to fold into an unrelated fix" reasoning item 7's own
-    history already applies elsewhere in this list.
+- **`conda_avail`'s own gating premise was wrong for this repo's actual CI shape (Active
+  Backlog item 15), and it merged (PR #390) before this was caught -- found 2026-07-27 via a
+  direct owner question ("are we sure we aren't shorting conda-full?") that prompted re-checking
+  real step-level conclusions instead of trusting the job's overall green status.** Item 7's `conda_avail` check (`id:
+  conda_avail`, a `Test-Path` against the shared `%PUBLIC%\Documents\Miniconda3\condabin\
+  conda.bat`/`Scripts\conda.bat`) was designed on the assumption that the earlier "Bootstrap
+  environment (run_setup.bat)" step performs the first real Miniconda install for the
+  `conda-full` lane, so gating ~27 downstream `real/conda-full`-restricted self-test steps on
+  "is conda already on disk" would only ever skip in the rare case that install genuinely
+  failed. **That assumption is false**: the "Bootstrap environment" step runs against THIS
+  repo's own root (no loose `.py` files there -- it's exercising the empty-repo/
+  `no_python_files` graceful-exit path, not a real target app), so it never installs Miniconda
+  at all. Worse, every downstream selfapps step capable of performing the FIRST real install
+  was ALSO gated behind this same `conda_avail` check -- a circular self-skip with no way to
+  ever break out of it. Confirmed directly via the GitHub Actions API against two real runs
+  (`efd7a5c` and `fd7a046`, both PR #390): all ~27 `real/conda-full`-only steps showed
+  `"conclusion":"skipped"` at the identical timestamp on the `conda-full` lane in BOTH runs
+  (dep-check, all 5 warnfix scenarios, pre-build collect-submodules, both hidden-import
+  auto-recovery scenarios, all EXE-smokerun/PyInstaller-failure xfails, py_compile preflight,
+  fast-path graceful fallback, fail-fast probe, post-execution checkpoint, super-user skip
+  hooks, REQ-002 timed picker, REQ-009 cascade timed prompt, pandas/openpyxl, pip gap-fill,
+  runtime.txt write-back, pyvisa detection, pyproject precedence, UX hardening). The job still
+  reported overall SUCCESS both times (a skipped step doesn't fail a job), so this silent,
+  100%-reproducible coverage loss on a GATING lane produced no automated signal at all and
+  merged via auto-merge before it was noticed -- exactly the failure mode the owner's question
+  was worried about, and the CI-time-is-free/watch-for-skips instinct behind it was correct.
+  **Fix, pushed as a follow-up commit on a fresh branch (the merged PR's branch can't be reused
+  per this repo's own stacking rule)**: reverted all 36 `conda_avail`-dependent `if:` clauses
+  to their pre-item-7 unconditional form (`matrix.mode == 'conda-full'`, no `conda_avail`
+  dependency), while KEEPING the `!cancelled()` half of each condition (the part of item 7 that
+  is actually correct and validated -- it still prevents one failing step from cascade-skipping
+  every subsequent step in the job). The `conda_avail` step itself is left in place, unused,
+  with a comment explaining why and pointing here -- removing it outright was judged riskier
+  than leaving a harmless, informational `Write-Host` step for a fix meant to land fast.
+  **Deliberately not attempted in this pass: correctly re-wiring `conda_avail` to fire at a
+  point where a real install has actually had a chance to happen.** The redundant-retry risk it
+  was meant to prevent ("dozens of steps each independently retrying a genuinely failed,
+  up-to-90-minute Miniconda install") is real in principle, but finding the right insertion
+  point requires identifying which selfapps step is genuinely first to trigger a real install
+  for a non-empty app under `HP_FORCE_CONDA_ONLY=1` -- multiple candidates already inspected
+  (`selfapps_single.ps1`, `selfapps_entry.ps1`, `selfapps_isolation.ps1`) turned out to run under
+  `HP_CI_SKIP_ENV=1` themselves (system-Python bypass, never touches conda), so this needs a
+  proper trace, not a guess, before being reintroduced. Revisit as its own dedicated, reviewed
+  pass -- the same "disproportionate to fold into an unrelated fix" reasoning item 7's own
+  history already applies elsewhere in this list.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
