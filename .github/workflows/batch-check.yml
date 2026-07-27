@@ -389,15 +389,20 @@ jobs:
         # owner's explicit direction, BOTH cases fail this step loudly and unconditionally, even
         # though the first case is technically "not our fault" (a transient external Miniconda/
         # network issue) -- a loud, attributable failure on a rare true negative is preferred over
-        # any risk of a silent false negative recurring. Runs in every lane (matching conda_avail's
-        # own if:) so its own NDJSON row is always present in every artifact, uniformly skip=true
-        # outside conda-full per this repo's established skip-pattern convention (see
-        # docs/agent-interconnect.md "Skip pattern template").
+        # any risk of a silent false negative recurring. Runs in every non-cache-corrupted lane
+        # (matching conda_avail's own if:) so its own NDJSON row is always present in every such
+        # artifact, uniformly skip=true outside conda-full per this repo's established skip-pattern
+        # convention (see docs/agent-interconnect.md "Skip pattern template"). Both this step and
+        # conda_avail above are themselves skipped, like everything else in this job, on the rare
+        # HP_CACHE_CORRUPTED=1 path (cache-lane restore failure -- see this file's own "cache lane
+        # Miniconda-corruption handling" lessons-learned entry).
         if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         id: conda_avail_gate
+        env:
+          HP_CONDA_AVAIL: ${{ steps.conda_avail.outputs.available }}
         shell: pwsh
         run: |
-          $avail = '${{ steps.conda_avail.outputs.available }}'
+          $avail = $env:HP_CONDA_AVAIL
           if ($env:HP_CI_LANE -ne 'conda-full') {
             $row = [ordered]@{
               id      = 'diag.conda.available.gate'

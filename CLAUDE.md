@@ -855,8 +855,10 @@ further.)*
     `steps.conda_avail.outputs.available == 'true'` (skip fast instead of each independently
     retrying a doomed sub-bootstrap).
   - A new paired step, "Enforce Miniconda availability" (`id: conda_avail_gate`), runs
-    immediately after `conda_avail` in EVERY lane (skip=true outside conda-full) and
-    unconditionally FAILS the job (`Write-Host '::error::...'` + `exit 1`, no
+    immediately after `conda_avail` in every non-cache-corrupted lane (skip=true outside
+    conda-full; both steps are skipped, like everything else in the job, on the rare
+    `HP_CACHE_CORRUPTED=1` path) and unconditionally FAILS the job (`Write-Host '::error::...'`
+    + `exit 1`, no
     `continue-on-error`) whenever `available` is anything other than `'true'` in conda-full --
     deliberately without trying to distinguish "genuine Miniconda install failure" from "a bug in
     this gating mechanism itself." On failure it also prints the tail of
