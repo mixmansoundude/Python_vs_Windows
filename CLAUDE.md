@@ -1400,6 +1400,19 @@ of a second or third pin actually needing it.
     since `taskkill.exe` isn't present on this Linux test host) inherits and holds those pipes
     open even after the direct `pwsh` child has exited -- fixed by redirecting to `DEVNULL`
     instead of a pipe for that one test, which doesn't block on EOF.
+  - **CI flake found and fixed 2026-07-26, PR #390 gating-lane run (`conda-full`, run
+    30226246284)**: `FastExit::test_arguments_forwarded_as_single_arguments_string` reported
+    `"1|1"` (timed out) instead of `"0|0"` for a script that only writes a file and exits --
+    the original `5000ms HP_INSTALLER_TIMEOUT_MS` window was too tight under real Windows
+    CI-runner contention, the exact same flake class already fixed once for
+    `HP_FAILFAST_PROBE_MS` (widened 5000ms->10000ms; see `docs/agent-lessons-learned.md`'s
+    "Fail-fast probe window vs. the ~30s hard-kill cap" entry). Widened all four `FastExit`/
+    `ResultPathOverride` call sites from 5000ms to 30000ms and the outer `_run_installer`
+    `wait` default from 10s to 45s (to stay comfortably above the new 30s inner ceiling) --
+    costs nothing in the normal case, since `WaitForExit` returns as soon as the child exits,
+    not after the full window; it only adds headroom against a slow-starting process on a
+    loaded runner. Unrelated to this PR's own `!cancelled()`/`always()` scope; a pure
+    pre-existing timing-flake fix surfaced by watching the gating lane.
 
 - **Tooling pass, owner-requested 2026-07-25 ("Update check delimiters to catch the rem space...
   see if there are any other lessons learned that can be baked into tools... expand the tools

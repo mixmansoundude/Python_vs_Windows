@@ -66,7 +66,7 @@ def _make_script(d, name, body):
     return path
 
 
-def _run_installer(d, exe, args, timeout_ms, env_extra=None, wait=10, capture=True):
+def _run_installer(d, exe, args, timeout_ms, env_extra=None, wait=45, capture=True):
     env = dict(os.environ)
     env["HP_INSTALLER_EXE"] = exe
     if args is not None:
@@ -108,10 +108,19 @@ def _result(d, env_extra=None):
 
 @unittest.skipUnless(PWSH, "pwsh not available")
 class FastExit(unittest.TestCase):
+    # derived requirement: a real conda-full-lane CI run caught test_arguments_forwarded_as_
+    # single_arguments_string reporting "1|1" (timed out) instead of "0|0" for a trivial
+    # write-a-file-and-exit script -- the original 5000ms HP_INSTALLER_TIMEOUT_MS window was
+    # too tight under real Windows CI-runner contention (same class of flake already fixed once
+    # for HP_FAILFAST_PROBE_MS, widened 5000ms->10000ms; see docs/agent-lessons-learned.md).
+    # 30000ms costs nothing in the normal case -- WaitForExit returns as soon as the child exits,
+    # not after the full window -- it only adds headroom against a slow-starting process. The
+    # outer subprocess.run(timeout=...) default (_run_installer's own `wait` param) was widened
+    # to 45s to stay comfortably above this 30s inner ceiling.
     def test_fast_exit_result_captured_and_not_timed_out(self):
         with tempfile.TemporaryDirectory() as d:
             script = _make_script(d, "fast", FAST_SCRIPT)
-            proc = _run_installer(d, sys.executable, str(script), 5000)
+            proc = _run_installer(d, sys.executable, str(script), 30000)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(_result(d), "3|0")
 
@@ -119,7 +128,7 @@ class FastExit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             script = _make_script(d, "argv", ARGV_ECHO_SCRIPT)
             args = "%s --foo bar" % script
-            proc = _run_installer(d, sys.executable, args, 5000)
+            proc = _run_installer(d, sys.executable, args, 30000)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(_result(d), "0|0")
             # sys.argv[0] (the script's own path) is excluded by ARGV_ECHO_SCRIPT's own
@@ -132,7 +141,7 @@ class FastExit(unittest.TestCase):
         # with no required argv still runs to completion.
         with tempfile.TemporaryDirectory() as d:
             script = _make_script(d, "fast", FAST_SCRIPT)
-            proc = _run_installer(d, sys.executable, script.as_posix(), 5000, env_extra=None)
+            proc = _run_installer(d, sys.executable, script.as_posix(), 30000, env_extra=None)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(_result(d), "3|0")
 
@@ -185,7 +194,7 @@ class ResultPathOverride(unittest.TestCase):
             script = _make_script(d, "fast", FAST_SCRIPT)
             result_path = Path(d) / "custom_result.txt"
             env = {"HP_INSTALLER_RESULT": str(result_path)}
-            proc = _run_installer(d, sys.executable, str(script), 5000, env_extra=env)
+            proc = _run_installer(d, sys.executable, str(script), 30000, env_extra=env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(_result(d, env), "3|0")
             self.assertFalse((Path(d) / "~installer_result.txt").exists())
