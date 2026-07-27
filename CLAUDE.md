@@ -776,6 +776,42 @@ further.)*
   pass -- the same "disproportionate to fold into an unrelated fix" reasoning item 7's own
   history already applies elsewhere in this list.
 
+  **The trace this needed was completed 2026-07-27, same day, per the standing 2-hour watchdog
+  mandate re-checking Active Backlog once nothing else was in-flight.** Read `batch-check.yml`'s
+  full `selftest` job step order from the top and checked each step's own env/script for an
+  `HP_CI_SKIP_ENV` override or a static-only check (never invokes `run_setup.bat` at all):
+  `selfapps_single.ps1`/`selfapps_entry.ps1`/`selfapps_isolation.ps1` all set
+  `HP_CI_SKIP_ENV: '1'` at the STEP level in the YAML itself (confirming the prior note directly,
+  not just citing it); `selfapps_envname.ps1` sets `HP_CI_SKIP_ENV=1` internally in its own script
+  body (a fourth candidate not previously named); `tests\selftests.ps1` (the empty-repo step)
+  replays a captured log rather than re-running the bootstrapper at all (see this file's own
+  "selftest.ps1 vs selftests.ps1" note); `selfapps_size.ps1` is a static byte-size check with no
+  bootstrap invocation. **The genuine first candidate is `selfapps_envsmoke.ps1`** ("Self-test:
+  real env smoke (CI-only)," gated only on `env.HP_CACHE_CORRUPTED != '1'`, no lane restriction
+  and no `HP_CI_SKIP_ENV` override) -- its own script comment says outright "FULL bootstrap here:
+  do NOT set HP_CI_SKIP_ENV," and it does `cmd /c .\run_setup.bat` against a real scratch app
+  directory, genuinely exercising conda-mode install under `HP_FORCE_CONDA_ONLY=1` inherited from
+  the job env. It runs immediately after the (confirmed-safe) size tripwire and immediately
+  before the first `real/conda-full only`-gated self-test block (`selfapps_depcheck.ps1`) --
+  i.e., right where `conda_avail` would need to move to for its premise to actually hold this
+  time, instead of checking too early (the original bug) or too late.
+  **Decision: do not re-implement the gating a third time without explicit owner sign-off,
+  despite having the answer this section asked for.** Two real, independently-discovered bugs
+  have already come out of this exact mechanism in close succession (the original premature-gate
+  bug this whole entry documents, plus a distinct CodeRabbit-caught wording slip on the very PR
+  that reverted it) -- both subtle, both missed on first read, both only caught via careful
+  after-the-fact scrutiny. A third attempt at gating steps in the two GATING lanes
+  (`real`/`conda-full`, explicitly must-not-regress territory) on a new `conda_avail`-at-a-new-
+  position mechanism carries real risk of a third, differently-subtle mistake in the same fragile
+  spot, and the value it buys is a bounded-but-unobserved worst case: no genuine Miniconda
+  install failure (as opposed to a transient blip already covered by REQ-022's own retry
+  hardening) has actually been hit in this repo's real CI history despite extensive documented
+  usage. Per this file's own standing instruction to escalate architecturally-significant,
+  already-burned-twice decisions rather than re-attempt them silently a third time: this is left
+  here, fully traced and ready to implement in a single well-scoped commit (move the existing,
+  currently-unused `conda_avail` step to right after `selfapps_envsmoke.ps1`, re-point the same
+  36 `if:` conditions at it), pending the owner's explicit go-ahead.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 **Scope, and how this differs from Active Backlog and Known Findings**: an Active Backlog item is
