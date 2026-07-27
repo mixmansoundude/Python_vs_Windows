@@ -2060,9 +2060,7 @@ def _as_text_preview(path: Path, max_bytes: int = MIRROR_TEXT_LIMIT) -> str:
         ]
         for info in infos[:200]:
             lines.append(
-                "- {0} (compressed {1:,} bytes -> {2:,} bytes)".format(
-                    info.filename, info.compress_size, info.file_size
-                )
+                f"- {info.filename} (compressed {info.compress_size:,} bytes -> {info.file_size:,} bytes)"
             )
         if len(infos) > 200:
             lines.append(f"- ... {len(infos) - 200} additional entries omitted ...")

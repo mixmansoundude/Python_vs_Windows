@@ -361,6 +361,18 @@ jobs:
           $avail = (Test-Path -LiteralPath $condaMain) -or (Test-Path -LiteralPath $condaAlt)
           "available=$($avail.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
           Write-Host "Miniconda available at shared path: $avail"
+          # derived requirement: this diagnostic's own output was previously observable
+          # (Write-Host + step output) but had no NDJSON row -- CodeRabbit flagged the gap on
+          # PR #394. Non-gating (pass is always true; this step never fails the job), so it is
+          # safe to record even before any downstream if: condition depends on it.
+          $row = [ordered]@{
+            id      = 'diag.conda.available'
+            pass    = $true
+            desc    = 'Miniconda availability diagnostic (non-gating, unwired)'
+            details = [ordered]@{ available = $avail }
+          } | ConvertTo-Json -Compress -Depth 8
+          $row | Add-Content 'tests\~test-results.ndjson' -Encoding Ascii
+          $row | Add-Content 'ci_test_results.ndjson' -Encoding Ascii
 
       - name: "Self-test: uv contract assertions (contract-uv* only)"
         if: ${{ matrix.mode == 'contract-uv' || matrix.mode == 'contract-uv-fail' }}
@@ -1988,6 +2000,7 @@ jobs:
 
             const passCt = rows.filter(r => r.pass === true).length;
             const failCt = rows.filter(r => r.pass === false).length;
+            const unknownCt = rows.length - passCt - failCt;
 
             // Prefer self.* and entry.* at the top
             const rank = r => (r.id||'').startsWith('self.') || (r.id||'').startsWith('entry.') ? 0 : 1;
@@ -2003,7 +2016,7 @@ jobs:
             await summary
               .addHeading('Self-test results', 2)
               .addList(bullets)
-              .addRaw(`\n**Totals:** PASS ${passCt} - FAIL ${failCt}\n`)
+              .addRaw(`\n**Totals:** PASS ${passCt} - FAIL ${failCt}${unknownCt > 0 ? ` - UNKNOWN ${unknownCt}` : ''}\n`)
               .write();
 
             // Optional tails (non-fatal if missing)
