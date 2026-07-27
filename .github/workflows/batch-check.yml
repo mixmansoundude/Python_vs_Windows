@@ -185,7 +185,7 @@ jobs:
           dir /b /s
 
       - name: Debug to show harness with line numbers
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           Write-Host "HEAD: $env:GITHUB_SHA  Branch: $env:GITHUB_REF"
@@ -200,7 +200,7 @@ jobs:
           }
 
       - name: Static-parse harness (AST)
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           if (Test-Path .\tests\harness.ps1) {
@@ -260,7 +260,7 @@ jobs:
           'HP_CACHE_CORRUPTED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
       - name: Append pipreqs summary
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $summary = Join-Path $PWD '~pipreqs.summary.txt'
@@ -270,15 +270,39 @@ jobs:
             'pipreqs summary not generated.' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           }
 
+      - name: Check Miniconda availability (for downstream !cancelled() gating)
+        # derived requirement (item 7 scoping-pass follow-on): Miniconda installs to a SHARED,
+        # machine-wide path (%PUBLIC%\Documents\Miniconda3), not per-test-directory -- see the
+        # :tci_both_failed CLAUDE.md entry. This is a single, cheap Test-Path (no execution of
+        # run_setup.bat, no network) that downstream !cancelled()-converted steps consult before
+        # attempting their own conda-dependent selfapps script, so a genuine "Miniconda itself
+        # failed to install" failure produces one clean skip per step instead of dozens of
+        # steps EACH redundantly retrying a real (up to 60-90 min per HP_INSTALLER_TIMEOUT)
+        # Miniconda install. !cancelled() so it still runs even when Bootstrap environment
+        # itself failed, but is skipped (like every other step here) if the run is cancelled.
+        # Checks both condabin\conda.bat and the Scripts\conda.bat fallback -- matches
+        # run_setup.bat's own :select_conda_bat (CONDA_MAIN/CONDA_ALT) and the "Validate restored
+        # conda binary" step above, so an install that only landed via the fallback path (a real,
+        # accepted-elsewhere possibility) isn't misreported as unavailable here.
+        if: ${{ !cancelled() }}
+        id: conda_avail
+        shell: pwsh
+        run: |
+          $condaMain = 'C:\Users\Public\Documents\Miniconda3\condabin\conda.bat'
+          $condaAlt  = 'C:\Users\Public\Documents\Miniconda3\Scripts\conda.bat'
+          $avail = (Test-Path -LiteralPath $condaMain) -or (Test-Path -LiteralPath $condaAlt)
+          "available=$($avail.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+          Write-Host "Miniconda available at shared path: $avail"
+
       - name: "Self-test: empty repo behavior"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & .\tests\selftests.ps1
           Get-Content -LiteralPath tests\~selftest_empty\~empty_bootstrap.log -Tail 60 -ErrorAction SilentlyContinue
 
       - name: "Self-test: single .py entry (CI-only)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         env:
           HP_CI_SKIP_ENV: '1'
         shell: pwsh
@@ -286,7 +310,7 @@ jobs:
           & tests\selfapps_single.ps1
 
       - name: "Self-test: entry selection (CI-only)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         env:
           HP_CI_SKIP_ENV: '1'
         shell: pwsh
@@ -294,7 +318,7 @@ jobs:
           & tests\selfapps_entry.ps1
 
       - name: "Self-test: isolation and directory integrity (CI-only)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         env:
           HP_CI_SKIP_ENV: '1'
         shell: pwsh
@@ -302,22 +326,22 @@ jobs:
           & tests\selfapps_isolation.ps1
 
       - name: "Self-test: env-name sanitization (leading hyphen)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & tests\selfapps_envname.ps1
 
       - name: "Self-test: bootstrapper size tripwire (REQ-017)"
         # derived requirement (item 7 scoping pass): this step never executes run_setup.bat
-        # (a static byte-size check only), so always() carries zero duration-inflation risk --
+        # (a static byte-size check only), so !cancelled() carries zero duration-inflation risk --
         # it is safe to surface even when an earlier step (e.g. Bootstrap environment) failed.
-        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           & tests\selfapps_size.ps1
 
       - name: "Self-test: real env smoke (CI-only)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & tests\selfapps_envsmoke.ps1
@@ -344,19 +368,19 @@ jobs:
           & tests\selfapps_dl_fallback.ps1
 
       - name: "Self-test: requirements specifier coverage"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & tests\selfapps_reqspec.ps1
 
       - name: "Self-test: dep-check skip scenario (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_depcheck.ps1
 
       - name: "Self-test: warnfix PASS scenario (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: pass
         shell: pwsh
@@ -364,7 +388,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix XFAIL scenario (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: xfail
         shell: pwsh
@@ -372,7 +396,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix REAL scenario - heuristic prevents warnfix (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: real
         shell: pwsh
@@ -380,7 +404,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix REAL_WARNFIX scenario - warnfix fixes non-heuristic dep (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: real_warnfix
         shell: pwsh
@@ -388,7 +412,7 @@ jobs:
           & tests\selfapps_warnfix.ps1
 
       - name: "Self-test: warnfix REAL_WARNFIX_DELAYED scenario - warnfix processes delayed imports (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         env:
           WARNFIX_SCENARIO: real_warnfix_delayed
         shell: pwsh
@@ -523,13 +547,13 @@ jobs:
           & tests\selfapps_pvw_idempotent.ps1
 
       - name: "Self-test: pre-build collect-submodules double-gate (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_collect.ps1
 
       - name: "Self-test: strict --hidden-import auto-recovery (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_hidden_import.ps1
@@ -538,7 +562,7 @@ jobs:
       # auto-recovery loop to its 3-attempt cap without ever succeeding (its sibling above only
       # covers the one-shot-recoverable success path).
       - name: "Self-test: strict --hidden-import auto-recovery exhaustion (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_hidden_import_exhaust.ps1
@@ -649,13 +673,13 @@ jobs:
           & tests\selfapps_interactive_stdin.ps1
 
       - name: "Self-test: EXE smokerun XFAIL bad import (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exefail.ps1
 
       - name: "Self-test: PyInstaller build failure correctly reported, not masked (execfail, real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         env:
           PYI_FAIL_SCENARIO: execfail
@@ -663,7 +687,7 @@ jobs:
           & tests\selfapps_pyinstaller_fail.ps1
 
       - name: "Self-test: PyInstaller build failure correctly reported, not masked (output_vanish, real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         env:
           PYI_FAIL_SCENARIO: output_vanish
@@ -671,7 +695,7 @@ jobs:
           & tests\selfapps_pyinstaller_fail.ps1
 
       - name: "Self-test: no-EXE briefing is honest when the interpreter fallback also fails (execfail_runtimefail, real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         env:
           PYI_FAIL_SCENARIO: execfail_runtimefail
@@ -679,67 +703,67 @@ jobs:
           & tests\selfapps_pyinstaller_fail.ps1
 
       - name: "Self-test: REQ-021 py_compile pre-flight syntax error (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_preflight.ps1
 
       - name: "Self-test: EXE smokerun XFAIL missing data file (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exedata_fail.ps1
 
       - name: "Self-test: EXE smokerun XFAIL dynamic import not bundled (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exedyn_fail.ps1
 
       - name: "Self-test: fast-path broken-EXE graceful fallback (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_exefastpath.ps1
 
       - name: "Self-test: fail-fast probe -- fast-failure discard and alive-past-probe no-discard (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_failfast_probe.ps1
 
       - name: "Self-test: post-execution checkpoint -- accept and decline (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_postexec_checkpoint.ps1
 
       - name: "Self-test: super-user skip hooks (conda-full only)"
-        if: ${{ matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_skiphooks.ps1
 
       - name: "Self-test: REQ-002 timed entry picker (conda-full only)"
-        if: ${{ matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_entry_picker.ps1
 
       - name: "Self-test: REQ-009 cascade consent timed prompt (conda-full only)"
-        if: ${{ matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_cascade_timed.ps1
 
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
-        if: ${{ matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_pandas_excel.ps1
 
       - name: "Test pip gap-fill safety net (conda-full only)"
-        if: ${{ matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
         run: |
           & tests\selfapps_pipgap.ps1
@@ -747,8 +771,8 @@ jobs:
       - name: "Self-test: parse_warn TRANSLATIONS table coverage"
         # derived requirement (item 7 scoping pass): this step only decodes the embedded
         # HP_PARSE_WARN base64 payload out of run_setup.bat as static text -- it never executes
-        # run_setup.bat -- so always() carries zero duration-inflation risk.
-        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' }}
+        # run_setup.bat -- so !cancelled() carries zero duration-inflation risk.
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           & tests\selfapps_parse_warn_table.ps1
@@ -756,8 +780,8 @@ jobs:
       - name: "Self-test: parse_warn pytest (test_parse_warn.py)"
         # derived requirement (item 7 scoping pass): pure `python -m unittest` against this
         # repo's own tools/parse_warn.py -- no dependency on run_setup.bat/conda/Miniconda at
-        # all, so always() carries zero duration-inflation risk.
-        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' }}
+        # all, so !cancelled() carries zero duration-inflation risk.
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           $nd   = "tests\~test-results.ndjson"
@@ -788,8 +812,8 @@ jobs:
       - name: "Self-test: heuristics unittest (test_heuristics.py)"
         # derived requirement (item 7 scoping pass): pure `python -m unittest` against this
         # repo's own tools/prep_requirements.py -- no dependency on run_setup.bat/conda/Miniconda
-        # at all, so always() carries zero duration-inflation risk.
-        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' }}
+        # at all, so !cancelled() carries zero duration-inflation risk.
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           $nd   = "tests\~test-results.ndjson"
@@ -820,8 +844,8 @@ jobs:
       - name: "Self-test: Python unit tests (pytest cross-platform)"
         # derived requirement (item 7 scoping pass): pure `pytest` against this repo's own
         # tests/test_*.py suite -- no dependency on run_setup.bat/conda/Miniconda at all, so
-        # always() carries zero duration-inflation risk.
-        if: ${{ always() && env.HP_CACHE_CORRUPTED != '1' }}
+        # !cancelled() carries zero duration-inflation risk.
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           $nd   = "tests\~test-results.ndjson"
@@ -873,31 +897,31 @@ jobs:
           if (-not $pass) { Write-Host $outStr; exit 1 }
 
       - name: "Self-test: runtime.txt write-back (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_runtime_writeback.ps1
 
       - name: "Self-test: pyvisa NI-VISA detection (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_pyvisa.ps1
 
       - name: "Self-test: pyproject.toml Python version precedence (real/conda-full only)"
-        if: ${{ matrix.mode == 'real' || matrix.mode == 'conda-full' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_pyproject_precedence.ps1
 
       - name: "Self-test: UX hardening (git config merge)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & tests\selfapps_ux_hardening.ps1
 
       - name: "Self-test: REQ-007 system-Python build consent gate (non-conda-full)"
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' || steps.conda_avail.outputs.available == 'true') }}
         shell: pwsh
         run: |
           & tests\selfapps_sysbuild.ps1
@@ -912,7 +936,7 @@ jobs:
           retention-days: 7
 
       - name: Upload CI NDJSON
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
         with:
           name: ci_test_results-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -932,7 +956,7 @@ jobs:
       # Verdict must read that same state before harness overwrites the file.
       - name: Verdict from NDJSON
         id: verdict
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           function Read-Ndjson([string]$p) {
@@ -981,14 +1005,14 @@ jobs:
 
       # closes the false-pass gap: has_failures=true was computed but never actually failed the job
       - name: Enforce NDJSON failures for gated lanes
-        if: ${{ always() && (matrix.mode == 'real' || matrix.mode == 'conda-full') && steps.verdict.outputs.has_failures == 'true' }}
+        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'conda-full') && steps.verdict.outputs.has_failures == 'true' }}
         shell: bash
         run: |
           echo "NDJSON indicates failures; failing gated lane."
           exit 1
 
       - name: Append iterate gate to Summary
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $flag = '${{ steps.verdict.outputs.has_failures }}'
@@ -1002,7 +1026,7 @@ jobs:
           }
 
       - name: Persist iterate gate verdict
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $flag = '${{ steps.verdict.outputs.has_failures }}'
@@ -1020,7 +1044,7 @@ jobs:
           $record | ConvertTo-Json -Compress -Depth 8 | Out-File -FilePath lane_verdict.json -Encoding ascii
 
       - name: Upload iterate gate verdict
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
         with:
           name: selftest-verdict-${{ matrix.mode }}
@@ -1029,7 +1053,7 @@ jobs:
           retention-days: 7
 
       - name: Run dynamic tests (if present)
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -1064,7 +1088,13 @@ jobs:
           if (-not (Test-Path $statusPath)) {
             Show-LogTail '.\bootstrap.log' 'bootstrap.log (tail)'
             Show-LogTail '.\~setup.log' '~setup.log (tail)'
-            throw "~bootstrap.status.json not found; bootstrapper did not record status."
+            # derived requirement: a plain Write-Host+exit here (not `throw`) keeps this
+            # step's failure signal a clean, informative one instead of an uncaught-exception
+            # stack trace -- this step runs under !cancelled(), so it is now reached even when
+            # the earlier "Bootstrap environment" step itself failed, and a missing status file
+            # in that case is a real, expected consequence, not a scripting bug.
+            Write-Host "::error::~bootstrap.status.json not found; bootstrapper did not record status."
+            exit 1
           }
 
           try {
@@ -1072,7 +1102,8 @@ jobs:
           } catch {
             Show-LogTail '.\bootstrap.log' 'bootstrap.log (tail)'
             Show-LogTail '.\~setup.log' '~setup.log (tail)'
-            throw "Failed to parse ~bootstrap.status.json: $($_.Exception.Message)"
+            Write-Host ("::error::Failed to parse ~bootstrap.status.json: {0}" -f $_.Exception.Message)
+            exit 1
           }
 
           $state = if ($null -ne $status.state) { [string]$status.state } else { '' }
@@ -1089,7 +1120,8 @@ jobs:
           if ($state -ne 'ok') {
             Show-LogTail '.\bootstrap.log' 'bootstrap.log (tail)'
             Show-LogTail '.\~setup.log' '~setup.log (tail)'
-            throw ("Bootstrap state '{0}' blocks dynamic tests execution." -f $state)
+            Write-Host ("::error::Bootstrap state '{0}' blocks dynamic tests execution." -f $state)
+            exit 1
           }
 
           if (-not (Test-Path $extractDir)) {
@@ -1153,7 +1185,7 @@ jobs:
           }
 
       - name: Run tests (map empty repo to success)
-        if: ${{ env.HP_CACHE_CORRUPTED != '1' }}
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         env:
           SCRIPT: run_tests.bat
@@ -1202,7 +1234,7 @@ jobs:
           exit $rc
 
       - name: Upload bootstrapper tests artifact
-        if: ${{ always() && matrix.mode == 'real' }}
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
         uses: actions/upload-artifact@v6
         with:
           name: bootstrapper-tests
@@ -1211,7 +1243,7 @@ jobs:
           retention-days: 7
 
       - name: Evaluate iterate gate
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         id: iterate_gate
         shell: pwsh
         run: |
@@ -1274,7 +1306,7 @@ jobs:
       # derived requirement: expose the iterate payload contents inline so field triage
       # can confirm breadcrumbs exist before upload.
       - name: List _ctx prior to upload (debug)
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |
@@ -1302,7 +1334,7 @@ jobs:
           retention-days: 7
 
       - name: Find and print test logs (tail)
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $focus = @(
@@ -1351,7 +1383,7 @@ jobs:
           }
 
       - name: Upload test logs
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
         with:
           name: test-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1857,7 +1889,7 @@ jobs:
           key: ${{ steps.conda_cache_restore.outputs.cache-primary-key }}
 
       - name: Summarize bootstrap result
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $statusPath = '.\~bootstrap.status.json'
@@ -1885,7 +1917,7 @@ jobs:
           }
 
       - name: Summarize dynamic tests result
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $notePath = '.\dynamic_summary_note.txt'
@@ -1904,7 +1936,7 @@ jobs:
           }
 
       - name: Summarize static tests result
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $summaryPath = '.\tests\~test-summary.txt'
@@ -1923,7 +1955,7 @@ jobs:
           }
 
       - name: Summarize self-tests (NDJSON → Job Summary)
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
@@ -1989,7 +2021,7 @@ jobs:
             }
 
       - name: Append diagnostics to Summary (public)
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           function Read-Optional($title, $paths, $max=6000) {
@@ -2020,7 +2052,7 @@ jobs:
           Read-Optional 'Env smoke bootstrap (tail)' @('tests\~envsmoke\~envsmoke_bootstrap.log') 4000
 
       - name: Append matrix mode meta row
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $row = [ordered]@{
@@ -2034,7 +2066,7 @@ jobs:
           Add-Content -LiteralPath ci_test_results.ndjson -Value $json -Encoding Ascii
 
       - name: Collect failing test IDs
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $root = Get-Location
@@ -2268,7 +2300,7 @@ jobs:
           $debugLines | Set-Content -Encoding UTF8 -LiteralPath $debugPath
 
       - name: Upload failing test IDs
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
         with:
           name: batchcheck-failures-${{ matrix.mode }}
@@ -2280,7 +2312,7 @@ jobs:
 
       - name: Preflight OpenAI auth (diagnostics)
         id: openai_auth
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2301,7 +2333,7 @@ jobs:
           fi
 
       - name: Iterate auth summary
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $present = '${{ steps.openai_auth.outputs.present }}'
@@ -2313,7 +2345,7 @@ jobs:
           "- auth_ok: $auth" | Out-File -Append $env:GITHUB_STEP_SUMMARY
 
       - name: Build public diagnostics tree
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         id: build_public
         shell: pwsh
         run: |
@@ -2664,7 +2696,7 @@ jobs:
           "public_dir=$pub" | Out-File -Append $env:GITHUB_OUTPUT
 
       - name: Upload diagnostics bundle
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
         with:
           name: diag-selftest-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -2673,7 +2705,7 @@ jobs:
           retention-days: 7
 
       - name: Gate on NDJSON results
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
@@ -2725,7 +2757,7 @@ jobs:
             }
 
       - name: Summarize NDJSON diagnostics payload
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           function Read-NdjsonFile {
@@ -2815,7 +2847,7 @@ jobs:
           $lines | Out-File -Encoding utf8 'diag/ndjson_summary.txt'
 
       - name: Stage self-test diagnostics payload
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $stage = Join-Path $PWD ('selftest-diag-${{ matrix.mode }}')
@@ -2864,7 +2896,7 @@ jobs:
           }
 
       - name: Upload self-test artifact
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
         with:
           name: selftest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.mode }}
@@ -2873,7 +2905,7 @@ jobs:
           retention-days: 7
 
       - name: Summarize prep_requirements helper
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $helperBase = Join-Path (Join-Path '.' 'tests') 'extracted'
@@ -2902,7 +2934,7 @@ jobs:
           }
 
       - name: Summarize detect_python helper
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $helperBase = Join-Path (Join-Path '.' 'tests') 'extracted'
@@ -2931,7 +2963,7 @@ jobs:
           }
 
       - name: Warn if zero tests executed
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $logs = Get-ChildItem -Recurse -Include *.log,*.txt,*.out -File -ErrorAction SilentlyContinue
@@ -2941,7 +2973,7 @@ jobs:
           }
 
       - name: Summarize bootstrap self-tests
-        if: always()
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $items = @(
@@ -2959,7 +2991,7 @@ jobs:
           }
 
       - name: "Diag: cascade execution evidence (uv lane; stdout so it lands in the log tail)"
-        if: ${{ always() && matrix.mode == 'uv' }}
+        if: ${{ !cancelled() && matrix.mode == 'uv' }}
         shell: pwsh
         run: |
           $bl = 'tests\~selftest_cascade_exec\~cascade_exec_bootstrap.log'

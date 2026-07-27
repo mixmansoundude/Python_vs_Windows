@@ -602,15 +602,110 @@ below instead of here (see that section's own scope note for the distinction fro
      if narrower, failure mode this repo has hit before -- see the REQ-013 connectivity-check
      retry-hardening entry's `conda.anaconda.org` 403 example) -- only THAT case would make every
      downstream conda-dependent step redundantly retry a slow install in lockstep.
-   - **Concrete follow-on design for the remaining ~62 steps, not implemented in this pass**: a
-     shared, fast pre-check (a single new early step, or a helper both `run_setup.bat` and the
-     selfapps scripts could consult) that tests whether `conda.bat` already exists at the shared
-     Miniconda path; steps converted to `always()` would consult it and skip cleanly with an
-     honest `pass=false`/`skip=true` NDJSON row (never blindly retry) when Miniconda itself is
-     confirmed absent. This targets the ACTUAL risk precisely instead of either doing nothing
-     (today) or a blanket conversion (still not proven safe). Sizing this precisely (touching
-     dozens of scripts, even if each edit is small) is its own dedicated pass -- correctly still
-     deferred, but with a real design now instead of an open question.
+   **Closed same day, follow-up slice: the remaining ~36 steps converted too, owner-directed
+   ("if confidence is high then proceed to next slice and drive to completion").** Built the
+   shared pre-check the paragraph above proposed -- a new `Check Miniconda availability` step
+   (`id: conda_avail`, a dual-path `Test-Path` fallback against the shared
+   `%PUBLIC%\Documents\Miniconda3\condabin\conda.bat` and its `Scripts\conda.bat` fallback --
+   matching `run_setup.bat`'s own `:select_conda_bat` (`CONDA_MAIN`/`CONDA_ALT`) and the existing
+   "Validate restored conda binary" step's dual-path check, caught by CodeRabbit on PR #390's
+   first real-CI pass -- zero execution/network cost either way) placed right after the main
+   bootstrap step -- then converted 36 of the remaining candidates, each gated
+   through it with a LANE-AWARE condition, not a uniform one. **Shown here in their final,
+   shipped form (`!cancelled()`, not the `always()` these were first written with -- see the
+   "Two CodeRabbit findings" paragraph below for why the whole job was converted from one to the
+   other in the same pass; this section is kept in sync with the actual condition strings rather
+   than describing an intermediate state)**:
+   - Steps restricted to `real || conda-full` (22 steps: warnfix family, hidden-import family,
+     the PyInstaller-failure family, EXE-smokerun xfails, etc.): `!cancelled() && (matrix.mode ==
+     'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true'))`.
+     The `real` lane is uv-first (see REQ-009 provider order), so it needs no conda gate at all --
+     its own redundant-retry worst case is bounded by uv's existing `--retry`/`--max-time` budget
+     (seconds to low minutes), not conda's. Only the `conda-full` half of the condition needs the
+     pre-check, since that lane unconditionally forces conda for the whole job.
+   - Steps restricted to `conda-full` only (5 steps: skiphooks, entry picker, cascade-timed,
+     pandas/openpyxl, pip gap-fill): `!cancelled() && matrix.mode == 'conda-full' &&
+     steps.conda_avail.outputs.available == 'true'`.
+   - Steps that run on every non-corrupted lane (9 steps: empty-repo, single-entry, entry
+     selection, isolation, env-name, real-env-smoke, reqspec, UX hardening, system-Python
+     consent): `!cancelled() && env.HP_CACHE_CORRUPTED != '1' && (matrix.mode != 'conda-full' ||
+     steps.conda_avail.outputs.available == 'true')` -- only conda-full among the lanes this
+     condition reaches needs the extra guard.
+   **Deliberately NOT converted, three distinct reasons, not oversight**: (1) the three
+   pre-bootstrap/setup steps (`Enable Miniconda probe`, `Force conda-only bootstrap`, `Bootstrap
+   environment (run_setup.bat)` itself) -- these must run in ORDER, before anything else; `always()`
+   on the root step itself is a no-op at best; (2) `Run dynamic tests (if present)` and `Run tests
+   (map empty repo to success)` -- confirmed via direct reading that `tests/harness.ps1` `throw`s
+   on a missing `~bootstrap.status.json` (lines ~67/71), so `always()`-ing these without ALSO
+   hardening that guard risks trading a clean skip for a confusing uncaught-exception failure;
+   correctly left for its own small follow-up rather than risking it in this already-large diff;
+   (3) `Validate Miniconda before cache save`/`Save Miniconda cache` -- restricted to the `cache`
+   lane, which is non-gating (job-level `continue-on-error`), so out of this item's scope entirely.
+   Verified via `yamllint`/`actionlint` (clean) and a scripted diff-scope check (exactly 36 `if:`
+   lines changed, matching the 36 target steps, no stray edits) before committing -- the same
+   "verify the diff touches exactly what's intended" discipline this file's own
+   `docs/agent-lessons-learned.md` documents for `run_setup.bat` edits, applied here to YAML.
+   Real-CI confirmation (does the `conda_avail` output actually read as `'true'`/`'false'`
+   correctly, does a genuine conda-full run behave identically to before when conda IS available)
+   is the one thing that can't be verified locally -- watch the next `conda-full` run closely.
+
+   **Two CodeRabbit findings on PR #390's first real-CI pass, both verified independently before
+   acting, not taken on faith.** (1) **Real bug, fixed**: the new `conda_avail` check only tested
+   `condabin\conda.bat`, but `run_setup.bat`'s own `:select_conda_bat` (`CONDA_MAIN`/`CONDA_ALT`)
+   and the pre-existing "Validate restored conda binary" step both already treat
+   `Scripts\conda.bat` as an equally valid fallback -- confirmed by reading `:select_conda_bat`
+   directly (lines ~1934-1938) before fixing; an install that only landed via the fallback path
+   would have made `conda-full`'s own bootstrap succeed while `conda_avail` wrongly reported
+   unavailable, silently skipping every newly-gated conda-full self-test. (2) **Real, separately-
+   scoped finding, extended and shipped in the same pass**: `always()` keeps a step running even
+   after the WORKFLOW ITSELF is cancelled (e.g. a newer push superseding an in-flight run via this
+   file's own `cancel-in-progress: true` concurrency group) -- `!cancelled()` is GitHub's own
+   documented idiom for "run regardless of prior step outcome, but still respect cancellation."
+   This is a real, well-established GitHub Actions semantic distinction, not specific to CI-time
+   cost (which this repo's owner has separately said isn't a constraint) -- it's about not letting
+   an already-abandoned run's steps keep grinding for no reason. CodeRabbit's own finding was
+   scoped to 3 example steps with a note to "apply to the other long-running self-tests in this
+   job"; verified this cleanly generalizes to EVERY `always()` in the `selftest` job (84 total,
+   none of which hold or release any cross-run resource the way `run_setup.bat`'s own `:acquire_
+   lock`/`:release_lock` does -- these are all self-contained diagnostic/self-test steps) and
+   applied it uniformly via a scripted replace, not just the 3 cited examples. **A second, real
+   bug surfaced during this exact fix, caught by `actionlint` before it shipped**: a bare `if:
+   always()` (no `${{ }}` wrapper) is safe YAML since it starts with a letter, but a bare `if:
+   !cancelled()` is NOT -- a leading `!` is a YAML tag indicator, so unquoted `!cancelled()`
+   fails to parse. 17 of the 84 replacements were bare and needed wrapping in `${{ !cancelled()
+   }}`; the other 67 were already inside a `${{ ... }}` compound expression and needed no extra
+   wrapping. Verified via `yamllint`/`actionlint` (clean) and an exact before/after occurrence
+   count (84 `always()` removed, 84 `!cancelled()` added, 0 stray edits) before committing.
+   Deliberately scoped to the `selftest` job only, matching the review's own scope -- the other
+   4 jobs in this file (`selftest-gate`, `ndjson-registry-check`, `model-quick-fix`,
+   `publish_diag`) have 25 more `always()` occurrences between them, not touched in this pass.
+   The suggested dedicated regression test for `conda_avail`'s own dual-path logic (a third
+   CodeRabbit comment) was NOT implemented -- disproportionate scope for a 4-line inline check
+   with an already-untested precedent in the same file (the "Validate restored conda binary"
+   step's own identical dual-path pattern has no dedicated test either).
+
+   **STATUS: gating-lane half of this item is now fully closed, including the one residual noted
+   above.** 41 of the ~67 candidate steps were converted in the pass documented above (5 zero-risk
+   + 36 lane-aware); the remaining 2 (`Run dynamic tests (if present)`, `Run tests (map empty repo
+   to success)`) are now also `!cancelled()`-gated, closing the loop. **Correction to the original
+   residual note**: it named `tests/harness.ps1`'s own two `throw` sites (missing
+   `.ci_bootstrap_marker` / `~bootstrap.status.json`) as the blocker -- re-reading the actual code
+   before fixing it found this was imprecise. Those two `harness.ps1` throws are reached only via
+   `Run tests (map empty repo to success)`'s `cmd /c run_tests.bat` call, a genuine subprocess
+   boundary: `run_tests.bat` invokes `powershell -File tests\harness.ps1` as its own process, so an
+   uncaught `throw` inside it just becomes that process's exit code (captured via `%ERRORLEVEL%`,
+   then `$rc`), never an uncaught exception in the CALLING GH Actions step -- that step was already
+   safe to `!cancelled()`-gate exactly as-is. The REAL risk was three separate, unrelated `throw`
+   statements inline in `Run dynamic tests (if present)`'s own PowerShell block (not in
+   `harness.ps1` at all, and not run via a subprocess) -- `~bootstrap.status.json not found`,
+   a JSON-parse failure, and `Bootstrap state '{0}' blocks dynamic tests execution`, all reachable
+   for the first time once this step could run even after an earlier "Bootstrap environment"
+   failure. Fixed by converting those three specifically to `Write-Host "::error::..."` + `exit 1`
+   -- same final outcome (the step still fails when the precondition genuinely isn't met), just
+   without an uncaught-exception stack trace obscuring the real cause. Two later, unrelated
+   `throw`s in the same step (`dynamic_tests.bat`/`.py failed with exit code N`) were deliberately
+   left alone -- they only fire once dynamic tests actually ran, meaning the precondition race this
+   fix targets never applies to them.
 *(Item 5 from the pre-existing "cosmetic log noise/path doubling" debrief note was checked
 briefly per standing instruction not to over-invest: no `--distpath`/`--workpath` override or
 other structural path-doubling exists in the PyInstaller build invocation. Most likely source is
@@ -1305,6 +1400,19 @@ of a second or third pin actually needing it.
     since `taskkill.exe` isn't present on this Linux test host) inherits and holds those pipes
     open even after the direct `pwsh` child has exited -- fixed by redirecting to `DEVNULL`
     instead of a pipe for that one test, which doesn't block on EOF.
+  - **CI flake found and fixed 2026-07-26, PR #390 gating-lane run (`conda-full`, run
+    30226246284)**: `FastExit::test_arguments_forwarded_as_single_arguments_string` reported
+    `"1|1"` (timed out) instead of `"0|0"` for a script that only writes a file and exits --
+    the original `5000ms HP_INSTALLER_TIMEOUT_MS` window was too tight under real Windows
+    CI-runner contention, the exact same flake class already fixed once for
+    `HP_FAILFAST_PROBE_MS` (widened 5000ms->10000ms; see `docs/agent-lessons-learned.md`'s
+    "Fail-fast probe window vs. the ~30s hard-kill cap" entry). Widened all four `FastExit`/
+    `ResultPathOverride` call sites from 5000ms to 30000ms and the outer `_run_installer`
+    `wait` default from 10s to 45s (to stay comfortably above the new 30s inner ceiling) --
+    costs nothing in the normal case, since `WaitForExit` returns as soon as the child exits,
+    not after the full window; it only adds headroom against a slow-starting process on a
+    loaded runner. Unrelated to this PR's own `!cancelled()`/`always()` scope; a pure
+    pre-existing timing-flake fix surfaced by watching the gating lane.
 
 - **Tooling pass, owner-requested 2026-07-25 ("Update check delimiters to catch the rem space...
   see if there are any other lessons learned that can be baked into tools... expand the tools
