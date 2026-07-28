@@ -371,6 +371,7 @@ jobs:
           # paired tripwire step immediately below) -- it only ever reports the observed fact.
           $row = [ordered]@{
             id      = 'diag.conda.available'
+            lane    = $env:HP_CI_LANE
             pass    = $true
             desc    = 'Miniconda availability diagnostic (raw fact only; see diag.conda.available.gate for the enforced judgment)'
             details = [ordered]@{ available = $avail }
@@ -406,9 +407,10 @@ jobs:
           if ($env:HP_CI_LANE -ne 'conda-full') {
             $row = [ordered]@{
               id      = 'diag.conda.available.gate'
+              lane    = $env:HP_CI_LANE
               pass    = $true
               desc    = 'Miniconda availability gate (enforced judgment; conda-full only)'
-              details = [ordered]@{ skip = $true; reason = 'not-conda-full'; lane = $env:HP_CI_LANE }
+              details = [ordered]@{ skip = $true; reason = 'not-conda-full' }
             } | ConvertTo-Json -Compress -Depth 8
             $row | Add-Content 'tests\~test-results.ndjson' -Encoding Ascii
             $row | Add-Content 'ci_test_results.ndjson' -Encoding Ascii
@@ -417,6 +419,7 @@ jobs:
           if ($avail -eq 'true') {
             $row = [ordered]@{
               id      = 'diag.conda.available.gate'
+              lane    = $env:HP_CI_LANE
               pass    = $true
               desc    = 'Miniconda availability gate (enforced judgment; conda-full only)'
               details = [ordered]@{ available = $avail }
@@ -427,6 +430,7 @@ jobs:
           }
           $row = [ordered]@{
             id      = 'diag.conda.available.gate'
+            lane    = $env:HP_CI_LANE
             pass    = $false
             desc    = 'Miniconda availability gate (enforced judgment; conda-full only)'
             details = [ordered]@{ available = $avail }
