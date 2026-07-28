@@ -845,6 +845,69 @@ further.)*
   two independent bugs from this exact mechanism is reason enough to keep that a deliberate,
   owner-confirmed step rather than something a single green run alone unlocks.
 
+  **Step 2 shipped, 2026-07-27, owner-directed with full rigor after a detailed risk-vs-benefit
+  assessment posted in chat.** The owner's own framing: "yes default to fail CI if any problem
+  for loud notification even if it isn't necessarily the fault of things we control." Two pieces
+  shipped TOGETHER, deliberately never one without the other -- shipping the gate alone would
+  reintroduce exactly the PR #390 risk (a wrong condition silently skips real tests while the job
+  stays green):
+  - The 27 `real/conda-full`/`conda-full`-only steps now gate their conda-full half on
+    `steps.conda_avail.outputs.available == 'true'` (skip fast instead of each independently
+    retrying a doomed sub-bootstrap).
+  - A new paired step, "Enforce Miniconda availability" (`id: conda_avail_gate`), runs
+    immediately after `conda_avail` in every non-cache-corrupted lane (skip=true outside
+    conda-full; both steps are skipped, like everything else in the job, on the rare
+    `HP_CACHE_CORRUPTED=1` path) and unconditionally FAILS the job (`Write-Host '::error::...'`
+    + `exit 1`, no
+    `continue-on-error`) whenever `available` is anything other than `'true'` in conda-full --
+    deliberately without trying to distinguish "genuine Miniconda install failure" from "a bug in
+    this gating mechanism itself." On failure it also prints the tail of
+    `tests\~envsmoke\~envsmoke_bootstrap.log` inline for immediate root-cause visibility.
+  - **A key fact that shaped the final design, found by re-reading `tests/selfapps_envsmoke.ps1`
+    before implementing rather than assuming**: a GENUINE Miniconda install failure already
+    independently fails the "Self-test: real env smoke (CI-only)" step's own `self.env.smoke.conda`
+    NDJSON row TODAY, with no changes needed -- `$bootstrapPass` requires a clean interpreter,
+    successful entry-run, PyInstaller output, AND the absence of any `[ERROR]` line in the
+    bootstrap log, not just a zero process exit code (which the file's own `:die`-exit-code
+    lessons-learned entry already warns is not by itself reliable evidence of success). This means
+    the tripwire's genuinely NEW protection is narrower and more precise than "catch Miniconda
+    failing" -- it specifically catches a bug in the gate/tripwire mechanism ITSELF (wrong lane,
+    wrong step id, wrong output name, a GH Actions expression typo) that could cause the 27 steps
+    to skip even when conda_avail's own check is working correctly. The genuine-failure case still
+    gets caught too (belt-and-suspenders, via an independent signal -- `Test-Path` on disk vs.
+    parsing bootstrap log text -- rather than relying on the log-parsing signal alone), exactly
+    per the owner's "default to fail CI if any problem" direction.
+  - **Recovery-mechanism exploration, per the owner's own ask ("if there is any more proactive
+    recovery mechanism... to make the benefit more worth it").** Traced what already exists
+    entirely inside `run_setup.bat`'s own single invocation (i.e. within ONE call to
+    `selfapps_envsmoke.ps1`): AllUsers -> JustMe Miniconda install fallback (`:tci_justme`),
+    REQ-022's transient-network detect-and-retry for `conda create`/bulk install, REQ-013's
+    connectivity-aware retry (recently hardened, see this doc's own Closed Backlog entry), a
+    secondary Miniconda download URL, and Active Backlog item 14's own bounded (60-minute)
+    installer timeout so a hung installer can't hang forever. **Decision: did NOT add a
+    CI-orchestration-level retry (e.g. wrapping the whole envsmoke step in a re-run-on-failure
+    action).** Two reasons: (1) no genuine Miniconda install failure has ever been observed in
+    this repo's real CI history despite extensive documented usage (the one related incident --
+    a `conda.anaconda.org` 403 -- was already a transient network blip, already covered by REQ-022's
+    own retry, not an install failure) -- the marginal benefit of a SECOND retry layer on top of an
+    already-comprehensive one is small against a problem that has not actually materialized; (2) a
+    CI-level auto-retry that silently succeeds on its second attempt would REDUCE signal quality by
+    smoothing over a real transient issue instead of surfacing it, which cuts directly against the
+    owner's own stated preference for loud, attributable failure even when "not our fault." The
+    lower-risk, genuinely additive piece of "more proactive" WAS shipped instead: the tripwire's
+    own diagnostic-log-tail printing (above), which makes whichever failure DOES occur maximally
+    actionable without extra digging, at zero new control-flow risk (pure read-only enrichment).
+  - **No genuinely blocking open question was found while implementing this** -- confirmed via a
+    full manual trace of all 27 target `if:` conditions (diff-scope-verified: exactly 27 lines
+    changed, matching the enumerated step names one-for-one) plus `yamllint`/`actionlint`, both
+    clean. Nothing added to `docs/open-questions.md`.
+  - **STATUS: item 7 is now fully closed, gating-lane half included.** Real-CI confirmation that
+    the gate correctly reads `true` in a normal conda-full run, and correctly fails loud in a
+    genuinely-broken one, is the one thing that could not be verified locally -- watch the next
+    conda-full run closely, and specifically confirm the OLD-style circular-self-skip failure mode
+    (PR #390) cannot recur even if some future edit accidentally reintroduces it, since it would
+    now hard-fail instead of silently passing.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 **Scope, and how this differs from Active Backlog and Known Findings**: an Active Backlog item is
