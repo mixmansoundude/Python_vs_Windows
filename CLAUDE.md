@@ -907,6 +907,13 @@ further.)*
     conda-full run closely, and specifically confirm the OLD-style circular-self-skip failure mode
     (PR #390) cannot recur even if some future edit accidentally reintroduces it, since it would
     now hard-fail instead of silently passing.
+  - **The watch-closely follow-up landed clean, 2026-07-28 (PR #398's own merge-commit run,
+    30324080455): `conda_avail` read `available: true`, `conda_avail_gate` passed, and all 15
+    checks including `conda-full` (~1h34m, normal duration) completed with conclusion `success`
+    -- no circular-self-skip regression, no unexpected step skips, no fallout from PR #398's own
+    NDJSON-schema change (adding a top-level `lane` field to the two new rows).** This is the
+    real-CI proof the item's own status note above was waiting on; nothing further is pending
+    for item 7.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
