@@ -1907,21 +1907,29 @@ are easy to conflate -- worth documenting distinctly.
 
 **REQ-004 (Python VERSION precedence, three tiers)**: Tier 1 `runtime.txt` beats Tier 2
 `pyproject.toml`'s `[project].requires-python` beats Tier 3 "let the selected provider pick latest,
-then write `runtime.txt` back." When `runtime.txt` is absent and `pyproject.toml` declares
-`requires-python = ">=3.10,<3.11"`, `~detect_python.py` (`HP_DETECT_PY`) resolves and forwards it
-(real NDJSON detail, `pyproject.precedence.detect`): `output":"python>=3.10,<3.11"`. After the
-environment is created under that pin, Tier 3's write-back fires since `runtime.txt` still didn't
-pre-exist:
+then write `runtime.txt` back." These two NDJSON rows deliberately test two DIFFERENT things in two
+DIFFERENT scratch directories with two DIFFERENT constraints, not one continuous flow -- worth
+being precise about, since the test file's own comments explain why: `.detect` calls
+`~detect_python.py` directly (no bootstrap, no environment ever created) against a tight
+`requires-python = ">=3.10,<3.11"` to check Tier 2's parse/forward precision in isolation; `.writeback`
+runs the FULL bootstrapper against a deliberately loose `requires-python = ">=3.9"` in a separate
+directory ("so conda picks a cached Python version and avoids a slow resolver round-trip for
+Python 3.10 packages," per the test's own comment) to check Tier 3's write-back end to end.
+
+`.detect`'s real NDJSON output confirms Tier 2's parse/forward is exact: `output":"python>=3.10,<3.11"`.
+`.writeback`'s real capture shows Tier 3 firing (since `runtime.txt` didn't pre-exist there either):
 
 ```
 [INFO] runtime.txt written: python-3.14.6
 ```
 
 (real capture; `pyproject.precedence.writeback`'s own NDJSON row confirms `runtimeVersion:
-python-3.14.6` and `versionSatisfied:true` -- the provider satisfied the `>=3.10,<3.11` constraint
-with whatever conda-forge/uv resolved, and that CONCRETE resolved version, not the constraint
-string, is what gets written back). Malformed `pyproject.toml` TOML degrades gracefully rather than
-aborting the whole precedence chain (real capture, `self.pyproject.malformed`):
+python-3.14.6` and `versionSatisfied:true` against ITS OWN, looser `>=3.9` constraint -- 3.14.6
+satisfies `>=3.9` comfortably. It does NOT satisfy the OTHER test's `<3.10,<3.11` constraint, but
+that constraint was never used for this environment; the two tests are independent, and this
+document originally conflated them into one implied sequence before being corrected.) Malformed
+`pyproject.toml` TOML degrades gracefully rather than aborting the whole precedence chain (real
+capture, `self.pyproject.malformed`):
 
 ```
 *** [WARN] pyproject.toml could not be parsed as valid TOML; falling back to requirements.txt or pipreqs.
