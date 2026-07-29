@@ -59,6 +59,10 @@ conflate:
 - [Part IV: Second run, nothing changed (repeat-run fast paths)](#part-iv-second-run-nothing-changed-repeat-run-fast-paths)
   - [Scenario 12: The EXE fast path (nothing changed at all)](#scenario-12-the-exe-fast-path-nothing-changed-at-all)
   - [Scenario 13: Source touched just enough to force a rebuild, but the environment is reused](#scenario-13-source-touched-just-enough-to-force-a-rebuild-but-the-environment-is-reused)
+- [Part V: User configuration and CLI overrides](#part-v-user-configuration-and-cli-overrides)
+  - [Scenario 14: `PVW_PYTHON_EXE` / `PVW_UV_EXE` / `PVW_TARGET_PY` / `PVW_WORKSPACE`](#scenario-14-pvw_python_exe--pvw_uv_exe--pvw_target_py--pvw_workspace)
+  - [Scenario 15: `PVW_CONDA_EXE` and its interaction with the conda self-heal flow](#scenario-15-pvw_conda_exe-and-its-interaction-with-the-conda-self-heal-flow)
+  - [Scenario 16: Drag-and-drop / CLI entry-file override (REQ-011 same-directory rule + REQ-002 priority)](#scenario-16-drag-and-drop--cli-entry-file-override-req-011-same-directory-rule--req-002-priority)
 
 ---
 
@@ -1144,3 +1148,222 @@ effect.
 than the very first run -- no fresh uv/conda acquisition, no fresh venv/env creation, and (when
 nothing about the dependency set changed) no re-running of the actual install step -- while still
 producing a genuinely fresh PyInstaller build and a real verification run of the new EXE.
+
+---
+
+## Part V: User configuration and CLI overrides
+
+**Scope note:** argv passthrough (extra launch arguments forwarded to the user's program, REQ-026)
+is already fully covered as Scenario 6 -- cross-reference it rather than re-documenting it here.
+This Part covers the remaining configuration surface: the five `PVW_*` super-user override
+environment variables (distinct from `HP_TEST_*`, which are CI-only and out of scope for this
+doc), and the CLI-argument/drag-and-drop entry-file override.
+
+**All five `PVW_*` variables share one generic acknowledgment line**, printed the instant the
+variable is defined, before any real detection/acquisition work runs and regardless of whether the
+value ever turns out to be usable:
+
+```
+[DEBUG] Using super-user override for PVW_<NAME>: <value>
+```
+
+**A real nuance worth stating up front rather than repeating per-variable:** the source's own
+header comment describes all five uniformly as bypassing auto-detection, but that's only literally
+true for two of them. `PVW_UV_EXE` and `PVW_WORKSPACE` genuinely skip the corresponding
+detection/creation branch outright. `PVW_PYTHON_EXE` and `PVW_TARGET_PY` do NOT skip anything --
+the full normal detection logic still runs to completion (including real network/disk work), and
+the override simply overwrites the *result* variable afterward. `PVW_CONDA_EXE` (Scenario 15) is
+its own case again, discussed separately since it has a unique interaction with the conda
+self-heal flow.
+
+### Scenario 14: `PVW_PYTHON_EXE` / `PVW_UV_EXE` / `PVW_TARGET_PY` / `PVW_WORKSPACE`
+
+**What's tested:** `PVW_UV_EXE` and `PVW_TARGET_PY` each have real, valid-value end-to-end CI
+coverage (details below). `PVW_PYTHON_EXE` and `PVW_WORKSPACE` have **zero** test coverage of any
+kind -- not even a valid-value smoke test -- confirmed via a repo-wide search across every test
+file and every lane of a recent clean run. **No test anywhere exercises an INVALID value for any
+of the four** -- all invalid-value behavior below is `[Extrapolated Branch]`, traced from source.
+
+**14a. `PVW_PYTHON_EXE`** overrides `HP_PY` at the shared convergence point every REQ-009 provider
+path (uv, conda, embed, venv, system, and every provider-cascade re-entry) funnels into after
+already selecting and setting up a working interpreter -- so it does NOT skip provider
+acquisition, it only overwrites the final result:
+
+```
+[INFO] Python host: using super-user override PVW_PYTHON_EXE.
+```
+
+`[Extrapolated Branch]`, genuinely untested. Invalid-value trace: no existence/executability check
+on the path itself; the first real probe is a non-fatal interpreter smoke test
+(`[WARN] Interpreter smoke test failed (continuing).`) that does NOT abort the run -- every
+subsequent `pip install` call is similarly wrapped in a WARN-only failure handler, so the
+bootstrap proceeds all the way to the PyInstaller build attempt with a broken interpreter before
+finally hitting a real failure there (the pre-existing, already-documented `:die`/`state=error`
+path). A bad `PVW_PYTHON_EXE` is therefore detected early (one WARN) but not treated as fatal
+until several steps downstream, not at the point of misuse.
+
+**14b. `PVW_UV_EXE`** overrides `HP_UV_EXE` and genuinely skips the entire uv download/acquire
+branch (jumps straight past it):
+
+```
+[INFO] uv: using super-user override PVW_UV_EXE.
+```
+
+REAL CI CAPTURE, run `30328748330`, job `90179708086` (`contract-uv` lane),
+`tests/selfapps_contract_uv.ps1`'s dedicated uv-version-forwarding scenarios (which reuse an
+already-downloaded `uv.exe` via this override specifically to avoid re-downloading it for each of
+several sub-bootstraps):
+
+```
+[DEBUG] Using super-user override for PVW_UV_EXE: D:\a\...\~envsmoke\~uv_bin\uv.exe
+[INFO] uv: using super-user override PVW_UV_EXE.
+[INFO] uv: creating venv at .uv_env with Python 3.12...
+```
+
+Invalid-value trace (`[Extrapolated Branch]`, no test forces a bad path): a broken/invalid
+`PVW_UV_EXE` is fully absorbed by the existing REQ-009 provider-cascade fallback machinery -- the
+uv-first Python-detection probe fails gracefully (WARN, falls toward Miniconda), and even if venv
+creation is separately attempted with the same bad binary, an independent, exit-code-agnostic
+on-disk check (`if not exist "...\Scripts\python.exe" goto :uv_venv_fail`) catches a binary that
+misleadingly reports success without doing real work -- no crash, no silent success, clean
+fall-through to conda.
+
+**14c. `PVW_TARGET_PY`** overrides `PYSPEC` at the shared merge point both the uv-first and
+conda-base detection paths converge on -- like `PVW_PYTHON_EXE`, detection still runs to
+completion first:
+
+```
+[INFO] Python version: using super-user override PVW_TARGET_PY.
+```
+
+REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full` lane),
+`tests/selfapps_pipgap.ps1` (sets this to `python=3.12` to pin conda's Python version so a
+specific `opencv-python` wheel is guaranteed available for a different test purpose entirely):
+
+```
+[DEBUG] Using super-user override for PVW_TARGET_PY: python=3.12
+[INFO] Python version: using super-user override PVW_TARGET_PY.
+```
+
+Invalid-value trace (`[Extrapolated Branch]`): no format validation; a garbage value becomes an
+invalid conda package spec or an invalid `uv venv --python` request, surfacing as a real,
+correctly-handled provider failure absorbed by the same fallback/cascade machinery as 14b --
+reaching a graceful `:die` (`state=error`) only if every fallback tier is also exhausted, never an
+uncontrolled crash.
+
+**14d. `PVW_WORKSPACE`** overrides `HP_UV_ENV_PATH` (the uv venv's path) with a clean, immediate
+override -- the default is assigned and instantly replaced before any use, unlike 14a/14c's
+"let it run, override the result" pattern. **Scope limitation worth flagging explicitly: this
+variable only takes effect in uv mode.** Conda's own environment path has no corresponding check
+at all -- a conda-mode run ignores `PVW_WORKSPACE` entirely.
+
+`[Extrapolated Branch]`, genuinely untested, and uniquely among the four, **there is no dedicated
+confirmation log line at its actual point of use** -- only the generic top-of-file `[DEBUG]` line,
+which fires purely because the variable is defined, before it's even known whether uv mode (where
+this variable matters at all) will be selected. Invalid-value trace: no path validation; if a
+`Scripts\python.exe` already happens to exist at the given path, a real functional canary
+(`import pip`) guards whether it's actually reused; a creation failure at a bad path is absorbed
+by the same `:uv_venv_fail` fallback chain as 14b/14c.
+
+---
+
+### Scenario 15: `PVW_CONDA_EXE` and its interaction with the conda self-heal flow
+
+**What's tested:** `self.corrupt.conda.override_exit` (`tests/selftest.ps1`), self-contained by
+construction (no ordering dependency on Miniconda already being installed elsewhere in the job,
+unlike its sibling corrupt-conda scenarios).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, both gating lanes (`real` job `90179708091` and
+`conda-full` job `90179708094`), both `pass: true`, `exitCode: 2`.
+
+`PVW_CONDA_EXE` overrides the resolved conda batch-file path unconditionally, the instant it's
+defined -- and because this happens BEFORE the "install Miniconda if missing" block, setting it
+also skips the Miniconda download/install entirely:
+
+```
+[DEBUG] Using super-user override for PVW_CONDA_EXE: <path>
+```
+
+**The special interaction, and the whole reason this variable gets its own scenario:** normally,
+when a health check on the resolved conda binary fails, the bootstrapper offers an interactive
+Y/N self-heal prompt that (on accept) deletes and rebuilds the entire Miniconda root. When
+`PVW_CONDA_EXE` is set, this self-heal path is skipped outright -- the very FIRST check in the
+corruption-handling subroutine, ahead of every other check including the CI auto-decline logic --
+because the bootstrapper will never auto-delete a path it doesn't own:
+
+```
+================================================================
+  CORRUPTED PYTHON ENVIRONMENT DETECTED
+================================================================
+
+  The local conda installation appears to be broken.
+  This can happen after a Windows update or OS migration
+  (example: DLL load error 0xc000007b).
+
+  Affected path: <MINICONDA_ROOT>
+
+  This binary was specified via PVW_CONDA_EXE:
+    <path to PVW_CONDA_EXE>
+
+  Automatic self-healing is not available for user-managed conda.
+  Please fix or replace the binary at the path above, then re-run.
+```
+
+followed by the exact error/exit sequence:
+
+```
+[ERROR] Corrupt user-managed conda (PVW_CONDA_EXE); fix manually.
+```
+
+and the process exits with code **2** -- notably, there is no Y/N prompt at all in this path, even
+for a genuinely interactive real user; the override check runs before the interactivity dispatch
+even has a chance to matter.
+
+---
+
+### Scenario 16: Drag-and-drop / CLI entry-file override (REQ-011 same-directory rule + REQ-002 priority)
+
+**What's tested:** three real, currently-passing NDJSON rows across two test files --
+`self.entry.req011.crossdir` and `self.entry.req011.sameDir` (`tests/selfapps_isolation.ps1`), and
+`self.entry.override` (`tests/selfapps_ux_hardening.ps1`, which specifically proves the override
+wins over auto-detection, not merely that dragging works at all).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, both gating lanes (`real` job `90179708091` and
+`conda-full` job `90179708094`), all three rows `pass: true` in both.
+
+A user can either type a `.py` filename as the first CLI argument to `run_setup.bat`, or literally
+drag a `.py` file onto the `.bat` file's icon in Windows Explorer (Windows translates the drop
+into the identical `%1` argument). **REQ-011's rule: the file must be in the SAME directory as
+`run_setup.bat` itself**, checked twice for defense-in-depth (once as an early pre-flight check,
+for instant feedback before any environment work begins, and once again inside the entry-selection
+subroutine itself). A cross-directory attempt genuinely terminates the whole process (`exit /b 1`,
+not merely a `call`-frame return) with:
+
+```
+[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder for environment cleanliness.
+```
+
+(This is the raw, untimestamped console line; the separately-written log-file copy is a shorter
+variant without the "for environment cleanliness" clause -- a real, source-confirmed difference,
+not a typo, confirmed via real CI capture: `[ERROR] REQ-011: Dragged files must reside in the
+bootstrapper root folder.`)
+
+A same-directory file succeeds and prints the filename (a historical bug that once printed this
+line with an EMPTY filename -- see `docs/agent-lessons-learned.md`'s "Provider-cascade dispatch is
+goto-based on purpose" entry -- is long fixed; the current, correct text is shown below):
+
+```
+*** Using drag-and-drop file: <filename>
+```
+
+**Interaction with the REQ-002 interactive entry picker: fully and structurally skipped.**
+Providing a valid same-directory file makes entry selection return immediately, before the
+auto-detection block (and therefore the picker, which is only ever invoked from inside that same
+block) is even reached -- this is REQ-002's documented "priority 0": a co-located override always
+wins over auto-detected names, and can never trigger the ambiguous-case timed picker. Confirmed
+positively (not just "dragging works," but that override genuinely beats auto-detection) by
+`self.entry.override`'s real capture: a scratch directory staged with BOTH `main.py` (which would
+win plain auto-detection by name-priority) and `zzz_override.py`, with `zzz_override.py` passed as
+the override -- the real run confirms the drag message names the override file, the entry-selected
+log line names `zzz_override.py` (not `main.py`), and the override file's own distinguishing output
+is what actually ran.
