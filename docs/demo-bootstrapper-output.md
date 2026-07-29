@@ -2062,28 +2062,37 @@ detected, per REQ-019's suppression-only convention.
 ### Scenario 31: pandas/openpyxl heuristic dependency augmentation (REQ-005.8)
 
 **What's tested:** `pandas_excel.translate`/`.conda.install`/`.conda.install.req006`/`.runtime`,
-`self.pandas.openpyxl.install`/`.import` (`tests/selfapps_pandas_excel.ps1`, `conda-full` lane,
-all real and passing).
+`self.pandas.openpyxl.install`/`.import` (`tests/selfapps_pandas_excel.ps1`, `conda-full` lane, all
+real and passing) -- plus a genuinely SEPARATE test that happens to exercise the same heuristic in
+a different scratch directory, `self.exe.warnfix.real` (`tests/selftest.ps1`'s `real` scenario,
+`conda-full` lane, also real and passing, `desc: "Heuristic pre-installed openpyxl via pandas
+heuristic; EXE succeeded"`).
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full` lane).
 
 `~prep_requirements.py` (`HP_PREP_REQUIREMENTS`) applies a small set of heuristic rules that inject
 a commonly-needed-but-undeclared package when its "parent" package is present -- pandas's
 `pd.read_excel()`/`to_excel()` need `openpyxl`/`xlsxwriter`, but pipreqs' static analysis has no
-way to see that a lazily-imported optional engine is actually required at runtime. Real capture:
+way to see that a lazily-imported optional engine is actually required at runtime. Real capture
+from `tests/~pandas_excel/`'s own scratch directory:
 
 ```
 [HEURISTIC] pandas->xlsxwriter
 ```
 
 (the console line is a compact tag; the two package names themselves are appended to the conda
-install spec list, confirmed by the real conda solve plan later in the same log: `openpyxl
-conda-forge/win-64::openpyxl-3.1.5-py314hccc76fc_3` and `xlsxwriter
-conda-forge/noarch::xlsxwriter-3.2.9-pyhd8ed1ab_0`). Both packages install cleanly and the frozen
-EXE's own PyInstaller warn-file scan confirms `openpyxl` was genuinely bundled and importable
-(`missing module named PIL - imported by openpyxl.drawing.image (optional)` -- an expected,
-harmless optional-dependency warning, not a real gap). This is `HP_ENV_MODE=conda`-lane-only
-coverage per this test file's own CI wiring (see `docs/agent-interconnect.md`'s
+install spec list, confirmed by the real conda solve plan later in the same `~pandas_excel` log:
+`openpyxl conda-forge/win-64::openpyxl-3.1.5-py314hccc76fc_3` and `xlsxwriter
+conda-forge/noarch::xlsxwriter-3.2.9-pyhd8ed1ab_0`, and both packages installed into
+`~pandas_excel`'s own `requirements.txt`/`~reqs_conda.txt`/`~reqs_pip.txt`). The claim that
+`openpyxl` ends up genuinely bundled and importable in a frozen EXE is confirmed by the SIBLING
+`self.exe.warnfix.real` test's OWN independent scratch directory (`tests/~selftest_warnfix_real/`,
+a different app that also exercises the pandas heuristic, per its own NDJSON `desc` text quoted
+above) rather than by `~pandas_excel`'s own PyInstaller warn-file -- its EXE's PyInstaller warn
+file shows only expected, harmless optional-dependency lines for the bundled `openpyxl`: `missing
+module named PIL - imported by openpyxl.drawing.image (optional)`, not a real gap. This is
+`HP_ENV_MODE=conda`-lane-only coverage per this test file's own CI wiring (see
+`docs/agent-interconnect.md`'s
 "selfapps_pandas_excel.ps1" note) -- the SAME heuristic logic also runs for uv/venv/embed/system
 providers via `requirements.txt` write-back (CLAUDE.md's own "Deep research pass" Closed Backlog
 entry on this exact fix), just not captured here since this test is conda-only by design.
