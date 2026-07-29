@@ -73,6 +73,15 @@ conflate:
   - [Scenario 23: Warnfix repair loop (success, and the failure that feeds the cascade)](#scenario-23-warnfix-repair-loop-success-and-the-failure-that-feeds-the-cascade)
   - [Scenario 24: Pre-flight guards actually firing](#scenario-24-pre-flight-guards-actually-firing)
   - [Scenario 25: Concurrent-instance lock contention (REQ-024)](#scenario-25-concurrent-instance-lock-contention-req-024)
+- [Part VII: Remaining branches (dependency source precedence, write-back, and misc)](#part-vii-remaining-branches-dependency-source-precedence-write-back-and-misc)
+  - [Scenario 26: Git config merge (`.gitignore`/`.gitattributes`, REQ-015)](#scenario-26-git-config-merge-gitignoregitattributes-req-015)
+  - [Scenario 27: Python-version precedence (REQ-004) and dependency-source precedence (`pyproject.toml`)](#scenario-27-python-version-precedence-req-004-and-dependency-source-precedence-pyprojecttoml)
+  - [Scenario 28: PEP 723 dependency write-back (REQ-005.11) -- the fresh-install trigger](#scenario-28-pep-723-dependency-write-back-req-00511----the-fresh-install-trigger)
+  - [Scenario 29: `HP_PVW_KNOWN_IDEMPOTENT` execute-mode discovery (REQ-005.13)](#scenario-29-hp_pvw_known_idempotent-execute-mode-discovery-req-00513)
+  - [Scenario 30: NI-VISA detection and install outcome (REQ-008)](#scenario-30-ni-visa-detection-and-install-outcome-req-008)
+  - [Scenario 31: pandas/openpyxl heuristic dependency augmentation (REQ-005.8)](#scenario-31-pandasopenpyxl-heuristic-dependency-augmentation-req-0058)
+  - [Scenario 32: Conda base periodic update](#scenario-32-conda-base-periodic-update)
+  - [Scenario 33: REQ-014 system-Python consent -- ACCEPT](#scenario-33-req-014-system-python-consent----accept)
 
 ---
 
@@ -1531,8 +1540,9 @@ line for the identical run:
 [INFO] Miniconda installed (JustMe fallback).
 ```
 
-**If JustMe ALSO fails** (both install types genuinely exhausted -- REAL CI CAPTURE, same shared
-label, same unconditional WARN wording):
+**If JustMe ALSO fails** (both installation options exhausted -- AllUsers was skipped, not
+attempted-then-failed, per the wording caveat above; REAL CI CAPTURE, same shared label, same
+unconditional WARN wording):
 
 ```
 [INFO] Not elevated; skipping AllUsers Miniconda install.
@@ -1817,3 +1827,317 @@ threshold), it's evicted automatically and the run proceeds normally with no use
 
 Staleness is deliberately age-based, not PID-liveness-based -- a dead process's PID can be
 recycled by an unrelated program, so trusting PID liveness for automated eviction would be unsafe.
+
+---
+
+## Part VII: Remaining branches (dependency source precedence, write-back, and misc)
+
+**Scope note:** this part collects everything from the plan's 5-pass checklist that didn't fit
+naturally into Parts III-VI: dependency and Python-version source precedence, the two write-back
+mechanisms (`runtime.txt`, PEP 723 headers), the optional execute-mode discovery flag, NI-VISA/
+pandas per-package special-casing, the periodic conda maintenance timer, and the one REQ-014
+branch (consent ACCEPT) that Part VI's Scenario 21 didn't cover (it only showed decline).
+
+---
+
+### Scenario 26: Git config merge (`.gitignore`/`.gitattributes`, REQ-015)
+
+**What's tested:** `self.ux.gitignore.merge`/`.preserve`/`.idem`, `self.ux.gitattributes.merge`
+(`tests/selfapps_ux_hardening.ps1`, `real` lane, all real and passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+On a fresh checkout with no `.gitignore`/`.gitattributes` at all, `:merge_git_config` (`run_setup.bat`)
+idempotently appends a standard block to each, guarded by an `findstr` signature check
+(`# Automated Python Bootstrapper Standard Ignores` / `...Attributes`) so a second run is a clean
+no-op rather than a duplicate append:
+
+```
+[INFO] REQ-015: Appending standard ignores to .gitignore.
+[INFO] REQ-015: Appending standard attributes to .gitattributes.
+```
+
+The appended `.gitignore` block (verbatim from source):
+
+```
+# Automated Python Bootstrapper Standard Ignores
+.*_env/
+.venv/
+.uv/
+.cache/
+.conda/
+dist/
+build/
+*~
+~*
+```
+
+and `.gitattributes`:
+
+```
+# Automated Python Bootstrapper Attributes
+*.bat eol=crlf
+*.cmd eol=crlf
+*.exe binary
+```
+
+Real evidence confirms all three properties the tests assert: the signature is appended
+(`self.ux.gitignore.merge`), any PRE-EXISTING content in the file (e.g. a user's own `node_modules/`
+line) survives the merge untouched (`self.ux.gitignore.preserve`, `nodeModulesFound:true`), and
+running the bootstrapper a second time does not duplicate the signature (`self.ux.gitignore.idem`,
+`sigCount:1`). This runs unconditionally on every bootstrap invocation, independent of provider or
+entry-file state -- it is one of the first things `run_setup.bat` does after the pre-flight guards.
+
+---
+
+### Scenario 27: Python-version precedence (REQ-004) and dependency-source precedence (`pyproject.toml`)
+
+**What's tested:** `pyproject.precedence.detect`/`.writeback` (`tests/selfapps_pyproject_precedence.ps1`,
+both real and passing) and `pyproject.dep.detect`/`.noproj` (same file). `pyproject.precedence.detect`
+ran in the `conda-full` lane in this capture (the `real` lane's own copy of the row emits
+`skip=true, reason=conda-not-installed-uv-first` since it happens to call `Get-CondaBatPath`, per
+`docs/agent-interconnect.md`'s skip-pattern convention for this test file); `pyproject.dep.*` and
+`.writeback` ran in `real`.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full`) for the version
+tiers, job `90179708091` (`real`) for the dependency-source precedence.
+
+These are two genuinely SEPARATE precedence systems that happen to both read `pyproject.toml` and
+are easy to conflate -- worth documenting distinctly.
+
+**REQ-004 (Python VERSION precedence, three tiers)**: Tier 1 `runtime.txt` beats Tier 2
+`pyproject.toml`'s `[project].requires-python` beats Tier 3 "let the selected provider pick latest,
+then write `runtime.txt` back." When `runtime.txt` is absent and `pyproject.toml` declares
+`requires-python = ">=3.10,<3.11"`, `~detect_python.py` (`HP_DETECT_PY`) resolves and forwards it
+(real NDJSON detail, `pyproject.precedence.detect`): `output":"python>=3.10,<3.11"`. After the
+environment is created under that pin, Tier 3's write-back fires since `runtime.txt` still didn't
+pre-exist:
+
+```
+[INFO] runtime.txt written: python-3.14.6
+```
+
+(real capture; `pyproject.precedence.writeback`'s own NDJSON row confirms `runtimeVersion:
+python-3.14.6` and `versionSatisfied:true` -- the provider satisfied the `>=3.10,<3.11` constraint
+with whatever conda-forge/uv resolved, and that CONCRETE resolved version, not the constraint
+string, is what gets written back). Malformed `pyproject.toml` TOML degrades gracefully rather than
+aborting the whole precedence chain (real capture, `self.pyproject.malformed`):
+
+```
+*** [WARN] pyproject.toml could not be parsed as valid TOML; falling back to requirements.txt or pipreqs.
+```
+
+logged compactly too: `[WARN] pyproject.toml TOML parse error; falling back.` -- the bootstrap then
+proceeds via Tier 3 (provider picks latest) exactly as if `pyproject.toml` had never existed.
+
+**Dependency-SOURCE precedence (a different mechanism, REQ-004/REQ-005.1 rows, unrelated to Python
+version)**: when `pyproject.toml` declares a real `[project].dependencies` array, it takes priority
+over any `requirements.txt` present -- this is decided independently of the version-tier logic
+above and can fire even when `runtime.txt` already exists. Real capture:
+
+```
+*** [INFO] pyproject.toml [project].dependencies found; overrides requirements.txt
+[INFO] pyproject.toml [project].dependencies detected
+[INFO] DEP_SOURCE=pyproject
+```
+
+`~pyproj_deps.py` (`HP_PYPROJ_DEPS`) is the helper that extracts the array; real NDJSON detail from
+`pyproject.dep.detect` shows it parsing a real two-line array (`"output":"requests>=2.28\r\ncolorama"`,
+`exitCode:0`). When `pyproject.toml` has no `[project]` section at all, the helper exits 1 with no
+output rather than a false match (`pyproject.dep.noproj`, `exitCode:1, outExists:false`) -- the
+bootstrapper then falls through to `requirements.txt`/pipreqs as usual.
+
+---
+
+### Scenario 28: PEP 723 dependency write-back (REQ-005.11) -- the fresh-install trigger
+
+**What's tested:** `self.pep723.writeback.fresh`/`.skipflag` (`tests/selfapps_pep723_writeback.ps1`,
+`real` lane, both real and passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+After a genuinely fresh, fully-successful `HP_ENV_MODE=uv` dependency install (see Part III,
+Scenario 9), `:pep723_writeback` promotes the resolved dependency set into the entry file's own
+PEP 723 header via `uv add --script`, so the pin travels with the user's source file rather than
+staying only in `requirements.txt`/the lock file:
+
+```
+[INFO] REQ-005.11: PEP 723 header write-back succeeded via uv add --script.
+```
+
+When there is nothing to write (a stdlib-only app, no third-party packages resolved), the
+subroutine correctly no-ops rather than writing an empty/misleading header -- also a REAL capture:
+
+```
+[INFO] REQ-005.11: PEP 723 write-back skipped (no packages to write).
+```
+
+This is `HP_ENV_MODE=uv`-only (v1 scope, see `docs/agent-interconnect.md`) and best-effort/non-gating
+-- any failure (malformed existing header not cleanly repairable, a file lock, non-UTF-8 source)
+logs a `[WARN]` and the bootstrap continues unaffected; `HP_SKIP_PEP723_WRITEBACK=1` suppresses it
+outright per REQ-019 (a genuine opt-OUT flag, not a gate). The warnfix-triggered SECOND write-back
+call (after a successful repair round) is functionally identical and not separately captured here
+-- same subroutine, same two possible outcomes, triggered from a different call site.
+
+---
+
+### Scenario 29: `HP_PVW_KNOWN_IDEMPOTENT` execute-mode discovery (REQ-005.13)
+
+**What's tested:** `self.pvw_idempotent.discovery` (`tests/selfapps_pvw_idempotent.ps1`, `uv` lane,
+real and passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708109` (`uv` lane).
+
+This is an opt-in super-user flag (not part of the default happy path -- Part III never sets it):
+when defined, `run_setup.bat` skips straight to actually RUNNING the entry file live via
+`uvx autopep723 <entry>` for dependency discovery, before pipreqs or any static analysis even
+starts. Real capture:
+
+```
+[INFO] REQ-005.13: HP_PVW_KNOWN_IDEMPOTENT set; running entry via uvx autopep723 for execute-mode discovery.
+[INFO] REQ-005.13: execute-mode discovery run succeeded (RAN:persisted).
+```
+
+The entry script's own stdout is inherited/passed through live during this discovery run (not
+captured or suppressed) -- real NDJSON detail confirms `stdoutPassthroughFound:true, appRan:true`
+-- and whatever dependency it needed (`requests`, in this real capture: `reqsHasRequests:true`) is
+persisted back into the PEP 723 header via `uv add --script`, then re-extracted into
+`requirements.txt` so the rest of the pipeline (pipreqs, Tier 1 autopep723 merge, the actual
+install) sees it too. Deliberately ADDITIVE, not a replacement for pipreqs -- pipreqs and Tier 1's
+own `autopep723 check` merge still run normally afterward to catch anything a single execution
+path didn't happen to exercise.
+
+---
+
+### Scenario 30: NI-VISA detection and install outcome (REQ-008)
+
+**What's tested:** `pyvisa.detect`/`.nivisa.branch`/`.nivisa.outcome`/`.nivisa.reason`/`.nivisa.disabled`
+(`tests/selfapps_pyvisa.ps1`, `real`/`conda-full` lanes, all real and passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real`) and job `90179708094`
+(`conda-full`) -- both lanes captured a genuine NI-VISA install ATTEMPT in this run (not just the
+"not required" skip), which is a more complete illustration than what an earlier pass in this
+document assumed was CI's only available evidence.
+
+When `pyvisa`/`visa` is detected as an import, the bootstrapper attempts a real NI-VISA driver
+install (downloads the online bootstrapper installer via curl, PE-validates it, then launches it
+under a bounded timeout):
+
+```
+[INFO] Detected pyvisa/visa import; NI-VISA install may be required.
+[VISA] download method: curl
+[VISA] installer file size: 6769400 bytes
+[VISA] installer PE check: PE_OK
+[INFO] Launching NI-VISA installer (timeout ceiling: 5400000 ms).
+[VISA] installer exit code: -125202
+[VISA] post-check waiting; retry 1/3 (installer_rc=-125202)
+[VISA] post-check waiting; retry 2/3 (installer_rc=-125202)
+[VISA] install_failed (post_check_timeout) installer_rc=-125202
+```
+
+This matches CLAUDE.md's already-documented Known Finding ("NI-VISA real install fails fast in CI")
+in shape and mechanism exactly -- a genuine, PE-valid installer download that exits fast and
+unattended-incompatible on a CI runner -- though the SPECIFIC installer exit code observed here
+(`-125202`) differs from that finding's originally-cited `-125083`. Consistent with the finding's
+own framing (an online bootstrapper installer failing an unattended install, not a fixed/stable
+error code), not a new discrepancy worth a separate backlog entry. The bootstrap proceeds
+gracefully regardless -- a failed NI-VISA install is never treated as a bootstrap failure, only
+logged and surfaced; the user's own program still builds and runs.
+
+Real evidence confirms the OTHER outcome branch too, via a dedicated `HP_SKIP_NIVISA=1` scenario in
+the same test file: `[VISA] skipped (not_required)`, with `skippedDisabled:true,
+noInstallAttempt:true` -- the flag suppresses the install attempt outright even when pyvisa IS
+detected, per REQ-019's suppression-only convention.
+
+---
+
+### Scenario 31: pandas/openpyxl heuristic dependency augmentation (REQ-005.8)
+
+**What's tested:** `pandas_excel.translate`/`.conda.install`/`.conda.install.req006`/`.runtime`,
+`self.pandas.openpyxl.install`/`.import` (`tests/selfapps_pandas_excel.ps1`, `conda-full` lane,
+all real and passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full` lane).
+
+`~prep_requirements.py` (`HP_PREP_REQUIREMENTS`) applies a small set of heuristic rules that inject
+a commonly-needed-but-undeclared package when its "parent" package is present -- pandas's
+`pd.read_excel()`/`to_excel()` need `openpyxl`/`xlsxwriter`, but pipreqs' static analysis has no
+way to see that a lazily-imported optional engine is actually required at runtime. Real capture:
+
+```
+[HEURISTIC] pandas->xlsxwriter
+```
+
+(the console line is a compact tag; the two package names themselves are appended to the conda
+install spec list, confirmed by the real conda solve plan later in the same log: `openpyxl
+conda-forge/win-64::openpyxl-3.1.5-py314hccc76fc_3` and `xlsxwriter
+conda-forge/noarch::xlsxwriter-3.2.9-pyhd8ed1ab_0`). Both packages install cleanly and the frozen
+EXE's own PyInstaller warn-file scan confirms `openpyxl` was genuinely bundled and importable
+(`missing module named PIL - imported by openpyxl.drawing.image (optional)` -- an expected,
+harmless optional-dependency warning, not a real gap). This is `HP_ENV_MODE=conda`-lane-only
+coverage per this test file's own CI wiring (see `docs/agent-interconnect.md`'s
+"selfapps_pandas_excel.ps1" note) -- the SAME heuristic logic also runs for uv/venv/embed/system
+providers via `requirements.txt` write-back (CLAUDE.md's own "Deep research pass" Closed Backlog
+entry on this exact fix), just not captured here since this test is conda-only by design.
+
+---
+
+### Scenario 32: Conda base periodic update
+
+**What's tested:** `self.conda.base.update` (`tests/selfapps_conda_update.ps1`) -- **NOT currently
+wired into any CI lane** (per `docs/agent-ndjson.md`'s own explicit note: the `HP_TEST_CONDA_UPDATE`
+injection flag was removed because it upgrades conda to a solver version that cascades failures
+across the rest of the `conda-full` job). Only the "skipped" branch below has real CI evidence.
+
+**Source (skipped branch):** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane,
+appears identically across every fresh scratch-dir bootstrap in the run).
+
+`:conda_base_update` runs `conda update -n base` on a timer (30-day threshold, seeded from
+`~conda.lastupdate` on first install) whenever `HP_ENV_MODE=conda`. On a genuinely first-ever
+install (the common case in a fresh CI scratch dir, and for most real first-time users), it
+correctly skips rather than updating a base that was just installed moments ago:
+
+```
+[INFO] Conda base update: skipped (first install).
+```
+
+**`[Extrapolated Branch]`** -- the actual 30-day-elapsed UPDATE-firing branch (`:cbu_run`,
+`run_setup.bat`) is not exercised by any current CI run (the only flag that could force it is
+deliberately disabled, per the note above). Traced from source: once the timestamp in
+`~conda.lastupdate` is more than 30 days old, the subroutine runs `conda update -n base -y` and
+would log something in the shape of `[INFO] Conda base update: running (last updated N days
+ago)...` followed by conda's own real update-solve output, then rewrites `~conda.lastupdate` to the
+current time on completion. This branch realistically only fires for a long-lived, repeatedly-reused
+project folder -- not the fresh-checkout scenarios this document otherwise captures -- and is
+correctly out of scope for a dedicated CI test per the reasoning already on record (a forced-update
+test previously broke conda's own solver in shared CI runners). No new CLAUDE.md backlog entry
+added -- this gap is already fully documented and deliberately accepted in
+`docs/agent-ndjson.md`'s "conda-full lane rows" section.
+
+---
+
+### Scenario 33: REQ-014 system-Python consent -- ACCEPT
+
+**What's tested:** `self.ux.system.gate.accept` (`tests/selfapps_ux_hardening.ps1`, `real` lane,
+real and passing). Part VI's Scenario 21 already showed the DECLINE branch of this same gate (as
+the terminal step of a full provider-cascade exhaustion); this scenario completes the pair.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+When every other REQ-009 provider tier has failed or been declined, the system-Python tier is
+still reached by any default, no-flag run -- it is gated solely by the REQ-014 consent prompt
+(Scenario 11 in Part III already documents the prompt's own framing text in full), never by an
+env-var the user would need to set. On ACCEPT, the bootstrapper proceeds to use whatever Python is
+already on the machine, unmanaged and unisolated:
+
+```
+[INFO] REQ-014: System Python consent: user accepted.
+[INFO] System fallback using C:\hostedtoolcache\windows\Python\3.12.10\x64\python.exe
+[BOOT] REQ-009: Selected Python provider: System Python (degraded).
+```
+
+`~bootstrap.status.json` still reports `state` as the degraded-but-successful `degraded_env` value
+(real NDJSON detail: `"state":"degraded_env","exitCode":0`) -- accepting this tier is a genuine,
+if suboptimal, path to a working run, not a failure. This is the ONLY REQ-009 tier gated by an
+explicit human consent prompt rather than an automatic fallback, precisely because it is the one
+tier that touches the user's real, shared Python environment instead of a private/disposable one.
