@@ -1490,6 +1490,7 @@ to be skipped for CI-safety reasons, so the "Downloading fresh copy..." line bel
   [INFO] Removing corrupt Miniconda installation...
   [INFO] Corrupt installation removed. Downloading fresh copy...
 ```
+
 ```
 [INFO] Self-healing: corrupt conda evicted from C:\Users\Public\Documents\Miniconda3.
 [INFO] Workspace: ...\tests\~selftest_heal_accept
@@ -1516,14 +1517,22 @@ passing).
 
 Miniconda install first attempts an AllUsers (machine-wide) install; if UAC rejects elevation (or
 the process simply isn't elevated), it skips straight to a JustMe (per-user) install instead, no
-wasted attempt:
+wasted attempt. **Both the "skip, never attempted" path and a genuine post-attempt AllUsers
+failure fall through to the same shared `:tci_justme` label** (`run_setup.bat`), whose log line
+unconditionally reads `[WARN] Miniconda AllUsers install failed; retrying with JustMe.` regardless
+of which of the two got it there -- so on the common non-elevated machine, the WARN text is a
+misnomer (AllUsers was never actually launched, only skipped), confirmed by this real capture
+pairing the "Not elevated; skipping" INFO line immediately with the "AllUsers install failed" WARN
+line for the identical run:
 
 ```
 [INFO] Not elevated; skipping AllUsers Miniconda install.
+[WARN] Miniconda AllUsers install failed; retrying with JustMe.
 [INFO] Miniconda installed (JustMe fallback).
 ```
 
-**If JustMe ALSO fails** (both install types genuinely exhausted -- REAL CI CAPTURE):
+**If JustMe ALSO fails** (both install types genuinely exhausted -- REAL CI CAPTURE, same shared
+label, same unconditional WARN wording):
 
 ```
 [INFO] Not elevated; skipping AllUsers Miniconda install.
@@ -1597,10 +1606,12 @@ verification failure and another cascade offer:
 [INFO] REQ-009: cascading provider uv to conda; re-attempting dependencies.
 *** [INFO] Trying the next Python provider (conda) to resolve dependencies...
 ```
+
 ```
 [INFO] REQ-009: cascading provider conda to embed; re-attempting dependencies.
 *** [INFO] Trying the next Python provider (embed) to resolve dependencies...
 ```
+
 ```
 [INFO] REQ-009: cascading provider embed to venv; re-attempting dependencies.
 *** [INFO] Trying the next Python provider (venv) to resolve dependencies...

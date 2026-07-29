@@ -1017,6 +1017,30 @@ further.)*
      so 2-3 representative invalid-value cases would likely cover the real risk without a
      combinatorial test matrix).
 
+- **11. `:tci_justme`'s `[WARN] Miniconda AllUsers install failed; retrying with JustMe.` log line
+   fires unconditionally, even when AllUsers was never actually attempted -- found 2026-07-29
+   while documenting the Miniconda install chain for `docs/demo-bootstrapper-output.md`'s Part VI,
+   flagged by a CodeRabbit review on PR #401 and verified against real CI evidence and the actual
+   `run_setup.bat` source before acting.** `:try_conda_install` has three distinct paths into the
+   shared `:tci_justme` label: (a) `HP_TEST_NOT_ELEVATED=1` (test-only, simulates a non-admin
+   environment) skips straight to `:tci_justme` with no AllUsers attempt at all; (b) a real
+   `fsutil dirty query %systemdrive%` failure (the genuine non-elevated-process detection) does
+   the same; (c) a real, genuine AllUsers installer failure (`:run_installer_timeout` returning
+   nonzero) also falls through to `:tci_justme`. All three paths log the identical
+   `[WARN] Miniconda AllUsers install failed; retrying with JustMe.` line at `:tci_justme` itself,
+   regardless of which path got there -- so on the common non-elevated real-world machine (paths a
+   or b), the WARN text is a misnomer: AllUsers was never launched, only skipped, yet the log
+   claims it "failed." Confirmed directly against real CI capture (run `30328748330`, `justme-test`
+   and `uv` lanes): both the `[INFO] Not elevated; skipping AllUsers Miniconda install.` line and
+   the `[WARN] ... AllUsers install failed ...` line appear back-to-back for the identical
+   non-elevated test run, with no genuine AllUsers attempt in between. **Not fixed in this pass**
+   -- this PR is documentation-only (see this file's own standing policy on scope); the doc itself
+   was corrected to explain the shared-label/unconditional-wording behavior accurately rather than
+   presenting the two log lines as if AllUsers were genuinely attempted-then-failed. Suggested fix
+   for a future pass: track whether AllUsers was actually launched (e.g. a flag set only inside
+   the real `:run_installer_timeout` call, checked at `:tci_justme` to select between "skipping"
+   and "failed" wording) rather than a single unconditional message covering all three paths.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 **Scope, and how this differs from Active Backlog and Known Findings**: an Active Backlog item is
