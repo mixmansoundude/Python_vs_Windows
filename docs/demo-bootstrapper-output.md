@@ -56,6 +56,9 @@ conflate:
   - [Scenario 9: Provider acquisition and dependency install (uv-first)](#scenario-9-provider-acquisition-and-dependency-install-uv-first)
   - [Scenario 10: Build, verify, and the final status panel](#scenario-10-build-verify-and-the-final-status-panel)
   - [Scenario 11: The two elective prompts a real user faces after every successful run](#scenario-11-the-two-elective-prompts-a-real-user-faces-after-every-successful-run)
+- [Part IV: Second run, nothing changed (repeat-run fast paths)](#part-iv-second-run-nothing-changed-repeat-run-fast-paths)
+  - [Scenario 12: The EXE fast path (nothing changed at all)](#scenario-12-the-exe-fast-path-nothing-changed-at-all)
+  - [Scenario 13: Source touched just enough to force a rebuild, but the environment is reused](#scenario-13-source-touched-just-enough-to-force-a-rebuild-but-the-environment-is-reused)
 
 ---
 
@@ -984,3 +987,160 @@ scenario's two prompts, CI logs genuinely do show the complete question for that
 CAPTURE, same run, job `90179708091`) -- only its own terse follow-up `"Your choice [y/n]: "` line
 is hidden the same way. Neither of these two gates fires on this Part's happy path; both are
 documented fully in Pass 4.
+
+---
+
+## Part IV: Second run, nothing changed (repeat-run fast paths)
+
+**Scope note:** this Part documents the success side of running the bootstrapper a SECOND time in
+the same folder with nothing changed -- same entry file, same requirements, no test flags. The
+FAILURE side of one of these fast paths (a stale cached EXE that's kept and later exits non-zero)
+is already documented as Scenario 7b (Part II); this Part doesn't repeat that. Evidence again
+comes from a recent clean green run (`30328748330`, commit `5872028`) rather than one single
+dedicated "repeat run" test file -- `tests/selfapps_envsmoke.ps1` re-invokes `run_setup.bat` a
+second time in the same scratch directory with nothing changed (the EXE fast path), and
+`tests/selftest.ps1`'s stub scenario and `tests/selfapps_depcheck.ps1` go one step further --
+`Run 1` (fresh bootstrap), `Run 2` (identical, EXE fast path), then deliberately touch the source
+file and run a THIRD time -- exercising the "source changed just enough to force a rebuild, but
+the environment itself doesn't need recreating" fast paths this Part's second scenario covers.
+
+### Scenario 12: The EXE fast path (nothing changed at all)
+
+**What's tested:** `self.fastpath` (`tests/selfapps_envsmoke.ps1`'s second, back-to-back
+invocation of `run_setup.bat` in the same scratch directory, zero CLI arguments, nothing touched).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` ("real" lane), the console
+capture of that second invocation (`~envsmoke_fastpath.log`) plus the matching block of
+`~setup.log`.
+
+**What fires FIRST, before any provider/entry/dependency logic even starts:** `:try_fast_exe` is
+called immediately after environment-name derivation and the Python-file count, right at the top
+of the file -- before uv acquisition, before Miniconda, before `:determine_entry`, before
+anything else. It runs exactly ONE real check: compare `dist\<env>.exe`'s modification time
+against the newest non-infrastructure `.py` file's modification time (via the embedded
+`HP_FAST_CHECK` helper). If the EXE is newer-or-equal, the whole rest of the bootstrap short-
+circuits straight to `:success`.
+
+**Non-interactive console text (what CI captures -- this is also exactly what a real user would
+see if they ran the bootstrapper non-interactively, e.g. from a script):**
+
+```
+[WARN] UNC paths not supported
+Tue 07/28/2026  4:30:33.81 [INFO] Environment name: _envsmoke
+Tue 07/28/2026  4:30:33.83 [INFO] Host OS: Microsoft Windows [Version 10.0.26100.32995]
+Tue 07/28/2026  4:30:34.04 [INFO] Host PowerShell: 5.1.26100.32995
+Tue 07/28/2026  4:30:34.10 [INFO] Python file count: 1
+Tue 07/28/2026  4:30:34.98 [INFO] Fast path: reusing dist\_envsmoke.exe
+Tue 07/28/2026  4:30:35.96 [INFO] Entry smoke exit=0
+Tue 07/28/2026  4:30:35.97 [STATUS] Run Status: SUCCESS (Exit Code: 0)
+Tue 07/28/2026  4:30:35.99 [INFO] Fast path: skipping PyInstaller rebuild for existing dist\_envsmoke.exe
+```
+
+No "SETUP COMPLETE" postflight banner appears -- confirmed both structurally (that dispatch is
+gated on the fast path NOT having fired) and in the raw capture, which ends right after the last
+line above. `~setup.log` shows one extra line between "Fast path: reusing" and "Entry smoke
+exit=0" that never reaches the console (`Fast path command: "dist\_envsmoke.exe" > "~run.out.txt"
+2> "~run.err.txt"`) -- a raw log-file-only write, not part of what a user actually sees.
+
+**Interactive console text (what a genuine double-click end user sees -- differs from CI because
+`HP_CI_LANE` is unset, so `:try_fast_exe` takes its OTHER branch, `:try_fast_exe_probe`, which
+launches the cached EXE through the same never-kills fail-fast probe mechanism Scenario 5
+documents rather than the plain redirect above).** Assembled from real, independently-confirmed
+fragments (the header and PID lines are genuine captured text from a different test that forces
+this same interactive branch; their pairing into a clean, fast, successful sequence is
+`[Extrapolated Branch]`, grounded directly in source rather than guessed):
+
+```
+[WARN] UNC paths not supported
+Tue 07/28/2026  4:30:33.81 [INFO] Environment name: _envsmoke
+Tue 07/28/2026  4:30:33.83 [INFO] Host OS: Microsoft Windows [Version 10.0.26100.32995]
+Tue 07/28/2026  4:30:34.04 [INFO] Host PowerShell: 5.1.26100.32995
+Tue 07/28/2026  4:30:34.10 [INFO] Python file count: 1
+Tue 07/28/2026  4:30:34.98 [INFO] Launching your program now via the cached standalone EXE (PyInstaller build): dist\_envsmoke.exe
+[INFO] Process ID 7692. If it seems stuck: Task Manager > Details tab > find this PID > End Task (this window stays open).
+                                                          <- the app's own live stdout/stderr tees here, if any
+Tue 07/28/2026  4:30:35.96 [INFO] Entry smoke exit=0
+Tue 07/28/2026  4:30:35.97 [STATUS] Run Status: SUCCESS (Exit Code: 0)
+Tue 07/28/2026  4:30:35.99 [INFO] Fast path: skipping PyInstaller rebuild for existing dist\_envsmoke.exe
+Press any key to continue . . .
+```
+
+The "still running after Nms, keep waiting?" WARN line that the fail-fast probe can print is
+conditional on the process actually exceeding its short classification window (confirmed absent
+here via real CI capture of the same forced-interactive mechanism failing fast in an unrelated
+scenario) -- omitted above since "nothing changed, app still runs fine" implies a normal-speed
+exit. `Press any key to continue . . .` is `cmd.exe`'s own native output from a `pause` at the
+very end of the main line, gated on `HP_CI_LANE` being unset -- real end-user only, never appears
+in any CI log.
+
+**Why it's fast -- everything this run skips entirely, not just runs faster:** once `:try_fast_exe`
+succeeds, the bootstrap jumps to `:success` before any of the following ever execute: the
+`HP_CI_SKIP_ENV` dispatch, the entire uv acquisition block (no download, no `uv venv`, no
+`UV_PYTHON_PREFERENCE` even gets set), `:select_conda_bat` and all Miniconda install/probe logic,
+the env-state fast path (moot -- conda was never considered), `:conda_base_update`, the
+`HP_PREP_REQUIREMENTS` heuristic dependency augmentation, `:determine_entry` (the cached EXE's
+identity is trusted as-is, no REQ-002 re-selection), pipreqs entirely (no `pipreqs.install`/
+`pipreqs.run`, no `requirements.auto.txt` diff), and -- the single biggest reason this is fast --
+`:run_entry_smoke` never runs, meaning no `py_compile` preflight and no PyInstaller build
+invocation of any kind, cached or otherwise. The reused EXE genuinely gets EXECUTED, not merely
+detected -- confirmed by the real `Entry smoke exit=0`/`[STATUS]` lines above, which come from an
+actual process launch.
+
+---
+
+### Scenario 13: Source touched just enough to force a rebuild, but the environment is reused
+
+**What's tested:** `tests/selftest.ps1`'s stub scenario and `tests/selfapps_depcheck.ps1`, both of
+which do Run 1 (fresh) -> Run 2 (Scenario 12's EXE fast path) -> touch the entry file's content
+and modification time -> Run 3, which is the case documented here: the EXE fast-path timestamp
+check now fails (source is newer than the cached EXE), so PyInstaller reruns and produces a new
+EXE -- but the ENVIRONMENT itself (the uv venv or conda env, and already-satisfied dependencies)
+is recognized as still valid and reused rather than recreated from scratch.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, jobs `90179708091` ("real" lane, uv-first) and
+`90179708094` ("conda-full" lane).
+
+**uv-first lane** (`.uv_env\Scripts\python.exe` already exists and its `import pip` canary
+succeeds, so venv creation is skipped -- the gate just above `:uv_venv_ready`):
+
+```
+[INFO] uv: reusing existing .uv_env
+[INFO] HP_ENV_MODE=uv
+[BOOT] REQ-009: Selected Python provider: UV.
+```
+
+**conda-full lane** (`~env.state.json` is valid and the conda env's `python.exe` is present --
+`:env_state_fast_path`; this mechanism is explicitly bypassed in uv mode, since it exists purely
+for the conda-specific case):
+
+```
+[INFO] Env-state fast path: reusing conda env _selftest_stub.
+[BOOT] REQ-009: Selected Python provider: Conda (Portable) [fast path].
+```
+
+Confirmed firing across every scratch env in that job's log (not a one-off), so this is a broadly
+reliable fast path, not a narrow coincidence. `self.stub.state_skip`'s own NDJSON assertion checks
+for EITHER phrase, which is why one shared test scenario validates both depending on which lane
+it runs under.
+
+**Both lanes then converge on the same dependency-install skip, immediately after dependency
+discovery** (pipreqs + the Tier 1 autopep723 merge from Scenario 9 still run normally here --
+neither of the two fast paths above touches dependency DISCOVERY, only environment creation):
+
+```
+[INFO] Dep-check: all pipreqs packages satisfied in lock; skipping conda install.
+```
+
+This message literally says "skipping conda install" even in uv mode -- confirmed intentional
+(a shared log line covering both providers via the same `HP_DEP_SKIP` flag), not a copy-paste
+bug, so don't read it as evidence the wrong provider was used. **One nuance worth flagging so it
+isn't misread as a second, real install still happening:** in conda mode specifically, an
+unconditional "pip gap fill from `requirements.txt`" step still runs immediately after this skip
+line, even though nothing was found missing -- it's a fast, harmless no-op safety net (confirmed
+completing in well under a second in the real capture), not evidence the skip failed to take
+effect.
+
+**Net effect for the user:** a rebuild triggered by an ordinary source edit is meaningfully faster
+than the very first run -- no fresh uv/conda acquisition, no fresh venv/env creation, and (when
+nothing about the dependency set changed) no re-running of the actual install step -- while still
+producing a genuinely fresh PyInstaller build and a real verification run of the new EXE.
