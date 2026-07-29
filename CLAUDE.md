@@ -1041,6 +1041,48 @@ further.)*
    the real `:run_installer_timeout` call, checked at `:tci_justme` to select between "skipping"
    and "failed" wording) rather than a single unconditional message covering all three paths.
 
+- **12. `:embed_dl_retry`'s genuine mid-download-failure-then-retry-once path (REQ-009 Tier 5) has
+   no CI test hook at all -- found 2026-07-29 while documenting the embed-tier download for
+   `docs/demo-bootstrapper-output.md`'s Part VI, Scenario 20.** Confirmed via `run_setup.bat`
+   source and a repo-wide grep: only two test hooks exist for this tier --
+   `HP_TEST_FORCE_EMBED_FAIL` (immediate decline, no download attempted at all) and
+   `HP_TEST_FORCE_EMBED_REAL` (a full, real, successful download end-to-end). Neither exercises
+   the retry branch itself: `:embed_dl_retry`'s own `[WARN] embed fallback: download failed;
+   retrying once.` line (both the curl and PowerShell download attempts failing on the FIRST try,
+   then succeeding on the second) and the sibling checksum/extraction-failure retry branch
+   (`[WARN] embed fallback: checksum verification or extraction failed; retrying download once.`)
+   are both reachable in principle but have never been observed firing in any real CI run
+   examined for this documentation pass -- the demo doc's own Scenario 20 correctly labels the
+   retry-branch text `[Extrapolated Branch]`, cited from source, for exactly this reason. **Not
+   fixed in this pass** -- documentation-only task; a dedicated test would need a new hook (e.g.
+   `HP_TEST_FORCE_EMBED_DL_FAIL_ONCE=1`, mirroring the existing `HP_TEST_FORCE_CONDA_CREATE_
+   NETWORK_FAIL`-style one-shot-then-succeed pattern already used for REQ-022's conda-create
+   retry) that fails the first curl+PowerShell attempt deterministically without touching the
+   real network, then lets the second attempt through for real. Suggested as a small, well-scoped
+   future addition to `tests/selfapps_ux_hardening.ps1` alongside the existing
+   `self.embed.fallback.decline`/`.real` scenarios.
+
+- **13. `self.warn.longpath`'s own real CI run examined for this documentation pass shows an
+   INCONCLUSIVE result (`ranBootstrap:false`), yet the test still reports an overall pass -- found
+   2026-07-29 while documenting the path-length pre-flight guard for
+   `docs/demo-bootstrapper-output.md`'s Part VI, Scenario 24.** The test's own NDJSON row in run
+   `30328748330` (`real` lane) reads `warnFound: false, ranBootstrap: false, pathLen: 312` -- the
+   scratch directory this specific CI run created did not actually reach a state where the
+   sub-bootstrap could run at all (most likely an OS-level path-length limit on the CI runner
+   itself was hit before `run_setup.bat`'s own ~200-char check ever got a chance to fire), yet the
+   test apparently tolerates this as a passing outcome rather than treating it as inconclusive.
+   This means the guard's actual WARN-firing behavior (`*** WARNING: Script path is <N> chars.
+   Paths near 260 chars may cause cmd.exe failures.`) has NOT been positively confirmed by this
+   specific real-CI observation -- the demo doc's own Scenario 24 correctly labels the guard's
+   exact text `[Extrapolated Branch]`, cited from source, for this reason, rather than presenting
+   an inconclusive test result as if it were a real, confirmed capture. **Not fixed in this pass**
+   -- documentation-only task, and root-causing exactly why the scratch directory's own path
+   didn't reach the runner's practical limit (or why the test tolerates `ranBootstrap:false`)
+   needs its own investigation into `tests/selftest.ps1`'s long-path scenario, not a rushed fix
+   folded into an unrelated docs PR. Worth checking in a future pass whether this is a persistent,
+   reproducible gap (in which case the test's own pass/fail logic may need tightening) or a
+   one-off artifact of this particular run's CI-runner path layout.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 **Scope, and how this differs from Active Backlog and Known Findings**: an Active Backlog item is
