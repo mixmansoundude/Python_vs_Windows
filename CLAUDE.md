@@ -915,6 +915,108 @@ further.)*
     real-CI proof the item's own status note above was waiting on; nothing further is pending
     for item 7.
 
+- **8. `[WARN] UNC paths not supported` fires unconditionally in CI on an ordinary (non-UNC) local
+   path -- found 2026-07-29 while gathering real console-output evidence for
+   `docs/demo-bootstrapper-output.md`'s default-happy-path documentation pass, not yet
+   investigated further.** `run_setup.bat:57-58` does
+   `echo %~dp0 | findstr /C:"\\\\" >nul` / `if not errorlevel 1 echo [WARN] UNC paths not
+   supported` -- per the C-runtime backslash-before-quote rule already documented in
+   `docs/agent-lessons-learned.md` ("A single trailing backslash before a closing quote silently
+   corrupts a subprocess argument"), `\\\\"` collapses to a 2-backslash literal search pattern,
+   so this is searching `%~dp0` for two CONSECUTIVE backslashes anywhere in the string -- not
+   testing for a UNC prefix (that's the separate, independent check two lines below at line 59,
+   `if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the louder `*** WARNING: UNC/network
+   paths detected...` banner). Pulled `tests/~envsmoke/~envsmoke_bootstrap.log` (the full,
+   unredirected console capture of a real, non-`HP_CI_SKIP_ENV` bootstrap) from a recent clean
+   green run (`30328748330`, all lanes green) across 6 lanes (`real`, `uv`, `conda-full`,
+   `justme-test`, `contract-uv`, `contract-uv-fail`) and found the `[WARN] UNC paths not
+   supported` line as the very FIRST line of console output in all 6, every single time, against
+   an entirely ordinary CI checkout path (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\
+   ~envsmoke\`) -- not a UNC path by any reasonable definition. No test in the repo asserts on
+   or references this string at all (confirmed via a repo-wide grep), so this has apparently been
+   firing on every single CI run, unnoticed, indefinitely.
+   - **Ruled out one theory directly**: the companion `HP_SCRIPT_LAUNCH_DIR:~0,2` check (tests
+     whether the path literally STARTS with `\\`) never fires in the same logs (zero hits for
+     "UNC/network paths detected" across all 6 lanes) -- so whatever is producing a
+     double-backslash for the `findstr` search must be sitting mid-string, not at the start of
+     `%~dp0`. This is real, if partial, information: it means the failure mode is NOT "the whole
+     checkout path is somehow UNC," which was the first, most obvious guess.
+   - **Root cause NOT identified.** Best unconfirmed guess: something about how GitHub-hosted
+     Windows runners provision the `D:\a\...` work directory (`actions/checkout`'s own path
+     construction, or a junction/reparse point backing that drive) introduces a duplicated
+     separator somewhere in the resolved `%~dp0` value for a batch file invoked from inside it --
+     but this was NOT verified (no way to inspect the raw `%~dp0` bytes directly from this
+     research pass; would need a dedicated diagnostic echo added to a test lane, e.g.
+     temporarily `echo RAW_DP0=[%~dp0]` to a log file, to actually see the string with delimiters
+     visible).
+   - **Whether this also fires for a genuine end-user double-click (not CI, no nested
+     `cmd`/PowerShell invocation, an ordinary local folder) is UNCONFIRMED** -- this sandbox has
+     no Windows machine to test on, and no real end-user report exists either way. If it's
+     CI-runner-specific plumbing, it's cosmetic noise (one extra harmless WARN line, unlikely to
+     confuse a real user since it never fires for them); if it also fires for real users on an
+     ordinary local path, it's a real, previously-unknown false-positive bug worth fixing (most
+     likely fix shape: tighten the `findstr` pattern to require the double-backslash appear
+     specifically in a network-path position, or just remove this redundant check entirely since
+     the very next lines already do a correct, more targeted UNC-prefix check).
+   - **Not investigated further in this pass** -- out of scope for a documentation-only task, and
+     genuinely needs either a dedicated diagnostic-logging CI experiment (cheap, doable in a
+     future loop) or a real Windows machine to resolve with confidence. Documented in
+     `docs/demo-bootstrapper-output.md`'s new default-happy-path scenario as an observed,
+     unexplained anomaly rather than either asserting it's harmless or that it's a bug.
+
+- **9. README.md's `[REQ-018]` bullet describing the mandatory verification run as
+   "force-stopped after a short interval even if running fine" is stale relative to the
+   activity-aware-kill behavior actually shipped later -- found 2026-07-29 via a CodeRabbit review
+   comment on PR #400 that (correctly) flagged a possible mismatch between README's REQ-018 prose
+   and `docs/demo-bootstrapper-output.md`'s new Scenario 11.** Traced it down: the real, current
+   WARN text (quoted verbatim in Scenario 10 from a real CI capture) says the opposite of what
+   README currently claims -- "if it stays completely silent for about 30 seconds it will be
+   force-stopped, but any output (including a prompt waiting on your input) keeps it running as
+   long as needed" -- matching CLAUDE.md's own already-documented Closed Backlog entry,
+   "Activity-aware EXE-smoke kill (docs/plan-cli-interactive-verification.md P0, requirement 3) --
+   resolves Open Question 1." That feature shipped after README's REQ-018 section was last written
+   and the corresponding bullet was apparently never updated to match. **Not fixed in this pass**
+   -- deliberately left for its own small, dedicated pass rather than edited as a side effect of an
+   unrelated docs-only PR (`docs/demo-bootstrapper-output.md`'s own scope): README.md is this
+   repo's authoritative PRD, and CLAUDE.md's own instruction is to reference it, not duplicate or
+   casually rewrite it. `docs/demo-bootstrapper-output.md`'s Scenario 11 already carries an inline
+   note explaining the discrepancy so a reader isn't left confused between the two docs in the
+   meantime. Suggested fix shape: update the REQ-018 bullet's "force-stopped after a short interval
+   even if running fine" clause to describe the activity-aware condition instead (only a
+   completely silent process is force-stopped; any output at all keeps the run alive
+   indefinitely).
+
+- **10. Two of the five `PVW_*` super-user override variables (`PVW_PYTHON_EXE`, `PVW_WORKSPACE`)
+   have ZERO test coverage of any kind, and ALL FIVE have zero coverage of their invalid-value
+   behavior -- found 2026-07-29 while documenting them for `docs/demo-bootstrapper-output.md`'s
+   Part V.** Confirmed via a repo-wide search across every `tests/*.ps1` file and every lane of a
+   recent clean CI run (`30328748330`): `PVW_PYTHON_EXE` and `PVW_WORKSPACE` have zero references
+   anywhere -- not even a valid-value smoke test. `PVW_UV_EXE` (`tests/selfapps_contract_uv.ps1`)
+   and `PVW_TARGET_PY` (`tests/selfapps_pipgap.ps1`) each have real, valid-value end-to-end CI
+   coverage, but that coverage is incidental to each test's own actual purpose (avoiding a
+   redundant uv re-download; pinning a Python version for an unrelated opencv-python wheel test),
+   not a dedicated test of the override mechanism itself. `PVW_CONDA_EXE` is the one exception with
+   dedicated, purpose-built coverage (`self.corrupt.conda.override_exit`, CLAUDE.md's own earlier
+   Active Backlog item 12 history).
+   - **No test anywhere exercises an INVALID value for any of the five** -- e.g. `PVW_PYTHON_EXE`
+     pointing at a nonexistent file, `PVW_UV_EXE` pointing at something that isn't actually uv,
+     `PVW_TARGET_PY` set to a malformed version spec, `PVW_WORKSPACE` pointing at an unwritable or
+     already-occupied-by-something-else path. Static tracing (done for the demo doc, see Part V)
+     shows each case is plausibly absorbed gracefully by pre-existing fallback/cascade machinery
+     (the REQ-009 provider cascade, the `:uv_venv_fail` chain, the interpreter smoke-test WARN),
+     never an uncontrolled crash -- but this is reasoned from source, not empirically confirmed by
+     any real run.
+   - **Not fixed in this pass** -- documentation-only task, and building 5+ new dedicated test
+     scenarios (a `PVW_PYTHON_EXE`-focused test, a `PVW_WORKSPACE`-focused test, plus invalid-value
+     variants for all five) is real, multi-scenario engineering work, not a quick addition. Suggested
+     shape for a future pass: one new `tests/selfapps_pvw_overrides.ps1`-style file (mirroring the
+     existing `tests/selfapps_ux_hardening.ps1`/`...contract_uv.ps1` pattern) covering the two
+     currently-zero-coverage variables' valid-value paths first (cheapest, highest-value gap), then
+     a smaller number of representative invalid-value scenarios (not all 5x2 combinations -- the
+     failure-absorption mechanism is shared/generic across most of them per the static trace above,
+     so 2-3 representative invalid-value cases would likely cover the real risk without a
+     combinatorial test matrix).
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 **Scope, and how this differs from Active Backlog and Known Findings**: an Active Backlog item is
