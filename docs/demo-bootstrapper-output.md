@@ -597,9 +597,10 @@ Tue 07/28/2026  4:29:43.96 [INFO] REQ-015: Appending standard ignores to .gitign
 ```
 
 **The very first console line is an unexplained anomaly, not a mistake in this doc.** `[WARN] UNC
-paths not supported` (`run_setup.bat:57-58`) fired on 6/6 checked lanes against an entirely
-ordinary local CI checkout path (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\~envsmoke\`) --
-not a UNC path. The companion, independent UNC-prefix check two lines below (`if
+paths not supported` (the top-of-file `findstr`-based UNC check, in the file's unlabeled prologue
+before the first `:label`) fired on 6/6 checked lanes against an entirely ordinary local CI
+checkout path (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\~envsmoke\`) -- not a UNC path. The
+companion, independent UNC-prefix check a couple of lines below it (`if
 "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the much louder `*** WARNING: UNC/network
 paths detected...` banner) never fires in the same logs, so whatever produces this WARN is not
 "the whole path is UNC" -- root cause unconfirmed. See CLAUDE.md Active Backlog item 8 for the
@@ -611,28 +612,29 @@ be confused by it.
 
 Between that line and `REQ-015`, nothing else prints -- `HP_APP_ARGS` capture (REQ-026, pure
 variable assignment), the workspace-path-exists check, `cd /d`, and `HP_SCRIPT_ROOT` construction
-(`run_setup.bat:34-79`) are all silent by design on a clean pass.
+(the rest of that same unlabeled prologue) are all silent by design on a clean pass.
 
 **The four REQ-025-family pre-flight guards (path-length, OneDrive, system-directory, disk-space --
-`run_setup.bat:103-178`) are completely silent unless they fire.** Confirmed by both the absence
-of any related text anywhere in the captured log, AND by reading the source: none of the four has
-an `else` branch that prints a success/clean message -- each is a bare `if (...) ( echo/log ... )`
-with nothing on the false path. A real user on an ordinary setup (short path, not under OneDrive,
-not under `Windows`/`Program Files`, plenty of free disk) sees zero output from any of these four
-checks.
+also part of that unlabeled prologue) are completely silent unless they fire.** Confirmed by both
+the absence of any related text anywhere in the captured log, AND by reading the source: none of
+the four has an `else` branch that prints a success/clean message -- each is a bare `if (...) (
+echo/log ... )` with nothing on the false path. A real user on an ordinary setup (short path, not
+under OneDrive, not under `Windows`/`Program Files`, plenty of free disk) sees zero output from
+any of these four checks.
 
-**`:acquire_lock` (`run_setup.bat:4368-4404`) is equally silent on an uncontended acquire.** The
-`mkdir "%HP_LOCK_DIR%"` call succeeds immediately (no prior lock directory), jumps straight to
-`:lock_acquired`, writes a transient `~bootstrap.lock\owner.txt` marker (a file, not console
-output), and returns -- every `echo`/`:log` call inside `:acquire_lock` lives inside the
-"another instance is already running" branch, only reached on a genuine `mkdir` failure. The lock
-directory (and its `owner.txt`) is gone again by the time the run completes (`:release_lock`,
-called from both `:die` and `:success`, is equally silent).
+**`:acquire_lock` is equally silent on an uncontended acquire.** The `mkdir "%HP_LOCK_DIR%"` call
+succeeds immediately (no prior lock directory), jumps straight to `:lock_acquired`, writes a
+transient `~bootstrap.lock\owner.txt` marker (a file, not console output), and returns -- every
+`echo`/`:log` call inside `:acquire_lock` lives inside the "another instance is already running"
+branch, only reached on a genuine `mkdir` failure. The lock directory (and its `owner.txt`) is
+gone again by the time the run completes (`:release_lock`, called from both `:die` and `:success`,
+is equally silent).
 
 **Entry detection for the common single-`.py`-file case** (`:determine_entry` ->
-`tools/find_entry.py` -> `:record_chosen_entry`, `run_setup.bat:2549-2711`) produces exactly one
-line, sourced from `tests/~envsmoke/~setup.log` (same run, real `run_setup.bat:1768` production
-call site -- not the separate `HP_CI_SKIP_ENV`-only `:ci_skip_entry` implementation that
+`tools/find_entry.py` -> `:record_chosen_entry`) produces exactly one line, sourced from
+`tests/~envsmoke/~setup.log` (same run, the real, non-`HP_CI_SKIP_ENV` `:determine_entry` call
+site inside `:after_env_bootstrap` -- not the separate `HP_CI_SKIP_ENV`-only `:ci_skip_entry`
+implementation that
 `tests/selfapps_entry.ps1`/`selfapps_single.ps1` exercise, which looks textually similar but is a
 different code path):
 
@@ -645,9 +647,9 @@ This is identical whether the sole `.py` file has a preferred name (`main.py`/`a
 same way, with zero stderr diagnostics either way) -- the interactive picker
 (`:pick_entry_interactive`) is only ever reached when more than one `.py` file is ambiguous, which
 this scenario deliberately doesn't have. `:determine_entry` actually runs twice in a normal
-bootstrap (once early, for PEP 723/autopep723 discovery purposes at `run_setup.bat:1033`, and once
-again at line 1768 for the real entry-selection that produces this console line) -- only the
-second call's result is what a user sees echoed.
+bootstrap (once early, for PEP 723/autopep723 discovery purposes, well before `:after_env_bootstrap`,
+and once again at the real entry-selection call site inside `:after_env_bootstrap` that produces
+this console line) -- only the second call's result is what a user sees echoed.
 
 ---
 
@@ -687,9 +689,10 @@ starts this way, matching a real user's first-ever double-click):
 and "acquired" lines, plus uv's own managed-CPython fetch triggered by the version-detection call
 -- `Downloading cpython-3.14.6-windows-x86_64-none (download) (21.5MiB)` /
 `Downloaded cpython-3.14.6-windows-x86_64-none (download)`. On a REPEAT run with `~uv_bin` already
-populated, `run_setup.bat:537`'s cached-binary branch instead logs `[INFO] uv: cached binary found
-at ~uv_bin\uv.exe` -- not independently captured here since every CI scratch dir is fresh; see
-Part IV/Pass 2 for the dedicated repeat-run treatment.)
+populated, the cached-binary branch just before `:uv_acquire_download` instead logs `[INFO] uv:
+cached binary found at ~uv_bin\uv.exe` -- not independently captured here since every CI scratch
+dir is fresh; see this doc's repeat-run scenarios, added in a later pass, for the dedicated
+treatment.)
 
 **uv venv creation** (console, no pre-existing version pin -- this app has neither `runtime.txt`
 nor a `pyproject.toml` constraint):
@@ -705,8 +708,8 @@ nor a `pyproject.toml` constraint):
 A version-constrained app (e.g. `pyproject.toml` with `requires-python = ">=3.9"`) instead logs
 `[INFO] uv: creating venv at .uv_env with Python 3.9 or newer...` -- confirmed via a second real
 capture in the same run (`tests/~pyproject_prec/~pyproject_prec_bootstrap.log`), an exact pin like
-`python==3.11` templates to `...with Python 3.11...` per the `HP_UV_PY_DISP` derivation at
-`run_setup.bat:817-824` (not independently captured, but the template is a literal source string,
+`python==3.11` templates to `...with Python 3.11...` per the `HP_UV_PY_DISP` derivation just
+above `:uv_venv_ready` (not independently captured, but the template is a literal source string,
 not inferred). `~setup.log`-only detail: uv's own raw venv output (`Using CPython 3.14.6`,
 `Creating virtual environment with seed packages at: .uv_env`, a `Failed to hardlink files;
 falling back to full copy` warning, `+ pip==26.1.2`, `Activate with: .uv_env\Scripts\activate`) --
@@ -730,16 +733,18 @@ isolate one mechanism from the other):
 **A real quirk worth flagging so it isn't misread**: the bootstrap log around this point also shows
 `DEP_FINAL_COUNT=0` even though `colorama` is a genuine, real dependency that gets installed a few
 steps later -- this count is taken BEFORE `requirements.auto.txt` is copied into `requirements.txt`
-a few lines further down (`run_setup.bat:1330-1358`), so `DEP_FINAL_COUNT=0` here does not mean
-"pipreqs found nothing"; it's a pre-existing ordering quirk in the log sequence, not a bug in this
+a few lines further down, still inside `:after_pipreqs_run`'s own tail, so `DEP_FINAL_COUNT=0`
+here does not mean "pipreqs found nothing"; it's a pre-existing ordering quirk in the log sequence, not a bug in this
 run. `~setup.log`-only (pipreqs's raw output is redirected to a SEPARATE file entirely,
 `~pipreqs_direct.log`, not even `~setup.log` -- a real user never sees any of the following):
+
 ```
 WARNING: Import named "colorama" not found locally. Trying to resolve it at the PyPI server.
 WARNING: Import named "colorama" was resolved to "colorama:0.4.6" package (https://pypi.org/project/colorama/).
 Please, verify manually the final list of requirements.txt to avoid possible dependency confusions.
 INFO: Successfully saved requirements file in ...\requirements.auto.txt
 ```
+
 plus a handful of cosmetic `SyntaxWarning` lines from pipreqs 0.4.13's own bundled `docopt`/`yarg`
 dependencies. `~setup.log` also shows the autopep723 merge's own uvx tool-bootstrap noise
 (`Installed 1 package in 26ms`) and its own result line, `no-op: all autopep723 dependencies
@@ -762,8 +767,9 @@ console): `Using Python 3.14.6 environment at: .uv_env`, `Resolved 1 package in 
 `~environment.lock.txt` (uv mode copies the pip-freeze output here) contains more than just
 `colorama` -- it also lists pipreqs's OWN transitive dependencies (`certifi`, `charset-normalizer`,
 `docopt`, `idna`, `pipreqs`, `requests`, `urllib3`, `yarg`), because in `HP_ENV_MODE=uv`, pipreqs
-is installed via `uv pip install --python "%HP_PY%"` into the SAME venv as the target app
-(`run_setup.bat:1105`), not an isolated tool venv. This is genuine, expected production behavior
+is installed via `uv pip install --python "%HP_PY%"` into the SAME venv as the target app (inside
+the pipreqs install step, before `:pipreqs_direct_done`), not an isolated tool venv. This is
+genuine, expected production behavior
 -- a real user's `.uv_env` always ends up with pipreqs's own dependency footprint mixed in
 alongside their actual dependencies, not a CI artifact.
 
@@ -901,7 +907,27 @@ though the surrounding framing text is a real capture.
 
 **Source:** framing lines are REAL CI CAPTURE (run `30328748330`, job `90179708091`, "real" lane,
 same log as Scenario 10 above); the two `set /p` prompt lines themselves are
-`[Extrapolated Branch]`, `run_setup.bat:2847` and `:2923`.
+`[Extrapolated Branch]`, cited from `:run_postexec_checkpoint` and `:offer_optimized_build`
+respectively.
+
+**Relationship to README.md's `[REQ-018]` spec, since the two don't map 1:1 in an obvious way:**
+`:run_postexec_checkpoint`'s own log line is explicitly tagged `REQ-018` in source (`[INFO]
+REQ-018: post-execution checkpoint (...): accepted/declined...`), so it -- not a separate,
+undocumented prompt -- is the shipped implementation of README's "After a build, the real run is
+offered, not forced" / "Consent before any extra run" bullets. Two nuances worth flagging
+explicitly rather than leaving implicit: (1) the offered rerun uses the INTERPRETER, not a second
+launch of the packaged EXE -- README's "offers to launch the app untimed for real" phrasing reads
+as if it means the EXE specifically, but the actual accepted-path log line says "running a second
+time via the interpreter", and a companion note the same subroutine prints for the EXE call site
+spells this out too ("this diagnostic run uses the interpreter, not the packaged EXE, so behavior
+can differ"); (2) README's separate REQ-018 bullet about the FIRST (mandatory) verification run
+being "force-stopped after a short interval even if running fine" is stale relative to the
+activity-aware-kill behavior actually shipped later (see Scenario 5's fuller writeup and CLAUDE.md's
+Closed Backlog "Activity-aware EXE-smoke kill" entry) -- the real WARN text quoted in Scenario 10
+above says the opposite: any output at all, not just a clean exit, keeps the run alive indefinitely,
+only a genuinely SILENT process gets force-stopped. Neither nuance changes what actually ships;
+both are flagged here because a reader cross-checking this scenario against README's prose could
+otherwise reasonably conclude something was missed.
 
 Right after a normal successful verification run (Scenario 10's tail), a real double-click user
 sees:
@@ -911,11 +937,12 @@ sees:
 *** You can run your program again now via the interpreter as an extra diagnostic check. ***
   Run again via the interpreter now? [Y/N] █
 ```
-(cursor sits after `[Y/N] `, waiting indefinitely -- `run_setup.bat:2847`,
-`:run_postexec_checkpoint`, an UNBOUNDED `set /p`, no timeout of any kind). Any answer other than
-a leading `Y`/`y` -- including just pressing Enter -- resolves to decline. If accepted, the entry
-program runs a second time via the interpreter (not the packaged EXE) as a diagnostic; if declined,
-the bootstrap immediately continues to the second prompt:
+
+(cursor sits after `[Y/N] `, waiting indefinitely -- `:run_postexec_checkpoint`, an UNBOUNDED
+`set /p`, no timeout of any kind). Any answer other than a leading `Y`/`y` -- including just
+pressing Enter -- resolves to decline. If accepted, the entry program runs a second time via the
+interpreter (not the packaged EXE) as a diagnostic; if declined, the bootstrap immediately
+continues to the second prompt:
 
 ```
 *** Your app is ready. ***
@@ -923,8 +950,9 @@ the bootstrap immediately continues to the second prompt:
 *** but it starts up more reliably on Windows and runs faster once it is built. ***
   Build the optimized version now? [Y/N] █
 ```
-(same shape -- `run_setup.bat:2923`, `:offer_optimized_build`, also an unbounded `set /p`, also
-defaults to decline on anything but a leading Y). Both prompts genuinely fire on essentially every
+
+(same shape -- `:offer_optimized_build`, also an unbounded `set /p`, also defaults to decline on
+anything but a leading Y). Both prompts genuinely fire on essentially every
 successful default run (the checkpoint is called after every clean verification; the optimized-
 build offer only skips if the AV-Safe-Build-Path Tier A Nuitka fallback already ran, or the
 verification itself failed) -- **this is not an edge case, it's what most real users see twice in

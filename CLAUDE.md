@@ -915,7 +915,7 @@ further.)*
     real-CI proof the item's own status note above was waiting on; nothing further is pending
     for item 7.
 
-8. **`[WARN] UNC paths not supported` fires unconditionally in CI on an ordinary (non-UNC) local
+- **8. `[WARN] UNC paths not supported` fires unconditionally in CI on an ordinary (non-UNC) local
    path -- found 2026-07-29 while gathering real console-output evidence for
    `docs/demo-bootstrapper-output.md`'s default-happy-path documentation pass, not yet
    investigated further.** `run_setup.bat:57-58` does
@@ -963,6 +963,28 @@ further.)*
      future loop) or a real Windows machine to resolve with confidence. Documented in
      `docs/demo-bootstrapper-output.md`'s new default-happy-path scenario as an observed,
      unexplained anomaly rather than either asserting it's harmless or that it's a bug.
+
+- **9. README.md's `[REQ-018]` bullet describing the mandatory verification run as
+   "force-stopped after a short interval even if running fine" is stale relative to the
+   activity-aware-kill behavior actually shipped later -- found 2026-07-29 via a CodeRabbit review
+   comment on PR #400 that (correctly) flagged a possible mismatch between README's REQ-018 prose
+   and `docs/demo-bootstrapper-output.md`'s new Scenario 11.** Traced it down: the real, current
+   WARN text (quoted verbatim in Scenario 10 from a real CI capture) says the opposite of what
+   README currently claims -- "if it stays completely silent for about 30 seconds it will be
+   force-stopped, but any output (including a prompt waiting on your input) keeps it running as
+   long as needed" -- matching CLAUDE.md's own already-documented Closed Backlog entry,
+   "Activity-aware EXE-smoke kill (docs/plan-cli-interactive-verification.md P0, requirement 3) --
+   resolves Open Question 1." That feature shipped after README's REQ-018 section was last written
+   and the corresponding bullet was apparently never updated to match. **Not fixed in this pass**
+   -- deliberately left for its own small, dedicated pass rather than edited as a side effect of an
+   unrelated docs-only PR (`docs/demo-bootstrapper-output.md`'s own scope): README.md is this
+   repo's authoritative PRD, and CLAUDE.md's own instruction is to reference it, not duplicate or
+   casually rewrite it. `docs/demo-bootstrapper-output.md`'s Scenario 11 already carries an inline
+   note explaining the discrepancy so a reader isn't left confused between the two docs in the
+   meantime. Suggested fix shape: update the REQ-018 bullet's "force-stopped after a short interval
+   even if running fine" clause to describe the activity-aware condition instead (only a
+   completely silent process is force-stopped; any output at all keeps the run alive
+   indefinitely).
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
