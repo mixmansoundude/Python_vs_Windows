@@ -63,6 +63,25 @@ conflate:
   - [Scenario 14: `PVW_PYTHON_EXE` / `PVW_UV_EXE` / `PVW_TARGET_PY` / `PVW_WORKSPACE`](#scenario-14-pvw_python_exe--pvw_uv_exe--pvw_target_py--pvw_workspace)
   - [Scenario 15: `PVW_CONDA_EXE` and its interaction with the conda self-heal flow](#scenario-15-pvw_conda_exe-and-its-interaction-with-the-conda-self-heal-flow)
   - [Scenario 16: Drag-and-drop / CLI entry-file override (REQ-011 same-directory rule + REQ-002 priority)](#scenario-16-drag-and-drop--cli-entry-file-override-req-011-same-directory-rule--req-002-priority)
+- [Part VI: Adversarial and recovery branches](#part-vi-adversarial-and-recovery-branches)
+  - [Scenario 17: Network connectivity check and transient-retry (REQ-013 + REQ-022)](#scenario-17-network-connectivity-check-and-transient-retry-req-013--req-022)
+  - [Scenario 18: Corrupted-conda self-heal (detect / decline / accept)](#scenario-18-corrupted-conda-self-heal-detect--decline--accept)
+  - [Scenario 19: Miniconda install chain (AllUsers -> JustMe -> both-failed)](#scenario-19-miniconda-install-chain-allusers---justme---both-failed)
+  - [Scenario 20: Standalone embed-tier download (REQ-009 Tier 5) -- decline and real success](#scenario-20-standalone-embed-tier-download-req-009-tier-5----decline-and-real-success)
+  - [Scenario 21: REQ-009 provider cascade -- one real run showing the FULL chain](#scenario-21-req-009-provider-cascade----one-real-run-showing-the-full-chain)
+  - [Scenario 22: `--hidden-import` auto-recovery (success and exhaustion)](#scenario-22---hidden-import-auto-recovery-success-and-exhaustion)
+  - [Scenario 23: Warnfix repair loop (success, and the failure that feeds the cascade)](#scenario-23-warnfix-repair-loop-success-and-the-failure-that-feeds-the-cascade)
+  - [Scenario 24: Pre-flight guards actually firing](#scenario-24-pre-flight-guards-actually-firing)
+  - [Scenario 25: Concurrent-instance lock contention (REQ-024)](#scenario-25-concurrent-instance-lock-contention-req-024)
+- [Part VII: Remaining branches (dependency source precedence, write-back, and misc)](#part-vii-remaining-branches-dependency-source-precedence-write-back-and-misc)
+  - [Scenario 26: Git config merge (`.gitignore`/`.gitattributes`, REQ-015)](#scenario-26-git-config-merge-gitignoregitattributes-req-015)
+  - [Scenario 27: Python-version precedence (REQ-004) and dependency-source precedence (`pyproject.toml`)](#scenario-27-python-version-precedence-req-004-and-dependency-source-precedence-pyprojecttoml)
+  - [Scenario 28: PEP 723 dependency write-back (REQ-005.11) -- the fresh-install trigger](#scenario-28-pep-723-dependency-write-back-req-00511----the-fresh-install-trigger)
+  - [Scenario 29: `HP_PVW_KNOWN_IDEMPOTENT` execute-mode discovery (REQ-005.13)](#scenario-29-hp_pvw_known_idempotent-execute-mode-discovery-req-00513)
+  - [Scenario 30: NI-VISA detection and install outcome (REQ-008)](#scenario-30-ni-visa-detection-and-install-outcome-req-008)
+  - [Scenario 31: pandas/openpyxl heuristic dependency augmentation (REQ-005.8)](#scenario-31-pandasopenpyxl-heuristic-dependency-augmentation-req-0058)
+  - [Scenario 32: Conda base periodic update](#scenario-32-conda-base-periodic-update)
+  - [Scenario 33: REQ-014 system-Python consent -- ACCEPT](#scenario-33-req-014-system-python-consent----accept)
 
 ---
 
@@ -1367,3 +1386,775 @@ win plain auto-detection by name-priority) and `zzz_override.py`, with `zzz_over
 the override -- the real run confirms the drag message names the override file, the entry-selected
 log line names `zzz_override.py` (not `main.py`), and the override file's own distinguishing output
 is what actually ran.
+
+---
+
+## Part VI: Adversarial and recovery branches
+
+**Scope note:** excludes `HP_TEST_*` CI-only flags as the documented subject -- they're the
+mechanism a test uses to force a scenario deterministically, but the resulting console text below
+is exactly what a real user hits when the same underlying condition occurs for real (a genuine
+flaky connection, a genuinely corrupted conda install, a genuinely missing bundled module, and so
+on). Evidence for this entire Part is pulled from run `30328748330` (commit `5872028`, all lanes
+green): `real` (job `90179708091`), `conda-full` (job `90179708094`), `uv` (job `90179708109`),
+`justme-test` (job `90179708103`).
+
+### Scenario 17: Network connectivity check and transient-retry (REQ-013 + REQ-022)
+
+**What's tested:** `self.ux.connectivity.*` rows (`tests/selfapps_ux_hardening.ps1`, real lane);
+`self.stub.conda_retry`/`self.stub.conda_create_retry`/`self.stub.conda_perpkg`
+(`tests/selftest.ps1`, conda-full lane). All real, all passing.
+
+When a download genuinely fails, `:check_net_after_dl_fail` (REQ-013) pings `8.8.8.8` (2 attempts)
+then, if ICMP is blocked, tries an HTTPS reachability check against `conda.anaconda.org` (2
+attempts) before concluding the user is actually offline -- this doubled-attempt design exists
+because a single dropped ICMP echo or a momentarily-contended connect on a busy machine is enough
+to misclassify a genuinely-online host as offline (this was root-caused from a REAL CI flake, not
+a hypothetical). If both checks fail, a real user sees an unbounded prompt:
+
+```
+[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed).
+WARNING: No internet connection detected. Remote providers may fail. Retry? (Fix connection then press Y) or proceed offline (N): 
+```
+
+Pressing Enter with no answer defaults to offline; `Y` re-tries (2 more ping attempts, then 2 more
+HTTPS attempts) before re-prompting on continued failure; `N` proceeds offline (`HP_OFFLINE_MODE=1`
+for the rest of the run).
+
+**Transient-retry for `conda create` and conda's bulk package install (REQ-022)** -- both use the
+identical detect-and-retry-once pattern: scan the failure output for `CondaHTTPError`/`Failed to
+fetch`/`timed out`/`ConnectionError`, wait 15 seconds, retry exactly once. If the retry ALSO fails,
+it falls straight through to the normal (non-transient) failure/fallback chain -- this is not an
+infinite-retry loop.
+
+`conda create` retry, REAL CI CAPTURE (`tests/selftest.ps1`'s conda-full sub-bootstrap):
+
+```
+Creating Python environment '_selftest_conda_create_retry' -- this may take several minutes...
+Conda environment creation failed -- possible network or repository issue. Retrying once...
+[INFO] conda create: transient failure detected; retrying after 15s.
+Retrying environment creation...
+[INFO] runtime.txt written: python-3.14.6
+[BOOT] REQ-009: Selected Python provider: Conda (Portable).
+```
+
+Bulk package install retry, REAL CI CAPTURE (same test file, a different scratch env):
+
+```
+Conda install failed -- possible network or repository issue. Retrying once...
+[INSTALL] conda bulk: transient failure detected; retrying after 15s.
+Retrying package installation...
+```
+
+A NON-transient bulk failure (any error text that doesn't match the transient patterns above)
+skips the retry entirely and instead falls back to installing packages one at a time
+(`self.stub.conda_perpkg`, REAL CI CAPTURE, `[INSTALL] conda per-pkg fallback`) -- a completely
+separate recovery path from the transient-retry one, chosen based on what kind of failure
+actually occurred.
+
+---
+
+### Scenario 18: Corrupted-conda self-heal (detect / decline / accept)
+
+**What's tested:** `self.corrupt.conda.detect`/`.heal.decline`/`.heal.accept`
+(`tests/selftest.ps1`, conda-full lane, all three real and passing). The `PVW_CONDA_EXE`-override
+variant is already covered in Scenario 15 -- this scenario is the DEFAULT case, where the
+bootstrapper owns the conda install and can offer to fix it.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full` lane).
+
+When a health check on the resolved conda binary fails, the user sees:
+
+```
+================================================================
+  CORRUPTED PYTHON ENVIRONMENT DETECTED
+================================================================
+
+  The local conda installation appears to be broken.
+  This can happen after a Windows update or OS migration
+  (example: DLL load error 0xc000007b).
+
+  Affected path: C:\Users\Public\Documents\Miniconda3
+```
+
+followed by an unbounded `[Y/N]` prompt (`  Would you like to delete it and rebuild? [Y/N] `,
+`[Extrapolated Branch]` for the exact prompt line, same reasoning as Scenario 11's two prompts --
+it lives inside `set /p`, never visible in a CI log even when a test forces the accept branch via
+an answer override).
+
+**Decline** (real capture):
+
+```
+  Exiting without changes. Delete the folder above manually,
+  then run this setup again.
+```
+
+logged as `[ERROR] Corrupt conda env; user declined rebuild.`, exit code 2.
+
+**Accept** (real capture; this specific test run additionally forces the actual re-download step
+to be skipped for CI-safety reasons, so the "Downloading fresh copy..." line below is
+`[Extrapolated Branch]`, cited from source, while everything else is real):
+
+```
+  [INFO] Removing corrupt Miniconda installation...
+  [INFO] Corrupt installation removed. Downloading fresh copy...
+```
+
+```
+[INFO] Self-healing: corrupt conda evicted from C:\Users\Public\Documents\Miniconda3.
+[INFO] Workspace: ...\tests\~selftest_heal_accept
+[INFO] Env name: _selftest_heal_accept
+[INFO] HP_ENV_MODE=conda
+[INFO] Creating Python environment '_selftest_heal_accept' -- this may take several minutes...
+[INFO] runtime.txt written: python-3.14.6
+[BOOT] REQ-009: Selected Python provider: Conda (Portable).
+```
+
+A real user's accept path re-downloads and reinstalls Miniconda from scratch (the full
+acquisition sequence from Scenario 9), then proceeds exactly as a fresh first run would.
+
+---
+
+### Scenario 19: Miniconda install chain (AllUsers -> JustMe -> both-failed)
+
+**What's tested:** `conda.install.justme` (`tests/selftest.ps1`, `justme-test` lane, real,
+passing) and `self.conda.bothfail` (`tests/selfapps_conda_bothfail.ps1`, `uv` lane, real,
+passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, jobs `90179708103` (`justme-test`) and
+`90179708109` (`uv`).
+
+Miniconda install first attempts an AllUsers (machine-wide) install; if UAC rejects elevation (or
+the process simply isn't elevated), it skips straight to a JustMe (per-user) install instead, no
+wasted attempt. **Both the "skip, never attempted" path and a genuine post-attempt AllUsers
+failure fall through to the same shared `:tci_justme` label** (`run_setup.bat`), whose log line
+unconditionally reads `[WARN] Miniconda AllUsers install failed; retrying with JustMe.` regardless
+of which of the two got it there -- so on the common non-elevated machine, the WARN text is a
+misnomer (AllUsers was never actually launched, only skipped), confirmed by this real capture
+pairing the "Not elevated; skipping" INFO line immediately with the "AllUsers install failed" WARN
+line for the identical run:
+
+```
+[INFO] Not elevated; skipping AllUsers Miniconda install.
+[WARN] Miniconda AllUsers install failed; retrying with JustMe.
+[INFO] Miniconda installed (JustMe fallback).
+```
+
+**If JustMe ALSO fails** (both installation options exhausted -- AllUsers was skipped, not
+attempted-then-failed, per the wording caveat above; REAL CI CAPTURE, same shared label, same
+unconditional WARN wording):
+
+```
+[INFO] Not elevated; skipping AllUsers Miniconda install.
+[WARN] Miniconda AllUsers install failed; retrying with JustMe.
+[ERROR] Miniconda install failed (both AllUsers and JustMe).
+```
+
+This is a genuine `:die` (`state=error`), not a graceful degrade -- with no Python interpreter
+acquirable at all through conda, there's nothing left for this tier to hand back. Both installer
+launches are bounded by a generous 60-minute timeout (not unbounded), based on real-world reports
+of Miniconda's silent installer hanging indefinitely on some machines -- documented in
+CLAUDE.md's Active Backlog history.
+
+---
+
+### Scenario 20: Standalone embed-tier download (REQ-009 Tier 5) -- decline and real success
+
+**What's tested:** `self.embed.fallback.decline`/`self.embed.fallback.real`
+(`tests/selfapps_ux_hardening.ps1`, `uv` lane, both real and passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708109` (`uv` lane).
+
+When uv and conda have both failed (or been declined/exhausted), the bootstrapper tries
+downloading a private, checksummed Python interpreter directly from python.org -- no consent
+prompt (unlike system Python), since this is a bootstrapper-controlled, disposable extraction:
+
+```
+[WARN] Attempting embedded Python download (REQ-009 Tier 5)...
+```
+
+**Real success** (a genuine end-to-end download/verify/extract/patch/pip-bootstrap/canary/build/
+run, REAL CI CAPTURE):
+
+```
+[INFO] Downloading embedded Python 3.14.6 from https://www.python.org/ftp/python/3.14.6/python-3.14.6-embed-amd64.zip...
+[INFO] embed fallback: 3.14.6 extracted and verified.
+```
+
+**Tier exhaustion** (this specific tier also fails, e.g. offline -- REAL CI CAPTURE):
+
+```
+[WARN] embed fallback: offline mode; cannot download embedded Python.
+```
+
+A genuine download failure (not offline, an actual failed transfer) retries the WHOLE
+download+verify cycle once before giving up (`[WARN] embed fallback: download failed; retrying
+once.`, `[Extrapolated Branch]`, cited from `:embed_dl_retry` -- not independently observed in
+this run's real capture, since neither scenario above hits a genuine mid-download failure). A
+checksum mismatch is treated the same way (redownload, not just re-verify, since a mismatch can
+mean a truncated download rather than a bad pin).
+
+---
+
+### Scenario 21: REQ-009 provider cascade -- one real run showing the FULL chain
+
+**What's tested:** `self.cascade.exec` (`tests/selfapps_cascade.ps1`, `uv` lane, real, passing).
+This single test happens to exercise BOTH mid-exhaustion (uv/conda/embed all cascade past) AND
+full exhaustion (system Python, the final tier, declines) in one coherent real capture -- an
+unusually complete real-world illustration of this mechanism.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708109` (`uv` lane).
+
+After a build succeeds but a dependency repair genuinely fails (Scenario 23 covers what triggers
+this), the user is offered (Scenario 11's timed `:cascade_consent_gate`, up to 30s, default
+decline) a chance to try the next Python provider. On acceptance, the REAL capture below shows the
+cascade working through every tier in order -- each hop re-attempts the full dependency phase
+under the new provider, and each hop that ALSO can't fully resolve dependencies triggers another
+verification failure and another cascade offer:
+
+```
+[INFO] REQ-009: cascading provider uv to conda; re-attempting dependencies.
+*** [INFO] Trying the next Python provider (conda) to resolve dependencies...
+```
+
+```
+[INFO] REQ-009: cascading provider conda to embed; re-attempting dependencies.
+*** [INFO] Trying the next Python provider (embed) to resolve dependencies...
+```
+
+```
+[INFO] REQ-009: cascading provider embed to venv; re-attempting dependencies.
+*** [INFO] Trying the next Python provider (venv) to resolve dependencies...
+```
+
+**Note the log wording says "uv to conda", never "uv -> conda"** -- deliberate: `:log` echoes
+unquoted, so a literal `>` would be parsed as shell redirection and silently eat the line.
+
+Right before each cascade offer, the elective postexec-checkpoint/optimized-build prompts from
+Scenario 11 are SKIPPED (not just auto-declined) once cascade is approved -- confirmed in this
+same real capture:
+
+```
+[INFO] Entry smoke exit=1
+[STATUS] Run Status: FAILED (Exit Code: 1)
+[INFO] REQ-009: cascade approved; skipping the post-verification offers for this build.
+```
+
+**Full exhaustion**, reached when venv ALSO can't fully resolve dependencies and the cascade
+offers the absolute last resort, system Python (REQ-014's consent gate, Scenario 11's other
+cross-referenced gate) -- declined here (CI auto-decline; a real interactive user sees the full
+timed/untimed prompt sequence documented in Scenario 11):
+
+```
+[INFO] REQ-009: cascading provider venv to system; re-attempting dependencies.
+[WARN] Attempting system Python fallback (degraded)...
+
+*** WARNING: System Python Execution ***
+*** Using global system Python may pollute shared packages. ***
+
+Proceed with System Python? (Global pollution risk) [y/n]: y to accept, n to decline.
+[INFO] REQ-014: System Python consent: user declined.
+[INFO] REQ-014: System Python fallback aborted: consent not granted.
+[WARN] REQ-009: cascade target system Python unavailable; keeping current build.
+```
+
+With every tier now exhausted, the bootstrapper keeps whatever build it had (venv, in this
+capture) and prints the honest caveat panel (Scenario 7's REQ-027 messaging) instead of "SETUP
+COMPLETE":
+
+```
+============================================================
+ SETUP COMPLETE -- WITH A CAVEAT
+============================================================
+ We packaged your app, but couldn't fully verify it runs as a
+ standalone program. Your environment and dependencies ARE
+ installed correctly -- you can always run your app directly:
+   "" "app.py"
+
+ RUNNING YOUR APP
+   Double-click dist\_selftest_cascade_exec.exe to run it.
+```
+
+**Each tier is tried at most once as a cascade source** (`HP_CASCADE_TRIED_<tier>` guards),
+`HP_ENV_MODE` only ever advances (`uv -> conda -> embed -> venv -> system`), so the cascade
+structurally cannot loop -- it either lands on a working tier or exhausts and stops, exactly as
+shown here.
+
+---
+
+### Scenario 22: `--hidden-import` auto-recovery (success and exhaustion)
+
+**What's tested:** `self.exe.hidden_import` (success, `tests/selfapps_hidden_import.ps1`) and
+`self.exe.hidden_import.exhaust` (`tests/selfapps_hidden_import_exhaust.ps1`), both real/conda-full
+lanes, real, passing.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+When a frozen EXE fails at runtime with `ModuleNotFoundError` for a module that IS installed in
+the build interpreter, the bootstrapper rebuilds with `--hidden-import=<module>` added, bounded to
+3 attempts. This is strict by design -- an uninstalled module (a real missing dependency) or a
+plain `ImportError` (not a missing module at all) never triggers a rebuild, since the fix is not
+mechanically derivable.
+
+**Exhaustion** (three DIFFERENT modules missing across three rebuilds, still never fully
+resolving -- REAL CI CAPTURE):
+
+```
+[WARN][HIDDEN_IMPORT] Auto-recovery exhausted after 3 attempts; module(s) still missing.
+```
+
+`~bootstrap.status.json` still reads `state: ok` in this case -- the user's own program repeatedly
+failing to import something is not a bootstrapper failure (the environment and build lifecycle
+both succeeded); see CLAUDE.md's "User-code exit-code semantics" Known Finding.
+
+---
+
+### Scenario 23: Warnfix repair loop (success, and the failure that feeds the cascade)
+
+**What's tested:** `self.exe.warnfix.install`/`.pass` (success) and `.xfail` (a module install
+genuinely fails), `tests/selfapps_warnfix.ps1`, real/conda-full lanes, all real, all passing.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+Unlike Scenario 22 (runs AFTER a launch fails), warnfix runs BEFORE the EXE is ever launched --
+PyInstaller's own warn file lists modules it couldn't bundle statically, and the bootstrapper
+tries to install and rebuild:
+
+**Success** (real capture, a clean repair with no failures):
+
+```
+[INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically.
+[REPAIR] missing modules detected; installing and rebuilding.
+[REPAIR] rebuild complete after warnfix.
+```
+
+**A module that genuinely can't be installed** (real capture -- `StringIO`, a Python-2-only
+module some Python-3 code still conditionally imports, which no Python-3 environment can satisfy):
+
+```
+[REPAIR] missing modules detected; installing and rebuilding.
+[WARN] Repair failed: StringIO
+[WARN] One or more repair attempts failed
+[REPAIR] rebuild complete after warnfix.
+```
+
+The rebuild still happens (bundling whatever WAS successfully installed), but this specific
+unresolved-after-rebuild situation is exactly what feeds `HP_CASCADE_CANDIDATE` -- setting up the
+provider-cascade offer documented fully in Scenario 21.
+
+---
+
+### Scenario 24: Pre-flight guards actually firing
+
+**What's tested:** `self.warn.onedrive`, `self.warn.sysdir`, `self.stub.low_disk_warn`
+(`tests/selftest.ps1`, real lane, all real and passing). Contrast with Scenario 8, which showed
+these same four guards' CLEAN (silent) pass.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+**OneDrive** (real capture):
+
+```
+*** WARNING: Script appears to be in a OneDrive folder. File locking may cause failures.
+[WARN] OneDrive path detected; file locking may cause failures.
+```
+
+**Disk space, REQ-025** (real capture -- warn-only, never a hard block, per REQ-001's rule that a
+flag-detectable condition must never gate the Prime Directive):
+
+```
+[WARN] REQ-025: low disk space detected (~0 GB free); continuing (warn-only).
+```
+
+**System directory guard** (the one guard that's a hard ABORT, not a warning -- exit code 1,
+confirmed via a real, passing NDJSON row, though the specific console dump wasn't captured
+verbatim in this run's log excerpt, so the exact banner text below is `[Extrapolated Branch]`,
+cited directly from source):
+
+```
+*** ERROR: This script is located inside a Windows system folder.
+*** Placing it here does not "install" it. Windows restricts writes to this location
+*** without administrator rights, and this bootstrapper needs to create files right
+*** next to itself to work.
+*** Please move this script (and your .py files) to a normal folder -- your Desktop
+*** or Documents folder both work well -- then run it again from there.
+```
+
+**Path-length guard**: this run's own long-path test scenario shows an interesting CI limitation
+worth being honest about rather than papering over -- the test's own NDJSON row reports
+`warnFound: false, ranBootstrap: false, pathLen: 312`, meaning the scratch directory this specific
+CI run created didn't actually reach a state where the sub-bootstrap could run at all (likely an
+OS-level path-length limit on the CI runner itself, hit before `run_setup.bat`'s own 200-char
+check ever got a chance to fire) -- yet the test still reports an overall pass, since it's
+apparently designed to tolerate this inconclusive outcome. The guard's own text is confirmed from
+source only for this doc (`[Extrapolated Branch]`):
+
+```
+*** WARNING: Script path is <N> chars. Paths near 260 chars may cause cmd.exe failures.
+```
+
+---
+
+### Scenario 25: Concurrent-instance lock contention (REQ-024)
+
+**What's tested:** `self.stub.lock_held_decline`/`self.stub.lock_stale_evict`
+(`tests/selftest.ps1`, real lane, both real and passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+A user double-clicking the bootstrapper twice in quick succession (or genuinely running two
+instances) hits an NTFS-atomic `mkdir`-based lock. If a second instance finds the lock genuinely
+held by a live first instance:
+
+```
+***
+*** Another instance of this setup appears to be running in this folder already.
+*** If you are sure that is NOT the case (for example, a previous run crashed),
+*** delete the "~bootstrap.lock" folder next to this script and run it again.
+***
+pid=<owning process id>
+started=<owning process start time>
+[WARN] REQ-024: setup already running (lock held, not stale); this instance is exiting.
+```
+
+exit code 1 -- the losing instance never touches the lock it doesn't own. If the lock directory
+is instead STALE (left over from a crashed/killed prior run, older than the ~2 hour staleness
+threshold), it's evicted automatically and the run proceeds normally with no user action needed:
+
+```
+[INFO] REQ-024: stale lock evicted (older than the staleness threshold); proceeding.
+```
+
+Staleness is deliberately age-based, not PID-liveness-based -- a dead process's PID can be
+recycled by an unrelated program, so trusting PID liveness for automated eviction would be unsafe.
+
+---
+
+## Part VII: Remaining branches (dependency source precedence, write-back, and misc)
+
+**Scope note:** this part collects everything from the plan's 5-pass checklist that didn't fit
+naturally into Parts III-VI: dependency and Python-version source precedence, the two write-back
+mechanisms (`runtime.txt`, PEP 723 headers), the optional execute-mode discovery flag, NI-VISA/
+pandas per-package special-casing, the periodic conda maintenance timer, and the one REQ-014
+branch (consent ACCEPT) that Part VI's Scenario 21 didn't cover (it only showed decline).
+
+---
+
+### Scenario 26: Git config merge (`.gitignore`/`.gitattributes`, REQ-015)
+
+**What's tested:** `self.ux.gitignore.merge`/`.preserve`/`.idem`, `self.ux.gitattributes.merge`
+(`tests/selfapps_ux_hardening.ps1`, `real` lane, all real and passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+On a fresh checkout with no `.gitignore`/`.gitattributes` at all, `:merge_git_config` (`run_setup.bat`)
+idempotently appends a standard block to each, guarded by an `findstr` signature check
+(`# Automated Python Bootstrapper Standard Ignores` / `...Attributes`) so a second run is a clean
+no-op rather than a duplicate append:
+
+```
+[INFO] REQ-015: Appending standard ignores to .gitignore.
+[INFO] REQ-015: Appending standard attributes to .gitattributes.
+```
+
+The appended `.gitignore` block (verbatim from source):
+
+```
+# Automated Python Bootstrapper Standard Ignores
+.*_env/
+.venv/
+.uv/
+.cache/
+.conda/
+dist/
+build/
+*~
+~*
+```
+
+and `.gitattributes`:
+
+```
+# Automated Python Bootstrapper Attributes
+*.bat eol=crlf
+*.cmd eol=crlf
+*.exe binary
+```
+
+Real evidence confirms all three properties the tests assert: the signature is appended
+(`self.ux.gitignore.merge`), any PRE-EXISTING content in the file (e.g. a user's own `node_modules/`
+line) survives the merge untouched (`self.ux.gitignore.preserve`, `nodeModulesFound:true`), and
+running the bootstrapper a second time does not duplicate the signature (`self.ux.gitignore.idem`,
+`sigCount:1`). This runs unconditionally on every bootstrap invocation, independent of provider or
+entry-file state -- it is one of the first things `run_setup.bat` does after the pre-flight guards.
+
+---
+
+### Scenario 27: Python-version precedence (REQ-004) and dependency-source precedence (`pyproject.toml`)
+
+**What's tested:** `pyproject.precedence.detect`/`.writeback` (`tests/selfapps_pyproject_precedence.ps1`,
+both real and passing) and `pyproject.dep.detect`/`.noproj` (same file). `pyproject.precedence.detect`
+ran in the `conda-full` lane in this capture (the `real` lane's own copy of the row emits
+`skip=true, reason=conda-not-installed-uv-first` since it happens to call `Get-CondaBatPath`, per
+`docs/agent-interconnect.md`'s skip-pattern convention for this test file); `pyproject.dep.*` and
+`.writeback` ran in `real`.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full`) for the version
+tiers, job `90179708091` (`real`) for the dependency-source precedence.
+
+These are two genuinely SEPARATE precedence systems that happen to both read `pyproject.toml` and
+are easy to conflate -- worth documenting distinctly.
+
+**REQ-004 (Python VERSION precedence, three tiers)**: Tier 1 `runtime.txt` beats Tier 2
+`pyproject.toml`'s `[project].requires-python` beats Tier 3 "let the selected provider pick latest,
+then write `runtime.txt` back." These two NDJSON rows deliberately test two DIFFERENT things in two
+DIFFERENT scratch directories with two DIFFERENT constraints, not one continuous flow -- worth
+being precise about, since the test file's own comments explain why: `.detect` calls
+`~detect_python.py` directly (no bootstrap, no environment ever created) against a tight
+`requires-python = ">=3.10,<3.11"` to check Tier 2's parse/forward precision in isolation; `.writeback`
+runs the FULL bootstrapper against a deliberately loose `requires-python = ">=3.9"` in a separate
+directory ("so conda picks a cached Python version and avoids a slow resolver round-trip for
+Python 3.10 packages," per the test's own comment) to check Tier 3's write-back end to end.
+
+`.detect`'s real NDJSON output confirms Tier 2's parse/forward is exact: `output":"python>=3.10,<3.11"`.
+`.writeback`'s real capture shows Tier 3 firing (since `runtime.txt` didn't pre-exist there either):
+
+```
+[INFO] runtime.txt written: python-3.14.6
+```
+
+(real capture; `pyproject.precedence.writeback`'s own NDJSON row confirms `runtimeVersion:
+python-3.14.6` and `versionSatisfied:true` against ITS OWN, looser `>=3.9` constraint -- 3.14.6
+satisfies `>=3.9` comfortably. It does NOT satisfy the OTHER test's `<3.10,<3.11` constraint, but
+that constraint was never used for this environment; the two tests are independent, and this
+document originally conflated them into one implied sequence before being corrected.) Malformed
+`pyproject.toml` TOML degrades gracefully rather than aborting the whole precedence chain (real
+capture, `self.pyproject.malformed`):
+
+```
+*** [WARN] pyproject.toml could not be parsed as valid TOML; falling back to requirements.txt or pipreqs.
+```
+
+logged compactly too: `[WARN] pyproject.toml TOML parse error; falling back.` -- the bootstrap then
+proceeds via Tier 3 (provider picks latest) exactly as if `pyproject.toml` had never existed.
+
+**Dependency-SOURCE precedence (a different mechanism, REQ-004/REQ-005.1 rows, unrelated to Python
+version)**: when `pyproject.toml` declares a real `[project].dependencies` array, it takes priority
+over any `requirements.txt` present -- this is decided independently of the version-tier logic
+above and can fire even when `runtime.txt` already exists. Real capture:
+
+```
+*** [INFO] pyproject.toml [project].dependencies found; overrides requirements.txt
+[INFO] pyproject.toml [project].dependencies detected
+[INFO] DEP_SOURCE=pyproject
+```
+
+`~pyproj_deps.py` (`HP_PYPROJ_DEPS`) is the helper that extracts the array; real NDJSON detail from
+`pyproject.dep.detect` shows it parsing a real two-line array (`"output":"requests>=2.28\r\ncolorama"`,
+`exitCode:0`). When `pyproject.toml` has no `[project]` section at all, the helper exits 1 with no
+output rather than a false match (`pyproject.dep.noproj`, `exitCode:1, outExists:false`) -- the
+bootstrapper then falls through to `requirements.txt`/pipreqs as usual.
+
+---
+
+### Scenario 28: PEP 723 dependency write-back (REQ-005.11) -- the fresh-install trigger
+
+**What's tested:** `self.pep723.writeback.fresh`/`.skipflag` (`tests/selfapps_pep723_writeback.ps1`,
+`real` lane, both real and passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+After a genuinely fresh, fully-successful `HP_ENV_MODE=uv` dependency install (see Part III,
+Scenario 9), `:pep723_writeback` promotes the resolved dependency set into the entry file's own
+PEP 723 header via `uv add --script`, so the pin travels with the user's source file rather than
+staying only in `requirements.txt`/the lock file:
+
+```
+[INFO] REQ-005.11: PEP 723 header write-back succeeded via uv add --script.
+```
+
+When there is nothing to write (a stdlib-only app, no third-party packages resolved), the
+subroutine correctly no-ops rather than writing an empty/misleading header -- also a REAL capture:
+
+```
+[INFO] REQ-005.11: PEP 723 write-back skipped (no packages to write).
+```
+
+This is `HP_ENV_MODE=uv`-only (v1 scope, see `docs/agent-interconnect.md`) and best-effort/non-gating
+-- any failure (malformed existing header not cleanly repairable, a file lock, non-UTF-8 source)
+logs a `[WARN]` and the bootstrap continues unaffected; `HP_SKIP_PEP723_WRITEBACK=1` suppresses it
+outright per REQ-019 (a genuine opt-OUT flag, not a gate). The warnfix-triggered SECOND write-back
+call (after a successful repair round) is functionally identical and not separately captured here
+-- same subroutine, same two possible outcomes, triggered from a different call site.
+
+---
+
+### Scenario 29: `HP_PVW_KNOWN_IDEMPOTENT` execute-mode discovery (REQ-005.13)
+
+**What's tested:** `self.pvw_idempotent.discovery` (`tests/selfapps_pvw_idempotent.ps1`, `uv` lane,
+real and passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708109` (`uv` lane).
+
+This is an opt-in super-user flag (not part of the default happy path -- Part III never sets it):
+when defined, `run_setup.bat` skips straight to actually RUNNING the entry file live via
+`uvx autopep723 <entry>` for dependency discovery, before pipreqs or any static analysis even
+starts. Real capture:
+
+```
+[INFO] REQ-005.13: HP_PVW_KNOWN_IDEMPOTENT set; running entry via uvx autopep723 for execute-mode discovery.
+[INFO] REQ-005.13: execute-mode discovery run succeeded (RAN:persisted).
+```
+
+The entry script's own stdout is inherited/passed through live during this discovery run (not
+captured or suppressed) -- real NDJSON detail confirms `stdoutPassthroughFound:true, appRan:true`
+-- and whatever dependency it needed (`requests`, in this real capture: `reqsHasRequests:true`) is
+persisted back into the PEP 723 header via `uv add --script`, then re-extracted into
+`requirements.txt` so the rest of the pipeline (pipreqs, Tier 1 autopep723 merge, the actual
+install) sees it too. Deliberately ADDITIVE, not a replacement for pipreqs -- pipreqs and Tier 1's
+own `autopep723 check` merge still run normally afterward to catch anything a single execution
+path didn't happen to exercise.
+
+---
+
+### Scenario 30: NI-VISA detection and install outcome (REQ-008)
+
+**What's tested:** `pyvisa.detect`/`.nivisa.branch`/`.nivisa.outcome`/`.nivisa.reason`/`.nivisa.disabled`
+(`tests/selfapps_pyvisa.ps1`, `real`/`conda-full` lanes, all real and passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real`) and job `90179708094`
+(`conda-full`) -- both lanes captured a genuine NI-VISA install ATTEMPT in this run (not just the
+"not required" skip), which is a more complete illustration than what an earlier pass in this
+document assumed was CI's only available evidence.
+
+When `pyvisa`/`visa` is detected as an import, the bootstrapper attempts a real NI-VISA driver
+install (downloads the online bootstrapper installer via curl, PE-validates it, then launches it
+under a bounded timeout):
+
+```
+[INFO] Detected pyvisa/visa import; NI-VISA install may be required.
+[VISA] download method: curl
+[VISA] installer file size: 6769400 bytes
+[VISA] installer PE check: PE_OK
+[INFO] Launching NI-VISA installer (timeout ceiling: 5400000 ms).
+[VISA] installer exit code: -125202
+[VISA] post-check waiting; retry 1/3 (installer_rc=-125202)
+[VISA] post-check waiting; retry 2/3 (installer_rc=-125202)
+[VISA] install_failed (post_check_timeout) installer_rc=-125202
+```
+
+This matches CLAUDE.md's already-documented Known Finding ("NI-VISA real install fails fast in CI")
+in shape and mechanism exactly -- a genuine, PE-valid installer download that exits fast and
+unattended-incompatible on a CI runner -- though the SPECIFIC installer exit code observed here
+(`-125202`) differs from that finding's originally-cited `-125083`. Consistent with the finding's
+own framing (an online bootstrapper installer failing an unattended install, not a fixed/stable
+error code), not a new discrepancy worth a separate backlog entry. The bootstrap proceeds
+gracefully regardless -- a failed NI-VISA install is never treated as a bootstrap failure, only
+logged and surfaced; the user's own program still builds and runs.
+
+Real evidence confirms the OTHER outcome branch too, via a dedicated `HP_SKIP_NIVISA=1` scenario in
+the same test file: `[VISA] skipped (not_required)`, with `skippedDisabled:true,
+noInstallAttempt:true` -- the flag suppresses the install attempt outright even when pyvisa IS
+detected, per REQ-019's suppression-only convention.
+
+---
+
+### Scenario 31: pandas/openpyxl heuristic dependency augmentation (REQ-005.8)
+
+**What's tested:** `pandas_excel.translate`/`.conda.install`/`.conda.install.req006`/`.runtime`,
+`self.pandas.openpyxl.install`/`.import` (`tests/selfapps_pandas_excel.ps1`, `conda-full` lane, all
+real and passing) -- plus a genuinely SEPARATE test that happens to exercise the same heuristic in
+a different scratch directory, `self.exe.warnfix.real` (`tests/selftest.ps1`'s `real` scenario,
+`conda-full` lane, also real and passing, `desc: "Heuristic pre-installed openpyxl via pandas
+heuristic; EXE succeeded"`).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full` lane).
+
+`~prep_requirements.py` (`HP_PREP_REQUIREMENTS`) applies a small set of heuristic rules that inject
+a commonly-needed-but-undeclared package when its "parent" package is present -- pandas's
+`pd.read_excel()`/`to_excel()` need `openpyxl`/`xlsxwriter`, but pipreqs' static analysis has no
+way to see that a lazily-imported optional engine is actually required at runtime. Real capture
+from `tests/~pandas_excel/`'s own scratch directory:
+
+```
+[HEURISTIC] pandas->xlsxwriter
+```
+
+(the console line is a compact tag; the two package names themselves are appended to the conda
+install spec list, confirmed by the real conda solve plan later in the same `~pandas_excel` log:
+`openpyxl conda-forge/win-64::openpyxl-3.1.5-py314hccc76fc_3` and `xlsxwriter
+conda-forge/noarch::xlsxwriter-3.2.9-pyhd8ed1ab_0`, and both packages installed into
+`~pandas_excel`'s own `requirements.txt`/`~reqs_conda.txt`/`~reqs_pip.txt`). The claim that
+`openpyxl` ends up genuinely bundled and importable in a frozen EXE is confirmed by the SIBLING
+`self.exe.warnfix.real` test's OWN independent scratch directory (`tests/~selftest_warnfix_real/`,
+a different app that also exercises the pandas heuristic, per its own NDJSON `desc` text quoted
+above) rather than by `~pandas_excel`'s own PyInstaller warn-file -- its EXE's PyInstaller warn
+file shows only expected, harmless optional-dependency lines for the bundled `openpyxl`: `missing
+module named PIL - imported by openpyxl.drawing.image (optional)`, not a real gap. This is
+`HP_ENV_MODE=conda`-lane-only coverage per this test file's own CI wiring (see
+`docs/agent-interconnect.md`'s
+"selfapps_pandas_excel.ps1" note) -- the SAME heuristic logic also runs for uv/venv/embed/system
+providers via `requirements.txt` write-back (CLAUDE.md's own "Deep research pass" Closed Backlog
+entry on this exact fix), just not captured here since this test is conda-only by design.
+
+---
+
+### Scenario 32: Conda base periodic update
+
+**What's tested:** `self.conda.base.update` (`tests/selfapps_conda_update.ps1`) -- **NOT currently
+wired into any CI lane** (per `docs/agent-ndjson.md`'s own explicit note: the `HP_TEST_CONDA_UPDATE`
+injection flag was removed because it upgrades conda to a solver version that cascades failures
+across the rest of the `conda-full` job). Only the "skipped" branch below has real CI evidence.
+
+**Source (skipped branch):** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane,
+appears identically across every fresh scratch-dir bootstrap in the run).
+
+`:conda_base_update` runs `conda update -n base` on a timer (30-day threshold, seeded from
+`~conda.lastupdate` on first install) whenever `HP_ENV_MODE=conda`. On a genuinely first-ever
+install (the common case in a fresh CI scratch dir, and for most real first-time users), it
+correctly skips rather than updating a base that was just installed moments ago:
+
+```
+[INFO] Conda base update: skipped (first install).
+```
+
+**`[Extrapolated Branch]`** -- the actual 30-day-elapsed UPDATE-firing branch (`:cbu_run`,
+`run_setup.bat`) is not exercised by any current CI run (the only flag that could force it is
+deliberately disabled, per the note above). Traced from source: once the timestamp in
+`~conda.lastupdate` is more than 30 days old, the subroutine runs `conda update -n base -y` and
+would log something in the shape of `[INFO] Conda base update: running (last updated N days
+ago)...` followed by conda's own real update-solve output, then rewrites `~conda.lastupdate` to the
+current time on completion. This branch realistically only fires for a long-lived, repeatedly-reused
+project folder -- not the fresh-checkout scenarios this document otherwise captures -- and is
+correctly out of scope for a dedicated CI test per the reasoning already on record (a forced-update
+test previously broke conda's own solver in shared CI runners). No new CLAUDE.md backlog entry
+added -- this gap is already fully documented and deliberately accepted in
+`docs/agent-ndjson.md`'s "conda-full lane rows" section.
+
+---
+
+### Scenario 33: REQ-014 system-Python consent -- ACCEPT
+
+**What's tested:** `self.ux.system.gate.accept` (`tests/selfapps_ux_hardening.ps1`, `real` lane,
+real and passing). Part VI's Scenario 21 already showed the DECLINE branch of this same gate (as
+the terminal step of a full provider-cascade exhaustion); this scenario completes the pair.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+When every other REQ-009 provider tier has failed or been declined, the system-Python tier is
+still reached by any default, no-flag run -- it is gated solely by the REQ-014 consent prompt
+(Scenario 11 in Part III already documents the prompt's own framing text in full), never by an
+env-var the user would need to set. On ACCEPT, the bootstrapper proceeds to use whatever Python is
+already on the machine, unmanaged and unisolated:
+
+```
+[INFO] REQ-014: System Python consent: user accepted.
+[INFO] System fallback using C:\hostedtoolcache\windows\Python\3.12.10\x64\python.exe
+[BOOT] REQ-009: Selected Python provider: System Python (degraded).
+```
+
+`~bootstrap.status.json` still reports `state` as the degraded-but-successful `degraded_env` value
+(real NDJSON detail: `"state":"degraded_env","exitCode":0`) -- accepting this tier is a genuine,
+if suboptimal, path to a working run, not a failure. This is the ONLY REQ-009 tier gated by an
+explicit human consent prompt rather than an automatic fallback, precisely because it is the one
+tier that touches the user's real, shared Python environment instead of a private/disposable one.
