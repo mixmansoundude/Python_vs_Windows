@@ -42,25 +42,50 @@ TEST_ONLY_RE = re.compile(
     re.IGNORECASE,
 )
 
-# A real redirect operator: one or two literal '>' not preceded by a caret escape (a caret
-# protects an INNER command's own redirect, e.g. the `2^>nul` on a nested `powershell -Command`
-# call, from being read as this line's own redirect) and not immediately followed by '=' (so a
+# A candidate redirect token: one or two literal '>' not immediately followed by '=' (so a
 # genuine console message containing '>=' -- e.g. "running (>=30 days since last update)" --
-# is never mistaken for a redirect).
-REDIRECT_RE = re.compile(r'(?<!\^)>{1,2}(?!=)')
+# is never mistaken for a redirect). Caret-escape state is NOT checked by the regex itself --
+# see _is_caret_escaped() below -- a single trailing (?<!\^) lookbehind cannot express cmd.exe's
+# parity rule (^X is escaped, ^^X is a literal caret followed by an UNESCAPED X).
+_REDIRECT_TOKEN_RE = re.compile(r'>{1,2}(?!=)')
 
-# A real command separator (& / | / && / ||), not caret-escaped. A redirect appearing AFTER one
-# of these belongs to a later, separately-chained command -- it must not cause the FIRST
-# command's own record (e.g. a `call :log` that already reached the console before the
-# separator) to be dropped.
-SEGMENT_END_RE = re.compile(r'(?<!\^)[&|]')
+# A candidate command separator (& / | / && / ||). Same caret-escape caveat as above.
+_SEGMENT_TOKEN_RE = re.compile(r'[&|]')
+
+
+def _is_caret_escaped(text: str, pos: int) -> bool:
+    """True if the character at `pos` is caret-escaped, per cmd.exe's parity rule: a caret
+    escapes the NEXT character, and a caret itself is escaped by a preceding caret. So an ODD
+    number of consecutive carets immediately before `pos` means `text[pos]` is escaped (^X);
+    an EVEN number (including zero) means it is not -- e.g. ^^& is a literal caret followed by
+    an ACTIVE '&', not an escaped one. A single-character regex lookbehind cannot express this
+    for an arbitrary run of carets, so it is checked by explicit backward scan instead."""
+    carets = 0
+    i = pos - 1
+    while i >= 0 and text[i] == '^':
+        carets += 1
+        i -= 1
+    return carets % 2 == 1
+
+
+def _first_unescaped(pattern: re.Pattern, text: str):
+    """Return the first match of `pattern` in `text` whose start position is not
+    caret-escaped, or None."""
+    for m in pattern.finditer(text):
+        if not _is_caret_escaped(text, m.start()):
+            return m
+    return None
+
+
+def _has_unescaped_redirect(text: str) -> bool:
+    return _first_unescaped(_REDIRECT_TOKEN_RE, text) is not None
 
 
 def _own_command_segment(tail: str) -> str:
-    """Truncate `tail` at the first real command separator, so a redirect belonging to a
-    later chained command is never mistaken for one that applies to the command being
-    checked."""
-    m = SEGMENT_END_RE.search(tail)
+    """Truncate `tail` at the first real (unescaped) command separator, so a redirect
+    belonging to a later chained command is never mistaken for one that applies to the
+    command being checked."""
+    m = _first_unescaped(_SEGMENT_TOKEN_RE, tail)
     return tail[:m.start()] if m else tail
 
 
@@ -95,7 +120,7 @@ def extract_records(bat_path: Path):
             # is indistinguishable from message content by position alone -- scan the whole raw
             # line. No current echo message contains a real (non-'>=', non-caret-escaped) '>',
             # confirmed by a full-file sweep at the time this check was added.
-            if REDIRECT_RE.search(raw):
+            if _has_unescaped_redirect(raw):
                 continue
             records.append((i, normalize(body)))
             continue
@@ -107,7 +132,7 @@ def extract_records(bat_path: Path):
             # inside the matched group, never scanned here. Truncate at the first real command
             # separator first: a redirect on a LATER, `&`-chained command (e.g. `call :log "..."
             # & echo hidden > file`) does not mean call :log itself was redirected.
-            if REDIRECT_RE.search(_own_command_segment(line[m.end():])):
+            if _has_unescaped_redirect(_own_command_segment(line[m.end():])):
                 continue
             records.append((i, normalize(m.group(1))))
     return records
