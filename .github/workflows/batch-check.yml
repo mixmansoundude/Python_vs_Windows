@@ -331,7 +331,7 @@ jobs:
         # producing a circular self-skip: confirmed via the GitHub Actions API against the CI runs
         # for two real commits on PR #390 (efd7a5c, fd7a046) that ~27 real/conda-full-only self-
         # tests silently "skipped" every run while the job still reported overall SUCCESS. See
-        # docs/agent-closed-backlog.md's Active Backlog item 7 for the full incident writeup and
+        # docs/agent-closed-backlog.md's closed Item 7 entry for the full incident writeup and
         # PR #391 for the revert that restored those steps to unconditional (matrix.mode ==
         # 'conda-full') form.
         #
@@ -347,7 +347,7 @@ jobs:
         # itself failed -- making this the correct point to sample "is conda now really available."
         #
         # Re-wired 2026-07-27 (owner sign-off, full risk/benefit assessment in chat -- see
-        # docs/agent-closed-backlog.md's Active Backlog item 7 entry for the summary) after the
+        # docs/agent-closed-backlog.md's closed Item 7 entry for the summary) after the
         # corrected POSITION
         # above was empirically confirmed working across two real conda-full runs (PR #395, #396:
         # `available` correctly read `true` both times). The 27 downstream conda-full-only self-test
@@ -440,7 +440,7 @@ jobs:
           $row | Add-Content 'tests\~test-results.ndjson' -Encoding Ascii
           $row | Add-Content 'ci_test_results.ndjson' -Encoding Ascii
           Write-Host '::error::Miniconda was NOT detected at the shared install path after "Self-test: real env smoke (CI-only)" completed. 27 downstream conda-full self-tests are gated on this and will have been skipped.'
-          Write-Host '::error::Two possible root causes, both must be checked: (1) a genuine Miniconda install failure during real env smoke -- this already independently fails that step''s own self.env.smoke.conda NDJSON row, so if that row also failed, this is likely just secondary confirmation; check tests\~envsmoke\~envsmoke_bootstrap.log and tests\~envsmoke\~setup.log below and in the job artifacts. (2) a bug in this gating mechanism itself (wrong lane/step/output reference) -- if the env-smoke step passed cleanly, treat this as case (2) and investigate the conda_avail / conda_avail_gate steps and the 27 if: conditions before assuming this is safe to ignore. See docs/agent-closed-backlog.md''s Active Backlog item 7 for the documented history of exactly this failure class (PR #390).'
+          Write-Host '::error::Two possible root causes, both must be checked: (1) a genuine Miniconda install failure during real env smoke -- this already independently fails that step''s own self.env.smoke.conda NDJSON row, so if that row also failed, this is likely just secondary confirmation; check tests\~envsmoke\~envsmoke_bootstrap.log and tests\~envsmoke\~setup.log below and in the job artifacts. (2) a bug in this gating mechanism itself (wrong lane/step/output reference) -- if the env-smoke step passed cleanly, treat this as case (2) and investigate the conda_avail / conda_avail_gate steps and the 27 if: conditions before assuming this is safe to ignore. See docs/agent-closed-backlog.md''s closed Item 7 entry for the documented history of exactly this failure class (PR #390).'
           $envsmokeLog = 'tests\~envsmoke\~envsmoke_bootstrap.log'
           if (Test-Path -LiteralPath $envsmokeLog) {
             Write-Host '--- tail of tests\~envsmoke\~envsmoke_bootstrap.log ---'
