@@ -473,7 +473,61 @@ further.)*
 
 ---
 
-### Item 9 (closed 2026-07-31; moved here same pass)
+### Item 16 (closed 2026-07-31; moved here same pass; renumbered from 11)
+
+**Renumbered from 11 to 16 when moving here** -- this finding was originally filed in CLAUDE.md's
+Active Backlog as "item 11," but that number was already permanently retired by the older
+"Hidden-import auto-recovery exhaustion coverage" entry in this file's own Closed Backlog section
+below (closed 2026-07-25, still correctly cited as "item 11" by `docs/agent-ndjson.md`'s
+`self.exe.hidden_import.exhaust` entry) -- a genuine number reuse that must have slipped in when
+this finding was first logged. Renumbered to 16 and 17 respectively (see the sibling entry right
+after this one) -- the next two numbers never used anywhere in this repo's docs -- rather than
+leaving the collision in place; no other doc referenced this finding as "item 11" before this
+move, so the renumber is clean. **This is one instance of a wider, unrelated bug** -- see the new
+Active Backlog entry filed in the same pass for the full scope (items 8, 9, 10, 12, 13, 14, and 15
+all appear to reuse numbers already retired the same way; only 9 and 11 were actually renumbered
+here, since those were the two items this pass touched for unrelated reasons).
+
+- **`:tci_justme`'s `[WARN] Miniconda AllUsers install failed; retrying with JustMe.` log line
+   fired unconditionally, even when AllUsers was never actually attempted -- found 2026-07-29
+   while documenting the Miniconda install chain for `docs/demo-bootstrapper-output.md`'s Part VI,
+   flagged by a CodeRabbit review on PR #401 and verified against real CI evidence and the actual
+   `run_setup.bat` source before acting.** `:try_conda_install` has three distinct paths into the
+   shared `:tci_justme` label: (a) `HP_TEST_NOT_ELEVATED=1` (test-only, simulates a non-admin
+   environment) skips straight to `:tci_justme` with no AllUsers attempt at all; (b) a real
+   `fsutil dirty query %systemdrive%` failure (the genuine non-elevated-process detection) does
+   the same; (c) a real, genuine AllUsers installer failure (`:run_installer_timeout` returning
+   nonzero) also falls through to `:tci_justme`. All three paths logged the identical
+   `[WARN] Miniconda AllUsers install failed; retrying with JustMe.` line at `:tci_justme` itself,
+   regardless of which path got there -- so on the common non-elevated real-world machine (paths a
+   or b), the WARN text was a misnomer: AllUsers was never launched, only skipped, yet the log
+   claimed it "failed." Confirmed directly against real CI capture (run `30328748330`, `justme-test`
+   and `uv` lanes): both the `[INFO] Not elevated; skipping AllUsers Miniconda install.` line and
+   the `[WARN] ... AllUsers install failed ...` line appeared back-to-back for the identical
+   non-elevated test run, with no genuine AllUsers attempt in between.
+   **Fixed 2026-07-31.** `:try_conda_install` now sets `HP_CONDA_ALLUSERS_ATTEMPTED=1` (reset
+   defensively at subroutine entry) immediately before the real AllUsers install attempt, and
+   `:tci_justme` branches its log line on whether that flag is defined: the genuine-failure path
+   keeps the original WARN wording unchanged, while both skip paths now log
+   `[INFO] Miniconda AllUsers install skipped (not elevated); trying JustMe install instead.`
+   instead. Confirmed safe against all three existing tests that reach this code path
+   (`tests/selfapps_justme.ps1`, `tests/selfapps_conda_bothfail.ps1`) -- none asserted on the old
+   WARN text for the skip-path scenarios they exercise. Added a new regression assertion to
+   `tests/selfapps_justme.ps1` (`skippedWordingCorrect`/`failedWordingAbsent`) confirming the new
+   INFO wording fires and the old WARN wording does NOT, in the non-elevated simulation this test
+   already runs.
+
+---
+
+### Item 17 (closed 2026-07-31; moved here same pass; renumbered from 9)
+
+**Renumbered from 9 to 17 when moving here** -- filed in CLAUDE.md's Active Backlog as "item 9,"
+but that number was already permanently retired by the older "Cascade-vs-postexec fix" entry in
+this file's own Closed Backlog section below (closed 2026-07-25, still correctly cited as
+"item 9" by both `docs/agent-ndjson.md` and `docs/agent-interconnect.md` -- both auto-loaded into
+every session). Nothing outside CLAUDE.md's own now-removed entry referenced this finding as
+"item 9," so the renumber is clean (see the preceding item's own header for the wider collision
+this belongs to).
 
 - **README.md's `[REQ-018]` bullet describing the mandatory verification run as
    "force-stopped after a short interval even if running fine" was stale relative to the
@@ -493,8 +547,6 @@ further.)*
    the `--hidden-import` auto-recovery loop remains unconditionally time-boxed (unaffected by this
    fix, by design -- see this file's own entry on that loop for why). No behavior changed; this
    was a documentation-only correction.
-
----
 
 ## Closed Backlog
 

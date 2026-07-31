@@ -57,7 +57,14 @@ $combinedText = $setupText + $mainSetupText
 $notElevatedSkip = $combinedText -match 'Not elevated; skipping AllUsers Miniconda install\.'
 $justmeInstalled = $combinedText -match 'Miniconda installed \(JustMe fallback\)'
 
-$pass = $notElevatedSkip -and $justmeInstalled
+# derived requirement: [Active Backlog item 11 fix] the shared :tci_justme label must NOT claim
+# AllUsers "failed" when it was only ever skipped (never launched) -- this scenario's own
+# HP_TEST_NOT_ELEVATED=1 takes the skip path, so the correct line is the INFO "skipped" wording,
+# and the old unconditional WARN "failed" wording must NOT appear at all in this run.
+$skippedWordingCorrect = $combinedText -match 'Miniconda AllUsers install skipped \(not elevated\); trying JustMe install instead\.'
+$failedWordingAbsent   = -not ($combinedText -match 'Miniconda AllUsers install failed; retrying with JustMe\.')
+
+$pass = $notElevatedSkip -and $justmeInstalled -and $skippedWordingCorrect -and $failedWordingAbsent
 
 Write-NdjsonRow ([ordered]@{
     id      = 'conda.install.justme'
@@ -65,9 +72,11 @@ Write-NdjsonRow ([ordered]@{
     pass    = $pass
     desc    = 'Miniconda JustMe install path executed (non-elevated simulation)'
     details = [ordered]@{
-        notElevatedSkip = $notElevatedSkip
-        justmeInstalled = $justmeInstalled
-        setupLog        = $setupLogPath
+        notElevatedSkip        = $notElevatedSkip
+        justmeInstalled        = $justmeInstalled
+        skippedWordingCorrect  = $skippedWordingCorrect
+        failedWordingAbsent    = $failedWordingAbsent
+        setupLog               = $setupLogPath
     }
 })
 
