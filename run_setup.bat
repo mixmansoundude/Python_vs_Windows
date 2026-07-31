@@ -4481,7 +4481,8 @@ exit /b %HP_INSTALLER_RC%
 rem derived requirement: AllUsers install can fail when UAC rejects elevation even for admin accounts.
 rem JustMe is the non-admin fallback that installs under the user profile instead.
 rem Both attempts reuse the already-downloaded installer at %TEMP%\miniconda.exe (no re-download).
-rem derived requirement: [Active Backlog item 11] track whether AllUsers was actually launched vs.
+rem derived requirement: [Active Backlog item 16, renumbered from 11 -- see docs/agent-closed-backlog.md]
+rem track whether AllUsers was actually launched vs.
 rem only skipped, so :tci_justme's own log line can tell the two apart instead of unconditionally
 rem claiming AllUsers "failed" even when it was never attempted. Reset defensively at entry in case
 rem a future caller invokes this subroutine more than once in the same process.
@@ -4505,14 +4506,16 @@ rem ContinuumIO/anaconda-issues GitHub issues reporting the silent installer han
 rem at extraction or the post-install script) confirm this is not a theoretical risk. 60 minutes
 rem is a generous ceiling above the documented ~40 min real-world duration.
 set "HP_CONDA_ALLUSERS_ATTEMPTED=1"
+set "HP_CONDA_ALLUSERS_RC="
 call :run_installer_timeout "%TEMP%\miniconda.exe" "/InstallationType=AllUsers /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%" 3600000 "Miniconda AllUsers"
-if errorlevel 1 goto :tci_justme
+set "HP_CONDA_ALLUSERS_RC=%ERRORLEVEL%"
+if not "%HP_CONDA_ALLUSERS_RC%"=="0" goto :tci_justme
 set "HP_CONDA_INSTALL_MODE=AllUsers"
 call :log "[INFO] Miniconda installed successfully."
 goto :eof
 :tci_justme
 if defined HP_CONDA_ALLUSERS_ATTEMPTED (
-  call :log "[WARN] Miniconda AllUsers install failed; retrying with JustMe."
+  call :log "[WARN] Miniconda AllUsers install failed (exitCode=%HP_CONDA_ALLUSERS_RC%, reason=installer_failed); retrying with JustMe."
 ) else (
   call :log "[INFO] Miniconda AllUsers install skipped (not elevated); trying JustMe install instead."
 )
@@ -4532,7 +4535,14 @@ set "HP_CONDA_INSTALL_MODE=JustMe"
 call :log "[INFO] Miniconda installed (JustMe fallback)."
 goto :eof
 :tci_both_failed
-call :die "[ERROR] Miniconda install failed (both AllUsers and JustMe)."
+rem derived requirement: [Active Backlog item 16] the terminal message must not imply AllUsers was
+rem genuinely attempted-then-failed when it was only ever skipped (not elevated) -- mirrors the
+rem same HP_CONDA_ALLUSERS_ATTEMPTED distinction :tci_justme already makes above.
+if defined HP_CONDA_ALLUSERS_ATTEMPTED (
+  call :die "[ERROR] Miniconda install failed (both AllUsers and JustMe)."
+) else (
+  call :die "[ERROR] Miniconda install failed (AllUsers skipped -- not elevated; JustMe also failed)."
+)
 goto :eof
 
 :conda_base_update

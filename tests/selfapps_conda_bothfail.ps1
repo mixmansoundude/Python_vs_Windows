@@ -9,8 +9,11 @@
 # New hook: HP_TEST_FORCE_JUSTME_FAIL=1 (run_setup.bat, :tci_justme) skips the real JustMe
 # `start "" /wait` call and forces a nonzero result deterministically. Combined with
 # HP_TEST_NOT_ELEVATED=1 (already reaches :tci_justme by skipping straight past the AllUsers
-# attempt), this reaches :tci_both_failed -> :die "[ERROR] Miniconda install failed (both
-# AllUsers and JustMe)." without depending on a genuinely broken installer/ACL environment.
+# attempt), this reaches :tci_both_failed -> :die "[ERROR] Miniconda install failed (AllUsers
+# skipped -- not elevated; JustMe also failed)." without depending on a genuinely broken
+# installer/ACL environment. (Message wording updated for Active Backlog item 16, renumbered
+# from 11 -- see docs/agent-closed-backlog.md -- to stop implying AllUsers was genuinely
+# attempted-then-failed when this scenario always skips it.)
 #
 # derived requirement: Miniconda installs to the SHARED, machine-wide %PUBLIC%\Documents\
 # Miniconda3 path, not a per-test-directory location -- if an EARLIER step in the same CI job
@@ -112,7 +115,11 @@ try {
 
     $notElevatedSkip = $combined -match [regex]::Escape('Not elevated; skipping AllUsers Miniconda install.')
     $justmeFailHookFired = $combined -match [regex]::Escape('HP_TEST_FORCE_JUSTME_FAIL=1; simulating JustMe install failure')
-    $bothFailedMsgFound = $combined -match [regex]::Escape('Miniconda install failed (both AllUsers and JustMe)')
+    # derived requirement: [Active Backlog item 16, renumbered from 11 -- see docs/agent-closed-
+    # backlog.md] :tci_both_failed's terminal message is now skip-aware -- this scenario always
+    # sets HP_TEST_NOT_ELEVATED=1, so AllUsers was skipped, never attempted, and the correct
+    # terminal wording says so instead of implying a genuine AllUsers install failure.
+    $bothFailedMsgFound = $combined -match [regex]::Escape('Miniconda install failed (AllUsers skipped -- not elevated; JustMe also failed)')
 
     $statusPath = Join-Path $workDir '~bootstrap.status.json'
     $statusText = if (Test-Path -LiteralPath $statusPath) { Get-Content -LiteralPath $statusPath -Raw } else { $null }
