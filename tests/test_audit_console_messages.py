@@ -27,6 +27,10 @@ def test_normalize_adjacent_expansions():
     assert acm.normalize('rc=%RC% size=%SIZE%') == 'rc=<V> size=<V>'
 
 
+def test_normalize_all_args_param():
+    assert acm.normalize('[INFO] Forwarding arguments: %*') == '[INFO] Forwarding arguments: <V>'
+
+
 def test_extract_records_skips_echo_control_tokens(tmp_path):
     bat = tmp_path / 'run_setup.bat'
     bat.write_text('@echo off\necho.\necho on\necho [INFO] real message\n', encoding='ascii')
@@ -51,6 +55,58 @@ def test_extract_records_skips_redirected_lines(tmp_path):
     )
     records = acm.extract_records(bat)
     assert records == [(3, '[INFO] visible line')]
+
+
+def test_extract_records_skips_single_arrow_redirected_lines(tmp_path):
+    bat = tmp_path / 'run_setup.bat'
+    bat.write_text(
+        'echo not visible > log.txt\n'
+        'call :log "not visible either" > log.txt\n'
+        'echo [INFO] visible line\n',
+        encoding='ascii',
+    )
+    records = acm.extract_records(bat)
+    assert records == [(3, '[INFO] visible line')]
+
+
+def test_extract_records_keeps_ge_symbol_in_message_content(tmp_path):
+    # A message containing a literal '>=' comparison (not a shell redirect) must not be
+    # mistaken for a redirected line.
+    bat = tmp_path / 'run_setup.bat'
+    bat.write_text('call :log "[INFO] running (>=30 days since last update)."\n', encoding='ascii')
+    records = acm.extract_records(bat)
+    assert records == [(1, '[INFO] running (>=30 days since last update).')]
+
+
+def test_extract_records_keeps_caret_escaped_redirect_of_nested_command(tmp_path):
+    # A caret-escaped redirect belongs to a NESTED command (e.g. a powershell subprocess's own
+    # stderr), not to this call :log line itself -- it must not cause a skip.
+    bat = tmp_path / 'run_setup.bat'
+    bat.write_text(
+        'for /f "delims=" %%P in (`powershell -Command "1" 2^>nul`) do call :log "[INFO] Value: %%P"\n',
+        encoding='ascii',
+    )
+    records = acm.extract_records(bat)
+    assert records == [(1, '[INFO] Value: <V>')]
+
+
+def test_extract_records_keeps_call_log_with_redirect_on_later_chained_command(tmp_path):
+    # A redirect on a LATER command chained via '&' belongs to that command, not to the
+    # call :log that already reached the console before the separator -- it must not cause
+    # the call :log record to be dropped.
+    bat = tmp_path / 'run_setup.bat'
+    bat.write_text('call :log "[INFO] visible" & echo hidden > log.txt\n', encoding='ascii')
+    records = acm.extract_records(bat)
+    assert records == [(1, '[INFO] visible')]
+
+
+def test_extract_records_skips_call_log_with_redirect_in_same_segment(tmp_path):
+    # A redirect immediately after the closing quote, with no intervening command
+    # separator, DOES belong to this call :log -- it must still be skipped.
+    bat = tmp_path / 'run_setup.bat'
+    bat.write_text('call :log "[INFO] hidden" > log.txt\n', encoding='ascii')
+    records = acm.extract_records(bat)
+    assert records == []
 
 
 def test_is_covered_true_when_all_segments_present():

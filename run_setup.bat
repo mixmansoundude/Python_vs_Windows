@@ -4475,7 +4475,11 @@ set "HP_INSTALLER_ARGS="
 set "HP_INSTALLER_TIMEOUT_MS="
 set "HP_INSTALLER_RESULT="
 set "HP_INSTALLER_LABEL="
-set "HP_INSTALLER_TIMEDOUT="
+rem derived requirement: HP_INSTALLER_TIMEDOUT is deliberately NOT cleared here -- it is the
+rem only way a caller can tell a timeout (HP_INSTALLER_RC hardcoded to 1, not a real installer
+rem exit code) apart from a genuine installer failure that happens to also exit 1. Each call
+rem freshly re-sets it at entry (either "0" or from the result file), so leaving it live across
+rem return is safe: no caller can ever read a stale value from an earlier, different call.
 exit /b %HP_INSTALLER_RC%
 :try_conda_install
 rem derived requirement: AllUsers install can fail when UAC rejects elevation even for admin accounts.
@@ -4487,6 +4491,7 @@ rem only skipped, so :tci_justme's own log line can tell the two apart instead o
 rem claiming AllUsers "failed" even when it was never attempted. Reset defensively at entry in case
 rem a future caller invokes this subroutine more than once in the same process.
 set "HP_CONDA_ALLUSERS_ATTEMPTED="
+set "HP_CONDA_ALLUSERS_TIMEDOUT="
 rem derived requirement: non-admin machines produce a UAC prompt when AllUsers install is attempted;
 rem skip directly to JustMe when the process is not elevated.
 rem HP_TEST_NOT_ELEVATED=1 simulates a non-admin environment for CI coverage of this branch.
@@ -4509,13 +4514,22 @@ set "HP_CONDA_ALLUSERS_ATTEMPTED=1"
 set "HP_CONDA_ALLUSERS_RC="
 call :run_installer_timeout "%TEMP%\miniconda.exe" "/InstallationType=AllUsers /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%" 3600000 "Miniconda AllUsers"
 set "HP_CONDA_ALLUSERS_RC=%ERRORLEVEL%"
+set "HP_CONDA_ALLUSERS_TIMEDOUT=%HP_INSTALLER_TIMEDOUT%"
 if not "%HP_CONDA_ALLUSERS_RC%"=="0" goto :tci_justme
 set "HP_CONDA_INSTALL_MODE=AllUsers"
 call :log "[INFO] Miniconda installed successfully."
 goto :eof
 :tci_justme
+rem derived requirement: a genuine timeout (HP_CONDA_ALLUSERS_TIMEDOUT=1, see
+rem :run_installer_timeout's own header comment) hardcodes HP_CONDA_ALLUSERS_RC to 1 -- that is
+rem a sentinel, not the installer's real exit code, so it must not be presented as one; report
+rem reason=timeout instead of a fabricated exitCode.
 if defined HP_CONDA_ALLUSERS_ATTEMPTED (
-  call :log "[WARN] Miniconda AllUsers install failed (exitCode=%HP_CONDA_ALLUSERS_RC%, reason=installer_failed); retrying with JustMe."
+  if "%HP_CONDA_ALLUSERS_TIMEDOUT%"=="1" (
+    call :log "[WARN] Miniconda AllUsers install failed (reason=timeout); retrying with JustMe."
+  ) else (
+    call :log "[WARN] Miniconda AllUsers install failed (exitCode=%HP_CONDA_ALLUSERS_RC%, reason=installer_failed); retrying with JustMe."
+  )
 ) else (
   call :log "[INFO] Miniconda AllUsers install skipped (not elevated); trying JustMe install instead."
 )

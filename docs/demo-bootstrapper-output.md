@@ -14,12 +14,26 @@ job log (cited with run ID, job ID, lane, and test file) or, where noted, taken 
 `run_setup.bat`'s current source because no CI run has exercised that exact wording yet -- always
 labeled explicitly which case applies, never presented as a real capture when it isn't.
 
-**Scope:** two parts, grouped by feature area and roughly in the order each was reviewed. Part I
-covers the AV-Safe Build Path work (Tier A Nuitka fallback, its interaction with hidden-import
-auto-recovery, and the requirement-9 optimized-build offer). Part II covers the CLI-interactivity
-plan (`docs/plan-cli-interactive-verification.md`): live-tee verification, argv passthrough
-(REQ-026), and honest ambiguous-exit messaging (REQ-027). Extend with a new Part as new feature
-areas get reviewed, rather than growing either existing Part indefinitely.
+**Scope:** grouped by feature area, roughly in the order each was reviewed (now eight Parts, not
+the original two -- this paragraph covers only the first two below since they were the doc's
+starting point; see the table of contents for the full current list). Part I covers the AV-Safe
+Build Path work (Tier A Nuitka fallback, its interaction with hidden-import auto-recovery, and the
+requirement-9 optimized-build offer). Part II covers the CLI-interactivity plan
+(`docs/plan-cli-interactive-verification.md`): live-tee verification, argv passthrough (REQ-026),
+and honest ambiguous-exit messaging (REQ-027). Extend with a new Part as new feature areas get
+reviewed, rather than growing any existing Part indefinitely.
+
+**TODO for the next reorg pass (owner request, 2026-08-01, not done yet -- flow only, no content
+change):** the current ordering front-loads two fairly narrow/advanced topics (Part I, Part II)
+before the reader ever sees the basic happy path. Move Scenario 38 ("No `.py` files at all -- the
+graceful `no_python_files` exit," currently the very LAST scenario in the doc, in Part VIII) up to
+the front -- it is the simplest, most foundational case (what happens before anything else can
+even run) and reads more naturally as an early scenario than a footnote at the end. Push Part I
+and Part II further down, or to the end, to make room. This is a pure reordering/flow pass: move
+the existing sections, then update the table of contents anchors and any in-doc cross-references
+that name a Part by number (e.g. "see Part I" / "see Part III") so they still point at the right
+content after the move -- no scenario text itself should change. Sized for its own dedicated pass,
+not a drive-by edit alongside unrelated content changes.
 
 **Console vs. `~setup.log`:** the bootstrapper writes to two different places that are easy to
 conflate:
@@ -1553,6 +1567,15 @@ current CI hook forces without also forcing the skip path):
 
 ```
 [WARN] Miniconda AllUsers install failed (exitCode=1, reason=installer_failed); retrying with JustMe.
+```
+
+If the installer instead hits `:run_installer_timeout`'s own 60-minute ceiling (see that
+subroutine's header comment), the exit code is a hardcoded sentinel, not the installer's real
+exit code -- reported as `reason=timeout` with no fabricated `exitCode` field instead
+(`[Extrapolated Branch]`, an even rarer sub-case of the one above, never observed in CI):
+
+```
+[WARN] Miniconda AllUsers install failed (reason=timeout); retrying with JustMe.
 ```
 
 **If JustMe ALSO fails** (both installation options exhausted; REAL CI CAPTURE for the skip-path

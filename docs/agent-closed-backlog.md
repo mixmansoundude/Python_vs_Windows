@@ -528,6 +528,29 @@ here, since those were the two items this pass touched for unrelated reasons).
    envsmoke-scoped log rather than the combined root+envsmoke text a second CodeRabbit comment
    flagged as a staleness risk for a negative assertion) confirming the new INFO wording fires and
    the old WARN wording does NOT, in the non-elevated simulation this test already runs.
+   **Follow-up fix, 2026-07-31 (same day, a later CodeRabbit review round on the follow-up PR):**
+   the genuine-failure WARN's `exitCode=%HP_CONDA_ALLUSERS_RC%` was itself sometimes a fabrication
+   -- `HP_CONDA_ALLUSERS_RC` is captured straight from `:run_installer_timeout`'s own return value,
+   which that subroutine's own header comment documents as "the installer's real exit code (or 1
+   on timeout)": on a genuine 60-minute installer timeout, `HP_CONDA_ALLUSERS_RC` reads `1` as a
+   pure sentinel, not a real exit code, so the WARN was presenting a fabricated `exitCode=1` as if
+   the installer itself had returned it. Fixed by no longer clearing `:run_installer_timeout`'s own
+   `HP_INSTALLER_TIMEDOUT` flag before it returns (each call re-sets it fresh at entry regardless,
+   so leaving it live across `exit /b` is safe -- no caller can read a stale value from an earlier,
+   unrelated call), capturing it into a new `HP_CONDA_ALLUSERS_TIMEDOUT` variable right alongside
+   `HP_CONDA_ALLUSERS_RC`, and branching `:tci_justme`'s genuine-failure WARN a second time on it:
+   `reason=timeout` with no `exitCode` field on a real timeout, the existing
+   `exitCode=..., reason=installer_failed` wording otherwise. `tests/selfapps_justme.ps1`'s own
+   `failedWordingAbsent` negative assertion was separately found to have silently degraded into an
+   assertion that could never fail: it matched the OLD, pre-exitCode-annotation exact sentence
+   (`Miniconda AllUsers install failed; retrying with JustMe.`), which no longer appears anywhere
+   verbatim now that the WARN always carries an `exitCode=.../reason=...` or `reason=timeout`
+   suffix -- fixed to match the stable `Miniconda AllUsers install failed` prefix instead, so it
+   once again actually catches a skip-path regression to any failure-wording variant. No CI hook
+   can force a genuine timeout deterministically (would need a real 60-minute hang or a dedicated
+   fake-timeout test hook, neither built here), so the timeout branch itself remains
+   `[Extrapolated Branch]`-only in `docs/demo-bootstrapper-output.md`, same status as the
+   genuine-failure branch it refines.
 
 ---
 

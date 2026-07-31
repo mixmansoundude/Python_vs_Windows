@@ -8,9 +8,10 @@ of new `echo`/`call :log` lines have landed in run_setup.bat.
 What it does:
   1. Extracts every `echo <text>` and `call :log "<text>"` line from run_setup.bat
      (case-insensitively, tolerating a leading `@`; skipping blank/`echo off`/
-     `echo on` control lines and lines redirected to a file with `>>`, which never
-     reach the live console) and normalizes `%VAR%`, `%~dp0`/`%~1`-style
-     positional parameters, and `%%M`-style for-loop variables to a single
+     `echo on` control lines and lines redirected to a file with `>`/`>>` (caret-
+     escaped redirects and `>=` inside message text are not treated as redirects),
+     which never reach the live console) and normalizes `%VAR%`, `%~dp0`/`%~1`/`%*`-
+     style positional parameters, and `%%M`-style for-loop variables to a single
      placeholder so lines differing only by runtime substitution match.
   2. Splits each normalized message on its placeholder tokens and checks whether
      every resulting literal segment (length >= 6, to skip noise) appears anywhere
@@ -41,14 +42,37 @@ TEST_ONLY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A real redirect operator: one or two literal '>' not preceded by a caret escape (a caret
+# protects an INNER command's own redirect, e.g. the `2^>nul` on a nested `powershell -Command`
+# call, from being read as this line's own redirect) and not immediately followed by '=' (so a
+# genuine console message containing '>=' -- e.g. "running (>=30 days since last update)" --
+# is never mistaken for a redirect).
+REDIRECT_RE = re.compile(r'(?<!\^)>{1,2}(?!=)')
+
+# A real command separator (& / | / && / ||), not caret-escaped. A redirect appearing AFTER one
+# of these belongs to a later, separately-chained command -- it must not cause the FIRST
+# command's own record (e.g. a `call :log` that already reached the console before the
+# separator) to be dropped.
+SEGMENT_END_RE = re.compile(r'(?<!\^)[&|]')
+
+
+def _own_command_segment(tail: str) -> str:
+    """Truncate `tail` at the first real command separator, so a redirect belonging to a
+    later chained command is never mistaken for one that applies to the command being
+    checked."""
+    m = SEGMENT_END_RE.search(tail)
+    return tail[:m.start()] if m else tail
+
 
 def normalize(text: str) -> str:
     # %%VAR / %%~zS -style for-loop variable references -- must run before the single-percent
     # patterns below, since %% would otherwise look like an empty %...% pair to them.
     text = re.sub(r'%%~?[A-Za-z][A-Za-z0-9]*', '<V>', text)
-    # %~dp0 / %~1 / %~nx1 -style positional/modified batch parameters, and bare %1-%9.
+    # %~dp0 / %~1 / %~nx1 -style positional/modified batch parameters, bare %1-%9, and %*
+    # (all positional arguments).
     text = re.sub(r'%~[A-Za-z$:]*[0-9]', '<V>', text)
     text = re.sub(r'%[0-9]\b', '<V>', text)
+    text = re.sub(r'%\*', '<V>', text)
     # %VAR% environment variable references. Requires no whitespace inside the delimiters (real
     # batch variable names never contain spaces) so a literal, isolated '%' earlier in the same
     # line (e.g. "10% free on %DRIVE%") can't be greedily treated as this pattern's opening
@@ -67,13 +91,23 @@ def extract_records(bat_path: Path):
             body = m.group(1)
             if body.strip().lower() in ('.', 'off', 'on'):
                 continue
-            if '>>' in raw:
+            # `echo`'s body is unquoted plain text, so a trailing redirect (`> file`, `>> file`)
+            # is indistinguishable from message content by position alone -- scan the whole raw
+            # line. No current echo message contains a real (non-'>=', non-caret-escaped) '>',
+            # confirmed by a full-file sweep at the time this check was added.
+            if REDIRECT_RE.search(raw):
                 continue
             records.append((i, normalize(body)))
             continue
         m = re.search(r'call :log\s+["\']([^"\']*)["\']', line, re.IGNORECASE)
         if m:
-            if '>>' in raw:
+            # call :log's message is quote-delimited, so only the text AFTER the closing quote
+            # can be a real redirect -- this correctly leaves a message that itself contains
+            # '>=' (e.g. "running (>=30 days since last update)") untouched, since that '>=' is
+            # inside the matched group, never scanned here. Truncate at the first real command
+            # separator first: a redirect on a LATER, `&`-chained command (e.g. `call :log "..."
+            # & echo hidden > file`) does not mean call :log itself was redirected.
+            if REDIRECT_RE.search(_own_command_segment(line[m.end():])):
                 continue
             records.append((i, normalize(m.group(1))))
     return records

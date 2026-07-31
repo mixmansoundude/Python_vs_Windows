@@ -481,17 +481,16 @@ a fact confirmed with no action needed, or a recurring/periodic check belongs in
 "Known Findings", `docs/agent-lessons-learned.md`, or "Periodic Maintenance Checks" below instead;
 a promising idea deliberately shelved pending a specific, named trigger belongs in "Cold Storage"
 below instead of here (see that section's own scope note for the distinction from this one).
-Item numbers are stable cross-reference identifiers, not sequential list positions -- once an
-item is fully resolved it is removed from here entirely and archived (keeping its original
-number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not start at 1.
-**Exception: if a new item's number collides with a number already permanently retired by an
-older, unrelated closed item, renumber the new item to the next never-used number when archiving
-it, and document the collision (old number, why, cite the colliding entry) in its
-closed-backlog entry.** Keeping the original number is still the default; renumbering only
-happens to resolve a genuine collision, never for its own sake. Concrete precedent: items 9 and
-11 (filed 2026-07-29) each collided with an older, already-closed item of the same number and
-were renumbered to 17 and 16 respectively when archived -- see item 18 below and
-`docs/agent-closed-backlog.md`'s Item 16/17 entries for the full trace.
+Item numbers are informal labels for cross-referencing within a session or PR, not a
+guaranteed-unique ID scheme -- pick anything that looks free in the list below when filing a new
+item; do not cross-check it against `docs/agent-closed-backlog.md`'s history first, and do not
+renumber an item if it later turns out to coincidentally repeat an older, already-closed item's
+number. (Owner decision 2026-08-01, see Known Findings below: the earlier renumber-on-collision
+convention was more rigor than a plain-text backlog needs -- a real uniqueness guarantee belongs
+in an actual issue tracker, e.g. GitHub Issues, not a hand-maintained numbering scheme here.)
+Once an item is fully resolved it is removed from here entirely and archived (keeping its
+original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
+start at 1 and has gaps.
 
 - **8. `[WARN] UNC paths not supported` fires unconditionally in CI on an ordinary (non-UNC) local
    path -- found 2026-07-29 while gathering real console-output evidence for
@@ -694,40 +693,58 @@ were renumbered to 17 and 16 respectively when archived -- see item 18 below and
    of what's shown) -- but a future pass fixing this should also confirm no currently-passing test
    silently relies on the unbounded behavior before adding a timeout.
 
-- **18. Active Backlog items 8, 10, 12, 13, 14, and 15 all appear to reuse item numbers already
-   permanently retired by older, unrelated closed items -- found 2026-07-31 while closing out
-   items 9 and 11 during a `/goal`-directed backlog-fix pass, both of which turned out to have the
-   identical problem (fixed for those two; this item tracks the rest).** The batch of findings
-   filed 2026-07-29 while documenting the bootstrapper for `docs/demo-bootstrapper-output.md`
-   (this file's current items 8, 10, 12, 13, 14, 15, plus the now-fixed 9 and 11) appears to have
-   picked its numbers by eyeballing what looked unused in THIS file at the time, without checking
-   `docs/agent-closed-backlog.md`'s own "Closed Backlog" changelog section (2026-07-25 through
-   2026-07-27 work) for numbers already retired there. Confirmed for 9 and 11 specifically (both
-   collided with real, already-closed, differently-numbered items -- see
-   `docs/agent-closed-backlog.md`'s Item 16 and Item 17 entries for the full trace of each) and
-   both renumbered to 16/17 when moved out of this file in the same pass that found this. A quick
-   grep-based check (`grep -n "item N\b"` across `docs/agent-closed-backlog.md`, `docs/agent-
-   ndjson.md`, `docs/agent-interconnect.md`, `docs/agent-lessons-learned.md` for each of N in
-   8, 10, 12, 13, 14, 15) shows a same-number hit in the older Closed Backlog section for every
-   single one of them, strongly suggesting the same mistake repeats across the whole batch --
-   but each was only confirmed by number match, not individually read and verified the way 9 and
-   11 were, so **treat this as a strong lead, not a certainty, until each one gets the same
-   individual check.** Notably, item 14's collision is NOT purely a docs problem: `run_setup.bat`
-   itself has a live `rem derived requirement: [Active Backlog item 14]` comment (in
-   `:try_conda_install`, next to the Miniconda installer timeout) that refers to the OLDER,
-   already-closed item 14 (the 60-minute installer-timeout work), not the current active item 14
-   (the misleading post-exhaustion syntax-error message) -- so fixing this properly means checking
-   inline source comments too, not just docs. **Not fixed in this pass** -- renumbering the
-   remaining six items correctly requires reading each one's full closed-backlog collision
-   individually (to write an accurate, non-templated "renumbered from X because Y" note the way
-   16/17 got), then re-numbering every cross-reference to each (docs and, per the item-14 finding
-   above, possibly `run_setup.bat`'s own comments) -- real, careful work, not a batch find-replace,
-   and disproportionate to fold into an unrelated backlog-fix pass. Suggested approach for a
-   future pass: process one item at a time (matching this repo's own iteration discipline), confirm
-   its collision, pick the next genuinely-unused number (19 is next after this item, assuming no
-   further items get filed first), update its own text plus every cross-reference, and move it to
-   `docs/agent-closed-backlog.md` only if it was ALSO independently resolved -- an item can be
-   renumbered without being closed, if its underlying finding is still open.
+- **19. The `cache` CI lane's corruption recovery is a one-way trap: once a restored cache is
+   flagged corrupted, nothing in that lane ever produces a fresh, valid cache again -- found
+   2026-08-01 while investigating a maintainer report that the lane "never works," always logging
+   `Cache corrupted, skipping fast-path tests (HP_CACHE_CORRUPTED=1)`, confirmed against the
+   current `.github/workflows/batch-check.yml` source, not just the symptom report.** Traced the
+   full mechanism: the cache key is `win-...-conda-${{ hashFiles('run_setup.bat') }}-<pipreqs_ver>`
+   with `restore-keys: win-...-conda-` as a prefix fallback. `run_setup.bat` changes on nearly
+   every PR in this repo, so the EXACT primary key rarely matches twice -- the restore step almost
+   always falls through to the `restore-keys` PREFIX match instead, which returns whatever cache
+   blob currently exists under that prefix (GitHub Actions cache entries are immutable once saved;
+   a "stale" blob can only be replaced by a NEW save under a NEW key, never overwritten in place).
+   The "Validate restored conda binary" step (`cache_health`) then runs `conda.bat info` against
+   whatever got restored; on failure it sets `HP_CACHE_CORRUPTED=1` (informational, `exit 0`, by
+   design -- this part is fine). The trap is downstream: the "Bootstrap environment (run_setup.bat)"
+   step -- the ONLY step in this lane capable of performing a fresh Miniconda install -- is gated on
+   `env.HP_CACHE_CORRUPTED != '1'`, so once corruption is flagged, bootstrap is SKIPPED ENTIRELY for
+   that run; no fresh install is ever attempted. The save step (`actions/cache/save`) is gated on
+   BOTH `steps.conda_cache_restore.outputs.cache-hit != 'true'` AND `env.HP_CACHE_CORRUPTED != '1'`
+   -- since a `restore-keys` prefix match reports `cache-hit: false` (only an EXACT primary-key
+   match reports `true`, confirmed against `actions/cache`'s own documented behavior), the
+   `cache-hit` half of the save gate is usually already satisfied when corruption is the actual
+   blocker -- the `HP_CACHE_CORRUPTED` half is what stops the save. Net effect: the SAME poisoned
+   blob (saved once, likely before this health-check mechanism existed, or from a one-off flake)
+   gets restored via the prefix fallback on every subsequent run, is correctly detected as
+   corrupted every time, but the detection itself prevents the one action (a fresh install this
+   run, followed by a fresh save) that would ever replace it -- a permanent, self-perpetuating
+   loop with no exit, fully consistent with "never works, always says corrupted."
+   **Confirmed this is real, not a one-off**: every `if:` gate on the lane's ~25 self-test steps
+   after "Bootstrap environment" already depends on `HP_CACHE_CORRUPTED != '1'`, so once corrupted,
+   the entire lane short-circuits to placeholder `pass:true, skip`-style NDJSON rows
+   (`self.cache.corrupted`) and reports overall green -- exactly the "always green to avoid being
+   gating" behavior observed, and exactly why this has been invisible in CI: nothing ever fails
+   loud enough to surface it as a real problem, it just silently never does its job.
+   **Not fixed in this pass** -- diagnosed only, per the maintainer's own "if you see an easy fix,
+   maybe put that in the backlog" framing; the fix touches shared CI workflow gating logic that
+   ~30 other steps also depend on, and can only be verified by watching real cache-lane runs
+   (multi-cycle, since the fix's own effect -- "does a fresh cache finally get saved" -- isn't
+   observable from a single run), so it doesn't fit safely into a downtime aside. **Suggested fix,
+   reasoned through but not implemented:** on a corruption detection that came from a `restore-keys`
+   PREFIX match specifically (`steps.conda_cache_restore.outputs.cache-hit != 'true'`, i.e. not an
+   exact primary-key hit), delete the corrupted `C:\Users\Public\Documents\Miniconda3` directory
+   and do NOT set `HP_CACHE_CORRUPTED` at all -- let the run fall through exactly like a genuine
+   cache miss (the health-check step's own existing "No conda binary found; fresh install will
+   proceed normally" branch already handles this shape correctly for a true miss). This lets
+   "Bootstrap environment" run a real fresh install, and lets the save step create a genuinely
+   fresh, valid cache entry under the current key afterward, breaking the loop. The narrower case
+   -- an EXACT primary-key hit that's ALSO corrupted (only plausible when `run_setup.bat` is
+   byte-identical to a previously-poisoned save, e.g. two runs on the same unchanged commit) --
+   would still be stuck, since that specific key's blob can never be overwritten; fully closing
+   that gap needs an explicit cache-deletion API call (`gh cache delete` / the GitHub Actions cache
+   REST API, `DELETE /repos/{owner}/{repo}/actions/caches`) gated on `cache-hit == 'true'` at
+   corruption-detection time, a smaller follow-on refinement once the main fix is proven working.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
@@ -918,6 +935,22 @@ for each tracked pin" -- worth doing, not urgent, and deliberately not built spe
 of a second or third pin actually needing it.
 
 ## Known Findings (diagnosed, no action warranted)
+
+- **Backlog item numbering: renumber-on-collision convention dropped, 2026-08-01 owner decision.**
+  A prior pass found that Active Backlog items 9 and 11 (filed 2026-07-29) each collided with an
+  older, already-closed item of the same number, and -- following a convention this file used to
+  document -- renumbered them to 17 and 16 when archiving (see `docs/agent-closed-backlog.md`'s
+  Item 16/17 entries; left as-is, not worth unwinding already-completed, harmless work). That same
+  pass flagged the remaining active items (8, 10, 12, 13, 14, 15) as likely sharing the same
+  collision, filed as its own Active Backlog item to renumber them individually in a future pass.
+  **Owner call: this is unnecessary maintenance overhead for a plain-text backlog** -- there is no
+  practical way to keep hand-tracking collision-free numbers against a growing closed-history
+  archive without an extra bookkeeping system, and a real uniqueness guarantee belongs in an
+  actual issue tracker (e.g. GitHub Issues) if it's ever genuinely needed, not a markdown
+  convention here. Decision: item numbers are now informal, non-unique labels (see the Active
+  Backlog section's own updated intro text above); items 8, 10, 12, 13, 14, 15 keep their current
+  numbers permanently, coincidental collisions with closed-item numbers are not a defect, and the
+  item that tracked renumbering them is closed with no further action.
 
 - **Cascade consent gate design (timed prompt, decline-by-default) kept exactly as shipped,
   2026-07-26 owner decision -- closes `docs/open-questions.md` item 1.** Following the
