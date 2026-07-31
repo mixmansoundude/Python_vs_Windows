@@ -534,28 +534,6 @@ number) in `docs/agent-closed-backlog.md`, which is why the numbering below does
      `docs/demo-bootstrapper-output.md`'s new default-happy-path scenario as an observed,
      unexplained anomaly rather than either asserting it's harmless or that it's a bug.
 
-- **9. README.md's `[REQ-018]` bullet describing the mandatory verification run as
-   "force-stopped after a short interval even if running fine" is stale relative to the
-   activity-aware-kill behavior actually shipped later -- found 2026-07-29 via a CodeRabbit review
-   comment on PR #400 that (correctly) flagged a possible mismatch between README's REQ-018 prose
-   and `docs/demo-bootstrapper-output.md`'s new Scenario 11.** Traced it down: the real, current
-   WARN text (quoted verbatim in Scenario 10 from a real CI capture) says the opposite of what
-   README currently claims -- "if it stays completely silent for about 30 seconds it will be
-   force-stopped, but any output (including a prompt waiting on your input) keeps it running as
-   long as needed" -- matching CLAUDE.md's own already-documented Closed Backlog entry,
-   "Activity-aware EXE-smoke kill (docs/plan-cli-interactive-verification.md P0, requirement 3) --
-   resolves Open Question 1." That feature shipped after README's REQ-018 section was last written
-   and the corresponding bullet was apparently never updated to match. **Not fixed in this pass**
-   -- deliberately left for its own small, dedicated pass rather than edited as a side effect of an
-   unrelated docs-only PR (`docs/demo-bootstrapper-output.md`'s own scope): README.md is this
-   repo's authoritative PRD, and CLAUDE.md's own instruction is to reference it, not duplicate or
-   casually rewrite it. `docs/demo-bootstrapper-output.md`'s Scenario 11 already carries an inline
-   note explaining the discrepancy so a reader isn't left confused between the two docs in the
-   meantime. Suggested fix shape: update the REQ-018 bullet's "force-stopped after a short interval
-   even if running fine" clause to describe the activity-aware condition instead (only a
-   completely silent process is force-stopped; any output at all keeps the run alive
-   indefinitely).
-
 - **10. Two of the five `PVW_*` super-user override variables (`PVW_PYTHON_EXE`, `PVW_WORKSPACE`)
    have ZERO test coverage of any kind, and ALL FIVE have zero coverage of their invalid-value
    behavior -- found 2026-07-29 while documenting them for `docs/demo-bootstrapper-output.md`'s
@@ -586,30 +564,6 @@ number) in `docs/agent-closed-backlog.md`, which is why the numbering below does
      failure-absorption mechanism is shared/generic across most of them per the static trace above,
      so 2-3 representative invalid-value cases would likely cover the real risk without a
      combinatorial test matrix).
-
-- **11. `:tci_justme`'s `[WARN] Miniconda AllUsers install failed; retrying with JustMe.` log line
-   fires unconditionally, even when AllUsers was never actually attempted -- found 2026-07-29
-   while documenting the Miniconda install chain for `docs/demo-bootstrapper-output.md`'s Part VI,
-   flagged by a CodeRabbit review on PR #401 and verified against real CI evidence and the actual
-   `run_setup.bat` source before acting.** `:try_conda_install` has three distinct paths into the
-   shared `:tci_justme` label: (a) `HP_TEST_NOT_ELEVATED=1` (test-only, simulates a non-admin
-   environment) skips straight to `:tci_justme` with no AllUsers attempt at all; (b) a real
-   `fsutil dirty query %systemdrive%` failure (the genuine non-elevated-process detection) does
-   the same; (c) a real, genuine AllUsers installer failure (`:run_installer_timeout` returning
-   nonzero) also falls through to `:tci_justme`. All three paths log the identical
-   `[WARN] Miniconda AllUsers install failed; retrying with JustMe.` line at `:tci_justme` itself,
-   regardless of which path got there -- so on the common non-elevated real-world machine (paths a
-   or b), the WARN text is a misnomer: AllUsers was never launched, only skipped, yet the log
-   claims it "failed." Confirmed directly against real CI capture (run `30328748330`, `justme-test`
-   and `uv` lanes): both the `[INFO] Not elevated; skipping AllUsers Miniconda install.` line and
-   the `[WARN] ... AllUsers install failed ...` line appear back-to-back for the identical
-   non-elevated test run, with no genuine AllUsers attempt in between. **Not fixed in this pass**
-   -- this PR is documentation-only (see this file's own standing policy on scope); the doc itself
-   was corrected to explain the shared-label/unconditional-wording behavior accurately rather than
-   presenting the two log lines as if AllUsers were genuinely attempted-then-failed. Suggested fix
-   for a future pass: track whether AllUsers was actually launched (e.g. a flag set only inside
-   the real `:run_installer_timeout` call, checked at `:tci_justme` to select between "skipping"
-   and "failed" wording) rather than a single unconditional message covering all three paths.
 
 - **12. `:embed_dl_retry`'s genuine mid-download-failure-then-retry-once path (REQ-009 Tier 5) has
    no CI test hook at all -- found 2026-07-29 while documenting the embed-tier download for
@@ -731,6 +685,41 @@ number) in `docs/agent-closed-backlog.md`, which is why the numbering below does
    completed runs (the hang risk is about a DIFFERENT, hypothetical program, not about the accuracy
    of what's shown) -- but a future pass fixing this should also confirm no currently-passing test
    silently relies on the unbounded behavior before adding a timeout.
+
+- **18. Active Backlog items 8, 10, 12, 13, 14, and 15 all appear to reuse item numbers already
+   permanently retired by older, unrelated closed items -- found 2026-07-31 while closing out
+   items 9 and 11 during a `/goal`-directed backlog-fix pass, both of which turned out to have the
+   identical problem (fixed for those two; this item tracks the rest).** The batch of findings
+   filed 2026-07-29 while documenting the bootstrapper for `docs/demo-bootstrapper-output.md`
+   (this file's current items 8, 10, 12, 13, 14, 15, plus the now-fixed 9 and 11) appears to have
+   picked its numbers by eyeballing what looked unused in THIS file at the time, without checking
+   `docs/agent-closed-backlog.md`'s own "Closed Backlog" changelog section (2026-07-25 through
+   2026-07-27 work) for numbers already retired there. Confirmed for 9 and 11 specifically (both
+   collided with real, already-closed, differently-numbered items -- see
+   `docs/agent-closed-backlog.md`'s Item 16 and Item 17 entries for the full trace of each) and
+   both renumbered to 16/17 when moved out of this file in the same pass that found this. A quick
+   grep-based check (`grep -n "item N\b"` across `docs/agent-closed-backlog.md`, `docs/agent-
+   ndjson.md`, `docs/agent-interconnect.md`, `docs/agent-lessons-learned.md` for each of N in
+   8, 10, 12, 13, 14, 15) shows a same-number hit in the older Closed Backlog section for every
+   single one of them, strongly suggesting the same mistake repeats across the whole batch --
+   but each was only confirmed by number match, not individually read and verified the way 9 and
+   11 were, so **treat this as a strong lead, not a certainty, until each one gets the same
+   individual check.** Notably, item 14's collision is NOT purely a docs problem: `run_setup.bat`
+   itself has a live `rem derived requirement: [Active Backlog item 14]` comment (in
+   `:try_conda_install`, next to the Miniconda installer timeout) that refers to the OLDER,
+   already-closed item 14 (the 60-minute installer-timeout work), not the current active item 14
+   (the misleading post-exhaustion syntax-error message) -- so fixing this properly means checking
+   inline source comments too, not just docs. **Not fixed in this pass** -- renumbering the
+   remaining six items correctly requires reading each one's full closed-backlog collision
+   individually (to write an accurate, non-templated "renumbered from X because Y" note the way
+   16/17 got), then re-numbering every cross-reference to each (docs and, per the item-14 finding
+   above, possibly `run_setup.bat`'s own comments) -- real, careful work, not a batch find-replace,
+   and disproportionate to fold into an unrelated backlog-fix pass. Suggested approach for a
+   future pass: process one item at a time (matching this repo's own iteration discipline), confirm
+   its collision, pick the next genuinely-unused number (19 is next after this item, assuming no
+   further items get filed first), update its own text plus every cross-reference, and move it to
+   `docs/agent-closed-backlog.md` only if it was ALSO independently resolved -- an item can be
+   renumbered without being closed, if its underlying finding is still open.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

@@ -331,8 +331,9 @@ jobs:
         # producing a circular self-skip: confirmed via the GitHub Actions API against the CI runs
         # for two real commits on PR #390 (efd7a5c, fd7a046) that ~27 real/conda-full-only self-
         # tests silently "skipped" every run while the job still reported overall SUCCESS. See
-        # CLAUDE.md's Active Backlog item 7 for the full incident writeup and PR #391 for the
-        # revert that restored those steps to unconditional (matrix.mode == 'conda-full') form.
+        # docs/agent-closed-backlog.md's Active Backlog item 7 for the full incident writeup and
+        # PR #391 for the revert that restored those steps to unconditional (matrix.mode ==
+        # 'conda-full') form.
         #
         # This step is now positioned right after "Self-test: real env smoke (CI-only)"
         # (selfapps_envsmoke.ps1) instead -- traced 2026-07-27 as the genuine first selfapps step
@@ -345,8 +346,9 @@ jobs:
         # own script would otherwise allow, so a nonzero exit there can only mean the conda install
         # itself failed -- making this the correct point to sample "is conda now really available."
         #
-        # Re-wired 2026-07-27 (owner sign-off, full risk/benefit assessment in chat -- see CLAUDE.md
-        # Active Backlog item 7's own closing entry for the summary) after the corrected POSITION
+        # Re-wired 2026-07-27 (owner sign-off, full risk/benefit assessment in chat -- see
+        # docs/agent-closed-backlog.md's Active Backlog item 7 entry for the summary) after the
+        # corrected POSITION
         # above was empirically confirmed working across two real conda-full runs (PR #395, #396:
         # `available` correctly read `true` both times). The 27 downstream conda-full-only self-test
         # steps below now gate on `steps.conda_avail.outputs.available == 'true'` -- BUT this alone

@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""On-demand audit of run_setup.bat's console-visible messages vs. the demo doc.
+
+Not wired into CI -- run by hand when re-reviewing docs/demo-bootstrapper-output.md
+for completeness (see that file's own "living demo report" header) or after a batch
+of new `echo`/`call :log` lines have landed in run_setup.bat.
+
+What it does:
+  1. Extracts every `echo <text>` and `call :log "<text>"` line from run_setup.bat
+     (skipping blank/`echo off`/`echo on` control lines and lines redirected to a
+     file with `>>`, which never reach the live console) and normalizes `%VAR%`
+     tokens to a placeholder so lines differing only by runtime substitution match.
+  2. Splits each normalized message on its placeholder tokens and checks whether
+     every resulting literal segment (length >= 6, to skip noise) appears anywhere
+     in the demo doc's text -- a heuristic substring match, not a semantic one.
+  3. Separately buckets messages that are test-only scaffolding (matched by
+     `HP_TEST`, `[TEST]`, `simulating`, `injected`/`injecting`, or `corrupt_conda`/
+     `corrupt_uv` in the text) -- these never reach a real user (see CLAUDE.md's
+     "Env-var flags are scaffolding" rule, REQ-019) and are out of the demo doc's
+     stated scope by design, not a documentation gap.
+
+What it deliberately does NOT do (and why): it does not attempt semantic or
+paraphrase matching, and it does not distinguish a genuinely undocumented feature
+from a scenario that narrates the same event with different exact wording (the
+demo doc's own stated scope is "representative captures," not an exhaustive
+line-by-line transcript). Treat "not found" as "worth a 30-second manual look,"
+not as proof of a real gap -- when this tool was built, roughly half its
+"not found" hits turned out to already be covered by nearby prose in an existing
+scenario. Only act on a hit after confirming the surrounding scenario doesn't
+already narrate it.
+"""
+import argparse
+import re
+import sys
+from pathlib import Path
+
+TEST_ONLY_RE = re.compile(
+    r'HP_TEST|\[TEST\]|simulating|inject(ed|ing)|corrupt_conda|corrupt_uv',
+    re.IGNORECASE,
+)
+
+
+def normalize(text: str) -> str:
+    text = re.sub(r'%[^%]+%', '<V>', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def extract_records(bat_path: Path):
+    """Return a list of (line_no, normalized_text) for console-visible lines."""
+    records = []
+    for i, raw in enumerate(bat_path.read_text(encoding='ascii', errors='replace').splitlines(), 1):
+        line = raw.strip()
+        m = re.match(r'^echo\s+(.*)$', line, re.IGNORECASE)
+        if m:
+            body = m.group(1)
+            if body.strip() in ('.', 'off', 'on'):
+                continue
+            if '>>' in raw:
+                continue
+            records.append((i, normalize(body)))
+            continue
+        m = re.search(r'call :log\s+["\']([^"\']*)["\']', line)
+        if m:
+            records.append((i, normalize(m.group(1))))
+    return records
+
+
+def is_covered(normalized: str, corpus: str) -> bool:
+    segments = [seg.strip() for seg in normalized.split('<V>') if len(seg.strip()) >= 6]
+    if not segments:
+        stripped = normalized.replace('<V>', '').strip()
+        return len(stripped) < 6 or stripped in corpus
+    return all(seg in corpus for seg in segments)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--file', default='run_setup.bat', help='Batch file to scan (default: run_setup.bat)')
+    parser.add_argument('--demo-doc', default='docs/demo-bootstrapper-output.md',
+                         help='Demo doc to check coverage against (default: docs/demo-bootstrapper-output.md)')
+    parser.add_argument('--include-test-only', action='store_true',
+                         help='Also report gaps in HP_TEST-gated / simulated lines (excluded by default, see module docstring)')
+    args = parser.parse_args()
+
+    bat_path = Path(args.file)
+    doc_path = Path(args.demo_doc)
+    if not bat_path.exists():
+        print(f"error: {bat_path} not found", file=sys.stderr)
+        return 2
+    if not doc_path.exists():
+        print(f"error: {doc_path} not found", file=sys.stderr)
+        return 2
+
+    records = extract_records(bat_path)
+    corpus = doc_path.read_text(encoding='utf-8', errors='replace')
+
+    missing = []
+    test_only_missing = []
+    for lineno, normalized in records:
+        if is_covered(normalized, corpus):
+            continue
+        if TEST_ONLY_RE.search(normalized):
+            test_only_missing.append((lineno, normalized))
+        else:
+            missing.append((lineno, normalized))
+
+    print(f"Total console-visible records scanned: {len(records)}")
+    print(f"Test-only scaffolding, not found (excluded by default, real users never see these): {len(test_only_missing)}")
+    print(f"Real-user-facing, not found (worth a manual look): {len(missing)}")
+    print()
+    for lineno, normalized in missing:
+        print(f"line {lineno}: {normalized}")
+    if args.include_test_only:
+        print()
+        print("--- test-only scaffolding, not found ---")
+        for lineno, normalized in test_only_missing:
+            print(f"line {lineno}: {normalized}")
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -4481,6 +4481,11 @@ exit /b %HP_INSTALLER_RC%
 rem derived requirement: AllUsers install can fail when UAC rejects elevation even for admin accounts.
 rem JustMe is the non-admin fallback that installs under the user profile instead.
 rem Both attempts reuse the already-downloaded installer at %TEMP%\miniconda.exe (no re-download).
+rem derived requirement: [Active Backlog item 11] track whether AllUsers was actually launched vs.
+rem only skipped, so :tci_justme's own log line can tell the two apart instead of unconditionally
+rem claiming AllUsers "failed" even when it was never attempted. Reset defensively at entry in case
+rem a future caller invokes this subroutine more than once in the same process.
+set "HP_CONDA_ALLUSERS_ATTEMPTED="
 rem derived requirement: non-admin machines produce a UAC prompt when AllUsers install is attempted;
 rem skip directly to JustMe when the process is not elevated.
 rem HP_TEST_NOT_ELEVATED=1 simulates a non-admin environment for CI coverage of this branch.
@@ -4499,13 +4504,18 @@ rem "Installing Anaconda/Miniconda times out after 40 minutes"; multiple conda/c
 rem ContinuumIO/anaconda-issues GitHub issues reporting the silent installer hanging indefinitely
 rem at extraction or the post-install script) confirm this is not a theoretical risk. 60 minutes
 rem is a generous ceiling above the documented ~40 min real-world duration.
+set "HP_CONDA_ALLUSERS_ATTEMPTED=1"
 call :run_installer_timeout "%TEMP%\miniconda.exe" "/InstallationType=AllUsers /AddToPath=0 /RegisterPython=0 /S /D=%MINICONDA_ROOT%" 3600000 "Miniconda AllUsers"
 if errorlevel 1 goto :tci_justme
 set "HP_CONDA_INSTALL_MODE=AllUsers"
 call :log "[INFO] Miniconda installed successfully."
 goto :eof
 :tci_justme
-call :log "[WARN] Miniconda AllUsers install failed; retrying with JustMe."
+if defined HP_CONDA_ALLUSERS_ATTEMPTED (
+  call :log "[WARN] Miniconda AllUsers install failed; retrying with JustMe."
+) else (
+  call :log "[INFO] Miniconda AllUsers install skipped (not elevated); trying JustMe install instead."
+)
 if exist "%MINICONDA_ROOT%" rd /s /q "%MINICONDA_ROOT%" >nul 2>&1
 rem derived requirement: [Active Backlog item 10] HP_TEST_FORCE_JUSTME_FAIL=1 deterministically
 rem forces the JustMe install to fail WITHOUT launching the real installer, so CI can exercise

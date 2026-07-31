@@ -967,7 +967,7 @@ sees:
 ```
 *** Verification finished -- see the Run Status above. ***
 *** You can run your program again now via the interpreter as an extra diagnostic check. ***
-  Run again via the interpreter now? [Y/N] █
+  Run again via the interpreter now? [Y/N] _
 ```
 
 (cursor sits after `[Y/N] `, waiting indefinitely -- `:run_postexec_checkpoint`, an UNBOUNDED
@@ -980,7 +980,7 @@ continues to the second prompt:
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. ***
-  Build the optimized version now? [Y/N] █
+  Build the optimized version now? [Y/N] _
 ```
 
 (same shape -- `:offer_optimized_build`, also an unbounded `set /p`, also defaults to decline on
@@ -1533,26 +1533,33 @@ passing).
 Miniconda install first attempts an AllUsers (machine-wide) install; if UAC rejects elevation (or
 the process simply isn't elevated), it skips straight to a JustMe (per-user) install instead, no
 wasted attempt. **Both the "skip, never attempted" path and a genuine post-attempt AllUsers
-failure fall through to the same shared `:tci_justme` label** (`run_setup.bat`), whose log line
-unconditionally reads `[WARN] Miniconda AllUsers install failed; retrying with JustMe.` regardless
-of which of the two got it there -- so on the common non-elevated machine, the WARN text is a
-misnomer (AllUsers was never actually launched, only skipped), confirmed by this real capture
-pairing the "Not elevated; skipping" INFO line immediately with the "AllUsers install failed" WARN
-line for the identical run:
+failure fall through to the same shared `:tci_justme` label** (`run_setup.bat`), but (fixed
+2026-07-31, Active Backlog item 16 -- see `docs/agent-closed-backlog.md`) the label
+now checks a flag set only right before the real AllUsers install attempt, so the two paths get
+distinct wording instead of both unconditionally claiming AllUsers "failed." On the common
+non-elevated machine (skip path, `[Extrapolated Branch]` for the new wording -- not yet
+re-confirmed against a fresh CI capture):
 
 ```
 [INFO] Not elevated; skipping AllUsers Miniconda install.
-[WARN] Miniconda AllUsers install failed; retrying with JustMe.
+[INFO] Miniconda AllUsers install skipped (not elevated); trying JustMe install instead.
 [INFO] Miniconda installed (JustMe fallback).
 ```
 
-**If JustMe ALSO fails** (both installation options exhausted -- AllUsers was skipped, not
-attempted-then-failed, per the wording caveat above; REAL CI CAPTURE, same shared label, same
-unconditional WARN wording):
+A genuine, post-attempt AllUsers failure still gets the original WARN wording (`[Extrapolated
+Branch]`, cited from source -- this branch requires a real elevated process whose AllUsers
+installer genuinely fails, which no current CI hook forces without also forcing the skip path):
+
+```
+[WARN] Miniconda AllUsers install failed; retrying with JustMe.
+```
+
+**If JustMe ALSO fails** (both installation options exhausted; REAL CI CAPTURE for the skip-path
+lines, `[Extrapolated Branch]` for the now-corrected wording):
 
 ```
 [INFO] Not elevated; skipping AllUsers Miniconda install.
-[WARN] Miniconda AllUsers install failed; retrying with JustMe.
+[INFO] Miniconda AllUsers install skipped (not elevated); trying JustMe install instead.
 [ERROR] Miniconda install failed (both AllUsers and JustMe).
 ```
 
@@ -1766,9 +1773,15 @@ these same four guards' CLEAN (silent) pass.
 ```
 
 **Disk space, REQ-025** (real capture -- warn-only, never a hard block, per REQ-001's rule that a
-flag-detectable condition must never gate the Prime Directive):
+flag-detectable condition must never gate the Prime Directive). The block emits three raw `echo`
+lines before the `[WARN]` line the test asserts on -- all four are console-visible in the same
+run; the earlier scan of this scenario quoted only the last one, which undersold what a real user
+actually sees:
 
 ```
+*** WARNING: Only ~0 GB free disk space detected on this drive.
+*** Downloading Python/Miniconda and building your app can need several GB.
+*** If setup fails partway through, freeing up disk space is a likely fix.
 [WARN] REQ-025: low disk space detected (~0 GB free); continuing (warn-only).
 ```
 
