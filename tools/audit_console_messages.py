@@ -49,6 +49,20 @@ TEST_ONLY_RE = re.compile(
 # is never mistaken for a redirect).
 REDIRECT_RE = re.compile(r'(?<!\^)>{1,2}(?!=)')
 
+# A real command separator (& / | / && / ||), not caret-escaped. A redirect appearing AFTER one
+# of these belongs to a later, separately-chained command -- it must not cause the FIRST
+# command's own record (e.g. a `call :log` that already reached the console before the
+# separator) to be dropped.
+SEGMENT_END_RE = re.compile(r'(?<!\^)[&|]')
+
+
+def _own_command_segment(tail: str) -> str:
+    """Truncate `tail` at the first real command separator, so a redirect belonging to a
+    later chained command is never mistaken for one that applies to the command being
+    checked."""
+    m = SEGMENT_END_RE.search(tail)
+    return tail[:m.start()] if m else tail
+
 
 def normalize(text: str) -> str:
     # %%VAR / %%~zS -style for-loop variable references -- must run before the single-percent
@@ -90,8 +104,10 @@ def extract_records(bat_path: Path):
             # call :log's message is quote-delimited, so only the text AFTER the closing quote
             # can be a real redirect -- this correctly leaves a message that itself contains
             # '>=' (e.g. "running (>=30 days since last update)") untouched, since that '>=' is
-            # inside the matched group, never scanned here.
-            if REDIRECT_RE.search(line[m.end():]):
+            # inside the matched group, never scanned here. Truncate at the first real command
+            # separator first: a redirect on a LATER, `&`-chained command (e.g. `call :log "..."
+            # & echo hidden > file`) does not mean call :log itself was redirected.
+            if REDIRECT_RE.search(_own_command_segment(line[m.end():])):
                 continue
             records.append((i, normalize(m.group(1))))
     return records

@@ -90,6 +90,25 @@ def test_extract_records_keeps_caret_escaped_redirect_of_nested_command(tmp_path
     assert records == [(1, '[INFO] Value: <V>')]
 
 
+def test_extract_records_keeps_call_log_with_redirect_on_later_chained_command(tmp_path):
+    # A redirect on a LATER command chained via '&' belongs to that command, not to the
+    # call :log that already reached the console before the separator -- it must not cause
+    # the call :log record to be dropped.
+    bat = tmp_path / 'run_setup.bat'
+    bat.write_text('call :log "[INFO] visible" & echo hidden > log.txt\n', encoding='ascii')
+    records = acm.extract_records(bat)
+    assert records == [(1, '[INFO] visible')]
+
+
+def test_extract_records_skips_call_log_with_redirect_in_same_segment(tmp_path):
+    # A redirect immediately after the closing quote, with no intervening command
+    # separator, DOES belong to this call :log -- it must still be skipped.
+    bat = tmp_path / 'run_setup.bat'
+    bat.write_text('call :log "[INFO] hidden" > log.txt\n', encoding='ascii')
+    records = acm.extract_records(bat)
+    assert records == []
+
+
 def test_is_covered_true_when_all_segments_present():
     assert acm.is_covered('[INFO] Log: <V>', '... [INFO] Log: C:\\work\\ ...') is True
 
