@@ -1766,9 +1766,15 @@ these same four guards' CLEAN (silent) pass.
 ```
 
 **Disk space, REQ-025** (real capture -- warn-only, never a hard block, per REQ-001's rule that a
-flag-detectable condition must never gate the Prime Directive):
+flag-detectable condition must never gate the Prime Directive). The block emits three raw `echo`
+lines before the `[WARN]` line the test asserts on -- all four are console-visible in the same
+run; the earlier scan of this scenario quoted only the last one, which undersold what a real user
+actually sees:
 
 ```
+*** WARNING: Only ~0 GB free disk space detected on this drive.
+*** Downloading Python/Miniconda and building your app can need several GB.
+*** If setup fails partway through, freeing up disk space is a likely fix.
 [WARN] REQ-025: low disk space detected (~0 GB free); continuing (warn-only).
 ```
 
