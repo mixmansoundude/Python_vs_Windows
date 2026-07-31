@@ -1134,6 +1134,34 @@ further.)*
    call-frame-only return, so total exhaustion genuinely halts the pipeline at the point of failure
    rather than continuing for another ~15 log lines under a broken interpreter.
 
+- **15. `:exe_smokerun_hints`'s diagnostic re-run of a freshly-failed EXE has no timeout, unlike
+   every other user-code launch point in this file -- found 2026-07-31, flagged by a CodeRabbit
+   review on PR #402 while documenting the hint mechanism for
+   `docs/demo-bootstrapper-output.md`'s Scenario 37, verified against source before logging.**
+   `:exe_smokerun_hints` (`run_setup.bat`) does `pushd dist` then `"%ENVNAME%.exe" > "~exe_out.txt"
+   2>&1` with no `.NET Process`/`WaitForExit(ms)`/`Kill()` wrapper at all -- a plain, synchronous,
+   unbounded batch invocation. Every OTHER place in this file that launches a frozen EXE or the
+   interpreter (`:run_exe_smokerun`'s primary verification, `:run_failfast_probe`'s three call
+   sites, `:hidden_import_recover`'s own repair-check re-run) is deliberately bounded, either by
+   the ~30s hard-kill ceiling (the one place this bootstrapper is allowed to `Kill()` a process) or
+   by the fail-fast-probe's classify-then-never-kill design -- this is the one exception. The call
+   site's own guard (`if not "%HP_EXE_EXIT%"=="-1" call :exe_smokerun_hints`, in `:smokerun_ndjson`)
+   only confirms the FIRST launch (inside `:run_exe_smokerun`) exited with a real, non-hang code --
+   it says nothing about whether the SAME program will behave identically on this SECOND, separate
+   launch a few lines later. A program with any non-determinism (a race condition, an environment
+   check that sometimes succeeds, or anything that occasionally blocks on stdin instead of exiting
+   fast) could hang this second, untimed invocation and hang the whole bootstrap, even though the
+   first invocation legitimately fell into the "fast, real, non-hang failure" classification that
+   is this subroutine's own precondition for being called at all. **Not fixed in this pass** --
+   documentation-only task, and the correct fix (reuse the existing bounded-launch pattern, e.g.
+   `tools/exe_smokerun.ps1`'s own `.NET Process` + timeout wrapper, or add an independent
+   termination deadline before the stderr pattern-match) touches `run_setup.bat` itself, out of
+   scope for a docs-only PR. `docs/demo-bootstrapper-output.md`'s Scenario 37 was not changed to
+   caveat this specifically, since the two real captures it documents are both genuine, already-
+   completed runs (the hang risk is about a DIFFERENT, hypothetical program, not about the accuracy
+   of what's shown) -- but a future pass fixing this should also confirm no currently-passing test
+   silently relies on the unbounded behavior before adding a timeout.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 **Scope, and how this differs from Active Backlog and Known Findings**: an Active Backlog item is

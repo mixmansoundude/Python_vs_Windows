@@ -2238,9 +2238,13 @@ Branch]`, cited from `:pick_entry_interactive`, not independently captured in th
 ### Scenario 35: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed
 
 **What's tested:** `self.preflight.syntax` (`tests/selfapps_preflight.ps1`, `real` lane, real,
-passing) for the ordinary case; a SEPARATE, unrelated real capture (`self.embed.fallback.decline`,
-`tests/selfapps_ux_hardening.ps1`) accidentally also reaches this code path under total provider
-exhaustion, which is what exposed the bug documented below.
+passing) for the ordinary case -- its `$pass` gate enforces the REQ-021 message firing, the real
+`SyntaxError` detail appearing, `state: error`, and no PyInstaller-build-crash text; "no EXE was
+produced" is separately computed and recorded (`noExe` in the row's own `details`, confirmed
+`true` in the real capture below) but is NOT itself part of the pass/fail gate. A SEPARATE,
+unrelated real capture (`self.embed.fallback.decline`, `tests/selfapps_ux_hardening.ps1`)
+accidentally also reaches this code path under total provider exhaustion, which is what exposed
+the bug documented below.
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
 
@@ -2307,8 +2311,15 @@ full trace and a suggested fix (not implemented here; this is a documentation-on
 
 ### Scenario 36: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path
 
-**What's tested:** `self.ux.system.gate.accept` and the REQ-007 build-consent decline
-(`tests/selfapps_sysbuild.ps1`, `real` lane, real, passing).
+**What's tested:** `self.sysbuild.decline` (`tests/selfapps_sysbuild.ps1`, `real` lane, real,
+passing) -- its `$pass` gate enforces that the REQ-007 prompt text appears, the decline is
+logged, packaging is skipped with a logged reason, and no EXE exists afterward. The REQ-014
+"use system Python at all" accept step that gets this test INTO system-Python mode in the first
+place is the same mechanism Scenario 33's own `self.ux.system.gate.accept` test covers
+independently, not re-asserted here. The interpreter-smoke success/status lines quoted below
+(`Entry smoke exit=0`, `[STATUS] Run Status: SUCCESS`) are genuinely present in this same real
+captured log but are NOT part of this test's own `$pass` gate -- shown here as observed fact from
+the real capture, not as something this specific test independently verifies.
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane),
 `tests/~selftest_sysbuild/`'s own sub-bootstrap -- ONE coherent, continuous real capture covering
@@ -2422,11 +2433,15 @@ skipping straight to a graceful, successful exit:
 [INFO] Python file count: 0
 Python file count: 0
 No Python files detected; skipping environment bootstrap.
+[INFO] No Python files detected; skipping environment bootstrap.
 ```
 
-(the last line appears twice in the real log -- once as a plain, untimestamped `echo` straight to
-console, once through `:log`'s timestamped form to both console and `~setup.log`; both are shown
-above as captured). `~bootstrap.status.json` reads `{"state":"no_python_files","exitCode":0,
+(the last message genuinely appears twice, back to back, in the real captured log -- once as a
+plain `echo` straight to console with no timestamp, once through `:log`'s own timestamped form
+written to both console and `~setup.log`; the block above shows both, with the second line's
+real timestamp prefix, e.g. `Tue 07/28/2026  4:29:15.97`, omitted here since it carries no
+information beyond confirming the two lines are adjacent). `~bootstrap.status.json` reads
+`{"state":"no_python_files","exitCode":0,
 "pyFiles":0}` -- a real user who double-clicks the bootstrapper in an empty folder, or in the
 wrong folder entirely, gets a clear, immediate, non-alarming message rather than the bootstrapper
 attempting (and inevitably failing) to build an environment for nothing.
