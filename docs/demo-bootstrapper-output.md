@@ -1555,6 +1555,15 @@ current CI hook forces without also forcing the skip path):
 [WARN] Miniconda AllUsers install failed (exitCode=1, reason=installer_failed); retrying with JustMe.
 ```
 
+If the installer instead hits `:run_installer_timeout`'s own 60-minute ceiling (see that
+subroutine's header comment), the exit code is a hardcoded sentinel, not the installer's real
+exit code -- reported as `reason=timeout` with no fabricated `exitCode` field instead
+(`[Extrapolated Branch]`, an even rarer sub-case of the one above, never observed in CI):
+
+```
+[WARN] Miniconda AllUsers install failed (reason=timeout); retrying with JustMe.
+```
+
 **If JustMe ALSO fails** (both installation options exhausted; REAL CI CAPTURE for the skip-path
 lines, `[Extrapolated Branch]` for the now-corrected wording):
 
