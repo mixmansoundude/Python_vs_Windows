@@ -82,6 +82,12 @@ conflate:
   - [Scenario 31: pandas/openpyxl heuristic dependency augmentation (REQ-005.8)](#scenario-31-pandasopenpyxl-heuristic-dependency-augmentation-req-0058)
   - [Scenario 32: Conda base periodic update](#scenario-32-conda-base-periodic-update)
   - [Scenario 33: REQ-014 system-Python consent -- ACCEPT](#scenario-33-req-014-system-python-consent----accept)
+- [Part VIII: Additional branches found in a full-file sweep](#part-viii-additional-branches-found-in-a-full-file-sweep)
+  - [Scenario 34: Interactive entry picker -- multiple `.py` files, no clear winner (REQ-002)](#scenario-34-interactive-entry-picker----multiple-py-files-no-clear-winner-req-002)
+  - [Scenario 35: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed](#scenario-35-pre-flight-syntax-error-rejection-req-021-and-a-real-bug-it-exposed)
+  - [Scenario 36: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path](#scenario-36-req-007-system-python-build-consent-and-the-resulting-no-exe-interpreter-path)
+  - [Scenario 37: EXE smoke-run diagnostic hints (companion to Scenario 22)](#scenario-37-exe-smoke-run-diagnostic-hints-companion-to-scenario-22)
+  - [Scenario 38: No `.py` files at all -- the graceful `no_python_files` exit](#scenario-38-no-py-files-at-all----the-graceful-no_python_files-exit)
 
 ---
 
@@ -2158,3 +2164,284 @@ already on the machine, unmanaged and unisolated:
 if suboptimal, path to a working run, not a failure. This is the ONLY REQ-009 tier gated by an
 explicit human consent prompt rather than an automatic fallback, precisely because it is the one
 tier that touches the user's real, shared Python environment instead of a private/disposable one.
+
+---
+
+## Part VIII: Additional branches found in a full-file sweep
+
+**Scope note:** after the original 5-pass plan completed, a systematic label-by-label sweep of
+every one of `run_setup.bat`'s 164 `:label`s (cross-checked against everything already written in
+Parts I-VII) turned up four genuine, user-observable gaps -- three straightforward missing
+scenarios, and one previously-undocumented, real bug in the bootstrapper's own error messaging,
+found via real CI evidence and confirmed against source before being written up. Everything else
+checked in the sweep (roughly 150 of the 164 labels) was either already covered, internal
+control-flow plumbing with no independently observable behavior of its own (e.g. `:pfb_runapp`,
+`:mgc_gi_done`), or a narrow edge case not worth a dedicated scenario (e.g. `:cascade_consent_no_
+choice_exe`, reached only on a Windows image stripped of `choice.exe`).
+
+- [Scenario 34: Interactive entry picker -- multiple `.py` files, no clear winner (REQ-002)](#scenario-34-interactive-entry-picker----multiple-py-files-no-clear-winner-req-002)
+- [Scenario 35: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed](#scenario-35-pre-flight-syntax-error-rejection-req-021-and-a-real-bug-it-exposed)
+- [Scenario 36: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path](#scenario-36-req-007-system-python-build-consent-and-the-resulting-no-exe-interpreter-path)
+- [Scenario 37: EXE smoke-run diagnostic hints (companion to Scenario 22)](#scenario-37-exe-smoke-run-diagnostic-hints-companion-to-scenario-22)
+
+---
+
+### Scenario 34: Interactive entry picker -- multiple `.py` files, no clear winner (REQ-002)
+
+**What's tested:** `self.entry.picker` (`tests/selfapps_entry_picker.ps1`, `conda-full` lane, real,
+passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full` lane).
+
+Part III's happy path covers the common single-`.py`-file case; this covers REQ-002's OTHER real
+end-user scenario: a folder with several `.py` files where none is named `main.py`/`app.py`/
+`run.py`/`cli.py` and none has a substantive `if __name__ == "__main__":` block (`:determine_entry`'s
+own priority ladder, in `tools/find_entry.py`, exhausts every tier and falls back to
+`find_entry.py`'s own `AMBIGUOUS_RC` (3) alphabetical pick). Only THEN does `:pick_entry_interactive`
+show a real, timed menu:
+
+```
+Multiple Python files detected -- no clear entry point, so please choose one to run:
+  [1] a_app.py
+  [2] b_app.py
+
+  Tip: to skip this question next time, do any one of these:
+    1. Drag a .py file onto run_setup.bat -- drop it on the batch file icon to run
+       that file directly. It must be in this same folder.
+    2. Rename your main script to one of: main.py, app.py, run.py, or cli.py.
+    3. Give exactly one script an  if __name__ == "__main__":  block.
+  If you do nothing, the alphabetically-first file is used: a_app.py
+
+Type a number 1-2, or wait 30s for the default [1]:
+```
+
+(the real capture's own timeout is shrunk to 2s via `HP_TEST_FORCE_PICKER`, the same CI-determinism
+technique already used for the timed cascade prompt in Scenario 11/21 -- the default, real-user
+window is 30 seconds, per `HP_PICK_T` in source, shown above as written). A real, non-interactive
+CI run also can't feed `choice.exe` an actual keystroke, so the captured log shows one extra,
+CI-only artifact line right after the prompt (`ERROR: The file is either empty or does not contain
+the valid choices.`) before falling through to the timeout default -- a real interactive user typing
+a number, or simply waiting, never sees that line. Either way, the resolution is logged:
+
+```
+[INFO] REQ-002: Picker entry selected: a_app.py
+```
+
+If MORE than 9 candidate files exist, the picker is skipped entirely (no menu can address more than
+the `123456789` `choice /C` charset) and the alphabetical pick is kept silently, logged as `[INFO]
+REQ-002: <N> candidates exceed picker limit; keeping <file> (alphabetical).` -- `[Extrapolated
+Branch]`, cited from `:pick_entry_interactive`, not independently captured in this run (would need a
+10th-plus stub `.py` file staged, which no current test does).
+
+---
+
+### Scenario 35: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed
+
+**What's tested:** `self.preflight.syntax` (`tests/selfapps_preflight.ps1`, `real` lane, real,
+passing) for the ordinary case -- its `$pass` gate enforces the REQ-021 message firing, the real
+`SyntaxError` detail appearing, `state: error`, and no PyInstaller-build-crash text; "no EXE was
+produced" is separately computed and recorded (`noExe` in the row's own `details`, confirmed
+`true` in the real capture below) but is NOT itself part of the pass/fail gate. A SEPARATE,
+unrelated real capture (`self.embed.fallback.decline`, `tests/selfapps_ux_hardening.ps1`)
+accidentally also reaches this code path under total provider exhaustion, which is what exposed
+the bug documented below.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+**The ordinary case**: before ever attempting a doomed PyInstaller build, `:preflight_compile`
+byte-compiles the entry file with the SAME parser the interpreter itself uses (`py_compile`,
+zero false positives), reporting a genuine `SyntaxError` clearly and stopping before the build:
+
+```
+*** [ERROR] REQ-021: Your Python program has a syntax error and cannot run. ***
+*** File: "app.py" ***
+```
+
+followed by the real Python compiler's own traceback (captured to `~preflight.err.txt`, echoed to
+both console and log) and a closing `*** Fix the syntax error shown above, then run this batch
+again. ***`. `~bootstrap.status.json` correctly reads `state: error`; the dependency install and
+environment creation that ran BEFORE this check are left intact (nothing is torn down), so a fixed
+file on the next run reuses them.
+
+**A real, previously-undocumented bug, found via this exact sweep and confirmed against a real,
+unrelated capture (not fabricated for this scenario)**: `:preflight_compile` invokes `"%HP_PY%" -m
+py_compile "%HP_ENTRY%"` with NO check that `HP_PY` is actually a valid, non-empty interpreter path
+first. On TOTAL REQ-009 provider-tier exhaustion (every tier fails or is declined -- see CLAUDE.md
+Active Backlog item 14 for the full trace), `:after_env_mode_selection`'s own `HP_PY`-resolved guard
+(`call :die "[ERROR] Active Python interpreter not resolved."`) does NOT actually halt the pipeline
+-- per this repo's own long-documented `:die` semantics, `exit /b` inside `:die` only returns from
+`:die`'s own call frame, so execution falls through and continues for another ~15 log lines with an
+EMPTY `HP_PY`, all the way to `:preflight_compile`. There, `"" -m py_compile "app.py"` is not a
+Python invocation at all -- it is cmd.exe trying to execute a program literally named `""`, which
+produces a CMD.EXE ERROR, not a Python traceback. Because `:preflight_compile` treats ANY nonzero
+exit as "syntax error," it reports this as if the user's own code were broken. Real capture, from a
+test that deliberately force-fails uv (offline), conda, the embed tier, and venv, and declines the
+REQ-014 system-Python prompt (`tests/~selftest_embed_decline/`'s own sub-bootstrap):
+
+```
+[ERROR] Active Python interpreter not resolved.
+Interpreter:
+[WARN] Interpreter smoke test failed (continuing).
+```
+
+(pipreqs, dependency install, and the pyvisa check all run to completion afterward, effectively as
+no-ops against the broken interpreter, before the entry is finally selected and preflight runs)
+
+```
+*** [ERROR] REQ-021: Your Python program has a syntax error and cannot run. ***
+*** File: "app.py" ***
+'""' is not recognized as an internal or external command,
+operable program or batch file.
+
+*** Fix the syntax error shown above, then run this batch again. ***
+```
+
+That last block is genuinely misleading: `app.py` may have no syntax problem whatsoever -- the real
+cause, printed several screens earlier, is that no Python interpreter was ever found. A real user is
+realistically reachable here for genuine (not test-only) reasons: README's own REQ-009 table already
+notes that falling through three-plus provider tiers in one run is "almost always one shared root
+cause" (no internet, a full disk, or a locked-down managed image), and a user hitting exactly that
+plus declining the REQ-014 system-Python consent prompt reaches this identical path. The status
+FILE is unaffected (`state: error` is still written correctly, since `:die`'s own state-set already
+happened before the fall-through) -- only the human-readable console narrative misdirects a user who
+reads just the last error rather than scrolling back. See CLAUDE.md Active Backlog item 14 for the
+full trace and a suggested fix (not implemented here; this is a documentation-only pass).
+
+---
+
+### Scenario 36: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path
+
+**What's tested:** `self.sysbuild.decline` (`tests/selfapps_sysbuild.ps1`, `real` lane, real,
+passing) -- its `$pass` gate enforces that the REQ-007 prompt text appears, the decline is
+logged, packaging is skipped with a logged reason, and no EXE exists afterward. The REQ-014
+"use system Python at all" accept step that gets this test INTO system-Python mode in the first
+place is the same mechanism Scenario 33's own `self.ux.system.gate.accept` test covers
+independently, not re-asserted here. The interpreter-smoke success/status lines quoted below
+(`Entry smoke exit=0`, `[STATUS] Run Status: SUCCESS`) are genuinely present in this same real
+captured log but are NOT part of this test's own `$pass` gate -- shown here as observed fact from
+the real capture, not as something this specific test independently verifies.
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane),
+`tests/~selftest_sysbuild/`'s own sub-bootstrap -- ONE coherent, continuous real capture covering
+the full journey below.
+
+Scenario 33 showed REQ-014's "use system Python at all?" consent being accepted. That is not the
+only consent gate on this tier: once system Python is actually selected as the provider, a SECOND,
+independent consent gate (`:system_build_consent_gate`, REQ-007) asks separately about installing
+PyInstaller into that same system Python to build a standalone EXE -- distinct from REQ-014, and
+reachable only in `HP_ENV_MODE=system` mode (every other provider tier gets no such prompt, since
+none of them touch a shared, uncontrolled Python installation):
+
+```
+*** The standalone EXE build installs PyInstaller into your system Python. ***
+*** This is the same PyInstaller build used for every provider -- not a special path -- and ***
+*** its footprint is small and self-contained (it does not pin common libraries), so it is ***
+*** unlikely to conflict with your existing packages. ***
+```
+
+CI auto-declines (same CI-safe pattern as every other consent gate in this file: `HP_TEST_
+SYSBUILD_ANSWER` override checked first, then `HP_CI_LANE` auto-decline, then a real, unbounded
+`set /p` for an interactive user). On decline, dependency install and environment setup are left
+completely intact -- only the PyInstaller packaging step is skipped:
+
+```
+[INFO] REQ-007: system-Python EXE build consent: declined.
+[INFO] REQ-007: system-Python EXE build not consented; skipping PyInstaller packaging. The environment and dependencies are installed; run the app directly via the prepared Python.
+```
+
+With no EXE ever attempted, `:verify_no_exe_interpreter` becomes the sole verification run (this is
+also the general no-EXE path reached whenever `dist\<env>.exe` doesn't exist for any reason -- a
+declined build here, or PyInstaller being entirely unavailable elsewhere -- not specific to this
+consent gate):
+
+```
+[INFO] Running entry script smoke test via system interpreter.
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+[INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
+```
+
+The postflight briefing that follows is `:print_no_exe_briefing` (Part VII/CLAUDE.md's REQ-027 P2
+work already documents its honest-messaging design and its `HP_NOEXE_VERIFY_FAILED`-gated caveat
+variant) rather than the EXE-focused `:print_postflight_briefing` -- distinct panels for a
+genuinely distinct outcome (no packaged deliverable exists, but the app runs fine via the prepared
+interpreter).
+
+---
+
+### Scenario 37: EXE smoke-run diagnostic hints (companion to Scenario 22)
+
+**What's tested:** the `[HINT]` mechanism fires as a byproduct of `selfapps_exedata_fail.ps1`
+(`DATA_FILE` hint) and `selfapps_exedyn_fail.ps1`/`selfapps_hidden_import_exhaust.ps1`-family tests
+(`HIDDEN_IMPORT` hint), both real/conda-full lanes, real, passing (the hint lines are a bonus
+diagnostic these tests emit, not the tests' own primary assertion target).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+Scenario 22 covers `--hidden-import` auto-recovery reaching its 3-attempt cap without resolving. In
+that same failure family -- any EXE that still fails at runtime AFTER hidden-import recovery has
+been tried (or was never applicable, e.g. a genuinely missing DATA file, not a missing module) --
+`:exe_smokerun_hints` re-runs the EXE briefly (no timeout needed; these failures exit immediately)
+purely to pattern-match its stderr and offer a targeted, actionable hint. Two real captures, from
+two different xfail scenarios:
+
+**A missing bundled data file** (real capture, `FileNotFoundError`):
+
+```
+[HINT][DATA_FILE] Missing data file detected: C:\Users\RUNNER~1\AppData\Local\Temp\_MEI41642\mypkg\data\info.txt
+[HINT][DATA_FILE] Consider adding: --add-data C:\Users\RUNNER~1\AppData\Local\Temp\_MEI41642\mypkg\data\info.txt;.
+[HINT][RUNTIME_MISMATCH] Standalone EXE behavior differs from the Python runtime (possible PyInstaller packaging issue in the EXE, not your environment or dependencies)
+```
+
+**A missing module hidden-import recovery couldn't resolve** (real capture, `ModuleNotFoundError`):
+
+```
+[HINT][HIDDEN_IMPORT] Hidden import likely missing: absent_dynmod_xyz
+[HINT][HIDDEN_IMPORT] Consider adding: --hidden-import=absent_dynmod_xyz
+[HINT][RUNTIME_MISMATCH] Standalone EXE behavior differs from the Python runtime (possible PyInstaller packaging issue in the EXE, not your environment or dependencies)
+```
+
+Both hint types are logged via `:log` (console AND `~setup.log`), so a real user hitting either
+failure sees them directly -- not buried in a diagnostic-only file. The `RUNTIME_MISMATCH` hint is
+a universal closing line, not specific to the `DATA_FILE` branch -- both real captures above show
+it: every path through `:exe_smokerun_hints` (data-file match, module-not-found match, or neither)
+falls straight through to it with no `goto`/`exit` skipping it in between, so it always fires
+alongside whichever more specific hint (if any) matched, as a general reminder that a frozen EXE's
+behavior can differ from the interpreter's for packaging reasons unrelated to environment or
+dependencies. A separate, optional machine-readable form exists too (`HINT_JSON=1`, an
+undocumented-in-README super-user flag that additionally prints each hint as a compact JSON object
+via PowerShell) -- not independently captured in this run.
+
+---
+
+### Scenario 38: No `.py` files at all -- the graceful `no_python_files` exit
+
+**What's tested:** `self.empty_repo.msg` (`tests/selftest.ps1`, `real` lane, real, passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+Referenced throughout this document (e.g. Scenario 9's note that this repo's own bootstrapper
+root, which has no loose `.py` files, exercises this exact path) but never shown directly: when
+`PYCOUNT` (a plain `dir /b /a-d *.py` count) is zero, the bootstrapper takes the shortest path in
+the entire file -- no provider selection, no dependency install, nothing network-touching at all,
+skipping straight to a graceful, successful exit:
+
+```
+[INFO] Environment name: _selftest_empty
+[INFO] Host OS: Microsoft Windows [Version 10.0.26100.32995]
+[INFO] Host PowerShell: 5.1.26100.32995
+[INFO] Python file count: 0
+Python file count: 0
+No Python files detected; skipping environment bootstrap.
+[INFO] No Python files detected; skipping environment bootstrap.
+```
+
+(the last message genuinely appears twice, back to back, in the real captured log -- once as a
+plain `echo` straight to console with no timestamp, once through `:log`'s own timestamped form
+written to both console and `~setup.log`; the block above shows both, with the second line's
+real timestamp prefix, e.g. `Tue 07/28/2026  4:29:15.97`, omitted here since it carries no
+information beyond confirming the two lines are adjacent). `~bootstrap.status.json` reads
+`{"state":"no_python_files","exitCode":0,
+"pyFiles":0}` -- a real user who double-clicks the bootstrapper in an empty folder, or in the
+wrong folder entirely, gets a clear, immediate, non-alarming message rather than the bootstrapper
+attempting (and inevitably failing) to build an environment for nothing.
