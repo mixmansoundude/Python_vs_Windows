@@ -729,6 +729,59 @@ were renumbered to 17 and 16 respectively when archived -- see item 18 below and
    `docs/agent-closed-backlog.md` only if it was ALSO independently resolved -- an item can be
    renumbered without being closed, if its underlying finding is still open.
 
+- **19. The `cache` CI lane's corruption recovery is a one-way trap: once a restored cache is
+   flagged corrupted, nothing in that lane ever produces a fresh, valid cache again -- found
+   2026-08-01 while investigating a maintainer report that the lane "never works," always logging
+   `Cache corrupted, skipping fast-path tests (HP_CACHE_CORRUPTED=1)`, confirmed against the
+   current `.github/workflows/batch-check.yml` source, not just the symptom report.** Traced the
+   full mechanism: the cache key is `win-...-conda-${{ hashFiles('run_setup.bat') }}-<pipreqs_ver>`
+   with `restore-keys: win-...-conda-` as a prefix fallback. `run_setup.bat` changes on nearly
+   every PR in this repo, so the EXACT primary key rarely matches twice -- the restore step almost
+   always falls through to the `restore-keys` PREFIX match instead, which returns whatever cache
+   blob currently exists under that prefix (GitHub Actions cache entries are immutable once saved;
+   a "stale" blob can only be replaced by a NEW save under a NEW key, never overwritten in place).
+   The "Validate restored conda binary" step (`cache_health`) then runs `conda.bat info` against
+   whatever got restored; on failure it sets `HP_CACHE_CORRUPTED=1` (informational, `exit 0`, by
+   design -- this part is fine). The trap is downstream: the "Bootstrap environment (run_setup.bat)"
+   step -- the ONLY step in this lane capable of performing a fresh Miniconda install -- is gated on
+   `env.HP_CACHE_CORRUPTED != '1'`, so once corruption is flagged, bootstrap is SKIPPED ENTIRELY for
+   that run; no fresh install is ever attempted. The save step (`actions/cache/save`) is gated on
+   BOTH `steps.conda_cache_restore.outputs.cache-hit != 'true'` AND `env.HP_CACHE_CORRUPTED != '1'`
+   -- since a `restore-keys` prefix match reports `cache-hit: false` (only an EXACT primary-key
+   match reports `true`, confirmed against `actions/cache`'s own documented behavior), the
+   `cache-hit` half of the save gate is usually already satisfied when corruption is the actual
+   blocker -- the `HP_CACHE_CORRUPTED` half is what stops the save. Net effect: the SAME poisoned
+   blob (saved once, likely before this health-check mechanism existed, or from a one-off flake)
+   gets restored via the prefix fallback on every subsequent run, is correctly detected as
+   corrupted every time, but the detection itself prevents the one action (a fresh install this
+   run, followed by a fresh save) that would ever replace it -- a permanent, self-perpetuating
+   loop with no exit, fully consistent with "never works, always says corrupted."
+   **Confirmed this is real, not a one-off**: every `if:` gate on the lane's ~25 self-test steps
+   after "Bootstrap environment" already depends on `HP_CACHE_CORRUPTED != '1'`, so once corrupted,
+   the entire lane short-circuits to placeholder `pass:true, skip`-style NDJSON rows
+   (`self.cache.corrupted`) and reports overall green -- exactly the "always green to avoid being
+   gating" behavior observed, and exactly why this has been invisible in CI: nothing ever fails
+   loud enough to surface it as a real problem, it just silently never does its job.
+   **Not fixed in this pass** -- diagnosed only, per the maintainer's own "if you see an easy fix,
+   maybe put that in the backlog" framing; the fix touches shared CI workflow gating logic that
+   ~30 other steps also depend on, and can only be verified by watching real cache-lane runs
+   (multi-cycle, since the fix's own effect -- "does a fresh cache finally get saved" -- isn't
+   observable from a single run), so it doesn't fit safely into a downtime aside. **Suggested fix,
+   reasoned through but not implemented:** on a corruption detection that came from a `restore-keys`
+   PREFIX match specifically (`steps.conda_cache_restore.outputs.cache-hit != 'true'`, i.e. not an
+   exact primary-key hit), delete the corrupted `C:\Users\Public\Documents\Miniconda3` directory
+   and do NOT set `HP_CACHE_CORRUPTED` at all -- let the run fall through exactly like a genuine
+   cache miss (the health-check step's own existing "No conda binary found; fresh install will
+   proceed normally" branch already handles this shape correctly for a true miss). This lets
+   "Bootstrap environment" run a real fresh install, and lets the save step create a genuinely
+   fresh, valid cache entry under the current key afterward, breaking the loop. The narrower case
+   -- an EXACT primary-key hit that's ALSO corrupted (only plausible when `run_setup.bat` is
+   byte-identical to a previously-poisoned save, e.g. two runs on the same unchanged commit) --
+   would still be stuck, since that specific key's blob can never be overwritten; fully closing
+   that gap needs an explicit cache-deletion API call (`gh cache delete` / the GitHub Actions cache
+   REST API, `DELETE /repos/{owner}/{repo}/actions/caches`) gated on `cache-hit == 'true'` at
+   corruption-detection time, a smaller follow-on refinement once the main fix is proven working.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
