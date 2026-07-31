@@ -967,7 +967,7 @@ sees:
 ```
 *** Verification finished -- see the Run Status above. ***
 *** You can run your program again now via the interpreter as an extra diagnostic check. ***
-  Run again via the interpreter now? [Y/N] █
+  Run again via the interpreter now? [Y/N] _
 ```
 
 (cursor sits after `[Y/N] `, waiting indefinitely -- `:run_postexec_checkpoint`, an UNBOUNDED
@@ -980,7 +980,7 @@ continues to the second prompt:
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. ***
-  Build the optimized version now? [Y/N] █
+  Build the optimized version now? [Y/N] _
 ```
 
 (same shape -- `:offer_optimized_build`, also an unbounded `set /p`, also defaults to decline on
