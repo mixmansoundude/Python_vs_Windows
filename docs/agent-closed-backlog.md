@@ -1,7 +1,8 @@
 # Agent Closed Backlog -- Python_vs_Windows
 
-**This file is NOT auto-loaded into every session's context** (unlike `docs/agent-lessons-
-learned.md`, `docs/agent-interconnect.md`, and `docs/agent-ndjson.md`, which CLAUDE.md's own
+**This file is NOT auto-loaded into every session's context** (unlike
+`docs/agent-lessons-learned.md`, `docs/agent-interconnect.md`, and
+`docs/agent-ndjson.md`, which CLAUDE.md's own
 `@import` lines pull in automatically). Read it on demand: when CLAUDE.md's own pointer sends you
 here, when you need the full resolution history behind a specific PR/item cited by number, or
 when investigating something that "feels like it was already done" and you want the receipt.
@@ -287,9 +288,10 @@ further.)*
 - **`conda_avail`'s own gating premise was wrong for this repo's actual CI shape (Active
   Backlog item 15), and it merged (PR #390) before this was caught -- found 2026-07-27 via a
   direct owner question ("are we sure we aren't shorting conda-full?") that prompted re-checking
-  real step-level conclusions instead of trusting the job's overall green status.** Item 7's `conda_avail` check (`id:
-  conda_avail`, a `Test-Path` against the shared `%PUBLIC%\Documents\Miniconda3\condabin\
-  conda.bat`/`Scripts\conda.bat`) was designed on the assumption that the earlier "Bootstrap
+  real step-level conclusions instead of trusting the job's overall green status.** Item 7's
+  `conda_avail` check (`id: conda_avail`, a `Test-Path` against the shared
+  `%PUBLIC%\Documents\Miniconda3\condabin\conda.bat`/`Scripts\conda.bat`) was designed on
+  the assumption that the earlier "Bootstrap
   environment (run_setup.bat)" step performs the first real Miniconda install for the
   `conda-full` lane, so gating ~27 downstream `real/conda-full`-restricted self-test steps on
   "is conda already on disk" would only ever skip in the rare case that install genuinely
