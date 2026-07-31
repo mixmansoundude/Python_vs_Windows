@@ -87,6 +87,7 @@ conflate:
   - [Scenario 35: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed](#scenario-35-pre-flight-syntax-error-rejection-req-021-and-a-real-bug-it-exposed)
   - [Scenario 36: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path](#scenario-36-req-007-system-python-build-consent-and-the-resulting-no-exe-interpreter-path)
   - [Scenario 37: EXE smoke-run diagnostic hints (companion to Scenario 22)](#scenario-37-exe-smoke-run-diagnostic-hints-companion-to-scenario-22)
+  - [Scenario 38: No `.py` files at all -- the graceful `no_python_files` exit](#scenario-38-no-py-files-at-all----the-graceful-no_python_files-exit)
 
 ---
 
@@ -2399,3 +2400,33 @@ behavior can differ from the interpreter's for packaging reasons unrelated to en
 dependencies. A separate, optional machine-readable form exists too (`HINT_JSON=1`, an
 undocumented-in-README super-user flag that additionally prints each hint as a compact JSON object
 via PowerShell) -- not independently captured in this run.
+
+---
+
+### Scenario 38: No `.py` files at all -- the graceful `no_python_files` exit
+
+**What's tested:** `self.empty_repo.msg` (`tests/selftest.ps1`, `real` lane, real, passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+Referenced throughout this document (e.g. Scenario 9's note that this repo's own bootstrapper
+root, which has no loose `.py` files, exercises this exact path) but never shown directly: when
+`PYCOUNT` (a plain `dir /b /a-d *.py` count) is zero, the bootstrapper takes the shortest path in
+the entire file -- no provider selection, no dependency install, nothing network-touching at all,
+skipping straight to a graceful, successful exit:
+
+```
+[INFO] Environment name: _selftest_empty
+[INFO] Host OS: Microsoft Windows [Version 10.0.26100.32995]
+[INFO] Host PowerShell: 5.1.26100.32995
+[INFO] Python file count: 0
+Python file count: 0
+No Python files detected; skipping environment bootstrap.
+```
+
+(the last line appears twice in the real log -- once as a plain, untimestamped `echo` straight to
+console, once through `:log`'s timestamped form to both console and `~setup.log`; both are shown
+above as captured). `~bootstrap.status.json` reads `{"state":"no_python_files","exitCode":0,
+"pyFiles":0}` -- a real user who double-clicks the bootstrapper in an empty folder, or in the
+wrong folder entirely, gets a clear, immediate, non-alarming message rather than the bootstrapper
+attempting (and inevitably failing) to build an environment for nothing.
