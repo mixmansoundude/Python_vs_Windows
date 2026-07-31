@@ -473,6 +473,29 @@ further.)*
 
 ---
 
+### Item 9 (closed 2026-07-31; moved here same pass)
+
+- **README.md's `[REQ-018]` bullet describing the mandatory verification run as
+   "force-stopped after a short interval even if running fine" was stale relative to the
+   activity-aware-kill behavior actually shipped later -- found 2026-07-29 via a CodeRabbit review
+   comment on PR #400 that (correctly) flagged a possible mismatch between README's REQ-018 prose
+   and `docs/demo-bootstrapper-output.md`'s new Scenario 11.** Traced it down: the real, current
+   WARN text (quoted verbatim in Scenario 10 from a real CI capture) said the opposite of what
+   README claimed -- "if it stays completely silent for about 30 seconds it will be
+   force-stopped, but any output (including a prompt waiting on your input) keeps it running as
+   long as needed" -- matching this file's own "Activity-aware EXE-smoke kill
+   (docs/plan-cli-interactive-verification.md P0, requirement 3) -- resolves Open Question 1"
+   entry below. That feature shipped after README's REQ-018 section was last written and the
+   corresponding bullet was never updated to match.
+   **Fixed 2026-07-31**, in the same pass as the bottom-up console-message audit: the bullet now
+   reads "Verifying a fresh build is activity-aware and announced," describes the actual
+   silent-vs-any-output condition, and separately notes that the narrower re-verification inside
+   the `--hidden-import` auto-recovery loop remains unconditionally time-boxed (unaffected by this
+   fix, by design -- see this file's own entry on that loop for why). No behavior changed; this
+   was a documentation-only correction.
+
+---
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a
