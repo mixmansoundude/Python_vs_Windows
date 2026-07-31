@@ -10,20 +10,19 @@
 // MD029 (ordered-list-item-prefix) is the one exception, kept enabled here: it is the
 // exact rule that caught a real, if minor, semantic issue on PR #391 -- CLAUDE.md's
 // "Active Backlog" section uses numbers as STABLE IDENTIFIERS (cross-referenced from
-// Closed Backlog by number), not literal sequential list order, so a second numbered
-// item added there can silently collide with markdown's own ordered-list numbering
-// rules. See docs/agent-lessons-learned.md and AGENTS.md's "Recurring tooling" section
-// for the convention this backstops: new Active Backlog items should be bullets with
-// the number spelled out in prose, not literal "N." markers -- reserve literal ordered-
-// list syntax for the historically-grandfathered item 7.
+// docs/agent-closed-backlog.md by number), not literal sequential list order, so a
+// second numbered item added there can silently collide with markdown's own ordered-
+// list numbering rules. See docs/agent-lessons-learned.md and AGENTS.md's "Recurring
+// tooling" section for the convention this backstops: new Active Backlog items should
+// be bullets with the number spelled out in prose, not literal "N." markers.
 //
-// One PERMANENT, EXPECTED finding: item 7's own solo "7." entry. Every MD029 style
-// (tested: one, ordered, one_or_ordered, zero) requires a list -- even a one-item list --
-// to start at "1."/"0.", so there is no style option that accepts "7." as a valid lone
-// starting number. Rewriting item 7's own giant, heavily-cross-referenced entry to a
-// bullet (like item 15) was judged disproportionate risk for a lint cosmetic given its
-// size -- so this ONE finding on line ~473 is a known, accepted baseline, not a bug.
-// Treat any OTHER finding (a 2nd hit) as the thing actually worth investigating.
+// Formerly one PERMANENT, EXPECTED finding here: item 7's own solo literal "7." entry,
+// grandfathered as a known baseline because rewriting its giant, heavily-cross-
+// referenced text to a bullet was judged disproportionate for a lint cosmetic. Item 7
+// was closed and moved out of CLAUDE.md entirely (to docs/agent-closed-backlog.md) on
+// 2026-07-31, taking its literal "7." marker with it -- this check should now come back
+// fully clean with ZERO findings. Any finding here going forward is a real regression
+// worth investigating, not an expected baseline.
 //
 // Run via `tools/run_sanity_sweep.sh` (advisory only, never fails the sweep) or directly:
 //   markdownlint-cli2 CLAUDE.md

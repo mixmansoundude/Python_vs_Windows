@@ -50,8 +50,9 @@ test suite for the phrase before wording it, not after.
 **CI `continue-on-error` scoping, confirmed via the actual workflow YAML, not assumption.**
 `batch-check.yml`'s single `selftest` job already sets `continue-on-error` at the JOB level for
 six of eight matrix lanes (`cache`, `justme-test`, `uv`, `contract-uv`, `contract-uv-fail`,
-`uv-dl-fallback`) -- only `real`/`conda-full` are true gating lanes. This means CLAUDE.md Active
-Backlog item 7's "continue-on-error would defeat gating" reasoning applies ONLY to steps that can
+`uv-dl-fallback`) -- only `real`/`conda-full` are true gating lanes. This means the closed Active
+Backlog item 7's (`docs/agent-closed-backlog.md`) "continue-on-error would defeat gating"
+reasoning applies ONLY to steps that can
 run under `real`/`conda-full`; it does NOT apply to steps whose `if:` condition restricts them to
 the six already-non-gating lanes, since those never gated merges regardless. Surveyed all step
 `if:` conditions in the file (33 steps restricted to non-gating-lanes-only); found the PEP 723

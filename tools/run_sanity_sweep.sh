@@ -94,9 +94,11 @@ check_markdownlint() {
   fi
   # Advisory only, matches PYFLAKES's own non-gating precedent -- always return 0.
   # Scoped to MD029 only via .markdownlint-cli2.jsonc; that file's own header explains why
-  # (this repo's docs don't follow a general markdown style gate) and documents the one
+  # (this repo's docs don't follow a general markdown style gate). Formerly had one
   # PERMANENT, EXPECTED finding (item 7's own solo "7." entry in CLAUDE.md's Active
-  # Backlog). Treat any additional finding on CLAUDE.md as worth investigating.
+  # Backlog); item 7 was closed and moved to docs/agent-closed-backlog.md on 2026-07-31,
+  # so this should now come back fully clean -- treat ANY finding on CLAUDE.md as worth
+  # investigating.
   #
   # Deliberately scoped to CLAUDE.md only, not README.md/docs/*.md -- those files use their
   # own non-sequential numbering schemes (e.g. "Finding N") for reasons not reviewed here;
