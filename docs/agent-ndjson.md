@@ -530,7 +530,8 @@ self.interactive.stdin.roundtrip
   `~hidden_import_scan.py`'s own tried-list exclusion and stop the loop early via "no next hidden
   import found", never reaching the iteration cap this test needs to exercise.
 - `diag.conda.available` (inline `.github/workflows/batch-check.yml`, the "Check Miniconda
-  availability" step -- see CLAUDE.md Active Backlog item 7's `conda_avail` history) is always
+  availability" step -- see `docs/agent-closed-backlog.md`'s Active Backlog item 7 entry for the
+  full `conda_avail` history) is always
   `pass: true` (this step itself never fails the job, by design -- it only reports the observed
   fact) and carries `details.available` (`true`/`false`) reflecting whether Miniconda was found at
   the shared `%PUBLIC%\Documents\Miniconda3` path at that point in the job. Added on PR #394 per a
@@ -546,8 +547,9 @@ self.interactive.stdin.roundtrip
   (including a never-set/empty value) fails loud, deliberately without distinguishing "Miniconda
   genuinely failed to install" from "a bug in this gating mechanism itself" (both are surfaced the
   same way, per an explicit owner decision to prefer a loud failure over any risk of a silent one
-  recurring -- see CLAUDE.md's Active Backlog item 7 for the full PR #390 incident this protects
-  against and the risk/benefit assessment behind this design). On failure it also prints the tail
+  recurring -- see `docs/agent-closed-backlog.md`'s Active Backlog item 7 entry for the full
+  PR #390 incident this protects against and the risk/benefit assessment behind this design). On
+  failure it also prints the tail
   of `tests\~envsmoke\~envsmoke_bootstrap.log` inline for immediate root-cause visibility.
 - A row absent from the diag site means the test script either was not reached, threw
   before the `Write-NdjsonRow` call, or the lane skipped that selfapps file.
