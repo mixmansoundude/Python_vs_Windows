@@ -508,14 +508,26 @@ here, since those were the two items this pass touched for unrelated reasons).
    **Fixed 2026-07-31.** `:try_conda_install` now sets `HP_CONDA_ALLUSERS_ATTEMPTED=1` (reset
    defensively at subroutine entry) immediately before the real AllUsers install attempt, and
    `:tci_justme` branches its log line on whether that flag is defined: the genuine-failure path
-   keeps the original WARN wording unchanged, while both skip paths now log
+   keeps the original WARN wording (now also carrying the installer's own exit code and a reason
+   token -- `exitCode=%HP_CONDA_ALLUSERS_RC%, reason=installer_failed`, captured immediately after
+   `:run_installer_timeout` returns, per a CodeRabbit review comment on this same PR asking that
+   external/environmental failures be made explicit in logs rather than left as a bare "failed"),
+   while both skip paths now log
    `[INFO] Miniconda AllUsers install skipped (not elevated); trying JustMe install instead.`
-   instead. Confirmed safe against all three existing tests that reach this code path
-   (`tests/selfapps_justme.ps1`, `tests/selfapps_conda_bothfail.ps1`) -- none asserted on the old
-   WARN text for the skip-path scenarios they exercise. Added a new regression assertion to
-   `tests/selfapps_justme.ps1` (`skippedWordingCorrect`/`failedWordingAbsent`) confirming the new
-   INFO wording fires and the old WARN wording does NOT, in the non-elevated simulation this test
-   already runs.
+   instead. The same review pass also caught that `:tci_both_failed`'s own terminal `:die` message
+   had the identical problem one level up -- "Miniconda install failed (both AllUsers and JustMe)"
+   still implied AllUsers was genuinely attempted-then-failed even when it was only ever skipped;
+   fixed with the same `HP_CONDA_ALLUSERS_ATTEMPTED` branch, producing
+   "Miniconda install failed (AllUsers skipped -- not elevated; JustMe also failed)" for the
+   skip-path case and leaving the original wording for a genuine double-failure. Confirmed safe
+   against all three existing tests that reach this code path (`tests/selfapps_justme.ps1`,
+   `tests/selfapps_conda_bothfail.ps1`) -- updated `selfapps_conda_bothfail.ps1`'s own assertion
+   to match the new terminal wording (it always sets `HP_TEST_NOT_ELEVATED=1`, so it exercises the
+   skip-path terminal message specifically). Added a new regression assertion to
+   `tests/selfapps_justme.ps1` (`skippedWordingCorrect`/`failedWordingAbsent`, checked against the
+   envsmoke-scoped log rather than the combined root+envsmoke text a second CodeRabbit comment
+   flagged as a staleness risk for a negative assertion) confirming the new INFO wording fires and
+   the old WARN wording does NOT, in the non-elevated simulation this test already runs.
 
 ---
 

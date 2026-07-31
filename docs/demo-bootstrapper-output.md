@@ -1534,7 +1534,7 @@ Miniconda install first attempts an AllUsers (machine-wide) install; if UAC reje
 the process simply isn't elevated), it skips straight to a JustMe (per-user) install instead, no
 wasted attempt. **Both the "skip, never attempted" path and a genuine post-attempt AllUsers
 failure fall through to the same shared `:tci_justme` label** (`run_setup.bat`), but (fixed
-2026-07-31, Active Backlog item 16 -- see `docs/agent-closed-backlog.md`) the label
+2026-07-31, Closed Active Backlog item 16, renumbered from 11 -- see `docs/agent-closed-backlog.md`) the label
 now checks a flag set only right before the real AllUsers install attempt, so the two paths get
 distinct wording instead of both unconditionally claiming AllUsers "failed." On the common
 non-elevated machine (skip path, `[Extrapolated Branch]` for the new wording -- not yet
@@ -1546,12 +1546,13 @@ re-confirmed against a fresh CI capture):
 [INFO] Miniconda installed (JustMe fallback).
 ```
 
-A genuine, post-attempt AllUsers failure still gets the original WARN wording (`[Extrapolated
-Branch]`, cited from source -- this branch requires a real elevated process whose AllUsers
-installer genuinely fails, which no current CI hook forces without also forcing the skip path):
+A genuine, post-attempt AllUsers failure still gets the original WARN wording, now also carrying
+the installer's own exit code and a reason token (`[Extrapolated Branch]`, cited from source --
+this branch requires a real elevated process whose AllUsers installer genuinely fails, which no
+current CI hook forces without also forcing the skip path):
 
 ```
-[WARN] Miniconda AllUsers install failed; retrying with JustMe.
+[WARN] Miniconda AllUsers install failed (exitCode=1, reason=installer_failed); retrying with JustMe.
 ```
 
 **If JustMe ALSO fails** (both installation options exhausted; REAL CI CAPTURE for the skip-path
@@ -1560,7 +1561,7 @@ lines, `[Extrapolated Branch]` for the now-corrected wording):
 ```
 [INFO] Not elevated; skipping AllUsers Miniconda install.
 [INFO] Miniconda AllUsers install skipped (not elevated); trying JustMe install instead.
-[ERROR] Miniconda install failed (both AllUsers and JustMe).
+[ERROR] Miniconda install failed (AllUsers skipped -- not elevated; JustMe also failed).
 ```
 
 This is a genuine `:die` (`state=error`), not a graceful degrade -- with no Python interpreter

@@ -484,6 +484,14 @@ below instead of here (see that section's own scope note for the distinction fro
 Item numbers are stable cross-reference identifiers, not sequential list positions -- once an
 item is fully resolved it is removed from here entirely and archived (keeping its original
 number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not start at 1.
+**Exception: if a new item's number collides with a number already permanently retired by an
+older, unrelated closed item, renumber the new item to the next never-used number when archiving
+it, and document the collision (old number, why, cite the colliding entry) in its
+closed-backlog entry.** Keeping the original number is still the default; renumbering only
+happens to resolve a genuine collision, never for its own sake. Concrete precedent: items 9 and
+11 (filed 2026-07-29) each collided with an older, already-closed item of the same number and
+were renumbered to 17 and 16 respectively when archived -- see item 18 below and
+`docs/agent-closed-backlog.md`'s Item 16/17 entries for the full trace.
 
 - **8. `[WARN] UNC paths not supported` fires unconditionally in CI on an ordinary (non-UNC) local
    path -- found 2026-07-29 while gathering real console-output evidence for

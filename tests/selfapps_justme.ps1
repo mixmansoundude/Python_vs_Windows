@@ -57,12 +57,17 @@ $combinedText = $setupText + $mainSetupText
 $notElevatedSkip = $combinedText -match 'Not elevated; skipping AllUsers Miniconda install\.'
 $justmeInstalled = $combinedText -match 'Miniconda installed \(JustMe fallback\)'
 
-# derived requirement: [Active Backlog item 11 fix] the shared :tci_justme label must NOT claim
-# AllUsers "failed" when it was only ever skipped (never launched) -- this scenario's own
-# HP_TEST_NOT_ELEVATED=1 takes the skip path, so the correct line is the INFO "skipped" wording,
-# and the old unconditional WARN "failed" wording must NOT appear at all in this run.
-$skippedWordingCorrect = $combinedText -match 'Miniconda AllUsers install skipped \(not elevated\); trying JustMe install instead\.'
-$failedWordingAbsent   = -not ($combinedText -match 'Miniconda AllUsers install failed; retrying with JustMe\.')
+# derived requirement: [Active Backlog item 16, renumbered from 11 -- see docs/agent-closed-
+# backlog.md] the shared :tci_justme label must NOT claim AllUsers "failed" when it was only ever
+# skipped (never launched) -- this scenario's own HP_TEST_NOT_ELEVATED=1 takes the skip path, so
+# the correct line is the INFO "skipped" wording, and the old unconditional WARN "failed" wording
+# must NOT appear at all in this run. Checked against $setupText (the envsmoke-scoped log for
+# THIS specific sub-bootstrap) rather than $combinedText -- unlike the two pre-existing presence
+# checks above, a negative ("must NOT appear") assertion would be vulnerable to stale/unrelated
+# content in the shared repo-root ~setup.log if it were ever written by an earlier, different step
+# in the same job.
+$skippedWordingCorrect = $setupText -match 'Miniconda AllUsers install skipped \(not elevated\); trying JustMe install instead\.'
+$failedWordingAbsent   = -not ($setupText -match 'Miniconda AllUsers install failed; retrying with JustMe\.')
 
 $pass = $notElevatedSkip -and $justmeInstalled -and $skippedWordingCorrect -and $failedWordingAbsent
 
