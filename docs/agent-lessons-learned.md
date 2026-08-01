@@ -1136,11 +1136,29 @@ assertions.
 `HP_FAILFAST_PROBE_MS` (default 10000ms, `:run_failfast_probe`) is a CLASSIFICATION checkpoint --
 how long to wait before deciding "this exited fast, treat a non-zero rc as a stale artifact" vs.
 "this is still running, treat it as the user's real program and never touch it again." The ~30s cap
-used by `:run_exe_smokerun`/`:hidden_import_recover` is a FORCE-KILL CEILING for the one run this
-bootstrapper is ever allowed to `Kill()` (the fresh-build verification run). The probe's second wait
-stage (`$p.WaitForExit()`, no argument) is genuinely unbounded and never kills anything -- raising or
-lowering the probe window only changes how quickly a broken cached EXE gets discarded+rebuilt, it
-never introduces a new kill point.
+used by `:run_exe_smokerun`/`:hidden_import_recover` is a FORCE-KILL CEILING for the fresh-build
+verification run (`~exe_smokerun.ps1`, `HP_SMOKERUN_KILL_MS`, activity-aware -- see "Activity-aware
+EXE-smoke kill" in `docs/agent-interconnect.md`). The probe's second wait stage (`$p.WaitForExit()`,
+no argument) is genuinely unbounded and never kills anything -- raising or lowering the probe window
+only changes how quickly a broken cached EXE gets discarded+rebuilt, it never introduces a new kill
+point.
+
+**A third bounded-launch helper exists, with a DIFFERENT kill philosophy from the two above --
+`~exe_hint_rerun.ps1` (`HP_EXE_HINT_RERUN`, `:exe_smokerun_hints`, closes former Active Backlog
+item 15).** Unlike `~exe_smokerun.ps1`/`~failfast_probe.ps1` (activity-aware: any output before the
+deadline skips the kill, since those cover a REAL run worth waiting on), this helper kills
+UNCONDITIONALLY at its deadline (default `HP_HINT_RERUN_KILL_MS=10000`, test-only override) --
+it exists purely to capture a bounded stdout+stderr snapshot for stderr pattern-matching
+(`ModuleNotFoundError`/`FileNotFoundError` signatures), never shown live to the user, so partial
+output on a hang is fine and strictly preferred over letting a diagnostic-only re-run hang the
+whole bootstrap a second time. Before this fix, `:exe_smokerun_hints` did a plain, untimed
+`"%ENVNAME%.exe" > "~exe_out.txt" 2>&1` -- the one user-code launch point in this file with no
+timeout at all, on the theory that a genuine ModuleNotFoundError/FileNotFoundError always exits
+immediately. That theory holds for the ORIGINAL failure (already classified as fast/real/non-hang
+by the primary verification), but this is a FRESH re-run of the same binary; any non-determinism
+could hang it. Regression tests: `tests/test_exe_hint_rerun.py` (`UnconditionalKill` class
+specifically proves a process that prints once and then hangs is STILL killed -- the defining
+behavioral difference from the other two helpers).
 
 **Why the default is 10000ms, not 5000ms (widened 2026-07):** the original 5000ms default was
 tuned assuming the probe window only needs to outlast a failing process's own error handling

@@ -755,6 +755,48 @@ this belongs to).
    opportunistically across this and future PRs' own `cache`-lane runs, not via a dedicated
    verification loop.
 
+### Item 15 (closed 2026-08-01)
+
+- **`:exe_smokerun_hints`'s diagnostic re-run of a freshly-failed EXE had no timeout, unlike every
+   other user-code launch point in `run_setup.bat` -- found 2026-07-31, flagged by a CodeRabbit
+   review on PR #402, fixed 2026-08-01.** `:exe_smokerun_hints` did `pushd dist` then
+   `"%ENVNAME%.exe" > "~exe_out.txt" 2>&1` with no `.NET Process`/`WaitForExit(ms)`/`Kill()`
+   wrapper at all -- a plain, synchronous, unbounded invocation. Every other user-code/EXE launch
+   point in the file (`:run_exe_smokerun`'s primary verification, `:run_failfast_probe`'s three
+   call sites, `:hidden_import_recover`'s own repair-check re-run) is deliberately bounded, either
+   by the ~30s hard-kill ceiling or by the fail-fast-probe's classify-then-never-kill design. The
+   call site's own guard (`if not "%HP_EXE_EXIT%"=="-1" call :exe_smokerun_hints`) only confirms
+   the FIRST launch (inside `:run_exe_smokerun`) exited with a real, non-hang code -- it says
+   nothing about whether the SAME program behaves identically on this SECOND, separate launch a
+   few lines later. Any non-determinism (a race, an env check that sometimes succeeds, anything
+   that occasionally blocks on inherited stdin) could hang this second, untimed invocation and
+   hang the whole bootstrap, even though the FIRST invocation legitimately classified as "fast,
+   real, non-hang failure."
+   **Fixed** with a new dedicated helper, `tools/exe_hint_rerun.ps1` (embedded as
+   `HP_EXE_HINT_RERUN`, following the standard `sync_payload.py`/`emit_from_base64` embedded-helper
+   convention) -- deliberately NOT a reuse of `~exe_smokerun.ps1`'s activity-aware kill philosophy
+   (which skips the kill once any output has been observed, correct for a REAL verification run
+   worth waiting on indefinitely). This re-run is diagnostic-only, never shown live to the user, so
+   the new helper kills UNCONDITIONALLY at its deadline (`HP_HINT_RERUN_KILL_MS`, default 10000ms
+   -- a diagnostic capture on an already-failed run does not need the full 30s primary-verification
+   budget; test-only override, mirroring `HP_SMOKERUN_KILL_MS`'s established pattern). Output is
+   written as ONE combined stdout+stderr file (`~exe_out.txt`, matching the original `2>&1` merge
+   exactly), since the existing `findstr`-based hint-matching in `:exe_smokerun_hints` only checks
+   for substring presence, never which stream a line came from. See
+   `docs/agent-lessons-learned.md`'s "Fail-fast probe window vs. the ~30s hard-kill cap" entry for
+   the full three-helper comparison (`~exe_smokerun.ps1` / `~failfast_probe.ps1` activity-aware vs.
+   `~exe_hint_rerun.ps1` unconditional).
+   **Test coverage**: `tests/test_exe_hint_rerun.py` (new, mirrors `tests/test_exe_smokerun.py`'s
+   established harness -- `sys.executable` as the fake exe, logic fed via inherited stdin, real
+   `pwsh` subprocess). `UnconditionalKill.test_hang_after_output_is_ALSO_killed_unlike_exe_smokerun`
+   is the regression test that actually proves the defining behavioral difference from the other
+   two helpers in this file family: a process that prints once and then hangs is still killed here
+   (unlike `~exe_smokerun.ps1`, where the same shape would be left running unbounded). A
+   `PayloadSync` test confirms the embedded base64 matches the canonical source byte-for-byte
+   (CRLF/LF normalized, per the established `.ps1` PayloadSync convention). No existing test relied
+   on the old unbounded behavior (confirmed via grep for `exe_smokerun_hints`/`exe_out.txt` across
+   `tests/`), so nothing needed to change on the success path.
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a
