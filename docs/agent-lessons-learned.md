@@ -443,6 +443,28 @@ list; the recurring traps that have actually bitten us:
   `%%`) inside `for` bodies in a `.bat` file.
 - **Special characters need escaping/quoting:** `&`, `|`, `<`, `>`, `^`, `!`, `~`, and `%`
   in values require quoting or `^`-escaping; `%` must be doubled (`%%`).
+- **A literal `(`/`)` inside `echo` text is NOT invisible to a parenthesized block's own parser,
+  even split across lines -- confirmed as a real shipped regression, 2026-08-01 (PR #408, commit
+  `fd52a3f`).** cmd.exe buffers an entire `if (...)`/`for (...)` block by counting `(`/`)`
+  characters in the raw text between the opening `(` and its match -- it has no concept of "this
+  paren is just prose inside an `echo` line," so a stray `(` on one `echo` line and its matching
+  `)` on the NEXT `echo` line (e.g. a hand-wrapped sentence like `method (uv, conda, a fresh
+  download, a` / `local virtual environment) failed ...`) reads as a real block-closing paren the
+  instant the parser reaches it -- the block ends there, and whatever plain-text token follows the
+  `)` (here, the word `failed`) is parsed as a new top-level command, producing
+  `failed was unexpected at this time.` This shipped in a new `:preflight_compile` message block
+  (the item-14 fix, see `docs/agent-closed-backlog.md`'s Item 14 entry for the full trace) and
+  broke every CI lane whose own self-tests reach that branch in the same run (6 lanes failed
+  simultaneously on one commit) -- caught by real CI, not by any local check: `python
+  tools/check_delimiters.py run_setup.bat` passed clean on the broken version, a confirmed gap in
+  that tool (its paren-balance logic does not currently walk `echo`/prose text inside a block the
+  way cmd.exe's own parser does). **Rule of thumb: never let a `(` and its matching `)` land on
+  different lines inside any parenthesized `.bat` block, even inside `echo`/prose text that looks
+  purely cosmetic.** Either keep the pair on the same line, avoid literal parens in wrapped prose
+  entirely (prefer ` -- ` or `,`), or escape both with `^(`/`^)` if the parens are structurally
+  necessary. When manually reviewing a new multi-line `echo` block inside an `if`/`for` block,
+  count parens per-line as part of the review, not just per-block -- `check_delimiters.py`'s
+  current implementation will not catch an imbalance introduced this way.
 - **Avoid `EnableDelayedExpansion`; if unavoidable, wrap it tightly.** `!` becomes special
   under delayed expansion, and a parent shell launched with `/V:ON` causes `!`-collisions.
   `tests/harness.ps1` `batch.bang.scan` enforces "no `!` in live batch code lines."

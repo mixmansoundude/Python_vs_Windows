@@ -54,8 +54,6 @@ if not "%~8"=="" set "HP_APP_ARGS=%HP_APP_ARGS% "%~8""
 if not "%~9"=="" set "HP_APP_ARGS=%HP_APP_ARGS% "%~9""
 rem Boot strap renamed to run_setup.bat
 set "HP_SCRIPT_LAUNCH_DIR=%~dp0"
-echo %~dp0 | findstr /C:"\\\\" >nul
-if not errorlevel 1 echo [WARN] UNC paths not supported
 if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\" (
   rem derived requirement: parentheses must be escaped inside IF (...) blocks in CMD or parsing breaks.
   echo *** WARNING: UNC/network paths detected ^(\\server\share^).
@@ -1016,13 +1014,14 @@ if exist "%REQ%" (
 set "HP_JOB_SUMMARY=~pipreqs.summary.txt"
 if exist "%HP_JOB_SUMMARY%" del "%HP_JOB_SUMMARY%"
 if not defined HP_PY (
+  set "HP_NO_INTERPRETER=1"
   call :die "[ERROR] Active Python interpreter not resolved."
 )
 
 echo Interpreter: %HP_PY%
 >> "%LOG%" echo Interpreter: %HP_PY%
 call :append_env_mode_row
-"%HP_PY%" -c "print('py_ok')" 1>nul 2>nul || call :log "[WARN] Interpreter smoke test failed (continuing)."
+"%HP_PY%" -c "print('py_ok')" 1>nul 2>nul || (call :log "[WARN] Interpreter smoke test failed (continuing)." & set "HP_NO_INTERPRETER=1")
 "%HP_PY%" -c "import sys;print(sys.version.split()[0])" > "~pyver_host.tmp" 2>nul
 if exist "~pyver_host.tmp" for /f "usebackq delims=" %%Y in ("~pyver_host.tmp") do call :log "[INFO] Host Python: %%Y"
 if exist "~pyver_host.tmp" del "~pyver_host.tmp" >nul 2>&1
@@ -3408,6 +3407,19 @@ rem the interpreter (zero false positives for the entry) and writes NO .pyc on f
 rem HP_PREFLIGHT_FAILED must persist to the caller. Capture %ERRORLEVEL% immediately (the del/set
 rem below would clobber it).
 set "HP_PREFLIGHT_FAILED="
+if defined HP_NO_INTERPRETER (
+  echo.
+  echo *** [ERROR] No Python interpreter is available; your program was not run or built. ***
+  echo *** This is not a syntax error -- the Python interpreter itself could not be used. ***
+  echo *** Either every automatic Python-acquisition method -- uv, conda, a fresh download, ***
+  echo *** or a local virtual environment -- failed, usually from no internet connection, a ***
+  echo *** full disk, or a locked-down managed machine image -- or a PVW_PYTHON_EXE override ***
+  echo *** points at a path that does not run. Scroll up in this window for the specific reason. ***
+  call :log "[ERROR] REQ-021: preflight skipped, no Python interpreter resolved: %HP_ENTRY%"
+  echo.
+  set "HP_PREFLIGHT_FAILED=1"
+  exit /b 0
+)
 if not defined HP_ENTRY exit /b 0
 if not exist "%HP_ENTRY%" exit /b 0
 if exist "~preflight.err.txt" del "~preflight.err.txt" >nul 2>&1

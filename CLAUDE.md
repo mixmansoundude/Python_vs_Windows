@@ -492,55 +492,6 @@ Once an item is fully resolved it is removed from here entirely and archived (ke
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
 start at 1 and has gaps.
 
-- **8. `[WARN] UNC paths not supported` fires unconditionally in CI on an ordinary (non-UNC) local
-   path -- found 2026-07-29 while gathering real console-output evidence for
-   `docs/demo-bootstrapper-output.md`'s default-happy-path documentation pass, not yet
-   investigated further.** `run_setup.bat:57-58` does
-   `echo %~dp0 | findstr /C:"\\\\" >nul` / `if not errorlevel 1 echo [WARN] UNC paths not
-   supported` -- per the C-runtime backslash-before-quote rule already documented in
-   `docs/agent-lessons-learned.md` ("A single trailing backslash before a closing quote silently
-   corrupts a subprocess argument"), `\\\\"` collapses to a 2-backslash literal search pattern,
-   so this is searching `%~dp0` for two CONSECUTIVE backslashes anywhere in the string -- not
-   testing for a UNC prefix (that's the separate, independent check two lines below at line 59,
-   `if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the louder `*** WARNING: UNC/network
-   paths detected...` banner). Pulled `tests/~envsmoke/~envsmoke_bootstrap.log` (the full,
-   unredirected console capture of a real, non-`HP_CI_SKIP_ENV` bootstrap) from a recent clean
-   green run (`30328748330`, all lanes green) across 6 lanes (`real`, `uv`, `conda-full`,
-   `justme-test`, `contract-uv`, `contract-uv-fail`) and found the `[WARN] UNC paths not
-   supported` line as the very FIRST line of console output in all 6, every single time, against
-   an entirely ordinary CI checkout path (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\
-   ~envsmoke\`) -- not a UNC path by any reasonable definition. No test in the repo asserts on
-   or references this string at all (confirmed via a repo-wide grep), so this has apparently been
-   firing on every single CI run, unnoticed, indefinitely.
-   - **Ruled out one theory directly**: the companion `HP_SCRIPT_LAUNCH_DIR:~0,2` check (tests
-     whether the path literally STARTS with `\\`) never fires in the same logs (zero hits for
-     "UNC/network paths detected" across all 6 lanes) -- so whatever is producing a
-     double-backslash for the `findstr` search must be sitting mid-string, not at the start of
-     `%~dp0`. This is real, if partial, information: it means the failure mode is NOT "the whole
-     checkout path is somehow UNC," which was the first, most obvious guess.
-   - **Root cause NOT identified.** Best unconfirmed guess: something about how GitHub-hosted
-     Windows runners provision the `D:\a\...` work directory (`actions/checkout`'s own path
-     construction, or a junction/reparse point backing that drive) introduces a duplicated
-     separator somewhere in the resolved `%~dp0` value for a batch file invoked from inside it --
-     but this was NOT verified (no way to inspect the raw `%~dp0` bytes directly from this
-     research pass; would need a dedicated diagnostic echo added to a test lane, e.g.
-     temporarily `echo RAW_DP0=[%~dp0]` to a log file, to actually see the string with delimiters
-     visible).
-   - **Whether this also fires for a genuine end-user double-click (not CI, no nested
-     `cmd`/PowerShell invocation, an ordinary local folder) is UNCONFIRMED** -- this sandbox has
-     no Windows machine to test on, and no real end-user report exists either way. If it's
-     CI-runner-specific plumbing, it's cosmetic noise (one extra harmless WARN line, unlikely to
-     confuse a real user since it never fires for them); if it also fires for real users on an
-     ordinary local path, it's a real, previously-unknown false-positive bug worth fixing (most
-     likely fix shape: tighten the `findstr` pattern to require the double-backslash appear
-     specifically in a network-path position, or just remove this redundant check entirely since
-     the very next lines already do a correct, more targeted UNC-prefix check).
-   - **Not investigated further in this pass** -- out of scope for a documentation-only task, and
-     genuinely needs either a dedicated diagnostic-logging CI experiment (cheap, doable in a
-     future loop) or a real Windows machine to resolve with confidence. Documented in
-     `docs/demo-bootstrapper-output.md`'s new default-happy-path scenario as an observed,
-     unexplained anomaly rather than either asserting it's harmless or that it's a bug.
-
 - **10. Two of the five `PVW_*` super-user override variables (`PVW_PYTHON_EXE`, `PVW_WORKSPACE`)
    have ZERO test coverage of any kind, and ALL FIVE have zero coverage of their invalid-value
    behavior -- found 2026-07-29 while documenting them for `docs/demo-bootstrapper-output.md`'s
@@ -614,57 +565,6 @@ start at 1 and has gaps.
    reproducible gap (in which case the test's own pass/fail logic may need tightening) or a
    one-off artifact of this particular run's CI-runner path layout.
 
-- **14. Total REQ-009 provider-tier exhaustion produces a MISLEADING "your program has a syntax
-   error" final message instead of surfacing the real "no Python interpreter found" cause -- found
-   2026-07-31 while sweeping `run_setup.bat` line-by-line for `docs/demo-bootstrapper-output.md`
-   coverage gaps, confirmed against real CI evidence and the actual source, not just theorized.**
-   `:after_env_mode_selection`'s own guard (`run_setup.bat`, right after
-   `:conda_base_update`/`:emit_from_base64 "~prep_requirements.py"`) does
-   `if not defined HP_PY ( call :die "[ERROR] Active Python interpreter not resolved." )` -- but
-   per this file's own long-documented `:die` semantics (`exit /b` inside `:die` only returns from
-   `:die`'s OWN call frame, never halts the calling code), execution falls straight through to the
-   very next line regardless: `echo Interpreter: %HP_PY%` (printing a blank interpreter path),
-   then an `"%HP_PY%" -c "print('py_ok')" ... || call :log "[WARN] Interpreter smoke test failed
-   (continuing)."` that silently downgrades the failure to a WARN and continues. The bootstrap then
-   proceeds through pipreqs, dependency install, the pyvisa check, and entry selection -- all
-   effectively no-ops against an empty interpreter path -- and finally reaches `:preflight_compile`
-   (REQ-021), whose `"%HP_PY%" -m py_compile "%HP_ENTRY%"` becomes a literal `"" -m py_compile
-   "app.py"` with `HP_PY` empty. cmd.exe cannot execute an empty-quoted command name, producing
-   `'""' is not recognized as an internal or external command, operable program or batch file.` --
-   a CMD.EXE ERROR, NOT A PYTHON TRACEBACK -- which `:preflight_compile` (any nonzero exit is
-   treated as "compile failed," with no distinction between "the interpreter itself couldn't run"
-   and "the interpreter ran and found a real syntax error") unconditionally reports as
-   `*** [ERROR] REQ-021: Your Python program has a syntax error and cannot run. ***` followed by
-   that cmd.exe text and "Fix the syntax error shown above, then run this batch again."
-   **Confirmed via real CI capture** (run `30328748330`, `real` lane, job `90179708091`,
-   `tests/~selftest_embed_decline/`'s own sub-bootstrap -- a test that force-fails EVERY provider
-   tier via `HP_TEST_FORCE_EMBED_FAIL`/`HP_TEST_FORCE_VENV_FAIL`/declined system-Python consent,
-   deterministically reproducing total exhaustion): the log shows exactly this sequence --
-   `[ERROR] Active Python interpreter not resolved.` -> blank `Interpreter:` line -> `[WARN]
-   Interpreter smoke test failed (continuing).` -> a full, unaffected pipreqs/dep-install/VISA/
-   entry-selection sequence -> the misleading REQ-021 syntax-error block quoting the literal
-   `'""' is not recognized...` cmd.exe text. **This is a real, non-test-only reachable scenario**:
-   README's own REQ-009 table already documents that falling through three-plus tiers in one run
-   is "almost always one shared root cause" (no internet, full disk, or a locked-down managed
-   image) -- a real user with no connectivity, no working ambient Python, and who declines the
-   REQ-014 system-Python prompt hits this identical path for genuine, non-test reasons. The
-   test-forced flags in the capture above are a deterministic REPRODUCTION vector, not the only
-   way to trigger it. **`~bootstrap.status.json`'s machine-readable `state` field is NOT
-   affected** -- `:die`'s own already-fixed unconditional `HP_BOOTSTRAP_STATE=error` set (see this
-   file's `:die` entry) still applies before execution falls through, so the status file correctly
-   reads `state: error` regardless of the confusing console narrative; only the human-readable
-   text is misleading, and only for a user who reads just the LAST error rather than scrolling
-   back to the real, earlier "Active Python interpreter not resolved." line. **Not fixed in this
-   pass** -- documentation-only task; `docs/demo-bootstrapper-output.md` documents this exact real
-   capture as its own scenario rather than presenting the misleading text as a genuine syntax-error
-   report. Suggested fix for a future pass: guard `:preflight_compile` (and any other `HP_PY`-using
-   code reachable after `:after_env_mode_selection`'s interpreter-resolution guard) on `HP_PY`
-   actually being a non-empty, existing path before invoking it -- or, more robustly, make the
-   `:after_env_mode_selection` guard itself a `goto`-based hard stop (matching this file's own
-   "Provider-cascade dispatch is goto-based on purpose" pattern) instead of relying on `:die`'s
-   call-frame-only return, so total exhaustion genuinely halts the pipeline at the point of failure
-   rather than continuing for another ~15 log lines under a broken interpreter.
-
 - **15. `:exe_smokerun_hints`'s diagnostic re-run of a freshly-failed EXE has no timeout, unlike
    every other user-code launch point in this file -- found 2026-07-31, flagged by a CodeRabbit
    review on PR #402 while documenting the hint mechanism for
@@ -692,59 +592,6 @@ start at 1 and has gaps.
    completed runs (the hang risk is about a DIFFERENT, hypothetical program, not about the accuracy
    of what's shown) -- but a future pass fixing this should also confirm no currently-passing test
    silently relies on the unbounded behavior before adding a timeout.
-
-- **19. The `cache` CI lane's corruption recovery is a one-way trap: once a restored cache is
-   flagged corrupted, nothing in that lane ever produces a fresh, valid cache again -- found
-   2026-07-31 while investigating a maintainer report that the lane "never works," always logging
-   `Cache corrupted, skipping fast-path tests (HP_CACHE_CORRUPTED=1)`, confirmed against the
-   current `.github/workflows/batch-check.yml` source, not just the symptom report.** Traced the
-   full mechanism: the cache key is `win-...-conda-${{ hashFiles('run_setup.bat') }}-<pipreqs_ver>`
-   with `restore-keys: win-...-conda-` as a prefix fallback. `run_setup.bat` changes on nearly
-   every PR in this repo, so the EXACT primary key rarely matches twice -- the restore step almost
-   always falls through to the `restore-keys` PREFIX match instead, which returns whatever cache
-   blob currently exists under that prefix (GitHub Actions cache entries are immutable once saved;
-   a "stale" blob can only be replaced by a NEW save under a NEW key, never overwritten in place).
-   The "Validate restored conda binary" step (`cache_health`) then runs `conda.bat info` against
-   whatever got restored; on failure it sets `HP_CACHE_CORRUPTED=1` (informational, `exit 0`, by
-   design -- this part is fine). The trap is downstream: the "Bootstrap environment (run_setup.bat)"
-   step -- the ONLY step in this lane capable of performing a fresh Miniconda install -- is gated on
-   `env.HP_CACHE_CORRUPTED != '1'`, so once corruption is flagged, bootstrap is SKIPPED ENTIRELY for
-   that run; no fresh install is ever attempted. The save step (`actions/cache/save`) is gated on
-   BOTH `steps.conda_cache_restore.outputs.cache-hit != 'true'` AND `env.HP_CACHE_CORRUPTED != '1'`
-   -- since a `restore-keys` prefix match reports `cache-hit: false` (only an EXACT primary-key
-   match reports `true`, confirmed against `actions/cache`'s own documented behavior), the
-   `cache-hit` half of the save gate is usually already satisfied when corruption is the actual
-   blocker -- the `HP_CACHE_CORRUPTED` half is what stops the save. Net effect: the SAME poisoned
-   blob (saved once, likely before this health-check mechanism existed, or from a one-off flake)
-   gets restored via the prefix fallback on every subsequent run, is correctly detected as
-   corrupted every time, but the detection itself prevents the one action (a fresh install this
-   run, followed by a fresh save) that would ever replace it -- a permanent, self-perpetuating
-   loop with no exit, fully consistent with "never works, always says corrupted."
-   **Confirmed this is real, not a one-off**: every `if:` gate on the lane's ~25 self-test steps
-   after "Bootstrap environment" already depends on `HP_CACHE_CORRUPTED != '1'`, so once corrupted,
-   the entire lane short-circuits to placeholder `pass:true, skip`-style NDJSON rows
-   (`self.cache.corrupted`) and reports overall green -- exactly the "always green to avoid being
-   gating" behavior observed, and exactly why this has been invisible in CI: nothing ever fails
-   loud enough to surface it as a real problem, it just silently never does its job.
-   **Not fixed in this pass** -- diagnosed only, per the maintainer's own "if you see an easy fix,
-   maybe put that in the backlog" framing; the fix touches shared CI workflow gating logic that
-   ~30 other steps also depend on, and can only be verified by watching real cache-lane runs
-   (multi-cycle, since the fix's own effect -- "does a fresh cache finally get saved" -- isn't
-   observable from a single run), so it doesn't fit safely into a downtime aside. **Suggested fix,
-   reasoned through but not implemented:** on a corruption detection that came from a `restore-keys`
-   PREFIX match specifically (`steps.conda_cache_restore.outputs.cache-hit != 'true'`, i.e. not an
-   exact primary-key hit), delete the corrupted `C:\Users\Public\Documents\Miniconda3` directory
-   and do NOT set `HP_CACHE_CORRUPTED` at all -- let the run fall through exactly like a genuine
-   cache miss (the health-check step's own existing "No conda binary found; fresh install will
-   proceed normally" branch already handles this shape correctly for a true miss). This lets
-   "Bootstrap environment" run a real fresh install, and lets the save step create a genuinely
-   fresh, valid cache entry under the current key afterward, breaking the loop. The narrower case
-   -- an EXACT primary-key hit that's ALSO corrupted (only plausible when `run_setup.bat` is
-   byte-identical to a previously-poisoned save, e.g. two runs on the same unchanged commit) --
-   would still be stuck, since that specific key's blob can never be overwritten; fully closing
-   that gap needs an explicit cache-deletion API call (`gh cache delete` / the GitHub Actions cache
-   REST API, `DELETE /repos/{owner}/{repo}/actions/caches`) gated on `cache-hit == 'true'` at
-   corruption-detection time, a smaller follow-on refinement once the main fix is proven working.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

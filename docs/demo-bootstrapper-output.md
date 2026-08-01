@@ -642,19 +642,20 @@ every byte of console output via `cmd /c .\run_setup.bat > '~envsmoke_bootstrap.
 Tue 07/28/2026  4:29:43.96 [INFO] REQ-015: Appending standard ignores to .gitignore.
 ```
 
-**The very first console line is an unexplained anomaly, not a mistake in this doc.** `[WARN] UNC
-paths not supported` (the top-of-file `findstr`-based UNC check, in the file's unlabeled prologue
-before the first `:label`) fired on 6/6 checked lanes against an entirely ordinary local CI
-checkout path (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\~envsmoke\`) -- not a UNC path. The
-companion, independent UNC-prefix check a couple of lines below it (`if
-"%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the much louder `*** WARNING: UNC/network
-paths detected...` banner) never fires in the same logs, so whatever produces this WARN is not
-"the whole path is UNC" -- root cause unconfirmed. See CLAUDE.md Active Backlog item 8 for the
-full trace and why this wasn't chased further in this documentation-only pass. **Whether this also
-fires for a genuine end-user double-click on an ordinary local folder is unknown** -- flagged here
-rather than silently omitted, since a real user seeing an unexplained "UNC paths not supported"
-warning on their very first line of output (on a completely normal local folder) would reasonably
-be confused by it.
+**The very first console line above (`[WARN] UNC paths not supported`) is historical, from the
+captured run, and no longer appears -- fixed since this capture, kept here unedited because it is
+a real, timestamped log.** It came from a broken, redundant top-of-file `findstr`-based check (in
+the file's unlabeled prologue before the first `:label`): `findstr /C:"\\\\"` was intended to
+match a UNC-style double-backslash but did not correctly gate on one -- its exact internal parsing
+(`findstr`'s own additional backslash-doubling behavior layered on cmd.exe's own C-runtime
+backslash-before-quote argument parsing, documented in `docs/agent-lessons-learned.md`) was never
+independently verified. What WAS confirmed is that it fired on 6/6 checked lanes against an
+entirely ordinary local CI checkout path (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\
+~envsmoke\`) -- not a UNC path. The companion, independent, correctly-targeted UNC-prefix check a
+couple of lines below it (`if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the much louder
+`*** WARNING: UNC/network paths detected...` banner) already covered the real UNC-detection job on
+its own, so the broken check was simply removed rather than repaired -- see
+`docs/agent-closed-backlog.md`'s Item 8 for the full trace.
 
 Between that line and `REQ-015`, nothing else prints -- `HP_APP_ARGS` capture (REQ-026, pure
 variable assignment), the workspace-path-exists check, `cd /d`, and `HP_SCRIPT_ROOT` construction
@@ -2300,20 +2301,23 @@ again. ***`. `~bootstrap.status.json` correctly reads `state: error`; the depend
 environment creation that ran BEFORE this check are left intact (nothing is torn down), so a fixed
 file on the next run reuses them.
 
-**A real, previously-undocumented bug, found via this exact sweep and confirmed against a real,
-unrelated capture (not fabricated for this scenario)**: `:preflight_compile` invokes `"%HP_PY%" -m
-py_compile "%HP_ENTRY%"` with NO check that `HP_PY` is actually a valid, non-empty interpreter path
-first. On TOTAL REQ-009 provider-tier exhaustion (every tier fails or is declined -- see CLAUDE.md
-Active Backlog item 14 for the full trace), `:after_env_mode_selection`'s own `HP_PY`-resolved guard
-(`call :die "[ERROR] Active Python interpreter not resolved."`) does NOT actually halt the pipeline
--- per this repo's own long-documented `:die` semantics, `exit /b` inside `:die` only returns from
-`:die`'s own call frame, so execution falls through and continues for another ~15 log lines with an
-EMPTY `HP_PY`, all the way to `:preflight_compile`. There, `"" -m py_compile "app.py"` is not a
-Python invocation at all -- it is cmd.exe trying to execute a program literally named `""`, which
-produces a CMD.EXE ERROR, not a Python traceback. Because `:preflight_compile` treats ANY nonzero
-exit as "syntax error," it reports this as if the user's own code were broken. Real capture, from a
-test that deliberately force-fails uv (offline), conda, the embed tier, and venv, and declines the
-REQ-014 system-Python prompt (`tests/~selftest_embed_decline/`'s own sub-bootstrap):
+**A real bug, found via this exact sweep, confirmed against a real, unrelated capture (not
+fabricated for this scenario), and FIXED 2026-08-01 (formerly CLAUDE.md Active Backlog item 14,
+now in `docs/agent-closed-backlog.md`).** The capture below is historical, from before the fix,
+kept unedited as a real, timestamped log. `:preflight_compile` used to invoke `"%HP_PY%" -m
+py_compile "%HP_ENTRY%"` with no check that `HP_PY` was actually a valid, non-empty interpreter
+path first. On TOTAL REQ-009 provider-tier exhaustion (every tier fails or is declined),
+`:after_env_mode_selection`'s own `HP_PY`-resolved guard
+(`call :die "[ERROR] Active Python interpreter not resolved."`) does NOT actually halt the
+pipeline -- per this repo's own long-documented `:die` semantics, `exit /b` inside `:die` only
+returns from `:die`'s own call frame, so execution fell through and continued for another ~15 log
+lines with an EMPTY `HP_PY`, all the way to `:preflight_compile`. There, `"" -m py_compile
+"app.py"` was not a Python invocation at all -- it was cmd.exe trying to execute a program
+literally named `""`, which produces a CMD.EXE ERROR, not a Python traceback. Because
+`:preflight_compile` treated ANY nonzero exit as "syntax error," it reported this as if the user's
+own code were broken. Real capture, from a test that deliberately force-fails uv (offline), conda,
+the embed tier, and venv, and declines the REQ-014 system-Python prompt
+(`tests/~selftest_embed_decline/`'s own sub-bootstrap):
 
 ```
 [ERROR] Active Python interpreter not resolved.
@@ -2333,16 +2337,40 @@ operable program or batch file.
 *** Fix the syntax error shown above, then run this batch again. ***
 ```
 
-That last block is genuinely misleading: `app.py` may have no syntax problem whatsoever -- the real
-cause, printed several screens earlier, is that no Python interpreter was ever found. A real user is
-realistically reachable here for genuine (not test-only) reasons: README's own REQ-009 table already
-notes that falling through three-plus provider tiers in one run is "almost always one shared root
-cause" (no internet, a full disk, or a locked-down managed image), and a user hitting exactly that
-plus declining the REQ-014 system-Python consent prompt reaches this identical path. The status
-FILE is unaffected (`state: error` is still written correctly, since `:die`'s own state-set already
-happened before the fall-through) -- only the human-readable console narrative misdirects a user who
-reads just the last error rather than scrolling back. See CLAUDE.md Active Backlog item 14 for the
-full trace and a suggested fix (not implemented here; this is a documentation-only pass).
+That last block was genuinely misleading: `app.py` may have had no syntax problem whatsoever -- the
+real cause, printed several screens earlier, was that no Python interpreter was ever found. A real
+user was realistically reachable here for genuine (not test-only) reasons: README's own REQ-009
+table already notes that falling through three-plus provider tiers in one run is "almost always one
+shared root cause" (no internet, a full disk, or a locked-down managed image), and a user hitting
+exactly that plus declining the REQ-014 system-Python consent prompt would reach this identical
+path. The status FILE was never affected (`state: error` was always written correctly, since
+`:die`'s own state-set already happened before the fall-through) -- only the human-readable console
+narrative misdirected a user who read just the last error rather than scrolling back.
+
+**Fixed**: `:after_env_mode_selection`'s guard now also sets `HP_NO_INTERPRETER=1` before calling
+`:die` (the call-frame-only-return fall-through itself is left as-is -- a deeper refactor of that
+mechanism was judged out of scope for this fix). `:preflight_compile` checks this flag first and,
+if set, reports the real cause instead of running `py_compile` against an empty interpreter path:
+
+```
+*** [ERROR] No Python interpreter is available; your program was not run or built. ***
+*** This is not a syntax error -- the Python interpreter itself could not be used. ***
+*** Either every automatic Python-acquisition method -- uv, conda, a fresh download, ***
+*** or a local virtual environment -- failed, usually from no internet connection, a ***
+*** full disk, or a locked-down managed machine image -- or a PVW_PYTHON_EXE override ***
+*** points at a path that does not run. Scroll up in this window for the specific reason. ***
+```
+
+(The message text was later reworded during implementation to avoid a literal `(...)` pair split
+across two `echo` lines inside the same parenthesized `if` block -- cmd.exe's block parser counts
+parens in echo text too, so a `(` on one line and its `)` on the next silently mis-closed the
+block and broke every CI lane reaching this branch in the same run. See
+`docs/agent-lessons-learned.md`'s batch-syntax-quirks section and
+`docs/agent-closed-backlog.md`'s Item 14 entry for the full trace.)
+
+This also skips the doomed PyInstaller build attempt entirely (`:run_entry_smoke`'s existing
+`HP_PREFLIGHT_FAILED` check already short-circuits the build, unchanged by this fix), not just the
+misleading message.
 
 ---
 
