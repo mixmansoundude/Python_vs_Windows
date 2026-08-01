@@ -92,6 +92,8 @@ jobs:
         id: cache_health
         continue-on-error: true
         shell: pwsh
+        env:
+          HP_CACHE_EXACT_HIT: ${{ steps.conda_cache_restore.outputs.cache-hit }}
         run: |
           $condaMain = 'C:\Users\Public\Documents\Miniconda3\condabin\conda.bat'
           $condaAlt  = 'C:\Users\Public\Documents\Miniconda3\Scripts\conda.bat'
@@ -101,8 +103,37 @@ jobs:
           } else {
             $output = & cmd /c "`"$condaBat`" info" 2>&1
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "::warning::Conda binary health check failed (exit=$LASTEXITCODE); cache corrupted."
-              'HP_CACHE_CORRUPTED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+              if ($env:HP_CACHE_EXACT_HIT -eq 'true') {
+                # derived requirement: an EXACT primary-key hit that's corrupted can never be
+                # replaced in place (a GitHub Actions cache entry's blob is immutable once saved
+                # under a key) -- see CLAUDE.md's cache-lane self-perpetuating-corruption item
+                # (formerly Active Backlog item 19) for the full trace. Keep the original
+                # skip-this-run behavior for this narrow case; fully closing it needs an explicit
+                # cache-deletion API call, a smaller follow-on not implemented here.
+                Write-Host "::warning::Conda binary health check failed (exit=$LASTEXITCODE) on an EXACT cache-key hit; cache corrupted, skipping fast-path tests this run."
+                'HP_CACHE_CORRUPTED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+              } else {
+                # derived requirement: a restore-keys PREFIX match (the common case -- the cache
+                # key hashes run_setup.bat, which changes on nearly every PR) is not a guarantee
+                # the restored blob is still valid. Treating this like HP_CACHE_CORRUPTED=1 was
+                # the actual bug: the ONLY step that can do a fresh install is gated on that same
+                # flag, so a poisoned blob could never be replaced -- a permanent, self-
+                # perpetuating loop. Fix: treat it like a genuine cache miss instead -- delete the
+                # stale directory and let the run fall through to a real fresh install and a real
+                # fresh save under the current key, breaking the loop.
+                Write-Host "::warning::Conda binary health check failed (exit=$LASTEXITCODE) on a restore-keys prefix match; deleting stale cache directory and proceeding as a fresh install."
+                Remove-Item -LiteralPath 'C:\Users\Public\Documents\Miniconda3' -Recurse -Force -ErrorAction SilentlyContinue
+                if (Test-Path 'C:\Users\Public\Documents\Miniconda3') {
+                  # derived requirement: same AV/indexer file-lock hazard class already documented
+                  # for :try_embed_fallback's own directory swap in run_setup.bat -- if deletion
+                  # didn't fully succeed, do not proceed into an uncertain half-deleted state;
+                  # fall back to the original, safe skip-this-run behavior instead.
+                  Write-Host "::warning::Stale cache directory could not be fully removed (possible file lock); falling back to HP_CACHE_CORRUPTED=1 for this run."
+                  'HP_CACHE_CORRUPTED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+                } else {
+                  Write-Host "Stale cache directory removed; fresh install will proceed normally."
+                }
+              }
             } else {
               Write-Host "Conda health OK: $output"
             }
