@@ -1014,6 +1014,7 @@ if exist "%REQ%" (
 set "HP_JOB_SUMMARY=~pipreqs.summary.txt"
 if exist "%HP_JOB_SUMMARY%" del "%HP_JOB_SUMMARY%"
 if not defined HP_PY (
+  set "HP_NO_INTERPRETER=1"
   call :die "[ERROR] Active Python interpreter not resolved."
 )
 
@@ -3406,6 +3407,18 @@ rem the interpreter (zero false positives for the entry) and writes NO .pyc on f
 rem HP_PREFLIGHT_FAILED must persist to the caller. Capture %ERRORLEVEL% immediately (the del/set
 rem below would clobber it).
 set "HP_PREFLIGHT_FAILED="
+if defined HP_NO_INTERPRETER (
+  echo.
+  echo *** [ERROR] No Python interpreter is available; your program was not run or built. ***
+  echo *** This is not a syntax error. It means every automatic Python-acquisition method ***
+  echo *** (uv, conda, a fresh download, a local virtual environment) failed -- usually from ***
+  echo *** no internet connection, a full disk, or a locked-down managed machine image. See ***
+  echo *** the earlier "[ERROR] Active Python interpreter not resolved." message above. ***
+  call :log "[ERROR] REQ-021: preflight skipped, no Python interpreter resolved: %HP_ENTRY%"
+  echo.
+  set "HP_PREFLIGHT_FAILED=1"
+  exit /b 0
+)
 if not defined HP_ENTRY exit /b 0
 if not exist "%HP_ENTRY%" exit /b 0
 if exist "~preflight.err.txt" del "~preflight.err.txt" >nul 2>&1

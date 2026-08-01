@@ -2301,20 +2301,23 @@ again. ***`. `~bootstrap.status.json` correctly reads `state: error`; the depend
 environment creation that ran BEFORE this check are left intact (nothing is torn down), so a fixed
 file on the next run reuses them.
 
-**A real, previously-undocumented bug, found via this exact sweep and confirmed against a real,
-unrelated capture (not fabricated for this scenario)**: `:preflight_compile` invokes `"%HP_PY%" -m
-py_compile "%HP_ENTRY%"` with NO check that `HP_PY` is actually a valid, non-empty interpreter path
-first. On TOTAL REQ-009 provider-tier exhaustion (every tier fails or is declined -- see CLAUDE.md
-Active Backlog item 14 for the full trace), `:after_env_mode_selection`'s own `HP_PY`-resolved guard
-(`call :die "[ERROR] Active Python interpreter not resolved."`) does NOT actually halt the pipeline
--- per this repo's own long-documented `:die` semantics, `exit /b` inside `:die` only returns from
-`:die`'s own call frame, so execution falls through and continues for another ~15 log lines with an
-EMPTY `HP_PY`, all the way to `:preflight_compile`. There, `"" -m py_compile "app.py"` is not a
-Python invocation at all -- it is cmd.exe trying to execute a program literally named `""`, which
-produces a CMD.EXE ERROR, not a Python traceback. Because `:preflight_compile` treats ANY nonzero
-exit as "syntax error," it reports this as if the user's own code were broken. Real capture, from a
-test that deliberately force-fails uv (offline), conda, the embed tier, and venv, and declines the
-REQ-014 system-Python prompt (`tests/~selftest_embed_decline/`'s own sub-bootstrap):
+**A real bug, found via this exact sweep, confirmed against a real, unrelated capture (not
+fabricated for this scenario), and FIXED 2026-08-01 (formerly CLAUDE.md Active Backlog item 14,
+now in `docs/agent-closed-backlog.md`).** The capture below is historical, from before the fix,
+kept unedited as a real, timestamped log. `:preflight_compile` used to invoke `"%HP_PY%" -m
+py_compile "%HP_ENTRY%"` with no check that `HP_PY` was actually a valid, non-empty interpreter
+path first. On TOTAL REQ-009 provider-tier exhaustion (every tier fails or is declined),
+`:after_env_mode_selection`'s own `HP_PY`-resolved guard
+(`call :die "[ERROR] Active Python interpreter not resolved."`) does NOT actually halt the
+pipeline -- per this repo's own long-documented `:die` semantics, `exit /b` inside `:die` only
+returns from `:die`'s own call frame, so execution fell through and continued for another ~15 log
+lines with an EMPTY `HP_PY`, all the way to `:preflight_compile`. There, `"" -m py_compile
+"app.py"` was not a Python invocation at all -- it was cmd.exe trying to execute a program
+literally named `""`, which produces a CMD.EXE ERROR, not a Python traceback. Because
+`:preflight_compile` treated ANY nonzero exit as "syntax error," it reported this as if the user's
+own code were broken. Real capture, from a test that deliberately force-fails uv (offline), conda,
+the embed tier, and venv, and declines the REQ-014 system-Python prompt
+(`tests/~selftest_embed_decline/`'s own sub-bootstrap):
 
 ```
 [ERROR] Active Python interpreter not resolved.
@@ -2334,16 +2337,32 @@ operable program or batch file.
 *** Fix the syntax error shown above, then run this batch again. ***
 ```
 
-That last block is genuinely misleading: `app.py` may have no syntax problem whatsoever -- the real
-cause, printed several screens earlier, is that no Python interpreter was ever found. A real user is
-realistically reachable here for genuine (not test-only) reasons: README's own REQ-009 table already
-notes that falling through three-plus provider tiers in one run is "almost always one shared root
-cause" (no internet, a full disk, or a locked-down managed image), and a user hitting exactly that
-plus declining the REQ-014 system-Python consent prompt reaches this identical path. The status
-FILE is unaffected (`state: error` is still written correctly, since `:die`'s own state-set already
-happened before the fall-through) -- only the human-readable console narrative misdirects a user who
-reads just the last error rather than scrolling back. See CLAUDE.md Active Backlog item 14 for the
-full trace and a suggested fix (not implemented here; this is a documentation-only pass).
+That last block was genuinely misleading: `app.py` may have had no syntax problem whatsoever -- the
+real cause, printed several screens earlier, was that no Python interpreter was ever found. A real
+user was realistically reachable here for genuine (not test-only) reasons: README's own REQ-009
+table already notes that falling through three-plus provider tiers in one run is "almost always one
+shared root cause" (no internet, a full disk, or a locked-down managed image), and a user hitting
+exactly that plus declining the REQ-014 system-Python consent prompt would reach this identical
+path. The status FILE was never affected (`state: error` was always written correctly, since
+`:die`'s own state-set already happened before the fall-through) -- only the human-readable console
+narrative misdirected a user who read just the last error rather than scrolling back.
+
+**Fixed**: `:after_env_mode_selection`'s guard now also sets `HP_NO_INTERPRETER=1` before calling
+`:die` (the call-frame-only-return fall-through itself is left as-is -- a deeper refactor of that
+mechanism was judged out of scope for this fix). `:preflight_compile` checks this flag first and,
+if set, reports the real cause instead of running `py_compile` against an empty interpreter path:
+
+```
+*** [ERROR] No Python interpreter is available; your program was not run or built. ***
+*** This is not a syntax error. It means every automatic Python-acquisition method ***
+*** (uv, conda, a fresh download, a local virtual environment) failed -- usually from ***
+*** no internet connection, a full disk, or a locked-down managed machine image. See ***
+*** the earlier "[ERROR] Active Python interpreter not resolved." message above. ***
+```
+
+This also skips the doomed PyInstaller build attempt entirely (`:run_entry_smoke`'s existing
+`HP_PREFLIGHT_FAILED` check already short-circuits the build, unchanged by this fix), not just the
+misleading message.
 
 ---
 

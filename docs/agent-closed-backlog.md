@@ -616,6 +616,58 @@ this belongs to).
    are historical record of a run that genuinely happened. No test needed updating (none
    referenced the removed line), and no other call site in `run_setup.bat` depends on it.
 
+### Item 14 (closed 2026-08-01)
+
+- **Total REQ-009 provider-tier exhaustion produced a MISLEADING "your program has a syntax
+   error" final message instead of surfacing the real "no Python interpreter found" cause -- found
+   2026-07-31 while sweeping `run_setup.bat` line-by-line for `docs/demo-bootstrapper-output.md`
+   coverage gaps, confirmed against real CI evidence and the actual source, not just theorized.**
+   `:after_env_mode_selection`'s own guard (`run_setup.bat`, right after
+   `:conda_base_update`/`:emit_from_base64 "~prep_requirements.py"`) did
+   `if not defined HP_PY ( call :die "[ERROR] Active Python interpreter not resolved." )` -- but
+   per this file's own long-documented `:die` semantics (`exit /b` inside `:die` only returns from
+   `:die`'s OWN call frame, never halts the calling code), execution fell straight through to the
+   very next line regardless: `echo Interpreter: %HP_PY%` (printing a blank interpreter path),
+   then an `"%HP_PY%" -c "print('py_ok')" ... || call :log "[WARN] Interpreter smoke test failed
+   (continuing)."` that silently downgraded the failure to a WARN and continued. The bootstrap
+   then proceeded through pipreqs, dependency install, the pyvisa check, and entry selection --
+   all effectively no-ops against an empty interpreter path -- and finally reached
+   `:preflight_compile` (REQ-021), whose `"%HP_PY%" -m py_compile "%HP_ENTRY%"` became a literal
+   `"" -m py_compile "app.py"` with `HP_PY` empty. cmd.exe cannot execute an empty-quoted command
+   name, producing `'""' is not recognized as an internal or external command, operable program or
+   batch file.` -- a CMD.EXE ERROR, NOT A PYTHON TRACEBACK -- which `:preflight_compile`
+   unconditionally reported as
+   `*** [ERROR] REQ-021: Your Python program has a syntax error and cannot run. ***`.
+   **Confirmed via real CI capture** (run `30328748330`, `real` lane, job `90179708091`,
+   `tests/~selftest_embed_decline/`'s own sub-bootstrap -- a test that force-fails EVERY provider
+   tier via `HP_TEST_FORCE_EMBED_FAIL`/`HP_TEST_FORCE_VENV_FAIL`/declined system-Python consent,
+   deterministically reproducing total exhaustion). **This was a real, non-test-only reachable
+   scenario**: README's own REQ-009 table already documents that falling through three-plus tiers
+   in one run is "almost always one shared root cause" (no internet, full disk, or a locked-down
+   managed image) -- a real user with no connectivity, no working ambient Python, and who declines
+   the REQ-014 system-Python prompt hits this identical path for genuine, non-test reasons.
+   `~bootstrap.status.json`'s machine-readable `state` field was never affected (`:die`'s own
+   unconditional `HP_BOOTSTRAP_STATE=error` set already applied before the fall-through) -- only
+   the human-readable console text was misleading.
+   **Fixed 2026-08-01.** `:after_env_mode_selection`'s guard now also sets `HP_NO_INTERPRETER=1`
+   before calling `:die` (deliberately did NOT attempt the deeper "make the guard a goto-based
+   hard stop" refactor the original finding floated as the more robust alternative -- judged
+   disproportionate risk for this fix, since it would require tracing every call-stack depth
+   `:after_env_mode_selection` can be reached from, including REQ-009 cascade re-entry). Instead,
+   `:preflight_compile` checks `HP_NO_INTERPRETER` first and, if set, reports the real cause
+   ("No Python interpreter is available; your program was not run or built... See the earlier
+   [ERROR] Active Python interpreter not resolved. message above") instead of running
+   `py_compile` against an empty interpreter path, sets `HP_PREFLIGHT_FAILED=1`, and returns --
+   which also means `:run_entry_smoke`'s pre-existing `HP_PREFLIGHT_FAILED` check skips the doomed
+   PyInstaller build attempt entirely, not just the misleading message. Verified: no test in the
+   repo asserted on the old misleading text (confirmed via grep) -- the one test reaching this
+   code path, `self.embed.fallback.decline`, gates on the embed-attempt/forced-failure log lines,
+   their relative order, and `state: error`, none of which this fix touches; the genuine
+   syntax-error path (`tests/selfapps_preflight.ps1`) is untouched since it never sets
+   `HP_NO_INTERPRETER`. `tests/harness.ps1`'s `batch.preflight.compile` static check (subroutine +
+   call site + `py_compile` + REQ-021 message + `HP_PREFLIGHT_FAILED` guard, all presence-only)
+   still passes unchanged.
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a

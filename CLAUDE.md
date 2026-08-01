@@ -565,57 +565,6 @@ start at 1 and has gaps.
    reproducible gap (in which case the test's own pass/fail logic may need tightening) or a
    one-off artifact of this particular run's CI-runner path layout.
 
-- **14. Total REQ-009 provider-tier exhaustion produces a MISLEADING "your program has a syntax
-   error" final message instead of surfacing the real "no Python interpreter found" cause -- found
-   2026-07-31 while sweeping `run_setup.bat` line-by-line for `docs/demo-bootstrapper-output.md`
-   coverage gaps, confirmed against real CI evidence and the actual source, not just theorized.**
-   `:after_env_mode_selection`'s own guard (`run_setup.bat`, right after
-   `:conda_base_update`/`:emit_from_base64 "~prep_requirements.py"`) does
-   `if not defined HP_PY ( call :die "[ERROR] Active Python interpreter not resolved." )` -- but
-   per this file's own long-documented `:die` semantics (`exit /b` inside `:die` only returns from
-   `:die`'s OWN call frame, never halts the calling code), execution falls straight through to the
-   very next line regardless: `echo Interpreter: %HP_PY%` (printing a blank interpreter path),
-   then an `"%HP_PY%" -c "print('py_ok')" ... || call :log "[WARN] Interpreter smoke test failed
-   (continuing)."` that silently downgrades the failure to a WARN and continues. The bootstrap then
-   proceeds through pipreqs, dependency install, the pyvisa check, and entry selection -- all
-   effectively no-ops against an empty interpreter path -- and finally reaches `:preflight_compile`
-   (REQ-021), whose `"%HP_PY%" -m py_compile "%HP_ENTRY%"` becomes a literal `"" -m py_compile
-   "app.py"` with `HP_PY` empty. cmd.exe cannot execute an empty-quoted command name, producing
-   `'""' is not recognized as an internal or external command, operable program or batch file.` --
-   a CMD.EXE ERROR, NOT A PYTHON TRACEBACK -- which `:preflight_compile` (any nonzero exit is
-   treated as "compile failed," with no distinction between "the interpreter itself couldn't run"
-   and "the interpreter ran and found a real syntax error") unconditionally reports as
-   `*** [ERROR] REQ-021: Your Python program has a syntax error and cannot run. ***` followed by
-   that cmd.exe text and "Fix the syntax error shown above, then run this batch again."
-   **Confirmed via real CI capture** (run `30328748330`, `real` lane, job `90179708091`,
-   `tests/~selftest_embed_decline/`'s own sub-bootstrap -- a test that force-fails EVERY provider
-   tier via `HP_TEST_FORCE_EMBED_FAIL`/`HP_TEST_FORCE_VENV_FAIL`/declined system-Python consent,
-   deterministically reproducing total exhaustion): the log shows exactly this sequence --
-   `[ERROR] Active Python interpreter not resolved.` -> blank `Interpreter:` line -> `[WARN]
-   Interpreter smoke test failed (continuing).` -> a full, unaffected pipreqs/dep-install/VISA/
-   entry-selection sequence -> the misleading REQ-021 syntax-error block quoting the literal
-   `'""' is not recognized...` cmd.exe text. **This is a real, non-test-only reachable scenario**:
-   README's own REQ-009 table already documents that falling through three-plus tiers in one run
-   is "almost always one shared root cause" (no internet, full disk, or a locked-down managed
-   image) -- a real user with no connectivity, no working ambient Python, and who declines the
-   REQ-014 system-Python prompt hits this identical path for genuine, non-test reasons. The
-   test-forced flags in the capture above are a deterministic REPRODUCTION vector, not the only
-   way to trigger it. **`~bootstrap.status.json`'s machine-readable `state` field is NOT
-   affected** -- `:die`'s own already-fixed unconditional `HP_BOOTSTRAP_STATE=error` set (see this
-   file's `:die` entry) still applies before execution falls through, so the status file correctly
-   reads `state: error` regardless of the confusing console narrative; only the human-readable
-   text is misleading, and only for a user who reads just the LAST error rather than scrolling
-   back to the real, earlier "Active Python interpreter not resolved." line. **Not fixed in this
-   pass** -- documentation-only task; `docs/demo-bootstrapper-output.md` documents this exact real
-   capture as its own scenario rather than presenting the misleading text as a genuine syntax-error
-   report. Suggested fix for a future pass: guard `:preflight_compile` (and any other `HP_PY`-using
-   code reachable after `:after_env_mode_selection`'s interpreter-resolution guard) on `HP_PY`
-   actually being a non-empty, existing path before invoking it -- or, more robustly, make the
-   `:after_env_mode_selection` guard itself a `goto`-based hard stop (matching this file's own
-   "Provider-cascade dispatch is goto-based on purpose" pattern) instead of relying on `:die`'s
-   call-frame-only return, so total exhaustion genuinely halts the pipeline at the point of failure
-   rather than continuing for another ~15 log lines under a broken interpreter.
-
 - **15. `:exe_smokerun_hints`'s diagnostic re-run of a freshly-failed EXE has no timeout, unlike
    every other user-code launch point in this file -- found 2026-07-31, flagged by a CodeRabbit
    review on PR #402 while documenting the hint mechanism for
