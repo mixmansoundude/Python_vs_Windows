@@ -492,55 +492,6 @@ Once an item is fully resolved it is removed from here entirely and archived (ke
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
 start at 1 and has gaps.
 
-- **8. `[WARN] UNC paths not supported` fires unconditionally in CI on an ordinary (non-UNC) local
-   path -- found 2026-07-29 while gathering real console-output evidence for
-   `docs/demo-bootstrapper-output.md`'s default-happy-path documentation pass, not yet
-   investigated further.** `run_setup.bat:57-58` does
-   `echo %~dp0 | findstr /C:"\\\\" >nul` / `if not errorlevel 1 echo [WARN] UNC paths not
-   supported` -- per the C-runtime backslash-before-quote rule already documented in
-   `docs/agent-lessons-learned.md` ("A single trailing backslash before a closing quote silently
-   corrupts a subprocess argument"), `\\\\"` collapses to a 2-backslash literal search pattern,
-   so this is searching `%~dp0` for two CONSECUTIVE backslashes anywhere in the string -- not
-   testing for a UNC prefix (that's the separate, independent check two lines below at line 59,
-   `if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the louder `*** WARNING: UNC/network
-   paths detected...` banner). Pulled `tests/~envsmoke/~envsmoke_bootstrap.log` (the full,
-   unredirected console capture of a real, non-`HP_CI_SKIP_ENV` bootstrap) from a recent clean
-   green run (`30328748330`, all lanes green) across 6 lanes (`real`, `uv`, `conda-full`,
-   `justme-test`, `contract-uv`, `contract-uv-fail`) and found the `[WARN] UNC paths not
-   supported` line as the very FIRST line of console output in all 6, every single time, against
-   an entirely ordinary CI checkout path (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\
-   ~envsmoke\`) -- not a UNC path by any reasonable definition. No test in the repo asserts on
-   or references this string at all (confirmed via a repo-wide grep), so this has apparently been
-   firing on every single CI run, unnoticed, indefinitely.
-   - **Ruled out one theory directly**: the companion `HP_SCRIPT_LAUNCH_DIR:~0,2` check (tests
-     whether the path literally STARTS with `\\`) never fires in the same logs (zero hits for
-     "UNC/network paths detected" across all 6 lanes) -- so whatever is producing a
-     double-backslash for the `findstr` search must be sitting mid-string, not at the start of
-     `%~dp0`. This is real, if partial, information: it means the failure mode is NOT "the whole
-     checkout path is somehow UNC," which was the first, most obvious guess.
-   - **Root cause NOT identified.** Best unconfirmed guess: something about how GitHub-hosted
-     Windows runners provision the `D:\a\...` work directory (`actions/checkout`'s own path
-     construction, or a junction/reparse point backing that drive) introduces a duplicated
-     separator somewhere in the resolved `%~dp0` value for a batch file invoked from inside it --
-     but this was NOT verified (no way to inspect the raw `%~dp0` bytes directly from this
-     research pass; would need a dedicated diagnostic echo added to a test lane, e.g.
-     temporarily `echo RAW_DP0=[%~dp0]` to a log file, to actually see the string with delimiters
-     visible).
-   - **Whether this also fires for a genuine end-user double-click (not CI, no nested
-     `cmd`/PowerShell invocation, an ordinary local folder) is UNCONFIRMED** -- this sandbox has
-     no Windows machine to test on, and no real end-user report exists either way. If it's
-     CI-runner-specific plumbing, it's cosmetic noise (one extra harmless WARN line, unlikely to
-     confuse a real user since it never fires for them); if it also fires for real users on an
-     ordinary local path, it's a real, previously-unknown false-positive bug worth fixing (most
-     likely fix shape: tighten the `findstr` pattern to require the double-backslash appear
-     specifically in a network-path position, or just remove this redundant check entirely since
-     the very next lines already do a correct, more targeted UNC-prefix check).
-   - **Not investigated further in this pass** -- out of scope for a documentation-only task, and
-     genuinely needs either a dedicated diagnostic-logging CI experiment (cheap, doable in a
-     future loop) or a real Windows machine to resolve with confidence. Documented in
-     `docs/demo-bootstrapper-output.md`'s new default-happy-path scenario as an observed,
-     unexplained anomaly rather than either asserting it's harmless or that it's a bug.
-
 - **10. Two of the five `PVW_*` super-user override variables (`PVW_PYTHON_EXE`, `PVW_WORKSPACE`)
    have ZERO test coverage of any kind, and ALL FIVE have zero coverage of their invalid-value
    behavior -- found 2026-07-29 while documenting them for `docs/demo-bootstrapper-output.md`'s

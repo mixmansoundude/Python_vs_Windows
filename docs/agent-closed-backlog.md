@@ -583,6 +583,39 @@ this belongs to).
    fix, by design -- see this file's own entry on that loop for why). No behavior changed; this
    was a documentation-only correction.
 
+### Item 8 (closed 2026-08-01)
+
+- **`[WARN] UNC paths not supported` fired unconditionally in CI on an ordinary (non-UNC) local
+   path -- found 2026-07-29 while gathering real console-output evidence for
+   `docs/demo-bootstrapper-output.md`'s default-happy-path documentation pass, not investigated
+   further at the time.** `run_setup.bat:57-58` did
+   `echo %~dp0 | findstr /C:"\\\\" >nul` / `if not errorlevel 1 echo [WARN] UNC paths not
+   supported` -- per the C-runtime backslash-before-quote rule documented in
+   `docs/agent-lessons-learned.md` ("A single trailing backslash before a closing quote silently
+   corrupts a subprocess argument"), `\\\\"` collapsed to a 2-backslash literal search pattern, so
+   this was searching `%~dp0` for two CONSECUTIVE backslashes anywhere in the string -- not testing
+   for a UNC prefix (that's the separate, independent check two lines below,
+   `if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the louder `*** WARNING: UNC/network
+   paths detected...` banner). Confirmed firing as the very FIRST line of console output across 6
+   lanes of a real clean CI run (`30328748330`) against an entirely ordinary checkout path
+   (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\~envsmoke\`) -- not a UNC path by any
+   reasonable definition. No test anywhere referenced this string (confirmed via a repo-wide
+   grep), so this had apparently been firing on every single CI run, unnoticed, indefinitely.
+   **Root cause of the double-backslash was never identified** (the companion, correctly-targeted
+   `HP_SCRIPT_LAUNCH_DIR:~0,2` check never fired in the same logs, ruling out "the whole checkout
+   path is UNC" but not pinning down what actually produced it -- possibly something in how
+   GitHub-hosted Windows runners provision the `D:\a\...` work directory). Whether this also fired
+   for a genuine end-user double-click on an ordinary local folder was likewise never confirmed
+   (no Windows machine available to test, no end-user report either way).
+   **Fixed 2026-08-01, without needing the root cause.** The broken check was simply removed --
+   the companion check two lines below it already does the real, correctly-targeted UNC-prefix
+   detection, so the broken/redundant line added nothing worth repairing. Updated
+   `docs/demo-bootstrapper-output.md`'s explanatory paragraph (which had documented this as an
+   "unexplained anomaly") to note the fix and why root-causing the double-backslash became moot;
+   left the real, timestamped console captures containing the old WARN line unedited, since they
+   are historical record of a run that genuinely happened. No test needed updating (none
+   referenced the removed line), and no other call site in `run_setup.bat` depends on it.
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a
