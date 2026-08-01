@@ -37,6 +37,7 @@ class StackItem:
     char: str
     line: int
     column: int
+    is_echo_open: bool = False
 
 
 class LineCursor:
@@ -141,8 +142,8 @@ class DelimiterChecker:
     def add_issue(self, line: int, column: int, message: str) -> None:
         self.issues.append(Issue(self.path, line, column, message))
 
-    def push(self, char: str, line: int, column: int) -> None:
-        self.stack.append(StackItem(char, line, column))
+    def push(self, char: str, line: int, column: int, is_echo_open: bool = False) -> None:
+        self.stack.append(StackItem(char, line, column, is_echo_open))
 
     def pop(self, expected: str, line: int, column: int, actual: str) -> None:
         if not self.stack:
@@ -154,6 +155,28 @@ class DelimiterChecker:
                 line,
                 column,
                 f"Mismatched '{actual}' (expected to close '{last.char}' from line {last.line}, column {last.column})",
+            )
+            return
+        if last.char == "(" and last.is_echo_open and line != last.line:
+            # derived requirement: cmd.exe's parenthesized-block parser counts '(' / ')'
+            # characters inside plain "echo" text too -- it has no concept of "this paren
+            # is just prose." A '(' opened on one echo line and closed on a LATER echo line
+            # is syntactically balanced from a pure count-matching perspective (which is why
+            # this specific case needs its own check, separate from the generic unclosed/
+            # mismatched checks above), but if that echo line sits inside a real
+            # if(...)/for(...) block, the stray pair can still corrupt cmd.exe's own block-
+            # closing search. See docs/agent-lessons-learned.md's "A literal (/) inside echo
+            # text is NOT invisible..." entry for the real regression this closes (PR #408,
+            # commit fd52a3f: "failed was unexpected at this time.", 6 CI lanes broken).
+            self.add_issue(
+                last.line,
+                last.column,
+                f"Batch: '(' opened on this 'echo' line does not close until line {line}; "
+                "cmd.exe's parenthesized-block parser counts parens in echo text too, so a "
+                "cross-line split can corrupt an enclosing if/for block's structure even "
+                "though the pair is individually balanced. Keep the pair on one line, avoid "
+                "literal parens in wrapped prose (prefer ' -- ' or ','), or escape both as "
+                "'^(' / '^)' if they are structurally necessary.",
             )
 
     def check(self) -> List[Issue]:
@@ -218,10 +241,14 @@ class DelimiterChecker:
                 cursor.advance(idx + 2)
 
             stripped = line.lstrip()
+            is_bat_echo_line = False
             if lower_suffix in {".bat", ".cmd"}:
                 upper = stripped.upper()
                 if upper.startswith("REM ") or upper == "REM" or stripped.startswith("::"):
                     continue
+                # derived requirement: matches "echo", "echo.", "echo(", "echo message" --
+                # anything cmd.exe itself treats as the echo command -- but not "echofoo".
+                is_bat_echo_line = re.match(r"echo\b", stripped, re.IGNORECASE) is not None
 
             while True:
                 ch = cursor.current()
@@ -302,7 +329,14 @@ class DelimiterChecker:
                         break
 
                 if ch in "({[":
-                    self.push(ch, line_no, cursor.column())
+                    # derived requirement: only the case where this paren is ALREADY nested
+                    # inside another open bracket (a real enclosing if/for block) is actually
+                    # hazardous -- a top-level echo statement with a self-contained paren pair
+                    # split across two otherwise-independent echo COMMANDS (no enclosing block
+                    # for cmd.exe to misparse) is harmless, confirmed against a real instance in
+                    # this file (:print_fastpath_ambiguous_note) that would otherwise false-flag.
+                    echo_open = ch == "(" and is_bat_echo_line and bool(self.stack)
+                    self.push(ch, line_no, cursor.column(), is_echo_open=echo_open)
                     cursor.advance()
                     continue
 
