@@ -106,8 +106,8 @@ jobs:
               if ($env:HP_CACHE_EXACT_HIT -eq 'true') {
                 # derived requirement: an EXACT primary-key hit that's corrupted can never be
                 # replaced in place (a GitHub Actions cache entry's blob is immutable once saved
-                # under a key) -- see CLAUDE.md's cache-lane self-perpetuating-corruption item
-                # (formerly Active Backlog item 19) for the full trace. Keep the original
+                # under a key) -- see docs/agent-closed-backlog.md's Item 19 (cache-lane
+                # self-perpetuating-corruption) for the full trace. Keep the original
                 # skip-this-run behavior for this narrow case; fully closing it needs an explicit
                 # cache-deletion API call, a smaller follow-on not implemented here.
                 Write-Host "::warning::Conda binary health check failed (exit=$LASTEXITCODE) on an EXACT cache-key hit; cache corrupted, skipping fast-path tests this run."

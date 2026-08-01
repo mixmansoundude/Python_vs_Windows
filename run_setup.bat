@@ -1021,7 +1021,7 @@ if not defined HP_PY (
 echo Interpreter: %HP_PY%
 >> "%LOG%" echo Interpreter: %HP_PY%
 call :append_env_mode_row
-"%HP_PY%" -c "print('py_ok')" 1>nul 2>nul || call :log "[WARN] Interpreter smoke test failed (continuing)."
+"%HP_PY%" -c "print('py_ok')" 1>nul 2>nul || (call :log "[WARN] Interpreter smoke test failed (continuing)." & set "HP_NO_INTERPRETER=1")
 "%HP_PY%" -c "import sys;print(sys.version.split()[0])" > "~pyver_host.tmp" 2>nul
 if exist "~pyver_host.tmp" for /f "usebackq delims=" %%Y in ("~pyver_host.tmp") do call :log "[INFO] Host Python: %%Y"
 if exist "~pyver_host.tmp" del "~pyver_host.tmp" >nul 2>&1
@@ -3410,10 +3410,11 @@ set "HP_PREFLIGHT_FAILED="
 if defined HP_NO_INTERPRETER (
   echo.
   echo *** [ERROR] No Python interpreter is available; your program was not run or built. ***
-  echo *** This is not a syntax error. It means every automatic Python-acquisition method ***
-  echo *** (uv, conda, a fresh download, a local virtual environment) failed -- usually from ***
-  echo *** no internet connection, a full disk, or a locked-down managed machine image. See ***
-  echo *** the earlier "[ERROR] Active Python interpreter not resolved." message above. ***
+  echo *** This is not a syntax error -- the Python interpreter itself could not be used. ***
+  echo *** Either every automatic Python-acquisition method -- uv, conda, a fresh download, ***
+  echo *** or a local virtual environment -- failed, usually from no internet connection, a ***
+  echo *** full disk, or a locked-down managed machine image -- or a PVW_PYTHON_EXE override ***
+  echo *** points at a path that does not run. Scroll up in this window for the specific reason. ***
   call :log "[ERROR] REQ-021: preflight skipped, no Python interpreter resolved: %HP_ENTRY%"
   echo.
   set "HP_PREFLIGHT_FAILED=1"

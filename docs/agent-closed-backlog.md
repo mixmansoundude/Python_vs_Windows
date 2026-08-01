@@ -655,18 +655,47 @@ this belongs to).
    disproportionate risk for this fix, since it would require tracing every call-stack depth
    `:after_env_mode_selection` can be reached from, including REQ-009 cascade re-entry). Instead,
    `:preflight_compile` checks `HP_NO_INTERPRETER` first and, if set, reports the real cause
-   ("No Python interpreter is available; your program was not run or built... See the earlier
-   [ERROR] Active Python interpreter not resolved. message above") instead of running
-   `py_compile` against an empty interpreter path, sets `HP_PREFLIGHT_FAILED=1`, and returns --
-   which also means `:run_entry_smoke`'s pre-existing `HP_PREFLIGHT_FAILED` check skips the doomed
-   PyInstaller build attempt entirely, not just the misleading message. Verified: no test in the
-   repo asserted on the old misleading text (confirmed via grep) -- the one test reaching this
-   code path, `self.embed.fallback.decline`, gates on the embed-attempt/forced-failure log lines,
-   their relative order, and `state: error`, none of which this fix touches; the genuine
-   syntax-error path (`tests/selfapps_preflight.ps1`) is untouched since it never sets
-   `HP_NO_INTERPRETER`. `tests/harness.ps1`'s `batch.preflight.compile` static check (subroutine +
-   call site + `py_compile` + REQ-021 message + `HP_PREFLIGHT_FAILED` guard, all presence-only)
-   still passes unchanged.
+   (a self-contained "No Python interpreter is available; your program was not run or built...
+   Either every automatic Python-acquisition method -- uv, conda, a fresh download, or a local
+   virtual environment -- failed... or a PVW_PYTHON_EXE override points at a path that does not
+   run" message) instead of running `py_compile` against an empty interpreter path, sets
+   `HP_PREFLIGHT_FAILED=1`, and returns -- which also means `:run_entry_smoke`'s pre-existing
+   `HP_PREFLIGHT_FAILED` check skips the doomed PyInstaller build attempt entirely, not just the
+   misleading message. Verified: no test in the repo asserted on the old misleading text
+   (confirmed via grep) -- the one test reaching this code path, `self.embed.fallback.decline`,
+   gates on the embed-attempt/forced-failure log lines, their relative order, and `state: error`,
+   none of which this fix touches; the genuine syntax-error path (`tests/selfapps_preflight.ps1`)
+   is untouched since it never sets `HP_NO_INTERPRETER`. `tests/harness.ps1`'s
+   `batch.preflight.compile` static check (subroutine + call site + `py_compile` + REQ-021
+   message + `HP_PREFLIGHT_FAILED` guard, all presence-only) still passes unchanged.
+   **A genuine batch-syntax regression shipped in the first version of this fix, caught by real CI
+   before merge (same PR, commit `fd52a3f`), not caught by any local check first.** The first
+   wording of the new echo block split one logical parenthetical across two `echo` lines --
+   `(uv, conda, a fresh download, a` on one line, `local virtual environment) failed -- ...` on
+   the next -- both lines sitting inside the enclosing `if defined HP_NO_INTERPRETER ( ... )`
+   parenthesized block. cmd.exe's block parser counts every `(`/`)` character in a parenthesized
+   block's text, including inside plain `echo` statements, regardless of intent -- it does not
+   understand "this is prose, not block structure." The `)` on the second line was read as
+   prematurely closing the `if` block, and the very next token, `failed`, was then parsed as a
+   stray top-level command, producing `failed was unexpected at this time.` -- a real cmd.exe
+   parse error, not a test flake. Because this fires the moment `HP_NO_INTERPRETER` is set
+   (declined/exhausted-provider paths, and the companion canary-probe hardening below), it broke
+   every CI lane whose own self-tests ever reach that state in the same run: `uv`,
+   `contract-uv`, `contract-uv-fail`, `uv-dl-fallback`, `cache`, and `justme-test` all failed on
+   the same commit. `python tools/check_delimiters.py run_setup.bat` did NOT catch this --
+   confirmed a real gap: the checker's paren-balance logic does not currently walk `echo` text
+   inside a block the same way cmd.exe's own parser does. Root-caused by downloading the real
+   `uv`-lane job log via `mcp__github__get_job_logs` (pre-signed blob URL, `curl`'d directly to
+   bypass tool-side truncation on a ~15K-line log) and tracing the exact byte offset where
+   `failed was unexpected at this time.` appeared, immediately after the `[BOOT] REQ-002: Entry
+   selected:` log line -- confirming it was `:preflight_compile`'s own new block, not something
+   unrelated. **Fixed by rewording the message to avoid any `(`/`)` character entirely** (dashes
+   instead of parenthetical asides) rather than escaping the parens with `^` -- simpler and more
+   robust against a future re-wrap of the same prose reintroducing the same hazard. This is the
+   same general hazard class `docs/agent-lessons-learned.md`'s batch-syntax-quirks section already
+   warns about for other constructs (parse-time `%VAR%` expansion, `:log`'s unquoted echo) but had
+   not yet been documented specifically for literal parens split across `echo` lines inside a
+   block -- worth adding there if a future instance recurs.
 
 ### Item 19 (closed 2026-08-01)
 

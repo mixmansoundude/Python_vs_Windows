@@ -2354,11 +2354,19 @@ if set, reports the real cause instead of running `py_compile` against an empty 
 
 ```
 *** [ERROR] No Python interpreter is available; your program was not run or built. ***
-*** This is not a syntax error. It means every automatic Python-acquisition method ***
-*** (uv, conda, a fresh download, a local virtual environment) failed -- usually from ***
-*** no internet connection, a full disk, or a locked-down managed machine image. See ***
-*** the earlier "[ERROR] Active Python interpreter not resolved." message above. ***
+*** This is not a syntax error -- the Python interpreter itself could not be used. ***
+*** Either every automatic Python-acquisition method -- uv, conda, a fresh download, ***
+*** or a local virtual environment -- failed, usually from no internet connection, a ***
+*** full disk, or a locked-down managed machine image -- or a PVW_PYTHON_EXE override ***
+*** points at a path that does not run. Scroll up in this window for the specific reason. ***
 ```
+
+(The message text was later reworded during implementation to avoid a literal `(...)` pair split
+across two `echo` lines inside the same parenthesized `if` block -- cmd.exe's block parser counts
+parens in echo text too, so a `(` on one line and its `)` on the next silently mis-closed the
+block and broke every CI lane reaching this branch in the same run. See
+`docs/agent-lessons-learned.md`'s batch-syntax-quirks section and
+`docs/agent-closed-backlog.md`'s Item 14 entry for the full trace.)
 
 This also skips the doomed PyInstaller build attempt entirely (`:run_entry_smoke`'s existing
 `HP_PREFLIGHT_FAILED` check already short-circuits the build, unchanged by this fix), not just the

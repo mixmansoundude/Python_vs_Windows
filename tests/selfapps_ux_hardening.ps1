@@ -906,21 +906,35 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     $embedDeclineVenvIdx = $embedDeclineText.IndexOf('[WARN] Attempting venv fallback')
     $embedDeclineEmbedIdx = $embedDeclineText.IndexOf('[WARN] Attempting embedded Python download')
     $embedDeclineOrdered = ($embedDeclineEmbedIdx -ge 0) -and ($embedDeclineVenvIdx -ge 0) -and ($embedDeclineEmbedIdx -lt $embedDeclineVenvIdx)
-    $embedDeclinePass = ($embedDeclineAttempted -and $embedDeclineForced -and $embedDeclineDied -and $embedDeclineOrdered)
+    # derived requirement (CLAUDE.md Active Backlog item 14, closed): total REQ-009 provider-tier
+    # exhaustion leaves HP_PY empty, which used to make :preflight_compile run py_compile against
+    # an empty interpreter path and report a fabricated "syntax error" instead of the real cause.
+    # This scenario (uv/conda/embed/venv all forced-fail, system declined) is the one real path
+    # that reaches total exhaustion, so it is also the regression test for that fix: the honest
+    # no-interpreter message must appear, the old fabricated message must NOT, and no PyInstaller
+    # build may be attempted against a broken interpreter.
+    $embedDeclineHonestMsg = ($embedDeclineText -match [regex]::Escape('No Python interpreter is available'))
+    $embedDeclineNoFakeSyntaxErr = -not ($embedDeclineText -match [regex]::Escape('Your Python program has a syntax error'))
+    $embedDeclineNoBuildAttempt = -not ($embedDeclineText -match [regex]::Escape('Building standalone executable'))
+    $embedDeclinePass = ($embedDeclineAttempted -and $embedDeclineForced -and $embedDeclineDied -and $embedDeclineOrdered -and
+                          $embedDeclineHonestMsg -and $embedDeclineNoFakeSyntaxErr -and $embedDeclineNoBuildAttempt)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.embed.fallback.decline'
         req     = 'REQ-009'
         pass    = $embedDeclinePass
-        desc    = 'REQ-009 Tier 5 (reordered): embed fallback is attempted right after conda fails (before venv/system), and a forced embed failure reaches :die once venv/system also fail (bootstrap.status.json reports state=error)'
+        desc    = 'REQ-009 Tier 5 (reordered): embed fallback is attempted right after conda fails (before venv/system), and a forced embed failure reaches :die once venv/system also fail (bootstrap.status.json reports state=error); also covers item 14: total exhaustion reports the real no-interpreter cause, not a fabricated syntax error, and skips the doomed build'
         details = [ordered]@{
-            attemptedLog = $embedDeclineAttempted
-            forcedLog    = $embedDeclineForced
-            orderedLog   = $embedDeclineOrdered
-            embedIdx     = $embedDeclineEmbedIdx
-            venvIdx      = $embedDeclineVenvIdx
-            state        = $embedDeclineState
-            exitCode     = $embedDeclineStExit
-            processExit  = $embedDeclineExit
+            attemptedLog   = $embedDeclineAttempted
+            forcedLog      = $embedDeclineForced
+            orderedLog     = $embedDeclineOrdered
+            embedIdx       = $embedDeclineEmbedIdx
+            venvIdx        = $embedDeclineVenvIdx
+            state          = $embedDeclineState
+            exitCode       = $embedDeclineStExit
+            processExit    = $embedDeclineExit
+            honestMsg      = $embedDeclineHonestMsg
+            noFakeSyntaxErr = $embedDeclineNoFakeSyntaxErr
+            noBuildAttempt = $embedDeclineNoBuildAttempt
         }
     })
 }
