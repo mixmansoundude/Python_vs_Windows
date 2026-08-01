@@ -72,3 +72,71 @@ def test_rem_prefixed_word_outside_bat_file_is_not_flagged(tmp_path, capsys):
 
     assert result == 0
     assert "No delimiter issues found." in captured.out
+
+
+# derived requirement: these three tests are a regression guard for a second real bug
+# that shipped in run_setup.bat and broke 6 CI lanes simultaneously (see
+# docs/agent-lessons-learned.md's "A literal (/) inside echo text is NOT invisible..."
+# entry, PR #408 commit fd52a3f). A "(" opened on one "echo" line and closed by its
+# matching ")" on a LATER "echo" line, both inside an enclosing if(...) block, is
+# balanced from a pure count-matching perspective (which is why the pre-existing
+# unclosed/mismatched checks missed it) but corrupts cmd.exe's own block-closing
+# search at runtime -- "failed was unexpected at this time." check_delimiters.py did
+# not catch this at the time; this dedicated check closes that gap.
+def test_paren_split_across_echo_lines_inside_block_is_flagged(tmp_path, capsys):
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "if defined HP_NO_INTERPRETER (\r\n"
+        "  echo *** method (uv, conda, a fresh download, a ***\r\n"
+        "  echo *** local virtual environment) failed -- usually ***\r\n"
+        "  exit /b 0\r\n"
+        ")\r\n"
+        "echo done\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "does not close until line" in captured.out
+    assert "counts parens in echo text too" in captured.out
+
+
+def test_paren_split_across_echo_lines_at_top_level_is_not_flagged(tmp_path, capsys):
+    # Same textual pattern as above, but with no enclosing if/for block -- each echo
+    # line is an independent top-level command, so there is no block-closing search
+    # for cmd.exe to corrupt. A real instance of this shape exists in run_setup.bat
+    # (:print_fastpath_ambiguous_note) and must not false-positive.
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "echo  and it exited with an error just now (see the status line\r\n"
+        "echo  above) -- so we cannot tell what happened.\r\n"
+        "exit /b 0\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+def test_paren_pair_on_same_echo_line_is_not_flagged(tmp_path, capsys):
+    # A balanced pair on a single echo line (common, e.g. a parenthetical aside) is
+    # always safe regardless of block nesting -- only a CROSS-line split is risky.
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "if defined FOO (\r\n"
+        "  echo *** see the docs (specifically the README) for details ***\r\n"
+        "  exit /b 0\r\n"
+        ")\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out

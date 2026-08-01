@@ -455,16 +455,23 @@ list; the recurring traps that have actually bitten us:
   `failed was unexpected at this time.` This shipped in a new `:preflight_compile` message block
   (the item-14 fix, see `docs/agent-closed-backlog.md`'s Item 14 entry for the full trace) and
   broke every CI lane whose own self-tests reach that branch in the same run (6 lanes failed
-  simultaneously on one commit) -- caught by real CI, not by any local check: `python
-  tools/check_delimiters.py run_setup.bat` passed clean on the broken version, a confirmed gap in
-  that tool (its paren-balance logic does not currently walk `echo`/prose text inside a block the
-  way cmd.exe's own parser does). **Rule of thumb: never let a `(` and its matching `)` land on
-  different lines inside any parenthesized `.bat` block, even inside `echo`/prose text that looks
-  purely cosmetic.** Either keep the pair on the same line, avoid literal parens in wrapped prose
-  entirely (prefer ` -- ` or `,`), or escape both with `^(`/`^)` if the parens are structurally
-  necessary. When manually reviewing a new multi-line `echo` block inside an `if`/`for` block,
-  count parens per-line as part of the review, not just per-block -- `check_delimiters.py`'s
-  current implementation will not catch an imbalance introduced this way.
+  simultaneously on one commit) -- caught by real CI, not by any local check at the time: `python
+  tools/check_delimiters.py run_setup.bat` passed clean on the broken version, since a stray `(...)`
+  pair inside echo text is individually balanced (one open, one close), so a whole-file LIFO
+  paren-count scan sees nothing wrong -- the hazard is specifically about a cross-line split
+  landing inside an ALREADY-open enclosing block, not a raw count mismatch. **Rule of thumb: never
+  let a `(` and its matching `)` land on different lines inside any parenthesized `.bat` block,
+  even inside `echo`/prose text that looks purely cosmetic.** Either keep the pair on the same
+  line, avoid literal parens in wrapped prose entirely (prefer ` -- ` or `,`), or escape both with
+  `^(`/`^)` if the parens are structurally necessary. **Gap closed same day**:
+  `check_delimiters.py` now tracks, for `.bat`/`.cmd` files, whether each `(` was opened on an
+  `echo` line while ALREADY nested inside another open bracket (a real enclosing `if`/`for`
+  block) -- if so, and its matching `)` closes on a different source line, it's flagged. Scoped
+  to "already nested" specifically because a top-level echo statement with no enclosing block
+  (confirmed against a real, harmless instance in this file, `:print_fastpath_ambiguous_note`) has
+  no block-closing search for cmd.exe to corrupt, so flagging it would be a pure false positive.
+  Regression tests: `tests/test_check_delimiters_import.py`'s three `test_paren_*` cases (flagged
+  when nested, not flagged at top level, not flagged for a same-line pair).
 - **Avoid `EnableDelayedExpansion`; if unavoidable, wrap it tightly.** `!` becomes special
   under delayed expansion, and a parent shell launched with `/V:ON` causes `!`-collisions.
   `tests/harness.ps1` `batch.bang.scan` enforces "no `!` in live batch code lines."
