@@ -849,6 +849,50 @@ this belongs to).
    with `skip=true` in the conda-full lane, same reasoning as `.decline`/`.real`. Registered in
    `docs/agent-ndjson.md`'s row registry per this file's own AGENT DIRECTIVE.
 
+### Item 10 (closed 2026-08-01)
+
+- **Two of the five `PVW_*` super-user override variables (`PVW_PYTHON_EXE`, `PVW_WORKSPACE`) had
+   ZERO test coverage of any kind, and ALL FIVE had zero coverage of their invalid-value behavior
+   -- found 2026-07-29 while documenting them for `docs/demo-bootstrapper-output.md`'s Part V,
+   fixed 2026-08-01.** `PVW_UV_EXE` and `PVW_TARGET_PY` each had real, valid-value CI coverage
+   incidental to another test's own purpose; `PVW_CONDA_EXE` had dedicated coverage
+   (`self.corrupt.conda.override_exit`); `PVW_PYTHON_EXE`/`PVW_WORKSPACE` had none at all, and no
+   test anywhere exercised an INVALID value for any of the five.
+   **Fixed** with a new file, `tests/selfapps_pvw_overrides.ps1` (uv lane only, non-gating),
+   covering the item's own suggested shape in full: both currently-zero-coverage variables'
+   valid-value paths (the cheapest, highest-value gap), plus 2 representative invalid-value
+   scenarios (not the full 5x2 combinatorial matrix, per the item's own "2-3 representative cases
+   would likely cover the real risk" reasoning) --
+   - `self.pvw.python_exe.valid` -- a two-stage test: stage 1 does an ordinary uv bootstrap purely
+     to materialize a real, working interpreter; stage 2 is a genuinely fresh scratch directory
+     (so the EXE-cache fast path cannot short-circuit past `:after_env_mode_selection`, where the
+     override actually applies) running a different stub app with `PVW_PYTHON_EXE` pointed at
+     stage 1's interpreter -- confirms the override log line fires and the app runs successfully
+     via the borrowed interpreter.
+   - `self.pvw.workspace.valid` -- a fresh bootstrap with `PVW_WORKSPACE` set to a custom
+     directory -- confirms the debug override log line fires, `Scripts\python.exe` exists at the
+     CUSTOM path (not the default `.uv_env`), the default env was never created, and the app
+     still runs successfully from the relocated venv.
+   - `self.pvw.python_exe.invalid` -- `PVW_PYTHON_EXE` set to a nonexistent path -- confirms the
+     pre-existing interpreter smoke test right after the override
+     (`"%HP_PY%" -c "print('py_ok')" ... || (... [WARN] Interpreter smoke test failed
+     (continuing). ...)`) absorbs the broken value gracefully, exactly as the original static
+     trace predicted -- no uncontrolled crash.
+   - `self.pvw.workspace.invalid` -- `PVW_WORKSPACE` set to a path already occupied by a plain
+     file (uv cannot create a venv "inside" a file) -- confirms the failure cascades to the SAME
+     already-established `:uv_venv_fail` -> conda-create fallback every other uv-venv-creation
+     failure in this file already goes through, rather than a raw, unhandled failure. Deliberately
+     does NOT require the conda fallback to actually succeed, only that it's reached -- a real
+     Miniconda download in this lane is an already-accepted cost (see `self.conda.bothfail`'s own
+     precedent).
+   All four skip with `skip=true` in the conda-full lane (uv is never the provider there).
+   **Remaining invalid-value combinations for `PVW_UV_EXE`/`PVW_TARGET_PY` (and any beyond the
+   `PVW_CONDA_EXE` case already covered by `self.corrupt.conda.override_exit`) are deliberately
+   NOT built** -- the original finding's own reasoning (the failure-absorption mechanism is
+   shared/generic across most of these, so a combinatorial 5x2 matrix would mostly duplicate the
+   same proof) still applies; revisit only if a real-world trigger surfaces a gap the
+   representative cases above don't actually cover.
+
 ### Item 13 (closed 2026-08-01)
 
 - **`self.warn.longpath`'s own real CI run showed an INCONCLUSIVE result (`ranBootstrap:false`),

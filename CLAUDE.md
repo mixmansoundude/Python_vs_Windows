@@ -492,37 +492,6 @@ Once an item is fully resolved it is removed from here entirely and archived (ke
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
 start at 1 and has gaps.
 
-- **10. Two of the five `PVW_*` super-user override variables (`PVW_PYTHON_EXE`, `PVW_WORKSPACE`)
-   have ZERO test coverage of any kind, and ALL FIVE have zero coverage of their invalid-value
-   behavior -- found 2026-07-29 while documenting them for `docs/demo-bootstrapper-output.md`'s
-   Part V.** Confirmed via a repo-wide search across every `tests/*.ps1` file and every lane of a
-   recent clean CI run (`30328748330`): `PVW_PYTHON_EXE` and `PVW_WORKSPACE` have zero references
-   anywhere -- not even a valid-value smoke test. `PVW_UV_EXE` (`tests/selfapps_contract_uv.ps1`)
-   and `PVW_TARGET_PY` (`tests/selfapps_pipgap.ps1`) each have real, valid-value end-to-end CI
-   coverage, but that coverage is incidental to each test's own actual purpose (avoiding a
-   redundant uv re-download; pinning a Python version for an unrelated opencv-python wheel test),
-   not a dedicated test of the override mechanism itself. `PVW_CONDA_EXE` is the one exception with
-   dedicated, purpose-built coverage (`self.corrupt.conda.override_exit`, CLAUDE.md's own earlier
-   Active Backlog item 12 history).
-   - **No test anywhere exercises an INVALID value for any of the five** -- e.g. `PVW_PYTHON_EXE`
-     pointing at a nonexistent file, `PVW_UV_EXE` pointing at something that isn't actually uv,
-     `PVW_TARGET_PY` set to a malformed version spec, `PVW_WORKSPACE` pointing at an unwritable or
-     already-occupied-by-something-else path. Static tracing (done for the demo doc, see Part V)
-     shows each case is plausibly absorbed gracefully by pre-existing fallback/cascade machinery
-     (the REQ-009 provider cascade, the `:uv_venv_fail` chain, the interpreter smoke-test WARN),
-     never an uncontrolled crash -- but this is reasoned from source, not empirically confirmed by
-     any real run.
-   - **Not fixed in this pass** -- documentation-only task, and building 5+ new dedicated test
-     scenarios (a `PVW_PYTHON_EXE`-focused test, a `PVW_WORKSPACE`-focused test, plus invalid-value
-     variants for all five) is real, multi-scenario engineering work, not a quick addition. Suggested
-     shape for a future pass: one new `tests/selfapps_pvw_overrides.ps1`-style file (mirroring the
-     existing `tests/selfapps_ux_hardening.ps1`/`...contract_uv.ps1` pattern) covering the two
-     currently-zero-coverage variables' valid-value paths first (cheapest, highest-value gap), then
-     a smaller number of representative invalid-value scenarios (not all 5x2 combinations -- the
-     failure-absorption mechanism is shared/generic across most of them per the static trace above,
-     so 2-3 representative invalid-value cases would likely cover the real risk without a
-     combinatorial test matrix).
-
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context

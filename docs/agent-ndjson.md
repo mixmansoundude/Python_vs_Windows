@@ -304,6 +304,47 @@ full-tree-artifact-capture pattern as `selfapps_autopep_discovery.ps1` -- no ind
 self.pvw_idempotent.discovery
 ```
 
+## selfapps-pvw-overrides NDJSON rows (selfapps_pvw_overrides.ps1, uv lane only, non-gating)
+
+CLAUDE.md former Active Backlog item 10: `PVW_PYTHON_EXE` and `PVW_WORKSPACE` had ZERO test
+coverage of any kind, unlike the other three PVW_* super-user overrides (`PVW_UV_EXE`,
+`PVW_TARGET_PY`, `PVW_CONDA_EXE`), and ALL FIVE had zero coverage of their invalid-value
+behavior. Four scenarios: valid- and invalid-value paths for both variables (2-3 representative
+invalid-value cases, not the full 5x2 combinatorial matrix, per the backlog item's own suggested
+shape).
+
+`self.pvw.python_exe.valid` is a two-stage test: stage 1 does an ordinary uv bootstrap purely to
+materialize a real, working interpreter on disk; stage 2 is a genuinely fresh scratch directory
+(so `:try_fast_exe`'s EXE-cache fast path cannot short-circuit past `:after_env_mode_selection`,
+where the override actually applies) running a different stub app with `PVW_PYTHON_EXE` pointed
+at stage 1's interpreter -- asserts the `[INFO] Python host: using super-user override
+PVW_PYTHON_EXE.` log line fires and the app actually runs successfully via the borrowed
+interpreter. `self.pvw.workspace.valid` runs a single fresh bootstrap with `PVW_WORKSPACE` set to
+a custom directory, asserting the `[DEBUG] Using super-user override for PVW_WORKSPACE:` log
+line fires, `Scripts\python.exe` exists at the CUSTOM path (not the default `.uv_env`), the
+default `.uv_env` was never created, and the app still runs successfully from the relocated venv.
+
+`self.pvw.python_exe.invalid` sets `PVW_PYTHON_EXE` to a nonexistent path and confirms the
+pre-existing interpreter smoke test right after the override (`"%HP_PY%" -c "print('py_ok')" ...
+|| (... [WARN] Interpreter smoke test failed (continuing). ...)`) absorbs the broken value
+gracefully rather than an uncontrolled crash. `self.pvw.workspace.invalid` sets `PVW_WORKSPACE`
+to a path already occupied by a plain file (uv cannot create a venv "inside" a file) and confirms
+the failure cascades to the SAME already-established `:uv_venv_fail` -> conda-create fallback
+every other uv-venv-creation failure in this file already goes through (`falling back to conda
+create` in the log) -- does NOT require the conda fallback to actually succeed, only that it's
+reached; a real Miniconda download in this lane is an already-accepted cost (see
+`self.conda.bothfail`'s own precedent).
+
+All four skip with `skip=true` in the conda-full lane (uv is never the provider there, so none of
+these overrides' own effects are reachable). Non-gating for its first landing, matching this
+repo's established graduation pattern for a new PowerShell scenario not yet proven stable across
+several real runs (see CLAUDE.md's "CI lane gating maturity" periodic check).
+
+```
+self.pvw.python_exe.valid, self.pvw.workspace.valid,
+self.pvw.python_exe.invalid, self.pvw.workspace.invalid
+```
+
 ## selfapps-cascade-timed NDJSON rows (selfapps_cascade_timed.ps1, conda-full lane only)
 
 CLAUDE.md item 9 / docs/open-questions.md item 1 follow-up: `:cascade_consent_gate` previously used
