@@ -36,6 +36,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 TEST_ONLY_RE = re.compile(
     r'HP_TEST|\[TEST\]|simulating|inject(ed|ing)|corrupt_conda|corrupt_uv',
@@ -53,6 +54,12 @@ _REDIRECT_TOKEN_RE = re.compile(r'>{1,2}(?!=)')
 _SEGMENT_TOKEN_RE = re.compile(r'[&|]')
 
 
+# derived requirement: cmd.exe caret-escape parity is not a one-char lookaround -- ^X escapes
+# X, but ^^X is a literal caret followed by an UNESCAPED X (the first caret escapes the
+# second). A naive `(?<!\^)` regex lookbehind mistook every ^^-prefixed separator/redirect for
+# an escaped one, silently dropping call :log records whose real command boundary sat right
+# after a doubled caret (found via CodeRabbit review on PR #406/#407; see
+# docs/agent-lessons-learned.md's caret-escaping entries for the general hazard class).
 def _is_caret_escaped(text: str, pos: int) -> bool:
     """True if the character at `pos` is caret-escaped, per cmd.exe's parity rule: a caret
     escapes the NEXT character, and a caret itself is escaped by a preceding caret. So an ODD
@@ -68,7 +75,7 @@ def _is_caret_escaped(text: str, pos: int) -> bool:
     return carets % 2 == 1
 
 
-def _first_unescaped(pattern: re.Pattern, text: str):
+def _first_unescaped(pattern: re.Pattern, text: str) -> Optional[re.Match]:
     """Return the first match of `pattern` in `text` whose start position is not
     caret-escaped, or None."""
     for m in pattern.finditer(text):

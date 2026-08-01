@@ -953,7 +953,8 @@ of a second or third pin actually needing it.
   item that tracked renumbering them is closed with no further action.
 
 - **Cascade consent gate design (timed prompt, decline-by-default) kept exactly as shipped,
-  2026-07-26 owner decision -- closes `docs/open-questions.md` item 1.** Following the
+  2026-07-26 owner decision -- closes the former cascade-consent question in
+  `docs/open-questions.md`.** Following the
   cascade-vs-postexec fix (see Closed Backlog), a deeper investigation into the reliability of
   the `HP_CASCADE_CANDIDATE` signal was requested and completed -- a full truth table over its
   two constituent build-time static signals, with estimated odds the `.exe` still runs fine and

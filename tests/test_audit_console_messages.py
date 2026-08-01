@@ -100,6 +100,9 @@ def test_extract_records_keeps_call_log_with_redirect_on_later_chained_command(t
     assert records == [(1, '[INFO] visible')]
 
 
+# derived requirement: cmd.exe caret-escape parity is odd-count-escapes / even-count-active,
+# not "any preceding caret escapes" -- see tools/audit_console_messages.py's
+# _is_caret_escaped() docstring for the full rule this group regression-tests.
 def test_extract_records_keeps_call_log_with_doubled_caret_separator(tmp_path):
     # cmd.exe caret parity: '^^&' is a literal '^' followed by an ACTIVE '&' (the first caret
     # escapes the second, leaving the '&' unescaped) -- so this is a real command separator, and
