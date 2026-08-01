@@ -1158,7 +1158,14 @@ immediately. That theory holds for the ORIGINAL failure (already classified as f
 by the primary verification), but this is a FRESH re-run of the same binary; any non-determinism
 could hang it. Regression tests: `tests/test_exe_hint_rerun.py` (`UnconditionalKill` class
 specifically proves a process that prints once and then hangs is STILL killed -- the defining
-behavioral difference from the other two helpers).
+behavioral difference from the other two helpers). **`Process.Kill()` alone only terminates the
+tracked process, not its descendants** -- a spawned child inheriting the redirected pipe can keep
+it open after the parent is killed, hanging an unbounded `ReadToEndAsync().Result` forever. Fixed
+via `taskkill /F /T /PID` (process-tree kill; Windows PowerShell 5.1's .NET Framework has no
+`Process.Kill(entireProcessTree)` overload, that's .NET 5+ only) PLUS an independent bounded final
+read (`Task.Wait($drainMs)`, 5000ms) as a second safety net. The `taskkill /T` half is NOT
+CI-confirmed (no Windows environment available to construct a genuine repro); the drain-wait
+fallback IS verified (`ProcessTreeAndDrainTimeout` test, a grandchild-inherits-the-pipe scenario).
 
 **Why the default is 10000ms, not 5000ms (widened 2026-07):** the original 5000ms default was
 tuned assuming the probe window only needs to outlast a failing process's own error handling

@@ -47,16 +47,29 @@ $outTask = $p.StandardOutput.ReadToEndAsync()
 $errTask = $p.StandardError.ReadToEndAsync()
 $exited = $p.WaitForExit($killMs)
 if (-not $exited) {
+    # derived requirement: Process.Kill() (the parameterless overload -- Windows PowerShell 5.1
+    # targets .NET Framework, which has no Process.Kill(entireProcessTree) overload; that's
+    # .NET 5+ only) terminates ONLY $p itself. A PyInstaller onefile bootloader (or any program)
+    # that spawns a child inheriting the redirected stdout/stderr handles can leave that child
+    # running after $p is killed -- the pipe then never reaches EOF, and an unbounded
+    # ReadToEndAsync().Result would hang forever, defeating the entire point of this bounded
+    # helper. taskkill /T terminates the whole process tree, not just $p. NOT independently
+    # verified on real Windows CI that a genuine descendant-holds-the-pipe scenario is fully
+    # covered by this (no Windows environment available to construct that repro) -- the bounded
+    # final read below is a second, independent safety net for exactly that residual risk.
+    try { & taskkill.exe /F /T /PID $p.Id 2>$null 1>$null } catch {}
     try { $p.Kill() } catch {}
 }
-# Unconditional (no timeout arg): once Kill() has been issued (or the process already exited on
-# its own), this returns promptly -- it is not a second unbounded wait, it drains the already-
-# terminating/terminated process. Reading the async Task .Result below then completes immediately
-# once the closed process's pipes reach EOF.
 $p.WaitForExit()
 
+# Bounded final read, NOT a blind .Result block: even after killing the process tree, a
+# descendant taskkill /T did not catch (or some other exotic handle-inheritance edge case)
+# should not be able to hang this diagnostic-only helper indefinitely. Task.Wait(ms) returns
+# false on timeout without throwing, so a stuck pipe degrades to partial/empty output instead
+# of an unbounded wait.
+$drainMs = 5000
 $out = ''
 $err = ''
-try { $out = $outTask.Result } catch {}
-try { $err = $errTask.Result } catch {}
+if ($outTask.Wait($drainMs)) { try { $out = $outTask.Result } catch {} }
+if ($errTask.Wait($drainMs)) { try { $err = $errTask.Result } catch {} }
 ($out + $err) | Set-Content -Path $outPath -Encoding ASCII

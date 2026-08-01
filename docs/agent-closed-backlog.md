@@ -796,6 +796,30 @@ this belongs to).
    (CRLF/LF normalized, per the established `.ps1` PayloadSync convention). No existing test relied
    on the old unbounded behavior (confirmed via grep for `exe_smokerun_hints`/`exe_out.txt` across
    `tests/`), so nothing needed to change on the success path.
+   **A genuine gap in the first version of this fix was caught by CodeRabbit review on PR #410
+   before merge: `Process.Kill()` only terminates the immediate tracked process, not its
+   descendants.** A PyInstaller onefile bootloader (or any program) that spawns a child inheriting
+   the redirected stdout/stderr handles can leave that child running after the immediate process
+   is killed -- the pipe then never reaches EOF, and the original unbounded
+   `ReadToEndAsync().Result` read would hang forever, defeating the entire point of adding a
+   bounded helper. Fixed two ways: (1) `taskkill /F /T /PID` (process-tree kill) instead of a bare
+   `Kill()` -- Windows PowerShell 5.1 targets .NET Framework, which has no
+   `Process.Kill(entireProcessTree)` overload (that's .NET 5+ only), so `taskkill /T` is the
+   available mechanism; (2) a bounded final read (`Task.Wait($drainMs)`, hardcoded 5000ms) as an
+   independent second safety net, so even a descendant `taskkill /T` somehow misses cannot hang
+   the helper indefinitely -- it degrades to partial/empty output instead. **The `taskkill /T`
+   half is NOT independently verified on real Windows CI** (no Windows environment available to
+   construct a genuine descendant-holds-the-pipe repro in this sandbox) -- treat as
+   strongly-supported-but-provisional, matching this repo's own established convention for
+   platform-specific behavior that can't be verified locally. The drain-wait fallback IS verified:
+   `tests/test_exe_hint_rerun.py::ProcessTreeAndDrainTimeout` spawns a grandchild that inherits the
+   pipe and outlives its own immediate parent (via `subprocess.Popen(..., stdout=sys.stdout)`),
+   proving the helper still terminates within a bounded time instead of hanging. Also fixed a
+   second, smaller CodeRabbit finding in the same review: `:exe_smokerun_hints` never explicitly
+   set `HP_HINT_RERUN_OUT` before invoking the helper, relying on its default -- an inherited/leaked
+   value for that env var from elsewhere would silently redirect the helper's output away from the
+   file the hint-matching `findstr` checks actually read. Fixed by setting it explicitly
+   (`~exe_out.txt`) at the call site, matching `HP_HINT_RERUN_EXE`'s own set/clear pattern.
 
 ## Closed Backlog
 

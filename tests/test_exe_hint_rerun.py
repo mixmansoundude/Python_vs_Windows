@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -41,6 +42,18 @@ HANG_AFTER_OUTPUT_SCRIPT = """
 import sys, time
 print("some output before hanging", flush=True)
 time.sleep(120)
+"""
+
+# Regression script for the process-tree-kill gap (CodeRabbit review, PR #410): spawns a
+# grandchild that inherits OUR stdout (the redirected pipe from the .NET parent) and then
+# exits immediately itself. Process.Kill() (or the process's own fast exit) only affects the
+# immediate child tracked by $p -- the grandchild keeps the pipe's write end open, so
+# ReadToEndAsync() alone would never reach EOF. Proves the bounded drain-wait fallback
+# (Task.Wait($drainMs)) prevents this from hanging the helper forever.
+GRANDCHILD_HOLDS_PIPE_SCRIPT = """
+import subprocess, sys
+subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], stdout=sys.stdout, stderr=sys.stdout)
+sys.exit(0)
 """
 
 
@@ -94,12 +107,22 @@ class FastExit(unittest.TestCase):
 
 @unittest.skipUnless(PWSH, "pwsh not available")
 class UnconditionalKill(unittest.TestCase):
+    # derived requirement (CodeRabbit review, PR #410): the outer subprocess.run timeout (15s)
+    # alone does not prove HP_HINT_RERUN_KILL_MS=500 was actually honored -- an implementation
+    # that silently ignored the override and fell back to the 10s default would still pass
+    # within 15s. Assert elapsed wall-clock stays well under the 10000ms default (8s bound
+    # leaves generous headroom over the intended ~500ms) to prove the override was honored.
+    KILL_MS_UPPER_BOUND_SECONDS = 8
+
     def test_silent_hang_is_killed(self):
         with tempfile.TemporaryDirectory() as d:
             script = _make_script(d, "hang", HANG_SILENT_SCRIPT)
             env = {"HP_HINT_RERUN_KILL_MS": "500"}
+            start = time.monotonic()
             proc = _run_hint_rerun(d, script, env)
+            elapsed = time.monotonic() - start
             self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertLess(elapsed, self.KILL_MS_UPPER_BOUND_SECONDS, "did not honor HP_HINT_RERUN_KILL_MS override")
             # No result/exit-code file is written by this helper (only the combined output
             # file) -- the caller only ever pattern-matches text, never checks an exit code.
             self.assertTrue(_out_path(d, env).exists())
@@ -113,15 +136,41 @@ class UnconditionalKill(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             script = _make_script(d, "hang_after", HANG_AFTER_OUTPUT_SCRIPT)
             env = {"HP_HINT_RERUN_KILL_MS": "500"}
+            start = time.monotonic()
             proc = _run_hint_rerun(d, script, env)
+            elapsed = time.monotonic() - start
             self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertLess(elapsed, self.KILL_MS_UPPER_BOUND_SECONDS, "did not honor HP_HINT_RERUN_KILL_MS override")
             self.assertIn("some output before hanging", _out_path(d, env).read_text(encoding="ascii"))
-            # If this test itself completes within the subprocess.run timeout (15s) rather than
-            # hanging for the full 120s sleep, the unconditional kill worked.
 
     def test_default_kill_ms_unset_means_10000(self):
         text = SOURCE.read_text(encoding="utf-8")
         self.assertIn("$killMs = 10000", text)
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class ProcessTreeAndDrainTimeout(unittest.TestCase):
+    def test_grandchild_holding_pipe_open_does_not_hang_forever(self):
+        # Regression test for the process-tree-kill gap (CodeRabbit review, PR #410): a
+        # grandchild that inherits the redirected pipe and outlives its own parent would make
+        # an unbounded ReadToEndAsync().Result hang forever. The bounded drain-wait fallback
+        # (Task.Wait($drainMs), hardcoded 5000ms in the script) must let the helper complete
+        # anyway, with partial/empty output rather than hanging -- proven here by the test
+        # itself completing well within its own 15s timeout despite the grandchild sleeping 30s.
+        # (taskkill.exe does not exist on this Linux sandbox, so this specifically exercises
+        # the drain-wait fallback, not the taskkill /T process-tree kill itself -- that half is
+        # NOT independently verified on real Windows CI; see docs/agent-lessons-learned.md.)
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "grandchild_holds_pipe", GRANDCHILD_HOLDS_PIPE_SCRIPT)
+            env = {}
+            start = time.monotonic()
+            proc = _run_hint_rerun(d, script, env, timeout=15)
+            elapsed = time.monotonic() - start
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertLess(elapsed, 10, "drain-wait fallback did not bound the hang")
+            # The output file must still be written (empty or partial is acceptable -- the
+            # point is the helper terminates, not that it captures the grandchild's output).
+            self.assertTrue(_out_path(d, env).exists())
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
