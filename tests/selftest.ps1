@@ -683,9 +683,27 @@ if (Test-Path $lpLogPath) { $lpLines = Get-Content -LiteralPath $lpLogPath -Enco
 $lpWarnTag = 'Script path is'
 $lpWarnFound = ($lpLines | Where-Object { $_ -like "*$lpWarnTag*chars*" }).Count -gt 0
 $lpActualLen = $longDir.Length
-# Pass if: bootstrap ran and warned (runner has long-path CWD support)
-#       OR: bootstrap could not run but path was verified >260 chars (no silent failure)
-$lpPass = if ($lpRanBootstrap) { $lpWarnFound -and ($lpExit -eq 0) } else { $lpActualLen -gt 260 }
+# derived requirement (former CLAUDE.md Active Backlog item 13): when $lpRanBootstrap is false,
+# Push-Location itself threw before cmd /c run_setup.bat was ever invoked -- confirmed via real
+# CI (two separate runs, months apart, identical signature: ranBootstrap=false, warnFound=false,
+# pathLen>260) to be a PERSISTENT, structural limitation of default GitHub-hosted Windows
+# runners (LongPathsEnabled is off by default, so PowerShell's own CWD navigation cannot enter a
+# >260-char directory at all), not a one-off flake. run_setup.bat's own long-path guard is never
+# reached in that case, so this genuinely does NOT confirm the WARN fires -- reporting a plain
+# pass would overstate what was actually observed. Report skip=true instead (mirrors this repo's
+# established skip pattern for "infra could not reach the code path under test", e.g. the
+# conda-not-installed-uv-first pattern in docs/agent-interconnect.md), while still failing hard
+# if the scratch path itself was not even built long enough (a genuine test-setup bug, not an
+# infra limitation).
+$lpSkip = $false
+if ($lpRanBootstrap) {
+  $lpPass = $lpWarnFound -and ($lpExit -eq 0)
+} elseif ($lpActualLen -gt 260) {
+  $lpPass = $true
+  $lpSkip = $true
+} else {
+  $lpPass = $false
+}
 Write-NdjsonRow ([ordered]@{
   id = 'self.warn.longpath'
   pass = $lpPass
@@ -695,9 +713,13 @@ Write-NdjsonRow ([ordered]@{
     exitCode = $lpExit
     pathLen = $lpActualLen
     ranBootstrap = $lpRanBootstrap
+    skip = $lpSkip
+    reason = if ($lpSkip) { 'runner-cannot-navigate-long-path' } else { $null }
   }
 })
-if ($lpPass) { $summary.Add('Long-path warning: PASS') } else { $summary.Add("Long-path warning: FAIL (len=$lpActualLen, found=$lpWarnFound, exit=$lpExit)") }
+if ($lpSkip) { $summary.Add("Long-path warning: SKIP (runner cannot navigate a $lpActualLen-char path)") }
+elseif ($lpPass) { $summary.Add('Long-path warning: PASS') }
+else { $summary.Add("Long-path warning: FAIL (len=$lpActualLen, found=$lpWarnFound, exit=$lpExit)") }
 
 # --- PATH-negative (minimal PATH env) test ---
 # Arrange: run from a clean dir with hello_stub.py and a requirements.txt containing

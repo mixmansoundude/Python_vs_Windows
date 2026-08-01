@@ -681,6 +681,17 @@ jobs:
         run: |
           & tests\selfapps_pvw_idempotent.ps1
 
+      # CLAUDE.md former Active Backlog item 10: PVW_PYTHON_EXE and PVW_WORKSPACE had ZERO test
+      # coverage of any kind, unlike the other three PVW_* super-user overrides. Non-gating for
+      # its first landing, matching this repo's established graduation pattern for a new
+      # PowerShell scenario not yet proven stable across several real runs.
+      - name: "Self-test: PVW_PYTHON_EXE / PVW_WORKSPACE super-user overrides (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_pvw_overrides.ps1
+
       - name: "Self-test: pre-build collect-submodules double-gate (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh

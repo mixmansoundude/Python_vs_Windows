@@ -23,312 +23,174 @@ leaving stale guidance.**
 
 ## Never open a real source file in Python `'w'` mode as part of a "dry run" -- write to a NEW path and diff before overwriting
 
-**Discovered 2026-07-25 as a genuine near-miss while fixing the `HP_PREP_REQUIREMENTS` payload
-(see CLAUDE.md's Closed Backlog entry for the fix itself).** A quick verification script meant to
-preview a payload-line swap included `with open('run_setup.bat', 'w', encoding='ascii',
-newline='\r\n') as fh: ... pass` -- the intent was to check line lengths first and fill in the
-write logic afterward, but Python's `'w'` mode truncates the file to zero bytes THE MOMENT
-`open()` succeeds, regardless of whether anything is ever written to the handle. The `pass` body
-meant nothing was written back, so `run_setup.bat` (~4715 lines, the repo's entire deliverable)
-was left at 0 bytes. Caught immediately via `wc -l run_setup.bat` / `git status` (both are cheap,
-fast checks worth running reflexively after ANY script that touches a tracked file) and restored
-losslessly via `git checkout -- run_setup.bat`, since the file had no uncommitted changes at the
-moment of the mistake -- if it had, those would have been lost with it.
+**Genuine near-miss (2026-07-25) while fixing the `HP_PREP_REQUIREMENTS` payload.** A verification
+script meant to preview a payload-line swap opened `run_setup.bat` with `open(..., 'w', ...)`,
+intending to fill in the write logic later (`... pass`). Python's `'w'` mode truncates a file to
+zero bytes THE MOMENT `open()` succeeds, regardless of whether anything is ever written -- this
+left `run_setup.bat` (~4715 lines, the repo's entire deliverable) at 0 bytes. Caught immediately
+via `wc -l`/`git status` (cheap, worth running reflexively after any script touching a tracked
+file) and restored losslessly via `git checkout --` since there were no uncommitted changes at the
+time -- if there had been, those would have been lost too.
 
-**Rule of thumb: a script whose job is to INSPECT or PREVIEW a change to an existing tracked file
-must never open that file in a write/truncate mode (`'w'`, `'wb'`) at all, even speculatively or
-as a scaffold to fill in later.** The safe pattern used to actually land this specific fix
-afterward: read the original file as bytes, construct the modified bytes entirely in memory (or
-write them to a brand-new path under `/tmp`), THEN diff the candidate against the original
-(`diff old new | grep -c '^[<>]'` or equivalent) to confirm only the intended lines changed,
-and only copy the verified candidate over the real file as the very last step. For a large
-generated/embedded-payload file like `run_setup.bat` specifically, also re-run
-`tools/check_delimiters.py` and confirm the line count is unchanged immediately after any such
-swap, before doing anything else.
+**Rule: a script that INSPECTS or PREVIEWS a change to an existing tracked file must never open it
+in a write/truncate mode (`'w'`, `'wb'`), even speculatively.** Safe pattern: read as bytes, build
+the modified content entirely in memory, diff the candidate against the original to confirm only
+intended lines changed, THEN copy the verified candidate over the real file as the last step. For
+`run_setup.bat` specifically, also re-run `tools/check_delimiters.py` and confirm the line count
+is unchanged immediately after any swap.
 
-**Automated, 2026-07-25: `tools/sync_payload.py` now implements this exact safe procedure as a
-reusable tool, so it never has to be hand-rolled again.** It reads `run_setup.bat` as bytes,
-builds the candidate content entirely in memory, verifies the diff touches EXACTLY the one target
-`set "HP_VARNAME=..."` line, checks the CMD 8191-char budget, and only then writes -- refusing
-(non-zero exit, no write) if any of those checks fail. See "Embedded Helper Update Workflow"
-below for usage; use it instead of a one-off inline snippet for every future payload swap.
+**Automated same day: `tools/sync_payload.py`** implements this exact procedure as a reusable
+tool -- reads `run_setup.bat` as bytes, verifies the diff touches EXACTLY the target
+`set "HP_VARNAME=..."` line, checks the CMD 8191-char budget, and only then writes (refuses with
+no write if any check fails). See "Embedded Helper Update Workflow" below; use it instead of a
+one-off inline snippet for every future payload swap.
 
 ---
 
 ## `rem` needs a space after it -- `rem-word` is parsed as a command, not a comment
 
-**Discovered 2026-07-25 via a real CI failure on PR #380, caught within minutes of the very
-first Windows CI run of this exact code path.** A multi-line `rem` comment explaining why the
-warnfix-triggered PyInstaller rebuild's new error handling deliberately does not retry via
-`:try_nuitka_tier_a` wrapped the phrase "an already-nested failure path" across two comment
-lines, splitting the hyphenated word at the hyphen:
+**Found via a real CI failure on PR #380.** A multi-line `rem` comment wrapped the phrase "an
+already-nested failure path" across two lines, splitting at the hyphen:
 ```bat
 rem is to report it, not to speculatively rebuild via a second tool inside an already
 rem-nested failure path.
 ```
-cmd.exe only treats a line as a comment when `rem` is followed by whitespace (or end of line) --
-`rem-nested` has no space between `rem` and the rest, so cmd.exe parsed it as an attempt to run a
-command literally named `rem-nested`, which does not exist:
-`'rem-nested' is not recognized as an internal or external command, operable program or batch
-file.` This left a **nonzero errorlevel** sitting immediately before the very next line, which
-happened to be a freshly-added `if errorlevel 1 (...)` check for the PyInstaller rebuild's own
-exit code (see `docs/agent-interconnect.md`'s `:die`/warnfix-rebuild-failure-handling history) --
-so the stray comment line's own failure was silently misattributed to PyInstaller, even though
-the real bootstrap log confirmed PyInstaller had already produced the EXE successfully moments
-earlier. Confirmed by downloading the actual `diag-selftest-real-*` CI artifact and reading the
-sub-bootstrap's own `~warnfix_bootstrap.log` directly (via
-`mcp__github__actions_get` method `download_workflow_run_artifact`) -- the stray
-"not recognized as an internal or external command" line was sitting right there between the
-"Rebuilding standalone executable..." line and the false "[ERROR] PyInstaller execution failed"
-line the new code produced.
+cmd.exe only treats a line as a comment when `rem` is followed by whitespace (or EOL) --
+`rem-nested` has no space, so cmd.exe parsed it as an attempt to run a nonexistent command
+literally named `rem-nested`: `'rem-nested' is not recognized as an internal or external
+command...`. This left a **nonzero errorlevel** sitting immediately before the very next line, a
+freshly-added `if errorlevel 1 (...)` check for the PyInstaller rebuild's own exit code -- so the
+stray comment's own failure was silently misattributed to PyInstaller, even though PyInstaller had
+already produced the EXE successfully. Confirmed by reading the real CI artifact's
+`~warnfix_bootstrap.log` directly.
 
-**Rule of thumb: never split a hyphenated word across two `rem` comment lines by putting the
-second half directly at the start of the next line.** More generally: any time a `rem` comment
-line's very next character after "rem" is NOT whitespace, cmd.exe does not treat the line as a
-comment at all -- it is executed as a command line with that leading token as the program name.
-This is easy to introduce by accident when wrapping prose across multiple `rem` lines (a
-justified/reflowed paragraph can end a line exactly at a hyphenated compound word).
+**Rule: never split a hyphenated word across two `rem` lines by putting the second half at the
+start of the next line.** More generally: any time a `rem` line's very next character after "rem"
+is NOT whitespace, cmd.exe does not treat it as a comment at all -- it executes that leading token
+as a command name.
 
-**Automated, 2026-07-25 (same day): `tools/check_delimiters.py`'s `_check_bat_rem_comment_spacing`
-now catches this exact pattern -- it is no longer true that no local tool catches it.** The
-original version of this entry said this was undetectable by any local tool short of a real
-Windows CI run; that gap is closed. Any `.bat`/`.cmd` line whose first token starts with `rem`
-immediately followed by a non-whitespace character is now flagged by
-`python tools/check_delimiters.py run_setup.bat`, part of the standard sweep
-(`tools/run_sanity_sweep.sh` / CLAUDE.md's "Mandatory Sanity Checks"). The old manual defensive
-check (`grep -nP '^\s*rem\S' run_setup.bat`) still works as a quick one-off, but is no longer
-necessary -- the sanity sweep now catches this automatically on every run.
+**Automated same day: `tools/check_delimiters.py`'s `_check_bat_rem_comment_spacing` now catches
+this** -- any `.bat`/`.cmd` line whose first token starts with `rem` immediately followed by a
+non-whitespace character is flagged, part of the standard sweep.
 
 ---
 
-## .NET Process async-redirected-output: "call WaitForExit() twice" is NOT sufficient on its own to guarantee the buffers are drained
+## .NET Process async-redirected-output: "call WaitForExit() twice" is NOT sufficient to guarantee buffers are drained [SUPERSEDED]
 
-**Superseded 2026-07-24 (see the "`Register-ObjectEvent` reorders lines within a single stream"
-entry below): the `Register-ObjectEvent` mechanism this entry was written against has since been
-replaced entirely by `StreamReader.ReadLineAsync()` polling in `tools/failfast_probe.ps1`/
-`tools/exe_smokerun.ps1`, which has no drain-race to guard against (a completed read task with a
-`$null` result IS the stream's own EOF signal, no separate post-`WaitForExit()` poll needed).**
-Kept here because the underlying lesson -- don't trust a documented "this guarantees completion"
-claim without empirical verification -- remains true and instructive for any future
-`Register-ObjectEvent` use in this repo, even though the specific implementation that motivated
-it is gone.
+**Superseded 2026-07-24 by the `ReadLineAsync()`/chunk-read entries below -- kept only for the
+methodology lesson.** Microsoft's own docs for `Process.WaitForExit(Int32)` say calling the
+no-arg `WaitForExit()` overload after a timed one returns `true` ensures async output handling
+has completed. Empirically FALSE for `Register-ObjectEvent` on `OutputDataReceived`: a direct
+`pwsh` repro (5/5 deterministic) showed the final event -- carrying a line flushed only at
+process exit -- firing AFTER both `WaitForExit()` calls returned, silently truncating the
+captured buffer with no error. Reproduced only when the `pwsh`-launching chain was itself
+launched via Python's `subprocess.run(..., capture_output=True)`, not from an interactive shell
+(same "differs by invocation shape" class as this repo's `Get-FileHash` module-autoload gap).
+**Rule: never trust a documented "async handling has completed" guarantee without empirical
+verification** -- this specific mechanism (`Register-ObjectEvent` + explicit EOF-flag polling) is
+gone from the codebase, replaced entirely by `StreamReader` async reads (see entries below), which
+have no equivalent drain race (a completed read task with a `$null`/`0` result IS the stream's own
+EOF signal).
 
-Discovered 2026-07-23 while empirically testing (in `pwsh`, per direct request) the live-tee
-mechanism built for `tools/failfast_probe.ps1`/`tools/exe_smokerun.ps1`
-(`docs/plan-cli-interactive-verification.md` P0). Microsoft's own documentation for
-`Process.WaitForExit(Int32)` says: "When standard output has been redirected to asynchronous
-event handlers, it is possible that output processing will not have completed when this method
-returns. To ensure that asynchronous event handling has been completed, call the `WaitForExit()`
-overload that takes no parameter after receiving a `true` from this overload." Followed this
-literally (`$p.WaitForExit($ms)` then `$p.WaitForExit()`) and it was **empirically proven
-insufficient**: a direct repro with `Register-ObjectEvent` on `OutputDataReceived` showed the
-FINAL event (carrying a line the child process only flushed at exit -- e.g. an ordinary
-`print("x")` with no `flush=True`, redirected/non-tty stdout) firing AFTER both `WaitForExit()`
-calls had already returned. Reading the accumulated buffer immediately after those two calls
-silently produced an EMPTY/truncated result -- no exception, no warning, just missing data.
-Confirmed deterministic (5/5 repro), not a rare flake, specifically when the whole
-`pwsh`-launching-a-grandchild chain was itself launched via Python's `subprocess.run(...,
-capture_output=True)` (did NOT reproduce when the same `pwsh` command was run directly from an
-interactive shell) -- the exact class of "works differently depending on invocation shape" this
-repo has hit before with `Get-FileHash`'s module-autoload gap.
-
-**Fix: don't trust the wait-call side effect at all. Track each stream's own EOF signal
-explicitly.** `OutputDataReceived`/`ErrorDataReceived` fire with `$EventArgs.Data -eq $null`
-exactly once, when that stream reaches end-of-file -- this is .NET's own definitive "this stream
-is fully drained" signal, independent of any wait-call timing assumption. Set a `Done` flag in
-each event's `-Action` on that null-Data event, then poll (bounded, e.g. 5000ms via
-`Start-Sleep -Milliseconds 20` in a loop -- `Start-Sleep` yields to PowerShell's event dispatch the
-same way a polling `WaitForExit(100)` loop does; see the companion fact below: a hard BLOCKING
-wait, unlike `Start-Sleep` or a polling `WaitForExit(ms)`, does NOT yield and so prevents
-`Register-ObjectEvent` actions from running at all until it returns -- confirmed both empirically
-and against PowerShell/PowerShell#11065) until BOTH flags are set before reading the accumulated
-buffers. The documented double-`WaitForExit()` call is still worth keeping as a first attempt
-(harmless, may help on some platforms), but the actual correctness guarantee is the explicit
-EOF-flag drain-wait, not the .NET docs' own stated guarantee.
-
-**Separately confirmed, worth remembering as a companion fact**: Python's `input(prompt)` builtin
+**Companion fact, still load-bearing (referenced by later entries):** Python's `input(prompt)`
 DOES flush stdout before blocking on stdin, even when stdout is redirected/non-tty (confirmed via
-direct reproduction: a prompt printed via `input()` was readable from a piped child's stdout
-BEFORE any stdin was sent). This means the specific real-world scenario this live-tee work exists
-for -- a program that asks setup questions via `input()` then loops until quit -- is NOT at risk
-of the buffering hazard described above; that hazard mainly bites `print()` calls made well
-before the next `input()`/exit, not the interactive prompts themselves. Don't over-generalize the
-async-drain fix's importance to "every Python script needs `flush=True` everywhere" -- the
-specific target use case is already safe by construction.
-
-**Rule of thumb for any future `Register-ObjectEvent`-based async output consumer in this repo**:
-never assume the buffer is complete just because a wait call returned, regardless of what its
-documentation promises about "async handling has completed" -- track the stream's own EOF signal
-explicitly and wait on that instead. **Stronger rule of thumb after the entry below: prefer
-`StreamReader.ReadLineAsync()` polling over `Register-ObjectEvent` entirely** for any new
-line-oriented async output consumer in this repo -- it sidesteps both this drain race and the
-ordering bug below by construction, and needs no event-subscription bookkeeping at all.
+direct reproduction). So a program that asks setup questions via `input()` then loops is NOT at
+risk of the buffering hazard above -- that hazard mainly bites `print()` calls made well before
+the next `input()`/exit, not the interactive prompts themselves.
 
 ---
 
-## `Register-ObjectEvent` on `OutputDataReceived`/`ErrorDataReceived` can reorder lines WITHIN a single stream -- confirmed upstream bug, fixed by switching to `ReadLineAsync()` polling
+## `Register-ObjectEvent` reorders lines WITHIN a single stream -- confirmed upstream bug [SUPERSEDED to chunk reads, pattern still valid]
 
-**Superseded again, same day (2026-07-24): `ReadLineAsync()` was itself replaced by chunk-based
-`ReadAsync()` reads -- see the next entry below for why.** The lesson in THIS entry (don't trust
-`Register-ObjectEvent`'s ordering, poll a single in-flight async read instead) remains valid and
-is still exactly why the fix below polls a single in-flight `ReadAsync()` rather than going back
-to events -- only the specific read PRIMITIVE changed (line-based to chunk-based), not the
-single-read-in-flight polling pattern itself.
+**Superseded same day (2026-07-24) by chunk-based `ReadAsync()` -- see the next entry -- but the
+single-read-in-flight POLLING PATTERN this entry introduced still holds; only the read primitive
+changed (line-based to chunk-based).**
 
-Discovered 2026-07-24 while building the interactive round-trip test requested to gain confidence
-in the live-tee mechanism above (`tests/test_failfast_probe.py`'s `InteractiveRoundTrip` class --
-a script that does `input()` for a name, prints a greeting, then loops `input()`/`print()` for a
-`ping`/`exit` conversation). The test failed non-deterministically: 2 out of 5 local runs showed
-output from a LATER round of the conversation appearing BEFORE an EARLIER round's output in the
-captured/teed text (e.g. round 2's `"pong"` landing ahead of round 1's `"Hello, Alice!"`). This is
-qualitatively worse than a dropped line or a late line -- it is a silent, in-place transposition
-that a human watching the live tee would see as their own conversation printed out of order.
+Found via `tests/test_failfast_probe.py`'s `InteractiveRoundTrip` test (a scripted `input()`/
+`print()` conversation): 2/5 local runs showed a LATER round's output appearing BEFORE an EARLIER
+round's in the captured/teed text -- a silent in-place transposition, worse than a dropped/late
+line. **Root cause: `Register-ObjectEvent` dispatches each event via
+`ThreadPool.QueueUserWorkItem`, which gives no ordering guarantee between queued work items** --
+two lines from the same stream arriving close together can have their `-Action` callbacks run on
+different pool threads in either order. Confirmed upstream, not sandbox-specific:
+[PowerShell/PowerShell#11937](https://github.com/PowerShell/PowerShell/issues/11937).
 
-**Root cause: `Register-ObjectEvent` dispatches each event via `ThreadPool.QueueUserWorkItem`
-internally, and the .NET thread pool provides no ordering guarantee between queued work items.**
-When two lines from the same stream arrive close together (a common case -- a prompt immediately
-followed by its own response, or two `print()` calls back-to-back), their `-Action` callbacks can
-be scheduled to run on different pool threads in either order. This is a real, documented,
-upstream limitation, not an artifact of this sandbox or this repo's specific usage --
-[PowerShell/PowerShell#11937](https://github.com/PowerShell/PowerShell/issues/11937) is a filed
-issue describing exactly this behavior.
-
-**Fix: stop using `Register-ObjectEvent` for this purpose. Poll `StreamReader.ReadLineAsync()`
-directly instead, issuing only ONE async read per stream at a time.** The pattern:
-```powershell
-$outTask = $p.StandardOutput.ReadLineAsync()
-# ... in the polling loop ...
-if ((-not $outDone) -and $outTask.IsCompleted) {
-    $line = $outTask.Result
-    if ($null -eq $line) { $outDone = $true }
-    else {
-        Write-Host $line
-        $outTask = $p.StandardOutput.ReadLineAsync()   # only issue the NEXT read after consuming this one
-    }
-}
-```
-Because a new read is never issued until the previous one's result has been consumed, there is
-never more than one outstanding read racing against itself for a given stream -- ordering is
-enforced by construction, not by hoping the runtime's callback scheduler happens to preserve it.
-Cross-stream (stdout vs. stderr) interleaving was never guaranteed by either mechanism and still
-isn't under this fix -- that reflects the child process's own two independent OS pipes, not a
-defect to fix.
-
-**This fix also subsumes and eliminates the separate drain-race workaround documented in the
-entry above** (tracking each stream's own null-`Data` EOF event and polling for both flags before
-trusting the buffer): under `ReadLineAsync()`, a completed task with a `$null` `.Result` IS the
-stream's own definitive EOF signal, with no separate "did async handling actually finish"
-question to answer -- the new mechanism is simpler as well as more correct. Applied to both
-`tools/failfast_probe.ps1` and `tools/exe_smokerun.ps1` (the only two `Register-ObjectEvent`
-consumers in this repo at the time of the fix); if a THIRD one is ever added, use
-`ReadLineAsync()` polling from the start rather than reintroducing this bug class.
-
-**Verification**: 20 repeated local runs of the interactive round-trip test after the fix, 0/20
-failures (versus 2/5 before). 5 repeated full runs of `tests/test_failfast_probe.py` and
-`tests/test_exe_smokerun.py`, all clean. See `docs/plan-cli-interactive-verification.md` Finding
-8 and `docs/agent-interconnect.md`'s "Live-echo redesign" section for the full context this bug
-was found in and how it connects to the rest of the stdin/tee feature.
+**Fix: stop using `Register-ObjectEvent`. Poll a single in-flight async read per stream instead**
+(`$task = $p.StandardOutput.ReadLineAsync()`; only issue the next read after consuming the
+current one's `.Result`) -- ordering is enforced by construction, never more than one outstanding
+read racing against itself per stream. Cross-stream (stdout vs. stderr) interleaving was never
+guaranteed either way -- that's the child's own two independent OS pipes, not a defect. This also
+subsumes the drain-race workaround from the entry above (a completed task with `$null` .Result IS
+the EOF signal, no separate flag-polling needed). Applied to `tools/failfast_probe.ps1` and
+`tools/exe_smokerun.ps1`; a future third consumer should use this polling pattern from the start.
+Verified 20/20 clean post-fix (vs. 2/5 before). See `docs/plan-cli-interactive-verification.md`
+Finding 8 for full context.
 
 ---
 
 ## `StreamReader.ReadLineAsync()` is line-buffered: a prompt with no trailing newline is invisible until something else flushes a line -- fixed by switching to `ReadAsync()` chunk reads
 
-Discovered 2026-07-24 during a requested research/refinement pass on already-shipped work (not
-while building a new feature) -- the owner independently confirmed hitting a related symptom
-themselves (progress dots not appearing until much later when running as a frozen EXE, fixed by
-adding an explicit `.flush()` in their own code), which prompted a closer look at this repo's own
-read mechanism rather than assuming it was already correct.
+Found during a refinement pass on already-shipped work; motivated by the owner independently
+hitting the same class of bug (progress dots delayed in a frozen EXE, fixed via explicit
+`.flush()`).
 
-**The problem**: Python's canonical `input(prompt)` idiom -- `name = input("Enter your name: ")`
--- writes the prompt to stdout and flushes it immediately (confirmed elsewhere in this file), but
-WITHOUT a trailing newline, by design: the cursor is meant to stay on the same line waiting for
-typed input. `StreamReader.ReadLineAsync()` does not return anything for a stream until it has
-accumulated a full newline-terminated line, or the stream reaches EOF -- so even though the
-prompt's bytes are genuinely sitting in the OS pipe, flushed and ready to read, `ReadLineAsync()`
-won't surface them. Confirmed directly: a child process writing `"Enter your name: "` and then
-blocking on stdin produced ZERO completed `ReadLineAsync()` reads for at least 2 full seconds of
-silence (`CanRead` on the underlying stream confirmed the bytes WERE there). The text only
-appears once EITHER a later write includes a newline (at which point the prompt and that later
-text arrive concatenated as ONE line -- e.g. `"Enter your name: Hello, Alice!"` as a single
-chunk, not two, silently reordering when things "appear" relative to when they were actually
-printed) OR the process exits (`ReadLineAsync()` DOES return a final unterminated line at EOF, so
-content is delayed, never permanently lost).
+**The problem**: Python's `input(prompt)` writes the prompt to stdout and flushes immediately
+(see the companion fact two entries up) but WITHOUT a trailing newline, by design -- the cursor
+stays on the same line. `ReadLineAsync()` does not return anything for a stream until a full
+newline-terminated line arrives, or EOF -- so the flushed prompt bytes sit in the OS pipe,
+invisible to the reader. Confirmed directly: a child writing `"Enter your name: "` then blocking
+on stdin produced ZERO completed `ReadLineAsync()` reads for 2+ seconds even though the bytes
+were provably there (`CanRead` confirmed). The text only surfaces once a later write adds a
+newline (concatenating the prompt with whatever comes after into one misleadingly-timed chunk) or
+the process exits.
 
-**Why this stayed hidden through two prior rounds of interactive-round-trip testing**: both the
-local unit test and the real-CI `selfapps_interactive_stdin.ps1` feed the ENTIRE scripted answer
-sequence through stdin essentially instantly (a pre-loaded file, not a human typing), so the
-prompt-then-response round-trip completes in well under a second regardless of the buffering
-behavior above -- the concatenated "line" still contains both substrings in the right relative
-order, so substring/ordering assertions pass. This is a real, structural blind spot in
-timing-insensitive tests, not a flaw in those specific tests' own design (they correctly proved
-the plumbing doesn't drop or reorder data, which was their stated goal) -- any test that supplies
-an entire answer sequence up front cannot distinguish "surfaced instantly" from "surfaced only
-once something else happened to flush a line," because both produce the same final captured text.
+**Why this stayed hidden through two prior rounds of round-trip testing**: both the local test
+and `selfapps_interactive_stdin.ps1` feed the ENTIRE scripted answer sequence through stdin
+essentially instantly -- a pre-loaded answers file can't distinguish "surfaced instantly" from
+"surfaced only once something else happened to flush a line," since both produce the same final
+captured text. This is a structural blind spot in any timing-insensitive test, not a flaw in
+those tests' own (correctly scoped) design.
 
-**Fix: replace `ReadLineAsync()` with `StreamReader.ReadAsync(char[], int, int)` on a fixed
-buffer** (kept the same single-read-in-flight polling shape from the entry above -- only the
-primitive changed), so ANY available bytes are surfaced and displayed the moment they arrive,
-matching how a real terminal behaves. Consequences of the switch: `Write-Host`/`WriteLine` (which
-auto-append a newline) must become `[Console]::Out.Write($chunk)`/`[Console]::Error.Write($chunk)`
-(no auto-newline), since chunks now arrive at arbitrary boundaries, not line boundaries; EOF
-becomes a 0-length read (`$n -eq 0`) rather than a `$null` result.
+**Fix: replace `ReadLineAsync()` with `StreamReader.ReadAsync(char[], int, int)`** on a fixed
+buffer (same single-read-in-flight polling shape as the entry above, only the primitive changed),
+so any available bytes surface the moment they arrive. `Write-Host`/`WriteLine` become
+`[Console]::Out.Write($chunk)`/`[Console]::Error.Write($chunk)` (chunks arrive at arbitrary
+boundaries now, not lines); EOF becomes a 0-length read, not a `$null` result.
 
-**How to actually TEST for this class of bug -- a pre-loaded answers file cannot catch it.**
-Since the whole reason this stayed hidden is that a static, fully-available-up-front stdin file
-makes read-timing invisible, the regression test has to drive stdin itself, live, via a
-`Popen`/`Process`-style pipe the TEST controls, and assert something is readable on the far end
-BEFORE the test writes anything to stdin. On the Python-test side this means raw, unbuffered
-`os.read(fd, n)` reads with a timed wait -- NOT `subprocess.run(..., capture_output=True)` or
-`proc.communicate()`, both of which block until the whole exchange finishes and only then hand
-back combined output, exactly the property that hides this bug. Verified both regression tests
-added for this fix (`tests/test_failfast_probe.py::NoNewlinePromptVisibility`,
-`tests/test_exe_smokerun.py::ActivityAwareStop::
-test_output_with_no_trailing_newline_still_prevents_kill`) genuinely FAIL when checked out
-against the pre-fix implementation and PASS against the fix -- proven regression tests, not new
-tests that happen to pass by coincidence.
+**How to actually TEST for this class of bug -- a pre-loaded answers file cannot catch it.** The
+regression test must drive stdin itself, live, via a pipe the TEST controls, and assert something
+is readable on the far end BEFORE writing anything to stdin -- raw `os.read(fd, n)` with a timed
+wait, NOT `subprocess.run(..., capture_output=True)`/`proc.communicate()` (both block until the
+whole exchange finishes). Verified both new regression tests
+(`tests/test_failfast_probe.py::NoNewlinePromptVisibility`,
+`tests/test_exe_smokerun.py::ActivityAwareStop::test_output_with_no_trailing_newline_still_prevents_kill`)
+genuinely FAIL pre-fix and PASS post-fix.
 
 **The timed wait itself must NOT be `select.select()` on the pipe object -- confirmed broken on
-real Windows CI, not just a theoretical concern.** The first version of
-`NoNewlinePromptVisibility` used `select.select([fileobj], [], [], timeout)` against
-`proc.stdout` (a `subprocess.Popen` pipe), which passed every local run on this Linux sandbox but
-failed on 4 separate Windows CI lanes (`contract-uv`, `contract-uv-fail`, `justme-test`,
-`uv-dl-fallback`) on its very first real run, all with the identical error:
-`OSError: [WinError 10038] An operation was attempted on something that is not a socket`. This is
-a well-known, if easy-to-forget, CPython `select` module limitation: on Windows, `select.select()`
-only supports actual socket objects -- it cannot poll an arbitrary file/pipe handle the way it can
-on POSIX, where "everything is a file descriptor" makes pipes, sockets, and regular files
-interchangeable to `select()`. **Fixed by replacing `select.select()` with a background
-`threading.Thread` that does blocking `os.read()` calls and pushes each chunk onto a
-`queue.Queue`, with the main thread calling `q.get(timeout=N)` instead of `select()`** -- this
-is portable (works identically on Windows and POSIX) and preserves the exact same live-timing
-sensitivity: a blocking `os.read()` that returns near-instantly still delivers the chunk to the
-queue near-instantly, so `q.get(timeout=N)` still distinguishes "visible almost immediately" from
-"never became visible within N seconds," the whole point of the test. **Rule of thumb: never use
-`select.select()` on a `subprocess.Popen` pipe object in code that must run on Windows** (this
-repo's test suite does, via `windows-latest` CI runners) -- use a reader-thread-plus-queue instead
-for any timed/non-blocking pipe read. This also means: any local-sandbox-only verification of a
-new test that reads a subprocess pipe with a timeout is not sufficient proof it will pass on the
-real target platform if it uses `select()` -- this specific bug passed 8 repeated local runs
-before shipping and only surfaced on the very first real Windows CI run.
+real Windows CI.** `select.select([fileobj], [], [], timeout)` against a `subprocess.Popen` pipe
+passed every local Linux run but failed on 4 separate Windows CI lanes on its first real run:
+`OSError: [WinError 10038] An operation was attempted on something that is not a socket`. CPython
+`select.select()` on Windows only supports socket objects -- it cannot poll an arbitrary file/pipe
+handle the way POSIX can. **Fixed with a background `threading.Thread` doing blocking `os.read()`
+into a `queue.Queue`, with the main thread calling `q.get(timeout=N)` instead of `select()`** --
+portable, and preserves the same live-timing sensitivity. **Rule: never use `select.select()` on
+a `subprocess.Popen` pipe in code that must run on Windows** -- use a reader-thread-plus-queue
+instead. A local-sandbox-only pass of a test using `select()` on a pipe is NOT sufficient proof it
+will pass on Windows CI (this exact bug passed 8 local runs before shipping and only surfaced on
+the first real Windows CI run).
 
 **Rule of thumb for any future async-output consumer in this repo**: prefer chunk/byte-based
-reads (`ReadAsync(buffer, offset, count)`) over line-based reads (`ReadLineAsync()`) whenever the
-producer might legitimately write meaningful, already-flushed content without a trailing
-newline -- an interactive prompt is the common case, but any progress indicator or partial-status
-line has the same shape. Line-based reads are only safe when every producer write is known to
-always end in a newline, which cannot be assumed for arbitrary Python programs (or arbitrary
-programs in general).
+reads over line-based reads whenever the producer might write meaningful, already-flushed content
+without a trailing newline (an interactive prompt, a progress indicator) -- line-based reads are
+only safe when every producer write is guaranteed to end in a newline.
 
 ---
 
 ## Ambient Python path leakage in uv sub-bootstrap venvs (fixed via `UV_PYTHON_PREFERENCE=only-managed`)
 
-**This was an isolation-boundary leak in our bootstrapper, NOT a uv defect.** uv was doing
-exactly what it is designed to do: with no version constraint and no managed-only
-preference, it discovers and uses an interpreter already on the host (PATH / registry /
-toolchain cache). The bug was that `run_setup.bat` never told uv to stay inside its own
-managed toolchain, so sub-bootstrap venvs silently inherited whatever ambient Python the
-runner happened to ship.
+**Isolation-boundary leak in our bootstrapper, NOT a uv defect** -- uv correctly used whatever
+ambient interpreter was on the host (PATH/registry/toolchain cache), because nothing told it to
+stay inside its own managed toolchain.
 
 **Observed symptom:** in uv-first lanes (`real`, `uv`, `contract-uv`, `contract-uv-fail`),
 `uv venv` created `.uv_env` from the GitHub runner's `C:\hostedtoolcache\windows\Python\...`
@@ -398,13 +260,10 @@ CPython. But fallback paths still exist where `HP_PY` can be an older ambient in
 
 `:check_net_after_dl_fail` (the REQ-013 "is the host actually offline" probe) did exactly ONE
 `ping -n 1 8.8.8.8` and, if that failed, exactly ONE `curl --connect-timeout 5 --max-time 8` to
-`conda.anaconda.org` -- zero retries on either check. Root-caused a real CI failure to this: a
-single dropped ICMP echo plus a curl connect that happened to exceed 5s (plausible under network
-contention on a shared runner, especially in the `conda-full` lane which is mid-flight doing
-several other real network operations for its ~80-minute duration) is enough to misclassify a
-genuinely-online host as offline. This is the same transient-single-shot-check problem REQ-022
-already solved for `:try_conda_create`/`:conda_bulk_install` (detect, wait, retry once) -- just
-never applied to this subroutine.
+`conda.anaconda.org` -- zero retries. A single dropped ICMP echo plus a curl connect exceeding 5s
+(plausible under shared-runner network contention) is enough to misclassify a genuinely-online
+host as offline -- the same transient-single-shot problem REQ-022 already solved for
+`:try_conda_create`/`:conda_bulk_install` (detect, wait, retry once), just never applied here.
 
 Fixed by adding a 2-total-attempts retry to both the ping and curl checks, but using **two
 different techniques depending on nesting**, because this subroutine has both a top-level check
@@ -444,34 +303,22 @@ list; the recurring traps that have actually bitten us:
 - **Special characters need escaping/quoting:** `&`, `|`, `<`, `>`, `^`, `!`, `~`, and `%`
   in values require quoting or `^`-escaping; `%` must be doubled (`%%`).
 - **A literal `(`/`)` inside `echo` text is NOT invisible to a parenthesized block's own parser,
-  even split across lines -- confirmed as a real shipped regression, 2026-08-01 (PR #408, commit
-  `fd52a3f`).** cmd.exe buffers an entire `if (...)`/`for (...)` block by counting `(`/`)`
-  characters in the raw text between the opening `(` and its match -- it has no concept of "this
-  paren is just prose inside an `echo` line," so a stray `(` on one `echo` line and its matching
-  `)` on the NEXT `echo` line (e.g. a hand-wrapped sentence like `method (uv, conda, a fresh
-  download, a` / `local virtual environment) failed ...`) reads as a real block-closing paren the
-  instant the parser reaches it -- the block ends there, and whatever plain-text token follows the
-  `)` (here, the word `failed`) is parsed as a new top-level command, producing
-  `failed was unexpected at this time.` This shipped in a new `:preflight_compile` message block
-  (the item-14 fix, see `docs/agent-closed-backlog.md`'s Item 14 entry for the full trace) and
-  broke every CI lane whose own self-tests reach that branch in the same run (6 lanes failed
-  simultaneously on one commit) -- caught by real CI, not by any local check at the time: `python
-  tools/check_delimiters.py run_setup.bat` passed clean on the broken version, since a stray `(...)`
-  pair inside echo text is individually balanced (one open, one close), so a whole-file LIFO
-  paren-count scan sees nothing wrong -- the hazard is specifically about a cross-line split
-  landing inside an ALREADY-open enclosing block, not a raw count mismatch. **Rule of thumb: never
-  let a `(` and its matching `)` land on different lines inside any parenthesized `.bat` block,
-  even inside `echo`/prose text that looks purely cosmetic.** Either keep the pair on the same
-  line, avoid literal parens in wrapped prose entirely (prefer ` -- ` or `,`), or escape both with
-  `^(`/`^)` if the parens are structurally necessary. **Gap closed same day**:
-  `check_delimiters.py` now tracks, for `.bat`/`.cmd` files, whether each `(` was opened on an
-  `echo` line while ALREADY nested inside another open bracket (a real enclosing `if`/`for`
-  block) -- if so, and its matching `)` closes on a different source line, it's flagged. Scoped
-  to "already nested" specifically because a top-level echo statement with no enclosing block
-  (confirmed against a real, harmless instance in this file, `:print_fastpath_ambiguous_note`) has
-  no block-closing search for cmd.exe to corrupt, so flagging it would be a pure false positive.
-  Regression tests: `tests/test_check_delimiters_import.py`'s three `test_paren_*` cases (flagged
-  when nested, not flagged at top level, not flagged for a same-line pair).
+  even split across lines -- confirmed as a real shipped regression (PR #408, commit `fd52a3f`).**
+  cmd.exe buffers an entire `if (...)`/`for (...)` block by counting `(`/`)` chars in the raw text
+  -- no concept of "this paren is just prose." A stray `(` on one `echo` line and its matching `)`
+  on the NEXT `echo` line reads as a real block-closing paren the instant the parser reaches it --
+  the block ends there, and whatever token follows the `)` gets parsed as a new top-level command
+  (`failed was unexpected at this time.` when the next word was "failed"). Broke multiple CI lanes
+  simultaneously. `check_delimiters.py` did NOT catch it at the time: a stray `(...)` pair inside
+  echo text is individually balanced, so a whole-file LIFO paren-count scan sees nothing wrong --
+  the hazard is a cross-line split inside an ALREADY-open block, not a raw count mismatch. **Rule:
+  never let a `(`/`)` pair land on different lines inside a parenthesized `.bat` block, even in
+  `echo`/prose text.** Keep the pair on one line, avoid literal parens in wrapped prose (prefer
+  ` -- ` or `,`), or escape both as `^(`/`^)`. **Gap closed same day**: `check_delimiters.py` now
+  flags a `(` opened on an `echo` line, ALREADY nested inside another open bracket, whose matching
+  `)` closes on a different line -- scoped to "already nested" so a harmless top-level echo (no
+  enclosing block, confirmed against `:print_fastpath_ambiguous_note`) doesn't false-positive.
+  Tests: `tests/test_check_delimiters_import.py`'s three `test_paren_*` cases.
 - **Avoid `EnableDelayedExpansion`; if unavoidable, wrap it tightly.** `!` becomes special
   under delayed expansion, and a parent shell launched with `/V:ON` causes `!`-collisions.
   `tests/harness.ps1` `batch.bang.scan` enforces "no `!` in live batch code lines."
@@ -481,40 +328,20 @@ list; the recurring traps that have actually bitten us:
 - **Line endings:** `.bat`/`.ps1` are CRLF, everything else LF, controlled by
   `.gitattributes` (do not hand-edit). LF-only edits to `.bat`/`.ps1` can fail locally
   before git normalizes them on commit.
-- **`:die` uses `exit /b`** (subroutine return), so the batch process can still exit 0 even
-  after a logical failure -- check `~bootstrap.status.json` / log markers, not just the
-  process exit code, when reasoning about success. **2026-07-20: this previously also meant
-  `~bootstrap.status.json` itself could be wrong; fixed at the source 2026-07-22.** `call :die
-  "..."` writes `state=error` transiently, but `:after_cascade_decision`/`:after_env_skip`
-  (both right before `:success`) unconditionally rewrite the status file from whatever
-  `HP_BOOTSTRAP_STATE` currently holds. First discovered via the PyInstaller build-failure call
-  sites (`:run_entry_smoke`'s else-branch): neither set `HP_BOOTSTRAP_STATE`, so a genuine build
-  failure fell through to `:run_exe_smokerun` (silent no-op skip when the EXE is missing), then
-  `:verify_no_exe_interpreter` (ran the raw entry via the interpreter instead), then
-  `:after_cascade_decision` overwrote the status file back to `state=ok` and the process exited
-  0 -- masking a build failure the user had explicitly consented to (`HP_BUILD_OK`). Fixed at
-  the time by setting `HP_BOOTSTRAP_STATE=error` alongside those 3 call sites individually.
-  **A later bug-hunt pass (2026-07-22) confirmed this was a systemic gap, not limited to those 3
-  sites** -- roughly 22 of the file's ~26 `call :die` sites had no companion set, and several
-  (e.g. `:handle_conda_failure`'s own exhausted-fallback `call :die` at the end of the initial
-  conda-create chain) fall through directly into code that keeps using a now-broken `HP_PY`,
-  eventually reaching `:after_cascade_decision` with `HP_BOOTSTRAP_STATE` still at its line-163
-  default of `"ok"`. Several of these were saved from being an OBSERVABLE bug only by accident:
-  a broken `HP_PY` downstream usually causes the PyInstaller build itself to fail later, which
-  hits one of the 3 already-fixed sites and "rescues" the final state via a code path unrelated
-  to the actual original failure -- but any run where the pipeline never reaches that rescue
-  point (e.g. `:determine_entry` finds no entry file, so PyInstaller is never invoked at all)
-  would still silently report `state=ok`. **Fixed centrally instead of per-call-site**: `:die`
-  itself now sets `HP_BOOTSTRAP_STATE=error` unconditionally as its first action, before its
-  existing `call :write_status "error" ...` line -- since `:die`'s entire purpose is representing
-  a fatal failure, this is a one-line fix covering every existing AND future `call :die` site,
-  rather than requiring each one to remember an easy-to-forget companion `set`. The 3
-  already-fixed sites' explicit `set "HP_BOOTSTRAP_STATE=error"` lines are now redundant but
-  harmless (left in place -- no reason to touch already-correct, already-tested code). Regression
-  test: `tests/selfapps_pyinstaller_fail.ps1` (unaffected by this change, still passes via the
-  same mechanism); `self.embed.fallback.decline`/`self.ux.system.gate.real`-style tests that
-  already asserted `state=='error'` continue to pass, now via the direct mechanism instead of the
-  PyInstaller-failure "rescue" coincidence.
+- **`:die` uses `exit /b`** (subroutine return, NOT a process halt), so the batch process can
+  still exit 0 even after a logical failure, and execution routinely continues past a `call :die`
+  line into whatever the enclosing block does next -- check `~bootstrap.status.json` / log
+  markers, not just the process exit code, when reasoning about success. **Fixed at the source
+  2026-07-22**: `:die` itself now sets `HP_BOOTSTRAP_STATE=error` unconditionally as its first
+  action, before its `call :write_status "error" ...` line. Before this fix, only 3 of ~26
+  `call :die` sites had a companion `set "HP_BOOTSTRAP_STATE=error"`; the rest could fall through
+  (e.g. using a now-broken `HP_PY`) all the way to `:after_cascade_decision`/`:after_env_skip`
+  (which unconditionally rewrite the status file from whatever `HP_BOOTSTRAP_STATE` currently
+  holds), silently reporting `state=ok` for a genuine failure. Centralizing the set in `:die`
+  itself covers every existing AND future call site with one line, rather than requiring each one
+  to remember an easy-to-forget companion `set`. Regression coverage:
+  `tests/selfapps_pyinstaller_fail.ps1`, `self.embed.fallback.decline`/
+  `self.ux.system.gate.real`-style tests asserting `state=='error'`.
 
 **PowerShell adjacent traps:** `-or`/`-and` outside a conditional are parsed as parameter
 names ("parameter name 'or'"); `tools/check_delimiters.py` flags these. Multi-line `run:`
@@ -525,26 +352,19 @@ workflows.
 
 ## Windows `move` onto an existing destination: atomic replace for FILES, silent NESTING for DIRECTORIES -- do not assume the same post-check works for both
 
-**Discovered while reviewing the embed tier's `:embed_swap_retry` swap logic (`run_setup.bat`).**
-Requirement 9's swap-verification fix (`:offer_optimized_build`, see its own section below)
-established a correct, well-tested pattern: for a same-volume FILE `move /y` onto an existing
-destination, the operation is atomic (fully replaces the destination, source consumed) or fully
-fails (source AND destination both untouched) -- so checking whether the SOURCE is now gone
-reliably tells you whether the move succeeded, when the destination itself can't be trusted (it
-existed before the move regardless of outcome).
+Requirement 9's swap-verification fix (`:offer_optimized_build`, own section below) established a
+correct pattern: for a same-volume FILE `move /y` onto an existing destination, the operation is
+atomic (fully replaces, source consumed) or fully fails (both untouched) -- so checking whether
+the SOURCE is now gone reliably tells you whether the move succeeded, when the destination itself
+existed before the move regardless of outcome.
 
-**That reasoning does NOT carry over to a DIRECTORY move, and assuming it does is itself a bug** --
-caught here specifically because an initial fix mirrored the file-move pattern onto a directory
-swap without re-verifying the underlying OS semantics first. A `move` of a directory onto a
-destination that still exists does not fail cleanly and does not atomically replace it either: it
-silently NESTS the source directory inside the destination (`move srcdir destdir` where `destdir`
-already exists produces `destdir\srcdir\...`, not `destdir` becoming `srcdir`'s contents). This
-creates a THIRD outcome neither the "check destination" nor the "check source gone" pattern
-detects correctly: if a preceding `rd /s /q` on the destination fails to fully clear it (a lock),
-the subsequent `move` nests rather than erroring -- the stale prior destination content is still
-present at the top level (so "check destination exists" reads false-success), AND the source path
-itself no longer exists as such, since it just got renamed into the nested subfolder (so "check
-source gone" ALSO reads false-success, for an unrelated reason).
+**That reasoning does NOT carry over to a DIRECTORY move** -- caught when an initial fix mirrored
+the file-move pattern onto `:embed_swap_retry`'s directory swap without re-verifying OS semantics
+first. A `move` of a directory onto an existing destination silently NESTS the source inside it
+(`move srcdir destdir` where `destdir` exists produces `destdir\srcdir\...`, not `destdir`
+becoming `srcdir`'s contents) -- neither "check destination" nor "check source gone" detects this
+correctly: if a preceding `rd /s /q` fails to fully clear the destination (a lock), the subsequent
+`move` nests rather than erroring, so BOTH checks read false-success for different reasons.
 
 **The only reliable fix for a directory swap: verify the PRECONDITION (destination actually
 cleared) before attempting the move, not the move's own outcome afterward.** Gate `move` itself on
@@ -561,43 +381,29 @@ third swap site is ever added, classify it as file-vs-directory first before pic
 
 ## A single trailing backslash before a closing quote silently corrupts a subprocess argument
 
-**Discovered 2026-07-18 via a real CI failure** on the REQ-025-family system-directory guard
-(`self.warn.sysdir`, `run_setup.bat`): `findstr /I /C:"%WINDIR%\" >nul` never matched, even
-against a script root genuinely under `%WINDIR%\Temp\...` in real Windows CI -- the guard
-silently never fired (`errFound: false, exitCode: 0` on every lane) despite `HP_SCRIPT_ROOT`
-being provably correct (the OneDrive guard's own substring check, running moments earlier in
-the same file, passed normally).
+**Found via a real CI failure** on the REQ-025-family system-directory guard (`self.warn.sysdir`):
+`findstr /I /C:"%WINDIR%\" >nul` never matched, even under a script root genuinely under
+`%WINDIR%\Temp\...`, despite `HP_SCRIPT_ROOT` being provably correct.
 
-**Root cause: this is NOT a cmd.exe `%VAR%`-expansion bug (the class already documented above)
--- it's the separate, standard Windows C-runtime argv-parsing rule that `findstr.exe` (like
-nearly every native Windows console app) applies to ITS OWN command line after cmd.exe hands it
-off.** That rule: N backslashes immediately followed by a `"` collapse to `N/2` literal
-backslashes, and if N is ODD, the trailing backslash "escapes" the quote -- the quote becomes a
-literal character instead of closing the string. `%WINDIR%\"` expands to `C:\Windows\"`: a
-single (odd) backslash before the quote, so the quote does NOT close -- the rest of the line,
-including the trailing `>nul`, gets silently absorbed into the (now-corrupted, never-matching)
-search pattern. No error, no crash -- the check just quietly never works. Confirmed by directly
-implementing the parsing rule in Python and running both the old and new pattern through it (see
-PR that added this entry for the exact repro) -- verified the OLD pattern indeed fails to close
-the quote, and the FIX (see below) closes it correctly with a single literal trailing backslash
-as intended.
+**Root cause: NOT the cmd.exe `%VAR%`-expansion trap -- it's the separate, standard Windows
+C-runtime argv-parsing rule** `findstr.exe` (like nearly every native Windows console app)
+applies to its own command line after cmd.exe hands it off: N backslashes immediately followed by
+`"` collapse to `N/2` literal backslashes, and if N is ODD, the trailing backslash escapes the
+quote instead of closing it. `%WINDIR%\"` expands to `C:\Windows\"` -- one (odd) backslash before
+the quote, so it doesn't close, and the rest of the line (including `>nul`) gets silently absorbed
+into a corrupted, never-matching search pattern. No error, no crash -- the check just quietly
+never works.
 
-**Fix: double the trailing backslash** (`%WINDIR%\\"` instead of `%WINDIR%\"`) -- an EVEN count
-(2) collapses to exactly one literal backslash and the quote closes normally, giving the intended
-search text (`C:\Windows\`) with the trailing-slash anchor still doing its job of preventing a
-same-prefix false match (e.g. `C:\WindowsFooBar\` does not contain the substring `C:\Windows\`).
+**Fix: double the trailing backslash** (`%WINDIR%\\"`) -- an EVEN count collapses to one literal
+backslash and the quote closes normally, giving the intended search text with the trailing-slash
+anchor still preventing a same-prefix false match.
 
-**Rule of thumb for ANY future `findstr /C:"...%VAR%..."` (or any other native-exe subprocess
-argument) whose value can end in a backslash**: never let a `%VAR%`-expanded value that might end
-in `\` sit immediately before the closing `"` with nothing in between. Either double the trailing
-backslash defensively, or restructure so the closing quote is never adjacent to a variable-derived
-trailing backslash. This is a DIFFERENT hazard from cmd.exe's own parse-time `%VAR%` expansion
-(the "Parse-time vs. runtime variable expansion" entry above) -- that one is about WHEN a `%VAR%`
-gets substituted; this one is about HOW the resulting text is re-parsed by the child process cmd
-hands it to. Existing `findstr /C:"..."` call sites in this file (the UNC-path check at the very
-top, `\\\\`, and the `.gitignore`/`.gitattributes` signature checks) happen to be safe already --
-none of their literal search strings end in an odd number of backslashes -- but this was luck, not
-design, until this entry documented the rule explicitly.
+**Rule for ANY future `findstr /C:"...%VAR%..."` (or other native-exe subprocess argument) whose
+value can end in a backslash**: never let a `%VAR%`-expanded value that might end in `\` sit
+immediately before the closing `"`. Double the trailing backslash defensively, or restructure so
+the closing quote is never adjacent to a variable-derived trailing backslash. Different hazard
+from cmd.exe's own parse-time `%VAR%` expansion (that's about WHEN substitution happens; this is
+about HOW the resulting text is re-parsed by the child process).
 
 ---
 
@@ -607,7 +413,7 @@ design, until this entry documented the rule explicitly.
 is echoed **unquoted**. If `%MSG%` contains a redirection/pipe metacharacter (`<`, `>`, `|`,
 `&`), cmd's parser treats it as a redirection/pipe at execution time, corrupting the log line
 and/or creating a stray file (e.g. `call :log "...with Python >=3.11..."` would try to write
-to a file named `=3.11`). This is the cmd.exe escape trap.
+to a file named `=3.11`).
 
 **Rule:** never pass a value containing `<`/`>`/`|`/`&` into `:log`. If you must surface such
 a value, forward it **only** through a tightly double-quoted argument to the actual command
@@ -652,22 +458,16 @@ labels means each `set`/read happens on a freshly parsed line. **If you refactor
 into nested `( ... )` blocks, re-verify every `%VAR%` you read was not `set` earlier in the
 same block** -- prefer keeping the goto-dispatch shape.
 
-**Second confirmed instance (Slice 2b-C, `:try_fast_exe` / `:verify_no_exe_interpreter`):** an
-earlier revision of the fail-fast probe dispatch launched a process and read
-`set "HP_SMOKE_RC=%ERRORLEVEL%"` (plus the immediate SUCCESS/FAILED `[STATUS]` branch) INSIDE the
-non-interactive `else ( ... )` clause of an `if defined HP_INTERACTIVE_RUN (...) else (...)`
-block -- this is the exact same bug class as the drag-and-drop empty-filename bug and the cascade
-gotcha above, just with `%ERRORLEVEL%` as the frozen variable instead of `%MAIN_FILE%`. It froze
-silently (no error, no crash) to whatever the errorlevel was right before the dispatch began
-(almost always `"0"`, since the preceding line is usually a successful `set`), so a genuinely
-broken cached EXE was NEVER discarded via the non-interactive branch in CI. Fixed the same way as
-the cascade: `if defined HP_INTERACTIVE_RUN goto :<label>_probe` instead of a parenthesized
-if/else, so the launch + `%ERRORLEVEL%` capture + STATUS branch are all top-level lines, each
-parsed fresh. **Any time a diff wraps a previously-top-level "launch a process, read
-`%ERRORLEVEL%`" sequence inside a NEW `if (...) ( ... ) else ( ... )` block for ANY reason
-(feature-flagging, dispatch, refactor), stop and check whether the read is safe** -- this is easy
-to introduce by accident precisely because the surrounding lines look unchanged and the bug
-produces no error, only a silently wrong captured exit code.
+**Second confirmed instance (Slice 2b-C, `:try_fast_exe` / `:verify_no_exe_interpreter`):** the
+same bug class, `%ERRORLEVEL%` as the frozen variable instead of `%MAIN_FILE%` -- an earlier
+revision read `set "HP_SMOKE_RC=%ERRORLEVEL%"` INSIDE the non-interactive `else ( ... )` clause of
+an `if defined HP_INTERACTIVE_RUN (...) else (...)` block, freezing silently to whatever
+errorlevel preceded the dispatch (almost always `"0"`), so a genuinely broken cached EXE was NEVER
+discarded via the non-interactive branch in CI. Fixed the same way: `goto :<label>_probe` instead
+of a parenthesized if/else. **Any time a diff wraps a previously-top-level "launch a process, read
+`%ERRORLEVEL%`" sequence inside a NEW `if (...) else (...)` block, stop and check whether the read
+is safe** -- easy to introduce by accident since it produces no error, only a silently wrong
+captured exit code.
 
 Two more cascade gotchas worth remembering:
 - `if defined HP_CASCADE_TRIED_UV` / `if not defined CONDA_BAT` are **runtime** checks (safe
@@ -676,64 +476,43 @@ Two more cascade gotchas worth remembering:
 - `:cascade_acquire_conda` is `call`ed (not `goto`'d) so it returns; it relies on
   `MINICONDA_ROOT`/`CONDA_MAIN`/`CONDA_ALT` already being set near line 410 (they are, even in
   uv-first runs -- only the *install* at line ~423 is gated on `HP_UV_PROVIDING_PYTHON`).
-- The cascade `:log` messages say **"uv to conda"**, not "uv -> conda". `:log` echoes UNQUOTED
-  (see the ":log echoes UNQUOTED" section above), so a `>` in the message is parsed as a
-  redirection and silently EATS the log line (and litters a stray file). This actually bit
-  slice 3: the cascade ran correctly on Windows (uv->conda->venv->stop, no loop, exit 0) but
-  `self.cascade.exec` failed because its phrase-count assertions never matched -- the
-  `cascading provider uv -> conda` lines had been swallowed by the `>`. Keep these arrow-free.
+- The cascade `:log` messages say **"uv to conda"**, not "uv -> conda" -- `:log` echoes UNQUOTED,
+  so a `>` is parsed as a redirection and silently EATS the log line (and litters a stray file).
+  Bit slice 3 for real: the cascade ran correctly on Windows but `self.cascade.exec` failed
+  because its phrase-count assertions never matched the swallowed lines. Keep these arrow-free.
 
 ---
 
 ## A declined/failed fallback tier must clear HP_PY, not just return failure
 
-**Discovered 2026-07 via the REQ-009 Tier 5 embed-tier tests (the first tests in this repo's
-history to assert the OUTCOME of a fully-exhausted fallback chain, not just that each individual
-decline point was logged).** `:try_system_fallback` sets `HP_PY=%HP_SYS_EXE%` *before* the REQ-014
-consent gate (so it's ready to use immediately on accept), but on EITHER of the two failure exits
-after that point (missing interpreter path, or consent declined) it returned `exit /b 1` without
-clearing `HP_PY` back to empty. Combined with `:die` being `call`ed (not `goto`'d) everywhere --
-see the "Known Findings" `:die` note elsewhere in this file: `exit /b` inside `:die` only returns
-from that one `call`, so execution routinely continues past a `call :die` line to whatever comes
-next in the enclosing block -- the leaked, non-empty `HP_PY` silently satisfied
-`:after_env_mode_selection`'s `if not defined HP_PY (call :die ...)` guard, the LAST checkpoint
-before dependency install/build. The bootstrap then proceeded to actually build and run using
-the STALE interpreter path from the declined/failed system attempt, with `HP_ENV_MODE` left at
-whatever it was last set to (often still `conda`, its optimistic default) -- silently reporting
-full `state=ok` SUCCESS out of a scenario where every real provider tier had failed or been
-declined. This directly blocked the new embed tier from ever being reached in any scenario that
-declines system consent (both `self.embed.fallback.decline` and `self.embed.fallback.real` decline
-system consent to reach embed) -- `self.embed.fallback.real`'s failure signature confirmed it:
-`appRan: true` but `extractedLog`/`readyLog`/`providerLogFound` all `false`, meaning the app ran
-successfully via the leaked system Python without the embed tier ever being attempted at all.
+**Found via the REQ-009 Tier 5 embed-tier tests.** `:try_system_fallback` sets
+`HP_PY=%HP_SYS_EXE%` *before* the REQ-014 consent gate (ready to use immediately on accept), but
+on EITHER failure exit after that point (missing interpreter, or consent declined) it returned
+`exit /b 1` without clearing `HP_PY`. Combined with `:die`'s call-frame-only-return quirk
+(execution continues past a `call :die` line), the leaked, non-empty `HP_PY` silently satisfied
+`:after_env_mode_selection`'s `if not defined HP_PY (call :die ...)` guard -- the bootstrap then
+built and ran using the STALE interpreter path from the declined/failed attempt, silently
+reporting `state=ok` SUCCESS out of a scenario where every real provider tier had failed or been
+declined. This directly blocked the embed tier from ever being reached when system consent was
+declined -- confirmed via `self.embed.fallback.real`'s failure signature: `appRan: true` but every
+embed-specific log flag `false`, meaning the app ran via the leaked system Python without embed
+ever being attempted.
 
-**Fix**: `:try_system_fallback` now sets `HP_PY=` (clears it) on both failure exits, immediately
-before their `exit /b 1`. **Rule for any current or future fallback-tier subroutine that sets
-`HP_PY` (or any other "selected provider" variable) speculatively before a gate that can still
-decline**: every failure/decline exit AFTER that point must clear the variable back to its
-pre-tier state, not just return a non-zero/failure signal -- a failed subroutine's job is to leave
-no trace of its attempt in shared state, since callers may (and in this codebase's case, routinely
-do, via the `:die`-continues quirk) proceed past a declared failure using whatever is left behind.
+**Fix**: `:try_system_fallback` now sets `HP_PY=` on both failure exits, immediately before
+`exit /b 1`. **Rule for any fallback-tier subroutine that sets `HP_PY` (or any "selected provider"
+variable) speculatively before a gate that can still decline**: every failure/decline exit after
+that point must clear the variable back to its pre-tier state -- a failed subroutine must leave no
+trace of its attempt in shared state, since callers may (and routinely do, via the `:die`-continues
+quirk) proceed past a declared failure using whatever is left behind.
 
-**Sibling leak fixed in a follow-up pass:** `:try_venv_fallback`'s `:venv_canary_fail` label had
-the identical pattern -- `HP_PY` is set to `.venv\Scripts\python.exe` during venv creation, and if
-the post-creation canary probe (REQ-023) then fails, it returned `exit /b 1` without clearing
-`HP_PY`. Not hit by either Tier 5 embed test (both force `HP_TEST_FORCE_VENV_FAIL=1`, which exits
-before `HP_PY` is ever set in venv's case, so this leak point wasn't on their path), but the same
-failure mode was plausible: a real-world venv that creates successfully but fails its canary check
-would leak a technically-existing-but-broken interpreter path forward exactly like system's did.
-Fixed with `set "HP_PY="` before that `exit /b 1`, exact mirror of the `:try_system_fallback` fix
-above.
+**Sibling leak fixed in the same pass:** `:try_venv_fallback`'s `:venv_canary_fail` label had the
+identical pattern (`HP_PY` set during venv creation, not cleared if the post-creation canary probe
+then fails) -- not hit by either Tier 5 test, but the same failure mode was plausible for a
+real-world venv. Fixed with `set "HP_PY="`, mirroring the `:try_system_fallback` fix.
 
 ---
 
 ## Env-var flags are scaffolding, not intended run paths (REQ-019)
-
-**Note (2026-07-12): this section's own title previously cited "(REQ-001)" ambiguously.**
-`[REQ-001]` in README.md is the Prime Directive itself, not this rule -- this rule *protects*
-REQ-001, it isn't numbered as it. The rule described here now has its own proper number,
-`[REQ-019]`, promoted from README's previously-unnumbered "Advanced Environment Variables"
-section specifically so it stops needing an ambiguous cross-reference like this one.
 
 The intended run paths are **double-click and drag-and-drop with no environment variables**.
 Every `HP_*` / `PVW_*` variable is test/CI/super-user scaffolding. **No Prime-Directive outcome
@@ -789,31 +568,22 @@ temp file in `$GITHUB_WORKSPACE` and read from disk instead.
 
 ## `download-artifact@v6` `merge-multiple: true` silently overwrites same-named files
 
-**This has now bitten this repo twice with the identical root cause.** When a workflow step
-downloads MULTIPLE artifacts matching a `pattern:`, and each of those artifacts zips a file with
-the SAME local filename (only the artifact's own top-level *name* differs, e.g.
-`ci_test_results-selftest-<mode>-<run>-<attempt>` all containing `ci_test_results.ndjson`, or
-`selftest-verdict-<mode>` all containing `lane_verdict.json`), setting `merge-multiple: true`
-extracts every matched artifact into ONE flat directory. Because the local filenames collide,
-each subsequent download silently overwrites the previous one -- **only the last-downloaded
-artifact's content survives**, with no error, warning, or non-zero exit code anywhere in the
-step. Any step downstream that reads "the file" in that directory silently sees just one lane's
-data instead of all of them.
+**Has bitten this repo twice with the identical root cause.** When a workflow step downloads
+MULTIPLE artifacts matching a `pattern:`, and each artifact zips a file with the SAME local
+filename (only the artifact's own top-level *name* differs), `merge-multiple: true` extracts
+every matched artifact into ONE flat directory -- the local filenames collide, so each subsequent
+download silently overwrites the previous one. **Only the last-downloaded artifact's content
+survives**, no error/warning/nonzero exit anywhere.
 
 **Confirmed instances (both fixed):**
-1. `ndjson-registry-check`'s "Download lane NDJSON artifacts" step (added 2026-07): caught during
-   CI verification of the job's first real run -- the `--log-dir` cross-check reported only 1
-   observed ID across all 8 lanes instead of the expected 100+. This was advisory-only (never
-   affected the job's exit code or the primary doc-vs-code diff), but degraded the tool's third
-   data source to near-uselessness.
-2. `selftest-gate`'s "Download lane verdicts" step (pre-existing, found while auditing the first
-   instance for other occurrences of the same pattern): silently limited the `has_failures`
-   aggregation to whichever single lane's `lane_verdict.json` happened to survive the collision,
-   instead of the OR of all 8 matrix lanes. Lower severity than it sounds -- `has_failures` only
-   feeds `model-quick-fix`'s auto-fix trigger (`HAS_FAILURES` env var), NOT PR merge gating
-   itself (the `real`/`conda-full` matrix jobs gate merges via their own individual GitHub check
-   conclusions, entirely independent of this aggregation) -- but it could have caused the
-   auto-fix bot to skip attempting a fix when a non-surviving lane genuinely had failures.
+1. `ndjson-registry-check`'s "Download lane NDJSON artifacts" step: the `--log-dir` cross-check
+   reported only 1 observed ID across all 8 lanes instead of 100+. Advisory-only (never affected
+   the job's exit code), but degraded the tool's third data source to near-uselessness.
+2. `selftest-gate`'s "Download lane verdicts" step: silently limited `has_failures` aggregation to
+   whichever single lane survived the collision instead of the OR of all 8 lanes. Lower severity
+   than it sounds -- `has_failures` only feeds `model-quick-fix`'s auto-fix trigger, not PR merge
+   gating (that's independent, via each matrix job's own GitHub check conclusion) -- but could
+   cause the auto-fix bot to skip a fix when a non-surviving lane genuinely had failures.
 
 **The fix is the same in both cases and is the correct default: drop `merge-multiple` entirely.**
 Without it, `download-artifact@v6` places each matched artifact into its own
@@ -1004,9 +774,8 @@ Then run `python tools/check_delimiters.py run_setup.bat` and the payload's own
 `PayloadSync` unit test (e.g. `python -m pytest tests/test_pyproj_deps.py -k PayloadSync`).
 
 **No canonical source yet (a shrinking minority -- see AGENTS.md's embedded payload
-inventory table for which payloads still lack one):** decode to a scratch file, edit that,
-then still hand it to `tools/sync_payload.py` for the actual write -- never open
-`run_setup.bat` in write mode by hand, even for a payload with no canonical source.
+inventory table):** decode to a scratch file, edit that, then still hand it to
+`tools/sync_payload.py` for the actual write -- never open `run_setup.bat` in write mode by hand.
 ```python
 import base64, re
 with open('run_setup.bat', 'r', encoding='ascii', errors='ignore') as f:
@@ -1022,125 +791,92 @@ python tools/sync_payload.py HP_VARNAME /tmp/decoded_helper.py
 python tools/check_delimiters.py run_setup.bat
 ```
 
-**PayloadSync tests for a `.ps1` canonical source must normalize CRLF/LF before comparing bytes.**
-All prior PayloadSync precedents (`test_collect_submodules.py`, `test_hidden_import_scan.py`)
-wrap `.py` canonical sources, which are `eol=lf` per `.gitattributes` -- no checkout-time line
-ending translation, so a raw `read_bytes()` byte-comparison against the base64-decoded payload is
-safe. The first `.ps1` canonical source with a PayloadSync test (`tools/embed_extract.ps1`, added
-for REQ-009 Tier 5) hit a real, CI-only failure this precedent didn't anticipate: `.ps1` files
-carry `*.ps1 text eol=crlf`, so `actions/checkout@v5` on the Windows CI runner materializes CRLF
-line endings in the working tree regardless of what the payload was encoded from. If the payload
-was encoded on a Linux/dev sandbox (LF-only working copy, since files created via a local editor
-don't go through git's checkout smudge filter), the base64-decoded bytes stay LF while
-`PS_SOURCE.read_bytes()` on the Windows runner returns CRLF -- a byte-for-byte mismatch that
-passes locally and fails only in real CI. This is a test-assertion bug only, not a functional one:
-the base64 string itself is immune to `.bat` eol conversion (it's plain characters on one line,
-no `\r`/`\n` inside it), and the runtime-extracted `.ps1` script works identically whether it
-lands on disk as LF or CRLF (PowerShell parses both). Fix: normalize both sides with
-`.replace(b"\r\n", b"\n")` before `assertEqual` -- verifies logical content, not incidental
-checkout-time line-ending translation. Any FUTURE PayloadSync test added for a `.bat`/`.ps1`/
-`.cmd`/`.psm1`/`.psd1` canonical source (anything covered by an `eol=crlf` `.gitattributes` rule)
-must include this same normalization from the start; `.py`/`.sh`/other `eol=lf`-attributed sources
-do not need it.
+**PayloadSync tests for a `.ps1` (or any `eol=crlf`-attributed) canonical source must normalize
+CRLF/LF before comparing bytes, or the test passes locally and fails only on real Windows CI.**
+`.py`/`.sh` sources are `eol=lf` (no checkout-time translation, safe to `read_bytes()` and compare
+raw). `.ps1`/`.bat`/`.cmd`/`.psm1`/`.psd1` are `eol=crlf` -- `actions/checkout@v5` on Windows CI
+materializes CRLF regardless of what the payload was encoded from (e.g. LF on a Linux dev
+sandbox), so a raw byte comparison mismatches even though the content is logically identical (the
+base64 string itself is immune -- no `\r`/`\n` inside it -- and the runtime-extracted script
+parses fine either way; this is a test-assertion bug only). Fix: `.replace(b"\r\n", b"\n")` on
+both sides before `assertEqual`.
 
-**Python baseline reminder:** With `UV_PYTHON_PREFERENCE=only-managed`, helpers normally run
-on the latest managed CPython, but fallback paths can still hand them an older ambient
-interpreter. Target modern CPython, guard modern *stdlib features* with `try/except`, and
-keep the file's *syntax* parse-compatible with older interpreters (no `match`/`case`, no
-evaluated `X | Y` unions). See "Embedded-helper Python baseline" above.
+**Python baseline reminder:** see "Embedded-helper Python baseline" above (target modern CPython,
+guard modern stdlib features with `try/except`, keep syntax parse-compatible with older
+interpreters) -- same rule applies to every embedded helper, not just the uv-managed-only case.
 
-**PowerShell helpers apply too, and the choice of inline `-Command` vs. embedded `.ps1` file
-matters more than it looks (Slice 2b-C, `HP_FAILFAST_PROBE`):** `:run_exe_smokerun`'s inline
-`powershell -Command "..."` one-liners work because they carefully avoid ANY literal `"` character
-inside the command body (all internal PowerShell string literals use single quotes, and the final
-captured value is a bare expression like `$p.ExitCode`, never a double-quoted interpolated string).
-The fail-fast probe needed to build a properly-quoted single argument for
-`ProcessStartInfo.Arguments` (`$si.Arguments = '"' + $rawArgs + '"'`, so a script path containing
-spaces still parses as one argument) -- and the `'"'` literal (a single-quoted PowerShell string
-whose CONTENT is one double-quote character) is itself a literal `"` character sitting in the
-command text cmd.exe has to tokenize. **The root cause is any literal `"` appearing anywhere in
-the `-Command` body, not specifically interpolation** -- a literal `"` embedded inside an
-already-double-quoted `-Command "..."` argument breaks cmd.exe's naive quote-toggle tokenization
-of that argument (cmd does not understand PowerShell's quoting rules; it just flips an
-in-quotes/out-of-quotes flag on every literal `"` it sees, with no concept of nesting or of
-"this quote is inside a single-quoted PowerShell string"). String interpolation
-(`"$exceeded|$($p.ExitCode)"`) would trip the SAME hazard if used inline, since it also requires a
-double-quoted PowerShell string, but avoiding interpolation alone (e.g. via `+` concatenation)
-would NOT have been sufficient here -- the `Arguments` quoting step needed a literal `"` character
-regardless of interpolation vs. concatenation. **Fix: emit a standalone `.ps1` file via the
-existing `:emit_from_base64` mechanism (exactly like `HP_FAST_CHECK`/`~fast_check.ps1`) and invoke
-it with `-File` instead of `-Command`.** A real file has no cmd.exe quote-parsing exposure at all
--- write normal, readable PowerShell inside it, quotes and interpolation both included freely.
-Rule of thumb: if an inline `-Command` one-liner would need ANY literal `"` character anywhere in
-its body (interpolation, nested quoting, here-strings, or quoting an argument for
-`ProcessStartInfo`), stop and make it a `.ps1` helper instead of trying to escape around it.
+**PowerShell helpers: prefer an emitted `.ps1` file over inline `-Command "..."` the moment the
+body needs ANY literal `"` character anywhere** (interpolation, nested quoting, here-strings, or
+quoting a `ProcessStartInfo.Arguments` value like `'"' + $rawArgs + '"'`) -- cmd.exe's naive
+quote-toggle tokenizer has no concept of "this quote is inside a single-quoted PowerShell string,"
+so a literal `"` anywhere in the command text breaks its parsing of the `-Command` argument,
+regardless of whether it came from interpolation or plain concatenation. A real `.ps1` file (via
+the existing `:emit_from_base64` mechanism) has no such exposure. This is why `HP_FAILFAST_PROBE`
+became an emitted file instead of an inline one-liner.
 
-**Prefer raw .NET types over Utility-module cmdlets (Get-FileHash, Expand-Archive, Get-Content,
-Set-Content) in embedded `.ps1` helpers invoked from a `for /f` backtick subshell -- module
-auto-loading is not guaranteed there on Windows PowerShell 5.1.** Discovered via a real CI
-failure building the REQ-009 Tier 5 embed tier: `tools/embed_extract.ps1` used `Get-FileHash` to
-verify the downloaded zip's checksum, tested successfully with `pwsh` (PowerShell 7 on this
-repo's Linux dev sandbox), and then failed on every real Windows CI run with `'Get-FileHash' is
-not recognized as the name of a cmdlet, function, script file, or operable program` -- the exact
-`CommandNotFoundException` wording, meaning `Get-FileHash`'s module (`Microsoft.PowerShell.Utility`)
-was genuinely not auto-loading in that specific invocation context (`run_setup.bat`'s
-`for /f "usebackq delims=" %%P in (\`powershell ... -File "helper.ps1" ...\`) do ...` pattern --
-i.e. `powershell.exe` spawned as a backtick subshell child of a `for /f` inside `cmd.exe`).
-`Test-Path`/`Get-Item` (`Microsoft.PowerShell.Management`) worked fine in the same run, so this is
-scoped to `Microsoft.PowerShell.Utility` cmdlets specifically, not module auto-loading in general
--- and it never reproduced under `pwsh`, which does not share Windows PowerShell 5.1's module
-discovery behavior, so **local testing with `pwsh` on Linux cannot catch this class of bug**; it
-only shows up on a real Windows PowerShell 5.1 CI run. Fixed by replacing `Get-FileHash` with
-`[System.Security.Cryptography.SHA256]::Create()` + `[System.IO.File]::OpenRead()`, `Expand-Archive`
-with `[System.IO.Compression.ZipFile]::ExtractToDirectory()` (needs
-`Add-Type -AssemblyName System.IO.Compression.FileSystem` first), and `Get-Content`/`Set-Content`
-with `[System.IO.File]::ReadAllText()`/`WriteAllText()` -- all raw .NET API calls with zero
-PowerShell module dependency, since `System.Security.Cryptography`/`System.IO`/
-`System.IO.Compression` are loaded as part of the CLR itself, not lazily discovered via
-`$env:PSModulePath`. Any future embedded `.ps1` helper reached via this same
-`for /f`-backtick-subshell pattern should default to .NET types for hashing/archive/file-IO
-rather than assuming the equivalent PowerShell cmdlet's module will be available.
+**Prefer raw .NET types over Utility-module cmdlets (`Get-FileHash`, `Expand-Archive`,
+`Get-Content`, `Set-Content`, `Get-Date`) in embedded `.ps1` helpers invoked from a `for /f`
+backtick subshell -- module auto-loading is not guaranteed there on Windows PowerShell 5.1, and
+this cannot be caught by local `pwsh` testing.** `tools/embed_extract.ps1` used `Get-FileHash`,
+tested fine under `pwsh` (PowerShell 7, Linux), then failed on every real Windows CI run:
+`'Get-FileHash' is not recognized as the name of a cmdlet...` -- `Microsoft.PowerShell.Utility`
+genuinely did not auto-load in that specific `for /f "..." in (\`powershell ... -File ...\`)`
+invocation shape. `Microsoft.PowerShell.Management` cmdlets (`Test-Path`/`Get-Item`) worked fine
+in the same run, so this is scoped to `Utility` specifically. `pwsh` never reproduces it (different
+module discovery behavior) -- **only real Windows PowerShell 5.1 CI catches this class of bug**.
+Fix: `[System.Security.Cryptography.SHA256]::Create()`/`OpenRead()` instead of `Get-FileHash`,
+`[System.IO.Compression.ZipFile]::ExtractToDirectory()` instead of `Expand-Archive`,
+`[System.IO.File]::ReadAllText()`/`WriteAllText()` instead of `Get-Content`/`Set-Content`,
+`[datetime]::Now` instead of `Get-Date` (easy to overlook -- same module as the others, so a
+partial fix that missed it would still fail identically). Applied defensively to a second,
+pre-existing `for /f`-backtick-subshell site with the same topology (`:conda_base_update`'s
+timestamp check) even though it was never confirmed broken in CI (masked by a `try/catch`) --
+any future embedded `.ps1` helper reached via this pattern should default to .NET types from the
+start.
 
-**Applied defensively to a second, pre-existing `for /f`-backtick-subshell site with the same
-topology: `:conda_base_update`'s timestamp check (run_setup.bat, was CLAUDE.md Active Backlog
-item, now closed).** This site was NEVER confirmed to have failed in CI -- it is wrapped in a
-`try/catch` that silently defaults to `'update'` on any exception, so a module-autoload failure
-here would be masked (an unnecessary conda update), not a crash, unlike the embed tier's
-unguarded `Get-FileHash` call. Rewritten anyway on the same principle: `Get-Content -Raw` ->
-`[System.IO.File]::ReadAllText(path, [System.Text.Encoding]::ASCII)`, `Test-Path` ->
-`[System.IO.File]::Exists(path)`, and -- worth calling out specifically -- `Get-Date` -> `[datetime]::Now`.
-`Get-Date` is easy to overlook here: it lives in the exact same `Microsoft.PowerShell.Utility`
-module as `Get-FileHash`/`Get-Content`/`Set-Content`, so if the module-autoload gap were ever
-triggered at this call site, `Get-Date` would fail identically -- fixing only the
-Get-Content/Set-Content calls while leaving `Get-Date` in place would have been an incomplete
-fix. All three PowerShell snippets here are inline `-Command "..."` one-liners (not an emitted
-`.ps1` file via `:emit_from_base64`), so per the quoting hazard documented elsewhere in this
-file, the .NET replacement calls stick to single-quoted PowerShell string literals throughout
-(`'...'`) to avoid introducing any literal `"` into the `-Command` body -- confirmed no such
-character was added.
-
-**A second, independent bug hid behind the first and only surfaced once diagnostics were added:**
-once `Get-FileHash` was replaced, a follow-up local `pwsh` test against the real downloaded zip
-showed extraction succeeding but the `._pth` site-imports patch silently NOT applying --
-`(Get-Content ...) -replace '^#import site$', 'import site'` (and its .NET-API equivalent using
-the same regex) never matched, because the embeddable zip's `._pth` file uses CRLF line endings
-and .NET regex `$` in multiline mode matches immediately before `\n`, not before a `\r\n` pair --
-the literal `\r` sits between `site` and the match position, so the anchor never lines up. Fixed
-by widening the pattern to `'(?m)^#import site\r?$'`. This is the same general CRLF-vs-`$`-anchor
-hazard as `.ps1` PayloadSync tests needing CRLF normalization (see "Embedded Helper Update
-Workflow" below) but hits at *runtime* instead of test-time -- worth checking for on ANY regex
-anchor (`^`/`$`) applied to file content that might carry Windows line endings, not just test
-assertions.
+**A second, independent bug hid behind the first, found only after diagnostics were added:** once
+`Get-FileHash` was replaced, extraction succeeded but the embeddable zip's `._pth` site-imports
+patch silently didn't apply -- `-replace '^#import site$', 'import site'` never matched, because
+`._pth` uses CRLF and .NET regex `$` in multiline mode matches before `\n`, not before `\r\n` (the
+literal `\r` sits between `site` and the match position). Fixed by widening to
+`'(?m)^#import site\r?$'`. Same general CRLF-vs-`$`-anchor hazard as the PayloadSync note above,
+but at *runtime* instead of test-time -- check any `^`/`$` regex anchor applied to file content
+that might carry Windows line endings.
 
 **Fail-fast probe window vs. the ~30s hard-kill cap are unrelated numbers, do not conflate them:**
 `HP_FAILFAST_PROBE_MS` (default 10000ms, `:run_failfast_probe`) is a CLASSIFICATION checkpoint --
 how long to wait before deciding "this exited fast, treat a non-zero rc as a stale artifact" vs.
 "this is still running, treat it as the user's real program and never touch it again." The ~30s cap
-used by `:run_exe_smokerun`/`:hidden_import_recover` is a FORCE-KILL CEILING for the one run this
-bootstrapper is ever allowed to `Kill()` (the fresh-build verification run). The probe's second wait
-stage (`$p.WaitForExit()`, no argument) is genuinely unbounded and never kills anything -- raising or
-lowering the probe window only changes how quickly a broken cached EXE gets discarded+rebuilt, it
-never introduces a new kill point.
+used by `:run_exe_smokerun`/`:hidden_import_recover` is a FORCE-KILL CEILING for the fresh-build
+verification run (`~exe_smokerun.ps1`, `HP_SMOKERUN_KILL_MS`, activity-aware -- see "Activity-aware
+EXE-smoke kill" in `docs/agent-interconnect.md`). The probe's second wait stage (`$p.WaitForExit()`,
+no argument) is genuinely unbounded and never kills anything -- raising or lowering the probe window
+only changes how quickly a broken cached EXE gets discarded+rebuilt, it never introduces a new kill
+point.
+
+**A third bounded-launch helper exists, with a DIFFERENT kill philosophy from the two above --
+`~exe_hint_rerun.ps1` (`HP_EXE_HINT_RERUN`, `:exe_smokerun_hints`, closes former Active Backlog
+item 15).** Unlike `~exe_smokerun.ps1`/`~failfast_probe.ps1` (activity-aware: any output before the
+deadline skips the kill, since those cover a REAL run worth waiting on), this helper kills
+UNCONDITIONALLY at its deadline (default `HP_HINT_RERUN_KILL_MS=10000`, test-only override) --
+it exists purely to capture a bounded stdout+stderr snapshot for stderr pattern-matching
+(`ModuleNotFoundError`/`FileNotFoundError` signatures), never shown live to the user, so partial
+output on a hang is fine and strictly preferred over letting a diagnostic-only re-run hang the
+whole bootstrap a second time. Before this fix, `:exe_smokerun_hints` did a plain, untimed
+`"%ENVNAME%.exe" > "~exe_out.txt" 2>&1` -- the one user-code launch point in this file with no
+timeout at all, on the theory that a genuine ModuleNotFoundError/FileNotFoundError always exits
+immediately. That theory holds for the ORIGINAL failure (already classified as fast/real/non-hang
+by the primary verification), but this is a FRESH re-run of the same binary; any non-determinism
+could hang it. Regression tests: `tests/test_exe_hint_rerun.py` (`UnconditionalKill` class
+specifically proves a process that prints once and then hangs is STILL killed -- the defining
+behavioral difference from the other two helpers). **`Process.Kill()` alone only terminates the
+tracked process, not its descendants** -- a spawned child inheriting the redirected pipe can keep
+it open after the parent is killed, hanging an unbounded `ReadToEndAsync().Result` forever. Fixed
+via `taskkill /F /T /PID` (process-tree kill; Windows PowerShell 5.1's .NET Framework has no
+`Process.Kill(entireProcessTree)` overload, that's .NET 5+ only) PLUS an independent bounded final
+read (`Task.Wait($drainMs)`, 5000ms) as a second safety net. The `taskkill /T` half is NOT
+CI-confirmed (no Windows environment available to construct a genuine repro); the drain-wait
+fallback IS verified (`ProcessTreeAndDrainTimeout` test, a grandchild-inherits-the-pipe scenario).
 
 **Why the default is 10000ms, not 5000ms (widened 2026-07):** the original 5000ms default was
 tuned assuming the probe window only needs to outlast a failing process's own error handling
@@ -1179,9 +915,13 @@ when no cached EXE exists yet) -- but this is optional polish, not a correctness
 
 The `cache` CI lane restores a Miniconda install from a GitHub Actions cache to skip the ~99 MB
 download/install on every run. This mechanism has its own self-healing logic that is easy to miss
-because, until this note, it was documented nowhere except inline YAML comments in
-`.github/workflows/batch-check.yml` -- a future agent debugging "why did the cache lane skip
-everything" should read this instead of re-deriving it from the workflow file.
+because it's documented nowhere except inline YAML comments in `.github/workflows/batch-check.yml`
+-- a future agent debugging "why did the cache lane skip everything" should read this instead of
+re-deriving it from the workflow file. **Item 19 (`docs/agent-closed-backlog.md`) closed the
+former self-perpetuating-corruption trap here**: a `restore-keys` PREFIX match that's corrupted
+now gets the stale `Miniconda3` directory deleted (falling through to a genuine fresh install)
+instead of the old unconditional skip-this-run behavior; an EXACT primary-key hit that's corrupted
+still skips (that narrower case needs an explicit cache-deletion API call, not yet implemented).
 
 **Cache key includes the pipreqs version, not just a source hash** (`batch-check.yml:85-87`):
 ```yaml
@@ -1238,14 +978,11 @@ savings. No action needed; recorded here so it isn't re-flagged as a "missing op
 
 ## `uv add --script` / PEP 723 empirical behavior (shared foundation for two features)
 
-Two features in this repo persist resolved dependencies into a script's PEP 723 header via `uv
-add --script`: the automatic, `run_setup.bat`-integrated one (`docs/plan-pep723-writeback.md`) and
-the standalone, manual "PVW QuickStart" one (`docs/plan-pvw-quickstart.md`, partially shipped in
-README's "PVW QuickStart" section). Both depend on the same empirical facts about `uv`'s real
-behavior, established via direct testing across three separate passes (never trusted from
-documentation alone) and originally restated in each plan doc's own words. Consolidated here once
-instead, per this file's own "standalone fact" categorization principle -- each plan doc now
-points back here rather than re-deriving these.
+Two features persist resolved dependencies into a script's PEP 723 header via `uv add --script`:
+the automatic `run_setup.bat`-integrated one (`docs/plan-pep723-writeback.md`) and the manual "PVW
+QuickStart" one (`docs/plan-pvw-quickstart.md`, README's "PVW QuickStart" section). Both rely on
+the same empirically-confirmed (never assumed from docs) `uv` behavior, consolidated here once --
+each plan doc points back here instead of re-deriving these facts.
 
 - **`uv add --script` performs a genuine targeted merge, not a rewrite.** Re-adding an
   already-pinned package by its bare name does not downgrade the pin (confirmed: `flask>=2.0`
@@ -1279,37 +1016,29 @@ points back here rather than re-deriving these.
   Any feature that calls `uv add --script` on a file that might have a hand-maintained lock should
   either skip when one exists, or at minimum document that it will be touched.
 - **Open caching issue -- astral-sh/uv#15156 ("Cached Script Dependencies Not Properly
-  Invalidated").** A sequence of `uv add --script` (change deps) then a later `uv run --script`
-  (or ephemeral run) on the SAME filename can serve a stale cached resolution even after the
-  header changed; renaming the file "fixes" it, implying the cache key is filename-derived. Hit
-  this repo's own testing directly: an early attempt to reproduce a design bug returned a
-  misleadingly clean result because of exactly this stale-cache effect, only resolved by using a
-  fresh filename and clearing `~/.cache/uv`. Relevant to any feature whose entire point is
-  persisting a header for a LATER, independent `uv run` to pick up. **Confirmed to bite a real,
-  shipped call site, not just a dev-testing artifact: `tools/pvw_known_idempotent.py`'s
-  (`HP_PVW_KNOWN_IDEMPOTENT`, REQ-005.13) retry paths.** `uvx autopep723 <entry>` (read from
-  its actual source, `autopep723/__init__.py`'s `run_with_uv`) shells out to `uv run` itself
-  (`--with dep` flags when no header exists yet, or letting `uv` parse an embedded header once
-  one does). `main()`'s "other nonzero" and post-strip-repair branches both call `persist()`
-  (writes a NEW header via `uv add --script`) then immediately re-run the SAME entry file --
-  exactly the change-then-rerun-same-filename trigger this bug describes. Fixed by adding a
-  `force_fresh` parameter to `run_script()` that sets `UV_NO_CACHE=1` in the subprocess env,
-  used ONLY on the two post-persist retry calls (never the first attempt, so the common
-  single-pass case keeps normal caching speed). `tests/test_pvw_known_idempotent.py`'s
-  `RunScript` class and the two retry-branch `MainDispatch` tests assert the env split
-  directly (first call gets no `env` override, the retry gets `UV_NO_CACHE=1`), so a future
-  edit that drops `force_fresh` from either retry call site is caught in CI.
+  Invalidated").** `uv add --script` (change deps) then a later `uv run --script` on the SAME
+  filename can serve a stale cached resolution even after the header changed; renaming the file
+  fixes it, implying the cache key is filename-derived. Confirmed directly in this repo's own
+  testing (an early reproduction attempt gave a misleadingly clean result from exactly this
+  effect, resolved only via a fresh filename + clearing `~/.cache/uv`). **Confirmed to bite a
+  real, shipped call site**: `tools/pvw_known_idempotent.py`'s (`HP_PVW_KNOWN_IDEMPOTENT`,
+  REQ-005.13) retry paths -- `uvx autopep723 <entry>` shells out to `uv run` itself, and
+  `main()`'s "other nonzero"/post-strip-repair branches both call `persist()` (writes a NEW
+  header) then immediately re-run the SAME entry file, exactly this bug's trigger. Fixed via a
+  `force_fresh` parameter on `run_script()` setting `UV_NO_CACHE=1`, used ONLY on the two
+  post-persist retry calls (never the first attempt, so the common single-pass case keeps normal
+  caching speed). `tests/test_pvw_known_idempotent.py`'s `RunScript`/`MainDispatch` tests assert
+  the env split directly, so dropping `force_fresh` from either retry site is caught in CI.
 - **`Get-Content -Raw`'s default text handling silently replaces any invalid-UTF-8 byte with the
-  Unicode replacement character (`U+FFFD` / `EF BF BD`) the instant it reads a file** -- confirmed
-  at the raw byte level, not just visually. For a script saved in a legacy encoding, this corrupts
-  an in-memory "original" backup before any risky operation even begins, so a later "restore" can
-  silently hand back an altered file. Reading and writing via `[System.IO.File]::ReadAllText`/
-  `WriteAllText` with `[System.Text.Encoding]::GetEncoding("ISO-8859-1")` round-trips any file's
-  bytes exactly (`ISO-8859-1` maps every byte value to a distinct character 1:1), regardless of
-  the file's real encoding -- the fix PVW QuickStart uses for its own retry/restore mutation.
-  `plan-pep723-writeback.md`'s automatic feature takes a different, simpler path for the same
-  underlying hazard (skip non-UTF-8 files entirely rather than round-tripping), since it never
-  needs to mutate-then-possibly-restore the same way QuickStart's live retry does.
+  Unicode replacement character (`U+FFFD` / `EF BF BD`) on read** -- confirmed at the raw byte
+  level. For a legacy-encoded script this corrupts an in-memory "original" backup before any risky
+  operation begins, so a later "restore" can silently hand back an altered file. Fix: read/write
+  via `[System.IO.File]::ReadAllText`/`WriteAllText` with
+  `[System.Text.Encoding]::GetEncoding("ISO-8859-1")`, which round-trips any file's bytes exactly
+  (1:1 byte-to-char mapping) regardless of real encoding -- used by PVW QuickStart's own
+  retry/restore mutation. `plan-pep723-writeback.md`'s automatic feature sidesteps the hazard
+  differently (skips non-UTF-8 files entirely, since it never mutate-then-possibly-restores the
+  way QuickStart's live retry does).
 - **A genuinely new dependency's written form depends on the `uv` version, not just on whether
   it's new.** `uv` 0.8.17 wrote bare names (`"requests"`); `uv` 0.11.28 wrote an auto-resolved
   lower bound (`"requests>=2.34.2"`) for the identical operation. Neither feature should assume or
@@ -1322,14 +1051,11 @@ that detail stays in each plan doc, with a pointer back here for the underlying 
 
 ## `autopep723`'s own import-detection is environment-leaky under direct invocation, safe under `uvx`
 
-Discovered while reviewing a user-supplied third-party design proposing to run `autopep723 check`
-next to `pipreqs` in `run_setup.bat`'s discovery phase (`docs/plan-autopep723-two-tier.md`). The
-third-party document made a blanket claim, backed by an 11-scenario test matrix, that `autopep723
-check` "never reports delta" and is "environment-independent" -- i.e. it always reports the
-complete set of third-party imports regardless of what's already installed. **This claim is false
-as a blanket statement, confirmed by reading `autopep723`'s actual source (pulled from the local
-`uv` cache, not guessed at) and by direct reproduction -- but the truth is narrower and still
-usable.**
+A third-party design (`docs/plan-autopep723-two-tier.md`) claimed `autopep723 check` "never
+reports delta" / is "environment-independent" -- always reports the complete set of third-party
+imports regardless of what's already installed. **False as a blanket statement, confirmed by
+reading `autopep723`'s actual source (pulled from the local `uv` cache) and direct reproduction --
+the truth is narrower and still usable.**
 
 `autopep723`'s `get_builtin_modules()` (the function every one of its commands -- `check`, `add`,
 and the default run mode -- calls before filtering "third-party" from "already accounted for")
@@ -1367,14 +1093,7 @@ directly through a lane's own interpreter (e.g. `conda run python -m autopep723 
 future conda-lane integration) is **not** safe as written and must be revised to keep using `uvx`
 even there -- see `docs/plan-autopep723-two-tier.md` for where this correction was applied.
 
-**This also resolves an apparent contradiction, not just a caveat**: a user reported working with
-a third party who suspected this exact delta bug, lost the specific reproduction, and could not
-tell whether it was a miscommunication. It wasn't -- the bug is real and reproduces reliably, it
-just depends on invocation method in a way that made it easy to "fix" by accident (switching from
-a direct interpreter to `uvx` between test sessions) without anyone identifying why the behavior
-had changed.
-
-**One more confirmed, load-bearing fact from the same source-reading pass**: `autopep723` has zero
+**Also confirmed, load-bearing**: `autopep723` has zero
 runtime dependencies of its own (`Requires-Dist` is empty in its distribution metadata), and is
 strictly single-file -- its argument parser (`cli.py`) has no directory, glob, or multi-file mode
 at all. Passing a directory (e.g. `.`) to any subcommand hits `Path.read_text()`'s

@@ -755,6 +755,193 @@ this belongs to).
    opportunistically across this and future PRs' own `cache`-lane runs, not via a dedicated
    verification loop.
 
+### Item 15 (closed 2026-08-01)
+
+- **`:exe_smokerun_hints`'s diagnostic re-run of a freshly-failed EXE had no timeout, unlike every
+   other user-code launch point in `run_setup.bat` -- found 2026-07-31, flagged by a CodeRabbit
+   review on PR #402, fixed 2026-08-01.** `:exe_smokerun_hints` did `pushd dist` then
+   `"%ENVNAME%.exe" > "~exe_out.txt" 2>&1` with no `.NET Process`/`WaitForExit(ms)`/`Kill()`
+   wrapper at all -- a plain, synchronous, unbounded invocation. Every other user-code/EXE launch
+   point in the file (`:run_exe_smokerun`'s primary verification, `:run_failfast_probe`'s three
+   call sites, `:hidden_import_recover`'s own repair-check re-run) is deliberately bounded, either
+   by the ~30s hard-kill ceiling or by the fail-fast-probe's classify-then-never-kill design. The
+   call site's own guard (`if not "%HP_EXE_EXIT%"=="-1" call :exe_smokerun_hints`) only confirms
+   the FIRST launch (inside `:run_exe_smokerun`) exited with a real, non-hang code -- it says
+   nothing about whether the SAME program behaves identically on this SECOND, separate launch a
+   few lines later. Any non-determinism (a race, an env check that sometimes succeeds, anything
+   that occasionally blocks on inherited stdin) could hang this second, untimed invocation and
+   hang the whole bootstrap, even though the FIRST invocation legitimately classified as "fast,
+   real, non-hang failure."
+   **Fixed** with a new dedicated helper, `tools/exe_hint_rerun.ps1` (embedded as
+   `HP_EXE_HINT_RERUN`, following the standard `sync_payload.py`/`emit_from_base64` embedded-helper
+   convention) -- deliberately NOT a reuse of `~exe_smokerun.ps1`'s activity-aware kill philosophy
+   (which skips the kill once any output has been observed, correct for a REAL verification run
+   worth waiting on indefinitely). This re-run is diagnostic-only, never shown live to the user, so
+   the new helper kills UNCONDITIONALLY at its deadline (`HP_HINT_RERUN_KILL_MS`, default 10000ms
+   -- a diagnostic capture on an already-failed run does not need the full 30s primary-verification
+   budget; test-only override, mirroring `HP_SMOKERUN_KILL_MS`'s established pattern). Output is
+   written as ONE combined stdout+stderr file (`~exe_out.txt`, matching the original `2>&1` merge
+   exactly), since the existing `findstr`-based hint-matching in `:exe_smokerun_hints` only checks
+   for substring presence, never which stream a line came from. See
+   `docs/agent-lessons-learned.md`'s "Fail-fast probe window vs. the ~30s hard-kill cap" entry for
+   the full three-helper comparison (`~exe_smokerun.ps1` / `~failfast_probe.ps1` activity-aware vs.
+   `~exe_hint_rerun.ps1` unconditional).
+   **Test coverage**: `tests/test_exe_hint_rerun.py` (new, mirrors `tests/test_exe_smokerun.py`'s
+   established harness -- `sys.executable` as the fake exe, logic fed via inherited stdin, real
+   `pwsh` subprocess). `UnconditionalKill.test_hang_after_output_is_ALSO_killed_unlike_exe_smokerun`
+   is the regression test that actually proves the defining behavioral difference from the other
+   two helpers in this file family: a process that prints once and then hangs is still killed here
+   (unlike `~exe_smokerun.ps1`, where the same shape would be left running unbounded). A
+   `PayloadSync` test confirms the embedded base64 matches the canonical source byte-for-byte
+   (CRLF/LF normalized, per the established `.ps1` PayloadSync convention). No existing test relied
+   on the old unbounded behavior (confirmed via grep for `exe_smokerun_hints`/`exe_out.txt` across
+   `tests/`), so nothing needed to change on the success path.
+   **A genuine gap in the first version of this fix was caught by CodeRabbit review on PR #410
+   before merge: `Process.Kill()` only terminates the immediate tracked process, not its
+   descendants.** A PyInstaller onefile bootloader (or any program) that spawns a child inheriting
+   the redirected stdout/stderr handles can leave that child running after the immediate process
+   is killed -- the pipe then never reaches EOF, and the original unbounded
+   `ReadToEndAsync().Result` read would hang forever, defeating the entire point of adding a
+   bounded helper. Fixed two ways: (1) `taskkill /F /T /PID` (process-tree kill) instead of a bare
+   `Kill()` -- Windows PowerShell 5.1 targets .NET Framework, which has no
+   `Process.Kill(entireProcessTree)` overload (that's .NET 5+ only), so `taskkill /T` is the
+   available mechanism; (2) a bounded final read (`Task.Wait($drainMs)`, hardcoded 5000ms) as an
+   independent second safety net, so even a descendant `taskkill /T` somehow misses cannot hang
+   the helper indefinitely -- it degrades to partial/empty output instead.
+   `tests/test_exe_hint_rerun.py::ProcessTreeAndDrainTimeout` spawns a grandchild that inherits the
+   pipe and outlives its own immediate parent (via `subprocess.Popen(..., stdout=sys.stdout)`),
+   proving the helper still terminates within a bounded time instead of hanging -- when this test
+   was first written, the sandbox this fix was built in had no `taskkill.exe`, so it only proved
+   the drain-wait fallback; **now confirmed on real Windows CI too** (two lanes on PR #410 showed
+   the same test's `returncode`/timing assertions passing, meaning the `taskkill /T` path itself
+   was genuinely exercised there -- only the test's own `tempfile.TemporaryDirectory()` cleanup
+   failed afterward, a separate, Windows-only bug in the TEST fixed below, not in the production
+   helper). Also fixed a
+   second, smaller CodeRabbit finding in the same review: `:exe_smokerun_hints` never explicitly
+   set `HP_HINT_RERUN_OUT` before invoking the helper, relying on its default -- an inherited/leaked
+   value for that env var from elsewhere would silently redirect the helper's output away from the
+   file the hint-matching `findstr` checks actually read. Fixed by setting it explicitly
+   (`~exe_out.txt`) at the call site, matching `HP_HINT_RERUN_EXE`'s own set/clear pattern.
+   **A wall-clock timing assertion in the same test file proved genuinely unfixable by tuning the
+   bound, and had to be redesigned instead.** `UnconditionalKill`'s two tests asserted elapsed
+   time stayed under a fixed ceiling to prove `HP_HINT_RERUN_KILL_MS=500` was actually honored
+   (not silently ignored in favor of the 10000ms default). The first bound (8s) failed on real CI
+   at 9.235s; the revised bound (13s) then failed on THREE SEPARATE real-CI lanes on the very next
+   push, at 13.468s, 14.578s, and 16.328s respectively -- a moving target across runs, not
+   converging toward any stable value, most likely reflecting variable overhead from the new
+   `taskkill.exe` process-tree-kill call (no other helper in this file family spawns it, so there
+   was no prior timing data to draw from) compounded by ordinary load variance on a shared runner
+   deep into a long sequential test suite. **Fixed by removing the dependency on wall-clock time
+   entirely**: `tools/exe_hint_rerun.ps1` now writes its resolved `$killMs` directly to
+   `HP_HINT_RERUN_KILLMS_OUT` (default `~exe_hint_killms.txt`), unconditionally, right after
+   computing it -- production callers never read this file, so it costs nothing there. The tests
+   now assert on that value DIRECTLY (proving the override was read and used, deterministically,
+   immune to CI-runner noise) instead of inferring it from timing. A generous, untuned wall-clock
+   ceiling (45s, well below the underlying test scripts' own 120s sleep) is kept only as a coarse
+   sanity net against the kill mechanism being completely broken -- it is not expected to need
+   future adjustment for ordinary CI variance, since it no longer needs to distinguish "honored a
+   500ms override" from "silently fell back to 10000ms," only "did the kill fire at all."
+
+### Item 12 (closed 2026-08-01)
+
+- **`:embed_dl_retry`'s genuine mid-download-failure-then-retry-once path (REQ-009 Tier 5) had no
+   CI test hook at all -- found 2026-07-29 while documenting the embed-tier download for
+   `docs/demo-bootstrapper-output.md`'s Part VI, Scenario 20, fixed 2026-08-01.** Only two test
+   hooks existed for this tier -- `HP_TEST_FORCE_EMBED_FAIL` (immediate decline, no download
+   attempted) and `HP_TEST_FORCE_EMBED_REAL` (a full, real, successful download end-to-end).
+   Neither exercised the retry branch: `:embed_dl_retry`'s own `[WARN] embed fallback: download
+   failed; retrying once.` line (both curl and PowerShell failing on the FIRST try, succeeding on
+   the second) was reachable in principle but never observed firing in any real CI run.
+   **Fixed** with a new one-shot test hook, `HP_TEST_FORCE_EMBED_DL_FAIL_ONCE=1`, mirroring the
+   existing `HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL`-style one-shot-then-succeed pattern already
+   used for REQ-022's conda-create retry -- deterministically fails ONLY the first download
+   attempt (no network touched) and clears itself immediately, so the second attempt always goes
+   through for real. `:embed_dl_retry` was restructured to share its "retry vs. give up" decision
+   (`if %HP_EMBED_DL_ATTEMPT% LSS 2 (...)`) between the real-failure path and the test-hook path
+   via a new shared `:embed_dl_attempt_failed` label, rather than duplicating that logic.
+   **Test coverage**: `self.embed.dl.retry` (new, `tests/selfapps_ux_hardening.ps1`), combining
+   the new one-shot-fail hook with the existing `HP_TEST_FORCE_EMBED_REAL=1` (same narrow
+   `HP_OFFLINE_MODE` hole as the sibling `.real` scenario) so the SECOND, real attempt genuinely
+   downloads/extracts/verifies/runs -- asserts both the `[TEST] HP_TEST_FORCE_EMBED_DL_FAIL_ONCE:`
+   hook-fired line and the `[WARN] ... retrying once.` line appear, AND that the tier still
+   succeeds end-to-end afterward (proving retry-then-succeed, not just retry-then-give-up). Skips
+   with `skip=true` in the conda-full lane, same reasoning as `.decline`/`.real`. Registered in
+   `docs/agent-ndjson.md`'s row registry per this file's own AGENT DIRECTIVE.
+
+### Item 10 (closed 2026-08-01)
+
+- **Two of the five `PVW_*` super-user override variables (`PVW_PYTHON_EXE`, `PVW_WORKSPACE`) had
+   ZERO test coverage of any kind, and ALL FIVE had zero coverage of their invalid-value behavior
+   -- found 2026-07-29 while documenting them for `docs/demo-bootstrapper-output.md`'s Part V,
+   fixed 2026-08-01.** `PVW_UV_EXE` and `PVW_TARGET_PY` each had real, valid-value CI coverage
+   incidental to another test's own purpose; `PVW_CONDA_EXE` had dedicated coverage
+   (`self.corrupt.conda.override_exit`); `PVW_PYTHON_EXE`/`PVW_WORKSPACE` had none at all, and no
+   test anywhere exercised an INVALID value for any of the five.
+   **Fixed** with a new file, `tests/selfapps_pvw_overrides.ps1` (uv lane only, non-gating),
+   covering the item's own suggested shape in full: both currently-zero-coverage variables'
+   valid-value paths (the cheapest, highest-value gap), plus 2 representative invalid-value
+   scenarios (not the full 5x2 combinatorial matrix, per the item's own "2-3 representative cases
+   would likely cover the real risk" reasoning) --
+   - `self.pvw.python_exe.valid` -- a two-stage test: stage 1 does an ordinary uv bootstrap purely
+     to materialize a real, working interpreter; stage 2 is a genuinely fresh scratch directory
+     (so the EXE-cache fast path cannot short-circuit past `:after_env_mode_selection`, where the
+     override actually applies) running a different stub app with `PVW_PYTHON_EXE` pointed at
+     stage 1's interpreter -- confirms the override log line fires and the app runs successfully
+     via the borrowed interpreter.
+   - `self.pvw.workspace.valid` -- a fresh bootstrap with `PVW_WORKSPACE` set to a custom
+     directory -- confirms the debug override log line fires, `Scripts\python.exe` exists at the
+     CUSTOM path (not the default `.uv_env`), the default env was never created, and the app
+     still runs successfully from the relocated venv.
+   - `self.pvw.python_exe.invalid` -- `PVW_PYTHON_EXE` set to a nonexistent path -- confirms the
+     pre-existing interpreter smoke test right after the override
+     (`"%HP_PY%" -c "print('py_ok')" ... || (... [WARN] Interpreter smoke test failed
+     (continuing). ...)`) absorbs the broken value gracefully, exactly as the original static
+     trace predicted -- no uncontrolled crash.
+   - `self.pvw.workspace.invalid` -- `PVW_WORKSPACE` set to a path already occupied by a plain
+     file (uv cannot create a venv "inside" a file) -- confirms the failure cascades to the SAME
+     already-established `:uv_venv_fail` -> conda-create fallback every other uv-venv-creation
+     failure in this file already goes through, rather than a raw, unhandled failure. Deliberately
+     does NOT require the conda fallback to actually succeed, only that it's reached -- a real
+     Miniconda download in this lane is an already-accepted cost (see `self.conda.bothfail`'s own
+     precedent).
+   All four skip with `skip=true` in the conda-full lane (uv is never the provider there).
+   **Remaining invalid-value combinations for `PVW_UV_EXE`/`PVW_TARGET_PY` (and any beyond the
+   `PVW_CONDA_EXE` case already covered by `self.corrupt.conda.override_exit`) are deliberately
+   NOT built** -- the original finding's own reasoning (the failure-absorption mechanism is
+   shared/generic across most of these, so a combinatorial 5x2 matrix would mostly duplicate the
+   same proof) still applies; revisit only if a real-world trigger surfaces a gap the
+   representative cases above don't actually cover.
+
+### Item 13 (closed 2026-08-01)
+
+- **`self.warn.longpath`'s own real CI run showed an INCONCLUSIVE result (`ranBootstrap:false`),
+   yet the test still reported an overall pass -- found 2026-07-29 while documenting the
+   path-length pre-flight guard for `docs/demo-bootstrapper-output.md`'s Part VI, Scenario 24,
+   root-caused and fixed 2026-08-01.** The original finding's NDJSON row (run `30328748330`,
+   `real` lane) read `warnFound: false, ranBootstrap: false, pathLen: 312`. **Root cause
+   (`tests/selftest.ps1`'s long-path scenario)**: `$lpRanBootstrap` is only set `$true` right
+   after the `cmd /c "call run_setup.bat ..."` line executes without PowerShell itself throwing;
+   the surrounding `try { Push-Location $longDir; ... } catch { $lpRanBootstrap = $false }` means
+   a `Push-Location` failure (thrown BEFORE `cmd /c` is ever reached) lands in the catch block
+   with `$lpRanBootstrap` still at its initial `$false`. `Push-Location` throws here because
+   default GitHub-hosted Windows runners do not have `LongPathsEnabled` turned on, so
+   PowerShell's own CWD-navigation cannot enter a >260-char directory at all -- `run_setup.bat`'s
+   own long-path guard is never reached, genuinely never confirming the WARN fires.
+   **Confirmed PERSISTENT, not a one-off**: a second real CI run on PR #410 (months after the
+   original finding) showed the byte-identical signature (`ranBootstrap:false, warnFound:false,
+   pathLen:312, pass:true`) -- same runner limitation, same scratch-path length, same outcome.
+   **Fixed**: `$lpPass`/the NDJSON row now distinguish three outcomes instead of two --
+   bootstrap ran and the WARN fired (real pass/fail on `$lpWarnFound`/`$lpExit`), bootstrap could
+   not even be attempted but the scratch path was verified long enough (now reported as
+   `skip=true, reason='runner-cannot-navigate-long-path'` rather than a plain, overstated pass --
+   mirrors this repo's established skip pattern for "infra could not reach the code path under
+   test," e.g. the conda-not-installed-uv-first pattern in `docs/agent-interconnect.md`), or the
+   scratch path itself was not built long enough (a genuine test-setup bug, still a hard FAIL).
+   `docs/demo-bootstrapper-output.md`'s Scenario 24 was already correctly labeling the WARN text
+   `[Extrapolated Branch]` for this exact reason -- no change needed there, since this fix only
+   makes the NDJSON row's own `pass`/`skip` fields honestly reflect what the earlier investigation
+   had already concluded from source.
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a

@@ -21,65 +21,48 @@ this file immediately in the SAME commit (edit existing entries, do not only app
 
 ## Concurrent-instance lock (REQ-024) touches every exit path -- call-graph tracing method
 
-The lock (`:acquire_lock`/`:lock_is_stale`/`:release_lock`, called near the top of the file
-right after `%STATUS_FILE%` cleanup, released at `:die` and `:success`) is a cross-cutting
-concern: **any future change that adds a NEW top-level process-terminating `exit /b` site, or
-converts an existing `call`-based subroutine into a `goto`-only continuation of the main line,
-must consider whether that site also needs `call :release_lock` before it.** This section
-documents the call-graph tracing method used to scope the lock's release points, and its limits,
-so a future agent doesn't have to rediscover them.
+The lock (`:acquire_lock`/`:lock_is_stale`/`:release_lock`, called near the top of the file right
+after `%STATUS_FILE%` cleanup, released at `:die` and `:success`) is cross-cutting: **any new
+top-level process-terminating `exit /b` site, or any conversion of a `call`-based subroutine into
+a `goto`-only continuation of the main line, must consider whether that site also needs
+`call :release_lock` before it.**
 
-**Why release is hooked at `:die`/`:success` only, not all ~100 `exit /b` sites.** Before this
-feature, `run_setup.bat` had 129 `:label` definitions and 55 top-level (unindented) `exit /b`
-sites (100 total once indented/parenthesized ones are included). A naive count of lines matching
-`exit /b` (including ones indented inside parenthesized blocks) is not a reliable proxy for
-"process-terminating site" -- whether a given `exit /b` actually terminates the whole process or just
-returns from a subroutine depends on the RUNTIME call stack at that point, not on whether the
-label it lexically sits under was ever `call`ed -- CMD.EXE's `exit /b` returns to the nearest
-active `call` frame, and a label reached purely via `goto` from *inside* an active call frame
-(e.g. `:venv_canary_fail`, reached by `goto` from within `:try_venv_fallback`'s call frame) still
-returns to `:try_venv_fallback`'s caller, not the whole process. A static, line-based CFG walk
-(BFS over `goto`/`call`/fall-through edges, attempted while designing this feature) correctly
-proves depth for pure goto/call/fall-through code, but breaks down at parenthesized
-`if (...) ( ... ) else ( ... )` blocks: a bare `exit /b N` line lexically inside such a block is
-only reached when the block's condition is true, and the walker has no notion of "skip to the
-line after the matching close-paren" for the false branch without a full paren-balance parser --
-early lines 45-52 (`if not exist "%~dp0" ( ... exit /b 1 )`) demonstrated this: the naive walker
-treated that `exit /b 1` as *always* reached and stopped exploring right there, never proving
-reachability for the other ~4000 lines that obviously do execute in a normal run. Building a true
-paren-aware CFG parser was assessed as disproportionate effort for this feature.
+**Why release is hooked at `:die`/`:success` only, not all ~100 `exit /b` sites** (`run_setup.bat`
+has 129 `:label`s, 55 top-level `exit /b` sites, 100 total including indented/parenthesized ones):
+whether a given `exit /b` terminates the whole process or just returns from a subroutine depends
+on the RUNTIME call stack, not on whether its label was ever `call`ed -- `exit /b` returns to the
+nearest active `call` frame, and a label reached purely via `goto` from inside an active call frame
+(e.g. `:venv_canary_fail`, reached from within `:try_venv_fallback`'s frame) still returns to that
+caller, not the whole process. A static line-based CFG walk (BFS over goto/call/fall-through edges)
+proves depth for pure goto/call/fall-through code but breaks on parenthesized
+`if (...) ( ... ) else ( ... )` blocks -- it has no notion of "skip to after the matching
+close-paren" for the false branch without a full paren-balance parser, so it wrongly treats any
+`exit /b` lexically inside such a block as always-reached. A true paren-aware CFG parser was
+assessed as disproportionate effort.
 
-**`tools/audit_batch_exit_paths.py`** (new, not wired into CI -- run by hand) captures the
-label/call/exit inventory this section is based on: it lists every label, every `call :label`
-site, and every `exit /b` site with its containing label and whether that label is ever `call`ed
-anywhere in the file. It explicitly does NOT attempt the paren-aware CFG proof described above --
-its own module docstring documents the same "called=False is a hint, not proof" limitation. Use
-it as the starting point for a future exit-path audit (e.g. before reworking this lock feature,
-or before adding a new top-level consent gate), not as a final answer on its own.
+**`tools/audit_batch_exit_paths.py`** (not wired into CI, run by hand) captures the label/call/exit
+inventory instead: every label, every `call :label` site, every `exit /b` site with its containing
+label and whether that label is ever `call`ed anywhere. It deliberately does NOT attempt the
+paren-aware CFG proof -- its own docstring documents "called=False is a hint, not proof." Starting
+point for a future exit-path audit, not a final answer.
 
-**The practical, sufficient answer instead:** CMD has no `finally`/`trap`, so a lock design that
-depends on *proving* every exit path releases it is the wrong shape regardless of how good the
-audit is -- a `Ctrl+C`, a killed process, a power loss, or a genuinely-missed exit site all bypass
-any release hook unconditionally. The correct backstop is age-based staleness (already the
-design), so the release hooks at `:die`/`:success` are an optimization (avoid leaving a stale
-lock around for up to ~2 hours after an ordinary successful run or an ordinary handled failure),
-not the correctness mechanism. Both labels were independently confirmed as the two universal
-funnels for the normal flow: every `call`-based consent-gate decline (REQ-014 system-Python
-consent, REQ-009 cascade consent, REQ-013 connectivity decline, the venv canary probe, etc.)
-returns up its call chain and continues the bootstrap (possibly into a further fallback tier)
-rather than terminating the process directly, and the EXE fast path's early success shortcut
-(`:try_fast_exe`, called at line ~294, near the top of the file) also funnels through `:success`
-(confirmed separately in the "EXE fast path vs env-state fast path" section below). The three
-handful of truly-early, pre-label `exit /b 1` sites (workspace-path-invalid guards, lines ~47/52)
-execute before the lock is ever acquired (lock acquisition is placed intentionally AFTER those
-checks), so they need no release call by construction.
+**The actual correctness mechanism is age-based staleness, not proven release-path coverage** --
+CMD has no `finally`/`trap`, so a design depending on proving every exit path releases the lock is
+the wrong shape (Ctrl+C, a killed process, power loss, or a missed exit site all bypass any release
+hook). The `:die`/`:success` hooks are an optimization (avoid a stale lock for up to ~2h after an
+ordinary run), not the guarantee. Both are confirmed universal funnels for the normal flow: every
+`call`-based consent-gate decline (REQ-014, REQ-009 cascade, REQ-013 connectivity, venv canary,
+etc.) returns up its call chain and continues the bootstrap rather than terminating directly, and
+the EXE fast path's early-success shortcut (`:try_fast_exe`, ~line 294) also funnels through
+`:success` (see "EXE fast path vs env-state fast path" below). The few truly-early, pre-label
+`exit /b 1` sites (workspace-path-invalid guards, ~lines 47/52) execute before the lock is ever
+acquired, so need no release call.
 
-**If you add a new top-level (non-`call`ed) `exit /b` site to the main line in the future**, ask
-whether it can be reached with an empty call stack (i.e., directly off a `goto` from the main
-line, not from inside any `call`ed subroutine's continuation chain). If so, and if it is a
-*routine* exit that a real user could hit often (not a crash), add `call :release_lock` before it
--- the same way `:die` and `:success` do -- so a normal repeated-decline pattern doesn't leave
-stale locks for other users of the same folder to wait out.
+**Rule for a new top-level (non-`call`ed) `exit /b` site**: if it's reachable with an empty call
+stack (directly off a `goto` from the main line, not from inside any `call`ed subroutine's
+continuation chain) AND is a *routine* exit a real user could hit often (not a crash), add
+`call :release_lock` before it -- same as `:die`/`:success` -- so a repeated-decline pattern
+doesn't leave stale locks for other users of the same folder.
 
 ---
 
@@ -88,440 +71,306 @@ stale locks for other users of the same folder to wait out.
 **Touch either subroutine, must understand the other.** `:try_nuitka_tier_a` (AV-Safe Build Path
 requirements 2-4, `docs/prd-av-safe-build-path.md`) attempts a Nuitka fallback build when
 PyInstaller's own build fails; on success it sets `HP_NUITKA_FALLBACK_USED=1` and
-`dist\<env>.exe` is a Nuitka-produced binary, not a PyInstaller one. `:hidden_import_recover`
+`dist\<env>.exe` becomes a Nuitka-produced binary, not a PyInstaller one. `:hidden_import_recover`
 (REQ-016 Slice 2, see `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay
-STRICT" entry) is the ONLY post-build repair mechanism this bootstrapper has for a frozen EXE
-that fails at runtime with a `ModuleNotFoundError` for an installed module -- and its repair
-action is a PyInstaller-specific rebuild (`--hidden-import=X`), which does not apply to a
-Nuitka-built EXE at all (Nuitka has its own, structurally different `--include-module`/
-`--follow-import-to` mechanism, not wired up here).
+STRICT" entry) is the ONLY post-build repair mechanism for a frozen EXE that fails at runtime with
+a `ModuleNotFoundError` for an installed module -- its repair action is a PyInstaller-specific
+rebuild (`--hidden-import=X`), which does not apply to a Nuitka-built EXE (Nuitka has its own,
+structurally different `--include-module`/`--follow-import-to` mechanism, not wired up here).
 
-**Real bug found and fixed via a refinement pass, 2026-07-21 (same day Tier A shipped):**
-`:hidden_import_recover` had no check for `HP_NUITKA_FALLBACK_USED` before its first line of real
-work -- it would unconditionally re-run the EXE, scan for a fixable `ModuleNotFoundError`, and (if
-found) rebuild via `PyInstaller -y --onefile ... --hidden-import=X`, silently discarding the
-Nuitka-built `dist\<env>.exe` and replacing it with a fresh PyInstaller attempt. Since Tier A only
-runs when the ORIGINAL PyInstaller build already failed once this run, this PyInstaller rebuild
-inside the recovery loop had a real chance of reproducing the exact failure Tier A exists to route
-around (e.g. AV quarantine), or at minimum wasting the loop's 3-attempt budget on the wrong tool
-while leaving the working Nuitka EXE's fate undefined mid-rebuild. `HP_NUITKA_FALLBACK_USED` is
-process-global and safely readable at `:hidden_import_recover`'s entry point (only one `setlocal`
-exists in the whole file, at the very top, disabling delayed expansion -- no scoping boundary sits
-between the build block that sets the variable and this subroutine).
+**Bug found and fixed (2026-07-21, same day Tier A shipped):** `:hidden_import_recover` had no
+check for `HP_NUITKA_FALLBACK_USED` before its first real work -- it would unconditionally re-run
+the EXE, scan for a fixable `ModuleNotFoundError`, and rebuild via `PyInstaller -y --onefile ...
+--hidden-import=X`, silently discarding the Nuitka-built EXE for a fresh PyInstaller attempt. Since
+Tier A only runs when the ORIGINAL PyInstaller build already failed, this rebuild had a real chance
+of reproducing the exact failure Tier A exists to route around (e.g. AV quarantine), or at minimum
+burning the loop's 3-attempt budget on the wrong tool. `HP_NUITKA_FALLBACK_USED` is process-global
+and safely readable at `:hidden_import_recover`'s entry (only one `setlocal` exists in the whole
+file, at the top, disabling delayed expansion -- no scoping boundary between the build block that
+sets it and this subroutine).
 
-**Fix**: `:hidden_import_recover` now checks `if defined HP_NUITKA_FALLBACK_USED` immediately
-after its existing `if not exist "dist\%ENVNAME%.exe" exit /b 0` early-return, and exits `/b 0`
-immediately (skip, not attempt-and-fail) with an `[INFO][HIDDEN_IMPORT]` log line explaining why.
-This is deliberately a SKIP, not a Nuitka-aware repair -- wiring up Nuitka's own missing-import
-recovery mechanism is out of scope for this fix and would be its own future feature if ever
-needed. Regression test: `tests/selfapps_nuitka_tiera_hidden_skip.ps1` (uv lane, non-gating,
+**Fix**: `:hidden_import_recover` now checks `if defined HP_NUITKA_FALLBACK_USED` right after its
+existing `if not exist "dist\%ENVNAME%.exe" exit /b 0` early-return, and exits `/b 0` immediately
+(skip, not attempt-and-fail) with an `[INFO][HIDDEN_IMPORT]` log line -- deliberately a SKIP, not a
+Nuitka-aware repair (wiring up Nuitka's own missing-import mechanism is a future feature if ever
+needed). Regression test: `tests/selfapps_nuitka_tiera_hidden_skip.ps1` (uv lane, non-gating,
 `self.exe.tiera.hidden_skip`) -- forces Tier A via `HP_TEST_FORCE_PYINSTALLER_FAIL=1`, lets a real
 Nuitka build succeed, and has the stub app print a FABRICATED
 `ModuleNotFoundError: No module named 'nuitka'` to stderr before exiting 1 (`nuitka` is guaranteed
-installed in the exact build interpreter Tier A just used, so the scanner's `find_spec` gate would
-treat it as fixable if the skip guard were missing or broken) -- then asserts the skip log line
-fires and the OLD `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=` rebuild line does NOT.
+installed in Tier A's own build interpreter, so the scanner's `find_spec` gate would treat it as
+fixable if the skip guard were missing) -- asserts the skip log fires and the OLD
+`[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=` rebuild line does NOT.
 
-**The warnfix-triggered rebuild (a SECOND PyInstaller rebuild call site, inside the
-`HP_WARNFIX_NEEDED` block) had the mirror-image gap, found via a later bug-hunt review pass: no
-failure handling at all, and no `HP_NUITKA_FALLBACK_USED` clearing on success.** Unlike the
-original build a few dozen lines earlier (which routes every failure through `:try_nuitka_tier_a`
-/ `:die` / `HP_BOOTSTRAP_STATE=error`), the warnfix rebuild's `"%HP_PY%" -m PyInstaller ...`
-call had no `if errorlevel 1` check at all -- the very next line unconditionally logged
-`[REPAIR] rebuild complete after warnfix.` regardless of whether it actually did, and nothing
-re-checked `dist\%ENVNAME%.exe`. A genuine rebuild failure here (e.g. the exact AV-lock class the
-whole PRD exists to route around) fell through to `:run_exe_smokerun`'s silent no-op-when-missing
-skip, then a clean interpreter-fallback run, ending in a false `state=ok`. Fixed with the same
-`if errorlevel 1 (...) else if not exist "dist\%ENVNAME%.exe" (...) else (...)` shape, nested
-if/else (no goto, matching the "safe inside a parenthesized block" pattern the original build's
-own comment documents) -- **deliberately NOT retried via `:try_nuitka_tier_a`** unlike the
-original build: this rebuild only exists to bundle an already-installed warnfix module into an
-EXE that was already confirmed working before this attempt, so the conservative, honest response
-to a failure is to report it via `HP_BOOTSTRAP_STATE=error`, not to speculatively invoke a second
-build tool inside an already-nested failure path. On a SUCCESSFUL rebuild, the fix also clears
-`HP_NUITKA_FALLBACK_USED` -- this rebuild always uses PyInstaller, so if the EXE it just replaced
-was previously Nuitka-built (a stale PyInstaller `build\%ENVNAME%\warn-%ENVNAME%.txt` can survive
-a Tier-A-rescued build and still trigger this warnfix block), the flag must reflect that the file
-at `dist\%ENVNAME%.exe` is now genuinely PyInstaller-built, or `:hidden_import_recover`'s own
-guard above would wrongly keep skipping repair on it. No dedicated CI test added for this specific
-fix (a review-pass correctness fix reusing an already-thoroughly-tested failure-handling shape,
-not a new feature) -- flagged in CLAUDE.md as a candidate for a future dedicated test pass if this
-path's real-world trigger rate ever justifies it.
+**Mirror-image gap found via a later bug-hunt pass, in the warnfix-triggered rebuild (a SECOND
+PyInstaller rebuild call site, inside `HP_WARNFIX_NEEDED`): no failure handling at all, and no
+`HP_NUITKA_FALLBACK_USED` clearing on success.** Unlike the original build (which routes every
+failure through `:try_nuitka_tier_a`/`:die`/`HP_BOOTSTRAP_STATE=error`), this rebuild's
+`"%HP_PY%" -m PyInstaller ...` call had no `if errorlevel 1` check -- the next line unconditionally
+logged `[REPAIR] rebuild complete after warnfix.` regardless of outcome, and nothing re-checked
+`dist\%ENVNAME%.exe`. A genuine failure here (the exact AV-lock class the PRD exists to route
+around) fell through to `:run_exe_smokerun`'s silent no-op-when-missing skip, then a clean
+interpreter-fallback run, ending in a false `state=ok`. Fixed with the same
+`if errorlevel 1 (...) else if not exist "dist\%ENVNAME%.exe" (...) else (...)` nested if/else
+shape (no goto, matching the "safe inside a parenthesized block" pattern) -- **deliberately NOT
+retried via `:try_nuitka_tier_a`**: this rebuild only bundles an already-installed warnfix module
+into an EXE already confirmed working, so the conservative response to failure is
+`HP_BOOTSTRAP_STATE=error`, not a speculative second build tool inside an already-nested failure
+path. On SUCCESS the fix also clears `HP_NUITKA_FALLBACK_USED` -- this rebuild always uses
+PyInstaller, so if the EXE it just replaced was previously Nuitka-built (a stale
+`build\%ENVNAME%\warn-%ENVNAME%.txt` can survive a Tier-A-rescued build and still trigger this
+block), the flag must reflect the file is now genuinely PyInstaller-built, or
+`:hidden_import_recover`'s guard above would wrongly keep skipping repair. No dedicated CI test
+(a review-pass correctness fix reusing an already-tested failure-handling shape) -- flagged in
+CLAUDE.md as a candidate for a future dedicated test pass if this path's trigger rate justifies it.
 
-**If a future Tier B (requirement 5, reprovisioned pinned-3.12 environment, dropped from the
-backlog -- see CLAUDE.md's Known Findings) or any other alternate-build-tool path is added, it
-needs this same guard.** The check belongs on
-`HP_NUITKA_FALLBACK_USED` specifically (or an equivalent "the EXE currently at `dist\<env>.exe`
-was NOT built by PyInstaller" signal) -- any future subroutine that can produce `dist\<env>.exe`
-via something other than PyInstaller should set an analogous marker and this guard should be
-extended to check it, not just the one existing flag.
+**Any future Tier B or alternate-build-tool path needs this same guard**, on
+`HP_NUITKA_FALLBACK_USED` specifically (or an equivalent "the EXE at `dist\<env>.exe` was NOT built
+by PyInstaller" signal) -- any subroutine that can produce `dist\<env>.exe` via something other
+than PyInstaller should set an analogous marker and extend this guard to check it.
 
 ---
 
 ## AV-Safe Build Path requirement 9 (`:offer_optimized_build`) -- a strictly safer sibling of Tier A
 
 **Shares `:try_nuitka_tier_a`'s Nuitka invocation but NOT its "delete first, build second" safety
-posture, and that difference is the entire point.** Tier A runs only after the PyInstaller build
-already failed, so it is free to `del "dist\%ENVNAME%.exe"` before attempting a replacement --
-there is nothing working to lose. `:offer_optimized_build` (requirement 9, called from
-`:smokerun_ndjson` right after `call :run_postexec_checkpoint exe`, before `HP_EXE_EXIT` is
-cleared) runs in the OPPOSITE situation: PyInstaller already succeeded AND the EXE already passed
-its smoke-test verification. A design that deleted/overwrote `dist\%ENVNAME%.exe` up front (Tier
-A's own pattern) would risk losing a confirmed-working build to an elective, human-declinable
-upsell -- unacceptable. Instead it builds to a distinct temp name
+posture -- that difference is the entire point.** Tier A runs only after PyInstaller already
+failed, so it's free to `del "dist\%ENVNAME%.exe"` first -- nothing working to lose.
+`:offer_optimized_build` (requirement 9, called from `:smokerun_ndjson` right after
+`call :run_postexec_checkpoint exe`, before `HP_EXE_EXIT` is cleared) runs in the OPPOSITE
+situation: PyInstaller already succeeded AND the EXE already passed smoke-test verification.
+Deleting/overwriting `dist\%ENVNAME%.exe` up front would risk losing a confirmed-working build to
+an elective, declinable upsell. Instead it builds to a distinct temp name
 (`%ENVNAME%.optimized_build.exe`), runs its own internal 30s-capped verification launch against
-that temp file (same `ProcessStartInfo`/`WaitForExit(30000)`/`Kill()`-on-timeout pattern
-`:run_exe_smokerun` uses), and only on CONFIRMED build-and-run success does `move /y` swap it over
-the original. Every failure branch (`goto :optbuild_cleanup`) deletes only the temp file and
-leaves `dist\%ENVNAME%.exe` completely untouched -- see the subroutine's own header comment in
-`run_setup.bat` for the full branch-by-branch trace.
+that temp file (same `ProcessStartInfo`/`WaitForExit(30000)`/`Kill()`-on-timeout pattern as
+`:run_exe_smokerun`), and only on CONFIRMED build-and-run success does `move /y` swap it over the
+original. Every failure branch (`goto :optbuild_cleanup`) deletes only the temp file, leaving
+`dist\%ENVNAME%.exe` untouched -- see the subroutine's own header comment for the full trace.
 
-**Real bug found and fixed via a refinement-pass code review, same day as PR #370 merged: the
-post-swap "did it work" check tested the wrong file.** The original code checked `if not exist
-"dist\%ENVNAME%.exe"` after the `move /y` to decide whether the swap succeeded -- but
-`dist\%ENVNAME%.exe` is the DESTINATION, which is the already-working original EXE this whole
-subroutine exists to (maybe) replace, so it already exists BEFORE the move runs, success or
-failure alike. A same-volume `move /y` onto an existing destination is an atomic rename-replace:
-on success the SOURCE (`dist\%HP_OPTBUILD_TMP%`) is consumed; on failure (e.g. an AV/indexer lock
-on the destination -- the exact hazard class already documented immediately below for
-`:try_embed_fallback`'s own `rd`/`move` swap) the whole operation is rejected and the source is
-left untouched, with the destination unaffected either way. The old destination-existence check
-could therefore never actually detect a failed swap -- a real failure would be silently
-misreported as `[INFO] Optimized build succeeded and verified...`, `HP_NUITKA_FALLBACK_USED`
-would be wrongly set (incorrectly disabling `:hidden_import_recover`'s auto-recovery for what is
-still a PyInstaller-built EXE, per the section above), and the leftover temp file at
-`dist\%HP_OPTBUILD_TMP%` would never be cleaned up (the old failure branch didn't route through
-`:optbuild_cleanup` either). Fixed by checking whether the SOURCE is gone instead, and by routing
-this failure through the shared `:optbuild_cleanup` label like every other failure branch (which
-also fixes the temp-file leak as a side effect). New test hook
-`HP_TEST_FORCE_OPTBUILD_SWAP_FAIL` (skips the real `move` and deliberately leaves the temp file in
-place, reproducing the exact "source still exists after move" failure signature without depending
-on an artificial OS-level file lock) and a new `swapfail` scenario in
-`tests/selfapps_optimized_build.ps1` (uv lane, non-gating, real Nuitka build + verify, like
-`accept`) prove the fix: the original EXE is left completely untouched and still runs, the
-leftover temp file is cleaned up, and the success message never logs.
+**Bug found and fixed (same day PR #370 merged): the post-swap "did it work" check tested the
+wrong file.** The original code checked `if not exist "dist\%ENVNAME%.exe"` after `move /y` --
+but that's the DESTINATION, the already-working original EXE, which exists BEFORE the move
+regardless of outcome. A same-volume `move /y` onto an existing destination is an atomic
+rename-replace: on success the SOURCE is consumed; on failure (e.g. an AV/indexer lock on the
+destination -- same hazard class as `:try_embed_fallback`'s own `rd`/`move` swap below) the whole
+operation is rejected, source untouched, destination unaffected. The destination-existence check
+could therefore never detect a failed swap -- a real failure was silently misreported as
+`[INFO] Optimized build succeeded and verified...`, `HP_NUITKA_FALLBACK_USED` wrongly set
+(incorrectly disabling `:hidden_import_recover`'s auto-recovery for what's still a
+PyInstaller-built EXE), and the leftover temp file never cleaned up. Fixed by checking whether the
+SOURCE is gone instead, routed through the shared `:optbuild_cleanup` label like every other
+failure branch (fixing the temp-file leak too). New test hook
+`HP_TEST_FORCE_OPTBUILD_SWAP_FAIL` (skips the real `move`, leaves the temp file in place,
+reproducing the "source still exists after move" failure signature without an OS-level lock) and
+a new `swapfail` scenario in `tests/selfapps_optimized_build.ps1` (uv lane, non-gating, real
+Nuitka build) prove the fix.
 
-**Gated on the SAME `HP_NUITKA_FALLBACK_USED` flag Tier A sets, but for the opposite reason.**
-Tier A's hidden-import-recovery guard (section above) checks the flag to SKIP a PyInstaller-only
-repair mechanism against a Nuitka EXE. This subroutine checks the flag to SKIP OFFERING THE PROMPT
-AT ALL when Tier A already ran -- if `dist\%ENVNAME%.exe` is already a Nuitka build, requirement
-9's "want an optimized version too?" question doesn't apply (the user already has one). On its own
-success path it sets `HP_NUITKA_FALLBACK_USED=1` too, for the same semantic reason (the file at
-`dist\%ENVNAME%.exe` genuinely is now Nuitka-built) -- this happens late enough in the flow
-(after `:run_exe_smokerun`/`:hidden_import_recover` have already completed for this pass) that it
-has no retroactive effect on anything in the SAME run, but keeps the flag accurate for any code
-that might read it later.
+**Gated on the SAME `HP_NUITKA_FALLBACK_USED` flag Tier A sets, for the opposite reason.** Tier
+A's hidden-import-recovery guard checks the flag to SKIP a PyInstaller-only repair against a
+Nuitka EXE; this subroutine checks it to SKIP OFFERING THE PROMPT AT ALL when Tier A already ran
+(the "want an optimized version too?" question doesn't apply -- the user already has one). On its
+own success path it sets `HP_NUITKA_FALLBACK_USED=1` too, for the same semantic reason -- this
+happens late enough (after `:run_exe_smokerun`/`:hidden_import_recover` already completed for this
+pass) to have no retroactive effect within the same run, but keeps the flag accurate later.
 
-**Consent-gate pattern mirrors `:run_postexec_checkpoint`'s BROADER 4-way auto-decline set, not
-the narrower 3-branch gates elsewhere in this file** (`:system_build_consent_gate` etc.) -- see
-that subroutine's own header comment for why: like the checkpoint, this prompt fires on
-essentially every successful bootstrap run (not a narrow edge-case path), so it also auto-declines
-on `NOINPUT`/`HP_NONINTERACTIVE` in addition to `HP_CI_LANE`, matching `:compute_interactive_run`'s
-own authoritative non-interactivity signals elsewhere in this file.
+**Cascade re-entry can offer this prompt more than once per bootstrap, same as the checkpoint** --
+called from the same site as `:run_postexec_checkpoint exe`, so a REQ-009 cascade reaching a new
+verification pass under a different provider tier re-offers BOTH prompts fresh each time
+(intentional -- each cascade tier is a genuinely different build; see "Post-execution checkpoint"
+below).
 
-**Cascade re-entry can offer this prompt more than once per bootstrap, same as the checkpoint.**
-Since this is called from the exact same call site as `:run_postexec_checkpoint exe` (right after
-it), a REQ-009 provider cascade that reaches a NEW verification pass under a different provider
-tier re-offers BOTH prompts fresh each time -- intentional, not a bug, for the same reason
-documented in the "Post-execution checkpoint" section below (each cascade tier is a genuinely
-different build).
+**Consent-gate pattern mirrors `:run_postexec_checkpoint`'s BROADER 4-way auto-decline set** (not
+the narrower 3-branch gates elsewhere, e.g. `:system_build_consent_gate`) -- like the checkpoint,
+this fires on essentially every successful run, so it also auto-declines on
+`NOINPUT`/`HP_NONINTERACTIVE` in addition to `HP_CI_LANE`, matching `:compute_interactive_run`'s
+authoritative non-interactivity signals.
 
-**Nuitka/MSVC auto-detection research (informs the reactive-only hint text on failure, added to
-both this subroutine and `:try_nuitka_tier_a`):** confirmed via Nuitka's own GitHub issue tracker
-(Nuitka/Nuitka#3317) that Nuitka auto-detects an installed Visual Studio via the registry with NO
-need to run from a Developer Command Prompt or set up `vcvarsall.bat` first -- a user with a plain
-VS2022 install and the "Desktop development with C++" workload (which includes a Windows SDK by
-default) should have Nuitka "just work" via MSVC with zero extra setup. Deliberately did NOT add
-any proactive detection/fingerprinting of the user's installed compiler to decide behavior --
-research Finding 2 in `docs/prd-av-safe-build-path.md` already argued against that class of
-fingerprinting, and this repo's Tier A design (requirement 4) already committed to trusting
-Nuitka's own internal discovery entirely. The hint text is REACTIVE ONLY (a static `[WARN]` line
-that only prints after Nuitka's OWN build already failed), never a proactive nag shown on a
-successful run or unconditionally on every bootstrap -- this keeps the "probing isn't a great
-idea" principle intact (no active detection of what's on the machine) while still surfacing a
-genuinely actionable, low-noise hint exactly when it would help.
+**Nuitka/MSVC auto-detection research** (informs the reactive-only hint text on failure, in both
+this subroutine and `:try_nuitka_tier_a`): confirmed via Nuitka/Nuitka#3317 that Nuitka
+auto-detects an installed Visual Studio via the registry with NO need for a Developer Command
+Prompt or `vcvarsall.bat` -- a plain VS2022 + "Desktop development with C++" install should "just
+work" via MSVC. Deliberately NOT proactive fingerprinting of the installed compiler (research
+Finding 2 in `docs/prd-av-safe-build-path.md` already argued against that class of probing, and
+Tier A already commits to trusting Nuitka's own discovery). The hint text is REACTIVE ONLY (a
+static `[WARN]` after Nuitka's OWN build already failed), never a proactive nag.
 
 ---
 
 ## Standalone Python-download tier (REQ-009 Tier 5 by naming/history; executed 3rd as of the
 ## provider-chain reorder below, SHIPPED)
 
-**Status: implemented 2026-07.** `:try_embed_fallback` (new subroutine in `run_setup.bat`) is
-wired into both fallback ladders, a new `HP_ENV_MODE=embed` value flows through every call site
-identified during the original design audit, and CI coverage lives in
-`tests/selfapps_ux_hardening.ps1` (`self.embed.fallback.decline`, `self.embed.fallback.real` --
-see `docs/agent-ndjson.md`). This section is kept as the map of the `HP_ENV_MODE` blast radius
-this tier touches -- useful for anyone extending or debugging it later, not just for the original
-implementer. The original design-map audit covered 34 `HP_ENV_MODE` reference sites in
-`run_setup.bat`; re-verify line numbers against the current file before relying on them, since
-they will have moved.
+**Status: implemented 2026-07.** `:try_embed_fallback` is wired into both fallback ladders, a new
+`HP_ENV_MODE=embed` value flows through every call site identified during the original design
+audit (34 `HP_ENV_MODE` reference sites; re-verify line numbers before relying on them), and CI
+coverage lives in `tests/selfapps_ux_hardening.ps1` (`self.embed.fallback.decline`,
+`self.embed.fallback.real` -- see `docs/agent-ndjson.md`). This section maps the `HP_ENV_MODE`
+blast radius this tier touches.
 
-**Provider-chain reorder (follow-up pass): `uv -> conda -> embed -> venv -> system`, embed moved
-from last-resort to right after conda.** Originally embed was the final rung (reached only after
-uv, conda, venv, AND system had all failed). Reordered so a user who pinned a specific Python
-version via `runtime.txt`/`pyproject.toml` still gets it via a fresh checksummed python.org
-download when uv/conda are unreachable, instead of silently falling back to whatever's already
-ambient on the machine (venv/system just wrap the ambient interpreter, they cannot acquire a
-different one) -- conda and embed both front-load acquisition of a FRESH/pinned interpreter;
-venv/system stay the true last resort. System stays absolute final regardless, since it is the
-only tier gated by the REQ-014 consent prompt (touches the user's real environment).
+**Provider-chain reorder: `uv -> conda -> embed -> venv -> system`, embed moved from last-resort
+to right after conda.** Originally embed was the final rung. Reordered so a user who pinned a
+specific Python version via `runtime.txt`/`pyproject.toml` still gets it via a fresh checksummed
+python.org download when uv/conda are unreachable, instead of silently falling back to whatever's
+ambient (venv/system just wrap the ambient interpreter, they cannot acquire a different one) --
+conda and embed both front-load acquisition of a FRESH/pinned interpreter; venv/system stay the
+true last resort. System stays absolute final regardless (only tier gated by the REQ-014 consent
+prompt). Both dispatch mechanisms encoding provider order moved together: `:handle_conda_failure`
+(linear initial fallback chain, reordered venv/system/embed -> embed/venv/system) and
+`:provider_cascade` (goto-based re-entrant post-warnfix cascade -- `:cascade_from_conda` now
+targets `:try_embed_fallback`; new `:cascade_from_embed` + `HP_CASCADE_TRIED_EMBED` guard targets
+`:try_venv_fallback`; `:cascade_from_venv` unchanged; `:cascade_from_system`/
+`HP_CASCADE_TRIED_SYSTEM` deleted, since system has no cascade target now). No downstream
+`HP_ENV_MODE`/`HP_ENV_READY` consumer needed to change (pure exact-string-equality / tier-agnostic
+boolean) -- only the two dispatch chains moved. Tier numbering ("Tier 4"=system, "Tier 5"=embed)
+was deliberately kept as a historical label, not renumbered to match execution order (the
+load-bearing NDJSON ids are not tier-numbered).
 
-Both dispatch mechanisms that encode provider order moved together: `:handle_conda_failure` (the
-linear, unconditional initial fallback chain -- reorders its three `call` blocks from
-venv/system/embed to embed/venv/system) and `:provider_cascade` (the goto-based, re-entrant
-post-warnfix cascade -- `:cascade_from_conda` now targets `:try_embed_fallback` instead of
-`:try_venv_fallback`; a new `:cascade_from_embed` label + `HP_CASCADE_TRIED_EMBED` guard targets
-`:try_venv_fallback`; `:cascade_from_venv` is unchanged, still targets `:try_system_fallback`;
-`:cascade_from_system` and `HP_CASCADE_TRIED_SYSTEM` were deleted entirely, since system has no
-cascade target now -- exactly mirroring how embed had none before this reorder). Confirmed via a
-full repo-wide trace that no downstream consumer of `HP_ENV_MODE`/`HP_ENV_READY` needed to change:
-every consumer does pure exact-string-equality on `HP_ENV_MODE`, and `HP_ENV_READY` is a
-tier-agnostic boolean -- only the two dispatch chains and their explanatory comments needed to
-move. Tier numbering ("Tier 4" = system, "Tier 5" = embed) was deliberately kept as a historical/
-naming label, not renumbered to match new execution order -- renumbering would touch ~15 comment
-sites plus two docs files for zero functional benefit, since the load-bearing NDJSON `id` fields
-(`self.embed.fallback.decline`/`.real`) are not tier-numbered.
+**Bug found+fixed in the reorder pass: the version-swap mechanism (stage 2 below) was dead code.**
+The version-check-and-swap sequence was wrapped in one parenthesized `if not errorlevel 1 ( ... )`
+block; a `for /f` loop inside set `HP_EMBED_SWAP_DIR`/`_TAG`/`_MINOR`, and code later in the SAME
+block read `%HP_EMBED_SWAP_DIR%` -- but CMD's parse-time `%VAR%` expansion substitutes every
+`%VAR%` using the value from BEFORE the block began (the bug class in
+`docs/agent-lessons-learned.md`'s "Provider-cascade dispatch is goto-based on purpose"), so the
+read was always empty and the swap body never ran. No test caught it (`self.embed.fallback.real`
+never requests a non-default version). Fixed via goto-based dispatch.
 
-**Correctness bug found and fixed in the same follow-up pass: the version-swap mechanism below
-was dead code.** The "PowerShell stage extracts latest, Python stage swaps to the user's
-requested version if different" design (point 2 below) had never actually executed, in
-production or in CI. `run_setup.bat`'s version-check-and-swap sequence was wrapped in one
-parenthesized `if not errorlevel 1 ( ... )` block; a `for /f` loop inside that block set
-`HP_EMBED_SWAP_DIR`/`_TAG`/`_MINOR` from the Python stage's output, and code later in the SAME
-block read `%HP_EMBED_SWAP_DIR%` to decide whether to swap -- but CMD's parse-time `%VAR%`
-expansion substitutes every `%VAR%` in a parenthesized block using the value from BEFORE the
-block began, not a value a `for /f` loop set during the same block's own execution (the exact bug
-class documented in `docs/agent-lessons-learned.md`'s "Provider-cascade dispatch is goto-based on
-purpose"). Since `HP_EMBED_SWAP_DIR` was never set earlier in the subroutine, that read was
-always empty, so the swap body never ran regardless of what version was actually requested. No
-test caught it because `self.embed.fallback.real` never requests a non-default version through
-this tier. Fixed via goto-based dispatch, matching this file's established fix pattern for this
-bug class -- see the "Two real implementation gotchas" list below (gotcha 1, the `._pth` patch)
-for the OTHER pre-existing hazard this tier has to handle correctly, which was unaffected by
-this bug.
+**Second bug (later deep-dive): a DIRECTORY move, not a FILE move -- requirement 9's swap-fix
+shape does NOT transfer.** `:embed_swap_retry` checked `if exist "%HP_EMBED_DIR%\python.exe"`
+after `rd /s /q "%HP_EMBED_DIR%"` + `move /y "%HP_EMBED_SWAP_DIR%" "%HP_EMBED_DIR%"`. A first pass
+mirrored requirement 9's "check whether the source is gone" fix -- but that only holds for a FILE
+move (atomic: fully replaces or fully fails, no third outcome). A DIRECTORY `move` onto a still-
+existing destination silently NESTS the source inside it instead. If `rd /s /q` fails to fully
+clear `HP_EMBED_DIR` (an AV/indexer-lock race this code already anticipates), the destination
+still exists when `move` runs, so nesting occurs -- and BOTH candidate checks then read as false
+success (stale `python.exe` still at the top level; `HP_EMBED_SWAP_DIR` no longer exists either,
+since it got renamed into the nested subfolder, not genuinely swapped). Neither post-hoc check can
+distinguish "swap succeeded" from "rd failed and the source got silently nested."
 
-**Second correctness issue found via a later deep-dive review pass -- NOT the same fix shape as
-requirement 9, despite an initial attempt to mirror it, because this is a DIRECTORY move, not a
-FILE move.** `:embed_swap_retry` checked `if exist "%HP_EMBED_DIR%\python.exe"` after `rd /s /q
-"%HP_EMBED_DIR%"` + `move /y "%HP_EMBED_SWAP_DIR%" "%HP_EMBED_DIR%"` to decide whether the swap
-succeeded. A first pass "fixed" this by checking whether the SOURCE was gone instead, mirroring
-requirement 9's own swap-verification fix -- but that mirroring does not actually hold here.
-Requirement 9's fix works because a same-volume FILE `move /y` onto an existing destination is
-atomic: it either fully replaces the destination (source consumed) or fully fails (source
-untouched, destination unaffected) -- no third outcome. A DIRECTORY `move` onto a destination
-that still exists behaves differently: it silently NESTS the source inside the destination
-(`HP_EMBED_SWAP_DIR` ends up living at `HP_EMBED_DIR\<its own name>`, not replacing
-`HP_EMBED_DIR`'s contents). If `rd /s /q` fails to fully clear `HP_EMBED_DIR` (the exact
-AV/indexer-lock race this code already anticipates), the destination still exists when `move`
-runs, so nesting occurs -- and in that scenario BOTH candidate checks read as false success: the
-STALE prior `python.exe` is still sitting at `HP_EMBED_DIR`'s top level regardless of what the
-nested move did (so "does the destination exist" is wrong), and `HP_EMBED_SWAP_DIR` as an exact
-path also no longer exists, since it got renamed away into the nested subfolder rather than
-genuinely swapped (so "is the source gone" is ALSO wrong, for a different reason). Neither
-post-hoc check can distinguish "swap genuinely succeeded" from "rd failed and the source got
-silently nested instead."
+**Actual fix: gate `move` on `rd` having genuinely cleared the destination first**, so `move` only
+ever runs onto a nonexistent target (pure rename, nesting structurally impossible) -- which makes a
+post-hoc destination check reliable again. `:embed_swap_retry` now does `rd /s /q "%HP_EMBED_DIR%"`
+then `if exist "%HP_EMBED_DIR%" goto :embed_swap_rd_failed` (skip `move`, go straight to the
+retry-count check) before ever attempting `move`. **NOT CI-confirmed** -- `self.embed.fallback.real`
+still never requests a non-default version through this tier, so this branch is untested by any
+real CI run; the fix is static reasoning about documented Windows `move`/`rd` semantics, not a live
+Windows repro. A dedicated test (pin a non-latest version through a real embed download) would be
+the natural next step if this tier's trigger rate ever justifies it.
 
-**The actually-correct fix: gate `move` on `rd` having genuinely cleared the destination first,**
-so `move` only ever runs onto a nonexistent target (pure rename semantics, nesting structurally
-impossible) -- which is what makes a post-hoc destination check reliable again. `:embed_swap_retry`
-now does `rd /s /q "%HP_EMBED_DIR%"` then `if exist "%HP_EMBED_DIR%" goto :embed_swap_rd_failed`
-(skip `move` entirely and go straight to the retry-count check) before ever attempting `move`; only
-when `rd` is confirmed to have cleared the directory does `move` run, and only then is `if exist
-"%HP_EMBED_DIR%\python.exe"` trustworthy as a success signal. **This is NOT CI-confirmed** --
-`self.embed.fallback.real` still never requests a non-default Python version through this tier
-(same gap the first correctness bug's own fix description already noted), so the swap branch this
-check lives in remains untested by any real CI run; the fix is based on static reasoning about
-Windows `move`/`rd` semantics (verified against documented Windows directory-move behavior, not a
-live Windows reproduction from this sandbox). Building a dedicated test (pinning a non-latest
-Python version through a real embed-tier download) would be the natural next step if this tier's
-real-world trigger rate ever justifies the investment -- not undertaken here, matching this tier's
-existing low-priority status elsewhere in this repo's own research notes.
+**Two-stage PowerShell/Python split (not a single script), a refinement found during
+implementation.** This tier runs precisely when NO Python interpreter exists anywhere, so
+per-request version-table logic cannot live in Python until *some* interpreter is on disk:
+1. **PowerShell stage** (`tools/embed_extract.ps1`, `HP_EMBED_EXTRACT`) -- batch has already
+   downloaded ONE hardcoded "latest" version's zip (`HP_EMBED_LATEST_PATCH`/
+   `HP_EMBED_LATEST_SHA256` near the top of `run_setup.bat`). Does ONLY checksum verification
+   (`Get-FileHash`), extraction (`Expand-Archive`), and the `._pth` patch (uncommenting
+   `#import site`) -- zero per-request branching. Prints the extracted `python.exe` path on
+   success, exits 1 silently on failure.
+2. **Python stage** (`tools/embed_pyver_check.py`, `HP_EMBED_PYVER_CHECK`) -- runs under the fresh
+   interpreter stage 1 just extracted. The ONLY place per-request version logic lives, reusing the
+   same `PYSPEC` value `~detect_python.py` already computed (the value uv/conda already honor). If
+   `PYSPEC` requests a minor other than the table's "latest," re-fetches/verifies/extracts the
+   correct version itself via stdlib (`urllib.request`, `hashlib`, `zipfile`).
+   `EMBED_PYTHON_TABLE` maps minor -> `(patch, sha256)` for 3.10-3.14 (5 entries, matching
+   python.org's currently-supported non-EOL minors). The `"3.14"` entry's patch/sha256 MUST match
+   the batch-side `HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256` exactly --
+   `tests/test_embed_tier.py`'s `BatchPythonConsistency` test catches drift.
 
-**Refinement made during implementation, beyond the original design map: two-stage
-PowerShell/Python split, not a single PowerShell script.** The original design map (below)
-assumed one implementation stage. Building it surfaced a chicken-and-egg problem the design map
-had not addressed: this tier runs precisely when NO Python interpreter exists anywhere on the
-system (the scenario it exists for), so per-request version-table logic cannot live in Python
-until *some* interpreter is on disk. The shipped design splits the tier into two stages:
-1. **PowerShell stage** (`tools/embed_extract.ps1`, embedded as `HP_EMBED_EXTRACT`) -- batch has
-   already downloaded ONE hardcoded "latest" version's zip (`HP_EMBED_LATEST_PATCH` /
-   `HP_EMBED_LATEST_SHA256` constants near the top of `run_setup.bat`). This script does ONLY
-   checksum verification (`Get-FileHash`), extraction (`Expand-Archive`), and the `._pth` patch
-   (uncommenting `#import site`) -- zero per-request branching. Prints the extracted
-   `python.exe` path on success, exits 1 silently on any failure.
-2. **Python stage** (`tools/embed_pyver_check.py`, embedded as `HP_EMBED_PYVER_CHECK`) -- runs
-   under the fresh interpreter stage 1 just extracted. This is the ONLY place per-request version
-   logic lives, reusing the same `PYSPEC` value `~detect_python.py` already computed earlier in
-   the bootstrap (the same value uv/conda already honor) instead of re-deriving equivalent regex
-   logic a second time in PowerShell. If `PYSPEC` requests a minor other than the table's
-   "latest" entry, it re-fetches/verifies/extracts the correct version itself via stdlib
-   (`urllib.request`, `hashlib`, `zipfile`) -- not PowerShell a second time.
+**Windows self-file-lock hazard (a running process cannot delete/replace its own EXE/DLLs).** The
+Python stage runs FROM `HP_EMBED_DIR` (the directory stage 1 extracted into), so extracting a
+version swap directly into `HP_EMBED_DIR` while that process is still running fails on file locks.
+Fix: the Python stage extracts any swap into a SIBLING staging directory (`HP_EMBED_DIR` + `_swap`)
+-- the actual swap (`rd /s /q` old + `move /y` new-into-place) happens in the BATCH caller, only
+AFTER the `for /f ... in ('powershell ... -File "~embed_pyver_check.py" ...')` call returns (i.e.
+after the Python process has fully exited and released its locks). Re-verify this ordering if the
+Python stage is ever invoked differently.
 
-   `EMBED_PYTHON_TABLE` (in `embed_pyver_check.py`) maps minor -> `(patch, sha256)` for 3.10
-   through 3.14 (5 entries, matching the design map's "python.org's currently-supported (non-EOL)
-   CPython minors" scope decision below). The `"3.14"` entry's patch/sha256 MUST match the
-   batch-side `HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256` constants exactly -- a refresh that
-   updates one but not the other is caught by `tests/test_embed_tier.py`'s
-   `BatchPythonConsistency` test, not discovered live.
+**Offline-mode test-flag exception chain touches two call sites, not one.** `HP_TEST_FORCE_EMBED_
+REAL=1` needs a hole punched through `HP_OFFLINE_MODE=1` at BOTH `:try_embed_fallback`'s own
+offline check AND `:download_get_pip` (reused from REQ-023b, whose existing offline exception only
+recognized `HP_TEST_FORCE_VENV_CREATE_FAIL`) -- extended via an intermediate
+`HP_GETPIP_SKIP_OFFLINE` OR variable (batch has no clean single-line boolean OR without delayed
+expansion). A future third test flag needing `:download_get_pip`'s real download must extend both
+sites together.
 
-**Windows self-file-lock hazard (discovered during implementation, not in the original design
-map): a running process cannot delete or replace its own executable/DLLs.** The Python stage
-(stage 2 above) runs FROM `HP_EMBED_DIR` (the directory stage 1 just extracted into) -- so if a
-version swap is needed, extracting the replacement directly into `HP_EMBED_DIR` while that same
-process is still running fails on Windows file locks. Fix: the Python stage extracts any swap
-into a SIBLING staging directory (`HP_EMBED_DIR` + `_swap`), never into its own running directory.
-The actual directory swap (`rd /s /q` old + `move /y` new-into-place) happens in the BATCH caller,
-only AFTER the `for /f ... in ('powershell ... -File "~embed_pyver_check.py" ...')` call has
-returned -- i.e., only after the Python process has fully exited and released its locks. If you
-ever refactor this to invoke the Python stage differently (e.g. inline instead of via `for /f`
-capturing its own exit), re-verify the swap still happens strictly after process exit.
+**CMD line-length budget was hit for real.** `embed_pyver_check.py`'s first draft (docstrings,
+nested-dict table) produced a 9439-char base64 line, 1248 over the 8191 hard limit. Trimmed to
+6739 chars (condensed comments, inline comments instead of docstrings, tuples instead of nested
+dicts) -- 1452-char margin. Re-check the budget before extending `EMBED_PYTHON_TABLE`.
 
-**Offline-mode test-flag exception chain -- touches two call sites, not one.** A CI test that
-wants to exercise the REAL embed download (`HP_TEST_FORCE_EMBED_REAL=1`) needs to punch a hole
-through `HP_OFFLINE_MODE=1` at BOTH: `:try_embed_fallback`'s own offline check, AND
-`:download_get_pip` (reused from the REQ-023b venv-resilience work to bootstrap pip into the
-embed interpreter), whose existing offline exception only recognized
-`HP_TEST_FORCE_VENV_CREATE_FAIL`. `:download_get_pip`'s check was extended to an OR of both flags
-via an intermediate `HP_GETPIP_SKIP_OFFLINE` variable (batch has no clean single-line boolean OR
-without delayed expansion, which is off-limits here -- see "CMD.EXE 8191-Character Line Limit"
-and the delayed-expansion ban elsewhere in `docs/agent-lessons-learned.md`). If a future test
-needs `:download_get_pip`'s real download exercised under a THIRD new test flag, both call sites
-must be extended together, or the new flag will be silently blocked by the second one even after
-successfully bypassing the first.
+**Sigstore was evaluated and rejected for integrity, in favor of embedded SHA256.** Sigstore needs
+`cosign`/`sigstore-python`, which themselves need an existing Python/tool install -- circular for a
+tier whose whole purpose is "no Python exists yet." Embedded SHA256 (computed once at pin-time,
+verified independently against real downloads before shipping) matches this repo's "bootstrap
+reliability > API correctness" principle.
 
-**CMD line-length budget was hit for real building this.** The first draft of
-`embed_pyver_check.py` (comments, docstrings, nested-dict table) produced a base64 line of 9439
-chars -- over the 8191 hard limit (see "CMD.EXE 8191-Character Line Limit" in
-`docs/agent-lessons-learned.md`) by 1248 chars. Trimmed to 6739 chars (comments condensed,
-docstrings replaced with inline comments, table changed from nested dicts to tuples) with a
-1452-char safety margin. If you extend `EMBED_PYTHON_TABLE` with more minors or add features,
-re-check the budget with the same method documented in that lessons-learned entry before assuming
-it still fits.
+**Design decisions agreed with the user:**
+- No REQ-014-style consent gate -- the embeddable zip is a private, checksummed,
+  bootstrapper-controlled extraction under `~embed_python\`, more REQ-010-isolated than system,
+  not less. Progress logging (REQ-016-style), not a prompt.
+- Version selection: a small pinned per-minor table, NOT a single hardcoded fallback and NOT a
+  live python.org "latest" scrape (violates "deterministic execution > dynamic resolution," same
+  reasoning as the pipreqs 0.4.13 pin). Table scope: python.org's currently-supported (non-EOL)
+  minors (~5-6 entries), refreshed on the same quarterly cadence as the pipreqs pin. A request
+  older than the table's floor falls back to the oldest entry with a WARN. No-request default uses
+  the table's *newest* entry, mirroring uv's `UV_PYTHON_PREFERENCE=only-managed`.
+- Integrity: embed the expected SHA256 per pinned version directly (computed at pin-time), never
+  fetched from a checksum file over the same network path as the download.
+- Two implementation gotchas: (1) the embeddable zip ships with `site` imports disabled via
+  `pythonXY._pth` -- must uncomment before pip/any installed package is importable, or the tier
+  looks like it succeeded while silently broken. (2) the embeddable zip has no pip -- reuse
+  `:download_get_pip` (built for REQ-023b), don't write a second copy.
 
-**Sigstore was evaluated and rejected for this tier's integrity check, in favor of embedded
-SHA256.** Verifying via Sigstore would require `cosign` or `sigstore-python`, both of which
-themselves require an existing Python/tool installation -- circular for a tier whose entire
-purpose is "no Python exists yet." Embedded SHA256 (`HP_EMBED_LATEST_SHA256` / the per-minor
-`EMBED_PYTHON_TABLE` entries, computed once at pin-time and verified independently against real
-downloads before shipping) is proportionate and consistent with this repo's "bootstrap
-reliability > API correctness" architecture principle (see CLAUDE.md).
+**Mental model: embed behaves like `venv`, not `system`.** venv and embed are both "fully
+isolated, bootstrapper-installable" (safe to `pip install` into freely); system is "shared,
+minimally-invasive" (installs avoided/consent-gated). Wherever code branches system out to a
+restricted/no-op path, embed should NOT be excluded the same way.
 
-**Original design-map audit below, preserved as the source of the confirmed call-site list.**
-This was produced by auditing every `HP_ENV_MODE` reference in `run_setup.bat` (34 sites at audit
-time) and classifying each as "needs a new `embed` case" vs. "already provider-agnostic, works
-automatically."
+**Call sites wired to a new `embed` case (current, post-reorder state -- matches "Provider cascade
+execution re-enters env-create" below, which documents the same two dispatch chains in full):**
+1. `:handle_conda_failure` (~line 1787) -- the initial fallback chain. `call :try_embed_fallback`
+   runs right after conda itself fails, BEFORE venv/system are attempted (embed/venv/system order).
+   `HP_FORCE_CONDA_ONLY=1` already short-circuits this function, so embed is auto-suppressed.
+2. `:provider_cascade`'s dispatch (~line 1618-1632) -- the separate post-build warnfix cascade.
+   `:cascade_from_conda` targets `:try_embed_fallback` (guard `HP_CASCADE_TRIED_EMBED`); a new
+   `:cascade_from_embed` targets `:try_venv_fallback`. System has NO cascade target of its own
+   (`:cascade_from_system` was deleted in the same reorder -- system is terminal). Per the
+   no-loop-guarantee rule: each guard var is mandatory and the order stays monotonic.
+3. **New subroutine `:try_embed_fallback`** -- mirrors `:try_venv_fallback`/`:try_system_fallback`'s
+   shape, called from both sites above. On success: `HP_ENV_MODE=embed`, `HP_PY=<extracted
+   pythonXY.exe>`, `HP_BOOTSTRAP_STATE=embed_env`, leaves `HP_SKIP_PIPREQS` UNSET (matching venv,
+   not system -- system's `HP_SKIP_PIPREQS=1` exists specifically to avoid `pip install pipreqs`
+   into a shared environment, which doesn't apply to embed's private extraction), logs `[BOOT]
+   REQ-009: Selected Python provider: Embedded Python (python.org).`, `exit /b 0`.
+4. Dependency-install branch in `:after_env_mode_selection` (~line 1258-1303) -- **the single most
+   important site**: the final catch-all `else` is reached by `system` mode ON PURPOSE (no-install
+   for a shared environment) but would ALSO silently catch `embed` if no new branch is added,
+   leaving embed with zero installed deps, relying 100% on the warnfix safety net. Added
+   `else if "%HP_ENV_MODE%"=="embed" (...)` before the catch-all, same body as `venv` (plain
+   `"%HP_PY%" -m pip install -r requirements.txt`).
 
-**Design decisions already agreed with the user (2026-07):**
-- No REQ-014-style consent gate. Unlike system Python (which uses a shared, uncontrolled,
-  version-unknown ambient environment), the embeddable zip is a private, checksummed,
-  bootstrapper-controlled extraction under `~embed_python\` -- more REQ-010-isolated than the
-  system tier, not less. Progress logging (REQ-016-style), not a prompt.
-- Version selection: a small pinned per-minor-version table (`{"3.11": "3.11.9", ...}`), NOT a
-  single hardcoded fallback version and NOT a live python.org scrape for "latest" (violates this
-  repo's "deterministic execution > dynamic resolution" principle -- same reasoning as the
-  pipreqs 0.4.13 pin). Table scope: python.org's currently-supported (non-EOL) CPython minor
-  versions at time of refresh -- practically ~5-6 entries, refreshed on the same quarterly
-  cadence as the pipreqs pin and other "Periodic Maintenance Checks" entries. A request older
-  than the table's floor (an EOL version) falls back to the table's oldest entry with a WARN,
-  rather than the table growing back indefinitely. The orchestration-layer default (no user
-  version request) always uses the table's *newest* entry, mirroring "orchestration always uses
-  latest" already established for uv (`UV_PYTHON_PREFERENCE=only-managed`).
-- Integrity: embed the expected SHA256 per pinned version directly in the bootstrapper (computed
-  once at pin-time), not fetched from a checksum file at runtime over the same network path as
-  the download itself.
-- Two real implementation gotchas to not lose: (1) the embeddable zip ships with `site` imports
-  disabled via the `pythonXY._pth` file -- must uncomment/edit that file before pip or any
-  installed package is importable at all, or the tier will look like it succeeded while being
-  silently broken. (2) the embeddable zip has no pip -- reuse the existing `:download_get_pip`
-  subroutine (built for the REQ-023b venv-resilience work), do not write a second copy.
+**Call sites that already worked automatically, zero change needed** (individually verified): the
+pipreqs-install/heuristic-augmentation/pip-freeze-capture/PyInstaller-install uv-vs-else branches
+(each plain-else already works once embed's pip is bootstrapped); `:compute_collect_flags`'s
+system-only exclusion (embed never matches `"%HP_ENV_MODE%"=="system"`, confirmed by omission);
+the REQ-007 "build under every provider except system" gate; `:append_env_mode_row`'s NDJSON
+emitter (reads `HP_ENV_MODE` dynamically); both `%HP_ENV_MODE%`-interpolating smoke-test log
+lines; `:conda_base_update`'s conda-only guard. Dep-check's fast-path gate (`if not
+"%HP_ENV_MODE%"=="conda" if not "%HP_ENV_MODE%"=="uv" goto :dep_check_done`) **deliberately**
+still excludes embed too, matching venv's scope -- a design choice for MVP parity, not an
+oversight; could extend to embed later if desired.
 
-**Mental model: embed behaves like `venv`, not like `system`.** venv and embed are both
-"fully isolated, bootstrapper-installable Python environments" (safe to `pip install` into
-freely); system is "shared, minimally-invasive" (installs are avoided/consent-gated). Wherever
-the code below branches system out to a restricted/no-op path, embed should NOT be excluded the
-same way -- it should fall through and behave like venv/uv/conda's normal path instead.
-
-**Confirmed call sites requiring a genuinely new `embed` case (the real work):**
-1. `:handle_conda_failure` (~line 1787) -- the INITIAL fallback chain, reached whenever conda
-   itself fails to install/create at bootstrap (both the uv-fails-then-conda-also-fails path and
-   the conda-only entry path funnel here). Currently: `call :try_venv_fallback` -> if that fails,
-   `call :try_system_fallback` -> if that also fails, `exit /b 0` (gives up, caller falls to
-   `:die`). Add a third rung: `call :try_embed_fallback` after the system-fallback attempt,
-   before the final `exit /b 0`. `HP_FORCE_CONDA_ONLY=1` already short-circuits this whole
-   function before any fallback is attempted, so embed is automatically suppressed under that
-   flag with no extra check needed.
-2. `:provider_cascade`'s dispatch (~line 1618-1632) -- the SEPARATE post-build, warnfix-driven
-   cascade (re-attempts the dependency phase under the next tier when an already-built EXE has
-   unresolved imports and the user consents via `:cascade_consent_gate`). Currently dispatches
-   `uv -> conda -> venv -> system` via `if /i "%HP_ENV_MODE%"=="<tier>" goto :cascade_from_<tier>`
-   lines, then a final "tiers exhausted" catch-all. Needs: a new
-   `if /i "%HP_ENV_MODE%"=="system" goto :cascade_from_system` case ahead of the catch-all, a new
-   `:cascade_from_system` label (mirroring `:cascade_from_venv`'s shape exactly: guard on a new
-   `HP_CASCADE_TRIED_SYSTEM` var, call `:try_embed_fallback`, `goto :after_env_mode_selection` on
-   success or a new `:cascade_embed_unavailable` label on failure). Per the existing "no-loop
-   guarantee" rule in this doc: the new guard var is mandatory, and embed must be the last tier
-   (no further cascade target), which falls out naturally by not adding an `embed` case to the
-   dispatch `if` chain -- reaching `embed` there falls through to the existing exhausted
-   catch-all.
-3. **New subroutine `:try_embed_fallback`** (does not exist yet) -- mirrors `:try_venv_fallback`
-   / `:try_system_fallback`'s exact shape and is called from BOTH sites above (both entry ladders
-   -- venv/system already have this dual-entry pattern, embed must match it, not just implement
-   one path). On success: `set "HP_ENV_MODE=embed"`, `set "HP_PY=<path to extracted
-   pythonXY.exe>"`, `set "HP_BOOTSTRAP_STATE=embed_env"` (new state value, matching venv's
-   `venv_env` / system's `degraded_env` pattern), leave `HP_SKIP_PIPREQS` UNSET (matching venv,
-   NOT system -- system sets `HP_SKIP_PIPREQS=1` specifically because pipreqs requires
-   `pip install pipreqs` into a shared/uncontrolled environment it's trying to avoid touching;
-   that reasoning does not apply to embed's private extraction), log
-   `[BOOT] REQ-009: Selected Python provider: Embedded Python (python.org).`, `exit /b 0`.
-4. Dependency-install branch inside `:after_env_mode_selection`'s requirement-install block
-   (~line 1258-1303) -- `if "%HP_ENV_MODE%"=="conda" (...) else if "%HP_ENV_MODE%"=="venv" (...)
-   else if "%HP_ENV_MODE%"=="uv" (...) else ( call :log "[WARN] System fallback: skipping
-   requirement installation." )`. **This is the single most important site to get right**: the
-   final `else` is currently reached by `system` mode ON PURPOSE (conservative, no-install
-   behavior for a shared environment) -- but it would ALSO silently catch `embed` mode if no new
-   branch is added, meaning embed would build with zero declared dependencies installed and rely
-   100% on the warnfix safety net. Add `else if "%HP_ENV_MODE%"=="embed" (...)` before the final
-   catch-all `else`, with the exact same body as the `venv` branch (plain
-   `"%HP_PY%" -m pip install -r requirements.txt`, no `--python` flag needed unlike uv, no conda
-   channel logic).
-
-**Confirmed call sites that already work automatically, zero code change needed** (each was
-individually verified, not assumed): the pipreqs-install uv-vs-else branch (~line 962, else
-branch is plain `%HP_PY% -m pip install`, already works once embed's pip is bootstrapped); the
-heuristic-augmentation conda-vs-else branch (~line 1258, same reasoning); the pip-freeze capture
-uv-vs-else branch (~line 1307); the PyInstaller-install uv-vs-else branch (~line 2623); the
-`:compute_collect_flags` system-only exclusion (~line 2744, embed should NOT be excluded here,
-and isn't, since no `embed` string ever matches the existing `if "%HP_ENV_MODE%"=="system"` check
--- confirms by omission, not by addition); the REQ-007 "build under every provider except system"
-gate (~line 2593, same reasoning -- embed builds automatically); the `:append_env_mode_row` NDJSON
-emitter (~line 1946, reads `HP_ENV_MODE` dynamically, no hardcoded branch); both smoke-test log
-lines that interpolate `%HP_ENV_MODE%` directly as display text (~lines 2799, 2819); the
-`:conda_base_update` conda-only guard (~line 3457, correctly excludes embed already, no conda
-involved); dep-check's fast-path gate (~line 1231, `if not "%HP_ENV_MODE%"=="conda" if not
-"%HP_ENV_MODE%"=="uv" goto :dep_check_done` -- **deliberately** left excluding embed too, matching
-venv's existing scope; this is a design choice to keep embed symmetric with venv for MVP, not an
-oversight -- the dep-check fast-path skip-on-repeat-run optimization could be extended to embed
-in a later round if desired, but isn't required for parity).
-
-**Pre-existing gap discovered during this audit, unrelated to embed, flagged not fixed:** the
-warnfix REPAIR-install branch (~line 2661, inside the missing-modules-detected block) only has
-two cases -- `if "%HP_ENV_MODE%"=="uv" (...)` and `else if defined CONDA_BAT (...)` -- with NO
-plain-pip fallback for any other mode. This means venv and system modes ALREADY have a silent
-blind spot today: if warnfix detects missing modules under venv or system, neither branch matches
-(uv is false, `CONDA_BAT` is undefined since conda was never touched), so the repair loop is a
-no-op and the rebuild proceeds with the same missing modules still missing. This is a real,
-pre-existing bug independent of the embed-tier work. **Confirmed unchanged after shipping embed**
-(the `~line 2661` warnfix REPAIR-install branch was not touched by the Tier 5 PR): embed inherits
-the identical gap, matching venv's/system's existing behavior, not introducing a new one. Still
-worth a dedicated future fix (add a plain-`%HP_PY% -m pip install` catch-all branch covering
-venv/system/embed alike) -- remains its own backlog item, not folded into the Tier 5 work.
+**Pre-existing gap found during this audit, unrelated to embed, flagged not fixed:** the warnfix
+REPAIR-install branch (~line 2661) only has two cases -- `if "%HP_ENV_MODE%"=="uv"` and
+`else if defined CONDA_BAT` -- with NO plain-pip fallback for any other mode. venv and system
+ALREADY had this blind spot (warnfix-detected missing modules under either mode match neither
+branch, so the repair loop is a no-op). Confirmed unchanged after shipping embed (this branch
+wasn't touched) -- embed inherits the identical gap. Worth a dedicated future fix (a plain
+`%HP_PY% -m pip install` catch-all covering venv/system/embed) -- its own backlog item.
 
 ---
 
 ## uv-First Provider Architecture
 
-The "uv-first" feature (skip Miniconda download when uv can provide Python) has a larger
-blast radius than it appears. This section documents how it touches test infrastructure.
+The "uv-first" feature (skip Miniconda download when uv can provide Python) has a larger blast
+radius than it appears -- this section documents how it touches test infrastructure.
 
 ### Provider selection flow (run_setup.bat)
 
@@ -541,34 +390,27 @@ When `HP_UV_PROVIDING_PYTHON=1`:
 ### Provider cascade execution re-enters env-create (REQ-009/REQ-005.10 slice 3)
 
 `:provider_cascade` (reached from the main line via `if defined HP_CASCADE_APPROVED goto
-:provider_cascade`, just after `:run_entry_smoke` returns) re-attempts the dependency phase
-under the next provider tier. **It does not re-implement env-create -- it reuses the existing
-paths**, so anyone touching those paths must understand the cascade re-entry:
+:provider_cascade`, just after `:run_entry_smoke` returns) re-attempts the dependency phase under
+the next provider tier. **It does not re-implement env-create -- it reuses the existing paths**,
+so anyone touching those paths must understand the cascade re-entry:
 
 - `uv -> conda`: sets `HP_ENV_MODE=conda`, clears `HP_UV_PROVIDING_PYTHON`, sets
-  `ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%`, then `goto :try_conda_create`. Because uv-first
-  runs skipped Miniconda, `:cascade_acquire_conda` first downloads+installs it on demand
-  (mirroring the normal acquisition at lines ~423-432; `MINICONDA_ROOT`/`CONDA_MAIN`/`CONDA_ALT`
-  are already set near line 410 even in uv-first runs, so `:select_conda_bat` / `:try_conda_install`
-  work). `:try_conda_create` ends with `goto :after_env_mode_selection`, which re-runs dep
-  install + build.
-- `conda -> embed` (reordered; was `conda -> venv` before the REQ-009 provider-chain reorder):
-  `call :try_embed_fallback` (sets `HP_ENV_MODE=embed`), then `goto :after_env_mode_selection`.
-  Suppressed when `HP_FORCE_CONDA_ONLY=1`. No `HP_OFFLINE_MODE`/consent gate of its own (mirrors
-  venv's zero-friction treatment, not system's).
-- `embed -> venv` (new edge): `call :try_venv_fallback` (sets `HP_ENV_MODE=venv`), then
-  `goto :after_env_mode_selection`.
-- `venv -> system`: `call :try_system_fallback` (sets `HP_ENV_MODE=system`), then
-  `goto :after_env_mode_selection`. **Reached in any run** -- the only gate is the REQ-014
-  consent prompt inside `:try_system_fallback` (no env flag; `HP_ALLOW_SYSTEM_FALLBACK` is
-  deprecated/ignored). In CI the consent gate auto-declines (`HP_CI_LANE`, or an explicit
-  `HP_TEST_SYSCON_ANSWER=N`), so the cascade logs `cascading provider venv to system`, the gate
-  declines, and `:cascade_system_unavailable` keeps the current build -- the cascade stops at
-  system in CI without entering it. `HP_FORCE_CONDA_ONLY=1` suppresses embed/venv/system upstream
-  (the cascade never leaves `:cascade_from_conda`). System has no cascade target of its own (no
-  `:cascade_from_system` label/guard exists -- deleted when this reorder made system terminal
-  instead of embed; a re-entry with `HP_ENV_MODE=system` falls straight through
-  `:provider_cascade`'s dispatch table to the "tiers exhausted" catch-all).
+  `ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%`, `goto :try_conda_create`. Because uv-first runs
+  skipped Miniconda, `:cascade_acquire_conda` downloads+installs it on demand
+  (`MINICONDA_ROOT`/`CONDA_MAIN`/`CONDA_ALT` are already set near line 410 even in uv-first runs).
+  `:try_conda_create` ends with `goto :after_env_mode_selection`, re-running dep install + build.
+- `conda -> embed` (reordered from `conda -> venv`): `call :try_embed_fallback`, then
+  `goto :after_env_mode_selection`. Suppressed when `HP_FORCE_CONDA_ONLY=1`. No
+  `HP_OFFLINE_MODE`/consent gate of its own (mirrors venv's zero-friction treatment, not system's).
+- `embed -> venv` (new edge): `call :try_venv_fallback`, then `goto :after_env_mode_selection`.
+- `venv -> system`: `call :try_system_fallback`, then `goto :after_env_mode_selection`. **Reached
+  in any run** -- the only gate is the REQ-014 consent prompt inside `:try_system_fallback` (no env
+  flag; `HP_ALLOW_SYSTEM_FALLBACK` is deprecated/ignored). In CI the gate auto-declines
+  (`HP_CI_LANE`, or explicit `HP_TEST_SYSCON_ANSWER=N`), so the cascade stops at system without
+  entering it. `HP_FORCE_CONDA_ONLY=1` suppresses embed/venv/system upstream. System has no
+  cascade target of its own (`:cascade_from_system` was deleted when this reorder made system
+  terminal instead of embed; a re-entry with `HP_ENV_MODE=system` falls straight through to the
+  "tiers exhausted" catch-all).
 
 **No-loop guarantee (touch one, understand all):** each tier is marked `HP_CASCADE_TRIED_<tier>`
 the first time it is used as a cascade source, and `HP_ENV_MODE` only ever advances
@@ -682,233 +524,191 @@ phrases (`[REPAIR] missing modules detected`) and EXE success, both of which wor
 
 ### autopep723 discovery merge (REQ-005.12, Tier 1) sits inside the pipreqs diff-computation block
 
-`:after_pipreqs_run` (`run_setup.bat` ~line 1258) is the shared fallthrough every pipreqs
-code path funnels to (success/skip/failure all `goto` here -- see the `if
-"%HP_PIPREQS_PHASE_RESULT%"=="ok" (...) else (...)` dispatch right at the top of the label). The
-new Tier 1 block (docs/plan-autopep723-two-tier.md) is inserted immediately after the REQ-005.5
-`fc`-based diff computation and its `[INFO] REQ-005.5: dependency source diff computed` log line,
-and immediately before the dep-check fast-path reset (`set "HP_DEP_SKIP="`) -- **any future edit
-to either neighbor must re-verify this block still sits between them**, since the block's own
-correctness depends on `requirements.txt` already being finalized by pipreqs (or copied from
-`requirements.auto.txt`) by the time it runs, and on running strictly before `HP_DEP_SKIP`/
-`HP_DEP_RESULT`/`HP_UV_INSTALL_OK` are reset for the dep-check fast path below it.
+`:after_pipreqs_run` (`run_setup.bat` ~line 1258) is the shared fallthrough every pipreqs code
+path funnels to (success/skip/failure all `goto` here). The Tier 1 block
+(docs/plan-autopep723-two-tier.md) is inserted immediately after the REQ-005.5 `fc`-based diff
+computation's `[INFO] REQ-005.5: dependency source diff computed` log line, and immediately before
+the dep-check fast-path reset (`set "HP_DEP_SKIP="`) -- **re-verify this block still sits between
+those two neighbors on any future edit**: it depends on `requirements.txt` already being
+finalized by pipreqs (or copied from `requirements.auto.txt`), and on running strictly before
+`HP_DEP_SKIP`/`HP_DEP_RESULT`/`HP_UV_INSTALL_OK` are reset for the dep-check fast path below it.
 
-**v1-scoped to `HP_ENV_MODE=uv` only**, matching `plan-pep723-writeback.md`'s own v1 scope
-decision -- the block computes `HP_UVX_EXE` unconditionally (a cheap string substitution,
-`%HP_UV_EXE:uv.exe=uvx.exe%`) but only ever invokes it when `HP_ENV_MODE` is `uv` AND `HP_ENTRY`
-is defined AND the derived `uvx.exe` path actually exists on disk -- the last check makes the
-whole block a silent no-op under conda/venv/system/embed modes (where `HP_UV_EXE` is empty or
-undefined, so `HP_UVX_EXE` is empty too) with no separate mode-gate needed beyond the `HP_ENV_MODE`
-check itself. **`HP_UVX_EXE` is derived from `HP_UV_EXE`, not from `HP_UV_BIN` directly** --
-this matters for the `PVW_UV_EXE` super-user override (`run_setup.bat` ~line 449): when that
-override is set, `HP_UV_BIN` never gets a `uvx.exe` extracted into it at all (the whole download
-step is skipped), so deriving from `HP_UV_BIN` directly would silently break Tier 1 under that
-override. Deriving from `HP_UV_EXE` via substring substitution works for both the normal
-downloaded-zip case and the override case, since official `uv` distributions always ship
-`uv.exe`/`uvx.exe` as sibling files in the same directory.
+**v1-scoped to `HP_ENV_MODE=uv` only.** Computes `HP_UVX_EXE` unconditionally (cheap string
+substitution, `%HP_UV_EXE:uv.exe=uvx.exe%`) but only invokes it when `HP_ENV_MODE` is `uv` AND
+`HP_ENTRY` is defined AND the derived `uvx.exe` path exists on disk -- the last check makes the
+block a silent no-op under conda/venv/system/embed (where `HP_UV_EXE` is empty). **`HP_UVX_EXE` is
+derived from `HP_UV_EXE`, not `HP_UV_BIN` directly** -- matters for the `PVW_UV_EXE` override
+(~line 449): when set, `HP_UV_BIN` never gets a `uvx.exe` extracted at all, so deriving from
+`HP_UV_BIN` would silently break Tier 1 under that override.
 
-**Writes to `requirements.txt`, not `requirements.auto.txt`** -- a deliberate merge-target
-decision (see the plan doc's own "Merge target decision" section for the full trace of why this
-is sufficient): the unconditional pip gap-fill step later in `:after_env_mode_selection`
-(`%HP_PY% -m pip install -r requirements.txt`) reads the merged file regardless of whether the
-dep-check fast path (`HP_DEP_SKIP`, which reads `requirements.auto.txt` instead) fires or not, so
-anything Tier 1 adds is installed either way. The known, accepted trade-off: on a repeat run
-where the dep-check fast path fires, an autopep-only-discovered package always goes through pip
-rather than conda, mirroring this repo's existing "pip gap-fill safety net" pattern rather than
-introducing a new failure mode.
+**Writes to `requirements.txt`, not `requirements.auto.txt`**: the unconditional pip gap-fill step
+later (`%HP_PY% -m pip install -r requirements.txt`) reads the merged file regardless of whether
+the dep-check fast path fires, so anything Tier 1 adds is installed either way. Accepted
+trade-off: on a repeat run where the fast path fires, an autopep-only-discovered package always
+goes through pip rather than conda (mirrors the existing "pip gap-fill safety net" pattern).
 
-**Never gates the lane.** The merge helper (`tools/autopep_merge.py`, embedded as
-`HP_AUTOPEP_MERGE`) always exits 0 and is purely additive -- it never removes or reorders
-existing `requirements.txt` content, and a missing/empty `requirements.autopep.txt` (autopep723
-failed, found nothing, or the block was skipped entirely) is a silent no-op. The one `[WARN]` log
-branch (`autopep723 merge helper failed`) is defensive only; nothing in the merge helper's own
-design can produce a nonzero exit under normal operation.
+**Never gates the lane, in practice.** The merge helper (`tools/autopep_merge.py`/
+`HP_AUTOPEP_MERGE`) is purely additive -- never removes/reorders existing `requirements.txt`
+content, and a missing/empty `requirements.autopep.txt` is a silent no-op. Every normal/expected
+path (no-op, successful merge) returns 0. **Correction: the module's own "never raises, always
+exits 0" docstring claim is not literally true** -- `existing_names()`'s `open()` and `main()`'s
+own trailing-newline/append `open()` calls are NOT wrapped in `try/except OSError` (unlike
+`extract_autopep_deps()`, which is), so a genuine OSError there (permission denied, disk full, a
+TOCTOU race between `os.path.exists()` and `open()`) propagates uncaught and exits nonzero via
+Python's default uncaught-exception handling. `run_setup.bat` never treats this as fatal either
+way -- the pipreqs-derived `requirements.txt` from earlier in the same flow is already on disk
+and usable regardless of whether this merge step completes, so the bootstrap simply continues
+with pipreqs-only results on that rare failure.
 
 ### HP_PVW_KNOWN_IDEMPOTENT execute-mode discovery (REQ-005.13, Tier 2) hooks in earlier than Tier 1
 
-`:pvw_known_idempotent_run` (`run_setup.bat` ~line 3289) is called from a gate right after
-`:determine_entry` returns (~line 980), BEFORE the pyproject.toml/PEP 723 header/pipreqs block
-even begins -- earlier than Tier 1's own insertion at `:after_pipreqs_run`. This is deliberate:
-Tier 2's whole premise is "skip static discovery, use execution instead," so it must run before
-any static-analysis-based dependency source gets a chance to populate `requirements.txt` first.
-It does NOT need its own PEP-723-awareness, though -- `uvx autopep723 <entry>` already respects
-an existing header on its own (uses declared deps to set up the run, only surfaces something new
-via a real `ModuleNotFoundError` at runtime), so Tier 2 inherits that correct behavior for free.
+`:pvw_known_idempotent_run` (~line 3289) is called from a gate right after `:determine_entry`
+returns (~line 980), BEFORE the pyproject.toml/PEP 723 header/pipreqs block even begins --
+earlier than Tier 1's own `:after_pipreqs_run` insertion, deliberately: Tier 2's premise is "skip
+static discovery, use execution instead," so it must run before any static source populates
+`requirements.txt`. Needs no PEP-723-awareness of its own -- `uvx autopep723 <entry>` already
+respects an existing header (uses declared deps to set up the run, only surfaces something new via
+a real `ModuleNotFoundError` at runtime).
 
-**`HP_UVX_EXE` is computed a second time here, independently of Tier 1's own computation.**
-Both insertion points derive it the same way (`%HP_UV_EXE:uv.exe=uvx.exe%`), but since Tier 2's
-gate is earlier in the file than Tier 1's, it cannot reuse Tier 1's copy of the variable -- this
-is intentional duplication (a cheap string substitution), not a bug to consolidate.
+**`HP_UVX_EXE` is computed a second time here, independently of Tier 1's copy** -- Tier 2's gate
+is earlier in the file, so it cannot reuse Tier 1's variable (intentional duplication of a cheap
+string substitution, not a bug to consolidate).
 
-**The real design wrinkle this hook point has to handle: `uv add --script` only updates the PEP
-723 header, not `requirements.txt`.** A naive "run, persist, continue" implementation would leave
-`requirements.txt` empty, since everything downstream of this point (`:after_pipreqs_run`'s own
-dep-check fast path, `~prep_requirements.py`'s heuristic augmentation, the actual install step)
-all operate on `requirements.txt`, never the header directly. Fixed by reusing the ALREADY-EXISTING
-`:extract_pep723_requirements` subroutine (same one the pre-existing-header case at ~line 1017
-already uses) to re-extract the just-updated header straight into `requirements.txt` after a
-successful Tier 2 run -- no second requirements.txt-writing mechanism was added.
+**Design wrinkle: `uv add --script` only updates the PEP 723 header, not `requirements.txt`.** A
+naive "run, persist, continue" would leave `requirements.txt` empty, since everything downstream
+operates on that file, never the header directly. Fixed by reusing the already-existing
+`:extract_pep723_requirements` subroutine (same one the pre-existing-header case uses) to
+re-extract the just-updated header into `requirements.txt` after a successful Tier 2 run.
 
-**Deliberately does NOT set `HP_SKIP_PIPREQS`.** Unlike the test file's own isolation technique
-(`selfapps_pvw_idempotent.ps1` sets it for test purposes only), production Tier 2 code leaves
-pipreqs free to run normally afterward -- it's additive layering, not a replacement: Tier 2
-anchors `requirements.txt` with what execution-based discovery found, and pipreqs/Tier 1's own
-`autopep723 check` merge (REQ-005.12, which runs later at `:after_pipreqs_run`) still get their
-normal chance to catch anything a single execution path didn't exercise (e.g. a conditionally
-imported module whose branch wasn't hit during this particular run). This mirrors Tier 1's own
-"augment, never replace" philosophy rather than introducing a new one.
+**Deliberately does NOT set `HP_SKIP_PIPREQS`** (unlike `selfapps_pvw_idempotent.ps1`'s own
+test-only isolation) -- production Tier 2 leaves pipreqs free to run normally afterward: additive
+layering, not replacement. Tier 2 anchors `requirements.txt` with what execution-based discovery
+found; pipreqs/Tier 1's own later merge still gets its normal chance to catch anything a single
+execution path didn't exercise (e.g. a conditionally imported module on an unhit branch).
 
-**Only stderr is redirected when the batch caller captures the helper's own result marker,
-never stdout.** `tools/pvw_known_idempotent.py`'s `run_script()` deliberately leaves the child
-`uvx autopep723 <entry>` process's stdio fully inherited (no `capture_output`) so the user's own
-script output prints live to the console, exactly like a normal `python entry.py` run -- this is
-the entire point of the "execute-mode" framing. Because of that, the helper's own one-line
-`RAN:<detail>` / `ERROR:<reason>` result marker is printed to **stderr**, not stdout (see the
-helper's own module docstring) -- if a future edit ever redirects the batch call's stdout instead
-of stderr to capture that marker, it would silently swallow the user's live script output into a
-throwaway result file instead of showing it on the console. `tests/selfapps_pvw_idempotent.ps1`
-guards against this regression directly: it asserts the stub app's own `print()` output appears
-in the bootstrap log itself, not just that the run "succeeded."
+**Only stderr is redirected when the batch caller captures the helper's result marker, never
+stdout.** `tools/pvw_known_idempotent.py`'s `run_script()` leaves the child `uvx autopep723
+<entry>` process's stdio fully inherited (no `capture_output`) so the user's script output prints
+live -- the entire point of "execute-mode." Its own `RAN:<detail>`/`ERROR:<reason>` marker is
+therefore printed to **stderr**, not stdout -- redirecting the batch call's stdout instead would
+silently swallow the user's live output into a throwaway file. `tests/selfapps_pvw_idempotent.ps1`
+guards this directly: asserts the stub app's `print()` output appears in the bootstrap log, not
+just that the run "succeeded."
 
-**`run_script()`'s live execution is bounded by a 120s timeout, found missing via a bug-hunt
-pass and fixed.** This call genuinely runs the user's entry script (not a smoke test) as the
-whole point of execute-mode discovery -- but unlike `discover_dep_names()`/`persist()` in the
-same file (60s/120s timeouts respectively), it originally had none at all. A GUI-mainloop app or
-a script that blocks on `input()` -- both completely ordinary Python programs -- would hang this
-call, and therefore the entire bootstrap, forever with zero feedback, since this runs before any
-build/verification phase and nothing downstream would ever get a chance to run. This is distinct
-from the "never kill the user's real run" principle covering `:run_failfast_probe`'s later
-verification runs (see "Fail-fast probe (Slice 2b-C)" below) -- THAT principle protects the run
-that produces the user's actual deliverable output; this call is a throwaway discovery pass that
-happens twice more anyway (the real, persistent-environment run comes later), so bounding it does
-not cost the user anything a real run needs. On timeout, `run_script()` returns `1` (routing
-through `main()`'s existing "other nonzero" best-effort-fillin-and-retry branch, same as any
-other non-2 failure) rather than raising -- `tests/test_pvw_known_idempotent.py`'s `RunScript`
-class asserts both that a timeout is set and that `subprocess.TimeoutExpired` is caught cleanly.
+**`run_script()`'s live execution is bounded by a 120s timeout, found missing via a bug-hunt and
+fixed.** This genuinely runs the user's entry script (not a smoke test) -- unlike
+`discover_dep_names()`/`persist()` in the same file (60s/120s timeouts), it originally had none. A
+GUI-mainloop app or a script blocking on `input()` would hang this call, and therefore the whole
+bootstrap, forever, since this runs before any build/verification phase. Distinct from the "never
+kill the user's real run" principle covering `:run_failfast_probe`'s later verification runs (see
+"Fail-fast probe" below) -- that protects the run producing the actual deliverable; this is a
+throwaway discovery pass that happens twice more anyway. On timeout, `run_script()` returns `1`
+(routes through `main()`'s existing "other nonzero" retry branch) rather than raising --
+`tests/test_pvw_known_idempotent.py`'s `RunScript` class asserts the timeout and the clean
+`subprocess.TimeoutExpired` catch.
 
 **Double-execution under this flag is intentional, not a REQ-018 gap.** The script runs once here
-(via `uvx`, ephemeral tool venv, for discovery) and again later during the normal PyInstaller EXE
-build's smoke-test verification (the real, persistent environment, producing the actual
-deliverable). `HP_PVW_KNOWN_IDEMPOTENT`'s own name is the user's explicit, self-declared consent
-to exactly this -- REQ-019's "flags only suppress, or add an alternate opt-in behavior, never gate
-the default" already covers it; no additional REQ-018 carve-out was needed.
+(ephemeral `uvx` venv, discovery) and again later during the normal PyInstaller EXE build's
+smoke-test verification (real, persistent environment, producing the deliverable).
+`HP_PVW_KNOWN_IDEMPOTENT`'s own name is the user's explicit consent to this -- REQ-019's "flags
+only suppress or add an opt-in behavior, never gate the default" already covers it.
 
-**Never gates the lane.** Any nonzero outcome (the run itself failing even after its one retry,
-the helper payload failing to write, etc.) is logged as a `[WARN]` and the subroutine returns 0
-unconditionally -- the Default Path (pyproject.toml/PEP 723 header/pipreqs/Tier 1, all still to
-come) picks up exactly as if `HP_PVW_KNOWN_IDEMPOTENT` had never been set.
+**Never gates the lane.** Any nonzero outcome is logged `[WARN]` and the subroutine returns 0
+unconditionally -- the Default Path picks up exactly as if the flag had never been set.
 
 ### PEP 723 write-back (REQ-005.11) touches two hook points and the warnfix/lock flow
 
-`:pep723_writeback` (new subroutine, called from two sites) is deliberately narrow --
-v1-scoped to `HP_ENV_MODE=uv` only -- but both call sites sit inside code this section and the
-one above already document, so a future change to either must re-check this feature too:
+`:pep723_writeback` (called from two sites) is deliberately narrow -- v1-scoped to
+`HP_ENV_MODE=uv` only -- but both call sites sit inside code this section and the one above
+already document, so a future change to either must re-check this feature too:
 
-- **Fresh-install trigger, at `:lock_done`.** This label is the shared fallthrough for BOTH
-  the conda and uv dependency-install paths (see "Provider cascade execution re-enters
-  env-create" above for the general `:after_env_mode_selection` re-entrancy this label already
-  has to handle). `call :pep723_writeback fresh` is placed immediately after `:lock_done`,
-  before the pyvisa/visa detection block -- the v1 scope gate (`if not "%HP_ENV_MODE%"=="uv"
-  exit /b 0`, first line of the subroutine) makes this a no-op on the conda path without an
-  extra guard at the call site.
+- **Fresh-install trigger, at `:lock_done`** -- the shared fallthrough for both conda/uv
+  dependency-install paths (see "Provider cascade execution re-enters env-create" above for the
+  `:after_env_mode_selection` re-entrancy this label already handles). `call :pep723_writeback
+  fresh` sits immediately after `:lock_done`, before the pyvisa/visa detection block -- the v1
+  scope gate (`if not "%HP_ENV_MODE%"=="uv" exit /b 0`, first line) makes this a no-op on conda
+  without an extra call-site guard.
 - **Warnfix trigger, inside the warnfix repair block.** `call :pep723_writeback warnfix` sits
   between the `[REPAIR] rebuild complete after warnfix.` log line and the `:warnfix_cascade_detect`
-  call documented above -- `~missing_modules.txt` and `~warnfix_repair_failed.flag` are both
-  still on disk at that exact point (both are deleted a few lines later, right after
-  `:warnfix_cascade_detect` returns), so this is the only safe window to read them. Because this
-  call sits inside the same `if defined HP_WARNFIX_NEEDED ( ... )` parenthesized block as the
-  `for /f` loops that populate those two files, the subroutine call itself is safe from the
-  parse-time-`%VAR%`-expansion trap (`docs/agent-lessons-learned.md` "Provider-cascade dispatch
-  is goto-based on purpose") only because it passes a literal argument (`warnfix`) and reads
-  `~warnfix_repair_failed.flag`/`~missing_modules.txt` via runtime `if exist` checks inside its
-  OWN separate `call` frame, not via `%VAR%` substitution in the outer block.
+  call -- `~missing_modules.txt`/`~warnfix_repair_failed.flag` are both still on disk at that
+  exact point (deleted a few lines later). This call sits inside the same
+  `if defined HP_WARNFIX_NEEDED ( ... )` block as the `for /f` loops that populate those files, but
+  is safe from the parse-time-`%VAR%`-expansion trap (see `docs/agent-lessons-learned.md`
+  "Provider-cascade dispatch is goto-based on purpose") only because it passes a literal argument
+  (`warnfix`) and reads the two files via runtime `if exist` checks inside its OWN call frame, not
+  via `%VAR%` substitution in the outer block.
 - **`HP_UV_INSTALL_OK` reset lives in `:after_env_mode_selection`'s existing reset block**,
-  alongside `HP_DEP_SKIP`/`HP_DEP_RESULT` (same re-entrancy reasoning as those two: a REQ-009
-  provider-cascade retry re-enters this label from scratch, and a stale `HP_UV_INSTALL_OK=1`
-  from a previous, now-abandoned uv attempt must never silently satisfy the fresh-trigger
-  "confirmed installed" gate on a later, unrelated cascade tier). It is set to `1` in exactly
-  two places inside the uv dependency-install branch: the genuine-install-succeeded `else`
-  branch of the `uv pip install -r requirements.txt` call, and the `HP_DEP_SKIP`-short-circuited
-  branch (already-satisfied-by-lock is still a confirmed-installed state, not a failure).
-- **Packages-file staging is a plain `copy`, not a re-derivation.** The subroutine never
-  re-resolves what was installed -- it copies whichever source file the trigger implies
-  (`requirements.txt` for fresh, `~missing_modules.txt` for warnfix) to `~pep723_pkgs.txt` and
-  hands that straight to the embedded helper. This is the "all-or-nothing per round" design
-  from `docs/plan-pep723-writeback.md` Part 2.0 point 3: neither trigger point can know which
-  subset of N packages in a single failed bulk install actually succeeded, so a failed round
-  (uv install errorlevel 1, or a `~warnfix_repair_failed.flag` present) skips the write-back
-  entirely rather than guessing a partial set.
-- **v1 does not touch venv/conda/embed/system modes at all.** A future extension of this
-  feature to another provider (if ever undertaken) would need a mechanism analogous to
-  `HP_UV_INSTALL_OK` for whichever provider's own install branch, plus a corresponding v1
-  scope-gate relaxation in `:pep723_writeback`'s first line -- currently that gate is the
-  single point controlling the feature's entire footprint.
+  alongside `HP_DEP_SKIP`/`HP_DEP_RESULT` (same re-entrancy reasoning: a stale
+  `HP_UV_INSTALL_OK=1` from an abandoned uv attempt must never silently satisfy a later cascade
+  tier's fresh-trigger gate). Set to `1` in exactly two places in the uv install branch: the
+  genuine-install-succeeded `else` branch, and the `HP_DEP_SKIP`-short-circuited branch
+  (already-satisfied-by-lock is a confirmed-installed state, not a failure).
+- **Packages-file staging is a plain `copy`, not a re-derivation.** Copies whichever source file
+  the trigger implies (`requirements.txt` for fresh, `~missing_modules.txt` for warnfix) to
+  `~pep723_pkgs.txt` and hands it to the embedded helper. "All-or-nothing per round" design
+  (`docs/plan-pep723-writeback.md` Part 2.0 point 3): neither trigger point can know which subset
+  of a failed bulk install actually succeeded, so a failed round skips write-back entirely rather
+  than guessing a partial set.
+- **v1 does not touch venv/conda/embed/system modes at all.** A future extension would need a
+  mechanism analogous to `HP_UV_INSTALL_OK` per provider, plus a matching v1 scope-gate
+  relaxation in `:pep723_writeback`'s first line -- currently the single point controlling the
+  feature's entire footprint.
 
 ### dep-check + uv mode lock file interconnection
 
-`~environment.lock.txt` is the dep-check cache key. In conda mode it is written via
-`conda list --export`. In uv mode it is written by copying `~dependency_installed.txt`
-(run_setup.bat lines 1141-1145). This ensures `selfapps_depcheck.ps1` works correctly
-in uv-first lanes: the lock file exists after run 1, and dep-check on run 2 correctly
-finds all packages already in the lock and emits the skip log line.
+`~environment.lock.txt` is the dep-check cache key: conda mode writes it via `conda list
+--export`; uv mode writes it by copying `~dependency_installed.txt` (lines 1141-1145). This is
+why `selfapps_depcheck.ps1` works in uv-first lanes -- the lock exists after run 1, so dep-check
+on run 2 finds all packages already in it and emits the skip log line.
 
-`dep_check.py` is run for BOTH `HP_ENV_MODE=conda` and `HP_ENV_MODE=uv` (line 1048:
-`if not "%HP_ENV_MODE%"=="conda" if not "%HP_ENV_MODE%"=="uv" goto :dep_check_done`).
-For venv and system modes, dep_check is skipped entirely (no lock written, no skip check).
-
-`HP_DEP_SKIP` is honored in uv mode too (line 1108: `if not defined HP_DEP_SKIP` guards
-the `uv pip install` call), so second-run dep-check correctly skips pip install as well.
+`dep_check.py` runs for BOTH `HP_ENV_MODE=conda` and `HP_ENV_MODE=uv` (line 1048: `if not
+"%HP_ENV_MODE%"=="conda" if not "%HP_ENV_MODE%"=="uv" goto :dep_check_done`) -- skipped entirely
+for venv/system (no lock written, no skip check). `HP_DEP_SKIP` is honored in uv mode too (line
+1108 guards the `uv pip install` call), so second-run dep-check skips pip install as well.
 
 ### HP_TEST_FORCE_UV_FAIL and HP_TEST_CORRUPT_UV interaction
 
-`HP_TEST_FORCE_UV_FAIL=1` fires at `run_setup.bat` line 296 (BEFORE the cached-uv check
-at line 302 where `HP_TEST_CORRUPT_UV` fires). If both are set simultaneously, the
-FORCE_UV_FAIL gate fires first and the CORRUPT_UV test never reaches its trigger.
-
-Fix (applied in `tests/selftest.ps1`): the corrupt-uv sub-bootstrap saves/clears/restores
-`HP_TEST_FORCE_UV_FAIL` so that the corrupt-uv branch is correctly exercised in all lanes.
+`HP_TEST_FORCE_UV_FAIL=1` fires at line 296, BEFORE the cached-uv check at line 302 where
+`HP_TEST_CORRUPT_UV` fires -- if both are set, FORCE_UV_FAIL wins and CORRUPT_UV never triggers.
+Fix (`tests/selftest.ps1`): the corrupt-uv sub-bootstrap saves/clears/restores
+`HP_TEST_FORCE_UV_FAIL` so the corrupt-uv branch is exercised in all lanes.
 
 ### Malformed pyproject.toml + uv venv failure (uv-first lanes)
 
-`uv venv` reads `pyproject.toml` for `[project].requires-python` even without `--python`.
-When pyproject.toml is malformed TOML, `uv venv` exits non-zero. In the uv-first real lane
-(no conda installed), this cascades: `:uv_venv_fail` falls to `:try_conda_create`, but
-`CONDA_BAT` is empty, so conda create also fails, and the bootstrap exits non-zero.
+`uv venv` reads `pyproject.toml` for `[project].requires-python` even without `--python`; a
+malformed TOML makes it exit non-zero. In the uv-first real lane (no conda installed), this
+cascades: `:uv_venv_fail` falls to `:try_conda_create`, `CONDA_BAT` is empty, conda create also
+fails, bootstrap exits non-zero.
 
-**Symptom**: `self.pyproject.malformed` fails in real/cache lanes (uv-first).
-**Root cause**: `uv venv` runs in the project directory and hits the malformed TOML before
-`HP_PYPROJ_DEPS` gets a chance to detect and warn about it.
-**Fix** (in `:uv_venv_fail`): when `HP_UV_PROVIDING_PYTHON=1`, retry via
-`uv run --no-project python -m venv .uv_env` which bypasses project discovery entirely.
-On success, go to `:uv_venv_ready`. The `HP_PYPROJ_DEPS` path (line ~712) then naturally
-detects the malformed TOML and emits `[WARN] pyproject.toml TOML parse error; falling back.`
+**Symptom**: `self.pyproject.malformed` fails in real/cache lanes. **Root cause**: `uv venv` runs
+in the project directory and hits the malformed TOML before `HP_PYPROJ_DEPS` gets a chance to
+detect and warn. **Fix** (`:uv_venv_fail`): when `HP_UV_PROVIDING_PYTHON=1`, retry via `uv run
+--no-project python -m venv .uv_env`, which bypasses project discovery entirely; on success go to
+`:uv_venv_ready`, and `HP_PYPROJ_DEPS` then naturally detects the malformed TOML and emits
+`[WARN] pyproject.toml TOML parse error; falling back.`
 
-**Note**: `UV_NO_CONFIG=1` does NOT help -- uv's own docs say: "Note that if a pyproject.toml
-file is present, uv will still use the [project] metadata (e.g., requires-python) to guide
-dependency resolution." Only `--no-project` truly bypasses pyproject.toml discovery.
+**`UV_NO_CONFIG=1` does NOT help** -- uv's own docs: pyproject.toml `[project]` metadata (e.g.
+`requires-python`) is still used to guide resolution regardless. Only `--no-project` truly
+bypasses pyproject.toml discovery. **`~detect_python.py` reads pyproject.toml via REGEX** (not a
+TOML parser), so it exits 0 even on malformed TOML (returns empty string) -- `HP_UV_PROVIDING_
+PYTHON=1` is set correctly, and venv creation is the actual first point of failure.
 
-**Note**: `~detect_python.py` reads pyproject.toml via REGEX (not TOML parser), so it exits 0
-even on malformed TOML (just returns empty string). That's why `HP_UV_PROVIDING_PYTHON=1` is
-set correctly, and the venv creation step is the first point of failure.
+**Malformed TOML regex fallback** (must not assume `tomllib`; see the embedded-helper Python
+baseline in `docs/agent-lessons-learned.md`): `re.search(r'^\[project\s*$', txt, re.MULTILINE)`
+matches `[project` missing its closing `]` at end of line (optional whitespace/CRLF), exits 2 so
+the caller emits WARN. No false positives for sub-tables like `[project.urls]` (`\s*$` requires
+end of line right after `project`).
 
-**Malformed TOML regex fallback detail** (the helper must not assume `tomllib`; see the
-embedded-helper Python baseline in `docs/agent-lessons-learned.md`):
-The regex must detect `[project` missing the closing `]` even without tomllib. The fix:
-`re.search(r'^\[project\s*$', txt, re.MULTILINE)` -- matches `[project` at end of line
-(with optional whitespace/CRLF). This exits 2 so the caller emits WARN. No false positives
-for sub-tables like `[project.urls]` because `\s*$` requires end of line after `project`.
-
-**Test assertion** (`tests/selftest.ps1` lines 599-643, all lanes, no HP_FORCE_CONDA_ONLY):
-- Asserts: `[WARN] pyproject.toml TOML parse error` in log AND `exitCode == 0`
-- Row: `self.pyproject.malformed`
-- In conda-full lane: malformed TOML is detected by HP_PYPROJ_DEPS (conda create doesn't read TOML)
-- In uv-first lane: the `:uv_venv_fail` retry path allows the bootstrap to continue so HP_PYPROJ_DEPS runs
+**Test assertion** (`tests/selftest.ps1` lines 599-643, all lanes, no HP_FORCE_CONDA_ONLY): row
+`self.pyproject.malformed` asserts `[WARN] pyproject.toml TOML parse error` in log AND `exitCode
+== 0`. In conda-full, malformed TOML is detected by HP_PYPROJ_DEPS (conda create doesn't read
+TOML); in uv-first, the `:uv_venv_fail` retry lets the bootstrap continue so HP_PYPROJ_DEPS runs.
 
 ### HP_FORCE_CONDA_ONLY as a test-override pattern
 
-Some tests that specifically test conda behavior SET `HP_FORCE_CONDA_ONLY=1` themselves,
-rather than relying on the CI lane. These tests are self-contained and work in all lanes
-(including uv-first lanes, where they trigger Miniconda download if not already installed):
+Some tests that specifically test conda behavior SET `HP_FORCE_CONDA_ONLY=1` themselves rather
+than relying on the CI lane -- self-contained, work in all lanes (triggering Miniconda download
+in uv-first lanes if not already installed):
 
 | Test | Why it sets HP_FORCE_CONDA_ONLY=1 |
 |------|-----------------------------------|
@@ -925,15 +725,12 @@ as a side effect but is testing something else -> skip=true in uv-first lanes.
 
 ### HP_UV_BIN locality: why offline sub-bootstrap tests work in all lanes
 
-`HP_UV_BIN` is set to `%HP_SCRIPT_ROOT%~uv_bin` (run_setup.bat line 290), where `HP_SCRIPT_ROOT`
-is the directory containing the bootstrapper, not a system temp or user-global path. This has
-a critical consequence for sub-bootstrap tests:
-
-**When a test creates a fresh temp directory and copies run_setup.bat into it:**
-- The sub-bootstrap's `HP_SCRIPT_ROOT` = the new temp dir
-- `HP_UV_BIN` = `~selftest_foo\~uv_bin\` (empty, no uv.exe)
-- `HP_OFFLINE_MODE=1` (set by the test) prevents re-downloading uv
-- Result: uv is ALWAYS unavailable in the sub-bootstrap
+`HP_UV_BIN` is set to `%HP_SCRIPT_ROOT%~uv_bin` (line 290), where `HP_SCRIPT_ROOT` is the
+bootstrapper's own directory, not a system temp or user-global path. Consequence: when a test
+creates a fresh temp directory and copies `run_setup.bat` into it, the sub-bootstrap's
+`HP_SCRIPT_ROOT` is that new temp dir, so `HP_UV_BIN` = `~selftest_foo\~uv_bin\` (empty, no
+uv.exe); combined with the test's own `HP_OFFLINE_MODE=1` (blocks re-download), uv is ALWAYS
+unavailable in the sub-bootstrap.
 
 This makes the fallback chain tests in `selfapps_ux_hardening.ps1` work correctly in uv-first
 (real/cache) lanes even though those lanes normally use uv as the primary provider:
@@ -959,10 +756,9 @@ not set it (confirmed by grepping batch-check.yml).
 ### selfapps_isolation.ps1: HP_CI_SKIP_ENV=1 bypasses all provider logic
 
 The three tests in `selfapps_isolation.ps1` (crossdir, sameDir, req010.pythonpath) run the
-bootstrapper with `HP_CI_SKIP_ENV=1` inherited from the CI environment. This causes run_setup.bat
-to jump to `:ci_skip_entry` (lines ~1090-1196) which uses system Python and bypasses the entire
-provider selection (no uv, no conda, no venv decision). These tests are completely lane-agnostic
-and safe in all lanes including uv-first.
+bootstrapper with `HP_CI_SKIP_ENV=1` inherited from CI, jumping to `:ci_skip_entry` (~1090-1196)
+which uses system Python and bypasses provider selection entirely -- lane-agnostic, safe in all
+lanes including uv-first.
 
 ### selfapps_skiphooks.ps1: provider-independent, conda-full lane only
 
@@ -1031,16 +827,20 @@ if ($env:HP_FORCE_CONDA_ONLY -ne '1') {
 
 ## Single-verification smoke model (REQ-018 2b-A.2) couples run_setup.bat to envsmoke/skiphooks
 
-The bootstrapper runs the user's code for verification at most ONCE per invocation. Touching the
+The bootstrapper runs the user's code for MANDATORY verification exactly ONCE per invocation
+(the pre-build interpreter smoke and a second EXE smoke were merged into one). An accepted
+post-execution checkpoint (see that section below) can still launch an OPTIONAL second run --
+"once per invocation" describes the automatic/default flow, not an absolute ceiling. Touching the
 smoke flow in `run_setup.bat` requires understanding the assertions in
 `tests/selfapps_envsmoke.ps1` and `tests/selfapps_skiphooks.ps1`, which are coupled by exact log
 strings and run artifacts:
 
 - **Removed:** the pre-build interpreter smoke (in `:run_entry_smoke`) and
-  `:try_entry_smoke_after_warnfix`. The EXE path no longer runs the app twice (interpreter then EXE).
-- **EXE path = sole verification via the timed EXE smoke** (`:run_exe_smokerun`). To keep the
-  existing tests passing WITHOUT re-pointing them, the EXE smoke now emits the **same vocabulary**
-  the interpreter smoke used and **captures the EXE stdout/stderr** to the app root:
+  `:try_entry_smoke_after_warnfix` -- the EXE path no longer runs the app twice.
+- **EXE path = primary (mandatory) verification via the timed EXE smoke** (`:run_exe_smokerun`).
+  To keep existing
+  tests passing without re-pointing them, it emits the **same vocabulary** the interpreter smoke
+  used and **captures the EXE stdout/stderr** to the app root:
   - `[INFO] Running entry script smoke test via packaged EXE.` -> matches envsmoke `$hasEntryRun`
     (`'Running entry script smoke test'`).
   - `[INFO] Entry smoke exit=%HP_EXE_EXIT%` at `:smokerun_ndjson` -> matches `$hasEntryExit`
@@ -1085,697 +885,442 @@ strings and run artifacts:
 ## Fail-fast probe (Slice 2b-C): shared state machine for the two untimed launch points
 
 `:try_fast_exe` (cached EXE reuse) and `:verify_no_exe_interpreter` (no-EXE interpreter run) both
-launch user code with NO timeout at all in CI/automation (unchanged, plain `cmd` redirect). For a
-real interactive double-click user (`HP_INTERACTIVE_RUN` set -- see `:compute_interactive_run`,
-mirrors `:pick_entry_interactive`'s `NOINPUT`/`HP_NONINTERACTIVE`/`HP_CI_LANE` signals, plus
-`HP_TEST_FORCE_INTERACTIVE_PROBE=1` to force the branch under `HP_CI_LANE` for CI coverage), both
-call the shared `:run_failfast_probe` subroutine instead, which launches via
-`~failfast_probe.ps1` (`HP_FAILFAST_PROBE`, a base64 embedded helper emitted through the existing
-`:emit_from_base64` mechanism -- NOT an inline `-Command` one-liner, deliberately: the two-stage
-wait needs interpolated strings, and `.ps1` file content sidesteps every cmd.exe quote-nesting
-hazard an inline `-Command "..."` string would hit here). The helper does `WaitForExit(HP_FAILFAST_PROBE_MS)`
-(default 10000ms, distinct from the unrelated ~30s hard-kill cap used by `:run_exe_smokerun`/
-`:hidden_import_recover` -- that is a force-kill ceiling for the fresh-build verification run, the
-ONLY run this bootstrapper ever kills; this probe window is purely a classification checkpoint,
-never a ceiling) then, if the process is still running, a SECOND, UNBOUNDED `WaitForExit()` with no
-`Kill()` call anywhere.
+launch user code with NO timeout in CI/automation (unchanged, plain `cmd` redirect). For a real
+interactive double-click user (`HP_INTERACTIVE_RUN` set -- see `:compute_interactive_run`, mirrors
+`:pick_entry_interactive`'s non-interactivity signals, plus `HP_TEST_FORCE_INTERACTIVE_PROBE=1` to
+force the branch under `HP_CI_LANE` for CI coverage), both call the shared `:run_failfast_probe`
+instead, which launches via `~failfast_probe.ps1` (`HP_FAILFAST_PROBE`, an emitted `.ps1` file, not
+inline `-Command` -- the two-stage wait needs interpolated strings, which sidesteps every cmd.exe
+quote-nesting hazard an inline command would hit). The helper does
+`WaitForExit(HP_FAILFAST_PROBE_MS)` (default 10000ms -- distinct from the unrelated ~30s hard-kill
+cap used by `:run_exe_smokerun`/`:hidden_import_recover`, which force-kills the fresh-build
+verification run, the ONLY run this bootstrapper ever kills; this probe window is purely a
+classification checkpoint, never a ceiling), then, if still running, a SECOND, UNBOUNDED
+`WaitForExit()` with no `Kill()` anywhere.
 
 **Touch either call site, must understand the other, plus the top-of-file success gate:**
-- Both callers set `HP_PROBE_EXE` / `HP_PROBE_ARGS` (raw, UNQUOTED -- the helper quotes it via
-  `'"' + $rawArgs + '"'`, which only works correctly for a SINGLE path argument; do not repurpose
-  `HP_PROBE_ARGS` for a multi-token command line) / `HP_PROBE_CWD` before calling
-  `:run_failfast_probe <site>`. **CWD is preserved per call site exactly as before this slice**:
-  `:try_fast_exe` runs from the app root (`%CD%`, no `pushd dist`) and `:verify_no_exe_interpreter`
-  also runs from the app root -- neither adopts `:run_exe_smokerun`'s `pushd dist` CWD (load-bearing
-  for `selfapps_exedata_fail`'s CWD-relative `config.json` check; see the paragraph above). If you
-  ever unify these CWDs, re-verify that xfail test.
-- `:run_failfast_probe` always leaves `HP_SMOKE_RC` set to the true final exit code (whether the
-  process exited fast or only after the unbounded continuation) and `HP_PROBE_EXCEEDED` set (`1`)
-  iff the probe window was crossed. `:try_fast_exe`'s discard-and-rebuild block is gated on
-  `if not "%HP_SMOKE_RC%"=="0" if not defined HP_PROBE_EXCEEDED` -- once a process is classified
-  alive/healthy at the probe, a LATER non-zero exit is presumed to be the user's own program outcome
-  (not proof of a stale artifact) and the cached EXE is kept, never discarded.
-- **The silent-success bug this closed:** the top-of-file fast-path caller (`run_setup.bat`, near
-  the very top, before provider selection) used to gate its `goto :success` shortcut on
-  `HP_FASTPATH_USED` alone, with no check of the run's outcome -- harmless before this slice because
-  any non-zero `HP_SMOKE_RC` always cleared `HP_FASTPATH_USED` too (inside `:try_fast_exe`'s old
-  unconditional discard). Once the probe's "don't discard past the probe window" rule could leave
-  `HP_FASTPATH_USED` set through a real later failure, that same shortcut would have silently
-  reported full bootstrap success while hiding the failure. Fixed by computing
+- Both callers set `HP_PROBE_EXE`/`HP_PROBE_ARGS`/`HP_PROBE_CWD` before calling `:run_failfast_probe
+  <site>`. **`HP_PROBE_ARGS` is a complete, ready-to-use Windows Arguments string, per the
+  caller-owned quoting contract the Argv passthrough feature established (see below): the caller
+  quotes each token, and `~failfast_probe.ps1` assigns the string to `ProcessStartInfo.Arguments`
+  VERBATIM, adding no quotes of its own.** Do not wrap the complete string in another pair of
+  quotes -- that collapses multiple arguments into one token. **CWD is preserved per call site**: both `:try_fast_exe` and
+  `:verify_no_exe_interpreter` run from the app root (no `pushd dist`), unlike
+  `:run_exe_smokerun`'s `pushd dist` (load-bearing for `selfapps_exedata_fail`'s CWD-relative
+  `config.json` xfail check -- re-verify that test if these CWDs are ever unified).
+- `:run_failfast_probe` always leaves `HP_SMOKE_RC` set to the true final exit code and
+  `HP_PROBE_EXCEEDED` set (`1`) iff the probe window was crossed. `:try_fast_exe`'s
+  discard-and-rebuild block is gated on `if not "%HP_SMOKE_RC%"=="0" if not defined
+  HP_PROBE_EXCEEDED` -- once a process is classified alive/healthy at the probe, a LATER non-zero
+  exit is presumed the user's own program outcome (not a stale artifact) and the cached EXE is
+  kept, never discarded.
+- **Silent-success bug this closed:** the top-of-file fast-path caller used to gate its `goto
+  :success` shortcut on `HP_FASTPATH_USED` alone, with no outcome check -- harmless before this
+  slice (any non-zero `HP_SMOKE_RC` always cleared `HP_FASTPATH_USED` too). Once the probe's
+  "don't discard past the window" rule could leave `HP_FASTPATH_USED` set through a real later
+  failure, that shortcut would silently report full success while hiding it. Fixed by computing
   `HP_FASTPATH_RUN_FAILED` (true only when `HP_SMOKE_RC` is DEFINED and non-"0" -- empty/undefined
-  `HP_SMOKE_RC` still means "no real failure observed," e.g. the REQ-012
-  `HP_SKIP_EXE_SMOKERUN` skip-without-running case, which must still take the zero-friction path)
-  and branching the log message on it before `write_status`/`goto :success`; `HP_BOOTSTRAP_STATE`
-  stays `ok` either way (env/build genuinely succeeded; a runtime bug in the user's own code is not
-  something a rebuild could fix -- matches the "User-code exit-code semantics" item in
-  `CLAUDE.md`'s Active Backlog), but the console/log now always shows the true
-  `[STATUS] Run Status: ...` outcome first. This second call site was recomputed with the exact
-  same `HP_FASTPATH_RUN_FAILED` guard (see the next bullet).
-- **Both `:try_fast_exe` call sites now carry this guard, not just the top-of-file one.** The
-  second call site (inside `:run_entry_smoke`'s build gate, `if defined HP_FASTPATH_USED (...)`
-  just before the PyInstaller build block) recomputes `HP_FASTPATH_RUN_FAILED` fresh as its own
-  top-level statement and branches the same way. It is normally unreachable with a real failure
-  today -- any first-call success or post-probe-failure outcome already took `goto :success`
-  before this point -- but a future provider-cascade re-entry (`:after_env_mode_selection`) could
-  reach it with `HP_FASTPATH_USED` still set from a probe-classified alive-then-failed run, and
-  this closes that gap defensively rather than leaving a second, unguarded copy of the same logic.
-- **cmd.exe parse-time-expansion hazard, avoided via goto, not if/else, at both call sites.** An
-  earlier revision of this slice launched the process and read `set "HP_SMOKE_RC=%ERRORLEVEL%"`
-  (plus the immediate SUCCESS/FAILED branch) INSIDE the non-interactive `else ( ... )` clause of
-  the `if defined HP_INTERACTIVE_RUN (...) else (...)` dispatch. cmd.exe expands every `%VAR%` in
-  a parenthesized block ONCE, at parse time, using values from before the block started -- so
-  `%ERRORLEVEL%` (and every in-block `%HP_SMOKE_RC%` read) silently froze to whatever it was right
-  before the dispatch began (almost always `"0"`), meaning a genuinely broken cached EXE was NEVER
-  discarded in the legacy/CI branch. Both `:try_fast_exe` and `:verify_no_exe_interpreter` now use
-  `if defined HP_INTERACTIVE_RUN goto :<label>_probe` instead, so each branch's statements are
-  parsed and executed as fresh top-level lines -- see
-  `docs/agent-lessons-learned.md` "Provider-cascade dispatch is goto-based on purpose" for the same
-  pattern used elsewhere in this file, and do not reintroduce a parenthesized if/else around a
-  launch+`%ERRORLEVEL%`-capture sequence at either call site.
-- `:try_fast_exe`'s legacy (non-interactive) branch also gained a `[STATUS] Run Status:
-  SUCCESS/FAILED` line for parity (it previously never emitted `[STATUS]` telemetry at all, unlike
-  `:verify_no_exe_interpreter` and `:run_exe_smokerun`) -- purely additive, does not change any
-  branch/goto target, so it does not affect CI determinism for `self.fastpath` /
-  `self.exe.fastpath.graceful`.
-- NDJSON row `self.failfast.probe` (gated on `HP_NDJSON`, same convention as `self.exe.smokerun`)
-  carries `details.site` (`'fastpath'|'interpreter'|'checkpoint'` -- the third value added when
-  `:run_postexec_checkpoint`, Slice 2b-C's post-execution checkpoint, shipped; see that section
-  below) so one schema covers all three call sites. Because the checkpoint can trigger this same
-  subroutine a SECOND time within one bootstrap invocation, `self.failfast.probe` is no longer
-  guaranteed to appear at most once per `HP_NDJSON` stream -- a consumer must key off
-  `details.site` to distinguish the primary verification's row from an accepted checkpoint's row,
-  not assume a single row per run.
+  still means "no real failure observed," e.g. the REQ-012 skip-without-running case, which must
+  still take the zero-friction path) and branching the log message on it before
+  `write_status`/`goto :success`; `HP_BOOTSTRAP_STATE` stays `ok` either way (a runtime bug in the
+  user's own code isn't something a rebuild could fix -- matches CLAUDE.md's "User-code exit-code
+  semantics" Known Finding), but the console now always shows the true `[STATUS]` outcome first.
+- **Both `:try_fast_exe` call sites carry this guard, not just the top-of-file one.** The second
+  site (inside `:run_entry_smoke`'s build gate) recomputes `HP_FASTPATH_RUN_FAILED` fresh and
+  branches the same way -- normally unreachable today (any first-call success or post-probe
+  failure already took `goto :success` before this point), but a future provider-cascade
+  re-entry could reach it with `HP_FASTPATH_USED` still set, so this closes that gap defensively.
+- **cmd.exe parse-time-expansion hazard, avoided via goto not if/else, at both sites.** An earlier
+  revision read `set "HP_SMOKE_RC=%ERRORLEVEL%"` (plus the SUCCESS/FAILED branch) INSIDE the
+  non-interactive `else ( ... )` clause -- cmd.exe expands every `%VAR%` in a parenthesized block
+  ONCE at parse time using pre-block values, so `%ERRORLEVEL%` silently froze to whatever it was
+  before the dispatch (almost always `"0"`), meaning a genuinely broken cached EXE was NEVER
+  discarded in the legacy/CI branch. Both sites now use `if defined HP_INTERACTIVE_RUN goto
+  :<label>_probe` instead (see `docs/agent-lessons-learned.md` "Provider-cascade dispatch is
+  goto-based on purpose") -- do not reintroduce a parenthesized if/else around a
+  launch+`%ERRORLEVEL%`-capture sequence here.
+- `:try_fast_exe`'s legacy branch also gained a `[STATUS] Run Status: SUCCESS/FAILED` line for
+  parity (previously emitted no `[STATUS]` telemetry at all) -- purely additive, no branch/goto
+  change, doesn't affect `self.fastpath`/`self.exe.fastpath.graceful` determinism.
+- NDJSON row `self.failfast.probe` carries `details.site`
+  (`'fastpath'|'interpreter'|'checkpoint'` -- the third value added when the post-execution
+  checkpoint shipped, see below) so one schema covers all three call sites. Since the checkpoint
+  can trigger this subroutine a SECOND time per bootstrap, this row is no longer guaranteed at
+  most once per stream -- key off `details.site`, don't assume one row per run.
 - Test coverage: `tests/selfapps_failfast_probe.ps1` (`self.failfast.probe.fastfail`,
   `self.failfast.probe.alive`), forced via `HP_TEST_FORCE_INTERACTIVE_PROBE=1` under
-  `HP_CI_LANE=test` (mirrors the `HP_TEST_FORCE_PICKER` pattern) since CI is otherwise always
-  non-interactive. `tests/harness.ps1`'s `batch.failfast.probe` statically guards the interactivity
-  subroutine, the shared probe subroutine, the test override, the default probe window, the
-  `HP_PROBE_EXCEEDED` state var, and the decoupling fix.
+  `HP_CI_LANE=test`. `tests/harness.ps1`'s `batch.failfast.probe` statically guards the
+  interactivity subroutine, the shared probe subroutine, the test override, the default window,
+  the `HP_PROBE_EXCEEDED` var, and the decoupling fix.
 
 ### Live-echo redesign (docs/plan-cli-interactive-verification.md P0, requirement 1) -- touches BOTH `~failfast_probe.ps1` and the new `~exe_smokerun.ps1`, plus their callers
 
-**Status: the tee/result-passing mechanism is implemented and shipped; requirement 2 (real-Windows
-stdin confirmation) now has a dedicated CI test in place (see the new "Interactive stdin
-round-trip" subsection below) but is not yet fully closed pending that test's first real CI run;
-requirement 3 (the 30s-kill revisit, Open Question 1) remains open -- see the plan doc.** Four
-changes shipped together across two passes, since none work without the others:
+**Status: shipped.** Requirement 2 (real-Windows stdin confirmation) has a dedicated CI test now
+(`tests/selfapps_interactive_stdin.ps1`, below) but isn't closed until its first real run is
+observed passing. Requirement 3 (the 30s-kill revisit, Open Question 1) remains open.
 
-1. **Both helper scripts live-tee the child's stdout/stderr** as each line arrives, instead of
-   only writing captured output to disk after the process exits -- otherwise a stdin-interactive
-   program's own prompts never reach a real double-clicked user.
-2. **The mechanism for doing so is self-sequenced `StreamReader.ReadLineAsync()` polling, NOT
-   `Register-ObjectEvent`.** The original implementation used `Register-ObjectEvent` on
-   `OutputDataReceived`/`ErrorDataReceived` with a polling `while (-not $p.WaitForExit(100)) { }`
-   loop (needed because a blocking, no-argument `WaitForExit()` does not yield to PowerShell's own
-   event-dispatch loop -- confirmed both empirically and against PowerShell/PowerShell#11065, so
-   registered `-Action` scriptblocks would queue but never run until the blocking call returned).
-   **This was replaced entirely, 2026-07-24, after a real bug was found**: `Register-ObjectEvent`
-   dispatches each event via `ThreadPool.QueueUserWorkItem`, which gives no ordering guarantee
-   between events -- a confirmed, filed upstream bug (PowerShell/PowerShell#11937) that reordered
-   lines WITHIN a single stream when several arrived close together (e.g. round 2 of a multi-round
-   `input()` conversation landing before round 1 in the captured/teed text, non-deterministically).
-   Found while building the interactive round-trip test for requirement 2's confirmation (see
-   below), reproduced 2/5 local runs before the fix, 0/20 after. The fix issues only ONE async
-   `ReadLineAsync()` read per stream at a time: check `.IsCompleted`, consume `.Result`, print it,
-   issue the next read -- ordering is enforced by construction (never more than one outstanding
-   read per stream), not by hoping the runtime's callback scheduler preserves it. This also
-   subsumes and removes the separate drain-race fix described in point 3 below: `ReadLineAsync()`
-   returning a completed task with a `$null` result IS the stream's own EOF signal, so no separate
-   post-`WaitForExit()` polled drain-wait is needed anymore -- the mechanism is simpler as well as
-   more correct. See `docs/plan-cli-interactive-verification.md` Finding 8 for the full
-   root-cause trace and verification method.
-3. **The original mechanism (superseded by point 2, kept here for the historical record of a real
-   race that was found and fixed along the way -- the general lesson remains valid even though the
-   specific implementation it was found in has been replaced):** a second, independent race was
-   found and fixed while empirically testing the ORIGINAL `Register-ObjectEvent` mechanism in
-   `pwsh`. Microsoft's own documented guidance for async-redirected output ("call the no-argument
-   `WaitForExit()` overload after a timed one returns `true`, to ensure async event handling has
-   completed" -- `Process.WaitForExit(Int32)` Remarks) was empirically proven insufficient in this
-   environment: a direct repro showed the final `OutputDataReceived` event (carrying a line Python
-   only flushed at process exit -- e.g. an ordinary unflushed `print()` before a redirected,
-   non-tty stdout) firing AFTER both `WaitForExit()` calls had already returned, silently losing
-   that line from the captured buffer/file. See `docs/agent-lessons-learned.md`'s ".NET Process
-   async-redirected-output" entry for the full mechanism -- still instructive even though
-   `ReadLineAsync()` polling no longer needs this specific fix.
-   **Separately confirmed reassuring for the actual target use case, still true under the new
-   mechanism**: Python's `input(prompt)` builtin DOES flush stdout before blocking on stdin, even
-   when stdout is redirected/non-tty (this is a real, if under-documented, CPython behavior,
-   confirmed via direct reproduction) -- so a program built around the owner's actual target shape
-   (ask setup questions via `input()`, loop until quit) does not depend on the user remembering to
-   flush; the buffering hazard above mainly affects `print()` calls made well before a program's
-   next `input()`/exit, not the prompts themselves.
-4. **Removed the `for /f`-captures-stdout result-passing mechanism entirely, at both call sites.**
-   Both `~failfast_probe.ps1` and the new `~exe_smokerun.ps1` used to print their
-   `"$exceeded|$exitcode"` (or, for the old inline `-Command`, an implicit last-expression value)
-   as their OWN final stdout line, captured by the caller via
-   `for /f "...delims=" %%X in (\`powershell ...\`) do (...)`. `for /f` captures the ENTIRE stdout
-   of the wrapped command and runs its `do` body once per line -- which would swallow every
-   live-teed line (never shown to the user) and corrupt the `exceeded|exitcode` split (each teed
-   line misparsed as a candidate result). Confirmed with a bash proxy of the identical
-   command-substitution shape before touching production code. Fixed by having both callers invoke
-   their helper DIRECTLY (a plain top-level `powershell -NoProfile -ExecutionPolicy Bypass -File
-   "..."` statement, no backtick/`for /f` wrapping at all) so live output flows straight to the
-   console, and each helper now writes its result to a dedicated file instead
-   (`HP_PROBE_RESULT`/`HP_SMOKERUN_RESULT`, defaulting to `~probe_result.txt`/
-   `~smokerun_result.txt`) which the caller reads afterward via a SEPARATE, safe `for /f` (safe
-   because it targets a static, fully-written file, not a live process's stdout -- no capture
-   conflict). This incidentally also removes the specific stdin-inheritance worry Finding 1 of the
-   plan doc originally flagged (a directly-invoked PowerShell process is a strictly more favorable
-   shape for stdin passthrough than one nested inside a command-substitution construct); this is
-   now backed by `tests/selfapps_interactive_stdin.ps1` (see below) exercising the real chain on
-   real Windows CI, pending that test's first observed run.
-5. **`:run_exe_smokerun`'s inline `-Command "..."` one-liner became a proper emitted helper,
-   `tools/exe_smokerun.ps1` (`HP_EXE_SMOKERUN`, embedded via the same `:emit_from_base64`
-   mechanism as `~failfast_probe.ps1`).** Required independently of point 4 above, per
-   `docs/agent-lessons-learned.md`'s existing "prefer an emitted `.ps1` file over inline `-Command`
-   with literal quotes" rule -- `Register-ObjectEvent`'s `-Action { ... }` scriptblock needs quoted
-   PowerShell strings that an inline `-Command "..."` argument cannot safely hold (the exact hazard
-   that already drove `~failfast_probe.ps1` to be a real file instead of an inline command).
-   `~exe_smokerun.ps1` is `:run_exe_smokerun`'s OWN dedicated helper, not a reuse of
-   `~failfast_probe.ps1` -- the one behavioral difference is preserved exactly: after
-   `HP_SMOKERUN_KILL_MS` (env var, default 30000 when unset -- `run_setup.bat` never sets it, so
-   production behavior is byte-for-byte unchanged from the prior hardcoded 30s; the override exists
-   purely so `tests/test_exe_smokerun.py` can exercise the `Kill()` branch without a real 30s wait),
-   this script calls `$p.Kill()` -- `:run_exe_smokerun` is the sole verification pass for a build
-   that has never been confirmed working, unlike the untimed call sites `~failfast_probe.ps1`
-   covers, so an unresponsive process here cannot be trusted to eventually finish. Revisiting the
-   30s value/behavior itself is Open Question 1 in the plan doc, explicitly NOT decided by this
-   change -- this was a mechanical conversion of HOW output is captured/shown and HOW the result is
-   signaled back, not a change to WHEN or WHETHER the process gets killed.
-6. **Point 2's `ReadLineAsync()` was itself replaced, 2026-07-24, by chunk-based reads (Finding
-   9) -- superseding it for a similar reason to why point 2 superseded `Register-ObjectEvent`: a
-   real, previously-undetected bug.** `ReadLineAsync()` only returns once it has accumulated a
-   FULL newline-terminated line -- but Python's own `input("prompt")` idiom (the pattern this
-   whole plan is built around) writes its prompt WITHOUT a trailing newline by design (the cursor
-   stays on the same line waiting for typed input). Confirmed empirically: a child process that
-   writes `"Enter your name: "` and blocks on stdin produces ZERO completed `ReadLineAsync()`
-   reads for at least 2 seconds, even though the bytes are genuinely sitting in the OS pipe --
-   they only surface once a LATER newline arrives or the process exits. This meant a real user
-   watching the console would see nothing until AFTER blindly typing an answer, and it meant
-   `$sawOutput` (point 5's activity-aware kill flag) could stay false for the exact scenario
-   requirement 3 exists to protect. Fixed by replacing `ReadLineAsync()` with
-   `StreamReader.ReadAsync(char[], int, int)` on a 4096-char buffer, same one-read-in-flight
-   polling shape -- `[Console]::Out.Write($chunk)`/`[Console]::Error.Write($chunk)` (no
-   auto-appended newline) replace `Write-Host`/`WriteLine`, since chunks now arrive at arbitrary
-   boundaries rather than line boundaries; EOF is a 0-length read (`$n -eq 0`), not a null
-   result. Found via a requested research/refinement pass (not while building a new feature),
-   confirmed both ways with direct `pwsh` repros (fails against the pre-fix code, passes against
-   the fix), and implemented with owner authorization once the fix shape was confirmed. See
-   `docs/plan-cli-interactive-verification.md` Finding 9 for the full trace.
+**Current mechanism (final state, after two superseding rewrites -- see
+`docs/agent-lessons-learned.md`'s ".NET Process async-redirected-output [SUPERSEDED]",
+"`Register-ObjectEvent` reorders lines... [SUPERSEDED...]", and "`StreamReader.ReadLineAsync()` is
+line-buffered" entries for the full bug-by-bug history of how this was arrived at):** both helper
+scripts live-tee the child's stdout/stderr as bytes arrive, via chunk-based
+`StreamReader.ReadAsync(char[], int, int)` polling (one read in flight per stream at a time,
+enforcing ordering by construction) -- `[Console]::Out.Write($chunk)`/`[Console]::Error.Write($chunk)`
+(no auto-newline, since chunks land at arbitrary boundaries), EOF is a 0-length read. Chosen over
+line-based `ReadLineAsync()` specifically because Python's `input("prompt")` writes its prompt
+WITHOUT a trailing newline, so a line-based read would leave a live user watching a blank screen
+until something else flushed a newline (Finding 9).
 
-Both helper scripts hit the CMD 8191-char line-length budget for real while writing the original
-live-tee+drain-wait logic (`HP_FAILFAST_PROBE`'s first draft exceeded the limit by 2021 chars) --
-see `docs/agent-lessons-learned.md`'s "CMD.EXE 8191-Character Line Limit" entry; both header
+**Result-passing is a dedicated file, not stdout capture.** Both helpers used to print their
+`"$exceeded|$exitcode"` result as their own final stdout line, captured by the caller via `for /f
+... in (\`powershell ...\`) do (...)` -- but `for /f` captures the ENTIRE stdout of the wrapped
+command, which would swallow every live-teed line and corrupt the result parse. Fixed by invoking
+the helper DIRECTLY (a plain top-level `powershell -File "..."` statement, no backtick/`for /f`
+wrapping) so live output flows straight to the console, with each helper writing its result to a
+dedicated file instead (`HP_PROBE_RESULT`/`HP_SMOKERUN_RESULT`, default `~probe_result.txt`/
+`~smokerun_result.txt`) read afterward via a SEPARATE, safe `for /f` targeting a static file.
+
+**`:run_exe_smokerun`'s inline `-Command "..."` became a proper emitted helper**,
+`tools/exe_smokerun.ps1` (`HP_EXE_SMOKERUN`) -- required independently, per the "prefer an emitted
+`.ps1` file over inline `-Command` with literal quotes" rule (`docs/agent-lessons-learned.md`).
+NOT a reuse of `~failfast_probe.ps1` -- the one behavioral difference is preserved exactly: after
+`HP_SMOKERUN_KILL_MS` (default 30000, `run_setup.bat` never overrides it -- production behavior is
+byte-for-byte unchanged from the prior hardcoded 30s; the override exists only for
+`tests/test_exe_smokerun.py` to exercise `Kill()` without a real 30s wait), this script calls
+`$p.Kill()` -- `:run_exe_smokerun` is the sole verification pass for a build never confirmed
+working, unlike the untimed sites `~failfast_probe.ps1` covers, so an unresponsive process here
+cannot be trusted to eventually finish. Revisiting the 30s value itself is Open Question 1,
+explicitly NOT decided by this redesign -- this was purely how output is captured/shown and how
+the result is signaled back, not when/whether the process gets killed.
+
+Both helper scripts hit the CMD 8191-char line-length budget for real while writing this (see
+`docs/agent-lessons-learned.md`'s "CMD.EXE 8191-Character Line Limit" entry) -- both header
 comments were trimmed to the terse, point-to-docs style already used by
-`HP_EMBED_PYVER_CHECK`/`HP_EMBED_EXTRACT` rather than inlining the full rationale (which lives
-here and in the plan doc instead). Both the `ReadLineAsync()`-based rewrite (point 2) and the
-later chunk-based rewrite (point 6, Finding 9) stayed comfortably under budget without needing
-further trimming (`HP_FAILFAST_PROBE` line_len 7668, margin 523; `HP_EXE_SMOKERUN` line_len 7394,
-margin 797, after the point-6 rewrite).
+`HP_EMBED_PYVER_CHECK`/`HP_EMBED_EXTRACT`. Current margins: `HP_FAILFAST_PROBE` line_len 7668,
+margin 523; `HP_EXE_SMOKERUN` line_len 7394, margin 797.
 
-Test coverage: `tests/test_failfast_probe.py` (updated, including a new `InteractiveRoundTrip`
-test class -- a multi-round `input()`-driven conversation script asserting output ORDER via
-`.index()` comparisons, the exact test that found the Finding-8 reordering bug -- and a new
-`NoNewlinePromptVisibility` class, Finding 9's regression test, which drives stdin via a live,
-test-controlled pipe rather than a pre-loaded answers file, specifically so it can assert the
-prompt is readable BEFORE any answer is sent) and `tests/test_exe_smokerun.py` (similarly gained
-`ActivityAwareStop::test_output_with_no_trailing_newline_still_prevents_kill`) exercise both
-scripts end-to-end via real `pwsh` subprocesses -- fast-exit classification, probe-window-exceeded
-classification, the `Kill()`-after-timeout path, output-path overrides, live output reaching the
-SCRIPT'S OWN stdout/stderr (not just the captured files), `PayloadSync` byte-equality for both
-embedded payloads, ordering correctness under repeated runs, and (new) no-newline-chunk
-visibility/activity-detection. Both new Finding-9 regression tests were confirmed to genuinely
-fail against the pre-fix (`ReadLineAsync()`-based) implementation and pass against the fix,
-checked out directly from the relevant merge commits -- proven regression tests, not tests that
-happen to pass. The `for /f`-capture-vs-tee conflict, the original async-drain race, the
-Finding-8 reordering bug, and the Finding-9 line-buffering gap were all provable/found with static
-analysis and local `pwsh` reproduction; the still-open piece is real Windows CI confirmation of
-the FULL production chain
-(cmd.exe's own console/stdin semantics for a double-clicked `.bat`, which cannot be reproduced in
-this sandbox). `tests/selfapps_interactive_stdin.ps1` (new, uv lane, non-gating) now provides
-exactly that: it builds a real PyInstaller EXE from a multi-round `input()`-driven stub app and
-pipes a scripted answer sequence into `cmd.exe`'s own stdin, exercising the full
-`cmd.exe -> :run_exe_smokerun -> ~exe_smokerun.ps1 -> the built EXE` chain and asserting ordering
-via `IndexOf` comparisons on the bootstrap log. It is provider-agnostic by construction (this
-verification chain runs identically regardless of which REQ-009 tier built the environment), so
-one passing run in the uv lane represents the mechanism working across every lane -- see
-`docs/agent-ndjson.md`'s "selfapps-interactive-stdin NDJSON rows" section for the row registered
-(`self.interactive.stdin.roundtrip`) and further detail. Requirement 2 remains open until this
-test's first real CI run is observed passing.
+Test coverage: `tests/test_failfast_probe.py` (`InteractiveRoundTrip` -- a multi-round `input()`
+conversation asserting output ORDER via `.index()`, the test that found the ordering bug;
+`NoNewlinePromptVisibility` -- drives stdin via a live, test-controlled pipe so it can assert the
+prompt is readable BEFORE any answer is sent) and `tests/test_exe_smokerun.py`
+(`ActivityAwareStop::test_output_with_no_trailing_newline_still_prevents_kill`) exercise both
+scripts end-to-end via real `pwsh` subprocesses: fast-exit/probe-exceeded classification,
+`Kill()`-after-timeout, output-path overrides, live output reaching the SCRIPT'S OWN stdout/stderr
+(not just captured files), `PayloadSync` byte-equality, ordering correctness, no-newline-chunk
+visibility. All regression tests confirmed to genuinely fail against the pre-fix implementation
+and pass against the fix. What's provable by static analysis + local `pwsh` repro stops short of
+the FULL production chain (cmd.exe's own console/stdin semantics for a double-clicked `.bat`,
+unreproducible in this sandbox) -- `tests/selfapps_interactive_stdin.ps1` (uv lane, non-gating)
+closes that gap: builds a real PyInstaller EXE from a multi-round `input()`-driven stub app, pipes
+a scripted answer sequence into `cmd.exe`'s own stdin, exercises the full `cmd.exe ->
+:run_exe_smokerun -> ~exe_smokerun.ps1 -> the built EXE` chain, asserts ordering via `IndexOf` on
+the bootstrap log. Provider-agnostic by construction, so one passing run in the uv lane represents
+every lane (`self.interactive.stdin.roundtrip`, see `docs/agent-ndjson.md`). Requirement 2 remains
+open until this test's first real CI run is observed passing.
 
 ### Activity-aware EXE-smoke kill (docs/plan-cli-interactive-verification.md P0, requirement 3) -- resolves Open Question 1, touches `~exe_smokerun.ps1` and `:warn_user_code_launch`
 
 **Status: SHIPPED 2026-07-24, owner decision.** The exact prompt: "don't change the timeout if
 they were told at the beginning that it was timed. At best, if interactive input was received
-then extend or stop the timeout." Two pieces shipped together, since the messaging change only
-makes sense once the behavior it describes actually exists:
+then extend or stop the timeout."
 
 1. **`tools/exe_smokerun.ps1`'s `Kill()` is now conditional on a new `$sawOutput` flag.** The
-   `HP_SMOKERUN_KILL_MS` window itself is UNCHANGED (still 30000ms default) -- per the owner's own
-   "don't change the timeout" instruction, this stays a fixed classification checkpoint, not a
-   value that grows. What changed is what happens AT that checkpoint: `Kill()` now only fires if
-   the process has produced ZERO output (stdout or stderr) by that point. If ANY output has
-   been observed, the kill is skipped entirely for the rest of the run -- the wait becomes
-   unbounded, mirroring `~failfast_probe.ps1`'s own "classify once, then never kill" philosophy
-   (see the "Fail-fast probe" section above). This is deliberately the ONLY subroutine that still
-   has a real `Kill()` in this file family; `~failfast_probe.ps1`'s three call sites never killed
-   to begin with, so they needed no change.
-   **Gap found and fixed same day (Finding 9, docs/plan-cli-interactive-verification.md): as
-   originally shipped, `$sawOutput` was driven by `ReadLineAsync()`-completion, so it stayed
-   false for a no-trailing-newline chunk (the exact shape of `input("prompt")`'s own output)
-   until a LATER newline arrived -- meaning the kill could still fire for the canonical scenario
-   this requirement exists to protect. Fixed by switching to chunk-based reads (see the
-   "Live-echo redesign" section's point 6 above); `$sawOutput` now sets on any non-empty chunk,
-   regardless of whether it ends in a newline.
-2. **Why "any output" is the chosen proxy for "interactive input was received."** The parent
-   process cannot observe stdin directly -- `RedirectStandardInput` is deliberately left unset
-   (inherited) so real keystrokes reach the child without being routed through this script, a
-   design choice from the requirement-1 live-tee work that this change does NOT reopen (redirecting
-   stdin ourselves here would reintroduce the exact stdin-passthrough risk that work just fixed).
-   Given that constraint, the best available signal is whether the process has said anything at
-   all: Python's own `input(prompt)` flushes stdout before blocking on stdin, confirmed directly
-   (see `docs/agent-lessons-learned.md`), so a process sitting at its very first prompt has
-   ALREADY printed something by definition -- a process that is STILL completely silent past the
-   deadline is the genuine hung/deadlocked/crashed-before-any-output case this cap exists to
-   catch, and that case is unaffected by this change (still killed, byte-for-byte as before).
-3. **"Stop" was chosen over "extend by a fixed increment."** The prompt offered both as
-   acceptable ("extend or stop"). A bounded extension (e.g. +30s) just relocates the same
-   ambiguity to a later deadline -- if the program is still going at the new deadline, the same
-   question recurs. "Stop" (switch to fully unbounded once alive) is simpler, reuses an
-   already-proven pattern in this same file family, and directly serves the owner's actual target
-   use case (an `input()`-driven setup-questions-then-loop program, which could legitimately run
-   for as long as the user is answering prompts). **Accepted trade-off, not a free win**: a
-   process that prints something once (e.g. a startup banner) and then genuinely deadlocks for a
-   reason unrelated to stdin will now hang the bootstrap indefinitely instead of being caught at
-   30s. This is Open Question 1's own previously-listed option (b), now the shipped behavior, not
-   a new risk introduced without warning.
-4. **`:warn_user_code_launch` (`run_setup.bat`) now takes a parameter (`main` or `hidden_import`)
-   and shows a DIFFERENT message per caller, because the two callers now have genuinely different
-   behavior.** `:run_exe_smokerun` (the primary EXE verification, passes `main`) gets the new
-   conditional wording ("if it stays completely silent for about 30 seconds it will be
-   force-stopped, but any output... keeps it running as long as needed"). The hidden-import
-   recovery loop's own separate, still-unconditional 30s check (`:hidden_import_loop`, an OLDER,
-   never-migrated inline `-Command` block that still always kills at 30s regardless of output --
-   see its own comment: "once recovery fixes a missing import the app may proceed into a
-   long-running phase... an uncapped run would hang the bootstrapper") passes `hidden_import` and
-   keeps the ORIGINAL unconditional wording, since that path's actual behavior is genuinely
-   unchanged by this work -- giving it the new conditional message would be dishonest. **This
-   inline block was deliberately NOT migrated to the activity-aware behavior or to
-   `~exe_smokerun.ps1`/`ReadLineAsync()` in this pass** -- it is a bounded repair-verification
-   check (does this specific `--hidden-import` fix work), not a full run, and Open Question 1 was
-   scoped to `:run_exe_smokerun` specifically; revisit only if a real need for interactive-friendly
-   behavior surfaces there too.
+   `HP_SMOKERUN_KILL_MS` window is UNCHANGED (still 30000ms default, per "don't change the
+   timeout") -- what changed is what happens AT the checkpoint: `Kill()` now only fires if the
+   process has produced ZERO output by then. Any output skips the kill for the rest of the run --
+   unbounded, mirroring `~failfast_probe.ps1`'s "classify once, then never kill" philosophy. The
+   ONLY subroutine in this file family that still has a real `Kill()`. **Gap found+fixed same day
+   (Finding 9)**: as shipped, `$sawOutput` was driven by `ReadLineAsync()`-completion, so it stayed
+   false for a no-trailing-newline chunk (the exact shape of `input("prompt")`'s output) until a
+   LATER newline -- meaning the kill could still fire for the canonical scenario this requirement
+   protects. Fixed by switching to chunk-based reads (see "Live-echo redesign" above); `$sawOutput`
+   now sets on any non-empty chunk regardless of trailing newline.
+2. **"Any output" is the chosen proxy for "interactive input was received"** because the parent
+   cannot observe stdin directly (`RedirectStandardInput` deliberately left unset/inherited, so
+   real keystrokes reach the child without being routed through this script -- not reopened here).
+   Python's `input(prompt)` flushes stdout before blocking on stdin (confirmed directly), so a
+   process at its first prompt has ALREADY printed something -- a process STILL silent past the
+   deadline is the genuine hung/deadlocked case this cap exists to catch (unaffected, still
+   killed).
+3. **"Stop" was chosen over "extend by a fixed increment"** -- a bounded extension just relocates
+   the same ambiguity to a later deadline. "Stop" (fully unbounded once alive) reuses an
+   already-proven pattern and serves the owner's target use case (an `input()`-driven
+   setup-then-loop program). **Accepted trade-off**: a process that prints once (a startup banner)
+   and then genuinely deadlocks for a reason unrelated to stdin now hangs the bootstrap
+   indefinitely instead of being caught at 30s.
+4. **`:warn_user_code_launch` now takes a parameter (`main`/`hidden_import`) with DIFFERENT
+   messages per caller**, since the two now behave differently: `:run_exe_smokerun` (`main`) gets
+   the new conditional wording; the hidden-import recovery loop's own separate, still-unconditional
+   30s check (`:hidden_import_loop`, an older inline block that always kills at 30s regardless of
+   output -- a bounded repair-verification check, not a full run) passes `hidden_import` and keeps
+   the ORIGINAL unconditional wording, since its actual behavior is genuinely unchanged.
+   **Deliberately NOT migrated to activity-aware/chunk-based reads in this pass** -- revisit only
+   if interactive-friendly behavior is needed there too.
 
 Test coverage: `tests/test_exe_smokerun.py`'s `KillTimeout` class was split -- the pre-existing
-hung-process test now uses a genuinely SILENT script (no output at all) to keep testing the "still
-killed" case correctly; a new `ActivityAwareStop` class proves a process that prints, then runs
-well PAST a short `HP_SMOKERUN_KILL_MS` window, then exits on its own with a distinguishable real
-exit code, is never force-stopped -- the result file shows the real exit code, not `-1`. That
-class gained a second test for Finding 9 specifically
-(`test_output_with_no_trailing_newline_still_prevents_kill`): a script that writes an
-unterminated chunk, sleeps well past a short kill window, then completes normally -- confirmed to
-genuinely fail (result `-1`, killed) against the pre-Finding-9 implementation and pass (real exit
-code) against the fix.
+hung-process test now uses a genuinely SILENT script to keep testing "still killed" correctly; a
+new `ActivityAwareStop` class proves a process that prints, runs well PAST a short kill window,
+then exits with a distinguishable real code, is never force-stopped, plus a Finding-9-specific
+test (`test_output_with_no_trailing_newline_still_prevents_kill`) confirmed to genuinely fail
+against the pre-fix implementation and pass against the fix.
 
 ### Process-ID display for stuck-program recovery (owner-requested, 2026-07-25) -- touches both `~exe_smokerun.ps1` and `~failfast_probe.ps1`
 
-**Direct follow-up to the "accepted trade-off" above**: once a process has printed anything at
-all, both this file's `:run_exe_smokerun` AND `~failfast_probe.ps1`'s three call sites
-(`:try_fast_exe`'s interactive branch, `:verify_no_exe_probe`, `:run_postexec_checkpoint`'s
-elective second run) become genuinely unbounded -- by design, per Open Question 1's resolution --
-so a real deadlock unrelated to stdin now has no automatic recovery. The owner asked what else
-could help a stuck user without reverting that decision, "even if not super elegant."
+**Direct follow-up to the "accepted trade-off" above**: once a process has printed anything,
+`:run_exe_smokerun` AND `~failfast_probe.ps1`'s three call sites become genuinely unbounded by
+design, so a real deadlock unrelated to stdin has no automatic recovery. The owner asked what
+else could help a stuck user without reverting that decision.
 
-**Ctrl+C was researched and rejected as the fix, in favor of something simpler.** `CTRL_C_EVENT`
-broadcasts to the WHOLE console process group by default (confirmed via Microsoft's own Windows
-Console docs) -- `cmd.exe` running `run_setup.bat`, `powershell.exe` running the helper script,
-AND the grandchild program all receive it simultaneously, not sequentially via the parent
-choosing to forward it. Making Ctrl+C "safe" (kill only the grandchild) would require real
-process-group-isolation engineering: launching with `CREATE_NEW_PROCESS_GROUP` (not exposed on
-`System.Diagnostics.ProcessStartInfo` -- needs a raw P/Invoke into `CreateProcess`), plus
-`SetConsoleCtrlHandler(NULL, TRUE)` in this file's own layers to ignore the signal themselves.
-Assessed as disproportionate for this ask and left unbuilt; logged in chat history for a future
-revisit if ever justified by a real need.
+**Ctrl+C was researched and rejected, in favor of something simpler.** `CTRL_C_EVENT` broadcasts
+to the WHOLE console process group (per Microsoft's Windows Console docs) -- `cmd.exe`,
+`powershell.exe`, AND the grandchild would all receive it simultaneously. Making it "safe" (kill
+only the grandchild) needs real process-group-isolation engineering (`CREATE_NEW_PROCESS_GROUP`
+via raw P/Invoke, plus `SetConsoleCtrlHandler(NULL, TRUE)` in this file's own layers) --
+disproportionate for this ask, left unbuilt.
 
-**What shipped instead: printing the real Windows PID and pointing the user at Task Manager's
-"End Task."** `TerminateProcess` -- what Task Manager's End Task actually calls -- targets a
-single PID directly. It is NOT a console-signal broadcast, so it is inherently more surgical than
-any Ctrl+C-based approach: it can never touch `cmd.exe`/`powershell.exe`/the bootstrapper, no
-matter what. This sidesteps the entire hazard class Ctrl+C research uncovered, at zero new
-isolation-engineering cost -- the PID is already sitting in the existing `$p =
-[System.Diagnostics.Process]::Start(...)` object at both never-kill call sites in this file
-family; nothing new needs to be tracked or isolated.
+**What shipped instead: printing the real Windows PID, pointing the user at Task Manager's "End
+Task."** `TerminateProcess` (what End Task calls) targets a single PID directly -- NOT a
+console-signal broadcast, so inherently more surgical: it can never touch
+`cmd.exe`/`powershell.exe`/the bootstrapper. The PID is already sitting in the existing `$p =
+[System.Diagnostics.Process]::Start(...)` object at both never-kill call sites; nothing new to
+track. Added `Write-Host "[INFO] Process ID $($p.Id). If it seems stuck: Task Manager > Details
+tab > find this PID > End Task (this window stays open)."` right after `Start()` in both scripts.
+**Deliberately `Write-Host`, not `[Console]::Out.Write`**: auto-appends a newline (correct for one
+complete bootstrapper-generated line, not an arbitrary-boundary child chunk), and is never
+captured into `$outBuf`/`$errBuf` (confirmed empirically), so it can't be mistaken for the user's
+own program output downstream.
 
-Added `Write-Host "[INFO] Process ID $($p.Id). If it seems stuck: Task Manager > Details tab >
-find this PID > End Task (this window stays open)."` immediately after `Start()` in both
-`tools/exe_smokerun.ps1` and `tools/failfast_probe.ps1`. **Deliberately `Write-Host`, not
-`[Console]::Out.Write`** (the mechanism this file family otherwise uses for the child's own
-per-chunk output passthrough, per Finding 9): `Write-Host` auto-appends a newline, correct here
-since this is one complete, bootstrapper-generated line, not an arbitrary-boundary chunk of the
-child's own stream -- and critically, `Write-Host` output is never captured into `$outBuf`/
-`$errBuf` (the buffers that become `~run.out.txt`/`~run.err.txt`), confirmed empirically via real
-`pwsh` runs, so this new line can never be mistaken for the user's own program output by anything
-downstream that reads those files.
+**Budget was the binding constraint.** Both payloads already had the tightest CMD-line-length
+margins in the file; the message was written for maximum compactness, landing at 145/151-char
+margins -- tight but workable.
 
-**Budget was the binding constraint, not design.** Both payloads already had the tightest
-CMD-line-length margins in the file (see the budget table elsewhere in this doc); the message was
-written for maximum compactness while staying actionable, landing the payloads at 145/151-char
-margins -- tight but workable, verified via the standard `base64.b64encode(...)`-length
-measurement method before committing to the wording.
+**Pre-existing test bug found+fixed while verifying this, not introduced by it**:
+`NoNewlinePromptVisibility` assumed the FIRST chunk read from the child's stdout pipe would BE the
+child's prompt text -- true before this change, not after the PID line prints first (never
+actually guaranteed by pipe semantics anyway). Fixed by accumulating reads until the expected
+substring appears.
 
-**A genuine, pre-existing test bug was found and fixed while verifying this empirically, not
-introduced by this change**: `tests/test_failfast_probe.py`'s `NoNewlinePromptVisibility` test
-(Finding 9's own regression test) assumed the FIRST chunk read from the child's stdout pipe would
-BE the child's prompt text -- true before this change (nothing printed before the child got a
-chance to), but no longer true once the PID line prints first. This assumption was never actually
-guaranteed by pipe semantics in the first place (a single `os.read()` call returning exactly one
-logical unit of output was coincidental, not contractual); fixed by accumulating reads until the
-expected substring appears, mirroring the pattern the same test already used for its own later
-phase -- a more correct test regardless of this specific change.
-
-Both files' full test suites re-verified passing (22 combined, including `PayloadSync` for both
-payloads), plus 4 new tests (2 per file): the PID line appears with a real positive numeric PID
-and mentions "Task Manager"/"End Task," and it never contaminates the captured output file.
+Both files' full test suites re-verified passing (22 combined, including `PayloadSync`), plus 4
+new tests (2 per file): the PID line appears with a real positive numeric PID and mentions "Task
+Manager"/"End Task," and never contaminates the captured output file.
 
 ## Argv passthrough escape hatch (REQ-026, P1) -- touches HP_PROBE_ARGS's own contract, not just new callers
 
-**Status: SHIPPED 2026-07-24**, the plan's P1 requirement 4
-(`docs/plan-cli-interactive-verification.md`). `HP_APP_ARGS` is captured ONCE, at the very top of
-`run_setup.bat` (right after `set "DEP_SOURCE=unknown"`, before anything else reads `%1`-`%9`),
-from `%2`-`%9` directly -- deliberately NOT via `shift`, since `%~1` (the entry file) is read
-directly by several later call sites in this file (the top-of-file UNC check, both
-`:determine_entry` call sites), and shifting would silently change what those later `"%~1"` reads
-see. This caps the feature at 8 extra arguments; a design that needed more would have to solve
-that problem differently (not attempted here, matching the plan's own non-goal of not chasing
-generic detection).
+**Status: SHIPPED 2026-07-24**, plan P1 requirement 4. `HP_APP_ARGS` is captured ONCE, at the very
+top of `run_setup.bat` (right after `set "DEP_SOURCE=unknown"`), from `%2`-`%9` directly --
+deliberately NOT via `shift`, since `%~1` (entry file) is read directly by several later call
+sites (top-of-file UNC check, both `:determine_entry` sites), and shifting would silently change
+what those later `"%~1"` reads see. Caps the feature at 8 extra arguments (matches the plan's
+non-goal of not chasing generic detection).
 
-**Touch either shared `.ps1` helper's `Arguments` handling, must understand the OTHER's, because
-this shipped as a CONTRACT CHANGE to `HP_PROBE_ARGS`, not just a new optional variable.** Before
-this feature, `tools/failfast_probe.ps1` did `if ($rawArgs) { $si.Arguments = '"' + $rawArgs +
-'"' }` -- wrapping WHATEVER was in `HP_PROBE_ARGS` in exactly one pair of quotes, which only
-produces correct behavior when `HP_PROBE_ARGS` holds a SINGLE token (a path, possibly containing
-spaces). Forwarding multiple tokens (entry path + extra args) through that same wrapping would
-collapse them into one literal argv element instead of several -- confirmed by reasoning through
-Windows' own `CommandLineToArgvW` quoting rules, the same rules `docs/agent-lessons-learned.md`
-already documents for `findstr`/subprocess-argument call sites elsewhere in this file. Fixed by
-changing the contract: `$si.Arguments = $rawArgs` now, used VERBATIM -- the CALLER
-(`run_setup.bat`) is responsible for providing a fully-quoted, ready-to-use Windows Arguments
-string. Every `HP_PROBE_ARGS` assignment site in `run_setup.bat` had to be re-audited under this
-new contract, not just the two new argv-forwarding sites:
-- `:try_fast_exe_probe` (EXE fast-path reuse): was `set "HP_PROBE_ARGS="` (empty, since the EXE
-  needs no entry-file argv); now `set "HP_PROBE_ARGS=%HP_APP_ARGS%"` -- no entry-file prefix,
-  just the forwarded extra args (or empty, unchanged when there are none).
-- `:verify_no_exe_probe` (interpreter run) and `:run_postexec_checkpoint` (checkpoint's second
-  run) -- both launch the INTERPRETER, which needs the entry path as its own first argv element:
-  was `set "HP_PROBE_ARGS=%HP_ENTRY%"` (bare, unquoted -- safe under the OLD contract because the
-  script's own wrapping quoted it); now `set "HP_PROBE_ARGS="%HP_ENTRY%"%HP_APP_ARGS%"` --
-  entry path EXPLICITLY re-quoted at the call site (no longer implicit), with the extra args
-  (already individually pre-quoted at `HP_APP_ARGS` capture time) appended after.
-- The two DIRECT (non-probe) invocation sites that never went through `~failfast_probe.ps1` at
-  all -- `:try_fast_exe`'s legacy/CI branch (`"%HP_FAST_EXE%" 1> ...`) and
-  `:verify_no_exe_interpreter`'s legacy branch (`"%HP_PY%" "%HP_ENTRY%" 1> ...`) -- needed
-  `%HP_APP_ARGS%` appended directly to the command line instead (`"%HP_FAST_EXE%"%HP_APP_ARGS%
-  1> ...`), since cmd.exe forwards this as ordinary additional quoted tokens with no `.ps1`
-  helper or re-quoting layer involved.
+**Touch either shared `.ps1` helper's `Arguments` handling, must understand the OTHER's -- this
+shipped as a CONTRACT CHANGE to `HP_PROBE_ARGS`, not just a new optional variable.** Before this,
+`tools/failfast_probe.ps1` did `if ($rawArgs) { $si.Arguments = '"' + $rawArgs + '"' }` --
+wrapping whatever was in `HP_PROBE_ARGS` in one pair of quotes, correct only for a SINGLE token.
+Forwarding multiple tokens through that wrapping would collapse them into one literal argv
+element (per Windows' `CommandLineToArgvW` quoting rules). Fixed by changing the contract:
+`$si.Arguments = $rawArgs`, used VERBATIM -- the CALLER is responsible for a fully-quoted,
+ready-to-use Arguments string. Every `HP_PROBE_ARGS` assignment site had to be re-audited:
+- `:try_fast_exe_probe`: was `set "HP_PROBE_ARGS="`; now `set "HP_PROBE_ARGS=%HP_APP_ARGS%"` (no
+  entry-file prefix -- the EXE is self-contained).
+- `:verify_no_exe_probe`/`:run_postexec_checkpoint` (launch the INTERPRETER, need the entry path
+  as first argv): was `set "HP_PROBE_ARGS=%HP_ENTRY%"` (bare, unquoted -- safe under the OLD
+  contract since the script's own wrapping quoted it); now `set "HP_PROBE_ARGS="%HP_ENTRY%"%HP_APP_ARGS%"`
+  -- entry path explicitly re-quoted at the call site, extra args (pre-quoted at capture time)
+  appended after.
+- The two DIRECT (non-probe) sites (`:try_fast_exe`'s legacy branch, `:verify_no_exe_interpreter`'s
+  legacy branch) needed `%HP_APP_ARGS%` appended directly to the command line, since cmd.exe
+  forwards this as ordinary additional quoted tokens with no `.ps1`/re-quoting layer involved.
 
-**`tools/exe_smokerun.ps1` needed a NEW variable, `HP_SMOKERUN_ARGS`, not a contract change** --
-it never had any `Arguments` handling before this feature (the EXE smoke previously always ran
-with zero argv, since nothing needed to pass any). Added `if ($argsRaw) { $si.Arguments =
-$argsRaw }` using the same "caller provides a ready string" contract as the now-fixed
-`~failfast_probe.ps1`, fed from `run_setup.bat`'s `:run_exe_smokerun` setting/clearing
-`HP_SMOKERUN_ARGS=%HP_APP_ARGS%` around the existing `HP_SMOKERUN_EXE` set/clear pair. Since the
-EXE is self-contained, this is exactly `HP_APP_ARGS` with no entry-file prefix, same as the
-fastpath probe site above.
+**`tools/exe_smokerun.ps1` needed a NEW variable, `HP_SMOKERUN_ARGS`, not a contract change** -- it
+never had `Arguments` handling before (zero argv previously). Added `if ($argsRaw) { $si.Arguments
+= $argsRaw }` under the same "caller provides a ready string" contract, fed from `run_setup.bat`'s
+`:run_exe_smokerun` setting/clearing `HP_SMOKERUN_ARGS=%HP_APP_ARGS%` (no entry-file prefix, same
+as the fastpath probe site).
 
-**`:log` echoes UNQUOTED (see the dedicated entry in `docs/agent-lessons-learned.md`) -- do NOT
-interpolate `%HP_APP_ARGS%`'s actual content into any log/echo line.** A user-supplied launch
-argument can legitimately contain `<`/`>`/`|`/`&` (e.g. a value the user's own program parses),
-and any of those would corrupt a raw `:log`/`echo` line the same way `%HP_ENTRY%`'s own
-already-documented "accepted risk" does at its 4 existing call sites. The one new log line this
-feature adds (right after `:determine_entry` succeeds, confirming forwarding is active) is
-deliberately CONTENT-FREE -- it only confirms "extra launch argument(s) detected," never expanding
-`%HP_APP_ARGS%` itself. If a future change wants to actually SHOW the forwarded arguments to the
-user, it needs the same kind of dedicated escaping `:log`'s own entry describes as blocked/deferred
-tech debt -- do not casually add `%HP_APP_ARGS%` to an existing `:log`/raw-`echo` line without
-solving that first.
+**`:log` echoes UNQUOTED -- do NOT interpolate `%HP_APP_ARGS%`'s content into any log/echo line.**
+A user-supplied argument can legitimately contain `<`/`>`/`|`/`&`, which would corrupt a raw
+`:log`/`echo` line the same way `%HP_ENTRY%`'s own documented "accepted risk" does. The one new log
+line this feature adds is deliberately CONTENT-FREE -- confirms "extra launch argument(s)
+detected," never expands `%HP_APP_ARGS%` itself.
 
-**Test-suite consequence: this REPLACED an existing test that documented the OLD contract as
-correct, not just added new ones.** `tests/test_failfast_probe.py`'s `ArgsIsSingleArgumentOnly`
-class had exactly this docstring: "HP_PROBE_ARGS must be a single path, never a multi-token
-command line... misparsed as one argument" -- true under the pre-fix contract, actively WRONG
-under the new one (a two-token pre-quoted string is now correctly split). Replaced with
-`ArgvPassthrough`, which proves the new, intended behavior (multiple pre-quoted tokens forwarded
-as separate argv elements) AND documents the new caller-responsibility boundary (an UNQUOTED
-token containing a space is split by the CHILD's own argv parser, exactly as if typed unquoted at
-a real command line -- not a bug in this script, matches why `HP_APP_ARGS` always pre-quotes each
-token). A second, PRE-EXISTING test (`test_single_argument_path_with_spaces_quoted_correctly`)
-also had to change: it passed an unquoted path-with-spaces relying on the OLD script's own
-wrapping, which now fails (`0|2`, "can't open file") under the new contract -- fixed by having
-the test quote the path itself, matching how `run_setup.bat` already does in production.
+**Test-suite consequence: REPLACED an existing test documenting the OLD contract as correct, not
+just added new ones.** `tests/test_failfast_probe.py`'s `ArgsIsSingleArgumentOnly` (docstring:
+"HP_PROBE_ARGS must be a single path... misparsed as one argument") was true pre-fix, actively
+WRONG post-fix. Replaced with `ArgvPassthrough` (proves multiple pre-quoted tokens forward as
+separate argv elements, and documents the caller-responsibility boundary: an UNQUOTED token
+containing a space is split by the CHILD's own argv parser). A second, pre-existing test
+(`test_single_argument_path_with_spaces_quoted_correctly`) also had to change: an unquoted
+path-with-spaces relying on the OLD wrapping now fails ("can't open file") -- fixed by quoting the
+path in the test, matching production.
 
-**`tests/test_exe_smokerun.py`'s test harness has no natural "argv slot" to test through --
-solved with a lesser-known CPython CLI form, not a change to the harness's own architecture.**
-That file's whole testing strategy (see its own module docstring) launches `sys.executable` with
-zero CLI arguments and feeds the actual test program via INHERITED stdin (`python` with no script
-argument and non-tty stdin reads and executes stdin as the program) -- this exists because a
-genuine frozen EXE needs no separate "script path" argument at all, so mimicking that shape with
-bare `python` was the least invasive way to reuse the same harness for both. But that shape has no
-room to ALSO pass extra CLI arguments, since there's no positional slot after the (absent) script
-path to attach them to -- appending args directly to a bare `python` invocation would make Python
-try to parse them as its OWN interpreter flags. Fixed with CPython's own documented `python - arg1
-arg2` form: a literal `-` as the script name means "read the program from stdin" (exactly what
-this harness already relies on), and everything AFTER that `-` becomes `sys.argv[1:]` for that
-program -- confirmed directly (`python3 - --foo "bar baz" < script.py` prints
-`ARGV:--foo|bar baz`) before relying on it in `ArgvPassthrough::test_extra_args_forwarded_as_separate_argv`.
+**`tests/test_exe_smokerun.py`'s harness has no natural "argv slot" -- solved with a lesser-known
+CPython CLI form.** That file feeds the test program via INHERITED stdin (`python` with no script
+argument, non-tty stdin executes stdin as the program), which has no positional slot for extra
+CLI args (appending them would make Python parse them as its own interpreter flags). Fixed with
+CPython's `python - arg1 arg2` form: a literal `-` as script name means "read from stdin," and
+everything after becomes `sys.argv[1:]` -- confirmed directly (`python3 - --foo "bar baz" <
+script.py` prints `ARGV:--foo|bar baz`).
 
-**`:hidden_import_recover`'s own re-run of the EXE deliberately does NOT receive `HP_APP_ARGS`,
-matching precedent already established elsewhere in this file** -- it is a diagnostic/repair
-check against a build ALREADY CONFIRMED WORKING, not the user's primary run, the same reasoning
-the "AV-Safe Build Path Tier A and hidden-import auto-recovery" section above already applies to
-that loop for an unrelated reason (Nuitka-vs-PyInstaller awareness). The `HP_CI_SKIP_ENV=1`
-CI-only test path (`:ci_skip_entry`'s system-Python launch, see "uv-First Provider Architecture"
--> "selfapps_isolation.ps1" above) was also left out -- it is test infrastructure exercising a
-narrow REQ-010 isolation scenario, not one of the plan's four named real launch sites, and CI has
-no interactive terminal to benefit from argument forwarding there.
+**`:hidden_import_recover`'s own EXE re-run deliberately does NOT receive `HP_APP_ARGS`** -- a
+diagnostic/repair check against a build ALREADY CONFIRMED WORKING, not the user's primary run
+(same reasoning the Tier A section applies to that loop for Nuitka-vs-PyInstaller awareness). The
+CI-only `HP_CI_SKIP_ENV=1` path was also left out -- test infrastructure, not a named real launch
+site, and CI has no interactive terminal to benefit.
 
-**`:offer_optimized_build`'s internal build-verify launch was ALSO missing `HP_APP_ARGS` at
-first, but this doc's own earlier reasoning for lumping it in with `:hidden_import_recover` above
-was wrong for this specific call site -- found and fixed 2026-07-25 via a deep research pass.**
-The two loops are NOT the same shape: `:hidden_import_recover` re-runs the ALREADY-VERIFIED
-original PyInstaller EXE (genuinely a repair check against known-working code), but
-`:offer_optimized_build`'s internal verify launches a BRAND-NEW Nuitka binary that has never
-itself been executed before -- for any program that requires launch arguments just to start
-cleanly (a common CLI-tool shape), omitting `HP_APP_ARGS` here meant this verification would
-ALWAYS report a nonzero exit and decline the optimized build, regardless of whether the Nuitka
-build itself was actually fine. Fixed by having the inline PowerShell `-Command` one-liner read
-`$env:HP_APP_ARGS` directly (PowerShell's own inherited-environment access) rather than having
-cmd.exe substitute `%HP_APP_ARGS%` into the command text -- `HP_APP_ARGS` already contains
-literal embedded double-quotes per forwarded token (see its definition near the top of
-`run_setup.bat`), and cmd.exe's naive quote-toggle parser has no concept of "this quote belongs
-to a PowerShell string," so direct substitution would have corrupted the `-Command` argument
-exactly like the hazard `docs/agent-lessons-learned.md` already documents for
-`HP_FAILFAST_PROBE`'s original inline-vs-emitted-`.ps1` design decision -- reading it as an
-inherited environment variable at PowerShell runtime sidesteps the whole hazard class, since
-cmd.exe's own command-line text never needs to contain the quote-laden content at all.
+**`:offer_optimized_build`'s internal build-verify launch was ALSO missing `HP_APP_ARGS`, found
+and fixed 2026-07-25 -- the two loops are NOT the same shape.** `:hidden_import_recover` re-runs
+the ALREADY-VERIFIED original EXE; `:offer_optimized_build`'s internal verify launches a BRAND-NEW
+Nuitka binary never executed before -- for a program needing launch arguments to start cleanly,
+omitting `HP_APP_ARGS` meant this verification would ALWAYS report nonzero and decline the
+optimized build regardless of whether the Nuitka build was actually fine. Fixed by having the
+inline PowerShell `-Command` read `$env:HP_APP_ARGS` directly (PowerShell's own inherited-env
+access) rather than cmd.exe substituting `%HP_APP_ARGS%` into the command text -- since
+`HP_APP_ARGS` contains literal embedded double-quotes per token, and cmd.exe's quote-toggle parser
+has no concept of "this quote belongs to a PowerShell string," direct substitution would corrupt
+the `-Command` argument (the same hazard class as `HP_FAILFAST_PROBE`'s inline-vs-emitted-`.ps1`
+decision) -- reading it at PowerShell runtime sidesteps the whole hazard, since cmd.exe's own
+command-line text never needs to contain the quote-laden content.
 
 ## Honest ambiguous-exit messaging (REQ-027, P2) -- two panels, two independent gaps found by tracing what P1/P0 already changed
 
-**Status: SHIPPED 2026-07-24**, the plan's P2 requirement 5 (`docs/plan-cli-interactive-verification.md`).
-Deliberately scoped narrower than the plan originally sketched -- see that doc's own P2 and Open
-Question 3 sections for why "offer a deeper dependency-resolution pass" was dropped from scope
-(the offer already exists and already fires earlier in the flow, at `:warnfix_cascade_detect`;
-re-offering it post-hoc at the final `[STATUS]` line would need much more plumbing for uncertain
-benefit). What shipped is messaging-only, touching two genuinely gapped panels found by tracing
-the ACTUAL control flow rather than assuming the plan's original framing still applied once P0
-and P1 had both shipped.
+**Status: SHIPPED 2026-07-24**, plan P2 requirement 5. Deliberately scoped narrower than the plan
+originally sketched -- "offer a deeper dependency-resolution pass" was dropped (that offer already
+exists and fires earlier, at `:warnfix_cascade_detect`; re-offering it post-hoc would need much
+more plumbing for uncertain benefit). What shipped is messaging-only, touching two genuinely
+gapped panels found by tracing the ACTUAL control flow after P0/P1 shipped.
 
 **Gap 1, a real pre-existing bug: `:print_no_exe_briefing`'s header unconditionally claimed "your
-code ran successfully."** This panel fires whenever `HP_BUILD_OK` is defined (a build was
-attempted) and no EXE exists (`run_setup.bat` ~line 1797-1802, `:success`'s dispatch). It always
-runs AFTER `:verify_no_exe_interpreter` has already executed the entry via the interpreter
-fallback (the only way to reach the no-EXE branch with an entry file defined) -- but the panel's
-own text had zero awareness of whether that interpreter run's `HP_SMOKE_RC` was actually 0. Fixed
-with a new flag, `HP_NOEXE_VERIFY_FAILED`, set in BOTH of `:verify_no_exe_interpreter`'s branches
-(the legacy/non-interactive branch right after `HP_SMOKE_RC` is captured; the
-`:verify_no_exe_probe` branch right after `:run_failfast_probe interpreter` returns) whenever
-`HP_SMOKE_RC` is nonzero -- mirroring the already-existing `HP_EXE_VERIFY_FAILED` pattern for the
-EXE path exactly (same declare-clean-at-top-of-file, set-only-on-failure shape). No `-1`/timeout
-ambiguity to worry about at either branch: `:run_failfast_probe` never kills, so `HP_SMOKE_RC` is
-always the interpreter's true final exit code once it exits. `:print_no_exe_briefing` now
-goto-dispatches its header text on this flag (mirroring `:print_postflight_briefing`'s own
-`:pfb_caveat` shape) -- the caveat variant never claims success and never asserts WHY the run
-failed (real bug vs. something this bootstrapper missed), matching Open Question 3's own framing
-that distinguishing root cause is out of scope.
+code ran successfully."** This panel fires whenever `HP_BUILD_OK` is defined and no EXE exists
+(`:success`'s dispatch, ~line 1797-1802) -- always AFTER `:verify_no_exe_interpreter` already ran
+the entry via the interpreter fallback, but the panel's text had zero awareness of whether that
+run's `HP_SMOKE_RC` was actually 0. Fixed with a new flag, `HP_NOEXE_VERIFY_FAILED`, set in BOTH
+of `:verify_no_exe_interpreter`'s branches whenever `HP_SMOKE_RC` is nonzero -- mirroring the
+existing `HP_EXE_VERIFY_FAILED` pattern for the EXE path (declare-clean-at-top, set-only-on-failure).
+No `-1`/timeout ambiguity: `:run_failfast_probe` never kills, so `HP_SMOKE_RC` is always the
+interpreter's true final exit code. `:print_no_exe_briefing` now goto-dispatches its header on
+this flag (mirroring `:print_postflight_briefing`'s `:pfb_caveat` shape) -- the caveat variant
+never claims success and never asserts WHY the run failed (out of scope, per Open Question 3).
 
 **Gap 2, a genuinely unsignaled path: the fast-path-kept-despite-failure case had NO postflight
-panel at all.** `:success`'s dispatch (`run_setup.bat` ~line 1797) is gated on `if not defined
-HP_FASTPATH_USED (...)` -- when the fast path IS used (a cached EXE reused, whether the fail-fast
-probe classified it as a fast-fail-and-discard candidate or as alive/healthy-and-kept -- see the
-"Fail-fast probe" section above), NEITHER `:print_postflight_briefing` NOR `:print_no_exe_briefing`
-ever fires, by design (the fast path is meant to be zero-friction, on the theory the user has
-already seen a full briefing on a prior run). But for the specific "kept despite a later non-zero
-exit" sub-case (`HP_FASTPATH_RUN_FAILED` set -- see the "Fail-fast probe" section's own
-`HP_FASTPATH_RUN_FAILED` decoupling fix for how this flag is computed and why it reliably survives
-to `:success`), that meant literally NO postflight signal beyond one `[WARN]` log line buried
-among other console output. New subroutine `:print_fastpath_ambiguous_note`, called from a new
-`else if defined HP_FASTPATH_RUN_FAILED` branch alongside the existing `if not defined
-HP_FASTPATH_USED` dispatch -- deliberately a PLAIN INFORMATIONAL PRINT, no `set /p`, no consent
-gate, so it does not violate the fast path's own "zero friction, no prompts" design requirement
-(that requirement is specifically about not adding QUESTIONS to the fast path; a print-only panel
-costs nothing and asks nothing). Points the user at the direct-run command AND at deleting
-`dist\<env>.exe` + re-running the bootstrapper if they want a genuinely fresh dependency check --
-the closest honest equivalent to "try a deeper pass" this call site can offer without inventing a
-new re-solve mechanism.
+panel at all.** `:success`'s dispatch is gated on `if not defined HP_FASTPATH_USED (...)` -- when
+the fast path IS used, NEITHER briefing panel ever fires, by design (zero-friction, the user
+already saw a full briefing on a prior run). But for the "kept despite a later non-zero exit"
+sub-case (`HP_FASTPATH_RUN_FAILED` set -- see "Fail-fast probe" above for how this survives to
+`:success`), that meant NO postflight signal beyond one `[WARN]` log line. New subroutine
+`:print_fastpath_ambiguous_note`, called from a new `else if defined HP_FASTPATH_RUN_FAILED`
+branch -- deliberately a PLAIN INFORMATIONAL PRINT, no `set /p`/consent gate (the fast path's
+"zero friction, no prompts" rule is about not adding QUESTIONS; a print-only panel asks nothing).
+Points the user at the direct-run command and at deleting `dist\<env>.exe` + re-running for a
+genuinely fresh dependency check -- the closest honest equivalent to "try a deeper pass" here.
 
-**Neither panel asserts a root cause.** Both stay deliberately agnostic about whether the ambiguous
-exit is (a) a real bug in the user's own code, (b) an unresolved dependency, or (c) something else
-entirely -- Open Question 3 in the plan doc explicitly says distinguishing these is not solved by
-this plan, and neither panel pretends otherwise.
+**Neither panel asserts a root cause** -- both stay agnostic about whether the ambiguous exit is a
+real bug in the user's code, an unresolved dependency, or something else (Open Question 3
+explicitly leaves root-cause distinction unsolved).
 
-**Test coverage, both reusing/extending existing scenarios rather than net-new test files.**
-`tests/selfapps_pyinstaller_fail.ps1` gained a third `PYI_FAIL_SCENARIO` value,
-`execfail_runtimefail` -- identical to `execfail` (forces the PyInstaller build itself to fail via
-`HP_TEST_FORCE_PYINSTALLER_FAIL=1`, with `HP_TEST_FORCE_NUITKA_FAIL=1` keeping Tier A from rescuing
-it) except the stub app ALSO exits non-zero (`sys.exit(3)`) so the interpreter fallback that runs
-next is a genuine failure too -- asserting the caveat header text appears instead of the two other
-scenarios' plain "your code ran successfully" text (which those two still correctly assert
-unchanged, since their trivial stub app still exits 0 via the interpreter fallback). Wired into
-`batch-check.yml` as a third step alongside the existing `execfail`/`output_vanish` steps, same
-`real`/`conda-full` gating lanes. `tests/selfapps_failfast_probe.ps1`'s existing `self.failfast.
+**Test coverage, reusing/extending existing scenarios rather than net-new test files.**
+`tests/selfapps_pyinstaller_fail.ps1` gained a third `PYI_FAIL_SCENARIO`, `execfail_runtimefail`
+-- identical to `execfail` except the stub app ALSO exits non-zero, so the interpreter fallback is
+a genuine failure too, asserting the caveat header appears instead of the plain success text (the
+two other scenarios still correctly assert that text unchanged). Wired as a third step in
+`batch-check.yml`, same gating lanes. `tests/selfapps_failfast_probe.ps1`'s existing `self.failfast.
 probe.alive` scenario already produces the EXACT "cached EXE kept, later exits non-zero" condition
-`:print_fastpath_ambiguous_note` targets (it exists to prove the decoupling fix from the "Fail-fast
-probe" section above) -- extended with one new assertion for the new panel's text rather than
-writing a fourth, largely-duplicate scenario.
+`:print_fastpath_ambiguous_note` targets -- extended with one new assertion rather than a fourth,
+largely-duplicate scenario.
 
 ## Post-execution checkpoint (Slice 2b-C, second half): the elective second run
 
-`:run_postexec_checkpoint` is the other half of 2b-C promised by the original REQ-018 design doc
-(the fail-fast probe above shipped first, in a separate PR). It is a **consent gate**, not a probe
-mechanism -- it follows the SAME 3-branch template as `:system_build_consent_gate` /
-`:cascade_consent_gate` / `:system_python_consent_gate` (echo the prompt UNCONDITIONALLY, then
-`HP_TEST_CHECKPOINT_ANSWER` override checked first, then `HP_CI_LANE` auto-decline, then
-interactive `set /p`) -- **not** the `HP_INTERACTIVE_RUN`/`HP_TEST_FORCE_INTERACTIVE_PROBE`
-convention the fail-fast probe uses. Do not conflate the two patterns: `HP_INTERACTIVE_RUN`
-silently SKIPS a branch under `HP_CI_LANE` (no prompt text at all in CI); the consent-gate pattern
-always ECHOES the prompt even when auto-declining, so a `self.checkpoint.*` test can assert the
-prompt text is shown regardless of lane.
+`:run_postexec_checkpoint` is the other half of 2b-C (the fail-fast probe above shipped first, in
+a separate PR). It is a **consent gate**, not a probe mechanism -- follows the SAME 3-branch
+template as `:system_build_consent_gate`/`:cascade_consent_gate`/`:system_python_consent_gate`
+(echo the prompt UNCONDITIONALLY, then `HP_TEST_CHECKPOINT_ANSWER` override, then `HP_CI_LANE`
+auto-decline, then interactive `set /p`) -- **not** the `HP_INTERACTIVE_RUN` convention the
+fail-fast probe uses. Do not conflate: `HP_INTERACTIVE_RUN` silently SKIPS a branch under CI (no
+prompt text at all); the consent-gate pattern always ECHOES the prompt even when auto-declining,
+so a `self.checkpoint.*` test can assert the prompt text regardless of lane.
 
-**What it does and why it is safe to call unconditionally:** `:run_postexec_checkpoint <site>` is
-called at the end of every place that already printed `[STATUS] Run Status: ...` telemetry for a
-FRESH verification run -- `:smokerun_ndjson` (after the EXE smoke + its NDJSON emission) and both
-branches of `:verify_no_exe_interpreter` (the legacy branch, and after `:run_failfast_probe
-interpreter` returns in `:verify_no_exe_probe`). It is deliberately **never** called from
-`:try_fast_exe`'s fast-path reuse -- the locked design requirement is "Fast path = ZERO friction...
-do NOT add a prompt or flag to the fast path," and since the checkpoint gate itself would decline
-silently-but-still-echo a prompt in CI, adding the call there would violate that zero-friction
-guarantee even on the auto-decline path. On accept, it reuses `:run_failfast_probe` (site
-`'checkpoint'`) for the actual second launch rather than a fourth ad hoc process-launch mechanism
--- same never-kill, two-stage-wait guarantee as the fail-fast probe's own interactive branch.
+**What it does and why it's safe to call unconditionally:** `:run_postexec_checkpoint <site>` is
+called at the end of every place that already printed `[STATUS] Run Status: ...` for a FRESH
+verification run -- `:smokerun_ndjson` and both branches of `:verify_no_exe_interpreter`.
+Deliberately **never** called from `:try_fast_exe`'s fast-path reuse -- "Fast path = ZERO
+friction... do NOT add a prompt or flag" -- adding it there would violate zero-friction even on
+the auto-decline path (still echoes a prompt in CI). On accept, it reuses `:run_failfast_probe`
+(site `'checkpoint'`) for the second launch -- same never-kill, two-stage-wait guarantee.
 
-**State it touches, and why nothing downstream breaks:** the checkpoint's accepted run reuses
-`HP_PROBE_EXE`/`HP_PROBE_ARGS`/`HP_PROBE_CWD` (cleared and reset, same as any other
-`:run_failfast_probe` call), and via `HP_PROBE_OUT`/`HP_PROBE_ERR` writes to distinct
-`~checkpoint_run.out.txt`/`~checkpoint_run.err.txt` files rather than the FIRST run's
-`~run.out.txt`/`~run.err.txt` (see the `:run_failfast_probe` header comment above --
-`HP_PROBE_OUT`/`HP_PROBE_ERR` exist specifically so this elective second run cannot clobber the
-real verification's captured output). `HP_SMOKE_RC`/`HP_PROBE_EXCEEDED` are explicitly
-**saved before and restored after** the `:run_failfast_probe checkpoint` call
-(`HP_CHECKPOINT_SAVED_SMOKE_RC`/`HP_CHECKPOINT_SAVED_PROBE_EXCEEDED`) -- NOT left overwritten by
-the second run's outcome -- because they belong to the FIRST (real) verification run in the
-caller's namespace and any code a caller might add after the checkpoint call (before its own
-`exit /b 0`) must still see the FIRST run's result, not the elective diagnostic run's. The elective
-run's own outcome is only ever surfaced via its own `[STATUS]`/NDJSON emission inside
-`:run_failfast_probe checkpoint` itself, never propagated back into the caller's `HP_SMOKE_RC`.
+**State it touches:** the accepted run reuses `HP_PROBE_EXE`/`HP_PROBE_ARGS`/`HP_PROBE_CWD`, and
+writes to distinct `~checkpoint_run.out.txt`/`~checkpoint_run.err.txt` files (via
+`HP_PROBE_OUT`/`HP_PROBE_ERR`) rather than the FIRST run's `~run.out.txt`/`~run.err.txt`, so this
+elective second run cannot clobber the real verification's captured output.
+`HP_SMOKE_RC`/`HP_PROBE_EXCEEDED` are explicitly **saved before and restored after** the checkpoint
+call (`HP_CHECKPOINT_SAVED_SMOKE_RC`/`HP_CHECKPOINT_SAVED_PROBE_EXCEEDED`) -- NOT overwritten by
+the second run's outcome, since a caller's code after the checkpoint call must still see the FIRST
+run's result. The elective run's outcome is only ever surfaced via its own `[STATUS]`/NDJSON
+emission inside the checkpoint call, never propagated back into the caller's `HP_SMOKE_RC`.
 
-**Cascade re-entry can offer the checkpoint more than once per bootstrap.** `:after_env_mode_selection`
-(see "Provider cascade execution re-enters env-create" above) is re-entrant, so a REQ-009 provider
-cascade (uv -> conda -> venv -> system) that reaches a NEW verification run at any of the three
-call sites offers a FRESH checkpoint prompt each time. This is intentional, not a bug: each cascade
-tier is a genuinely different build/environment, so a fresh "run it again to check" offer is
-correct per tier -- but it does mean `self.checkpoint.*`-style assertions on a cascading run must
-not assume exactly one prompt occurrence, and a real interactive user could see the prompt more
-than once in a single double-click session if their run happens to cascade through providers.
+**Cascade re-entry can offer the checkpoint more than once per bootstrap** -- `:after_env_mode_
+selection` is re-entrant, so a REQ-009 cascade reaching a NEW verification run at any of the three
+call sites offers a FRESH checkpoint prompt each time (intentional, each cascade tier is a
+genuinely different build) -- `self.checkpoint.*`-style assertions must not assume exactly one
+prompt occurrence.
 
-Test coverage: `tests/selfapps_postexec_checkpoint.ps1` (`self.checkpoint.accept` via
-`HP_TEST_CHECKPOINT_ANSWER=Y`, `self.checkpoint.decline` via the default/`HP_CI_LANE` path),
-asserting the prompt is shown in both cases and the run footprint is exactly two vs. one
-`Entry smoke exit=0` occurrences. `tests/harness.ps1`'s `batch.postexec.checkpoint` statically
-guards the subroutine, the test override, the unconditional prompt echo, both log lines, and that
-all three call sites are still wired (`call :run_postexec_checkpoint` count `-ge 3`).
+Test coverage: `tests/selfapps_postexec_checkpoint.ps1` (`self.checkpoint.accept`/`.decline`),
+asserting the prompt is shown in both cases and the run footprint is exactly two vs. one `Entry
+smoke exit=0` occurrences. `tests/harness.ps1`'s `batch.postexec.checkpoint` statically guards the
+subroutine, the test override, the unconditional prompt echo, both log lines, and that all three
+call sites are still wired.
 
-**Cascade-vs-postexec fix (CLAUDE.md item 9 / docs/open-questions.md item 1) -- the checkpoint and
-requirement 9's optimized-build offer are now both skipped, but ONLY at the `exe` call site, and
-ONLY when the CURRENT provider's own cascade was just approved.** The original open question
-(closed by this fix) was: cascade consent is asked BEFORE the EXE smoke run, so a user who already
-said "yes, try the next provider" would still be shown two more elective prompts (`:run_postexec_
-checkpoint`, `:offer_optimized_build`) about the build they just opted away from, wasting real time
-(the optimized-build offer alone can take a minute or more compiling something about to be
-discarded once the cascade rebuilds under the next tier).
+**Cascade-vs-postexec fix (CLAUDE.md item 9 / docs/open-questions.md item 1, closed) -- the
+checkpoint and requirement 9's optimized-build offer are now both skipped, but ONLY at the `exe`
+call site, and ONLY when the CURRENT provider's own cascade was just approved.** Closed open
+question: cascade consent is asked BEFORE the EXE smoke run, so a user who already said "yes, try
+the next provider" would still be shown two more elective prompts about the build they just opted
+away from, wasting real time (the optimized-build offer alone can take a minute+ compiling
+something about to be discarded).
 
-**The smoke run ITSELF is deliberately NOT skipped, even when cascade is approved -- this was the
-first, wrong design attempted, caught before shipping.** `HP_CASCADE_APPROVED` (set inside
-`:warnfix_cascade_detect`, well before `:run_exe_smokerun` is even called) only means the NEXT
-provider tier will be TRIED -- it does not guarantee the cascade actually reaches a new tier.
-`:provider_cascade` (reached later, from the top-level main line, only after `:run_entry_smoke`
-fully returns -- see "Provider cascade execution re-enters env-create" above) can still find every
-remaining tier unavailable or declined (e.g. the terminal system tier's own REQ-014 consent gate
-being declined) and fall back to one of its six "keeping current build" exhaustion messages
-(`run_setup.bat` lines ~1853/1868/1881/1884/1896/1910) -- at which point the CURRENT build (the
-one whose smoke run would have been skipped) is what actually ships. Skipping the smoke run
-entirely would leave that kept-on-exhaustion build completely unverified, a real regression from
-the pre-fix behavior (which always verified at least once, just sometimes for a build that turned
-out to be discarded moments later). Fix: `:run_exe_smokerun` always runs; only the two ELECTIVE
-follow-up calls inside `:smokerun_ndjson` (`:run_postexec_checkpoint exe`, `:offer_optimized_
-build`) are wrapped in `if defined HP_CASCADE_APPROVED (...) else (...)`, so the mandatory
-diagnostic step never disappears but the two optional prompts do, exactly when they'd otherwise be
-asked about a build the user has already opted away from.
+**The smoke run ITSELF is deliberately NOT skipped, even when cascade is approved -- the first,
+wrong design attempted, caught before shipping.** `HP_CASCADE_APPROVED` (set well before
+`:run_exe_smokerun` runs) only means the NEXT tier will be TRIED, not that the cascade actually
+reaches one -- `:provider_cascade` can still find every remaining tier unavailable/declined and
+fall back to one of its six "keeping current build" exhaustion messages, at which point the
+CURRENT build (whose smoke run would have been skipped) is what ships. Skipping the smoke run
+entirely would leave that kept-on-exhaustion build completely unverified. Fix: `:run_exe_smokerun`
+always runs; only the two ELECTIVE follow-up calls inside `:smokerun_ndjson`
+(`:run_postexec_checkpoint exe`, `:offer_optimized_build`) are wrapped in `if defined
+HP_CASCADE_APPROVED (...) else (...)`.
 
-**The "declined/timed-out" side got two companion pieces, both requested directly:**
-1. **`:cascade_consent_gate`'s real-interactive-user branch now uses a TIMED `choice /T` prompt
-   (default 30s) instead of an unbounded `set /p`**, mirroring `:pick_entry_interactive`'s own
-   established `choice /T %HP_PICK_T% /D %HP_PICK_DEFAULT%` pattern (the entry picker is the only
-   OTHER consent-style prompt in this file that was already timed -- every sibling gate
-   (`:run_postexec_checkpoint`, `:offer_optimized_build`, `:system_build_consent_gate`,
-   `:conda_binary_corrupt`'s heal prompt, `:check_net_after_dl_fail`, `:system_python_consent_gate`)
-   still uses a bare, unbounded `set /p` and shares this same "hangs forever if nobody's at the
-   keyboard" characteristic -- fixing all of them was judged out of scope for this pass; flagged
-   here so a future pass doesn't have to rediscover the pattern). On timeout with no answer, `/D N`
-   resolves to decline -- an unattended interactive run still tries the current build once,
-   unprompted, rather than hanging the whole bootstrap indefinitely. `HP_TEST_FORCE_INTERACTIVE_
-   CASCADE=1` forces this branch to be reached even under `HP_CI_LANE` (mirrors `HP_TEST_FORCE_
-   PICKER`) and shrinks the timeout to 2s for CI. Rewritten with goto-based dispatch throughout
-   (not nested parens) per "Provider-cascade dispatch is goto-based on purpose" in
-   `docs/agent-lessons-learned.md` -- a `choice` call followed by an `%ERRORLEVEL%`-reading `set`
-   is exactly the bug class that lesson documents when nested inside a shared parenthesized block;
-   `if errorlevel N` (the special comparison form, not `%ERRORLEVEL%` text substitution) is used
-   instead specifically to sidestep it, matching `:pick_entry_interactive`'s own established idiom.
+**The "declined/timed-out" side got two companion pieces:**
+1. **`:cascade_consent_gate`'s real-interactive-user branch now uses a TIMED `choice /T` prompt**
+   (default 30s) instead of an unbounded `set /p`, mirroring `:pick_entry_interactive`'s
+   established `choice /T %HP_PICK_T% /D %HP_PICK_DEFAULT%` pattern -- the only other already-timed
+   consent-style prompt (every sibling gate: `:run_postexec_checkpoint`, `:offer_optimized_build`,
+   `:system_build_consent_gate`, `:conda_binary_corrupt`'s heal prompt, `:check_net_after_dl_fail`,
+   `:system_python_consent_gate` still uses a bare, unbounded `set /p` and shares the same
+   "hangs forever unattended" characteristic -- fixing all of them was out of scope for this pass).
+   On timeout, `/D N` resolves to decline. `HP_TEST_FORCE_INTERACTIVE_CASCADE=1` forces this branch
+   under `HP_CI_LANE` and shrinks the timeout to 2s for CI. Rewritten with goto-based dispatch (not
+   nested parens) per "Provider-cascade dispatch is goto-based on purpose" -- `if errorlevel N`
+   (not `%ERRORLEVEL%` substitution) sidesteps the parse-time-expansion trap.
 2. **A new "dependencies may be incomplete" note** (`HP_DEP_MAYBE_INCOMPLETE`), set in
-   `:warnfix_cascade_detect` whenever a cascade candidate was detected but NOT approved (declined,
-   timed out, or auto-declined in CI) -- reset to unset at the top of every FRESH build attempt
-   (alongside `HP_NUITKA_FALLBACK_USED`'s own reset) so a provider that needs no warnfix repair at
-   all doesn't inherit a stale flag from an earlier, cascaded-away provider's failure. Consumed at
-   two points: an immediate `[WARN]` right where the decision was made, and a second reminder line
-   in `:warn_user_code_launch` (right before the EXE actually launches) so the context survives to
-   the moment it's most useful -- a confusing runtime failure right after is not mistaken for a bug
-   in the user's own code. Deliberately a NOTE, never a second gate: the user may know something the
-   automated install missed and want to push through anyway. The "extra credit" idea discussed
-   alongside this (telling the user their odds of a DIFFERENT specific next tier helping) was
-   investigated but not implemented -- see the "Cascade signal reliability" subsection below for
-   the supporting analysis and why it was left out.
+   `:warnfix_cascade_detect` whenever a cascade candidate was detected but NOT approved -- reset at
+   the top of every FRESH build attempt (alongside `HP_NUITKA_FALLBACK_USED`'s reset). Consumed at
+   two points: an immediate `[WARN]` at the decision, and a reminder in `:warn_user_code_launch`
+   right before the EXE launches, so a confusing runtime failure isn't mistaken for a bug in the
+   user's own code. Deliberately a NOTE, never a second gate. The "tell the user their odds of a
+   DIFFERENT next tier helping" idea was investigated but not implemented -- see "Cascade signal
+   reliability" below for why.
 
-Test coverage: `tests/selfapps_cascade.ps1`'s existing `self.cascade.exec` (uv lane, non-gating)
-gained an assertion that all 4 approved-cascade builds (uv, conda, embed, venv) correctly skip
-their postexec offers (`offersSkipped` count, expected exactly 4). New `tests/selfapps_cascade_
-timed.ps1` (conda-full lane) proves the timed-choice mechanism and the dirty-flag note positively;
-see `docs/agent-ndjson.md`'s own section on it for the full assertion list.
+Test coverage: `tests/selfapps_cascade.ps1`'s `self.cascade.exec` (uv lane, non-gating) gained an
+assertion that all 4 approved-cascade builds (uv, conda, embed, venv) correctly skip their
+postexec offers (`offersSkipped` count, expected exactly 4). New `tests/selfapps_cascade_
+timed.ps1` (conda-full lane) proves the timed-choice mechanism and the dirty-flag note positively
+-- see `docs/agent-ndjson.md` for the full assertion list.
 
 ### Cascade signal reliability -- why `HP_CASCADE_CANDIDATE` is a strong-but-imperfect signal
 
-Investigated 2026-07-25/26, in response to a maintainer question about how confident this signal
-actually is, and whether the cascade consent gate's design (timed prompt, defaults to decline)
-should change as a result. **Outcome: kept exactly as shipped -- see CLAUDE.md's Known Findings
-entry for the decision.** This subsection preserves the supporting mechanism-level analysis, since
-it is useful background for anyone touching the cascade signal again later.
+Investigated in response to a maintainer question about how confident this signal actually is, and
+whether the cascade consent gate's design (timed prompt, defaults to decline) should change as a
+result. **Outcome: kept exactly as shipped -- see CLAUDE.md's Known Findings entry.** This
+subsection preserves the supporting mechanism-level analysis for anyone touching the signal again.
 
 `HP_CASCADE_CANDIDATE` requires BOTH of two build-time, static signals (`:warnfix_cascade_detect`):
 - **Signal A**: PyInstaller's own warn file still lists an unresolved import even AFTER a
@@ -1796,14 +1341,13 @@ together is what makes a genuine candidate uncommon, not the base rate of repair
 | Yes | Yes | **Yes** | The actual trigger: a real install failure AND a persistent static-analysis gap. The strongest available signal, but still not proof the app will crash. | Lower, and audience-dependent (~25-40%) |
 
 **Row 4 in more depth (the one that actually reaches the user).** Could the `.exe` still succeed
-even with a genuine (A=yes, B=yes) signal? Yes, plausibly -- PyInstaller's warn file is a
-whole-codebase static scan, not proof a specific code path executes; an optional feature behind
-`try/except ImportError`, a rarely-used branch, or a type-checking-only import would all trigger
-this signal without the main flow ever needing it. Against that: this bootstrapper's own stated
-audience is beginners with straightforward scripts, where a top-level, unconditionally-used import
-is common -- so an outright crash is plausibly more likely than not, just not overwhelming. These
-percentages are informed estimates from reasoning through the mechanism, not measured production
-telemetry -- there is no real usage data to check them against.
+with a genuine (A=yes, B=yes) signal? Plausibly -- PyInstaller's warn file is a whole-codebase
+static scan, not proof a specific code path executes; an optional feature behind `try/except
+ImportError`, a rarely-used branch, or a type-checking-only import would all trigger this signal
+without the main flow ever needing it. Against that: this bootstrapper's stated audience is
+beginners with straightforward scripts, where a top-level, unconditionally-used import is common,
+so an outright crash is plausibly more likely than not, just not overwhelming. These percentages
+are informed estimates from reasoning through the mechanism, not measured production telemetry.
 
 Could the NEXT provider actually help, given this signal? Depends entirely on WHICH hop, and the
 bootstrapper has no way to tell which:
