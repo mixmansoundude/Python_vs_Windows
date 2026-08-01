@@ -588,15 +588,15 @@ this belongs to).
 - **`[WARN] UNC paths not supported` fired unconditionally in CI on an ordinary (non-UNC) local
    path -- found 2026-07-29 while gathering real console-output evidence for
    `docs/demo-bootstrapper-output.md`'s default-happy-path documentation pass, not investigated
-   further at the time.** `run_setup.bat:57-58` did
+   further at the time.** The unlabeled prologue in `run_setup.bat` did
    `echo %~dp0 | findstr /C:"\\\\" >nul` / `if not errorlevel 1 echo [WARN] UNC paths not
-   supported` -- per the C-runtime backslash-before-quote rule documented in
-   `docs/agent-lessons-learned.md` ("A single trailing backslash before a closing quote silently
-   corrupts a subprocess argument"), `\\\\"` collapsed to a 2-backslash literal search pattern, so
-   this was searching `%~dp0` for two CONSECUTIVE backslashes anywhere in the string -- not testing
-   for a UNC prefix (that's the separate, independent check two lines below,
-   `if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the louder `*** WARNING: UNC/network
-   paths detected...` banner). Confirmed firing as the very FIRST line of console output across 6
+   supported` -- its exact internal parsing (how `findstr`'s own additional backslash-doubling
+   behavior interacts with cmd.exe's own C-runtime backslash-before-quote argument parsing,
+   documented in `docs/agent-lessons-learned.md`) was never independently verified; what WAS
+   confirmed empirically is that it did not correctly gate on a UNC prefix (that's the separate,
+   independent check two lines below, `if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the
+   louder `*** WARNING: UNC/network paths detected...` banner). Confirmed firing as the very FIRST
+   line of console output across 6
    lanes of a real clean CI run (`30328748330`) against an entirely ordinary checkout path
    (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\~envsmoke\`) -- not a UNC path by any
    reasonable definition. No test anywhere referenced this string (confirmed via a repo-wide

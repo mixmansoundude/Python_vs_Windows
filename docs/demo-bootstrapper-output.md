@@ -645,16 +645,17 @@ Tue 07/28/2026  4:29:43.96 [INFO] REQ-015: Appending standard ignores to .gitign
 **The very first console line above (`[WARN] UNC paths not supported`) is historical, from the
 captured run, and no longer appears -- fixed since this capture, kept here unedited because it is
 a real, timestamped log.** It came from a broken, redundant top-of-file `findstr`-based check (in
-the file's unlabeled prologue before the first `:label`): `findstr /C:"\\\\"` (searching for two
-literal backslashes) actually collapsed to a search for ONE literal backslash before the closing
-quote, per the C-runtime backslash-before-quote parsing rule documented in
-`docs/agent-lessons-learned.md`, so it fired on 6/6 checked lanes against an entirely ordinary
-local CI checkout path (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\~envsmoke\`) -- not a UNC
-path. The companion, independent, correctly-targeted UNC-prefix check a couple of lines below it
-(`if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the much louder `*** WARNING: UNC/network
-paths detected...` banner) already covered the real UNC-detection job on its own, so the broken
-check was simply removed rather than repaired -- see CLAUDE.md's Closed Backlog (formerly Active
-Backlog item 8) for the full trace.
+the file's unlabeled prologue before the first `:label`): `findstr /C:"\\\\"` was intended to
+match a UNC-style double-backslash but did not correctly gate on one -- its exact internal parsing
+(`findstr`'s own additional backslash-doubling behavior layered on cmd.exe's own C-runtime
+backslash-before-quote argument parsing, documented in `docs/agent-lessons-learned.md`) was never
+independently verified. What WAS confirmed is that it fired on 6/6 checked lanes against an
+entirely ordinary local CI checkout path (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\
+~envsmoke\`) -- not a UNC path. The companion, independent, correctly-targeted UNC-prefix check a
+couple of lines below it (`if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the much louder
+`*** WARNING: UNC/network paths detected...` banner) already covered the real UNC-detection job on
+its own, so the broken check was simply removed rather than repaired -- see
+`docs/agent-closed-backlog.md`'s Item 8 for the full trace.
 
 Between that line and `REQ-015`, nothing else prints -- `HP_APP_ARGS` capture (REQ-026, pure
 variable assignment), the workspace-path-exists check, `cd /d`, and `HP_SCRIPT_ROOT` construction
