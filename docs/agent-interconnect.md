@@ -323,16 +323,16 @@ isolated, bootstrapper-installable" (safe to `pip install` into freely); system 
 minimally-invasive" (installs avoided/consent-gated). Wherever code branches system out to a
 restricted/no-op path, embed should NOT be excluded the same way.
 
-**Call sites requiring a genuinely new `embed` case:**
-1. `:handle_conda_failure` (~line 1787) -- the initial fallback chain. Added `call
-   :try_embed_fallback` after the system-fallback attempt, before the final `exit /b 0`.
+**Call sites wired to a new `embed` case (current, post-reorder state -- matches "Provider cascade
+execution re-enters env-create" below, which documents the same two dispatch chains in full):**
+1. `:handle_conda_failure` (~line 1787) -- the initial fallback chain. `call :try_embed_fallback`
+   runs right after conda itself fails, BEFORE venv/system are attempted (embed/venv/system order).
    `HP_FORCE_CONDA_ONLY=1` already short-circuits this function, so embed is auto-suppressed.
 2. `:provider_cascade`'s dispatch (~line 1618-1632) -- the separate post-build warnfix cascade.
-   Added `if /i "%HP_ENV_MODE%"=="system" goto :cascade_from_system` + a `:cascade_from_system`
-   label mirroring `:cascade_from_venv` (guard on `HP_CASCADE_TRIED_SYSTEM`, call
-   `:try_embed_fallback`, `goto :after_env_mode_selection` on success or `:cascade_embed_
-   unavailable` on failure). Per the no-loop-guarantee rule: the guard var is mandatory and embed
-   must be the last tier (falls out naturally by not adding an `embed` case to the dispatch chain).
+   `:cascade_from_conda` targets `:try_embed_fallback` (guard `HP_CASCADE_TRIED_EMBED`); a new
+   `:cascade_from_embed` targets `:try_venv_fallback`. System has NO cascade target of its own
+   (`:cascade_from_system` was deleted in the same reorder -- system is terminal). Per the
+   no-loop-guarantee rule: each guard var is mandatory and the order stays monotonic.
 3. **New subroutine `:try_embed_fallback`** -- mirrors `:try_venv_fallback`/`:try_system_fallback`'s
    shape, called from both sites above. On success: `HP_ENV_MODE=embed`, `HP_PY=<extracted
    pythonXY.exe>`, `HP_BOOTSTRAP_STATE=embed_env`, leaves `HP_SKIP_PIPREQS` UNSET (matching venv,
@@ -547,9 +547,18 @@ the dep-check fast path fires, so anything Tier 1 adds is installed either way. 
 trade-off: on a repeat run where the fast path fires, an autopep-only-discovered package always
 goes through pip rather than conda (mirrors the existing "pip gap-fill safety net" pattern).
 
-**Never gates the lane.** The merge helper (`tools/autopep_merge.py`/`HP_AUTOPEP_MERGE`) always
-exits 0 and is purely additive -- never removes/reorders existing `requirements.txt` content, and
-a missing/empty `requirements.autopep.txt` is a silent no-op.
+**Never gates the lane, in practice.** The merge helper (`tools/autopep_merge.py`/
+`HP_AUTOPEP_MERGE`) is purely additive -- never removes/reorders existing `requirements.txt`
+content, and a missing/empty `requirements.autopep.txt` is a silent no-op. Every normal/expected
+path (no-op, successful merge) returns 0. **Correction: the module's own "never raises, always
+exits 0" docstring claim is not literally true** -- `existing_names()`'s `open()` and `main()`'s
+own trailing-newline/append `open()` calls are NOT wrapped in `try/except OSError` (unlike
+`extract_autopep_deps()`, which is), so a genuine OSError there (permission denied, disk full, a
+TOCTOU race between `os.path.exists()` and `open()`) propagates uncaught and exits nonzero via
+Python's default uncaught-exception handling. `run_setup.bat` never treats this as fatal either
+way -- the pipreqs-derived `requirements.txt` from earlier in the same flow is already on disk
+and usable regardless of whether this merge step completes, so the bootstrap simply continues
+with pipreqs-only results on that rare failure.
 
 ### HP_PVW_KNOWN_IDEMPOTENT execute-mode discovery (REQ-005.13, Tier 2) hooks in earlier than Tier 1
 
@@ -818,14 +827,18 @@ if ($env:HP_FORCE_CONDA_ONLY -ne '1') {
 
 ## Single-verification smoke model (REQ-018 2b-A.2) couples run_setup.bat to envsmoke/skiphooks
 
-The bootstrapper runs the user's code for verification at most ONCE per invocation. Touching the
+The bootstrapper runs the user's code for MANDATORY verification exactly ONCE per invocation
+(the pre-build interpreter smoke and a second EXE smoke were merged into one). An accepted
+post-execution checkpoint (see that section below) can still launch an OPTIONAL second run --
+"once per invocation" describes the automatic/default flow, not an absolute ceiling. Touching the
 smoke flow in `run_setup.bat` requires understanding the assertions in
 `tests/selfapps_envsmoke.ps1` and `tests/selfapps_skiphooks.ps1`, which are coupled by exact log
 strings and run artifacts:
 
 - **Removed:** the pre-build interpreter smoke (in `:run_entry_smoke`) and
   `:try_entry_smoke_after_warnfix` -- the EXE path no longer runs the app twice.
-- **EXE path = sole verification via the timed EXE smoke** (`:run_exe_smokerun`). To keep existing
+- **EXE path = primary (mandatory) verification via the timed EXE smoke** (`:run_exe_smokerun`).
+  To keep existing
   tests passing without re-pointing them, it emits the **same vocabulary** the interpreter smoke
   used and **captures the EXE stdout/stderr** to the app root:
   - `[INFO] Running entry script smoke test via packaged EXE.` -> matches envsmoke `$hasEntryRun`
@@ -886,9 +899,12 @@ classification checkpoint, never a ceiling), then, if still running, a SECOND, U
 `WaitForExit()` with no `Kill()` anywhere.
 
 **Touch either call site, must understand the other, plus the top-of-file success gate:**
-- Both callers set `HP_PROBE_EXE`/`HP_PROBE_ARGS` (raw, UNQUOTED -- the helper quotes it via
-  `'"' + $rawArgs + '"'`, correct only for a SINGLE path argument)/`HP_PROBE_CWD` before calling
-  `:run_failfast_probe <site>`. **CWD is preserved per call site**: both `:try_fast_exe` and
+- Both callers set `HP_PROBE_EXE`/`HP_PROBE_ARGS`/`HP_PROBE_CWD` before calling `:run_failfast_probe
+  <site>`. **`HP_PROBE_ARGS` is a complete, ready-to-use Windows Arguments string, per the
+  caller-owned quoting contract the Argv passthrough feature established (see below): the caller
+  quotes each token, and `~failfast_probe.ps1` assigns the string to `ProcessStartInfo.Arguments`
+  VERBATIM, adding no quotes of its own.** Do not wrap the complete string in another pair of
+  quotes -- that collapses multiple arguments into one token. **CWD is preserved per call site**: both `:try_fast_exe` and
   `:verify_no_exe_interpreter` run from the app root (no `pushd dist`), unlike
   `:run_exe_smokerun`'s `pushd dist` (load-bearing for `selfapps_exedata_fail`'s CWD-relative
   `config.json` xfail check -- re-verify that test if these CWDs are ever unified).

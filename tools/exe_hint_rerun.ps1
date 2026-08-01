@@ -23,6 +23,14 @@
 # primary-verification budget) is a test-only override point, mirroring HP_SMOKERUN_KILL_MS's
 # established pattern.
 #
+# derived requirement: the resolved $killMs is ALWAYS written to HP_HINT_RERUN_KILLMS_OUT (default
+# ~exe_hint_killms.txt) right after it's computed, unconditionally -- production callers never read
+# this file, so it costs nothing there. It exists so tests can assert the override was actually
+# honored by reading this DIRECT value, instead of inferring it from wall-clock elapsed time (which
+# proved unreliable on shared real-Windows CI runners -- the same test measured 9.2s, 13.5s, 14.6s,
+# and 16.3s of overhead across four different real-CI runs for the identical 500ms override, a
+# moving target that no fixed bound could chase; see docs/agent-lessons-learned.md).
+#
 # This is the canonical source for the HP_EXE_HINT_RERUN base64 payload embedded in run_setup.bat.
 # After editing, run `python tools/sync_payload.py HP_EXE_HINT_RERUN tools/exe_hint_rerun.ps1`;
 # tests/test_exe_hint_rerun.py asserts the embedded payload matches this file (CRLF/LF normalized,
@@ -33,6 +41,9 @@ $outPath = $env:HP_HINT_RERUN_OUT
 if (-not $outPath) { $outPath = '~exe_out.txt' }
 $killMs = 10000
 if ($env:HP_HINT_RERUN_KILL_MS) { $killMs = [int]$env:HP_HINT_RERUN_KILL_MS }
+$killMsOutPath = $env:HP_HINT_RERUN_KILLMS_OUT
+if (-not $killMsOutPath) { $killMsOutPath = '~exe_hint_killms.txt' }
+"$killMs" | Set-Content -Path $killMsOutPath -Encoding ASCII
 
 $si = New-Object System.Diagnostics.ProcessStartInfo
 $si.FileName = $exe

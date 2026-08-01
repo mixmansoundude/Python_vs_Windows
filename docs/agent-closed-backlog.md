@@ -822,6 +822,25 @@ this belongs to).
    value for that env var from elsewhere would silently redirect the helper's output away from the
    file the hint-matching `findstr` checks actually read. Fixed by setting it explicitly
    (`~exe_out.txt`) at the call site, matching `HP_HINT_RERUN_EXE`'s own set/clear pattern.
+   **A wall-clock timing assertion in the same test file proved genuinely unfixable by tuning the
+   bound, and had to be redesigned instead.** `UnconditionalKill`'s two tests asserted elapsed
+   time stayed under a fixed ceiling to prove `HP_HINT_RERUN_KILL_MS=500` was actually honored
+   (not silently ignored in favor of the 10000ms default). The first bound (8s) failed on real CI
+   at 9.235s; the revised bound (13s) then failed on THREE SEPARATE real-CI lanes on the very next
+   push, at 13.468s, 14.578s, and 16.328s respectively -- a moving target across runs, not
+   converging toward any stable value, most likely reflecting variable overhead from the new
+   `taskkill.exe` process-tree-kill call (no other helper in this file family spawns it, so there
+   was no prior timing data to draw from) compounded by ordinary load variance on a shared runner
+   deep into a long sequential test suite. **Fixed by removing the dependency on wall-clock time
+   entirely**: `tools/exe_hint_rerun.ps1` now writes its resolved `$killMs` directly to
+   `HP_HINT_RERUN_KILLMS_OUT` (default `~exe_hint_killms.txt`), unconditionally, right after
+   computing it -- production callers never read this file, so it costs nothing there. The tests
+   now assert on that value DIRECTLY (proving the override was read and used, deterministically,
+   immune to CI-runner noise) instead of inferring it from timing. A generous, untuned wall-clock
+   ceiling (45s, well below the underlying test scripts' own 120s sleep) is kept only as a coarse
+   sanity net against the kill mechanism being completely broken -- it is not expected to need
+   future adjustment for ordinary CI variance, since it no longer needs to distinguish "honored a
+   500ms override" from "silently fell back to 10000ms," only "did the kill fire at all."
 
 ### Item 12 (closed 2026-08-01)
 

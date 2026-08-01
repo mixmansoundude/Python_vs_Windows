@@ -104,6 +104,11 @@ def _out_path(d, env_extra):
     return Path(override) if override else (Path(d) / "dist" / "~exe_out.txt")
 
 
+def _killms_path(d, env_extra):
+    override = env_extra.get("HP_HINT_RERUN_KILLMS_OUT")
+    return Path(override) if override else (Path(d) / "dist" / "~exe_hint_killms.txt")
+
+
 @unittest.skipUnless(PWSH, "pwsh not available")
 class FastExit(unittest.TestCase):
     def test_fast_exit_output_captured_combined(self):
@@ -123,18 +128,20 @@ class FastExit(unittest.TestCase):
 
 @unittest.skipUnless(PWSH, "pwsh not available")
 class UnconditionalKill(unittest.TestCase):
-    # derived requirement (CodeRabbit review, PR #410): the outer subprocess.run timeout
-    # alone does not prove HP_HINT_RERUN_KILL_MS=500 was actually honored -- an implementation
-    # that silently ignored the override and fell back to the 10s default would still pass
-    # within a large-enough timeout. Assert elapsed wall-clock stays well under the 10000ms
-    # default to prove the override was honored, WITHOUT being so tight it flakes on a loaded
-    # real-Windows CI runner. A real CI run measured 9.235s for a 500ms override (pwsh startup +
-    # process-tree taskkill.exe overhead -- see docs/agent-lessons-learned.md's note on the
-    # taskkill /T addition not being independently timing-verified beforehand); the original
-    # 8s bound was too tight and flaked. 13s still fails hard if the override were silently
-    # ignored (10000ms default + the same overhead would land near 19s).
-    KILL_MS_UPPER_BOUND_SECONDS = 13
-    RUN_TIMEOUT_SECONDS = 20
+    # derived requirement (CodeRabbit review, PR #410; redesigned after four real-CI runs proved
+    # a wall-clock upper bound is not a reliable signal here): elapsed-time assertions on this
+    # test kept flaking upward on shared real-Windows CI runners -- 9.235s, 13.468s, 14.578s,
+    # 16.328s of overhead were all observed for the SAME 500ms override across different runs,
+    # with no bound converging. The actual thing worth proving -- that HP_HINT_RERUN_KILL_MS was
+    # read and used, rather than silently falling back to the 10000ms default -- does not need
+    # wall-clock inference at all: the script now writes its resolved $killMs directly to
+    # HP_HINT_RERUN_KILLMS_OUT (see tools/exe_hint_rerun.ps1), so the test reads that value
+    # straight instead of guessing it from timing. A generous, loose wall-clock ceiling is kept
+    # only as a coarse sanity net against the kill mechanism being completely broken (e.g. never
+    # firing at all, letting the script run out its full HANG_*_SCRIPT sleep) -- it is not tuned
+    # to the override value and should not need adjusting for ordinary CI noise.
+    SANITY_CEILING_SECONDS = 45
+    RUN_TIMEOUT_SECONDS = 60
 
     def test_silent_hang_is_killed(self):
         with tempfile.TemporaryDirectory() as d:
@@ -144,7 +151,9 @@ class UnconditionalKill(unittest.TestCase):
             proc = _run_hint_rerun(d, script, env, timeout=self.RUN_TIMEOUT_SECONDS)
             elapsed = time.monotonic() - start
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertLess(elapsed, self.KILL_MS_UPPER_BOUND_SECONDS, "did not honor HP_HINT_RERUN_KILL_MS override")
+            self.assertEqual(_killms_path(d, env).read_text(encoding="ascii").strip(), "500",
+                              "script did not read/use the HP_HINT_RERUN_KILL_MS override")
+            self.assertLess(elapsed, self.SANITY_CEILING_SECONDS, "kill mechanism appears completely broken")
             # No result/exit-code file is written by this helper (only the combined output
             # file) -- the caller only ever pattern-matches text, never checks an exit code.
             self.assertTrue(_out_path(d, env).exists())
@@ -162,12 +171,20 @@ class UnconditionalKill(unittest.TestCase):
             proc = _run_hint_rerun(d, script, env, timeout=self.RUN_TIMEOUT_SECONDS)
             elapsed = time.monotonic() - start
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertLess(elapsed, self.KILL_MS_UPPER_BOUND_SECONDS, "did not honor HP_HINT_RERUN_KILL_MS override")
+            self.assertEqual(_killms_path(d, env).read_text(encoding="ascii").strip(), "500",
+                              "script did not read/use the HP_HINT_RERUN_KILL_MS override")
+            self.assertLess(elapsed, self.SANITY_CEILING_SECONDS, "kill mechanism appears completely broken")
             self.assertIn("some output before hanging", _out_path(d, env).read_text(encoding="ascii"))
 
     def test_default_kill_ms_unset_means_10000(self):
         text = SOURCE.read_text(encoding="utf-8")
         self.assertIn("$killMs = 10000", text)
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "fast_default", FAST_SCRIPT)
+            env = {}
+            proc = _run_hint_rerun(d, script, env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(_killms_path(d, env).read_text(encoding="ascii").strip(), "10000")
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
@@ -211,6 +228,15 @@ class OutputPaths(unittest.TestCase):
             proc = _run_hint_rerun(d, script, env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertTrue(Path(custom).exists())
+
+    def test_custom_killms_out_path_honored(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "fast", FAST_SCRIPT)
+            custom = str(Path(d) / "dist" / "~custom_killms.txt")
+            env = {"HP_HINT_RERUN_KILLMS_OUT": custom, "HP_HINT_RERUN_KILL_MS": "7000"}
+            proc = _run_hint_rerun(d, script, env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(Path(custom).read_text(encoding="ascii").strip(), "7000")
 
 
 class PayloadSync(unittest.TestCase):
