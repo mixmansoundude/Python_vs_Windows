@@ -22,7 +22,8 @@ import time
 import unittest
 from pathlib import Path
 
-def _rmtree_best_effort(path):
+def _rmtree_best_effort(path: str) -> None:
+    """Delete a temp directory tree, tolerating a still-running descendant on Windows."""
     # derived requirement (real Windows CI, PR #410): the grandchild-holds-pipe regression
     # test below deliberately leaves a sleeping grandchild process alive with its CWD inside
     # this directory (see GRANDCHILD_HOLDS_PIPE_SCRIPT) -- on Windows, a process's CWD is an
