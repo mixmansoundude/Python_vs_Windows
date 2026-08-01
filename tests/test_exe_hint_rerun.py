@@ -104,7 +104,7 @@ def _out_path(d, env_extra):
     return Path(override) if override else (Path(d) / "dist" / "~exe_out.txt")
 
 
-def _killms_path(d, env_extra):
+def _killms_path(d, env_extra) -> Path:
     override = env_extra.get("HP_HINT_RERUN_KILLMS_OUT")
     return Path(override) if override else (Path(d) / "dist" / "~exe_hint_killms.txt")
 
