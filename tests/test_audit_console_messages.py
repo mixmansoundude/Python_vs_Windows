@@ -100,6 +100,37 @@ def test_extract_records_keeps_call_log_with_redirect_on_later_chained_command(t
     assert records == [(1, '[INFO] visible')]
 
 
+# derived requirement: cmd.exe caret-escape parity is odd-count-escapes / even-count-active,
+# not "any preceding caret escapes" -- see tools/audit_console_messages.py's
+# _is_caret_escaped() docstring for the full rule this group regression-tests.
+def test_extract_records_keeps_call_log_with_doubled_caret_separator(tmp_path):
+    # cmd.exe caret parity: '^^&' is a literal '^' followed by an ACTIVE '&' (the first caret
+    # escapes the second, leaving the '&' unescaped) -- so this is a real command separator, and
+    # the later command's redirect must not cause the call :log record to be dropped.
+    bat = tmp_path / 'run_setup.bat'
+    bat.write_text('call :log "[INFO] visible" ^^& echo hidden > log.txt\n', encoding='ascii')
+    records = acm.extract_records(bat)
+    assert records == [(1, '[INFO] visible')]
+
+
+def test_extract_records_keeps_call_log_with_doubled_caret_pipe_separator(tmp_path):
+    # Same parity rule for '|': '^^|' is a literal '^' followed by an ACTIVE '|'.
+    bat = tmp_path / 'run_setup.bat'
+    bat.write_text('call :log "[INFO] visible" ^^| echo hidden > log.txt\n', encoding='ascii')
+    records = acm.extract_records(bat)
+    assert records == [(1, '[INFO] visible')]
+
+
+def test_extract_records_skips_call_log_with_single_caret_escaped_ampersand(tmp_path):
+    # Contrast case: a SINGLE caret ('^&') genuinely escapes the '&' into literal text -- there
+    # is no real separator here, so the whole line (including its trailing redirect) is one
+    # command and the call :log record is correctly dropped.
+    bat = tmp_path / 'run_setup.bat'
+    bat.write_text('call :log "[INFO] hidden" ^& echo also_hidden > log.txt\n', encoding='ascii')
+    records = acm.extract_records(bat)
+    assert records == []
+
+
 def test_extract_records_skips_call_log_with_redirect_in_same_segment(tmp_path):
     # A redirect immediately after the closing quote, with no intervening command
     # separator, DOES belong to this call :log -- it must still be skipped.

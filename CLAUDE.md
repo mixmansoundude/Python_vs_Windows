@@ -485,7 +485,7 @@ Item numbers are informal labels for cross-referencing within a session or PR, n
 guaranteed-unique ID scheme -- pick anything that looks free in the list below when filing a new
 item; do not cross-check it against `docs/agent-closed-backlog.md`'s history first, and do not
 renumber an item if it later turns out to coincidentally repeat an older, already-closed item's
-number. (Owner decision 2026-08-01, see Known Findings below: the earlier renumber-on-collision
+number. (Owner decision 2026-07-31, see Known Findings below: the earlier renumber-on-collision
 convention was more rigor than a plain-text backlog needs -- a real uniqueness guarantee belongs
 in an actual issue tracker, e.g. GitHub Issues, not a hand-maintained numbering scheme here.)
 Once an item is fully resolved it is removed from here entirely and archived (keeping its
@@ -695,7 +695,7 @@ start at 1 and has gaps.
 
 - **19. The `cache` CI lane's corruption recovery is a one-way trap: once a restored cache is
    flagged corrupted, nothing in that lane ever produces a fresh, valid cache again -- found
-   2026-08-01 while investigating a maintainer report that the lane "never works," always logging
+   2026-07-31 while investigating a maintainer report that the lane "never works," always logging
    `Cache corrupted, skipping fast-path tests (HP_CACHE_CORRUPTED=1)`, confirmed against the
    current `.github/workflows/batch-check.yml` source, not just the symptom report.** Traced the
    full mechanism: the cache key is `win-...-conda-${{ hashFiles('run_setup.bat') }}-<pipreqs_ver>`
@@ -936,7 +936,7 @@ of a second or third pin actually needing it.
 
 ## Known Findings (diagnosed, no action warranted)
 
-- **Backlog item numbering: renumber-on-collision convention dropped, 2026-08-01 owner decision.**
+- **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
   A prior pass found that Active Backlog items 9 and 11 (filed 2026-07-29) each collided with an
   older, already-closed item of the same number, and -- following a convention this file used to
   document -- renumbered them to 17 and 16 when archiving (see `docs/agent-closed-backlog.md`'s
@@ -953,7 +953,8 @@ of a second or third pin actually needing it.
   item that tracked renumbering them is closed with no further action.
 
 - **Cascade consent gate design (timed prompt, decline-by-default) kept exactly as shipped,
-  2026-07-26 owner decision -- closes `docs/open-questions.md` item 1.** Following the
+  2026-07-26 owner decision -- closes the former cascade-consent question in
+  `docs/open-questions.md`.** Following the
   cascade-vs-postexec fix (see Closed Backlog), a deeper investigation into the reliability of
   the `HP_CASCADE_CANDIDATE` signal was requested and completed -- a full truth table over its
   two constituent build-time static signals, with estimated odds the `.exe` still runs fine and
