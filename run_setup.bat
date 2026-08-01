@@ -261,6 +261,11 @@ rem HP_TEST_FORCE_VENV_CREATE_FAIL's existing exception for :download_get_pip) s
 rem the real embed download/extract/patch/pip-bootstrap path while HP_OFFLINE_MODE=1 still blocks
 rem unrelated Miniconda/uv downloads earlier in the same test run.
 set "HP_TEST_FORCE_EMBED_REAL=%HP_TEST_FORCE_EMBED_REAL%"
+rem HP_TEST_FORCE_EMBED_DL_FAIL_ONCE=1: former CLAUDE.md Active Backlog item 12. Deterministically
+rem fails ONLY the first embed-tier download attempt (no network touched, no real failure needed)
+rem so :embed_dl_retry's genuine mid-download-failure-then-retry-once path gets CI coverage --
+rem mirrors HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL's established one-shot-then-succeed pattern.
+set "HP_TEST_FORCE_EMBED_DL_FAIL_ONCE=%HP_TEST_FORCE_EMBED_DL_FAIL_ONCE%"
 rem HP_TEST_FORCE_CONDA_FAIL=1: simulates conda env creation failure for REQ-009/REQ-014 branch coverage
 set "HP_TEST_FORCE_CONDA_FAIL=%HP_TEST_FORCE_CONDA_FAIL%"
 rem HP_TEST_FORCE_WARNFIX_UNRESOLVED=1: forces the warnfix cascade-candidate detection (REQ-009/REQ-005.10) for branch coverage
@@ -2246,12 +2251,24 @@ set "HP_EMBED_DL_ATTEMPT=0"
 :embed_dl_retry
 set /a HP_EMBED_DL_ATTEMPT+=1
 if exist "%HP_EMBED_ZIP%" del "%HP_EMBED_ZIP%" >nul 2>&1
+rem derived requirement: HP_TEST_FORCE_EMBED_DL_FAIL_ONCE (CLAUDE.md former Active Backlog item
+rem 12) deterministically fails ONLY the first attempt, without touching the real network, so
+rem this genuine mid-download-failure-then-retry-once path gets CI coverage -- mirrors
+rem HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL's established one-shot-then-succeed pattern. Checked
+rem BEFORE the real curl/PowerShell calls and cleared immediately, so attempt 2 always goes
+rem through for real.
+if "%HP_TEST_FORCE_EMBED_DL_FAIL_ONCE%"=="1" if "%HP_EMBED_DL_ATTEMPT%"=="1" goto :embed_dl_test_fail_once
 call :log "[INFO] Downloading embedded Python %HP_EMBED_LATEST_PATCH% from %HP_EMBED_URL%..."
 curl --fail -L --retry 3 --retry-delay 5 --max-time 120 "%HP_EMBED_URL%" -o "%HP_EMBED_ZIP%" >> "%LOG%" 2>&1
 if not errorlevel 1 if exist "%HP_EMBED_ZIP%" goto :embed_dl_ok
 echo *** curl download failed, trying PowerShell...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%HP_EMBED_URL%' -OutFile '%HP_EMBED_ZIP%' -UseBasicParsing } catch { exit 1 }" >> "%LOG%" 2>&1
 if not errorlevel 1 if exist "%HP_EMBED_ZIP%" goto :embed_dl_ok
+goto :embed_dl_attempt_failed
+:embed_dl_test_fail_once
+call :log "[TEST] HP_TEST_FORCE_EMBED_DL_FAIL_ONCE: simulating download failure on attempt 1 (no network touched)."
+set "HP_TEST_FORCE_EMBED_DL_FAIL_ONCE="
+:embed_dl_attempt_failed
 if %HP_EMBED_DL_ATTEMPT% LSS 2 (
   call :log "[WARN] embed fallback: download failed; retrying once."
   goto :embed_dl_retry

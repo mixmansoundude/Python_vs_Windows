@@ -807,19 +807,77 @@ this belongs to).
    `Process.Kill(entireProcessTree)` overload (that's .NET 5+ only), so `taskkill /T` is the
    available mechanism; (2) a bounded final read (`Task.Wait($drainMs)`, hardcoded 5000ms) as an
    independent second safety net, so even a descendant `taskkill /T` somehow misses cannot hang
-   the helper indefinitely -- it degrades to partial/empty output instead. **The `taskkill /T`
-   half is NOT independently verified on real Windows CI** (no Windows environment available to
-   construct a genuine descendant-holds-the-pipe repro in this sandbox) -- treat as
-   strongly-supported-but-provisional, matching this repo's own established convention for
-   platform-specific behavior that can't be verified locally. The drain-wait fallback IS verified:
+   the helper indefinitely -- it degrades to partial/empty output instead.
    `tests/test_exe_hint_rerun.py::ProcessTreeAndDrainTimeout` spawns a grandchild that inherits the
    pipe and outlives its own immediate parent (via `subprocess.Popen(..., stdout=sys.stdout)`),
-   proving the helper still terminates within a bounded time instead of hanging. Also fixed a
+   proving the helper still terminates within a bounded time instead of hanging -- when this test
+   was first written, the sandbox this fix was built in had no `taskkill.exe`, so it only proved
+   the drain-wait fallback; **now confirmed on real Windows CI too** (two lanes on PR #410 showed
+   the same test's `returncode`/timing assertions passing, meaning the `taskkill /T` path itself
+   was genuinely exercised there -- only the test's own `tempfile.TemporaryDirectory()` cleanup
+   failed afterward, a separate, Windows-only bug in the TEST fixed below, not in the production
+   helper). Also fixed a
    second, smaller CodeRabbit finding in the same review: `:exe_smokerun_hints` never explicitly
    set `HP_HINT_RERUN_OUT` before invoking the helper, relying on its default -- an inherited/leaked
    value for that env var from elsewhere would silently redirect the helper's output away from the
    file the hint-matching `findstr` checks actually read. Fixed by setting it explicitly
    (`~exe_out.txt`) at the call site, matching `HP_HINT_RERUN_EXE`'s own set/clear pattern.
+
+### Item 12 (closed 2026-08-01)
+
+- **`:embed_dl_retry`'s genuine mid-download-failure-then-retry-once path (REQ-009 Tier 5) had no
+   CI test hook at all -- found 2026-07-29 while documenting the embed-tier download for
+   `docs/demo-bootstrapper-output.md`'s Part VI, Scenario 20, fixed 2026-08-01.** Only two test
+   hooks existed for this tier -- `HP_TEST_FORCE_EMBED_FAIL` (immediate decline, no download
+   attempted) and `HP_TEST_FORCE_EMBED_REAL` (a full, real, successful download end-to-end).
+   Neither exercised the retry branch: `:embed_dl_retry`'s own `[WARN] embed fallback: download
+   failed; retrying once.` line (both curl and PowerShell failing on the FIRST try, succeeding on
+   the second) was reachable in principle but never observed firing in any real CI run.
+   **Fixed** with a new one-shot test hook, `HP_TEST_FORCE_EMBED_DL_FAIL_ONCE=1`, mirroring the
+   existing `HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL`-style one-shot-then-succeed pattern already
+   used for REQ-022's conda-create retry -- deterministically fails ONLY the first download
+   attempt (no network touched) and clears itself immediately, so the second attempt always goes
+   through for real. `:embed_dl_retry` was restructured to share its "retry vs. give up" decision
+   (`if %HP_EMBED_DL_ATTEMPT% LSS 2 (...)`) between the real-failure path and the test-hook path
+   via a new shared `:embed_dl_attempt_failed` label, rather than duplicating that logic.
+   **Test coverage**: `self.embed.dl.retry` (new, `tests/selfapps_ux_hardening.ps1`), combining
+   the new one-shot-fail hook with the existing `HP_TEST_FORCE_EMBED_REAL=1` (same narrow
+   `HP_OFFLINE_MODE` hole as the sibling `.real` scenario) so the SECOND, real attempt genuinely
+   downloads/extracts/verifies/runs -- asserts both the `[TEST] HP_TEST_FORCE_EMBED_DL_FAIL_ONCE:`
+   hook-fired line and the `[WARN] ... retrying once.` line appear, AND that the tier still
+   succeeds end-to-end afterward (proving retry-then-succeed, not just retry-then-give-up). Skips
+   with `skip=true` in the conda-full lane, same reasoning as `.decline`/`.real`. Registered in
+   `docs/agent-ndjson.md`'s row registry per this file's own AGENT DIRECTIVE.
+
+### Item 13 (closed 2026-08-01)
+
+- **`self.warn.longpath`'s own real CI run showed an INCONCLUSIVE result (`ranBootstrap:false`),
+   yet the test still reported an overall pass -- found 2026-07-29 while documenting the
+   path-length pre-flight guard for `docs/demo-bootstrapper-output.md`'s Part VI, Scenario 24,
+   root-caused and fixed 2026-08-01.** The original finding's NDJSON row (run `30328748330`,
+   `real` lane) read `warnFound: false, ranBootstrap: false, pathLen: 312`. **Root cause
+   (`tests/selftest.ps1`'s long-path scenario)**: `$lpRanBootstrap` is only set `$true` right
+   after the `cmd /c "call run_setup.bat ..."` line executes without PowerShell itself throwing;
+   the surrounding `try { Push-Location $longDir; ... } catch { $lpRanBootstrap = $false }` means
+   a `Push-Location` failure (thrown BEFORE `cmd /c` is ever reached) lands in the catch block
+   with `$lpRanBootstrap` still at its initial `$false`. `Push-Location` throws here because
+   default GitHub-hosted Windows runners do not have `LongPathsEnabled` turned on, so
+   PowerShell's own CWD-navigation cannot enter a >260-char directory at all -- `run_setup.bat`'s
+   own long-path guard is never reached, genuinely never confirming the WARN fires.
+   **Confirmed PERSISTENT, not a one-off**: a second real CI run on PR #410 (months after the
+   original finding) showed the byte-identical signature (`ranBootstrap:false, warnFound:false,
+   pathLen:312, pass:true`) -- same runner limitation, same scratch-path length, same outcome.
+   **Fixed**: `$lpPass`/the NDJSON row now distinguish three outcomes instead of two --
+   bootstrap ran and the WARN fired (real pass/fail on `$lpWarnFound`/`$lpExit`), bootstrap could
+   not even be attempted but the scratch path was verified long enough (now reported as
+   `skip=true, reason='runner-cannot-navigate-long-path'` rather than a plain, overstated pass --
+   mirrors this repo's established skip pattern for "infra could not reach the code path under
+   test," e.g. the conda-not-installed-uv-first pattern in `docs/agent-interconnect.md`), or the
+   scratch path itself was not built long enough (a genuine test-setup bug, still a hard FAIL).
+   `docs/demo-bootstrapper-output.md`'s Scenario 24 was already correctly labeling the WARN text
+   `[Extrapolated Branch]` for this exact reason -- no change needed there, since this fix only
+   makes the NDJSON row's own `pass`/`skip` fields honestly reflect what the earlier investigation
+   had already concluded from source.
 
 ## Closed Backlog
 

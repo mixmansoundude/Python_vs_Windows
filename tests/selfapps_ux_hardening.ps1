@@ -1017,6 +1017,82 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
+# ===== REQ-009 Tier 5: embed download-failure-then-retry-once path (former CLAUDE.md Active =====
+# ===== Backlog item 12) =====
+# :embed_dl_retry's genuine mid-download-failure-then-retry-once path had no CI test hook at
+# all -- HP_TEST_FORCE_EMBED_DL_FAIL_ONCE=1 (run_setup.bat) deterministically fails ONLY the
+# first download attempt (no network touched, cleared immediately after firing), so attempt 2
+# goes through for real -- mirrors HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL's established
+# one-shot-then-succeed pattern. Combined with HP_TEST_FORCE_EMBED_REAL=1 (same narrow
+# HP_OFFLINE_MODE hole as the .real scenario above) so the SECOND, real attempt genuinely
+# downloads/extracts/verifies/runs -- proving both the retry log line fires AND the tier still
+# succeeds end-to-end afterward. Skipped in conda-full lane, same reasoning as .real above.
+$embedRetryDir = Join-Path $here '~selftest_embed_dl_retry'
+if (Test-Path $embedRetryDir) { Remove-Item -Recurse -Force $embedRetryDir }
+New-Item -ItemType Directory -Force -Path $embedRetryDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $embedRetryDir -Force
+Set-Content -LiteralPath (Join-Path $embedRetryDir 'app.py') -Value 'print("embed-retry-ok")' -Encoding Ascii
+
+$embedRetryPass = $true
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.embed.dl.retry'
+        req     = 'REQ-009'
+        pass    = $true
+        desc    = 'REQ-009 Tier 5: embed download-failure-then-retry-once path'
+        details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-prohibits-non-conda-fallbacks' }
+    })
+} else {
+    $embedRetryLog = Join-Path $embedRetryDir '~embed_retry.log'
+    $embedRetryExit = Invoke-WithEnvOverrides -Overrides @{
+        HP_TEST_FORCE_CONDA_FAIL         = '1'
+        HP_OFFLINE_MODE                  = '1'
+        HP_SKIP_PIPREQS                  = '1'
+        HP_CI_LANE                       = 'test'
+        HP_TEST_FORCE_EMBED_REAL         = '1'
+        HP_TEST_FORCE_EMBED_DL_FAIL_ONCE = '1'
+    } -Body {
+        Push-Location -LiteralPath $embedRetryDir
+        try {
+            cmd /c "run_setup.bat > ~embed_retry.log 2>&1"
+            $LASTEXITCODE
+        } finally {
+            Pop-Location
+        }
+    }
+
+    $embedRetrySetupLog = Join-Path $embedRetryDir '~setup.log'
+    $embedRetrySetupText = ''
+    if (Test-Path -LiteralPath $embedRetrySetupLog) {
+        $embedRetrySetupText = Get-Content -LiteralPath $embedRetrySetupLog -Raw -Encoding Ascii
+    }
+    $embedRetryRunOut = Join-Path $embedRetryDir '~run.out.txt'
+    $embedRetryRunText = ''
+    if (Test-Path -LiteralPath $embedRetryRunOut) {
+        $embedRetryRunText = Get-Content -LiteralPath $embedRetryRunOut -Raw -Encoding Ascii
+    }
+    $embedRetryHookFired = ($embedRetrySetupText -match [regex]::Escape('[TEST] HP_TEST_FORCE_EMBED_DL_FAIL_ONCE: simulating download failure on attempt 1'))
+    $embedRetryWarnFired = ($embedRetrySetupText -match [regex]::Escape('[WARN] embed fallback: download failed; retrying once.'))
+    $embedRetryExtracted = ($embedRetrySetupText -match [regex]::Escape('[INFO] embed fallback: ')) -and ($embedRetrySetupText -match [regex]::Escape('extracted and verified.'))
+    $embedRetryReady     = ($embedRetrySetupText -match [regex]::Escape('[INFO] embed fallback ready:'))
+    $embedRetryAppRan    = ($embedRetryRunText -match [regex]::Escape('embed-retry-ok'))
+    $embedRetryPass = ($embedRetryHookFired -and $embedRetryWarnFired -and $embedRetryExtracted -and $embedRetryReady -and $embedRetryAppRan)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.embed.dl.retry'
+        req     = 'REQ-009'
+        pass    = $embedRetryPass
+        desc    = 'REQ-009 Tier 5: first download attempt deterministically fails (no network touched), second (real) attempt succeeds end-to-end'
+        details = [ordered]@{
+            hookFired  = $embedRetryHookFired
+            warnFired  = $embedRetryWarnFired
+            extracted  = $embedRetryExtracted
+            ready      = $embedRetryReady
+            appRan     = $embedRetryAppRan
+            exit       = $embedRetryExit
+        }
+    })
+}
+
 # ===== REQ-002 priority 0: manual %1 override beats auto-detection (main.py) =====
 # REQ-002 ranks a co-located %1 argument (drag-and-drop) above every auto-detected name:
 # it is used directly and skips all auto-detection. Prior tests only cover auto-detection

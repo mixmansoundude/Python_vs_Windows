@@ -72,7 +72,7 @@ self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
 self.ux.gitattributes.merge, self.ux.gitattributes.idem,
 self.ux.postflight,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
-self.embed.fallback.decline, self.embed.fallback.real
+self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
 ```
 
 ## justme-test lane rows (flag-triggered)
@@ -232,7 +232,7 @@ self.ux.connectivity.online, self.ux.connectivity.retry,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
 self.sysbuild.decline,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
-self.embed.fallback.decline, self.embed.fallback.real
+self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
 ```
 
 ## selfapps-pep723-writeback NDJSON rows (selfapps_pep723_writeback.ps1, uv-first lanes)
@@ -627,6 +627,14 @@ self.interactive.stdin.roundtrip
   succeeding short-circuits the chain before venv is ever attempted; it instead asserts the
   venv-fallback log line is ABSENT, proving that short-circuit. Both skip with `skip=true` in the
   conda-full lane (`HP_FORCE_CONDA_ONLY=1` blocks all non-conda fallbacks).
+- `self.embed.dl.retry` (former CLAUDE.md Active Backlog item 12, `selfapps_ux_hardening.ps1`)
+  closes the gap that `.real` above does not cover: `:embed_dl_retry`'s genuine mid-download-
+  failure-then-retry-once path. Combines `HP_TEST_FORCE_EMBED_DL_FAIL_ONCE=1` (deterministically
+  fails ONLY the first download attempt, no network touched, cleared immediately after firing)
+  with `HP_TEST_FORCE_EMBED_REAL=1` so the second, real attempt genuinely succeeds -- asserts
+  both the `[TEST] HP_TEST_FORCE_EMBED_DL_FAIL_ONCE:` hook-fired line and the
+  `[WARN] embed fallback: download failed; retrying once.` line appear, AND that the tier still
+  succeeds end-to-end afterward. Skips with `skip=true` in the conda-full lane, same reasoning.
 
 **NDJSON files and who owns them:**
 - `tests/~test-results.ndjson` -- written by every `selfapps_*.ps1` test script during the
