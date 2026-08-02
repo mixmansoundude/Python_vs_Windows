@@ -58,11 +58,19 @@ if (-not $IsWindows) {
 }
 
 function New-FakeCondaDir {
+    # derived requirement: verify the fixture actually landed on disk before returning -- a
+    # silently-failed Set-Content here would leave $Dir with no conda.bat, which
+    # ci_cache_selfheal.ps1 correctly treats as a genuine cache miss (exit 0) -- the SAME exit
+    # code Scenario 1 expects for a HEALTHY conda.bat, so a silent fixture-creation failure
+    # would make that scenario pass for the wrong reason instead of failing loudly.
     param([string]$Dir, [int]$ExitCode)
     if (Test-Path -LiteralPath $Dir) { Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue }
     New-Item -ItemType Directory -Force -Path (Join-Path $Dir 'condabin') | Out-Null
     $bat = Join-Path $Dir 'condabin\conda.bat'
     Set-Content -LiteralPath $bat -Value "@echo off`r`nexit /b $ExitCode`r`n" -Encoding Ascii
+    if (-not (Test-Path -LiteralPath $bat)) {
+        throw "New-FakeCondaDir: fake conda.bat was not created at $bat"
+    }
 }
 
 $scratchRoot = Join-Path $here '~selftest_cache_selfheal'
