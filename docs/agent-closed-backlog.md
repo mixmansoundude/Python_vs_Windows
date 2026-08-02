@@ -13,6 +13,13 @@ CLAUDE.md's ~4200 lines (>60%) despite being pure historical record with no forw
 action attached to any entry. Nothing here needs re-reading by default; it exists so a specific
 past decision or fix can be looked up when its details actually matter.
 
+**A `docs/demo-bootstrapper-output.md` "Part N, Scenario N" citation below reflects that doc's
+structure AT THE TIME the entry was written, not necessarily its current numbering** -- that file
+went through a flow-only reorg pass (2026-08-02) that renumbered every Part and Scenario, and will
+likely be reorganized again as it grows. Treat a Part/Scenario citation here as "roughly where to
+look," not a precise current coordinate; this file is an append-only historical record, so its own
+entries are not retroactively renumbered to track that doc's current structure.
+
 **Two sections below.** "Closed Active Backlog Items" holds items that were promoted out of
 `CLAUDE.md`'s own "Active Backlog" section once fully resolved (each keeps its original item
 number for cross-reference stability -- other docs cite these by number). "Closed Backlog" is

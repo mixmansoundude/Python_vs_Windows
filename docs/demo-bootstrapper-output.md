@@ -9,31 +9,31 @@ in place; don't keep the old one around for context. Ongoing investigation notes
 day-to-day refinement-pass checks belong in `docs/agent-scratchlog.md` (internal working notes),
 not here. Unresolved design questions belong in `docs/open-questions.md`, not here.
 
+**House style, stated once here rather than repeated per-scenario:** this doc describes CURRENT
+behavior, not a changelog of how it got that way. Avoid narrating this document's own revision
+history inside scenario prose (phrasing like "not yet re-confirmed against a fresh capture," "the
+earlier scan of this scenario quoted only X," or hedging a quote as "the CURRENT shipped wording"
+as if some other wording still mattered) -- that's bookkeeping for whoever edits this file next,
+not something a reader trying to understand the bootstrapper needs. Likewise, don't cite this
+repo's own internal backlog-item numbers or "Active Backlog item N" bookkeeping as part of the
+user-facing description; point to `docs/agent-lessons-learned.md` /
+`docs/agent-interconnect.md` / `docs/agent-closed-backlog.md` directly instead if a pointer is
+genuinely useful. **A real historical GOTCHA is a different thing and stays welcome** -- a bug that
+shaped current behavior, worth knowing so a reader doesn't rediscover it the hard way, is exactly
+the kind of content this doc wants (see Scenario 29, Scenario 39 for two kept in full). The
+distinction is between explaining what the reader is looking at right now versus narrating how
+this document itself was assembled.
+
 **Sourcing convention:** every quoted block is either copied verbatim from a real GitHub Actions
 job log (cited with run ID, job ID, lane, and test file) or, where noted, taken directly from
 `run_setup.bat`'s current source because no CI run has exercised that exact wording yet -- always
 labeled explicitly which case applies, never presented as a real capture when it isn't.
 
-**Scope:** grouped by feature area, roughly in the order each was reviewed (now eight Parts, not
-the original two -- this paragraph covers only the first two below since they were the doc's
-starting point; see the table of contents for the full current list). Part I covers the AV-Safe
-Build Path work (Tier A Nuitka fallback, its interaction with hidden-import auto-recovery, and the
-requirement-9 optimized-build offer). Part II covers the CLI-interactivity plan
-(`docs/plan-cli-interactive-verification.md`): live-tee verification, argv passthrough (REQ-026),
-and honest ambiguous-exit messaging (REQ-027). Extend with a new Part as new feature areas get
-reviewed, rather than growing any existing Part indefinitely.
-
-**TODO for the next reorg pass (owner request, 2026-08-01, not done yet -- flow only, no content
-change):** the current ordering front-loads two fairly narrow/advanced topics (Part I, Part II)
-before the reader ever sees the basic happy path. Move Scenario 38 ("No `.py` files at all -- the
-graceful `no_python_files` exit," currently the very LAST scenario in the doc, in Part VIII) up to
-the front -- it is the simplest, most foundational case (what happens before anything else can
-even run) and reads more naturally as an early scenario than a footnote at the end. Push Part I
-and Part II further down, or to the end, to make room. This is a pure reordering/flow pass: move
-the existing sections, then update the table of contents anchors and any in-doc cross-references
-that name a Part by number (e.g. "see Part I" / "see Part III") so they still point at the right
-content after the move -- no scenario text itself should change. Sized for its own dedicated pass,
-not a drive-by edit alongside unrelated content changes.
+**Scope:** grouped by feature area, ordered roughly the way a real user would actually encounter
+each area -- the default happy path and its immediate variations first, narrower and more advanced
+topics last -- rather than the order each was originally reviewed. Nine Parts total; see the table
+of contents for the full current list. Extend with a new Part as new feature areas get reviewed,
+rather than growing any existing Part indefinitely.
 
 **Console vs. `~setup.log`:** the bootstrapper writes to two different places that are easy to
 conflate:
@@ -47,570 +47,78 @@ conflate:
 
 ## Table of contents
 
-- [Part I: AV-Safe Build Path (Nuitka fallback)](#part-i-av-safe-build-path-nuitka-fallback)
-  - [Scenario 1: PyInstaller build fails, Tier A (Nuitka) fallback succeeds](#scenario-1-pyinstaller-build-fails-tier-a-nuitka-fallback-succeeds)
-  - [Scenario 2: PyInstaller build fails, Tier A fallback ALSO fails (tier exhaustion)](#scenario-2-pyinstaller-build-fails-tier-a-fallback-also-fails-tier-exhaustion)
-    - [2a. `execfail`](#2a-execfail----the-pyinstaller-build-command-itself-fails)
-    - [2b. `output_vanish`](#2b-output_vanish----pyinstaller-succeeds-then-the-exe-disappears-immediately)
-  - [Scenario 3: Tier A + hidden-import auto-recovery skip guard](#scenario-3-tier-a-hidden-import-auto-recovery-skip-guard)
-  - [Scenario 4: Requirement 9 -- elective "want an optimized build too?" offer](#scenario-4-requirement-9----elective-want-an-optimized-build-too-offer)
-    - [4a. `accept`](#4a-accept----a-real-optimized-build-succeeds-and-is-swapped-in)
-    - [4b. `forcefail`](#4b-forcefail----accepted-but-the-build-fails-original-exe-is-left-untouched)
-    - [4c. `swapfail`](#4c-swapfail----verified-build-but-the-final-swap-step-fails-original-exe-is-left-untouched)
-    - [4d. `decline`](#4d-decline----defaultci-path-prompt-shown-but-nothing-built)
-    - [Reactive-only failure hint](#reactive-only-failure-hint-both-tier-a-and-requirement-9s-real-build-failure-paths)
-- [Part II: CLI interactivity, argv passthrough & honest messaging](#part-ii-cli-interactivity-argv-passthrough-honest-messaging)
-  - [Scenario 5: Interactive verification -- live-tee, activity-aware kill, and the quit-prompt hint](#scenario-5-interactive-verification----live-tee-activity-aware-kill-and-the-quit-prompt-hint)
-  - [Scenario 6: Argv passthrough (REQ-026) -- launch arguments through the bootstrapper](#scenario-6-argv-passthrough-req-026----launch-arguments-through-the-bootstrapper)
-  - [Scenario 7: Honest ambiguous-exit messaging (REQ-027)](#scenario-7-honest-ambiguous-exit-messaging-req-027)
-    - [7a. No-EXE path, interpreter also failed](#7a-no-exe-path-interpreter-also-failed)
-    - [7b. Cached-EXE fast path, kept despite a non-zero exit](#7b-cached-exe-fast-path-kept-despite-a-non-zero-exit)
-- [Part III: Default double-click happy path (uv-first, fresh machine, zero flags)](#part-iii-default-double-click-happy-path-uv-first-fresh-machine-zero-flags)
-  - [Scenario 8: Pre-flight guards, lock acquisition, and entry detection on a clean run](#scenario-8-pre-flight-guards-lock-acquisition-and-entry-detection-on-a-clean-run)
-  - [Scenario 9: Provider acquisition and dependency install (uv-first)](#scenario-9-provider-acquisition-and-dependency-install-uv-first)
-  - [Scenario 10: Build, verify, and the final status panel](#scenario-10-build-verify-and-the-final-status-panel)
-  - [Scenario 11: The two elective prompts a real user faces after every successful run](#scenario-11-the-two-elective-prompts-a-real-user-faces-after-every-successful-run)
-- [Part IV: Second run, nothing changed (repeat-run fast paths)](#part-iv-second-run-nothing-changed-repeat-run-fast-paths)
-  - [Scenario 12: The EXE fast path (nothing changed at all)](#scenario-12-the-exe-fast-path-nothing-changed-at-all)
-  - [Scenario 13: Source touched just enough to force a rebuild, but the environment is reused](#scenario-13-source-touched-just-enough-to-force-a-rebuild-but-the-environment-is-reused)
-- [Part V: User configuration and CLI overrides](#part-v-user-configuration-and-cli-overrides)
-  - [Scenario 14: `PVW_PYTHON_EXE` / `PVW_UV_EXE` / `PVW_TARGET_PY` / `PVW_WORKSPACE`](#scenario-14-pvw_python_exe--pvw_uv_exe--pvw_target_py--pvw_workspace)
-  - [Scenario 15: `PVW_CONDA_EXE` and its interaction with the conda self-heal flow](#scenario-15-pvw_conda_exe-and-its-interaction-with-the-conda-self-heal-flow)
-  - [Scenario 16: Drag-and-drop / CLI entry-file override (REQ-011 same-directory rule + REQ-002 priority)](#scenario-16-drag-and-drop--cli-entry-file-override-req-011-same-directory-rule--req-002-priority)
-- [Part VI: Adversarial and recovery branches](#part-vi-adversarial-and-recovery-branches)
-  - [Scenario 17: Network connectivity check and transient-retry (REQ-013 + REQ-022)](#scenario-17-network-connectivity-check-and-transient-retry-req-013--req-022)
-  - [Scenario 18: Corrupted-conda self-heal (detect / decline / accept)](#scenario-18-corrupted-conda-self-heal-detect--decline--accept)
-  - [Scenario 19: Miniconda install chain (AllUsers -> JustMe -> both-failed)](#scenario-19-miniconda-install-chain-allusers---justme---both-failed)
-  - [Scenario 20: Standalone embed-tier download (REQ-009 Tier 5) -- decline and real success](#scenario-20-standalone-embed-tier-download-req-009-tier-5----decline-and-real-success)
-  - [Scenario 21: REQ-009 provider cascade -- one real run showing the FULL chain](#scenario-21-req-009-provider-cascade----one-real-run-showing-the-full-chain)
-  - [Scenario 22: `--hidden-import` auto-recovery (success and exhaustion)](#scenario-22---hidden-import-auto-recovery-success-and-exhaustion)
-  - [Scenario 23: Warnfix repair loop (success, and the failure that feeds the cascade)](#scenario-23-warnfix-repair-loop-success-and-the-failure-that-feeds-the-cascade)
-  - [Scenario 24: Pre-flight guards actually firing](#scenario-24-pre-flight-guards-actually-firing)
-  - [Scenario 25: Concurrent-instance lock contention (REQ-024)](#scenario-25-concurrent-instance-lock-contention-req-024)
-- [Part VII: Remaining branches (dependency source precedence, write-back, and misc)](#part-vii-remaining-branches-dependency-source-precedence-write-back-and-misc)
-  - [Scenario 26: Git config merge (`.gitignore`/`.gitattributes`, REQ-015)](#scenario-26-git-config-merge-gitignoregitattributes-req-015)
-  - [Scenario 27: Python-version precedence (REQ-004) and dependency-source precedence (`pyproject.toml`)](#scenario-27-python-version-precedence-req-004-and-dependency-source-precedence-pyprojecttoml)
-  - [Scenario 28: PEP 723 dependency write-back (REQ-005.11) -- the fresh-install trigger](#scenario-28-pep-723-dependency-write-back-req-00511----the-fresh-install-trigger)
-  - [Scenario 29: `HP_PVW_KNOWN_IDEMPOTENT` execute-mode discovery (REQ-005.13)](#scenario-29-hp_pvw_known_idempotent-execute-mode-discovery-req-00513)
-  - [Scenario 30: NI-VISA detection and install outcome (REQ-008)](#scenario-30-ni-visa-detection-and-install-outcome-req-008)
-  - [Scenario 31: pandas/openpyxl heuristic dependency augmentation (REQ-005.8)](#scenario-31-pandasopenpyxl-heuristic-dependency-augmentation-req-0058)
-  - [Scenario 32: Conda base periodic update](#scenario-32-conda-base-periodic-update)
-  - [Scenario 33: REQ-014 system-Python consent -- ACCEPT](#scenario-33-req-014-system-python-consent----accept)
-- [Part VIII: Additional branches found in a full-file sweep](#part-viii-additional-branches-found-in-a-full-file-sweep)
-  - [Scenario 34: Interactive entry picker -- multiple `.py` files, no clear winner (REQ-002)](#scenario-34-interactive-entry-picker----multiple-py-files-no-clear-winner-req-002)
-  - [Scenario 35: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed](#scenario-35-pre-flight-syntax-error-rejection-req-021-and-a-real-bug-it-exposed)
-  - [Scenario 36: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path](#scenario-36-req-007-system-python-build-consent-and-the-resulting-no-exe-interpreter-path)
-  - [Scenario 37: EXE smoke-run diagnostic hints (companion to Scenario 22)](#scenario-37-exe-smoke-run-diagnostic-hints-companion-to-scenario-22)
-  - [Scenario 38: No `.py` files at all -- the graceful `no_python_files` exit](#scenario-38-no-py-files-at-all----the-graceful-no_python_files-exit)
+- [Part I: Default double-click happy path (uv-first, fresh machine, zero flags)](#part-i-default-double-click-happy-path-uv-first-fresh-machine-zero-flags)
+  - [Scenario 1: No `.py` files at all -- the graceful `no_python_files` exit](#scenario-1-no-py-files-at-all----the-graceful-no_python_files-exit)
+  - [Scenario 2: Pre-flight guards, lock acquisition, and entry detection on a clean run](#scenario-2-pre-flight-guards-lock-acquisition-and-entry-detection-on-a-clean-run)
+  - [Scenario 3: Provider acquisition and dependency install (uv-first)](#scenario-3-provider-acquisition-and-dependency-install-uv-first)
+  - [Scenario 4: Build, verify, and the final status panel](#scenario-4-build-verify-and-the-final-status-panel)
+  - [Scenario 5: The two elective prompts a real user faces after every successful run](#scenario-5-the-two-elective-prompts-a-real-user-faces-after-every-successful-run)
+- [Part II: Second run, nothing changed (repeat-run fast paths)](#part-ii-second-run-nothing-changed-repeat-run-fast-paths)
+  - [Scenario 6: The EXE fast path (nothing changed at all)](#scenario-6-the-exe-fast-path-nothing-changed-at-all)
+  - [Scenario 7: Source touched just enough to force a rebuild, but the environment is reused](#scenario-7-source-touched-just-enough-to-force-a-rebuild-but-the-environment-is-reused)
+- [Part III: User configuration and CLI overrides](#part-iii-user-configuration-and-cli-overrides)
+  - [Scenario 8: `PVW_PYTHON_EXE` / `PVW_UV_EXE` / `PVW_TARGET_PY` / `PVW_WORKSPACE`](#scenario-8-pvw_python_exe--pvw_uv_exe--pvw_target_py--pvw_workspace)
+  - [Scenario 9: `PVW_CONDA_EXE` and its interaction with the conda self-heal flow](#scenario-9-pvw_conda_exe-and-its-interaction-with-the-conda-self-heal-flow)
+  - [Scenario 10: Drag-and-drop / CLI entry-file override (REQ-011 same-directory rule + REQ-002 priority)](#scenario-10-drag-and-drop--cli-entry-file-override-req-011-same-directory-rule--req-002-priority)
+- [Part IV: Adversarial and recovery branches](#part-iv-adversarial-and-recovery-branches)
+  - [Scenario 11: Network connectivity check and transient-retry (REQ-013 + REQ-022)](#scenario-11-network-connectivity-check-and-transient-retry-req-013--req-022)
+  - [Scenario 12: Corrupted-conda self-heal (detect / decline / accept)](#scenario-12-corrupted-conda-self-heal-detect--decline--accept)
+  - [Scenario 13: Miniconda install chain (AllUsers -> JustMe -> both-failed)](#scenario-13-miniconda-install-chain-allusers---justme---both-failed)
+  - [Scenario 14: Standalone embed-tier download (REQ-009 Tier 5) -- decline and real success](#scenario-14-standalone-embed-tier-download-req-009-tier-5----decline-and-real-success)
+  - [Scenario 15: REQ-009 provider cascade -- one real run showing the FULL chain](#scenario-15-req-009-provider-cascade----one-real-run-showing-the-full-chain)
+  - [Scenario 16: `--hidden-import` auto-recovery (success and exhaustion)](#scenario-16---hidden-import-auto-recovery-success-and-exhaustion)
+  - [Scenario 17: Warnfix repair loop (success, and the failure that feeds the cascade)](#scenario-17-warnfix-repair-loop-success-and-the-failure-that-feeds-the-cascade)
+  - [Scenario 18: Pre-flight guards actually firing](#scenario-18-pre-flight-guards-actually-firing)
+  - [Scenario 19: Concurrent-instance lock contention (REQ-024)](#scenario-19-concurrent-instance-lock-contention-req-024)
+- [Part V: Remaining branches (dependency source precedence, write-back, and misc)](#part-v-remaining-branches-dependency-source-precedence-write-back-and-misc)
+  - [Scenario 20: Git config merge (`.gitignore`/`.gitattributes`, REQ-015)](#scenario-20-git-config-merge-gitignoregitattributes-req-015)
+  - [Scenario 21: Python-version precedence (REQ-004) and dependency-source precedence (`pyproject.toml`)](#scenario-21-python-version-precedence-req-004-and-dependency-source-precedence-pyprojecttoml)
+  - [Scenario 22: PEP 723 dependency write-back (REQ-005.11) -- the fresh-install trigger](#scenario-22-pep-723-dependency-write-back-req-00511----the-fresh-install-trigger)
+  - [Scenario 23: `HP_PVW_KNOWN_IDEMPOTENT` execute-mode discovery (REQ-005.13)](#scenario-23-hp_pvw_known_idempotent-execute-mode-discovery-req-00513)
+  - [Scenario 24: NI-VISA detection and install outcome (REQ-008)](#scenario-24-ni-visa-detection-and-install-outcome-req-008)
+  - [Scenario 25: pandas/openpyxl heuristic dependency augmentation (REQ-005.8)](#scenario-25-pandasopenpyxl-heuristic-dependency-augmentation-req-0058)
+  - [Scenario 26: Conda base periodic update](#scenario-26-conda-base-periodic-update)
+  - [Scenario 27: REQ-014 system-Python consent -- ACCEPT](#scenario-27-req-014-system-python-consent----accept)
+- [Part VI: Additional branches found in a full-file sweep](#part-vi-additional-branches-found-in-a-full-file-sweep)
+  - [Scenario 28: Interactive entry picker -- multiple `.py` files, no clear winner (REQ-002)](#scenario-28-interactive-entry-picker----multiple-py-files-no-clear-winner-req-002)
+  - [Scenario 29: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed](#scenario-29-pre-flight-syntax-error-rejection-req-021-and-a-real-bug-it-exposed)
+  - [Scenario 30: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path](#scenario-30-req-007-system-python-build-consent-and-the-resulting-no-exe-interpreter-path)
+  - [Scenario 31: EXE smoke-run diagnostic hints (companion to Scenario 16)](#scenario-31-exe-smoke-run-diagnostic-hints-companion-to-scenario-16)
+- [Part VII: Full startup-to-shutdown walkthroughs](#part-vii-full-startup-to-shutdown-walkthroughs)
+  - [Scenario 32: Full walkthrough -- the ordinary happy path, start to shutdown](#scenario-32-full-walkthrough----the-ordinary-happy-path-start-to-shutdown)
+  - [Scenario 33: Full walkthrough -- uv can't resolve a dependency, cascades to conda, which does](#scenario-33-full-walkthrough----uv-cant-resolve-a-dependency-cascades-to-conda-which-does)
+  - [Scenario 34: Full walkthrough -- warnfix repair and rebuild, start to finish](#scenario-34-full-walkthrough----warnfix-repair-and-rebuild-start-to-finish)
+  - [Scenario 35: Full walkthrough -- `--hidden-import` auto-recovery succeeds on the first rebuild](#scenario-35-full-walkthrough------hidden-import-auto-recovery-succeeds-on-the-first-rebuild)
+  - [Scenario 36: Full walkthrough -- `HP_PVW_KNOWN_IDEMPOTENT`, with the actual input and output files](#scenario-36-full-walkthrough----hp_pvw_known_idempotent-with-the-actual-input-and-output-files)
+- [Part VIII: AV-Safe Build Path (Nuitka fallback)](#part-viii-av-safe-build-path-nuitka-fallback)
+  - [Scenario 37: PyInstaller build fails, Tier A (Nuitka) fallback succeeds](#scenario-37-pyinstaller-build-fails-tier-a-nuitka-fallback-succeeds)
+  - [Scenario 38: PyInstaller build fails, Tier A fallback ALSO fails (tier exhaustion)](#scenario-38-pyinstaller-build-fails-tier-a-fallback-also-fails-tier-exhaustion)
+    - [38a. `execfail` -- the PyInstaller build command itself fails](#38a-execfail----the-pyinstaller-build-command-itself-fails)
+    - [38b. `output_vanish` -- PyInstaller succeeds, then the EXE disappears immediately](#38b-output_vanish----pyinstaller-succeeds-then-the-exe-disappears-immediately)
+  - [Scenario 39: Tier A + hidden-import auto-recovery skip guard](#scenario-39-tier-a--hidden-import-auto-recovery-skip-guard)
+  - [Scenario 40: Requirement 9 -- elective "want an optimized build too?" offer](#scenario-40-requirement-9----elective-want-an-optimized-build-too-offer)
+    - [40a. `accept` -- a real optimized build succeeds and is swapped in](#40a-accept----a-real-optimized-build-succeeds-and-is-swapped-in)
+    - [40b. `forcefail` -- accepted, but the build fails; original EXE is left untouched](#40b-forcefail----accepted-but-the-build-fails-original-exe-is-left-untouched)
+    - [40c. `swapfail` -- verified build, but the final swap step fails; original EXE is left untouched](#40c-swapfail----verified-build-but-the-final-swap-step-fails-original-exe-is-left-untouched)
+    - [40d. `decline` -- default/CI path, prompt shown but nothing built](#40d-decline----defaultci-path-prompt-shown-but-nothing-built)
+    - [Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths)](#reactive-only-failure-hint-both-tier-a-and-requirement-9s-real-build-failure-paths)
+- [Part IX: CLI interactivity, argv passthrough & honest messaging](#part-ix-cli-interactivity-argv-passthrough--honest-messaging)
+  - [Scenario 41: Interactive verification -- live-tee, activity-aware kill, and the quit-prompt hint](#scenario-41-interactive-verification----live-tee-activity-aware-kill-and-the-quit-prompt-hint)
+  - [Scenario 42: Argv passthrough (REQ-026) -- launch arguments through the bootstrapper](#scenario-42-argv-passthrough-req-026----launch-arguments-through-the-bootstrapper)
+  - [Scenario 43: Honest ambiguous-exit messaging (REQ-027)](#scenario-43-honest-ambiguous-exit-messaging-req-027)
+    - [43a. No-EXE path, interpreter also failed](#43a-no-exe-path-interpreter-also-failed)
+    - [43b. Cached-EXE fast path, kept despite a non-zero exit](#43b-cached-exe-fast-path-kept-despite-a-non-zero-exit)
 
 ---
 
-## Part I: AV-Safe Build Path (Nuitka fallback)
+## Part I: Default double-click happy path (uv-first, fresh machine, zero flags)
 
-### Scenario 1: PyInstaller build fails, Tier A (Nuitka) fallback succeeds
-
-**What's tested:** `self.exe.build.tiera` (`tests/selfapps_nuitka_tiera.ps1`, uv lane,
-non-gating). `HP_TEST_FORCE_PYINSTALLER_FAIL=1` forces the primary build to fail deterministically;
-the Nuitka fallback (`:try_nuitka_tier_a`) then runs for real -- a genuine compile, not simulated.
-
-**What appears on screen**, from the moment PyInstaller's build is attempted through to the final
-summary. Sourced from real CI (run `29788624195`, job `88506013149`), with the "(fallback build
-system)" verification line and the drive-message reassurance line as originally captured, but the
-"Verifying the built standalone EXE" line and the "Does your program need launch arguments"
-paragraph both updated in place to the CURRENT shipped wording (`docs/plan-cli-interactive-
-verification.md` requirement 3's activity-aware kill, and REQ-026's argv passthrough -- both
-landed after this specific run) -- **not yet re-confirmed against a fresh CI capture that includes
-either addition**:
-
-```
-[INFO] Building standalone executable -- this may take a minute or two...
-[INFO] (A stray one-line Windows message about a missing drive may appear next -- that is a known side effect from an unrelated background process, unrelated to your app; safe to ignore.)
-The system cannot find the drive specified.
-The system cannot find the drive specified.
-[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
-[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-[INFO] Fallback build succeeded: dist\<env>.exe was produced using the fallback build system.
-[DEBUG] warnfix: warn file not found
-[INFO] PyInstaller build artifacts cleaned up.
-[INFO] EXE smokerun: testing dist\<env>.exe
-[INFO] Running entry script smoke test via packaged EXE.
-[WARN] Verifying the built standalone EXE (fallback build system) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
-[INFO] EXE smokerun: exited 0 (ok)
-[INFO] Entry smoke exit=0
-[STATUS] Run Status: SUCCESS (Exit Code: 0)
-
-*** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
-[INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
-
-============================================================
- SETUP COMPLETE
-============================================================
- Your standalone application is ready:
-   dist\<env>.exe
-
- RUNNING YOUR APP
-   Double-click dist\<env>.exe to run it.
-
-   STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
-   starts, so allow 10-15 seconds (longer for big libraries like
-   numpy/scipy/matplotlib, or when extra packages were bundled to fix
-   missing imports) before assuming it has hung.
-
-   If the window flashes and closes instantly: that's normal if
-   your program finished quickly or hit an error before printing
-   anything. To see what happened, open Command Prompt, cd to
-   this folder, and run:
-     dist\<env>.exe
-   This keeps the window open so you can read any messages.
-
-   A progress indicator that updates in place may appear all at
-   once instead of live when run as the .exe -- that is a stdout
-   buffering difference between the .exe and the script, not an error.
-
-   Does your program need launch arguments (e.g. --input file.csv)? Run
-   this bootstrapper again with them added after the entry file, e.g.
-     run_setup.bat "<entry.py>" --input file.csv
-   and they will be forwarded to your program during THIS setup run
-   (up to 8 extra arguments). This does not change how a plain
-   double-click of dist\<env>.exe launches it afterward -- for that,
-   make a Windows shortcut to the .exe and add the arguments to its
-   Target field, or launch it yourself from a Command Prompt.
-
- KEEP these files with your project:
-   requirements.txt  -- packages your app depends on
-   runtime.txt       -- Python version pin
-
- SAFE TO DELETE to reclaim disk space:
-   .*_env\ folders   -- environment directories
-   ~* files          -- tilde-prefix work files (e.g. ~setup.log)
-   build\            -- PyInstaller build cache
-============================================================
-```
-
-The "Verifying the built standalone EXE" line now correctly says "(fallback build system)"
-instead of a hardcoded "(PyInstaller)" when the EXE being verified was actually Nuitka-built
-(`:warn_user_code_launch` branches on `HP_NUITKA_FALLBACK_USED`). The postflight briefing's
-"PyInstaller build cache" line is left as-is -- Nuitka never creates a `build\<env>\` folder of
-its own (its `--remove-output` flag cleans up its own intermediates), so that line stays literally
-true regardless of which tool actually built the current EXE: if a `build\` folder exists, it's
-PyInstaller's. See Scenario 6 for the argv-passthrough paragraph's own dedicated writeup.
-
----
-
-### Scenario 2: PyInstaller build fails, Tier A fallback ALSO fails (tier exhaustion)
-
-**What's tested:** `self.exe.build.xfail` (`tests/selfapps_pyinstaller_fail.ps1`, real/conda-full
-lanes, gating). Three sub-scenarios share one NDJSON row id: `execfail` (the PyInstaller build
-command itself fails), `output_vanish` (PyInstaller succeeds, then the output EXE vanishes
-immediately -- simulating AV-style post-creation removal), and `execfail_runtimefail` (packaging
-fails AND the interpreter fallback that runs next ALSO exits non-zero -- see Scenario 7a for that
-one's console text, since it's really a REQ-027 demo). The first two additionally force
-`HP_TEST_FORCE_NUITKA_FAIL=1` so the fallback also fails, proving genuine tier exhaustion.
-
-#### 2a. `execfail` -- the PyInstaller build command itself fails
-
-Real CI capture, run `29788624195`, job `88506013028` ("real" lane):
-
-```
-[INFO] Building standalone executable -- this may take a minute or two...
-[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
-[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure.
-[ERROR] PyInstaller execution failed.
-[DEBUG] warnfix: warn file not found
-[INFO] PyInstaller build artifacts cleaned up.
-[WARN] EXE smokerun: dist\<env>.exe not found; skipping
-[INFO] Running entry script smoke test via uv interpreter.
-[INFO] Entry smoke exit=0
-[STATUS] Run Status: SUCCESS (Exit Code: 0)
-
-[INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
-```
-
-When BOTH the PyInstaller build and the Nuitka fallback fail outright but the interpreter
-fallback's own run exits 0 (this trivial stub script does), the final line is
-`[STATUS] Run Status: SUCCESS (Exit Code: 0)` and the postflight panel is the plain
-"YOUR CODE RAN -- BUT NO STANDALONE .EXE WAS PRODUCED" variant -- see Scenario 7a for the
-DIFFERENT (honest, "we can't confirm") panel this same tier-exhaustion path now shows when the
-interpreter run ALSO fails, which is the REQ-027 fix that closed the gap this section used to flag
-as an open question.
-
-#### 2b. `output_vanish` -- PyInstaller succeeds, then the EXE disappears immediately
-
-Real CI capture, same run/job as 2a:
-
-```
-[INFO] Building standalone executable -- this may take a minute or two...
-[TEST] HP_TEST_FORCE_OUTPUT_VANISH: deleting freshly-built EXE to simulate post-creation removal.
-[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure.
-[ERROR] PyInstaller did not produce dist\<env>.exe
-[DEBUG] warnfix: warn file found
-[INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically.
-[INFO] PyInstaller build artifacts cleaned up.
-[WARN] EXE smokerun: dist\<env>.exe not found; skipping
-[INFO] Running entry script smoke test via uv interpreter.
-[INFO] Entry smoke exit=0
-[STATUS] Run Status: SUCCESS (Exit Code: 0)
-
-*** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
-[INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
-```
-
----
-
-### Scenario 3: Tier A + hidden-import auto-recovery skip guard
-
-**What's tested:** `self.exe.tiera.hidden_skip` (`tests/selfapps_nuitka_tiera_hidden_skip.ps1`, uv
-lane, non-gating). Forces Tier A to trigger and succeed for real, then has the stub app fabricate
-a `ModuleNotFoundError: No module named 'nuitka'` on stderr and exit 1 -- the exact signature that
-used to (before this fix) trigger an incorrect PyInstaller rebuild attempt against a Nuitka-built
-EXE.
-
-**Source:** confirmed in real CI run `29877805447`, uv lane, job `88792048278`:
-```
-{"details":{"appStdoutFound":true,"noRepairRebuild":true,"successLogged":true,"skipGuardLogged":true,"exeExists":true,"statusState":"ok","bootstrapExit":0,"smokerunNonzeroLogged":true,"attemptLogged":true,"log":"~nuitka_tiera_hidden_skip_bootstrap.log"},"req":"REQ-AV","pass":true,"desc":"AV-Safe Build Path Tier A: hidden-import auto-recovery correctly skips (never rebuilds via PyInstaller) against a Nuitka-built EXE","id":"self.exe.tiera.hidden_skip","lane":"uv"}
-```
-The test only dumps a full console log to CI when a scenario fails; since this one passes, the
-exact console text below is reconstructed from `run_setup.bat`'s source rather than copied from a
-console dump -- the NDJSON row's `skipGuardLogged`/`noRepairRebuild` fields are the test's own
-regex-verified confirmation that these exact lines were present/absent in the real captured log:
-
-```
-[INFO] Building standalone executable -- this may take a minute or two...
-[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
-[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-[INFO] Fallback build succeeded: dist\<env>.exe was produced using the fallback build system.
-[INFO] EXE smokerun: testing dist\<env>.exe
-[WARN] EXE smokerun: exited 1 (non-zero)
-[INFO][HIDDEN_IMPORT] Skipping --hidden-import auto-recovery: dist\<env>.exe was built via the fallback build system (Nuitka), which uses a different missing-import mechanism than PyInstaller's --hidden-import flag.
-```
-
-Without this guard, the OLD behavior would have printed
-`[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=nuitka; rebuilding EXE (iter 1/3)` here and
-attempted a PyInstaller rebuild against a Nuitka-built EXE.
-
----
-
-### Scenario 4: Requirement 9 -- elective "want an optimized build too?" offer
-
-**What's tested:** `self.optbuild.offer` (`tests/selfapps_optimized_build.ps1`, uv lane,
-non-gating), four scenarios sharing one row id.
-
-**Source:** confirmed in real CI run `29877805447`, uv lane, job `88792048278`, all four scenarios
-passing:
-```
-{"lane":"uv","details":{"log":"~optbuild_accept_bootstrap.log","statusState":"ok","scenario":"accept","successLogged":true,"promptShown":true,"tmpExeGone":true,"exeExists":true,"bootstrapExit":0,"acceptedLogged":true,"appStillRuns":true},"desc":"AV-Safe Build Path requirement 9 (accept): a real optimized build succeeds, verifies, and is swapped into place","req":"REQ-AV","id":"self.optbuild.offer","pass":true}
-{"req":"REQ-AV","lane":"uv","desc":"AV-Safe Build Path requirement 9 (forcefail): a failed optimized build leaves the original PyInstaller EXE completely untouched","id":"self.optbuild.offer","details":{"originalStillRuns":true,"bootstrapExit":0,"log":"~optbuild_forcefail_bootstrap.log","tmpExeGone":true,"promptShown":true,"exeExists":true,"testHookFired":true,"scenario":"forcefail","statusState":"ok","noSuccessMsg":true},"pass":true}
-{"req":"REQ-AV","id":"self.optbuild.offer","lane":"uv","pass":true,"details":{"bootstrapExit":0,"acceptedLogged":true,"originalStillRuns":true,"log":"~optbuild_swapfail_bootstrap.log","promptShown":true,"exeExists":true,"tmpExeGone":true,"scenario":"swapfail","statusState":"ok","noSuccessMsg":true,"swapFailLogged":true},"desc":"AV-Safe Build Path requirement 9 (swapfail): a verified optimized build whose final swap fails leaves the original PyInstaller EXE completely untouched and cleans up the leftover temp file"}
-{"desc":"AV-Safe Build Path requirement 9 (decline): default/CI path shows the prompt but never attempts a build","lane":"uv","details":{"statusState":"ok","noBuildAttempt":true,"tmpExeGone":true,"scenario":"decline","log":"~optbuild_decline_bootstrap.log","bootstrapExit":0,"exeExists":true,"declinedLogged":true,"promptShown":true},"req":"REQ-AV","id":"self.optbuild.offer","pass":true}
-```
-
-#### 4a. `accept` -- a real optimized build succeeds and is swapped in
-
-Real, verbatim console dump (`~selftest_optbuild_accept\~optbuild_accept_bootstrap.log`), with the
-"Verifying the built standalone EXE" line updated in place to the CURRENT shipped wording
-(requirement 3's activity-aware kill plus the quit-prompt hint, both landed after this capture) --
-**not yet re-confirmed against a fresh CI capture**:
-
-```
-[INFO] Building standalone executable -- this may take a minute or two...
-The system cannot find the drive specified.
-The system cannot find the drive specified.
-[INFO] PyInstaller produced dist\<env>.exe
-[INFO] warnfix: Platform-specific modules in the list above are expected on Windows: posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external. These will be filtered out automatically.
-[INFO] PyInstaller build artifacts cleaned up.
-[INFO] EXE smokerun: testing dist\<env>.exe
-[INFO] Running entry script smoke test via packaged EXE.
-[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
-[INFO] EXE smokerun: exited 0 (ok)
-[INFO] Entry smoke exit=0
-[STATUS] Run Status: SUCCESS (Exit Code: 0)
-
-*** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
-[INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
-
-*** Your app is ready. ***
-*** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
-[INFO] Optimized build: accepted; building now (this may take a minute or two).
-[INFO] Optimized build succeeded and verified: dist\<env>.exe now uses the fallback build system.
-```
-
-Note the "warnfix: Platform-specific modules..." line above still shows the OLD wording (this
-capture predates the messaging fix described in Scenario 2b) -- the NEW wording is the one shown
-there.
-
-**The interactive `Build the optimized version now? [Y/N]` prompt line is echoed unconditionally
-by design** (same pattern as `:run_postexec_checkpoint`), but does not appear literally in any
-CI capture -- CI answers via the `HP_TEST_OPTBUILD_ANSWER` env-var override, not the interactive
-`set /p` path, so only the resolution lines (`accepted`/`declined`) show up in these logs. This is
-expected (CI is non-interactive by design), not a gap.
-
-#### 4b. `forcefail` -- accepted, but the build fails; original EXE is left untouched
-
-Real, verbatim console dump (`~selftest_optbuild_forcefail\~optbuild_forcefail_bootstrap.log`):
-
-```
-*** Your app is ready. ***
-*** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
-[INFO] Optimized build: accepted; building now (this may take a minute or two).
-[TEST] HP_TEST_FORCE_OPTBUILD_FAIL: simulating optimized-build failure.
-[INFO] REQ-016: Post-flight briefing printed.
-```
-
-No further message prints between the forced-fail log line and the (unrelated, always-present)
-post-flight briefing -- the subroutine cleans up the temp file and returns silently. This is a
-narrower silence than the wording used on a REAL build-failure branch (which explicitly says
-"your app is still ready to use as-is" -- see the reactive hint below); a forced-test-hook failure
-and a genuine build failure currently give the user different amounts of reassurance for what is,
-from their perspective, the same outcome.
-
-#### 4c. `swapfail` -- verified build, but the final swap step fails; original EXE is left untouched
-
-Regression test for a real bug: the swap-verification check used to test the DESTINATION file
-(which already exists before the move, success or failure alike) instead of the SOURCE (which
-should be gone only on success) -- a genuinely failed swap would have been silently misreported
-as success. Fixed; console text (expected from source, not yet dumped in a CI console capture
-since this scenario has passed on every run so far):
-
-```
-*** Your app is ready. ***
-*** Want to build an optimized version too? ... ***
-[INFO] Optimized build: accepted; building now (this may take a minute or two).
-[WARN] Optimized build verified successfully but could not be swapped into place; your app is still ready to use as-is.
-```
-
-#### 4d. `decline` -- default/CI path, prompt shown but nothing built
-
-Real, verbatim console dump (`~selftest_optbuild_decline\~optbuild_decline_bootstrap.log`):
-
-```
-*** Your app is ready. ***
-*** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
-[INFO] Optimized build: declined.
-```
-
-#### Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths)
-
-Fires only on a GENUINE Nuitka compiler failure (not the `forcefail` test hook, which bypasses it
-entirely). No CI run to date has exercised a real Nuitka compiler failure, so this is sourced from
-`run_setup.bat` rather than a console capture:
-
-```
-[WARN] Optimized build did not complete; your app is still ready to use as-is.
-[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help.
-```
-
----
-
-## Part II: CLI interactivity, argv passthrough & honest messaging
-
-Covers `docs/plan-cli-interactive-verification.md` (P0/P1/P2, all shipped): the live-tee
-verification redesign that lets an interactive `input()`-driven program's prompts actually reach
-the console, the activity-aware 30-second kill, argv passthrough (REQ-026), and the honest
-ambiguous-exit messaging panels (REQ-027).
-
-### Scenario 5: Interactive verification -- live-tee, activity-aware kill, and the quit-prompt hint
-
-**What changed, in one sentence:** before this plan, `:run_exe_smokerun`'s verification launch
-force-killed at a hard 30 seconds regardless of output, and captured stdout/stderr only to a file
-(never live to the console) -- so a program correctly waiting on its first `input()` prompt looked
-identical to a genuinely hung one, and the user watching the window saw nothing until the process
-either finished or got killed.
-
-**What's tested (the plumbing):** `self.interactive.stdin.roundtrip`
-(`tests/selfapps_interactive_stdin.ps1`, uv lane, non-gating) builds a real PyInstaller EXE from a
-multi-round `input()`-driven stub app and pipes a scripted answer sequence into `cmd.exe`'s own
-stdin, exercising the full `cmd.exe -> :run_exe_smokerun -> ~exe_smokerun.ps1 -> the built EXE`
-chain and asserting each answer lands in the right round via ordering checks on the captured log
--- it proves the plumbing doesn't drop or reorder stdin/stdout, not a live human's own typing
-timing (which can't be automated).
-
-**The WARN line a user sees right before the verification launch**, current shipped wording
-(source: `run_setup.bat`, `:warn_user_code_launch` -- not a console capture, since CI answers
-scripted stdin rather than a human watching the window; Scenario 1 and Scenario 4a above both show
-this exact line in situ):
-
-```
-[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
-```
-
-Three things this one line is doing:
-1. **States the actual kill rule truthfully**: the 30-second cap is a classification checkpoint,
-   not an unconditional deadline -- `Kill()` only fires if the process has stayed COMPLETELY
-   silent that whole time. Any output (including a bare prompt with no trailing newline, the exact
-   shape of Python's own `input("...")`) switches to an unbounded wait.
-2. **Actively guides the user toward a clean result**: driving an interactive program to its own
-   quit/exit option during this pass turns an otherwise-ambiguous exit into a genuine, confirmed
-   `[STATUS] Run Status: SUCCESS` -- this directly reduces how often a real user ever sees either
-   of Scenario 7's ambiguous-exit panels.
-3. **Still warns it's a throwaway pass, not the user's real, saveable session** -- this verification
-   EXE is never reused; only the file it's already tested is kept for later double-clicks.
-
-The `hidden_import` recovery loop's own separate, narrower verification check (see
-`docs/agent-interconnect.md`'s "Activity-aware EXE-smoke kill" section) deliberately keeps the
-OLDER, unconditional 30-second wording -- it's a bounded repair-verification check on an
-already-built EXE, not the user's primary run, so it never got the interactive-friendly rewrite.
-
-### Scenario 6: Argv passthrough (REQ-026) -- launch arguments through the bootstrapper
-
-Extra arguments after the entry file on `run_setup.bat`'s own command line (up to 8) are forwarded
-verbatim to the target program at every real launch site -- the cached-EXE fast path, the fresh EXE
-verification, the no-EXE interpreter run, and the post-execution checkpoint's elective second run.
-This is a documented, opt-in escape hatch (no detection or heuristics involved) for a program that
-needs `--flag value`-style launch arguments to run correctly, on top of this bootstrapper's usual
-zero-argument double-click flow.
-
-**The postflight guidance a user sees after a successful EXE build** (Scenario 1's full panel
-above shows this in context):
-
-```
-   Does your program need launch arguments (e.g. --input file.csv)? Run
-   this bootstrapper again with them added after the entry file, e.g.
-     run_setup.bat "<entry.py>" --input file.csv
-   and they will be forwarded to your program during THIS setup run
-   (up to 8 extra arguments). This does not change how a plain
-   double-click of dist\<env>.exe launches it afterward -- for that,
-   make a Windows shortcut to the .exe and add the arguments to its
-   Target field, or launch it yourself from a Command Prompt.
-```
-
-**The equivalent guidance on the no-EXE path** (direct-interpreter-invocation form, part of
-Scenario 7a's panel below):
-
-```
-   Need launch arguments? Add them directly after that command, e.g.
-     "<python>" "<entry.py>" --input file.csv
-```
-
-Both are additive to the launch commands already shown in each panel, not a separate prompt --
-matching this bootstrapper's general rule that env-var/CLI flags only ever add an opt-in path or
-suppress an optional step, never gate a behavior the Prime Directive needs (see CLAUDE.md's
-`[REQ-019]`).
-
-### Scenario 7: Honest ambiguous-exit messaging (REQ-027)
-
-Both panels below fire only when a verification run ends AMBIGUOUSLY -- the program exited with an
-error, and no automatic repair (`--hidden-import` auto-recovery, the REQ-009 dependency-resolution
-cascade) fixed it. Neither panel claims to know WHY: a bug in the program's own code, something
-this bootstrapper missed, or an unresolved dependency are all indistinguishable from here, and both
-panels say so plainly rather than guessing. This is messaging only -- `~bootstrap.status.json`
-semantics, the process exit code, and consent-gate behavior are all unchanged.
-
-Both are new enough (shipped, then refined once more for wording, entirely within this same
-session) that no CI run has yet produced a console capture including the current wording -- both
-quotes below are sourced directly from `run_setup.bat`, not a job log.
-
-#### 7a. No-EXE path, interpreter also failed
-
-Fires when BOTH PyInstaller and the Nuitka fallback fail to package the app outright, AND the
-interpreter fallback that runs next (the only way left to run the program at all) also exits
-non-zero -- the scenario Scenario 2a's own `execfail` sub-case would hit if its trivial stub script
-didn't happen to exit cleanly. Source: `:print_no_exe_briefing`'s `:noexe_caveat` branch,
-`run_setup.bat`:
-
-```
-============================================================
- NO STANDALONE .EXE -- AND WE CAN'T CONFIRM YOUR CODE RAN CLEANLY
-============================================================
- We could not package your app into a double-clickable .exe
- (see the ERROR message above for why). We also just ran it
- directly via the prepared Python environment, and it exited
- with an error (see the [STATUS] line above) -- so we can't
- tell whether that's a bug in the Python code we tried to run
- or something this bootstrapper missed. Your environment and
- dependencies ARE still installed correctly; run it yourself
- below to see the full output.
-
- RUNNING YOUR APP (without an .exe) -- the most direct option
-   "<python>" "<entry.py>"
-   Need launch arguments? Add them directly after that command, e.g.
-     "<python>" "<entry.py>" --input file.csv
-
- Want to try different arguments through the bootstrapper itself
- instead? Your already-installed environment is reused either
- way; it will just attempt the .exe build again too:
-   run_setup.bat "<entry.py>" arg1 arg2
-
- KEEP these files with your project:
-   requirements.txt  -- packages your app depends on
-   runtime.txt       -- Python version pin
-
- SAFE TO DELETE to reclaim disk space:
-   .*_env\ folders   -- environment directories
-   ~* files          -- tilde-prefix work files (e.g. ~setup.log)
-============================================================
-```
-
-The direct-run command stays the visually primary option (matches this panel's own established
-preference for running the program directly over going back through the bootstrapper); the
-bootstrapper-rerun mention is deliberately secondary and uses the real entry filename (`%HP_ENTRY%`
-is reliably set by this point in the pipeline -- unlike Scenario 7b below).
-
-When the interpreter run instead exits CLEANLY (the common case, and what Scenario 2a's own capture
-shows), this panel's header and opening paragraph read differently -- plain "YOUR CODE RAN -- BUT
-NO STANDALONE .EXE WAS PRODUCED", with no claim of an unconfirmed run -- but the rest of the panel
-(launch commands, KEEP/SAFE TO DELETE lists) is identical either way.
-
-#### 7b. Cached-EXE fast path, kept despite a non-zero exit
-
-Fires when the fail-fast probe classifies a REUSED `dist\<env>.exe` (the top-of-file fast path,
-before any provider/entry-file logic runs) as alive/healthy -- so it's kept, never
-discarded-and-rebuilt -- and it later exits non-zero. Before this fix, this exact case had no
-postflight signal at all beyond one `[WARN]` log line buried among other console output. Source:
-`:print_fastpath_ambiguous_note`, `run_setup.bat`:
-
-```
-============================================================
- SETUP COMPLETE -- BUT WE CAN'T CONFIRM YOUR LAST RUN WORKED
-============================================================
- Your existing standalone application was reused (dist\<env>.exe),
- and it exited with an error just now (see the [STATUS] line
- above) -- so we can't tell whether that's a bug in the Python
- code we tried to run, or something else. Your environment and
- dependencies ARE still installed correctly.
-
- RUNNING YOUR APP
-   Double-click dist\<env>.exe to run it, or run it from a
-   Command Prompt to see the full output.
-
- WANT TO TRY AGAIN? You do not have to start over from scratch --
-   just run this bootstrapper again the same way you did before;
-   your already-installed environment and built .exe are reused.
-
- WANT A FRESH BUILD instead (re-checks all dependencies from scratch)?
-   Delete dist\<env>.exe and run this bootstrapper again.
-============================================================
-```
-
-This panel is a PLAIN INFORMATIONAL PRINT, never a consent gate -- the cached-EXE fast path is
-deliberately zero-friction for prompts (see `docs/agent-interconnect.md`'s "Fast path = ZERO
-friction" design requirement), and this doesn't violate that since it never asks a question.
-
-**No entry filename appears anywhere in this panel, unlike 7a's rerun mention -- deliberately.**
-`HP_ENTRY` is not set yet at the point the top-of-file fast path runs (it fires before
-`:determine_entry` ever executes, since the cached EXE is self-contained and doesn't need the
-original source filename to relaunch), so naming one here would show blank or stale text. The two
-rerun options are worded to distinguish a genuinely different tradeoff instead: rerunning WITHOUT
-deleting the EXE reuses it (via the same fast path that got the user here) with no promise about
-whether it's actually faster overall, while deleting it first forces a full, slower, from-scratch
-dependency check.
-
----
-
-## Part III: Default double-click happy path (uv-first, fresh machine, zero flags)
-
-**Scope note:** Parts I and II each document one feature area's edge cases. This Part documents
-the OTHER thing this doc has never shown: what a completely ordinary run looks like end to end --
-one `.py` file, no test hooks, no prior state, no flags, uv reachable (the REQ-009 default,
+**Scope note:** this Part opens the document with what a completely ordinary run looks like end to
+end -- one `.py` file, no test hooks, no prior state, no flags, uv reachable (the REQ-009 default,
 `uv -> conda -> embed -> venv -> system`). This is what the large majority of real users actually
-see. Evidence is pulled from a recent fully-green run (`30328748330`, commit `5872028`, all lanes
+see; narrower/advanced feature areas (the AV-Safe Build Path's Nuitka fallback, CLI-interactivity
+internals) are covered later, in Part VIII and Part IX. Evidence is pulled from a recent fully-green
+run (`30328748330`, commit `5872028`, all lanes
 green) rather than any single dedicated "happy path" test -- no such test exists as one file, so
 each piece below is sourced from whichever real, non-`HP_CI_SKIP_ENV` sub-bootstrap in that run
 exercises it most faithfully (mainly `tests/selfapps_envsmoke.ps1`'s real env-smoke sub-bootstrap
@@ -625,7 +133,39 @@ for the one genuinely timed gate, wait up to its timeout) instead of resolving i
 11 below covers this distinction in detail for the two prompts that fire on this exact happy path;
 it applies identically to every other consent gate documented elsewhere in this file.
 
-### Scenario 8: Pre-flight guards, lock acquisition, and entry detection on a clean run
+### Scenario 1: No `.py` files at all -- the graceful `no_python_files` exit
+
+**What's tested:** `self.empty_repo.msg` (`tests/selftest.ps1`, `real` lane, real, passing).
+
+**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+
+Referenced throughout this document (e.g. Scenario 3's note that this repo's own bootstrapper
+root, which has no loose `.py` files, exercises this exact path) but never shown directly: when
+`PYCOUNT` (a plain `dir /b /a-d *.py` count) is zero, the bootstrapper takes the shortest path in
+the entire file -- no provider selection, no dependency install, nothing network-touching at all,
+skipping straight to a graceful, successful exit:
+
+```
+[INFO] Environment name: _selftest_empty
+[INFO] Host OS: Microsoft Windows [Version 10.0.26100.32995]
+[INFO] Host PowerShell: 5.1.26100.32995
+[INFO] Python file count: 0
+Python file count: 0
+No Python files detected; skipping environment bootstrap.
+[INFO] No Python files detected; skipping environment bootstrap.
+```
+
+(the last message genuinely appears twice, back to back, in the real captured log -- once as a
+plain `echo` straight to console with no timestamp, once through `:log`'s own timestamped form
+written to both console and `~setup.log`; the block above shows both, with the second line's
+real timestamp prefix, e.g. `Tue 07/28/2026  4:29:15.97`, omitted here since it carries no
+information beyond confirming the two lines are adjacent). `~bootstrap.status.json` reads
+`{"state":"no_python_files","exitCode":0,
+"pyFiles":0}` -- a real user who double-clicks the bootstrapper in an empty folder, or in the
+wrong folder entirely, gets a clear, immediate, non-alarming message rather than the bootstrapper
+attempting (and inevitably failing) to build an environment for nothing.
+
+### Scenario 2: Pre-flight guards, lock acquisition, and entry detection on a clean run
 
 **What's tested:** no single dedicated test asserts the CLEAN (non-firing) pass of these checks --
 `docs/agent-ndjson.md` only registers rows for the *firing* branches (`self.warn.onedrive`,
@@ -638,28 +178,15 @@ every byte of console output via `cmd /c .\run_setup.bat > '~envsmoke_bootstrap.
 `justme-test`, `contract-uv`, `contract-uv-fail`):
 
 ```
-[WARN] UNC paths not supported
 Tue 07/28/2026  4:29:43.96 [INFO] REQ-015: Appending standard ignores to .gitignore.
 ```
 
-**The very first console line above (`[WARN] UNC paths not supported`) is historical, from the
-captured run, and no longer appears -- fixed since this capture, kept here unedited because it is
-a real, timestamped log.** It came from a broken, redundant top-of-file `findstr`-based check (in
-the file's unlabeled prologue before the first `:label`): `findstr /C:"\\\\"` was intended to
-match a UNC-style double-backslash but did not correctly gate on one -- its exact internal parsing
-(`findstr`'s own additional backslash-doubling behavior layered on cmd.exe's own C-runtime
-backslash-before-quote argument parsing, documented in `docs/agent-lessons-learned.md`) was never
-independently verified. What WAS confirmed is that it fired on 6/6 checked lanes against an
-entirely ordinary local CI checkout path (`D:\a\Python_vs_Windows\Python_vs_Windows\tests\
-~envsmoke\`) -- not a UNC path. The companion, independent, correctly-targeted UNC-prefix check a
-couple of lines below it (`if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints the much louder
-`*** WARNING: UNC/network paths detected...` banner) already covered the real UNC-detection job on
-its own, so the broken check was simply removed rather than repaired -- see
-`docs/agent-closed-backlog.md`'s Item 8 for the full trace.
-
-Between that line and `REQ-015`, nothing else prints -- `HP_APP_ARGS` capture (REQ-026, pure
-variable assignment), the workspace-path-exists check, `cd /d`, and `HP_SCRIPT_ROOT` construction
-(the rest of that same unlabeled prologue) are all silent by design on a clean pass.
+Before that line, nothing prints -- `HP_APP_ARGS` capture (REQ-026, pure variable assignment), the
+workspace-path-exists check, `cd /d`, `HP_SCRIPT_ROOT` construction, and the top-of-file UNC-path
+check (`if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints a much louder `*** WARNING:
+UNC/network paths detected...` banner when it genuinely fires -- see `docs/agent-lessons-learned.md`
+for the C-runtime backslash-before-quote parsing hazard a check like this has to get right) are all
+silent on an ordinary, non-UNC path.
 
 **The four REQ-025-family pre-flight guards (path-length, OneDrive, system-directory, disk-space --
 also part of that unlabeled prologue) are completely silent unless they fire.** Confirmed by both
@@ -700,7 +227,7 @@ this console line) -- only the second call's result is what a user sees echoed.
 
 ---
 
-### Scenario 9: Provider acquisition and dependency install (uv-first)
+### Scenario 3: Provider acquisition and dependency install (uv-first)
 
 **What's tested:** `tests/selfapps_envsmoke.ps1`'s real sub-bootstrap (`self.env.smoke.*` rows),
 uv-first lane, against a stub `app.py` that genuinely does `import colorama` -- a real, if small,
@@ -717,9 +244,8 @@ extra content this repo deliberately never puts on-screen -- see this doc's own 
 representative evidence for this scenario** -- that step runs `run_setup.bat` against the
 bootstrapper repo's OWN root (no loose `.py` files there), so it takes the `no_python_files`
 graceful-exit path and produces nothing relevant. The genuinely representative evidence is the
-"Self-test: real env smoke (CI-only)" step's own inner sub-bootstrap, which runs
-`run_setup.bat` for real against a scratch app directory (matches CLAUDE.md's own documented
-finding for Active Backlog item 15/`conda_avail`'s history -- the same distinction applies here).
+"Self-test: real env smoke (CI-only)" step's own inner sub-bootstrap, which runs `run_setup.bat`
+for real against a scratch app directory instead.
 
 **uv acquisition** (console, first-ever run, no cached `~uv_bin` -- every fresh CI scratch dir
 starts this way, matching a real user's first-ever double-click):
@@ -822,14 +348,14 @@ alongside their actual dependencies, not a CI artifact.
 
 ---
 
-### Scenario 10: Build, verify, and the final status panel
+### Scenario 4: Build, verify, and the final status panel
 
 **What's tested:** `self.stub.fastpath` (`tests/selftest.ps1`, real lane), a genuine first-run
 (non-cached) build of a trivial one-line stub app (`hello_stub.py` = `print("hello-from-stub")`).
-Chosen over Scenario 9's `colorama`-importing app for this piece specifically because it produces
+Chosen over Scenario 3's `colorama`-importing app for this piece specifically because it produces
 a single, fully self-consistent, real capture spanning build through the final status panel with
-zero staleness caveats -- strictly better evidence than the similar block quoted in Scenario 1
-(Part I), which has two lines marked "not yet re-confirmed against a fresh capture."
+no lines needing a source-level touch-up -- unlike the similar block quoted in Scenario 37
+(Part VIII), where two lines had to be patched to current wording.
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` ("real" lane),
 `tests/~selftest_stub/~stub_bootstrap.log`:
@@ -859,14 +385,14 @@ file found` -- expected, since even a bare stub still needs the platform-module 
 needed no repair install, so the informational filter messaging is present but purely
 informational -- the "no warnfix repair needed" success case this doc previously had no example
 of. `hello-from-stub` is the stub program's OWN real stdout, live-teed via
-`tools/exe_smokerun.ps1`'s chunk-based `ReadAsync` reader (see Scenario 5's fuller writeup of that
+`tools/exe_smokerun.ps1`'s chunk-based `ReadAsync` reader (see Scenario 41's fuller writeup of that
 mechanism) -- landing exactly between the PID line and the "exited 0" line, precisely where a real
 user's own program output appears. The `[INFO] Process ID <n>. If it seems stuck: Task Manager >
 Details tab...` line is the already-shipped stuck-program recovery aid (`tools/exe_smokerun.ps1`,
 see `docs/agent-interconnect.md`'s "Process-ID display for stuck-program recovery" section) --
 confirmed here as a genuine, working console line, not just source text.
 
-Immediately following (elective prompts, both auto-declined by CI -- see Scenario 11 below for
+Immediately following (elective prompts, both auto-declined by CI -- see Scenario 5 below for
 what a real user experiences here instead) and then the final panel:
 
 ```
@@ -941,7 +467,7 @@ Finding).
 
 ---
 
-### Scenario 11: The two elective prompts a real user faces after every successful run
+### Scenario 5: The two elective prompts a real user faces after every successful run
 
 **What's tested:** the framing text of both prompts is confirmed via real CI capture (they're
 unconditionally echoed even when CI auto-declines); the actual `[Y/N]` question lines themselves
@@ -953,7 +479,7 @@ directly, bypassing the real `set /p` prompt entirely). Both are therefore genui
 though the surrounding framing text is a real capture.
 
 **Source:** framing lines are REAL CI CAPTURE (run `30328748330`, job `90179708091`, "real" lane,
-same log as Scenario 10 above); the two `set /p` prompt lines themselves are
+same log as Scenario 4 above); the two `set /p` prompt lines themselves are
 `[Extrapolated Branch]`, cited from `:run_postexec_checkpoint` and `:offer_optimized_build`
 respectively.
 
@@ -969,14 +495,14 @@ time via the interpreter", and a companion note the same subroutine prints for t
 spells this out too ("this diagnostic run uses the interpreter, not the packaged EXE, so behavior
 can differ"); (2) README's separate REQ-018 bullet about the FIRST (mandatory) verification run
 being "force-stopped after a short interval even if running fine" is stale relative to the
-activity-aware-kill behavior actually shipped later (see Scenario 5's fuller writeup and CLAUDE.md's
-Closed Backlog "Activity-aware EXE-smoke kill" entry) -- the real WARN text quoted in Scenario 10
+activity-aware-kill behavior actually shipped later (see Scenario 41's fuller writeup and CLAUDE.md's
+Closed Backlog "Activity-aware EXE-smoke kill" entry) -- the real WARN text quoted in Scenario 4
 above says the opposite: any output at all, not just a clean exit, keeps the run alive indefinitely,
 only a genuinely SILENT process gets force-stopped. Neither nuance changes what actually ships;
 both are flagged here because a reader cross-checking this scenario against README's prose could
 otherwise reasonably conclude something was missed.
 
-Right after a normal successful verification run (Scenario 10's tail), a real double-click user
+Right after a normal successful verification run (Scenario 4's tail), a real double-click user
 sees:
 
 ```
@@ -1034,12 +560,12 @@ documented fully in Pass 4.
 
 ---
 
-## Part IV: Second run, nothing changed (repeat-run fast paths)
+## Part II: Second run, nothing changed (repeat-run fast paths)
 
 **Scope note:** this Part documents the success side of running the bootstrapper a SECOND time in
 the same folder with nothing changed -- same entry file, same requirements, no test flags. The
 FAILURE side of one of these fast paths (a stale cached EXE that's kept and later exits non-zero)
-is already documented as Scenario 7b (Part II); this Part doesn't repeat that. Evidence again
+is already documented as Scenario 43b (Part IX); this Part doesn't repeat that. Evidence again
 comes from a recent clean green run (`30328748330`, commit `5872028`) rather than one single
 dedicated "repeat run" test file -- `tests/selfapps_envsmoke.ps1` re-invokes `run_setup.bat` a
 second time in the same scratch directory with nothing changed (the EXE fast path), and
@@ -1048,7 +574,7 @@ second time in the same scratch directory with nothing changed (the EXE fast pat
 file and run a THIRD time -- exercising the "source changed just enough to force a rebuild, but
 the environment itself doesn't need recreating" fast paths this Part's second scenario covers.
 
-### Scenario 12: The EXE fast path (nothing changed at all)
+### Scenario 6: The EXE fast path (nothing changed at all)
 
 **What's tested:** `self.fastpath` (`tests/selfapps_envsmoke.ps1`'s second, back-to-back
 invocation of `run_setup.bat` in the same scratch directory, zero CLI arguments, nothing touched).
@@ -1069,7 +595,6 @@ circuits straight to `:success`.
 see if they ran the bootstrapper non-interactively, e.g. from a script):**
 
 ```
-[WARN] UNC paths not supported
 Tue 07/28/2026  4:30:33.81 [INFO] Environment name: _envsmoke
 Tue 07/28/2026  4:30:33.83 [INFO] Host OS: Microsoft Windows [Version 10.0.26100.32995]
 Tue 07/28/2026  4:30:34.04 [INFO] Host PowerShell: 5.1.26100.32995
@@ -1088,14 +613,13 @@ exit=0" that never reaches the console (`Fast path command: "dist\_envsmoke.exe"
 
 **Interactive console text (what a genuine double-click end user sees -- differs from CI because
 `HP_CI_LANE` is unset, so `:try_fast_exe` takes its OTHER branch, `:try_fast_exe_probe`, which
-launches the cached EXE through the same never-kills fail-fast probe mechanism Scenario 5
+launches the cached EXE through the same never-kills fail-fast probe mechanism Scenario 41
 documents rather than the plain redirect above).** Assembled from real, independently-confirmed
 fragments (the header and PID lines are genuine captured text from a different test that forces
 this same interactive branch; their pairing into a clean, fast, successful sequence is
 `[Extrapolated Branch]`, grounded directly in source rather than guessed):
 
 ```
-[WARN] UNC paths not supported
 Tue 07/28/2026  4:30:33.81 [INFO] Environment name: _envsmoke
 Tue 07/28/2026  4:30:33.83 [INFO] Host OS: Microsoft Windows [Version 10.0.26100.32995]
 Tue 07/28/2026  4:30:34.04 [INFO] Host PowerShell: 5.1.26100.32995
@@ -1132,10 +656,10 @@ actual process launch.
 
 ---
 
-### Scenario 13: Source touched just enough to force a rebuild, but the environment is reused
+### Scenario 7: Source touched just enough to force a rebuild, but the environment is reused
 
 **What's tested:** `tests/selftest.ps1`'s stub scenario and `tests/selfapps_depcheck.ps1`, both of
-which do Run 1 (fresh) -> Run 2 (Scenario 12's EXE fast path) -> touch the entry file's content
+which do Run 1 (fresh) -> Run 2 (Scenario 6's EXE fast path) -> touch the entry file's content
 and modification time -> Run 3, which is the case documented here: the EXE fast-path timestamp
 check now fails (source is newer than the cached EXE), so PyInstaller reruns and produces a new
 EXE -- but the ENVIRONMENT itself (the uv venv or conda env, and already-satisfied dependencies)
@@ -1168,7 +692,7 @@ for EITHER phrase, which is why one shared test scenario validates both dependin
 it runs under.
 
 **Both lanes then converge on the same dependency-install skip, immediately after dependency
-discovery** (pipreqs + the Tier 1 autopep723 merge from Scenario 9 still run normally here --
+discovery** (pipreqs + the Tier 1 autopep723 merge from Scenario 3 still run normally here --
 neither of the two fast paths above touches dependency DISCOVERY, only environment creation):
 
 ```
@@ -1191,10 +715,10 @@ producing a genuinely fresh PyInstaller build and a real verification run of the
 
 ---
 
-## Part V: User configuration and CLI overrides
+## Part III: User configuration and CLI overrides
 
 **Scope note:** argv passthrough (extra launch arguments forwarded to the user's program, REQ-026)
-is already fully covered as Scenario 6 -- cross-reference it rather than re-documenting it here.
+is already fully covered as Scenario 42 -- cross-reference it rather than re-documenting it here.
 This Part covers the remaining configuration surface: the five `PVW_*` super-user override
 environment variables (distinct from `HP_TEST_*`, which are CI-only and out of scope for this
 doc), and the CLI-argument/drag-and-drop entry-file override.
@@ -1212,19 +736,20 @@ header comment describes all five uniformly as bypassing auto-detection, but tha
 true for two of them. `PVW_UV_EXE` and `PVW_WORKSPACE` genuinely skip the corresponding
 detection/creation branch outright. `PVW_PYTHON_EXE` and `PVW_TARGET_PY` do NOT skip anything --
 the full normal detection logic still runs to completion (including real network/disk work), and
-the override simply overwrites the *result* variable afterward. `PVW_CONDA_EXE` (Scenario 15) is
+the override simply overwrites the *result* variable afterward. `PVW_CONDA_EXE` (Scenario 9) is
 its own case again, discussed separately since it has a unique interaction with the conda
 self-heal flow.
 
-### Scenario 14: `PVW_PYTHON_EXE` / `PVW_UV_EXE` / `PVW_TARGET_PY` / `PVW_WORKSPACE`
+### Scenario 8: `PVW_PYTHON_EXE` / `PVW_UV_EXE` / `PVW_TARGET_PY` / `PVW_WORKSPACE`
 
-**What's tested:** `PVW_UV_EXE` and `PVW_TARGET_PY` each have real, valid-value end-to-end CI
-coverage (details below). `PVW_PYTHON_EXE` and `PVW_WORKSPACE` have **zero** test coverage of any
-kind -- not even a valid-value smoke test -- confirmed via a repo-wide search across every test
-file and every lane of a recent clean run. **No test anywhere exercises an INVALID value for any
-of the four** -- all invalid-value behavior below is `[Extrapolated Branch]`, traced from source.
+**What's tested:** all four now have real, valid-value end-to-end CI coverage; `PVW_PYTHON_EXE` and
+`PVW_WORKSPACE` also each have a real, invalid-value CI scenario (`tests/selfapps_pvw_overrides.ps1`,
+`uv` lane, non-gating -- confirmed passing in the same fully-green CI run this whole document's
+release cycle was verified against: run `30709255610`, job `91393894838`). Neither `PVW_UV_EXE`
+nor `PVW_TARGET_PY` has invalid-value coverage of its own; that half of 8b/8c below stays
+`[Extrapolated Branch]`, traced from source.
 
-**14a. `PVW_PYTHON_EXE`** overrides `HP_PY` at the shared convergence point every REQ-009 provider
+**8a. `PVW_PYTHON_EXE`** overrides `HP_PY` at the shared convergence point every REQ-009 provider
 path (uv, conda, embed, venv, system, and every provider-cascade re-entry) funnels into after
 already selecting and setting up a working interpreter -- so it does NOT skip provider
 acquisition, it only overwrites the final result:
@@ -1233,16 +758,20 @@ acquisition, it only overwrites the final result:
 [INFO] Python host: using super-user override PVW_PYTHON_EXE.
 ```
 
-`[Extrapolated Branch]`, genuinely untested. Invalid-value trace: no existence/executability check
-on the path itself; the first real probe is a non-fatal interpreter smoke test
-(`[WARN] Interpreter smoke test failed (continuing).`) that does NOT abort the run -- every
-subsequent `pip install` call is similarly wrapped in a WARN-only failure handler, so the
+Real, confirmed via `tests/selfapps_pvw_overrides.ps1`'s `self.pvw.python_exe.valid` scenario
+(a two-stage test: stage 1 does an ordinary uv bootstrap to materialize a real interpreter, stage 2
+is a genuinely fresh scratch directory pointing `PVW_PYTHON_EXE` at stage 1's interpreter) -- the
+override log line fires and the app runs successfully via the borrowed interpreter. Invalid-value
+trace, confirmed by the same file's `self.pvw.python_exe.invalid` scenario (a nonexistent path): no
+existence/executability check on the path itself; the first real probe is a non-fatal interpreter
+smoke test (`[WARN] Interpreter smoke test failed (continuing).`) that does NOT abort the run --
+every subsequent `pip install` call is similarly wrapped in a WARN-only failure handler, so the
 bootstrap proceeds all the way to the PyInstaller build attempt with a broken interpreter before
 finally hitting a real failure there (the pre-existing, already-documented `:die`/`state=error`
 path). A bad `PVW_PYTHON_EXE` is therefore detected early (one WARN) but not treated as fatal
 until several steps downstream, not at the point of misuse.
 
-**14b. `PVW_UV_EXE`** overrides `HP_UV_EXE` and genuinely skips the entire uv download/acquire
+**8b. `PVW_UV_EXE`** overrides `HP_UV_EXE` and genuinely skips the entire uv download/acquire
 branch (jumps straight past it):
 
 ```
@@ -1268,7 +797,7 @@ on-disk check (`if not exist "...\Scripts\python.exe" goto :uv_venv_fail`) catch
 misleadingly reports success without doing real work -- no crash, no silent success, clean
 fall-through to conda.
 
-**14c. `PVW_TARGET_PY`** overrides `PYSPEC` at the shared merge point both the uv-first and
+**8c. `PVW_TARGET_PY`** overrides `PYSPEC` at the shared merge point both the uv-first and
 conda-base detection paths converge on -- like `PVW_PYTHON_EXE`, detection still runs to
 completion first:
 
@@ -1287,27 +816,36 @@ specific `opencv-python` wheel is guaranteed available for a different test purp
 
 Invalid-value trace (`[Extrapolated Branch]`): no format validation; a garbage value becomes an
 invalid conda package spec or an invalid `uv venv --python` request, surfacing as a real,
-correctly-handled provider failure absorbed by the same fallback/cascade machinery as 14b --
+correctly-handled provider failure absorbed by the same fallback/cascade machinery as 8b --
 reaching a graceful `:die` (`state=error`) only if every fallback tier is also exhausted, never an
 uncontrolled crash.
 
-**14d. `PVW_WORKSPACE`** overrides `HP_UV_ENV_PATH` (the uv venv's path) with a clean, immediate
-override -- the default is assigned and instantly replaced before any use, unlike 14a/14c's
+**8d. `PVW_WORKSPACE`** overrides `HP_UV_ENV_PATH` (the uv venv's path) with a clean, immediate
+override -- the default is assigned and instantly replaced before any use, unlike 8a/8c's
 "let it run, override the result" pattern. **Scope limitation worth flagging explicitly: this
 variable only takes effect in uv mode.** Conda's own environment path has no corresponding check
 at all -- a conda-mode run ignores `PVW_WORKSPACE` entirely.
 
-`[Extrapolated Branch]`, genuinely untested, and uniquely among the four, **there is no dedicated
-confirmation log line at its actual point of use** -- only the generic top-of-file `[DEBUG]` line,
-which fires purely because the variable is defined, before it's even known whether uv mode (where
-this variable matters at all) will be selected. Invalid-value trace: no path validation; if a
-`Scripts\python.exe` already happens to exist at the given path, a real functional canary
-(`import pip`) guards whether it's actually reused; a creation failure at a bad path is absorbed
-by the same `:uv_venv_fail` fallback chain as 14b/14c.
+Uniquely among the four, **there is no dedicated confirmation log line at its actual point of
+use** -- only the generic top-of-file `[DEBUG]` line, which fires purely because the variable is
+defined, before it's even known whether uv mode (where this variable matters at all) will be
+selected. Real, confirmed via `tests/selfapps_pvw_overrides.ps1`'s own `self.pvw.workspace.valid`
+scenario:
+
+```
+[DEBUG] Using super-user override for PVW_WORKSPACE: <path>
+```
+
+with `Scripts\python.exe` genuinely present at the custom path afterward (and the default
+`.uv_env` never created). Invalid-value trace, confirmed by the same test file's
+`self.pvw.workspace.invalid` scenario (a path already occupied by a plain file, so uv cannot
+create a venv "inside" it): no path validation up front, but the failure lands on exactly the
+already-established `:uv_venv_fail` fallback chain 8b/8c also use, reaching the log line `falling
+back to conda create` -- no crash, no silent success.
 
 ---
 
-### Scenario 15: `PVW_CONDA_EXE` and its interaction with the conda self-heal flow
+### Scenario 9: `PVW_CONDA_EXE` and its interaction with the conda self-heal flow
 
 **What's tested:** `self.corrupt.conda.override_exit` (`tests/selftest.ps1`), self-contained by
 construction (no ordering dependency on Miniconda already being installed elsewhere in the job,
@@ -1361,7 +899,7 @@ even has a chance to matter.
 
 ---
 
-### Scenario 16: Drag-and-drop / CLI entry-file override (REQ-011 same-directory rule + REQ-002 priority)
+### Scenario 10: Drag-and-drop / CLI entry-file override (REQ-011 same-directory rule + REQ-002 priority)
 
 **What's tested:** three real, currently-passing NDJSON rows across two test files --
 `self.entry.req011.crossdir` and `self.entry.req011.sameDir` (`tests/selfapps_isolation.ps1`), and
@@ -1410,7 +948,7 @@ is what actually ran.
 
 ---
 
-## Part VI: Adversarial and recovery branches
+## Part IV: Adversarial and recovery branches
 
 **Scope note:** excludes `HP_TEST_*` CI-only flags as the documented subject -- they're the
 mechanism a test uses to force a scenario deterministically, but the resulting console text below
@@ -1420,7 +958,7 @@ on). Evidence for this entire Part is pulled from run `30328748330` (commit `587
 green): `real` (job `90179708091`), `conda-full` (job `90179708094`), `uv` (job `90179708109`),
 `justme-test` (job `90179708103`).
 
-### Scenario 17: Network connectivity check and transient-retry (REQ-013 + REQ-022)
+### Scenario 11: Network connectivity check and transient-retry (REQ-013 + REQ-022)
 
 **What's tested:** `self.ux.connectivity.*` rows (`tests/selfapps_ux_hardening.ps1`, real lane);
 `self.stub.conda_retry`/`self.stub.conda_create_retry`/`self.stub.conda_perpkg`
@@ -1475,11 +1013,11 @@ actually occurred.
 
 ---
 
-### Scenario 18: Corrupted-conda self-heal (detect / decline / accept)
+### Scenario 12: Corrupted-conda self-heal (detect / decline / accept)
 
 **What's tested:** `self.corrupt.conda.detect`/`.heal.decline`/`.heal.accept`
 (`tests/selftest.ps1`, conda-full lane, all three real and passing). The `PVW_CONDA_EXE`-override
-variant is already covered in Scenario 15 -- this scenario is the DEFAULT case, where the
+variant is already covered in Scenario 9 -- this scenario is the DEFAULT case, where the
 bootstrapper owns the conda install and can offer to fix it.
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full` lane).
@@ -1499,7 +1037,7 @@ When a health check on the resolved conda binary fails, the user sees:
 ```
 
 followed by an unbounded `[Y/N]` prompt (`  Would you like to delete it and rebuild? [Y/N] `,
-`[Extrapolated Branch]` for the exact prompt line, same reasoning as Scenario 11's two prompts --
+`[Extrapolated Branch]` for the exact prompt line, same reasoning as Scenario 5's two prompts --
 it lives inside `set /p`, never visible in a CI log even when a test forces the accept branch via
 an answer override).
 
@@ -1532,11 +1070,11 @@ to be skipped for CI-safety reasons, so the "Downloading fresh copy..." line bel
 ```
 
 A real user's accept path re-downloads and reinstalls Miniconda from scratch (the full
-acquisition sequence from Scenario 9), then proceeds exactly as a fresh first run would.
+acquisition sequence from Scenario 3), then proceeds exactly as a fresh first run would.
 
 ---
 
-### Scenario 19: Miniconda install chain (AllUsers -> JustMe -> both-failed)
+### Scenario 13: Miniconda install chain (AllUsers -> JustMe -> both-failed)
 
 **What's tested:** `conda.install.justme` (`tests/selftest.ps1`, `justme-test` lane, real,
 passing) and `self.conda.bothfail` (`tests/selfapps_conda_bothfail.ps1`, `uv` lane, real,
@@ -1548,12 +1086,10 @@ passing).
 Miniconda install first attempts an AllUsers (machine-wide) install; if UAC rejects elevation (or
 the process simply isn't elevated), it skips straight to a JustMe (per-user) install instead, no
 wasted attempt. **Both the "skip, never attempted" path and a genuine post-attempt AllUsers
-failure fall through to the same shared `:tci_justme` label** (`run_setup.bat`), but (fixed
-2026-07-31, Closed Active Backlog item 16, renumbered from 11 -- see `docs/agent-closed-backlog.md`) the label
-now checks a flag set only right before the real AllUsers install attempt, so the two paths get
-distinct wording instead of both unconditionally claiming AllUsers "failed." On the common
-non-elevated machine (skip path, `[Extrapolated Branch]` for the new wording -- not yet
-re-confirmed against a fresh CI capture):
+failure fall through to the same shared `:tci_justme` label** (`run_setup.bat`) -- the label checks
+a flag set only right before the real AllUsers install attempt, so the two paths get distinct
+wording instead of both unconditionally claiming AllUsers "failed." On the common non-elevated
+machine (skip path, `[Extrapolated Branch]`, cited from source):
 
 ```
 [INFO] Not elevated; skipping AllUsers Miniconda install.
@@ -1591,12 +1127,11 @@ lines, `[Extrapolated Branch]` for the now-corrected wording):
 This is a genuine `:die` (`state=error`), not a graceful degrade -- with no Python interpreter
 acquirable at all through conda, there's nothing left for this tier to hand back. Both installer
 launches are bounded by a generous 60-minute timeout (not unbounded), based on real-world reports
-of Miniconda's silent installer hanging indefinitely on some machines -- documented in
-CLAUDE.md's Active Backlog history.
+of Miniconda's silent installer hanging indefinitely on some machines.
 
 ---
 
-### Scenario 20: Standalone embed-tier download (REQ-009 Tier 5) -- decline and real success
+### Scenario 14: Standalone embed-tier download (REQ-009 Tier 5) -- decline and real success
 
 **What's tested:** `self.embed.fallback.decline`/`self.embed.fallback.real`
 (`tests/selfapps_ux_hardening.ps1`, `uv` lane, both real and passing).
@@ -1626,15 +1161,24 @@ run, REAL CI CAPTURE):
 ```
 
 A genuine download failure (not offline, an actual failed transfer) retries the WHOLE
-download+verify cycle once before giving up (`[WARN] embed fallback: download failed; retrying
-once.`, `[Extrapolated Branch]`, cited from `:embed_dl_retry` -- not independently observed in
-this run's real capture, since neither scenario above hits a genuine mid-download failure). A
-checksum mismatch is treated the same way (redownload, not just re-verify, since a mismatch can
-mean a truncated download rather than a bad pin).
+download+verify cycle once before giving up. Real, confirmed via `self.embed.dl.retry`
+(`tests/selfapps_ux_hardening.ps1`, `uv` lane, non-gating -- `HP_TEST_FORCE_EMBED_DL_FAIL_ONCE=1`
+deterministically fails only the first attempt, no network touched, then a real second attempt
+succeeds):
+
+```
+[TEST] HP_TEST_FORCE_EMBED_DL_FAIL_ONCE: simulating download failure on attempt 1 (no network touched).
+[WARN] embed fallback: download failed; retrying once.
+```
+
+followed by the tier succeeding end to end on the second attempt. A checksum mismatch is treated
+the same way (redownload, not just re-verify, since a mismatch can mean a truncated download
+rather than a bad pin) -- that specific trigger has no dedicated test of its own, `[Extrapolated
+Branch]` for that one detail.
 
 ---
 
-### Scenario 21: REQ-009 provider cascade -- one real run showing the FULL chain
+### Scenario 15: REQ-009 provider cascade -- one real run showing the FULL chain
 
 **What's tested:** `self.cascade.exec` (`tests/selfapps_cascade.ps1`, `uv` lane, real, passing).
 This single test happens to exercise BOTH mid-exhaustion (uv/conda/embed all cascade past) AND
@@ -1643,8 +1187,8 @@ unusually complete real-world illustration of this mechanism.
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708109` (`uv` lane).
 
-After a build succeeds but a dependency repair genuinely fails (Scenario 23 covers what triggers
-this), the user is offered (Scenario 11's timed `:cascade_consent_gate`, up to 30s, default
+After a build succeeds but a dependency repair genuinely fails (Scenario 17 covers what triggers
+this), the user is offered (Scenario 5's timed `:cascade_consent_gate`, up to 30s, default
 decline) a chance to try the next Python provider. On acceptance, the REAL capture below shows the
 cascade working through every tier in order -- each hop re-attempts the full dependency phase
 under the new provider, and each hop that ALSO can't fully resolve dependencies triggers another
@@ -1669,7 +1213,7 @@ verification failure and another cascade offer:
 unquoted, so a literal `>` would be parsed as shell redirection and silently eat the line.
 
 Right before each cascade offer, the elective postexec-checkpoint/optimized-build prompts from
-Scenario 11 are SKIPPED (not just auto-declined) once cascade is approved -- confirmed in this
+Scenario 5 are SKIPPED (not just auto-declined) once cascade is approved -- confirmed in this
 same real capture:
 
 ```
@@ -1679,9 +1223,9 @@ same real capture:
 ```
 
 **Full exhaustion**, reached when venv ALSO can't fully resolve dependencies and the cascade
-offers the absolute last resort, system Python (REQ-014's consent gate, Scenario 11's other
+offers the absolute last resort, system Python (REQ-014's consent gate, Scenario 5's other
 cross-referenced gate) -- declined here (CI auto-decline; a real interactive user sees the full
-timed/untimed prompt sequence documented in Scenario 11):
+timed/untimed prompt sequence documented in Scenario 5):
 
 ```
 [INFO] REQ-009: cascading provider venv to system; re-attempting dependencies.
@@ -1697,7 +1241,7 @@ Proceed with System Python? (Global pollution risk) [y/n]: y to accept, n to dec
 ```
 
 With every tier now exhausted, the bootstrapper keeps whatever build it had (venv, in this
-capture) and prints the honest caveat panel (Scenario 7's REQ-027 messaging) instead of "SETUP
+capture) and prints the honest caveat panel (Scenario 43's REQ-027 messaging) instead of "SETUP
 COMPLETE":
 
 ```
@@ -1720,7 +1264,7 @@ shown here.
 
 ---
 
-### Scenario 22: `--hidden-import` auto-recovery (success and exhaustion)
+### Scenario 16: `--hidden-import` auto-recovery (success and exhaustion)
 
 **What's tested:** `self.exe.hidden_import` (success, `tests/selfapps_hidden_import.ps1`) and
 `self.exe.hidden_import.exhaust` (`tests/selfapps_hidden_import_exhaust.ps1`), both real/conda-full
@@ -1747,14 +1291,14 @@ both succeeded); see CLAUDE.md's "User-code exit-code semantics" Known Finding.
 
 ---
 
-### Scenario 23: Warnfix repair loop (success, and the failure that feeds the cascade)
+### Scenario 17: Warnfix repair loop (success, and the failure that feeds the cascade)
 
 **What's tested:** `self.exe.warnfix.install`/`.pass` (success) and `.xfail` (a module install
 genuinely fails), `tests/selfapps_warnfix.ps1`, real/conda-full lanes, all real, all passing.
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
 
-Unlike Scenario 22 (runs AFTER a launch fails), warnfix runs BEFORE the EXE is ever launched --
+Unlike Scenario 16 (runs AFTER a launch fails), warnfix runs BEFORE the EXE is ever launched --
 PyInstaller's own warn file lists modules it couldn't bundle statically, and the bootstrapper
 tries to install and rebuild:
 
@@ -1778,14 +1322,14 @@ module some Python-3 code still conditionally imports, which no Python-3 environ
 
 The rebuild still happens (bundling whatever WAS successfully installed), but this specific
 unresolved-after-rebuild situation is exactly what feeds `HP_CASCADE_CANDIDATE` -- setting up the
-provider-cascade offer documented fully in Scenario 21.
+provider-cascade offer documented fully in Scenario 15.
 
 ---
 
-### Scenario 24: Pre-flight guards actually firing
+### Scenario 18: Pre-flight guards actually firing
 
 **What's tested:** `self.warn.onedrive`, `self.warn.sysdir`, `self.stub.low_disk_warn`
-(`tests/selftest.ps1`, real lane, all real and passing). Contrast with Scenario 8, which showed
+(`tests/selftest.ps1`, real lane, all real and passing). Contrast with Scenario 2, which showed
 these same four guards' CLEAN (silent) pass.
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
@@ -1799,9 +1343,8 @@ these same four guards' CLEAN (silent) pass.
 
 **Disk space, REQ-025** (real capture -- warn-only, never a hard block, per REQ-001's rule that a
 flag-detectable condition must never gate the Prime Directive). The block emits three raw `echo`
-lines before the `[WARN]` line the test asserts on -- all four are console-visible in the same
-run; the earlier scan of this scenario quoted only the last one, which undersold what a real user
-actually sees:
+lines before the `[WARN]` line the underlying test asserts on; all four are console-visible in the
+same run, so a real user sees the full four-line block below, not just the final `[WARN]`:
 
 ```
 *** WARNING: Only ~0 GB free disk space detected on this drive.
@@ -1824,22 +1367,22 @@ cited directly from source):
 *** or Documents folder both work well -- then run it again from there.
 ```
 
-**Path-length guard**: this run's own long-path test scenario shows an interesting CI limitation
-worth being honest about rather than papering over -- the test's own NDJSON row reports
-`warnFound: false, ranBootstrap: false, pathLen: 312`, meaning the scratch directory this specific
-CI run created didn't actually reach a state where the sub-bootstrap could run at all (likely an
-OS-level path-length limit on the CI runner itself, hit before `run_setup.bat`'s own 200-char
-check ever got a chance to fire) -- yet the test still reports an overall pass, since it's
-apparently designed to tolerate this inconclusive outcome. The guard's own text is confirmed from
-source only for this doc (`[Extrapolated Branch]`):
+**Path-length guard**: this one is genuinely hard to exercise in CI, for a structural reason worth
+being upfront about -- GitHub-hosted Windows runners don't have `LongPathsEnabled` by default, so
+PowerShell's own `Push-Location` can fail to navigate into a scratch directory built long enough to
+trigger `run_setup.bat`'s own 200-char check before the sub-bootstrap ever gets a chance to run at
+all. The test's own real NDJSON row makes this concrete: `pathLen: 312` (the directory really was
+built long enough), `ranBootstrap: false` (the runner itself couldn't get there), `skip: true,
+reason: 'runner-cannot-navigate-long-path'` -- an honest inconclusive result, not a false pass. The
+guard's own text is confirmed from source only for this doc (`[Extrapolated Branch]`):
 
 ```
-*** WARNING: Script path is <N> chars. Paths near 260 chars may cause cmd.exe failures.
+*** WARNING: Script path is 312 chars. Paths near 260 chars may cause cmd.exe failures.
 ```
 
 ---
 
-### Scenario 25: Concurrent-instance lock contention (REQ-024)
+### Scenario 19: Concurrent-instance lock contention (REQ-024)
 
 **What's tested:** `self.stub.lock_held_decline`/`self.stub.lock_stale_evict`
 (`tests/selftest.ps1`, real lane, both real and passing).
@@ -1874,17 +1417,17 @@ recycled by an unrelated program, so trusting PID liveness for automated evictio
 
 ---
 
-## Part VII: Remaining branches (dependency source precedence, write-back, and misc)
+## Part V: Remaining branches (dependency source precedence, write-back, and misc)
 
 **Scope note:** this part collects everything from the plan's 5-pass checklist that didn't fit
-naturally into Parts III-VI: dependency and Python-version source precedence, the two write-back
+naturally into Parts I-IV: dependency and Python-version source precedence, the two write-back
 mechanisms (`runtime.txt`, PEP 723 headers), the optional execute-mode discovery flag, NI-VISA/
 pandas per-package special-casing, the periodic conda maintenance timer, and the one REQ-014
-branch (consent ACCEPT) that Part VI's Scenario 21 didn't cover (it only showed decline).
+branch (consent ACCEPT) that Part IV's Scenario 15 didn't cover (it only showed decline).
 
 ---
 
-### Scenario 26: Git config merge (`.gitignore`/`.gitattributes`, REQ-015)
+### Scenario 20: Git config merge (`.gitignore`/`.gitattributes`, REQ-015)
 
 **What's tested:** `self.ux.gitignore.merge`/`.preserve`/`.idem`, `self.ux.gitattributes.merge`
 (`tests/selfapps_ux_hardening.ps1`, `real` lane, all real and passing).
@@ -1934,7 +1477,7 @@ entry-file state -- it is one of the first things `run_setup.bat` does after the
 
 ---
 
-### Scenario 27: Python-version precedence (REQ-004) and dependency-source precedence (`pyproject.toml`)
+### Scenario 21: Python-version precedence (REQ-004) and dependency-source precedence (`pyproject.toml`)
 
 **What's tested:** `pyproject.precedence.detect`/`.writeback` (`tests/selfapps_pyproject_precedence.ps1`,
 both real and passing) and `pyproject.dep.detect`/`.noproj` (same file). `pyproject.precedence.detect`
@@ -2001,15 +1544,15 @@ bootstrapper then falls through to `requirements.txt`/pipreqs as usual.
 
 ---
 
-### Scenario 28: PEP 723 dependency write-back (REQ-005.11) -- the fresh-install trigger
+### Scenario 22: PEP 723 dependency write-back (REQ-005.11) -- the fresh-install trigger
 
 **What's tested:** `self.pep723.writeback.fresh`/`.skipflag` (`tests/selfapps_pep723_writeback.ps1`,
 `real` lane, both real and passing).
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
 
-After a genuinely fresh, fully-successful `HP_ENV_MODE=uv` dependency install (see Part III,
-Scenario 9), `:pep723_writeback` promotes the resolved dependency set into the entry file's own
+After a genuinely fresh, fully-successful `HP_ENV_MODE=uv` dependency install (see Part I,
+Scenario 3), `:pep723_writeback` promotes the resolved dependency set into the entry file's own
 PEP 723 header via `uv add --script`, so the pin travels with the user's source file rather than
 staying only in `requirements.txt`/the lock file:
 
@@ -2033,14 +1576,14 @@ call (after a successful repair round) is functionally identical and not separat
 
 ---
 
-### Scenario 29: `HP_PVW_KNOWN_IDEMPOTENT` execute-mode discovery (REQ-005.13)
+### Scenario 23: `HP_PVW_KNOWN_IDEMPOTENT` execute-mode discovery (REQ-005.13)
 
 **What's tested:** `self.pvw_idempotent.discovery` (`tests/selfapps_pvw_idempotent.ps1`, `uv` lane,
 real and passing).
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708109` (`uv` lane).
 
-This is an opt-in super-user flag (not part of the default happy path -- Part III never sets it):
+This is an opt-in super-user flag (not part of the default happy path -- Part I never sets it):
 when defined, `run_setup.bat` skips straight to actually RUNNING the entry file live via
 `uvx autopep723 <entry>` for dependency discovery, before pipreqs or any static analysis even
 starts. Real capture:
@@ -2061,7 +1604,7 @@ path didn't happen to exercise.
 
 ---
 
-### Scenario 30: NI-VISA detection and install outcome (REQ-008)
+### Scenario 24: NI-VISA detection and install outcome (REQ-008)
 
 **What's tested:** `pyvisa.detect`/`.nivisa.branch`/`.nivisa.outcome`/`.nivisa.reason`/`.nivisa.disabled`
 (`tests/selfapps_pyvisa.ps1`, `real`/`conda-full` lanes, all real and passing).
@@ -2103,7 +1646,7 @@ detected, per REQ-019's suppression-only convention.
 
 ---
 
-### Scenario 31: pandas/openpyxl heuristic dependency augmentation (REQ-005.8)
+### Scenario 25: pandas/openpyxl heuristic dependency augmentation (REQ-005.8)
 
 **What's tested:** `pandas_excel.translate`/`.conda.install`/`.conda.install.req006`/`.runtime`,
 `self.pandas.openpyxl.install`/`.import` (`tests/selfapps_pandas_excel.ps1`, `conda-full` lane, all
@@ -2143,7 +1686,7 @@ entry on this exact fix), just not captured here since this test is conda-only b
 
 ---
 
-### Scenario 32: Conda base periodic update
+### Scenario 26: Conda base periodic update
 
 **What's tested:** `self.conda.base.update` (`tests/selfapps_conda_update.ps1`) -- **NOT currently
 wired into any CI lane** (per `docs/agent-ndjson.md`'s own explicit note: the `HP_TEST_CONDA_UPDATE`
@@ -2170,24 +1713,23 @@ would log something in the shape of `[INFO] Conda base update: running (last upd
 ago)...` followed by conda's own real update-solve output, then rewrites `~conda.lastupdate` to the
 current time on completion. This branch realistically only fires for a long-lived, repeatedly-reused
 project folder -- not the fresh-checkout scenarios this document otherwise captures -- and is
-correctly out of scope for a dedicated CI test per the reasoning already on record (a forced-update
-test previously broke conda's own solver in shared CI runners). No new CLAUDE.md backlog entry
-added -- this gap is already fully documented and deliberately accepted in
-`docs/agent-ndjson.md`'s "conda-full lane rows" section.
+correctly out of scope for a dedicated CI test: a forced-update test previously broke conda's own
+solver in shared CI runners, an accepted, documented tradeoff (`docs/agent-ndjson.md`'s
+"conda-full lane rows" section).
 
 ---
 
-### Scenario 33: REQ-014 system-Python consent -- ACCEPT
+### Scenario 27: REQ-014 system-Python consent -- ACCEPT
 
 **What's tested:** `self.ux.system.gate.accept` (`tests/selfapps_ux_hardening.ps1`, `real` lane,
-real and passing). Part VI's Scenario 21 already showed the DECLINE branch of this same gate (as
+real and passing). Part IV's Scenario 15 already showed the DECLINE branch of this same gate (as
 the terminal step of a full provider-cascade exhaustion); this scenario completes the pair.
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
 
 When every other REQ-009 provider tier has failed or been declined, the system-Python tier is
 still reached by any default, no-flag run -- it is gated solely by the REQ-014 consent prompt
-(Scenario 11 in Part III already documents the prompt's own framing text in full), never by an
+(Scenario 5 in Part I already documents the prompt's own framing text in full), never by an
 env-var the user would need to set. On ACCEPT, the bootstrapper proceeds to use whatever Python is
 already on the machine, unmanaged and unisolated:
 
@@ -2205,33 +1747,33 @@ tier that touches the user's real, shared Python environment instead of a privat
 
 ---
 
-## Part VIII: Additional branches found in a full-file sweep
+## Part VI: Additional branches found in a full-file sweep
 
 **Scope note:** after the original 5-pass plan completed, a systematic label-by-label sweep of
 every one of `run_setup.bat`'s 164 `:label`s (cross-checked against everything already written in
-Parts I-VII) turned up four genuine, user-observable gaps -- three straightforward missing
-scenarios, and one previously-undocumented, real bug in the bootstrapper's own error messaging,
+every other Part of this file) turned up four genuine, user-observable gaps -- three straightforward
+missing scenarios, and one previously-undocumented, real bug in the bootstrapper's own error messaging,
 found via real CI evidence and confirmed against source before being written up. Everything else
 checked in the sweep (roughly 150 of the 164 labels) was either already covered, internal
 control-flow plumbing with no independently observable behavior of its own (e.g. `:pfb_runapp`,
 `:mgc_gi_done`), or a narrow edge case not worth a dedicated scenario (e.g. `:cascade_consent_no_
 choice_exe`, reached only on a Windows image stripped of `choice.exe`).
 
-- [Scenario 34: Interactive entry picker -- multiple `.py` files, no clear winner (REQ-002)](#scenario-34-interactive-entry-picker----multiple-py-files-no-clear-winner-req-002)
-- [Scenario 35: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed](#scenario-35-pre-flight-syntax-error-rejection-req-021-and-a-real-bug-it-exposed)
-- [Scenario 36: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path](#scenario-36-req-007-system-python-build-consent-and-the-resulting-no-exe-interpreter-path)
-- [Scenario 37: EXE smoke-run diagnostic hints (companion to Scenario 22)](#scenario-37-exe-smoke-run-diagnostic-hints-companion-to-scenario-22)
+- [Scenario 28: Interactive entry picker -- multiple `.py` files, no clear winner (REQ-002)](#scenario-34-interactive-entry-picker----multiple-py-files-no-clear-winner-req-002)
+- [Scenario 29: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed](#scenario-35-pre-flight-syntax-error-rejection-req-021-and-a-real-bug-it-exposed)
+- [Scenario 30: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path](#scenario-36-req-007-system-python-build-consent-and-the-resulting-no-exe-interpreter-path)
+- [Scenario 31: EXE smoke-run diagnostic hints (companion to Scenario 16)](#scenario-37-exe-smoke-run-diagnostic-hints-companion-to-scenario-22)
 
 ---
 
-### Scenario 34: Interactive entry picker -- multiple `.py` files, no clear winner (REQ-002)
+### Scenario 28: Interactive entry picker -- multiple `.py` files, no clear winner (REQ-002)
 
 **What's tested:** `self.entry.picker` (`tests/selfapps_entry_picker.ps1`, `conda-full` lane, real,
 passing).
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full` lane).
 
-Part III's happy path covers the common single-`.py`-file case; this covers REQ-002's OTHER real
+Part I's happy path covers the common single-`.py`-file case; this covers REQ-002's OTHER real
 end-user scenario: a folder with several `.py` files where none is named `main.py`/`app.py`/
 `run.py`/`cli.py` and none has a substantive `if __name__ == "__main__":` block (`:determine_entry`'s
 own priority ladder, in `tools/find_entry.py`, exhausts every tier and falls back to
@@ -2254,7 +1796,7 @@ Type a number 1-2, or wait 30s for the default [1]:
 ```
 
 (the real capture's own timeout is shrunk to 2s via `HP_TEST_FORCE_PICKER`, the same CI-determinism
-technique already used for the timed cascade prompt in Scenario 11/21 -- the default, real-user
+technique already used for the timed cascade prompt in Scenario 5/21 -- the default, real-user
 window is 30 seconds, per `HP_PICK_T` in source, shown above as written). A real, non-interactive
 CI run also can't feed `choice.exe` an actual keystroke, so the captured log shows one extra,
 CI-only artifact line right after the prompt (`ERROR: The file is either empty or does not contain
@@ -2265,15 +1807,19 @@ a number, or simply waiting, never sees that line. Either way, the resolution is
 [INFO] REQ-002: Picker entry selected: a_app.py
 ```
 
-If MORE than 9 candidate files exist, the picker is skipped entirely (no menu can address more than
-the `123456789` `choice /C` charset) and the alphabetical pick is kept silently, logged as `[INFO]
-REQ-002: <N> candidates exceed picker limit; keeping <file> (alphabetical).` -- `[Extrapolated
-Branch]`, cited from `:pick_entry_interactive`, not independently captured in this run (would need a
-10th-plus stub `.py` file staged, which no current test does).
+If MORE than 9 candidate files exist, the picker's own numbered menu is skipped entirely (no menu
+can address more than the `123456789` `choice /C` charset) and the alphabetical pick is kept, logged
+as `[INFO] REQ-002: <N> candidates exceed picker limit; keeping <file> (alphabetical).`. The Tip
+block (the same three-item list shown above -- drag-and-drop, a preferred filename, or a
+`__main__` block) still prints right after that log line, since it's exactly the guidance a user
+who just hit a >9-file folder needs most to avoid landing here again -- this used to be silently
+skipped along with the rest of the menu, fixed in the same pass that wrote this scenario.
+`[Extrapolated Branch]`, cited from `:pick_entry_interactive`, not independently captured in CI
+(would need a 10th-plus stub `.py` file staged, which no current test does).
 
 ---
 
-### Scenario 35: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed
+### Scenario 29: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed
 
 **What's tested:** `self.preflight.syntax` (`tests/selfapps_preflight.ps1`, `real` lane, real,
 passing) for the ordinary case -- its `$pass` gate enforces the REQ-021 message firing, the real
@@ -2302,8 +1848,7 @@ environment creation that ran BEFORE this check are left intact (nothing is torn
 file on the next run reuses them.
 
 **A real bug, found via this exact sweep, confirmed against a real, unrelated capture (not
-fabricated for this scenario), and FIXED 2026-08-01 (formerly CLAUDE.md Active Backlog item 14,
-now in `docs/agent-closed-backlog.md`).** The capture below is historical, from before the fix,
+fabricated for this scenario), and fixed.** The capture below is historical, from before the fix,
 kept unedited as a real, timestamped log. `:preflight_compile` used to invoke `"%HP_PY%" -m
 py_compile "%HP_ENTRY%"` with no check that `HP_PY` was actually a valid, non-empty interpreter
 path first. On TOTAL REQ-009 provider-tier exhaustion (every tier fails or is declined),
@@ -2365,8 +1910,7 @@ if set, reports the real cause instead of running `py_compile` against an empty 
 across two `echo` lines inside the same parenthesized `if` block -- cmd.exe's block parser counts
 parens in echo text too, so a `(` on one line and its `)` on the next silently mis-closed the
 block and broke every CI lane reaching this branch in the same run. See
-`docs/agent-lessons-learned.md`'s batch-syntax-quirks section and
-`docs/agent-closed-backlog.md`'s Item 14 entry for the full trace.)
+`docs/agent-lessons-learned.md`'s batch-syntax-quirks section for the full trace.)
 
 This also skips the doomed PyInstaller build attempt entirely (`:run_entry_smoke`'s existing
 `HP_PREFLIGHT_FAILED` check already short-circuits the build, unchanged by this fix), not just the
@@ -2374,13 +1918,13 @@ misleading message.
 
 ---
 
-### Scenario 36: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path
+### Scenario 30: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path
 
 **What's tested:** `self.sysbuild.decline` (`tests/selfapps_sysbuild.ps1`, `real` lane, real,
 passing) -- its `$pass` gate enforces that the REQ-007 prompt text appears, the decline is
 logged, packaging is skipped with a logged reason, and no EXE exists afterward. The REQ-014
 "use system Python at all" accept step that gets this test INTO system-Python mode in the first
-place is the same mechanism Scenario 33's own `self.ux.system.gate.accept` test covers
+place is the same mechanism Scenario 27's own `self.ux.system.gate.accept` test covers
 independently, not re-asserted here. The interpreter-smoke success/status lines quoted below
 (`Entry smoke exit=0`, `[STATUS] Run Status: SUCCESS`) are genuinely present in this same real
 captured log but are NOT part of this test's own `$pass` gate -- shown here as observed fact from
@@ -2390,7 +1934,7 @@ the real capture, not as something this specific test independently verifies.
 `tests/~selftest_sysbuild/`'s own sub-bootstrap -- ONE coherent, continuous real capture covering
 the full journey below.
 
-Scenario 33 showed REQ-014's "use system Python at all?" consent being accepted. That is not the
+Scenario 27 showed REQ-014's "use system Python at all?" consent being accepted. That is not the
 only consent gate on this tier: once system Python is actually selected as the provider, a SECOND,
 independent consent gate (`:system_build_consent_gate`, REQ-007) asks separately about installing
 PyInstaller into that same system Python to build a standalone EXE -- distinct from REQ-014, and
@@ -2426,7 +1970,7 @@ consent gate):
 [INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
 ```
 
-The postflight briefing that follows is `:print_no_exe_briefing` (Part VII/CLAUDE.md's REQ-027 P2
+The postflight briefing that follows is `:print_no_exe_briefing` (Part V/CLAUDE.md's REQ-027 P2
 work already documents its honest-messaging design and its `HP_NOEXE_VERIFY_FAILED`-gated caveat
 variant) rather than the EXE-focused `:print_postflight_briefing` -- distinct panels for a
 genuinely distinct outcome (no packaged deliverable exists, but the app runs fine via the prepared
@@ -2434,7 +1978,7 @@ interpreter).
 
 ---
 
-### Scenario 37: EXE smoke-run diagnostic hints (companion to Scenario 22)
+### Scenario 31: EXE smoke-run diagnostic hints (companion to Scenario 16)
 
 **What's tested:** the `[HINT]` mechanism fires as a byproduct of `selfapps_exedata_fail.ps1`
 (`DATA_FILE` hint) and `selfapps_exedyn_fail.ps1`/`selfapps_hidden_import_exhaust.ps1`-family tests
@@ -2443,7 +1987,7 @@ diagnostic these tests emit, not the tests' own primary assertion target).
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
 
-Scenario 22 covers `--hidden-import` auto-recovery reaching its 3-attempt cap without resolving. In
+Scenario 16 covers `--hidden-import` auto-recovery reaching its 3-attempt cap without resolving. In
 that same failure family -- any EXE that still fails at runtime AFTER hidden-import recovery has
 been tried (or was never applicable, e.g. a genuinely missing DATA file, not a missing module) --
 `:exe_smokerun_hints` re-runs the EXE briefly (no timeout needed; these failures exit immediately)
@@ -2479,34 +2023,757 @@ via PowerShell) -- not independently captured in this run.
 
 ---
 
-### Scenario 38: No `.py` files at all -- the graceful `no_python_files` exit
+## Part VII: Full startup-to-shutdown walkthroughs
 
-**What's tested:** `self.empty_repo.msg` (`tests/selftest.ps1`, `real` lane, real, passing).
+**Scope note:** every scenario elsewhere in this file is deliberately narrow -- one feature area,
+excerpted to the lines that illustrate it. This Part does the opposite: five composite panels that
+show a run from its first console line to its last, so a reader can see the actual SHAPE of a
+complete bootstrap without jumping between sections. None of these is sourced from one single,
+continuous CI capture (no test in this repo is designed to produce that) -- each is assembled from
+real fragments already individually cited elsewhere in this file, spliced into one continuous flow
+and labeled where the splice itself (not any individual line) is `[Extrapolated Branch]`. Cross-
+reference the originating scenario for that fragment's own detailed sourcing rather than re-deriving
+it here.
 
-**Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
+### Scenario 32: Full walkthrough -- the ordinary happy path, start to shutdown
 
-Referenced throughout this document (e.g. Scenario 9's note that this repo's own bootstrapper
-root, which has no loose `.py` files, exercises this exact path) but never shown directly: when
-`PYCOUNT` (a plain `dir /b /a-d *.py` count) is zero, the bootstrapper takes the shortest path in
-the entire file -- no provider selection, no dependency install, nothing network-touching at all,
-skipping straight to a graceful, successful exit:
+Splices Scenario 2's pre-flight/entry-detection evidence and Scenario 3's provider/dependency
+evidence (both from the `colorama`-importing stub app) with Scenario 4's own single, fully
+self-consistent, zero-staleness real capture (the `hello_stub.py` trivial app, chosen there
+specifically because it already spans build through the final status panel with no gaps). All three
+are real CI captures from the same run (`30328748330`, job `90179708091`, "real" lane) -- just two
+different scratch apps within that run, since no single test in this repo builds one app all the
+way from a cold uv download through a `hello_stub`-style trivial verification. The splice point
+(where the `colorama` app's pre-build evidence hands off to the `hello_stub` app's build-onward
+evidence) is `[Extrapolated Branch]` -- the two are structurally identical at that point (both are
+first-ever runs, no cached state, uv-first), but were never the same process.
 
 ```
-[INFO] Environment name: _selftest_empty
-[INFO] Host OS: Microsoft Windows [Version 10.0.26100.32995]
-[INFO] Host PowerShell: 5.1.26100.32995
-[INFO] Python file count: 0
-Python file count: 0
-No Python files detected; skipping environment bootstrap.
-[INFO] No Python files detected; skipping environment bootstrap.
+[INFO] REQ-015: Appending standard ignores to .gitignore.
+[INFO] REQ-015: Appending standard attributes to .gitattributes.
+Chosen entry: app.py
+[INFO] uv: UV_PYTHON_PREFERENCE=only-managed (orchestration uses managed Python).
+[INFO] uv: downloading to ~uv_bin...
+[INFO] Downloading uv from https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip...
+[INFO] uv: acquired at ~uv_bin\uv.exe
+[INFO] uv-first: Miniconda download skipped.
+[INFO] uv: creating venv at .uv_env...
+[INFO] uv: venv created at .uv_env
+[INFO] HP_ENV_MODE=uv
+[BOOT] REQ-009: Selected Python provider: UV.
+[INFO] runtime.txt written: python-3.14.6
+[INFO] pipreqs 0.4.13 installed successfully; using it for dependency discovery.
+*** [WARN] Dependencies were auto-detected (pipreqs)
+*** [WARN] Auto-detection may be incomplete or incorrect
+*** [INFO] Consider adding requirements.txt or PEP 723 metadata for reliability
+[INFO] REQ-005.5: dependency source diff computed -- ~pipreqs.diff.txt
+[INFO] REQ-005.12: autopep723 discovery merge complete.
+[INFO] UV_USED=1
+[INFO] DEP_INSTALLED_CAPTURED=1
+[INFO] Environment snapshot written: ~environment.lock.txt
+[INFO] REQ-005.11: PEP 723 header write-back succeeded via uv add --script.
+[INFO] Building standalone executable -- this may take a minute or two...
+[INFO] (A stray one-line Windows message about a missing drive may appear next -- that is a known side effect from an unrelated background process, unrelated to your app; safe to ignore.)
+The system cannot find the drive specified.
+The system cannot find the drive specified.
+[INFO] PyInstaller produced dist\<env>.exe
+[DEBUG] warnfix: warn file found
+[INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically.
+[INFO] PyInstaller build artifacts cleaned up.
+[INFO] EXE smokerun: testing dist\<env>.exe
+[INFO] Running entry script smoke test via packaged EXE.
+[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
+[INFO] Process ID 6076. If it seems stuck: Task Manager > Details tab > find this PID > End Task (this window stays open).
+hello-from-stub
+[INFO] EXE smokerun: exited 0 (ok)
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+
+*** Verification finished -- see the Run Status above. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+  Run again via the interpreter now? [Y/N] _
 ```
 
-(the last message genuinely appears twice, back to back, in the real captured log -- once as a
-plain `echo` straight to console with no timestamp, once through `:log`'s own timestamped form
-written to both console and `~setup.log`; the block above shows both, with the second line's
-real timestamp prefix, e.g. `Tue 07/28/2026  4:29:15.97`, omitted here since it carries no
-information beyond confirming the two lines are adjacent). `~bootstrap.status.json` reads
-`{"state":"no_python_files","exitCode":0,
-"pyFiles":0}` -- a real user who double-clicks the bootstrapper in an empty folder, or in the
-wrong folder entirely, gets a clear, immediate, non-alarming message rather than the bootstrapper
-attempting (and inevitably failing) to build an environment for nothing.
+(the checkpoint prompt line itself is `[Extrapolated Branch]`, same reasoning as Scenario 5 -- it
+lives inside an unbounded `set /p`, never visible in a CI log). Declining both elective prompts
+(the checkpoint above, then the optimized-build offer) reaches the same "SETUP COMPLETE" panel
+already quoted in full in Scenario 4 -- not repeated a third time here; see that scenario for the
+exact panel text, or Scenario 5 for what accepting either prompt does instead.
+
+### Scenario 33: Full walkthrough -- uv can't resolve a dependency, cascades to conda, which does
+
+**Honesty note up front:** this exact narrow case -- uv fails specifically at DEPENDENCY
+RESOLUTION (not environment creation), cascades exactly once, and conda succeeds -- has no single
+real capture in this repo's CI history to point to. Scenario 15's own real capture (the fullest
+cascade evidence this repo has) walks uv through every tier to full exhaustion in one run, which is
+genuinely a harder case to hit than "cascades once and the next tier just works." The pieces below
+are real, individually cited fragments; the SPLICE connecting "uv cascades to conda" into "conda
+then succeeds and the run completes" is `[Extrapolated Branch]`, reusing this doc's own
+already-verified building blocks (the provider-selection log line and the generic build/verify/
+complete tail, both provider-agnostic in their wording) rather than inventing new text.
+
+Real trigger (Scenario 15, same wording, same reasoning about why it says "uv to conda" not
+"uv -> conda"):
+
+```
+[WARN] Repair failed: <package>
+[WARN] One or more repair attempts failed
+[REPAIR] rebuild complete after warnfix.
+[INFO] Entry smoke exit=1
+[STATUS] Run Status: FAILED (Exit Code: 1)
+[INFO] REQ-009: cascade approved; skipping the post-verification offers for this build.
+[INFO] REQ-009: cascading provider uv to conda; re-attempting dependencies.
+*** [INFO] Trying the next Python provider (conda) to resolve dependencies...
+```
+
+`:cascade_acquire_conda` downloads and installs Miniconda on demand at this point if it wasn't
+already on disk (uv-first runs skip Miniconda entirely until something actually needs it -- see
+`docs/agent-interconnect.md`'s "uv-First Provider Architecture"), then re-enters the same
+dependency-install machinery Scenario 3 already documents in full, just under
+`HP_ENV_MODE=conda` this time (`[Extrapolated Branch]` for this specific re-entry's own console
+text, though every individual line reused below is independently real elsewhere in this file):
+
+```
+[BOOT] REQ-009: Selected Python provider: Conda (Portable).
+Creating Python environment '<env>' -- this may take several minutes...
+[INFO] runtime.txt written: python-3.14.6
+[INFO] Building standalone executable -- this may take a minute or two...
+[INFO] PyInstaller produced dist\<env>.exe
+[INFO] EXE smokerun: testing dist\<env>.exe
+[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
+[INFO] EXE smokerun: exited 0 (ok)
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+```
+
+followed by the ordinary "SETUP COMPLETE" panel (Scenario 4). The mechanism-level reason conda has
+a genuine, above-average chance of resolving what uv couldn't -- a real, different package index
+with pre-built native-extension wheels, not just a fresh attempt at the same resolution -- is
+covered in `docs/agent-interconnect.md`'s "Cascade signal reliability" section; that section is
+also why later cascade hops (embed/venv/system) carry comparatively less of this same justification.
+
+### Scenario 34: Full walkthrough -- warnfix repair and rebuild, start to finish
+
+Splices Scenario 17's real repair-loop fragments with the generic build-start/verify/complete text
+already verified real elsewhere in this file (Scenario 4). The connecting tissue (that these two
+fragments belong to the same run) is `[Extrapolated Branch]`; every individual line is independently
+a real capture cited in its own originating scenario.
+
+```
+[INFO] Building standalone executable -- this may take a minute or two...
+[INFO] PyInstaller produced dist\<env>.exe
+[DEBUG] warnfix: warn file found
+[INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically.
+[REPAIR] missing modules detected; installing and rebuilding.
+[REPAIR] rebuild complete after warnfix.
+[INFO] PyInstaller build artifacts cleaned up.
+[INFO] EXE smokerun: testing dist\<env>.exe
+[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
+[INFO] EXE smokerun: exited 0 (ok)
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+```
+
+followed by the ordinary "SETUP COMPLETE" panel. Note what does NOT appear here: no second
+"[INFO] Building standalone executable" banner precedes the repair rebuild -- `[REPAIR] rebuild
+complete after warnfix.` covers the whole re-invocation, PyInstaller's own build noise from that
+second pass is not separately re-echoed. The failure variant of this same loop (a module that
+genuinely can't be installed, e.g. `StringIO`) is already documented in Scenario 17 -- that variant
+still reaches `[REPAIR] rebuild complete after warnfix.` (bundling whatever DID install) and is what
+actually feeds the provider cascade Scenario 33 above walks through.
+
+### Scenario 35: Full walkthrough -- `--hidden-import` auto-recovery succeeds on the first rebuild
+
+**Honesty note:** Scenario 16 documents this mechanism's EXHAUSTION path with a real captured line;
+the one-shot SUCCESS path's exact rebuild line has never been independently console-dumped in this
+file, only confirmed present via `self.exe.hidden_import`'s own passing NDJSON row (the same
+"test passes, so no full log was dumped" situation Scenario 39 already documents for a different
+mechanism) and via the exact line format quoted from source at Scenario 39 (a different context --
+Tier A's hidden-import SKIP guard -- but quoting the identical `[REPAIR][HIDDEN_IMPORT]` line
+PyInstaller's own recovery path would have printed). This whole panel is therefore
+`[Extrapolated Branch]`, built from source, not a stitch of independently-real fragments the way
+Scenario 32/33/34 above are.
+
+```
+[INFO] Building standalone executable -- this may take a minute or two...
+[INFO] PyInstaller produced dist\<env>.exe
+[INFO] PyInstaller build artifacts cleaned up.
+[INFO] EXE smokerun: testing dist\<env>.exe
+[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
+[WARN] EXE smokerun: exited 1 (non-zero)
+[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=<module>; rebuilding EXE (iter 1/3)
+[INFO] PyInstaller produced dist\<env>.exe
+[INFO] EXE smokerun: testing dist\<env>.exe
+[INFO] EXE smokerun: exited 0 (ok)
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+```
+
+followed by the ordinary "SETUP COMPLETE" panel. The gate that makes this rebuild worth attempting
+at all -- the failure must be a real `ModuleNotFoundError` (not a bare `ImportError`) for a module
+that IS installed in the build interpreter, and the EXE must have been built by PyInstaller, not
+Tier A's Nuitka fallback -- is covered in full in `docs/agent-lessons-learned.md`'s "--hidden-import
+auto-recovery must stay STRICT" entry; Scenario 16 covers the case where three rebuilds still don't
+resolve it.
+
+### Scenario 36: Full walkthrough -- `HP_PVW_KNOWN_IDEMPOTENT`, with the actual input and output files
+
+Scenario 23 already covers this flag's console output; this walkthrough adds what that scenario
+doesn't show: the actual file contents a user would see before and after. Source: the real,
+deterministic stub app `tests/selfapps_pvw_idempotent.ps1` stages for `self.pvw_idempotent.discovery`
+(`uv` lane, real, passing) -- quoted directly from the test's own source, not a CI console dump, but
+these are the literal bytes that test writes and asserts against.
+
+**Input, `app.py` (the user's only file, before running the bootstrapper at all):**
+
+```python
+import requests
+print('t2-idempotent-ok')
+```
+
+No `requirements.txt`, no `pyproject.toml`, no PEP 723 header -- genuinely nothing else in the
+folder besides `run_setup.bat` and this one file (the test isolates pipreqs via `HP_SKIP_PIPREQS=1`
+specifically so this is the ONLY way `requests` can end up discovered -- see Scenario 23's own
+production-vs-test-isolation note for why that flag is test-only, never how this feature runs for a
+real user).
+
+**Console output** (real, `self.pvw_idempotent.discovery`'s own capture, already fully quoted in
+Scenario 23 -- repeated here only for continuity with the file changes below):
+
+```
+[INFO] REQ-005.13: HP_PVW_KNOWN_IDEMPOTENT set; running entry via uvx autopep723 for execute-mode discovery.
+t2-idempotent-ok
+[INFO] REQ-005.13: execute-mode discovery run succeeded (RAN:persisted).
+```
+
+(`t2-idempotent-ok` is the app's own live stdout, inherited straight through the discovery run --
+real NDJSON detail confirms `stdoutPassthroughFound:true`, the exact design point
+`tools/pvw_known_idempotent.py` exists to preserve; see `docs/agent-interconnect.md`.)
+
+**Output, `app.py` (same file, now carrying a PEP 723 header `uv add --script` wrote in place):**
+this is the STANDARD shape `uv add --script` is documented to produce (see
+`docs/agent-lessons-learned.md`'s "`uv add --script` / PEP 723 empirical behavior" section) --
+`[Extrapolated Branch]` for the exact formatting shown, since this specific test doesn't assert
+byte-for-byte header content, only that the resulting `requirements.txt` (below) ends up containing
+`requests`:
+
+```python
+# /// script
+# dependencies = [
+#     "requests",
+# ]
+# ///
+
+import requests
+print('t2-idempotent-ok')
+```
+
+**Output, `requirements.txt` (newly created -- did not exist before this run):** re-extracted from
+the header above via the same `:extract_pep723_requirements` subroutine the pre-existing-header case
+already uses (see `docs/agent-interconnect.md`'s "HP_PVW_KNOWN_IDEMPOTENT execute-mode discovery"
+section for why re-extraction, not the header alone, is what feeds the rest of the pipeline). Real,
+directly confirmed: the test's own assertion is `$reqsText -match 'requests'` against this exact
+file:
+
+```
+requests
+```
+
+Production behavior (unlike this test's isolated setup) does NOT stop here -- pipreqs and the
+Tier 1 `autopep723 check` merge (Scenario 3) both still run normally afterward, additively layering
+on top of whatever this execute-mode pass already found, in case anything conditionally-imported
+didn't execute during this one discovery run.
+
+## Part VIII: AV-Safe Build Path (Nuitka fallback)
+
+### Scenario 37: PyInstaller build fails, Tier A (Nuitka) fallback succeeds
+
+**What's tested:** `self.exe.build.tiera` (`tests/selfapps_nuitka_tiera.ps1`, uv lane,
+non-gating). `HP_TEST_FORCE_PYINSTALLER_FAIL=1` forces the primary build to fail deterministically;
+the Nuitka fallback (`:try_nuitka_tier_a`) then runs for real -- a genuine compile, not simulated.
+
+**What appears on screen**, from the moment PyInstaller's build is attempted through to the final
+summary. Sourced from real CI (run `29788624195`, job `88506013149`); the "(fallback build system)"
+verification line and the drive-message reassurance line are exactly as captured, while the
+"Verifying the built standalone EXE" line and the "Does your program need launch arguments"
+paragraph reflect current source (`docs/plan-cli-interactive-verification.md` requirement 3's
+activity-aware kill, and REQ-026's argv passthrough, both of which shipped after this specific run):
+
+```
+[INFO] Building standalone executable -- this may take a minute or two...
+[INFO] (A stray one-line Windows message about a missing drive may appear next -- that is a known side effect from an unrelated background process, unrelated to your app; safe to ignore.)
+The system cannot find the drive specified.
+The system cannot find the drive specified.
+[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
+[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
+[INFO] Fallback build succeeded: dist\<env>.exe was produced using the fallback build system.
+[DEBUG] warnfix: warn file not found
+[INFO] PyInstaller build artifacts cleaned up.
+[INFO] EXE smokerun: testing dist\<env>.exe
+[INFO] Running entry script smoke test via packaged EXE.
+[WARN] Verifying the built standalone EXE (fallback build system) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
+[INFO] EXE smokerun: exited 0 (ok)
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+
+*** Verification finished -- see the Run Status above. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+[INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
+
+============================================================
+ SETUP COMPLETE
+============================================================
+ Your standalone application is ready:
+   dist\<env>.exe
+
+ RUNNING YOUR APP
+   Double-click dist\<env>.exe to run it.
+
+   STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
+   starts, so allow 10-15 seconds (longer for big libraries like
+   numpy/scipy/matplotlib, or when extra packages were bundled to fix
+   missing imports) before assuming it has hung.
+
+   If the window flashes and closes instantly: that's normal if
+   your program finished quickly or hit an error before printing
+   anything. To see what happened, open Command Prompt, cd to
+   this folder, and run:
+     dist\<env>.exe
+   This keeps the window open so you can read any messages.
+
+   A progress indicator that updates in place may appear all at
+   once instead of live when run as the .exe -- that is a stdout
+   buffering difference between the .exe and the script, not an error.
+
+   Does your program need launch arguments (e.g. --input file.csv)? Run
+   this bootstrapper again with them added after the entry file, e.g.
+     run_setup.bat "<entry.py>" --input file.csv
+   and they will be forwarded to your program during THIS setup run
+   (up to 8 extra arguments). This does not change how a plain
+   double-click of dist\<env>.exe launches it afterward -- for that,
+   make a Windows shortcut to the .exe and add the arguments to its
+   Target field, or launch it yourself from a Command Prompt.
+
+ KEEP these files with your project:
+   requirements.txt  -- packages your app depends on
+   runtime.txt       -- Python version pin
+
+ SAFE TO DELETE to reclaim disk space:
+   .*_env\ folders   -- environment directories
+   ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+   build\            -- PyInstaller build cache
+============================================================
+```
+
+The "Verifying the built standalone EXE" line now correctly says "(fallback build system)"
+instead of a hardcoded "(PyInstaller)" when the EXE being verified was actually Nuitka-built
+(`:warn_user_code_launch` branches on `HP_NUITKA_FALLBACK_USED`). The postflight briefing's
+"PyInstaller build cache" line is left as-is -- Nuitka never creates a `build\<env>\` folder of
+its own (its `--remove-output` flag cleans up its own intermediates), so that line stays literally
+true regardless of which tool actually built the current EXE: if a `build\` folder exists, it's
+PyInstaller's. See Scenario 42 for the argv-passthrough paragraph's own dedicated writeup.
+
+---
+
+### Scenario 38: PyInstaller build fails, Tier A fallback ALSO fails (tier exhaustion)
+
+**What's tested:** `self.exe.build.xfail` (`tests/selfapps_pyinstaller_fail.ps1`, real/conda-full
+lanes, gating). Three sub-scenarios share one NDJSON row id: `execfail` (the PyInstaller build
+command itself fails), `output_vanish` (PyInstaller succeeds, then the output EXE vanishes
+immediately -- simulating AV-style post-creation removal), and `execfail_runtimefail` (packaging
+fails AND the interpreter fallback that runs next ALSO exits non-zero -- see Scenario 43a for that
+one's console text, since it's really a REQ-027 demo). The first two additionally force
+`HP_TEST_FORCE_NUITKA_FAIL=1` so the fallback also fails, proving genuine tier exhaustion.
+
+#### 38a. `execfail` -- the PyInstaller build command itself fails
+
+Real CI capture, run `29788624195`, job `88506013028` ("real" lane):
+
+```
+[INFO] Building standalone executable -- this may take a minute or two...
+[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
+[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
+[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure.
+[ERROR] PyInstaller execution failed.
+[DEBUG] warnfix: warn file not found
+[INFO] PyInstaller build artifacts cleaned up.
+[WARN] EXE smokerun: dist\<env>.exe not found; skipping
+[INFO] Running entry script smoke test via uv interpreter.
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+
+[INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
+```
+
+When BOTH the PyInstaller build and the Nuitka fallback fail outright but the interpreter
+fallback's own run exits 0 (this trivial stub script does), the final line is
+`[STATUS] Run Status: SUCCESS (Exit Code: 0)` and the postflight panel is the plain
+"YOUR CODE RAN -- BUT NO STANDALONE .EXE WAS PRODUCED" variant -- see Scenario 43a for the
+different, honest "we can't confirm" panel this same tier-exhaustion path shows instead when the
+interpreter run ALSO fails.
+
+#### 38b. `output_vanish` -- PyInstaller succeeds, then the EXE disappears immediately
+
+Real CI capture, same run/job as 2a:
+
+```
+[INFO] Building standalone executable -- this may take a minute or two...
+[TEST] HP_TEST_FORCE_OUTPUT_VANISH: deleting freshly-built EXE to simulate post-creation removal.
+[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
+[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure.
+[ERROR] PyInstaller did not produce dist\<env>.exe
+[DEBUG] warnfix: warn file found
+[INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically.
+[INFO] PyInstaller build artifacts cleaned up.
+[WARN] EXE smokerun: dist\<env>.exe not found; skipping
+[INFO] Running entry script smoke test via uv interpreter.
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+
+*** Verification finished -- see the Run Status above. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+[INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
+```
+
+---
+
+### Scenario 39: Tier A + hidden-import auto-recovery skip guard
+
+**What's tested:** `self.exe.tiera.hidden_skip` (`tests/selfapps_nuitka_tiera_hidden_skip.ps1`, uv
+lane, non-gating). Forces Tier A to trigger and succeed for real, then has the stub app fabricate
+a `ModuleNotFoundError: No module named 'nuitka'` on stderr and exit 1 -- the exact signature that
+used to (before this fix) trigger an incorrect PyInstaller rebuild attempt against a Nuitka-built
+EXE.
+
+**Source:** confirmed in real CI run `29877805447`, uv lane, job `88792048278`:
+```
+{"details":{"appStdoutFound":true,"noRepairRebuild":true,"successLogged":true,"skipGuardLogged":true,"exeExists":true,"statusState":"ok","bootstrapExit":0,"smokerunNonzeroLogged":true,"attemptLogged":true,"log":"~nuitka_tiera_hidden_skip_bootstrap.log"},"req":"REQ-AV","pass":true,"desc":"AV-Safe Build Path Tier A: hidden-import auto-recovery correctly skips (never rebuilds via PyInstaller) against a Nuitka-built EXE","id":"self.exe.tiera.hidden_skip","lane":"uv"}
+```
+The test only dumps a full console log to CI when a scenario fails; since this one passes, the
+exact console text below is reconstructed from `run_setup.bat`'s source rather than copied from a
+console dump -- the NDJSON row's `skipGuardLogged`/`noRepairRebuild` fields are the test's own
+regex-verified confirmation that these exact lines were present/absent in the real captured log:
+
+```
+[INFO] Building standalone executable -- this may take a minute or two...
+[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
+[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
+[INFO] Fallback build succeeded: dist\<env>.exe was produced using the fallback build system.
+[INFO] EXE smokerun: testing dist\<env>.exe
+[WARN] EXE smokerun: exited 1 (non-zero)
+[INFO][HIDDEN_IMPORT] Skipping --hidden-import auto-recovery: dist\<env>.exe was built via the fallback build system (Nuitka), which uses a different missing-import mechanism than PyInstaller's --hidden-import flag.
+```
+
+Without this guard, `run_setup.bat` would instead print
+`[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=nuitka; rebuilding EXE (iter 1/3)` here and
+attempt a PyInstaller rebuild against a Nuitka-built EXE.
+
+---
+
+### Scenario 40: Requirement 9 -- elective "want an optimized build too?" offer
+
+**What's tested:** `self.optbuild.offer` (`tests/selfapps_optimized_build.ps1`, uv lane,
+non-gating), four scenarios sharing one row id.
+
+**Source:** confirmed in real CI run `29877805447`, uv lane, job `88792048278`, all four scenarios
+passing:
+```
+{"lane":"uv","details":{"log":"~optbuild_accept_bootstrap.log","statusState":"ok","scenario":"accept","successLogged":true,"promptShown":true,"tmpExeGone":true,"exeExists":true,"bootstrapExit":0,"acceptedLogged":true,"appStillRuns":true},"desc":"AV-Safe Build Path requirement 9 (accept): a real optimized build succeeds, verifies, and is swapped into place","req":"REQ-AV","id":"self.optbuild.offer","pass":true}
+{"req":"REQ-AV","lane":"uv","desc":"AV-Safe Build Path requirement 9 (forcefail): a failed optimized build leaves the original PyInstaller EXE completely untouched","id":"self.optbuild.offer","details":{"originalStillRuns":true,"bootstrapExit":0,"log":"~optbuild_forcefail_bootstrap.log","tmpExeGone":true,"promptShown":true,"exeExists":true,"testHookFired":true,"scenario":"forcefail","statusState":"ok","noSuccessMsg":true},"pass":true}
+{"req":"REQ-AV","id":"self.optbuild.offer","lane":"uv","pass":true,"details":{"bootstrapExit":0,"acceptedLogged":true,"originalStillRuns":true,"log":"~optbuild_swapfail_bootstrap.log","promptShown":true,"exeExists":true,"tmpExeGone":true,"scenario":"swapfail","statusState":"ok","noSuccessMsg":true,"swapFailLogged":true},"desc":"AV-Safe Build Path requirement 9 (swapfail): a verified optimized build whose final swap fails leaves the original PyInstaller EXE completely untouched and cleans up the leftover temp file"}
+{"desc":"AV-Safe Build Path requirement 9 (decline): default/CI path shows the prompt but never attempts a build","lane":"uv","details":{"statusState":"ok","noBuildAttempt":true,"tmpExeGone":true,"scenario":"decline","log":"~optbuild_decline_bootstrap.log","bootstrapExit":0,"exeExists":true,"declinedLogged":true,"promptShown":true},"req":"REQ-AV","id":"self.optbuild.offer","pass":true}
+```
+
+#### 40a. `accept` -- a real optimized build succeeds and is swapped in
+
+Real, verbatim console dump (`~selftest_optbuild_accept\~optbuild_accept_bootstrap.log`), with the
+"Verifying the built standalone EXE" line updated in place to reflect current source (requirement
+3's activity-aware kill plus the quit-prompt hint, both of which shipped after this capture):
+
+```
+[INFO] Building standalone executable -- this may take a minute or two...
+The system cannot find the drive specified.
+The system cannot find the drive specified.
+[INFO] PyInstaller produced dist\<env>.exe
+[INFO] warnfix: Platform-specific modules in the list above are expected on Windows: posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external. These will be filtered out automatically.
+[INFO] PyInstaller build artifacts cleaned up.
+[INFO] EXE smokerun: testing dist\<env>.exe
+[INFO] Running entry script smoke test via packaged EXE.
+[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
+[INFO] EXE smokerun: exited 0 (ok)
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+
+*** Verification finished -- see the Run Status above. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+[INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
+
+*** Your app is ready. ***
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
+[INFO] Optimized build: accepted; building now (this may take a minute or two).
+[INFO] Optimized build succeeded and verified: dist\<env>.exe now uses the fallback build system.
+```
+
+The "warnfix: Platform-specific modules..." line above is this specific verbatim capture's own
+pre-existing wording; current wording for that same line is shown in Scenario 34.
+
+**The interactive `Build the optimized version now? [Y/N]` prompt line is echoed unconditionally
+by design** (same pattern as `:run_postexec_checkpoint`), but does not appear literally in any
+CI capture -- CI answers via the `HP_TEST_OPTBUILD_ANSWER` env-var override, not the interactive
+`set /p` path, so only the resolution lines (`accepted`/`declined`) show up in these logs. This is
+expected (CI is non-interactive by design), not a gap.
+
+#### 40b. `forcefail` -- accepted, but the build fails; original EXE is left untouched
+
+Real, verbatim console dump (`~selftest_optbuild_forcefail\~optbuild_forcefail_bootstrap.log`):
+
+```
+*** Your app is ready. ***
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
+[INFO] Optimized build: accepted; building now (this may take a minute or two).
+[TEST] HP_TEST_FORCE_OPTBUILD_FAIL: simulating optimized-build failure.
+[INFO] REQ-016: Post-flight briefing printed.
+```
+
+No further message prints between the forced-fail log line and the (unrelated, always-present)
+post-flight briefing -- the subroutine cleans up the temp file and returns silently. This is a
+narrower silence than the wording used on a REAL build-failure branch (which explicitly says
+"your app is still ready to use as-is" -- see the reactive hint below); a forced-test-hook failure
+and a genuine build failure currently give the user different amounts of reassurance for what is,
+from their perspective, the same outcome.
+
+#### 40c. `swapfail` -- verified build, but the final swap step fails; original EXE is left untouched
+
+Regression test for a real bug: the swap-verification check used to test the DESTINATION file
+(which already exists before the move, success or failure alike) instead of the SOURCE (which
+should be gone only on success) -- a genuinely failed swap would have been silently misreported
+as success. Fixed; console text (expected from source, not yet dumped in a CI console capture
+since this scenario has passed on every run so far):
+
+```
+*** Your app is ready. ***
+*** Want to build an optimized version too? ... ***
+[INFO] Optimized build: accepted; building now (this may take a minute or two).
+[WARN] Optimized build verified successfully but could not be swapped into place; your app is still ready to use as-is.
+```
+
+#### 40d. `decline` -- default/CI path, prompt shown but nothing built
+
+Real, verbatim console dump (`~selftest_optbuild_decline\~optbuild_decline_bootstrap.log`):
+
+```
+*** Your app is ready. ***
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
+[INFO] Optimized build: declined.
+```
+
+#### Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths)
+
+Fires only on a GENUINE Nuitka compiler failure (not the `forcefail` test hook, which bypasses it
+entirely). No CI run to date has exercised a real Nuitka compiler failure, so this is sourced from
+`run_setup.bat` rather than a console capture:
+
+```
+[WARN] Optimized build did not complete; your app is still ready to use as-is.
+[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help.
+```
+
+---
+
+## Part IX: CLI interactivity, argv passthrough & honest messaging
+
+Covers `docs/plan-cli-interactive-verification.md` (P0/P1/P2, all shipped): the live-tee
+verification redesign that lets an interactive `input()`-driven program's prompts actually reach
+the console, the activity-aware 30-second kill, argv passthrough (REQ-026), and the honest
+ambiguous-exit messaging panels (REQ-027).
+
+### Scenario 41: Interactive verification -- live-tee, activity-aware kill, and the quit-prompt hint
+
+**What changed, in one sentence:** before this plan, `:run_exe_smokerun`'s verification launch
+force-killed at a hard 30 seconds regardless of output, and captured stdout/stderr only to a file
+(never live to the console) -- so a program correctly waiting on its first `input()` prompt looked
+identical to a genuinely hung one, and the user watching the window saw nothing until the process
+either finished or got killed.
+
+**What's tested (the plumbing):** `self.interactive.stdin.roundtrip`
+(`tests/selfapps_interactive_stdin.ps1`, uv lane, non-gating) builds a real PyInstaller EXE from a
+multi-round `input()`-driven stub app and pipes a scripted answer sequence into `cmd.exe`'s own
+stdin, exercising the full `cmd.exe -> :run_exe_smokerun -> ~exe_smokerun.ps1 -> the built EXE`
+chain and asserting each answer lands in the right round via ordering checks on the captured log
+-- it proves the plumbing doesn't drop or reorder stdin/stdout, not a live human's own typing
+timing (which can't be automated).
+
+**The WARN line a user sees right before the verification launch**, current shipped wording
+(source: `run_setup.bat`, `:warn_user_code_launch` -- not a console capture, since CI answers
+scripted stdin rather than a human watching the window; Scenario 37 and Scenario 40a above both show
+this exact line in situ):
+
+```
+[WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
+```
+
+Three things this one line is doing:
+1. **States the actual kill rule truthfully**: the 30-second cap is a classification checkpoint,
+   not an unconditional deadline -- `Kill()` only fires if the process has stayed COMPLETELY
+   silent that whole time. Any output (including a bare prompt with no trailing newline, the exact
+   shape of Python's own `input("...")`) switches to an unbounded wait.
+2. **Actively guides the user toward a clean result**: driving an interactive program to its own
+   quit/exit option during this pass turns an otherwise-ambiguous exit into a genuine, confirmed
+   `[STATUS] Run Status: SUCCESS` -- this directly reduces how often a real user ever sees either
+   of Scenario 43's ambiguous-exit panels.
+3. **Still warns it's a throwaway pass, not the user's real, saveable session** -- this verification
+   EXE is never reused; only the file it's already tested is kept for later double-clicks.
+
+The `hidden_import` recovery loop's own separate, narrower verification check (see
+`docs/agent-interconnect.md`'s "Activity-aware EXE-smoke kill" section) deliberately keeps the
+OLDER, unconditional 30-second wording -- it's a bounded repair-verification check on an
+already-built EXE, not the user's primary run, so it never got the interactive-friendly rewrite.
+
+### Scenario 42: Argv passthrough (REQ-026) -- launch arguments through the bootstrapper
+
+Extra arguments after the entry file on `run_setup.bat`'s own command line (up to 8) are forwarded
+verbatim to the target program at every real launch site -- the cached-EXE fast path, the fresh EXE
+verification, the no-EXE interpreter run, and the post-execution checkpoint's elective second run.
+This is a documented, opt-in escape hatch (no detection or heuristics involved) for a program that
+needs `--flag value`-style launch arguments to run correctly, on top of this bootstrapper's usual
+zero-argument double-click flow.
+
+**The postflight guidance a user sees after a successful EXE build** (Scenario 37's full panel
+above shows this in context):
+
+```
+   Does your program need launch arguments (e.g. --input file.csv)? Run
+   this bootstrapper again with them added after the entry file, e.g.
+     run_setup.bat "<entry.py>" --input file.csv
+   and they will be forwarded to your program during THIS setup run
+   (up to 8 extra arguments). This does not change how a plain
+   double-click of dist\<env>.exe launches it afterward -- for that,
+   make a Windows shortcut to the .exe and add the arguments to its
+   Target field, or launch it yourself from a Command Prompt.
+```
+
+**The equivalent guidance on the no-EXE path** (direct-interpreter-invocation form, part of
+Scenario 43a's panel below):
+
+```
+   Need launch arguments? Add them directly after that command, e.g.
+     "<python>" "<entry.py>" --input file.csv
+```
+
+Both are additive to the launch commands already shown in each panel, not a separate prompt --
+matching this bootstrapper's general rule that env-var/CLI flags only ever add an opt-in path or
+suppress an optional step, never gate a behavior the Prime Directive needs (see CLAUDE.md's
+`[REQ-019]`).
+
+### Scenario 43: Honest ambiguous-exit messaging (REQ-027)
+
+Both panels below fire only when a verification run ends AMBIGUOUSLY -- the program exited with an
+error, and no automatic repair (`--hidden-import` auto-recovery, the REQ-009 dependency-resolution
+cascade) fixed it. Neither panel claims to know WHY: a bug in the program's own code, something
+this bootstrapper missed, or an unresolved dependency are all indistinguishable from here, and both
+panels say so plainly rather than guessing. This is messaging only -- `~bootstrap.status.json`
+semantics, the process exit code, and consent-gate behavior are all unchanged.
+
+Both are new enough (shipped, then refined once more for wording, entirely within this same
+session) that no CI run has yet produced a console capture including the current wording -- both
+quotes below are sourced directly from `run_setup.bat`, not a job log.
+
+#### 43a. No-EXE path, interpreter also failed
+
+Fires when BOTH PyInstaller and the Nuitka fallback fail to package the app outright, AND the
+interpreter fallback that runs next (the only way left to run the program at all) also exits
+non-zero -- the scenario Scenario 38a's own `execfail` sub-case would hit if its trivial stub script
+didn't happen to exit cleanly. Source: `:print_no_exe_briefing`'s `:noexe_caveat` branch,
+`run_setup.bat`:
+
+```
+============================================================
+ NO STANDALONE .EXE -- AND WE CAN'T CONFIRM YOUR CODE RAN CLEANLY
+============================================================
+ We could not package your app into a double-clickable .exe
+ (see the ERROR message above for why). We also just ran it
+ directly via the prepared Python environment, and it exited
+ with an error (see the [STATUS] line above) -- so we can't
+ tell whether that's a bug in the Python code we tried to run
+ or something this bootstrapper missed. Your environment and
+ dependencies ARE still installed correctly; run it yourself
+ below to see the full output.
+
+ RUNNING YOUR APP (without an .exe) -- the most direct option
+   "<python>" "<entry.py>"
+   Need launch arguments? Add them directly after that command, e.g.
+     "<python>" "<entry.py>" --input file.csv
+
+ Want to try different arguments through the bootstrapper itself
+ instead? Your already-installed environment is reused either
+ way; it will just attempt the .exe build again too:
+   run_setup.bat "<entry.py>" arg1 arg2
+
+ KEEP these files with your project:
+   requirements.txt  -- packages your app depends on
+   runtime.txt       -- Python version pin
+
+ SAFE TO DELETE to reclaim disk space:
+   .*_env\ folders   -- environment directories
+   ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+============================================================
+```
+
+The direct-run command stays the visually primary option (matches this panel's own established
+preference for running the program directly over going back through the bootstrapper); the
+bootstrapper-rerun mention is deliberately secondary and uses the real entry filename (`%HP_ENTRY%`
+is reliably set by this point in the pipeline -- unlike Scenario 43b below).
+
+When the interpreter run instead exits CLEANLY (the common case, and what Scenario 38a's own capture
+shows), this panel's header and opening paragraph read differently -- plain "YOUR CODE RAN -- BUT
+NO STANDALONE .EXE WAS PRODUCED", with no claim of an unconfirmed run -- but the rest of the panel
+(launch commands, KEEP/SAFE TO DELETE lists) is identical either way.
+
+#### 43b. Cached-EXE fast path, kept despite a non-zero exit
+
+Fires when the fail-fast probe classifies a REUSED `dist\<env>.exe` (the top-of-file fast path,
+before any provider/entry-file logic runs) as alive/healthy -- so it's kept, never
+discarded-and-rebuilt -- and it later exits non-zero. Before this fix, this exact case had no
+postflight signal at all beyond one `[WARN]` log line buried among other console output. Source:
+`:print_fastpath_ambiguous_note`, `run_setup.bat`:
+
+```
+============================================================
+ SETUP COMPLETE -- BUT WE CAN'T CONFIRM YOUR LAST RUN WORKED
+============================================================
+ Your existing standalone application was reused (dist\<env>.exe),
+ and it exited with an error just now (see the [STATUS] line
+ above) -- so we can't tell whether that's a bug in the Python
+ code we tried to run, or something else. Your environment and
+ dependencies ARE still installed correctly.
+
+ RUNNING YOUR APP
+   Double-click dist\<env>.exe to run it, or run it from a
+   Command Prompt to see the full output.
+
+ WANT TO TRY AGAIN? You do not have to start over from scratch --
+   just run this bootstrapper again the same way you did before;
+   your already-installed environment and built .exe are reused.
+
+ WANT A FRESH BUILD instead (re-checks all dependencies from scratch)?
+   Delete dist\<env>.exe and run this bootstrapper again.
+============================================================
+```
+
+This panel is a PLAIN INFORMATIONAL PRINT, never a consent gate -- the cached-EXE fast path is
+deliberately zero-friction for prompts (see `docs/agent-interconnect.md`'s "Fast path = ZERO
+friction" design requirement), and this doesn't violate that since it never asks a question.
+
+**No entry filename appears anywhere in this panel, unlike 7a's rerun mention -- deliberately.**
+`HP_ENTRY` is not set yet at the point the top-of-file fast path runs (it fires before
+`:determine_entry` ever executes, since the cached EXE is self-contained and doesn't need the
+original source filename to relaunch), so naming one here would show blank or stale text. The two
+rerun options are worded to distinguish a genuinely different tradeoff instead: rerunning WITHOUT
+deleting the EXE reuses it (via the same fast path that got the user here) with no promise about
+whether it's actually faster overall, while deleting it first forces a full, slower, from-scratch
+dependency check.
+
+---
