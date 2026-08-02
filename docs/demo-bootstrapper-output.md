@@ -24,13 +24,13 @@ the kind of content this doc wants (see Scenario 29, Scenario 39 for two kept in
 distinction is between explaining what the reader is looking at right now versus narrating how
 this document itself was assembled.
 
-**Sourcing convention:** every quoted block is either copied verbatim from a real GitHub Actions
-job log (cited with run ID, job ID, lane, and test file), taken directly from `run_setup.bat`'s
-current source because no CI run has exercised that exact wording yet, or -- for the composite
-walkthroughs in Part VII -- assembled by splicing several independently-real fragments together,
-each already cited in its own originating scenario, with the splice itself called out as
-`[Extrapolated Branch]`. Always labeled explicitly which case applies, never presented as a single
-real capture when it isn't.
+**Sourcing convention:** every quoted block carries one explicit provenance label -- REAL CI
+CAPTURE (copied verbatim from a real GitHub Actions job log, cited with run ID, job ID, lane, and
+test file), a source excerpt (taken directly from `run_setup.bat`'s current source because no CI
+run has exercised that exact wording yet), or, for the composite walkthroughs in Part VII,
+`[Extrapolated Branch]` (assembled by splicing several independently-real fragments together, each
+already cited in its own originating scenario). A source excerpt or a composite splice is never
+described as a job log or presented as a single real capture.
 
 **Scope:** grouped by feature area, ordered roughly the way a real user would actually encounter
 each area -- the default happy path and its immediate variations first, narrower and more advanced
@@ -1816,9 +1816,13 @@ three-item Tip list shown above (drag-and-drop, a preferred filename, or a `__ma
 prints right after that log line -- worded "to avoid the alphabetical fallback next time" here,
 since no question was actually asked to skip -- because it's exactly the guidance a user who just
 hit a >9-file folder needs most to avoid landing here again; this used to be silently skipped along
-with the rest of the menu, fixed in the same pass that wrote this scenario. `[Extrapolated Branch]`,
-cited from `:pick_entry_interactive`, not independently captured in CI (would need a 10th-plus stub
-`.py` file staged -- a real coverage gap, not yet a dedicated test).
+with the rest of the menu, fixed in the same pass that wrote this scenario. `[Extrapolated Branch]`
+for the exact console text, cited from `:pick_entry_interactive` -- the branch itself is now
+covered by `self.entry.picker.overflow` (`tests/selfapps_entry_picker.ps1`, `conda-full` lane,
+registered in `docs/agent-ndjson.md`), which stages 10 candidate files and asserts the overflow log
+line, the Tip guidance, and the alphabetical default all fire correctly; that test only dumps a
+full console log to CI on failure, so the exact text below is still not an independently captured
+console dump.
 
 ---
 
