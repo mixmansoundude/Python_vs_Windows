@@ -164,7 +164,7 @@ visa.detect, emit.helpers, env.state.write, dep.check.parse_lock,
 dp.compat, prep.multi.constraint, batch.paren.balance, env.foldername,
 conda.path, conda.url, env.mode,
 self.warnfix.platform_filter, self.exe.smokerun, helper.find_entry.syntax, entry.helper.ok,
-self.cache.corrupted, self.cache.bootstrap.failed,
+self.cache.corrupted, self.cache.bootstrap.failed, self.cache.selfheal.fired,
 meta.env.mode, workflow.lint,
 version.metadata,
 host.env.os, host.env.ps, host.env.python,
@@ -557,6 +557,33 @@ substitute for a human's own interactive session).
 ```
 self.interactive.stdin.roundtrip
 ```
+
+## selfapps-cache-selfheal NDJSON rows (test_ci_cache_selfheal.ps1, `real` lane only, GATING)
+
+Item 19 follow-on (docs/agent-closed-backlog.md): the cache-lane self-heal logic
+(`tools/ci_cache_selfheal.ps1`) previously had no deterministic CI coverage -- the ambient
+`cache` lane only reaches it when GitHub's own cache happens to be organically corrupted, and
+that lane is entirely informational (job-level `continue-on-error`) besides, so a regression in
+the self-heal logic itself would ship silently. This test exercises all 4 branches of that
+script directly against a scratch temp directory with fake `condabin\conda.bat` stand-ins (no
+real conda/network dependency), wired into `real` -- a GATING lane -- so a regression actually
+fails CI. Windows-only (the script under test shells out to `conda.bat` via `cmd.exe`, and the
+locked-directory scenario needs Windows file-locking semantics); skips with `skip=true` on
+non-Windows via the bare `self.ci.cache_selfheal` row.
+
+```
+self.ci.cache_selfheal,
+self.ci.cache_selfheal.healthy, self.ci.cache_selfheal.prefix_healed,
+self.ci.cache_selfheal.exact_hit_corrupted, self.ci.cache_selfheal.prefix_heal_failed
+```
+
+`self.cache.selfheal.fired` (inline `batch-check.yml`, `cache` lane, `HP_CACHE_SELFHEAL_
+ATTEMPTED`-gated) is the companion VISIBILITY row -- unlike the deterministic test above, this
+fires only when the AMBIENT `cache` lane's own restored cache is organically corrupted on a
+restore-keys prefix match, and records whether that real self-heal attempt actually succeeded
+(`details.healed`). Always `pass:true` (informational, matching `self.cache.corrupted`'s own
+convention) -- its purpose is to make an organic occurrence queryable on the diagnostics site
+over time instead of requiring a raw-log dig to notice it happened at all, not to gate.
 
 ---
 

@@ -95,48 +95,24 @@ jobs:
         env:
           HP_CACHE_EXACT_HIT: ${{ steps.conda_cache_restore.outputs.cache-hit }}
         run: |
-          $condaMain = 'C:\Users\Public\Documents\Miniconda3\condabin\conda.bat'
-          $condaAlt  = 'C:\Users\Public\Documents\Miniconda3\Scripts\conda.bat'
-          $condaBat = if (Test-Path $condaMain) { $condaMain } elseif (Test-Path $condaAlt) { $condaAlt } else { $null }
-          if ($null -eq $condaBat) {
-            Write-Host "No conda binary found; fresh install will proceed normally."
-          } else {
-            $output = & cmd /c "`"$condaBat`" info" 2>&1
-            if ($LASTEXITCODE -ne 0) {
-              if ($env:HP_CACHE_EXACT_HIT -eq 'true') {
-                # derived requirement: an EXACT primary-key hit that's corrupted can never be
-                # replaced in place (a GitHub Actions cache entry's blob is immutable once saved
-                # under a key) -- see docs/agent-closed-backlog.md's Item 19 (cache-lane
-                # self-perpetuating-corruption) for the full trace. Keep the original
-                # skip-this-run behavior for this narrow case; fully closing it needs an explicit
-                # cache-deletion API call, a smaller follow-on not implemented here.
-                Write-Host "::warning::Conda binary health check failed (exit=$LASTEXITCODE) on an EXACT cache-key hit; cache corrupted, skipping fast-path tests this run."
-                'HP_CACHE_CORRUPTED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
-              } else {
-                # derived requirement: a restore-keys PREFIX match (the common case -- the cache
-                # key hashes run_setup.bat, which changes on nearly every PR) is not a guarantee
-                # the restored blob is still valid. Treating this like HP_CACHE_CORRUPTED=1 was
-                # the actual bug: the ONLY step that can do a fresh install is gated on that same
-                # flag, so a poisoned blob could never be replaced -- a permanent, self-
-                # perpetuating loop. Fix: treat it like a genuine cache miss instead -- delete the
-                # stale directory and let the run fall through to a real fresh install and a real
-                # fresh save under the current key, breaking the loop.
-                Write-Host "::warning::Conda binary health check failed (exit=$LASTEXITCODE) on a restore-keys prefix match; deleting stale cache directory and proceeding as a fresh install."
-                Remove-Item -LiteralPath 'C:\Users\Public\Documents\Miniconda3' -Recurse -Force -ErrorAction SilentlyContinue
-                if (Test-Path 'C:\Users\Public\Documents\Miniconda3') {
-                  # derived requirement: same AV/indexer file-lock hazard class already documented
-                  # for :try_embed_fallback's own directory swap in run_setup.bat -- if deletion
-                  # didn't fully succeed, do not proceed into an uncertain half-deleted state;
-                  # fall back to the original, safe skip-this-run behavior instead.
-                  Write-Host "::warning::Stale cache directory could not be fully removed (possible file lock); falling back to HP_CACHE_CORRUPTED=1 for this run."
-                  'HP_CACHE_CORRUPTED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
-                } else {
-                  Write-Host "Stale cache directory removed; fresh install will proceed normally."
-                }
-              }
-            } else {
-              Write-Host "Conda health OK: $output"
-            }
+          # derived requirement: the actual health-check-and-heal logic now lives in
+          # tools/ci_cache_selfheal.ps1 so tests/test_ci_cache_selfheal.ps1 can exercise it
+          # deterministically on every CI run (a GATING lane), independent of whether GitHub's
+          # own cache happens to be organically corrupted this run -- see that file and
+          # docs/agent-closed-backlog.md's Item 19 entry for why the ambient `cache` lane alone
+          # (informational, job-level continue-on-error) was not enough signal on its own.
+          $exactArgs = @()
+          if ($env:HP_CACHE_EXACT_HIT -eq 'true') { $exactArgs = @('-ExactHit') }
+          & .\tools\ci_cache_selfheal.ps1 -CondaDir 'C:\Users\Public\Documents\Miniconda3' @exactArgs
+          $rc = $LASTEXITCODE
+          if ($rc -eq 1 -or $rc -eq 3) {
+            'HP_CACHE_CORRUPTED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          }
+          if ($rc -eq 3) {
+            'HP_CACHE_SELFHEAL_FAILED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          }
+          if ($rc -eq 2 -or $rc -eq 3) {
+            'HP_CACHE_SELFHEAL_ATTEMPTED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           }
           exit 0  # health check is informational; never fail this step
 
@@ -151,6 +127,49 @@ jobs:
           $row = '{"id":"self.cache.corrupted","pass":true,"desc":"Cache corrupted; bootstrap skipped (infrastructure, not product failure)","lane":"cache"}'
           $row | Add-Content 'tests\~test-results.ndjson' -Encoding Ascii
           $row | Add-Content 'ci_test_results.ndjson' -Encoding Ascii
+
+      - name: "Record cache self-heal outcome (visibility row; never fails)"
+        # derived requirement: this is the gap the owner flagged directly -- when the self-heal
+        # SUCCEEDS (the ordinary case), HP_CACHE_CORRUPTED is never set, so no NDJSON row was
+        # ever emitted saying "this run actually had to self-heal a corrupted cache" -- the run
+        # just looked like an ordinary fresh install, with the only trace being a ::warning::
+        # buried in raw job logs. Emitting this unconditionally whenever the self-heal branch is
+        # entered (success OR failure) makes both outcomes queryable on the diagnostics site over
+        # time, instead of requiring a manual raw-log dig to notice either one.
+        if: ${{ !cancelled() && env.HP_CACHE_SELFHEAL_ATTEMPTED == '1' }}
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'tests')) { New-Item -ItemType Directory 'tests' | Out-Null }
+          $healed = ($env:HP_CACHE_SELFHEAL_FAILED -ne '1')
+          $row = [ordered]@{
+            id      = 'self.cache.selfheal.fired'
+            pass    = $true
+            lane    = 'cache'
+            desc    = 'Restored cache failed its health check on a restore-keys prefix match; self-heal (delete stale dir, fall through to fresh install) was attempted'
+            details = [ordered]@{ healed = $healed }
+          } | ConvertTo-Json -Compress
+          $row | Add-Content 'tests\~test-results.ndjson' -Encoding Ascii
+          $row | Add-Content 'ci_test_results.ndjson' -Encoding Ascii
+
+      - name: "Enforce cache self-heal success (Item 19 follow-on)"
+        # derived requirement: an ordinary corrupted-and-healed cache is routine infra noise and
+        # stays informational -- run_setup.bat hashes into the cache key on nearly every PR, so
+        # this fires often and is expected. But the self-heal ITSELF failing to clear the stale
+        # directory is not routine noise: it means this repo's own Item 19 fix has regressed back
+        # into the exact pre-fix "always corrupted, never self-heals" trap that item existed to
+        # close. This step's own failure is still absorbed by the `cache` lane's job-level
+        # continue-on-error (see CLAUDE.md's CI lane gating maturity notes -- this lane stays
+        # intentionally non-gating for ordinary organic flakiness), so on its own this does not
+        # block a PR; it exists so the failure is a loud, explicit ::error:: annotation and a red
+        # step marker instead of a buried ::warning::. tests/test_ci_cache_selfheal.ps1 (a GATING
+        # regression test wired into the `real` lane) is what actually catches a regression in
+        # this logic on every single CI run, independent of whether GitHub's own cache happens to
+        # be organically corrupted this run.
+        if: ${{ !cancelled() && env.HP_CACHE_SELFHEAL_FAILED == '1' }}
+        shell: pwsh
+        run: |
+          Write-Host "::error::Cache self-heal failed to clear the stale Miniconda3 directory -- see 'Validate restored conda binary' step output above."
+          exit 1
 
       # probe fires in real, conda-full, uv, and contract-uv* lanes; cache lane skips it intentionally
       - name: Enable Miniconda probe (real/conda-full/uv/contract-uv mode)
@@ -252,6 +271,17 @@ jobs:
               Write-Host "No AST parse errors in tests\harness.ps1"
             }
           }
+
+      # derived requirement: wired into `real` specifically (a GATING lane, not in the
+      # job-level continue-on-error list at the top of this file) so a regression in
+      # tools/ci_cache_selfheal.ps1 actually fails CI -- see that file and
+      # docs/agent-closed-backlog.md's Item 19 entry for why the ambient `cache` lane alone
+      # (informational, only fires on organic corruption) was not sufficient signal on its own.
+      - name: "Self-test: cache-lane self-heal logic (real lane only, GATING)"
+        if: ${{ matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\test_ci_cache_selfheal.ps1
 
       - name: "Pre-bootstrap: ensure Python file exists"
         shell: pwsh

@@ -762,6 +762,52 @@ this belongs to).
    opportunistically across this and future PRs' own `cache`-lane runs, not via a dedicated
    verification loop.
 
+   **Follow-on shipped 2026-08-02, prompted by the owner directly asking "is the fix holding" and
+   then "make it go red so it actually helps something."** The "observed opportunistically" plan
+   above turned out to have two real gaps, both found while answering the first question
+   honestly rather than assuming: (1) verification meant manually pulling raw job logs each time
+   -- nothing queryable recorded whether a run's self-heal had actually fired (a corrupted
+   restore-keys-prefix-match cache with a successful heal never sets `HP_CACHE_CORRUPTED`, so no
+   NDJSON row was ever emitted for it -- the only trace was a `::warning::` buried in the log);
+   (2) even a hypothetical step-level failure inside the `cache` lane could never have surfaced as
+   a real CI failure, because that whole lane is job-level `continue-on-error` (see the top of
+   `batch-check.yml`) -- confirmed directly against the first real post-fix run (`30684739923`,
+   job `91328449387`, commit `40e6187`/PR #409): the corrupted-prefix-match branch fired for real
+   (`##[warning]Conda binary health check failed (exit=1) on a restore-keys prefix match; deleting
+   stale cache directory and proceeding as a fresh install.` at 04:55:51Z, `Stale cache directory
+   removed; fresh install will proceed normally.` at 04:56:21Z, `Cache saved with key:
+   win-Windows-py311b-conda-...` at 05:16:43Z) -- genuine end-to-end proof the fix works, found
+   only by pulling the raw log by hand, not by anything CI itself surfaced.
+   - Extracted the inline health-check-and-heal PowerShell out of `batch-check.yml`'s "Validate
+     restored conda binary" step into `tools/ci_cache_selfheal.ps1`, a small parameterized script
+     (`-CondaDir`, `-ExactHit`) with 4 distinct exit codes (0=healthy/no-op, 1=exact-hit-corrupted
+     [unchanged accepted gap], 2=prefix-corrupted-and-healed, 3=prefix-corrupted-heal-FAILED --
+     the new case: the stale directory could not be fully cleared, meaning this fix has regressed
+     back toward its own pre-fix trap).
+   - Added `tests/test_ci_cache_selfheal.ps1`: a deterministic regression test exercising all 4
+     exit codes against a scratch temp directory with fake `conda.bat` stand-ins (including a
+     genuine locked-file reproduction of the heal-FAILED case via a held `FileStream` handle) --
+     no dependency on GitHub's cache ever being organically corrupted. Wired into the `real`
+     lane specifically (a GATING lane, not in the job-level `continue-on-error` list), so a future
+     regression in this logic fails CI for real, unlike the ambient `cache` lane which cannot.
+     Windows-only (shells out to `conda.bat` via `cmd.exe`; the lock scenario needs Windows
+     file-locking semantics), matching this repo's usual `$IsWindows`-gated-skip convention.
+   - Added `self.cache.selfheal.fired`: an always-`pass:true` visibility row emitted by the
+     ambient `cache` lane itself whenever the self-heal branch is entered (success or failure),
+     recording the real outcome in `details.healed` -- closes gap (1) above; an organic
+     occurrence is now queryable on the diagnostics site instead of requiring a raw-log dig.
+   - Added a loud `::error::` tripwire step (`Enforce cache self-heal success`) for the
+     heal-FAILED sub-case specifically, mirroring `diag.conda.available.gate`'s established
+     "default to a loud failure, not a silent one" pattern -- explicitly documented as *not* a
+     substitute for the gating test above (still absorbed by the `cache` lane's own job-level
+     `continue-on-error`), only a clearer annotation than the `::warning::` it replaces for that
+     one case.
+   - Deliberately did NOT flip the `cache` lane itself to gating, and did NOT touch the still-open
+     exact-key-hit-corrupted gap (still needs the `gh cache delete`/cache-deletion-API follow-on
+     noted above) -- both out of scope for this pass; the ask was specifically "make a regression
+     in the self-heal mechanism visible and blocking," not "make ordinary organic cache flakiness
+     block PRs."
+
 ### Item 15 (closed 2026-08-01)
 
 - **`:exe_smokerun_hints`'s diagnostic re-run of a freshly-failed EXE had no timeout, unlike every
