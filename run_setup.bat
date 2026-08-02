@@ -2642,7 +2642,7 @@ for /f "usebackq delims=" %%F in ("~entry.menu") do set /a HP_PICK_N+=1
 if %HP_PICK_N% LSS 2 ( del "~entry.menu" >nul 2>&1 & exit /b 0 )
 if %HP_PICK_N% GTR 9 (
   call :log "[INFO] REQ-002: %HP_PICK_N% candidates exceed picker limit; keeping %HP_ENTRY% (alphabetical)."
-  echo   Tip: to skip this question next time, do any one of these:
+  echo   Tip: to avoid the alphabetical fallback next time, do any one of these:
   echo     1. Drag a .py file onto run_setup.bat -- drop it on the batch file icon to run
   echo        that file directly. It must be in this same folder.
   echo     2. Rename your main script to one of: main.py, app.py, run.py, or cli.py.

@@ -25,9 +25,12 @@ distinction is between explaining what the reader is looking at right now versus
 this document itself was assembled.
 
 **Sourcing convention:** every quoted block is either copied verbatim from a real GitHub Actions
-job log (cited with run ID, job ID, lane, and test file) or, where noted, taken directly from
-`run_setup.bat`'s current source because no CI run has exercised that exact wording yet -- always
-labeled explicitly which case applies, never presented as a real capture when it isn't.
+job log (cited with run ID, job ID, lane, and test file), taken directly from `run_setup.bat`'s
+current source because no CI run has exercised that exact wording yet, or -- for the composite
+walkthroughs in Part VII -- assembled by splicing several independently-real fragments together,
+each already cited in its own originating scenario, with the splice itself called out as
+`[Extrapolated Branch]`. Always labeled explicitly which case applies, never presented as a single
+real capture when it isn't.
 
 **Scope:** grouped by feature area, ordered roughly the way a real user would actually encounter
 each area -- the default happy path and its immediate variations first, narrower and more advanced
@@ -184,9 +187,8 @@ Tue 07/28/2026  4:29:43.96 [INFO] REQ-015: Appending standard ignores to .gitign
 Before that line, nothing prints -- `HP_APP_ARGS` capture (REQ-026, pure variable assignment), the
 workspace-path-exists check, `cd /d`, `HP_SCRIPT_ROOT` construction, and the top-of-file UNC-path
 check (`if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints a much louder `*** WARNING:
-UNC/network paths detected...` banner when it genuinely fires -- see `docs/agent-lessons-learned.md`
-for the C-runtime backslash-before-quote parsing hazard a check like this has to get right) are all
-silent on an ordinary, non-UNC path.
+UNC/network paths detected...` banner when it genuinely fires) are all silent on an ordinary,
+non-UNC path.
 
 **The four REQ-025-family pre-flight guards (path-length, OneDrive, system-directory, disk-space --
 also part of that unlabeled prologue) are completely silent unless they fire.** Confirmed by both
@@ -1759,10 +1761,10 @@ control-flow plumbing with no independently observable behavior of its own (e.g.
 `:mgc_gi_done`), or a narrow edge case not worth a dedicated scenario (e.g. `:cascade_consent_no_
 choice_exe`, reached only on a Windows image stripped of `choice.exe`).
 
-- [Scenario 28: Interactive entry picker -- multiple `.py` files, no clear winner (REQ-002)](#scenario-34-interactive-entry-picker----multiple-py-files-no-clear-winner-req-002)
-- [Scenario 29: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed](#scenario-35-pre-flight-syntax-error-rejection-req-021-and-a-real-bug-it-exposed)
-- [Scenario 30: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path](#scenario-36-req-007-system-python-build-consent-and-the-resulting-no-exe-interpreter-path)
-- [Scenario 31: EXE smoke-run diagnostic hints (companion to Scenario 16)](#scenario-37-exe-smoke-run-diagnostic-hints-companion-to-scenario-22)
+- [Scenario 28: Interactive entry picker -- multiple `.py` files, no clear winner (REQ-002)](#scenario-28-interactive-entry-picker----multiple-py-files-no-clear-winner-req-002)
+- [Scenario 29: Pre-flight syntax-error rejection (REQ-021), and a real bug it exposed](#scenario-29-pre-flight-syntax-error-rejection-req-021-and-a-real-bug-it-exposed)
+- [Scenario 30: REQ-007 system-Python build consent, and the resulting no-EXE interpreter path](#scenario-30-req-007-system-python-build-consent-and-the-resulting-no-exe-interpreter-path)
+- [Scenario 31: EXE smoke-run diagnostic hints (companion to Scenario 16)](#scenario-31-exe-smoke-run-diagnostic-hints-companion-to-scenario-16)
 
 ---
 
@@ -1809,13 +1811,14 @@ a number, or simply waiting, never sees that line. Either way, the resolution is
 
 If MORE than 9 candidate files exist, the picker's own numbered menu is skipped entirely (no menu
 can address more than the `123456789` `choice /C` charset) and the alphabetical pick is kept, logged
-as `[INFO] REQ-002: <N> candidates exceed picker limit; keeping <file> (alphabetical).`. The Tip
-block (the same three-item list shown above -- drag-and-drop, a preferred filename, or a
-`__main__` block) still prints right after that log line, since it's exactly the guidance a user
-who just hit a >9-file folder needs most to avoid landing here again -- this used to be silently
-skipped along with the rest of the menu, fixed in the same pass that wrote this scenario.
-`[Extrapolated Branch]`, cited from `:pick_entry_interactive`, not independently captured in CI
-(would need a 10th-plus stub `.py` file staged, which no current test does).
+as `[INFO] REQ-002: <N> candidates exceed picker limit; keeping <file> (alphabetical).`. The same
+three-item Tip list shown above (drag-and-drop, a preferred filename, or a `__main__` block) still
+prints right after that log line -- worded "to avoid the alphabetical fallback next time" here,
+since no question was actually asked to skip -- because it's exactly the guidance a user who just
+hit a >9-file folder needs most to avoid landing here again; this used to be silently skipped along
+with the rest of the menu, fixed in the same pass that wrote this scenario. `[Extrapolated Branch]`,
+cited from `:pick_entry_interactive`, not independently captured in CI (would need a 10th-plus stub
+`.py` file staged -- a real coverage gap, not yet a dedicated test).
 
 ---
 
@@ -2446,9 +2449,11 @@ used to (before this fix) trigger an incorrect PyInstaller rebuild attempt again
 EXE.
 
 **Source:** confirmed in real CI run `29877805447`, uv lane, job `88792048278`:
+
 ```
 {"details":{"appStdoutFound":true,"noRepairRebuild":true,"successLogged":true,"skipGuardLogged":true,"exeExists":true,"statusState":"ok","bootstrapExit":0,"smokerunNonzeroLogged":true,"attemptLogged":true,"log":"~nuitka_tiera_hidden_skip_bootstrap.log"},"req":"REQ-AV","pass":true,"desc":"AV-Safe Build Path Tier A: hidden-import auto-recovery correctly skips (never rebuilds via PyInstaller) against a Nuitka-built EXE","id":"self.exe.tiera.hidden_skip","lane":"uv"}
 ```
+
 The test only dumps a full console log to CI when a scenario fails; since this one passes, the
 exact console text below is reconstructed from `run_setup.bat`'s source rather than copied from a
 console dump -- the NDJSON row's `skipGuardLogged`/`noRepairRebuild` fields are the test's own
@@ -2477,6 +2482,7 @@ non-gating), four scenarios sharing one row id.
 
 **Source:** confirmed in real CI run `29877805447`, uv lane, job `88792048278`, all four scenarios
 passing:
+
 ```
 {"lane":"uv","details":{"log":"~optbuild_accept_bootstrap.log","statusState":"ok","scenario":"accept","successLogged":true,"promptShown":true,"tmpExeGone":true,"exeExists":true,"bootstrapExit":0,"acceptedLogged":true,"appStillRuns":true},"desc":"AV-Safe Build Path requirement 9 (accept): a real optimized build succeeds, verifies, and is swapped into place","req":"REQ-AV","id":"self.optbuild.offer","pass":true}
 {"req":"REQ-AV","lane":"uv","desc":"AV-Safe Build Path requirement 9 (forcefail): a failed optimized build leaves the original PyInstaller EXE completely untouched","id":"self.optbuild.offer","details":{"originalStillRuns":true,"bootstrapExit":0,"log":"~optbuild_forcefail_bootstrap.log","tmpExeGone":true,"promptShown":true,"exeExists":true,"testHookFired":true,"scenario":"forcefail","statusState":"ok","noSuccessMsg":true},"pass":true}

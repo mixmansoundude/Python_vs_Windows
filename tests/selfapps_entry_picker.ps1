@@ -10,6 +10,14 @@
 # test verifies the picker runs, shows the menu, and resolves to the default without
 # hanging. True human selection needs a console and is out of CI scope.
 #
+# Second scenario (self.entry.picker.overflow): 10 non-PREFERRED, no-__main__ files --
+# one past :pick_entry_interactive's own >9 GTR-check limit (choice /C only supports the
+# 123456789 charset). Asserts the numbered menu is skipped entirely (no
+# "Multiple Python files detected" prompt), the overflow log line and its Tip guidance
+# both print, and the alphabetically-first file is still chosen -- closes the gap flagged
+# in docs/demo-bootstrapper-output.md's picker scenario ("a real coverage gap, not yet a
+# dedicated test").
+#
 # Lane: conda-full only (one real bootstrap; behavior is provider-independent).
 param()
 $ErrorActionPreference = 'Continue'
@@ -92,4 +100,63 @@ Write-NdjsonRow ([ordered]@{
 })
 
 if (-not $pass) { exit 1 }
+
+# --- Second scenario: >9 candidates -> numbered menu skipped, Tip guidance still shown ---
+$overflowDir = Join-Path $here '~selftest_entry_picker_overflow'
+if (Test-Path -LiteralPath $overflowDir) { Remove-Item -LiteralPath $overflowDir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $overflowDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $overflowDir -Force
+1..10 | ForEach-Object {
+    $letter = [char](96 + $_)
+    Set-Content -LiteralPath (Join-Path $overflowDir "${letter}_app.py") -Value "print('entry-$letter')`n" -Encoding ASCII
+}
+
+$prevForce2 = if (Test-Path Env:HP_TEST_FORCE_PICKER) { $env:HP_TEST_FORCE_PICKER } else { $null }
+$prevPip2   = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
+$env:HP_TEST_FORCE_PICKER = '1'
+$env:HP_SKIP_PIPREQS = '1'
+$overflowLog = '~entry_picker_overflow_bootstrap.log'
+$overflowExit = -1
+Push-Location -LiteralPath $overflowDir
+try {
+    cmd /c "call run_setup.bat > $overflowLog 2>&1"
+    $overflowExit = $LASTEXITCODE
+} finally {
+    Pop-Location
+    if ($null -eq $prevForce2) { Remove-Item Env:HP_TEST_FORCE_PICKER -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_PICKER = $prevForce2 }
+    if ($null -eq $prevPip2)   { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevPip2 }
+}
+
+$overflowLogPath  = Join-Path $overflowDir $overflowLog
+$overflowSetupLog = Join-Path $overflowDir '~setup.log'
+$overflowLogText  = if (Test-Path $overflowLogPath)  { Get-Content -LiteralPath $overflowLogPath  -Raw -Encoding ASCII } else { '' }
+$overflowSetupTxt = if (Test-Path $overflowSetupLog) { Get-Content -LiteralPath $overflowSetupLog -Raw -Encoding ASCII } else { '' }
+$overflowCombined = $overflowLogText + "`n" + $overflowSetupTxt
+
+$overflowMenuAbsent = $overflowCombined -notmatch 'Multiple Python files detected'
+# :pick_entry_interactive logs %HP_ENTRY% directly here, unlike :record_chosen_entry's separate
+# "Chosen entry:" line -- HP_ENTRY at this point is find_entry.py's own bare-filename stdout
+# (os.path.normpath() on a bare name adds no ".\" prefix), so no prefix is expected below.
+$overflowLimitLogged = $overflowCombined -match [regex]::Escape('candidates exceed picker limit; keeping a_app.py (alphabetical)')
+$overflowTipShown = $overflowCombined -match [regex]::Escape('Tip: to avoid the alphabetical fallback next time')
+$overflowChosenDefault = $overflowCombined -match 'Chosen entry:.*a_app\.py'
+
+$overflowPass = ($overflowExit -eq 0) -and $overflowMenuAbsent -and $overflowLimitLogged -and $overflowTipShown -and $overflowChosenDefault
+
+Write-NdjsonRow ([ordered]@{
+    id='self.entry.picker.overflow'
+    req='REQ-002'
+    pass=$overflowPass
+    desc='More than 9 candidate files skips the numbered menu entirely but still shows Tip guidance, keeping the alphabetical default'
+    details=[ordered]@{
+        exitCode       = $overflowExit
+        menuAbsent     = $overflowMenuAbsent
+        limitLogged    = $overflowLimitLogged
+        tipShown       = $overflowTipShown
+        chosenDefault  = $overflowChosenDefault
+        log            = $overflowLog
+    }
+})
+
+if (-not $overflowPass) { exit 1 }
 exit 0
