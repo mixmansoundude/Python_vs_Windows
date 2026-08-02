@@ -146,7 +146,18 @@ if (-not $pass4) { $allPass = $false }
 # healthy conda.bat (Scenario 1) and no conda.bat present at all. Only the former was covered
 # above; this closes the gap on the latter.
 $dir5 = Join-Path $scratchRoot 'no_binary'
+if (Test-Path -LiteralPath $dir5) { Remove-Item -LiteralPath $dir5 -Recurse -Force -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force -Path $dir5 | Out-Null
+# derived requirement: assert the cache genuinely starts empty -- $scratchRoot is freshly
+# recreated at the top of this file, but if a PRIOR interrupted run's teardown left content
+# behind AND that top-level recreation also failed to fully clear it, New-Item -Force above
+# would silently preserve a stale conda.bat here, making this scenario exercise the wrong
+# branch (healthy or corrupted-detect) instead of the no-binary one it's meant to test.
+$dir5CondaMain = Join-Path $dir5 'condabin\conda.bat'
+$dir5CondaAlt  = Join-Path $dir5 'Scripts\conda.bat'
+if ((Test-Path -LiteralPath $dir5CondaMain) -or (Test-Path -LiteralPath $dir5CondaAlt)) {
+    throw "Scenario 5 setup: $dir5 unexpectedly still contains a conda.bat"
+}
 & $script -CondaDir $dir5
 $rc5 = $LASTEXITCODE
 $pass5 = ($rc5 -eq 0) -and (Test-Path -LiteralPath $dir5)
