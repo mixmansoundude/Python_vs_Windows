@@ -64,10 +64,11 @@ if (-not $exited) {
     # that spawns a child inheriting the redirected stdout/stderr handles can leave that child
     # running after $p is killed -- the pipe then never reaches EOF, and an unbounded
     # ReadToEndAsync().Result would hang forever, defeating the entire point of this bounded
-    # helper. taskkill /T terminates the whole process tree, not just $p. NOT independently
-    # verified on real Windows CI that a genuine descendant-holds-the-pipe scenario is fully
-    # covered by this (no Windows environment available to construct that repro) -- the bounded
-    # final read below is a second, independent safety net for exactly that residual risk.
+    # helper. taskkill /T terminates the whole process tree, not just $p. Confirmed on real
+    # Windows CI (two lanes on PR #410): a grandchild-inherits-the-pipe regression test's
+    # returncode/timing assertions passed there, meaning the taskkill /T path itself was
+    # genuinely exercised, not just the fallback below -- the bounded final read still stays as
+    # a second, independent safety net for whatever a descendant taskkill /T might still miss.
     try { & taskkill.exe /F /T /PID $p.Id 2>$null 1>$null } catch {}
     try { $p.Kill() } catch {}
 }
