@@ -2300,11 +2300,13 @@ non-gating). `HP_TEST_FORCE_PYINSTALLER_FAIL=1` forces the primary build to fail
 the Nuitka fallback (`:try_nuitka_tier_a`) then runs for real -- a genuine compile, not simulated.
 
 **What appears on screen**, from the moment PyInstaller's build is attempted through to the final
-summary. Sourced from real CI (run `29788624195`, job `88506013149`); the "(fallback build system)"
-verification line and the drive-message reassurance line are exactly as captured, while the
-"Verifying the built standalone EXE" line and the "Does your program need launch arguments"
-paragraph reflect current source (`docs/plan-cli-interactive-verification.md` requirement 3's
-activity-aware kill, and REQ-026's argv passthrough, both of which shipped after this specific run):
+summary -- a mix of real CI capture and lines updated to reflect current source, not a single
+uniform capture. Real CI capture (run `29788624195`, job `88506013149`): the
+"(fallback build system)" verification line and the drive-message reassurance line, exactly as
+captured. Updated to reflect current source (`docs/plan-cli-interactive-verification.md`
+requirement 3's activity-aware kill, and REQ-026's argv passthrough, both of which shipped after
+this specific run): the "Verifying the built standalone EXE" line and the "Does your program need
+launch arguments" paragraph. Every other line below is real capture, unmodified:
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
@@ -2496,9 +2498,10 @@ passing:
 
 #### 40a. `accept` -- a real optimized build succeeds and is swapped in
 
-Real, verbatim console dump (`~selftest_optbuild_accept\~optbuild_accept_bootstrap.log`), with the
-"Verifying the built standalone EXE" line updated in place to reflect current source (requirement
-3's activity-aware kill plus the quit-prompt hint, both of which shipped after this capture):
+Real CI capture (`~selftest_optbuild_accept\~optbuild_accept_bootstrap.log`) with one line updated
+in place to reflect current source: the "Verifying the built standalone EXE" line now shows
+requirement 3's activity-aware kill plus the quit-prompt hint, both of which shipped after this
+capture -- every other line below is exactly as captured:
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
@@ -2525,8 +2528,9 @@ The system cannot find the drive specified.
 [INFO] Optimized build succeeded and verified: dist\<env>.exe now uses the fallback build system.
 ```
 
-The "warnfix: Platform-specific modules..." line above is this specific verbatim capture's own
-pre-existing wording; current wording for that same line is shown in Scenario 34.
+The "warnfix: Platform-specific modules..." line above is this specific capture's own pre-existing
+wording (not updated, unlike the line noted above); current wording for that same line is shown in
+Scenario 34.
 
 **The interactive `Build the optimized version now? [Y/N]` prompt line is echoed unconditionally
 by design** (same pattern as `:run_postexec_checkpoint`), but does not appear literally in any
@@ -2618,8 +2622,10 @@ timing (which can't be automated).
 
 **The WARN line a user sees right before the verification launch**, current shipped wording
 (source: `run_setup.bat`, `:warn_user_code_launch` -- not a console capture, since CI answers
-scripted stdin rather than a human watching the window; Scenario 37 and Scenario 40a above both show
-this exact line in situ):
+scripted stdin rather than a human watching the window; Scenario 40a above shows this exact line in
+situ too, though there it is the one line explicitly edited into that capture to match current
+source, not part of that scenario's own real-captured text; Scenario 37 shows the same line's
+"(fallback build system)" variant instead of "(PyInstaller)"):
 
 ```
 [WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.

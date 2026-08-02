@@ -574,11 +574,12 @@ non-Windows via the bare `self.ci.cache_selfheal` row.
 ```
 self.ci.cache_selfheal,
 self.ci.cache_selfheal.healthy, self.ci.cache_selfheal.prefix_healed,
-self.ci.cache_selfheal.exact_hit_corrupted, self.ci.cache_selfheal.prefix_heal_failed
+self.ci.cache_selfheal.exact_hit_corrupted, self.ci.cache_selfheal.prefix_heal_failed,
+self.ci.cache_selfheal.no_binary
 ```
 
-`self.cache.selfheal.fired` (inline `batch-check.yml`, `cache` lane, `HP_CACHE_SELFHEAL_
-ATTEMPTED`-gated) is the companion VISIBILITY row -- unlike the deterministic test above, this
+`self.cache.selfheal.fired` (inline `batch-check.yml`, `cache` lane, `HP_CACHE_SELFHEAL_ATTEMPTED`-gated)
+is the companion VISIBILITY row -- unlike the deterministic test above, this
 fires only when the AMBIENT `cache` lane's own restored cache is organically corrupted on a
 restore-keys prefix match, and records whether that real self-heal attempt actually succeeded
 (`details.healed`). Always `pass:true` (informational, matching `self.cache.corrupted`'s own

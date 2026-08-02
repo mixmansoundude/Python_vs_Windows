@@ -14,7 +14,7 @@
 # wrapper) and the locked-directory scenario depends on Windows file-locking semantics, neither
 # of which is meaningfully reproducible on Linux.
 #
-# Four scenarios, all against fake `condabin\conda.bat` stand-ins (never a real Miniconda
+# Five scenarios, all against fake `condabin\conda.bat` stand-ins (never a real Miniconda
 # install -- this test is pure logic, no conda/network dependency):
 #   healthy              - conda.bat exits 0 -> exit code 0, directory untouched.
 #   prefix_healed         - conda.bat exits 1, PREFIX match -> exit code 2, directory deleted
@@ -26,6 +26,9 @@
 #                            still present. This is the scenario that would have silently
 #                            regressed back into Item 19's original "always corrupted, never
 #                            self-heals" trap if it went undetected.
+#   no_binary              - no conda.bat present at all -> exit code 0, directory untouched
+#                            (a genuine cache miss, the other branch that shares exit code 0
+#                            with the healthy scenario above).
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -129,6 +132,22 @@ Write-NdjsonRow ([ordered]@{
     details=[ordered]@{ exitCode=$rc4; dirStillExists=(Test-Path -LiteralPath $dir4) }
 })
 if (-not $pass4) { $allPass = $false }
+
+# --- Scenario 5: no conda.bat restored at all (genuine cache miss) ---
+# derived requirement: exit code 0 covers two distinct branches in ci_cache_selfheal.ps1 -- a
+# healthy conda.bat (Scenario 1) and no conda.bat present at all. Only the former was covered
+# above; this closes the gap on the latter.
+$dir5 = Join-Path $scratchRoot 'no_binary'
+New-Item -ItemType Directory -Force -Path $dir5 | Out-Null
+& $script -CondaDir $dir5
+$rc5 = $LASTEXITCODE
+$pass5 = ($rc5 -eq 0) -and (Test-Path -LiteralPath $dir5)
+Write-NdjsonRow ([ordered]@{
+    id='self.ci.cache_selfheal.no_binary'; pass=$pass5
+    desc='ci_cache_selfheal.ps1: no conda.bat restored at all is treated as a genuine cache miss (exit 0, no-op)'
+    details=[ordered]@{ exitCode=$rc5; dirStillExists=(Test-Path -LiteralPath $dir5) }
+})
+if (-not $pass5) { $allPass = $false }
 
 Remove-Item -LiteralPath $scratchRoot -Recurse -Force -ErrorAction SilentlyContinue
 
