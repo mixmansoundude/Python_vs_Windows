@@ -48,6 +48,7 @@ self.exe.hidden_import, self.exe.hidden_import.exhaust,
 self.preflight.syntax,
 self.cascade.detect, self.cascade.consent, self.cascade.timed,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
+self.layered_e2e.chain (cache lane only -- selfapps_layered_e2e.ps1; non-gating),
 self.conda.bothfail (uv lane only -- selfapps_conda_bothfail.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
 self.exe.tiera.hidden_skip (uv lane only -- selfapps_nuitka_tiera_hidden_skip.ps1; non-gating),
@@ -370,6 +371,61 @@ offers.
 
 ```
 self.cascade.timed
+```
+
+## selfapps-layered-e2e NDJSON rows (selfapps_layered_e2e.ps1, cache lane only, non-gating)
+
+Closes CLAUDE.md Active Backlog item 22: a real, non-simulated end-to-end test proving three
+distinct mechanisms all fire for real in ONE run, replacing Part VII Scenario 33's
+`[Extrapolated Branch]` splice with genuine evidence -- the uv-to-conda provider cascade
+(REQ-009/REQ-005.10 slice 3), warnfix repair (REQ-007, both a genuine success AND a genuine
+failure in the same repair round), and `--hidden-import` auto-recovery (REQ-016 Slice 2). No
+`HP_TEST_FORCE_*`/`HP_SKIP_*`/`HP_DISABLE_*` flags are used beyond the unavoidable
+`HP_TEST_CASCADE_ANSWER=Y` (accepting an interactive consent prompt deterministically in CI) --
+every failure and repair is a genuine, unflagged consequence of three real packages' own
+availability on PyPI vs. conda-forge: `pygrib` (zero Windows wheels on PyPI, confirmed via a
+direct PyPI JSON API query -- macOS/Linux wheels exist for every recent CPython, Windows was
+deliberately excluded, and the sdist needs the ecCodes/GRIB-API C library a bare CI runner does
+not have -- but real conda-forge win-64 builds exist, verified via the anaconda.org API), `xlrd`
+(a real PyPI wheel, so warnfix's per-module install genuinely succeeds for it in the same round
+pygrib genuinely fails), and `colorama` (imported only via `importlib.import_module`, invisible
+to PyInstaller's static analysis, so never touched by warnfix -- installs fine once cascaded to
+conda but the frozen EXE still needs `--hidden-import` to actually bundle it).
+
+**GDAL was the original candidate for the cascade trigger, researched and rejected.** GDAL's
+Python bindings live under the `osgeo` namespace (`from osgeo import gdal`), and PyInstaller's
+warn file always records the top-level import name ("osgeo"), not the actual PyPI distribution
+name ("gdal"/"GDAL"). PyPI hosts a real, always-succeeding dummy package literally named `osgeo`
+(a deliberate typosquat-protection placeholder maintained specifically to catch people who
+mistakenly `pip install osgeo` instead of `pip install gdal`) -- so warnfix's own per-module
+repair attempt for GDAL would install that harmless dummy instead of genuinely failing, silently
+defeating `:warnfix_cascade_detect`'s Signal B (a REAL recorded install failure, gated on
+`~warnfix_repair_failed.flag`, set only by a genuine per-module install failure). `pygrib`'s
+top-level import name IS its own correct PyPI/conda-forge package name (no namespace
+indirection, no decoy package), so this same trap cannot occur. See CLAUDE.md's Active Backlog
+item 22 (moved to `docs/agent-closed-backlog.md` once closed) for the full research trail.
+
+Asserts, against a single `~setup.log` source (matching `self.cascade.exec`'s own "count against
+one source, not the doubled stdout+log combined text" convention): the initial `uv pip install
+-r requirements.txt` genuinely failed; the REQ-009 cascade candidate was detected and approved
+and executed exactly once (uv to conda); conda was selected as the new provider; warnfix's
+per-module loop both attempted AND failed to install `pygrib`, and both attempted AND succeeded
+at installing `xlrd` (the new Active Backlog item 21 `[INFO] Attempting to install:`/`[INFO]
+Installed:` lines); `--hidden-import=colorama` was added and the EXE was verified after hidden-
+import recovery; the final EXE (built under conda, the tier the cascade lands on) genuinely
+exists, exits 0, and writes a token file combining evidence from all three packages; and
+`~bootstrap.status.json` reads `state=ok`.
+
+Lane: `cache` only (uv-first, and the only lane that already caches Miniconda across runs to
+amortize the one-time download this test's own cascade triggers -- unlike adding it fresh to
+`real`). Non-gating for its first landing (the `cache` job is `continue-on-error` at the job
+level) -- promote once proven stable across several real runs, matching this repo's established
+graduation pattern (see CLAUDE.md's "CI lane gating maturity" periodic check). Wired
+immediately after the `uv` lane's own `self.cascade.exec` step in `batch-check.yml` (thematically
+grouped, no ordering dependency between them -- different lanes).
+
+```
+self.layered_e2e.chain
 ```
 
 ## selfapps-conda-bothfail NDJSON rows (selfapps_conda_bothfail.ps1, uv lane only, non-gating)

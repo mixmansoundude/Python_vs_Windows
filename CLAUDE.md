@@ -492,38 +492,49 @@ Once an item is fully resolved it is removed from here entirely and archived (ke
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
 start at 1 and has gaps.
 
-- **Item 22: real, non-simulated end-to-end layered-dependency-chain test.** New CI test + demo
-  doc scenario proving uv-fails-to-conda-cascade, warnfix repair, and hidden-import auto-recovery
-  all fire for real (not simulated) in one run, replacing Part VII Scenario 33's current
-  `[Extrapolated Branch]` splice with genuine evidence. Researched and confirmed (2026-08-03) via a
-  direct query against the official PyPI JSON API (`https://pypi.org/pypi/GDAL/json`): the `GDAL`
-  package's latest release (3.13.2) ships zero `bdist_wheel` files for ANY Python version or
-  platform -- sdist-only across its entire release history -- so this is a genuine, deterministic
-  `uv`/`pip` install failure against the default PyPI index on Windows regardless of which Python
-  version the bootstrapper's uv-managed interpreter happens to be, not a version-specific gap.
-  (Third-party wheel indexes such as the community-run Geospatial Wheels Index do publish Windows
-  GDAL wheels, but are irrelevant here -- the bootstrapper only ever installs against the default
-  PyPI index, never a custom `--index-url`.) Separately confirmed via the anaconda.org API
-  (`https://api.anaconda.org/package/conda-forge/gdal`) that conda-forge has current `win-64`
-  `gdal` 3.13.2 builds, actively maintained, per-Python-version build strings (np2py310 through
-  np2py314), ~2.2MB direct package. `pygraphviz`
-  was considered and ruled out -- it now ships real Windows wheels as of 2.0.1, so it would not
-  reproduce a genuine install failure. `colorama` via `importlib.import_module()` is already a
-  proven real trigger for hidden-import auto-recovery (`tests/selfapps_hidden_import.ps1`). `xlrd`
-  via `tests/selfapps_warnfix.ps1`'s `real_warnfix` scenario is a proven real warnfix trigger, but
-  that test uses `HP_SKIP_PIPREQS=1` to isolate it -- for a natural (pipreqs-enabled) trigger, try
-  `pandas.read_excel('legacy.xls')` (xlrd needed as an invisible runtime engine); unconfirmed
-  whether PyInstaller's own pandas hook surfaces this in the warn file the way a direct import
-  does -- needs a real trial. Fallback if that doesn't pan out: accept the `HP_SKIP_PIPREQS`
-  isolation flag (a real discovery-path removal, not a faked failure -- different in kind from an
-  `HP_TEST_FORCE_*` hook). Needed test-only flag either way: `HP_TEST_CASCADE_ANSWER=Y` (accept
-  the cascade consent prompt; no way around this in CI). Lane placement: NOT `conda-full`
-  (`HP_FORCE_CONDA_ONLY=1` skips uv entirely, so uv can never genuinely fail there) and NOT
-  `justme-test` (`HP_TEST_FORCE_UV_FAIL=1` fakes uv's absence, which is simulated). Recommended:
-  `cache` lane -- uv-first (uv gets a real shot at gdal and genuinely fails), and it already
-  carries the Miniconda-caching infra to amortize the one-time conda install cost across runs,
-  unlike adding it fresh to `real`. Next step before implementing: a real CI trial confirming
-  GDAL's actual install behavior/timing via uv and conda-forge on `windows-latest`.
+- **Item 22: real, non-simulated end-to-end layered-dependency-chain test.** New CI test
+  (`tests/selfapps_layered_e2e.ps1`, `self.layered_e2e.chain`, `cache` lane only, non-gating for
+  its first landing) proving the uv-fails-to-conda cascade, warnfix repair (both a genuine
+  success AND a genuine failure in the same round), and hidden-import auto-recovery all fire for
+  real (not simulated) in one run -- **implemented and pushed, NOT YET CONFIRMED by a real CI
+  run** (this is genuinely the "real CI trial" step; treat as provisional until a real `cache`
+  lane run is observed green). Uses three real packages, no `HP_TEST_FORCE_*`/`HP_SKIP_*`/
+  `HP_DISABLE_*` flags beyond the unavoidable `HP_TEST_CASCADE_ANSWER=Y`:
+  - `pygrib` (the cascade trigger): confirmed via a direct PyPI JSON API query
+    (`https://pypi.org/pypi/pygrib/json`) that it ships macOS/Linux wheels for every recent
+    CPython but ZERO Windows wheels (deliberately excluded, not merely absent) -- its sdist needs
+    the ecCodes/GRIB-API C library a bare CI runner does not have, so `uv pip install` genuinely
+    fails to build it. Confirmed via the anaconda.org API
+    (`https://api.anaconda.org/package/conda-forge/pygrib`) that conda-forge has real `win-64`
+    builds (5 current per-Python-version builds for 2.1.8).
+  - **GDAL was the original candidate, researched and REJECTED after deeper research -- a
+    genuine near-miss worth recording so it is not re-attempted.** GDAL's Python bindings live
+    under the `osgeo` namespace (`from osgeo import gdal`), and PyInstaller's warn file always
+    records the top-level import name ("osgeo"), not the actual PyPI distribution name
+    ("gdal"/"GDAL"). PyPI hosts a real, always-succeeding DUMMY package literally named `osgeo`
+    (`https://pypi.org/pypi/osgeo/json` -- a deliberate typosquat-protection placeholder
+    maintained specifically to catch people who mistakenly `pip install osgeo` instead of
+    `pip install gdal`), so warnfix's own per-module repair attempt for GDAL would install that
+    harmless dummy instead of genuinely failing -- silently defeating
+    `:warnfix_cascade_detect`'s Signal B (a REAL recorded install failure, gated on
+    `~warnfix_repair_failed.flag`, set only by a genuine per-module install failure). `pygrib`'s
+    top-level import name IS its own correct PyPI/conda-forge package name (no namespace
+    indirection, no decoy package), so this trap cannot occur. `pygraphviz`, `rasterio`, and
+    `fiona` were also considered and ruled out -- all now ship real Windows wheels (confirmed via
+    the same direct PyPI JSON API method), so none would reproduce a genuine install failure.
+  - `xlrd` (the warnfix-success half of the same repair round): a real PyPI wheel, so once
+    genuinely absent (caught up in the same failed bulk install as `pygrib`), warnfix's
+    per-module retry installs it successfully -- no `HP_SKIP_PIPREQS` isolation needed (unlike
+    `tests/selfapps_warnfix.ps1`'s `real_warnfix` scenario), since warnfix operates on whatever
+    the warn file shows as genuinely unresolved regardless of how it got there.
+  - `colorama` via `importlib.import_module()` (the hidden-import trigger): already a proven
+    real trigger elsewhere (`tests/selfapps_hidden_import.ps1`) -- invisible to warnfix (dynamic
+    import), installs fine once cascaded to conda (declared in requirements.txt), but the frozen
+    EXE still needs `--hidden-import=colorama` to actually bundle it.
+  Lane placement confirmed as researched: NOT `conda-full` (`HP_FORCE_CONDA_ONLY=1` skips uv
+  entirely) and NOT `justme-test` (`HP_TEST_FORCE_UV_FAIL=1` fakes uv's absence, simulated).
+  `cache` lane matches the original reasoning (uv-first, already carries Miniconda-caching infra
+  to amortize the one-time conda install cost this test's own cascade triggers).
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
