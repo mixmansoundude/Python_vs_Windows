@@ -96,9 +96,20 @@ if (-not (Test-Path $batchPath)) {
 }
 
 $workDir = Join-Path $here '~selftest_layered_e2e'
-if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
-New-Item -ItemType Directory -Force -Path $workDir | Out-Null
-Copy-Item -Path $batchPath -Destination $workDir -Force
+# derived requirement: fail closed on stale-workspace cleanup -- $ErrorActionPreference is
+# 'Continue' for the rest of this script (so later steps still write an NDJSON row/exit code
+# on failure), which would otherwise let a failed Remove-Item (e.g. a locked dist\<env>.exe
+# left over from a prior interrupted run) silently pass through, letting this run reuse stale
+# dist/status/token/log files and pass for the wrong reason instead of exercising a genuinely
+# fresh bootstrap. -ErrorAction Stop + an explicit existence re-check makes that failure loud.
+if (Test-Path -LiteralPath $workDir) {
+    Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $workDir) {
+        throw "selfapps_layered_e2e.ps1: failed to remove stale workspace: $workDir"
+    }
+}
+New-Item -ItemType Directory -Force -Path $workDir -ErrorAction Stop | Out-Null
+Copy-Item -Path $batchPath -Destination $workDir -Force -ErrorAction Stop
 
 Set-Content -Path (Join-Path $workDir 'requirements.txt') -Value "pygrib`ncolorama`nxlrd" -Encoding ASCII
 
@@ -148,12 +159,28 @@ $cascadeApproved = $combined -match [regex]::Escape('[INFO] REQ-009: cascade app
 $uvToConda       = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider uv to conda'))).Count
 $condaSelected   = $combined -match [regex]::Escape('REQ-009: Selected Python provider: Conda')
 
-# Mechanism 2: warnfix repair, both outcomes in the same round.
-$warnInstallFired = $combined -match [regex]::Escape('[REPAIR] missing modules detected; installing and rebuilding.')
-$pygribAttempted  = $combined -match [regex]::Escape('[INFO] Attempting to install: pygrib')
-$pygribFailed     = $combined -match [regex]::Escape('[WARN] Repair failed: pygrib')
-$xlrdAttempted    = $combined -match [regex]::Escape('[INFO] Attempting to install: xlrd')
-$xlrdInstalled    = $combined -match [regex]::Escape('[INFO] Installed: xlrd')
+# Mechanism 2: warnfix repair, both outcomes in the SAME round -- derived requirement: a plain
+# "does this string appear anywhere in the combined log" check (the original approach) cannot
+# distinguish "both happened in one round" from "each happened in a different round," so it
+# would not actually catch a future regression that split them across rounds. Scope the pygrib/
+# xlrd checks to the single warnfix round's own text slice instead: from the round's start
+# marker to the next "rebuild complete" marker (or end of log if the round never completed).
+# $warnfixRoundCount -eq 1 additionally proves there was exactly one such round in this run, so
+# the slice below cannot itself be straddling two rounds.
+$warnInstallFired    = $combined -match [regex]::Escape('[REPAIR] missing modules detected; installing and rebuilding.')
+$warnfixRoundMatches = [regex]::Matches($combined, [regex]::Escape('[REPAIR] missing modules detected; installing and rebuilding.'))
+$warnfixRoundCount   = $warnfixRoundMatches.Count
+$warnfixRoundText    = ''
+if ($warnfixRoundCount -ge 1) {
+    $roundStart = $warnfixRoundMatches[0].Index
+    $tail = $combined.Substring($roundStart)
+    $endMarker = [regex]::Match($tail, [regex]::Escape('[REPAIR] rebuild complete after warnfix.'))
+    $warnfixRoundText = if ($endMarker.Success) { $tail.Substring(0, $endMarker.Index + $endMarker.Length) } else { $tail }
+}
+$pygribAttempted  = $warnfixRoundText -match [regex]::Escape('[INFO] Attempting to install: pygrib')
+$pygribFailed     = $warnfixRoundText -match [regex]::Escape('[WARN] Repair failed: pygrib')
+$xlrdAttempted    = $warnfixRoundText -match [regex]::Escape('[INFO] Attempting to install: xlrd')
+$xlrdInstalled    = $warnfixRoundText -match [regex]::Escape('[INFO] Installed: xlrd')
 
 # Mechanism 3: hidden-import auto-recovery for colorama, after the cascade.
 $hiddenAdding     = $combined -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama')
@@ -201,7 +228,7 @@ if (Test-Path $statusPath) {
 }
 
 $mech1Pass = $uvInstallFailed -and $cascadeDetected -and $cascadeApproved -and ($uvToConda -eq 1) -and $condaSelected
-$mech2Pass = $warnInstallFired -and $pygribAttempted -and $pygribFailed -and $xlrdAttempted -and $xlrdInstalled
+$mech2Pass = $warnInstallFired -and ($warnfixRoundCount -eq 1) -and $pygribAttempted -and $pygribFailed -and $xlrdAttempted -and $xlrdInstalled
 $mech3Pass = $hiddenAdding -and $hiddenRecovered
 $exePass   = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and (-not $infraError)
 $chainPass = $mech1Pass -and $mech2Pass -and $mech3Pass -and $exePass -and ($statusExit -eq 0) -and ($statusState -eq 'ok')
@@ -231,6 +258,7 @@ Write-NdjsonRow ([ordered]@{
         condaSelected    = $condaSelected
         mech2Pass        = $mech2Pass
         warnInstallFired = $warnInstallFired
+        warnfixRoundCount = $warnfixRoundCount
         pygribAttempted  = $pygribAttempted
         pygribFailed     = $pygribFailed
         xlrdAttempted    = $xlrdAttempted

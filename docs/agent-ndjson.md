@@ -404,8 +404,8 @@ repair attempt for GDAL would install that harmless dummy instead of genuinely f
 defeating `:warnfix_cascade_detect`'s Signal B (a REAL recorded install failure, gated on
 `~warnfix_repair_failed.flag`, set only by a genuine per-module install failure). `pygrib`'s
 top-level import name IS its own correct PyPI/conda-forge package name (no namespace
-indirection, no decoy package), so this same trap cannot occur. See CLAUDE.md's Active Backlog
-item 22 (moved to `docs/agent-closed-backlog.md` once closed) for the full research trail.
+indirection, no decoy package), so this same trap cannot occur. See `docs/agent-closed-backlog.md`'s
+Item 22 for the full research trail.
 
 Asserts, mostly against `$combined` (the bootstrap stdout log plus `~setup.log`, concatenated) --
 except the exact cascade COUNT (`$uvToConda`, the `-eq 1` no-loop check), which is checked against
@@ -414,10 +414,15 @@ except the exact cascade COUNT (`$uvToConda`, the `-eq 1` no-loop check), which 
 -r requirements.txt` genuinely failed; the REQ-009 cascade candidate was detected and approved
 and executed exactly once (uv to conda); conda was selected as the new provider; warnfix's
 per-module loop both attempted AND failed to install `pygrib`, and both attempted AND succeeded
-at installing `xlrd` (the new Active Backlog item 21 `[INFO] Attempting to install:`/`[INFO]
-Installed:` lines); `--hidden-import=colorama` was added and the EXE was verified after hidden-
-import recovery; the final EXE (built under conda, the tier the cascade lands on) genuinely
-exists, exits 0, and writes a token file combining evidence from all three packages; and
+at installing `xlrd` -- proven to have happened in the SAME repair round (not merely somewhere in
+the run), by scoping the `pygrib`/`xlrd` checks to the substring between the round's own
+`[REPAIR] missing modules detected; installing and rebuilding.` start marker and its
+`[REPAIR] rebuild complete after warnfix.` end marker, plus a `$warnfixRoundCount -eq 1` check
+proving exactly one such round exists in the run (so that slice cannot itself straddle two
+rounds) -- see Item 21's `[INFO] Attempting to install:`/`[INFO] Installed:` lines for where those
+per-module log lines originate; `--hidden-import=colorama` was added and the EXE was verified
+after hidden-import recovery; the final EXE (built under conda, the tier the cascade lands on)
+genuinely exists, exits 0, and writes a token file combining evidence from all three packages; and
 `~bootstrap.status.json` reads `state=ok`.
 
 Lane: `cache` only (uv-first, and the only lane that already caches Miniconda across runs to

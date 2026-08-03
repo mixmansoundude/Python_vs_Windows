@@ -1061,6 +1061,20 @@ this belongs to).
    same repair round), `mech3Pass` (`--hidden-import=colorama` was added and the EXE was verified
    after hidden-import recovery), and `exePass` (the final EXE, built under conda, genuinely ran
    and exited 0 with the token file written) -- so a `success` conclusion is proof all four held.
+   **Two hardening fixes applied post-landing, from CodeRabbit review on the same PR:** (1)
+   `$mech2Pass`'s original `pygrib`/`xlrd` checks were plain "does this string appear anywhere in
+   `$combined`" regexes -- true independently of each other, but not proof the two outcomes
+   occurred in the SAME warnfix round the way the prose above already claimed; a future code
+   change splitting them across two rounds could keep this test green without the claim actually
+   holding. Fixed by scoping those two checks to the substring between the round's own start
+   marker (`[REPAIR] missing modules detected; installing and rebuilding.`) and its end marker
+   (`[REPAIR] rebuild complete after warnfix.`), plus a new `$warnfixRoundCount -eq 1` check
+   proving exactly one round exists (so the slice cannot itself straddle two). (2) workspace setup
+   (`Remove-Item`/`New-Item`/`Copy-Item` on `~selftest_layered_e2e\`) ran under the script's own
+   `$ErrorActionPreference = 'Continue'` with no failure check -- a failed `Remove-Item` (e.g. an
+   AV/indexer lock on a leftover `dist\<env>.exe` from a prior interrupted run) would silently let
+   the run reuse stale artifacts and potentially pass for the wrong reason. Fixed with
+   `-ErrorAction Stop` on all three calls plus an explicit re-check-and-throw after the removal.
 
 ### Item 13 (closed 2026-08-01)
 

@@ -768,7 +768,7 @@ jobs:
         run: |
           & tests\selfapps_cascade.ps1
 
-      # CLAUDE.md Active Backlog item 22: a real, non-simulated end-to-end test proving the
+      # docs/agent-closed-backlog.md's Item 22: a real, non-simulated end-to-end test proving the
       # uv-to-conda cascade, warnfix repair (both success and failure in the same round), and
       # --hidden-import auto-recovery all fire for real in ONE run -- no HP_TEST_FORCE_*/
       # HP_SKIP_*/HP_DISABLE_* flags beyond the unavoidable cascade-consent answer. Runs only in
