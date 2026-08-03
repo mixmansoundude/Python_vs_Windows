@@ -1364,6 +1364,11 @@ if not exist "%REQ%" if exist "requirements.auto.txt" (
 echo (no diff: requirements files not both present) > "~pipreqs.diff.txt"
 if exist "requirements.txt" if exist "requirements.auto.txt" (
   fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1
+  findstr /C:"FC: no differences encountered" "~pipreqs.diff.txt" >nul
+  if errorlevel 1 (
+    echo [INFO] requirements.txt differs from the auto-detected dependency scan; details below:
+    type "~pipreqs.diff.txt"
+  )
 )
 call :log "[INFO] REQ-005.5: dependency source diff computed -- ~pipreqs.diff.txt"
 rem === REQ-005.12 (Tier 1, docs/plan-autopep723-two-tier.md): autopep723 discovery ===
@@ -3340,18 +3345,24 @@ if not defined HP_BUILD_OK (
       call :log "[REPAIR] missing modules detected; installing and rebuilding."
       if "%HP_ENV_MODE%"=="uv" (
         for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
+          call :log "[INFO] Attempting to install: %%M"
           "%HP_UV_EXE%" pip install --python "%HP_PY%" %%M >> "%LOG%" 2>&1
           if errorlevel 1 (
             call :log "[WARN] Repair failed: %%M"
             copy nul "~warnfix_repair_failed.flag" >nul 2>&1
+          ) else (
+            call :log "[INFO] Installed: %%M"
           )
         )
       ) else if defined CONDA_BAT (
         for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
+          call :log "[INFO] Attempting to install: %%M"
           call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%M >> "%LOG%" 2>&1
           if errorlevel 1 (
             call :log "[WARN] Repair failed: %%M"
             copy nul "~warnfix_repair_failed.flag" >nul 2>&1
+          ) else (
+            call :log "[INFO] Installed: %%M"
           )
         )
       )

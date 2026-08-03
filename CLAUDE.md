@@ -492,30 +492,6 @@ Once an item is fully resolved it is removed from here entirely and archived (ke
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
 start at 1 and has gaps.
 
-- **Item 20: postflight briefing should always show the interpreter-run command, not only in the
-  caveat branch.** `run_setup.bat`'s `:print_postflight_briefing` currently only prints
-  `"%HP_PY%" "%HP_ENTRY%"` inside the caveat-only preamble (EXE verification uncertain/failed),
-  never in the shared `:pfb_runapp` section both the clean-success and caveat branches jump to.
-  Since `dist\%ENVNAME%.exe` existing at all proves `HP_PY` already worked (PyInstaller needs a
-  working interpreter to run), showing the interpreter command is always accurate there, not just
-  in the caveat case -- confirmed with the owner directly (2026-08-03 discussion). Fix: move the
-  line out of the caveat-only text into the shared `:pfb_runapp` section so it prints
-  unconditionally once, removing the now-duplicate caveat mention. Also update README.md's
-  REQ-016 section (currently documents the caveat-only behavior as intentional) to describe the
-  new unconditional behavior.
-
-- **Item 21: surface the requirements diff and warnfix install-attempt names on screen.** Two
-  small `run_setup.bat` product changes, confirmed as genuine gaps (not just doc-fidelity issues)
-  by reading source directly: (1) the pipreqs-vs-`requirements.txt` diff (`fc` output,
-  `~pipreqs.diff.txt`) is currently written to file only, never shown on screen -- add a curated
-  one-line summary of newly-detected packages, e.g. `[INFO] Newly auto-detected package(s) not yet
-  in requirements.txt: X`. (2) Warnfix repair installs are currently silent on attempt/success,
-  only naming a package on failure (`[WARN] Repair failed: %%M`) -- add an `[INFO] Attempting to
-  install: X, Y` line before the per-module install loop (`run_setup.bat`'s warnfix
-  repair-install loop, inside `:run_entry_after_smoke`) and an
-  `[INFO] Installed: X` line in the existing per-package success branch, mirroring the existing
-  failure line exactly. Owner is leaning toward implementing both if kept small.
-
 - **Item 22: real, non-simulated end-to-end layered-dependency-chain test.** New CI test + demo
   doc scenario proving uv-fails-to-conda-cascade, warnfix repair, and hidden-import auto-recovery
   all fire for real (not simulated) in one run, replacing Part VII Scenario 33's current

@@ -965,6 +965,49 @@ this belongs to).
    same proof) still applies; revisit only if a real-world trigger surfaces a gap the
    representative cases above don't actually cover.
 
+### Item 20 (closed 2026-08-03)
+
+- **Postflight briefing should always show the interpreter-run command, not only in the caveat
+   branch.** `run_setup.bat`'s `:print_postflight_briefing` previously only printed
+   `"%HP_PY%" "%HP_ENTRY%"` inside the caveat-only preamble (EXE verification uncertain/failed),
+   never in the shared `:pfb_runapp` section both the clean-success and caveat branches jump to.
+   Since `dist\%ENVNAME%.exe` existing at all proves `HP_PY` already worked (PyInstaller needs a
+   working interpreter to run), showing the interpreter command is always accurate there, not just
+   in the caveat case -- confirmed with the owner directly (2026-08-03 discussion). **Fixed**: the
+   line moved out of the caveat-only text into the shared `:pfb_runapp` section so it prints
+   unconditionally once, with the now-duplicate caveat mention removed. README.md's REQ-016
+   section was updated to describe the new unconditional behavior (previously documented the
+   caveat-only behavior as intentional). `docs/demo-bootstrapper-output.md`'s quoted postflight
+   panels (Scenarios 4, 15, 32, 33, 34, 35, 37) were all updated to reflect the new line, each
+   noting explicitly which lines were "updated to reflect current source" vs. preserved as
+   unmodified real-capture evidence, per this repo's sourcing convention.
+
+### Item 21 (closed 2026-08-03)
+
+- **Surface the requirements diff and warnfix install-attempt names on screen.** Two small
+   `run_setup.bat` product changes, confirmed as genuine gaps (not just doc-fidelity issues) by
+   reading source directly: (1) the pipreqs-vs-`requirements.txt` diff (`fc` output,
+   `~pipreqs.diff.txt`) was previously written to file only, never shown on screen; (2) warnfix
+   repair installs were previously silent on attempt/success, only naming a package on failure
+   (`[WARN] Repair failed: %%M`).
+   **Fixed, deliberately simpler than the original sketch (which proposed a curated one-line
+   summary of newly-detected packages):** re-derivation during implementation favored the lower-risk
+   option -- `type` the existing `fc` output verbatim when a genuine difference exists (detected via
+   `findstr /C:"FC: no differences encountered"` on the diff file, `if errorlevel 1` gating the
+   `type`), rather than writing new, untested set-difference parsing logic for a curated summary.
+   For warnfix, added `[INFO] Attempting to install: %%M` immediately before each per-module
+   install call (both the `HP_ENV_MODE=uv` branch's `uv pip install` loop and the conda branch's
+   `conda install` loop) and `[INFO] Installed: %%M` in a new `else` success branch alongside the
+   existing `[WARN] Repair failed: %%M` failure branch -- same `%%M` for-loop variable, same
+   `call :log` mechanism, same nesting depth as the pre-existing failure line, so no new variable
+   or delayed-expansion exposure was introduced. `docs/demo-bootstrapper-output.md` was updated to
+   show both new behaviors: the warnfix scenario's real capture gained the two new lines with a
+   note identifying them as updated-to-reflect-current-source (rest of the panel preserved
+   unmodified), and the pipreqs-diff scenario gained an `[Extrapolated Branch]`-labeled example of
+   what the console diff looks like when one genuinely exists (the real capture's own
+   `requirements.txt` was freshly copied from the auto-detected scan moments earlier, so `fc` finds
+   no differences there and the new line never fires in that specific capture).
+
 ### Item 13 (closed 2026-08-01)
 
 - **`self.warn.longpath`'s own real CI run showed an INCONCLUSIVE result (`ranBootstrap:false`),

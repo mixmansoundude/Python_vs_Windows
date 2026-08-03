@@ -309,6 +309,24 @@ isolate one mechanism from the other):
 [INFO] REQ-005.12: autopep723 discovery merge complete.
 ```
 
+**Not shown above because it doesn't apply to this run, not omitted:** since this app had no
+pre-existing `requirements.txt` (CLAUDE.md's Active Backlog item 21, closed), `requirements.txt`
+was freshly copied from `requirements.auto.txt` a few lines earlier in `:after_pipreqs_run`, so the
+`fc` diff genuinely finds no differences and stays file-only. When a user's own pre-existing
+`requirements.txt` DOES differ from what pipreqs auto-detects, the diff is now also printed to the
+console right after the line above:
+```
+[INFO] requirements.txt differs from the auto-detected dependency scan; details below:
+***** requirements.txt
+requests==2.31.0
+***** requirements.auto.txt
+requests==2.31.0
+colorama==0.4.6
+*****
+```
+(`[Extrapolated Branch]` -- `fc`'s own output format, not independently captured; genuine content
+depends entirely on the two files' real contents).
+
 **A real quirk worth flagging so it isn't misread**: the bootstrap log around this point also shows
 `DEP_FINAL_COUNT=0` even though `colorama` is a genuine, real dependency that gets installed a few
 steps later -- this count is taken BEFORE `requirements.auto.txt` is copied into `requirements.txt`
@@ -2456,12 +2474,19 @@ real, unflagged trigger case is a package pipreqs's static scan genuinely cannot
 direct import pipreqs's AST scan would catch) -- not yet captured in this file with its own
 dedicated real test; see CLAUDE.md's Active Backlog item 22.
 
+**Two lines below (`[INFO] Attempting to install: openpyxl` / `[INFO] Installed: openpyxl`)
+updated to reflect current source -- CLAUDE.md's Active Backlog item 21 (closed) added them to the
+per-module warnfix repair loop after this capture was originally taken, so install attempts are no
+longer silent on success; everything else in this panel is the original, unmodified capture:**
+
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
 [INFO] PyInstaller produced dist\<env>.exe
 [DEBUG] warnfix: warn file found
 [INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically.
 [REPAIR] missing modules detected; installing and rebuilding.
+[INFO] Attempting to install: openpyxl
+[INFO] Installed: openpyxl
 [REPAIR] rebuild complete after warnfix.
 [INFO] PyInstaller build artifacts cleaned up.
 [INFO] EXE smokerun: testing dist\<env>.exe
