@@ -408,18 +408,23 @@ indirection, no decoy package), so this same trap cannot occur. See `docs/agent-
 Item 22 for the full research trail.
 
 Asserts, mostly against `$combined` (the bootstrap stdout log plus `~setup.log`, concatenated) --
-except the exact cascade COUNT (`$uvToConda`, the `-eq 1` no-loop check), which is checked against
-`$setupText` (`~setup.log` alone) so a genuine occurrence is never double-counted, matching
-`self.cascade.exec`'s own single-source-for-counts convention: the initial `uv pip install
--r requirements.txt` genuinely failed; the REQ-009 cascade candidate was detected and approved
-and executed exactly once (uv to conda); conda was selected as the new provider; warnfix's
-per-module loop both attempted AND failed to install `pygrib`, and both attempted AND succeeded
-at installing `xlrd` -- proven to have happened in the SAME repair round (not merely somewhere in
-the run), by scoping the `pygrib`/`xlrd` checks to the substring between the round's own
-`[REPAIR] missing modules detected; installing and rebuilding.` start marker and its
-`[REPAIR] rebuild complete after warnfix.` end marker, plus a `$warnfixRoundCount -eq 1` check
-proving exactly one such round exists in the run (so that slice cannot itself straddle two
-rounds) -- see Item 21's `[INFO] Attempting to install:`/`[INFO] Installed:` lines for where those
+except the exact cascade COUNT (`$uvToConda`) and the warnfix-round evidence (`$warnfixRoundCount`/
+`$warnfixRoundText`, both derived below), which are checked against `$setupText` (`~setup.log`
+alone) so a genuine occurrence is never double-counted: every `:log`-emitted line (`run_setup.bat`'s
+`:log` subroutine) is written to BOTH stdout (captured into the bootstrap log) AND `~setup.log`
+(`%LOG%`), so counting matches against the concatenation of both would silently double every
+occurrence -- matching `self.cascade.exec`'s own single-source-for-counts convention: the initial
+`uv pip install -r requirements.txt` genuinely failed; the REQ-009 cascade candidate was detected
+and approved and executed exactly once (uv to conda); conda was selected as the new provider;
+warnfix's per-module loop both attempted AND failed to install `pygrib`, and both attempted AND
+succeeded at installing `xlrd` -- proven to have happened in the SAME repair round (not merely
+somewhere in the run), by scoping the `pygrib`/`xlrd` checks to the substring between the round's
+own `[REPAIR] missing modules detected; installing and rebuilding.` start marker and its
+`[REPAIR] rebuild complete after warnfix.` end marker (required explicitly -- an incomplete round
+with no completion marker does NOT fall back to "everything to end of log," it counts as no
+evidence at all), plus a `$warnfixRoundCount -eq 1` check proving exactly one such round exists in
+the run (so that slice cannot itself straddle two rounds) -- see Item 21's `[INFO] Attempting to
+install:`/`[INFO] Installed:` lines for where those
 per-module log lines originate; `--hidden-import=colorama` was added and the EXE was verified
 after hidden-import recovery; the final EXE (built under conda, the tier the cascade lands on)
 genuinely exists, exits 0, and writes a token file combining evidence from all three packages; and

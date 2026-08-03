@@ -102,14 +102,28 @@ $workDir = Join-Path $here '~selftest_layered_e2e'
 # left over from a prior interrupted run) silently pass through, letting this run reuse stale
 # dist/status/token/log files and pass for the wrong reason instead of exercising a genuinely
 # fresh bootstrap. -ErrorAction Stop + an explicit existence re-check makes that failure loud.
-if (Test-Path -LiteralPath $workDir) {
-    Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction Stop
+# Wrapped in try/catch (rather than just letting the throw propagate) so a workspace-prep
+# failure still emits the self.layered_e2e.chain NDJSON row -- a raw terminating error here
+# would otherwise leave CI with no record of this test at all instead of an explicit failure.
+try {
     if (Test-Path -LiteralPath $workDir) {
-        throw "selfapps_layered_e2e.ps1: failed to remove stale workspace: $workDir"
+        Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath $workDir) {
+            throw "selfapps_layered_e2e.ps1: failed to remove stale workspace: $workDir"
+        }
     }
+    New-Item -ItemType Directory -Force -Path $workDir -ErrorAction Stop | Out-Null
+    Copy-Item -Path $batchPath -Destination $workDir -Force -ErrorAction Stop
+} catch {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.layered_e2e.chain'
+        req     = 'REQ-009'
+        pass    = $false
+        desc    = 'layered test workspace preparation failed'
+        details = [ordered]@{ error = $_.Exception.Message }
+    })
+    exit 1
 }
-New-Item -ItemType Directory -Force -Path $workDir -ErrorAction Stop | Out-Null
-Copy-Item -Path $batchPath -Destination $workDir -Force -ErrorAction Stop
 
 Set-Content -Path (Join-Path $workDir 'requirements.txt') -Value "pygrib`ncolorama`nxlrd" -Encoding ASCII
 
@@ -167,15 +181,28 @@ $condaSelected   = $combined -match [regex]::Escape('REQ-009: Selected Python pr
 # marker to the next "rebuild complete" marker (or end of log if the round never completed).
 # $warnfixRoundCount -eq 1 additionally proves there was exactly one such round in this run, so
 # the slice below cannot itself be straddling two rounds.
-$warnInstallFired    = $combined -match [regex]::Escape('[REPAIR] missing modules detected; installing and rebuilding.')
-$warnfixRoundMatches = [regex]::Matches($combined, [regex]::Escape('[REPAIR] missing modules detected; installing and rebuilding.'))
+# derived requirement: match against $setupText ALONE, not $combined -- every :log-emitted line
+# (including both markers below) is written to BOTH stdout (captured into $logLines) AND
+# ~setup.log (%LOG%, see run_setup.bat's :log subroutine), so counting matches in $combined
+# double-counts every occurrence. $uvToConda above already established this same
+# single-source-for-counts convention; this reuses it rather than inventing a second one.
+$warnInstallFired    = $setupText -match [regex]::Escape('[REPAIR] missing modules detected; installing and rebuilding.')
+$warnfixRoundMatches = [regex]::Matches($setupText, [regex]::Escape('[REPAIR] missing modules detected; installing and rebuilding.'))
 $warnfixRoundCount   = $warnfixRoundMatches.Count
-$warnfixRoundText    = ''
+$warnfixRoundText     = ''
+$warnfixRoundComplete = $false
 if ($warnfixRoundCount -ge 1) {
     $roundStart = $warnfixRoundMatches[0].Index
-    $tail = $combined.Substring($roundStart)
+    $tail = $setupText.Substring($roundStart)
     $endMarker = [regex]::Match($tail, [regex]::Escape('[REPAIR] rebuild complete after warnfix.'))
-    $warnfixRoundText = if ($endMarker.Success) { $tail.Substring(0, $endMarker.Index + $endMarker.Length) } else { $tail }
+    # derived requirement: an incomplete round (no completion marker -- e.g. the rebuild itself
+    # errored, or the log was truncated) must NOT count as same-round evidence just because the
+    # rest of the log happens to still contain both substrings; require the marker explicitly
+    # rather than falling back to "everything to EOF."
+    if ($endMarker.Success) {
+        $warnfixRoundText = $tail.Substring(0, $endMarker.Index + $endMarker.Length)
+        $warnfixRoundComplete = $true
+    }
 }
 $pygribAttempted  = $warnfixRoundText -match [regex]::Escape('[INFO] Attempting to install: pygrib')
 $pygribFailed     = $warnfixRoundText -match [regex]::Escape('[WARN] Repair failed: pygrib')
@@ -228,7 +255,7 @@ if (Test-Path $statusPath) {
 }
 
 $mech1Pass = $uvInstallFailed -and $cascadeDetected -and $cascadeApproved -and ($uvToConda -eq 1) -and $condaSelected
-$mech2Pass = $warnInstallFired -and ($warnfixRoundCount -eq 1) -and $pygribAttempted -and $pygribFailed -and $xlrdAttempted -and $xlrdInstalled
+$mech2Pass = $warnInstallFired -and ($warnfixRoundCount -eq 1) -and $warnfixRoundComplete -and $pygribAttempted -and $pygribFailed -and $xlrdAttempted -and $xlrdInstalled
 $mech3Pass = $hiddenAdding -and $hiddenRecovered
 $exePass   = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and (-not $infraError)
 $chainPass = $mech1Pass -and $mech2Pass -and $mech3Pass -and $exePass -and ($statusExit -eq 0) -and ($statusState -eq 'ok')
@@ -258,7 +285,8 @@ Write-NdjsonRow ([ordered]@{
         condaSelected    = $condaSelected
         mech2Pass        = $mech2Pass
         warnInstallFired = $warnInstallFired
-        warnfixRoundCount = $warnfixRoundCount
+        warnfixRoundCount    = $warnfixRoundCount
+        warnfixRoundComplete = $warnfixRoundComplete
         pygribAttempted  = $pygribAttempted
         pygribFailed     = $pygribFailed
         xlrdAttempted    = $xlrdAttempted

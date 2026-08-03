@@ -1061,6 +1061,15 @@ this belongs to).
    same repair round), `mech3Pass` (`--hidden-import=colorama` was added and the EXE was verified
    after hidden-import recovery), and `exePass` (the final EXE, built under conda, genuinely ran
    and exited 0 with the token file written) -- so a `success` conclusion is proof all four held.
+   **Re-verified independently against the GitHub Actions API** (not re-derived from this file's
+   own prior claim) during the second CodeRabbit review round below: `get_workflow_job` on job
+   `91580880846` confirms step 61's name, `conclusion: success`, `started_at 02:33:09Z`,
+   `completed_at 02:37:05Z` -- an exact match on both the timestamp and the ~4-minute duration
+   already cited above. Note the JOB's own overall conclusion reads `cancelled` -- this is
+   unrelated to the test's own result: a later push to the same branch superseded the whole run
+   (`concurrency.cancel-in-progress: true` in `batch-check.yml`) well after step 61 had already
+   completed with its own `success` conclusion, and steps 92+ show `cancelled`/`skipped`
+   accordingly. The step-level result this entry cites is unaffected by that later cancellation.
    **Two hardening fixes applied post-landing, from CodeRabbit review on the same PR:** (1)
    `$mech2Pass`'s original `pygrib`/`xlrd` checks were plain "does this string appear anywhere in
    `$combined`" regexes -- true independently of each other, but not proof the two outcomes
@@ -1075,6 +1084,27 @@ this belongs to).
    AV/indexer lock on a leftover `dist\<env>.exe` from a prior interrupted run) would silently let
    the run reuse stale artifacts and potentially pass for the wrong reason. Fixed with
    `-ErrorAction Stop` on all three calls plus an explicit re-check-and-throw after the removal.
+
+   **Three more hardening fixes, from a SECOND CodeRabbit review round on the same PR -- one of
+   which was a real regression introduced by fix (1) above, not caught by the real CI run that
+   already passed before this round.** (3) Fix (1)'s own round-scoping matched against `$combined`
+   (bootstrap log + `~setup.log` concatenated) -- but every `:log`-emitted line (including BOTH the
+   round start/end markers) is written to BOTH streams by `run_setup.bat`'s own `:log` subroutine,
+   so matching against their concatenation silently DOUBLE-COUNTED every occurrence. This meant
+   `$warnfixRoundCount` would read 2 for a single genuine round, making the new `-eq 1` check
+   FALSE on every normal run -- an unconditional regression that the already-passed real CI run
+   (item above) never caught, since that run predates this fix. Fixed by matching against
+   `$setupText` alone, the same single-source convention `$uvToConda` already used one line above
+   it in the same file -- a precedent this fix should have followed the first time. (4) The round
+   substring's fallback-to-EOF when no completion marker is found meant an INCOMPLETE round (the
+   rebuild itself errored, or the log was truncated) could still count as valid same-round
+   evidence if the rest of the log happened to contain both substrings. Fixed by requiring the
+   completion marker explicitly -- no marker means no evidence, not "assume the rest of the log is
+   the round." (5) Workspace-prep (`Remove-Item`/`New-Item`/`Copy-Item`, see fix (2)) now uses
+   `-ErrorAction Stop`, but a genuine failure there would raise a terminating error with no
+   `self.layered_e2e.chain` NDJSON row emitted at all, leaving CI with silence instead of an
+   explicit failure record. Fixed by wrapping the block in `try`/`catch`, emitting a `pass=false`
+   row with the error message before `exit 1` on any workspace-prep failure.
 
 ### Item 13 (closed 2026-08-01)
 
