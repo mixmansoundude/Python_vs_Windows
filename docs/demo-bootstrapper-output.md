@@ -399,7 +399,10 @@ see `docs/agent-interconnect.md`'s "Process-ID display for stuck-program recover
 confirmed here as a genuine, working console line, not just source text.
 
 Immediately following (elective prompts, both auto-declined by CI -- see Scenario 5 below for
-what a real user experiences here instead) and then the final panel:
+what a real user experiences here instead) and then the final panel -- with the "You can also run
+it directly via the interpreter" line and its path updated in place to reflect current source
+(this real capture predates the postflight briefing always showing that line; every other line
+below is unmodified real capture):
 
 ```
 *** Verification finished -- see the Run Status above. ***
@@ -419,6 +422,8 @@ Tue 07/28/2026  4:55:59.94 [INFO] Optimized build: declined.
 
  RUNNING YOUR APP
    Double-click dist\_selftest_stub.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     ".uv_env\Scripts\python.exe" "hello_stub.py"
 
    STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
    starts, so allow 10-15 seconds (longer for big libraries like
@@ -1259,12 +1264,18 @@ COMPLETE":
 ============================================================
  We packaged your app, but couldn't fully verify it runs as a
  standalone program. Your environment and dependencies ARE
- installed correctly -- you can always run your app directly:
-   "" "app.py"
+ installed correctly.
 
  RUNNING YOUR APP
    Double-click dist\_selftest_cascade_exec.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     "" "app.py"
 ```
+
+(the interpreter line's structural position -- now in the shared RUNNING YOUR APP section rather
+than the caveat preamble -- reflects current source; the `""` value itself is unchanged, real
+captured data from this run, not something this update invented: `HP_PY` was genuinely empty in
+this specific cascade-exhaustion capture, a real, already-flagged quirk worth preserving as-is.)
 
 **Each tier is tried at most once as a cascade source** (`HP_CASCADE_TRIED_<tier>` guards),
 `HP_ENV_MODE` only ever advances (`uv -> conda -> embed -> venv -> system`), so the cascade
@@ -2234,6 +2245,8 @@ the final panel:
 
  RUNNING YOUR APP
    Double-click dist\<env>.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     ".uv_env\Scripts\python.exe" "hello_stub.py"
 
    STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
    starts, so allow 10-15 seconds (longer for big libraries like
@@ -2315,7 +2328,7 @@ scenario illustrates (a package genuinely resolvable via conda-forge but not uv/
 test app in this repo yet; Scenario 15's own real trigger app (`import fake_pkg_cascade_xyz`, a
 package name that doesn't exist ANYWHERE) is deliberately unresolvable by every tier alike, which
 is what drives that scenario's full-exhaustion case -- it cannot illustrate conda succeeding where
-uv failed. See `docs/agent-closed-backlog.md`'s open backlog item for a planned real, non-simulated
+uv failed. See CLAUDE.md's Active Backlog item 22 for a planned real, non-simulated
 version of this exact scenario (GDAL, confirmed to have no PyPI wheels for any platform but current
 conda-forge Windows builds) once that test lands.
 
@@ -2362,8 +2375,42 @@ Branch]` for this specific re-entry, not a separate real capture) reaches the sa
 
  RUNNING YOUR APP
    Double-click dist\<env>.exe to run it.
-   ... (same panel body as Scenario 32 -- startup-time note, flash-close note, buffering note,
-   launch-argument forwarding, KEEP/SAFE-TO-DELETE lists; not repeated a third time verbatim here)
+   You can also run it directly via the interpreter at any time:
+     "<python>" "<entry.py>"
+
+   STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
+   starts, so allow 10-15 seconds (longer for big libraries like
+   numpy/scipy/matplotlib, or when extra packages were bundled to fix
+   missing imports) before assuming it has hung.
+
+   If the window flashes and closes instantly: that's normal if
+   your program finished quickly or hit an error before printing
+   anything. To see what happened, open Command Prompt, cd to
+   this folder, and run:
+     dist\<env>.exe
+   This keeps the window open so you can read any messages.
+
+   A progress indicator that updates in place may appear all at
+   once instead of live when run as the .exe -- that is a stdout
+   buffering difference between the .exe and the script, not an error.
+
+   Does your program need launch arguments (e.g. --input file.csv)? Run
+   this bootstrapper again with them added after the entry file, e.g.
+     run_setup.bat "<entry.py>" --input file.csv
+   and they will be forwarded to your program during THIS setup run
+   (up to 8 extra arguments). This does not change how a plain
+   double-click of dist\<env>.exe launches it afterward -- for that,
+   make a Windows shortcut to the .exe and add the arguments to its
+   Target field, or launch it yourself from a Command Prompt.
+
+ KEEP these files with your project:
+   requirements.txt  -- packages your app depends on
+   runtime.txt       -- Python version pin
+
+ SAFE TO DELETE to reclaim disk space:
+   .*_env\ folders   -- environment directories
+   ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+   build\            -- PyInstaller build cache
 ============================================================
 
 [INFO] REQ-016: Post-flight briefing printed.
@@ -2407,7 +2454,7 @@ behavior (pipreqs enabled, no flags) would normally have pipreqs discover and pr
 real, unflagged trigger case is a package pipreqs's static scan genuinely cannot see (e.g. a
 `pandas.read_excel('legacy.xls')` call, which needs `xlrd` as an invisible runtime engine, never a
 direct import pipreqs's AST scan would catch) -- not yet captured in this file with its own
-dedicated real test; see `docs/agent-closed-backlog.md`'s open backlog item.
+dedicated real test; see CLAUDE.md's Active Backlog item 22.
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
@@ -2447,8 +2494,42 @@ final panel:
 
  RUNNING YOUR APP
    Double-click dist\<env>.exe to run it.
-   ... (same panel body as Scenario 32 -- startup-time note, flash-close note, buffering note,
-   launch-argument forwarding, KEEP/SAFE-TO-DELETE lists; not repeated a third time verbatim here)
+   You can also run it directly via the interpreter at any time:
+     ".uv_env\Scripts\python.exe" "app.py"
+
+   STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
+   starts, so allow 10-15 seconds (longer for big libraries like
+   numpy/scipy/matplotlib, or when extra packages were bundled to fix
+   missing imports) before assuming it has hung.
+
+   If the window flashes and closes instantly: that's normal if
+   your program finished quickly or hit an error before printing
+   anything. To see what happened, open Command Prompt, cd to
+   this folder, and run:
+     dist\<env>.exe
+   This keeps the window open so you can read any messages.
+
+   A progress indicator that updates in place may appear all at
+   once instead of live when run as the .exe -- that is a stdout
+   buffering difference between the .exe and the script, not an error.
+
+   Does your program need launch arguments (e.g. --input file.csv)? Run
+   this bootstrapper again with them added after the entry file, e.g.
+     run_setup.bat "app.py" --input file.csv
+   and they will be forwarded to your program during THIS setup run
+   (up to 8 extra arguments). This does not change how a plain
+   double-click of dist\<env>.exe launches it afterward -- for that,
+   make a Windows shortcut to the .exe and add the arguments to its
+   Target field, or launch it yourself from a Command Prompt.
+
+ KEEP these files with your project:
+   requirements.txt  -- packages your app depends on
+   runtime.txt       -- Python version pin
+
+ SAFE TO DELETE to reclaim disk space:
+   .*_env\ folders   -- environment directories
+   ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+   build\            -- PyInstaller build cache
 ============================================================
 
 [INFO] REQ-016: Post-flight briefing printed.
@@ -2532,8 +2613,42 @@ Declining (same provider-agnostic building blocks as Scenario 32's own ending, s
 
  RUNNING YOUR APP
    Double-click dist\<env>.exe to run it.
-   ... (same panel body as Scenario 32 -- startup-time note, flash-close note, buffering note,
-   launch-argument forwarding, KEEP/SAFE-TO-DELETE lists; not repeated a third time verbatim here)
+   You can also run it directly via the interpreter at any time:
+     ".uv_env\Scripts\python.exe" "app.py"
+
+   STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
+   starts, so allow 10-15 seconds (longer for big libraries like
+   numpy/scipy/matplotlib, or when extra packages were bundled to fix
+   missing imports) before assuming it has hung.
+
+   If the window flashes and closes instantly: that's normal if
+   your program finished quickly or hit an error before printing
+   anything. To see what happened, open Command Prompt, cd to
+   this folder, and run:
+     dist\<env>.exe
+   This keeps the window open so you can read any messages.
+
+   A progress indicator that updates in place may appear all at
+   once instead of live when run as the .exe -- that is a stdout
+   buffering difference between the .exe and the script, not an error.
+
+   Does your program need launch arguments (e.g. --input file.csv)? Run
+   this bootstrapper again with them added after the entry file, e.g.
+     run_setup.bat "app.py" --input file.csv
+   and they will be forwarded to your program during THIS setup run
+   (up to 8 extra arguments). This does not change how a plain
+   double-click of dist\<env>.exe launches it afterward -- for that,
+   make a Windows shortcut to the .exe and add the arguments to its
+   Target field, or launch it yourself from a Command Prompt.
+
+ KEEP these files with your project:
+   requirements.txt  -- packages your app depends on
+   runtime.txt       -- Python version pin
+
+ SAFE TO DELETE to reclaim disk space:
+   .*_env\ folders   -- environment directories
+   ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+   build\            -- PyInstaller build cache
 ============================================================
 
 [INFO] REQ-016: Post-flight briefing printed.
@@ -2626,9 +2741,11 @@ summary -- a mix of real CI capture and lines updated to reflect current source,
 uniform capture. Real CI capture (run `29788624195`, job `88506013149`): the
 "(fallback build system)" verification line and the drive-message reassurance line, exactly as
 captured. Updated to reflect current source (`docs/plan-cli-interactive-verification.md`
-requirement 3's activity-aware kill, and REQ-026's argv passthrough, both of which shipped after
-this specific run): the "Verifying the built standalone EXE" line and the "Does your program need
-launch arguments" paragraph. Every other line below is real capture, unmodified:
+requirement 3's activity-aware kill, REQ-026's argv passthrough, and Active Backlog item 20's
+postflight briefing change, all of which shipped after this specific run): the "Verifying the
+built standalone EXE" line, the "You can also run it directly via the interpreter" line, and the
+"Does your program need launch arguments" paragraph. Every other line below is real capture,
+unmodified:
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
@@ -2667,6 +2784,8 @@ line immediately following, with nothing printed in between. Continuing:
 
  RUNNING YOUR APP
    Double-click dist\<env>.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     "<python>" "<entry.py>"
 
    STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
    starts, so allow 10-15 seconds (longer for big libraries like

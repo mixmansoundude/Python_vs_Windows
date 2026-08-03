@@ -511,7 +511,8 @@ start at 1 and has gaps.
   one-line summary of newly-detected packages, e.g. `[INFO] Newly auto-detected package(s) not yet
   in requirements.txt: X`. (2) Warnfix repair installs are currently silent on attempt/success,
   only naming a package on failure (`[WARN] Repair failed: %%M`) -- add an `[INFO] Attempting to
-  install: X, Y` line before the per-module install loop (`run_setup.bat` ~line 3342) and an
+  install: X, Y` line before the per-module install loop (`run_setup.bat`'s warnfix
+  repair-install loop, inside `:run_entry_after_smoke`) and an
   `[INFO] Installed: X` line in the existing per-package success branch, mirroring the existing
   failure line exactly. Owner is leaning toward implementing both if kept small.
 

@@ -4707,12 +4707,13 @@ echo  SETUP COMPLETE -- WITH A CAVEAT
 echo ============================================================
 echo  We packaged your app, but couldn't fully verify it runs as a
 echo  standalone program. Your environment and dependencies ARE
-echo  installed correctly -- you can always run your app directly:
-echo    "%HP_PY%" "%HP_ENTRY%"
+echo  installed correctly.
 :pfb_runapp
 echo.
 echo  RUNNING YOUR APP
 echo    Double-click dist\%ENVNAME%.exe to run it.
+echo    You can also run it directly via the interpreter at any time:
+echo      "%HP_PY%" "%HP_ENTRY%"
 echo.
 echo    STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
 echo    starts, so allow 10-15 seconds (longer for big libraries like
