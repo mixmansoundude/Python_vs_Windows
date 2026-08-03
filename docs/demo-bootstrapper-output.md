@@ -310,11 +310,12 @@ isolate one mechanism from the other):
 ```
 
 **Not shown above because it doesn't apply to this run, not omitted:** since this app had no
-pre-existing `requirements.txt` (CLAUDE.md's Active Backlog item 21, closed), `requirements.txt`
+pre-existing `requirements.txt` (`docs/agent-closed-backlog.md`'s Item 21), `requirements.txt`
 was freshly copied from `requirements.auto.txt` a few lines earlier in `:after_pipreqs_run`, so the
 `fc` diff genuinely finds no differences and stays file-only. When a user's own pre-existing
 `requirements.txt` DOES differ from what pipreqs auto-detects, the diff is now also printed to the
 console right after the line above:
+
 ```
 [INFO] requirements.txt differs from the auto-detected dependency scan; details below:
 ***** requirements.txt
@@ -324,6 +325,7 @@ requests==2.31.0
 colorama==0.4.6
 *****
 ```
+
 (`[Extrapolated Branch]` -- `fc`'s own output format, not independently captured; genuine content
 depends entirely on the two files' real contents).
 
@@ -1281,19 +1283,34 @@ COMPLETE":
  SETUP COMPLETE -- WITH A CAVEAT
 ============================================================
  We packaged your app, but couldn't fully verify it runs as a
- standalone program. Your environment and dependencies ARE
- installed correctly.
+ standalone program. Your Python environment was set up and the
+ packaging step completed without a fatal error.
 
  RUNNING YOUR APP
    Double-click dist\_selftest_cascade_exec.exe to run it.
    You can also run it directly via the interpreter at any time:
-     "" "app.py"
+     "<full path to>\.venv\Scripts\python.exe" "app.py"
 ```
 
-(the interpreter line's structural position -- now in the shared RUNNING YOUR APP section rather
-than the caveat preamble -- reflects current source; the `""` value itself is unchanged, real
-captured data from this run, not something this update invented: `HP_PY` was genuinely empty in
-this specific cascade-exhaustion capture, a real, already-flagged quirk worth preserving as-is.)
+**Both the caveat text and the interpreter line above are updated to reflect current source, not
+the original real capture -- the rest of this panel (the exhausted-cascade log lines above it,
+the header, and the file paths) is still the original evidence.** The original real capture showed
+`"" "app.py"` here (a genuinely empty `HP_PY`) and the older, overclaiming "Your environment and
+dependencies ARE installed correctly" wording -- a code-review pass (a CodeRabbit finding on the
+PR that introduced this always-shown interpreter line) traced the exact cause: a declined
+cascade-to-system fallback tier clears its own `HP_PY` on the way out as its own correctness
+invariant (see `docs/agent-lessons-learned.md`'s "A declined/failed fallback tier must clear
+HP_PY" entry), which is right for the FIRST-time provider chain but was wrong here -- it clobbered
+the still-good venv interpreter path this exact panel is describing as ready to use. Fixed with a
+save/restore around `:provider_cascade` (`HP_CASCADE_SAVED_PY`, restored at
+`:after_cascade_decision`) plus a defensive `if not defined HP_PY` skip at the print site itself,
+and the caveat wording was independently narrowed to stop claiming dependency installation was
+verified (it isn't, by this point in the flow -- see CLAUDE.md's Active Backlog / closed-backlog
+history for the full fix). The corrected interpreter line above is therefore `[Extrapolated
+Branch]` (the fix has not yet been re-exercised by a fresh real CI capture of this exact scenario)
+-- the general shape (a `.venv\Scripts\python.exe` path, since the log lines above confirm venv
+was the tier actually kept) is derived from `:try_venv_fallback`'s own `set "HP_PY=%CD%\.venv\
+Scripts\python.exe"` line, not independently captured.
 
 **Each tier is tried at most once as a cascade source** (`HP_CASCADE_TRIED_<tier>` guards),
 `HP_ENV_MODE` only ever advances (`uv -> conda -> embed -> venv -> system`), so the cascade
@@ -2346,9 +2363,10 @@ scenario illustrates (a package genuinely resolvable via conda-forge but not uv/
 test app in this repo yet; Scenario 15's own real trigger app (`import fake_pkg_cascade_xyz`, a
 package name that doesn't exist ANYWHERE) is deliberately unresolvable by every tier alike, which
 is what drives that scenario's full-exhaustion case -- it cannot illustrate conda succeeding where
-uv failed. See CLAUDE.md's Active Backlog item 22 for a planned real, non-simulated
-version of this exact scenario (GDAL, confirmed to have no PyPI wheels for any platform but current
-conda-forge Windows builds) once that test lands.
+uv failed. See CLAUDE.md's Active Backlog item 22 for a planned real, non-simulated version of
+this exact scenario (GDAL against the default PyPI index, confirmed via a direct PyPI JSON API
+query -- not from memory -- to have zero wheels for any Python version, but current conda-forge
+Windows builds) once that test lands; see that item's own entry for the full verification detail.
 
 `:cascade_acquire_conda` downloads and installs Miniconda on demand at this point if it wasn't
 already on disk (uv-first runs skip Miniconda entirely until something actually needs it -- see
@@ -2475,7 +2493,7 @@ direct import pipreqs's AST scan would catch) -- not yet captured in this file w
 dedicated real test; see CLAUDE.md's Active Backlog item 22.
 
 **Two lines below (`[INFO] Attempting to install: openpyxl` / `[INFO] Installed: openpyxl`)
-updated to reflect current source -- CLAUDE.md's Active Backlog item 21 (closed) added them to the
+updated to reflect current source -- `docs/agent-closed-backlog.md`'s Item 21 added them to the
 per-module warnfix repair loop after this capture was originally taken, so install attempts are no
 longer silent on success; everything else in this panel is the original, unmodified capture:**
 

@@ -495,10 +495,18 @@ start at 1 and has gaps.
 - **Item 22: real, non-simulated end-to-end layered-dependency-chain test.** New CI test + demo
   doc scenario proving uv-fails-to-conda-cascade, warnfix repair, and hidden-import auto-recovery
   all fire for real (not simulated) in one run, replacing Part VII Scenario 33's current
-  `[Extrapolated Branch]` splice with genuine evidence. Researched and confirmed (2026-08-03): GDAL
-  has zero PyPI wheels for any platform (sdist-only through the latest 3.13.2 as of this research)
-  -- a genuine, deterministic `uv`/`pip` install failure on Windows -- while conda-forge has
-  current `win-64` `gdal` builds (3.13.2, actively maintained, ~2.2MB direct package). `pygraphviz`
+  `[Extrapolated Branch]` splice with genuine evidence. Researched and confirmed (2026-08-03) via a
+  direct query against the official PyPI JSON API (`https://pypi.org/pypi/GDAL/json`): the `GDAL`
+  package's latest release (3.13.2) ships zero `bdist_wheel` files for ANY Python version or
+  platform -- sdist-only across its entire release history -- so this is a genuine, deterministic
+  `uv`/`pip` install failure against the default PyPI index on Windows regardless of which Python
+  version the bootstrapper's uv-managed interpreter happens to be, not a version-specific gap.
+  (Third-party wheel indexes such as the community-run Geospatial Wheels Index do publish Windows
+  GDAL wheels, but are irrelevant here -- the bootstrapper only ever installs against the default
+  PyPI index, never a custom `--index-url`.) Separately confirmed via the anaconda.org API
+  (`https://api.anaconda.org/package/conda-forge/gdal`) that conda-forge has current `win-64`
+  `gdal` 3.13.2 builds, actively maintained, per-Python-version build strings (np2py310 through
+  np2py314), ~2.2MB direct package. `pygraphviz`
   was considered and ruled out -- it now ships real Windows wheels as of 2.0.1, so it would not
   reproduce a genuine install failure. `colorama` via `importlib.import_module()` is already a
   proven real trigger for hidden-import auto-recovery (`tests/selfapps_hidden_import.ps1`). `xlrd`

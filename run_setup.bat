@@ -997,6 +997,13 @@ if not errorlevel 1 (
 )
 
 :after_env_mode_selection
+rem derived requirement: this label is the shared re-entry convergence point for every REQ-009
+rem provider-selection success (first-time AND cascade-driven, see docs/agent-interconnect.md
+rem "Provider cascade execution re-enters env-create") -- clear the cascade save/restore slot
+rem here so a LATER pass's cascade decline (falling through to :after_cascade_decision without
+rem ever re-entering :provider_cascade) does not restore a now-stale HP_PY from an earlier,
+rem already-successful cascade.
+set "HP_CASCADE_SAVED_PY="
 if defined PVW_PYTHON_EXE set "HP_PY=%PVW_PYTHON_EXE%"
 if defined PVW_PYTHON_EXE call :log "[INFO] Python host: using super-user override PVW_PYTHON_EXE."
 rem === Conda base periodic update (~30 days) ====================================
@@ -1364,8 +1371,15 @@ if not exist "%REQ%" if exist "requirements.auto.txt" (
 echo (no diff: requirements files not both present) > "~pipreqs.diff.txt"
 if exist "requirements.txt" if exist "requirements.auto.txt" (
   fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1
-  findstr /C:"FC: no differences encountered" "~pipreqs.diff.txt" >nul
-  if errorlevel 1 (
+  rem derived requirement: use fc.exe's own exit code (0=identical, 1=differ, 2=comparison
+  rem error), not a findstr match on its English "FC: no differences encountered" message --
+  rem that text is localized on non-English Windows, so a findstr match would never fire there
+  rem and the diff would incorrectly show even for two identical files. Check errorlevel 2
+  rem before errorlevel 1 -- "if errorlevel N" matches ERRORLEVEL GEQ N, so the higher value
+  rem must be checked first or it would never be reached.
+  if errorlevel 2 (
+    call :log "[WARN] fc comparison of requirements.txt vs requirements.auto.txt reported an error; skipping diff display."
+  ) else if errorlevel 1 (
     echo [INFO] requirements.txt differs from the auto-detected dependency scan; details below:
     type "~pipreqs.diff.txt"
   )
@@ -1794,6 +1808,18 @@ rem cascade source twice, so an unresolvable dependency exhausts the tiers and s
 rem it never loops. Each re-attempt re-enters at :try_conda_create / :after_env_mode_selection.
 if defined HP_CASCADE_APPROVED goto :provider_cascade
 :after_cascade_decision
+rem derived requirement: restore HP_PY if a cascade attempt clobbered it. A DECLINED/failed
+rem fallback tier (:try_venv_fallback / :try_system_fallback) clears its own HP_PY on failure
+rem exit as ITS OWN invariant (must leave no trace of a speculative attempt -- see
+rem docs/agent-lessons-learned.md "A declined/failed fallback tier must clear HP_PY, not just
+rem return failure"), which is correct for the INITIAL fallback chain but destructive here: on
+rem cascade re-entry, HP_PY may already hold a working interpreter from an earlier successful
+rem build (the one :print_postflight_briefing is about to describe as "your standalone
+rem application is ready"). Every path that reaches this label via :provider_cascade's own
+rem exhaustion/decline branches (not the direct fall-through when no cascade was ever approved)
+rem is exactly "keeping current build" -- restore what :provider_cascade saved on entry.
+if defined HP_CASCADE_SAVED_PY set "HP_PY=%HP_CASCADE_SAVED_PY%"
+set "HP_CASCADE_SAVED_PY="
 if /i "%HP_BOOTSTRAP_STATE%"=="ok" (
   call :write_status ok 0 %PYCOUNT%
 ) else (
@@ -1850,6 +1876,10 @@ rem the machine -- see docs/agent-interconnect.md "Standalone Python-download ti
 rem ordering rationale. NOTE: the :log messages below say "uv to conda" (not "uv -> conda") on
 rem purpose -- :log echoes UNQUOTED, so a ">" in the message would be parsed as redirection and
 rem eat the line (see docs/agent-lessons-learned.md). Do not "fix" these to arrows.
+rem derived requirement: save HP_PY before any cascade tier attempt can clobber it (a failed/
+rem declined tier clears its own HP_PY on the way out); :after_cascade_decision restores this
+rem on every exhaustion/decline exit from this label -- see the comment there for why.
+set "HP_CASCADE_SAVED_PY=%HP_PY%"
 set "HP_CASCADE_APPROVED="
 if /i "%HP_ENV_MODE%"=="uv" goto :cascade_from_uv
 if /i "%HP_ENV_MODE%"=="conda" goto :cascade_from_conda
@@ -4717,14 +4747,22 @@ goto :pfb_runapp
 echo  SETUP COMPLETE -- WITH A CAVEAT
 echo ============================================================
 echo  We packaged your app, but couldn't fully verify it runs as a
-echo  standalone program. Your environment and dependencies ARE
-echo  installed correctly.
+echo  standalone program. Your Python environment was set up and the
+echo  packaging step completed without a fatal error.
 :pfb_runapp
 echo.
 echo  RUNNING YOUR APP
 echo    Double-click dist\%ENVNAME%.exe to run it.
+rem derived requirement: defense in depth alongside the HP_CASCADE_SAVED_PY restore above --
+rem never print an empty "" "%HP_ENTRY%" interpreter command. HP_PY should always be defined
+rem here (the EXE this panel describes could not have been built without a working interpreter,
+rem and :after_cascade_decision now restores HP_PY if a declined/exhausted cascade tier cleared
+rem it), but the .exe itself remains correct and runnable either way, so silently omitting this
+rem one line is strictly safer than a guaranteed-broken command.
+if not defined HP_PY goto :pfb_runapp_noninterp
 echo    You can also run it directly via the interpreter at any time:
 echo      "%HP_PY%" "%HP_ENTRY%"
+:pfb_runapp_noninterp
 echo.
 echo    STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
 echo    starts, so allow 10-15 seconds (longer for big libraries like
