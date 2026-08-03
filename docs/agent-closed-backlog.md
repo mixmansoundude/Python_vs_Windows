@@ -1008,6 +1008,60 @@ this belongs to).
    `requirements.txt` was freshly copied from the auto-detected scan moments earlier, so `fc` finds
    no differences there and the new line never fires in that specific capture).
 
+### Item 22 (closed 2026-08-03)
+
+- **Real, non-simulated end-to-end layered-dependency-chain test.** New CI test
+   (`tests/selfapps_layered_e2e.ps1`, `self.layered_e2e.chain`, `cache` lane only, non-gating for
+   its first landing) proving the uv-fails-to-conda cascade, warnfix repair (both a genuine
+   success AND a genuine failure in the same round), and hidden-import auto-recovery all fire for
+   real (not simulated) in one run. Uses three real packages, no `HP_TEST_FORCE_*`/`HP_SKIP_*`/
+   `HP_DISABLE_*` flags beyond the unavoidable `HP_TEST_CASCADE_ANSWER=Y`:
+   - `pygrib` (the cascade trigger): confirmed via a direct PyPI JSON API query
+     (`https://pypi.org/pypi/pygrib/json`) that it ships macOS/Linux wheels for every recent
+     CPython but ZERO Windows wheels (deliberately excluded, not merely absent) -- its sdist needs
+     the ecCodes/GRIB-API C library a bare CI runner does not have, so `uv pip install` genuinely
+     fails to build it. Confirmed via the anaconda.org API
+     (`https://api.anaconda.org/package/conda-forge/pygrib`) that conda-forge has real `win-64`
+     builds (5 current per-Python-version builds for 2.1.8).
+   - **GDAL was the original candidate, researched and REJECTED after further investigation -- a
+     genuine near-miss worth recording so it is not re-attempted.** GDAL's Python bindings live
+     under the `osgeo` namespace (`from osgeo import gdal`), and PyInstaller's warn file always
+     records the top-level import name ("osgeo"), not the actual PyPI distribution name
+     ("gdal"/"GDAL"). PyPI hosts a real, always-succeeding DUMMY package literally named `osgeo`
+     (`https://pypi.org/pypi/osgeo/json` -- a deliberate typosquat-protection placeholder
+     maintained specifically to catch people who mistakenly `pip install osgeo` instead of
+     `pip install gdal`), so warnfix's own per-module repair attempt for GDAL would install that
+     harmless dummy instead of genuinely failing -- silently defeating
+     `:warnfix_cascade_detect`'s Signal B (a REAL recorded install failure, gated on
+     `~warnfix_repair_failed.flag`, set only by a genuine per-module install failure). `pygrib`'s
+     top-level import name IS its own correct PyPI/conda-forge package name (no namespace
+     indirection, no decoy package), so this trap cannot occur. `pygraphviz`, `rasterio`, and
+     `fiona` were also considered and ruled out -- all now ship real Windows wheels (confirmed via
+     the same direct PyPI JSON API method), so none would reproduce a genuine install failure.
+   - `xlrd` (the warnfix-success half of the same repair round): a real PyPI wheel, so once
+     genuinely absent (caught up in the same failed bulk install as `pygrib`), warnfix's
+     per-module retry installs it successfully -- no `HP_SKIP_PIPREQS` isolation needed (unlike
+     `tests/selfapps_warnfix.ps1`'s `real_warnfix` scenario), since warnfix operates on whatever
+     the warn file shows as genuinely unresolved regardless of how it got there.
+   - `colorama` via `importlib.import_module()` (the hidden-import trigger): already a proven
+     real trigger elsewhere (`tests/selfapps_hidden_import.ps1`) -- invisible to warnfix (dynamic
+     import), installs fine once cascaded to conda (declared in requirements.txt), but the frozen
+     EXE still needs `--hidden-import=colorama` to actually bundle it.
+   Lane placement confirmed as researched: NOT `conda-full` (`HP_FORCE_CONDA_ONLY=1` skips uv
+   entirely) and NOT `justme-test` (`HP_TEST_FORCE_UV_FAIL=1` fakes uv's absence, simulated).
+   `cache` lane matches the original reasoning (uv-first, already carries Miniconda-caching infra
+   to amortize the one-time conda install cost this test's own cascade triggers).
+   **CONFIRMED by a real CI run**: `self.layered_e2e.chain` passed on its first real execution,
+   run `30779274430`, cache-lane job `91580880846`, step 61, completed 2026-08-03T02:37:05Z
+   (ran in ~4 minutes) -- the design held on the first try, with no iteration needed. The step's
+   own `success` conclusion is generated directly from the test script's `exit 0`/`exit 1`, which
+   is gated on every one of `mech1Pass` (uv genuinely failed on `pygrib`, the cascade candidate
+   was detected and approved, conda was selected), `mech2Pass` (warnfix's per-module loop both
+   attempted and failed `pygrib`, and both attempted and succeeded at installing `xlrd`, in the
+   same repair round), `mech3Pass` (`--hidden-import=colorama` was added and the EXE was verified
+   after hidden-import recovery), and `exePass` (the final EXE, built under conda, genuinely ran
+   and exited 0 with the token file written) -- so a `success` conclusion is proof all four held.
+
 ### Item 13 (closed 2026-08-01)
 
 - **`self.warn.longpath`'s own real CI run showed an INCONCLUSIVE result (`ranBootstrap:false`),

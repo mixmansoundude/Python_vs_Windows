@@ -375,7 +375,9 @@ self.cascade.timed
 
 ## selfapps-layered-e2e NDJSON rows (selfapps_layered_e2e.ps1, cache lane only, non-gating)
 
-Closes CLAUDE.md Active Backlog item 22: a real, non-simulated end-to-end test proving three
+Implements `docs/agent-closed-backlog.md`'s Item 22 (closed 2026-08-03, confirmed by real CI run
+`30779274430`, cache-lane job `91580880846` -- passed on its first real execution, no iteration
+needed): a real, non-simulated end-to-end test proving three
 distinct mechanisms all fire for real in ONE run, replacing Part VII Scenario 33's
 `[Extrapolated Branch]` splice with genuine evidence -- the uv-to-conda provider cascade
 (REQ-009/REQ-005.10 slice 3), warnfix repair (REQ-007, both a genuine success AND a genuine
@@ -405,8 +407,10 @@ top-level import name IS its own correct PyPI/conda-forge package name (no names
 indirection, no decoy package), so this same trap cannot occur. See CLAUDE.md's Active Backlog
 item 22 (moved to `docs/agent-closed-backlog.md` once closed) for the full research trail.
 
-Asserts, against a single `~setup.log` source (matching `self.cascade.exec`'s own "count against
-one source, not the doubled stdout+log combined text" convention): the initial `uv pip install
+Asserts, mostly against `$combined` (the bootstrap stdout log plus `~setup.log`, concatenated) --
+except the exact cascade COUNT (`$uvToConda`, the `-eq 1` no-loop check), which is checked against
+`$setupText` (`~setup.log` alone) so a genuine occurrence is never double-counted, matching
+`self.cascade.exec`'s own single-source-for-counts convention: the initial `uv pip install
 -r requirements.txt` genuinely failed; the REQ-009 cascade candidate was detected and approved
 and executed exactly once (uv to conda); conda was selected as the new provider; warnfix's
 per-module loop both attempted AND failed to install `pygrib`, and both attempted AND succeeded

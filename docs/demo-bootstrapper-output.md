@@ -1296,21 +1296,22 @@ COMPLETE":
 the original real capture -- the rest of this panel (the exhausted-cascade log lines above it,
 the header, and the file paths) is still the original evidence.** The original real capture showed
 `"" "app.py"` here (a genuinely empty `HP_PY`) and the older, overclaiming "Your environment and
-dependencies ARE installed correctly" wording -- a code-review pass (a CodeRabbit finding on the
-PR that introduced this always-shown interpreter line) traced the exact cause: a declined
-cascade-to-system fallback tier clears its own `HP_PY` on the way out as its own correctness
-invariant (see `docs/agent-lessons-learned.md`'s "A declined/failed fallback tier must clear
-HP_PY" entry), which is right for the FIRST-time provider chain but was wrong here -- it clobbered
-the still-good venv interpreter path this exact panel is describing as ready to use. Fixed with a
-save/restore around `:provider_cascade` (`HP_CASCADE_SAVED_PY`, restored at
-`:after_cascade_decision`) plus a defensive `if not defined HP_PY` skip at the print site itself,
-and the caveat wording was independently narrowed to stop claiming dependency installation was
-verified (it isn't, by this point in the flow -- see CLAUDE.md's Active Backlog / closed-backlog
-history for the full fix). The corrected interpreter line above is therefore `[Extrapolated
-Branch]` (the fix has not yet been re-exercised by a fresh real CI capture of this exact scenario)
--- the general shape (a `.venv\Scripts\python.exe` path, since the log lines above confirm venv
-was the tier actually kept) is derived from `:try_venv_fallback`'s own `set "HP_PY=%CD%\.venv\
-Scripts\python.exe"` line, not independently captured.
+dependencies ARE installed correctly" wording. `:print_postflight_briefing` only prints a valid
+interpreter command when `HP_PY` genuinely still points at a working interpreter at this point in
+the flow -- when a declined cascade-to-system fallback tier clears its own `HP_PY` on the way out
+(correct for a first-time provider chain, where nothing was working yet, but wrong once a cascade
+re-entry has ALREADY produced a working build under an earlier tier), `:provider_cascade` now
+saves `HP_PY` on entry and `:after_cascade_decision` restores it before falling through to this
+panel, so the still-good venv interpreter path this exact panel is describing as ready to use
+survives a declined later tier intact; `:print_postflight_briefing` also skips the interpreter
+line entirely rather than print an empty command if `HP_PY` is ever undefined for any other
+reason. The caveat wording above was separately narrowed to stop claiming dependency installation
+was verified, since it isn't confirmed by this point in the flow regardless of which panel fires.
+The corrected interpreter line above is therefore `[Extrapolated Branch]` (this specific fix has
+not yet been re-exercised by a fresh real CI capture of this exact scenario) -- the general shape
+(a `.venv\Scripts\python.exe` path, since the log lines above confirm venv was the tier actually
+kept) is derived from `:try_venv_fallback`'s own `set "HP_PY=%CD%\.venv\Scripts\python.exe"` line,
+not independently captured.
 
 **Each tier is tried at most once as a cascade source** (`HP_CASCADE_TRIED_<tier>` guards),
 `HP_ENV_MODE` only ever advances (`uv -> conda -> embed -> venv -> system`), so the cascade
@@ -2363,10 +2364,18 @@ scenario illustrates (a package genuinely resolvable via conda-forge but not uv/
 test app in this repo yet; Scenario 15's own real trigger app (`import fake_pkg_cascade_xyz`, a
 package name that doesn't exist ANYWHERE) is deliberately unresolvable by every tier alike, which
 is what drives that scenario's full-exhaustion case -- it cannot illustrate conda succeeding where
-uv failed. See CLAUDE.md's Active Backlog item 22 for a planned real, non-simulated version of
-this exact scenario (GDAL against the default PyPI index, confirmed via a direct PyPI JSON API
-query -- not from memory -- to have zero wheels for any Python version, but current conda-forge
-Windows builds) once that test lands; see that item's own entry for the full verification detail.
+uv failed. `tests/selfapps_layered_e2e.ps1` (`docs/agent-closed-backlog.md`'s Item 22, `cache`
+lane only, non-gating) now exists, produces exactly this real evidence, and is CONFIRMED by a
+real CI run (`30779274430`, cache-lane job `91580880846`, passed on its first real execution in
+~4 minutes, no iteration needed) -- see that item's own closed-backlog entry for full status and
+verification detail. It uses `pygrib` (a package with zero Windows wheels on PyPI as of the
+latest release, per a direct PyPI JSON API query, but real conda-forge win-64 builds) as the
+cascade trigger -- GDAL was the original candidate and was researched and rejected (its Python
+bindings live under the `osgeo` namespace, and PyPI hosts a real, always-succeeding dummy package
+literally named `osgeo` that would have silently defeated the cascade's own confidence-gate
+signal; see the same closed-backlog entry for the full trail). A full start-to-shutdown console
+panel with the real captured output (matching this Part's own convention) has not yet been added
+here -- a reasonable fast-follow, not yet done.
 
 `:cascade_acquire_conda` downloads and installs Miniconda on demand at this point if it wasn't
 already on disk (uv-first runs skip Miniconda entirely until something actually needs it -- see

@@ -775,9 +775,12 @@ jobs:
       # the cache lane (uv-first, and the only lane that already caches Miniconda across runs to
       # amortize the one-time download this test's own cascade triggers). Non-gating for its
       # first landing (cache lane is continue-on-error at the job level) -- promote once proven
-      # stable across several real runs.
+      # stable across several real runs. env.HP_CACHE_CORRUPTED != '1' matches every other
+      # post-bootstrap step in this lane -- this test invokes run_setup.bat and relies on the
+      # shared Miniconda cache the cascade downloads into, so a corrupted cache would fail it
+      # for an infrastructure reason unrelated to the mechanisms it actually tests.
       - name: "Self-test: layered dependency chain -- cascade + warnfix + hidden-import, real (cache lane, non-gating)"
-        if: ${{ matrix.mode == 'cache' }}
+        if: ${{ !cancelled() && matrix.mode == 'cache' && env.HP_CACHE_CORRUPTED != '1' }}
         continue-on-error: true
         shell: pwsh
         run: |

@@ -195,7 +195,9 @@ if (Test-Path $statusPath) {
         $status = Get-Content -LiteralPath $statusPath -Raw -Encoding ASCII | ConvertFrom-Json
         $statusExit = $status.exitCode
         $statusState = $status.state
-    } catch { }
+    } catch {
+        Write-Warning "Failed to parse ${statusPath}: $($_.Exception.Message)"
+    }
 }
 
 $mech1Pass = $uvInstallFailed -and $cascadeDetected -and $cascadeApproved -and ($uvToConda -eq 1) -and $condaSelected
