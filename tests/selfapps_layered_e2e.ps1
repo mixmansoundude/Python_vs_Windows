@@ -168,7 +168,7 @@ $combined  = ($logLines -join "`n") + "`n" + $setupText
 
 # Mechanism 1: uv-fails-to-conda cascade.
 $uvInstallFailed = $combined -match [regex]::Escape('[WARN] uv pip install -r requirements.txt failed; some packages may be missing.')
-$cascadeDetected = $combined -match [regex]::Escape('[INFO] REQ-009: cascade candidate detected')
+$cascadeDetected = $combined -match [regex]::Escape('[INFO] REQ-009: cascade candidate detected.')
 $cascadeApproved = $combined -match [regex]::Escape('[INFO] REQ-009: cascade approved; will re-attempt under the next provider tier.')
 $uvToConda       = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider uv to conda'))).Count
 $condaSelected   = $combined -match [regex]::Escape('REQ-009: Selected Python provider: Conda')
