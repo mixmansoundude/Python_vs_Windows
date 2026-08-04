@@ -2365,10 +2365,15 @@ test app in this repo yet; Scenario 15's own real trigger app (`import fake_pkg_
 package name that doesn't exist ANYWHERE) is deliberately unresolvable by every tier alike, which
 is what drives that scenario's full-exhaustion case -- it cannot illustrate conda succeeding where
 uv failed. `tests/selfapps_layered_e2e.ps1` (`docs/agent-closed-backlog.md`'s Item 22, `cache`
-lane only, non-gating) now exists, produces exactly this real evidence, and is CONFIRMED by a
-real CI run (`30779274430`, cache-lane job `91580880846`, passed on its first real execution in
-~4 minutes, no iteration needed) -- see that item's own closed-backlog entry for full status and
-verification detail. It uses `pygrib` (a package with zero Windows wheels on PyPI as of the
+lane only, non-gating) now exists and is designed to produce exactly this real evidence, but its
+first real CI runs surfaced a genuine bug in the mechanism under test, not the test itself: a
+second, unplanned warnfix round failed on `cStringIO` (a Python-2-only stdlib shim `xlrd`'s own
+compatibility code still references, never a real installable package), which drove an
+unplanned SECOND cascade (conda to embed) that this scenario's own single-cascade premise doesn't
+cover. Fixed by adding `cStringIO`/`StringIO` to `parse_warn.py`'s `SKIP` filter -- see that
+item's own closed-backlog entry for the full failure trail and fix detail. **Not yet re-confirmed
+by a completed real CI run as of this writing** -- do not read this scenario as CI-verified until
+that entry's own status is updated to say so. It uses `pygrib` (a package with zero Windows wheels on PyPI as of the
 latest release, per a direct PyPI JSON API query, but real conda-forge win-64 builds) as the
 cascade trigger -- GDAL was the original candidate and was researched and rejected (its Python
 bindings live under the `osgeo` namespace, and PyPI hosts a real, always-succeeding dummy package
