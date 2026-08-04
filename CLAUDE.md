@@ -421,15 +421,21 @@ cannot build), the bootstrapper still falls back to `warnfix`:
 1. PyInstaller builds the EXE (static analysis finds many imports)
 2. Read the `warn` file (list of modules PyInstaller couldn't find)
 3. Parse warn file via `parse_warn.py`: extract top-level, delayed, and conditional imports
-4. Filter out modules known to be permanently unresolvable. `parse_warn.py` uses two distinct
-   mechanisms, not one -- keep them separate when describing or extending this filter:
+4. Filter out modules warnfix must never try to install as an application dependency (either
+   because the name isn't a real installable package at all, or because the interpreter/its own
+   import machinery already provides it and re-installing would be pointless noise).
+   `parse_warn.py` uses two distinct mechanisms, not one -- keep them separate when describing or
+   extending this filter:
    - A generic, SKIP-independent rule (`if mod.startswith("_"): continue`) drops any
      leading-underscore internal module by name pattern alone -- this is what actually filters
      `_scproxy`, `_posixsubprocess`, and `_frozen_importlib_external`; none of the three is a
      `SKIP` entry.
-   - The `SKIP` frozenset covers everything else "guaranteed to never be a real installable
-     package," across a few distinct groups: packaging/import-machinery internals
-     (`pkg_resources`, `distutils`, `setuptools`, `importlib` and its submodules); `collections`
+   - The `SKIP` frozenset covers everything else warnfix must not treat as an application
+     dependency, across a few distinct groups: packaging/import-machinery internals
+     (`pkg_resources`, `distutils`, `setuptools`, `importlib` and its submodules) -- these ARE
+     real, installable PyPI packages, but PyInstaller's own bundling of the interpreter's import
+     machinery can surface them as "missing" even though the app never actually needs a separate
+     install; `collections`
      (also covers `collections.abc`, since dotted names truncate to their top-level package
      before the `SKIP` lookup) -- this one is the stdlib's own submodules surfacing as "missing,"
      not a platform gap; Unix-only platform modules absent on Windows (`grp`, `pwd`, `posix`,

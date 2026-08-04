@@ -269,13 +269,30 @@ if ($exeExists) {
                 # inheriting the redirected stdout/stderr handles can leave that child running
                 # after $proc is killed, so the pipe never reaches EOF and an unbounded
                 # ReadToEndAsync().Result would hang forever, defeating the whole point of this
-                # bounded launch. Same taskkill /T (process-tree kill) + bounded-drain pattern
-                # already established in tools/exe_hint_rerun.ps1 for the identical hazard.
-                try { & taskkill.exe /F /T /PID $proc.Id 2>$null 1>$null } catch {}
-                try { $proc.Kill() } catch {}
+                # bounded launch. Same taskkill /T (process-tree kill) pattern already
+                # established in tools/exe_hint_rerun.ps1 for the identical hazard, but with a
+                # BOUNDED wait after each termination attempt (not an unbounded final
+                # WaitForExit()) -- if taskkill AND Kill() both somehow fail to terminate $proc
+                # itself, the test must still reach the bounded output drain below instead of
+                # hanging the whole CI job indefinitely.
+                $terminationWaitMs = 5000
+                try {
+                    & taskkill.exe /F /T /PID $proc.Id 2>$null 1>$null
+                } catch {
+                    Write-Warning "taskkill failed for PID $($proc.Id): $($_.Exception.Message)"
+                }
+                if (-not $proc.WaitForExit($terminationWaitMs) -and -not $proc.HasExited) {
+                    try {
+                        $proc.Kill()
+                    } catch {
+                        Write-Warning "Process kill failed for PID $($proc.Id): $($_.Exception.Message)"
+                    }
+                    if (-not $proc.WaitForExit($terminationWaitMs)) {
+                        Write-Warning "Process $($proc.Id) remained active after termination attempts."
+                    }
+                }
                 $exeExit = -1
             }
-            $proc.WaitForExit()
             # Bounded final read, NOT a blind .GetAwaiter().GetResult() block: even after
             # killing the process tree, a descendant taskkill /T did not catch (or some other
             # exotic handle-inheritance edge case) must not be able to hang this test

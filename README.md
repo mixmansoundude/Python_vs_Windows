@@ -276,7 +276,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 
 ### Reactive Repair (Warnfix)
 
-- REQ-005.9 -- Missing import detection and repair: If missing modules are detected during dependency install or EXE build, the bootstrapper must attempt to identify and install them automatically.
+- REQ-005.9 -- Missing import detection and repair: If missing modules are detected during dependency install or EXE build, the bootstrapper must attempt to identify and install them automatically. Names known in advance to be un-installable (platform-only standard-library modules, or obsolete compatibility shims a dependency's own code still references) are filtered out before any install is attempted, so repair never wastes a cycle on something guaranteed to fail.
 
 ---
 
