@@ -988,6 +988,19 @@ jobs:
         run: |
           & tests\selfapps_pipgap.ps1
 
+      # CLAUDE.md Active Backlog Item 24 / docs/prd-conda-native-dll-bundling.md Requirement 1:
+      # empirical, standalone experiment (does NOT invoke run_setup.bat) testing whether forcing
+      # --hidden-import=gribapi on a pygrib PyInstaller build makes the existing
+      # pyinstaller-hooks-contrib hook-gribapi.py bundle eccodes.dll for free. Non-gating:
+      # exploratory by design, and the conda-forge solve for pygrib+eccodes+python-eccodes+
+      # pyinstaller together in one env is unproven.
+      - name: "Probe: does --hidden-import=gribapi bundle eccodes.dll for pygrib (conda-full only, non-gating)"
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_gribapi_hook_probe.ps1
+
       - name: "Self-test: parse_warn TRANSLATIONS table coverage"
         # derived requirement (item 7 scoping pass): this step only decodes the embedded
         # HP_PARSE_WARN base64 payload out of run_setup.bat as static text -- it never executes
