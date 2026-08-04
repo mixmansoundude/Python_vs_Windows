@@ -965,6 +965,201 @@ this belongs to).
    same proof) still applies; revisit only if a real-world trigger surfaces a gap the
    representative cases above don't actually cover.
 
+### Item 20 (closed 2026-08-03)
+
+- **Postflight briefing should always show the interpreter-run command, not only in the caveat
+   branch.** `run_setup.bat`'s `:print_postflight_briefing` previously only printed
+   `"%HP_PY%" "%HP_ENTRY%"` inside the caveat-only preamble (EXE verification uncertain/failed),
+   never in the shared `:pfb_runapp` section both the clean-success and caveat branches jump to.
+   Since `dist\%ENVNAME%.exe` existing at all proves `HP_PY` already worked (PyInstaller needs a
+   working interpreter to run), showing the interpreter command is always accurate there, not just
+   in the caveat case -- confirmed with the owner directly (2026-08-03 discussion). **Fixed**: the
+   line moved out of the caveat-only text into the shared `:pfb_runapp` section so it prints
+   unconditionally once, with the now-duplicate caveat mention removed. README.md's REQ-016
+   section was updated to describe the new unconditional behavior (previously documented the
+   caveat-only behavior as intentional). `docs/demo-bootstrapper-output.md`'s quoted postflight
+   panels (Scenarios 4, 15, 32, 33, 34, 35, 37) were all updated to reflect the new line, each
+   noting explicitly which lines were "updated to reflect current source" vs. preserved as
+   unmodified real-capture evidence, per this repo's sourcing convention.
+
+### Item 21 (closed 2026-08-03)
+
+- **Surface the requirements diff and warnfix install-attempt names on screen.** Two small
+   `run_setup.bat` product changes, confirmed as genuine gaps (not just doc-fidelity issues) by
+   reading source directly: (1) the pipreqs-vs-`requirements.txt` diff (`fc` output,
+   `~pipreqs.diff.txt`) was previously written to file only, never shown on screen; (2) warnfix
+   repair installs were previously silent on attempt/success, only naming a package on failure
+   (`[WARN] Repair failed: %%M`).
+   **Fixed, deliberately simpler than the original sketch (which proposed a curated one-line
+   summary of newly-detected packages):** re-derivation during implementation favored the lower-risk
+   option -- `type` the existing `fc` output verbatim when a genuine difference exists (detected via
+   `findstr /C:"FC: no differences encountered"` on the diff file, `if errorlevel 1` gating the
+   `type`), rather than writing new, untested set-difference parsing logic for a curated summary.
+   For warnfix, added `[INFO] Attempting to install: %%M` immediately before each per-module
+   install call (both the `HP_ENV_MODE=uv` branch's `uv pip install` loop and the conda branch's
+   `conda install` loop) and `[INFO] Installed: %%M` in a new `else` success branch alongside the
+   existing `[WARN] Repair failed: %%M` failure branch -- same `%%M` for-loop variable, same
+   `call :log` mechanism, same nesting depth as the pre-existing failure line, so no new variable
+   or delayed-expansion exposure was introduced. `docs/demo-bootstrapper-output.md` was updated to
+   show both new behaviors: the warnfix scenario's real capture gained the two new lines with a
+   note identifying them as updated-to-reflect-current-source (rest of the panel preserved
+   unmodified), and the pipreqs-diff scenario gained an `[Extrapolated Branch]`-labeled example of
+   what the console diff looks like when one genuinely exists (the real capture's own
+   `requirements.txt` was freshly copied from the auto-detected scan moments earlier, so `fc` finds
+   no differences there and the new line never fires in that specific capture).
+
+### Item 22 (closed 2026-08-03)
+
+- **Real, non-simulated end-to-end layered-dependency-chain test.** New CI test
+   (`tests/selfapps_layered_e2e.ps1`, `self.layered_e2e.chain`, `cache` lane only, non-gating for
+   its first landing) proving the uv-fails-to-conda cascade, warnfix repair (both a genuine
+   success AND a genuine failure in the same round), and hidden-import auto-recovery all fire for
+   real (not simulated) in one run. Uses three real packages, no `HP_TEST_FORCE_*`/`HP_SKIP_*`/
+   `HP_DISABLE_*` flags beyond the unavoidable `HP_TEST_CASCADE_ANSWER=Y`:
+   - `pygrib` (the cascade trigger): confirmed via a direct PyPI JSON API query
+     (`https://pypi.org/pypi/pygrib/json`) that it ships macOS/Linux wheels for every recent
+     CPython but ZERO Windows wheels (deliberately excluded, not merely absent) -- its sdist needs
+     the ecCodes/GRIB-API C library a bare CI runner does not have, so `uv pip install` genuinely
+     fails to build it. Confirmed via the anaconda.org API
+     (`https://api.anaconda.org/package/conda-forge/pygrib`) that conda-forge has real `win-64`
+     builds (5 current per-Python-version builds for 2.1.8).
+   - **GDAL was the original candidate, researched and REJECTED after further investigation -- a
+     genuine near-miss worth recording so it is not re-attempted.** GDAL's Python bindings live
+     under the `osgeo` namespace (`from osgeo import gdal`), and PyInstaller's warn file always
+     records the top-level import name ("osgeo"), not the actual PyPI distribution name
+     ("gdal"/"GDAL"). PyPI hosts a real, always-succeeding DUMMY package literally named `osgeo`
+     (`https://pypi.org/pypi/osgeo/json` -- a deliberate typosquat-protection placeholder
+     maintained specifically to catch people who mistakenly `pip install osgeo` instead of
+     `pip install gdal`), so warnfix's own per-module repair attempt for GDAL would install that
+     harmless dummy instead of genuinely failing -- silently defeating
+     `:warnfix_cascade_detect`'s Signal B (a REAL recorded install failure, gated on
+     `~warnfix_repair_failed.flag`, set only by a genuine per-module install failure). `pygrib`'s
+     top-level import name IS its own correct PyPI/conda-forge package name (no namespace
+     indirection, no decoy package), so this trap cannot occur. `pygraphviz`, `rasterio`, and
+     `fiona` were also considered and ruled out -- all now ship real Windows wheels (confirmed via
+     the same direct PyPI JSON API method), so none would reproduce a genuine install failure.
+   - `xlrd` (the warnfix-success half of the same repair round): a real PyPI wheel, so once
+     genuinely absent (caught up in the same failed bulk install as `pygrib`), warnfix's
+     per-module retry installs it successfully -- no `HP_SKIP_PIPREQS` isolation needed (unlike
+     `tests/selfapps_warnfix.ps1`'s `real_warnfix` scenario), since warnfix operates on whatever
+     the warn file shows as genuinely unresolved regardless of how it got there.
+   - `colorama` via `importlib.import_module()` (the hidden-import trigger): already a proven
+     real trigger elsewhere (`tests/selfapps_hidden_import.ps1`) -- invisible to warnfix (dynamic
+     import), installs fine once cascaded to conda (declared in requirements.txt), but the frozen
+     EXE still needs `--hidden-import=colorama` to actually bundle it.
+   Lane placement confirmed as researched: NOT `conda-full` (`HP_FORCE_CONDA_ONLY=1` skips uv
+   entirely) and NOT `justme-test` (`HP_TEST_FORCE_UV_FAIL=1` fakes uv's absence, simulated).
+   `cache` lane matches the original reasoning (uv-first, already carries Miniconda-caching infra
+   to amortize the one-time conda install cost this test's own cascade triggers).
+   **CORRECTION (superseding the "CONFIRMED by a real CI run" claim originally written here):**
+   that claim was wrong, and was itself based on a real verification mistake -- not a fabrication,
+   but a genuine failure to check the actual result before writing "confirmed." The GitHub Actions
+   step for `self.layered_e2e.chain` (run `30779274430`, cache-lane job `91580880846`, step 61) has
+   `continue-on-error: true` (this test is non-gating, see the lane-placement note above), which
+   makes GitHub report the step's own `conclusion` as `success` REGARDLESS of the wrapped script's
+   real exit code. A later re-check via `get_workflow_job` (during the second CodeRabbit review
+   round) reported `conclusion: success` and was taken at face value as proof the test passed --
+   without ever opening the step's own raw log to confirm. It did not pass. The real log (pulled
+   directly via the workflow run's downloadable log archive, not the truncated `get_job_logs` tail)
+   shows `mech1Pass=True mech2Pass=False mech3Pass=False exePass=False ... chainPass=False` and
+   ends with `##[error]Process completed with exit code 1.` -- `chainPass` was in fact `False`, not
+   `True` as this file previously, incorrectly, claimed. Lesson for future verification of any
+   `continue-on-error: true` step in this repo: the step-level `conclusion` field is NOT evidence
+   of the wrapped script's own result for such a step -- always read the actual log content.
+   **Two hardening fixes applied post-landing, from CodeRabbit review on the same PR:** (1)
+   `$mech2Pass`'s original `pygrib`/`xlrd` checks were plain "does this string appear anywhere in
+   `$combined`" regexes -- true independently of each other, but not proof the two outcomes
+   occurred in the SAME warnfix round the way the prose above already claimed; a future code
+   change splitting them across two rounds could keep this test green without the claim actually
+   holding. Fixed by scoping those two checks to the substring between the round's own start
+   marker (`[REPAIR] missing modules detected; installing and rebuilding.`) and its end marker
+   (`[REPAIR] rebuild complete after warnfix.`), plus a new `$warnfixRoundCount -eq 1` check
+   proving exactly one round exists (so the slice cannot itself straddle two). (2) workspace setup
+   (`Remove-Item`/`New-Item`/`Copy-Item` on `~selftest_layered_e2e\`) ran under the script's own
+   `$ErrorActionPreference = 'Continue'` with no failure check -- a failed `Remove-Item` (e.g. an
+   AV/indexer lock on a leftover `dist\<env>.exe` from a prior interrupted run) would silently let
+   the run reuse stale artifacts and potentially pass for the wrong reason. Fixed with
+   `-ErrorAction Stop` on all three calls plus an explicit re-check-and-throw after the removal.
+
+   **Three more hardening fixes, from a SECOND CodeRabbit review round on the same PR -- one of
+   which was a real regression introduced by fix (1) above, not caught by the real CI run that
+   already passed before this round.** (3) Fix (1)'s own round-scoping matched against `$combined`
+   (bootstrap log + `~setup.log` concatenated) -- but every `:log`-emitted line (including BOTH the
+   round start/end markers) is written to BOTH streams by `run_setup.bat`'s own `:log` subroutine,
+   so matching against their concatenation silently DOUBLE-COUNTED every occurrence. This meant
+   `$warnfixRoundCount` would read 2 for a single genuine round, making the new `-eq 1` check
+   FALSE on every normal run -- an unconditional regression that the already-passed real CI run
+   (item above) never caught, since that run predates this fix. Fixed by matching against
+   `$setupText` alone, the same single-source convention `$uvToConda` already used one line above
+   it in the same file -- a precedent this fix should have followed the first time. (4) The round
+   substring's fallback-to-EOF when no completion marker is found meant an INCOMPLETE round (the
+   rebuild itself errored, or the log was truncated) could still count as valid same-round
+   evidence if the rest of the log happened to contain both substrings. Fixed by requiring the
+   completion marker explicitly -- no marker means no evidence, not "assume the rest of the log is
+   the round." (5) Workspace-prep (`Remove-Item`/`New-Item`/`Copy-Item`, see fix (2)) now uses
+   `-ErrorAction Stop`, but a genuine failure there would raise a terminating error with no
+   `self.layered_e2e.chain` NDJSON row emitted at all, leaving CI with silence instead of an
+   explicit failure record. Fixed by wrapping the block in `try`/`catch`, emitting a `pass=false`
+   row with the error message before `exit 1` on any workspace-prep failure.
+
+   **Root cause of the actual `chainPass=False` failure, found by reading the real log (see the
+   CORRECTION above) instead of trusting the step's own `continue-on-error`-masked `conclusion`.**
+   Two independent real runs (job `91580880846` on run `30779274430`, and the equivalent cache-lane
+   job on commit `694f325`) both show the identical, fully deterministic sequence: after the
+   uv-to-conda cascade (mechanism 1) fires correctly, a SECOND, unplanned warnfix round fires under
+   conda and fails on a module named `cStringIO` -- not one of the test's own three declared
+   packages -- triggering a SECOND, unplanned cascade (conda to embed) that the test's design never
+   anticipated, so mechanism 3 (hidden-import recovery for `colorama`) never gets a chance to fire
+   before the run ends in a caveat panel (`~bootstrap.status.json` reads `state=embed_env`, not
+   `state=ok`). The exact warn-file line: `missing module named cStringIO - imported by
+   xlrd.timemachine (conditional)` -- `xlrd`'s own source (`xlrd/timemachine.py`, its internal
+   Python 2/3 compatibility shim) does `try: from cStringIO import StringIO except ImportError:
+   from io import StringIO`, a dead code path under any Python 3 interpreter but still flagged by
+   PyInstaller's static analysis regardless. `cStringIO` was pure Python 2 stdlib, removed entirely
+   in Python 3, and was never a real PyPI/conda package -- warnfix's attempt to `conda install
+   cStringIO` was always guaranteed to fail, for every single run, unconditionally. **Fixed** by
+   adding `cStringIO` and its bare sibling `StringIO` (identical Python-2-only-stdlib-shim
+   property) to `tools/parse_warn.py`'s `SKIP` frozenset -- the same mechanism already filtering
+   Unix-only stdlib modules (`posix`, `fcntl`, `grp`, etc.) from the warn file, just a different
+   axis (Python-version-only rather than platform-only) sharing the same "guaranteed to never be a
+   real installable package" justification. `run_setup.bat`'s `[INFO] warnfix: some modules could
+   not be automatically bundled...` log line was extended to mention this second filtered category
+   with accurate wording (not folded into the existing "expected on Windows" phrasing, since this
+   exclusion has nothing to do with platform). New regression test
+   `test_cstringio_skipped_real_xlrd_warn_line` in `tests/test_parse_warn.py` uses the exact warn
+   line captured from the real CI log verbatim. Embedded `HP_PARSE_WARN` payload re-synced via
+   `tools/sync_payload.py`.
+
+   **cStringIO fix CONFIRMED by a real CI run (run `30875520181`, cache-lane job `91886501141`,
+   commit `a095fa9`) -- read directly from the real log, not the step's own masked `conclusion`,
+   per the lesson two paragraphs up.** The cascade now fires exactly once and cleanly:
+   `mech1Pass=True mech2Pass=True` -- `xlrd` installs on the first warnfix round, `pygrib`
+   genuinely fails (still the only real failure, no more spurious `cStringIO` entry), the cascade
+   triggers uv-to-conda exactly once (`warnfixRoundCount=1`, `warnfixRoundComplete=true`), and
+   conda is selected. This closes the fix's own open question: it behaves exactly as predicted.
+
+   **A SEPARATE, previously-unreached bug surfaced once mech1/mech2 started passing, keeping
+   `chainPass=False` for a new reason.** Under conda, `pygrib` (with its real conda-forge win-64
+   build, `pygrib-2.1.8-py314h7badd63_0`) installs successfully and PyInstaller's build itself
+   succeeds, but the build log shows `WARNING: Library not found: could not resolve
+   'eccodes.dll', dependency of '...\pygrib\_pygrib.cp314-win_amd64.pyd'` -- PyInstaller's static
+   analysis bundles the Python extension module but not its native DLL dependency (`eccodes`, a C
+   library `pygrib`'s compiled `_pygrib` extension links against, itself a separate conda-forge
+   package that IS installed in the env but whose DLL PyInstaller never discovers/copies). The
+   frozen EXE then fails at runtime with `ImportError: DLL load failed while importing _pygrib:
+   The specified module could not be found.` -- a missing-native-library error, not a
+   `ModuleNotFoundError` for an installed Python module, so `--hidden-import` auto-recovery
+   correctly declines to attempt anything (see "--hidden-import auto-recovery must stay STRICT" in
+   `docs/agent-lessons-learned.md` -- this is exactly the class of failure that mechanism is NOT
+   supposed to touch). `mech3Pass=False` (`hiddenAdding=false, hiddenRecovered=false`) reflects
+   this correctly -- colorama's own hidden-import recovery is never reached because the run fails
+   before mechanism 3 gets a chance to matter, not because mechanism 3 itself is broken.
+   **Not yet fixed or filed as a dedicated backlog item as of this entry** -- a real fix (e.g.
+   `--collect-binaries=pygrib` or an explicit eccodes DLL copy step) needs its own scoped
+   investigation, not a same-loop patch on top of the cStringIO fix; the test remains `pass:false`
+   and non-gating (`cache` lane, `continue-on-error`) in the interim, so no CI lane that gates PR
+   merges is affected.
+
 ### Item 13 (closed 2026-08-01)
 
 - **`self.warn.longpath`'s own real CI run showed an INCONCLUSIVE result (`ranBootstrap:false`),

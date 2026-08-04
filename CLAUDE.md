@@ -421,7 +421,38 @@ cannot build), the bootstrapper still falls back to `warnfix`:
 1. PyInstaller builds the EXE (static analysis finds many imports)
 2. Read the `warn` file (list of modules PyInstaller couldn't find)
 3. Parse warn file via `parse_warn.py`: extract top-level, delayed, and conditional imports
-4. Filter out platform-specific modules (posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external -- all POSIX/Unix-only, safe to ignore on Windows)
+4. Filter out modules warnfix must never try to install as an application dependency (either
+   because the name isn't a real installable package at all, or because the interpreter/its own
+   import machinery already provides it and re-installing would be pointless noise).
+   `parse_warn.py` uses two distinct mechanisms, not one -- keep them separate when describing or
+   extending this filter:
+   - A generic, SKIP-independent rule (`if mod.startswith("_"): continue`) drops any
+     leading-underscore internal module by name pattern alone -- this is what actually filters
+     `_scproxy`, `_posixsubprocess`, and `_frozen_importlib_external`; none of the three is a
+     `SKIP` entry.
+   - The `SKIP` frozenset covers everything else warnfix must not treat as an application
+     dependency, across a few distinct groups: packaging/import-machinery internals
+     (`pkg_resources`, `distutils`, `setuptools`, `importlib` and its submodules) -- these ARE
+     real, installable PyPI packages, but PyInstaller's own bundling of the interpreter's import
+     machinery can surface them as "missing" even though the app never actually needs a separate
+     install; `collections`
+     (also covers `collections.abc`, since dotted names truncate to their top-level package
+     before the `SKIP` lookup) -- this one is the stdlib's own submodules surfacing as "missing,"
+     not a platform gap; Unix-only platform modules absent on Windows (`grp`, `pwd`, `posix`,
+     `resource`, `fcntl`, `readline`, `termios`, `tty`, `pty`, `crypt`, `spwd`, `nis`, `syslog`,
+     `ossaudiodev`); and Python-2-only stdlib shims removed entirely in Python 3 (`cStringIO`,
+     `StringIO`) that still surface via real packages' own Python 2/3 compatibility code -- e.g.
+     `xlrd`'s `xlrd/timemachine.py` does `try: from cStringIO import StringIO except ImportError:
+     from io import StringIO`, a dead code path under Python 3 that PyInstaller's static
+     analysis still flags. Confirmed via a real, unflagged CI run of the layered-dependency
+     E2E test (`self.layered_e2e.chain`) -- warnfix was genuinely attempting and failing to
+     `conda install cStringIO`, which can never succeed, forcing an unnecessary extra
+     provider cascade. Every entry in `SKIP` is covered by
+     `tests/test_parse_warn.py::ParseWarnFileEdgeCasesTest::
+     test_every_skip_entry_filtered_in_realistic_warn_line`, which iterates the current set
+     and proves each one filters in the `(conditional)`/`(delayed)`/`(top-level)` PyInstaller
+     6.x forms -- any future `SKIP` addition is covered automatically, no separate test
+     needed per entry.
 5. Install detected missing packages via conda or pip
 6. Rebuild EXE
 7. Retry interpreter smoke test
@@ -491,6 +522,87 @@ in an actual issue tracker, e.g. GitHub Issues, not a hand-maintained numbering 
 Once an item is fully resolved it is removed from here entirely and archived (keeping its
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
 start at 1 and has gaps.
+
+- **Item 23: a genuine (non-test) conda-create failure during a REQ-009 cascade re-entry does
+  not restore the previous working build via `HP_CASCADE_SAVED_PY`, unlike every other
+  cascade-target failure.** Found via a CodeRabbit review finding on PR #412, verified by
+  reading the source directly (not taken on faith; re-verified again while fixing this entry's
+  own citations, which corrected the mechanism description below). `:try_conda_create`'s own
+  failure label (`:conda_create_failed`) does NOT hard-fail immediately -- it first calls
+  `:handle_conda_failure`, the same linear embed/venv/system fallback chain the ORIGINAL
+  (non-cascade) conda-create failure path already relies on; if any of those tiers succeeds,
+  `HP_ENV_READY` is set and control correctly `goto :after_env_mode_selection`. Only when
+  `:handle_conda_failure` ALSO exhausts every tier does `:conda_create_failed` fall through to
+  `call :die`, and only then does the actual bug surface: `:die` returns via `exit /b`
+  (subroutine return, not a process halt; see `docs/agent-lessons-learned.md`'s `:die` entry),
+  so execution falls straight through past it into `:conda_create_done`, which sets
+  `HP_PY=%CONDA_PREFIX%\python.exe` and checks `if not exist "%HP_PY%"` -- true in this case, so
+  it retries the identical `:handle_conda_failure` chain a second time (redundant, since nothing
+  changed) before a second `call :die`, after which execution again falls through, now carrying
+  a genuinely broken `HP_PY` into whatever code follows. Neither fall-through ever routes through
+  `:after_cascade_decision` (the label every OTHER cascade-target failure --
+  `:cascade_conda_unavailable`, `:cascade_embed_unavailable`, `:cascade_venv_unavailable`,
+  `:cascade_system_unavailable` -- correctly uses, logging `[WARN] ... unavailable; keeping
+  current build.` and restoring `HP_CASCADE_SAVED_PY` into `HP_PY` so the bootstrap gracefully
+  continues on the PREVIOUS successful build, e.g. uv, if cascading uv-to-conda). `:try_conda_
+  create`'s failure handling has no cascade-context-awareness at all -- it behaves identically
+  whether this is the very first creation attempt (where there is no earlier build to restore,
+  so eventually hard-failing is correct) or a `:cascade_from_uv` re-entry (where `HP_CASCADE_
+  SAVED_PY` holds a known-working uv build that never gets restored).
+  **Practical impact, tempered but real:** `:die` already sets `HP_BOOTSTRAP_STATE=error`
+  unconditionally as of an earlier fix (see `docs/agent-lessons-learned.md`), so the FINAL
+  `~bootstrap.status.json` should still correctly read `state=error` rather than falsely
+  claiming success -- this is not the same severity as the empty-interpreter-command bug the
+  prior commit fixed. But a genuine, plausibly-transient conda-create failure during a cascade
+  (e.g. a real network blip while acquiring Miniconda on demand for the cascade, distinct from
+  "Miniconda not installed at all" which `:cascade_conda_unavailable` already handles gracefully)
+  now hard-fails the WHOLE bootstrap instead of gracefully keeping the already-working uv build,
+  and burns through the doubled `:handle_conda_failure` retry plus whatever broken-`HP_PY` log
+  noise follows before a terminal point is reached.
+  **Deliberately not fixed in the same commit as the Item 22 companion fix** -- properly fixing
+  this needs `:try_conda_create`'s failure branches to become cascade-context-aware (e.g. check
+  `if defined HP_CASCADE_APPROVED` or an equivalent re-entry signal and route to
+  `:after_cascade_decision`'s "keeping current build" pattern instead of `:die`, but ONLY when
+  there is a genuine earlier build to fall back to -- the first-attempt case must keep failing
+  hard), plus a new regression test that forces a genuine (not `HP_TEST_FORCE_CONDA_FAIL`-style
+  simulated) conda-create failure specifically during a cascade re-entry, which does not
+  currently exist. This is real design work, not a quick fix -- scoping it into the same commit
+  as the cStringIO warnfix-filter fix would have risked a rushed, undertested change to
+  already-sensitive cascade logic. `:hp_test_conda_fail` (the existing `HP_TEST_FORCE_CONDA_FAIL`
+  test hook) has the identical fallthrough shape and reaches the same `:after_env_mode_selection`
+  clear, but is scoped to the FIRST-attempt path only (its only call site is the top of
+  `:try_conda_create`, before any cascade re-entry could reach it) -- it is NOT itself evidence
+  this gap is already covered by existing tests.
+
+- **Item 24: PyInstaller does not bundle `pygrib`'s native `eccodes.dll` dependency under the
+  conda provider, so the frozen EXE fails at runtime even though the build itself succeeds.**
+  Found via `self.layered_e2e.chain`'s real CI evidence (run `30875520181`, cache-lane job
+  `91886501141`) once Item 22's cStringIO fix let the test reach this far for the first time --
+  see that item's own closed-backlog entry for the full mechanism trace. `pygrib`'s conda-forge
+  build (`pygrib-2.1.8-py314h7badd63_0`) links its compiled `_pygrib.cp314-win_amd64.pyd`
+  extension against `eccodes.dll`, a separate native C library shipped by its own conda-forge
+  package (`eccodes-2.48.0-h3bec8ca_0`, present in the env) -- PyInstaller's static analysis
+  bundles the Python extension module itself but never discovers or copies that DLL dependency,
+  so the build succeeds (with only a `WARNING: Library not found: could not resolve
+  'eccodes.dll'...` note) and the frozen EXE then fails immediately at runtime with `ImportError:
+  DLL load failed while importing _pygrib: The specified module could not be found.` This is a
+  missing-native-library failure, not a missing-Python-module one -- `--hidden-import`
+  auto-recovery correctly never attempts anything here (see "--hidden-import auto-recovery must
+  stay STRICT" in `docs/agent-lessons-learned.md`), since that mechanism is deliberately scoped to
+  `ModuleNotFoundError` only and this is a different failure class entirely.
+  **Practical impact:** keeps `self.layered_e2e.chain` at `pass:false` (`chainPass=False`) even
+  though the two mechanisms it was originally designed to test (REQ-009 cascade, warnfix
+  success/failure) now both genuinely pass. The test is `cache`-lane-only and non-gating
+  (`continue-on-error`), so this does not block any lane that gates PR merges.
+  **Not investigated further yet** -- a real fix likely needs either a `--collect-binaries=pygrib`
+  (or equivalent PyInstaller binary-collection flag) added to the existing `:compute_collect_flags`
+  machinery (currently only handles `--collect-submodules` for a curated set: sklearn, matplotlib,
+  scipy, plotly -- see `docs/agent-lessons-learned.md`'s "Pre-build --collect-submodules must be
+  DOUBLE-gated" entry for that mechanism's shape), or an explicit post-build DLL-copy step scoped
+  to conda-provided native dependencies. Whether this is a `pygrib`-specific quirk or a broader gap
+  affecting any conda-forge package with a native DLL dependency PyInstaller can't trace is not yet
+  known -- worth checking against another conda-forge package with a similar native-library
+  dependency before assuming a `pygrib`-specific fix is sufficient.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

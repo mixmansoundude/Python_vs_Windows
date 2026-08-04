@@ -77,6 +77,20 @@ SKIP = frozenset([
     "nis",
     "syslog",
     "ossaudiodev",
+    # Python-2-only stdlib modules (removed entirely in Python 3, never a real PyPI/conda
+    # package) that still appear as conditional imports inside real packages' own Python
+    # 2/3 compatibility shims -- e.g. xlrd/timemachine.py does
+    # "try: from cStringIO import StringIO except ImportError: from io import StringIO",
+    # a dead code path under any Python 3 interpreter, but PyInstaller's warn file flags it
+    # regardless. Confirmed via a real, unflagged CI run of the layered-dependency-chain
+    # E2E test (self.layered_e2e.chain): "missing module named cStringIO - imported by
+    # xlrd.timemachine (conditional)" -- warnfix genuinely attempted and failed to install
+    # a package literally named "cStringIO", which can never exist, forcing an unnecessary
+    # extra provider cascade past conda. Different axis from the Unix-only list above
+    # (Python-version-only, not platform-only), but the same "guaranteed to never be a
+    # real installable package" property that makes it safe to filter unconditionally.
+    "cStringIO",
+    "StringIO",
 ])
 
 

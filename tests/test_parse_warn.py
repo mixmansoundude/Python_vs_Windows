@@ -229,6 +229,46 @@ class ParseWarnFileEdgeCasesTest(unittest.TestCase):
         ])
         self.assertEqual(result, [])
 
+    def test_cstringio_skipped_real_xlrd_warn_line(self):
+        # derived requirement: real, unflagged warn-file line captured verbatim from
+        # self.layered_e2e.chain's own CI run -- xlrd's own Python 2/3 compatibility shim
+        # (xlrd/timemachine.py) does a conditional "from cStringIO import StringIO", a dead
+        # code path under Python 3 but still flagged by PyInstaller's own static analysis.
+        # cStringIO can never be a real installable package (removed entirely in Python 3),
+        # so warnfix must never attempt to install it -- confirmed this was previously
+        # causing a genuine, unnecessary extra provider cascade in real CI.
+        result = _parse_lines([
+            "missing module named cStringIO - imported by xlrd.timemachine (conditional)"
+        ])
+        self.assertEqual(result, [])
+
+    def test_stringio_skipped(self):
+        # Bare StringIO (as opposed to cStringIO) is the same Python-2-only stdlib module
+        # class -- also never a real installable package.
+        result = _parse_lines([
+            "missing module named StringIO - imported by app (conditional)"
+        ])
+        self.assertEqual(result, [])
+
+    def test_every_skip_entry_filtered_in_realistic_warn_line(self):
+        # derived requirement: prior to this test, only 2 of SKIP's ~14 non-collections/
+        # importlib entries (grp, posix) had any dedicated test exercising them through
+        # parse_warn_file -- the rest (pwd, fcntl, resource, readline, termios, tty, pty,
+        # crypt, spwd, nis, syslog, ossaudiodev) were only asserted present in the SKIP
+        # frozenset itself, never proven to actually filter when they appear in a real
+        # PyInstaller 6.x warn line. This test iterates the CURRENT SKIP set (any future
+        # addition is covered automatically, no separate registry to keep in sync) and
+        # proves each one is filtered in both the (conditional) and (delayed) forms real
+        # warn files actually use for these stdlib shims.
+        for mod in sorted(SKIP):
+            for qualifier in ("conditional", "delayed", "top-level"):
+                line = f"missing module named {mod} - imported by app ({qualifier})"
+                result = _parse_lines([line])
+                self.assertEqual(
+                    result, [],
+                    f"SKIP entry {mod!r} was not filtered for qualifier {qualifier!r}: line={line!r}",
+                )
+
     def test_pyi6_delayed_processed(self):
         # derived requirement: function-scoped imports appear as (delayed) in the
         # PyInstaller 6.x warn file. warnfix must install them.

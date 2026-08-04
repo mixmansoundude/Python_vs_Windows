@@ -768,6 +768,24 @@ jobs:
         run: |
           & tests\selfapps_cascade.ps1
 
+      # docs/agent-closed-backlog.md's Item 22: a real, non-simulated end-to-end test proving the
+      # uv-to-conda cascade, warnfix repair (both success and failure in the same round), and
+      # --hidden-import auto-recovery all fire for real in ONE run -- no HP_TEST_FORCE_*/
+      # HP_SKIP_*/HP_DISABLE_* flags beyond the unavoidable cascade-consent answer. Runs only in
+      # the cache lane (uv-first, and the only lane that already caches Miniconda across runs to
+      # amortize the one-time download this test's own cascade triggers). Non-gating for its
+      # first landing (cache lane is continue-on-error at the job level) -- promote once proven
+      # stable across several real runs. env.HP_CACHE_CORRUPTED != '1' matches every other
+      # post-bootstrap step in this lane -- this test invokes run_setup.bat and relies on the
+      # shared Miniconda cache the cascade downloads into, so a corrupted cache would fail it
+      # for an infrastructure reason unrelated to the mechanisms it actually tests.
+      - name: "Self-test: layered dependency chain -- cascade + warnfix + hidden-import, real (cache lane, non-gating)"
+        if: ${{ !cancelled() && matrix.mode == 'cache' && env.HP_CACHE_CORRUPTED != '1' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_layered_e2e.ps1
+
       # AV-Safe Build Path (docs/prd-av-safe-build-path.md) requirements 2-4, Tier A: proves a
       # real Nuitka fallback build succeeds and is used when PyInstaller's own build fails.
       # Non-gating for its first landing -- unlike self.exe.build.xfail (real/conda-full,

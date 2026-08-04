@@ -337,9 +337,25 @@ if ($pipWarnFound -and $pipWarnContinued) { $summary.Add('pip install warn + con
 # warnfix still had to recover `six`, i.e. pipreqs's own scan produced nothing usable by some
 # other path). A nonexistent version number removes that external dependency entirely.
 # Assert: the pipreqs-install-failed WARN fires, DEP_SOURCE never becomes "pipreqs" (nothing
-# declares `six`), the PyInstaller warn-file/warnfix repair loop is the ONLY thing that installs
-# `six`, and the rebuilt program still runs and prints its token. All four must hold -- checking
-# only "did it exit 0" would let this test silently pass for the wrong reason.
+# declares `six`), SOME fallback layer (REQ-005.12's autopep723 discovery merge, or the
+# PyInstaller warn-file/warnfix repair loop) recovers `six`, and the rebuilt program still runs
+# and prints its token. All four must hold -- checking only "did it exit 0" would let this test
+# silently pass for the wrong reason.
+#
+# derived requirement: this test originally asserted warnfix SPECIFICALLY was the recovery
+# mechanism (both here and in the REQ-005.12 discovery-merge-complete log line's own era, that
+# was still true -- see the pipreqs 0.5.0 footnote above). Since REQ-005.12 shipped, a plain
+# top-level `import six` with no requirements source is caught by the autopep723 discovery merge
+# BEFORE the PyInstaller build ever runs, so warnfix's own repair loop no longer has anything left
+# to do for `six` itself -- it only kept firing as an accidental side effect of `StringIO` (an
+# unrelated, always-doomed-to-fail conditional import inside six's own Python 2/3 compatibility
+# layer) still being treated as a genuine repair target. Once tools/parse_warn.py's SKIP set was
+# extended to filter StringIO/cStringIO (a real fix -- see CLAUDE.md's warnfix SKIP documentation
+# for why), that accidental trigger went away and warnfixEngaged correctly reads false whenever
+# the discovery merge already did the job. Asserting warnfix specifically would now be testing a
+# stale implementation detail, not a genuine safety property -- the actual invariant this test
+# exists to protect is "pipreqs failing doesn't strand the user," and that holds regardless of
+# which layered fallback mechanism recovers the dependency.
 $pipreqsFailDir = Join-Path $TestsDir '~selftest_pipreqs_version_fail'
 if (Test-Path $pipreqsFailDir) { Remove-Item -Recurse -Force $pipreqsFailDir }
 New-Item -ItemType Directory -Force -Path $pipreqsFailDir | Out-Null
@@ -374,6 +390,20 @@ $pipreqsFailLines = @()
 if (Test-Path $pipreqsFailLogPath) { $pipreqsFailLines = Get-Content -LiteralPath $pipreqsFailLogPath -Encoding ASCII }
 $pipreqsInstallFailFound = ($pipreqsFailLines | Where-Object { $_ -like '*pipreqs install failed*' }).Count -gt 0
 $pipreqsWarnfixEngaged = ($pipreqsFailLines | Where-Object { $_ -like '*rebuild complete after warnfix*' }).Count -gt 0
+# derived requirement: `six` is recovered either by warnfix's own repair loop OR by REQ-005.12's
+# autopep723 discovery merge finding it before the build ever runs (see the comment block above --
+# both are legitimate, and which one actually fires is an implementation detail, not the property
+# under test). "added: six" comes from tools/autopep_merge.py's own stdout -- run_setup.bat's
+# REQ-005.12 call site redirects that helper's stdout directly into %LOG% (">> "%LOG%" 2>&1"),
+# NOT the parent process's own stdout, so this line is written to ~setup.log ONLY and never
+# reaches ~pipreqs_version_fail_bootstrap.log (the outer `cmd /c ... > log 2>&1` capture
+# $pipreqsFailLines is read from above) -- unlike :log-emitted lines (e.g. warnfixEngaged's own
+# check), which dual-write to both streams. Must be read from ~setup.log specifically.
+$pipreqsSetupLogPath = Join-Path $pipreqsFailDir '~setup.log'
+$pipreqsSetupLines = @()
+if (Test-Path $pipreqsSetupLogPath) { $pipreqsSetupLines = Get-Content -LiteralPath $pipreqsSetupLogPath -Encoding ASCII }
+$pipreqsDiscoveryRecovered = ($pipreqsSetupLines | Where-Object { $_ -like '*added: six*' }).Count -gt 0
+$pipreqsRecovered = $pipreqsWarnfixEngaged -or $pipreqsDiscoveryRecovered
 # derived requirement: the app's own stdout is never echoed into run_setup.bat's own console/log
 # (both the EXE-smoke path at run_setup.bat:2783 and the no-EXE interpreter path at :2616 redirect
 # the child process's stdout to a standalone ~run.out.txt in the app root instead) -- so the printed
@@ -392,14 +422,15 @@ if (Test-Path $pipreqsFailStatusPath) {
     $pipreqsFailBootstrapOk = ($pipreqsFailStatus.state -eq 'ok' -and $pipreqsFailStatus.exitCode -eq 0)
   } catch { }
 }
-$pipreqsFailAllPass = ($pipreqsInstallFailFound -and $pipreqsWarnfixEngaged -and $pipreqsAppRan -and $pipreqsFailBootstrapOk)
+$pipreqsFailAllPass = ($pipreqsInstallFailFound -and $pipreqsRecovered -and $pipreqsAppRan -and $pipreqsFailBootstrapOk)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.pipreqs_version_fail'
   pass = $pipreqsFailAllPass
-  desc = 'HP_PIPREQS_VERSION=99.99.99 forces pipreqs install to fail; warnfix alone recovers the missing import and the app still runs'
+  desc = 'HP_PIPREQS_VERSION=99.99.99 forces pipreqs install to fail; a layered fallback recovers the missing import and the app still runs'
   details = [ordered]@{
     installFailWarnFound = $pipreqsInstallFailFound
     warnfixEngaged = $pipreqsWarnfixEngaged
+    discoveryMergeRecovered = $pipreqsDiscoveryRecovered
     appRan = $pipreqsAppRan
     bootstrapOk = $pipreqsFailBootstrapOk
     exitCode = $pipreqsFailExit

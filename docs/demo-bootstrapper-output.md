@@ -22,7 +22,11 @@ genuinely useful. **A real historical GOTCHA is a different thing and stays welc
 shaped current behavior, worth knowing so a reader doesn't rediscover it the hard way, is exactly
 the kind of content this doc wants (see Scenario 29, Scenario 39 for two kept in full). The
 distinction is between explaining what the reader is looking at right now versus narrating how
-this document itself was assembled.
+this document itself was assembled. When a mechanism is genuinely covered by README.md or
+`run_setup.bat`'s own source/comments, cite those first -- they're the product-facing docs a reader
+of this file is more likely to already be looking at; reach for the internal `docs/agent-*.md`
+engineering docs only for detail that has no README/source equivalent (implementation-level
+CMD/PowerShell quirks, cross-component interconnects, and similar maintainer-facing reasoning).
 
 **Sourcing convention:** every quoted block carries one explicit provenance label -- REAL CI
 CAPTURE (copied verbatim from a real GitHub Actions job log, cited with run ID, job ID, lane, and
@@ -305,6 +309,26 @@ isolate one mechanism from the other):
 [INFO] REQ-005.12: autopep723 discovery merge complete.
 ```
 
+**Not shown above because it doesn't apply to this run, not omitted:** since this app had no
+pre-existing `requirements.txt` (`docs/agent-closed-backlog.md`'s Item 21), `requirements.txt`
+was freshly copied from `requirements.auto.txt` a few lines earlier in `:after_pipreqs_run`, so the
+`fc` diff genuinely finds no differences and stays file-only. When a user's own pre-existing
+`requirements.txt` DOES differ from what pipreqs auto-detects, the diff is now also printed to the
+console right after the line above:
+
+```
+[INFO] requirements.txt differs from the auto-detected dependency scan; details below:
+***** requirements.txt
+requests==2.31.0
+***** requirements.auto.txt
+requests==2.31.0
+colorama==0.4.6
+*****
+```
+
+(`[Extrapolated Branch]` -- `fc`'s own output format, not independently captured; genuine content
+depends entirely on the two files' real contents).
+
 **A real quirk worth flagging so it isn't misread**: the bootstrap log around this point also shows
 `DEP_FINAL_COUNT=0` even though `colorama` is a genuine, real dependency that gets installed a few
 steps later -- this count is taken BEFORE `requirements.auto.txt` is copied into `requirements.txt`
@@ -395,7 +419,10 @@ see `docs/agent-interconnect.md`'s "Process-ID display for stuck-program recover
 confirmed here as a genuine, working console line, not just source text.
 
 Immediately following (elective prompts, both auto-declined by CI -- see Scenario 5 below for
-what a real user experiences here instead) and then the final panel:
+what a real user experiences here instead) and then the final panel -- with the "You can also run
+it directly via the interpreter" line and its path updated in place to reflect current source
+(this real capture predates the postflight briefing always showing that line; every other line
+below is unmodified real capture):
 
 ```
 *** Verification finished -- see the Run Status above. ***
@@ -415,6 +442,8 @@ Tue 07/28/2026  4:55:59.94 [INFO] Optimized build: declined.
 
  RUNNING YOUR APP
    Double-click dist\_selftest_stub.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     ".uv_env\Scripts\python.exe" "hello_stub.py"
 
    STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
    starts, so allow 10-15 seconds (longer for big libraries like
@@ -538,8 +567,8 @@ them."** Both prompts follow this repo's own established CI-safe-gate pattern (s
 `docs/agent-interconnect.md`'s "CI-safe interactive gates" section): echo the framing
 unconditionally, THEN branch on `HP_TEST_*_ANSWER` override / `HP_CI_LANE` auto-decline / real
 `set /p`. Because the actual question text lives inside the `set /p` call itself (not a separate
-unconditional `echo`), and CI always takes one of the first two branches, no CI log -- gating or
-non-gating, auto-decline or forced-accept -- can ever contain the literal `"  Run again via the
+unconditional `echo`), and CI always takes one of the first two branches, no CI log -- auto-decline
+or forced-accept -- can ever contain the literal `"  Run again via the
 interpreter now? [Y/N] "` or `"  Build the optimized version now? [Y/N] "` text. This is a genuine
 blind spot in what CI evidence alone can show about this bootstrapper's real user-facing behavior,
 worth keeping in mind when reading any other scenario in this file that involves a `set /p`-based
@@ -746,7 +775,7 @@ self-heal flow.
 
 **What's tested:** all four now have real, valid-value end-to-end CI coverage; `PVW_PYTHON_EXE` and
 `PVW_WORKSPACE` also each have a real, invalid-value CI scenario (`tests/selfapps_pvw_overrides.ps1`,
-`uv` lane, non-gating -- confirmed passing in the same fully-green CI run this whole document's
+`uv` lane -- confirmed passing in the same fully-green CI run this whole document's
 release cycle was verified against: run `30709255610`, job `91393894838`). Neither `PVW_UV_EXE`
 nor `PVW_TARGET_PY` has invalid-value coverage of its own; that half of 8b/8c below stays
 `[Extrapolated Branch]`, traced from source.
@@ -853,7 +882,7 @@ back to conda create` -- no crash, no silent success.
 construction (no ordering dependency on Miniconda already being installed elsewhere in the job,
 unlike its sibling corrupt-conda scenarios).
 
-**Source:** REAL CI CAPTURE, run `30328748330`, both gating lanes (`real` job `90179708091` and
+**Source:** REAL CI CAPTURE, run `30328748330`, both `real` and `conda-full` lanes (`real` job `90179708091` and
 `conda-full` job `90179708094`), both `pass: true`, `exitCode: 2`.
 
 `PVW_CONDA_EXE` overrides the resolved conda batch-file path unconditionally, the instant it's
@@ -908,7 +937,7 @@ even has a chance to matter.
 `self.entry.override` (`tests/selfapps_ux_hardening.ps1`, which specifically proves the override
 wins over auto-detection, not merely that dragging works at all).
 
-**Source:** REAL CI CAPTURE, run `30328748330`, both gating lanes (`real` job `90179708091` and
+**Source:** REAL CI CAPTURE, run `30328748330`, both `real` and `conda-full` lanes (`real` job `90179708091` and
 `conda-full` job `90179708094`), all three rows `pass: true` in both.
 
 A user can either type a `.py` filename as the first CLI argument to `run_setup.bat`, or literally
@@ -1163,13 +1192,16 @@ run, REAL CI CAPTURE):
 ```
 
 A genuine download failure (not offline, an actual failed transfer) retries the WHOLE
-download+verify cycle once before giving up. Real, confirmed via `self.embed.dl.retry`
-(`tests/selfapps_ux_hardening.ps1`, `uv` lane, non-gating -- `HP_TEST_FORCE_EMBED_DL_FAIL_ONCE=1`
-deterministically fails only the first attempt, no network touched, then a real second attempt
-succeeds):
+download+verify cycle once before giving up. The mechanism is confirmed real via
+`self.embed.dl.retry` (`tests/selfapps_ux_hardening.ps1`, `uv` lane), which forces this path
+deterministically for CI purposes without touching the network -- but what a real user watching
+this happen would actually see is the two real, unconditional console lines the source always
+prints on a genuine transfer failure (`[Extrapolated Branch]`, built from source: the download line
+already shown above, then a real `curl` failure falling through to the PowerShell fallback, both
+inside the SAME attempt, before the retry line fires):
 
 ```
-[TEST] HP_TEST_FORCE_EMBED_DL_FAIL_ONCE: simulating download failure on attempt 1 (no network touched).
+*** curl download failed, trying PowerShell...
 [WARN] embed fallback: download failed; retrying once.
 ```
 
@@ -1251,13 +1283,35 @@ COMPLETE":
  SETUP COMPLETE -- WITH A CAVEAT
 ============================================================
  We packaged your app, but couldn't fully verify it runs as a
- standalone program. Your environment and dependencies ARE
- installed correctly -- you can always run your app directly:
-   "" "app.py"
+ standalone program. Your Python environment was set up and the
+ packaging step completed without a fatal error.
 
  RUNNING YOUR APP
    Double-click dist\_selftest_cascade_exec.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     "<full path to>\.venv\Scripts\python.exe" "app.py"
 ```
+
+**Both the caveat text and the interpreter line above are updated to reflect current source, not
+the original real capture -- the rest of this panel (the exhausted-cascade log lines above it,
+the header, and the file paths) is still the original evidence.** The original real capture showed
+`"" "app.py"` here (a genuinely empty `HP_PY`) and the older, overclaiming "Your environment and
+dependencies ARE installed correctly" wording. `:print_postflight_briefing` only prints a valid
+interpreter command when `HP_PY` genuinely still points at a working interpreter at this point in
+the flow -- when a declined cascade-to-system fallback tier clears its own `HP_PY` on the way out
+(correct for a first-time provider chain, where nothing was working yet, but wrong once a cascade
+re-entry has ALREADY produced a working build under an earlier tier), `:provider_cascade` now
+saves `HP_PY` on entry and `:after_cascade_decision` restores it before falling through to this
+panel, so the still-good venv interpreter path this exact panel is describing as ready to use
+survives a declined later tier intact; `:print_postflight_briefing` also skips the interpreter
+line entirely rather than print an empty command if `HP_PY` is ever undefined for any other
+reason. The caveat wording above was separately narrowed to stop claiming dependency installation
+was verified, since it isn't confirmed by this point in the flow regardless of which panel fires.
+The corrected interpreter line above is therefore `[Extrapolated Branch]` (this specific fix has
+not yet been re-exercised by a fresh real CI capture of this exact scenario) -- the general shape
+(a `.venv\Scripts\python.exe` path, since the log lines above confirm venv was the tier actually
+kept) is derived from `:try_venv_fallback`'s own `set "HP_PY=%CD%\.venv\Scripts\python.exe"` line,
+not independently captured.
 
 **Each tier is tried at most once as a cascade source** (`HP_CASCADE_TRIED_<tier>` guards),
 `HP_ENV_MODE` only ever advances (`uv -> conda -> embed -> venv -> system`), so the cascade
@@ -1500,10 +1554,24 @@ then write `runtime.txt` back." These two NDJSON rows deliberately test two DIFF
 DIFFERENT scratch directories with two DIFFERENT constraints, not one continuous flow -- worth
 being precise about, since the test file's own comments explain why: `.detect` calls
 `~detect_python.py` directly (no bootstrap, no environment ever created) against a tight
-`requires-python = ">=3.10,<3.11"` to check Tier 2's parse/forward precision in isolation; `.writeback`
-runs the FULL bootstrapper against a deliberately loose `requires-python = ">=3.9"` in a separate
-directory ("so conda picks a cached Python version and avoids a slow resolver round-trip for
-Python 3.10 packages," per the test's own comment) to check Tier 3's write-back end to end.
+`requires-python = ">=3.10,<3.11"` (real source, `tests/selfapps_pyproject_precedence.ps1`):
+
+```toml
+[project]
+requires-python = ">=3.10,<3.11"
+```
+
+to check Tier 2's parse/forward precision in isolation; `.writeback` runs the FULL bootstrapper
+against a deliberately loose `requires-python = ">=3.9"` in a separate directory (real source, same
+test file):
+
+```toml
+[project]
+requires-python = ">=3.9"
+```
+
+("so conda picks a cached Python version and avoids a slow resolver round-trip for Python 3.10
+packages," per the test's own comment) to check Tier 3's write-back end to end.
 
 `.detect`'s real NDJSON output confirms Tier 2's parse/forward is exact: `output":"python>=3.10,<3.11"`.
 `.writeback`'s real capture shows Tier 3 firing (since `runtime.txt` didn't pre-exist there either):
@@ -1517,8 +1585,16 @@ python-3.14.6` and `versionSatisfied:true` against ITS OWN, looser `>=3.9` const
 satisfies `>=3.9` comfortably. It does NOT satisfy the OTHER test's `<3.10,<3.11` constraint, but
 that constraint was never used for this environment; the two tests are independent, and this
 document originally conflated them into one implied sequence before being corrected.) Malformed
-`pyproject.toml` TOML degrades gracefully rather than aborting the whole precedence chain (real
-capture, `self.pyproject.malformed`):
+`pyproject.toml` TOML degrades gracefully rather than aborting the whole precedence chain -- real
+input source (`tests/selftest.ps1`, `self.pyproject.malformed`), a missing closing bracket on the
+section header:
+
+```toml
+[project
+name = "malformed-app"
+```
+
+produces this real capture:
 
 ```
 *** [WARN] pyproject.toml could not be parsed as valid TOML; falling back to requirements.txt or pipreqs.
@@ -1530,7 +1606,18 @@ proceeds via Tier 3 (provider picks latest) exactly as if `pyproject.toml` had n
 **Dependency-SOURCE precedence (a different mechanism, REQ-004/REQ-005.1 rows, unrelated to Python
 version)**: when `pyproject.toml` declares a real `[project].dependencies` array, it takes priority
 over any `requirements.txt` present -- this is decided independently of the version-tier logic
-above and can fire even when `runtime.txt` already exists. Real capture:
+above and can fire even when `runtime.txt` already exists. Real input source (same test file):
+
+```toml
+[project]
+name = "myapp"
+dependencies = [
+    "requests>=2.28",
+    "colorama",
+]
+```
+
+Real capture:
 
 ```
 *** [INFO] pyproject.toml [project].dependencies found; overrides requirements.txt
@@ -1553,6 +1640,14 @@ bootstrapper then falls through to `requirements.txt`/pipreqs as usual.
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
 
+**Input, `app.py` (real source, `tests/selfapps_pep723_writeback.ps1`'s default `fresh` scenario --
+no existing PEP 723 header, no `requirements.txt`):**
+
+```python
+import requests
+print('hi')
+```
+
 After a genuinely fresh, fully-successful `HP_ENV_MODE=uv` dependency install (see Part I,
 Scenario 3), `:pep723_writeback` promotes the resolved dependency set into the entry file's own
 PEP 723 header via `uv add --script`, so the pin travels with the user's source file rather than
@@ -1562,6 +1657,24 @@ staying only in `requirements.txt`/the lock file:
 [INFO] REQ-005.11: PEP 723 header write-back succeeded via uv add --script.
 ```
 
+**Output, `app.py` (same file, now carrying the written-back header)** -- this test's own
+assertions confirm the block markers, a `requires-python` line, and `requests` are all present, but
+don't assert exact formatting beyond that; the precise shape shown is the same one Scenario 36
+already establishes and cites in full (`docs/agent-lessons-learned.md`'s "`uv add --script` / PEP
+723 empirical behavior" section) -- `[Extrapolated Branch]` for the exact layout:
+
+```python
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "requests",
+# ]
+# ///
+
+import requests
+print('hi')
+```
+
 When there is nothing to write (a stdlib-only app, no third-party packages resolved), the
 subroutine correctly no-ops rather than writing an empty/misleading header -- also a REAL capture:
 
@@ -1569,8 +1682,8 @@ subroutine correctly no-ops rather than writing an empty/misleading header -- al
 [INFO] REQ-005.11: PEP 723 write-back skipped (no packages to write).
 ```
 
-This is `HP_ENV_MODE=uv`-only (v1 scope, see `docs/agent-interconnect.md`) and best-effort/non-gating
--- any failure (malformed existing header not cleanly repairable, a file lock, non-UTF-8 source)
+This is `HP_ENV_MODE=uv`-only (v1 scope, see `docs/agent-interconnect.md`) and best-effort -- it
+does not block the run: any failure (malformed existing header not cleanly repairable, a file lock, non-UTF-8 source)
 logs a `[WARN]` and the bootstrap continues unaffected; `HP_SKIP_PEP723_WRITEBACK=1` suppresses it
 outright per REQ-019 (a genuine opt-OUT flag, not a gate). The warnfix-triggered SECOND write-back
 call (after a successful repair round) is functionally identical and not separately captured here
@@ -1658,6 +1771,19 @@ a different scratch directory, `self.exe.warnfix.real` (`tests/selftest.ps1`'s `
 heuristic; EXE succeeded"`).
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full` lane).
+
+**Input, `app.py` and `requirements.txt` (real source, `tests/selfapps_pandas_excel.ps1`):**
+
+```python
+import pandas as pd
+
+df = pd.DataFrame({"a": [1, 2]})
+df.to_excel("out.xlsx")
+```
+
+```
+pandas
+```
 
 `~prep_requirements.py` (`HP_PREP_REQUIREMENTS`) applies a small set of heuristic rules that inject
 a commonly-needed-but-undeclared package when its "parent" package is present -- pandas's
@@ -2055,6 +2181,38 @@ way from a cold uv download through a `hello_stub`-style trivial verification. T
 evidence) is `[Extrapolated Branch]` -- the two are structurally identical at that point (both are
 first-ever runs, no cached state, uv-first), but were never the same process.
 
+**Input, `app.py` (the `colorama` app -- real source, `tests/selfapps_envsmoke.ps1`, drives every
+line below up through `[INFO] REQ-005.11: PEP 723 header write-back succeeded`):**
+
+```python
+import colorama  # Prime Directive: proves pipreqs scanned app.py, conda installed it
+import os as _os
+import sys as _sys
+
+# Write token to a sidecar file. stdout-based approaches (print, os.write) are
+# unreliable through cmd.exe redirects on some Windows Python distributions due
+# to CRT file-descriptor/HANDLE mismatch (see history in selfapps_envsmoke.ps1).
+# File I/O uses Win32 CreateFile/WriteFile directly - no stdout involved.
+# Use sys.argv[0] so normal Python runs write next to app.py while PyInstaller
+# --onefile runs write next to the EXE instead of the transient _MEI temp tree.
+_here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
+with open(_os.path.join(_here, '~smoke_token.txt'), 'w') as _f:
+    _f.write('smoke-ok\n')
+```
+
+No `requirements.txt`, `runtime.txt`, or `pyproject.toml` -- just this file and `run_setup.bat`.
+This app writes its proof-of-life to a sidecar file rather than stdout (the comment explains why:
+a CRT file-descriptor quirk on some Windows Python distributions), which is why the build-onward
+half of this walkthrough switches to a second, genuinely different real capture below instead of
+continuing this same app's own evidence.
+
+**Input, `hello_stub.py` (a second, different real app -- `tests/selftest.ps1` -- takes over as the
+entry from `[INFO] Building standalone executable` onward; see the splice-honesty note above):**
+
+```python
+print("hello-from-stub")
+```
+
 ```
 [INFO] REQ-015: Appending standard ignores to .gitignore.
 [INFO] REQ-015: Appending standard attributes to .gitattributes.
@@ -2102,10 +2260,78 @@ hello-from-stub
 ```
 
 (the checkpoint prompt line itself is `[Extrapolated Branch]`, same reasoning as Scenario 5 -- it
-lives inside an unbounded `set /p`, never visible in a CI log). Declining both elective prompts
-(the checkpoint above, then the optimized-build offer) reaches the same "SETUP COMPLETE" panel
-already quoted in full in Scenario 4 -- not repeated a third time here; see that scenario for the
-exact panel text, or Scenario 5 for what accepting either prompt does instead.
+lives inside an unbounded `set /p`, never visible in a CI log). Declining it (real capture, back to
+`hello_stub.py`'s own evidence, timestamps dropped for readability elsewhere in this panel but shown
+here to make clear this reconnects to a real, timestamped log), then the optimized-build offer, then
+the final panel:
+
+```
+[INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
+
+*** Your app is ready. ***
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
+[INFO] Optimized build: declined.
+
+============================================================
+ SETUP COMPLETE
+============================================================
+ Your standalone application is ready:
+   dist\<env>.exe
+
+ RUNNING YOUR APP
+   Double-click dist\<env>.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     ".uv_env\Scripts\python.exe" "hello_stub.py"
+
+   STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
+   starts, so allow 10-15 seconds (longer for big libraries like
+   numpy/scipy/matplotlib, or when extra packages were bundled to fix
+   missing imports) before assuming it has hung.
+
+   If the window flashes and closes instantly: that's normal if
+   your program finished quickly or hit an error before printing
+   anything. To see what happened, open Command Prompt, cd to
+   this folder, and run:
+     dist\<env>.exe
+   This keeps the window open so you can read any messages.
+
+   A progress indicator that updates in place may appear all at
+   once instead of live when run as the .exe -- that is a stdout
+   buffering difference between the .exe and the script, not an error.
+
+   Does your program need launch arguments (e.g. --input file.csv)? Run
+   this bootstrapper again with them added after the entry file, e.g.
+     run_setup.bat "hello_stub.py" --input file.csv
+   and they will be forwarded to your program during THIS setup run
+   (up to 8 extra arguments). This does not change how a plain
+   double-click of dist\<env>.exe launches it afterward -- for that,
+   make a Windows shortcut to the .exe and add the arguments to its
+   Target field, or launch it yourself from a Command Prompt.
+
+ KEEP these files with your project:
+   requirements.txt  -- packages your app depends on
+   runtime.txt       -- Python version pin
+
+ SAFE TO DELETE to reclaim disk space:
+   .*_env\ folders   -- environment directories
+   ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+   build\            -- PyInstaller build cache
+============================================================
+
+[INFO] REQ-016: Post-flight briefing printed.
+```
+
+Real capture (`tests/~selftest_stub/~stub_bootstrap.log`, same run as Scenario 4, `_selftest_stub`/
+`hello_stub.py` genericized to `<env>`/kept as `hello_stub.py` respectively, matching the real
+capture's own entry filename in the launch-args example line). See Scenario 5 for what accepting
+either elective prompt does instead of the decline path shown here.
+
+**Output, `~bootstrap.status.json` (unchanged from Scenario 4's own real capture of the same run):**
+
+```json
+{"state":"ok","exitCode":0,"pyFiles":1}
+```
 
 ### Scenario 33: Full walkthrough -- uv can't resolve a dependency, cascades to conda, which does
 
@@ -2133,6 +2359,33 @@ Real trigger (Scenario 15, same wording, same reasoning about why it says "uv to
 *** [INFO] Trying the next Python provider (conda) to resolve dependencies...
 ```
 
+**No real input `app.py` to show here, unlike Scenario 32/34/35/36** -- the narrow case this
+scenario illustrates (a package genuinely resolvable via conda-forge but not uv/pip) has no real
+test app in this repo yet; Scenario 15's own real trigger app (`import fake_pkg_cascade_xyz`, a
+package name that doesn't exist ANYWHERE) is deliberately unresolvable by every tier alike, which
+is what drives that scenario's full-exhaustion case -- it cannot illustrate conda succeeding where
+uv failed. `tests/selfapps_layered_e2e.ps1` (`docs/agent-closed-backlog.md`'s Item 22, `cache`
+lane only, non-gating) now exists and is designed to produce exactly this real evidence. Its
+first real CI runs surfaced a genuine bug in the mechanism under test, not the test itself: a
+second, unplanned warnfix round failed on `cStringIO` (a Python-2-only stdlib shim `xlrd`'s own
+compatibility code still references, never a real installable package), which drove an
+unplanned SECOND cascade (conda to embed) that this scenario's own single-cascade premise doesn't
+cover. Fixed by adding `cStringIO`/`StringIO` to `parse_warn.py`'s `SKIP` filter -- **confirmed by
+a real CI run** (run `30875520181`, cache-lane job `91886501141`): the cascade now fires exactly
+once, cleanly, as designed. That same run surfaced a SECOND, unrelated, still-open bug (CLAUDE.md
+Active Backlog item 24) -- PyInstaller doesn't bundle `pygrib`'s native `eccodes.dll` dependency
+under the conda provider, so the frozen EXE still fails at runtime for a different reason once it
+reaches that point. This scenario's own uv-to-conda cascade illustration below is unaffected by
+that second bug (it documents the cascade mechanism itself, which is now confirmed working); see
+item 24 for the separate, not-yet-fixed EXE-verification gap. It uses `pygrib` (a package with zero Windows wheels on PyPI as of the
+latest release, per a direct PyPI JSON API query, but real conda-forge win-64 builds) as the
+cascade trigger -- GDAL was the original candidate and was researched and rejected (its Python
+bindings live under the `osgeo` namespace, and PyPI hosts a real, always-succeeding dummy package
+literally named `osgeo` that would have silently defeated the cascade's own confidence-gate
+signal; see the same closed-backlog entry for the full trail). A full start-to-shutdown console
+panel with the real captured output (matching this Part's own convention) has not yet been added
+here -- a reasonable fast-follow, not yet done.
+
 `:cascade_acquire_conda` downloads and installs Miniconda on demand at this point if it wasn't
 already on disk (uv-first runs skip Miniconda entirely until something actually needs it -- see
 `docs/agent-interconnect.md`'s "uv-First Provider Architecture"), then re-enters the same
@@ -2151,13 +2404,77 @@ Creating Python environment '<env>' -- this may take several minutes...
 [INFO] EXE smokerun: exited 0 (ok)
 [INFO] Entry smoke exit=0
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
+
+*** Verification finished -- see the Run Status above. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+  Run again via the interpreter now? [Y/N] _
 ```
 
-followed by the ordinary "SETUP COMPLETE" panel (Scenario 4). The mechanism-level reason conda has
-a genuine, above-average chance of resolving what uv couldn't -- a real, different package index
-with pre-built native-extension wheels, not just a fresh attempt at the same resolution -- is
-covered in `docs/agent-interconnect.md`'s "Cascade signal reliability" section; that section is
-also why later cascade hops (embed/venv/system) carry comparatively less of this same justification.
+Declining (same provider-agnostic building blocks as Scenario 32's own ending, `[Extrapolated
+Branch]` for this specific re-entry, not a separate real capture) reaches the same final panel:
+
+```
+[INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
+
+*** Your app is ready. ***
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
+[INFO] Optimized build: declined.
+
+============================================================
+ SETUP COMPLETE
+============================================================
+ Your standalone application is ready:
+   dist\<env>.exe
+
+ RUNNING YOUR APP
+   Double-click dist\<env>.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     "<python>" "<entry.py>"
+
+   STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
+   starts, so allow 10-15 seconds (longer for big libraries like
+   numpy/scipy/matplotlib, or when extra packages were bundled to fix
+   missing imports) before assuming it has hung.
+
+   If the window flashes and closes instantly: that's normal if
+   your program finished quickly or hit an error before printing
+   anything. To see what happened, open Command Prompt, cd to
+   this folder, and run:
+     dist\<env>.exe
+   This keeps the window open so you can read any messages.
+
+   A progress indicator that updates in place may appear all at
+   once instead of live when run as the .exe -- that is a stdout
+   buffering difference between the .exe and the script, not an error.
+
+   Does your program need launch arguments (e.g. --input file.csv)? Run
+   this bootstrapper again with them added after the entry file, e.g.
+     run_setup.bat "<entry.py>" --input file.csv
+   and they will be forwarded to your program during THIS setup run
+   (up to 8 extra arguments). This does not change how a plain
+   double-click of dist\<env>.exe launches it afterward -- for that,
+   make a Windows shortcut to the .exe and add the arguments to its
+   Target field, or launch it yourself from a Command Prompt.
+
+ KEEP these files with your project:
+   requirements.txt  -- packages your app depends on
+   runtime.txt       -- Python version pin
+
+ SAFE TO DELETE to reclaim disk space:
+   .*_env\ folders   -- environment directories
+   ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+   build\            -- PyInstaller build cache
+============================================================
+
+[INFO] REQ-016: Post-flight briefing printed.
+```
+
+The mechanism-level reason conda has a genuine, above-average chance of resolving what uv couldn't
+-- a real, different package index with pre-built native-extension wheels, not just a fresh attempt
+at the same resolution -- is covered in `docs/agent-interconnect.md`'s "Cascade signal reliability"
+section; that section is also why later cascade hops (embed/venv/system) carry comparatively less
+of this same justification.
 
 ### Scenario 34: Full walkthrough -- warnfix repair and rebuild, start to finish
 
@@ -2166,12 +2483,46 @@ already verified real elsewhere in this file (Scenario 4). The connecting tissue
 fragments belong to the same run) is `[Extrapolated Branch]`; every individual line is independently
 a real capture cited in its own originating scenario.
 
+**Input, `app.py` (real source, `tests/selfapps_warnfix.ps1`'s default `pass` scenario -- the exact
+app that produces the repair-loop capture below):**
+
+```python
+import openpyxl
+import os as _os
+import sys as _sys
+
+wb = openpyxl.Workbook()
+wb.active['A1'] = 'warnfix-ok'
+wb.save('out.xlsx')
+_here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
+with open(_os.path.join(_here, '~warnfix_token.txt'), 'w') as _f:
+    _f.write('warnfix-ok\n')
+print('wrote out.xlsx')
+```
+
+**Test-isolation note, same distinction Scenario 23/36 already make for a different mechanism:**
+this specific test sets `HP_SKIP_PIPREQS=1` so `openpyxl` is guaranteed absent when PyInstaller
+first runs, isolating warnfix as the sole repair path for this test's own assertions -- production
+behavior (pipreqs enabled, no flags) would normally have pipreqs discover and pre-install
+`openpyxl` from this same `import openpyxl` line, so warnfix would have nothing to do. Warnfix's
+real, unflagged trigger case is a package pipreqs's static scan genuinely cannot see (e.g. a
+`pandas.read_excel('legacy.xls')` call, which needs `xlrd` as an invisible runtime engine, never a
+direct import pipreqs's AST scan would catch) -- not yet captured in this file with its own
+dedicated real test; see CLAUDE.md's Active Backlog item 22.
+
+**Two lines below (`[INFO] Attempting to install: openpyxl` / `[INFO] Installed: openpyxl`)
+updated to reflect current source -- `docs/agent-closed-backlog.md`'s Item 21 added them to the
+per-module warnfix repair loop after this capture was originally taken, so install attempts are no
+longer silent on success; everything else in this panel is the original, unmodified capture:**
+
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
 [INFO] PyInstaller produced dist\<env>.exe
 [DEBUG] warnfix: warn file found
 [INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically.
 [REPAIR] missing modules detected; installing and rebuilding.
+[INFO] Attempting to install: openpyxl
+[INFO] Installed: openpyxl
 [REPAIR] rebuild complete after warnfix.
 [INFO] PyInstaller build artifacts cleaned up.
 [INFO] EXE smokerun: testing dist\<env>.exe
@@ -2179,15 +2530,79 @@ a real capture cited in its own originating scenario.
 [INFO] EXE smokerun: exited 0 (ok)
 [INFO] Entry smoke exit=0
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
+
+*** Verification finished -- see the Run Status above. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+  Run again via the interpreter now? [Y/N] _
 ```
 
-followed by the ordinary "SETUP COMPLETE" panel. Note what does NOT appear here: no second
-"[INFO] Building standalone executable" banner precedes the repair rebuild -- `[REPAIR] rebuild
-complete after warnfix.` covers the whole re-invocation, PyInstaller's own build noise from that
-second pass is not separately re-echoed. The failure variant of this same loop (a module that
-genuinely can't be installed, e.g. `StringIO`) is already documented in Scenario 17 -- that variant
-still reaches `[REPAIR] rebuild complete after warnfix.` (bundling whatever DID install) and is what
-actually feeds the provider cascade Scenario 33 above walks through.
+Declining (same provider-agnostic building blocks as Scenario 32's own ending) reaches the same
+final panel:
+
+```
+[INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
+
+*** Your app is ready. ***
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
+[INFO] Optimized build: declined.
+
+============================================================
+ SETUP COMPLETE
+============================================================
+ Your standalone application is ready:
+   dist\<env>.exe
+
+ RUNNING YOUR APP
+   Double-click dist\<env>.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     ".uv_env\Scripts\python.exe" "app.py"
+
+   STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
+   starts, so allow 10-15 seconds (longer for big libraries like
+   numpy/scipy/matplotlib, or when extra packages were bundled to fix
+   missing imports) before assuming it has hung.
+
+   If the window flashes and closes instantly: that's normal if
+   your program finished quickly or hit an error before printing
+   anything. To see what happened, open Command Prompt, cd to
+   this folder, and run:
+     dist\<env>.exe
+   This keeps the window open so you can read any messages.
+
+   A progress indicator that updates in place may appear all at
+   once instead of live when run as the .exe -- that is a stdout
+   buffering difference between the .exe and the script, not an error.
+
+   Does your program need launch arguments (e.g. --input file.csv)? Run
+   this bootstrapper again with them added after the entry file, e.g.
+     run_setup.bat "app.py" --input file.csv
+   and they will be forwarded to your program during THIS setup run
+   (up to 8 extra arguments). This does not change how a plain
+   double-click of dist\<env>.exe launches it afterward -- for that,
+   make a Windows shortcut to the .exe and add the arguments to its
+   Target field, or launch it yourself from a Command Prompt.
+
+ KEEP these files with your project:
+   requirements.txt  -- packages your app depends on
+   runtime.txt       -- Python version pin
+
+ SAFE TO DELETE to reclaim disk space:
+   .*_env\ folders   -- environment directories
+   ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+   build\            -- PyInstaller build cache
+============================================================
+
+[INFO] REQ-016: Post-flight briefing printed.
+```
+
+Note what does NOT appear here: no second "[INFO] Building standalone executable" banner precedes
+the repair rebuild -- `[REPAIR] rebuild complete after warnfix.` covers the whole re-invocation,
+PyInstaller's own build noise from that second pass is not separately re-echoed. The failure
+variant of this same loop (a module that genuinely can't be installed, e.g. `StringIO`) is already
+documented in Scenario 17 -- that variant still reaches `[REPAIR] rebuild complete after warnfix.`
+(bundling whatever DID install) and is what actually feeds the provider cascade Scenario 33 above
+walks through.
 
 ### Scenario 35: Full walkthrough -- `--hidden-import` auto-recovery succeeds on the first rebuild
 
@@ -2197,9 +2612,29 @@ file, only confirmed present via `self.exe.hidden_import`'s own passing NDJSON r
 "test passes, so no full log was dumped" situation Scenario 39 already documents for a different
 mechanism) and via the exact line format quoted from source at Scenario 39 (a different context --
 Tier A's hidden-import SKIP guard -- but quoting the identical `[REPAIR][HIDDEN_IMPORT]` line
-PyInstaller's own recovery path would have printed). This whole panel is therefore
+PyInstaller's own recovery path would have printed). This whole console panel is therefore
 `[Extrapolated Branch]`, built from source, not a stitch of independently-real fragments the way
-Scenario 32/33/34 above are.
+Scenario 32/33/34 above are -- but the input files below ARE real, unflagged source (no test
+isolation flag involved; pipreqs runs normally here).
+
+**Input, `requirements.txt` and `app.py` (real source, `tests/selfapps_hidden_import.ps1` --
+`colorama` is genuinely installed, but imported only via a runtime string, so PyInstaller's static
+analysis cannot see the reference and never bundles it):**
+
+```
+colorama
+```
+
+```python
+import importlib
+import os as _os
+import sys as _sys
+_mod = importlib.import_module('colorama')
+_here = _os.path.dirname(_os.path.abspath(_sys.argv[0]))
+with open(_os.path.join(_here, '~hidden_token.txt'), 'w') as _f:
+    _f.write('hidden-ok\n')
+print('colorama via importlib ok:', _mod.__name__)
+```
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
@@ -2208,20 +2643,83 @@ Scenario 32/33/34 above are.
 [INFO] EXE smokerun: testing dist\<env>.exe
 [WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
 [WARN] EXE smokerun: exited 1 (non-zero)
-[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=<module>; rebuilding EXE (iter 1/3)
+[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama; rebuilding EXE (iter 1/3)
 [INFO] PyInstaller produced dist\<env>.exe
 [INFO] EXE smokerun: testing dist\<env>.exe
 [INFO] EXE smokerun: exited 0 (ok)
 [INFO] Entry smoke exit=0
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
+
+*** Verification finished -- see the Run Status above. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+  Run again via the interpreter now? [Y/N] _
 ```
 
-followed by the ordinary "SETUP COMPLETE" panel. The gate that makes this rebuild worth attempting
-at all -- the failure must be a real `ModuleNotFoundError` (not a bare `ImportError`) for a module
-that IS installed in the build interpreter, and the EXE must have been built by PyInstaller, not
-Tier A's Nuitka fallback -- is covered in full in `docs/agent-lessons-learned.md`'s "--hidden-import
-auto-recovery must stay STRICT" entry; Scenario 16 covers the case where three rebuilds still don't
-resolve it.
+Declining (same provider-agnostic building blocks as Scenario 32's own ending, still
+`[Extrapolated Branch]` here since the whole panel is) reaches the same final panel:
+
+```
+[INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
+
+*** Your app is ready. ***
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
+[INFO] Optimized build: declined.
+
+============================================================
+ SETUP COMPLETE
+============================================================
+ Your standalone application is ready:
+   dist\<env>.exe
+
+ RUNNING YOUR APP
+   Double-click dist\<env>.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     ".uv_env\Scripts\python.exe" "app.py"
+
+   STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
+   starts, so allow 10-15 seconds (longer for big libraries like
+   numpy/scipy/matplotlib, or when extra packages were bundled to fix
+   missing imports) before assuming it has hung.
+
+   If the window flashes and closes instantly: that's normal if
+   your program finished quickly or hit an error before printing
+   anything. To see what happened, open Command Prompt, cd to
+   this folder, and run:
+     dist\<env>.exe
+   This keeps the window open so you can read any messages.
+
+   A progress indicator that updates in place may appear all at
+   once instead of live when run as the .exe -- that is a stdout
+   buffering difference between the .exe and the script, not an error.
+
+   Does your program need launch arguments (e.g. --input file.csv)? Run
+   this bootstrapper again with them added after the entry file, e.g.
+     run_setup.bat "app.py" --input file.csv
+   and they will be forwarded to your program during THIS setup run
+   (up to 8 extra arguments). This does not change how a plain
+   double-click of dist\<env>.exe launches it afterward -- for that,
+   make a Windows shortcut to the .exe and add the arguments to its
+   Target field, or launch it yourself from a Command Prompt.
+
+ KEEP these files with your project:
+   requirements.txt  -- packages your app depends on
+   runtime.txt       -- Python version pin
+
+ SAFE TO DELETE to reclaim disk space:
+   .*_env\ folders   -- environment directories
+   ~* files          -- tilde-prefix work files (e.g. ~setup.log)
+   build\            -- PyInstaller build cache
+============================================================
+
+[INFO] REQ-016: Post-flight briefing printed.
+```
+
+The gate that makes this rebuild worth attempting at all -- the failure must be a real
+`ModuleNotFoundError` (not a bare `ImportError`) for a module that IS installed in the build
+interpreter, and the EXE must have been built by PyInstaller, not Tier A's Nuitka fallback -- is
+covered in full in `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay
+STRICT" entry; Scenario 16 covers the case where three rebuilds still don't resolve it.
 
 ### Scenario 36: Full walkthrough -- `HP_PVW_KNOWN_IDEMPOTENT`, with the actual input and output files
 
@@ -2295,8 +2793,8 @@ didn't execute during this one discovery run.
 
 ### Scenario 37: PyInstaller build fails, Tier A (Nuitka) fallback succeeds
 
-**What's tested:** `self.exe.build.tiera` (`tests/selfapps_nuitka_tiera.ps1`, uv lane,
-non-gating). `HP_TEST_FORCE_PYINSTALLER_FAIL=1` forces the primary build to fail deterministically;
+**What's tested:** `self.exe.build.tiera` (`tests/selfapps_nuitka_tiera.ps1`, uv lane).
+`HP_TEST_FORCE_PYINSTALLER_FAIL=1` forces the primary build to fail deterministically;
 the Nuitka fallback (`:try_nuitka_tier_a`) then runs for real -- a genuine compile, not simulated.
 
 **What appears on screen**, from the moment PyInstaller's build is attempted through to the final
@@ -2304,9 +2802,11 @@ summary -- a mix of real CI capture and lines updated to reflect current source,
 uniform capture. Real CI capture (run `29788624195`, job `88506013149`): the
 "(fallback build system)" verification line and the drive-message reassurance line, exactly as
 captured. Updated to reflect current source (`docs/plan-cli-interactive-verification.md`
-requirement 3's activity-aware kill, and REQ-026's argv passthrough, both of which shipped after
-this specific run): the "Verifying the built standalone EXE" line and the "Does your program need
-launch arguments" paragraph. Every other line below is real capture, unmodified:
+requirement 3's activity-aware kill, REQ-026's argv passthrough, and Active Backlog item 20's
+postflight briefing change, all of which shipped after this specific run): the "Verifying the
+built standalone EXE" line, the "You can also run it directly via the interpreter" line, and the
+"Does your program need launch arguments" paragraph. Every other line below is real capture,
+unmodified:
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
@@ -2328,7 +2828,15 @@ The system cannot find the drive specified.
 *** Verification finished -- see the Run Status above. ***
 *** You can run your program again now via the interpreter as an extra diagnostic check. ***
 [INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
+```
 
+**The `[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL` line above is this real capture's own CI test-hook
+announcement, not something a real user would ever see** -- a genuine PyInstaller build failure at
+that exact point is completely silent (its own error output goes only to the log file, never the
+console); the next line a real user would actually see is the "Standard build did not complete"
+line immediately following, with nothing printed in between. Continuing:
+
+```
 ============================================================
  SETUP COMPLETE
 ============================================================
@@ -2337,6 +2845,8 @@ The system cannot find the drive specified.
 
  RUNNING YOUR APP
    Double-click dist\<env>.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     "<python>" "<entry.py>"
 
    STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
    starts, so allow 10-15 seconds (longer for big libraries like
@@ -2387,7 +2897,7 @@ PyInstaller's. See Scenario 42 for the argv-passthrough paragraph's own dedicate
 ### Scenario 38: PyInstaller build fails, Tier A fallback ALSO fails (tier exhaustion)
 
 **What's tested:** `self.exe.build.xfail` (`tests/selfapps_pyinstaller_fail.ps1`, real/conda-full
-lanes, gating). Three sub-scenarios share one NDJSON row id: `execfail` (the PyInstaller build
+lanes). Three sub-scenarios share one NDJSON row id: `execfail` (the PyInstaller build
 command itself fails), `output_vanish` (PyInstaller succeeds, then the output EXE vanishes
 immediately -- simulating AV-style post-creation removal), and `execfail_runtimefail` (packaging
 fails AND the interpreter fallback that runs next ALSO exits non-zero -- see Scenario 43a for that
@@ -2396,7 +2906,11 @@ one's console text, since it's really a REQ-027 demo). The first two additionall
 
 #### 38a. `execfail` -- the PyInstaller build command itself fails
 
-Real CI capture, run `29788624195`, job `88506013028` ("real" lane):
+Real CI capture, run `29788624195`, job `88506013028` ("real" lane). **The two `[TEST]
+HP_TEST_FORCE_*` lines below are this capture's own CI test-hook announcements, not something a
+real user would ever see** -- a genuine failure at each of those two points is completely silent
+(both PyInstaller's and Nuitka's own error output go only to the log file, never the console); a
+real user would see the very next line instead, with nothing printed in between:
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
@@ -2423,7 +2937,14 @@ interpreter run ALSO fails.
 
 #### 38b. `output_vanish` -- PyInstaller succeeds, then the EXE disappears immediately
 
-Real CI capture, same run/job as 2a:
+Real CI capture, same run/job as 2a. **Unlike the test hooks elsewhere in this file,
+`HP_TEST_FORCE_OUTPUT_VANISH` stands in for a real external event, not an internal simulated
+failure** -- a real user could hit this exact same gap if antivirus software or a file indexer
+deletes the freshly-built EXE in the instant right after PyInstaller creates it; the line below
+would not appear on a real user's screen (there's no bootstrapper code path that announces this),
+but the underlying trigger (the file being gone at the next check) is something that genuinely
+happens, not a pure test artifact. `HP_TEST_FORCE_NUITKA_FAIL` is a normal, internal-only test
+hook (see 38a's note -- a real Nuitka failure at that point is silent):
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
@@ -2449,7 +2970,7 @@ Real CI capture, same run/job as 2a:
 ### Scenario 39: Tier A + hidden-import auto-recovery skip guard
 
 **What's tested:** `self.exe.tiera.hidden_skip` (`tests/selfapps_nuitka_tiera_hidden_skip.ps1`, uv
-lane, non-gating). Forces Tier A to trigger and succeed for real, then has the stub app fabricate
+lane). Forces Tier A to trigger and succeed for real, then has the stub app fabricate
 a `ModuleNotFoundError: No module named 'nuitka'` on stderr and exit 1 -- the exact signature that
 used to (before this fix) trigger an incorrect PyInstaller rebuild attempt against a Nuitka-built
 EXE.
@@ -2467,7 +2988,6 @@ regex-verified confirmation that these exact lines were present/absent in the re
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
-[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
 [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
 [INFO] Fallback build succeeded: dist\<env>.exe was produced using the fallback build system.
 [INFO] EXE smokerun: testing dist\<env>.exe
@@ -2483,8 +3003,8 @@ attempt a PyInstaller rebuild against a Nuitka-built EXE.
 
 ### Scenario 40: Requirement 9 -- elective "want an optimized build too?" offer
 
-**What's tested:** `self.optbuild.offer` (`tests/selfapps_optimized_build.ps1`, uv lane,
-non-gating), four scenarios sharing one row id.
+**What's tested:** `self.optbuild.offer` (`tests/selfapps_optimized_build.ps1`, uv lane),
+four scenarios sharing one row id.
 
 **Source:** confirmed in real CI run `29877805447`, uv lane, job `88792048278`, all four scenarios
 passing:
@@ -2551,12 +3071,21 @@ Real, verbatim console dump (`~selftest_optbuild_forcefail\~optbuild_forcefail_b
 [INFO] REQ-016: Post-flight briefing printed.
 ```
 
-No further message prints between the forced-fail log line and the (unrelated, always-present)
-post-flight briefing -- the subroutine cleans up the temp file and returns silently. This is a
-narrower silence than the wording used on a REAL build-failure branch (which explicitly says
-"your app is still ready to use as-is" -- see the reactive hint below); a forced-test-hook failure
-and a genuine build failure currently give the user different amounts of reassurance for what is,
-from their perspective, the same outcome.
+**The `[TEST] HP_TEST_FORCE_OPTBUILD_FAIL` line above is this capture's own CI test-hook
+announcement, not something a real user would ever see -- and unlike the silent build failures
+elsewhere in this Part, a REAL failure here is NOT silent.** Every genuine failure branch in
+`:offer_optimized_build` (tool-install failure, build-did-not-complete, missing output,
+verification failure, swap failure) logs its own `[WARN] ...; your app is still ready to use as-is.`
+line before reaching the post-flight briefing; the test hook instead jumps straight past all of
+them. The most common real case (`[Extrapolated Branch]`, from source) would read:
+
+```
+[WARN] Optimized build did not complete; your app is still ready to use as-is.
+```
+
+right where the `[TEST]` line sits above -- a forced-test-hook failure and a genuine build failure
+currently give the user different amounts of reassurance for what is, from their perspective, the
+same outcome.
 
 #### 40c. `swapfail` -- verified build, but the final swap step fails; original EXE is left untouched
 
@@ -2613,7 +3142,7 @@ identical to a genuinely hung one, and the user watching the window saw nothing 
 either finished or got killed.
 
 **What's tested (the plumbing):** `self.interactive.stdin.roundtrip`
-(`tests/selfapps_interactive_stdin.ps1`, uv lane, non-gating) builds a real PyInstaller EXE from a
+(`tests/selfapps_interactive_stdin.ps1`, uv lane) builds a real PyInstaller EXE from a
 multi-round `input()`-driven stub app and pipes a scripted answer sequence into `cmd.exe`'s own
 stdin, exercising the full `cmd.exe -> :run_exe_smokerun -> ~exe_smokerun.ps1 -> the built EXE`
 chain and asserting each answer lands in the right round via ordering checks on the captured log
@@ -2643,10 +3172,11 @@ Three things this one line is doing:
 3. **Still warns it's a throwaway pass, not the user's real, saveable session** -- this verification
    EXE is never reused; only the file it's already tested is kept for later double-clicks.
 
-The `hidden_import` recovery loop's own separate, narrower verification check (see
-`docs/agent-interconnect.md`'s "Activity-aware EXE-smoke kill" section) deliberately keeps the
-OLDER, unconditional 30-second wording -- it's a bounded repair-verification check on an
-already-built EXE, not the user's primary run, so it never got the interactive-friendly rewrite.
+The `hidden_import` recovery loop's own separate, narrower verification check (see README.md's
+"Verifying a fresh build is activity-aware and announced" bullet, which calls this exact exception
+out directly) deliberately keeps the OLDER, unconditional 30-second wording -- it's a bounded
+repair-verification check on an already-built EXE, not the user's primary run, so it never got the
+interactive-friendly rewrite.
 
 ### Scenario 42: Argv passthrough (REQ-026) -- launch arguments through the bootstrapper
 
@@ -2780,8 +3310,8 @@ postflight signal at all beyond one `[WARN]` log line buried among other console
 ```
 
 This panel is a PLAIN INFORMATIONAL PRINT, never a consent gate -- the cached-EXE fast path is
-deliberately zero-friction for prompts (see `docs/agent-interconnect.md`'s "Fast path = ZERO
-friction" design requirement), and this doesn't violate that since it never asks a question.
+deliberately zero-friction for prompts (see README.md's "Fast path is the user's run
+(frictionless)" bullet), and this doesn't violate that since it never asks a question.
 
 **No entry filename appears anywhere in this panel, unlike 7a's rerun mention -- deliberately.**
 `HP_ENTRY` is not set yet at the point the top-of-file fast path runs (it fires before
