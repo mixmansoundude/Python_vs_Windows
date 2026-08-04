@@ -130,6 +130,10 @@ if ($envCreateExit -ne 0) {
 $condaRoot  = Split-Path -Path (Split-Path -Path $condaBat -Parent) -Parent
 $envPython  = Join-Path $condaRoot "envs\$envName\python.exe"
 if (-not (Test-Path -LiteralPath $envPython)) {
+    # derived requirement (CodeRabbit review finding): the env genuinely got created by the
+    # successful conda create above -- this guard must clean it up too, matching every other
+    # post-create exit path, or a python.exe-missing run leaks gribapi_probe_env on the runner.
+    & cmd /c "call `"$condaBat`" env remove -y -n $envName >nul 2>&1"
     Write-NdjsonRow ([ordered]@{
         id      = 'self.gribapi_hook_probe.hidden_import'
         req     = 'REQ-009'
@@ -156,7 +160,14 @@ function Invoke-ProbeBuild {
     $buildDir = Join-Path $workDir "build_$Variant"
     $buildLog = Join-Path $workDir "~build_$Variant.log"
     $specName = "probe_$Variant"
-    $pyiArgs = @('-m', 'PyInstaller', '-y', '--onefile', '--name', $specName,
+    # derived requirement (CodeRabbit review finding): --onefile embeds every bundled support
+    # file (including any DLL the hook would add) INSIDE the compressed EXE -- PyInstaller only
+    # extracts them to a runtime-only _MEIxxxxxx temp directory, never to $distDir on disk. The
+    # $bundledDll filesystem scan below could therefore never find anything under --onefile,
+    # regardless of whether hook-gribapi.py actually bundled the DLL -- a structural blind spot
+    # in the experiment itself, not a finding about the hidden-import. --onedir writes bundled
+    # files (DLLs included) directly under $distDir\$specName\, where the scan can see them.
+    $pyiArgs = @('-m', 'PyInstaller', '-y', '--onedir', '--name', $specName,
                  '--distpath', $distDir, '--workpath', $buildDir,
                  '--specpath', $workDir) + $ExtraArgs + @((Join-Path $workDir 'app.py'))
 
@@ -189,8 +200,16 @@ function Invoke-ProbeBuild {
         if ($buildCompleted) {
             $buildExit = $proc.ExitCode
         } else {
+            # derived requirement (CodeRabbit review finding): taskkill.exe is a native command --
+            # a nonzero exit lands in $LASTEXITCODE, not a PowerShell exception, so the catch block
+            # alone never detects a failed kill. Check $LASTEXITCODE AND confirm the process
+            # actually exited via a bounded WaitForExit before trusting the kill succeeded.
             try {
                 & taskkill.exe /F /T /PID $proc.Id 2>$null 1>$null
+                $taskkillExit = $LASTEXITCODE
+                if (-not $proc.WaitForExit(5000)) {
+                    Write-Warning "taskkill did not stop build PID $($proc.Id) within 5s (exit code $taskkillExit)"
+                }
             } catch {
                 Write-Warning "taskkill failed for build PID $($proc.Id): $($_.Exception.Message)"
             }
@@ -207,7 +226,9 @@ function Invoke-ProbeBuild {
     Set-Content -LiteralPath $buildLog -Value $combinedLog -Encoding Ascii
 
     $dllWarning = $combinedLog -match [regex]::Escape("could not resolve 'eccodes.dll'")
-    $exePath = Join-Path $distDir "$specName.exe"
+    # derived requirement: --onedir places the EXE inside its own $specName subdirectory under
+    # $distDir (dist_$Variant\probe_$Variant\probe_$Variant.exe), not directly in $distDir.
+    $exePath = Join-Path (Join-Path $distDir $specName) "$specName.exe"
     $exeExists = Test-Path -LiteralPath $exePath
     # derived requirement: check for the DLL landing ANYWHERE under distDir, not just a flat
     # eccodes.dll -- hook-gribapi.py's own directory-preservation logic (Finding 1) nests it
@@ -236,6 +257,10 @@ function Invoke-ProbeBuild {
             } else {
                 try {
                     & taskkill.exe /F /T /PID $eproc.Id 2>$null 1>$null
+                    $taskkillExit = $LASTEXITCODE
+                    if (-not $eproc.WaitForExit(5000)) {
+                        Write-Warning "taskkill did not stop EXE PID $($eproc.Id) within 5s (exit code $taskkillExit)"
+                    }
                 } catch {
                     Write-Warning "taskkill failed for EXE PID $($eproc.Id): $($_.Exception.Message)"
                 }
@@ -253,29 +278,37 @@ function Invoke-ProbeBuild {
     }
     $dllLoadFailed = $exeOut -match 'DLL load failed'
 
+    # derived requirement (CodeRabbit review finding): a build that timed out or whose output
+    # went uncaptured must not be treated as a valid observation just because a (possibly
+    # partial) EXE happened to land on disk before the kill -- buildObservationComplete gates on
+    # the BUILD's own completeness (launched, finished within budget, output captured, exited 0),
+    # independent of whatever the EXE-side observation below finds.
+    $buildObservationComplete = $buildLaunched -and $buildCompleted -and $buildOutputCaptured -and ($buildExit -eq 0)
+
     # derived requirement: an "observation" only counts as complete when the EXE genuinely
     # launched, ran to completion within the timeout (not killed), and both output streams were
     # fully captured -- only then can ranClean's absence be trusted as a real negative result
     # rather than an artifact of a hung process or a truncated read.
-    $observationComplete = $exeExists -and $exeLaunched -and $exeCompleted -and $exeOutputCaptured
+    $observationComplete = $buildObservationComplete -and $exeExists -and $exeLaunched -and $exeCompleted -and $exeOutputCaptured
     $ranClean = $observationComplete -and ($exeExit -eq 0) -and ($exeOut -match 'pygrib-imported-ok')
 
     return [ordered]@{
-        variant              = $Variant
-        buildLaunched        = [bool]$buildLaunched
-        buildCompleted       = [bool]$buildCompleted
-        buildOutputCaptured  = [bool]$buildOutputCaptured
-        buildExit            = $buildExit
-        dllWarningSeen       = [bool]$dllWarning
-        exeExists            = [bool]$exeExists
-        bundledDll           = [bool]$bundledDll
-        exeLaunched          = [bool]$exeLaunched
-        exeCompleted         = [bool]$exeCompleted
-        exeOutputCaptured    = [bool]$exeOutputCaptured
-        observationComplete  = [bool]$observationComplete
-        exeExit              = $exeExit
-        dllLoadFailed        = [bool]$dllLoadFailed
-        ranClean             = [bool]$ranClean
+        variant                   = $Variant
+        buildLaunched             = [bool]$buildLaunched
+        buildCompleted            = [bool]$buildCompleted
+        buildOutputCaptured       = [bool]$buildOutputCaptured
+        buildObservationComplete  = [bool]$buildObservationComplete
+        buildExit                 = $buildExit
+        dllWarningSeen            = [bool]$dllWarning
+        exeExists                 = [bool]$exeExists
+        bundledDll                = [bool]$bundledDll
+        exeLaunched               = [bool]$exeLaunched
+        exeCompleted              = [bool]$exeCompleted
+        exeOutputCaptured         = [bool]$exeOutputCaptured
+        observationComplete       = [bool]$observationComplete
+        exeExit                   = $exeExit
+        dllLoadFailed             = [bool]$dllLoadFailed
+        ranClean                  = [bool]$ranClean
     }
 }
 
@@ -285,13 +318,20 @@ $experiment = Invoke-ProbeBuild -Variant 'experiment' -ExtraArgs @('--hidden-imp
 & cmd /c "call `"$condaBat`" env remove -y -n $envName >nul 2>&1"
 
 # derived requirement (CodeRabbit review finding): "conclusive evidence" must require a
-# COMPLETE runtime observation for both variants, not merely that a dist\*.exe file exists on
-# disk -- a build that produced an EXE which then hung or whose output read timed out is NOT
-# evidence about whether the hidden-import helped, and must not be treated as if it were.
+# COMPLETE observation for both variants -- observationComplete (per variant, above) now
+# requires buildObservationComplete as a prerequisite, so a build that timed out, whose output
+# went uncaptured, or that merely left a partial EXE on disk before being killed can never be
+# treated as conclusive just because dist\*.exe happened to exist.
 $conclusive = $control.observationComplete -and $experiment.observationComplete
 $hiddenImportHelped = $null
 if ($conclusive) {
-    $hiddenImportHelped = (-not $control.ranClean) -and $experiment.ranClean
+    # derived requirement (CodeRabbit review finding): the actual research question is whether
+    # the hidden-import causes hook-gribapi.py to BUNDLE eccodes.dll -- bundledDll (a structural,
+    # build-output fact) is the direct signal for that; ranClean (a runtime-behavior fact) is
+    # supplementary evidence recorded separately in details.control/details.experiment, not the
+    # primary "did it help" determination, since a clean run could in principle happen for a
+    # reason unrelated to DLL bundling (or vice versa).
+    $hiddenImportHelped = (-not $control.bundledDll) -and $experiment.bundledDll
 }
 
 Write-Host "=== self.gribapi_hook_probe.hidden_import evidence ==="
