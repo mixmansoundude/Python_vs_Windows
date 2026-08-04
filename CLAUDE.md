@@ -574,6 +574,36 @@ start at 1 and has gaps.
   `:try_conda_create`, before any cascade re-entry could reach it) -- it is NOT itself evidence
   this gap is already covered by existing tests.
 
+- **Item 24: PyInstaller does not bundle `pygrib`'s native `eccodes.dll` dependency under the
+  conda provider, so the frozen EXE fails at runtime even though the build itself succeeds.**
+  Found via `self.layered_e2e.chain`'s real CI evidence (run `30875520181`, cache-lane job
+  `91886501141`) once Item 22's cStringIO fix let the test reach this far for the first time --
+  see that item's own closed-backlog entry for the full mechanism trace. `pygrib`'s conda-forge
+  build (`pygrib-2.1.8-py314h7badd63_0`) links its compiled `_pygrib.cp314-win_amd64.pyd`
+  extension against `eccodes.dll`, a separate native C library shipped by its own conda-forge
+  package (`eccodes-2.48.0-h3bec8ca_0`, present in the env) -- PyInstaller's static analysis
+  bundles the Python extension module itself but never discovers or copies that DLL dependency,
+  so the build succeeds (with only a `WARNING: Library not found: could not resolve
+  'eccodes.dll'...` note) and the frozen EXE then fails immediately at runtime with `ImportError:
+  DLL load failed while importing _pygrib: The specified module could not be found.` This is a
+  missing-native-library failure, not a missing-Python-module one -- `--hidden-import`
+  auto-recovery correctly never attempts anything here (see "--hidden-import auto-recovery must
+  stay STRICT" in `docs/agent-lessons-learned.md`), since that mechanism is deliberately scoped to
+  `ModuleNotFoundError` only and this is a different failure class entirely.
+  **Practical impact:** keeps `self.layered_e2e.chain` at `pass:false` (`chainPass=False`) even
+  though the two mechanisms it was originally designed to test (REQ-009 cascade, warnfix
+  success/failure) now both genuinely pass. The test is `cache`-lane-only and non-gating
+  (`continue-on-error`), so this does not block any lane that gates PR merges.
+  **Not investigated further yet** -- a real fix likely needs either a `--collect-binaries=pygrib`
+  (or equivalent PyInstaller binary-collection flag) added to the existing `:compute_collect_flags`
+  machinery (currently only handles `--collect-submodules` for a curated set: sklearn, matplotlib,
+  scipy, plotly -- see `docs/agent-lessons-learned.md`'s "Pre-build --collect-submodules must be
+  DOUBLE-gated" entry for that mechanism's shape), or an explicit post-build DLL-copy step scoped
+  to conda-provided native dependencies. Whether this is a `pygrib`-specific quirk or a broader gap
+  affecting any conda-forge package with a native DLL dependency PyInstaller can't trace is not yet
+  known -- worth checking against another conda-forge package with a similar native-library
+  dependency before assuming a `pygrib`-specific fix is sufficient.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context

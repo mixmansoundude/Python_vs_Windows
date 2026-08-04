@@ -1128,13 +1128,37 @@ this belongs to).
    exclusion has nothing to do with platform). New regression test
    `test_cstringio_skipped_real_xlrd_warn_line` in `tests/test_parse_warn.py` uses the exact warn
    line captured from the real CI log verbatim. Embedded `HP_PARSE_WARN` payload re-synced via
-   `tools/sync_payload.py`. **Not yet re-confirmed by a fresh real CI run as of this commit** -- the
-   fix is applied and unit-tested, but the layered E2E test's own next real run (which will exercise
-   the fix live) had not completed at the time this entry was written; the fix predicts a clean,
-   single-cascade (uv to conda only) pass with all three mechanisms firing as originally designed,
-   but that prediction is not yet independently confirmed the way this entry's earlier, retracted
-   claim wrongly asserted without checking. Do not mark this claim "confirmed" again without
-   reading the actual step log, not just its `conclusion` field.
+   `tools/sync_payload.py`.
+
+   **cStringIO fix CONFIRMED by a real CI run (run `30875520181`, cache-lane job `91886501141`,
+   commit `a095fa9`) -- read directly from the real log, not the step's own masked `conclusion`,
+   per the lesson two paragraphs up.** The cascade now fires exactly once and cleanly:
+   `mech1Pass=True mech2Pass=True` -- `xlrd` installs on the first warnfix round, `pygrib`
+   genuinely fails (still the only real failure, no more spurious `cStringIO` entry), the cascade
+   triggers uv-to-conda exactly once (`warnfixRoundCount=1`, `warnfixRoundComplete=true`), and
+   conda is selected. This closes the fix's own open question: it behaves exactly as predicted.
+
+   **A SEPARATE, previously-unreached bug surfaced once mech1/mech2 started passing, keeping
+   `chainPass=False` for a new reason.** Under conda, `pygrib` (with its real conda-forge win-64
+   build, `pygrib-2.1.8-py314h7badd63_0`) installs successfully and PyInstaller's build itself
+   succeeds, but the build log shows `WARNING: Library not found: could not resolve
+   'eccodes.dll', dependency of '...\pygrib\_pygrib.cp314-win_amd64.pyd'` -- PyInstaller's static
+   analysis bundles the Python extension module but not its native DLL dependency (`eccodes`, a C
+   library `pygrib`'s compiled `_pygrib` extension links against, itself a separate conda-forge
+   package that IS installed in the env but whose DLL PyInstaller never discovers/copies). The
+   frozen EXE then fails at runtime with `ImportError: DLL load failed while importing _pygrib:
+   The specified module could not be found.` -- a missing-native-library error, not a
+   `ModuleNotFoundError` for an installed Python module, so `--hidden-import` auto-recovery
+   correctly declines to attempt anything (see "--hidden-import auto-recovery must stay STRICT" in
+   `docs/agent-lessons-learned.md` -- this is exactly the class of failure that mechanism is NOT
+   supposed to touch). `mech3Pass=False` (`hiddenAdding=false, hiddenRecovered=false`) reflects
+   this correctly -- colorama's own hidden-import recovery is never reached because the run fails
+   before mechanism 3 gets a chance to matter, not because mechanism 3 itself is broken.
+   **Not yet fixed or filed as a dedicated backlog item as of this entry** -- a real fix (e.g.
+   `--collect-binaries=pygrib` or an explicit eccodes DLL copy step) needs its own scoped
+   investigation, not a same-loop patch on top of the cStringIO fix; the test remains `pass:false`
+   and non-gating (`cache` lane, `continue-on-error`) in the interim, so no CI lane that gates PR
+   merges is affected.
 
 ### Item 13 (closed 2026-08-01)
 
