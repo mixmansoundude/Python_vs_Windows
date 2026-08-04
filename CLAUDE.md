@@ -421,7 +421,24 @@ cannot build), the bootstrapper still falls back to `warnfix`:
 1. PyInstaller builds the EXE (static analysis finds many imports)
 2. Read the `warn` file (list of modules PyInstaller couldn't find)
 3. Parse warn file via `parse_warn.py`: extract top-level, delayed, and conditional imports
-4. Filter out platform-specific modules (posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, _frozen_importlib_external -- all POSIX/Unix-only, safe to ignore on Windows)
+4. Filter out modules known to be permanently unresolvable, via `parse_warn.py`'s `SKIP` set
+   (two independent categories, both "guaranteed to never be a real installable package"):
+   - Platform-specific: posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess,
+     collections.abc, _frozen_importlib_external -- all POSIX/Unix-only, safe to ignore on
+     Windows.
+   - Python-2-only stdlib shims: cStringIO, StringIO -- removed entirely in Python 3, but
+     still referenced by real packages' own Python 2/3 compatibility code (e.g. `xlrd`'s
+     `xlrd/timemachine.py` does `try: from cStringIO import StringIO except ImportError:
+     from io import StringIO`, a dead code path under Python 3 that PyInstaller's static
+     analysis still flags). Confirmed via a real, unflagged CI run of the layered-dependency
+     E2E test (`self.layered_e2e.chain`) -- warnfix was genuinely attempting and failing to
+     `conda install cStringIO`, which can never succeed, forcing an unnecessary extra
+     provider cascade. Every entry in `SKIP` is covered by
+     `tests/test_parse_warn.py::ParseWarnFileEdgeCasesTest::
+     test_every_skip_entry_filtered_in_realistic_warn_line`, which iterates the current set
+     and proves each one filters in the `(conditional)`/`(delayed)`/`(top-level)` PyInstaller
+     6.x forms -- any future `SKIP` addition is covered automatically, no separate test
+     needed per entry.
 5. Install detected missing packages via conda or pip
 6. Rebuild EXE
 7. Retry interpreter smoke test
@@ -491,6 +508,52 @@ in an actual issue tracker, e.g. GitHub Issues, not a hand-maintained numbering 
 Once an item is fully resolved it is removed from here entirely and archived (keeping its
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
 start at 1 and has gaps.
+
+- **Item 23: a genuine (non-test) conda-create failure during a REQ-009 cascade re-entry does
+  not gracefully fall back to the previous working build, unlike every other cascade-target
+  failure.** Found via a CodeRabbit review finding on PR #412, verified by reading the source
+  directly (not taken on faith). `:try_conda_create`'s own internal failure handling
+  (`:conda_create_failed`, `run_setup.bat` ~line 934-938, and the companion `python.exe`
+  existence check ~line 943-948) calls `:die` on failure -- but `:die` returns via `exit /b`
+  (subroutine return, not a process halt; see `docs/agent-lessons-learned.md`'s `:die` entry),
+  so execution falls straight through into `:conda_create_done` and continues the SUCCESS path
+  (writing `runtime.txt`, staging `.condarc`, etc.) with a broken/nonexistent `HP_PY`, eventually
+  reaching `goto :after_env_mode_selection` unconditionally. That label unconditionally clears
+  `HP_CASCADE_SAVED_PY` (the save/restore mechanism Item added in the commit just before this
+  one, see `docs/agent-closed-backlog.md`'s Item 22 entry, fixed a DIFFERENT clobber case:
+  `:try_venv_fallback`/`:try_system_fallback` declining cleanly via `:after_cascade_decision`).
+  Every OTHER cascade-target failure (`:cascade_conda_unavailable`, `:cascade_embed_unavailable`,
+  `:cascade_venv_unavailable`, `:cascade_system_unavailable`) correctly logs a `[WARN] ...
+  unavailable; keeping current build.` and routes to `:after_cascade_decision`, which restores
+  `HP_CASCADE_SAVED_PY` and gracefully continues with the PREVIOUS successful build (e.g. uv,
+  if cascading uv-to-conda) -- but `:try_conda_create`'s OWN internal failure path was written
+  assuming it is always the FIRST/original creation attempt (where a hard `:die` is the right
+  call, since there is no earlier working build to fall back to), and was never updated to be
+  cascade-context-aware when it was ALSO wired up as `:cascade_from_uv`'s re-entry target.
+  **Practical impact, tempered but real:** `:die` already sets `HP_BOOTSTRAP_STATE=error`
+  unconditionally as of an earlier fix (see `docs/agent-lessons-learned.md`), so the FINAL
+  `~bootstrap.status.json` should still correctly read `state=error` rather than falsely
+  claiming success -- this is not the same severity as the empty-interpreter-command bug the
+  prior commit fixed. But a genuine, plausibly-transient conda-create failure during a cascade
+  (e.g. a real network blip while acquiring Miniconda on demand for the cascade, distinct from
+  "Miniconda not installed at all" which `:cascade_conda_unavailable` already handles gracefully)
+  now hard-fails the WHOLE bootstrap instead of gracefully keeping the already-working uv build,
+  and burns through however many more lines of broken-interpreter execution happen before some
+  later `:die`/terminal point is reached, generating confusing secondary log noise along the way.
+  **Deliberately not fixed in the same commit as the Item 22 companion fix** -- properly fixing
+  this needs `:try_conda_create`'s failure branches to become cascade-context-aware (e.g. check
+  `if defined HP_CASCADE_APPROVED` or an equivalent re-entry signal and route to
+  `:after_cascade_decision`'s "keeping current build" pattern instead of `:die`, but ONLY when
+  there is a genuine earlier build to fall back to -- the first-attempt case must keep failing
+  hard), plus a new regression test that forces a genuine (not `HP_TEST_FORCE_CONDA_FAIL`-style
+  simulated) conda-create failure specifically during a cascade re-entry, which does not
+  currently exist. This is real design work, not a quick fix -- scoping it into the same commit
+  as the cStringIO warnfix-filter fix would have risked a rushed, undertested change to
+  already-sensitive cascade logic. `:hp_test_conda_fail` (the existing `HP_TEST_FORCE_CONDA_FAIL`
+  test hook, ~line 5021) has the identical fallthrough shape and reaches the same
+  `:after_env_mode_selection` clear, but is scoped to the FIRST-attempt path only (never reached
+  via a cascade re-entry, confirmed by tracing its only call site at ~line 887) -- it is NOT
+  itself evidence this gap is already covered by existing tests.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

@@ -250,6 +250,27 @@ class ParseWarnFileEdgeCasesTest(unittest.TestCase):
         ])
         self.assertEqual(result, [])
 
+    def test_every_skip_entry_filtered_in_realistic_warn_line(self):
+        # derived requirement: prior to this test, only 2 of SKIP's ~14 non-collections/
+        # importlib entries (grp, posix) had any dedicated test exercising them through
+        # parse_warn_file -- the rest (pwd, fcntl, resource, readline, termios, tty, pty,
+        # crypt, spwd, nis, syslog, ossaudiodev) were only asserted present in the SKIP
+        # frozenset itself, never proven to actually filter when they appear in a real
+        # PyInstaller 6.x warn line. This test iterates the CURRENT SKIP set (any future
+        # addition is covered automatically, no separate registry to keep in sync) and
+        # proves each one is filtered in both the (conditional) and (delayed) forms real
+        # warn files actually use for these stdlib shims.
+        for mod in sorted(SKIP):
+            for qualifier in ("conditional", "delayed", "top-level"):
+                line = "missing module named {} - imported by app ({})".format(mod, qualifier)
+                result = _parse_lines([line])
+                self.assertEqual(
+                    result, [],
+                    "SKIP entry {!r} was not filtered for qualifier {!r}: line={!r}".format(
+                        mod, qualifier, line
+                    ),
+                )
+
     def test_pyi6_delayed_processed(self):
         # derived requirement: function-scoped imports appear as (delayed) in the
         # PyInstaller 6.x warn file. warnfix must install them.

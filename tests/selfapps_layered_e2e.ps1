@@ -240,8 +240,30 @@ if ($exeExists) {
     try {
         Push-Location -LiteralPath $distDir
         try {
-            cmd /c "`"$exePath`"" *> '~layered_e2e_exe.log'
-            $exeExit = $LASTEXITCODE
+            # derived requirement: bound the final EXE launch -- an unbounded `cmd /c` wait
+            # (the original approach) could hang the whole CI job until the workflow-level
+            # timeout if the built EXE ever hangs. run_setup.bat's OWN smokerun already has
+            # a 30s activity-aware kill, but that covers ONLY its own internal verification
+            # launch -- it does not cover this SECOND, independent launch performed by the
+            # test itself, after run_setup.bat has already exited.
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $exePath
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+            $stderrTask = $proc.StandardError.ReadToEndAsync()
+            $exeTimeoutMs = 60000
+            if ($proc.WaitForExit($exeTimeoutMs)) {
+                $exeExit = $proc.ExitCode
+            } else {
+                try { $proc.Kill() } catch {}
+                $exeExit = -1
+            }
+            $stdout = $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            ($stdout + $stderr) | Set-Content -LiteralPath '~layered_e2e_exe.log' -Encoding Ascii
         } finally {
             Pop-Location
         }
@@ -268,7 +290,7 @@ $mech1Pass = $uvInstallFailed -and $cascadeDetected -and $cascadeApproved -and (
 $mech2Pass = $warnInstallFired -and ($warnfixRoundCount -eq 1) -and $warnfixRoundComplete -and $pygribAttempted -and $pygribFailed -and $xlrdAttempted -and $xlrdInstalled
 $mech3Pass = $hiddenAdding -and $hiddenRecovered
 $exePass   = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and (-not $infraError)
-$chainPass = $mech1Pass -and $mech2Pass -and $mech3Pass -and $exePass -and ($statusExit -eq 0) -and ($statusState -eq 'ok')
+$chainPass = $mech1Pass -and $mech2Pass -and $mech3Pass -and $exePass -and ($statusExit -eq 0) -and ($statusState -eq 'ok') -and ($runExit -eq 0)
 
 # Self-diagnosis: run_setup.bat output is redirected to the bootstrap log file, so without
 # this the CI job log shows nothing about what the chain actually did.
