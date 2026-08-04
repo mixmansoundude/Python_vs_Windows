@@ -1,10 +1,13 @@
 # PRD: Conda Native-DLL Bundling Repair Loop (pygrib/eccodes and the General Case)
 
-**Status:** Draft v1 -- planning only, no implementation started. Written in response to CLAUDE.md
-Active Backlog Item 24 (found via `self.layered_e2e.chain`'s real CI evidence once the cStringIO
-warnfix fix let that test reach this far for the first time -- see `docs/agent-closed-backlog.md`'s
-Item 22 entry for the discovery trail). Deliberately stored in cold storage after this draft, not scheduled
--- see `docs/agent-cold-storage.md`'s own entry for the thaw trigger.
+**Status:** Requirements 1-3 and 6 implemented (2026-08-04); Requirement 4's regression test
+extended but not yet confirmed passing in real CI; Requirement 5 (documentation) in progress in
+the same pass. See CLAUDE.md's Item 24 entry for current confirmation status. Originally written
+in response to CLAUDE.md Active Backlog Item 24 (found via `self.layered_e2e.chain`'s real CI
+evidence once the cStringIO warnfix fix let that test reach this far for the first time -- see
+`docs/agent-closed-backlog.md`'s Item 22 entry for the discovery trail); thawed from cold storage
+the same day the owner brought it forward -- see `docs/agent-cold-storage.md`'s own entry for the
+original shelve-and-thaw reasoning.
 **Owner:** Supervisor (Python_vs_Windows)
 **Related:** `docs/agent-closed-backlog.md` Item 22 (the layered E2E test that found this),
 CLAUDE.md Active Backlog Item 24, `docs/prd-av-safe-build-path.md` (the repo's other PRD stored
@@ -225,7 +228,11 @@ cascade, warnfix repair) both now genuinely pass.
   confirms a real gap there, but out of scope for this bootstrapper's own PRD -- track separately if
   it becomes relevant.
 
-## Requirements (sketch only -- not sequenced into P0/P1 until this is actually picked up)
+## Requirements -- IMPLEMENTED 2026-08-04
+
+Requirements 1-3 and 6 done; Requirement 4's regression test extended but not yet CI-confirmed;
+Requirement 5 done in the same pass. See CLAUDE.md's Item 24 entry for current confirmation
+status. Kept below as the original design record, not rewritten to past tense throughout.
 
 1. **Verify Finding 1 first, with zero new bootstrapper code, via its own small CI-only PR.** Add
    `python-eccodes` (the conda-forge package providing `gribapi`, confirmed to build for win-64)
