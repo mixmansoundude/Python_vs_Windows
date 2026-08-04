@@ -22,16 +22,16 @@
 # Lane: conda-full only. Miniconda is always installed for real in that lane regardless of step
 # ordering (CLAUDE.md's lane table), so this avoids the CI-ordering placement constraints other
 # conda-dependent tests need (see selfapps_conda_bothfail.ps1's own placement note for contrast).
-# Non-gating (continue-on-error at the step level) -- exploratory by nature, and the conda-forge
-# solve for pygrib+eccodes+python-eccodes+pyinstaller together is untested and may need a real
-# CI run to even confirm it resolves cleanly.
 #
-# This test is deliberately NOT tied to a specific pass/fail expectation on the hidden-import
-# question itself -- "pass" means the experiment ran to completion and produced conclusive
-# evidence for both the control and experiment builds; the actual finding (did the hidden-import
-# help) is recorded in details.hiddenImportHelped for a human to read, matching the established
-# "informational, pass=true records an observed fact" convention used elsewhere (e.g.
-# diag.conda.available).
+# derived requirement: this row is genuinely diagnostic/exploratory, not a correctness
+# assertion about the bootstrapper -- it must NEVER emit pass=false. A CodeRabbit review on this
+# PR's first commit correctly found that `continue-on-error: true` on the CI step does NOT make
+# a row non-gating on its own: batch-check.yml's separate "Verdict from NDJSON" + "Enforce
+# NDJSON failures for gated lanes" steps scan raw NDJSON pass values across ALL rows and fail
+# the conda-full lane job outright on any pass=false, independent of which step emitted it.
+# Every exit path below (including genuine infra failures such as a failed conda env create)
+# therefore emits pass=true and exits 0 -- skip=true or details.conclusive=false carries the
+# real outcome instead of a gating failure.
 #
 # Emits: self.gribapi_hook_probe.hidden_import
 param()
@@ -98,15 +98,16 @@ try {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.gribapi_hook_probe.hidden_import'
         req     = 'REQ-009'
-        pass    = $false
-        desc    = 'probe workspace preparation failed'
-        details = [ordered]@{ error = $_.Exception.Message }
+        pass    = $true
+        skip    = $true
+        desc    = 'gribapi hook --hidden-import probe skipped: workspace preparation failed'
+        details = [ordered]@{ reason = 'workspace-prep-failed'; error = $_.Exception.Message }
     })
-    exit 1
+    exit 0
 }
 
 $envName = 'gribapi_probe_env'
-$envCreateLog = Join-Path $workDir 'env_create.log'
+$envCreateLog = Join-Path $workDir '~env_create.log'
 & cmd /c "call `"$condaBat`" env remove -y -n $envName >nul 2>&1"
 & cmd /c "call `"$condaBat`" create -y -n $envName python pip pyinstaller pygrib eccodes python-eccodes --override-channels -c conda-forge > `"$envCreateLog`" 2>&1"
 $envCreateExit = $LASTEXITCODE
@@ -118,11 +119,12 @@ if ($envCreateExit -ne 0) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.gribapi_hook_probe.hidden_import'
         req     = 'REQ-009'
-        pass    = $false
-        desc    = 'conda env create for pygrib+eccodes+python-eccodes+pyinstaller failed -- cannot run the probe'
-        details = [ordered]@{ envCreateExit = $envCreateExit; envCreateTail = ($envCreateText -split "`n" | Select-Object -Last 40) -join "`n" }
+        pass    = $true
+        skip    = $true
+        desc    = 'gribapi hook --hidden-import probe skipped: conda env create for pygrib+eccodes+python-eccodes+pyinstaller failed'
+        details = [ordered]@{ reason = 'env-create-failed'; envCreateExit = $envCreateExit; envCreateTail = ($envCreateText -split "`n" | Select-Object -Last 40) -join "`n" }
     })
-    exit 1
+    exit 0
 }
 
 $condaRoot  = Split-Path -Path (Split-Path -Path $condaBat -Parent) -Parent
@@ -131,11 +133,12 @@ if (-not (Test-Path -LiteralPath $envPython)) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.gribapi_hook_probe.hidden_import'
         req     = 'REQ-009'
-        pass    = $false
-        desc    = 'conda env created but python.exe missing -- cannot run the probe'
-        details = [ordered]@{ envPython = $envPython }
+        pass    = $true
+        skip    = $true
+        desc    = 'gribapi hook --hidden-import probe skipped: conda env created but python.exe missing'
+        details = [ordered]@{ reason = 'env-python-missing'; envPython = $envPython }
     })
-    exit 1
+    exit 0
 }
 
 $appCode = @'
@@ -151,30 +154,55 @@ function Invoke-ProbeBuild {
     )
     $distDir  = Join-Path $workDir "dist_$Variant"
     $buildDir = Join-Path $workDir "build_$Variant"
-    $buildLog = Join-Path $workDir "build_$Variant.log"
+    $buildLog = Join-Path $workDir "~build_$Variant.log"
     $specName = "probe_$Variant"
     $pyiArgs = @('-m', 'PyInstaller', '-y', '--onefile', '--name', $specName,
                  '--distpath', $distDir, '--workpath', $buildDir,
                  '--specpath', $workDir) + $ExtraArgs + @((Join-Path $workDir 'app.py'))
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $envPython
-    $psi.Arguments = ($pyiArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.WorkingDirectory = $workDir
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    $stdout = $proc.StandardOutput.ReadToEndAsync()
-    $stderr = $proc.StandardError.ReadToEndAsync()
-    $completed = $proc.WaitForExit(600000)
-    $buildExit = if ($completed) { $proc.ExitCode } else { -1 }
-    if (-not $completed) {
-        try { & taskkill.exe /F /T /PID $proc.Id 2>$null 1>$null } catch {}
-    }
+
+    # derived requirement (CodeRabbit review finding): a launch exception, a timeout, or a
+    # failed output read must each be tracked explicitly and distinctly from a genuine build/run
+    # result -- collapsing them all into the same -1/empty-string defaults let an incomplete
+    # observation masquerade as a real (negative) finding. buildLaunched/buildCompleted/
+    # buildOutputCaptured (and the EXE-side equivalents below) make "did we actually observe
+    # this variant's real behavior" a first-class, checkable fact instead of an implicit
+    # assumption baked into $conclusive.
+    $buildLaunched  = $false
+    $buildCompleted = $false
+    $buildOutputCaptured = $false
+    $buildExit = -1
     $stdoutText = ''
     $stderrText = ''
-    if ($stdout.Wait(10000)) { try { $stdoutText = $stdout.Result } catch {} }
-    if ($stderr.Wait(10000)) { try { $stderrText = $stderr.Result } catch {} }
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $envPython
+        $psi.Arguments = ($pyiArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.WorkingDirectory = $workDir
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $buildLaunched = $true
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
+        $buildCompleted = $proc.WaitForExit(600000)
+        if ($buildCompleted) {
+            $buildExit = $proc.ExitCode
+        } else {
+            try {
+                & taskkill.exe /F /T /PID $proc.Id 2>$null 1>$null
+            } catch {
+                Write-Warning "taskkill failed for build PID $($proc.Id): $($_.Exception.Message)"
+            }
+        }
+        $stdoutOk = $stdoutTask.Wait(10000)
+        $stderrOk = $stderrTask.Wait(10000)
+        if ($stdoutOk) { try { $stdoutText = $stdoutTask.Result } catch {} }
+        if ($stderrOk) { try { $stderrText = $stderrTask.Result } catch {} }
+        $buildOutputCaptured = $stdoutOk -and $stderrOk
+    } catch {
+        Write-Warning "PyInstaller launch failed for variant '$Variant': $($_.Exception.Message)"
+    }
     $combinedLog = $stdoutText + "`n" + $stderrText
     Set-Content -LiteralPath $buildLog -Value $combinedLog -Encoding Ascii
 
@@ -186,6 +214,9 @@ function Invoke-ProbeBuild {
     # under an "eccodes" subfolder on Windows, not the dist root.
     $bundledDll = @(Get-ChildItem -Path $distDir -Recurse -Filter 'eccodes*.dll' -ErrorAction SilentlyContinue).Count -gt 0
 
+    $exeLaunched = $false
+    $exeCompleted = $false
+    $exeOutputCaptured = $false
     $exeExit = -1
     $exeOut = ''
     if ($exeExists) {
@@ -196,34 +227,55 @@ function Invoke-ProbeBuild {
             $epsi.RedirectStandardOutput = $true
             $epsi.RedirectStandardError = $true
             $eproc = [System.Diagnostics.Process]::Start($epsi)
+            $exeLaunched = $true
             $eOutTask = $eproc.StandardOutput.ReadToEndAsync()
             $eErrTask = $eproc.StandardError.ReadToEndAsync()
-            if ($eproc.WaitForExit(30000)) {
+            $exeCompleted = $eproc.WaitForExit(30000)
+            if ($exeCompleted) {
                 $exeExit = $eproc.ExitCode
             } else {
-                try { & taskkill.exe /F /T /PID $eproc.Id 2>$null 1>$null } catch {}
-                $exeExit = -1
+                try {
+                    & taskkill.exe /F /T /PID $eproc.Id 2>$null 1>$null
+                } catch {
+                    Write-Warning "taskkill failed for EXE PID $($eproc.Id): $($_.Exception.Message)"
+                }
             }
             $eOut = ''; $eErr = ''
-            if ($eOutTask.Wait(5000)) { try { $eOut = $eOutTask.Result } catch {} }
-            if ($eErrTask.Wait(5000)) { try { $eErr = $eErrTask.Result } catch {} }
+            $eOutOk = $eOutTask.Wait(5000)
+            $eErrOk = $eErrTask.Wait(5000)
+            if ($eOutOk) { try { $eOut = $eOutTask.Result } catch {} }
+            if ($eErrOk) { try { $eErr = $eErrTask.Result } catch {} }
+            $exeOutputCaptured = $eOutOk -and $eErrOk
             $exeOut = $eOut + $eErr
         } catch {
-            $exeOut = $_.Exception.Message
+            Write-Warning "EXE launch failed for variant '$Variant': $($_.Exception.Message)"
         }
     }
     $dllLoadFailed = $exeOut -match 'DLL load failed'
-    $ranClean = ($exeExit -eq 0) -and ($exeOut -match 'pygrib-imported-ok')
+
+    # derived requirement: an "observation" only counts as complete when the EXE genuinely
+    # launched, ran to completion within the timeout (not killed), and both output streams were
+    # fully captured -- only then can ranClean's absence be trusted as a real negative result
+    # rather than an artifact of a hung process or a truncated read.
+    $observationComplete = $exeExists -and $exeLaunched -and $exeCompleted -and $exeOutputCaptured
+    $ranClean = $observationComplete -and ($exeExit -eq 0) -and ($exeOut -match 'pygrib-imported-ok')
 
     return [ordered]@{
-        variant        = $Variant
-        buildExit      = $buildExit
-        dllWarningSeen = [bool]$dllWarning
-        exeExists      = [bool]$exeExists
-        bundledDll     = [bool]$bundledDll
-        exeExit        = $exeExit
-        dllLoadFailed  = [bool]$dllLoadFailed
-        ranClean       = [bool]$ranClean
+        variant              = $Variant
+        buildLaunched        = [bool]$buildLaunched
+        buildCompleted       = [bool]$buildCompleted
+        buildOutputCaptured  = [bool]$buildOutputCaptured
+        buildExit            = $buildExit
+        dllWarningSeen       = [bool]$dllWarning
+        exeExists            = [bool]$exeExists
+        bundledDll           = [bool]$bundledDll
+        exeLaunched          = [bool]$exeLaunched
+        exeCompleted         = [bool]$exeCompleted
+        exeOutputCaptured    = [bool]$exeOutputCaptured
+        observationComplete  = [bool]$observationComplete
+        exeExit              = $exeExit
+        dllLoadFailed        = [bool]$dllLoadFailed
+        ranClean             = [bool]$ranClean
     }
 }
 
@@ -232,28 +284,31 @@ $experiment = Invoke-ProbeBuild -Variant 'experiment' -ExtraArgs @('--hidden-imp
 
 & cmd /c "call `"$condaBat`" env remove -y -n $envName >nul 2>&1"
 
-# derived requirement: "conclusive evidence" means both builds actually produced an EXE we could
-# launch and observe -- if either build failed to even produce dist_*\probe_*.exe, the experiment
-# itself is inconclusive (an infra/solve problem, not a finding about the hidden-import), so pass
-# reflects "did this experiment run cleanly," not "did hidden-import fix the DLL."
-$conclusive = $control.exeExists -and $experiment.exeExists
+# derived requirement (CodeRabbit review finding): "conclusive evidence" must require a
+# COMPLETE runtime observation for both variants, not merely that a dist\*.exe file exists on
+# disk -- a build that produced an EXE which then hung or whose output read timed out is NOT
+# evidence about whether the hidden-import helped, and must not be treated as if it were.
+$conclusive = $control.observationComplete -and $experiment.observationComplete
 $hiddenImportHelped = $null
 if ($conclusive) {
     $hiddenImportHelped = (-not $control.ranClean) -and $experiment.ranClean
 }
 
 Write-Host "=== self.gribapi_hook_probe.hidden_import evidence ==="
-Write-Host ("control:    buildExit={0} exeExists={1} bundledDll={2} exeExit={3} dllLoadFailed={4} ranClean={5}" -f `
-    $control.buildExit, $control.exeExists, $control.bundledDll, $control.exeExit, $control.dllLoadFailed, $control.ranClean)
-Write-Host ("experiment: buildExit={0} exeExists={1} bundledDll={2} exeExit={3} dllLoadFailed={4} ranClean={5}" -f `
-    $experiment.buildExit, $experiment.exeExists, $experiment.bundledDll, $experiment.exeExit, $experiment.dllLoadFailed, $experiment.ranClean)
+Write-Host ("control:    buildExit={0} exeExists={1} bundledDll={2} observationComplete={3} exeExit={4} dllLoadFailed={5} ranClean={6}" -f `
+    $control.buildExit, $control.exeExists, $control.bundledDll, $control.observationComplete, $control.exeExit, $control.dllLoadFailed, $control.ranClean)
+Write-Host ("experiment: buildExit={0} exeExists={1} bundledDll={2} observationComplete={3} exeExit={4} dllLoadFailed={5} ranClean={6}" -f `
+    $experiment.buildExit, $experiment.exeExists, $experiment.bundledDll, $experiment.observationComplete, $experiment.exeExit, $experiment.dllLoadFailed, $experiment.ranClean)
 Write-Host ("conclusive={0} hiddenImportHelped={1}" -f $conclusive, $hiddenImportHelped)
 Write-Host "=== end self.gribapi_hook_probe.hidden_import evidence ==="
 
+# derived requirement: pass is ALWAYS true -- this row is diagnostic/exploratory (see the file
+# header comment), never a bootstrapper-correctness assertion, so it must never fail the
+# conda-full lane's gated NDJSON verdict regardless of what this probe observed.
 Write-NdjsonRow ([ordered]@{
     id      = 'self.gribapi_hook_probe.hidden_import'
     req     = 'REQ-009'
-    pass    = [bool]$conclusive
+    pass    = $true
     desc    = 'empirical probe: does --hidden-import=gribapi make hook-gribapi.py bundle eccodes.dll for a pygrib build (CLAUDE.md Active Backlog Item 24 / PRD Requirement 1)'
     details = [ordered]@{
         conclusive          = $conclusive
@@ -263,5 +318,4 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-if (-not $conclusive) { exit 1 }
 exit 0
