@@ -229,6 +229,27 @@ class ParseWarnFileEdgeCasesTest(unittest.TestCase):
         ])
         self.assertEqual(result, [])
 
+    def test_cstringio_skipped_real_xlrd_warn_line(self):
+        # derived requirement: real, unflagged warn-file line captured verbatim from
+        # self.layered_e2e.chain's own CI run -- xlrd's own Python 2/3 compatibility shim
+        # (xlrd/timemachine.py) does a conditional "from cStringIO import StringIO", a dead
+        # code path under Python 3 but still flagged by PyInstaller's own static analysis.
+        # cStringIO can never be a real installable package (removed entirely in Python 3),
+        # so warnfix must never attempt to install it -- confirmed this was previously
+        # causing a genuine, unnecessary extra provider cascade in real CI.
+        result = _parse_lines([
+            "missing module named cStringIO - imported by xlrd.timemachine (conditional)"
+        ])
+        self.assertEqual(result, [])
+
+    def test_stringio_skipped(self):
+        # Bare StringIO (as opposed to cStringIO) is the same Python-2-only stdlib module
+        # class -- also never a real installable package.
+        result = _parse_lines([
+            "missing module named StringIO - imported by app (conditional)"
+        ])
+        self.assertEqual(result, [])
+
     def test_pyi6_delayed_processed(self):
         # derived requirement: function-scoped imports appear as (delayed) in the
         # PyInstaller 6.x warn file. warnfix must install them.

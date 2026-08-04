@@ -1051,25 +1051,21 @@ this belongs to).
    entirely) and NOT `justme-test` (`HP_TEST_FORCE_UV_FAIL=1` fakes uv's absence, simulated).
    `cache` lane matches the original reasoning (uv-first, already carries Miniconda-caching infra
    to amortize the one-time conda install cost this test's own cascade triggers).
-   **CONFIRMED by a real CI run**: `self.layered_e2e.chain` passed on its first real execution,
-   run `30779274430`, cache-lane job `91580880846`, step 61, completed 2026-08-03T02:37:05Z
-   (ran in ~4 minutes) -- the design held on the first try, with no iteration needed. The step's
-   own `success` conclusion is generated directly from the test script's `exit 0`/`exit 1`, which
-   is gated on every one of `mech1Pass` (uv genuinely failed on `pygrib`, the cascade candidate
-   was detected and approved, conda was selected), `mech2Pass` (warnfix's per-module loop both
-   attempted and failed `pygrib`, and both attempted and succeeded at installing `xlrd`, in the
-   same repair round), `mech3Pass` (`--hidden-import=colorama` was added and the EXE was verified
-   after hidden-import recovery), and `exePass` (the final EXE, built under conda, genuinely ran
-   and exited 0 with the token file written) -- so a `success` conclusion is proof all four held.
-   **Re-verified independently against the GitHub Actions API** (not re-derived from this file's
-   own prior claim) during the second CodeRabbit review round below: `get_workflow_job` on job
-   `91580880846` confirms step 61's name, `conclusion: success`, `started_at 02:33:09Z`,
-   `completed_at 02:37:05Z` -- an exact match on both the timestamp and the ~4-minute duration
-   already cited above. Note the JOB's own overall conclusion reads `cancelled` -- this is
-   unrelated to the test's own result: a later push to the same branch superseded the whole run
-   (`concurrency.cancel-in-progress: true` in `batch-check.yml`) well after step 61 had already
-   completed with its own `success` conclusion, and steps 92+ show `cancelled`/`skipped`
-   accordingly. The step-level result this entry cites is unaffected by that later cancellation.
+   **CORRECTION (superseding the "CONFIRMED by a real CI run" claim originally written here):**
+   that claim was wrong, and was itself based on a real verification mistake -- not a fabrication,
+   but a genuine failure to check the actual result before writing "confirmed." The GitHub Actions
+   step for `self.layered_e2e.chain` (run `30779274430`, cache-lane job `91580880846`, step 61) has
+   `continue-on-error: true` (this test is non-gating, see the lane-placement note above), which
+   makes GitHub report the step's own `conclusion` as `success` REGARDLESS of the wrapped script's
+   real exit code. A later re-check via `get_workflow_job` (during the second CodeRabbit review
+   round) reported `conclusion: success` and was taken at face value as proof the test passed --
+   without ever opening the step's own raw log to confirm. It did not pass. The real log (pulled
+   directly via the workflow run's downloadable log archive, not the truncated `get_job_logs` tail)
+   shows `mech1Pass=True mech2Pass=False mech3Pass=False exePass=False ... chainPass=False` and
+   ends with `##[error]Process completed with exit code 1.` -- `chainPass` was in fact `False`, not
+   `True` as this file previously, incorrectly, claimed. Lesson for future verification of any
+   `continue-on-error: true` step in this repo: the step-level `conclusion` field is NOT evidence
+   of the wrapped script's own result for such a step -- always read the actual log content.
    **Two hardening fixes applied post-landing, from CodeRabbit review on the same PR:** (1)
    `$mech2Pass`'s original `pygrib`/`xlrd` checks were plain "does this string appear anywhere in
    `$combined`" regexes -- true independently of each other, but not proof the two outcomes
@@ -1105,6 +1101,40 @@ this belongs to).
    `self.layered_e2e.chain` NDJSON row emitted at all, leaving CI with silence instead of an
    explicit failure record. Fixed by wrapping the block in `try`/`catch`, emitting a `pass=false`
    row with the error message before `exit 1` on any workspace-prep failure.
+
+   **Root cause of the actual `chainPass=False` failure, found by reading the real log (see the
+   CORRECTION above) instead of trusting the step's own `continue-on-error`-masked `conclusion`.**
+   Two independent real runs (job `91580880846` on run `30779274430`, and the equivalent cache-lane
+   job on commit `694f325`) both show the identical, fully deterministic sequence: after the
+   uv-to-conda cascade (mechanism 1) fires correctly, a SECOND, unplanned warnfix round fires under
+   conda and fails on a module named `cStringIO` -- not one of the test's own three declared
+   packages -- triggering a SECOND, unplanned cascade (conda to embed) that the test's design never
+   anticipated, so mechanism 3 (hidden-import recovery for `colorama`) never gets a chance to fire
+   before the run ends in a caveat panel (`~bootstrap.status.json` reads `state=embed_env`, not
+   `state=ok`). The exact warn-file line: `missing module named cStringIO - imported by
+   xlrd.timemachine (conditional)` -- `xlrd`'s own source (`xlrd/timemachine.py`, its internal
+   Python 2/3 compatibility shim) does `try: from cStringIO import StringIO except ImportError:
+   from io import StringIO`, a dead code path under any Python 3 interpreter but still flagged by
+   PyInstaller's static analysis regardless. `cStringIO` was pure Python 2 stdlib, removed entirely
+   in Python 3, and was never a real PyPI/conda package -- warnfix's attempt to `conda install
+   cStringIO` was always guaranteed to fail, for every single run, unconditionally. **Fixed** by
+   adding `cStringIO` and its bare sibling `StringIO` (identical Python-2-only-stdlib-shim
+   property) to `tools/parse_warn.py`'s `SKIP` frozenset -- the same mechanism already filtering
+   Unix-only stdlib modules (`posix`, `fcntl`, `grp`, etc.) from the warn file, just a different
+   axis (Python-version-only rather than platform-only) sharing the same "guaranteed to never be a
+   real installable package" justification. `run_setup.bat`'s `[INFO] warnfix: some modules could
+   not be automatically bundled...` log line was extended to mention this second filtered category
+   with accurate wording (not folded into the existing "expected on Windows" phrasing, since this
+   exclusion has nothing to do with platform). New regression test
+   `test_cstringio_skipped_real_xlrd_warn_line` in `tests/test_parse_warn.py` uses the exact warn
+   line captured from the real CI log verbatim. Embedded `HP_PARSE_WARN` payload re-synced via
+   `tools/sync_payload.py`. **Not yet re-confirmed by a fresh real CI run as of this commit** -- the
+   fix is applied and unit-tested, but the layered E2E test's own next real run (which will exercise
+   the fix live) had not completed at the time this entry was written; the fix predicts a clean,
+   single-cascade (uv to conda only) pass with all three mechanisms firing as originally designed,
+   but that prediction is not yet independently confirmed the way this entry's earlier, retracted
+   claim wrongly asserted without checking. Do not mark this claim "confirmed" again without
+   reading the actual step log, not just its `conclusion` field.
 
 ### Item 13 (closed 2026-08-01)
 

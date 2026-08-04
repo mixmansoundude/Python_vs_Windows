@@ -59,16 +59,20 @@ $here = $PSScriptRoot
 $repo = Split-Path -Path $here -Parent
 $nd   = Join-Path $here '~test-results.ndjson'
 $ciNd = Join-Path $repo 'ci_test_results.ndjson'
-if (-not (Test-Path $nd))   { New-Item -ItemType File -Path $nd   -Force | Out-Null }
-if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
+if (-not (Test-Path $nd))   { New-Item -ItemType File -Path $nd   -Force -ErrorAction Stop | Out-Null }
+if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force -ErrorAction Stop | Out-Null }
 
+# derived requirement: fail closed on NDJSON output -- under the script's own
+# $ErrorActionPreference = 'Continue', a failed Add-Content would otherwise be silently
+# swallowed, leaving CI with NO self.layered_e2e.chain record at all (indistinguishable from
+# the step never running) instead of a loud, diagnosable failure.
 function Write-NdjsonRow {
     param([hashtable]$Row)
     $lane = [Environment]::GetEnvironmentVariable('HP_CI_LANE')
     if ($lane -and -not $Row.ContainsKey('lane')) { $Row['lane'] = $lane }
     $json = $Row | ConvertTo-Json -Compress -Depth 8
-    Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii
-    Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
+    Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii -ErrorAction Stop
+    Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii -ErrorAction Stop
 }
 
 if (-not $IsWindows) {
@@ -151,13 +155,19 @@ $prevCascade = if (Test-Path Env:HP_TEST_CASCADE_ANSWER) { $env:HP_TEST_CASCADE_
 $env:HP_TEST_CASCADE_ANSWER = 'Y'
 
 $bootstrapLog = '~layered_e2e_bootstrap.log'
-Push-Location $workDir
+# derived requirement: guard the location push -- under $ErrorActionPreference = 'Continue', a
+# failed Push-Location would otherwise be non-terminating, letting the try block run
+# run_setup.bat from the CALLER's own directory instead of $workDir, and letting the finally
+# block's Pop-Location pop an unrelated stack entry that was never pushed by this script.
+$pushedLocation = $false
 try {
+    Push-Location -LiteralPath $workDir -ErrorAction Stop
+    $pushedLocation = $true
     cmd /c "call run_setup.bat > $bootstrapLog 2>&1"
     $runExit = $LASTEXITCODE
 } finally {
     if ($null -eq $prevCascade) { Remove-Item Env:HP_TEST_CASCADE_ANSWER -ErrorAction SilentlyContinue } else { $env:HP_TEST_CASCADE_ANSWER = $prevCascade }
-    Pop-Location
+    if ($pushedLocation) { Pop-Location }
 }
 
 $logPath   = Join-Path $workDir $bootstrapLog
