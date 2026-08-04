@@ -564,9 +564,28 @@ start at 1 and has gaps.
   parses whatever DLL name PyInstaller's own warning names via regex, not a fixed string, and
   double-gates on the DLL actually existing under the conda env's `Library\bin` (recursively, since
   `hook-gribapi.py` itself nests `eccodes.dll` under a package-named subfolder there on Windows).
-  `tests/test_dll_bundle_scan.py` (24 tests) covers the warning parse, the tried-list guard, the
+  `tests/test_dll_bundle_scan.py` (34 tests) covers the warning parse, the tried-list guard, the
   double-gate, the byte-offset log-tail read (so a stale warning from an earlier run in the same
-  persistent `~setup.log` is never re-detected), and the embedded-payload sync.
+  persistent `~setup.log` is never re-detected), the `--detect` mode, and the embedded-payload sync.
+  **A CodeRabbit review pass caught 4 genuine bugs in the first-shipped version, all fixed same
+  day**: (1) detection itself was gated on `HP_ENV_MODE=conda`, silently defeating the PRD's own
+  "provider-agnostic detection" design -- fixed by moving detection (a `--detect` CLI mode) before
+  both the conda and Nuitka gates; (2) the tried-list was accumulated via an unquoted batch
+  variable expanded on the scan command line, which a DLL basename containing a space or `&` would
+  corrupt or split -- fixed by routing it through a file (`~dll_bundle_tried.txt`, appended via
+  `type ... >>`, never through `%VAR%`-expanded command text); (3) `main()` stopped at the first
+  candidate that failed the `Library\bin` lookup instead of trying the next one -- fixed with a
+  loop that skips unresolvable candidates; (4) the "Native-DLL bundling complete" log line could
+  fire even after a genuine rebuild failure, since `HP_DLL_ITER GEQ 1` is true on both the success
+  and failure paths -- fixed with an explicit `HP_DLL_FAILED` flag (mirroring the exact bug class
+  already fixed once before for the warnfix-triggered rebuild, see
+  `docs/agent-interconnect.md`'s "AV-Safe Build Path Tier A" section). Separately, the FIRST real
+  CI run of this implementation failed all 8 lanes on a genuine bug in the test file itself, not
+  the batch logic: `tests/test_dll_bundle_scan.py` wrote fixture files via `Path.write_text()`,
+  which performs platform newline translation (`\n` -> `\r\n`) on Windows but not Linux -- the
+  exact-string-equality assertions in the `ReadTail` test class passed locally (Linux sandbox) and
+  failed on the real Windows runner. Fixed by switching every fixture write in that file to
+  `Path.write_bytes(text.encode("utf-8"))`, which never translates.
   **Requirement 4 (regression test) extended `tests/selfapps_layered_e2e.ps1`** with a 4th
   mechanism (`mech4Pass`, requiring `dllWarningSeen`/`dllBundling`/`dllBundleComplete`) alongside
   the three it already proved -- this is the acceptance criterion that should finally flip

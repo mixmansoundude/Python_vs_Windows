@@ -12,15 +12,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.dll_bundle_scan import next_dll_target, locate_dll, read_tail, main
+from tools.dll_bundle_scan import next_dll_target, locate_dll, read_tail, read_tried_file, main
 
 REPO = Path(__file__).resolve().parent.parent
 SOURCE = REPO / "tools" / "dll_bundle_scan.py"
 
 
-def _warn(dll, dep_of="...\\pygrib\\_pygrib.cp314-win_amd64.pyd"):
+def _warn(dll, dep_of="...\\pygrib\\_pygrib.cp314-win_amd64.pyd") -> str:
     """A realistic PyInstaller build-log unresolved-native-DLL warning."""
-    return "WARNING: Library not found: could not resolve '{0}', dependency of '{1}'.\n".format(dll, dep_of)
+    return f"WARNING: Library not found: could not resolve '{dll}', dependency of '{dep_of}'.\n"
 
 
 class WarningParse(unittest.TestCase):
@@ -102,7 +102,13 @@ class ReadTail(unittest.TestCase):
             p = Path(tmp) / "log.txt"
             prefix = "stale content from an earlier run\n"
             suffix = _warn("eccodes.dll")
-            p.write_text(prefix + suffix, encoding="utf-8")
+            # write_bytes, not write_text: Path.write_text performs platform
+            # newline translation (\n -> \r\n on Windows), which would corrupt
+            # the exact byte-offset math and string-equality checks below --
+            # confirmed as a real Windows-CI-only failure, not a Linux-only
+            # theoretical concern (this test passed locally on Linux and
+            # failed on the real Windows runner before this fix).
+            p.write_bytes((prefix + suffix).encode("utf-8"))
             offset = len(prefix.encode("utf-8"))
             self.assertEqual(read_tail(str(p), offset), suffix)
 
@@ -114,7 +120,7 @@ class ReadTail(unittest.TestCase):
             p = Path(tmp) / "log.txt"
             prefix = _warn("stale.dll")
             suffix = "build succeeded, no new warnings\n"
-            p.write_text(prefix + suffix, encoding="utf-8")
+            p.write_bytes((prefix + suffix).encode("utf-8"))
             offset = len(prefix.encode("utf-8"))
             self.assertEqual(next_dll_target(read_tail(str(p), offset)), "")
 
@@ -125,7 +131,7 @@ class ReadTail(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "log.txt"
             text = _warn("eccodes.dll")
-            p.write_text(text, encoding="utf-8")
+            p.write_bytes(text.encode("utf-8"))
             self.assertEqual(read_tail(str(p), -5), text)
 
 
@@ -133,7 +139,7 @@ class MainCli(unittest.TestCase):
     def test_main_end_to_end(self):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "log.txt"
-            log.write_text(_warn("eccodes.dll"), encoding="utf-8")
+            log.write_bytes(_warn("eccodes.dll").encode("utf-8"))
             lib_bin = Path(tmp) / "Library" / "bin"
             lib_bin.mkdir(parents=True)
             target = lib_bin / "eccodes.dll"
@@ -149,7 +155,7 @@ class MainCli(unittest.TestCase):
         # Double-gate: named in the warning but not found under Library\bin.
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "log.txt"
-            log.write_text(_warn("eccodes.dll"), encoding="utf-8")
+            log.write_bytes(_warn("eccodes.dll").encode("utf-8"))
             import io
             import contextlib
             buf = io.StringIO()
@@ -176,7 +182,7 @@ class MainCli(unittest.TestCase):
     def test_main_bad_offset_defaults_to_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "log.txt"
-            log.write_text(_warn("eccodes.dll"), encoding="utf-8")
+            log.write_bytes(_warn("eccodes.dll").encode("utf-8"))
             lib_bin = Path(tmp) / "Library" / "bin"
             lib_bin.mkdir(parents=True)
             (lib_bin / "eccodes.dll").write_bytes(b"stub")
@@ -186,6 +192,123 @@ class MainCli(unittest.TestCase):
             with contextlib.redirect_stdout(buf):
                 main([str(log), "not_a_number", tmp])
             self.assertTrue(buf.getvalue().startswith("eccodes.dll|"))
+
+    def test_main_skips_unresolvable_and_finds_next(self):
+        # A DLL named in an earlier warning but genuinely absent from disk
+        # must not block a LATER warning naming a real, locatable DLL.
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "log.txt"
+            text = _warn("ghost.dll") + _warn("eccodes.dll")
+            log.write_bytes(text.encode("utf-8"))
+            lib_bin = Path(tmp) / "Library" / "bin"
+            lib_bin.mkdir(parents=True)
+            target = lib_bin / "eccodes.dll"
+            target.write_bytes(b"stub")
+            import io
+            import contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                main([str(log), "0", tmp])
+            self.assertEqual(buf.getvalue(), "eccodes.dll|" + str(target))
+
+    def test_main_reads_tried_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "log.txt"
+            text = _warn("eccodes.dll") + _warn("other.dll")
+            log.write_bytes(text.encode("utf-8"))
+            lib_bin = Path(tmp) / "Library" / "bin"
+            lib_bin.mkdir(parents=True)
+            (lib_bin / "eccodes.dll").write_bytes(b"stub")
+            target = lib_bin / "other.dll"
+            target.write_bytes(b"stub")
+            tried_file = Path(tmp) / "tried.txt"
+            tried_file.write_bytes(b"eccodes.dll|C:\\some\\prior\\path.dll\n")
+            import io
+            import contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                main([str(log), "0", tmp, str(tried_file)])
+            self.assertEqual(buf.getvalue(), "other.dll|" + str(target))
+
+    def test_main_missing_tried_file_treated_as_no_tried_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "log.txt"
+            log.write_bytes(_warn("eccodes.dll").encode("utf-8"))
+            lib_bin = Path(tmp) / "Library" / "bin"
+            lib_bin.mkdir(parents=True)
+            target = lib_bin / "eccodes.dll"
+            target.write_bytes(b"stub")
+            import io
+            import contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                main([str(log), "0", tmp, str(Path(tmp) / "no_such_tried.txt")])
+            self.assertEqual(buf.getvalue(), "eccodes.dll|" + str(target))
+
+
+class Detect(unittest.TestCase):
+    def test_detect_finds_warning_without_locating(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "log.txt"
+            log.write_bytes(_warn("eccodes.dll").encode("utf-8"))
+            import io
+            import contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                main(["--detect", str(log), "0"])
+            # Provider-agnostic: emits the name even with no Library\bin
+            # anywhere near this temp dir -- detection never touches disk.
+            self.assertEqual(buf.getvalue(), "eccodes.dll")
+
+    def test_detect_no_warning_emits_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "log.txt"
+            log.write_bytes(b"build completed successfully\n")
+            import io
+            import contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                main(["--detect", str(log), "0"])
+            self.assertEqual(buf.getvalue(), "")
+
+    def test_detect_respects_offset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "log.txt"
+            prefix = _warn("stale.dll")
+            suffix = "no new warnings\n"
+            log.write_bytes((prefix + suffix).encode("utf-8"))
+            offset = len(prefix.encode("utf-8"))
+            import io
+            import contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                main(["--detect", str(log), str(offset)])
+            self.assertEqual(buf.getvalue(), "")
+
+    def test_detect_too_few_args_silent(self):
+        import io
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            main(["--detect", "only_one_arg"])
+        self.assertEqual(buf.getvalue(), "")
+
+
+class ReadTriedFile(unittest.TestCase):
+    def test_reads_names_before_pipe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "tried.txt"
+            p.write_bytes(b"eccodes.dll|C:\\a\\b.dll\nother.dll|C:\\c\\d.dll\n")
+            self.assertEqual(read_tried_file(str(p)), ["eccodes.dll", "other.dll"])
+
+    def test_missing_file_returns_empty_list(self):
+        self.assertEqual(read_tried_file("/no/such/file/xyz.txt"), [])
+
+    def test_blank_lines_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "tried.txt"
+            p.write_bytes(b"eccodes.dll|C:\\a\\b.dll\n\n\nother.dll|C:\\c\\d.dll\n")
+            self.assertEqual(read_tried_file(str(p)), ["eccodes.dll", "other.dll"])
 
 
 class PayloadSync(unittest.TestCase):

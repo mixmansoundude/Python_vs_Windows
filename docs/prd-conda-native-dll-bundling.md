@@ -1,8 +1,8 @@
 # PRD: Conda Native-DLL Bundling Repair Loop (pygrib/eccodes and the General Case)
 
-**Status:** Requirements 1-3 and 6 implemented (2026-08-04); Requirement 4's regression test
-extended but not yet confirmed passing in real CI; Requirement 5 (documentation) in progress in
-the same pass. See CLAUDE.md's Item 24 entry for current confirmation status. Originally written
+**Status:** Requirements 1, 2, 3, 5, and 6 implemented (2026-08-04); Requirement 4's regression
+test extended but not yet confirmed passing in real CI. See CLAUDE.md's Item 24 entry for current
+confirmation status. Originally written
 in response to CLAUDE.md Active Backlog Item 24 (found via `self.layered_e2e.chain`'s real CI
 evidence once the cStringIO warnfix fix let that test reach this far for the first time -- see
 `docs/agent-closed-backlog.md`'s Item 22 entry for the discovery trail); thawed from cold storage
@@ -17,7 +17,7 @@ in cold storage -- same "cheapest option first, reactive not proactive" design p
 
 ## Research Findings
 
-### Finding 1 -- `hook-gribapi.py`'s actual source now confirmed; `pygrib` and `gribapi` are architecturally independent bindings, so the "free lunch" is now assessed as UNLIKELY (not just unverified) -- still worth the cheap empirical test
+### Finding 1 -- `hook-gribapi.py`'s actual source confirmed; `pygrib` and `gribapi` are architecturally independent bindings; Requirement 1's CI experiment CONFIRMED the free lunch does not exist
 
 **Updated 2026-08-04 with the actual hook source and the pygrib/gribapi relationship, both
 confirmed via direct research (not extrapolated).** `pyinstaller-hooks-contrib` (already an
@@ -37,9 +37,8 @@ correcting the original guess below). Its actual mechanism, read directly from s
 5. If the library comes from the separate `eccodeslib` PyPI package (binary wheels for eccodes
    itself, `>= 2.37.0`), that package is added to hidden imports too, for `findlibs.find()`.
 
-**Two separate claims here -- one proven, one still an expectation pending Requirement 1's own CI
-experiment, not to be conflated (a distinction a review pass on this PR correctly flagged as
-blurred in an earlier draft).**
+**Two separate claims here -- one proven by the package-relationship research itself, one now
+CONFIRMED by Requirement 1's own real CI experiment rather than left as an inference.**
 
 *Proven, via the package-relationship research itself*: `pygrib` (jswhit/pygrib) and
 `gribapi`/`eccodes-python` (ECMWF's official bindings, conda-forge package `python-eccodes`) are
@@ -49,28 +48,24 @@ different upstream projects -- `pygrib` does not import or depend on `gribapi` a
 has no reason to fire UNFORCED for a pygrib-only project: PyInstaller's static analysis genuinely
 never sees a `gribapi` import to trigger the hook on, since none exists in pygrib's own source.
 
-*Still an expectation, not a proven negative*: whether FORCING `--hidden-import=gribapi` would
-still help is a separate question this reasoning does not settle on its own. The hook's own
-DLL-bundling logic (step 2 above) operates on `gribapi.bindings.library_path`, which is a fact
-about `gribapi`'s own package location, not `pygrib`'s -- so it is EXPECTED to bundle a DLL that
-doesn't help `pygrib`'s own separately-linked `_pygrib.cp314-win_amd64.pyd` extension, but this is
-an inference from how the hook's logic reads, not something independently confirmed by running it.
-It remains conceivable that PyInstaller's hook machinery, once `gribapi` is forced into the
-dependency graph at all, ends up placing a copy of `eccodes.dll` somewhere `pygrib`'s own extension
-can also find it (e.g. a shared `Library\bin`-adjacent location), which would make the forced
-import help for a reason unrelated to the hook's own intended purpose. **Requirement 1's CI
-experiment (not this section's reasoning) is the actual decision point** -- treat the paragraph
-above as the expectation the experiment tests, not its conclusion.
+*Confirmed empirically, not just inferred*: whether FORCING `--hidden-import=gribapi` would still
+help was the open question this reasoning alone could not settle. Requirement 1's own CI experiment
+(`tests/selfapps_gribapi_hook_probe.ps1`, PR #415, merged 2026-08-04) answered it directly:
+`self.gribapi_hook_probe.hidden_import` reports `details.conclusive=true`,
+`details.hiddenImportHelped=false` -- both the control build (no forced import) and the experiment
+build (`--hidden-import=gribapi`) showed IDENTICAL outcomes (`bundledDll=false`, `exeExit=1`,
+`dllLoadFailed=true`). Forcing the hidden import did NOT cause `hook-gribapi.py` to place
+`eccodes.dll` anywhere `pygrib`'s own `_pygrib.cp314-win_amd64.pyd` extension could find it. The
+free lunch does not exist; this is now closed, not merely expected.
 
-**Still worth the empirical test, per explicit owner instruction to verify via real CI rather than
-rely on analysis alone.** The conda-forge package providing `gribapi` (`python-eccodes`) does build
-for win-64 (confirmed via the feedstock's own CI badge matrix, Python 3.10-3.14), so the experiment
-is genuinely runnable: install `python-eccodes` alongside `pygrib`+`eccodes` in the test conda env,
-force `--hidden-import=gribapi` on the build, and observe whether the resulting EXE's DLL situation
-changes at all. **Updated expectation: likely a clean, informative negative result** (ruling out
-the free lunch with real evidence, closing this specific question for good) rather than the
-originally-hoped-for shortcut -- but a cheap, low-cost, one-CI-run experiment either way, and
-worth running exactly because "likely won't work" is a probability estimate, not a certainty.
+**The empirical test was worth running, per explicit owner instruction to verify via real CI rather
+than rely on analysis alone -- and it delivered exactly the informative negative result the
+analysis above predicted.** The conda-forge package providing `gribapi` (`python-eccodes`) built
+for win-64 as expected (confirmed via the feedstock's own CI badge matrix), so the experiment ran
+cleanly: `python-eccodes` installed alongside `pygrib`+`eccodes` in the test conda env,
+`--hidden-import=gribapi` was forced on the experiment build, and the resulting EXE's DLL situation
+did not change at all relative to the control. This ruled out the free-lunch shortcut with real
+evidence and directly motivated building the general repair loop (Requirements 2-6 below).
 
 ### Finding 2 -- `--collect-binaries=PKG` is the wrong shape for this failure; it does not cross package boundaries
 
@@ -234,45 +229,48 @@ Requirements 1-3 and 6 done; Requirement 4's regression test extended but not ye
 Requirement 5 done in the same pass. See CLAUDE.md's Item 24 entry for current confirmation
 status. Kept below as the original design record, not rewritten to past tense throughout.
 
-1. **Verify Finding 1 first, with zero new bootstrapper code, via its own small CI-only PR.** Add
-   `python-eccodes` (the conda-forge package providing `gribapi`, confirmed to build for win-64)
-   alongside `pygrib` in a minimal test build, force `--hidden-import=gribapi`, and observe whether
-   `eccodes.dll` ends up bundled / the EXE runs. Per Finding 1's updated assessment this is now
-   EXPECTED to come back negative (pygrib and gribapi are independent bindings), but run it anyway
-   for real evidence before committing to the larger repair loop -- keep this experiment isolated
-   in its own PR, not bundled with requirement 3's implementation, so a negative result doesn't
-   block on or get entangled with unrelated work. **conda-forge only, matching this repo's
-   established channel policy** (README.md/CLAUDE.md: `--override-channels -c conda-forge` on
-   every conda install, no `defaults` channel contamination) -- a mixed-channel solve could pull a
-   different `pygrib`/`eccodes` build with a different native-DLL graph, undermining the
-   experiment's own reproducibility. The experiment PR's own conda env creation already does this
-   (`--override-channels -c conda-forge` in its `conda create` call); record the resolved package
-   versions from that run's env-create log when reporting the finding.
-2. **Decide build-time vs. runtime detection (Finding 5).** Prototype whichever is cheaper to wire
-   given requirement 1's outcome; a build-time detector reuses `parse_warn.py`'s general shape
-   (new pattern, same file family) but targets a different PyInstaller output stream (`Library not
-   found: could not resolve` warnings, not the missing-module warn file); a runtime detector reuses
-   `:hidden_import_recover`'s existing scan-and-react loop shape almost directly.
-3. **New repair loop, gated to `HP_ENV_MODE=conda` for the actual bundling action.** Mirror
-   `:hidden_import_recover`'s bounded-iteration, tried-list shape (see Finding 4) -- not a
-   single-shot fix. Detection stays provider-agnostic (cheap, always checked); the DLL-glob-and-
-   `--add-binary` action itself no-ops (with a clear log line) under any non-conda provider.
-4. **Regression test forcing the real `pygrib`/`eccodes` failure**, modeled on how
-   `tests/selfapps_layered_e2e.ps1` already reaches this exact failure for real today (no new
-   simulated-failure hook needed -- the failure is already reliably reproducible via the existing
-   test's own uv-to-conda cascade). Assert the loop bundles the DLL, rebuilds, and the final EXE
-   genuinely runs and prints its token -- this is the acceptance criterion that would finally flip
-   `self.layered_e2e.chain`'s `chainPass` to `True`.
-5. **Documentation**: CLAUDE.md's Item 24 gets its resolution written up (mirroring how Item 22 and
-   Item 23 were each closed with a full mechanism trace); `docs/agent-interconnect.md` gets a new
-   section analogous to "Tier A and hidden-import auto-recovery" describing how this new loop
-   relates to the existing one (touch one, must understand the other, if they end up sharing any
-   scan infrastructure).
-6. **`HP_NUITKA_FALLBACK_USED` early-exit guard, mandatory (see Finding 6).** The new repair loop
-   must check this flag and skip (not attempt-and-fail) before any rebuild action, identical in
-   shape to `:hidden_import_recover`'s own guard. No CI test currently exercises a Nuitka-built EXE
-   hitting a native-DLL failure -- if one is added, it should assert the skip fires (mirroring
-   `tests/selfapps_nuitka_tiera_hidden_skip.ps1`'s own regression-test shape for the sibling case).
+1. **DONE (PR #415, merged 2026-08-04).** Verified Finding 1 first, with zero new bootstrapper
+   code, via its own small CI-only PR: added `python-eccodes` (the conda-forge package providing
+   `gribapi`, confirmed to build for win-64) alongside `pygrib` in a minimal test build, forced
+   `--hidden-import=gribapi`, and observed whether `eccodes.dll` ended up bundled / the EXE ran.
+   Confirmed negative, matching Finding 1's updated assessment (pygrib and gribapi are independent
+   bindings) -- `self.gribapi_hook_probe.hidden_import` shows `conclusive=true`,
+   `hiddenImportHelped=false`. The experiment was kept isolated in its own PR, not bundled with
+   requirement 3's implementation, so the negative result didn't block on or get entangled with
+   unrelated work. **conda-forge only, matching this repo's established channel policy**
+   (README.md/CLAUDE.md: `--override-channels -c conda-forge` on every conda install, no `defaults`
+   channel contamination) -- the experiment PR's own conda env creation did this
+   (`--override-channels -c conda-forge` in its `conda create` call).
+2. **DONE.** Decided build-time detection (Finding 5): `:dll_bundle_recover` reacts to
+   PyInstaller's own build-time `Library not found: could not resolve` warning line, before the
+   smoke run, rather than waiting for the guaranteed runtime crash -- reuses `~hidden_import_scan.py`'s
+   general shape (`tools/dll_bundle_scan.py`) but targets this different PyInstaller output stream
+   instead of the missing-module warn file.
+3. **DONE.** New repair loop (`:dll_bundle_recover`, `tools/dll_bundle_scan.py`), gated to
+   `HP_ENV_MODE=conda` for the actual bundling action. Mirrors `:hidden_import_recover`'s
+   bounded-iteration, tried-list shape (see Finding 4) -- not a single-shot fix. Detection stays
+   provider-agnostic (cheap, always checked first via a `--detect` mode); the DLL-glob-and-
+   `--add-binary` action itself no-ops (with a clear log line) under any non-conda provider or a
+   Nuitka-built EXE (Requirement 6).
+4. **Regression test extended, not yet confirmed passing in real CI.** `tests/selfapps_layered_e2e.ps1`
+   gained a 4th mechanism (`mech4Pass`) modeled on how it already reaches the real `pygrib`/`eccodes`
+   failure today (no new simulated-failure hook needed -- the failure is already reliably
+   reproducible via the existing test's own uv-to-conda cascade). Asserts the loop bundles the DLL,
+   rebuilds, and the final EXE genuinely runs and prints its token -- this is the acceptance
+   criterion that should finally flip `self.layered_e2e.chain`'s `chainPass` to `True`. See
+   CLAUDE.md's Item 24 entry for current real-CI confirmation status.
+5. **DONE.** Documentation: CLAUDE.md's Item 24 entry written up (mirroring how Item 22 and Item 23
+   were each closed with a full mechanism trace); `docs/agent-interconnect.md` gained a new
+   "Conda native-DLL bundling repair loop" section analogous to "Tier A and hidden-import
+   auto-recovery" describing how this new loop relates to the existing one; `docs/agent-ndjson.md`
+   updated to describe the 4th mechanism on `self.layered_e2e.chain`'s existing row.
+6. **DONE.** `HP_NUITKA_FALLBACK_USED` early-exit guard (see Finding 6): `:dll_bundle_recover`
+   checks this flag and skips (not attempt-and-fail) before any rebuild action, identical in shape
+   to `:hidden_import_recover`'s own guard. No CI test currently exercises a Nuitka-built EXE
+   hitting a native-DLL failure specifically -- `tests/selfapps_nuitka_tiera_hidden_skip.ps1` is the
+   sibling regression test for `:hidden_import_recover`'s OWN Nuitka guard, a genuinely different
+   code path; it does not exercise `:dll_bundle_recover`'s guard. If a dedicated test is ever added
+   here, it should assert the skip fires, mirroring that sibling test's own shape.
 
 ## Level Check (explicitly requested by the owner)
 

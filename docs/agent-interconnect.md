@@ -155,9 +155,21 @@ The `HP_LOG_SIZE_BEFORE` byte-offset snapshot (taken right before the fresh-buil
 is what makes this safe against `%LOG%`'s own persistence across runs in the same app directory --
 without it, a stale DLL warning from an EARLIER run could be re-detected and re-"fixed" for no
 reason. `tools/dll_bundle_scan.py` (`HP_DLL_BUNDLE_SCAN` payload) is the scanning helper, mirroring
-`~hidden_import_scan.py`'s shape (a pure `read_tail`/`next_dll_target`/`locate_dll`/`main` module,
-unit-tested in `tests/test_dll_bundle_scan.py`) but reading a byte-offset log slice instead of a
-captured EXE stderr file.
+`~hidden_import_scan.py`'s shape (`read_tail`/`next_dll_target`/`locate_dll`/`main`, unit-tested in
+`tests/test_dll_bundle_scan.py`) but reading a byte-offset log slice instead of a captured EXE
+stderr file, and with two extra pieces the sibling doesn't need: a `--detect` CLI mode (see below)
+and `read_tried_file()` (see the tried-list paragraph below).
+
+**Bug found and fixed via review (real, not hypothetical): the original implementation gated
+DETECTION itself on `HP_ENV_MODE=conda`, silently defeating the "provider-agnostic detection"
+design the PRD itself specifies.** The first-shipped version checked `if not "%HP_ENV_MODE%"=="conda"
+exit /b 0` as effectively the FIRST real check, before ever scanning the log -- meaning a non-conda
+provider (or a Nuitka-built EXE, same class of bug) got ZERO detection and ZERO log line, not the
+documented "detected, repair skipped" state (see `docs/open-questions.md`). Fixed by restructuring
+so detection runs first and unconditionally (a cheap `--detect`-mode call into
+`tools/dll_bundle_scan.py` that only parses the log, no `Library\bin` lookup), with the
+Nuitka-guard and the conda-gate each becoming a "detected but here's why we can't act" log branch
+instead of a silent early exit before detection ever happened.
 
 **Built GENERAL, not hardcoded to `eccodes.dll`** (resolved `docs/open-questions.md`'s former
 narrow-vs-general question, 2026-08-04): `next_dll_target()` parses whatever DLL name PyInstaller's
@@ -170,17 +182,54 @@ named DLL to ACTUALLY exist under the conda env's own `Library\bin` (searched re
 the PRD's Finding 1) before emitting anything -- a name mentioned in a stale/irrelevant warning that
 isn't really on disk is not something `--add-binary` could fix.
 
-**Gated to `HP_ENV_MODE=conda` for the actual bundling action (Requirement 3), detection stays
-cheap regardless of provider.** `Library\bin` is conda's own shared-DLL convention, meaningless
-under uv/embed/venv/system (those install from PyPI wheels, expected to vendor their own native
-deps) -- with no conda env to search there is nothing this loop could act on even under a real
-warning, so the whole subroutine exits early with `if not "%HP_ENV_MODE%"=="conda" exit /b 0`
-rather than logging a "detected but cannot act" line with no actionable next step.
+**Gated to `HP_ENV_MODE=conda` for the actual bundling action (Requirement 3) ONLY -- detection now
+genuinely runs first and unconditionally.** `Library\bin` is conda's own shared-DLL convention,
+meaningless under uv/embed/venv/system (those install from PyPI wheels, expected to vendor their
+own native deps) -- with no conda env to search there is nothing this loop could BUNDLE even under
+a real warning, but it still logs `[INFO][DLL_BUNDLE] Detected native-DLL warning for '...';
+native-DLL bundling repair requires the conda provider...; skipping.` rather than staying silent,
+satisfying the caveat panel's "detected, repair skipped" state.
 
 **Carries the identical `HP_NUITKA_FALLBACK_USED` early-exit guard `:hidden_import_recover` has, for
-the identical reason (Requirement 6).** `--add-binary` is a PyInstaller-specific flag with no
-Nuitka equivalent wired up here; skip (not attempt-and-fail) rather than risk rebuilding a working
-Tier-A EXE via the wrong tool.
+the identical reason (Requirement 6) -- also now checked AFTER detection, for the same reason as
+the conda gate above.** `--add-binary` is a PyInstaller-specific flag with no Nuitka equivalent
+wired up here; skip (not attempt-and-fail) rather than risk rebuilding a working Tier-A EXE via the
+wrong tool, but still log the detected DLL name before skipping.
+
+**Tried-list is a FILE (`~dll_bundle_tried.txt`), not inline argv -- a second real bug found via
+review.** The first-shipped version accumulated tried DLL names in a batch variable
+(`HP_DLL_TRIED`) and expanded it unquoted on the scan command line -- a DLL basename can legally
+contain a space or a cmd.exe metacharacter (`&`, `|`, `^`), which would split the command line's
+argv or, worse, have `&` interpreted as a command separator, injecting arbitrary text into the
+line. Fixed by appending each `name|path` result to a tilde-prefixed file via `type ...
+>>"~dll_bundle_tried.txt"` (pure byte-copy between files, never routing the DLL name through any
+`%VAR%`-expanded command text) and having `tools/dll_bundle_scan.py`'s new `read_tried_file()`
+parse it back -- the same "prefer a file over inline argv for anything risky" convention this
+repo already uses for `~missing_modules.txt`/`~next_hidden.txt`.
+
+**`main()` continues past a named-but-not-on-disk candidate to the next one -- a third real bug
+found via review.** The first-shipped version returned nothing the moment the FIRST untried
+candidate failed `locate_dll()`'s double-gate, even if a LATER warning in the same log named a
+real, locatable DLL -- silently stalling the whole loop on a single stale/irrelevant warning.
+Fixed with a small loop in `main()` that keeps trying successive candidates (via
+`next_dll_target(text, candidates)` with the just-rejected name appended to `candidates` each pass)
+until one is both untried and actually found on disk, or none remain.
+
+**The "bundling complete" log line must never fire on a genuine rebuild failure -- a fourth real
+bug found via review, mirroring a bug class this repo has already hit and fixed once before for the
+warnfix-triggered rebuild (see `docs/agent-lessons-learned.md`'s general "no failure handling at
+all... unconditionally logged... complete... regardless of outcome" pattern).** `HP_DLL_ITER`
+increments BEFORE the rebuild attempt, so a naive `if %HP_DLL_ITER% GEQ 1` check at the loop's exit
+label is true on both the success path AND either failure path (`errorlevel 1` from PyInstaller, or
+a missing `dist\<env>.exe` afterward) -- the original code used exactly that check, so a genuine
+rebuild failure could still log "Native-DLL bundling complete" and continue as if nothing were
+wrong. Fixed with an explicit `HP_DLL_FAILED` flag, set only on a real failure branch (which also
+sets `HP_BOOTSTRAP_STATE=error` and logs an `[ERROR][DLL_BUNDLE]` line, mirroring the
+warnfix-rebuild's own "conservative response to failure" precedent) and checked before the
+"complete" line is ever logged. The smoke run afterward is deliberately NOT skipped on this
+failure (same reasoning as the warnfix rebuild) -- `HP_BOOTSTRAP_STATE=error` alone is the
+authoritative signal; see "Single-verification smoke model" above for why the smoke run always
+runs regardless.
 
 **`HP_PYI_DLLBIND` must be threaded into `:hidden_import_recover`'s OWN rebuild command, or a later
 hidden-import repair silently drops an earlier DLL-bundle repair.** Both loops can fire in the same
