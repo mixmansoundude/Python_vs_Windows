@@ -781,6 +781,19 @@ jobs:
         run: |
           & tests\selfapps_cascade_conda_create_fail.ps1
 
+      # PR #413 CodeRabbit review finding: the scenario above only exercises the fix's
+      # :conda_create_failed call site (create itself fails); this exercises the OTHER call site
+      # inside :conda_create_done (create genuinely succeeds but python.exe is missing
+      # afterward). Same placement requirement as the step above (Miniconda already cached).
+      - name: "Self-test: cascade-reentry conda-create missing python.exe keeps previous build (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          CASCADE_CCF_SCENARIO: missing_python
+        run: |
+          & tests\selfapps_cascade_conda_create_fail.ps1
+
       # docs/agent-closed-backlog.md's Item 22: a real, non-simulated end-to-end test proving the
       # uv-to-conda cascade, warnfix repair (both success and failure in the same round), and
       # --hidden-import auto-recovery all fire for real in ONE run -- no HP_TEST_FORCE_*/

@@ -11,8 +11,8 @@ changelog-style sections are for.
 
 ## 1. Conda native-DLL bundling repair loop: narrow (pygrib/eccodes-only) fix vs. a general pattern-matcher?
 
-Full context: `docs/prd-conda-native-dll-bundling.md` (CLAUDE.md Active Backlog Item 24, cold-
-storaged -- see `docs/agent-cold-storage.md`'s own entry for the thaw trigger). When this repair
+Full context: `docs/prd-conda-native-dll-bundling.md` (CLAUDE.md Active Backlog Item 24, stored in
+cold storage -- see `docs/agent-cold-storage.md`'s own entry for the thaw trigger). When this repair
 loop is eventually built, should it hardcode the `eccodes.dll` name/glob (mirroring REQ-007's
 existing libexpat pattern exactly -- cheap, directly closes the one known failure), or should it
 detect ANY `Library not found: could not resolve 'X.dll'` PyInstaller warning generically and

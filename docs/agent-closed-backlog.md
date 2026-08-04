@@ -1212,6 +1212,22 @@ this belongs to).
   fail` (the existing `HP_TEST_FORCE_CONDA_FAIL` test hook) has the identical fallthrough shape
   and reaches the same `:after_env_mode_selection` clear, but is scoped to the FIRST-attempt path
   only -- it was never evidence this gap was already covered by existing tests.
+  **Follow-up, same PR (#413), from a CodeRabbit review finding**: the original regression test
+  above only exercised `:conda_create_failed`'s own call site (create itself genuinely fails). The
+  fix's OTHER call site -- the `if not exist "%HP_PY%"` check inside `:conda_create_done`, reached
+  when conda create genuinely SUCCEEDS but the resulting environment is somehow missing
+  `python.exe` -- had zero coverage. Closed by adding a `missing_python` scenario
+  (`CASCADE_CCF_SCENARIO` env var) to the SAME test file, via a new hook
+  `HP_TEST_FORCE_CONDA_MISSING_PYTHON=1` (`run_setup.bat`, `:conda_create_done`) that lets the real
+  create succeed and then deletes the `python.exe` it just produced -- genuine success followed by
+  a genuinely missing interpreter, not a simulated create failure. Wired as a second CI step
+  (`CASCADE_CCF_SCENARIO: missing_python`) immediately after the original, same placement
+  constraint (Miniconda already cached from `selfapps_cascade.ps1`). See `docs/agent-ndjson.md`'s
+  updated `self.cascade.conda_create_fail` entry for the full two-scenario assertion list,
+  including the message-occurrence-COUNT technique used to distinguish "handle_conda_failure
+  logged the failure once, as expected" from "the old :die fall-through regression is back"
+  (both scenarios' own failure messages are logged once by `:handle_conda_failure` regardless of
+  outcome; a second occurrence would come only from `:die`'s own separate echo).
 
 ### Item 13 (closed 2026-08-01)
 

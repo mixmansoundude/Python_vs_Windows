@@ -3,12 +3,12 @@
 **Status:** Draft v1 -- planning only, no implementation started. Written in response to CLAUDE.md
 Active Backlog Item 24 (found via `self.layered_e2e.chain`'s real CI evidence once the cStringIO
 warnfix fix let that test reach this far for the first time -- see `docs/agent-closed-backlog.md`'s
-Item 22 entry for the discovery trail). Deliberately cold-storaged after this draft, not scheduled
+Item 22 entry for the discovery trail). Deliberately stored in cold storage after this draft, not scheduled
 -- see `docs/agent-cold-storage.md`'s own entry for the thaw trigger.
 **Owner:** Supervisor (Python_vs_Windows)
 **Related:** `docs/agent-closed-backlog.md` Item 22 (the layered E2E test that found this),
-CLAUDE.md Active Backlog Item 24, `docs/prd-av-safe-build-path.md` (the repo's other cold-storaged
-PRD -- same "cheapest option first, reactive not proactive" design philosophy applies here)
+CLAUDE.md Active Backlog Item 24, `docs/prd-av-safe-build-path.md` (the repo's other PRD stored
+in cold storage -- same "cheapest option first, reactive not proactive" design philosophy applies here)
 
 ---
 

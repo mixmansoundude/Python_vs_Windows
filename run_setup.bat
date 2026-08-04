@@ -958,6 +958,13 @@ call :die "[ERROR] conda env create failed."
 
 set "CONDA_PREFIX=%ENV_PATH%"
 set "HP_PY=%CONDA_PREFIX%\python.exe"
+rem [TEST] HP_TEST_FORCE_CONDA_MISSING_PYTHON: forces the "conda create genuinely succeeded but
+rem python.exe is missing afterward" branch below through a REAL successful create (not a
+rem simulated create-command failure) -- deletes the real python.exe a genuine create just
+rem produced. Exists to test the OTHER call site of the CLAUDE.md Item 23 cascade-restore fix
+rem (see :conda_create_failed's own comment above); selfapps_cascade_conda_create_fail.ps1's
+rem missing_python scenario is the only caller.
+if "%HP_TEST_FORCE_CONDA_MISSING_PYTHON%"=="1" if exist "%HP_PY%" del /f /q "%HP_PY%" >nul 2>&1
 if not exist "%HP_PY%" (
   set "HP_ENV_READY="
   call :handle_conda_failure "[ERROR] python.exe missing from conda environment."
