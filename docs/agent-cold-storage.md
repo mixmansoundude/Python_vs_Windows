@@ -121,38 +121,23 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   under CLAUDE.md's Active Backlog Item 24, not here -- this entry is kept only as a historical
   record of the original shelve-and-thaw-trigger reasoning; see Item 24 itself for current status.
 
-- **Blinter in the sanity sweep, scoped to a vetted rule subset.** Investigated 2026-08-04 (see
-  AGENTS.md's own Blinter entry for the full false-positive detail). A real, actively-maintained,
-  pip-installable general-purpose batch-file linter (147 rules) -- functionally complementary to
-  `check_delimiters.py`, not a duplicate. Not adopted now: a direct run against `run_setup.bat`
-  produced heavy noise against confirmed-correct, deliberate patterns (flagging intentional
-  `HP_*`/`PVW_*` scaffolding vars as "undefined," correct `^>` caret-escaping as an error, and a
-  false "63 unclosed parenthesis blocks" on a file `check_delimiters.py` already validates clean).
-  **Trigger to thaw**: someone does the actual per-rule audit -- run Blinter with `--output
-  report.json` against the current clean `run_setup.bat`, classify every one of the ~147 rules as
-  reliable-for-this-repo or noisy-for-this-repo, and build a `blinter.ini` `enabled_rules`/
-  `disabled_rules` allowlist that produces ZERO findings against the current, already-clean file
-  before it's trustworthy enough to gate on. Not worth doing speculatively ahead of that audit.
+- **Blinter in the sanity sweep, scoped to a vetted rule subset.** Investigated 2026-08-04 --
+  current evidence (false-positive detail, rule counts) lives in AGENTS.md's own Blinter entry;
+  not duplicated here to avoid drift between the two. Proposal: a scoped, per-rule-audited
+  `blinter.ini` allowlist, mirroring how the sanity sweep already scopes markdownlint to MD029
+  only, rather than running Blinter's full default rule set. **Trigger to thaw**: someone does
+  the actual per-rule audit described in AGENTS.md and confirms a scoped allowlist produces ZERO
+  findings against the current, already-clean `run_setup.bat`. Not worth doing speculatively
+  ahead of that audit.
 
 - **PSScriptAnalyzer in the sanity sweep, scoped to a vetted rule subset.** Investigated
-  2026-08-04 (see AGENTS.md's own PSScriptAnalyzer entry, which also corrects a stale "PSGallery
-  blocked by proxy" note this same investigation disproved). A real, genuine style/correctness
-  linter for `.ps1`/`.psm1`/`.psd1` files -- functionally different from the sanity sweep's
-  existing AST-parse sweep (that only proves a file parses; this flags style/best-practice issues
-  in a file that already parses fine). Not adopted now: a full run against `tests/`+`tools/`
-  produced 181 findings, ~90% from three rules that fire against this repo's own deliberate,
-  established conventions (`PSAvoidUsingWriteHost` -- `Write-Host` is the repo's intentional test-
-  diagnostic-output mechanism, never captured into comparison buffers by design;
-  `PSAvoidUsingEmptyCatchBlock` -- the shared "swallow an unparseable `~bootstrap.status.json`"
-  pattern used across 6+ `selfapps_*.ps1` files; `PSAvoidUsingPositionalParameters` -- a style
-  preference this repo's scripts don't consistently follow). The remaining ~10% (5 hits across
-  `PSAvoidUsingInvokeExpression`, `PSPossibleIncorrectComparisonWithNull` x2,
-  `PSAvoidAssignmentToAutomaticVariable` x2) were spot-checked and are minor style nitpicks, not
-  active bugs -- not urgent enough to fix as a drive-by. Somewhat more promising than Blinter (a
-  smaller false-positive surface, concentrated in exactly three well-understood rules rather than
-  spread across many), but the same principle applies. **Trigger to thaw**: someone builds a
-  `PSScriptAnalyzerSettings.psd1` excluding at least those three rules, confirms a full sweep
-  against the current codebase comes back clean, and wires it into `tools/run_sanity_sweep.sh`
-  mirroring the markdownlint MD029-only scoping pattern. Not worth doing speculatively ahead of
-  that audit.
+  2026-08-04 -- current evidence (finding counts, which rules fire against this repo's own
+  deliberate conventions) lives in AGENTS.md's own PSScriptAnalyzer entry, which also corrects a
+  stale "PSGallery blocked by proxy" note this same investigation disproved; not duplicated here
+  to avoid drift. Proposal: a `PSScriptAnalyzerSettings.psd1` excluding the rules AGENTS.md
+  identifies as firing against established repo conventions, wired into
+  `tools/run_sanity_sweep.sh`. Somewhat more promising than Blinter (per AGENTS.md, a smaller
+  false-positive surface concentrated in fewer rules), but the same principle applies. **Trigger
+  to thaw**: someone builds that settings file, confirms a full sweep against the current codebase
+  comes back clean. Not worth doing speculatively ahead of that audit.
 

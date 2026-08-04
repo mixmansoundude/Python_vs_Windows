@@ -34,17 +34,30 @@ correcting the original guess below). Its actual mechanism, read directly from s
 5. If the library comes from the separate `eccodeslib` PyPI package (binary wheels for eccodes
    itself, `>= 2.37.0`), that package is added to hidden imports too, for `findlibs.find()`.
 
-**Why this still likely does not solve pygrib's problem, now confirmed via research into the
-package relationship itself, not just guessed from naming**: `pygrib` (jswhit/pygrib) and
+**Two separate claims here -- one proven, one still an expectation pending Requirement 1's own CI
+experiment, not to be conflated (a distinction a review pass on this PR correctly flagged as
+blurred in an earlier draft).**
+
+*Proven, via the package-relationship research itself*: `pygrib` (jswhit/pygrib) and
 `gribapi`/`eccodes-python` (ECMWF's official bindings, conda-forge package `python-eccodes`) are
 two INDEPENDENT, unrelated Python bindings to the same underlying `eccodes` C library, from
 different upstream projects -- `pygrib` does not import or depend on `gribapi` at all; it talks to
 `libeccodes`/`eccodes.dll` directly through its own compiled extension. This means `hook-gribapi.py`
-has no reason to ever fire for a pygrib-only project (PyInstaller never sees a `gribapi` import to
-trigger it), and even a forced `--hidden-import=gribapi` would at best bundle an entirely separate,
-unused package -- the hook's own DLL-bundling logic (step 2 above) operates on `gribapi.bindings.
-library_path`, which has no connection to `pygrib`'s own linked `_pygrib.cp314-win_amd64.pyd`
-extension's actual eccodes.dll dependency.
+has no reason to fire UNFORCED for a pygrib-only project: PyInstaller's static analysis genuinely
+never sees a `gribapi` import to trigger the hook on, since none exists in pygrib's own source.
+
+*Still an expectation, not a proven negative*: whether FORCING `--hidden-import=gribapi` would
+still help is a separate question this reasoning does not settle on its own. The hook's own
+DLL-bundling logic (step 2 above) operates on `gribapi.bindings.library_path`, which is a fact
+about `gribapi`'s own package location, not `pygrib`'s -- so it is EXPECTED to bundle a DLL that
+doesn't help `pygrib`'s own separately-linked `_pygrib.cp314-win_amd64.pyd` extension, but this is
+an inference from how the hook's logic reads, not something independently confirmed by running it.
+It remains conceivable that PyInstaller's hook machinery, once `gribapi` is forced into the
+dependency graph at all, ends up placing a copy of `eccodes.dll` somewhere `pygrib`'s own extension
+can also find it (e.g. a shared `Library\bin`-adjacent location), which would make the forced
+import help for a reason unrelated to the hook's own intended purpose. **Requirement 1's CI
+experiment (not this section's reasoning) is the actual decision point** -- treat the paragraph
+above as the expectation the experiment tests, not its conclusion.
 
 **Still worth the empirical test, per explicit owner instruction to verify via real CI rather than
 rely on analysis alone.** The conda-forge package providing `gribapi` (`python-eccodes`) does build
@@ -160,7 +173,7 @@ shipped both mechanisms and their guards:
   (not verified in this research pass) that a user who hits this exact pygrib/eccodes failure under
   PyInstaller and then accepts the requirement-9 "optimized build?" upsell would find the Nuitka
   build bundles `eccodes.dll` correctly without this PRD's repair loop ever being needed for that
-  specific run. This does NOT reduce the value of building the loop (Tier 9 is elective, declined
+  specific run. This does NOT reduce the value of building the loop (Requirement 9 is elective, declined
   by default in CI and not something every user will accept, and the PyInstaller build is still the
   PRIMARY path this repo's Prime Directive depends on) -- noted here only because it is the same
   "does an existing mechanism already solve this for free" question Finding 1 asks about
@@ -221,7 +234,13 @@ cascade, warnfix repair) both now genuinely pass.
    EXPECTED to come back negative (pygrib and gribapi are independent bindings), but run it anyway
    for real evidence before committing to the larger repair loop -- keep this experiment isolated
    in its own PR, not bundled with requirement 3's implementation, so a negative result doesn't
-   block on or get entangled with unrelated work.
+   block on or get entangled with unrelated work. **conda-forge only, matching this repo's
+   established channel policy** (README.md/CLAUDE.md: `--override-channels -c conda-forge` on
+   every conda install, no `defaults` channel contamination) -- a mixed-channel solve could pull a
+   different `pygrib`/`eccodes` build with a different native-DLL graph, undermining the
+   experiment's own reproducibility. The experiment PR's own conda env creation already does this
+   (`--override-channels -c conda-forge` in its `conda create` call); record the resolved package
+   versions from that run's env-create log when reporting the finding.
 2. **Decide build-time vs. runtime detection (Finding 5).** Prototype whichever is cheaper to wire
    given requirement 1's outcome; a build-time detector reuses `parse_warn.py`'s general shape
    (new pattern, same file family) but targets a different PyInstaller output stream (`Library not
