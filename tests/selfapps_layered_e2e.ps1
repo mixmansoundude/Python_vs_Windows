@@ -129,7 +129,13 @@ try {
     exit 1
 }
 
-Set-Content -Path (Join-Path $workDir 'requirements.txt') -Value "pygrib`ncolorama`nxlrd" -Encoding ASCII
+# derived requirement: pin pygrib specifically -- it is the cascade trigger (mechanism 1),
+# whose whole premise depends on it shipping zero Windows wheels on PyPI as of this pin. An
+# unpinned requirement could silently pick up a future PyPI release that DOES ship a Windows
+# wheel, which would make `uv pip install` succeed and never trigger the cascade at all. colorama
+# and xlrd are not pinned -- neither one's own trigger (hidden-import recovery / warnfix success)
+# depends on a specific version the way the cascade depends on pygrib's wheel availability.
+Set-Content -Path (Join-Path $workDir 'requirements.txt') -Value "pygrib==2.1.8`ncolorama`nxlrd" -Encoding ASCII
 
 $appCode = @'
 import pygrib
@@ -258,11 +264,27 @@ if ($exeExists) {
             if ($proc.WaitForExit($exeTimeoutMs)) {
                 $exeExit = $proc.ExitCode
             } else {
+                # derived requirement: Process.Kill() (the parameterless overload) terminates
+                # ONLY $proc itself -- a onefile bootloader (or any program) that spawns a child
+                # inheriting the redirected stdout/stderr handles can leave that child running
+                # after $proc is killed, so the pipe never reaches EOF and an unbounded
+                # ReadToEndAsync().Result would hang forever, defeating the whole point of this
+                # bounded launch. Same taskkill /T (process-tree kill) + bounded-drain pattern
+                # already established in tools/exe_hint_rerun.ps1 for the identical hazard.
+                try { & taskkill.exe /F /T /PID $proc.Id 2>$null 1>$null } catch {}
                 try { $proc.Kill() } catch {}
                 $exeExit = -1
             }
-            $stdout = $stdoutTask.GetAwaiter().GetResult()
-            $stderr = $stderrTask.GetAwaiter().GetResult()
+            $proc.WaitForExit()
+            # Bounded final read, NOT a blind .GetAwaiter().GetResult() block: even after
+            # killing the process tree, a descendant taskkill /T did not catch (or some other
+            # exotic handle-inheritance edge case) must not be able to hang this test
+            # indefinitely. Task.Wait(ms) returns false on timeout without throwing.
+            $drainMs = 5000
+            $stdout = ''
+            $stderr = ''
+            if ($stdoutTask.Wait($drainMs)) { try { $stdout = $stdoutTask.Result } catch {} }
+            if ($stderrTask.Wait($drainMs)) { try { $stderr = $stderrTask.Result } catch {} }
             ($stdout + $stderr) | Set-Content -LiteralPath '~layered_e2e_exe.log' -Encoding Ascii
         } finally {
             Pop-Location

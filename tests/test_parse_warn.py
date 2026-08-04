@@ -262,13 +262,11 @@ class ParseWarnFileEdgeCasesTest(unittest.TestCase):
         # warn files actually use for these stdlib shims.
         for mod in sorted(SKIP):
             for qualifier in ("conditional", "delayed", "top-level"):
-                line = "missing module named {} - imported by app ({})".format(mod, qualifier)
+                line = f"missing module named {mod} - imported by app ({qualifier})"
                 result = _parse_lines([line])
                 self.assertEqual(
                     result, [],
-                    "SKIP entry {!r} was not filtered for qualifier {!r}: line={!r}".format(
-                        mod, qualifier, line
-                    ),
+                    f"SKIP entry {mod!r} was not filtered for qualifier {qualifier!r}: line={line!r}",
                 )
 
     def test_pyi6_delayed_processed(self):
