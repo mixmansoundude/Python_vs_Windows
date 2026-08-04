@@ -114,3 +114,26 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   was correctly ruled out elsewhere (its wheel bundles an ~40 MB SQLite package database, a
   non-starter for a single-file bootstrapper).
 
+- **Conda native-DLL bundling repair loop (CLAUDE.md Active Backlog Item 24 -- pygrib/eccodes and
+  the general case).** Full PRD at `docs/prd-conda-native-dll-bundling.md`: a frozen EXE built
+  under the conda provider can fail at runtime with `ImportError: DLL load failed` when
+  PyInstaller doesn't discover/bundle a native DLL a conda-forge package depends on (confirmed via
+  real CI evidence for `pygrib`'s `eccodes.dll` dependency, `self.layered_e2e.chain`). The PRD
+  lays out a reactive, bounded repair loop mirroring `:hidden_import_recover`'s proven shape (see
+  `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay STRICT" entry) --
+  scan for the DLL-load-failure signature (or PyInstaller's own earlier build-time warning),
+  locate the missing DLL under `%CONDA_PREFIX%\Library\bin`, bundle via `--add-binary`, rebuild,
+  and iterate to catch transitive native deps one at a time. Not pursued now: the single highest-
+  leverage next step (verify whether `pyinstaller-hooks-contrib`'s existing `hook-gribapi.py`
+  already solves this for free via a plain `--hidden-import=gribapi` addition -- Finding 1 in the
+  PRD) is unverified and was not resolvable in the sandbox this PRD was drafted in (no access to
+  fetch `pyinstaller-hooks-contrib`'s source). Building any new mechanism before that verification
+  risks duplicating work an existing upstream hook may already cover.
+  **Trigger to thaw**: the owner explicitly brings this forward as the next active work item (per
+  their own stated intent when requesting this PRD: "I think I will bring it forward soon if level
+  check passes and the current todo is fully closed out") -- at that point, start with the PRD's
+  own Requirement 1 (the zero-new-code `--hidden-import=gribapi` verification), not with building
+  the repair loop directly. The PRD's own Open Questions section (narrow pygrib-only fix vs. a
+  general conda-native-DLL pattern-matcher) also needs a maintainer call before implementation
+  proceeds past that first verification step -- see `docs/open-questions.md`.
+

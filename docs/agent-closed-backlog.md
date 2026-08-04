@@ -1160,6 +1160,75 @@ this belongs to).
    and non-gating (`cache` lane, `continue-on-error`) in the interim, so no CI lane that gates PR
    merges is affected.
 
+### Item 23 (closed 2026-08-04)
+
+- **A genuine (non-test) conda-create failure during a REQ-009 cascade re-entry did not restore
+  the previous working build via `HP_CASCADE_SAVED_PY`, unlike every other cascade-target
+  failure.** Found via a CodeRabbit review finding on PR #412, verified by reading the source
+  directly. `:try_conda_create`'s own failure label (`:conda_create_failed`) does NOT hard-fail
+  immediately -- it first calls `:handle_conda_failure`, the same linear embed/venv/system
+  fallback chain the ORIGINAL (non-cascade) conda-create failure path already relies on; if any
+  of those tiers succeeds, `HP_ENV_READY` is set and control correctly `goto
+  :after_env_mode_selection`. Only when `:handle_conda_failure` ALSO exhausts every tier does
+  `:conda_create_failed` fall through to `call :die`, and only then did the actual bug surface:
+  `:die` returns via `exit /b` (subroutine return, not a process halt; see
+  `docs/agent-lessons-learned.md`'s `:die` entry), so execution fell straight through past it
+  into `:conda_create_done`, which sets `HP_PY=%CONDA_PREFIX%\python.exe` and checks `if not
+  exist "%HP_PY%"` -- true in this case, so it retried the identical `:handle_conda_failure`
+  chain a second time (redundant, since nothing changed) before a second `call :die`, after which
+  execution again fell through, now carrying a genuinely broken `HP_PY` into whatever code
+  followed. Neither fall-through ever routed through `:after_cascade_decision` (the label every
+  OTHER cascade-target failure -- `:cascade_conda_unavailable`, `:cascade_embed_unavailable`,
+  `:cascade_venv_unavailable`, `:cascade_system_unavailable` -- correctly uses, logging `[WARN]
+  ... unavailable; keeping current build.` and restoring `HP_CASCADE_SAVED_PY` into `HP_PY` so
+  the bootstrap gracefully continues on the PREVIOUS successful build, e.g. uv, if cascading
+  uv-to-conda). `:try_conda_create`'s failure handling had no cascade-context-awareness at all --
+  it behaved identically whether this was the very first creation attempt (where there is no
+  earlier build to restore, so eventually hard-failing is correct) or a `:cascade_from_uv`
+  re-entry (where `HP_CASCADE_SAVED_PY` holds a known-working uv build that never got restored).
+  **Fixed** by inserting `if defined HP_CASCADE_SAVED_PY goto :cascade_conda_create_failed`
+  immediately before both `call :die` fall-through sites (`:conda_create_failed`'s own line and
+  the companion `python.exe`-missing check inside `:conda_create_done`), and adding a new
+  `:cascade_conda_create_failed` label mirroring the existing sibling template exactly -- logs
+  `[WARN] REQ-009: cascade target conda create failed; keeping current build.` and `goto
+  :after_cascade_decision`, deliberately never calling `:die` (that label's own restore logic
+  only works correctly when `HP_BOOTSTRAP_STATE` is left as whatever it already was -- the prior
+  successful build's `ok` -- not overwritten to `error`). `HP_CASCADE_SAVED_PY`-definedness is a
+  safe signal to distinguish "first attempt" (never defined) from "cascade re-entry" (always
+  defined by `:provider_cascade` before dispatching to `:cascade_from_uv`, the only cascade
+  source that can reach `:try_conda_create`).
+  **New regression test, forcing a GENUINE (not `HP_TEST_FORCE_CONDA_FAIL`-style simulated)
+  failure through the real create/retry code path** -- `tests/selfapps_cascade_conda_create_fail.
+  ps1` (uv lane, non-gating, `self.cascade.conda_create_fail`; see `docs/agent-ndjson.md` for the
+  full assertion list). New hook `HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL=1` (distinct from the
+  existing `HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL`, which only fails the first attempt then
+  clears itself so the retry can genuinely succeed) persists through both the initial attempt and
+  the retry, so `:conda_create_failed` is reached deterministically without depending on real
+  network conditions. Combined with `HP_TEST_FORCE_EMBED_FAIL=1`/`HP_TEST_FORCE_VENV_FAIL=1`/
+  `HP_TEST_SYSCON_ANSWER=N` to exhaust `:handle_conda_failure`'s own fallback chain so the fix's
+  new check is actually reached. Placement is load-bearing: wired into `batch-check.yml`
+  immediately AFTER `selfapps_cascade.ps1`'s own step so Miniconda is already cached from that
+  step (mirrors `self.conda.bothfail`'s own placement note, opposite direction). `:hp_test_conda_
+  fail` (the existing `HP_TEST_FORCE_CONDA_FAIL` test hook) has the identical fallthrough shape
+  and reaches the same `:after_env_mode_selection` clear, but is scoped to the FIRST-attempt path
+  only -- it was never evidence this gap was already covered by existing tests.
+  **Follow-up, same PR (#413), from a CodeRabbit review finding**: the original regression test
+  above only exercised `:conda_create_failed`'s own call site (create itself genuinely fails). The
+  fix's OTHER call site -- the `if not exist "%HP_PY%"` check inside `:conda_create_done`, reached
+  when conda create genuinely SUCCEEDS but the resulting environment is somehow missing
+  `python.exe` -- had zero coverage. Closed by adding a `missing_python` scenario
+  (`CASCADE_CCF_SCENARIO` env var) to the SAME test file, via a new hook
+  `HP_TEST_FORCE_CONDA_MISSING_PYTHON=1` (`run_setup.bat`, `:conda_create_done`) that lets the real
+  create succeed and then deletes the `python.exe` it just produced -- genuine success followed by
+  a genuinely missing interpreter, not a simulated create failure. Wired as a second CI step
+  (`CASCADE_CCF_SCENARIO: missing_python`) immediately after the original, same placement
+  constraint (Miniconda already cached from `selfapps_cascade.ps1`). See `docs/agent-ndjson.md`'s
+  updated `self.cascade.conda_create_fail` entry for the full two-scenario assertion list,
+  including the message-occurrence-COUNT technique used to distinguish "handle_conda_failure
+  logged the failure once, as expected" from "the old :die fall-through regression is back"
+  (both scenarios' own failure messages are logged once by `:handle_conda_failure` regardless of
+  outcome; a second occurrence would come only from `:die`'s own separate echo).
+
 ### Item 13 (closed 2026-08-01)
 
 - **`self.warn.longpath`'s own real CI run showed an INCONCLUSIVE result (`ranBootstrap:false`),
