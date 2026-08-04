@@ -48,6 +48,7 @@ self.exe.hidden_import, self.exe.hidden_import.exhaust,
 self.preflight.syntax,
 self.cascade.detect, self.cascade.consent, self.cascade.timed,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
+self.cascade.conda_create_fail (uv lane only -- selfapps_cascade_conda_create_fail.ps1; non-gating),
 self.layered_e2e.chain (cache lane only -- selfapps_layered_e2e.ps1; non-gating),
 self.conda.bothfail (uv lane only -- selfapps_conda_bothfail.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
@@ -474,6 +475,54 @@ CI-ordering assumption above needs to soak before considering gating-lane promot
 
 ```
 self.conda.bothfail
+```
+
+## selfapps-cascade-conda-create-fail NDJSON rows (selfapps_cascade_conda_create_fail.ps1, uv lane only, non-gating)
+
+Closes CLAUDE.md Active Backlog Item 23: a genuine (non-`HP_TEST_FORCE_CONDA_FAIL`-simulated)
+conda-create failure reached during a REQ-009 cascade re-entry (`:cascade_from_uv ->
+:try_conda_create`) previously fell through `:die` into `:conda_create_done`'s own success-path
+continuation instead of routing through `:after_cascade_decision` like every other cascade-target
+failure -- see `docs/agent-interconnect.md`'s "Provider cascade execution re-enters env-create"
+and `CLAUDE.md`'s Item 23 entry for the full trace. Fixed by adding `if defined
+HP_CASCADE_SAVED_PY goto :cascade_conda_create_failed` at both `:conda_create_failed` fall-through
+sites, plus a new `:cascade_conda_create_failed` label mirroring the existing
+`:cascade_conda_unavailable` / `:cascade_embed_unavailable` / `:cascade_venv_unavailable` /
+`:cascade_system_unavailable` template (log a `[WARN] ... keeping current build.` line, restore
+`HP_CASCADE_SAVED_PY` via `:after_cascade_decision`, deliberately never call `:die`).
+
+New hook `HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL=1` (`run_setup.bat`, `:try_conda_create`) forces a
+GENUINE failure through the real create/retry code path -- unlike the existing
+`HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL` (fails the first attempt only, then clears itself so the
+retry can genuinely succeed), this new flag persists through the retry too, so both the initial
+attempt and the retry fail deterministically without depending on real network conditions.
+`HP_TEST_FORCE_EMBED_FAIL=1`, `HP_TEST_FORCE_VENV_FAIL=1`, and `HP_TEST_SYSCON_ANSWER=N` exhaust
+`:handle_conda_failure`'s own embed/venv/system fallback chain deterministically, so `HP_ENV_READY`
+never gets set and the fix's own new check is actually reached rather than short-circuited by an
+unrelated fallback tier succeeding. The app imports a nonexistent module
+(`fake_pkg_cascade_xyz`, same trick as `selfapps_cascade.ps1`) so warnfix genuinely fails to
+resolve it under uv, marking a cascade candidate and driving the uv-to-conda cascade with
+`HP_TEST_CASCADE_ANSWER=Y`.
+
+**Placement is load-bearing.** Must run immediately AFTER `selfapps_cascade.ps1`'s own step
+(`self.cascade.exec`) in the same `uv`-lane job -- that step already downloads and installs
+Miniconda for real, so by the time this step runs `CONDA_BAT` is already cached and
+`:cascade_acquire_conda`'s own real-install branch is skipped. Same CI-ordering reasoning as
+`selfapps_conda_bothfail.ps1`'s own placement note above, just the opposite direction: that test
+needs Miniconda NOT yet installed, this one wants it already installed.
+
+Asserts: the cascade reached conda exactly once (`REQ-009: cascading provider uv to conda`, single
+occurrence against `~setup.log` alone, matching `self.cascade.exec`'s own single-source-for-counts
+convention), both the simulated initial-attempt and retry-attempt failures genuinely engaged, the
+new `[WARN] REQ-009: cascade target conda create failed; keeping current build.` line fired, the
+OLD `[ERROR] conda env create failed.` hard-failure message never printed, the bootstrap exited 0,
+and -- the key behavioral proof of the fix -- `~bootstrap.status.json` reads `state=ok` (not
+`error`) since `HP_BOOTSTRAP_STATE`'s own default is `ok` at this point in the run and
+`:after_cascade_decision` preserves whatever it already was. Non-gating: depends on
+`selfapps_cascade.ps1` having already run in the same job.
+
+```
+self.cascade.conda_create_fail
 ```
 
 ## selfapps-pyinstaller-fail NDJSON rows (selfapps_pyinstaller_fail.ps1, real/conda-full lanes)

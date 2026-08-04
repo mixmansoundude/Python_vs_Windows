@@ -768,6 +768,19 @@ jobs:
         run: |
           & tests\selfapps_cascade.ps1
 
+      # CLAUDE.md Active Backlog Item 23: a genuine conda-create failure during a REQ-009 cascade
+      # re-entry previously fell through :die instead of gracefully keeping the previous working
+      # uv build. Must run AFTER the step directly above (selfapps_cascade.ps1) so Miniconda is
+      # already installed/cached from that step -- otherwise :cascade_acquire_conda would need a
+      # real Miniconda download of its own, same CI-ordering reasoning as
+      # selfapps_conda_bothfail.ps1's own placement note, just the opposite direction.
+      - name: "Self-test: cascade-reentry conda-create failure keeps previous build (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_cascade_conda_create_fail.ps1
+
       # docs/agent-closed-backlog.md's Item 22: a real, non-simulated end-to-end test proving the
       # uv-to-conda cascade, warnfix repair (both success and failure in the same round), and
       # --hidden-import auto-recovery all fire for real in ONE run -- no HP_TEST_FORCE_*/

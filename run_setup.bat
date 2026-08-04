@@ -895,6 +895,14 @@ rem purpose"): the create call + %ERRORLEVEL% capture is never nested inside a p
 rem if/else block, so cmd's parse-time %VAR% expansion cannot freeze it to a stale value.
 if exist "~conda_create.tmp" del "~conda_create.tmp" >nul 2>&1
 if "%HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL%"=="1" goto :conda_create_test_network_fail
+rem [TEST] HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL: like HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL,
+rem but genuinely fails BOTH the initial attempt and the retry (not cleared after the first
+rem simulated failure -- see the retry call site below), so :conda_create_failed is reached
+rem through the real create/retry code path instead of the :hp_test_conda_fail bypass. Exists
+rem to test CLAUDE.md Active Backlog Item 23's cascade-restore fix, which specifically needs a
+rem genuine (not HP_TEST_FORCE_CONDA_FAIL-style) failure reaching :conda_create_failed during a
+rem cascade re-entry.
+if "%HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL%"=="1" goto :conda_create_test_network_fail
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge > "~conda_create.tmp" 2>&1
 ) else (
@@ -922,12 +930,14 @@ echo Conda environment creation failed -- possible network or repository issue. 
 call :log "[INFO] conda create: transient failure detected; retrying after 15s."
 timeout /t 15 /nobreak >nul 2>&1
 echo Retrying environment creation...
+if "%HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL%"=="1" goto :conda_create_retry_forced_fail
 if "%PYSPEC%"=="" (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 )
 if not errorlevel 1 goto :conda_create_done
+:conda_create_retry_forced_fail
 echo *** Conda environment creation could not complete. This may be a temporary network issue.
 echo *** See log file for details: ~setup.log
 call :log "[WARN] conda create: retry after transient failure also failed."
@@ -935,6 +945,14 @@ call :log "[WARN] conda create: retry after transient failure also failed."
 set "HP_ENV_READY="
 call :handle_conda_failure "[ERROR] conda env create failed."
 if defined HP_ENV_READY goto :after_env_mode_selection
+rem derived requirement: a genuine conda-create failure reached via a REQ-009 cascade re-entry
+rem (HP_CASCADE_SAVED_PY defined, see :provider_cascade) must gracefully keep the previous
+rem working build instead of hard-failing the whole bootstrap, matching every other
+rem cascade-target failure (:cascade_conda_unavailable etc.) -- see CLAUDE.md Active Backlog
+rem Item 23 for the full trace of why this was previously missing. On a genuine first attempt
+rem (no earlier build to fall back to), HP_CASCADE_SAVED_PY is never defined, so this check is a
+rem no-op and the existing hard-failure behavior below is unchanged.
+if defined HP_CASCADE_SAVED_PY goto :cascade_conda_create_failed
 call :die "[ERROR] conda env create failed."
 :conda_create_done
 
@@ -944,6 +962,7 @@ if not exist "%HP_PY%" (
   set "HP_ENV_READY="
   call :handle_conda_failure "[ERROR] python.exe missing from conda environment."
   if defined HP_ENV_READY goto :after_env_mode_selection
+  if defined HP_CASCADE_SAVED_PY goto :cascade_conda_create_failed
   call :die "[ERROR] python.exe missing from conda environment."
 )
 
@@ -1905,6 +1924,15 @@ set "ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%"
 goto :try_conda_create
 :cascade_conda_unavailable
 call :log "[WARN] REQ-009: cascade to conda unavailable (Miniconda not installed); keeping current build."
+goto :after_cascade_decision
+:cascade_conda_create_failed
+rem derived requirement: reached from :conda_create_failed / :conda_create_done (via goto, not
+rem call) when a genuine conda-create failure occurs during THIS cascade re-entry specifically --
+rem see the comment at :conda_create_failed for the full rationale. Deliberately does NOT call
+rem :die: :after_cascade_decision's own "keeping current build" restore only works correctly when
+rem HP_BOOTSTRAP_STATE is left as whatever it already was (the prior successful build's "ok"),
+rem not overwritten to "error" the way :die would.
+call :log "[WARN] REQ-009: cascade target conda create failed; keeping current build."
 goto :after_cascade_decision
 
 :cascade_from_conda

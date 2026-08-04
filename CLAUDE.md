@@ -523,57 +523,6 @@ Once an item is fully resolved it is removed from here entirely and archived (ke
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
 start at 1 and has gaps.
 
-- **Item 23: a genuine (non-test) conda-create failure during a REQ-009 cascade re-entry does
-  not restore the previous working build via `HP_CASCADE_SAVED_PY`, unlike every other
-  cascade-target failure.** Found via a CodeRabbit review finding on PR #412, verified by
-  reading the source directly (not taken on faith; re-verified again while fixing this entry's
-  own citations, which corrected the mechanism description below). `:try_conda_create`'s own
-  failure label (`:conda_create_failed`) does NOT hard-fail immediately -- it first calls
-  `:handle_conda_failure`, the same linear embed/venv/system fallback chain the ORIGINAL
-  (non-cascade) conda-create failure path already relies on; if any of those tiers succeeds,
-  `HP_ENV_READY` is set and control correctly `goto :after_env_mode_selection`. Only when
-  `:handle_conda_failure` ALSO exhausts every tier does `:conda_create_failed` fall through to
-  `call :die`, and only then does the actual bug surface: `:die` returns via `exit /b`
-  (subroutine return, not a process halt; see `docs/agent-lessons-learned.md`'s `:die` entry),
-  so execution falls straight through past it into `:conda_create_done`, which sets
-  `HP_PY=%CONDA_PREFIX%\python.exe` and checks `if not exist "%HP_PY%"` -- true in this case, so
-  it retries the identical `:handle_conda_failure` chain a second time (redundant, since nothing
-  changed) before a second `call :die`, after which execution again falls through, now carrying
-  a genuinely broken `HP_PY` into whatever code follows. Neither fall-through ever routes through
-  `:after_cascade_decision` (the label every OTHER cascade-target failure --
-  `:cascade_conda_unavailable`, `:cascade_embed_unavailable`, `:cascade_venv_unavailable`,
-  `:cascade_system_unavailable` -- correctly uses, logging `[WARN] ... unavailable; keeping
-  current build.` and restoring `HP_CASCADE_SAVED_PY` into `HP_PY` so the bootstrap gracefully
-  continues on the PREVIOUS successful build, e.g. uv, if cascading uv-to-conda). `:try_conda_
-  create`'s failure handling has no cascade-context-awareness at all -- it behaves identically
-  whether this is the very first creation attempt (where there is no earlier build to restore,
-  so eventually hard-failing is correct) or a `:cascade_from_uv` re-entry (where `HP_CASCADE_
-  SAVED_PY` holds a known-working uv build that never gets restored).
-  **Practical impact, tempered but real:** `:die` already sets `HP_BOOTSTRAP_STATE=error`
-  unconditionally as of an earlier fix (see `docs/agent-lessons-learned.md`), so the FINAL
-  `~bootstrap.status.json` should still correctly read `state=error` rather than falsely
-  claiming success -- this is not the same severity as the empty-interpreter-command bug the
-  prior commit fixed. But a genuine, plausibly-transient conda-create failure during a cascade
-  (e.g. a real network blip while acquiring Miniconda on demand for the cascade, distinct from
-  "Miniconda not installed at all" which `:cascade_conda_unavailable` already handles gracefully)
-  now hard-fails the WHOLE bootstrap instead of gracefully keeping the already-working uv build,
-  and burns through the doubled `:handle_conda_failure` retry plus whatever broken-`HP_PY` log
-  noise follows before a terminal point is reached.
-  **Deliberately not fixed in the same commit as the Item 22 companion fix** -- properly fixing
-  this needs `:try_conda_create`'s failure branches to become cascade-context-aware (e.g. check
-  `if defined HP_CASCADE_APPROVED` or an equivalent re-entry signal and route to
-  `:after_cascade_decision`'s "keeping current build" pattern instead of `:die`, but ONLY when
-  there is a genuine earlier build to fall back to -- the first-attempt case must keep failing
-  hard), plus a new regression test that forces a genuine (not `HP_TEST_FORCE_CONDA_FAIL`-style
-  simulated) conda-create failure specifically during a cascade re-entry, which does not
-  currently exist. This is real design work, not a quick fix -- scoping it into the same commit
-  as the cStringIO warnfix-filter fix would have risked a rushed, undertested change to
-  already-sensitive cascade logic. `:hp_test_conda_fail` (the existing `HP_TEST_FORCE_CONDA_FAIL`
-  test hook) has the identical fallthrough shape and reaches the same `:after_env_mode_selection`
-  clear, but is scoped to the FIRST-attempt path only (its only call site is the top of
-  `:try_conda_create`, before any cascade re-entry could reach it) -- it is NOT itself evidence
-  this gap is already covered by existing tests.
-
 - **Item 24: PyInstaller does not bundle `pygrib`'s native `eccodes.dll` dependency under the
   conda provider, so the frozen EXE fails at runtime even though the build itself succeeds.**
   Found via `self.layered_e2e.chain`'s real CI evidence (run `30875520181`, cache-lane job
