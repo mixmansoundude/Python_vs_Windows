@@ -50,6 +50,7 @@ self.cascade.detect, self.cascade.consent, self.cascade.timed,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
 self.cascade.conda_create_fail (uv lane only -- selfapps_cascade_conda_create_fail.ps1; non-gating),
 self.layered_e2e.chain (cache lane only -- selfapps_layered_e2e.ps1; non-gating),
+self.gribapi_hook_probe.hidden_import (conda-full lane only -- selfapps_gribapi_hook_probe.ps1; non-gating),
 self.conda.bothfail (uv lane only -- selfapps_conda_bothfail.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
 self.exe.tiera.hidden_skip (uv lane only -- selfapps_nuitka_tiera_hidden_skip.ps1; non-gating),
@@ -441,6 +442,67 @@ grouped, no ordering dependency between them -- different lanes).
 
 ```
 self.layered_e2e.chain
+```
+
+## selfapps-gribapi-hook-probe NDJSON rows (selfapps_gribapi_hook_probe.ps1, conda-full lane only, non-gating)
+
+CLAUDE.md Active Backlog Item 24 / `docs/prd-conda-native-dll-bundling.md` Requirement 1: a
+one-off empirical experiment testing whether forcing `--hidden-import=gribapi` on a `pygrib`
+PyInstaller build makes `pyinstaller-hooks-contrib`'s existing `hook-gribapi.py` bundle
+`eccodes.dll` for free, without building any new bootstrapper mechanism. See the PRD's Finding 1
+for the full research trail on why this is now expected to come back negative (pygrib and gribapi
+are architecturally independent bindings to the same C library) but is still worth the real CI
+evidence per explicit owner instruction.
+
+**Deliberately standalone -- does NOT invoke `run_setup.bat` or the REQ-009 provider cascade at
+all.** Creates its own scratch conda env directly (`gribapi_probe_env`, removed after every exit
+path including early ones, per a CodeRabbit review finding that the original version leaked it on
+one guard) with `python pygrib eccodes python-eccodes pyinstaller pip --override-channels -c
+conda-forge`, then runs PyInstaller twice from that env's own interpreter against a trivial
+`import pygrib` stub: once as a control (no extra flags), once with `--hidden-import gribapi`
+added. **Builds use `--onedir`, not `--onefile`** (fixed from the first version, another
+CodeRabbit finding) -- `--onefile` embeds bundled support files, DLLs included, inside the
+compressed EXE itself, extracting them only to a runtime-only `_MEIxxxxxx` temp directory that
+never touches disk under the dist path, which would have made the DLL-bundling scan structurally
+unable to ever detect a positive result regardless of whether the hidden-import worked. `--onedir`
+writes bundled files under `dist_$Variant\probe_$Variant\`, where the scan can actually see them.
+For each build, checks whether the `could not resolve 'eccodes.dll'` build-time warning still
+appears, whether any `eccodes*.dll` landed anywhere under that directory (recursive --
+`hook-gribapi.py`'s own directory-preservation logic nests it under an `eccodes` subfolder on
+Windows, not the dist root), and whether the resulting EXE actually runs clean (exits 0 and prints
+its own success token, as opposed to failing with `DLL load failed`).
+
+**`pass` reflects whether the experiment ran to completion and produced conclusive evidence, NOT
+whether the hidden-import "worked" -- there is no `pass`/`fail` on the actual research question
+itself, only a recorded finding.** `details.hiddenImportHelped` (`true`/`false`/`null`) is the
+actual answer, determined from `bundledDll` (a structural, build-output fact -- did the DLL
+actually land on disk), NOT from `ranClean` (a runtime-behavior fact kept only as supplementary
+per-variant evidence) -- a review finding correctly pointed out these are two distinct questions
+that a runtime-only signal would have conflated. `null` when the experiment was inconclusive
+(either variant's observation was incomplete), otherwise `true` only if the control build did NOT
+bundle the DLL AND the experiment build did. An "observation" requires BOTH the build itself
+(launched, completed within its 600s budget, output fully captured, exited 0) AND the resulting
+EXE (launched, completed within its 30s budget, output fully captured) to be complete --
+`buildObservationComplete`/`observationComplete` are both explicit, checkable per-variant facts
+(not inferred from `dist\*.exe` merely existing on disk) precisely so a timed-out or partially-
+written build/run can never masquerade as real evidence. `pass=false` covers a genuine infra
+failure (conda env create failed, or python.exe missing from the created env) that prevented the
+probe from running at all -- distinct from `pass=true, hiddenImportHelped=null`, which means the
+probe ran but the builds themselves were inconclusive.
+
+Lane: `conda-full` only, gated on `steps.conda_avail.outputs.available == 'true'` (same gate the
+27 other conda-full-only self-tests already use) -- guarantees real Miniconda is present without
+any step-ordering placement constraint. Non-gating in practice, though NOT via `continue-on-error`
+alone (a review finding on this PR's first commit correctly caught that this does not, by itself,
+exempt a row from `batch-check.yml`'s separate NDJSON-verdict enforcement step, which fails the
+`conda-full` lane job on any raw `pass=false` regardless of which step emitted it) -- every exit
+path in the test script emits `pass=true` unconditionally, with `skip`/`details.conclusive`
+carrying the real outcome instead. Exploratory by design: the conda-forge solve for
+`pygrib`+`eccodes`+`python-eccodes`+`pyinstaller` together in one env is unproven as of this
+test's first landing.
+
+```
+self.gribapi_hook_probe.hidden_import
 ```
 
 ## selfapps-conda-bothfail NDJSON rows (selfapps_conda_bothfail.ps1, uv lane only, non-gating)
