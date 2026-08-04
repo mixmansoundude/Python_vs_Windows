@@ -393,9 +393,16 @@ $pipreqsWarnfixEngaged = ($pipreqsFailLines | Where-Object { $_ -like '*rebuild 
 # derived requirement: `six` is recovered either by warnfix's own repair loop OR by REQ-005.12's
 # autopep723 discovery merge finding it before the build ever runs (see the comment block above --
 # both are legitimate, and which one actually fires is an implementation detail, not the property
-# under test). "added: six" is the exact line REQ-005.5's diff-tracking writes to the bootstrap log
-# when the discovery merge adds a package pipreqs itself never declared.
-$pipreqsDiscoveryRecovered = ($pipreqsFailLines | Where-Object { $_ -like '*added: six*' }).Count -gt 0
+# under test). "added: six" comes from tools/autopep_merge.py's own stdout -- run_setup.bat's
+# REQ-005.12 call site redirects that helper's stdout directly into %LOG% (">> "%LOG%" 2>&1"),
+# NOT the parent process's own stdout, so this line is written to ~setup.log ONLY and never
+# reaches ~pipreqs_version_fail_bootstrap.log (the outer `cmd /c ... > log 2>&1` capture
+# $pipreqsFailLines is read from above) -- unlike :log-emitted lines (e.g. warnfixEngaged's own
+# check), which dual-write to both streams. Must be read from ~setup.log specifically.
+$pipreqsSetupLogPath = Join-Path $pipreqsFailDir '~setup.log'
+$pipreqsSetupLines = @()
+if (Test-Path $pipreqsSetupLogPath) { $pipreqsSetupLines = Get-Content -LiteralPath $pipreqsSetupLogPath -Encoding ASCII }
+$pipreqsDiscoveryRecovered = ($pipreqsSetupLines | Where-Object { $_ -like '*added: six*' }).Count -gt 0
 $pipreqsRecovered = $pipreqsWarnfixEngaged -or $pipreqsDiscoveryRecovered
 # derived requirement: the app's own stdout is never echoed into run_setup.bat's own console/log
 # (both the EXE-smoke path at run_setup.bat:2783 and the no-EXE interpreter path at :2616 redirect
