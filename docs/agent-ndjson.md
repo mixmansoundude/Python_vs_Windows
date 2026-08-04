@@ -379,8 +379,8 @@ self.cascade.timed
 
 Implements `docs/agent-closed-backlog.md`'s Item 22 (closed 2026-08-03, confirmed by real CI run
 `30779274430`, cache-lane job `91580880846` -- passed on its first real execution, no iteration
-needed): a real, non-simulated end-to-end test proving three
-distinct mechanisms all fire for real in ONE run, replacing Part VII Scenario 33's
+needed): a real, non-simulated end-to-end test originally proving three
+distinct mechanisms fire for real in ONE run, replacing Part VII Scenario 33's
 `[Extrapolated Branch]` splice with genuine evidence -- the uv-to-conda provider cascade
 (REQ-009/REQ-005.10 slice 3), warnfix repair (REQ-007, both a genuine success AND a genuine
 failure in the same repair round), and `--hidden-import` auto-recovery (REQ-016 Slice 2). No
@@ -408,6 +408,17 @@ defeating `:warnfix_cascade_detect`'s Signal B (a REAL recorded install failure,
 top-level import name IS its own correct PyPI/conda-forge package name (no namespace
 indirection, no decoy package), so this same trap cannot occur. See `docs/agent-closed-backlog.md`'s
 Item 22 for the full research trail.
+
+**Extended 2026-08-04 with a 4th mechanism (CLAUDE.md Active Backlog Item 24,
+`docs/prd-conda-native-dll-bundling.md`): the conda native-DLL bundling repair loop
+(`:dll_bundle_recover`).** `pygrib`'s conda-forge build genuinely triggers the exact
+`eccodes.dll`-not-bundled failure this loop exists to repair, so this same test (no new flags,
+no new fixtures) is also this loop's Requirement 4 regression test -- see
+`docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the full
+mechanism trace. `$mech4Pass` (`dllWarningSeen`/`dllBundling`/`dllBundleComplete`) is now required
+for `$chainPass`, alongside the original three mechanisms -- this is the acceptance criterion that
+should finally flip `chainPass` to `True` for the first time. NOT YET CONFIRMED in real CI as of
+this note (see CLAUDE.md's Item 24 entry for current status).
 
 Asserts, mostly against `$combined` (the bootstrap stdout log plus `~setup.log`, concatenated) --
 except the exact cascade COUNT (`$uvToConda`) and the warnfix-round evidence (`$warnfixRoundCount`/

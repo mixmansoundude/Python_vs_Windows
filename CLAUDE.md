@@ -543,22 +543,38 @@ start at 1 and has gaps.
   though the two mechanisms it was originally designed to test (REQ-009 cascade, warnfix
   success/failure) now both genuinely pass. The test is `cache`-lane-only and non-gating
   (`continue-on-error`), so this does not block any lane that gates PR merges.
-  **Full PRD now exists at `docs/prd-conda-native-dll-bundling.md`** (drafted 2026-08-04, brought
-  forward the same day per owner instruction -- research substantially de-risked since the original
-  "not investigated further yet" note above): confirmed `hook-gribapi.py`'s real source
-  (`_pyinstaller_hooks_contrib/stdhooks/hook-gribapi.py`) and that `pygrib`/`gribapi` are
-  architecturally independent bindings to the same C library, so the "does an existing upstream
-  hook already solve this for free" question is now assessed as LIKELY negative (not just
-  unverified) -- still being verified empirically via a small, isolated CI-only experiment PR
-  before the larger repair loop is built (see the PRD's Requirement 1). The actual fix direction:
-  a reactive, bounded repair loop mirroring `:hidden_import_recover`'s proven shape (see
-  `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay STRICT" entry), gated
-  to the conda provider for its actual `--add-binary`/DLL-glob action, with detection kept
-  provider-agnostic. Must also carry the same `HP_NUITKA_FALLBACK_USED` early-exit guard
-  `:hidden_import_recover` already has (confirmed via the PRD's Finding 6) -- PyInstaller-specific
-  repair flags have no Nuitka equivalent wired up. Whether this is a `pygrib`-specific quirk or a
-  broader gap is the PRD's own explicitly-flagged open question (narrow vs. general repair loop
-  scope, see `docs/open-questions.md`) -- not yet decided.
+  **Full PRD at `docs/prd-conda-native-dll-bundling.md`.** Requirement 1's own CI-only experiment
+  (`tests/selfapps_gribapi_hook_probe.ps1`, PR #415, merged 2026-08-04) empirically confirmed the
+  "does an existing upstream hook already solve this for free" question negative: forcing
+  `--hidden-import=gribapi` did NOT make `hook-gribapi.py` bundle `eccodes.dll` for a pygrib-only
+  build (`self.gribapi_hook_probe.hidden_import`, `details.conclusive=true`,
+  `details.hiddenImportHelped=false` -- both the control and forced-hidden-import builds showed
+  identical `bundledDll=false`/`exeExit=1`/`dllLoadFailed=true`), matching the PRD's own updated
+  Finding 1 expectation (`pygrib`/`gribapi` are architecturally independent bindings to the same C
+  library). **Requirements 2-6 now implemented** (this session, same day): `:dll_bundle_recover` in
+  `run_setup.bat` (new subroutine, called from `:run_entry_smoke` right before `:run_exe_smokerun`)
+  reacts to PyInstaller's own build-time `WARNING: Library not found: could not resolve 'X.dll'`
+  line (Requirement 2's chosen design -- build-time, not runtime, to skip a guaranteed-failing
+  smoke-test cycle), mirrors `:hidden_import_recover`'s bounded-iteration/tried-list shape
+  (Requirement 3, 3-iteration cap), is gated to `HP_ENV_MODE=conda` for the actual
+  `--add-binary`/`Library\bin` glob action (Requirement 3), carries the identical
+  `HP_NUITKA_FALLBACK_USED` early-exit guard `:hidden_import_recover` already has (Requirement 6),
+  and is built GENERAL rather than `eccodes`-hardcoded (see `docs/open-questions.md`'s former item
+  1, now resolved below) -- the new `tools/dll_bundle_scan.py` (`HP_DLL_BUNDLE_SCAN` payload)
+  parses whatever DLL name PyInstaller's own warning names via regex, not a fixed string, and
+  double-gates on the DLL actually existing under the conda env's `Library\bin` (recursively, since
+  `hook-gribapi.py` itself nests `eccodes.dll` under a package-named subfolder there on Windows).
+  `tests/test_dll_bundle_scan.py` (24 tests) covers the warning parse, the tried-list guard, the
+  double-gate, the byte-offset log-tail read (so a stale warning from an earlier run in the same
+  persistent `~setup.log` is never re-detected), and the embedded-payload sync.
+  **Requirement 4 (regression test) extended `tests/selfapps_layered_e2e.ps1`** with a 4th
+  mechanism (`mech4Pass`, requiring `dllWarningSeen`/`dllBundling`/`dllBundleComplete`) alongside
+  the three it already proved -- this is the acceptance criterion that should finally flip
+  `chainPass` to `True` for the first time. **NOT YET CONFIRMED in real CI** -- this implementation
+  was written and unit-tested locally (no Windows/conda/pygrib available in this sandbox); it needs
+  a real `cache`-lane run of `self.layered_e2e.chain` to confirm `mech4Pass`/`chainPass` actually
+  go green before this item can be considered closed. Do not close this item until that real CI
+  confirmation lands.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

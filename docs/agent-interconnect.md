@@ -130,6 +130,81 @@ than PyInstaller should set an analogous marker and extend this guard to check i
 
 ---
 
+## Conda native-DLL bundling repair loop (`:dll_bundle_recover`, CLAUDE.md Item 24) and its two siblings
+
+**Touch any of the three PyInstaller repair loops (`:dll_bundle_recover`, `:hidden_import_recover`,
+the warnfix per-module rebuild), must understand how they chain.** `:dll_bundle_recover` (new,
+`docs/prd-conda-native-dll-bundling.md`) repairs a DIFFERENT failure class than
+`:hidden_import_recover`: a conda-installed native extension's own compiled `.pyd` depends on a
+shared DLL under the env's `Library\bin` (conda's convention, e.g. `eccodes.dll` for `pygrib`) that
+PyInstaller's static analysis bundles the `.pyd` for but never discovers the DLL dependency of --
+this is a MISSING-NATIVE-LIBRARY failure, not a missing-Python-module one, so
+`:hidden_import_recover`'s own strict `ModuleNotFoundError`-only gate correctly never fires for it
+(see "--hidden-import auto-recovery must stay STRICT" in `docs/agent-lessons-learned.md`).
+
+**Detects at BUILD time, not runtime -- the one structural difference from `:hidden_import_recover`
+(Requirement 2's own design choice, `docs/prd-conda-native-dll-bundling.md` Finding 5).**
+`:hidden_import_recover` has no earlier signal than the runtime `ModuleNotFoundError` (PyInstaller's
+static analysis cannot tell whether an installed module will actually be imported at runtime), so
+it must re-run the EXE to detect anything. This failure class announces itself immediately after
+the build, in the build log itself (`WARNING: Library not found: could not resolve 'X.dll',
+dependency of '...'.`) -- reacting to that build-time line (`:dll_bundle_recover` is called from
+`:run_entry_smoke` right before `:run_exe_smokerun`, i.e. BEFORE the smoke run rather than after)
+skips one guaranteed-failing verification cycle a runtime-detection design would otherwise waste.
+The `HP_LOG_SIZE_BEFORE` byte-offset snapshot (taken right before the fresh-build attempt begins)
+is what makes this safe against `%LOG%`'s own persistence across runs in the same app directory --
+without it, a stale DLL warning from an EARLIER run could be re-detected and re-"fixed" for no
+reason. `tools/dll_bundle_scan.py` (`HP_DLL_BUNDLE_SCAN` payload) is the scanning helper, mirroring
+`~hidden_import_scan.py`'s shape (a pure `read_tail`/`next_dll_target`/`locate_dll`/`main` module,
+unit-tested in `tests/test_dll_bundle_scan.py`) but reading a byte-offset log slice instead of a
+captured EXE stderr file.
+
+**Built GENERAL, not hardcoded to `eccodes.dll`** (resolved `docs/open-questions.md`'s former
+narrow-vs-general question, 2026-08-04): `next_dll_target()` parses whatever DLL name PyInstaller's
+own warning names via regex, not a fixed string -- the loop's reactive/bounded/iterative shape
+(mirroring `:hidden_import_recover`, 3-iteration cap, tried-list guard) does not actually care
+whether the DLL name is hardcoded or parsed out of the warning text, so building it general cost no
+more than building it narrow would have. Double-gated like its sibling: `locate_dll()` requires the
+named DLL to ACTUALLY exist under the conda env's own `Library\bin` (searched recursively, since
+`hook-gribapi.py` itself nests `eccodes.dll` under a package-named subfolder there on Windows, per
+the PRD's Finding 1) before emitting anything -- a name mentioned in a stale/irrelevant warning that
+isn't really on disk is not something `--add-binary` could fix.
+
+**Gated to `HP_ENV_MODE=conda` for the actual bundling action (Requirement 3), detection stays
+cheap regardless of provider.** `Library\bin` is conda's own shared-DLL convention, meaningless
+under uv/embed/venv/system (those install from PyPI wheels, expected to vendor their own native
+deps) -- with no conda env to search there is nothing this loop could act on even under a real
+warning, so the whole subroutine exits early with `if not "%HP_ENV_MODE%"=="conda" exit /b 0`
+rather than logging a "detected but cannot act" line with no actionable next step.
+
+**Carries the identical `HP_NUITKA_FALLBACK_USED` early-exit guard `:hidden_import_recover` has, for
+the identical reason (Requirement 6).** `--add-binary` is a PyInstaller-specific flag with no
+Nuitka equivalent wired up here; skip (not attempt-and-fail) rather than risk rebuilding a working
+Tier-A EXE via the wrong tool.
+
+**`HP_PYI_DLLBIND` must be threaded into `:hidden_import_recover`'s OWN rebuild command, or a later
+hidden-import repair silently drops an earlier DLL-bundle repair.** Both loops can fire in the same
+build lifecycle (a native-DLL warning AND a separate missing-Python-module runtime failure), and
+`:dll_bundle_recover` always runs first (build-time, before the smoke run that `:hidden_import_
+recover` reacts to). Since `HP_PYI_DLLBIND` is reset only in the same end-of-`:run_entry_smoke`
+trailer as `HP_PYI_EXPAT`/`HP_PYI_COLLECT` (not between the two loops), it survives into
+`:hidden_import_recover`'s own rebuild -- but only because that rebuild's own PyInstaller command
+line explicitly includes `%HP_PYI_DLLBIND%` alongside `%HP_PYI_EXPAT% %HP_PYI_COLLECT%
+%HP_PYI_HIDDEN_IMPORTS%`. Any future repair loop added to this same build lifecycle must thread its
+own accumulated flags through EVERY later rebuild command the same way, or an earlier loop's fix
+gets silently discarded by a later one's rebuild.
+
+**`self.layered_e2e.chain` (`tests/selfapps_layered_e2e.ps1`) is this loop's regression test
+(Requirement 4)**, extended with a 4th mechanism (`mech4Pass`) alongside the three it already
+proved for real (REQ-009 cascade, warnfix repair, hidden-import recovery) -- see that file's own
+header comment for the full mechanism trace. `pygrib`'s conda-forge build genuinely triggers this
+exact native-DLL gap, making `chainPass` flipping to `True` for the first time this loop's own
+acceptance criterion. **Not yet confirmed in real CI as of this section's own writing** -- see
+CLAUDE.md's Item 24 entry for the current confirmation status; do not assume this passes without
+checking a real `cache`-lane run first.
+
+---
+
 ## AV-Safe Build Path requirement 9 (`:offer_optimized_build`) -- a strictly safer sibling of Tier A
 
 **Shares `:try_nuitka_tier_a`'s Nuitka invocation but NOT its "delete first, build second" safety

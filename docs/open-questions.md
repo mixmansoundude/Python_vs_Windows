@@ -9,27 +9,7 @@ changelog-style sections are for.
 
 ---
 
-## 1. Conda native-DLL bundling repair loop: narrow (pygrib/eccodes-only) fix vs. a general pattern-matcher?
-
-Full context: `docs/prd-conda-native-dll-bundling.md` (CLAUDE.md Active Backlog Item 24 -- active
-work as of 2026-08-04, thawed from cold storage; see `docs/agent-cold-storage.md`'s own entry for
-the original shelve-and-thaw reasoning). When this repair loop is eventually built, should it
-hardcode the `eccodes.dll` name/glob (mirroring REQ-007's existing libexpat pattern exactly --
-cheap, directly closes the one known failure), or should it detect ANY `Library not found: could
-not resolve 'X.dll'` PyInstaller warning generically and bundle whatever `X` turns out to be
-(costs more to build/test, but silently covers any future conda-forge package hitting the same gap
-without needing its own dedicated PRD each time)?
-
-The PRD leans toward "build it general is not much extra cost over building it narrow" -- the
-loop's reactive/bounded/iterative shape (mirroring `:hidden_import_recover`) doesn't really care
-whether the DLL name is hardcoded or parsed out of the warning text -- but this is exactly the
-kind of proportionality judgment `docs/prd-av-safe-build-path.md`'s own "Notes from Claude"
-section on pin-generalization warns against an agent deciding unilaterally. Needs the
-maintainer's call, and only once the PRD's own Requirement 1 (verifying whether
-`pyinstaller-hooks-contrib`'s existing `hook-gribapi.py` already solves this for free) has been
-checked first -- that verification could make this whole question moot for the pygrib case.
-
-## 2. Should the post-flight caveat panel surface a DLL-specific hint once the new repair loop's own detection signal exists?
+## 1. Should the post-flight caveat panel surface a DLL-specific hint once the new repair loop's own detection signal exists?
 
 README.md's REQ-016 spec (confirmed current, correctly implemented today) already guarantees the
 post-flight briefing always shows the direct interpreter-run command regardless of EXE
@@ -68,6 +48,11 @@ Any eventual wording change must model these as distinct states (or at minimum g
 "attempted" language on a real "repair was attempted" flag, not just "detection fired"), not
 collapse them into one caveat sentence.
 
-Not urgent -- naturally sequenced after the repair loop itself exists (Item 24's Requirement 3),
-not before. Flagged now so it isn't lost, and so Item 24's eventual implementation considers it
-alongside Requirement 5's documentation pass rather than as an afterthought.
+**Update 2026-08-04: the repair loop itself now exists** (`:dll_bundle_recover` in
+`run_setup.bat`, CLAUDE.md Item 24), so this question is no longer blocked on a future
+mechanism -- the three states above map directly onto real, already-emitted log lines
+(`[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: ...` for attempted, `[REPAIR][DLL_BUNDLE]
+Native-DLL bundling complete` for attempted-and-succeeded, absence of either for
+detected-but-skipped). Still not urgent enough to implement speculatively ahead of
+`self.layered_e2e.chain`'s own real-CI confirmation that the loop works end-to-end (see Item 24's
+own "NOT YET CONFIRMED in real CI" note) -- revisit once that lands.
