@@ -543,15 +543,22 @@ start at 1 and has gaps.
   though the two mechanisms it was originally designed to test (REQ-009 cascade, warnfix
   success/failure) now both genuinely pass. The test is `cache`-lane-only and non-gating
   (`continue-on-error`), so this does not block any lane that gates PR merges.
-  **Not investigated further yet** -- a real fix likely needs either a `--collect-binaries=pygrib`
-  (or equivalent PyInstaller binary-collection flag) added to the existing `:compute_collect_flags`
-  machinery (currently only handles `--collect-submodules` for a curated set: sklearn, matplotlib,
-  scipy, plotly -- see `docs/agent-lessons-learned.md`'s "Pre-build --collect-submodules must be
-  DOUBLE-gated" entry for that mechanism's shape), or an explicit post-build DLL-copy step scoped
-  to conda-provided native dependencies. Whether this is a `pygrib`-specific quirk or a broader gap
-  affecting any conda-forge package with a native DLL dependency PyInstaller can't trace is not yet
-  known -- worth checking against another conda-forge package with a similar native-library
-  dependency before assuming a `pygrib`-specific fix is sufficient.
+  **Full PRD now exists at `docs/prd-conda-native-dll-bundling.md`** (drafted 2026-08-04, brought
+  forward the same day per owner instruction -- research substantially de-risked since the original
+  "not investigated further yet" note above): confirmed `hook-gribapi.py`'s real source
+  (`_pyinstaller_hooks_contrib/stdhooks/hook-gribapi.py`) and that `pygrib`/`gribapi` are
+  architecturally independent bindings to the same C library, so the "does an existing upstream
+  hook already solve this for free" question is now assessed as LIKELY negative (not just
+  unverified) -- still being verified empirically via a small, isolated CI-only experiment PR
+  before the larger repair loop is built (see the PRD's Requirement 1). The actual fix direction:
+  a reactive, bounded repair loop mirroring `:hidden_import_recover`'s proven shape (see
+  `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay STRICT" entry), gated
+  to the conda provider for its actual `--add-binary`/DLL-glob action, with detection kept
+  provider-agnostic. Must also carry the same `HP_NUITKA_FALLBACK_USED` early-exit guard
+  `:hidden_import_recover` already has (confirmed via the PRD's Finding 6) -- PyInstaller-specific
+  repair flags have no Nuitka equivalent wired up. Whether this is a `pygrib`-specific quirk or a
+  broader gap is the PRD's own explicitly-flagged open question (narrow vs. general repair loop
+  scope, see `docs/open-questions.md`) -- not yet decided.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

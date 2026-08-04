@@ -14,34 +14,47 @@ in cold storage -- same "cheapest option first, reactive not proactive" design p
 
 ## Research Findings
 
-### Finding 1 -- PyInstaller already has SOME upstream machinery for this exact package family; untested whether it actually covers `pygrib`
+### Finding 1 -- `hook-gribapi.py`'s actual source now confirmed; `pygrib` and `gribapi` are architecturally independent bindings, so the "free lunch" is now assessed as UNLIKELY (not just unverified) -- still worth the cheap empirical test
 
-`pyinstaller-hooks-contrib` (already an installed dependency of this repo's build -- confirmed in
-real CI logs as version `2026.6`) ships `hook-gribapi.py`, a standard hook for the `gribapi`
-package -- eccodes's own official Python bindings. Per that project's own changelog, this hook was
-specifically updated "to account for the possibility of bundled eccodes shared library," and a
-companion `findlibs` runtime hook exists and was reworked for eccodes compatibility. PyInstaller's
-own binary-collection machinery is also documented as aware of conda's `Library\bin` convention on
-Windows.
+**Updated 2026-08-04 with the actual hook source and the pygrib/gribapi relationship, both
+confirmed via direct research (not extrapolated).** `pyinstaller-hooks-contrib` (already an
+installed dependency of this repo's build -- confirmed in real CI logs as version `2026.6`) ships
+`hook-gribapi.py` at `_pyinstaller_hooks_contrib/stdhooks/hook-gribapi.py` (no `src/` prefix,
+correcting the original guess below). Its actual mechanism, read directly from source:
+1. Collects `gribapi`'s data files (`collect_data_files('gribapi')` -- header files like
+   `eccodes.h`/`gribapi.h`).
+2. At BUILD TIME, imports `gribapi` in the build environment and queries
+   `gribapi.bindings.library_path` to locate the real eccodes shared library on disk.
+3. Resolves a relative path via `_resolveCtypesImports`; on failure, logs a warning (does not
+   hard-fail the build).
+4. **Has explicit Windows-aware directory-preservation logic** -- calculates a destination
+   relative to the package parent, producing `eccodes.libs` on Linux or `eccodes` on Windows. This
+   directly contradicts an earlier, narrower assumption that the hook's shared-library awareness
+   was "non-Windows only" -- it is not; Windows is a named, handled case in this exact code path.
+5. If the library comes from the separate `eccodeslib` PyPI package (binary wheels for eccodes
+   itself, `>= 2.37.0`), that package is added to hidden imports too, for `findlibs.find()`.
 
-**This does not mean the problem is already solved.** `pygrib` is a *different* PyPI/conda package
-name from `gribapi`, with its own compiled extension (`_pygrib.cp314-win_amd64.pyd`, per the real
-build log this PRD is responding to). PyInstaller hooks trigger on the exact top-level Python
-import PyInstaller's static analysis detects -- if `pygrib`'s own C extension links against
-`eccodes.dll` directly at the OS/linker level, without ever doing `import gribapi` from Python
-code, `hook-gribapi.py` would never fire for a pygrib-only project, regardless of how
-conda-Library\bin-aware that hook actually is. This was NOT independently verified against the
-hook's actual source in this research pass (the sandbox this PRD was written in could not fetch
-`pyinstaller-hooks-contrib`'s repository directly) -- **the single highest-leverage next step,
-cheaper than everything else in this document, is confirming this one way or the other** before
-building any new bootstrapper-side mechanism. Two ways to check, in order of cost:
-1. Add `--hidden-import=gribapi` to the PyInstaller build command for the failing case and see
-   whether that alone makes `hook-gribapi.py` fire and correctly bundle `eccodes.dll` (and its own
-   transitive deps) -- if yes, this problem may not need ANY new bootstrapper mechanism at all,
-   just a hidden-import addition scoped the same way REQ-016's existing loop already works.
-2. Failing that, read `hook-gribapi.py`'s actual source (`pyinstaller-hooks-contrib`'s GitHub repo,
-   `src/_pyinstaller_hooks_contrib/stdhooks/hook-gribapi.py`) to see exactly what it collects and
-   whether it can be reused/imitated for `pygrib` specifically.
+**Why this still likely does not solve pygrib's problem, now confirmed via research into the
+package relationship itself, not just guessed from naming**: `pygrib` (jswhit/pygrib) and
+`gribapi`/`eccodes-python` (ECMWF's official bindings, conda-forge package `python-eccodes`) are
+two INDEPENDENT, unrelated Python bindings to the same underlying `eccodes` C library, from
+different upstream projects -- `pygrib` does not import or depend on `gribapi` at all; it talks to
+`libeccodes`/`eccodes.dll` directly through its own compiled extension. This means `hook-gribapi.py`
+has no reason to ever fire for a pygrib-only project (PyInstaller never sees a `gribapi` import to
+trigger it), and even a forced `--hidden-import=gribapi` would at best bundle an entirely separate,
+unused package -- the hook's own DLL-bundling logic (step 2 above) operates on `gribapi.bindings.
+library_path`, which has no connection to `pygrib`'s own linked `_pygrib.cp314-win_amd64.pyd`
+extension's actual eccodes.dll dependency.
+
+**Still worth the empirical test, per explicit owner instruction to verify via real CI rather than
+rely on analysis alone.** The conda-forge package providing `gribapi` (`python-eccodes`) does build
+for win-64 (confirmed via the feedstock's own CI badge matrix, Python 3.10-3.14), so the experiment
+is genuinely runnable: install `python-eccodes` alongside `pygrib`+`eccodes` in the test conda env,
+force `--hidden-import=gribapi` on the build, and observe whether the resulting EXE's DLL situation
+changes at all. **Updated expectation: likely a clean, informative negative result** (ruling out
+the free lunch with real evidence, closing this specific question for good) rather than the
+originally-hoped-for shortcut -- but a cheap, low-cost, one-CI-run experiment either way, and
+worth running exactly because "likely won't work" is a probability estimate, not a certainty.
 
 ### Finding 2 -- `--collect-binaries=PKG` is the wrong shape for this failure; it does not cross package boundaries
 
@@ -112,6 +125,48 @@ different PyInstaller output stream than the existing `parse_warn.py` handles; r
 reuses `:hidden_import_recover`'s existing scan-and-react shape almost exactly, at the cost of one
 wasted smoke-test cycle per missing DLL.
 
+### Finding 6 -- interaction with the AV-Safe Build Path (Nuitka Tier A / requirement 9 optimized build), confirmed from existing shipped mechanisms
+
+Traced directly against `docs/agent-interconnect.md`'s existing "AV-Safe Build Path Tier A and
+hidden-import auto-recovery" and "requirement 9" sections -- not extrapolated, this repo already
+shipped both mechanisms and their guards:
+
+- **The existing `--hidden-import` auto-recovery loop (`:hidden_import_recover`) explicitly skips
+  itself when `dist\<env>.exe` was built by Nuitka, not PyInstaller** (`HP_NUITKA_FALLBACK_USED`
+  guard, added same-day Tier A shipped -- see `docs/agent-lessons-learned.md`'s "--hidden-import
+  auto-recovery must stay STRICT" entry). Reason: its repair action is a PyInstaller-specific
+  rebuild flag (`--hidden-import=X`); Nuitka has a structurally different, unwired mechanism
+  (`--include-module`/`--follow-import-to`). **The new DLL-bundling repair loop this PRD proposes
+  needs the identical guard, for the identical reason** -- `--add-binary`/`--collect-binaries` are
+  PyInstaller-specific flags with no Nuitka equivalent wired up here. Any implementation MUST check
+  `HP_NUITKA_FALLBACK_USED` (or an equivalent "this dist\<env>.exe was not built by PyInstaller"
+  signal) before attempting a rebuild, mirroring `:hidden_import_recover`'s own early-exit shape --
+  see Requirement 6 below.
+- **Requirement 9's elective "optimized build?" Nuitka upsell (`:offer_optimized_build`) does not
+  "fall back" to PyInstaller on failure -- there is nothing to fall back to, because the original
+  PyInstaller EXE is never touched until success is fully confirmed.** It builds to a distinct temp
+  filename, runs its own internal verify-launch against that temp file, and only on CONFIRMED
+  success does it `move /y` the temp file over `dist\<env>.exe`. Every failure branch (build fails,
+  verify-run fails, or the swap itself fails) routes through the shared `:optbuild_cleanup` label,
+  which deletes only the temp file and leaves the original, already-working PyInstaller EXE
+  completely untouched -- confirmed by `tests/selfapps_optimized_build.ps1`'s `forcefail`/
+  `swapfail` scenarios, which explicitly re-execute the original EXE afterward to prove this. So:
+  if a user's Nuitka-optimized build attempt fails for any reason, the answer is "it just doesn't
+  swap," not "it falls back" -- the distinction matters because there is no active recovery step,
+  just an absence of replacement.
+- **Interesting side observation, not a requirement to chase**: Nuitka's `--standalone` mode uses
+  its own Windows DLL dependency walker, generally understood to be more thorough at discovering
+  native library dependencies than PyInstaller's warn-file-based static analysis. It is plausible
+  (not verified in this research pass) that a user who hits this exact pygrib/eccodes failure under
+  PyInstaller and then accepts the requirement-9 "optimized build?" upsell would find the Nuitka
+  build bundles `eccodes.dll` correctly without this PRD's repair loop ever being needed for that
+  specific run. This does NOT reduce the value of building the loop (Tier 9 is elective, declined
+  by default in CI and not something every user will accept, and the PyInstaller build is still the
+  PRIMARY path this repo's Prime Directive depends on) -- noted here only because it is the same
+  "does an existing mechanism already solve this for free" question Finding 1 asks about
+  `hook-gribapi.py`, just for a different existing mechanism. Not verified; not planned as a
+  dedicated investigation unless this PRD is picked up and the cheap check is worth adding then.
+
 ## Problem Statement
 
 `pygrib`'s conda-forge build genuinely installs and PyInstaller's build genuinely succeeds when the
@@ -159,11 +214,14 @@ cascade, warnfix repair) both now genuinely pass.
 
 ## Requirements (sketch only -- not sequenced into P0/P1 until this is actually picked up)
 
-1. **Verify Finding 1 first, with zero new bootstrapper code.** Manually (or via a scratch CI
-   experiment) add `--hidden-import=gribapi` to a `pygrib` build and observe whether
-   `hook-gribapi.py` already resolves `eccodes.dll` correctly under conda on Windows. If yes, the
-   fix may be as small as extending the EXISTING `--hidden-import` mechanism's own scope (or a
-   small, targeted addition informed by exactly what the hook needs), not a new repair loop at all.
+1. **Verify Finding 1 first, with zero new bootstrapper code, via its own small CI-only PR.** Add
+   `python-eccodes` (the conda-forge package providing `gribapi`, confirmed to build for win-64)
+   alongside `pygrib` in a minimal test build, force `--hidden-import=gribapi`, and observe whether
+   `eccodes.dll` ends up bundled / the EXE runs. Per Finding 1's updated assessment this is now
+   EXPECTED to come back negative (pygrib and gribapi are independent bindings), but run it anyway
+   for real evidence before committing to the larger repair loop -- keep this experiment isolated
+   in its own PR, not bundled with requirement 3's implementation, so a negative result doesn't
+   block on or get entangled with unrelated work.
 2. **Decide build-time vs. runtime detection (Finding 5).** Prototype whichever is cheaper to wire
    given requirement 1's outcome; a build-time detector reuses `parse_warn.py`'s general shape
    (new pattern, same file family) but targets a different PyInstaller output stream (`Library not
@@ -184,6 +242,11 @@ cascade, warnfix repair) both now genuinely pass.
    section analogous to "Tier A and hidden-import auto-recovery" describing how this new loop
    relates to the existing one (touch one, must understand the other, if they end up sharing any
    scan infrastructure).
+6. **`HP_NUITKA_FALLBACK_USED` early-exit guard, mandatory (see Finding 6).** The new repair loop
+   must check this flag and skip (not attempt-and-fail) before any rebuild action, identical in
+   shape to `:hidden_import_recover`'s own guard. No CI test currently exercises a Nuitka-built EXE
+   hitting a native-DLL failure -- if one is added, it should assert the skip fires (mirroring
+   `tests/selfapps_nuitka_tiera_hidden_skip.ps1`'s own regression-test shape for the sibling case).
 
 ## Level Check (explicitly requested by the owner)
 
@@ -217,11 +280,15 @@ toward, rather than diverging from it.
 
 ## Confidence Assessment
 
-**Yellow -- real, well-evidenced problem with a plausible design direction, but the single most
-important fact (does `--hidden-import=gribapi` already solve this via the existing upstream hook)
-is unverified.** The reactive-loop architecture (Finding 4) is sound and directly reuses a proven,
-shipped pattern from this same codebase -- low design risk there. The genuine uncertainty is
-scope: this PRD could describe either "add one hidden-import flag" or "build a new repair
-subsystem," and which one is true depends entirely on Finding 1's still-open verification. Do not
-start implementation without resolving that first -- it changes the size of this work by an order
-of magnitude in either direction.
+**Green-leaning-Yellow (upgraded 2026-08-04 after reading `hook-gribapi.py`'s actual source and
+confirming the pygrib/gribapi package relationship) -- real, well-evidenced problem, sound design
+direction, and the scope question is now a probability estimate rather than a total unknown.** The
+reactive-loop architecture (Finding 4) is sound and directly reuses a proven, shipped pattern from
+this same codebase -- low design risk there. Finding 1's "free lunch" question is no longer
+unverified-in-principle -- it is now assessed as LIKELY negative based on real research (pygrib and
+gribapi are independent bindings to the same C library, confirmed via their respective upstream
+docs), but Requirement 1's cheap CI experiment should still confirm this empirically before ruling
+it out for good, since a probability estimate is not proof. Remaining genuine uncertainty is
+narrower than before: exactly how many transitive native DLLs eccodes pulls in beyond itself
+(hdf5/netcdf/proj were all observed in the same conda env in the original failure), which
+Finding 4's iterative design handles without needing to know the answer up front.

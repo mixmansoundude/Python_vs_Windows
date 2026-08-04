@@ -233,7 +233,27 @@ THEN stop and open/append a PR. One loop = one change set.
       /opt/pwsh/pwsh --version   # -> PowerShell 7.4.6
       ```
       Then use `/opt/pwsh/pwsh -NoLogo -NoProfile -File tools/ps-compileall.ps1` for the syntax sweep.
-    - PowerShell Gallery downloads (PSResourceGet / PSScriptAnalyzer) are still blocked by proxy 403 responses. When linting is required, prefer executing the scripts directly under `pwsh` with realistic environment variables instead of relying on ScriptAnalyzer.
+    - **Correction (2026-08-04): PSGallery is NOT currently blocked** -- `Install-Module -Name PSScriptAnalyzer -Scope CurrentUser` installed cleanly (v1.25.0, real download from
+      powershellgallery.com) in this same sandbox class. The prior "blocked by proxy 403" note was
+      either environment-specific or has since been fixed upstream; re-verify before trusting either
+      claim if this keeps changing. PSScriptAnalyzer is a genuine style/correctness linter for
+      `.ps1`/`.psm1`/`.psd1` files -- functionally different from the AST-parse sweep above (that
+      only proves a file parses; PSScriptAnalyzer flags style/best-practice issues within a file that
+      already parses fine, closer to what `pyflakes` does for Python in CLAUDE.md's sanity sweep).
+      **Not currently wired into the sanity sweep or CI** -- a full run across `tests/`+`tools/`
+      produces real signal buried in heavy repo-specific noise: ~90% of findings come from
+      `PSAvoidUsingWriteHost` and `PSAvoidUsingEmptyCatchBlock`, both of which fire against this
+      repo's own deliberate, established conventions (`Write-Host` for test diagnostic output --
+      never captured into comparison buffers, by design; the shared "swallow an unparseable
+      `~bootstrap.status.json` and let the pass predicate's exact-match handle it" pattern used
+      across 6+ `selfapps_*.ps1` files) plus `PSAvoidUsingPositionalParameters` (a style preference
+      this repo's scripts don't consistently follow). Wiring it in would need a
+      `PSScriptAnalyzerSettings.psd1` excluding at least those three rules first, mirroring how the
+      sanity sweep's own MARKDOWNLINT step is already scoped to MD029 only rather than every
+      markdownlint rule -- not done speculatively ahead of an actual need. When linting IS needed
+      ad hoc, prefer `Import-Module PSScriptAnalyzer; Invoke-ScriptAnalyzer -Path <file>` directly
+      over relying on CI, since CI (CodeRabbit's own review tooling) already surfaces PSScriptAnalyzer
+      findings on PRs independently.
     - After installing `pwsh`, sanity-check modified scripts by invoking them directly. For example, populate temporary directories for `DIAG`/`ARTIFACTS` and run `pwsh -NoLogo -File tools/diag/publish_index.ps1` to catch syntax errors.
     - Use `pwsh -NoLogo -NoProfile -File tools/ps-compileall.ps1` for syntax-only sweeps across `.ps1`/`.psm1`/`.psd1` files when you need a lightweight pre-commit check without PSGallery access.
 - YAML (and GitHub Actions): run `python -m yamllint <file>` (or `actionshub/yamllint@v1`) and `actionlint -oneline` for workflow validation.
@@ -246,6 +266,22 @@ THEN stop and open/append a PR. One loop = one change set.
     - For `.bat/.cmd`, treat `^` as escape and `REM`/`::` as comment starts; avoid over-parsing redirection symbols.
     - For `.ps1`, respect `#` comments and here-strings (@'...'@, @"..."@) when counting delimiters.
     - **When a real bug is found only via a real Windows CI run (not catchable by any local static check that existed at the time), treat "can this become a `check_delimiters.py` heuristic" as a standing question before closing out the fix.** Not every lesson generalizes into a safe, low-false-positive static check -- see docs/agent-lessons-learned.md's "Prefer raw .NET types over Utility-module cmdlets" entry for an example that was deliberately NOT automated (the root cause is scoped to a specific invocation topology under Windows PowerShell 5.1 that a text-level scanner cannot reliably detect; a blanket flag on `Get-FileHash`/`Get-Content`/etc. usage across every `.ps1` file would be mostly false positives, confirmed by grepping the current `tools/*.ps1` files before deciding against it) -- but when a check is both cheap and has zero observed false positives against the real codebase (as with the `rem`-spacing check), add it.
+    - **Blinter** (`pip install blinter`, `tboy1337/Blinter` -- a general-purpose Windows batch-file
+      linter, 147 rules across error/security/warning/performance/style categories; this is what
+      surfaces as CodeRabbit's own automated-review findings against `.bat`/`.cmd` files, e.g. its
+      `SEC016` rule) is functionally DIFFERENT from `check_delimiters.py`, not a duplicate --
+      Blinter is broad, generic batch-linting; `check_delimiters.py` is narrow, repo-specific
+      hazard detection tuned to incidents that have actually bitten this repo. **Investigated
+      2026-08-04, NOT currently wired into the sanity sweep**: running Blinter directly against
+      `run_setup.bat` produces heavy false-positive noise against confirmed-correct patterns --
+      e.g. `E001` ("63 unclosed parenthesis blocks") when `check_delimiters.py` finds zero issues
+      on the same file; `E006` ("undefined variable") flagging every intentional `HP_*`/`PVW_*`
+      scaffolding var this repo deliberately never `set`s (see "Env-var flags are scaffolding" in
+      `docs/agent-lessons-learned.md`); `E030` flagging CORRECT `^>` caret-escaping inside `echo`
+      lines as an error. Blinter supports a `blinter.ini` `enabled_rules`/`disabled_rules` config
+      (same scoping mechanism the sanity sweep already uses for markdownlint's MD029-only pass),
+      so a scoped adoption is plausible in principle, but would need a real per-rule audit across
+      all 147 rules to build a trustworthy repo-specific allowlist first -- not done speculatively.
 
 ## Recurring tooling (do not re-derive these procedures by hand)
 

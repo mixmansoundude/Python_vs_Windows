@@ -114,26 +114,45 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   was correctly ruled out elsewhere (its wheel bundles an ~40 MB SQLite package database, a
   non-starter for a single-file bootstrapper).
 
-- **Conda native-DLL bundling repair loop (CLAUDE.md Active Backlog Item 24 -- pygrib/eccodes and
-  the general case).** Full PRD at `docs/prd-conda-native-dll-bundling.md`: a frozen EXE built
-  under the conda provider can fail at runtime with `ImportError: DLL load failed` when
-  PyInstaller doesn't discover/bundle a native DLL a conda-forge package depends on (confirmed via
-  real CI evidence for `pygrib`'s `eccodes.dll` dependency, `self.layered_e2e.chain`). The PRD
-  lays out a reactive, bounded repair loop mirroring `:hidden_import_recover`'s proven shape (see
-  `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay STRICT" entry) --
-  scan for the DLL-load-failure signature (or PyInstaller's own earlier build-time warning),
-  locate the missing DLL under `%CONDA_PREFIX%\Library\bin`, bundle via `--add-binary`, rebuild,
-  and iterate to catch transitive native deps one at a time. Not pursued now: the single highest-
-  leverage next step (verify whether `pyinstaller-hooks-contrib`'s existing `hook-gribapi.py`
-  already solves this for free via a plain `--hidden-import=gribapi` addition -- Finding 1 in the
-  PRD) is unverified and was not resolvable in the sandbox this PRD was drafted in (no access to
-  fetch `pyinstaller-hooks-contrib`'s source). Building any new mechanism before that verification
-  risks duplicating work an existing upstream hook may already cover.
-  **Trigger to thaw**: the owner explicitly brings this forward as the next active work item (per
-  their own stated intent when requesting this PRD: "I think I will bring it forward soon if level
-  check passes and the current todo is fully closed out") -- at that point, start with the PRD's
-  own Requirement 1 (the zero-new-code `--hidden-import=gribapi` verification), not with building
-  the repair loop directly. The PRD's own Open Questions section (narrow pygrib-only fix vs. a
-  general conda-native-DLL pattern-matcher) also needs a maintainer call before implementation
-  proceeds past that first verification step -- see `docs/open-questions.md`.
+- **Conda native-DLL bundling repair loop (CLAUDE.md Active Backlog Item 24) -- THAWED 2026-08-04,
+  no longer cold-storaged.** The owner explicitly brought this forward the same day (see
+  `docs/prd-conda-native-dll-bundling.md`'s now-updated Finding 1/6 and Confidence Assessment for
+  the research completed since the original draft). Active implementation is now tracked directly
+  under CLAUDE.md's Active Backlog Item 24, not here -- this entry is kept only as a historical
+  record of the original shelve-and-thaw-trigger reasoning; see Item 24 itself for current status.
+
+- **Blinter in the sanity sweep, scoped to a vetted rule subset.** Investigated 2026-08-04 (see
+  AGENTS.md's own Blinter entry for the full false-positive detail). A real, actively-maintained,
+  pip-installable general-purpose batch-file linter (147 rules) -- functionally complementary to
+  `check_delimiters.py`, not a duplicate. Not adopted now: a direct run against `run_setup.bat`
+  produced heavy noise against confirmed-correct, deliberate patterns (flagging intentional
+  `HP_*`/`PVW_*` scaffolding vars as "undefined," correct `^>` caret-escaping as an error, and a
+  false "63 unclosed parenthesis blocks" on a file `check_delimiters.py` already validates clean).
+  **Trigger to thaw**: someone does the actual per-rule audit -- run Blinter with `--output
+  report.json` against the current clean `run_setup.bat`, classify every one of the ~147 rules as
+  reliable-for-this-repo or noisy-for-this-repo, and build a `blinter.ini` `enabled_rules`/
+  `disabled_rules` allowlist that produces ZERO findings against the current, already-clean file
+  before it's trustworthy enough to gate on. Not worth doing speculatively ahead of that audit.
+
+- **PSScriptAnalyzer in the sanity sweep, scoped to a vetted rule subset.** Investigated
+  2026-08-04 (see AGENTS.md's own PSScriptAnalyzer entry, which also corrects a stale "PSGallery
+  blocked by proxy" note this same investigation disproved). A real, genuine style/correctness
+  linter for `.ps1`/`.psm1`/`.psd1` files -- functionally different from the sanity sweep's
+  existing AST-parse sweep (that only proves a file parses; this flags style/best-practice issues
+  in a file that already parses fine). Not adopted now: a full run against `tests/`+`tools/`
+  produced 181 findings, ~90% from three rules that fire against this repo's own deliberate,
+  established conventions (`PSAvoidUsingWriteHost` -- `Write-Host` is the repo's intentional test-
+  diagnostic-output mechanism, never captured into comparison buffers by design;
+  `PSAvoidUsingEmptyCatchBlock` -- the shared "swallow an unparseable `~bootstrap.status.json`"
+  pattern used across 6+ `selfapps_*.ps1` files; `PSAvoidUsingPositionalParameters` -- a style
+  preference this repo's scripts don't consistently follow). The remaining ~10% (5 hits across
+  `PSAvoidUsingInvokeExpression`, `PSPossibleIncorrectComparisonWithNull` x2,
+  `PSAvoidAssignmentToAutomaticVariable` x2) were spot-checked and are minor style nitpicks, not
+  active bugs -- not urgent enough to fix as a drive-by. Somewhat more promising than Blinter (a
+  smaller false-positive surface, concentrated in exactly three well-understood rules rather than
+  spread across many), but the same principle applies. **Trigger to thaw**: someone builds a
+  `PSScriptAnalyzerSettings.psd1` excluding at least those three rules, confirms a full sweep
+  against the current codebase comes back clean, and wires it into `tools/run_sanity_sweep.sh`
+  mirroring the markdownlint MD029-only scoping pattern. Not worth doing speculatively ahead of
+  that audit.
 
