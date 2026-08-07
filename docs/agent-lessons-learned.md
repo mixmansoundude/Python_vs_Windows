@@ -947,25 +947,43 @@ read (`Task.Wait($drainMs)`, 5000ms) as a second safety net. The `taskkill /T` h
 CI-confirmed (no Windows environment available to construct a genuine repro); the drain-wait
 fallback IS verified (`ProcessTreeAndDrainTimeout` test, a grandchild-inherits-the-pipe scenario).
 
-**First real CI evidence, 2026-08-07 -- two DIFFERENT failure modes of the same mechanism, on two
-independent runner VMs, in one real Windows CI run.** `UnconditionalKill::test_hang_after_output_
-is_ALSO_killed_unlike_exe_smokerun` failed on 2 of 8 lanes on a commit that touched neither this
-test file nor `tools/exe_hint_rerun.ps1` (confirmed via `git log`/`git diff origin/main` showing
-zero changes to either since PR #410) -- the other 6 lanes, including both gating lanes
-(`real`/`conda-full`), passed the identical suite on the identical commit:
-- `contract-uv`: a hard `subprocess.TimeoutExpired` after the test's own 60s outer budget, waiting
-  on a real `pwsh.EXE ... tools/exe_hint_rerun.ps1` child -- the kill never completed in time.
-- `uv`: `AssertionError: 50.641... not less than 45 : kill mechanism appears completely broken` --
-  the kill DID eventually complete, just past the test's own 45s inner assertion.
-Both affected lanes are non-gating, so neither blocked a merge. Two independent runner VMs
-showing correlated SLOWNESS (not an outright crash or wrong-behavior) in the same kill path is a
-stronger signal than either alone would be -- plausibly a genuine, shared GitHub Actions
-infrastructure slowdown in that time window (both jobs ran concurrently), or the first real sign
-that `taskkill /F /T /PID` sometimes takes meaningfully longer than expected on Windows rather
-than failing outright. Two real occurrences in one run is enough to move this from "watch for
-recurrence" to a tracked backlog item (see CLAUDE.md's Active Backlog) rather than staying purely
-a documentation note -- but still not enough to diagnose which of the two explanations is right,
-since both jobs shared the same time window and could reflect either cause.
+**First real CI evidence, 2026-08-07 -- THREE occurrences of the same mechanism across three
+separate runner VMs in one real Windows CI run, escalating from "watch for recurrence" to a
+confirmed, fixed bug.** `UnconditionalKill::test_hang_after_output_is_ALSO_killed_unlike_exe_
+smokerun` failed on 3 of 8 lanes on a commit that touched neither this test file nor
+`tools/exe_hint_rerun.ps1` (confirmed via `git log`/`git diff origin/main` showing zero changes to
+either since PR #410) -- the other 5 lanes passed the identical suite on the identical commit:
+- `contract-uv` (non-gating): a hard `subprocess.TimeoutExpired` after the test's own 60s outer
+  budget, waiting on a real `pwsh.EXE ... tools/exe_hint_rerun.ps1` child -- the kill never
+  completed in time.
+- `uv` (non-gating): `AssertionError: 50.641... not less than 45` -- the kill DID eventually
+  complete, just past the test's own 45s inner assertion.
+- `real` (**GATING**): `AssertionError: 48.437... not less than 45` -- the identical failure
+  signature as `uv`, now on a lane that blocks PR merges. This is what escalated the issue from a
+  documentation note to an actual fix: three occurrences across independent runner VMs, all
+  showing the SAME direction of slowness (kill eventually succeeds, just 40-60s late against a
+  500ms test deadline), is a real pattern, not noise -- and once it hit a gating lane it could no
+  longer be deferred.
+- The other gating lane (`conda-full`) and 4 more non-gating lanes passed clean on the same commit.
+
+**Root cause identified and fixed the same day, without a Windows repro environment, by bounding
+every previously-unbounded wait in the kill path.** `~exe_hint_rerun.ps1`'s post-kill sequence had
+TWO calls with no timeout at all: the blocking `& taskkill.exe /F /T /PID $p.Id` invocation itself
+(a synchronous native-command call with no way to bound it via the `&` operator), and the trailing
+`$p.WaitForExit()` (no argument) right after it. Either one stalling under shared-runner
+contention -- CPU/disk contention, or Windows Defender scanning a freshly-terminated process tree,
+neither confirmed since no Windows host was available to instrument directly -- would fully explain
+all three observed signatures (a slow-but-eventually-successful kill, or a kill so slow it blew
+past even a 60s outer budget). Rather than guess which single call was the culprit, BOTH are now
+bounded: `taskkill.exe` is launched via its own `System.Diagnostics.Process` object with a 5000ms
+`WaitForExit`, and the trailing `$p.WaitForExit()` after the kill attempt is now
+`$p.WaitForExit($drainMs)` (also 5000ms) instead of unbounded. `$p` has already been sent `/F /T`
+plus a direct `Kill()` by the time either bound is reached, so a slow confirmation now just means
+"stop waiting," never "the process might still be alive and unaddressed." All 8
+`tests/test_exe_hint_rerun.py` tests (including `PayloadSync`) pass locally post-fix; the fix is
+**not yet confirmed against the real slowness itself** (that only reproduces on a real,
+contended Windows CI runner) -- watch the next `real`/`conda-full` run for a clean pass as the
+actual confirmation.
 
 **Why the default is 10000ms, not 5000ms (widened 2026-07):** the original 5000ms default was
 tuned assuming the probe window only needs to outlast a failing process's own error handling

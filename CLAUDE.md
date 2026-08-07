@@ -751,24 +751,31 @@ start at 1 and has gaps.
   property is already satisfied.
 
 - **Item 27: `tools/exe_hint_rerun.ps1`'s `taskkill /F /T /PID` process-tree kill showed real,
-  correlated slowness across two independent CI runner VMs in one real Windows run, 2026-08-07.**
+  correlated slowness across THREE independent CI runner VMs in one real Windows run, 2026-08-07 --
+  escalated to a GATING lane, so fixed the same day rather than deferred further.**
   `tests/test_exe_hint_rerun.py::UnconditionalKill::test_hang_after_output_is_ALSO_killed_unlike_
-  exe_smokerun` failed on 2 of 8 lanes (`uv`, `contract-uv`, both non-gating) on a commit that
-  touched neither the test nor the helper script (confirmed via `git log`/`git diff origin/main`)
-  -- the other 6 lanes, including both gating lanes, passed the identical suite on the identical
-  commit. Two DIFFERENT failure modes of the SAME mechanism: `contract-uv` hit a hard
-  `subprocess.TimeoutExpired` after the test's outer 60s budget (kill never completed in time);
-  `uv` hit `AssertionError: 50.641... not less than 45` (kill DID eventually complete, just past
-  the test's own 45s inner assertion). See `docs/agent-lessons-learned.md`'s "A third bounded-
-  launch helper exists" entry for the full mechanism trace and prior context -- this closes (with
-  real evidence, not proof either way) the entry's own long-standing "the `taskkill /T` half is
-  NOT CI-confirmed" caveat. Two correlated occurrences across independent runner VMs in one run is
-  enough to track as a real backlog item rather than a pure documentation note, but not enough to
-  tell whether the cause is (a) ordinary shared-runner contention that happened to hit both jobs in
-  the same time window, or (b) a genuine latent reliability gap in the `taskkill /F /T /PID`
-  mechanism itself on Windows. Next step if this recurs: capture the actual process-tree kill
-  timing (not just pass/fail) across several real runs to distinguish the two causes before
-  attempting any fix -- do not speculatively rewrite the kill mechanism on a single run's evidence.
+  exe_smokerun` failed on 3 of 8 lanes (`uv`, `contract-uv` non-gating; `real` **gating**) on a
+  commit that touched neither the test nor the helper script (confirmed via `git log`/`git diff
+  origin/main`) -- the other 5 lanes, including `conda-full` (the other gating lane), passed the
+  identical suite on the identical commit. All three showed the same direction of failure:
+  `contract-uv` hit a hard `subprocess.TimeoutExpired` after the test's outer 60s budget (kill
+  never completed in time); `uv` hit `AssertionError: 50.641... not less than 45`; `real` hit the
+  identical signature, `AssertionError: 48.437... not less than 45` -- kill eventually completes,
+  just 40-60s later than a 500ms test deadline. Once a gating lane was hit, the item's own former
+  "do not speculatively rewrite on a single run's evidence" caveat no longer applied (three
+  correlated occurrences, one of them merge-blocking) -- **fixed same day**: both previously-
+  unbounded waits in the post-kill sequence (`& taskkill.exe ...` itself, launched via the
+  blocking `&` operator with no way to bound it; and the trailing `$p.WaitForExit()` with no
+  argument right after) are now bounded to 5000ms each, via `taskkill.exe` running through its own
+  `System.Diagnostics.Process` object instead of `&`. See `docs/agent-lessons-learned.md`'s "A
+  third bounded-launch helper exists" entry for the full mechanism trace and the fix detail. All 8
+  `tests/test_exe_hint_rerun.py` tests (incl. `PayloadSync`) pass locally.
+  **NOT YET CONFIRMED against the real slowness** -- the root cause (taskkill.exe itself vs. the
+  trailing `WaitForExit()` vs. both) was never isolated on a real Windows host, since none was
+  available; the fix bounds both defensively rather than pinpointing one. Needs a clean `real`/
+  `conda-full` run post-fix to confirm the actual CI slowness is gone, not just that the local
+  test suite still passes (which it would regardless of whether the real bug was in taskkill.exe
+  or the trailing wait). Do not close this item until that real-CI confirmation lands.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

@@ -1,41 +1,20 @@
-# :exe_smokerun_hints' bounded diagnostic re-run helper. Unlike exe_smokerun.ps1/failfast_probe.ps1
-# (activity-aware -- once a process has printed anything, the kill is skipped and the wait becomes
-# unbounded, since those cover REAL verification runs worth waiting on), this re-run is diagnostic
-# ONLY: its sole purpose is a stdout+stderr snapshot for stderr pattern-matching (ModuleNotFoundError/
-# FileNotFoundError signatures), never shown live to the user. Partial output on a hang is fine and
-# strictly preferred over hanging the whole bootstrap a second time on a run nobody is watching --
-# so the kill here is UNCONDITIONAL at the deadline, not activity-aware. See CLAUDE.md's former
-# Active Backlog item 15 / docs/agent-closed-backlog.md for the gap this closes: the prior inline
-# ":exe_smokerun_hints" body did a plain, untimed `"%ENVNAME%.exe" > "~exe_out.txt" 2>&1` -- the
-# ONE user-code launch point in this file with no timeout at all, on the theory that a genuine
-# ModuleNotFoundError/FileNotFoundError always exits immediately. That theory holds for a
-# DETERMINISTIC failure, but this is a fresh re-run of the same binary; any non-determinism (a
-# race, an environment check that sometimes succeeds, anything that occasionally blocks on
-# inherited stdin instead of exiting fast) could hang this second, untimed invocation even though
-# the FIRST invocation legitimately classified as "fast, real, non-hang failure".
+# :exe_smokerun_hints' bounded diagnostic re-run helper. Diagnostic-only stdout+stderr snapshot
+# for stderr pattern-matching (ModuleNotFoundError/FileNotFoundError); never shown live. Kill is
+# UNCONDITIONAL at the deadline (not activity-aware like exe_smokerun.ps1/failfast_probe.ps1) --
+# partial output on a hang beats hanging the bootstrap on a run nobody is watching. See CLAUDE.md
+# former item 15 / docs/agent-closed-backlog.md for the untimed-rerun gap this closed.
 #
-# Reads: HP_HINT_RERUN_EXE (bare filename; caller runs this with CWD already set to dist\, mirroring
-# exe_smokerun.ps1's own convention). HP_HINT_RERUN_OUT (default ~exe_out.txt, relative to dist\)
-# is where combined stdout+stderr is written -- matching the ORIGINAL `2>&1` merge-into-one-file
-# behavior exactly, since the existing findstr hint-matching in :exe_smokerun_hints only checks for
-# substring presence in that one file, never which stream a line came from. HP_HINT_RERUN_KILL_MS
-# (default 10000 -- a diagnostic capture on an already-failed run does not need the full 30s
-# primary-verification budget) is a test-only override point, mirroring HP_SMOKERUN_KILL_MS's
-# established pattern.
+# Reads: HP_HINT_RERUN_EXE (bare filename; CWD already dist\). HP_HINT_RERUN_OUT (default
+# ~exe_out.txt) gets combined stdout+stderr, matching the original `2>&1` merge. HP_HINT_RERUN_KILL_MS
+# (default 10000) is a test override, mirroring HP_SMOKERUN_KILL_MS.
 #
-# derived requirement: the resolved $killMs is ALWAYS written to HP_HINT_RERUN_KILLMS_OUT (default
-# ~exe_hint_killms.txt) right after it's computed, unconditionally -- production callers never read
-# this file, so it costs nothing there. It exists so tests can assert the override was actually
-# honored by reading this DIRECT value, instead of inferring it from wall-clock elapsed time (which
-# proved unreliable on shared real-Windows CI runners -- the same test measured 9.2s, 13.5s, 14.6s,
-# and 16.3s of overhead across four different real-CI runs for the identical 500ms override, a
-# moving target that no fixed bound could chase; see docs/agent-lessons-learned.md).
+# $killMs is always written to HP_HINT_RERUN_KILLMS_OUT (default ~exe_hint_killms.txt) so tests can
+# assert the override was honored directly -- wall-clock elapsed proved unreliable on shared
+# real-Windows CI (see docs/agent-lessons-learned.md's "third bounded-launch helper" entry).
 #
-# This is the canonical source for the HP_EXE_HINT_RERUN base64 payload embedded in run_setup.bat.
-# After editing, run `python tools/sync_payload.py HP_EXE_HINT_RERUN tools/exe_hint_rerun.ps1`;
-# tests/test_exe_hint_rerun.py asserts the embedded payload matches this file (CRLF/LF normalized,
-# per the .ps1 PayloadSync convention -- see docs/agent-lessons-learned.md
-# "Embedded Helper Update Workflow").
+# Canonical source for the HP_EXE_HINT_RERUN payload in run_setup.bat. After editing:
+# `python tools/sync_payload.py HP_EXE_HINT_RERUN tools/exe_hint_rerun.ps1`. PayloadSync in
+# tests/test_exe_hint_rerun.py asserts the match (CRLF/LF normalized).
 $exe = $env:HP_HINT_RERUN_EXE
 $outPath = $env:HP_HINT_RERUN_OUT
 if (-not $outPath) { $outPath = '~exe_out.txt' }
@@ -56,30 +35,40 @@ $p.Start() | Out-Null
 
 $outTask = $p.StandardOutput.ReadToEndAsync()
 $errTask = $p.StandardError.ReadToEndAsync()
+# $drainMs bounds taskkill.exe, the post-kill WaitForExit, AND the pipe drain below -- moved up
+# so it's defined before first use.
+$drainMs = 5000
 $exited = $p.WaitForExit($killMs)
 if (-not $exited) {
-    # derived requirement: Process.Kill() (the parameterless overload -- Windows PowerShell 5.1
-    # targets .NET Framework, which has no Process.Kill(entireProcessTree) overload; that's
-    # .NET 5+ only) terminates ONLY $p itself. A PyInstaller onefile bootloader (or any program)
-    # that spawns a child inheriting the redirected stdout/stderr handles can leave that child
-    # running after $p is killed -- the pipe then never reaches EOF, and an unbounded
-    # ReadToEndAsync().Result would hang forever, defeating the entire point of this bounded
-    # helper. taskkill /T terminates the whole process tree, not just $p. Confirmed on real
-    # Windows CI (two lanes on PR #410): a grandchild-inherits-the-pipe regression test's
-    # returncode/timing assertions passed there, meaning the taskkill /T path itself was
-    # genuinely exercised, not just the fallback below -- the bounded final read still stays as
-    # a second, independent safety net for whatever a descendant taskkill /T might still miss.
-    try { & taskkill.exe /F /T /PID $p.Id 2>$null 1>$null } catch {}
+    # Process.Kill() (Win PS 5.1 = .NET Framework, no entireProcessTree overload) only kills $p;
+    # a child inheriting the redirected pipes could outlive it and hang ReadToEndAsync forever.
+    # taskkill /T kills the whole tree (confirmed exercised on real CI, PR #410).
+    #
+    # derived requirement: taskkill.exe now runs via its own Process object with a BOUNDED
+    # WaitForExit, and the WaitForExit below is bounded too -- both used to be unbounded. Real CI
+    # (three runs, 2026-08-07) showed this helper taking 48-60+s against a 500ms test deadline;
+    # see docs/agent-lessons-learned.md's "third bounded-launch helper" entry for the full
+    # incident. $p has already been sent /F /T plus Kill(), so a slow confirmation just means
+    # "stop waiting," not "still alive."
+    try {
+        $tkInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $tkInfo.FileName = 'taskkill.exe'
+        $tkInfo.Arguments = "/F /T /PID $($p.Id)"
+        $tkInfo.UseShellExecute = $false
+        $tkInfo.RedirectStandardOutput = $true
+        $tkInfo.RedirectStandardError = $true
+        $tk = [System.Diagnostics.Process]::Start($tkInfo)
+        if (-not $tk.WaitForExit($drainMs)) { try { $tk.Kill() } catch {} }
+    } catch {}
     try { $p.Kill() } catch {}
+    $p.WaitForExit($drainMs) | Out-Null
+} else {
+    $p.WaitForExit()
 }
-$p.WaitForExit()
 
-# Bounded final read, NOT a blind .Result block: even after killing the process tree, a
-# descendant taskkill /T did not catch (or some other exotic handle-inheritance edge case)
-# should not be able to hang this diagnostic-only helper indefinitely. Task.Wait(ms) returns
-# false on timeout without throwing, so a stuck pipe degrades to partial/empty output instead
-# of an unbounded wait.
-$drainMs = 5000
+# Bounded final read, not a blind .Result block -- a descendant taskkill/T missed (or some
+# exotic handle-inheritance edge case) must not hang this diagnostic-only helper. Task.Wait(ms)
+# returns false on timeout without throwing; a stuck pipe degrades to partial/empty output.
 $out = ''
 $err = ''
 if ($outTask.Wait($drainMs)) { try { $out = $outTask.Result } catch {} }
