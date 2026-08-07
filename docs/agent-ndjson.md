@@ -193,6 +193,8 @@ batch.smoke.telemetry,
 batch.smoke.single_verify,
 batch.failfast.probe,
 batch.postexec.checkpoint,
+batch.dll_bundle.ndjson,
+self.dll_bundle.recover,
 self.bootstrap.state, self.empty_repo.msg, self.empty_repo.no_spurious_warn,
 self.harness.started,
 self.stub.fastpath, self.stub.rebuild, self.stub.state_skip,
@@ -223,6 +225,46 @@ before the Miniconda install-if-missing block even runs, so the corruption-check
 (`if defined CONDA_BAT ...`) fires regardless of whether Miniconda was ever installed anywhere
 in the job -- self-contained by construction, no CI-ordering dependency (unlike
 `self.conda.bothfail`, above).
+
+`self.dll_bundle.recover` (inline `run_setup.bat`'s `:emit_dll_bundle_row`, called from all 6
+outcome points inside `:dll_bundle_recover` -- CLAUDE.md Item 24 / `docs/prd-conda-native-dll-
+bundling.md`) is a CodeRabbit review finding on PR #414: the native-DLL bundling repair loop's
+detected/skipped/repaired/unlocatable/failed outcomes previously only reached `:log`'s console
+text, with no machine-readable record. `details.state` is one of `skipped_nuitka` (a Nuitka-built
+EXE, repair not attempted), `skipped_non_conda` (a non-conda provider, repair not attempted),
+`repaired` (rebuild genuinely succeeded), `unlocatable` (detected but the named DLL was never
+found under the conda env's `Library\bin`), `failed_rebuild` (PyInstaller rebuild itself failed),
+or `failed_missing_exe` (rebuild reported success but `dist\<env>.exe` was not produced) --
+`pass` is `false` only for the two `failed_*` states. `details.dll`/`details.provider`/
+`details.iteration` are pulled inside the emitting PowerShell command via
+`[Environment]::GetEnvironmentVariable(...)` rather than `%VAR%` cmd.exe substitution into the
+`-Command` text, for the same reason the sibling `HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`
+display-only sanitization exists (see `docs/agent-interconnect.md`'s DLL-bundling section) --
+a DLL basename can legally contain `&`/`|`, which are metacharacters to cmd.exe's own
+command-line parsing even inside a quoted argument, not just inside `:log`'s unquoted echo.
+
+**Not currently observed in any real CI artifact.** `run_setup.bat`'s own `HP_NDJSON`
+auto-detection (`if not defined HP_NDJSON if exist "%CD%\tests" set "HP_NDJSON=..."`) only fires
+when the bootstrapped app directory has its own `tests\` subfolder -- `tests/selfapps_layered_
+e2e.ps1` (the one test that genuinely triggers the `repaired` state, via `pygrib`/`eccodes.dll`)
+runs its sub-bootstrap from a bare scratch directory with no `tests\` subfolder, and does not
+explicitly set `HP_NDJSON` either, matching this repo's established convention for isolated
+sub-bootstrap tests (see `tests/selfapps_postexec_checkpoint.ps1`, which deliberately `Remove-
+Item Env:HP_NDJSON` around its own sub-bootstrap calls and asserts via log text instead, to avoid
+an isolated scratch run's rows leaking into the shared `~test-results.ndjson` stream). So
+`:emit_dll_bundle_row`'s own `if not defined HP_NDJSON exit /b 0` guard means this row is never
+actually written during that test's run today -- `mech4Pass` continues to rely on the pre-existing
+`[REPAIR][DLL_BUNDLE]` log-text assertions (`docs/agent-interconnect.md`'s DLL-bundling section),
+unaffected by this addition. `batch.dll_bundle.ndjson` (`tests/harness.ps1`, static) is the actual
+coverage for this row: it verifies the `:emit_dll_bundle_row` subroutine exists, the row id string
+is present, and all 6 `call :emit_dll_bundle_row <state>` sites are wired -- the same "static wiring
+guard, not runtime execution" pattern already used for `batch.failfast.probe`/`batch.postexec.
+checkpoint` above. Per-state runtime coverage (deliberately setting `HP_NDJSON` for a sub-bootstrap
+and reading the row back) remains a candidate for a future, dedicated test if ever justified --
+not pursued now, since simulating the other 5 states (Nuitka-used, non-conda provider, a genuine
+PyInstaller rebuild failure, a missing post-rebuild EXE, a detected-but-unlocatable DLL) each needs
+its own scaffolding beyond what `self.layered_e2e.chain`'s real `pygrib` trigger already provides
+for the `repaired` state alone.
 
 ## selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes)
 

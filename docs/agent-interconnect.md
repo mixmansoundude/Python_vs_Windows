@@ -243,6 +243,42 @@ line explicitly includes `%HP_PYI_DLLBIND%` alongside `%HP_PYI_EXPAT% %HP_PYI_CO
 own accumulated flags through EVERY later rebuild command the same way, or an earlier loop's fix
 gets silently discarded by a later one's rebuild.
 
+**A fifth real bug found via review: `HP_DLL_DETECTED`/`HP_NEXT_DLL`/`HP_NEXT_DLL_PATH` reached
+`:log`'s UNQUOTED echo, an already-documented hazard class in this repo (see
+`docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry) this loop had not yet been
+checked against.** All three values are ultimately derived from PyInstaller's own build-log
+warning text (`_PATTERN`'s regex extracts whatever sits between quotes in `Library not found:
+could not resolve 'X.dll'`), which can legally contain `&`/`|`/`<`/`>` on Windows -- cmd.exe would
+reinterpret any of those as a live redirection/pipe operator once substituted into `:log`'s
+unquoted `echo %date% %time% %MSG%` line, corrupting the log line and/or creating a stray file.
+Fixed with the same DISPLAY-ONLY sanitization pattern the `%HP_ENTRY%` case documents as the
+correct fix wherever the source is tractable (unlike `%HP_ENTRY%` itself, which remains an
+accepted risk because its only real fix -- a global `:log` rework -- is blocked by three CI static
+guards): `HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` are computed via
+chained `set "VAR_SAFE=%VAR_SAFE:&=_%"` substitution (repeated for `|`, `<`, `>`) immediately after
+each raw value is captured, and used ONLY in `:log` calls -- every functional use of the raw value
+(the tried-file byte-copy via `type`, the quoted `--add-binary` PyInstaller argument) is
+untouched, so this cannot desync the tried-list dedup matching (`next_dll_target()` re-extracts
+the RAW name from the log text on every loop iteration; sanitizing only the tried-file's stored
+copy would break equality comparison for any DLL name containing a hazardous character).
+
+**A companion CodeRabbit finding on the same review round: the loop's detected/skipped/repaired/
+unlocatable/failed outcomes previously reached only `:log`'s console text, with no
+machine-readable record.** Fixed with a new shared subroutine, `:emit_dll_bundle_row`, called from
+all 6 outcome points (`skipped_nuitka`/`skipped_non_conda`/`repaired`/`unlocatable`/
+`failed_rebuild`/`failed_missing_exe`) and emitting NDJSON id `self.dll_bundle.recover` -- see
+`docs/agent-ndjson.md` for the full field list and the `HP_NDJSON`-scoping caveat (this row is
+not currently observed in `self.layered_e2e.chain`'s own artifact, since that test's isolated
+sub-bootstrap leaves `HP_NDJSON` unset by the same established convention `selfapps_postexec_
+checkpoint.ps1` already uses; `tests/harness.ps1`'s new `batch.dll_bundle.ndjson` static check is
+the actual coverage for this row's wiring). The state name is passed as a `call` argument (safe --
+always one of the 6 literal tokens above, written directly in `run_setup.bat`, never derived from
+external content), but the DLL name/provider/iteration are pulled INSIDE the emitting PowerShell
+command via `[Environment]::GetEnvironmentVariable(...)` rather than `%VAR%` cmd.exe substitution
+into the `-Command` text -- protecting cmd.exe's OWN command-line parsing (`&`/`|` are
+metacharacters even inside a quoted `call` argument) the same way the `_SAFE` display variables
+protect `:log`'s unquoted echo, just at a different vulnerable site.
+
 **`self.layered_e2e.chain` (`tests/selfapps_layered_e2e.ps1`) is this loop's regression test
 (Requirement 4)**, extended with a 4th mechanism (`mech4Pass`) alongside the three it already
 proved for real (REQ-009 cascade, warnfix repair, hidden-import recovery) -- see that file's own

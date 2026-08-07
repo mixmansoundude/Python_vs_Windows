@@ -586,6 +586,23 @@ start at 1 and has gaps.
   exact-string-equality assertions in the `ReadTail` test class passed locally (Linux sandbox) and
   failed on the real Windows runner. Fixed by switching every fixture write in that file to
   `Path.write_bytes(text.encode("utf-8"))`, which never translates.
+  **A second CodeRabbit review pass caught 2 more genuine findings, both fixed same day**:
+  (5) `HP_DLL_DETECTED`/`HP_NEXT_DLL`/`HP_NEXT_DLL_PATH` (all derived from PyInstaller's own
+  warning text, which can legally contain `&`/`|`/`<`/`>`) reached `:log`'s UNQUOTED echo -- an
+  already-documented hazard class in this repo (see `docs/agent-lessons-learned.md`'s ":log
+  echoes UNQUOTED" entry) this loop had not yet been checked against; fixed with display-only
+  `_SAFE` sanitized variables used only in `:log` calls, leaving every functional use of the raw
+  value (tried-file byte-copy, quoted `--add-binary` argument) untouched; (6) the loop's
+  detected/skipped/repaired/unlocatable/failed outcomes reached only `:log`'s console text, with
+  no machine-readable record -- fixed with a new `:emit_dll_bundle_row` subroutine emitting NDJSON
+  id `self.dll_bundle.recover` from all 6 outcome points, pulling the DLL name/provider/iteration
+  via `[Environment]::GetEnvironmentVariable(...)` inside PowerShell rather than `%VAR%` cmd.exe
+  substitution (protecting cmd.exe's own command-line parsing, where `&`/`|` are metacharacters
+  even inside a quoted argument). See `docs/agent-interconnect.md`'s DLL-bundling section and
+  `docs/agent-ndjson.md` for full detail, including why this row is not yet observed in
+  `self.layered_e2e.chain`'s own artifact (that test's isolated sub-bootstrap leaves `HP_NDJSON`
+  unset, matching established convention) and relies instead on `tests/harness.ps1`'s new
+  `batch.dll_bundle.ndjson` static wiring check.
   **Requirement 4 (regression test) extended `tests/selfapps_layered_e2e.ps1`** with a 4th
   mechanism (`mech4Pass`, requiring `dllWarningSeen`/`dllBundling`/`dllBundleComplete`) alongside
   the three it already proved -- this is the acceptance criterion that should finally flip

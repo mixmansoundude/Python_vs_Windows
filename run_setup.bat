@@ -3914,19 +3914,33 @@ set "HP_DLL_DETECTED="
 for /f "usebackq delims=" %%N in ("~dll_detect.txt") do set "HP_DLL_DETECTED=%%N"
 if exist "~dll_detect.txt" del "~dll_detect.txt" >nul 2>&1
 if not defined HP_DLL_DETECTED exit /b 0
+rem :log echoes UNQUOTED (see docs/agent-lessons-learned.md's ":log echoes UNQUOTED" entry) --
+rem a DLL basename can legally contain &, |, <, or > on Windows, which cmd.exe would otherwise
+rem reinterpret as a live redirection/pipe operator once substituted into an unquoted echo line,
+rem corrupting the log line and/or creating a stray file. Sanitize a DISPLAY-ONLY copy here; the
+rem raw HP_DLL_DETECTED is never used for anything functional (no file lookup happens on it --
+rem the real Library\bin search is redone from scratch, on the raw warning text, inside
+rem :dll_bundle_loop below), so this substitution cannot desync any matching logic.
+set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED%"
+set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:&=_%"
+set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:|=_%"
+set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:<=_%"
+set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:>=_%"
 rem Requirement 6: identical guard to :hidden_import_recover's own, for the identical
 rem reason -- --add-binary is a PyInstaller-specific flag with no Nuitka equivalent wired
 rem up here. Skip (not attempt-and-fail) rather than risk rebuilding a working Tier-A EXE
 rem via the wrong tool.
 if defined HP_NUITKA_FALLBACK_USED (
-  call :log "[INFO][DLL_BUNDLE] Detected native-DLL warning for '%HP_DLL_DETECTED%'; skipping repair: dist\%ENVNAME%.exe was built via the fallback build system (Nuitka), which has its own DLL discovery mechanism, not this PyInstaller-specific repair."
+  call :log "[INFO][DLL_BUNDLE] Detected native-DLL warning for '%HP_DLL_DETECTED_SAFE%'; skipping repair: dist\%ENVNAME%.exe was built via the fallback build system (Nuitka), which has its own DLL discovery mechanism, not this PyInstaller-specific repair."
+  call :emit_dll_bundle_row skipped_nuitka
   exit /b 0
 )
 rem Requirement 3: the actual bundling ACTION only makes sense under the conda provider --
 rem Library\bin is conda's own shared-DLL convention, meaningless under uv/embed/venv/system
 rem (those install from PyPI wheels, which are expected to vendor their own native deps).
 if not "%HP_ENV_MODE%"=="conda" (
-  call :log "[INFO][DLL_BUNDLE] Detected native-DLL warning for '%HP_DLL_DETECTED%'; native-DLL bundling repair requires the conda provider (current provider: %HP_ENV_MODE%); skipping."
+  call :log "[INFO][DLL_BUNDLE] Detected native-DLL warning for '%HP_DLL_DETECTED_SAFE%'; native-DLL bundling repair requires the conda provider (current provider: %HP_ENV_MODE%); skipping."
+  call :emit_dll_bundle_row skipped_non_conda
   exit /b 0
 )
 if exist "~dll_bundle_tried.txt" del "~dll_bundle_tried.txt" >nul 2>&1
@@ -3957,22 +3971,37 @@ rem which would corrupt or split the command line if routed through argv/echo te
 type "~next_dll.txt">>"~dll_bundle_tried.txt"
 echo.>>"~dll_bundle_tried.txt"
 if exist "~next_dll.txt" del "~next_dll.txt" >nul 2>&1
+rem Same :log-unquoted-echo hazard as HP_DLL_DETECTED above -- sanitize DISPLAY-ONLY copies.
+rem The raw HP_NEXT_DLL/HP_NEXT_DLL_PATH are still used unchanged for the tried-file (pure file
+rem content, never shell-expanded) and the quoted --add-binary argument below.
+set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL%"
+set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:&=_%"
+set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:|=_%"
+set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:<=_%"
+set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:>=_%"
+set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH%"
+set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:&=_%"
+set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:|=_%"
+set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:<=_%"
+set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:>=_%"
 set /a HP_DLL_ITER+=1
 set "HP_PYI_DLLBIND=%HP_PYI_DLLBIND% --add-binary "%HP_NEXT_DLL_PATH%;.""
-call :log "[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: %HP_NEXT_DLL% (found at %HP_NEXT_DLL_PATH%); rebuilding EXE (iter %HP_DLL_ITER%/3)."
+call :log "[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: %HP_NEXT_DLL_SAFE% (found at %HP_NEXT_DLL_PATH_SAFE%); rebuilding EXE (iter %HP_DLL_ITER%/3)."
 if exist "%ENVNAME%.spec" (set "HP_DLL_SPEC_PRE=1") else (set "HP_DLL_SPEC_PRE=")
 for %%Z in ("%LOG%") do set "HP_LOG_SIZE_BEFORE=%%~zZ"
 "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% %HP_PYI_DLLBIND% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
 if errorlevel 1 (
-  call :log "[ERROR][DLL_BUNDLE] PyInstaller rebuild failed while bundling native DLL dependency: %HP_NEXT_DLL%; the previous build may no longer be valid."
+  call :log "[ERROR][DLL_BUNDLE] PyInstaller rebuild failed while bundling native DLL dependency: %HP_NEXT_DLL_SAFE%; the previous build may no longer be valid."
   set "HP_BOOTSTRAP_STATE=error"
   set "HP_DLL_FAILED=1"
+  call :emit_dll_bundle_row failed_rebuild
   goto :dll_bundle_recover_done
 )
 if not exist "dist\%ENVNAME%.exe" (
-  call :log "[ERROR][DLL_BUNDLE] PyInstaller did not produce dist\%ENVNAME%.exe while bundling native DLL dependency: %HP_NEXT_DLL%."
+  call :log "[ERROR][DLL_BUNDLE] PyInstaller did not produce dist\%ENVNAME%.exe while bundling native DLL dependency: %HP_NEXT_DLL_SAFE%."
   set "HP_BOOTSTRAP_STATE=error"
   set "HP_DLL_FAILED=1"
+  call :emit_dll_bundle_row failed_missing_exe
   goto :dll_bundle_recover_done
 )
 if not defined HP_DLL_SPEC_PRE if exist "%ENVNAME%.spec" del "%ENVNAME%.spec" >nul 2>&1
@@ -3987,13 +4016,41 @@ rem "never claim success without checking" precedent -- see docs/agent-lessons-l
 if defined HP_DLL_FAILED goto :dll_bundle_recover_exit
 if %HP_DLL_ITER% GEQ 1 (
   call :log "[REPAIR][DLL_BUNDLE] Native-DLL bundling complete (%HP_DLL_ITER% DLL(s) added); EXE will be re-verified next."
+  call :emit_dll_bundle_row repaired
 ) else (
-  call :log "[INFO][DLL_BUNDLE] Detected native-DLL warning for '%HP_DLL_DETECTED%' but could not locate a matching file under the conda env's Library\bin; skipping."
+  call :log "[INFO][DLL_BUNDLE] Detected native-DLL warning for '%HP_DLL_DETECTED_SAFE%' but could not locate a matching file under the conda env's Library\bin; skipping."
+  call :emit_dll_bundle_row unlocatable
 )
 :dll_bundle_recover_exit
 if exist "~dll_bundle_tried.txt" del "~dll_bundle_tried.txt" >nul 2>&1
 set "HP_DLL_SPEC_PRE="
 set "HP_DLL_FAILED="
+exit /b 0
+:emit_dll_bundle_row
+rem CodeRabbit finding on PR #414: ":dll_bundle_recover"'s detected/skipped/repaired/
+rem unlocatable/failed outcomes previously only reached :log's console text, with no
+rem machine-readable record. %1 is always one of a small set of literal state tokens
+rem (skipped_nuitka/skipped_non_conda/repaired/unlocatable/failed_rebuild/
+rem failed_missing_exe) written directly in THIS file, never derived from external
+rem content, so passing it as a call argument is safe. The DLL name/provider/iteration
+rem are pulled INSIDE PowerShell via [Environment]::GetEnvironmentVariable rather than
+rem %VAR% cmd.exe substitution into the -Command text -- same reasoning as the
+rem HP_DLL_DETECTED_SAFE/HP_NEXT_DLL_SAFE display-only sanitization above, but this
+rem time protecting cmd.exe's OWN command-line parsing (& and | are metacharacters even
+rem inside a quoted argument) rather than :log's unquoted echo.
+if not defined HP_NDJSON exit /b 0
+set "HP_DLL_ROW_STATE=%~1"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$state = [Environment]::GetEnvironmentVariable('HP_DLL_ROW_STATE');" ^
+  "$provider = [Environment]::GetEnvironmentVariable('HP_ENV_MODE');" ^
+  "$detected = [Environment]::GetEnvironmentVariable('HP_DLL_DETECTED');" ^
+  "$next = [Environment]::GetEnvironmentVariable('HP_NEXT_DLL');" ^
+  "$iterRaw = [Environment]::GetEnvironmentVariable('HP_DLL_ITER');" ^
+  "$iter = 0; [void][int]::TryParse($iterRaw, [ref]$iter);" ^
+  "$dll = if ($next) { $next } else { $detected };" ^
+  "$pass = -not ($state -like 'failed_*');" ^
+  "$row = [ordered]@{ id='self.dll_bundle.recover'; pass=$pass; details=[ordered]@{ state=$state; provider=$provider; dll=$dll; iteration=$iter } } | ConvertTo-Json -Compress -Depth 8;" ^
+  "Add-Content -Path '%HP_NDJSON%' -Value $row -Encoding ASCII" >> "%LOG%" 2>&1
 exit /b 0
 :hidden_import_recover
 rem Slice 2 (REQ-016): strict, double-gated --hidden-import auto-recovery loop.
