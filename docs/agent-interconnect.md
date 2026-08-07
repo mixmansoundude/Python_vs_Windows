@@ -337,6 +337,18 @@ unrelated axes, which is why it still needs the same sanitization as `|`/`<`/`>`
 also filesystem-illegal, so a real path containing them would be a defect elsewhere; `&` is the one
 character in this set that's both filesystem-legal and CMD-hazardous).
 
+**Eventually converted to a real emitted `.ps1` file (`tools/dll_pct_sanitize.ps1`,
+`HP_DLL_PCT_SANITIZE`), which eliminates this entire bug class structurally rather than patching
+around it a fourth time.** All three bugs above share one root cause: literal `%` text sitting
+somewhere on a line cmd.exe itself parses. A `-File "path" arg1 arg2...` invocation has no such
+line -- cmd.exe only tokenizes the outer invocation (plain argv, no `%`-pairing hazard); the
+script's own body is read and executed entirely by PowerShell, which never sees cmd.exe's parser
+at all. Both call sites (`HP_DLL_DETECTED_SAFE`; `HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE`) now
+call this one shared helper (`(envVarName, outFile)` pairs as plain argv) instead of building
+inline `-Command` text per call site. See `docs/agent-lessons-learned.md`'s "PowerShell helpers:
+prefer an emitted `.ps1` file..." entry, extended with this as a second, independent trigger
+condition (alongside embedded `"` characters) for preferring `-File` over `-Command`.
+
 **A companion CodeRabbit finding on the same review round: the loop's detected/skipped/repaired/
 unlocatable/failed outcomes previously reached only `:log`'s console text, with no
 machine-readable record.** Fixed with a new shared subroutine, `:emit_dll_bundle_row`, called from

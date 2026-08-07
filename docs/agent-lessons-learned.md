@@ -512,6 +512,17 @@ this one code path, even after the fixture had already caught the first mistake 
 itself is what caught the second and third, exactly by design. Do not treat "I fixed the thing the
 test caught" as proof the new code is correct; re-run the actual test.
 
+**Closed out via a fourth change: stop trying to write cmd.exe-safe `%`-handling `-Command` text
+at all.** After three rounds of getting the exact same class of bug wrong, the actual fix was to
+stop fighting cmd.exe's `%`-pairing rules and remove them from the equation entirely -- the
+sanitizer moved into a real emitted file, `tools/dll_pct_sanitize.ps1` (`HP_DLL_PCT_SANITIZE`),
+invoked via `-File "path" arg1 arg2...` instead of `-Command "..."`. A `-File` invocation's own
+script body is never handed to cmd.exe's tokenizer at all -- only the outer invocation line is,
+and that's plain argv (env-var names and output file paths), with no `%`-pairing hazard to get
+wrong a fourth time. See the "PowerShell helpers: prefer an emitted `.ps1` file..." entry further
+below in this file (now covers this as a second, independent trigger condition alongside embedded
+`"` characters) and `docs/agent-interconnect.md`'s DLL-bundling section for the full before/after.
+
 ---
 
 ## Provider-cascade dispatch is goto-based on purpose (parse-time expansion)
@@ -882,6 +893,24 @@ so a literal `"` anywhere in the command text breaks its parsing of the `-Comman
 regardless of whether it came from interpolation or plain concatenation. A real `.ps1` file (via
 the existing `:emit_from_base64` mechanism) has no such exposure. This is why `HP_FAILFAST_PROBE`
 became an emitted file instead of an inline one-liner.
+
+**Second, independent trigger condition for the same rule: a literal `%` anywhere in `-Command`
+text, even with zero `"` characters involved.** The DLL-bundling `%`/`^` sanitizer (CLAUDE.md
+Item 24) went through THREE separate real-CI-confirmed bugs while it stayed inline `-Command`
+text (see `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the
+full trace) -- cmd.exe pairs `%` characters via a left-to-right scan of the ENTIRE logical line,
+with zero awareness of PowerShell's own quoting, so a literal `%` inside `-Command` text sharing a
+cmd.exe line with any real `%VAR%` reference (`%LOG%`, `%TEMP%`, etc.) can silently corrupt that
+reference's pairing -- an entirely separate failure mode from the `"`-breaks-tokenizing rule above,
+with its own history of getting "fixed" wrong twice before landing on the actual fix. Eventually
+converted to `tools/dll_pct_sanitize.ps1`, a real emitted file (env-var names and output paths
+passed as plain argv, never interpolated into `-Command` text) -- this closes the bug class
+structurally, the same way `HP_FAILFAST_PROBE` closed the `"`-tokenizing class above. **Rule of
+thumb going forward: the moment a PowerShell one-liner needs to build or contain a literal `%`
+(not just read an existing `%VAR%` the CALLER already substituted), stop and use `-File` instead
+of reasoning through cmd.exe's pairing behavior again** -- that reasoning has now been wrong three
+times in a row in this exact code path, each only caught by a live-cmd.exe CI test built for the
+purpose, never by review or local `pwsh` testing.
 
 **Prefer raw .NET types over Utility-module cmdlets (`Get-FileHash`, `Expand-Archive`,
 `Get-Content`, `Set-Content`, `Get-Date`) in embedded `.ps1` helpers invoked from a `for /f`

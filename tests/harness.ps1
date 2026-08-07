@@ -484,35 +484,28 @@ $hasDllBundleRow = $dbSub -and $dbRowId -and $dbAllStates -and ($dbCallCount -ge
 Write-Result 'batch.dll_bundle.ndjson' 'CLAUDE.md Item 24: native-DLL bundling recovery loop emits a dedicated NDJSON row (self.dll_bundle.recover) for every outcome state (skipped_nuitka/skipped_non_conda/repaired/unlocatable/failed_rebuild/failed_missing_exe)' $hasDllBundleRow @{ sub=$dbSub; rowId=$dbRowId; allStates=$dbAllStates; callSites=$dbCallCount }
 # derived requirement: CLAUDE.md Item 24 -- an earlier version of HP_DLL_DETECTED_SAFE/
 # HP_NEXT_DLL_SAFE/HP_NEXT_DLL_PATH_SAFE's display-only sanitization stripped a literal
-# percent sign via cmd.exe's own %VAR:%%=_% doubled-percent substitution idiom. That idiom
-# was confirmed BROKEN by this exact fixture's own prior form, live-executed on real Windows
-# CI: the substitution silently produced an EMPTY value instead of the expected sanitized
-# text (an undocumented cmd.exe parsing quirk this repo's own reasoning got wrong on the
-# first attempt -- see docs/agent-lessons-learned.md's ":log echoes UNQUOTED" entry). Fixed
-# by moving the %/^ stripping into PowerShell (-replace, unambiguous .NET semantics) instead
-# of cmd.exe substitution. This fixture proves the REPLACEMENT mechanism -- not the abandoned
-# idiom -- under a real cmd.exe + PowerShell child process, and additionally proves the actual
-# security property the whole sanitization exists for: a raw value shaped like "%SECRET%"
-# must not leak the real SECRET variable's value through `call`'s own second cmd.exe
-# expansion pass (see docs/agent-lessons-learned.md's "call triggers a second expansion pass"
-# entry) once it has been through this sanitizer.
-#
-# A SECOND real bug surfaced on this fixture's own first real Windows run: the PowerShell fix's
-# literal `-replace '%','_'` put a lone, unpaired % on the same cmd.exe line as `%TEMP%` below.
-# cmd.exe pairs % characters by a left-to-right scan of the WHOLE line, ignoring quotes -- the
-# lone % paired with %TEMP%'s own opening %, and everything between them (the real replace
-# logic) was parsed as one bogus, undefined variable name and silently deleted (an undefined
-# %VAR% collapses to empty text inside a batch file). Fixed by removing every literal % from the
-# -Command text: `$pct = [char]37` builds the percent character entirely inside PowerShell, so
-# %TEMP% is the only % left on the line.
+# percent sign via cmd.exe's own %VAR:%%=_% doubled-percent substitution idiom (confirmed
+# BROKEN live on real Windows CI -- an undocumented cmd.exe parsing quirk), then via inline
+# `-Command` text with a lone, unpaired % (confirmed broken a SECOND time, same live-CI method
+# -- see docs/agent-lessons-learned.md's ":log echoes UNQUOTED" entry for the full trace of
+# both). Root cause both times: literal % text living on a line cmd.exe itself parses. Fixed by
+# moving the sanitizer into a real emitted file, tools/dll_pct_sanitize.ps1 -- its own body is
+# never parsed by cmd.exe's tokenizer, only the outer `-File "path" arg...` invocation is, and
+# that's plain argv with no %-pairing hazard. This fixture now exercises that REAL file (the
+# same canonical source run_setup.bat's embedded HP_DLL_PCT_SANITIZE payload is synced from,
+# per PayloadSync in tests/test_dll_pct_sanitize.py) under a real cmd.exe + PowerShell child
+# process, and additionally proves the actual security property the whole sanitization exists
+# for: a raw value shaped like "%SECRET%" must not leak the real SECRET variable's value
+# through `call`'s own second cmd.exe expansion pass (see docs/agent-lessons-learned.md's
+# "call triggers a second expansion pass" entry) once it has been through this sanitizer.
+$dllPctScript = Join-Path $ProjDir 'tools\dll_pct_sanitize.ps1'
 $pctFixture = Join-Path $env:TEMP 'verify-percent-sanitizer.cmd'
 $pctScript = @'
 @echo off
 setlocal DisableDelayedExpansion
 set "SECRET=must-not-appear"
-set "RAW=prefix%%SECRET%%suffix^caretend"
-set "SAFE=%RAW%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$pct = [char]37; $v = [Environment]::GetEnvironmentVariable('SAFE'); $v = $v -replace $pct,'_' -replace '\^','_'; [Console]::Write($v)" > "%TEMP%\pct_safe_out.txt" 2>nul
+set "HP_DLL_DETECTED_SAFE=prefix%%SECRET%%suffix^caretend"
+powershell -NoProfile -ExecutionPolicy Bypass -File "__PCTSCRIPT__" HP_DLL_DETECTED_SAFE "%TEMP%\pct_safe_out.txt" > nul 2>&1
 set "SAFE="
 for /f "usebackq delims=" %%X in ("%TEMP%\pct_safe_out.txt") do set "SAFE=%%X"
 if exist "%TEMP%\pct_safe_out.txt" del "%TEMP%\pct_safe_out.txt" >nul 2>&1
@@ -521,6 +514,7 @@ exit /b
 :log
 echo %~1
 '@
+$pctScript = $pctScript.Replace('__PCTSCRIPT__', $dllPctScript)
 Set-Content -LiteralPath $pctFixture -Value $pctScript -Encoding Ascii
 $pctOutput = ''
 $pctExit = 1
@@ -532,7 +526,7 @@ try {
 }
 Remove-Item -LiteralPath $pctFixture -Force -ErrorAction SilentlyContinue
 $hasPctSanitizer = ($pctExit -eq 0) -and ($pctOutput -eq 'prefix_SECRET_suffix_caretend')
-Write-Result 'batch.dll_bundle.pct_sanitizer' 'CLAUDE.md Item 24: the PowerShell -replace mechanism used by the DLL-bundle loops _SAFE display sanitization genuinely strips % and ^ under a real cmd.exe + PowerShell child process, and the sanitized value survives a real call-based second expansion pass without leaking the shadowed SECRET variable (live-executed fixture, not static reasoning -- this repo previously got cmd.exes own undocumented %%=_% substitution semantics wrong via reasoning alone)' $hasPctSanitizer @{ output=$pctOutput; exitCode=$pctExit }
+Write-Result 'batch.dll_bundle.pct_sanitizer' 'CLAUDE.md Item 24: tools/dll_pct_sanitize.ps1 (the emitted-.ps1 replacement for the DLL-bundle loops _SAFE display sanitization) genuinely strips % and ^ under a real cmd.exe + PowerShell child process, and the sanitized value survives a real call-based second expansion pass without leaking the shadowed SECRET variable (live-executed fixture against the real canonical source, not static reasoning -- this repo previously got cmd.exes own %-handling wrong via reasoning alone, twice)' $hasPctSanitizer @{ output=$pctOutput; exitCode=$pctExit }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

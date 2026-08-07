@@ -204,6 +204,13 @@ This is the deliverable. Treat changes carefully.
      so a user typo or `ImportError: cannot import name` causes ZERO rebuilds. Bounded to 3
      rebuilds (helper tried-list + iter cap). Canonical source `tools/hidden_import_scan.py`;
      PayloadSync in `tests/test_hidden_import_scan.py`.
+   - `HP_DLL_PCT_SANITIZE` -- decodes to `~dll_pct_sanitize.ps1`; strips `%`/`^` from one or more
+     env var values (`(envVarName, outFile)` argv pairs), for `:log`'s UNQUOTED-echo safety in the
+     native-DLL bundling loop. Emitted as a real `.ps1` file specifically so cmd.exe's own
+     tokenizer never parses its body -- the predecessor inline `-Command` version of this logic
+     went through three separate real-CI-confirmed bugs from cmd.exe's `%`-pairing behavior before
+     landing here (see `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry). Canonical
+     source `tools/dll_pct_sanitize.ps1`; PayloadSync in `tests/test_dll_pct_sanitize.py`.
 
 2. **Delimiter-check after every edit**:
    ```bash
