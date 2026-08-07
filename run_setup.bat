@@ -3954,6 +3954,15 @@ set "HP_DLL_DETECTED="
 for /f "usebackq delims=" %%N in ("~dll_detect.txt") do set "HP_DLL_DETECTED=%%N"
 if exist "~dll_detect.txt" del "~dll_detect.txt" >nul 2>&1
 if not defined HP_DLL_DETECTED exit /b 0
+rem CodeRabbit finding: :run_entry_smoke (and therefore :dll_bundle_recover) can run more than
+rem once per process during a REQ-009 provider cascade re-entry. HP_NEXT_DLL/HP_DLL_ITER are
+rem normally reset later (line ~4017/inside the loop), which is AFTER the skipped_nuitka/
+rem skipped_non_conda exits below -- so a stale value left by an EARLIER call's successful
+rem repair would leak into a LATER call's skip row via :emit_dll_bundle_row's own
+rem "$dll = if ($next) { $next } else { $detected }" fallback. Reset both here, before either
+rem skip branch can read them.
+set "HP_NEXT_DLL="
+set "HP_DLL_ITER=0"
 rem :log echoes UNQUOTED (see docs/agent-lessons-learned.md's ":log echoes UNQUOTED" entry) --
 rem a DLL basename can legally contain &, |, <, or > on Windows, which cmd.exe would otherwise
 rem reinterpret as a live redirection/pipe operator once substituted into an unquoted echo line,
