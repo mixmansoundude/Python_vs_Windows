@@ -4020,9 +4020,28 @@ if exist "~dll_bundle_tried.txt" del "~dll_bundle_tried.txt" >nul 2>&1
 set "HP_DLL_ITER=0"
 set "HP_PYI_DLLBIND="
 set "HP_DLL_FAILED="
+rem derived requirement: real CI evidence (self.layered_e2e.chain, cache lane, 2026-08-07) --
+rem HP_PY_DIR (from %%~dpI) always ends in exactly ONE trailing backslash. Quoted as
+rem "%HP_PY_DIR%" immediately before another quoted argument, Python's own argv parser
+rem (the standard Windows CommandLineToArgvW backslash-quote-parity rule, the same hazard
+rem already documented for findstr in docs/agent-lessons-learned.md, but here hitting
+rem python.exe's own C-runtime startup instead) treats that single trailing backslash as
+rem ESCAPING the closing quote rather than closing it -- the quoted region never actually
+rem closes, silently merging conda_env_dir with the next argument (the tried-file path) into
+rem one garbage string. locate_dll() then fails os.path.isdir() on that garbage and reports
+rem "could not locate" even when the real DLL is genuinely sitting under Library\bin --
+rem confirmed for real: eccodes.dll IS present in the eccodes-2.48.0-h3bec8ca_0 conda-forge
+rem package at exactly Library\bin\eccodes.dll, yet self.layered_e2e.chain's own CI run still
+rem reported "could not locate a matching file". Deterministic, not flaky -- HP_PY_DIR always
+rem ends in one backslash by construction, so this fires on every single conda-provider run.
+rem Fixed the same way lessons-learned's findstr entry recommends: double the trailing
+rem backslash so an EVEN count precedes the closing quote, collapsing back to the intended
+rem single backslash on the receiving end.
+set "HP_PY_DIR_ARG=%HP_PY_DIR%"
+if defined HP_PY_DIR_ARG set "HP_PY_DIR_ARG=%HP_PY_DIR_ARG%\"
 :dll_bundle_loop
 call :emit_from_base64 "~dll_bundle_scan.py" HP_DLL_BUNDLE_SCAN
-"%HP_PY%" ~dll_bundle_scan.py "%LOG%" "%HP_LOG_SIZE_BEFORE%" "%HP_PY_DIR%" "~dll_bundle_tried.txt" > "~next_dll.txt" 2>> "%LOG%"
+"%HP_PY%" ~dll_bundle_scan.py "%LOG%" "%HP_LOG_SIZE_BEFORE%" "%HP_PY_DIR_ARG%" "~dll_bundle_tried.txt" > "~next_dll.txt" 2>> "%LOG%"
 if exist "~dll_bundle_scan.py" del "~dll_bundle_scan.py" >nul 2>&1
 set "HP_NEXT_DLL="
 set "HP_NEXT_DLL_PATH="

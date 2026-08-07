@@ -371,9 +371,46 @@ protect `:log`'s unquoted echo, just at a different vulnerable site.
 proved for real (REQ-009 cascade, warnfix repair, hidden-import recovery) -- see that file's own
 header comment for the full mechanism trace. `pygrib`'s conda-forge build genuinely triggers this
 exact native-DLL gap, making `chainPass` flipping to `True` for the first time this loop's own
-acceptance criterion. **Not yet confirmed in real CI as of this section's own writing** -- see
-CLAUDE.md's Item 24 entry for the current confirmation status; do not assume this passes without
-checking a real `cache`-lane run first.
+acceptance criterion.
+
+**An EIGHTH real bug, found via the first real `cache`-lane run of this whole feature
+(2026-08-07): `HP_PY_DIR`'s own trailing backslash corrupted the `~dll_bundle_scan.py` call's
+argv, so `locate_dll()` always reported "could not locate" even when the DLL was genuinely
+present.** `HP_PY_DIR` (from `%~dpI`) always ends in exactly one trailing backslash; quoted as
+`"%HP_PY_DIR%"` immediately before another quoted argument (the tried-file path), Python's own
+Windows argv parser (the same `CommandLineToArgvW`-equivalent hazard already documented for
+`findstr.exe` in `docs/agent-lessons-learned.md`'s "A single trailing backslash before a closing
+quote" entry -- this is the SAME general rule hitting a second native executable) treats the
+single trailing backslash as escaping the closing quote rather than closing it, silently merging
+`conda_env_dir` with the tried-file argument into one garbage string. `os.path.isdir()` then
+fails on that garbage regardless of whether the real DLL exists. Confirmed directly: the real
+`eccodes-2.48.0-h3bec8ca_0` conda-forge win-64 package genuinely ships `Library\bin\eccodes.dll`
+(downloaded and inspected the package contents directly), and the real CI run's own
+`~environment.lock.txt` confirmed `eccodes=2.48.0=h3bec8ca_0` was genuinely installed -- yet the
+loop still reported `[INFO][DLL_BUNDLE] Detected native-DLL warning for 'eccodes.dll' but could
+not locate a matching file under the conda env's Library\bin; skipping.` Deterministic, not
+flaky -- `HP_PY_DIR` always ends in one backslash by construction, so every conda-provider run
+hit this. **Fixed** with `HP_PY_DIR_ARG` (one extra backslash appended before quoting, giving an
+even count) at the one call site that needed it; the sibling `HP_EXPAT_DLL` lookup a few lines
+earlier was never affected, since there the trailing backslash is followed by more literal path
+text (`Library\bin\libexpat*.dll`) before the closing quote, not directly by it.
+
+**Also plausibly explains why `mech3Pass` (hidden-import recovery, colorama) had never been
+observed passing in the same run either**: the frozen EXE never got past the corrupted-DLL
+`pygrib` import to reach colorama's own separate, deliberately un-bundled hidden-import gap, so
+`:hidden_import_recover`'s strict `ModuleNotFoundError`-only gate never had a chance to fire --
+an `ImportError: DLL load failed` is a structurally different signature it correctly declines
+(see "--hidden-import auto-recovery must stay STRICT" in `docs/agent-lessons-learned.md`). If
+true, fixing this one bug should unblock both `mech3Pass` and `mech4Pass` on the next real run,
+not just `mech4Pass` in isolation.
+
+**Not yet confirmed in real CI as of this section's own writing** -- see CLAUDE.md's Item 24
+entry for the current confirmation status; do not assume this passes without checking a real
+`cache`-lane run first. The fix itself is verified via a faithful Python simulation of the
+documented Windows argv-parsing algorithm (`tests/test_dll_bundle_scan.py`'s
+`HpPyDirArgvQuoting` class) -- this hazard class cannot be reproduced via a real subprocess on a
+Linux sandbox at all, since Linux's `execve` passes argv as an array with no command-line
+re-tokenizing step for the simulation to catch a regression in.
 
 ---
 

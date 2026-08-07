@@ -713,13 +713,48 @@ start at 1 and has gaps.
   caught the second and third rounds, exactly as it was built to do. See
   `docs/agent-interconnect.md`'s DLL-bundling section and `docs/agent-lessons-learned.md`'s ":log
   echoes UNQUOTED" entry for the full corrected trace.
+  **(13) The first REAL `cache`-lane run of the whole feature (2026-08-07) came back
+  `chainPass:false` again -- `mech1Pass:true`/`mech2Pass:true` (cascade + warnfix both confirmed
+  working for real), but `mech3Pass:false` and `mech4Pass:false`.** `mech4`'s own detail fields
+  (`dllWarningSeen:true, dllBundling:false, dllBundleComplete:false`) showed the loop correctly
+  DETECTED the `eccodes.dll` warning but never actually bundled it, logging "could not locate a
+  matching file under the conda env's Library\bin" -- despite `eccodes=2.48.0=h3bec8ca_0` being
+  genuinely installed (confirmed via the run's own `~environment.lock.txt`). **Root cause: an
+  EIGHTH bug, a real, deterministic argv-corruption issue, NOT a locate_dll() logic bug.**
+  `HP_PY_DIR` (from `%~dpI`) always ends in exactly one trailing backslash; quoted as
+  `"%HP_PY_DIR%"` immediately before another quoted argument (the tried-file path) at the
+  `~dll_bundle_scan.py` call site, that trailing backslash escapes the closing quote instead of
+  closing it (the same general hazard already documented for `findstr.exe` in
+  `docs/agent-lessons-learned.md`'s "A single trailing backslash before a closing quote" entry --
+  confirmed here as a genuinely general rule, not findstr-specific, since this hit `python.exe`'s
+  own argv parser instead) -- silently merging `conda_env_dir` with the tried-file argument into
+  garbage, so `os.path.isdir()` fails regardless of whether the real DLL exists. Confirmed by
+  downloading the real `eccodes-2.48.0-h3bec8ca_0` conda-forge win-64 package directly and
+  inspecting its contents: `eccodes.dll` genuinely ships at exactly `Library\bin\eccodes.dll`,
+  precisely where an uncorrupted search would have found it. Deterministic (not flaky) --
+  `HP_PY_DIR` always ends in one backslash by construction, so this fired on every single
+  conda-provider run since the loop shipped, meaning `chainPass` could never have been observed
+  `true` before this fix regardless of anything else being correct. **Also plausibly explains
+  `mech3Pass:false` in the same run**: the EXE never got past the corrupted-DLL pygrib import to
+  reach colorama's own separate hidden-import gap, so `:hidden_import_recover`'s strict
+  `ModuleNotFoundError`-only gate never had a chance to fire (an `ImportError: DLL load failed` is
+  a different signature it correctly declines) -- fixing this one bug may unblock both mechanisms
+  on the next run, not just `mech4`. **Fixed same day**: `HP_PY_DIR_ARG` (`%HP_PY_DIR%` plus one
+  appended backslash, giving an even count before the closing quote) replaces the raw `HP_PY_DIR`
+  at this one call site. Verified via a faithful Python simulation of the documented Windows
+  `CommandLineToArgvW` algorithm (`tests/test_dll_bundle_scan.py`'s new `HpPyDirArgvQuoting`
+  class) rather than a real Windows subprocess repro -- this hazard is Windows-argv-specific and
+  cannot be reproduced via a real subprocess on a Linux sandbox at all (`execve` passes argv as a
+  real array, no command-line re-tokenizing step to catch a regression in). See
+  `docs/agent-interconnect.md`'s DLL-bundling section and `docs/agent-lessons-learned.md`'s
+  trailing-backslash entry for the full trace.
   **NOT YET CONFIRMED in real CI** -- the `HP_PYSPEC_WRITEBACK` fix, the `HP_PYSPEC_ORIGINAL`
-  refinement, the DLL-bundling loop itself, AND the twice-corrected `batch.dll_bundle.pct_sanitizer`
-  check all need a fresh `cache`-lane run of `self.layered_e2e.chain` (mech1-4 all green,
-  `chainPass:true`) before this item can be considered closed -- note that test's own fixture is
-  Tier 3 (no pyproject constraint), so it only exercises the base drop-to-unconstrained path, not
-  `HP_PYSPEC_ORIGINAL`'s range-preservation specifically. Do not close this item until that real CI
-  confirmation lands.
+  refinement, the DLL-bundling loop itself, the twice-corrected `batch.dll_bundle.pct_sanitizer`
+  check, AND now this argv-corruption fix all need a fresh `cache`-lane run of
+  `self.layered_e2e.chain` (mech1-4 all green, `chainPass:true`) before this item can be
+  considered closed -- note that test's own fixture is Tier 3 (no pyproject constraint), so it
+  only exercises the base drop-to-unconstrained path, not `HP_PYSPEC_ORIGINAL`'s
+  range-preservation specifically. Do not close this item until that real CI confirmation lands.
 
 - **Item 25: `:dll_bundle_recover` reports `repaired` instead of a distinct `exhausted` outcome
   when a locatable DLL candidate is found after the 3-iteration cap is already hit.** Found via a

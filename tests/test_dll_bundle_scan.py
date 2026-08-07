@@ -311,6 +311,114 @@ class ReadTriedFile(unittest.TestCase):
             self.assertEqual(read_tried_file(str(p)), ["eccodes.dll", "other.dll"])
 
 
+def _parse_windows_argv(cmdline):
+    """Faithful implementation of the documented Windows CommandLineToArgvW
+    algorithm (MSDN) -- the same argv-parsing convention every native Windows
+    executable's C-runtime startup uses, python.exe included. Linux's execve
+    passes argv as a real array with no command-line re-tokenizing step, so
+    this specific hazard cannot be reproduced via a real subprocess on this
+    sandbox; this simulation is the closest available live-verification
+    substitute, mirroring this repo's own "trust a live check over reasoning"
+    rule (docs/agent-lessons-learned.md) for a hazard class that is
+    Windows-only by construction.
+    """
+    args = []
+    i = 0
+    n = len(cmdline)
+    cur = []
+    in_quotes = False
+    started = False
+    while i < n:
+        c = cmdline[i]
+        if c == " " and not in_quotes:
+            if started:
+                args.append("".join(cur))
+                cur = []
+                started = False
+            i += 1
+            continue
+        started = True
+        if c == "\\":
+            nbs = 0
+            while i < n and cmdline[i] == "\\":
+                nbs += 1
+                i += 1
+            if i < n and cmdline[i] == '"':
+                cur.append("\\" * (nbs // 2))
+                if nbs % 2 == 1:
+                    cur.append('"')
+                    i += 1
+                else:
+                    in_quotes = not in_quotes
+                    i += 1
+            else:
+                cur.append("\\" * nbs)
+        elif c == '"':
+            in_quotes = not in_quotes
+            i += 1
+        else:
+            cur.append(c)
+            i += 1
+    if started:
+        args.append("".join(cur))
+    return args
+
+
+class HpPyDirArgvQuoting(unittest.TestCase):
+    """Regression test for the real, CI-confirmed bug (self.layered_e2e.chain, cache
+    lane, 2026-08-07) behind mech4Pass staying false: HP_PY_DIR (from %~dpI) always
+    ends in exactly one trailing backslash. run_setup.bat quotes it as the 3rd argv to
+    ~dll_bundle_scan.py, immediately before another quoted argument (the tried-file
+    path) -- the single trailing backslash escapes the closing quote instead of
+    closing it, silently merging conda_env_dir with the tried-file argument into one
+    garbage string. locate_dll() then fails os.path.isdir() even when the real DLL is
+    genuinely sitting under Library\\bin (confirmed directly: eccodes.dll IS present
+    in the real eccodes-2.48.0-h3bec8ca_0 conda-forge package at exactly
+    Library\\bin\\eccodes.dll). Fixed by doubling the trailing backslash
+    (HP_PY_DIR_ARG) before quoting -- see docs/agent-lessons-learned.md's "A single
+    trailing backslash before a closing quote" entry."""
+
+    def test_single_trailing_backslash_corrupts_the_next_argument(self):
+        # Reproduces the ORIGINAL (broken) construction: "%HP_PY_DIR%" immediately
+        # followed by another quoted argument, with conda_env_dir ending in one
+        # backslash exactly as %~dpI always produces.
+        broken = (
+            r'x.py "log" "1234" "C:\Users\Public\Documents\Miniconda3\envs\myenv\" '
+            r'"~dll_bundle_tried.txt"'
+        )
+        argv = _parse_windows_argv(broken)
+        # The bug: conda_env_dir and the tried-file argument merge into ONE
+        # corrupted argument (with a literal embedded quote), instead of staying
+        # as two separate arguments -- exactly what caused the real CI failure.
+        self.assertEqual(len(argv), 4, "sanity check: this construction really does lose an argument")
+        self.assertIn('"', argv[3], "the trailing backslash must escape the closing quote (the bug)")
+        self.assertNotEqual(argv[3], "C:\\Users\\Public\\Documents\\Miniconda3\\envs\\myenv\\")
+
+    def test_doubled_trailing_backslash_is_the_fix(self):
+        # Reproduces the FIX: HP_PY_DIR_ARG = "%HP_PY_DIR%\" (one extra backslash
+        # appended), giving an EVEN count before the closing quote.
+        fixed = (
+            r'x.py "log" "1234" "C:\Users\Public\Documents\Miniconda3\envs\myenv\\" '
+            r'"~dll_bundle_tried.txt"'
+        )
+        argv = _parse_windows_argv(fixed)
+        self.assertEqual(len(argv), 5, "conda_env_dir and the tried-file path must stay separate arguments")
+        self.assertEqual(argv[3], "C:\\Users\\Public\\Documents\\Miniconda3\\envs\\myenv\\")
+        self.assertEqual(argv[4], "~dll_bundle_tried.txt")
+
+    def test_run_setup_bat_constructs_hp_py_dir_arg_with_doubled_backslash(self):
+        # Static guard: the actual batch fix must exist and precede the real call
+        # site, not just live in this test's own understanding of the bug.
+        bat = (REPO / "run_setup.bat").read_text(encoding="ascii", errors="replace")
+        self.assertIn('set "HP_PY_DIR_ARG=%HP_PY_DIR%"', bat)
+        self.assertIn('set "HP_PY_DIR_ARG=%HP_PY_DIR_ARG%\\"', bat)
+        self.assertIn(
+            '~dll_bundle_scan.py "%LOG%" "%HP_LOG_SIZE_BEFORE%" "%HP_PY_DIR_ARG%" "~dll_bundle_tried.txt"',
+            bat,
+            "the real call site must use HP_PY_DIR_ARG (doubled backslash), not the raw HP_PY_DIR",
+        )
+
+
 class PayloadSync(unittest.TestCase):
     def test_embedded_base64_matches_source(self):
         bat = (REPO / "run_setup.bat").read_text(encoding="utf-8", errors="replace")

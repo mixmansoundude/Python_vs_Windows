@@ -405,6 +405,39 @@ the closing quote is never adjacent to a variable-derived trailing backslash. Di
 from cmd.exe's own parse-time `%VAR%` expansion (that's about WHEN substitution happens; this is
 about HOW the resulting text is re-parsed by the child process).
 
+**Second real, CI-confirmed instance -- `python.exe`'s own argv, not just `findstr.exe`'s (CLAUDE.md
+Item 24, `self.layered_e2e.chain`, cache lane, 2026-08-07).** Confirms this is a genuinely GENERAL
+rule about how any native Windows console app's C-runtime startup re-parses its own command line
+(`CommandLineToArgvW`-equivalent), not something specific to `findstr`. `run_setup.bat`'s
+`:dll_bundle_recover` called `~dll_bundle_scan.py` with `"%HP_PY_DIR%"` (from `%~dpI`, which
+ALWAYS ends in exactly one trailing backslash) as the third argument, immediately followed by
+another quoted argument (the tried-file path) -- the same odd-backslash-before-quote pattern,
+just hitting `python.exe`'s own argv parser instead of `findstr.exe`'s. The single trailing
+backslash escaped the closing quote instead of closing it, silently merging `conda_env_dir` with
+the next argument into one corrupted string containing a literal embedded `"`. `locate_dll()`
+then failed `os.path.isdir()` on that garbage and reported "could not locate a matching file"
+**even though the real DLL was genuinely present** -- confirmed directly by downloading the real
+`eccodes-2.48.0-h3bec8ca_0` conda-forge win-64 package and inspecting its contents: `eccodes.dll`
+sits at exactly `Library\bin\eccodes.dll`, precisely where the (uncorrupted) search would have
+found it. Deterministic, not flaky -- `HP_PY_DIR` always ends in one backslash by construction, so
+this fired on every single conda-provider run, and is the likely reason `self.layered_e2e.chain`'s
+`chainPass` had never been observed `true` in any real CI run despite the mechanism itself being
+otherwise correct. **Also plausibly explains `mech3Pass:false`** in the same test run: the
+frozen EXE never got past the corrupted-DLL pygrib import to reach colorama's own (deliberately
+un-bundled, `importlib`-based) hidden-import gap, so `:hidden_import_recover`'s own strict
+`ModuleNotFoundError`-only gate never had a chance to fire on this run -- an `ImportError: DLL
+load failed` is a structurally different failure signature it correctly declines to act on (see
+"--hidden-import auto-recovery must stay STRICT" above). Fixed the same way: `HP_PY_DIR_ARG`
+(`%HP_PY_DIR%` plus one appended backslash, giving an even count) replaces `HP_PY_DIR` at this one
+call site. Verified via a faithful Python simulation of the documented `CommandLineToArgvW`
+algorithm (`tests/test_dll_bundle_scan.py`'s `HpPyDirArgvQuoting` class) rather than a real
+Windows subprocess repro -- Linux's `execve` passes argv as a real array with no command-line
+re-tokenizing step, so this specific hazard class cannot be reproduced via a real subprocess on
+this sandbox at all; the algorithmic simulation is the closest available live-verification
+substitute for a hazard that is Windows-only by construction. **Needs a fresh `cache`-lane
+`self.layered_e2e.chain` run to confirm `chainPass:true` for the first time** -- do not assume
+this is fully fixed until that real evidence lands.
+
 ---
 
 ## `:log` echoes UNQUOTED -- never route shell metacharacters through it
