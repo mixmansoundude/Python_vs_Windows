@@ -309,7 +309,13 @@ without leaking the shadowed `SECRET` variable's true value. Order among all six
 so chaining them in any order produces the same result. `HP_NEXT_DLL_PATH_SAFE` needs the same `%`/
 `^` stripping even though its raw value is a real, `os.walk()`-confirmed path (unlike
 `HP_DLL_DETECTED`/`HP_NEXT_DLL`, which are regex-extracted from arbitrary warning text) -- Windows
-filenames may legally contain `%` and `^`, even though they cannot contain `&`/`|`/`<`/`>`.
+filenames may legally contain `%`, `^`, and `&` (NTFS's own forbidden set is only
+`< > : " / \ | ? *` plus control characters), so a real conda-forge package path could carry any of
+these. `&` is a valid filename character but still a genuine CMD *transport* hazard once that path
+reaches an unquoted `:log` echo -- legality on disk and safety on a cmd.exe command line are
+unrelated axes, which is why it still needs the same sanitization as `|`/`<`/`>` (those three ARE
+also filesystem-illegal, so a real path containing them would be a defect elsewhere; `&` is the one
+character in this set that's both filesystem-legal and CMD-hazardous).
 
 **A companion CodeRabbit finding on the same review round: the loop's detected/skipped/repaired/
 unlocatable/failed outcomes previously reached only `:log`'s console text, with no
