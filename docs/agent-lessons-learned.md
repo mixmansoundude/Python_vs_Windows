@@ -1009,10 +1009,13 @@ bounded: `taskkill.exe` is launched via its own `System.Diagnostics.Process` obj
 `$p.WaitForExit($drainMs)` (also 5000ms) instead of unbounded. `$p` has already been sent `/F /T`
 plus a direct `Kill()` by the time either bound is reached, so a slow confirmation now just means
 "stop waiting," never "the process might still be alive and unaddressed." All 8
-`tests/test_exe_hint_rerun.py` tests (including `PayloadSync`) pass locally post-fix; the fix is
-**not yet confirmed against the real slowness itself** (that only reproduces on a real,
-contended Windows CI runner) -- watch the next `real`/`conda-full` run for a clean pass as the
-actual confirmation.
+`tests/test_exe_hint_rerun.py` tests (including `PayloadSync`) pass locally post-fix.
+**Confirmed against the real slowness on the `real` lane** (commit `f106f78`, run `31196980168`,
+job `92928320716`: full pytest suite passed, job conclusion `success`) -- the lane that was
+actually gating-blocked is fixed. `conda-full` (the other gating lane) had not yet finished on
+that same run as of this note; a single lane's clean pass doesn't rule out the same
+runner-contention class recurring elsewhere, so watch for a `conda-full` confirmation too before
+treating this as fully settled.
 
 **Why the default is 10000ms, not 5000ms (widened 2026-07):** the original 5000ms default was
 tuned assuming the probe window only needs to outlast a failing process's own error handling

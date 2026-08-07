@@ -777,12 +777,14 @@ start at 1 and has gaps.
   `System.Diagnostics.Process` object instead of `&`. See `docs/agent-lessons-learned.md`'s "A
   third bounded-launch helper exists" entry for the full mechanism trace and the fix detail. All 8
   `tests/test_exe_hint_rerun.py` tests (incl. `PayloadSync`) pass locally.
-  **NOT YET CONFIRMED against the real slowness** -- the root cause (taskkill.exe itself vs. the
-  trailing `WaitForExit()` vs. both) was never isolated on a real Windows host, since none was
-  available; the fix bounds both defensively rather than pinpointing one. Needs a clean `real`/
-  `conda-full` run post-fix to confirm the actual CI slowness is gone, not just that the local
-  test suite still passes (which it would regardless of whether the real bug was in taskkill.exe
-  or the trailing wait). Do not close this item until that real-CI confirmation lands.
+  The root cause (taskkill.exe itself vs. the trailing `WaitForExit()` vs. both) was never
+  isolated on a real Windows host, since none was available; the fix bounds both defensively
+  rather than pinpointing one. **`real` lane confirmed clean post-fix** (commit `f106f78`, run
+  `31196980168`, job `92928320716`: full pytest suite including `test_exe_hint_rerun.py` passed,
+  overall job conclusion `success`) -- the lane that was actually gating-blocked is fixed.
+  `conda-full` (the other gating lane) had not yet finished on that same run as of this note; do
+  not close this item until it too comes back clean, since a single lane's pass doesn't rule out
+  the same runner-contention class recurring elsewhere.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
