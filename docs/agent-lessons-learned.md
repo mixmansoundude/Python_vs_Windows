@@ -476,12 +476,41 @@ shell out to PowerShell instead** (`[Environment]::GetEnvironmentVariable('VAR')
 `for /f "usebackq delims=" %%X in (...) do set`), which has unambiguous .NET string semantics
 instead of cmd.exe's own undocumented parsing quirks. See `docs/agent-interconnect.md`'s "Conda
 native-DLL bundling repair loop" section for the concrete fix (`HP_DLL_DETECTED_SAFE`/
-`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE`) and the CI-confirmed failure signature. **General rule
-this incident reinforces**: when this repo's own static reasoning about an undocumented cmd.exe
-parsing rule cannot be settled by citing an authoritative source, build a live-cmd.exe-executed
-test fixture (mirroring `tests/harness.ps1`'s existing pattern) and trust ITS result over another
-round of reasoning -- this is now the second time reasoning-without-execution produced a
-confidently-wrong answer about cmd.exe's own substitution semantics in this exact code path.
+`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE`) and the CI-confirmed failure signature.
+
+**That PowerShell fix ALSO shipped broken, on the exact same fixture's next real Windows run --
+a third round of the same underlying lesson.** The replacement text itself, `-replace '%','_'`,
+put a lone, unpaired `%` literal into the `-Command` argument -- and that `-Command` argument sat
+on the same cmd.exe logical line as a legitimate `%LOG%`/`%TEMP%` reference. **cmd.exe pairs `%`
+characters with a left-to-right scan of the ENTIRE line, ignoring quote boundaries** -- it does
+not know or care that the lone `%` is "inside a PowerShell string" three quote-levels deep; it
+just counts percent signs. The lone `%` paired with `%LOG%`'s own opening `%`, and everything
+between them -- the whole real replace logic -- was parsed as one bogus, undefined variable name.
+Inside a batch file specifically (not an interactive prompt), an undefined `%VAR%` reference is
+silently deleted and replaced with empty text, not left as literal fallback text -- so the entire
+PowerShell command was gutted before it ever executed, reproducing the identical `"ECHO is off."`
+failure signature as the very bug this fix was meant to close. A sibling block with an EVEN total
+`%` count (two lone `%`'s, one per `-replace` call, plus `%LOG%`'s own pair) shows even parity is
+NOT sufficient proof of safety: the two lone `%`'s paired with EACH OTHER instead of each correctly
+pairing with `%LOG%`, silently deleting an entire intervening `Set-Content` call. **Rule: a
+literal, lone `%` must never appear anywhere in PowerShell text embedded in a `-Command` argument
+if that same cmd.exe logical line ALSO contains any legitimate `%VAR%` reference** (a redirection
+target, `%LOG%`, `%TEMP%`, anything) -- cmd.exe's pairing scan has no concept of "this one is fake,
+skip it." Build the percent character entirely inside PowerShell instead: `$pct = [char]37` (or
+`[char]0x25`), then `-replace $pct,'_'` -- this removes every literal `%` from the cmd.exe-visible
+text, leaving only the genuine, correctly-paired reference. **Verification method that actually
+caught this**: after any such fix, count `%` occurrences on the fully-joined (continuation-`^`-
+resolved) logical line and confirm the total matches exactly the number of INTENDED pairs -- do not
+stop at "the count looks even," trace which characters are meant to pair with which.
+
+**General rule this incident reinforces, for the THIRD time in this exact code path**: when this
+repo's own static reasoning about an undocumented cmd.exe parsing rule cannot be settled by citing
+an authoritative source, build a live-cmd.exe-executed test fixture (mirroring `tests/harness.ps1`'s
+existing pattern) and trust ITS result over another round of reasoning. Static reasoning about
+cmd.exe's own `%`-pairing and substitution semantics has now been WRONG three separate times in
+this one code path, even after the fixture had already caught the first mistake -- the fixture
+itself is what caught the second and third, exactly by design. Do not treat "I fixed the thing the
+test caught" as proof the new code is correct; re-run the actual test.
 
 ---
 

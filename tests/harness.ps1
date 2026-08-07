@@ -496,6 +496,15 @@ Write-Result 'batch.dll_bundle.ndjson' 'CLAUDE.md Item 24: native-DLL bundling r
 # must not leak the real SECRET variable's value through `call`'s own second cmd.exe
 # expansion pass (see docs/agent-lessons-learned.md's "call triggers a second expansion pass"
 # entry) once it has been through this sanitizer.
+#
+# A SECOND real bug surfaced on this fixture's own first real Windows run: the PowerShell fix's
+# literal `-replace '%','_'` put a lone, unpaired % on the same cmd.exe line as `%TEMP%` below.
+# cmd.exe pairs % characters by a left-to-right scan of the WHOLE line, ignoring quotes -- the
+# lone % paired with %TEMP%'s own opening %, and everything between them (the real replace
+# logic) was parsed as one bogus, undefined variable name and silently deleted (an undefined
+# %VAR% collapses to empty text inside a batch file). Fixed by removing every literal % from the
+# -Command text: `$pct = [char]37` builds the percent character entirely inside PowerShell, so
+# %TEMP% is the only % left on the line.
 $pctFixture = Join-Path $env:TEMP 'verify-percent-sanitizer.cmd'
 $pctScript = @'
 @echo off
@@ -503,7 +512,7 @@ setlocal DisableDelayedExpansion
 set "SECRET=must-not-appear"
 set "RAW=prefix%%SECRET%%suffix^caretend"
 set "SAFE=%RAW%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$v = [Environment]::GetEnvironmentVariable('SAFE'); $v = $v -replace '%','_' -replace '\^','_'; [Console]::Write($v)" > "%TEMP%\pct_safe_out.txt" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$pct = [char]37; $v = [Environment]::GetEnvironmentVariable('SAFE'); $v = $v -replace $pct,'_' -replace '\^','_'; [Console]::Write($v)" > "%TEMP%\pct_safe_out.txt" 2>nul
 set "SAFE="
 for /f "usebackq delims=" %%X in ("%TEMP%\pct_safe_out.txt") do set "SAFE=%%X"
 if exist "%TEMP%\pct_safe_out.txt" del "%TEMP%\pct_safe_out.txt" >nul 2>&1

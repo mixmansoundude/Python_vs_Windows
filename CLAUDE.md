@@ -685,8 +685,29 @@ start at 1 and has gaps.
   lines, so a PEP 440 range containing `<`/`>` would already have corrupted the command even
   before today's session (unrelated to write-back specifically). See
   `docs/agent-interconnect.md`'s write-back/cascade section for the full trace.
+  **(12) The PowerShell fix from finding (10) ALSO shipped broken -- caught by the same
+  `batch.dll_bundle.pct_sanitizer` fixture's own very next real CI run, `details.output` again
+  `"ECHO is off."`.** The replacement text (`-replace '%','_'`) put a lone, unpaired `%` on the
+  SAME cmd.exe logical line as the legitimate `%LOG%`/`%TEMP%` reference; cmd.exe pairs `%`
+  characters via a left-to-right scan of the whole line regardless of quoting, so the lone `%`
+  paired with `%LOG%`'s own opening `%` and everything between them (the entire real replace
+  logic) was parsed as one bogus, undefined variable name -- silently deleted, since an undefined
+  `%VAR%` collapses to empty text inside a batch file. A sibling block with an EVEN total `%` count
+  failed the same way for a related reason: its two lone `%`'s (one per `-replace` call) paired
+  with EACH OTHER instead of each pairing with `%LOG%`, deleting an entire intervening
+  `Set-Content` call -- proving even parity alone does not establish correct pairing. **Fixed by
+  removing every literal `%` from the `-Command` text entirely**: `$pct = [char]37` builds the
+  percent character inside PowerShell itself, leaving only the one legitimate, correctly-paired
+  `%LOG%`/`%TEMP%` reference on each cmd.exe line -- verified by literally counting `%` occurrences
+  per fully-joined logical line after the fix (exactly 2 in every case). The
+  `batch.dll_bundle.pct_sanitizer` fixture in `tests/harness.ps1` was updated with the identical
+  `[char]37` technique. Static reasoning about cmd.exe's own `%`-pairing/substitution semantics has
+  now been wrong THREE separate times in this one code path; the live-cmd.exe fixture is what
+  caught the second and third rounds, exactly as it was built to do. See
+  `docs/agent-interconnect.md`'s DLL-bundling section and `docs/agent-lessons-learned.md`'s ":log
+  echoes UNQUOTED" entry for the full corrected trace.
   **NOT YET CONFIRMED in real CI** -- the `HP_PYSPEC_WRITEBACK` fix, the `HP_PYSPEC_ORIGINAL`
-  refinement, the DLL-bundling loop itself, AND the corrected `batch.dll_bundle.pct_sanitizer`
+  refinement, the DLL-bundling loop itself, AND the twice-corrected `batch.dll_bundle.pct_sanitizer`
   check all need a fresh `cache`-lane run of `self.layered_e2e.chain` (mech1-4 all green,
   `chainPass:true`) before this item can be considered closed -- note that test's own fixture is
   Tier 3 (no pyproject constraint), so it only exercises the base drop-to-unconstrained path, not

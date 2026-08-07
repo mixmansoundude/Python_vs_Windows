@@ -3980,9 +3980,19 @@ rem instead (unambiguous .NET string/regex semantics), reading the value via
 rem [Environment]::GetEnvironmentVariable (never substituting it into the -Command text, so
 rem this cannot reintroduce the same call-triggered second-pass hazard) and routing the
 rem result back through a file, never a command-substitution capture.
+rem derived requirement: a SECOND real CI-confirmed bug found via the pct_sanitizer fixture's
+rem own first real Windows run -- a lone, unpaired % inside '-replace ''%'',''_''' sits on the
+rem SAME cmd.exe logical line as %LOG% below; cmd.exe pairs % characters by a left-to-right scan
+rem across the WHOLE line regardless of quoting, so that lone % paired with %LOG%'s own opening
+rem %, and everything in between (the real replace logic) was treated as one bogus, undefined
+rem variable name and silently deleted (an undefined %VAR% collapses to empty text inside a
+rem batch file). Fixed by never writing a literal % in the -Command text at all: $pct = [char]37
+rem produces the percent character entirely inside PowerShell, so the only % left on this
+rem cmd.exe line is the legitimate, correctly-paired %LOG%.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$pct = [char]37;" ^
   "$v = [Environment]::GetEnvironmentVariable('HP_DLL_DETECTED_SAFE');" ^
-  "$v = $v -replace '%','_' -replace '\^','_';" ^
+  "$v = $v -replace $pct,'_' -replace '\^','_';" ^
   "[Console]::Write($v)" > "~dll_pct_safe.txt" 2>>"%LOG%"
 for /f "usebackq delims=" %%X in ("~dll_pct_safe.txt") do set "HP_DLL_DETECTED_SAFE=%%X"
 if exist "~dll_pct_safe.txt" del "~dll_pct_safe.txt" >nul 2>&1
@@ -4049,12 +4059,18 @@ rem HP_DLL_DETECTED_SAFE above -- stripped via PowerShell instead (see that comm
 rem full trace). Two separate output files, not one multi-line file, so reading the result
 rem back is a plain single-value "for /f ... do set" with no counter/index logic needed --
 rem this repo bans delayed expansion (!VAR!) repo-wide, which a multi-line parse would need.
+rem derived requirement: same odd-%-pairing bug as HP_DLL_DETECTED_SAFE above -- with TWO
+rem literal '%' occurrences here (one per -replace call) plus %LOG%'s pair, the total was
+rem EVEN but paired WRONG: the two lone %'s paired with EACH OTHER, silently deleting the
+rem entire first Set-Content call as a bogus "variable name" between them. $pct = [char]37
+rem removes every literal % from this line's text, leaving only %LOG%'s own correct pair.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$pct = [char]37;" ^
   "$a = [Environment]::GetEnvironmentVariable('HP_NEXT_DLL_SAFE');" ^
-  "$a = $a -replace '%','_' -replace '\^','_';" ^
+  "$a = $a -replace $pct,'_' -replace '\^','_';" ^
   "Set-Content -LiteralPath '~dll_pct_safe_a.txt' -Value $a -NoNewline -Encoding ASCII;" ^
   "$b = [Environment]::GetEnvironmentVariable('HP_NEXT_DLL_PATH_SAFE');" ^
-  "$b = $b -replace '%','_' -replace '\^','_';" ^
+  "$b = $b -replace $pct,'_' -replace '\^','_';" ^
   "Set-Content -LiteralPath '~dll_pct_safe_b.txt' -Value $b -NoNewline -Encoding ASCII" >> "%LOG%" 2>&1
 set "HP_NEXT_DLL_SAFE="
 set "HP_NEXT_DLL_PATH_SAFE="

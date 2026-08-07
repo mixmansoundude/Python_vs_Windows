@@ -289,22 +289,42 @@ undocumented cmd.exe parsing quirk, not a Blinter false positive as first assume
 (the gating `batch.dll_bundle.pct_sanitizer` NDJSON row failed the run).
 
 **Actual fix: strip `%` and `^` in PowerShell instead of cmd.exe substitution.** Each `_SAFE`
-variable's `%`/`^` stripping now happens via `powershell -NoProfile -ExecutionPolicy Bypass
--Command "$v = [Environment]::GetEnvironmentVariable('VAR_SAFE'); $v = $v -replace '%','_' -replace
-'\^','_'; [Console]::Write($v)" > "~dll_pct_safe*.txt"`, read back via a plain, non-`call`
-`for /f "usebackq delims=" %%X in ("~dll_pct_safe*.txt") do set "VAR_SAFE=%%X"`. Reading the value
-via `[Environment]::GetEnvironmentVariable` (never substituting it into the `-Command` text itself)
+variable's `%`/`^` stripping now happens via a `powershell -NoProfile -ExecutionPolicy Bypass
+-Command` call, read back via a plain, non-`call` `for /f "usebackq delims=" %%X in
+("~dll_pct_safe*.txt") do set "VAR_SAFE=%%X"`. Reading the value via
+`[Environment]::GetEnvironmentVariable` (never substituting it into the `-Command` text itself)
 means this cannot reintroduce the same `call`-triggered second-pass hazard one layer up. `HP_NEXT_
 DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` are sanitized in ONE PowerShell invocation writing TWO separate
 output files (`~dll_pct_safe_a.txt`/`~dll_pct_safe_b.txt`), not one combined multi-line file --
 this repo bans delayed expansion (`!VAR!`) repo-wide, which parsing multiple lines out of one file
 back into two batch variables would otherwise need. `&`/`|`/`<`/`>` stripping is unchanged (still
 plain cmd.exe `:search=replace` substitution -- that part was never wrong, only the `%%` escape
-attempt was). `tests/harness.ps1`'s `batch.dll_bundle.pct_sanitizer` fixture was rewritten to
-validate this REPLACEMENT mechanism (still a real cmd.exe + PowerShell child-process execution, not
-static pattern matching) and additionally proves the actual security property end-to-end: a raw
-value shaped like `%SECRET%`, once sanitized, survives a real `call`-based second expansion pass
-without leaking the shadowed `SECRET` variable's true value. Order among all six substitutions
+attempt was).
+
+**A THIRD real bug, caught by this fixture's own first real Windows CI run (the fixture proved
+itself trustworthy again, not the fix): a lone, unpaired `%` inside the literal PowerShell text
+`-replace '%','_'` sits on the SAME cmd.exe logical line as `%LOG%` (or, in the fixture itself,
+`%TEMP%`).** cmd.exe pairs `%` characters via a left-to-right scan of the WHOLE line, completely
+ignoring quote boundaries -- the lone `%` paired with `%LOG%`'s own opening `%`, and cmd.exe
+treated everything between them (the entire real replace logic, dozens of characters) as one
+bogus, undefined variable name. Inside a batch file, an undefined `%VAR%` reference is silently
+removed and replaced with empty text (not left literal, the classic batch-only gotcha) -- so the
+whole PowerShell command was gutted before it ever ran, producing an empty output file and the
+identical `"ECHO is off."` failure signature as the first bug, on every single lane again. The
+`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` block had a variant of the same bug with an EVEN total
+`%` count (two lone `%`'s from two `-replace` calls, plus `%LOG%`'s own pair) -- even parity is
+not enough to prove correct pairing: the two lone `%`'s paired with EACH OTHER instead of each
+pairing with `%LOG%`, silently deleting the entire first `Set-Content` call as one bogus variable
+name. **Fixed by removing every literal `%` from the `-Command` text entirely**: `$pct = [char]37`
+builds the percent character inside PowerShell itself, so the only `%` remaining on any of these
+cmd.exe lines is the single, legitimate, correctly-paired `%LOG%`/`%TEMP%` reference -- verified by
+literally counting `%` occurrences per logical (continuation-joined) line after the fix (exactly 2
+in every case, the one intended pair). `tests/harness.ps1`'s `batch.dll_bundle.pct_sanitizer`
+fixture was updated with the same `[char]37` technique -- it validates the REPLACEMENT mechanism
+(still a real cmd.exe + PowerShell child-process execution, not static pattern matching) and
+additionally proves the actual security property end-to-end: a raw value shaped like `%SECRET%`,
+once sanitized, survives a real `call`-based second expansion pass without leaking the shadowed
+`SECRET` variable's true value. Order among all six substitutions
 (`&`/`|`/`<`/`>`/`%`/`^`) is commutative -- none of them can match the replacement character (`_`),
 so chaining them in any order produces the same result. `HP_NEXT_DLL_PATH_SAFE` needs the same `%`/
 `^` stripping even though its raw value is a real, `os.walk()`-confirmed path (unlike
