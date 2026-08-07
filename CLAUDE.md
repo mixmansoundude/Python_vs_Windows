@@ -530,231 +530,42 @@ Once an item is fully resolved it is removed from here entirely and archived (ke
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
 start at 1 and has gaps.
 
-- **Item 24: PyInstaller does not bundle `pygrib`'s native `eccodes.dll` dependency under the
-  conda provider, so the frozen EXE fails at runtime even though the build itself succeeds.**
-  Found via `self.layered_e2e.chain`'s real CI evidence (run `30875520181`, cache-lane job
-  `91886501141`) once Item 22's cStringIO fix let the test reach this far for the first time --
-  see that item's own closed-backlog entry for the full mechanism trace. `pygrib`'s conda-forge
-  build (`pygrib-2.1.8-py314h7badd63_0`) links its compiled `_pygrib.cp314-win_amd64.pyd`
-  extension against `eccodes.dll`, a separate native C library shipped by its own conda-forge
-  package (`eccodes-2.48.0-h3bec8ca_0`, present in the env) -- PyInstaller's static analysis
-  bundles the Python extension module itself but never discovers or copies that DLL dependency,
-  so the build succeeds (with only a `WARNING: Library not found: could not resolve
-  'eccodes.dll'...` note) and the frozen EXE then fails immediately at runtime with `ImportError:
-  DLL load failed while importing _pygrib: The specified module could not be found.` This is a
-  missing-native-library failure, not a missing-Python-module one -- `--hidden-import`
-  auto-recovery correctly never attempts anything here (see "--hidden-import auto-recovery must
-  stay STRICT" in `docs/agent-lessons-learned.md`), since that mechanism is deliberately scoped to
-  `ModuleNotFoundError` only and this is a different failure class entirely.
-  **Practical impact:** keeps `self.layered_e2e.chain` at `pass:false` (`chainPass=False`) even
-  though the two mechanisms it was originally designed to test (REQ-009 cascade, warnfix
-  success/failure) now both genuinely pass. The test is `cache`-lane-only and non-gating
-  (`continue-on-error`), so this does not block any lane that gates PR merges.
-  **Full PRD at `docs/prd-conda-native-dll-bundling.md`.** Requirement 1's own CI-only experiment
-  (`tests/selfapps_gribapi_hook_probe.ps1`, PR #415, merged 2026-08-04) empirically confirmed the
-  "does an existing upstream hook already solve this for free" question negative: forcing
-  `--hidden-import=gribapi` did NOT make `hook-gribapi.py` bundle `eccodes.dll` for a pygrib-only
-  build (`self.gribapi_hook_probe.hidden_import`, `details.conclusive=true`,
-  `details.hiddenImportHelped=false` -- both the control and forced-hidden-import builds showed
-  identical `bundledDll=false`/`exeExit=1`/`dllLoadFailed=true`), matching the PRD's own updated
-  Finding 1 expectation (`pygrib`/`gribapi` are architecturally independent bindings to the same C
-  library). **Requirements 2-6 now implemented** (this session, same day): `:dll_bundle_recover` in
-  `run_setup.bat` (new subroutine, called from `:run_entry_smoke` right before `:run_exe_smokerun`)
-  reacts to PyInstaller's own build-time `WARNING: Library not found: could not resolve 'X.dll'`
-  line (Requirement 2's chosen design -- build-time, not runtime, to skip a guaranteed-failing
-  smoke-test cycle), mirrors `:hidden_import_recover`'s bounded-iteration/tried-list shape
-  (Requirement 3, 3-iteration cap), is gated to `HP_ENV_MODE=conda` for the actual
-  `--add-binary`/`Library\bin` glob action (Requirement 3), carries the identical
-  `HP_NUITKA_FALLBACK_USED` early-exit guard `:hidden_import_recover` already has (Requirement 6),
-  and is built GENERAL rather than `eccodes`-hardcoded (see `docs/open-questions.md`'s former item
-  1, now resolved below) -- the new `tools/dll_bundle_scan.py` (`HP_DLL_BUNDLE_SCAN` payload)
-  parses whatever DLL name PyInstaller's own warning names via regex, not a fixed string, and
-  double-gates on the DLL actually existing under the conda env's `Library\bin` (recursively, since
-  `hook-gribapi.py` itself nests `eccodes.dll` under a package-named subfolder there on Windows).
-  `tests/test_dll_bundle_scan.py` (34 tests) covers the warning parse, the tried-list guard, the
-  double-gate, the byte-offset log-tail read (so a stale warning from an earlier run in the same
-  persistent `~setup.log` is never re-detected), the `--detect` mode, and the embedded-payload sync.
-  **A CodeRabbit review pass caught 4 genuine bugs in the first-shipped version, all fixed same
-  day**: (1) detection itself was gated on `HP_ENV_MODE=conda`, silently defeating the PRD's own
-  "provider-agnostic detection" design -- fixed by moving detection (a `--detect` CLI mode) before
-  both the conda and Nuitka gates; (2) the tried-list was accumulated via an unquoted batch
-  variable expanded on the scan command line, which a DLL basename containing a space or `&` would
-  corrupt or split -- fixed by routing it through a file (`~dll_bundle_tried.txt`, appended via
-  `type ... >>`, never through `%VAR%`-expanded command text); (3) `main()` stopped at the first
-  candidate that failed the `Library\bin` lookup instead of trying the next one -- fixed with a
-  loop that skips unresolvable candidates; (4) the "Native-DLL bundling complete" log line could
-  fire even after a genuine rebuild failure, since `HP_DLL_ITER GEQ 1` is true on both the success
-  and failure paths -- fixed with an explicit `HP_DLL_FAILED` flag (mirroring the exact bug class
-  already fixed once before for the warnfix-triggered rebuild, see
-  `docs/agent-interconnect.md`'s "AV-Safe Build Path Tier A" section). Separately, the FIRST real
-  CI run of this implementation failed all 8 lanes on a genuine bug in the test file itself, not
-  the batch logic: `tests/test_dll_bundle_scan.py` wrote fixture files via `Path.write_text()`,
-  which performs platform newline translation (`\n` -> `\r\n`) on Windows but not Linux -- the
-  exact-string-equality assertions in the `ReadTail` test class passed locally (Linux sandbox) and
-  failed on the real Windows runner. Fixed by switching every fixture write in that file to
-  `Path.write_bytes(text.encode("utf-8"))`, which never translates.
-  **A second CodeRabbit review pass caught 2 more genuine findings, both fixed same day**:
-  (5) `HP_DLL_DETECTED`/`HP_NEXT_DLL`/`HP_NEXT_DLL_PATH` (all derived from PyInstaller's own
-  warning text, which can legally contain `&`/`|`/`<`/`>`) reached `:log`'s UNQUOTED echo -- an
-  already-documented hazard class in this repo (see `docs/agent-lessons-learned.md`'s ":log
-  echoes UNQUOTED" entry) this loop had not yet been checked against; fixed with display-only
-  `_SAFE` sanitized variables used only in `:log` calls, leaving every functional use of the raw
-  value (tried-file byte-copy, quoted `--add-binary` argument) untouched; (6) the loop's
-  detected/skipped/repaired/unlocatable/failed outcomes reached only `:log`'s console text, with
-  no machine-readable record -- fixed with a new `:emit_dll_bundle_row` subroutine emitting NDJSON
-  id `self.dll_bundle.recover` from all 6 outcome points, pulling the DLL name/provider/iteration
-  via `[Environment]::GetEnvironmentVariable(...)` inside PowerShell rather than `%VAR%` cmd.exe
-  substitution (protecting cmd.exe's own command-line parsing, where `&`/`|` are metacharacters
-  even inside a quoted argument). See `docs/agent-interconnect.md`'s DLL-bundling section and
-  `docs/agent-ndjson.md` for full detail, including why this row is not yet observed in
-  `self.layered_e2e.chain`'s own artifact (that test's isolated sub-bootstrap leaves `HP_NDJSON`
-  unset, matching established convention) and relies instead on `tests/harness.ps1`'s new
-  `batch.dll_bundle.ndjson` static wiring check.
-  **A third CodeRabbit review pass on that same fix caught a 7th genuine bug**: the `_SAFE`
-  sanitization from finding (5) stripped `&`/`|`/`<`/`>` but missed that `call :log "..."` triggers
-  cmd.exe's OWN second expansion pass on its own command line -- a well-established (if not
-  officially documented) `call` behavior -- so a raw `%` or `^` surviving into a `_SAFE` variable
-  could still expand an unrelated environment variable (e.g. a crafted `%SOME_SECRET%.dll` warning
-  text from an adversarial native extension) into the log, or alter escaping, on that second pass.
-  Fixed by extending all three `_SAFE` chains (`HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/
-  `HP_NEXT_DLL_PATH_SAFE`) with two more substitutions each: `%` (doubled to `%%` in the search
-  text, believed at the time to be a standard cmd.exe idiom for matching a literal percent sign in
-  a `:search=replace` substitution -- **this belief was wrong, see finding (10) below**) and `^`
-  (no doubling needed there). See `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry
-  (new subsection) and `docs/agent-interconnect.md`'s DLL-bundling section for the full mechanism
-  trace.
-  **Requirement 4 (regression test) extended `tests/selfapps_layered_e2e.ps1`** with a 4th
-  mechanism (`mech4Pass`, requiring `dllWarningSeen`/`dllBundling`/`dllBundleComplete`) alongside
-  the three it already proved -- this is the acceptance criterion that should finally flip
-  `chainPass` to `True` for the first time.
-  **A FOURTH CodeRabbit review pass caught 2 more findings, both triaged**: (8) Blinter (a static
-  linter, not a real cmd.exe) flagged the `%VAR:%%=_%` doubled-percent idiom from finding (7) as a
-  possible "malformed string operation" (rule E021) -- assumed at the time to be a Blinter false
-  positive (its pattern matcher not modeling the doubled-`%%` escape), but rather than trust either
-  static tool's verdict or this repo's own reasoning about undocumented cmd.exe parsing a fourth
-  time, `tests/harness.ps1` gained a NEW gating check (`batch.dll_bundle.pct_sanitizer`) that runs
-  the EXACT idiom against a real `cmd.exe` via a live fixture and asserts the observed output --
-  settling it empirically rather than by further static reasoning. **Blinter turned out to be
-  RIGHT, not a false positive -- see finding (10).** (9) A genuine, still-open correctness gap,
-  DEFERRED to Item 25 below rather than fixed in this already-large change: when a 4th locatable
-  DLL candidate is found after `HP_DLL_ITER` already hit its 3-iteration cap, the loop currently
-  reports `repaired` + "bundling complete" even though that 4th DLL was never bundled -- needs a
-  distinct `exhausted` outcome state, mirroring `:hidden_import_recover`'s own
-  `self.exe.hidden_import.exhaust` pattern.
-  **Real CI evidence, first observed 2026-08-07**: `self.layered_e2e.chain` came back
-  `chainPass:false`, but the failure is EARLIER than the DLL-bundling mechanism entirely --
-  `mech1Pass:false`, `condaSelected:false`, `statusState:"venv_env"`. Root cause (confirmed via the
-  real `~setup.log`/`~layered_e2e_bootstrap.log` artifacts): a genuine, PRE-EXISTING bug unrelated
-  to the DLL-bundling loop itself. The `runtime.txt` write-back feature (REQ-004) writes the EXACT
-  patch version uv resolved (e.g. `python-3.14.7`) the moment uv's own venv succeeds; when the
-  REQ-009 cascade later re-enters targeting conda (because pygrib still fails to build under uv),
-  `:after_env_mode_selection`'s re-derivation of `PYSPEC` reads that freshly-written `runtime.txt`
-  and forwards `python=3.14.7` verbatim to `conda create` -- but conda-forge's own `python` package
-  release cadence is entirely separate from CPython's/uv's, and did not have that exact patch,
-  producing `PackagesNotFoundInChannelsError: python=3.14.7` and a hard `conda env create failed.`
-  The chain then fell through embed -> venv, never reaching a real conda environment, so pygrib
-  was never built and `dllWarningSeen` never fired -- the DLL-bundling loop was never exercised at
-  all in this run, regardless of its own correctness. **Fixed**: a new `HP_PYSPEC_WRITEBACK` flag,
-  set at all 3 sites where write-back reassigns `PYSPEC` (the `:write_runtime_txt` subroutine plus
-  its two inline duplicates), marks a `PYSPEC` value as "self-authored by whichever provider ran
-  first," not a genuine user requirement (distinct from `HP_RUNTIME_TXT_PREEXIST`, which only
-  tracks the FILE's pre-existence, not whether write-back overwrote it this run). `:try_conda_create`
-  now drops the version pin (falls back to its own existing unconstrained `"%PYSPEC%"==""` branch)
-  whenever `HP_PYSPEC_WRITEBACK` is set, at both the initial attempt and the transient-retry --
-  a REAL pre-existing user pin (`HP_RUNTIME_TXT_PREEXIST` defined) is left untouched.
-  **(10) The very first real CI run of `batch.dll_bundle.pct_sanitizer` (finding 8's own live-cmd.exe
-  fixture) proved the `%VAR:%%=_%` doubled-percent idiom from finding (7) FALSE, not the Blinter
-  flag it was built to double-check.** `details.output` came back `"ECHO is off."` with
-  `exitCode:0` -- the substitution silently produced an EMPTY value instead of the expected
-  sanitized text, an undocumented cmd.exe parsing quirk this repo's own reasoning got wrong (this
-  broke `HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` across essentially every
-  CI lane). **Fixed by moving `%`/`^` stripping into PowerShell** (`-replace '%','_' -replace
-  '\^','_'` against `[Environment]::GetEnvironmentVariable(...)`, written to a temp file and read
-  back via a plain, non-`call` `for /f "usebackq delims=" %%X in (...) do set` -- never a
-  delayed-expansion multi-line parse, which this repo bans repo-wide) instead of cmd.exe
-  substitution; `&`/`|`/`<`/`>` stripping is unchanged (that part was never wrong). The
-  `batch.dll_bundle.pct_sanitizer` fixture itself was rewritten to validate the REPLACEMENT
-  mechanism (still a real cmd.exe + PowerShell child-process execution) and additionally proves the
-  actual security property end-to-end via a real `call`-based second-expansion-pass check. See
-  `docs/agent-interconnect.md`'s DLL-bundling section and `docs/agent-lessons-learned.md`'s ":log
-  echoes UNQUOTED" entry for the full corrected trace.
-  **(11) Refined further the same day, before any real CI confirmation of finding (10) had even
-  landed, in response to a maintainer question plus an independently-converging CodeRabbit
-  finding**: a new `HP_PYSPEC_ORIGINAL` snapshot (captured immediately before each of the 3
-  write-back sites reassigns `PYSPEC`) now lets `:try_conda_create` preserve a genuine
-  user-authored `pyproject.toml`/PEP 723 `requires-python` range across cascade instead of always
-  dropping to "no constraint" -- CodeRabbit's own finding. Investigating the maintainer's separate
-  "would loosening write-back also help subsequent runs" question turned up that it already does,
-  via PRE-EXISTING code unrelated to this fix (`tools/detect_python.py`'s `read_runtime_spec()`
-  already truncates any version to major.minor on every fresh read of `runtime.txt`) -- no
-  write-side change was needed for that half. Also fixed a genuine, independent, pre-existing bug
-  found while making this change: `%PYSPEC%` was used UNQUOTED on both `conda create` command
-  lines, so a PEP 440 range containing `<`/`>` would already have corrupted the command even
-  before today's session (unrelated to write-back specifically). See
-  `docs/agent-interconnect.md`'s write-back/cascade section for the full trace.
-  **(12) The PowerShell fix from finding (10) ALSO shipped broken -- caught by the same
-  `batch.dll_bundle.pct_sanitizer` fixture's own very next real CI run, `details.output` again
-  `"ECHO is off."`.** The replacement text (`-replace '%','_'`) put a lone, unpaired `%` on the
-  SAME cmd.exe logical line as the legitimate `%LOG%`/`%TEMP%` reference; cmd.exe pairs `%`
-  characters via a left-to-right scan of the whole line regardless of quoting, so the lone `%`
-  paired with `%LOG%`'s own opening `%` and everything between them (the entire real replace
-  logic) was parsed as one bogus, undefined variable name -- silently deleted, since an undefined
-  `%VAR%` collapses to empty text inside a batch file. A sibling block with an EVEN total `%` count
-  failed the same way for a related reason: its two lone `%`'s (one per `-replace` call) paired
-  with EACH OTHER instead of each pairing with `%LOG%`, deleting an entire intervening
-  `Set-Content` call -- proving even parity alone does not establish correct pairing. **Fixed by
-  removing every literal `%` from the `-Command` text entirely**: `$pct = [char]37` builds the
-  percent character inside PowerShell itself, leaving only the one legitimate, correctly-paired
-  `%LOG%`/`%TEMP%` reference on each cmd.exe line -- verified by literally counting `%` occurrences
-  per fully-joined logical line after the fix (exactly 2 in every case). The
-  `batch.dll_bundle.pct_sanitizer` fixture in `tests/harness.ps1` was updated with the identical
-  `[char]37` technique. Static reasoning about cmd.exe's own `%`-pairing/substitution semantics has
-  now been wrong THREE separate times in this one code path; the live-cmd.exe fixture is what
-  caught the second and third rounds, exactly as it was built to do. See
-  `docs/agent-interconnect.md`'s DLL-bundling section and `docs/agent-lessons-learned.md`'s ":log
-  echoes UNQUOTED" entry for the full corrected trace.
-  **(13) The first REAL `cache`-lane run of the whole feature (2026-08-07) came back
-  `chainPass:false` again -- `mech1Pass:true`/`mech2Pass:true` (cascade + warnfix both confirmed
-  working for real), but `mech3Pass:false` and `mech4Pass:false`.** `mech4`'s own detail fields
-  (`dllWarningSeen:true, dllBundling:false, dllBundleComplete:false`) showed the loop correctly
-  DETECTED the `eccodes.dll` warning but never actually bundled it, logging "could not locate a
-  matching file under the conda env's Library\bin" -- despite `eccodes=2.48.0=h3bec8ca_0` being
-  genuinely installed (confirmed via the run's own `~environment.lock.txt`). **Root cause: an
-  EIGHTH bug, a real, deterministic argv-corruption issue, NOT a locate_dll() logic bug.**
-  `HP_PY_DIR` (from `%~dpI`) always ends in exactly one trailing backslash; quoted as
-  `"%HP_PY_DIR%"` immediately before another quoted argument (the tried-file path) at the
-  `~dll_bundle_scan.py` call site, that trailing backslash escapes the closing quote instead of
-  closing it (the same general hazard already documented for `findstr.exe` in
-  `docs/agent-lessons-learned.md`'s "A single trailing backslash before a closing quote" entry --
-  confirmed here as a genuinely general rule, not findstr-specific, since this hit `python.exe`'s
-  own argv parser instead) -- silently merging `conda_env_dir` with the tried-file argument into
-  garbage, so `os.path.isdir()` fails regardless of whether the real DLL exists. Confirmed by
-  downloading the real `eccodes-2.48.0-h3bec8ca_0` conda-forge win-64 package directly and
-  inspecting its contents: `eccodes.dll` genuinely ships at exactly `Library\bin\eccodes.dll`,
-  precisely where an uncorrupted search would have found it. Deterministic (not flaky) --
-  `HP_PY_DIR` always ends in one backslash by construction, so this fired on every single
-  conda-provider run since the loop shipped, meaning `chainPass` could never have been observed
-  `true` before this fix regardless of anything else being correct. **Also plausibly explains
-  `mech3Pass:false` in the same run**: the EXE never got past the corrupted-DLL pygrib import to
-  reach colorama's own separate hidden-import gap, so `:hidden_import_recover`'s strict
-  `ModuleNotFoundError`-only gate never had a chance to fire (an `ImportError: DLL load failed` is
-  a different signature it correctly declines) -- fixing this one bug may unblock both mechanisms
-  on the next run, not just `mech4`. **Fixed same day**: `HP_PY_DIR_ARG` (`%HP_PY_DIR%` plus one
-  appended backslash, giving an even count before the closing quote) replaces the raw `HP_PY_DIR`
-  at this one call site. Verified via a faithful Python simulation of the documented Windows
-  `CommandLineToArgvW` algorithm (`tests/test_dll_bundle_scan.py`'s new `HpPyDirArgvQuoting`
-  class) rather than a real Windows subprocess repro -- this hazard is Windows-argv-specific and
-  cannot be reproduced via a real subprocess on a Linux sandbox at all (`execve` passes argv as a
-  real array, no command-line re-tokenizing step to catch a regression in). See
-  `docs/agent-interconnect.md`'s DLL-bundling section and `docs/agent-lessons-learned.md`'s
-  trailing-backslash entry for the full trace.
-  **NOT YET CONFIRMED in real CI** -- the `HP_PYSPEC_WRITEBACK` fix, the `HP_PYSPEC_ORIGINAL`
-  refinement, the DLL-bundling loop itself, the twice-corrected `batch.dll_bundle.pct_sanitizer`
-  check, AND now this argv-corruption fix all need a fresh `cache`-lane run of
-  `self.layered_e2e.chain` (mech1-4 all green, `chainPass:true`) before this item can be
-  considered closed -- note that test's own fixture is Tier 3 (no pyproject constraint), so it
-  only exercises the base drop-to-unconstrained path, not `HP_PYSPEC_ORIGINAL`'s
-  range-preservation specifically. Do not close this item until that real CI confirmation lands.
+- **Item 28: `pygrib`'s compiled extension needs `numpy` and `packaging` as hidden imports before
+  the app can run at all, and `self.layered_e2e.chain`'s `mech3Pass` check (specifically
+  `--hidden-import=colorama`) never gets a chance to fire because of it.** Found via the first
+  real CI confirmation of Item 24's own fix (commit `45ec269`, `cache`-lane run `31208498606`,
+  `~layered_e2e_bootstrap.log`) -- now that `eccodes.dll` bundling genuinely works (Item 24
+  closed), the frozen EXE gets further than ever before and hits a NEW, earlier failure:
+  `ModuleNotFoundError: No module named 'numpy'` on the first post-DLL-bundle smoke run.
+  `:hidden_import_recover` correctly identifies and fixes this (`--hidden-import=numpy`, iter
+  1/3), but the NEXT smoke run then fails on `packaging` (`--hidden-import=packaging`, iter 2/3)
+  -- both are genuine, correctly-diagnosed hidden-import gaps (`pygrib`'s Cython-generated
+  extension apparently imports both at the C level, invisible to PyInstaller's static AST scan,
+  the same general blind spot `--hidden-import` auto-recovery exists to patch one module at a
+  time). After the `packaging` fix, the run still fails (`Entry smoke exit=1`), but the loop does
+  NOT attempt a 3rd rebuild -- the final failure's own signature apparently isn't a plain
+  `ModuleNotFoundError` for an installed module (only a generic `[HINT][RUNTIME_MISMATCH]` fires,
+  not a `[HINT][HIDDEN_IMPORT]` one), so `:hidden_import_recover`'s strict gate correctly declines
+  rather than guessing. **Not yet root-caused what the 3rd failure actually is** -- the concatenated
+  bootstrap log this investigation used doesn't include the EXE's own stderr for that specific
+  attempt; a future loop should pull `~run.err.txt`/the hidden-import-recovery loop's own captured
+  stderr for that exact rebuild to see the real traceback before deciding on a fix.
+  **Practical effect on `self.layered_e2e.chain`**: `chainPass` stays `false`, but for a reason
+  entirely OUTSIDE Item 24's own scope -- `mech3Pass` requires the literal log text
+  `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama`, and colorama's own gap (deliberately
+  built into the test's own `app.py` via `importlib.import_module`, specifically to exercise
+  hidden-import recovery) is never reached because `pygrib`'s own numpy/packaging chain intervenes
+  first and doesn't resolve within the 3-iteration cap. Two candidate directions, neither
+  attempted yet: (a) find out what the 3rd, unfixed failure actually is and whether one more
+  `--hidden-import` would close it (possibly needing more than 3 iterations for a dependency chain
+  this deep -- `pygrib` pulls in numpy transitively via conda, and numpy itself has its own
+  layered C-extension import needs); (b) reconsider whether `pygrib`+`--collect-all=pygrib` (or
+  `--copy-metadata=numpy`, since `packaging` needing to be findable often means something is doing
+  a `pkg_resources`/`importlib.metadata` version check) would resolve the whole chain in one shot
+  instead of the current one-module-at-a-time approach. Either direction needs its own focused
+  investigation, not a guess bolted onto an already-large change -- deliberately deferred, same
+  discipline as Item 25's own deferral. Low urgency: this only affects the `cache`-lane,
+  non-gating `self.layered_e2e.chain` test; it does not block any lane that gates PR merges.
 
 - **Item 25: `:dll_bundle_recover` reports `repaired` instead of a distinct `exhausted` outcome
   when a locatable DLL candidate is found after the 3-iteration cap is already hit.** Found via a

@@ -400,17 +400,21 @@ observed passing in the same run either**: the frozen EXE never got past the cor
 `pygrib` import to reach colorama's own separate, deliberately un-bundled hidden-import gap, so
 `:hidden_import_recover`'s strict `ModuleNotFoundError`-only gate never had a chance to fire --
 an `ImportError: DLL load failed` is a structurally different signature it correctly declines
-(see "--hidden-import auto-recovery must stay STRICT" in `docs/agent-lessons-learned.md`). If
-true, fixing this one bug should unblock both `mech3Pass` and `mech4Pass` on the next real run,
-not just `mech4Pass` in isolation.
+(see "--hidden-import auto-recovery must stay STRICT" in `docs/agent-lessons-learned.md`).
 
-**Not yet confirmed in real CI as of this section's own writing** -- see CLAUDE.md's Item 24
-entry for the current confirmation status; do not assume this passes without checking a real
-`cache`-lane run first. The fix itself is verified via a faithful Python simulation of the
-documented Windows argv-parsing algorithm (`tests/test_dll_bundle_scan.py`'s
-`HpPyDirArgvQuoting` class) -- this hazard class cannot be reproduced via a real subprocess on a
-Linux sandbox at all, since Linux's `execve` passes argv as an array with no command-line
-re-tokenizing step for the simulation to catch a regression in.
+**Confirmed fixed via real CI evidence (commit `45ec269`, `cache`-lane run `31208498606`)** --
+`~layered_e2e_bootstrap.log` shows the loop genuinely locating and bundling `eccodes.dll` for the
+first time: `[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: eccodes.dll (found at
+...\Library\bin\eccodes.dll); rebuilding EXE (iter 1/3).` followed by `Native-DLL bundling
+complete`. `mech4Pass` is confirmed `true`, closing CLAUDE.md's Item 24. The fix itself was
+verified pre-CI via a faithful Python simulation of the documented Windows argv-parsing algorithm
+(`tests/test_dll_bundle_scan.py`'s `HpPyDirArgvQuoting` class) -- this hazard class cannot be
+reproduced via a real subprocess on a Linux sandbox at all, since Linux's `execve` passes argv as
+an array with no command-line re-tokenizing step for the simulation to catch a regression in; the
+real CI run is what actually confirmed it. **Also confirmed the mech3 prediction was directionally
+right but not the whole story**: the EXE does get further now, but hits a NEW, deeper gap first
+(`pygrib`'s own extension needs `numpy`/`packaging` as hidden imports before colorama's own gap is
+ever reached) -- see CLAUDE.md's Item 28 for the full trace of this separately-scoped finding.
 
 ---
 

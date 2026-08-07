@@ -434,9 +434,12 @@ algorithm (`tests/test_dll_bundle_scan.py`'s `HpPyDirArgvQuoting` class) rather 
 Windows subprocess repro -- Linux's `execve` passes argv as a real array with no command-line
 re-tokenizing step, so this specific hazard class cannot be reproduced via a real subprocess on
 this sandbox at all; the algorithmic simulation is the closest available live-verification
-substitute for a hazard that is Windows-only by construction. **Needs a fresh `cache`-lane
-`self.layered_e2e.chain` run to confirm `chainPass:true` for the first time** -- do not assume
-this is fully fixed until that real evidence lands.
+substitute for a hazard that is Windows-only by construction. **Confirmed via real CI** (commit
+`45ec269`, `cache`-lane run `31208498606`): the fresh bootstrap log shows `eccodes.dll` genuinely
+located and bundled for the first time (`[REPAIR][DLL_BUNDLE] Bundling native DLL dependency:
+eccodes.dll (found at ...\Library\bin\eccodes.dll)...` -> `Native-DLL bundling complete`),
+closing CLAUDE.md's Item 24. `chainPass` itself is still `false` on that same run, but for a
+separately-scoped reason now that this fix let the EXE get further -- see CLAUDE.md's Item 28.
 
 ---
 
