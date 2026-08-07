@@ -750,6 +750,26 @@ start at 1 and has gaps.
   friction yet -- filed here rather than implemented immediately since the underlying safety
   property is already satisfied.
 
+- **Item 27: `tools/exe_hint_rerun.ps1`'s `taskkill /F /T /PID` process-tree kill showed real,
+  correlated slowness across two independent CI runner VMs in one real Windows run, 2026-08-07.**
+  `tests/test_exe_hint_rerun.py::UnconditionalKill::test_hang_after_output_is_ALSO_killed_unlike_
+  exe_smokerun` failed on 2 of 8 lanes (`uv`, `contract-uv`, both non-gating) on a commit that
+  touched neither the test nor the helper script (confirmed via `git log`/`git diff origin/main`)
+  -- the other 6 lanes, including both gating lanes, passed the identical suite on the identical
+  commit. Two DIFFERENT failure modes of the SAME mechanism: `contract-uv` hit a hard
+  `subprocess.TimeoutExpired` after the test's outer 60s budget (kill never completed in time);
+  `uv` hit `AssertionError: 50.641... not less than 45` (kill DID eventually complete, just past
+  the test's own 45s inner assertion). See `docs/agent-lessons-learned.md`'s "A third bounded-
+  launch helper exists" entry for the full mechanism trace and prior context -- this closes (with
+  real evidence, not proof either way) the entry's own long-standing "the `taskkill /T` half is
+  NOT CI-confirmed" caveat. Two correlated occurrences across independent runner VMs in one run is
+  enough to track as a real backlog item rather than a pure documentation note, but not enough to
+  tell whether the cause is (a) ordinary shared-runner contention that happened to hit both jobs in
+  the same time window, or (b) a genuine latent reliability gap in the `taskkill /F /T /PID`
+  mechanism itself on Windows. Next step if this recurs: capture the actual process-tree kill
+  timing (not just pass/fail) across several real runs to distinguish the two causes before
+  attempting any fix -- do not speculatively rewrite the kill mechanism on a single run's evidence.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
