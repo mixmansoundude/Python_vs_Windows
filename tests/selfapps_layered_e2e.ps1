@@ -207,6 +207,17 @@ $cascadeDetected = $combined -match [regex]::Escape('[INFO] REQ-009: cascade can
 $cascadeApproved = $combined -match [regex]::Escape('[INFO] REQ-009: cascade approved; will re-attempt under the next provider tier.')
 $uvToConda       = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider uv to conda'))).Count
 $condaSelected   = $combined -match [regex]::Escape('REQ-009: Selected Python provider: Conda')
+# derived requirement: real CI evidence (2026-08-07) showed this cascade genuinely failing here --
+# runtime.txt write-back pins the EXACT uv-resolved patch version (e.g. python-3.14.7), and without
+# the HP_PYSPEC_WRITEBACK fix, :try_conda_create forwarded that exact pin to conda create, which
+# conda-forge does not carry (PackagesNotFoundInChannelsError), hard-failing the whole cascade
+# before pygrib was ever built. This app's own stub has no runtime.txt/pyproject.toml of its own,
+# so PYSPEC can ONLY be non-empty here via write-back -- $pinDropped not firing (while $condaSelected
+# is still true) would mean conda happened to already have that exact patch by coincidence, not that
+# the fix's own code path was exercised; not asserted as a hard requirement for that reason, but
+# logged for visibility (see docs/agent-interconnect.md's "runtime.txt write-back... cascade
+# re-entry" section for the full mechanism trace).
+$pinDropped      = $setupText -match [regex]::Escape('[INFO] conda create: dropping the write-back-derived exact Python pin')
 
 # Mechanism 2: warnfix repair, both outcomes in the SAME round -- derived requirement: a plain
 # "does this string appear anywhere in the combined log" check (the original approach) cannot
@@ -385,6 +396,7 @@ Write-NdjsonRow ([ordered]@{
         cascadeApproved  = $cascadeApproved
         uvToConda        = $uvToConda
         condaSelected    = $condaSelected
+        pinDropped       = $pinDropped
         mech2Pass        = $mech2Pass
         warnInstallFired = $warnInstallFired
         warnfixRoundCount    = $warnfixRoundCount

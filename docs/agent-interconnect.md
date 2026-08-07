@@ -608,6 +608,53 @@ is gated on `HP_FASTPATH_USED` (unset on a fresh first build), so the next tier 
 rebuilds. Do not introduce first-run-only state into `:after_env_mode_selection` without
 making it idempotent.
 
+**`runtime.txt` write-back (REQ-004) can poison a `uv -> conda` cascade re-entry with an
+unsatisfiable exact version pin -- found via real CI evidence, CLAUDE.md Item 24.** Write-back
+(`:write_runtime_txt` and its two inline duplicates at `:conda_create_done`/
+`:env_state_fast_path`) fires the moment ANY provider's own env setup succeeds, writing the
+EXACT patch version that provider's interpreter reports (`~print_pyver.py`) to `runtime.txt` and
+reassigning `PYSPEC` to match -- intended so a plain re-run reuses the same, proven-working
+version. This interacts badly with cascade re-entry specifically because `:after_env_mode_
+selection` (see re-entrancy note above) recomputes `PYSPEC` from scratch on EVERY tier, which
+means a SUBSEQUENT provider's own env-create call receives the PREVIOUS provider's exact patch
+pin, not its own. Confirmed via a real `self.layered_e2e.chain` cache-lane run
+(2026-08-07): uv resolved `python-3.14.7`, write-back wrote that to `runtime.txt` the moment
+uv's venv succeeded, then the uv->conda cascade (pygrib still failing to build under uv) re-
+derived `PYSPEC=python=3.14.7` from that same freshly-written file and forwarded it verbatim to
+`conda create ... python=3.14.7 ...` -- but conda-forge's own `python` package release cadence is
+a wholly separate index from CPython's/uv's, and did not carry that exact patch:
+`PackagesNotFoundInChannelsError: python=3.14.7`, a hard `conda env create failed.`, and the
+cascade fell through embed -> venv without ever reaching a real conda environment (so pygrib was
+never built, and Item 24's own `:dll_bundle_recover` loop was never exercised at all in that run,
+regardless of its own correctness).
+
+**Fixed with a new `HP_PYSPEC_WRITEBACK` flag**, set at all 3 sites where write-back reassigns
+`PYSPEC` (immediately after each `set "PYSPEC=%PYVER:python-=python=%"` line) -- distinct from
+`HP_RUNTIME_TXT_PREEXIST`, which only tracks whether the FILE existed before this run started,
+not whether write-back has since overwritten its contents with a provider-specific artifact.
+`:try_conda_create`'s two `conda create` call sites (initial attempt and the REQ-022 transient
+retry) now compute a single `HP_CONDA_PYSPEC_SKIP` flag once, before either attempt (PYSPEC and
+HP_PYSPEC_WRITEBACK do not change between the two): `"%PYSPEC%"==""` OR `HP_PYSPEC_WRITEBACK`
+defined both route to the SAME pre-existing unconstrained branch (`conda create -y -n ENVNAME
+python pip ...`, no version pin, letting conda's own solver pick its latest compatible build) --
+a REAL pre-existing user pin (`HP_RUNTIME_TXT_PREEXIST` defined at the time write-back would have
+fired, meaning it never fired) is left completely untouched, since that constraint is a genuine
+user requirement REQ-004 must still forward, not a bootstrapper-manufactured artifact. The two-
+variable split (`HP_PYSPEC_WRITEBACK` set once at write-back time; `HP_CONDA_PYSPEC_SKIP`
+computed once at `:try_conda_create` entry) avoids re-deriving the same OR-of-two-conditions logic
+twice (batch has no clean single-line boolean OR without delayed expansion -- see the embed
+tier's own `HP_GETPIP_SKIP_OFFLINE` precedent above for the same idiom).
+
+**Why this doesn't (yet) need the same fix for the embed tier's own PYSPEC-driven version
+lookup**: `tools/embed_pyver_check.py` also reads `PYSPEC` to pick which pinned table entry to
+download (see "Standalone Python-download tier" above), so a write-back-derived exact patch
+COULD in principle also reach an embed-tier cascade target with the same class of mismatch. Left
+unfixed for now because embed's own table lookup already degrades gracefully for an unknown/
+below-floor request (falls back to the table's oldest/newest entry with a WARN, never a hard
+failure) -- unlike conda's solver, which fails outright on an unresolvable exact pin. Revisit if
+a real CI run ever shows this actually misbehaving for the embed tier specifically; not assumed
+from the conda case alone.
+
 ### uv uses managed-only CPython (UV_PYTHON_PREFERENCE)
 
 `run_setup.bat` sets `UV_PYTHON_PREFERENCE=only-managed` at the top of the uv acquisition

@@ -618,11 +618,61 @@ start at 1 and has gaps.
   **Requirement 4 (regression test) extended `tests/selfapps_layered_e2e.ps1`** with a 4th
   mechanism (`mech4Pass`, requiring `dllWarningSeen`/`dllBundling`/`dllBundleComplete`) alongside
   the three it already proved -- this is the acceptance criterion that should finally flip
-  `chainPass` to `True` for the first time. **NOT YET CONFIRMED in real CI** -- this implementation
-  was written and unit-tested locally (no Windows/conda/pygrib available in this sandbox); it needs
-  a real `cache`-lane run of `self.layered_e2e.chain` to confirm `mech4Pass`/`chainPass` actually
-  go green before this item can be considered closed. Do not close this item until that real CI
-  confirmation lands.
+  `chainPass` to `True` for the first time.
+  **A FOURTH CodeRabbit review pass caught 2 more findings, both triaged**: (8) Blinter (a static
+  linter, not a real cmd.exe) flagged the `%VAR:%%=_%` doubled-percent idiom from finding (7) as a
+  possible "malformed string operation" (rule E021) -- Blinter's own pattern matcher does not model
+  the doubled-`%%` escape for a literal percent sign inside a `:search=replace` substitution, but
+  rather than trust either static tool's verdict or this repo's own reasoning about undocumented
+  cmd.exe parsing a fourth time, `tests/harness.ps1` gained a NEW gating check
+  (`batch.dll_bundle.pct_sanitizer`) that runs the EXACT idiom against a real `cmd.exe` via a live
+  fixture and asserts the observed output -- settling it empirically in the next real CI run rather
+  than by further static reasoning. (9) A genuine, still-open correctness gap, DEFERRED to Item 25
+  below rather than fixed in this already-large change: when a 4th locatable DLL candidate is found
+  after `HP_DLL_ITER` already hit its 3-iteration cap, the loop currently reports `repaired` +
+  "bundling complete" even though that 4th DLL was never bundled -- needs a distinct `exhausted`
+  outcome state, mirroring `:hidden_import_recover`'s own `self.exe.hidden_import.exhaust` pattern.
+  **Real CI evidence, first observed 2026-08-07**: `self.layered_e2e.chain` came back
+  `chainPass:false`, but the failure is EARLIER than the DLL-bundling mechanism entirely --
+  `mech1Pass:false`, `condaSelected:false`, `statusState:"venv_env"`. Root cause (confirmed via the
+  real `~setup.log`/`~layered_e2e_bootstrap.log` artifacts): a genuine, PRE-EXISTING bug unrelated
+  to the DLL-bundling loop itself. The `runtime.txt` write-back feature (REQ-004) writes the EXACT
+  patch version uv resolved (e.g. `python-3.14.7`) the moment uv's own venv succeeds; when the
+  REQ-009 cascade later re-enters targeting conda (because pygrib still fails to build under uv),
+  `:after_env_mode_selection`'s re-derivation of `PYSPEC` reads that freshly-written `runtime.txt`
+  and forwards `python=3.14.7` verbatim to `conda create` -- but conda-forge's own `python` package
+  release cadence is entirely separate from CPython's/uv's, and did not have that exact patch,
+  producing `PackagesNotFoundInChannelsError: python=3.14.7` and a hard `conda env create failed.`
+  The chain then fell through embed -> venv, never reaching a real conda environment, so pygrib
+  was never built and `dllWarningSeen` never fired -- the DLL-bundling loop was never exercised at
+  all in this run, regardless of its own correctness. **Fixed**: a new `HP_PYSPEC_WRITEBACK` flag,
+  set at all 3 sites where write-back reassigns `PYSPEC` (the `:write_runtime_txt` subroutine plus
+  its two inline duplicates), marks a `PYSPEC` value as "self-authored by whichever provider ran
+  first," not a genuine user requirement (distinct from `HP_RUNTIME_TXT_PREEXIST`, which only
+  tracks the FILE's pre-existence, not whether write-back overwrote it this run). `:try_conda_create`
+  now drops the version pin (falls back to its own existing unconstrained `"%PYSPEC%"==""` branch)
+  whenever `HP_PYSPEC_WRITEBACK` is set, at both the initial attempt and the transient-retry --
+  a REAL pre-existing user pin (`HP_RUNTIME_TXT_PREEXIST` defined) is left untouched. **NOT YET
+  CONFIRMED in real CI** -- this fix, the DLL-bundling loop itself, AND the new
+  `batch.dll_bundle.pct_sanitizer` check all need a fresh `cache`-lane run of
+  `self.layered_e2e.chain` (mech1-4 all green, `chainPass:true`) before this item can be considered
+  closed. Do not close this item until that real CI confirmation lands.
+
+- **Item 25: `:dll_bundle_recover` reports `repaired` instead of a distinct `exhausted` outcome
+  when a locatable DLL candidate is found after the 3-iteration cap is already hit.** Found via a
+  CodeRabbit review round on PR #414 (Item 24's own PR), same day as Item 24's real CI diagnosis.
+  `:dll_bundle_loop` finds the next candidate (`HP_NEXT_DLL`) BEFORE checking
+  `if %HP_DLL_ITER% GEQ 3` -- so when a 4th locatable DLL exists, that information is silently
+  discarded (the loop just `goto :dll_bundle_recover_done`), and at `:dll_bundle_recover_done`, the
+  `if %HP_DLL_ITER% GEQ 1` check reads TRUE (3 DLLs were already genuinely bundled), so it emits
+  `[REPAIR][DLL_BUNDLE] Native-DLL bundling complete` and the `repaired` NDJSON state, even though
+  a real candidate was left unbundled. Needs a distinct `exhausted` outcome (mirroring
+  `:hidden_import_recover`'s own `self.exe.hidden_import.exhaust` precedent) that does NOT claim
+  completion, plus a matching `docs/agent-ndjson.md` registration and a `tests/harness.ps1` call-
+  site-count update. Deliberately NOT fixed inside Item 24's already-large PR -- this needs its own
+  focused loop with its own test coverage. Low real-world trigger rate (needs 4+ conda-forge
+  packages under ONE PyInstaller build to each separately need `--add-binary`, not yet observed for
+  any real package in this repo's testing), so not urgent, but a genuine correctness gap.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

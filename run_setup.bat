@@ -903,7 +903,24 @@ rem to test CLAUDE.md Active Backlog Item 23's cascade-restore fix, which specif
 rem genuine (not HP_TEST_FORCE_CONDA_FAIL-style) failure reaching :conda_create_failed during a
 rem cascade re-entry.
 if "%HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL%"=="1" goto :conda_create_test_network_fail
-if "%PYSPEC%"=="" (
+rem derived requirement: HP_PYSPEC_WRITEBACK marks a PYSPEC value that was
+rem self-written moments ago by a DIFFERENT provider's own resolved interpreter
+rem (see :write_runtime_txt and its two inline duplicates) -- an artifact of
+rem whichever provider happened to run first, not a genuine user requirement.
+rem Forcing that exact patch-level pin onto conda's own solver is unsafe: conda-
+rem forge's python package availability is a wholly separate release cadence
+rem from CPython's/uv's, so an exact pin like python=3.14.7 can be genuinely
+rem unresolvable there even though it worked fine under uv moments earlier
+rem (confirmed via real CI: self.layered_e2e.chain's uv-to-conda cascade failed
+rem with PackagesNotFoundInChannelsError for exactly this reason). A REAL
+rem pre-existing user pin (HP_RUNTIME_TXT_PREEXIST defined, or PYSPEC sourced
+rem from pyproject.toml/PEP 723 without ever going through write-back) is left
+rem untouched -- only the self-authored, write-back-derived value is dropped.
+set "HP_CONDA_PYSPEC_SKIP="
+if "%PYSPEC%"=="" set "HP_CONDA_PYSPEC_SKIP=1"
+if defined HP_PYSPEC_WRITEBACK set "HP_CONDA_PYSPEC_SKIP=1"
+if defined HP_CONDA_PYSPEC_SKIP if defined HP_PYSPEC_WRITEBACK call :log "[INFO] conda create: dropping the write-back-derived exact Python pin; conda will resolve its own latest compatible Python instead."
+if defined HP_CONDA_PYSPEC_SKIP (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge > "~conda_create.tmp" 2>&1
 ) else (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% pip --override-channels -c conda-forge > "~conda_create.tmp" 2>&1
@@ -931,7 +948,9 @@ call :log "[INFO] conda create: transient failure detected; retrying after 15s."
 timeout /t 15 /nobreak >nul 2>&1
 echo Retrying environment creation...
 if "%HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL%"=="1" goto :conda_create_retry_forced_fail
-if "%PYSPEC%"=="" (
+rem Same HP_CONDA_PYSPEC_SKIP decision as the initial attempt above -- PYSPEC/
+rem HP_PYSPEC_WRITEBACK are unchanged since then, so the flag is still valid.
+if defined HP_CONDA_PYSPEC_SKIP (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% pip --override-channels -c conda-forge >> "%LOG%" 2>&1
@@ -984,6 +1003,7 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
   ) else (
     call :log "[INFO] runtime.txt written: %PYVER%"
     set "PYSPEC=%PYVER:python-=python=%"
+    set "HP_PYSPEC_WRITEBACK=1"
   )
 )
 
@@ -1018,6 +1038,7 @@ if not errorlevel 1 (
     ) else (
       call :log "[INFO] runtime.txt written: %PYVER%"
       set "PYSPEC=%PYVER:python-=python=%"
+      set "HP_PYSPEC_WRITEBACK=1"
     )
   )
 )
@@ -4498,6 +4519,11 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
   ) else (
     call :log "[INFO] runtime.txt written: %PYVER%"
     set "PYSPEC=%PYVER:python-=python=%"
+    rem derived requirement: this PYSPEC value is an artifact of whichever provider
+    rem happened to run first, not a genuine user requirement -- see the identical
+    rem comment at :try_conda_create's PYSPEC decision for why this must not be
+    rem forced onto a LATER, different provider during a REQ-009 cascade re-entry.
+    set "HP_PYSPEC_WRITEBACK=1"
   )
 )
 exit /b 0

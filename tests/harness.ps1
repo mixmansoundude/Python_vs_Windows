@@ -482,6 +482,39 @@ $dbAllStates  = $true
 foreach ($s in $dbStates) { if ($AllText -notmatch [regex]::Escape("call :emit_dll_bundle_row $s")) { $dbAllStates = $false } }
 $hasDllBundleRow = $dbSub -and $dbRowId -and $dbAllStates -and ($dbCallCount -ge 6)
 Write-Result 'batch.dll_bundle.ndjson' 'CLAUDE.md Item 24: native-DLL bundling recovery loop emits a dedicated NDJSON row (self.dll_bundle.recover) for every outcome state (skipped_nuitka/skipped_non_conda/repaired/unlocatable/failed_rebuild/failed_missing_exe)' $hasDllBundleRow @{ sub=$dbSub; rowId=$dbRowId; allStates=$dbAllStates; callSites=$dbCallCount }
+# derived requirement: CLAUDE.md Item 24 -- a CodeRabbit/Blinter review round flagged the
+# %VAR:%%=_% doubled-percent idiom (used by HP_DLL_DETECTED_SAFE/HP_NEXT_DLL_SAFE/
+# HP_NEXT_DLL_PATH_SAFE's display-only sanitization) as a possible "malformed string
+# operation" (Blinter rule E021). Blinter is a purely static pattern matcher and does not
+# model the doubled-%% escape for a literal percent sign inside a :search=replace
+# substitution -- but rather than trust either static tool's verdict or this repo's own
+# reasoning about cmd.exe's undocumented parsing rules a fourth time, this runs the EXACT
+# idiom against a REAL cmd.exe and asserts the observed output, settling it empirically.
+$pctFixture = Join-Path $env:TEMP 'verify-percent-sanitizer.cmd'
+$pctScript = @'
+@echo off
+setlocal DisableDelayedExpansion
+set "SECRET=must-not-appear"
+set "RAW=prefix%%SECRET%%suffix"
+set "SAFE=%RAW%"
+set "SAFE=%SAFE:%%=_%"
+call :show "%SAFE%"
+exit /b
+:show
+echo %~1
+'@
+Set-Content -LiteralPath $pctFixture -Value $pctScript -Encoding Ascii
+$pctOutput = ''
+$pctExit = 1
+try {
+  $pctOutput = (& cmd.exe /d /v:off /c $pctFixture | Out-String).Trim()
+  $pctExit = $LASTEXITCODE
+} catch {
+  $pctOutput = "EXCEPTION: $($_.Exception.Message)"
+}
+Remove-Item -LiteralPath $pctFixture -Force -ErrorAction SilentlyContinue
+$hasPctSanitizer = ($pctExit -eq 0) -and ($pctOutput -eq 'prefix_SECRET_suffix')
+Write-Result 'batch.dll_bundle.pct_sanitizer' 'CLAUDE.md Item 24: the %VAR:%%=_% doubled-percent idiom used by the DLL-bundle loops _SAFE display sanitization genuinely strips a literal percent sign under a real cmd.exe (live-executed fixture, not static pattern matching -- Blinter E021 flags this construct but its own analyzer does not model the doubled-%% substitution escape)' $hasPctSanitizer @{ output=$pctOutput; exitCode=$pctExit }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
