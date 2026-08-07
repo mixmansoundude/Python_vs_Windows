@@ -1259,6 +1259,34 @@ this belongs to).
    makes the NDJSON row's own `pass`/`skip` fields honestly reflect what the earlier investigation
    had already concluded from source.
 
+### Item 27 (closed 2026-08-07)
+
+- **`tools/exe_hint_rerun.ps1`'s `taskkill /F /T /PID` process-tree kill showed real, correlated
+   slowness across THREE independent CI runner VMs in one real Windows run, 2026-08-07 -- escalated
+   to a GATING lane, so fixed the same day rather than deferred further.**
+   `tests/test_exe_hint_rerun.py::UnconditionalKill::test_hang_after_output_is_ALSO_killed_unlike_
+   exe_smokerun` failed on 3 of 8 lanes (`uv`, `contract-uv` non-gating; `real` **gating**) on a
+   commit that touched neither the test nor the helper script (confirmed via `git log`/`git diff
+   origin/main`) -- the other 5 lanes, including `conda-full` (the other gating lane), passed the
+   identical suite on the identical commit. All three showed the same direction of failure:
+   `contract-uv` hit a hard `subprocess.TimeoutExpired` after the test's outer 60s budget (kill
+   never completed in time); `uv` hit `AssertionError: 50.641... not less than 45`; `real` hit the
+   identical signature, `AssertionError: 48.437... not less than 45` -- kill eventually completes,
+   just 40-60s later than a 500ms test deadline. Once a gating lane was hit, the item's own former
+   "do not speculatively rewrite on a single run's evidence" caveat no longer applied (three
+   correlated occurrences, one of them merge-blocking) -- **fixed same day**: both previously-
+   unbounded waits in the post-kill sequence (`& taskkill.exe ...` itself, launched via the
+   blocking `&` operator with no way to bound it; and the trailing `$p.WaitForExit()` with no
+   argument right after) are now bounded to 5000ms each, via `taskkill.exe` running through its own
+   `System.Diagnostics.Process` object instead of `&`. See `docs/agent-lessons-learned.md`'s "A
+   third bounded-launch helper exists" entry for the full mechanism trace and the fix detail. The
+   root cause (taskkill.exe itself vs. the trailing `WaitForExit()` vs. both) was never isolated on
+   a real Windows host, since none was available; the fix bounds both defensively rather than
+   pinpointing one. **Confirmed on both gating lanes post-fix** (commit `f106f78`, run
+   `31196980168`): `real` (job `92928320716`) and `conda-full` (job `92928320698`) both came back
+   `conclusion: success`, full pytest suite included -- the same runner-contention class did not
+   recur on either gating lane's re-run, closing this item.
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a
