@@ -194,6 +194,7 @@ batch.smoke.single_verify,
 batch.failfast.probe,
 batch.postexec.checkpoint,
 batch.dll_bundle.ndjson,
+batch.dll_bundle.pct_sanitizer,
 self.dll_bundle.recover,
 self.bootstrap.state, self.empty_repo.msg, self.empty_repo.no_spurious_warn,
 self.harness.started,
@@ -265,6 +266,14 @@ not pursued now, since simulating the other 5 states (Nuitka-used, non-conda pro
 PyInstaller rebuild failure, a missing post-rebuild EXE, a detected-but-unlocatable DLL) each needs
 its own scaffolding beyond what `self.layered_e2e.chain`'s real `pygrib` trigger already provides
 for the `repaired` state alone.
+
+`batch.dll_bundle.pct_sanitizer` (`tests/harness.ps1`, gating) is a SEPARATE static check, not a
+sibling of the above -- it live-executes a real cmd.exe + PowerShell fixture proving the `_SAFE`
+sanitization's `%`/`^`-stripping mechanism (and the `call`-based second-expansion-pass security
+property) actually works, rather than statically checking `run_setup.bat`'s own wiring. See
+`docs/agent-interconnect.md`'s DLL-bundling section for the real bug this fixture caught (a first
+implementation attempt used a cmd.exe `%VAR:%%=_%` substitution that CI proved silently produced an
+empty string) and `docs/agent-lessons-learned.md`'s corresponding entry.
 
 ## selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes)
 
