@@ -947,6 +947,19 @@ read (`Task.Wait($drainMs)`, 5000ms) as a second safety net. The `taskkill /T` h
 CI-confirmed (no Windows environment available to construct a genuine repro); the drain-wait
 fallback IS verified (`ProcessTreeAndDrainTimeout` test, a grandchild-inherits-the-pipe scenario).
 
+**First real CI evidence, 2026-08-07 (still inconclusive -- do not treat as confirmed either
+way).** `UnconditionalKill::test_hang_after_output_is_ALSO_killed_unlike_exe_smokerun` genuinely
+timed out (`subprocess.TimeoutExpired` after 60s waiting on a real `pwsh.EXE ...
+tools/exe_hint_rerun.ps1` child) on 2 of 8 lanes (`uv`, `contract-uv`) in one real Windows CI run,
+on a commit that touched neither this test file nor `tools/exe_hint_rerun.ps1` (confirmed via
+`git log`/`git diff origin/main` showing zero changes to either since PR #410) -- the other 6
+lanes, including both gating lanes (`real`/`conda-full`), passed the identical suite on the
+identical commit. Both affected lanes are non-gating, so this did not block a merge. Genuinely
+ambiguous which explanation is right: ordinary Windows-runner timing contention on a busy shared
+host (the test's own 60s budget could plausibly be tight under load), or the first real sign that
+the `taskkill /T` mechanism itself sometimes doesn't complete in time. One occurrence across two
+lanes is not enough to tell the difference -- watch for recurrence before concluding either way.
+
 **Why the default is 10000ms, not 5000ms (widened 2026-07):** the original 5000ms default was
 tuned assuming the probe window only needs to outlast a failing process's own error handling
 (instant -- an unhandled exception unwinds in microseconds). It does not: a PyInstaller *onefile*
