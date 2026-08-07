@@ -482,25 +482,34 @@ $dbAllStates  = $true
 foreach ($s in $dbStates) { if ($AllText -notmatch [regex]::Escape("call :emit_dll_bundle_row $s")) { $dbAllStates = $false } }
 $hasDllBundleRow = $dbSub -and $dbRowId -and $dbAllStates -and ($dbCallCount -ge 6)
 Write-Result 'batch.dll_bundle.ndjson' 'CLAUDE.md Item 24: native-DLL bundling recovery loop emits a dedicated NDJSON row (self.dll_bundle.recover) for every outcome state (skipped_nuitka/skipped_non_conda/repaired/unlocatable/failed_rebuild/failed_missing_exe)' $hasDllBundleRow @{ sub=$dbSub; rowId=$dbRowId; allStates=$dbAllStates; callSites=$dbCallCount }
-# derived requirement: CLAUDE.md Item 24 -- a CodeRabbit/Blinter review round flagged the
-# %VAR:%%=_% doubled-percent idiom (used by HP_DLL_DETECTED_SAFE/HP_NEXT_DLL_SAFE/
-# HP_NEXT_DLL_PATH_SAFE's display-only sanitization) as a possible "malformed string
-# operation" (Blinter rule E021). Blinter is a purely static pattern matcher and does not
-# model the doubled-%% escape for a literal percent sign inside a :search=replace
-# substitution -- but rather than trust either static tool's verdict or this repo's own
-# reasoning about cmd.exe's undocumented parsing rules a fourth time, this runs the EXACT
-# idiom against a REAL cmd.exe and asserts the observed output, settling it empirically.
+# derived requirement: CLAUDE.md Item 24 -- an earlier version of HP_DLL_DETECTED_SAFE/
+# HP_NEXT_DLL_SAFE/HP_NEXT_DLL_PATH_SAFE's display-only sanitization stripped a literal
+# percent sign via cmd.exe's own %VAR:%%=_% doubled-percent substitution idiom. That idiom
+# was confirmed BROKEN by this exact fixture's own prior form, live-executed on real Windows
+# CI: the substitution silently produced an EMPTY value instead of the expected sanitized
+# text (an undocumented cmd.exe parsing quirk this repo's own reasoning got wrong on the
+# first attempt -- see docs/agent-lessons-learned.md's ":log echoes UNQUOTED" entry). Fixed
+# by moving the %/^ stripping into PowerShell (-replace, unambiguous .NET semantics) instead
+# of cmd.exe substitution. This fixture proves the REPLACEMENT mechanism -- not the abandoned
+# idiom -- under a real cmd.exe + PowerShell child process, and additionally proves the actual
+# security property the whole sanitization exists for: a raw value shaped like "%SECRET%"
+# must not leak the real SECRET variable's value through `call`'s own second cmd.exe
+# expansion pass (see docs/agent-lessons-learned.md's "call triggers a second expansion pass"
+# entry) once it has been through this sanitizer.
 $pctFixture = Join-Path $env:TEMP 'verify-percent-sanitizer.cmd'
 $pctScript = @'
 @echo off
 setlocal DisableDelayedExpansion
 set "SECRET=must-not-appear"
-set "RAW=prefix%%SECRET%%suffix"
+set "RAW=prefix%%SECRET%%suffix^caretend"
 set "SAFE=%RAW%"
-set "SAFE=%SAFE:%%=_%"
-call :show "%SAFE%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$v = [Environment]::GetEnvironmentVariable('SAFE'); $v = $v -replace '%','_' -replace '\^','_'; [Console]::Write($v)" > "%TEMP%\pct_safe_out.txt" 2>nul
+set "SAFE="
+for /f "usebackq delims=" %%X in ("%TEMP%\pct_safe_out.txt") do set "SAFE=%%X"
+if exist "%TEMP%\pct_safe_out.txt" del "%TEMP%\pct_safe_out.txt" >nul 2>&1
+call :log "%SAFE%"
 exit /b
-:show
+:log
 echo %~1
 '@
 Set-Content -LiteralPath $pctFixture -Value $pctScript -Encoding Ascii
@@ -513,8 +522,8 @@ try {
   $pctOutput = "EXCEPTION: $($_.Exception.Message)"
 }
 Remove-Item -LiteralPath $pctFixture -Force -ErrorAction SilentlyContinue
-$hasPctSanitizer = ($pctExit -eq 0) -and ($pctOutput -eq 'prefix_SECRET_suffix')
-Write-Result 'batch.dll_bundle.pct_sanitizer' 'CLAUDE.md Item 24: the %VAR:%%=_% doubled-percent idiom used by the DLL-bundle loops _SAFE display sanitization genuinely strips a literal percent sign under a real cmd.exe (live-executed fixture, not static pattern matching -- Blinter E021 flags this construct but its own analyzer does not model the doubled-%% substitution escape)' $hasPctSanitizer @{ output=$pctOutput; exitCode=$pctExit }
+$hasPctSanitizer = ($pctExit -eq 0) -and ($pctOutput -eq 'prefix_SECRET_suffix_caretend')
+Write-Result 'batch.dll_bundle.pct_sanitizer' 'CLAUDE.md Item 24: the PowerShell -replace mechanism used by the DLL-bundle loops _SAFE display sanitization genuinely strips % and ^ under a real cmd.exe + PowerShell child process, and the sanitized value survives a real call-based second expansion pass without leaking the shadowed SECRET variable (live-executed fixture, not static reasoning -- this repo previously got cmd.exes own undocumented %%=_% substitution semantics wrong via reasoning alone)' $hasPctSanitizer @{ output=$pctOutput; exitCode=$pctExit }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })

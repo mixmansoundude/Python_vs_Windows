@@ -273,17 +273,43 @@ before actually invoking `:log`. If the substituted text happened to contain som
 `%SOME_VAR%` (a crafted "library not found" name from an adversarial native extension, since
 `_PATTERN`'s regex only excludes quote characters, not `%`/`^`), that second pass would expand
 `SOME_VAR`'s real value into what `:log` receives as `%~1` -- potentially leaking an unrelated
-environment variable (e.g. a CI secret) into the log. Fixed by extending all three `_SAFE` chains
-with two more substitutions: `set "VAR_SAFE=%VAR_SAFE:%%=_%"` (a literal `%` must be doubled to
-`%%` to match it as the search token in a `:search=replace` substitution -- this is the standard,
-long-established cmd.exe idiom for stripping a percent sign this way) and
-`set "VAR_SAFE=%VAR_SAFE:^=_%"` (caret needs no such doubling; it has no special meaning inside a
-substitution's search text, only within raw, unquoted command-line tokenization). Order among all
-six substitutions (`&`/`|`/`<`/`>`/`%`/`^`) is commutative -- none of them can match the replacement
-character (`_`), so chaining them in any order produces the same result. `HP_NEXT_DLL_PATH_SAFE`
-needs the same two extra lines even though its raw value is a real, `os.walk()`-confirmed path
-(unlike `HP_DLL_DETECTED`/`HP_NEXT_DLL`, which are regex-extracted from arbitrary warning text) --
-Windows filenames may legally contain `%` and `^`, even though they cannot contain `&`/`|`/`<`/`>`.
+environment variable (e.g. a CI secret) into the log.
+
+**First fix attempt was itself wrong, and only caught because a live-cmd.exe CI test was built to
+verify it.** The initial fix extended all three `_SAFE` chains with `set "VAR_SAFE=%VAR_SAFE:%%=_%"`
+on the theory that doubling `%` to `%%` is "the standard, long-established cmd.exe idiom" for
+matching a literal percent sign as the search token in a `:search=replace` substitution. This is
+**not actually how cmd.exe behaves** -- confirmed via `tests/harness.ps1`'s
+`batch.dll_bundle.pct_sanitizer` fixture (built specifically to settle a Blinter E021 "malformed
+string operation" flag on this construct empirically rather than trust static reasoning a fourth
+time) executed for real on Windows CI: the substitution silently produced an **empty** value
+(`echo` with no argument, `"ECHO is off."`) instead of the expected sanitized text -- an
+undocumented cmd.exe parsing quirk, not a Blinter false positive as first assumed. This broke
+`HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` across essentially every CI lane
+(the gating `batch.dll_bundle.pct_sanitizer` NDJSON row failed the run).
+
+**Actual fix: strip `%` and `^` in PowerShell instead of cmd.exe substitution.** Each `_SAFE`
+variable's `%`/`^` stripping now happens via `powershell -NoProfile -ExecutionPolicy Bypass
+-Command "$v = [Environment]::GetEnvironmentVariable('VAR_SAFE'); $v = $v -replace '%','_' -replace
+'\^','_'; [Console]::Write($v)" > "~dll_pct_safe*.txt"`, read back via a plain, non-`call`
+`for /f "usebackq delims=" %%X in ("~dll_pct_safe*.txt") do set "VAR_SAFE=%%X"`. Reading the value
+via `[Environment]::GetEnvironmentVariable` (never substituting it into the `-Command` text itself)
+means this cannot reintroduce the same `call`-triggered second-pass hazard one layer up. `HP_NEXT_
+DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` are sanitized in ONE PowerShell invocation writing TWO separate
+output files (`~dll_pct_safe_a.txt`/`~dll_pct_safe_b.txt`), not one combined multi-line file --
+this repo bans delayed expansion (`!VAR!`) repo-wide, which parsing multiple lines out of one file
+back into two batch variables would otherwise need. `&`/`|`/`<`/`>` stripping is unchanged (still
+plain cmd.exe `:search=replace` substitution -- that part was never wrong, only the `%%` escape
+attempt was). `tests/harness.ps1`'s `batch.dll_bundle.pct_sanitizer` fixture was rewritten to
+validate this REPLACEMENT mechanism (still a real cmd.exe + PowerShell child-process execution, not
+static pattern matching) and additionally proves the actual security property end-to-end: a raw
+value shaped like `%SECRET%`, once sanitized, survives a real `call`-based second expansion pass
+without leaking the shadowed `SECRET` variable's true value. Order among all six substitutions
+(`&`/`|`/`<`/`>`/`%`/`^`) is commutative -- none of them can match the replacement character (`_`),
+so chaining them in any order produces the same result. `HP_NEXT_DLL_PATH_SAFE` needs the same `%`/
+`^` stripping even though its raw value is a real, `os.walk()`-confirmed path (unlike
+`HP_DLL_DETECTED`/`HP_NEXT_DLL`, which are regex-extracted from arbitrary warning text) -- Windows
+filenames may legally contain `%` and `^`, even though they cannot contain `&`/`|`/`<`/`>`.
 
 **A companion CodeRabbit finding on the same review round: the loop's detected/skipped/repaired/
 unlocatable/failed outcomes previously reached only `:log`'s console text, with no
@@ -632,18 +658,60 @@ regardless of its own correctness).
 `PYSPEC` (immediately after each `set "PYSPEC=%PYVER:python-=python=%"` line) -- distinct from
 `HP_RUNTIME_TXT_PREEXIST`, which only tracks whether the FILE existed before this run started,
 not whether write-back has since overwritten its contents with a provider-specific artifact.
-`:try_conda_create`'s two `conda create` call sites (initial attempt and the REQ-022 transient
-retry) now compute a single `HP_CONDA_PYSPEC_SKIP` flag once, before either attempt (PYSPEC and
-HP_PYSPEC_WRITEBACK do not change between the two): `"%PYSPEC%"==""` OR `HP_PYSPEC_WRITEBACK`
-defined both route to the SAME pre-existing unconstrained branch (`conda create -y -n ENVNAME
-python pip ...`, no version pin, letting conda's own solver pick its latest compatible build) --
-a REAL pre-existing user pin (`HP_RUNTIME_TXT_PREEXIST` defined at the time write-back would have
-fired, meaning it never fired) is left completely untouched, since that constraint is a genuine
-user requirement REQ-004 must still forward, not a bootstrapper-manufactured artifact. The two-
-variable split (`HP_PYSPEC_WRITEBACK` set once at write-back time; `HP_CONDA_PYSPEC_SKIP`
-computed once at `:try_conda_create` entry) avoids re-deriving the same OR-of-two-conditions logic
-twice (batch has no clean single-line boolean OR without delayed expansion -- see the embed
-tier's own `HP_GETPIP_SKIP_OFFLINE` precedent above for the same idiom).
+
+**Refined same day, before real CI ever confirmed the first version, in response to a maintainer
+question and an independent CodeRabbit finding that converged on the same gap**: the maintainer
+asked whether "how did this ever work" pointed at a genuinely SEPARATE gap for a plain subsequent
+run (not just the same-run cascade), and whether backing off write-back's own precision would also
+help; separately, CodeRabbit flagged that unconditionally dropping to "no constraint" on cascade
+also discards a genuine, user-authored `pyproject.toml`/PEP 723 `requires-python` range whenever it
+happens to coexist with a write-back-derived `PYSPEC` in the same run. Both were investigated
+together:
+- **The "subsequent run" concern turned out to already be handled, by pre-existing code unrelated
+  to this fix.** `tools/detect_python.py`'s `read_runtime_spec()` (the canonical source for
+  `HP_DETECT_PY`, invoked at the START of every fresh bootstrap process to derive `PYSPEC` from
+  `runtime.txt`) already truncates ANY version string it finds down to major.minor
+  (`major_minor = '.'.join(parts[:2])`) before ever returning a `python=X.Y` constraint -- it does
+  not matter whether `runtime.txt`'s content came from write-back (`python-3.14.7`) or a genuine
+  hand-authored file; a fresh, separate invocation of `run_setup.bat` never sees the exact patch,
+  only `python=3.14`. This means the on-disk file can legitimately keep recording the exact,
+  proven-working patch (useful documentation for the user) without that precision ever reaching a
+  provider's create/venv command on a later, separate run -- no write-side change was needed for
+  this half of the question. The ONLY place the untruncated patch leaks through as a hard
+  constraint is the SAME-process in-memory `PYSPEC` variable reused during a cascade re-entry
+  WITHIN one bootstrap run, which bypasses this file-read/truncation path entirely (the value is
+  already sitting in a shell variable, never re-derived from disk) -- exactly the gap
+  `HP_PYSPEC_WRITEBACK` already targets.
+- **CodeRabbit's finding was real and is now fixed via a new `HP_PYSPEC_ORIGINAL` snapshot.**
+  Immediately before each of the 3 write-back sites reassigns `PYSPEC`, it now also does
+  `set "HP_PYSPEC_ORIGINAL=%PYSPEC%"` -- capturing whatever constraint existed at that exact moment
+  (a genuine pyproject.toml/PEP 723 range if Tier 2 applied, or empty if Tier 3/no constraint;
+  never anything write-back-derived itself, since this snapshot always runs before the very first
+  write-back of the run). `:try_conda_create` now computes `HP_CONDA_PYSPEC_USE` (`%PYSPEC%`
+  normally, `%HP_PYSPEC_ORIGINAL%` when `HP_PYSPEC_WRITEBACK` is defined) instead of unconditionally
+  dropping to "no constraint" -- a genuine user-authored range still reaches conda's solver on
+  cascade; only the bad exact pin is discarded, and the "no constraint" fallback now applies solely
+  when there was never a real constraint to begin with (`HP_PYSPEC_ORIGINAL` empty too).
+- **A genuine, independent pre-existing bug found while making this change, and fixed in the same
+  pass: `%PYSPEC%` was used UNQUOTED on both `conda create` command lines.** A PEP 440 range (e.g.
+  `python>=3.10,<4`, exactly what `HP_PYSPEC_ORIGINAL` now forwards more often than before) contains
+  live `<`/`>` characters -- unquoted on a cmd.exe command line, these are parsed as real
+  redirection operators, corrupting the `conda create` invocation (this predates the current
+  session's changes entirely; a plain, non-cascade first run with a `requires-python = ">=3.10,<4"`
+  pyproject.toml would already have hit this against the ORIGINAL, unmodified code). Fixed by
+  quoting both call sites (`"%HP_CONDA_PYSPEC_USE%"`), mirroring the already-established
+  `HP_UV_PY_REQ` pattern (quoted at its own `uv venv --python` call site -- see the "`:log` echoes
+  UNQUOTED" entry in `docs/agent-lessons-learned.md` for the general rule this follows).
+
+The two-variable split (`HP_PYSPEC_WRITEBACK` set once at write-back time; `HP_CONDA_PYSPEC_USE`/
+`HP_CONDA_PYSPEC_SKIP` computed once at `:try_conda_create` entry, reused by both the initial
+attempt and the REQ-022 transient retry) avoids re-deriving the same decision twice. **NOT YET
+CONFIRMED in real CI** -- same status as the base `HP_PYSPEC_WRITEBACK` fix; needs a fresh
+`cache`-lane `self.layered_e2e.chain` run to confirm `chainPass:true` before this can be considered
+settled (that test's own fixture uses a Tier 3/no-constraint pyproject, so it does not by itself
+exercise the `HP_PYSPEC_ORIGINAL` range-preservation path -- only the base drop-to-unconstrained
+behavior; the range-preservation and quoting fix are verified by reasoning and local tooling only
+so far, not a real-CI-observed range-constrained cascade).
 
 **Why this doesn't (yet) need the same fix for the embed tier's own PYSPEC-driven version
 lookup**: `tools/embed_pyver_check.py` also reads `PYSPEC` to pick which pinned table entry to

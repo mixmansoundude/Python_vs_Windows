@@ -611,27 +611,29 @@ start at 1 and has gaps.
   text from an adversarial native extension) into the log, or alter escaping, on that second pass.
   Fixed by extending all three `_SAFE` chains (`HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/
   `HP_NEXT_DLL_PATH_SAFE`) with two more substitutions each: `%` (doubled to `%%` in the search
-  text, the standard cmd.exe idiom for matching a literal percent sign in a `:search=replace`
-  substitution) and `^` (no doubling needed there). See `docs/agent-lessons-learned.md`'s ":log
-  echoes UNQUOTED" entry (new subsection) and `docs/agent-interconnect.md`'s DLL-bundling section
-  for the full mechanism trace.
+  text, believed at the time to be a standard cmd.exe idiom for matching a literal percent sign in
+  a `:search=replace` substitution -- **this belief was wrong, see finding (10) below**) and `^`
+  (no doubling needed there). See `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry
+  (new subsection) and `docs/agent-interconnect.md`'s DLL-bundling section for the full mechanism
+  trace.
   **Requirement 4 (regression test) extended `tests/selfapps_layered_e2e.ps1`** with a 4th
   mechanism (`mech4Pass`, requiring `dllWarningSeen`/`dllBundling`/`dllBundleComplete`) alongside
   the three it already proved -- this is the acceptance criterion that should finally flip
   `chainPass` to `True` for the first time.
   **A FOURTH CodeRabbit review pass caught 2 more findings, both triaged**: (8) Blinter (a static
   linter, not a real cmd.exe) flagged the `%VAR:%%=_%` doubled-percent idiom from finding (7) as a
-  possible "malformed string operation" (rule E021) -- Blinter's own pattern matcher does not model
-  the doubled-`%%` escape for a literal percent sign inside a `:search=replace` substitution, but
-  rather than trust either static tool's verdict or this repo's own reasoning about undocumented
-  cmd.exe parsing a fourth time, `tests/harness.ps1` gained a NEW gating check
-  (`batch.dll_bundle.pct_sanitizer`) that runs the EXACT idiom against a real `cmd.exe` via a live
-  fixture and asserts the observed output -- settling it empirically in the next real CI run rather
-  than by further static reasoning. (9) A genuine, still-open correctness gap, DEFERRED to Item 25
-  below rather than fixed in this already-large change: when a 4th locatable DLL candidate is found
-  after `HP_DLL_ITER` already hit its 3-iteration cap, the loop currently reports `repaired` +
-  "bundling complete" even though that 4th DLL was never bundled -- needs a distinct `exhausted`
-  outcome state, mirroring `:hidden_import_recover`'s own `self.exe.hidden_import.exhaust` pattern.
+  possible "malformed string operation" (rule E021) -- assumed at the time to be a Blinter false
+  positive (its pattern matcher not modeling the doubled-`%%` escape), but rather than trust either
+  static tool's verdict or this repo's own reasoning about undocumented cmd.exe parsing a fourth
+  time, `tests/harness.ps1` gained a NEW gating check (`batch.dll_bundle.pct_sanitizer`) that runs
+  the EXACT idiom against a real `cmd.exe` via a live fixture and asserts the observed output --
+  settling it empirically rather than by further static reasoning. **Blinter turned out to be
+  RIGHT, not a false positive -- see finding (10).** (9) A genuine, still-open correctness gap,
+  DEFERRED to Item 25 below rather than fixed in this already-large change: when a 4th locatable
+  DLL candidate is found after `HP_DLL_ITER` already hit its 3-iteration cap, the loop currently
+  reports `repaired` + "bundling complete" even though that 4th DLL was never bundled -- needs a
+  distinct `exhausted` outcome state, mirroring `:hidden_import_recover`'s own
+  `self.exe.hidden_import.exhaust` pattern.
   **Real CI evidence, first observed 2026-08-07**: `self.layered_e2e.chain` came back
   `chainPass:false`, but the failure is EARLIER than the DLL-bundling mechanism entirely --
   `mech1Pass:false`, `condaSelected:false`, `statusState:"venv_env"`. Root cause (confirmed via the
@@ -652,11 +654,44 @@ start at 1 and has gaps.
   tracks the FILE's pre-existence, not whether write-back overwrote it this run). `:try_conda_create`
   now drops the version pin (falls back to its own existing unconstrained `"%PYSPEC%"==""` branch)
   whenever `HP_PYSPEC_WRITEBACK` is set, at both the initial attempt and the transient-retry --
-  a REAL pre-existing user pin (`HP_RUNTIME_TXT_PREEXIST` defined) is left untouched. **NOT YET
-  CONFIRMED in real CI** -- this fix, the DLL-bundling loop itself, AND the new
-  `batch.dll_bundle.pct_sanitizer` check all need a fresh `cache`-lane run of
-  `self.layered_e2e.chain` (mech1-4 all green, `chainPass:true`) before this item can be considered
-  closed. Do not close this item until that real CI confirmation lands.
+  a REAL pre-existing user pin (`HP_RUNTIME_TXT_PREEXIST` defined) is left untouched.
+  **(10) The very first real CI run of `batch.dll_bundle.pct_sanitizer` (finding 8's own live-cmd.exe
+  fixture) proved the `%VAR:%%=_%` doubled-percent idiom from finding (7) FALSE, not the Blinter
+  flag it was built to double-check.** `details.output` came back `"ECHO is off."` with
+  `exitCode:0` -- the substitution silently produced an EMPTY value instead of the expected
+  sanitized text, an undocumented cmd.exe parsing quirk this repo's own reasoning got wrong (this
+  broke `HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` across essentially every
+  CI lane). **Fixed by moving `%`/`^` stripping into PowerShell** (`-replace '%','_' -replace
+  '\^','_'` against `[Environment]::GetEnvironmentVariable(...)`, written to a temp file and read
+  back via a plain, non-`call` `for /f "usebackq delims=" %%X in (...) do set` -- never a
+  delayed-expansion multi-line parse, which this repo bans repo-wide) instead of cmd.exe
+  substitution; `&`/`|`/`<`/`>` stripping is unchanged (that part was never wrong). The
+  `batch.dll_bundle.pct_sanitizer` fixture itself was rewritten to validate the REPLACEMENT
+  mechanism (still a real cmd.exe + PowerShell child-process execution) and additionally proves the
+  actual security property end-to-end via a real `call`-based second-expansion-pass check. See
+  `docs/agent-interconnect.md`'s DLL-bundling section and `docs/agent-lessons-learned.md`'s ":log
+  echoes UNQUOTED" entry for the full corrected trace.
+  **(11) Refined further the same day, before any real CI confirmation of finding (10) had even
+  landed, in response to a maintainer question plus an independently-converging CodeRabbit
+  finding**: a new `HP_PYSPEC_ORIGINAL` snapshot (captured immediately before each of the 3
+  write-back sites reassigns `PYSPEC`) now lets `:try_conda_create` preserve a genuine
+  user-authored `pyproject.toml`/PEP 723 `requires-python` range across cascade instead of always
+  dropping to "no constraint" -- CodeRabbit's own finding. Investigating the maintainer's separate
+  "would loosening write-back also help subsequent runs" question turned up that it already does,
+  via PRE-EXISTING code unrelated to this fix (`tools/detect_python.py`'s `read_runtime_spec()`
+  already truncates any version to major.minor on every fresh read of `runtime.txt`) -- no
+  write-side change was needed for that half. Also fixed a genuine, independent, pre-existing bug
+  found while making this change: `%PYSPEC%` was used UNQUOTED on both `conda create` command
+  lines, so a PEP 440 range containing `<`/`>` would already have corrupted the command even
+  before today's session (unrelated to write-back specifically). See
+  `docs/agent-interconnect.md`'s write-back/cascade section for the full trace.
+  **NOT YET CONFIRMED in real CI** -- the `HP_PYSPEC_WRITEBACK` fix, the `HP_PYSPEC_ORIGINAL`
+  refinement, the DLL-bundling loop itself, AND the corrected `batch.dll_bundle.pct_sanitizer`
+  check all need a fresh `cache`-lane run of `self.layered_e2e.chain` (mech1-4 all green,
+  `chainPass:true`) before this item can be considered closed -- note that test's own fixture is
+  Tier 3 (no pyproject constraint), so it only exercises the base drop-to-unconstrained path, not
+  `HP_PYSPEC_ORIGINAL`'s range-preservation specifically. Do not close this item until that real CI
+  confirmation lands.
 
 - **Item 25: `:dll_bundle_recover` reports `repaired` instead of a distinct `exhausted` outcome
   when a locatable DLL candidate is found after the 3-iteration cap is already hit.** Found via a

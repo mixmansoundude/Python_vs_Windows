@@ -460,15 +460,28 @@ with it (in this case, `:log`'s own console/file output). **Rule: any DISPLAY-ON
 built to protect a `call`-based subroutine's own unquoted internals (mirroring the `_SAFE` pattern
 above) must ALSO strip `%` and `^`, not just `<`/`>`/`|`/`&`** -- omitting them defeats the whole
 point of building the sanitization in the first place, since a value from an untrusted/external
-source can just as easily be shaped like `%GITHUB_TOKEN%` as it can contain a raw `&`. To strip a
-literal `%` via `set "VAR=%VAR:search=replace%"` substitution, DOUBLE it in the search text
-(`set "VAR=%VAR:%%=_%"`) -- this is the standard, long-established cmd.exe idiom for matching a
-literal percent sign in this construct (distinct from the FOR-loop `%%i` doubling rule, which is
-about declaring/using a loop variable, not about search-and-replace text). `^` needs no such
-doubling -- it has no special meaning inside a substitution's search text, only in raw, unquoted
-command-line tokenization. See `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair
-loop" section for the concrete fix (`HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/
-`HP_NEXT_DLL_PATH_SAFE`, each extended with two more substitution lines).
+source can just as easily be shaped like `%GITHUB_TOKEN%` as it can contain a raw `&`.
+
+**`set "VAR=%VAR:%%=_%"` (doubling `%` to `%%` in the search text) does NOT reliably strip a
+literal percent sign -- a real bug this repo shipped once and caught only via a live-cmd.exe CI
+test, not via reasoning.** The doubled-percent form looks like a natural extension of the
+well-known FOR-loop `%%i` escaping rule, and was documented here as "the standard, long-established
+cmd.exe idiom" on that basis -- but confirmed FALSE via `tests/harness.ps1`'s
+`batch.dll_bundle.pct_sanitizer` fixture executed for real on Windows CI: the substitution silently
+produced an EMPTY value (`echo` with no argument) instead of the sanitized text. This broke the DLL
+native-bundling loop's own sanitization across essentially every CI lane. **Rule: to strip a
+literal `%` (or `^`) from a batch variable, do NOT use cmd.exe `:search=replace` substitution --
+shell out to PowerShell instead** (`[Environment]::GetEnvironmentVariable('VAR') -replace
+'%','_' -replace '\^','_'`, written to a temp file and read back via a plain, non-`call`
+`for /f "usebackq delims=" %%X in (...) do set`), which has unambiguous .NET string semantics
+instead of cmd.exe's own undocumented parsing quirks. See `docs/agent-interconnect.md`'s "Conda
+native-DLL bundling repair loop" section for the concrete fix (`HP_DLL_DETECTED_SAFE`/
+`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE`) and the CI-confirmed failure signature. **General rule
+this incident reinforces**: when this repo's own static reasoning about an undocumented cmd.exe
+parsing rule cannot be settled by citing an authoritative source, build a live-cmd.exe-executed
+test fixture (mirroring `tests/harness.ps1`'s existing pattern) and trust ITS result over another
+round of reasoning -- this is now the second time reasoning-without-execution produced a
+confidently-wrong answer about cmd.exe's own substitution semantics in this exact code path.
 
 ---
 

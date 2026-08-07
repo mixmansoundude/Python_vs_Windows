@@ -915,15 +915,31 @@ rem (confirmed via real CI: self.layered_e2e.chain's uv-to-conda cascade failed
 rem with PackagesNotFoundInChannelsError for exactly this reason). A REAL
 rem pre-existing user pin (HP_RUNTIME_TXT_PREEXIST defined, or PYSPEC sourced
 rem from pyproject.toml/PEP 723 without ever going through write-back) is left
-rem untouched -- only the self-authored, write-back-derived value is dropped.
+rem untouched -- only the self-authored, write-back-derived exact pin is dropped.
+rem HP_PYSPEC_ORIGINAL (snapshotted at each write-back site immediately before
+rem PYSPEC was overwritten) preserves whatever constraint existed BEFORE
+rem write-back fired -- a genuine pyproject.toml/PEP 723 requires-python range
+rem (Tier 2) or nothing at all (Tier 3, both PYSPEC and PYSPEC_ORIGINAL empty) --
+rem so a real user-authored range constraint still reaches conda's solver
+rem instead of being discarded along with the bad exact pin.
+set "HP_CONDA_PYSPEC_USE=%PYSPEC%"
+if defined HP_PYSPEC_WRITEBACK set "HP_CONDA_PYSPEC_USE=%HP_PYSPEC_ORIGINAL%"
 set "HP_CONDA_PYSPEC_SKIP="
-if "%PYSPEC%"=="" set "HP_CONDA_PYSPEC_SKIP=1"
-if defined HP_PYSPEC_WRITEBACK set "HP_CONDA_PYSPEC_SKIP=1"
-if defined HP_CONDA_PYSPEC_SKIP if defined HP_PYSPEC_WRITEBACK call :log "[INFO] conda create: dropping the write-back-derived exact Python pin; conda will resolve its own latest compatible Python instead."
+if "%HP_CONDA_PYSPEC_USE%"=="" set "HP_CONDA_PYSPEC_SKIP=1"
+if defined HP_PYSPEC_WRITEBACK if not "%HP_PYSPEC_ORIGINAL%"=="" call :log "[INFO] conda create: dropping the write-back-derived exact Python pin; using the original pre-write-back Python constraint instead."
+if defined HP_PYSPEC_WRITEBACK if "%HP_PYSPEC_ORIGINAL%"=="" call :log "[INFO] conda create: dropping the write-back-derived exact Python pin; conda will resolve its own latest compatible Python instead."
+rem derived requirement: PYSPEC/HP_CONDA_PYSPEC_USE can legitimately contain PEP
+rem 440 range operators (>=, <, <=) once sourced from pyproject.toml's
+rem requires-python (pep440_to_conda() output) -- unquoted on this command line,
+rem cmd.exe would parse a bare < or > as a real redirection operator and corrupt
+rem the create command (a genuine pre-existing bug found while adding this
+rem HP_PYSPEC_ORIGINAL fallback, which specifically increases how often a
+rem range value reaches this exact line). Quoting protects it the same way
+rem HP_UV_PY_REQ is already quoted at its own uv venv --python call site.
 if defined HP_CONDA_PYSPEC_SKIP (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge > "~conda_create.tmp" 2>&1
 ) else (
-  call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% pip --override-channels -c conda-forge > "~conda_create.tmp" 2>&1
+  call "%CONDA_BAT%" create -y -n "%ENVNAME%" "%HP_CONDA_PYSPEC_USE%" pip --override-channels -c conda-forge > "~conda_create.tmp" 2>&1
 )
 set "HP_CCREATE_RC=%ERRORLEVEL%"
 goto :conda_create_have_rc
@@ -948,12 +964,13 @@ call :log "[INFO] conda create: transient failure detected; retrying after 15s."
 timeout /t 15 /nobreak >nul 2>&1
 echo Retrying environment creation...
 if "%HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL%"=="1" goto :conda_create_retry_forced_fail
-rem Same HP_CONDA_PYSPEC_SKIP decision as the initial attempt above -- PYSPEC/
-rem HP_PYSPEC_WRITEBACK are unchanged since then, so the flag is still valid.
+rem Same HP_CONDA_PYSPEC_USE/HP_CONDA_PYSPEC_SKIP decision as the initial attempt
+rem above -- PYSPEC/HP_PYSPEC_ORIGINAL/HP_PYSPEC_WRITEBACK are unchanged since
+rem then, so both are still valid.
 if defined HP_CONDA_PYSPEC_SKIP (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" python pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 ) else (
-  call "%CONDA_BAT%" create -y -n "%ENVNAME%" %PYSPEC% pip --override-channels -c conda-forge >> "%LOG%" 2>&1
+  call "%CONDA_BAT%" create -y -n "%ENVNAME%" "%HP_CONDA_PYSPEC_USE%" pip --override-channels -c conda-forge >> "%LOG%" 2>&1
 )
 if not errorlevel 1 goto :conda_create_done
 :conda_create_retry_forced_fail
@@ -1002,6 +1019,7 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
     call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
   ) else (
     call :log "[INFO] runtime.txt written: %PYVER%"
+    set "HP_PYSPEC_ORIGINAL=%PYSPEC%"
     set "PYSPEC=%PYVER:python-=python=%"
     set "HP_PYSPEC_WRITEBACK=1"
   )
@@ -1037,6 +1055,7 @@ if not errorlevel 1 (
       call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
     ) else (
       call :log "[INFO] runtime.txt written: %PYVER%"
+      set "HP_PYSPEC_ORIGINAL=%PYSPEC%"
       set "PYSPEC=%PYVER:python-=python=%"
       set "HP_PYSPEC_WRITEBACK=1"
     )
@@ -3946,16 +3965,27 @@ rem CodeRabbit finding: `call :log` performs a SECOND cmd.exe expansion pass on 
 rem argument text (the documented "call re-parses its command line" behavior), so a raw
 rem % or ^ surviving into HP_DLL_DETECTED_SAFE could still expand an unrelated environment
 rem variable (e.g. a crafted "%SOME_SECRET%.dll" warning text) or alter escaping on that
-rem second pass, even though &/|/</> are already neutralized. % must be doubled (%%) to
-rem match a literal percent sign inside a :search=replace substitution; ^ needs no such
-rem doubling here (caret has no special meaning inside the substitution's search text).
+rem second pass, even though &/|/</> are already neutralized.
 set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED%"
 set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:&=_%"
 set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:|=_%"
 set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:<=_%"
 set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:>=_%"
-set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:%%=_%"
-set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:^=_%"
+rem derived requirement: a real CI-confirmed bug -- cmd.exe's own %VAR:%%=X% doubled-percent
+rem idiom does NOT reliably strip a literal percent sign (confirmed via
+rem batch.dll_bundle.pct_sanitizer's live cmd.exe fixture: the substitution silently produced
+rem an EMPTY value instead of the expected text, an undocumented cmd.exe parsing quirk this
+rem repo's own reasoning got wrong on the first attempt). % and ^ are stripped in PowerShell
+rem instead (unambiguous .NET string/regex semantics), reading the value via
+rem [Environment]::GetEnvironmentVariable (never substituting it into the -Command text, so
+rem this cannot reintroduce the same call-triggered second-pass hazard) and routing the
+rem result back through a file, never a command-substitution capture.
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$v = [Environment]::GetEnvironmentVariable('HP_DLL_DETECTED_SAFE');" ^
+  "$v = $v -replace '%','_' -replace '\^','_';" ^
+  "[Console]::Write($v)" > "~dll_pct_safe.txt" 2>>"%LOG%"
+for /f "usebackq delims=" %%X in ("~dll_pct_safe.txt") do set "HP_DLL_DETECTED_SAFE=%%X"
+if exist "~dll_pct_safe.txt" del "~dll_pct_safe.txt" >nul 2>&1
 rem Requirement 6: identical guard to :hidden_import_recover's own, for the identical
 rem reason -- --add-binary is a PyInstaller-specific flag with no Nuitka equivalent wired
 rem up here. Skip (not attempt-and-fail) rather than risk rebuilding a working Tier-A EXE
@@ -4004,22 +4034,34 @@ if exist "~next_dll.txt" del "~next_dll.txt" >nul 2>&1
 rem Same :log-unquoted-echo hazard as HP_DLL_DETECTED above -- sanitize DISPLAY-ONLY copies.
 rem The raw HP_NEXT_DLL/HP_NEXT_DLL_PATH are still used unchanged for the tried-file (pure file
 rem content, never shell-expanded) and the quoted --add-binary argument below.
-rem Also strips % and ^ -- see the HP_DLL_DETECTED_SAFE comment above for why "call :log"'s
-rem own second cmd.exe expansion pass makes these two just as hazardous as &/|/</>.
 set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL%"
 set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:&=_%"
 set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:|=_%"
 set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:<=_%"
 set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:>=_%"
-set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:%%=_%"
-set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:^=_%"
 set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH%"
 set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:&=_%"
 set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:|=_%"
 set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:<=_%"
 set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:>=_%"
-set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:%%=_%"
-set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:^=_%"
+rem derived requirement: same real, CI-confirmed cmd.exe %VAR:%%=X% bug as
+rem HP_DLL_DETECTED_SAFE above -- stripped via PowerShell instead (see that comment for the
+rem full trace). Two separate output files, not one multi-line file, so reading the result
+rem back is a plain single-value "for /f ... do set" with no counter/index logic needed --
+rem this repo bans delayed expansion (!VAR!) repo-wide, which a multi-line parse would need.
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$a = [Environment]::GetEnvironmentVariable('HP_NEXT_DLL_SAFE');" ^
+  "$a = $a -replace '%','_' -replace '\^','_';" ^
+  "Set-Content -LiteralPath '~dll_pct_safe_a.txt' -Value $a -NoNewline -Encoding ASCII;" ^
+  "$b = [Environment]::GetEnvironmentVariable('HP_NEXT_DLL_PATH_SAFE');" ^
+  "$b = $b -replace '%','_' -replace '\^','_';" ^
+  "Set-Content -LiteralPath '~dll_pct_safe_b.txt' -Value $b -NoNewline -Encoding ASCII" >> "%LOG%" 2>&1
+set "HP_NEXT_DLL_SAFE="
+set "HP_NEXT_DLL_PATH_SAFE="
+for /f "usebackq delims=" %%X in ("~dll_pct_safe_a.txt") do set "HP_NEXT_DLL_SAFE=%%X"
+for /f "usebackq delims=" %%X in ("~dll_pct_safe_b.txt") do set "HP_NEXT_DLL_PATH_SAFE=%%X"
+if exist "~dll_pct_safe_a.txt" del "~dll_pct_safe_a.txt" >nul 2>&1
+if exist "~dll_pct_safe_b.txt" del "~dll_pct_safe_b.txt" >nul 2>&1
 set /a HP_DLL_ITER+=1
 set "HP_PYI_DLLBIND=%HP_PYI_DLLBIND% --add-binary "%HP_NEXT_DLL_PATH%;.""
 call :log "[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: %HP_NEXT_DLL_SAFE% (found at %HP_NEXT_DLL_PATH_SAFE%); rebuilding EXE (iter %HP_DLL_ITER%/3)."
@@ -4518,11 +4560,14 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
     call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
   ) else (
     call :log "[INFO] runtime.txt written: %PYVER%"
+    set "HP_PYSPEC_ORIGINAL=%PYSPEC%"
     set "PYSPEC=%PYVER:python-=python=%"
     rem derived requirement: this PYSPEC value is an artifact of whichever provider
     rem happened to run first, not a genuine user requirement -- see the identical
     rem comment at :try_conda_create's PYSPEC decision for why this must not be
     rem forced onto a LATER, different provider during a REQ-009 cascade re-entry.
+    rem HP_PYSPEC_ORIGINAL preserves whatever constraint (a genuine pyproject.toml/
+    rem PEP 723 range, or nothing) existed immediately before this overwrite.
     set "HP_PYSPEC_WRITEBACK=1"
   )
 )
