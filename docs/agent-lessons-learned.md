@@ -443,6 +443,33 @@ flow (not a common vector), and the only real fix is the global `:log` rework al
 as blocked by the three CI static guards above. Noted here so it isn't rediscovered as a "new"
 finding later.
 
+**A second, distinct hazard on top of the above: `call :log "..."` triggers cmd.exe's OWN second
+expansion pass, so `%`/`^` are just as dangerous as `<`/`>`/`|`/`&` -- found and fixed for the
+conda native-DLL bundling loop (CLAUDE.md Item 24), via a CodeRabbit review round.** This is
+independent of the UNQUOTED-echo hazard above (which is about `:log`'s OWN `echo %MSG%` line) --
+this one is about the CALLER's line, `call :log "... %SOME_VAR% ..."`, itself. `call` is
+documented (informally, but extremely well-established in practice) to re-scan its own,
+already-substituted command line a SECOND time before invoking the target. Concretely: if
+`%SOME_VAR%`'s value happens to CONTAIN text shaped like `%OTHER_VAR%` (not a literal `%OTHER_VAR%`
+reference in the source code -- a VALUE that merely looks like one, e.g. captured from external
+text such as a build-tool warning message), the caller's own NORMAL single-pass substitution
+inserts that literal text into the line first; then, because the command is `call`, a SECOND scan
+finds `%OTHER_VAR%` sitting in the now-substituted text and expands IT too -- potentially leaking
+an unrelated environment variable (a CI secret, a token) into whatever the call ultimately does
+with it (in this case, `:log`'s own console/file output). **Rule: any DISPLAY-ONLY sanitization
+built to protect a `call`-based subroutine's own unquoted internals (mirroring the `_SAFE` pattern
+above) must ALSO strip `%` and `^`, not just `<`/`>`/`|`/`&`** -- omitting them defeats the whole
+point of building the sanitization in the first place, since a value from an untrusted/external
+source can just as easily be shaped like `%GITHUB_TOKEN%` as it can contain a raw `&`. To strip a
+literal `%` via `set "VAR=%VAR:search=replace%"` substitution, DOUBLE it in the search text
+(`set "VAR=%VAR:%%=_%"`) -- this is the standard, long-established cmd.exe idiom for matching a
+literal percent sign in this construct (distinct from the FOR-loop `%%i` doubling rule, which is
+about declaring/using a loop variable, not about search-and-replace text). `^` needs no such
+doubling -- it has no special meaning inside a substitution's search text, only in raw, unquoted
+command-line tokenization. See `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair
+loop" section for the concrete fix (`HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/
+`HP_NEXT_DLL_PATH_SAFE`, each extended with two more substitution lines).
+
 ---
 
 ## Provider-cascade dispatch is goto-based on purpose (parse-time expansion)

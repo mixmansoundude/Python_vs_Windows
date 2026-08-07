@@ -3921,11 +3921,20 @@ rem corrupting the log line and/or creating a stray file. Sanitize a DISPLAY-ONL
 rem raw HP_DLL_DETECTED is never used for anything functional (no file lookup happens on it --
 rem the real Library\bin search is redone from scratch, on the raw warning text, inside
 rem :dll_bundle_loop below), so this substitution cannot desync any matching logic.
+rem CodeRabbit finding: `call :log` performs a SECOND cmd.exe expansion pass on its own
+rem argument text (the documented "call re-parses its command line" behavior), so a raw
+rem % or ^ surviving into HP_DLL_DETECTED_SAFE could still expand an unrelated environment
+rem variable (e.g. a crafted "%SOME_SECRET%.dll" warning text) or alter escaping on that
+rem second pass, even though &/|/</> are already neutralized. % must be doubled (%%) to
+rem match a literal percent sign inside a :search=replace substitution; ^ needs no such
+rem doubling here (caret has no special meaning inside the substitution's search text).
 set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED%"
 set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:&=_%"
 set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:|=_%"
 set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:<=_%"
 set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:>=_%"
+set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:%%=_%"
+set "HP_DLL_DETECTED_SAFE=%HP_DLL_DETECTED_SAFE:^=_%"
 rem Requirement 6: identical guard to :hidden_import_recover's own, for the identical
 rem reason -- --add-binary is a PyInstaller-specific flag with no Nuitka equivalent wired
 rem up here. Skip (not attempt-and-fail) rather than risk rebuilding a working Tier-A EXE
@@ -3974,16 +3983,22 @@ if exist "~next_dll.txt" del "~next_dll.txt" >nul 2>&1
 rem Same :log-unquoted-echo hazard as HP_DLL_DETECTED above -- sanitize DISPLAY-ONLY copies.
 rem The raw HP_NEXT_DLL/HP_NEXT_DLL_PATH are still used unchanged for the tried-file (pure file
 rem content, never shell-expanded) and the quoted --add-binary argument below.
+rem Also strips % and ^ -- see the HP_DLL_DETECTED_SAFE comment above for why "call :log"'s
+rem own second cmd.exe expansion pass makes these two just as hazardous as &/|/</>.
 set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL%"
 set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:&=_%"
 set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:|=_%"
 set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:<=_%"
 set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:>=_%"
+set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:%%=_%"
+set "HP_NEXT_DLL_SAFE=%HP_NEXT_DLL_SAFE:^=_%"
 set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH%"
 set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:&=_%"
 set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:|=_%"
 set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:<=_%"
 set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:>=_%"
+set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:%%=_%"
+set "HP_NEXT_DLL_PATH_SAFE=%HP_NEXT_DLL_PATH_SAFE:^=_%"
 set /a HP_DLL_ITER+=1
 set "HP_PYI_DLLBIND=%HP_PYI_DLLBIND% --add-binary "%HP_NEXT_DLL_PATH%;.""
 call :log "[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: %HP_NEXT_DLL_SAFE% (found at %HP_NEXT_DLL_PATH_SAFE%); rebuilding EXE (iter %HP_DLL_ITER%/3)."

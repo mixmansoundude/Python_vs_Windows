@@ -603,6 +603,18 @@ start at 1 and has gaps.
   `self.layered_e2e.chain`'s own artifact (that test's isolated sub-bootstrap leaves `HP_NDJSON`
   unset, matching established convention) and relies instead on `tests/harness.ps1`'s new
   `batch.dll_bundle.ndjson` static wiring check.
+  **A third CodeRabbit review pass on that same fix caught a 7th genuine bug**: the `_SAFE`
+  sanitization from finding (5) stripped `&`/`|`/`<`/`>` but missed that `call :log "..."` triggers
+  cmd.exe's OWN second expansion pass on its own command line -- a well-established (if not
+  officially documented) `call` behavior -- so a raw `%` or `^` surviving into a `_SAFE` variable
+  could still expand an unrelated environment variable (e.g. a crafted `%SOME_SECRET%.dll` warning
+  text from an adversarial native extension) into the log, or alter escaping, on that second pass.
+  Fixed by extending all three `_SAFE` chains (`HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/
+  `HP_NEXT_DLL_PATH_SAFE`) with two more substitutions each: `%` (doubled to `%%` in the search
+  text, the standard cmd.exe idiom for matching a literal percent sign in a `:search=replace`
+  substitution) and `^` (no doubling needed there). See `docs/agent-lessons-learned.md`'s ":log
+  echoes UNQUOTED" entry (new subsection) and `docs/agent-interconnect.md`'s DLL-bundling section
+  for the full mechanism trace.
   **Requirement 4 (regression test) extended `tests/selfapps_layered_e2e.ps1`** with a 4th
   mechanism (`mech4Pass`, requiring `dllWarningSeen`/`dllBundling`/`dllBundleComplete`) alongside
   the three it already proved -- this is the acceptance criterion that should finally flip

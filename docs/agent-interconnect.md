@@ -262,6 +262,29 @@ untouched, so this cannot desync the tried-list dedup matching (`next_dll_target
 the RAW name from the log text on every loop iteration; sanitizing only the tried-file's stored
 copy would break equality comparison for any DLL name containing a hazardous character).
 
+**A sixth real bug found via a SECOND review pass on the fifth bug's own fix: the `_SAFE`
+sanitization above stripped `&`/`|`/`<`/`>` but left `%` and `^` untouched, missing that `call`
+performs its OWN, SECOND cmd.exe expansion pass on the command line it is calling** -- a
+well-established (if not officially documented by Microsoft) cmd.exe behavior: `call :log "...
+%HP_NEXT_DLL_SAFE% ..."` is itself an ordinary command line, so `%HP_NEXT_DLL_SAFE%` is substituted
+once during the NORMAL parse of that line (as with any `%VAR%` reference) -- but because the
+command being executed is `call`, cmd.exe then re-scans the ALREADY-SUBSTITUTED text a second time
+before actually invoking `:log`. If the substituted text happened to contain something shaped like
+`%SOME_VAR%` (a crafted "library not found" name from an adversarial native extension, since
+`_PATTERN`'s regex only excludes quote characters, not `%`/`^`), that second pass would expand
+`SOME_VAR`'s real value into what `:log` receives as `%~1` -- potentially leaking an unrelated
+environment variable (e.g. a CI secret) into the log. Fixed by extending all three `_SAFE` chains
+with two more substitutions: `set "VAR_SAFE=%VAR_SAFE:%%=_%"` (a literal `%` must be doubled to
+`%%` to match it as the search token in a `:search=replace` substitution -- this is the standard,
+long-established cmd.exe idiom for stripping a percent sign this way) and
+`set "VAR_SAFE=%VAR_SAFE:^=_%"` (caret needs no such doubling; it has no special meaning inside a
+substitution's search text, only within raw, unquoted command-line tokenization). Order among all
+six substitutions (`&`/`|`/`<`/`>`/`%`/`^`) is commutative -- none of them can match the replacement
+character (`_`), so chaining them in any order produces the same result. `HP_NEXT_DLL_PATH_SAFE`
+needs the same two extra lines even though its raw value is a real, `os.walk()`-confirmed path
+(unlike `HP_DLL_DETECTED`/`HP_NEXT_DLL`, which are regex-extracted from arbitrary warning text) --
+Windows filenames may legally contain `%` and `^`, even though they cannot contain `&`/`|`/`<`/`>`.
+
 **A companion CodeRabbit finding on the same review round: the loop's detected/skipped/repaired/
 unlocatable/failed outcomes previously reached only `:log`'s console text, with no
 machine-readable record.** Fixed with a new shared subroutine, `:emit_dll_bundle_row`, called from
