@@ -1330,7 +1330,8 @@ this belongs to).
   parses whatever DLL name PyInstaller's own warning names via regex, not a fixed string, and
   double-gates on the DLL actually existing under the conda env's `Library\bin` (recursively, since
   `hook-gribapi.py` itself nests `eccodes.dll` under a package-named subfolder there on Windows).
-  `tests/test_dll_bundle_scan.py` (34 tests) covers the warning parse, the tried-list guard, the
+  `tests/test_dll_bundle_scan.py` (34 tests at this point, growing to 37 once finding (13)'s
+  `HpPyDirArgvQuoting` class is added below) covers the warning parse, the tried-list guard, the
   double-gate, the byte-offset log-tail read (so a stale warning from an earlier run in the same
   persistent `~setup.log` is never re-detected), the `--detect` mode, and the embedded-payload sync.
   **A CodeRabbit review pass caught 4 genuine bugs in the first-shipped version, all fixed same

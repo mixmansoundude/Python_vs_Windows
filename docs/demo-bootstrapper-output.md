@@ -2383,8 +2383,8 @@ flag bundling it in -- bounded to 3 attempts, and gated off entirely under a non
 a Nuitka-built EXE, where it has no equivalent mechanism to fall back to. See
 `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the full
 mechanism trace. This scenario's own uv-to-conda cascade illustration below is unaffected either
-way (it documents the cascade mechanism itself, which is confirmed working). It uses `pygrib` (a package with zero Windows wheels on PyPI as of the
-latest release, per a direct PyPI JSON API query, but real conda-forge win-64 builds) as the
+way (it documents the cascade mechanism itself, which is confirmed working). It uses `pygrib` (a package with zero Windows wheels on PyPI as of
+version 2.1.8 (queried 2026-08-07) via the PyPI JSON API, but real conda-forge win-64 builds) as the
 cascade trigger -- GDAL was the original candidate and was researched and rejected (its Python
 bindings live under the `osgeo` namespace, and PyPI hosts a real, always-succeeding dummy package
 literally named `osgeo` that would have silently defeated the cascade's own confidence-gate
