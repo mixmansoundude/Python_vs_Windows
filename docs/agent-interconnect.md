@@ -1013,7 +1013,7 @@ attempt and the REQ-022 transient retry) avoids re-deriving the same decision tw
 merge commit `dcfce1d`, `cache`-lane run `31264219121`): that run's `self.layered_e2e.chain` row
 shows `pinDropped:true` and `condaSelected:true` alongside `chainPass:true`, confirming the
 uv-to-conda cascade re-entry genuinely dropped the write-back-derived exact pin rather than
-forwarding it unconstrained to `conda create`. **The `HP_PYSPEC_ORIGINAL` range-preservation path
+forwarding that exact pin to `conda create`. **The `HP_PYSPEC_ORIGINAL` range-preservation path
 remains unconfirmed**, since that test's own fixture uses a Tier 3/no-constraint pyproject, so it
 does not exercise a genuine user-authored range surviving the cascade -- the range-preservation
 and quoting fix are still verified by reasoning and local tooling only, not a real-CI-observed
