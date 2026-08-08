@@ -128,6 +128,38 @@ CLAUDE.md as a candidate for a future dedicated test pass if this path's trigger
 by PyInstaller" signal) -- any subroutine that can produce `dist\<env>.exe` via something other
 than PyInstaller should set an analogous marker and extend this guard to check it.
 
+**`:hidden_import_recover` now pairs `--collect-submodules=X` with every `--hidden-import=X` it
+adds (CLAUDE.md Item 28, implemented 2026-08-08).** A `--hidden-import=X` target alone only
+guarantees PyInstaller follows whatever `X`'s own `__init__.py` statically imports -- it does not
+guarantee every real submodule under `X/` is bundled. A compiled C extension ELSEWHERE in the app
+(invisible to PyInstaller's static scan the same way the original missing import was) can still
+need a submodule of `X` that `X`'s own `__init__.py` never references -- confirmed via a real
+pygrib 2.1.8 failure (`from packaging import version` inside a Cython extension, needing
+`packaging.version` even after `--hidden-import=packaging` alone genuinely worked). New
+accumulator `HP_PYI_HID_COLLECT` (distinct from the pre-build `HP_PYI_COLLECT` computed by
+`:compute_collect_flags` for packages imported by the USER'S OWN source -- do not confuse the
+two, they are gated completely differently) mirrors `HP_PYI_HIDDEN_IMPORTS`'s own
+accumulate-then-inject shape: each loop iteration appends
+`--collect-submodules=%HP_NEXT_HIDDEN%` for the SAME `%HP_NEXT_HIDDEN%` just added as a hidden
+import, and both flag lists are passed to the SAME rebuild call. Broader than strictly necessary
+(collects every submodule of `X`, not just the one actually needed) but structurally safe: `X` is
+already `find_spec`-confirmed installed by `~hidden_import_scan.py`'s own gate (see
+`docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay STRICT" entry, which
+this change leaves untouched -- it only changes what happens for a target the strict gate ALREADY
+decided to act on, never what triggers the gate itself).
+
+**The `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=X` log line now reads
+`Adding --hidden-import=X --collect-submodules=X`** -- every existing consumer of that line
+matches it as a PREFIX substring (`-match [regex]::Escape('...Adding --hidden-import=colorama')`
+or the bare `'...Adding --hidden-import='` prefix), never a full-line or trailing-anchor match, so
+each one continues to match unchanged: `self.exe.hidden_import`'s own `addingFired` check,
+`self.exe.hidden_import.exhaust`'s `$addingCount -eq 3` occurrence count (the appended text sits
+BEFORE the semicolon each line already had, so the per-line occurrence count of the matched
+substring is unaffected), `self.layered_e2e.chain`'s `mech3Pass` colorama check, and
+`tests/selfapps_nuitka_tiera_hidden_skip.ps1`'s negative "this line must NOT appear" check (still
+correctly absent, since that code path returns before ever reaching this line). Re-verify this
+holds for any FUTURE change to this log line's own text.
+
 ---
 
 ## Conda native-DLL bundling repair loop (`:dll_bundle_recover`, CLAUDE.md Item 24) and its two siblings

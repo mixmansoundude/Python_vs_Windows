@@ -1371,15 +1371,25 @@ mechanically derivable.
 **Success, one rebuild** (`self.exe.hidden_import`'s own fixture: a dynamic `importlib.import_module`
 call on `colorama`, invisible to PyInstaller's static analysis, so the frozen EXE genuinely fails
 its first run) -- exact sequence assembled from the log lines `tests/selfapps_hidden_import.ps1`
-itself matches against (`run_setup.bat`'s own `:log` calls at the smokerun/recovery call sites):
+itself matches against (`run_setup.bat`'s own `:log` calls at the smokerun/recovery call sites).
+`[Extrapolated Branch]` on the one `Adding --hidden-import=...` line specifically: the cited real
+capture (run `30328748330`) predates CLAUDE.md Item 28's `--collect-submodules` pairing fix, so
+that single line is traced from the CURRENT source instead of copied verbatim from that run; the
+other 4 lines in this block are untouched by Item 28 and remain accurate to the original capture:
 
 ```
 [WARN] EXE smokerun: exited 1 (non-zero)
-[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama; rebuilding EXE (iter 1/3).
+[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama --collect-submodules=colorama; rebuilding EXE (iter 1/3).
 [REPAIR][HIDDEN_IMPORT] EXE verified after hidden-import recovery.
 [INFO] EXE smokerun: exited 0 (ok)
 [INFO] Entry smoke exit=0
 ```
+
+(CLAUDE.md Item 28: every `--hidden-import=X` this loop adds is now paired with
+`--collect-submodules=X` on the same rebuild, so a compiled extension needing one of X's own
+submodules -- invisible to PyInstaller's static scan the same way the original missing import
+was -- gets a chance to be bundled in the same pass, rather than surfacing as a separate,
+undiagnosable failure later.)
 
 **Exhaustion** (three DIFFERENT modules missing across three rebuilds, still never fully
 resolving -- REAL CI CAPTURE):
@@ -2771,7 +2781,7 @@ print('colorama via importlib ok:', _mod.__name__)
 [INFO] EXE smokerun: testing dist\<env>.exe
 [WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
 [WARN] EXE smokerun: exited 1 (non-zero)
-[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama; rebuilding EXE (iter 1/3)
+[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama --collect-submodules=colorama; rebuilding EXE (iter 1/3).
 [INFO] PyInstaller produced dist\<env>.exe
 [INFO] EXE smokerun: testing dist\<env>.exe
 [INFO] EXE smokerun: exited 0 (ok)
@@ -3124,8 +3134,8 @@ regex-verified confirmation that these exact lines were present/absent in the re
 ```
 
 Without this guard, `run_setup.bat` would instead print
-`[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=nuitka; rebuilding EXE (iter 1/3)` here and
-attempt a PyInstaller rebuild against a Nuitka-built EXE.
+`[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=nuitka --collect-submodules=nuitka; rebuilding EXE (iter 1/3).`
+here and attempt a PyInstaller rebuild against a Nuitka-built EXE.
 
 ---
 
