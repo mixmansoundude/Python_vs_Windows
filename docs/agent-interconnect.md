@@ -352,19 +352,60 @@ condition (alongside embedded `"` characters) for preferring `-File` over `-Comm
 **A companion CodeRabbit finding on the same review round: the loop's detected/skipped/repaired/
 unlocatable/failed outcomes previously reached only `:log`'s console text, with no
 machine-readable record.** Fixed with a new shared subroutine, `:emit_dll_bundle_row`, called from
-all 6 outcome points (`skipped_nuitka`/`skipped_non_conda`/`repaired`/`unlocatable`/
+all 7 outcome points (`skipped_nuitka`/`skipped_non_conda`/`repaired`/`unlocatable`/`exhausted`/
 `failed_rebuild`/`failed_missing_exe`) and emitting NDJSON id `self.dll_bundle.recover` -- see
 `docs/agent-ndjson.md` for the full field list and the `HP_NDJSON`-scoping caveat (this row is
 not currently observed in `self.layered_e2e.chain`'s own artifact, since that test's isolated
 sub-bootstrap leaves `HP_NDJSON` unset by the same established convention `selfapps_postexec_
 checkpoint.ps1` already uses; `tests/harness.ps1`'s new `batch.dll_bundle.ndjson` static check is
 the actual coverage for this row's wiring). The state name is passed as a `call` argument (safe --
-always one of the 6 literal tokens above, written directly in `run_setup.bat`, never derived from
+always one of the 7 literal tokens above, written directly in `run_setup.bat`, never derived from
 external content), but the DLL name/provider/iteration are pulled INSIDE the emitting PowerShell
 command via `[Environment]::GetEnvironmentVariable(...)` rather than `%VAR%` cmd.exe substitution
 into the `-Command` text -- protecting cmd.exe's OWN command-line parsing (`&`/`|` are
 metacharacters even inside a quoted `call` argument) the same way the `_SAFE` display variables
 protect `:log`'s unquoted echo, just at a different vulnerable site.
+
+**A NINTH real bug found via a CodeRabbit review round on PR #414 itself (CLAUDE.md Item 25,
+fixed in a dedicated follow-up loop): `:dll_bundle_loop` found the next candidate (`HP_NEXT_DLL`)
+BEFORE checking `if %HP_DLL_ITER% GEQ 3`, silently discarding it instead of reporting an
+`exhausted` outcome.** When a 4th (or later) locatable DLL exists after the 3-iteration cap is
+already hit, the loop just `goto :dll_bundle_recover_done` with the candidate's own name and path
+already sitting in `HP_NEXT_DLL`/`HP_NEXT_DLL_PATH` from that iteration's scan, but with nothing
+recording that a real candidate was left unbundled. At `:dll_bundle_recover_done`, the
+`if %HP_DLL_ITER% GEQ 1` check reads TRUE (3 DLLs were already genuinely bundled in earlier
+iterations), so it logged `[REPAIR][DLL_BUNDLE] Native-DLL bundling complete` and emitted the
+`repaired` NDJSON state -- indistinguishable from a clean, fully-resolved run, even though a real,
+on-disk DLL was never bundled and the EXE could still fail to load it. Fixed with a new
+`HP_DLL_EXHAUSTED` flag, set at the cap-check branch in `:dll_bundle_loop` (the early
+`if not defined HP_NEXT_DLL` return above it already rules out the empty-candidate case, so
+reaching the cap check at all means a real candidate was found and about to be discarded) and
+checked at `:dll_bundle_recover_done` BEFORE the `HP_DLL_ITER GEQ 1` "repaired" branch -- emits a
+new `[WARN][DLL_BUNDLE]` line and the `exhausted` NDJSON state instead, reusing the already-
+sanitized `HP_DLL_DETECTED_SAFE` (the first warning seen this run, computed once at
+`:dll_bundle_recover`'s own entry) to safely name at least one detected dependency without a new
+sanitize pass. `exhausted` is `pass:true` under `:emit_dll_bundle_row`'s existing
+`$pass = -not ($state -like 'failed_*')` formula -- same treatment as `unlocatable`, since neither
+state means the bootstrap itself failed, only that the repair was incomplete; the EXE smoke run
+afterward is the actual arbiter of whether the missing DLL matters at runtime. Mirrors
+`:hidden_import_recover`'s own `[WARN][HIDDEN_IMPORT] Auto-recovery exhausted after 3 attempts`
+precedent in spirit (a distinct "gave up, did not fully resolve" signal), though that sibling
+loop's exhaustion is detected via a runtime EXE re-run rather than a build-time scan, so the two
+mechanisms are not literally shared code. `HP_DLL_EXHAUSTED` is reset at `:dll_bundle_recover`'s
+own top-of-loop reset block (alongside `HP_DLL_FAILED`) and cleared again at
+`:dll_bundle_recover_exit`, mirroring `HP_DLL_FAILED`'s own cascade-re-entry-safe reset pattern
+(see the CodeRabbit finding above about `HP_NEXT_DLL`/`HP_DLL_ITER` leaking across a REQ-009
+cascade re-entry) -- a stale `exhausted` outcome from an EARLIER `:dll_bundle_recover` call could
+otherwise leak into a LATER call's own outcome the same way that earlier bug did. Low real-world
+trigger rate (needs 4+ conda-forge packages under ONE PyInstaller build to each separately need
+`--add-binary`, not yet observed for any real package in this repo's testing) -- covered only by
+`tests/harness.ps1`'s `batch.dll_bundle.ndjson` static wiring check (the new 7th call site and
+state token), the same "static wiring guard, not runtime execution" precedent already accepted
+for 4 of this subroutine's other 5 pre-existing states (see `docs/agent-ndjson.md`'s own note on
+this), not a live CI trigger -- building a live fixture would need either 4 genuine native-DLL
+dependencies in one build (not yet observed for any real package) or a new test-only injection
+hook into the detection step, judged disproportionate effort for a low-trigger-rate correctness
+fix relative to the rest of this feature.
 
 **`self.layered_e2e.chain` (`tests/selfapps_layered_e2e.ps1`) is this loop's regression test
 (Requirement 4)**, extended with a 4th mechanism (`mech4Pass`) alongside the three it already

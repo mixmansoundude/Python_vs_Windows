@@ -567,22 +567,6 @@ start at 1 and has gaps.
   discipline as Item 25's own deferral. Low urgency: this only affects the `cache`-lane,
   non-gating `self.layered_e2e.chain` test; it does not block any lane that gates PR merges.
 
-- **Item 25: `:dll_bundle_recover` reports `repaired` instead of a distinct `exhausted` outcome
-  when a locatable DLL candidate is found after the 3-iteration cap is already hit.** Found via a
-  CodeRabbit review round on PR #414 (Item 24's own PR), same day as Item 24's real CI diagnosis.
-  `:dll_bundle_loop` finds the next candidate (`HP_NEXT_DLL`) BEFORE checking
-  `if %HP_DLL_ITER% GEQ 3` -- so when a 4th locatable DLL exists, that information is silently
-  discarded (the loop just `goto :dll_bundle_recover_done`), and at `:dll_bundle_recover_done`, the
-  `if %HP_DLL_ITER% GEQ 1` check reads TRUE (3 DLLs were already genuinely bundled), so it emits
-  `[REPAIR][DLL_BUNDLE] Native-DLL bundling complete` and the `repaired` NDJSON state, even though
-  a real candidate was left unbundled. Needs a distinct `exhausted` outcome (mirroring
-  `:hidden_import_recover`'s own `self.exe.hidden_import.exhaust` precedent) that does NOT claim
-  completion, plus a matching `docs/agent-ndjson.md` registration and a `tests/harness.ps1` call-
-  site-count update. Deliberately NOT fixed inside Item 24's already-large PR -- this needs its own
-  focused loop with its own test coverage. Low real-world trigger rate (needs 4+ conda-forge
-  packages under ONE PyInstaller build to each separately need `--add-binary`, not yet observed for
-  any real package in this repo's testing), so not urgent, but a genuine correctness gap.
-
 - **Item 26: `ENVNAME` sanitization collapses `&` (and every other non-word/non-hyphen character)
   to a bare underscore in the built EXE's filename, losing readability -- owner-suggested
   refinement, deliberately deferred as a far-term nice-to-have, not a defect.** `ENVNAME` (derived
