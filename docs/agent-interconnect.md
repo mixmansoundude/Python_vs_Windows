@@ -492,6 +492,149 @@ ever reached) -- see `docs/agent-closed-backlog.md`'s Item 28 entry for the full
 separately-scoped finding (closed 2026-08-08; its own fix uncovered a further, deeper gap now
 tracked as CLAUDE.md's Item 29).
 
+**CLAUDE.md Item 29 (implemented 2026-08-08, not yet CI-confirmed): `:dll_bundle_recover` now
+runs a SECOND time per fresh build attempt, after `:hidden_import_recover`'s own loop finishes --
+`:run_exe_smokerun`'s flow calls it again right there, and, if that second call actually bundles
+something, gives `:hidden_import_recover` one more bounded pass too.** Root cause: a
+`--collect-submodules=X` hidden-import fix (Item 28) can pull a package's own compiled extensions
+into the bundle for the FIRST time, surfacing a native-DLL warning that never existed in any
+EARLIER build -- confirmed via a real `pyproj`/`proj_9.dll` failure (`self.layered_e2e.chain`,
+`cache`-lane run `31256064576`): once `--collect-submodules=pyproj` bundled `pyproj`'s own `.pyd`
+files, PyInstaller's OWN build log for that rebuild showed 9 fresh `Library not found: could not
+resolve 'proj_9.dll'` warnings, one per `.pyd`. `:dll_bundle_recover`'s original, single call site
+(before the very first smoke run) had no way to see this, since it only ever scans build output
+that existed BEFORE it was called.
+
+**New `HP_DLL_REPAIRED` flag is the caller's signal for "did this specific call actually bundle
+something," deliberately NOT `HP_DLL_ITER`.** `HP_DLL_ITER` is reset to 0 partway through
+`:dll_bundle_recover` (after the cheap `--detect` pre-check, before the actual bundling loop) --
+an early "nothing detected" return above that point never touches it, so a SECOND call finding
+nothing new would otherwise still read a stale, nonzero `HP_DLL_ITER` left over from the FIRST
+call's own successful bundle, making the caller wrongly think fresh repair activity just
+happened. `HP_DLL_REPAIRED` is reset to empty at the very top of `:dll_bundle_recover` (before
+ANY early-return path, including the pre-`--detect` ones) and set to `1` only in the genuine
+"repaired" branch at `:dll_bundle_recover_done` -- a reliable, per-call-scoped signal the caller
+can check right after `call :dll_bundle_recover` returns, gating whether the extra
+`:hidden_import_recover` pass (and its own EXE re-launch) is actually worth paying for.
+
+**Two real, cross-call state-leak bugs found and fixed while wiring this up -- the same bug class
+this subsystem has hit before (a fix silently dropped by a rebuild that doesn't carry it
+forward), just now occurring ACROSS two calls to the SAME subroutine instead of between two
+DIFFERENT ones:**
+1. `:dll_bundle_recover` unconditionally reset `HP_PYI_DLLBIND=` at the top of its own per-call
+   bundling section (right after the nuitka/non-conda gates, before `:dll_bundle_loop`). Harmless
+   for a single call, but a genuine second call would silently wipe the FIRST call's own
+   accumulated `--add-binary` flags (e.g. `eccodes.dll`'s binding, from Item 24) before the
+   second call's own rebuild ever ran -- the resulting EXE would have LOST `eccodes.dll`'s
+   bundling even while gaining `proj_9.dll`'s. Fixed by moving the reset out of
+   `:dll_bundle_recover` entirely, to `:run_entry_smoke`'s own fresh-build-attempt
+   initialization block (alongside the pre-existing `HP_NUITKA_FALLBACK_USED`/
+   `HP_DEP_MAYBE_INCOMPLETE` resets there, which already follow the identical "once per fresh
+   build attempt, not once per call" principle for their own reasons) -- so it now happens
+   exactly once per `:run_entry_smoke` pass, regardless of how many times
+   `:dll_bundle_recover` itself is called within that pass.
+2. `:hidden_import_recover` had the IDENTICAL bug for `HP_PYI_HIDDEN_IMPORTS`/
+   `HP_PYI_HID_COLLECT`, and in TWO places: its own entry (reset unconditionally, right after the
+   Nuitka-skip guard) AND its own exit trailer (reset again right before `exit /b 0`). A second
+   call (the new post-DLL-fix pass) would have these wiped BOTH on the way in (before doing
+   anything) AND -- even if that first wipe hadn't existed -- on the way out of the FIRST call,
+   before the caller's OWN second call to `:dll_bundle_recover` could ever read them to thread
+   through ITS rebuild command. Either wipe alone would have silently regressed the FIRST call's
+   own numpy/pyproj hidden-import fixes back to `ModuleNotFoundError` the moment ANY later
+   rebuild ran without re-specifying them (PyInstaller's `--clean --onefile` invocation does a
+   fully fresh analysis each time; it does not remember flags from a previous, separate
+   invocation). Fixed the same way as (1) -- both resets removed, replaced by the single
+   once-per-fresh-build-attempt reset alongside `HP_PYI_DLLBIND`'s own.
+
+**`:dll_bundle_recover`'s own rebuild command now also threads
+`%HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT%`** -- previously only `%HP_PYI_DLLBIND%` reached
+`:hidden_import_recover`'s rebuild (the fix documented earlier in this section, "`HP_PYI_DLLBIND`
+must be threaded into `:hidden_import_recover`'s OWN rebuild command"); this closes the reverse
+direction, so a DLL-bundle rebuild that happens to run AFTER `:hidden_import_recover` (the new
+second-pass case) does not silently drop whatever hidden-import fixes are already accumulated.
+Both subroutines' rebuild commands now carry the identical flag ordering:
+`%HP_PYI_EXPAT% %HP_PYI_COLLECT% %HP_PYI_DLLBIND% %HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT%`.
+
+**Deliberately bounded to exactly one extra round of each subroutine, not a further interleave.**
+If the post-DLL-fix `:hidden_import_recover` pass itself surfaces ANOTHER native-DLL gap (e.g. a
+package it hidden-imports has its own unbundled dependency), this design does NOT call
+`:dll_bundle_recover` a third time -- each subroutine call already gets its own fresh, capped
+3-iteration budget, and chaining a third round risks an unbounded repair cascade for a
+sufficiently pathological dependency tree. A case ever found needing more than this one extra
+round is its own future backlog item (following the exact same "each fix reveals the next layer"
+precedent that produced Item 28 from Item 24, and Item 29 from Item 28), not solved
+speculatively here.
+
+**Static regression guard**: `tests/harness.ps1`'s `batch.dll_bundle.second_pass` check asserts
+both new call sites exist, the flag-threading text is present, `HP_DLL_REPAIRED` is both set and
+checked, and -- specifically to catch either state-leak bug above being reintroduced -- the bare
+`set "HP_PYI_DLLBIND="` line appears in `run_setup.bat` EXACTLY twice (the fresh-build-attempt
+reset plus `:run_entry_smoke`'s own pre-existing end-of-pass trailer reset) and the bare
+`HP_PYI_HIDDEN_IMPORTS`/`HP_PYI_HID_COLLECT` resets appear EXACTLY once each.
+
+**Refined via a CodeRabbit review round on PR #421: `:hidden_import_recover`'s own rebuild also
+now advances `HP_LOG_SIZE_BEFORE`, and the second `:dll_bundle_recover` call is gated on a new
+`HP_HIDDEN_REPAIRED` flag.** `:hidden_import_recover`'s own loop previously never touched
+`HP_LOG_SIZE_BEFORE` at all, so the second `:dll_bundle_recover` pass's scan window stayed
+anchored wherever the FIRST `:dll_bundle_recover` call had last left it -- correct (never missed
+a genuinely new warning) but wider than necessary (also re-covering the first DLL-bundle pass's
+own already-resolved rebuild, and every earlier hidden-import rebuild, not just the LAST one).
+Fixed by adding the identical `for %%Z in ("%LOG%") do set "HP_LOG_SIZE_BEFORE=%%~zZ"` line
+`:dll_bundle_loop` already uses, right before `:hidden_import_recover`'s own rebuild too --
+narrows the window to just the freshest rebuild's own output. Separately, a new `HP_HIDDEN_
+REPAIRED` flag (identical shape to `HP_DLL_REPAIRED`: reset at `:hidden_import_recover`'s own
+entry, before any early-return path; set only where a rebuild is genuinely attempted, alongside
+`HP_HIDDEN_ITER`'s own increment) now gates the second `:dll_bundle_recover` call -- if the first
+`:hidden_import_recover` call did nothing (e.g. the failure wasn't a fixable `ModuleNotFoundError`
+at all), there is nothing new in the log for a second DLL scan to find, so it's skipped entirely
+rather than always paying for a pointless re-scan.
+
+**Traced whether the ORIGINAL wider scan window could actually cause the failure CodeRabbit's
+review described** (re-detecting an already-bundled DLL's own warning, re-adding it, and
+spuriously setting `HP_DLL_REPAIRED` to trigger an unnecessary extra hidden-import pass) --
+confirmed it could not, for the real observed scenario: once a DLL is bundled via `--add-binary`
+(threaded into every later rebuild via `HP_PYI_DLLBIND`), PyInstaller's own build-time analysis
+genuinely stops re-emitting that specific "Library not found" warning in subsequent builds (the
+dependency really is satisfied), and `HP_DLL_REPAIRED` is scoped strictly to the genuine
+"located on disk and rebuild succeeded" branch inside `:dll_bundle_recover_done` -- never to mere
+detection. Both refinements were implemented anyway, since narrowing the scan window and skipping
+a provably pointless re-scan are still objectively more precise and defensive regardless of
+whether the wider window was ever empirically observed to misfire.
+
+**A third finding on the same PR #421 review round was a genuine functional bug, not a
+defense-in-depth refinement: the caller had an early `if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok`
+immediately after the FIRST `call :hidden_import_recover`, which could skip this entire second-pass
+block outright.** Whenever that first call's own rebuild happened to make the smoke run exit 0,
+execution jumped straight to `:smokerun_ok` before the second `:dll_bundle_recover` call (and its
+own conditional second `:hidden_import_recover` pass) ever ran. This defeated the whole point of
+build-time DLL detection for exactly the case this feature exists to catch: a hidden-import
+rebuild's own `--collect-submodules=X` can surface a NEW native-DLL warning in the build log even
+when the CURRENT smoke run's own code path does not happen to load the DLL-needing part of `X` --
+a passing smoke run does not mean the build log has nothing left to flag, and a real user later
+hitting a different code path could still hit a `DLL load failed` error the build already warned
+about but the bootstrapper silently declined to act on. Fixed by removing that early goto
+entirely -- the block below it is already correctly self-gating on `HP_HIDDEN_REPAIRED` (skipped
+when the first call did no rebuild at all), and the genuine final success check
+(`if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok`) already exists unchanged right after the whole
+block, so removing the early one needed no other logic change.
+
+**Companion Minor finding: `tests/harness.ps1`'s own `$hiLogSizeAdvance` check (added for the
+`HP_LOG_SIZE_BEFORE` refinement above) was a whole-file `-match`, so it stayed `true` even if the
+new line inside `:hidden_import_recover` were deleted** -- the identical
+`for %%Z in ("%LOG%") do set "HP_LOG_SIZE_BEFORE=%%~zZ"` text already exists in
+`:run_entry_smoke`'s own pre-build snapshot and in `:dll_bundle_loop`, so an unscoped whole-file
+match could never actually prove the NEW occurrence exists. Fixed by regex-extracting
+`:hidden_import_recover`'s own body (bounded by the next label, `:warn_user_code_launch`) and
+matching only within it, immediately preceding its `PyInstaller` rebuild line -- verified locally
+(via a simulated removal of the new line) that the scoped check correctly flips from `true` to
+`false` when the line is missing, confirming it is no longer vacuous.
+
+**NOT YET CONFIRMED in real CI** -- needs a fresh `cache`-lane `self.layered_e2e.chain` run
+showing the second `:dll_bundle_recover` pass locate and bundle `proj_9.dll`, then a second
+`:hidden_import_recover` pass reach and fix colorama's own gap, before `chainPass` can be
+considered proven `true` for the first time (see CLAUDE.md's Item 29 entry for the current
+status).
+
 ---
 
 ## AV-Safe Build Path requirement 9 (`:offer_optimized_build`) -- a strictly safer sibling of Tier A

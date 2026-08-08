@@ -195,6 +195,7 @@ batch.failfast.probe,
 batch.postexec.checkpoint,
 batch.dll_bundle.ndjson,
 batch.dll_bundle.pct_sanitizer,
+batch.dll_bundle.second_pass,
 self.dll_bundle.recover,
 self.bootstrap.state, self.empty_repo.msg, self.empty_repo.no_spurious_warn,
 self.harness.started,
@@ -281,6 +282,30 @@ property) actually works, rather than statically checking `run_setup.bat`'s own 
 `docs/agent-interconnect.md`'s DLL-bundling section for the real bug this fixture caught (a first
 implementation attempt used a cmd.exe `%VAR:%%=_%` substitution that CI proved silently produced an
 empty string) and `docs/agent-lessons-learned.md`'s corresponding entry.
+
+`batch.dll_bundle.second_pass` (`tests/harness.ps1`, CLAUDE.md Item 29) is a THIRD, separate static
+check in the same family -- unlike `batch.dll_bundle.ndjson`'s 7-state wiring guard and
+`batch.dll_bundle.pct_sanitizer`'s live-executed sanitization fixture, this one guards the
+second `:dll_bundle_recover` pass that runs after `:hidden_import_recover` (a hidden-import
+rebuild's own `--collect-submodules=X` can surface a native-DLL warning the FIRST
+`:dll_bundle_recover` call, which only ever ran before any hidden-import rebuild, could never
+have seen -- see `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section
+for the full mechanism and its real `pyproj`/`proj_9.dll` trigger). Asserts: both `call
+:dll_bundle_recover` and `call :hidden_import_recover` appear at least twice in the file (the
+original call plus the new second-pass call), the DLL rebuild command threads the hidden-import
+flags, `HP_DLL_REPAIRED` is both set (on genuine repair) and checked (gating the extra
+`:hidden_import_recover` pass), the second `:dll_bundle_recover` call is itself gated on a new
+`HP_HIDDEN_REPAIRED` flag, `HP_LOG_SIZE_BEFORE` advances immediately before
+`:hidden_import_recover`'s own rebuild (scoped to that subroutine's own body via a regex
+extraction bounded by the next label, not a whole-file match -- a whole-file match would stay
+true even if this specific line were deleted, since the identical text already exists in
+`:run_entry_smoke`'s initial snapshot and in `:dll_bundle_loop`), and -- specifically to catch a
+REINTRODUCED per-call reset regressing the two cross-call state-leak bugs this same fix had to
+close -- the bare `set "HP_PYI_DLLBIND="` line appears EXACTLY twice in the file (the
+fresh-build-attempt reset plus `:run_entry_smoke`'s own pre-existing end-of-pass trailer) and the
+bare `HP_PYI_HIDDEN_IMPORTS`/`HP_PYI_HID_COLLECT` resets appear EXACTLY once each. Static wiring
+guard only, same as `batch.dll_bundle.ndjson` -- runtime proof is `self.layered_e2e.chain`'s own
+`chainPass` (`cache` lane, non-gating), not yet confirmed `true` in real CI as of this writing.
 
 ## selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes)
 

@@ -398,6 +398,53 @@ $hiCollectAppend = $AllText -match [regex]::Escape('set "HP_PYI_HID_COLLECT=%HP_
 $hiCollectInject = $AllText -match [regex]::Escape('%HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT% --name')
 $hasHiddenRecover = $hiCall -and $hiLabel -and $hiPayload -and $hiEmit -and $hiCap -and $hiRepair -and $hiCollectVar -and $hiCollectAppend -and $hiCollectInject
 Write-Result 'batch.pyi.hidden_import.recover' 'REQ-016: strict --hidden-import auto-recovery wired (recover subroutine called + payload + emit + 3-iter cap + repair log + collect-submodules pairing)' $hasHiddenRecover @{ call=$hiCall; label=$hiLabel; payload=$hiPayload; emit=$hiEmit; cap=$hiCap; repair=$hiRepair; collectVar=$hiCollectVar; collectAppend=$hiCollectAppend; collectInject=$hiCollectInject }
+# derived requirement (CLAUDE.md Item 29): a hidden-import rebuild's own --collect-submodules=X
+# can surface a NEW native-DLL warning :dll_bundle_recover never saw (it only ran once, before
+# any hidden-import rebuild). Static guard against silent deletion/regression of the second-pass
+# wiring; runtime proof is self.layered_e2e.chain's own chainPass (cache lane, non-gating).
+$dllSecondCall     = ([regex]::Matches($AllText, [regex]::Escape('call :dll_bundle_recover'))).Count -ge 2
+$hiSecondCall      = ([regex]::Matches($AllText, [regex]::Escape('call :hidden_import_recover'))).Count -ge 2
+$dllRebuildHasHid  = $AllText -match [regex]::Escape('%HP_PYI_DLLBIND% %HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT% --name')
+$dllRepairedSet    = $AllText -match [regex]::Escape('set "HP_DLL_REPAIRED=1"')
+$dllRepairedCheck  = $AllText -match [regex]::Escape('if defined HP_DLL_REPAIRED')
+# Regression guard for the two state-leak bugs this same fix had to close: HP_PYI_DLLBIND and
+# HP_PYI_HIDDEN_IMPORTS/HP_PYI_HID_COLLECT must each be reset exactly once per fresh build
+# attempt (in :run_entry_smoke), NOT once per call to :dll_bundle_recover/:hidden_import_recover
+# -- a reintroduced per-call reset would silently wipe an earlier call's own accumulated flags
+# on the second pass. An exact occurrence count of the bare reset line catches this: DLLBIND is
+# reset twice on purpose (the fresh-build-attempt reset plus :run_entry_smoke's own end-of-pass
+# trailer, pre-existing); the hidden-import pair is reset once (the fresh-build-attempt reset
+# only -- no end-of-pass trailer reset for these two, since HP_PYI_DLLBIND's own precedent never
+# needed one either).
+$dllbindResetCount   = ([regex]::Matches($AllText, [regex]::Escape('set "HP_PYI_DLLBIND="'))).Count
+$hiddenImportsResetCount = ([regex]::Matches($AllText, [regex]::Escape('set "HP_PYI_HIDDEN_IMPORTS="'))).Count
+$hidCollectResetCount    = ([regex]::Matches($AllText, [regex]::Escape('set "HP_PYI_HID_COLLECT="'))).Count
+$noPerCallResetLeak = ($dllbindResetCount -eq 2) -and ($hiddenImportsResetCount -eq 1) -and ($hidCollectResetCount -eq 1)
+# derived requirement (CodeRabbit review finding on PR #421): the second :dll_bundle_recover
+# call must be gated on :hidden_import_recover having actually rebuilt something -- otherwise
+# it re-scans a log window that hasn't grown since the FIRST :dll_bundle_recover call already
+# covered it, for no purpose. HP_HIDDEN_REPAIRED (reset at :hidden_import_recover's own entry,
+# before any early-return path, set only where a rebuild is genuinely attempted) is the
+# reliable per-call signal for this, mirroring HP_DLL_REPAIRED's identical shape. Also guards
+# that HP_LOG_SIZE_BEFORE advances to right before EACH hidden-import rebuild (mirroring
+# :dll_bundle_loop's own identical pattern), tightening the second pass's own scan window to
+# just the LAST hidden-import rebuild's output. The advance check is scoped to
+# :hidden_import_recover's own body (not a whole-file -match) -- CodeRabbit review finding on
+# PR #421: the same "for %%Z in (...) do set HP_LOG_SIZE_BEFORE" text already exists in the
+# initial build and in :dll_bundle_loop, so an unscoped -match would stay true even if the new
+# occurrence inside :hidden_import_loop were deleted, silently defeating the regression guard.
+$hiRepairedSet     = $AllText -match [regex]::Escape('set "HP_HIDDEN_REPAIRED=1"')
+$hiRepairedReset    = $AllText -match [regex]::Escape('set "HP_HIDDEN_REPAIRED="')
+$hiddenRecoverMatch = [regex]::Match($AllText, '(?ms)^:hidden_import_recover\r?\n(?<body>.*?)(?=^:warn_user_code_launch)')
+$hiLogSizeAdvance  = $hiddenRecoverMatch.Success -and (
+  $hiddenRecoverMatch.Groups['body'].Value -match (
+    [regex]::Escape('for %%Z in ("%LOG%") do set "HP_LOG_SIZE_BEFORE=%%~zZ"') +
+    '\s*\r?\n\s*"%HP_PY%" -m PyInstaller'
+  )
+)
+$dllSecondCallGated = $AllText -match [regex]::Escape('if not "%HP_EXE_EXIT%"=="-1" if defined HP_HIDDEN_REPAIRED call :dll_bundle_recover')
+$hasDllBundleSecondPass = $dllSecondCall -and $hiSecondCall -and $dllRebuildHasHid -and $dllRepairedSet -and $dllRepairedCheck -and $noPerCallResetLeak -and $hiRepairedSet -and $hiRepairedReset -and $hiLogSizeAdvance -and $dllSecondCallGated
+Write-Result 'batch.dll_bundle.second_pass' 'CLAUDE.md Item 29: a second :dll_bundle_recover pass runs after :hidden_import_recover (gated on HP_HIDDEN_REPAIRED, so it only fires when a rebuild actually happened), threading its own accumulated hidden-import flags through the DLL rebuild, then giving :hidden_import_recover one more bounded pass if a DLL was actually bundled -- with a regression guard on the exact-once-per-fresh-build-attempt reset counts for the three cross-call accumulator variables' $hasDllBundleSecondPass @{ dllSecondCall=$dllSecondCall; hiSecondCall=$hiSecondCall; dllRebuildHasHid=$dllRebuildHasHid; dllRepairedSet=$dllRepairedSet; dllRepairedCheck=$dllRepairedCheck; dllbindResetCount=$dllbindResetCount; hiddenImportsResetCount=$hiddenImportsResetCount; hidCollectResetCount=$hidCollectResetCount; hiRepairedSet=$hiRepairedSet; hiRepairedReset=$hiRepairedReset; hiLogSizeAdvance=$hiLogSizeAdvance; dllSecondCallGated=$dllSecondCallGated }
 # derived requirement: tightly-scoped 30s-kill warning must precede launches that force-stop
 # user code (EXE smoke + hidden-import recovery), so users do not lose work in a verification run.
 $warnSubCount = ([regex]::Matches($AllText, ':warn_user_code_launch')).Count
