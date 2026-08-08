@@ -391,9 +391,18 @@ call :define_helper_payloads
 for %%I in ("%CD%") do set "ENVNAME=%%~nI"
 rem derived requirement: conda env names reject characters like '~'; self env smoke
 rem scenarios run from tests\~envsmoke so normalize to ASCII word chars/_/-.
+rem CLAUDE.md Item 26: '&' is special-cased to the bare word 'and' BEFORE the blanket
+rem substitution below -- the blanket rule alone already avoids the real hazard (a raw '&'
+rem confuses URL query-string parsing and renders oddly in Outlook), but collapses it to '_'
+rem like any other stripped character, losing readability ("Sales & Marketing" -> a folder a
+rem user might rename and email becoming "Sales___Marketing.exe" instead of the more legible
+rem "Sales_and_Marketing.exe"). Deliberately a bare word (no surrounding underscores): the
+rem existing spaces on either side of '&' are still converted to '_' by the blanket rule right
+rem after, so "Sales & Marketing" -> "Sales and Marketing" -> "Sales_and_Marketing" without
+rem this substitution needing to supply its own separators.
 set "ENVNAME_ORIG=%ENVNAME%"
 set "ENVNAME_SANITIZED="
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = $env:ENVNAME; if (-not $name) { $name = 'env'; } $san = ($name -replace '[^A-Za-z0-9_-]', '_'); $san = ($san -replace '^-+', '_'); if ([string]::IsNullOrWhiteSpace($san) -or ($san.Trim('_').Length -eq 0)) { $san = 'env'; } [Console]::Write($san)"` ) do set "ENVNAME_SANITIZED=%%I"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = $env:ENVNAME; if (-not $name) { $name = 'env'; } $name = ($name -replace '&', 'and'); $san = ($name -replace '[^A-Za-z0-9_-]', '_'); $san = ($san -replace '^-+', '_'); if ([string]::IsNullOrWhiteSpace($san) -or ($san.Trim('_').Length -eq 0)) { $san = 'env'; } [Console]::Write($san)"` ) do set "ENVNAME_SANITIZED=%%I"
 if defined ENVNAME_SANITIZED set "ENVNAME=%ENVNAME_SANITIZED%"
 set "ENVNAME_SANITIZED="
 rem derived requirement: a leading hyphen is replaced above because `conda create -n -foo`

@@ -1562,6 +1562,37 @@ this belongs to).
   `--add-binary`, not yet observed for any real package in this repo's testing -- that made a live
   CI trigger disproportionate effort to build for this specific gap).
 
+### Item 26 (closed 2026-08-08)
+
+- **`ENVNAME` sanitization collapsed `&` (and every other non-word/non-hyphen character) to a
+  bare underscore in the built EXE's filename, losing readability -- owner-suggested refinement,
+  not a defect.** `ENVNAME` (derived from the project folder name near the top of
+  `run_setup.bat`, right after `:define_helper_payloads`) is sanitized via a PowerShell regex
+  (`-replace '[^A-Za-z0-9_-]', '_'`) before it becomes both the conda env name and the actual
+  built artifact filename, `dist\%ENVNAME%.exe` -- exactly the kind of file a user might rename
+  and email to someone. No live bug: `&` was never in the allowed character set, so it already
+  collapsed to `_`, never reaching the filename raw -- many tools mishandle a raw `&` in a
+  filename (confuses it for URL query-string syntax), and Outlook specifically renders
+  `&`-containing filenames oddly in email, but the blanket substitution alone already avoided
+  that failure mode categorically, just at the cost of readability (a folder named
+  `Sales & Marketing` became `Sales___Marketing.exe`, not `Sales_and_Marketing.exe`).
+  **Fixed**: `&` is now special-cased to the bare word `and` immediately BEFORE the blanket
+  substitution runs (`run_setup.bat`, the `ENVNAME_SANITIZED` PowerShell one-liner) -- deliberately
+  a bare word with no surrounding underscores of its own, since the existing spaces on either
+  side of `&` are still converted to `_` by the blanket rule right after, so
+  `"Sales & Marketing"` -> `"Sales and Marketing"` -> `"Sales_and_Marketing"` without this
+  substitution needing to supply its own separators; matches the backlog's own illustrative
+  example exactly. Every other stripped character's behavior is unchanged.
+  **Test coverage**: `tests/selfapps_envname.ps1` gained a second scenario
+  (`ENVNAME_SCENARIO=ampersand`, `self.envname.ampersand`) alongside its existing leading-hyphen
+  case (`self.envname.hyphen`) -- both are real, live CI tests (not simulated), each creating a
+  real folder with the hazard character, running `run_setup.bat` with `HP_CI_SKIP_ENV=1` (no
+  conda needed, cheap), and asserting the logged `Environment name: ...` line matches the
+  expected sanitized form with no leading trace of the original hazard character. Wired as a
+  second CI step in `batch-check.yml` immediately after the existing hyphen step, same
+  `!cancelled()` gating (any lane, cheap, skip-env). `docs/agent-ndjson.md` updated with the new
+  row id.
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a

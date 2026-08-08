@@ -1,11 +1,21 @@
 # ASCII only
-# selfapps_envname.ps1 - REQ-004 env-name sanitization edge case.
+# selfapps_envname.ps1 - REQ-004 env-name sanitization edge cases.
 #
-# A folder name starting with a hyphen must not flow through to `conda create -n -foo`,
-# where argparse would treat "-foo" as a command-line flag (malformed). The sanitizer
-# replaces a leading hyphen run with "_" (internal hyphens like my-app are preserved).
-# Runs with HP_CI_SKIP_ENV=1 (no conda needed) and asserts the derived env name logged
-# by run_setup.bat is conda-safe.
+# Two scenarios (ENVNAME_SCENARIO env var; unset defaults to 'hyphen'):
+#
+# - 'hyphen' (default): a folder name starting with a hyphen must not flow through to
+#   `conda create -n -foo`, where argparse would treat "-foo" as a command-line flag
+#   (malformed). The sanitizer replaces a leading hyphen run with "_" (internal hyphens
+#   like my-app are preserved).
+# - 'ampersand' (CLAUDE.md Item 26): '&' is special-cased to the bare word 'and' BEFORE
+#   the blanket [^A-Za-z0-9_-] -> '_' substitution runs, so a folder like "Sales & Marketing"
+#   sanitizes to the more legible "Sales_and_Marketing" instead of "Sales___Marketing" --
+#   readability only, not a safety fix (the blanket substitution alone already prevented the
+#   real hazard: a raw '&' in the exported filename confusing URL query-string parsing or
+#   rendering oddly in Outlook).
+#
+# Both scenarios run with HP_CI_SKIP_ENV=1 (no conda needed) and assert the derived env name
+# logged by run_setup.bat matches expectations.
 #
 # Lane: any (cheap, skip-env).
 param()
@@ -26,18 +36,33 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
+$scenario = if ($env:ENVNAME_SCENARIO) { $env:ENVNAME_SCENARIO } else { 'hyphen' }
+switch ($scenario) {
+    'ampersand' {
+        $rowId        = 'self.envname.ampersand'
+        $folderName   = 'Sales & Marketing'
+        $expectedName = 'Sales_and_Marketing'
+        $desc         = "'&' special-cased to 'and' before the blanket sanitizer runs (readability, CLAUDE.md Item 26)"
+    }
+    default {
+        $rowId        = 'self.envname.hyphen'
+        $folderName   = '-hyphen-start'
+        $expectedName = '_hyphen-start'
+        $desc         = 'Leading-hyphen folder name sanitized to a conda-safe env name (no leading hyphen)'
+    }
+}
+
 if (-not $IsWindows) {
     Write-NdjsonRow ([ordered]@{
-        id='self.envname.hyphen'; req='REQ-004'; pass=$true
-        desc='Leading-hyphen folder name sanitized to a conda-safe env name (skipped on non-Windows)'
+        id=$rowId; req='REQ-004'; pass=$true
+        desc="$desc (skipped on non-Windows)"
         details=[ordered]@{ skip=$true; reason='non-windows-host' }
     })
     exit 0
 }
 
 $batchPath = Join-Path $repo 'run_setup.bat'
-# Leaf folder name deliberately starts with a hyphen.
-$workDir = Join-Path $here '-hyphen-start'
+$workDir = Join-Path $here $folderName
 if (Test-Path -LiteralPath $workDir) { Remove-Item -LiteralPath $workDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 Copy-Item -LiteralPath $batchPath -Destination $workDir -Force
@@ -65,24 +90,27 @@ $logText  = if (Test-Path $logPath)  { Get-Content -LiteralPath $logPath  -Raw -
 $setupTxt = if (Test-Path $setupLog) { Get-Content -LiteralPath $setupLog -Raw -Encoding ASCII } else { '' }
 $combined = $logText + "`n" + $setupTxt
 
-# Expected sanitized name: leading "-" -> "_", internal hyphens preserved.
-$expectedName  = '_hyphen-start'
-$sawExpected   = $combined -match [regex]::Escape("Environment name: $expectedName")
-# Guard: the env name must never be logged with a leading hyphen.
-$sawBadLeading = $combined -match 'Environment name:\s+-'
+$sawExpected = $combined -match [regex]::Escape("Environment name: $expectedName")
+# Guard, scenario-specific: the hyphen case must never log a leading hyphen; the ampersand
+# case must never log a raw, unsubstituted '&' (proves the special-case actually ran, not
+# just that the blanket rule alone happened to produce a readable result by coincidence).
+$sawBadPattern = switch ($scenario) {
+    'ampersand' { $combined -match 'Environment name:\s+\S*&' }
+    default     { $combined -match 'Environment name:\s+-' }
+}
 
-$pass = ($exit -eq 0) -and $sawExpected -and (-not $sawBadLeading)
+$pass = ($exit -eq 0) -and $sawExpected -and (-not $sawBadPattern)
 
 Write-NdjsonRow ([ordered]@{
-    id='self.envname.hyphen'
+    id=$rowId
     req='REQ-004'
     pass=$pass
-    desc='Leading-hyphen folder name sanitized to a conda-safe env name (no leading hyphen)'
+    desc=$desc
     details=[ordered]@{
         exitCode      = $exit
         expectedName  = $expectedName
         sawExpected   = $sawExpected
-        sawBadLeading = $sawBadLeading
+        sawBadPattern = $sawBadPattern
         log           = $bootstrapLog
     }
 })
