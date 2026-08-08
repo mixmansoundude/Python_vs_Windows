@@ -553,10 +553,12 @@ start at 1 and has gaps.
   original investigation used) and cross-referencing pygrib's own real published source
   (`jswhit/pygrib` tag `v2.1.8rel`, matching the exact version this run installed, confirmed via
   `~warnfile.txt`'s `pygrib==2.1.8`). The 3rd, unfixed failure is:
+
   ```
   File "src/pygrib/_pygrib.pyx", line 14, in init pygrib._pygrib
   ImportError: cannot import name version
   ```
+
   `_pygrib.pyx` line 14 is genuinely `from packaging import version` -- confirmed directly against
   the real source file. This is a **submodule** gap, not an attribute gap: `--hidden-import=packaging`
   (iter 2's fix) only guarantees PyInstaller's modulegraph follows whatever `packaging/__init__.py`
