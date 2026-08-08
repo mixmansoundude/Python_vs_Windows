@@ -400,9 +400,15 @@ rem "Sales_and_Marketing.exe"). Deliberately a bare word (no surrounding undersc
 rem existing spaces on either side of '&' are still converted to '_' by the blanket rule right
 rem after, so "Sales & Marketing" -> "Sales and Marketing" -> "Sales_and_Marketing" without
 rem this substitution needing to supply its own separators.
+rem derived requirement: a CodeRabbit review finding on this same PR -- '&' -> 'and' is a 1-to-3
+rem character expansion, so a folder name unusually heavy in '&' could make the sanitized name
+rem LONGER than the original (every other stripped character before this change was a 1-to-1
+rem substitution, never lengthening the result). Bounded to 64 chars post-substitution -- ample
+rem for a real project folder name, well clear of Windows/conda env-name length limits for
+rem everything this value later becomes (ENV_PATH, dist\<name>.exe).
 set "ENVNAME_ORIG=%ENVNAME%"
 set "ENVNAME_SANITIZED="
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = $env:ENVNAME; if (-not $name) { $name = 'env'; } $name = ($name -replace '&', 'and'); $san = ($name -replace '[^A-Za-z0-9_-]', '_'); $san = ($san -replace '^-+', '_'); if ([string]::IsNullOrWhiteSpace($san) -or ($san.Trim('_').Length -eq 0)) { $san = 'env'; } [Console]::Write($san)"` ) do set "ENVNAME_SANITIZED=%%I"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = $env:ENVNAME; if (-not $name) { $name = 'env'; } $name = ($name -replace '&', 'and'); $san = ($name -replace '[^A-Za-z0-9_-]', '_'); $san = ($san -replace '^-+', '_'); if ($san.Length -gt 64) { $san = $san.Substring(0, 64).TrimEnd('_', '-') }; if ([string]::IsNullOrWhiteSpace($san) -or ($san.Trim('_').Length -eq 0)) { $san = 'env'; } [Console]::Write($san)"` ) do set "ENVNAME_SANITIZED=%%I"
 if defined ENVNAME_SANITIZED set "ENVNAME=%ENVNAME_SANITIZED%"
 set "ENVNAME_SANITIZED="
 rem derived requirement: a leading hyphen is replaced above because `conda create -n -foo`

@@ -21,6 +21,40 @@ leaving stale guidance.**
 
 ---
 
+## A multi-scenario PowerShell test's NDJSON `id` must stay a literal string at each `Write-NdjsonRow` call site, never a shared variable
+
+**Found via a real CI failure while adding `tests/selfapps_envname.ps1`'s second scenario
+(CLAUDE.md Item 26).** `tools/check_ndjson_registry.py`'s static scan of `tests/*.ps1` matches
+one of four fixed textual patterns to discover which NDJSON `id`s a test file emits --
+`CODE_HASHTABLE_ID_RE = re.compile(r"\bid\s*=\s*['\"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['\"]")` is the
+one this class of test uses. It is a plain regex over the file's TEXT, not a PowerShell parser --
+it has no notion of variable assignment or control flow, so it can only ever match an `id` key
+followed immediately by a quoted literal.
+
+Refactoring a single-scenario test file into a multi-scenario one (env-var-selected, matching this
+repo's own established `PYI_FAIL_SCENARIO`-style convention) naturally tempts consolidating the
+per-scenario `id` into one shared variable (`$rowId = 'self.foo.bar'` in a `switch`, then
+`Write-NdjsonRow ([ordered]@{ id=$rowId; ... })` at the single call site) -- this is correct,
+idiomatic PowerShell and preserves the exact same runtime NDJSON output, but it silently breaks
+the regex: `id=$rowId` never matches `\bid\s*=\s*['"]`, so the checker reports the id as
+"registered in docs but no matching code emission site found" -- indistinguishable from a genuinely
+stale/removed row. Confirmed doubly damaging in practice: not just the NEW scenario's id went
+undetected, but the PRE-EXISTING scenario's id did too, even though its own emitted NDJSON content
+was completely unchanged -- the regression was in the STATIC TEXT shape, not the runtime behavior.
+
+**Fix: keep `id='literal.id.here'` as a literal at EVERY `Write-NdjsonRow` call site**, even if that
+means branching on the scenario variable a second time right at the call site (`if ($scenario -eq
+'x') { Write-NdjsonRow ([ordered]@{ id='self.foo.x'; ... }) } else { Write-NdjsonRow ([ordered]@{
+id='self.foo.y'; ... }) }`) instead of consolidating into one call fed by a shared `$rowId`
+variable. This is a small amount of duplication in exchange for staying legible to a scanner that
+cannot execute the script. This check is advisory (`continue-on-error: true`, non-gating) so it
+never blocks a merge on its own, but the finding is real and worth fixing on sight -- do not treat
+it as noise. Verify any new multi-scenario test file against the same regex directly before
+pushing: `python3 -c "import re; print(re.findall(r'\bid\s*=\s*[\'\"]([A-Za-z0-9][A-Za-z0-9_.-]*)[\'\"]', open('tests/the_file.ps1').read()))"`
+and confirm every scenario's id appears.
+
+---
+
 ## Never open a real source file in Python `'w'` mode as part of a "dry run" -- write to a NEW path and diff before overwriting
 
 **Genuine near-miss (2026-07-25) while fixing the `HP_PREP_REQUIREMENTS` payload.** A verification

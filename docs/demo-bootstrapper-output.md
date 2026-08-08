@@ -194,9 +194,9 @@ assignment), the workspace-path-exists check, `cd /d`, `HP_SCRIPT_ROOT` construc
 top-of-file UNC-path check (`if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints a much louder
 `*** WARNING: UNC/network paths detected...` banner when it genuinely fires) are all silent on an
 ordinary, non-UNC path. Both `.gitignore`/`.gitattributes` lines come from the same
-`:merge_git_config` call (`run_setup.bat` line 82, the very first thing the script does after
-setting up its own log file) -- on a fresh scratch directory neither file yet has the bootstrapper's
-signature comment, so both append branches fire back to back.
+`:merge_git_config` call (called right after `run_setup.bat` sets up its own log file, the very
+first thing the script does) -- on a fresh scratch directory neither file yet has the
+bootstrapper's signature comment, so both append branches fire back to back.
 
 Immediately after that, the same real capture shows the environment-name and host-diagnostics
 lines every run prints (same run, same underlying artifact -- also quoted in Scenario 6 below,
@@ -323,6 +323,12 @@ isolate one mechanism from the other):
 [INFO] REQ-005.5: dependency source diff computed -- ~pipreqs.diff.txt
 [INFO] REQ-005.12: autopep723 discovery merge complete.
 ```
+
+The "pipreqs (direct) command:" line is a DISPLAY-ONLY string (`HP_PIPREQS_CMD_LOG`, built for
+human readability as the CLI-equivalent form) -- the actual invocation, per this repo's own
+"never depend on console scripts during bootstrap" rule, is
+`"%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath ... --ignore ...`, never the
+bare `pipreqs` command shown on screen.
 
 **Not shown above because it doesn't apply to this run, not omitted:** since this app had no
 pre-existing `requirements.txt` (`docs/agent-closed-backlog.md`'s Item 21), `requirements.txt`
@@ -1541,9 +1547,9 @@ no-op rather than a duplicate append:
 [INFO] REQ-015: Appending standard attributes to .gitattributes.
 ```
 
-This is the very first thing `run_setup.bat` prints (`:merge_git_config` is called at line 82,
-before the environment-name/host-diagnostics block Scenario 2 covers) -- the same real capture
-continues immediately with:
+This is the very first thing `run_setup.bat` prints (`:merge_git_config` is called before the
+environment-name/host-diagnostics block Scenario 2 covers) -- the same real capture continues
+immediately with:
 
 ```
 [INFO] Environment name: _envsmoke
@@ -1765,10 +1771,10 @@ real and passing).
 This is an opt-in super-user flag (not part of the default happy path -- Part I never sets it):
 when defined, `run_setup.bat` skips straight to actually RUNNING the entry file live via
 `uvx autopep723 <entry>` for dependency discovery, before pipreqs or any static analysis even
-starts. `:pvw_known_idempotent_run` is called right after entry selection returns (`run_setup.bat`
-line 1136, immediately after the `if defined HP_PVW_KNOWN_IDEMPOTENT ...` gate), so the very next
-thing on screen after the entry is chosen (the same "Chosen entry: ..." moment Scenario 2 covers)
-is this discovery run. Real capture, `self.pvw_idempotent.discovery`, including the entry script's
+starts. `:pvw_known_idempotent_run` is called right after entry selection returns (immediately
+after the `if defined HP_PVW_KNOWN_IDEMPOTENT ...` gate), so the very next thing on screen after
+the entry is chosen (the same "Chosen entry: ..." moment Scenario 2 covers) is this discovery run.
+Real capture, `self.pvw_idempotent.discovery`, including the entry script's
 own live stdout passed straight through mid-run (real NDJSON detail confirms
 `stdoutPassthroughFound:true, appRan:true` -- not captured or suppressed, the exact design point
 `tools/pvw_known_idempotent.py` exists to preserve):
@@ -1913,9 +1919,9 @@ correctly skips rather than updating a base that was just installed moments ago:
 [INFO] Conda base update: skipped (first install).
 ```
 
-**`[Extrapolated Branch]`** -- the actual 30-day-elapsed UPDATE-firing branch (`:cbu_run`,
-`run_setup.bat` lines 5053-5063) is not exercised by any current CI run (the only flag that could
-force it is deliberately disabled, per the note above). Once the timestamp in `~conda.lastupdate`
+**`[Extrapolated Branch]`** -- the actual 30-day-elapsed UPDATE-firing branch (`:cbu_run`) is not
+exercised by any current CI run (the only flag that could force it is deliberately disabled, per
+the note above). Once the timestamp in `~conda.lastupdate`
 is more than 30 days old, the subroutine's two `:log` calls are these exact, deterministic literal
 strings -- not an approximation, the source text itself:
 
@@ -2103,13 +2109,15 @@ Interpreter:
 [WARN] Interpreter smoke test failed (continuing).
 ```
 
-Between those lines and the misleading block below, `run_setup.bat` genuinely keeps executing --
-pipreqs's own install attempt, the dependency-install step, and the pyvisa detection check are none
-of them gated on `HP_NO_INTERPRETER` (confirmed by reading each call site directly; that flag was
-only ever checked by the fix's own new `:preflight_compile` guard), so each one genuinely runs
-against the empty `HP_PY` before the entry is finally selected and preflight fires. Their own exact
-console text from this specific historical run was not separately preserved alongside the two
-blocks quoted here (only the excerpts a maintainer captured while diagnosing the bug at the time
+**`[Extrapolated Branch]`** for what happens between those lines and the misleading block below --
+traced from source, not an independently preserved capture. `run_setup.bat` genuinely keeps
+executing -- pipreqs's own install attempt, the dependency-install step, and the pyvisa detection
+check are none of them gated on `HP_NO_INTERPRETER` (confirmed by reading each call site directly;
+that flag was only ever checked by the fix's own new `:preflight_compile` guard), so each one
+genuinely runs against the empty `HP_PY` before the entry is finally selected and preflight fires.
+Their own exact console text from this specific historical run was not separately preserved
+alongside the two blocks quoted here (only the excerpts a maintainer captured while diagnosing the
+bug at the time
 survived) -- each would have produced its own `cmd.exe`-level "not recognized" error or install
 failure, the same general shape as the two blocks already shown, rather than silently vanishing.
 
@@ -2504,7 +2512,8 @@ already on disk (uv-first runs skip Miniconda entirely until something actually 
 `docs/agent-interconnect.md`'s "uv-First Provider Architecture"), then re-enters the same
 dependency-install machinery Scenario 3 already documents in full, just under
 `HP_ENV_MODE=conda` this time (`[Extrapolated Branch]` for this specific re-entry's own console
-text, though every individual line reused below is independently real elsewhere in this file):
+text, though every individual line reused below is independently real elsewhere in this file --
+including the "pipreqs (direct) command:" line's own display-only caveat, noted in full there):
 
 ```
 [BOOT] REQ-009: Selected Python provider: Conda (Portable).
@@ -3295,8 +3304,8 @@ The `hidden_import` recovery loop's own separate, narrower verification check (s
 out directly) deliberately keeps the OLDER, unconditional 30-second wording -- it's a bounded
 repair-verification check on an already-built EXE, not the user's primary run, so it never got the
 interactive-friendly rewrite. Same subroutine (`:warn_user_code_launch`), same PyInstaller-vs-Nuitka
-variant split, but a genuinely different, still-unconditional message (`run_setup.bat` lines
-4283-4285, literal source text):
+variant split, but a genuinely different, still-unconditional message (the `hidden_import`-site
+branch's own literal source text):
 
 ```
 [WARN] Verifying the built standalone EXE (fallback build system) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost.
