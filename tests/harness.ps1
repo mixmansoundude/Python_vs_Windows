@@ -470,18 +470,21 @@ $cpCallCount    = ([regex]::Matches($AllText, 'call :run_postexec_checkpoint')).
 $hasCheckpoint = $cpSub -and $cpTestOverride -and $cpPrompt -and $cpAccept -and $cpDecline -and ($cpCallCount -ge 3)
 Write-Result 'batch.postexec.checkpoint' 'REQ-018 (2b-C): post-execution checkpoint wired (subroutine + CI-safe test override + unconditional prompt echo + accept/decline log lines + call sites at EXE smoke and both no-EXE interpreter branches)' $hasCheckpoint @{ sub=$cpSub; testOverride=$cpTestOverride; prompt=$cpPrompt; accept=$cpAccept; decline=$cpDecline; callSites=$cpCallCount }
 # derived requirement: CLAUDE.md Item 24 -- guard against silent removal of the native-DLL
-# recovery loop's NDJSON emission subroutine and its 6 call sites (one per outcome state:
-# skipped_nuitka, skipped_non_conda, repaired, unlocatable, failed_rebuild,
+# recovery loop's NDJSON emission subroutine and its 7 call sites (one per outcome state:
+# skipped_nuitka, skipped_non_conda, repaired, unlocatable, exhausted, failed_rebuild,
 # failed_missing_exe). A CodeRabbit review finding on PR #414 required a dedicated
 # machine-readable record for these outcomes (previously :log console text only).
+# "exhausted" (Item 25) was added when a CodeRabbit review round on PR #414 found that hitting
+# the 3-iteration cap with a real, locatable candidate still pending was silently reported as
+# "repaired" instead of a distinct outcome.
 $dbSub        = $AllText -match '(?m)^:emit_dll_bundle_row'
 $dbRowId      = $AllText -match [regex]::Escape("id='self.dll_bundle.recover'")
 $dbCallCount  = ([regex]::Matches($AllText, 'call :emit_dll_bundle_row')).Count
-$dbStates     = @('skipped_nuitka','skipped_non_conda','repaired','unlocatable','failed_rebuild','failed_missing_exe')
+$dbStates     = @('skipped_nuitka','skipped_non_conda','repaired','unlocatable','exhausted','failed_rebuild','failed_missing_exe')
 $dbAllStates  = $true
 foreach ($s in $dbStates) { if ($AllText -notmatch [regex]::Escape("call :emit_dll_bundle_row $s")) { $dbAllStates = $false } }
-$hasDllBundleRow = $dbSub -and $dbRowId -and $dbAllStates -and ($dbCallCount -ge 6)
-Write-Result 'batch.dll_bundle.ndjson' 'CLAUDE.md Item 24: native-DLL bundling recovery loop emits a dedicated NDJSON row (self.dll_bundle.recover) for every outcome state (skipped_nuitka/skipped_non_conda/repaired/unlocatable/failed_rebuild/failed_missing_exe)' $hasDllBundleRow @{ sub=$dbSub; rowId=$dbRowId; allStates=$dbAllStates; callSites=$dbCallCount }
+$hasDllBundleRow = $dbSub -and $dbRowId -and $dbAllStates -and ($dbCallCount -ge 7)
+Write-Result 'batch.dll_bundle.ndjson' 'CLAUDE.md Item 24/25: native-DLL bundling recovery loop emits a dedicated NDJSON row (self.dll_bundle.recover) for every outcome state (skipped_nuitka/skipped_non_conda/repaired/unlocatable/exhausted/failed_rebuild/failed_missing_exe)' $hasDllBundleRow @{ sub=$dbSub; rowId=$dbRowId; allStates=$dbAllStates; callSites=$dbCallCount }
 # derived requirement: CLAUDE.md Item 24 -- an earlier version of HP_DLL_DETECTED_SAFE/
 # HP_NEXT_DLL_SAFE/HP_NEXT_DLL_PATH_SAFE's display-only sanitization stripped a literal
 # percent sign via cmd.exe's own %VAR:%%=_% doubled-percent substitution idiom (confirmed

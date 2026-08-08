@@ -1525,6 +1525,43 @@ this belongs to).
   genuinely new, separately-scoped finding, not a continuation of the DLL-bundling work -- filed as
   its own Active Backlog item rather than reopening this one. See that item for the full trace.
 
+### Item 25 (closed 2026-08-08)
+
+- **`:dll_bundle_recover` reported `repaired` instead of a distinct `exhausted` outcome when a
+  locatable DLL candidate was found after the 3-iteration cap was already hit.** Found via a
+  CodeRabbit review round on PR #414 (Item 24's own PR), same day as Item 24's real CI diagnosis.
+  `:dll_bundle_loop` found the next candidate (`HP_NEXT_DLL`) BEFORE checking
+  `if %HP_DLL_ITER% GEQ 3` -- so when a 4th locatable DLL existed, that information was silently
+  discarded (the loop just `goto :dll_bundle_recover_done`), and at `:dll_bundle_recover_done`, the
+  `if %HP_DLL_ITER% GEQ 1` check read TRUE (3 DLLs were already genuinely bundled), so it emitted
+  `[REPAIR][DLL_BUNDLE] Native-DLL bundling complete` and the `repaired` NDJSON state, even though
+  a real candidate was left unbundled.
+  **Fixed**, in its own dedicated follow-up loop as originally planned (deliberately not folded
+  into Item 24's already-large PR): a new `HP_DLL_EXHAUSTED` flag is set in `:dll_bundle_loop`'s
+  cap-check branch -- reaching that branch at all already means a real candidate was found (the
+  earlier `if not defined HP_NEXT_DLL` early-return rules out the empty case), so setting the flag
+  there needs no extra detection logic. `:dll_bundle_recover_done` now checks `HP_DLL_EXHAUSTED`
+  BEFORE the `HP_DLL_ITER GEQ 1` "repaired" branch: logs a new
+  `[WARN][DLL_BUNDLE] Native-DLL bundling reached its 3-attempt cap with another native-DLL
+  dependency still detected...` line (reusing the already-sanitized `HP_DLL_DETECTED_SAFE` from
+  `:dll_bundle_recover`'s own entry, so no new sanitize pass is needed) and emits the new
+  `exhausted` NDJSON state instead of `repaired`. `exhausted` is `pass:true` under
+  `:emit_dll_bundle_row`'s existing `$pass = -not ($state -like 'failed_*')` formula, the same
+  treatment as `unlocatable` -- both are informational (the bootstrap itself did not fail, only the
+  repair was incomplete); the EXE smoke run afterward remains the actual arbiter of whether the
+  still-missing DLL matters at runtime. `HP_DLL_EXHAUSTED` is reset at `:dll_bundle_recover`'s own
+  top-of-loop reset block (alongside `HP_DLL_FAILED`) and cleared again at
+  `:dll_bundle_recover_exit`, mirroring `HP_DLL_FAILED`'s own cascade-re-entry-safe reset pattern
+  so a stale `exhausted` outcome from an earlier `:dll_bundle_recover` call cannot leak into a
+  later call's outcome during a REQ-009 provider cascade re-entry.
+  `docs/agent-ndjson.md` and `docs/agent-interconnect.md` updated with the 7th state and the full
+  mechanism trace; `tests/harness.ps1`'s `batch.dll_bundle.ndjson` extended with the new state
+  token and 7th call site (the same "static wiring guard, not runtime execution" coverage already
+  accepted for 4 of this subroutine's other states, per that same low real-world trigger rate --
+  needs 4+ conda-forge packages under ONE PyInstaller build to each separately need
+  `--add-binary`, not yet observed for any real package in this repo's testing -- that made a live
+  CI trigger disproportionate effort to build for this specific gap).
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a

@@ -227,16 +227,21 @@ before the Miniconda install-if-missing block even runs, so the corruption-check
 in the job -- self-contained by construction, no CI-ordering dependency (unlike
 `self.conda.bothfail`, above).
 
-`self.dll_bundle.recover` (inline `run_setup.bat`'s `:emit_dll_bundle_row`, called from all 6
+`self.dll_bundle.recover` (inline `run_setup.bat`'s `:emit_dll_bundle_row`, called from all 7
 outcome points inside `:dll_bundle_recover` -- CLAUDE.md Item 24 / `docs/prd-conda-native-dll-
 bundling.md`) is a CodeRabbit review finding on PR #414: the native-DLL bundling repair loop's
 detected/skipped/repaired/unlocatable/failed outcomes previously only reached `:log`'s console
 text, with no machine-readable record. `details.state` is one of `skipped_nuitka` (a Nuitka-built
 EXE, repair not attempted), `skipped_non_conda` (a non-conda provider, repair not attempted),
 `repaired` (rebuild genuinely succeeded), `unlocatable` (detected but the named DLL was never
-found under the conda env's `Library\bin`), `failed_rebuild` (PyInstaller rebuild itself failed),
+found under the conda env's `Library\bin`), `exhausted` (CLAUDE.md Item 25 -- the 3-iteration
+cap was reached with a real, locatable candidate still pending, so at least one native-DLL
+dependency remains unbundled; distinct from `repaired` so a partial fix is never reported as a
+clean completion), `failed_rebuild` (PyInstaller rebuild itself failed),
 or `failed_missing_exe` (rebuild reported success but `dist\<env>.exe` was not produced) --
-`pass` is `false` only for the two `failed_*` states. `details.dll`/`details.provider`/
+`pass` is `false` only for the two `failed_*` states (`exhausted` is `pass:true`, same treatment
+as `unlocatable` -- both are informational: the bootstrap itself did not fail, only the repair was
+incomplete). `details.dll`/`details.provider`/
 `details.iteration` are pulled inside the emitting PowerShell command via
 `[Environment]::GetEnvironmentVariable(...)` rather than `%VAR%` cmd.exe substitution into the
 `-Command` text, for the same reason the sibling `HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`
@@ -258,12 +263,14 @@ actually written during that test's run today -- `mech4Pass` continues to rely o
 `[REPAIR][DLL_BUNDLE]` log-text assertions (`docs/agent-interconnect.md`'s DLL-bundling section),
 unaffected by this addition. `batch.dll_bundle.ndjson` (`tests/harness.ps1`, static) is the actual
 coverage for this row: it verifies the `:emit_dll_bundle_row` subroutine exists, the row id string
-is present, and all 6 `call :emit_dll_bundle_row <state>` sites are wired -- the same "static wiring
+is present, and all 7 `call :emit_dll_bundle_row <state>` sites are wired (including the
+`exhausted` state added for CLAUDE.md Item 25) -- the same "static wiring
 guard, not runtime execution" pattern already used for `batch.failfast.probe`/`batch.postexec.
 checkpoint` above. Per-state runtime coverage (deliberately setting `HP_NDJSON` for a sub-bootstrap
 and reading the row back) remains a candidate for a future, dedicated test if ever justified --
-not pursued now, since simulating the other 5 states (Nuitka-used, non-conda provider, a genuine
-PyInstaller rebuild failure, a missing post-rebuild EXE, a detected-but-unlocatable DLL) each needs
+not pursued now, since simulating the other 6 states (Nuitka-used, non-conda provider, a genuine
+PyInstaller rebuild failure, a missing post-rebuild EXE, a detected-but-unlocatable DLL, the
+3-iteration cap hit with a candidate still pending) each needs
 its own scaffolding beyond what `self.layered_e2e.chain`'s real `pygrib` trigger already provides
 for the `repaired` state alone.
 

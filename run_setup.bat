@@ -4020,6 +4020,7 @@ if exist "~dll_bundle_tried.txt" del "~dll_bundle_tried.txt" >nul 2>&1
 set "HP_DLL_ITER=0"
 set "HP_PYI_DLLBIND="
 set "HP_DLL_FAILED="
+set "HP_DLL_EXHAUSTED="
 rem derived requirement: real CI evidence (self.layered_e2e.chain, cache lane, 2026-08-07) --
 rem HP_PY_DIR (from %%~dpI) always ends in exactly ONE trailing backslash. Quoted as
 rem "%HP_PY_DIR%" immediately before another quoted argument, Python's own argv parser
@@ -4054,6 +4055,14 @@ if not defined HP_NEXT_DLL (
   goto :dll_bundle_recover_done
 )
 if %HP_DLL_ITER% GEQ 3 (
+  rem derived requirement: CLAUDE.md Item 25 -- a real candidate was just found (the
+  rem "if not defined HP_NEXT_DLL" early-return above already ruled out the empty case), but
+  rem the 3-iteration cap discards it here without a trace. HP_DLL_EXHAUSTED distinguishes
+  rem this from a clean "repaired" outcome at :dll_bundle_recover_done below -- without it,
+  rem HP_DLL_ITER GEQ 1 (true: 3 DLLs were genuinely bundled in earlier iterations) alone
+  rem would claim "Native-DLL bundling complete" even though a real, locatable DLL was left
+  rem unbundled.
+  set "HP_DLL_EXHAUSTED=1"
   if exist "~next_dll.txt" del "~next_dll.txt" >nul 2>&1
   goto :dll_bundle_recover_done
 )
@@ -4121,6 +4130,11 @@ rem increment. HP_DLL_FAILED is the actual success/failure signal; the "complete
 rem must never fire on a genuine rebuild failure (mirrors the warnfix-rebuild's own
 rem "never claim success without checking" precedent -- see docs/agent-lessons-learned.md).
 if defined HP_DLL_FAILED goto :dll_bundle_recover_exit
+if defined HP_DLL_EXHAUSTED (
+  call :log "[WARN][DLL_BUNDLE] Native-DLL bundling reached its 3-attempt cap with another native-DLL dependency still detected (first seen: '%HP_DLL_DETECTED_SAFE%'); %HP_DLL_ITER% DLL(s) were bundled, but at least one more remains unbundled -- the EXE may still fail to load it."
+  call :emit_dll_bundle_row exhausted
+  goto :dll_bundle_recover_exit
+)
 if %HP_DLL_ITER% GEQ 1 (
   call :log "[REPAIR][DLL_BUNDLE] Native-DLL bundling complete (%HP_DLL_ITER% DLL(s) added); EXE will be re-verified next."
   call :emit_dll_bundle_row repaired
@@ -4132,13 +4146,16 @@ if %HP_DLL_ITER% GEQ 1 (
 if exist "~dll_bundle_tried.txt" del "~dll_bundle_tried.txt" >nul 2>&1
 set "HP_DLL_SPEC_PRE="
 set "HP_DLL_FAILED="
+set "HP_DLL_EXHAUSTED="
 exit /b 0
 :emit_dll_bundle_row
 rem CodeRabbit finding on PR #414: ":dll_bundle_recover"'s detected/skipped/repaired/
 rem unlocatable/failed outcomes previously only reached :log's console text, with no
 rem machine-readable record. %1 is always one of a small set of literal state tokens
-rem (skipped_nuitka/skipped_non_conda/repaired/unlocatable/failed_rebuild/
-rem failed_missing_exe) written directly in THIS file, never derived from external
+rem (skipped_nuitka/skipped_non_conda/repaired/unlocatable/exhausted/failed_rebuild/
+rem failed_missing_exe -- CLAUDE.md Item 25 added "exhausted": the 3-iteration cap was
+rem hit with a real, locatable candidate still pending, distinct from a clean "repaired")
+rem written directly in THIS file, never derived from external
 rem content, so passing it as a call argument is safe. The DLL name/provider/iteration
 rem are pulled INSIDE PowerShell via [Environment]::GetEnvironmentVariable rather than
 rem %VAR% cmd.exe substitution into the -Command text -- same reasoning as the
