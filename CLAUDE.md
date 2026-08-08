@@ -546,26 +546,64 @@ start at 1 and has gaps.
   NOT attempt a 3rd rebuild -- the final failure's own signature apparently isn't a plain
   `ModuleNotFoundError` for an installed module (only a generic `[HINT][RUNTIME_MISMATCH]` fires,
   not a `[HINT][HIDDEN_IMPORT]` one), so `:hidden_import_recover`'s strict gate correctly declines
-  rather than guessing. **Not yet root-caused what the 3rd failure actually is** -- the concatenated
-  bootstrap log this investigation used doesn't include the EXE's own stderr for that specific
-  attempt; a future loop should pull `~run.err.txt`/the hidden-import-recovery loop's own captured
-  stderr for that exact rebuild to see the real traceback before deciding on a fix.
+  rather than guessing.
+  **Root-caused 2026-08-08** by pulling the actual per-attempt artifacts from the same CI run
+  (`diag-selftest-cache-31208498606-1`'s `~selftest_layered_e2e/dist/~layered_e2e_exe.log`,
+  the exact rebuild's own captured stderr, not visible in the concatenated bootstrap log the
+  original investigation used) and cross-referencing pygrib's own real published source
+  (`jswhit/pygrib` tag `v2.1.8rel`, matching the exact version this run installed, confirmed via
+  `~warnfile.txt`'s `pygrib==2.1.8`). The 3rd, unfixed failure is:
+  ```
+  File "src/pygrib/_pygrib.pyx", line 14, in init pygrib._pygrib
+  ImportError: cannot import name version
+  ```
+  `_pygrib.pyx` line 14 is genuinely `from packaging import version` -- confirmed directly against
+  the real source file. This is a **submodule** gap, not an attribute gap: `--hidden-import=packaging`
+  (iter 2's fix) only guarantees PyInstaller's modulegraph follows whatever `packaging/__init__.py`
+  itself statically imports; it does not guarantee every real submodule under `packaging/` gets
+  bundled, and the ONLY thing that references `packaging.version` here is pygrib's own COMPILED
+  Cython extension -- invisible to PyInstaller's source-level scan the same way `eccodes.dll`
+  (Item 24) and `numpy`/`packaging` themselves were invisible, just one level deeper (a missing
+  submodule of an already-hidden-imported package, rather than a missing top-level package).
+  **Confirms `:hidden_import_recover`'s strict gate is declining CORRECTLY, not missing an easy
+  win.** The observed message, `ImportError: cannot import name version` -- no quotes around
+  `version`, no `from 'packaging'` clause -- is NOT the pattern `~hidden_import_scan.py`'s own
+  docstring already discusses and excludes (CPython's `ImportError: cannot import name 'Y' from
+  'Z'`, added in 3.7+). It is Cython's own hand-rolled `__Pyx_ImportFrom` error format, which
+  carries neither the source package name nor quoting -- genuinely NOT parseable into a
+  `--hidden-import` target from the runtime signal alone; the only reason `packaging.version` is
+  known here at all is external evidence (reading pygrib's real, versioned source), not anything
+  derivable from the frozen EXE's own stderr at runtime. Broadening the strict gate to guess "the
+  previous iteration's hidden-imported package, plus the failing name, might be a real submodule"
+  was considered and explicitly rejected: nothing in the runtime signal actually ties the failing
+  name to that specific package (a coincidental `find_spec` hit on an unrelated but real submodule
+  would silently burn an iteration on the wrong fix), and this repo's own hard-won rule for this
+  exact subsystem (see `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay
+  STRICT") is to keep this loop narrowly proven-correct rather than cleverer-but-riskier.
   **Practical effect on `self.layered_e2e.chain`**: `chainPass` stays `false`, but for a reason
   entirely OUTSIDE Item 24's own scope -- `mech3Pass` requires the literal log text
   `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama`, and colorama's own gap (deliberately
   built into the test's own `app.py` via `importlib.import_module`, specifically to exercise
-  hidden-import recovery) is never reached because `pygrib`'s own numpy/packaging chain intervenes
-  first and doesn't resolve within the 3-iteration cap. Two candidate directions, neither
-  attempted yet: (a) find out what the 3rd, unfixed failure actually is and whether one more
-  `--hidden-import` would close it (possibly needing more than 3 iterations for a dependency chain
-  this deep -- `pygrib` pulls in numpy transitively via conda, and numpy itself has its own
-  layered C-extension import needs); (b) reconsider whether `pygrib`+`--collect-all=pygrib` (or
-  `--copy-metadata=numpy`, since `packaging` needing to be findable often means something is doing
-  a `pkg_resources`/`importlib.metadata` version check) would resolve the whole chain in one shot
-  instead of the current one-module-at-a-time approach. Either direction needs its own focused
-  investigation, not a guess bolted onto an already-large change -- deliberately deferred, same
-  discipline as Item 25's own deferral. Low urgency: this only affects the `cache`-lane,
-  non-gating `self.layered_e2e.chain` test; it does not block any lane that gates PR merges.
+  hidden-import recovery) is never reached because `pygrib`'s own numpy/packaging/packaging.version
+  chain intervenes first and doesn't resolve within the current mechanism's scope.
+  **The correct general mechanism for this failure class is `--collect-submodules`, not
+  `--hidden-import`, but the existing `HP_COLLECT_SUBMODULES` double-gate doesn't reach it either**
+  -- it requires the package be imported by the USER'S OWN project source (AST-scanned), and
+  `packaging` here is a transitive dependency of `pygrib`, never referenced by the test app's own
+  `app.py`. A real fix needs one of: (a) add `packaging` to `HP_COLLECT_SUBMODULES`'s curated set
+  gated on "installed AND already `--hidden-import`ed this run" instead of "imported by user
+  source" (a new gate condition, not just a new curated entry); or (b) extend `:hidden_import_recover`
+  itself so that once ANY package is added via `--hidden-import=X`, the SAME rebuild also passes
+  `--collect-submodules=X` for that package -- broader than strictly necessary (collects every
+  submodule of `X`, not just the one actually needed) but structurally safe (no name-guessing, no
+  cross-package inference) and directly addresses the mechanism gap this investigation found.
+  Option (b) is the more promising direction on the evidence gathered so far, but still needs its
+  own dedicated design-and-test loop (new `tests/test_hidden_import_scan.py` coverage, a real CI
+  scenario proving it fires, and care that it doesn't change behavior for the numpy/packaging
+  cases that already work) -- deliberately not attempted in this same investigation pass, same
+  "don't bolt a guess onto an already-large change" discipline already applied to this item once.
+  Low urgency: this only affects the `cache`-lane, non-gating `self.layered_e2e.chain` test; it
+  does not block any lane that gates PR merges.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
