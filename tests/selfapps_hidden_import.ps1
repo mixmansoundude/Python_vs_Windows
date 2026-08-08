@@ -101,11 +101,18 @@ $addingFired    = $combined -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] Addi
 # --hidden-import=X this loop adds, on the SAME rebuild -- a --hidden-import target alone only
 # guarantees PyInstaller follows X's own statically-discovered imports, not every real submodule
 # under X/ (confirmed via a real pygrib failure needing packaging.version even after
-# --hidden-import=packaging alone). Asserts the flag is both logged AND actually passed on the
-# PyInstaller rebuild command line (the log line and the command are two independent statements
-# in run_setup.bat, so this catches a drift between them).
+# --hidden-import=packaging alone).
+# derived requirement (CodeRabbit finding on PR #419): $collectLogged/$collectPaired below both
+# read $combined, i.e. the SAME :log line -- they prove the intended flag text was composed and
+# logged together, NOT that the real PyInstaller argv actually received --collect-submodules
+# (cmd.exe's own echo is off and PyInstaller does not print its own invocation, so no runtime
+# artifact captures the literal composed command line for this file to check independently).
+# That independent proof lives in tests/harness.ps1's own $hiCollectInject static check instead,
+# which confirms %HP_PYI_HID_COLLECT% genuinely sits in the SOURCE's PyInstaller command line
+# immediately after %HP_PYI_HIDDEN_IMPORTS% -- a different file checking a different artifact
+# (source text, not a runtime log), which is what makes it a real second, independent check.
 $collectLogged  = $combined -match [regex]::Escape('--collect-submodules=colorama')
-$collectInvoked = $combined -match [regex]::Escape('--hidden-import=colorama --collect-submodules=colorama')
+$collectPaired  = $combined -match [regex]::Escape('--hidden-import=colorama --collect-submodules=colorama')
 $recoveredFired = $combined -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] EXE verified after hidden-import recovery')
 $infraError     = $combined -match 'Failed to parse|uv error|pip error'
 
@@ -134,7 +141,7 @@ if ($exeExists) {
     }
 }
 
-$hiddenPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and $addingFired -and $collectLogged -and $collectInvoked -and $recoveredFired -and (-not $infraError)
+$hiddenPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and $addingFired -and $collectLogged -and $collectPaired -and $recoveredFired -and (-not $infraError)
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.hidden_import'
     req     = 'REQ-016'
@@ -147,7 +154,7 @@ Write-NdjsonRow ([ordered]@{
         tokenFound     = $tokenFound
         addingFired    = $addingFired
         collectLogged  = $collectLogged
-        collectInvoked = $collectInvoked
+        collectPaired  = $collectPaired
         recoveredFired = $recoveredFired
         infraError     = $infraError
         exePath        = $exePath

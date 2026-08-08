@@ -616,10 +616,17 @@ start at 1 and has gaps.
   3-occurrence count, `self.layered_e2e.chain`'s `mech3Pass` check, `batch.pyi.hidden_import.recover`'s
   static wiring guard) -- verified by tracing each one's own match pattern, not just by running the
   cross-platform test subset (the real proof needs Windows CI). `tests/selfapps_hidden_import.ps1`
-  extended with `collectLogged`/`collectInvoked` assertions (the one new test this loop adds, per
-  the log line AND the actual PyInstaller command line, since they are two independent statements
-  in `run_setup.bat` that could drift from each other). `tests/harness.ps1` extended with a static
-  wiring guard for the new accumulator/append/inject sites.
+  extended with `collectLogged`/`collectPaired` assertions (the one new test this loop adds) --
+  both read the SAME `:log` line, so they prove the intended flag text was composed and logged
+  together, not that the real PyInstaller argv actually received it (no runtime artifact captures
+  the literal invoked command line; cmd.exe echo is off and PyInstaller does not print its own
+  argv). The independent proof that the flag reaches the REAL command line is
+  `tests/harness.ps1`'s own new `$hiCollectInject` static check instead, confirming
+  `%HP_PYI_HID_COLLECT%` genuinely sits in the SOURCE's PyInstaller command line right after
+  `%HP_PYI_HIDDEN_IMPORTS%` -- a CodeRabbit review finding on this fix's own PR caught an earlier
+  draft's overclaim that the two `selfapps_hidden_import.ps1` checks alone were independent proof
+  of the real invocation; corrected to route that specific claim through the actual independent
+  check instead.
   **NOT YET CONFIRMED in real CI** -- same status this repo requires before treating a fix like
   this as settled (see the Item 24 precedent: implemented, then confirmed via a real
   `cache`-lane run before being considered closed). The next `self.layered_e2e.chain` run should
