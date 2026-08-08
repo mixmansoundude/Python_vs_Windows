@@ -510,7 +510,9 @@ substitute for a hazard that is Windows-only by construction. **Confirmed via re
 located and bundled for the first time (`[REPAIR][DLL_BUNDLE] Bundling native DLL dependency:
 eccodes.dll (found at ...\Library\bin\eccodes.dll)...` -> `Native-DLL bundling complete`),
 closing CLAUDE.md's Item 24. `chainPass` itself is still `false` on that same run, but for a
-separately-scoped reason now that this fix let the EXE get further -- see CLAUDE.md's Item 28.
+separately-scoped reason now that this fix let the EXE get further -- see
+`docs/agent-closed-backlog.md`'s Item 28 entry (closed 2026-08-08, its own fix in turn uncovered
+CLAUDE.md's Item 29).
 
 ---
 
@@ -856,7 +858,8 @@ It is deliberately gated on TWO conditions and it is a mistake to relax either:
    `except ImportError: from ._fallback import ...` where the fallback was not collected) is
    `--collect-submodules`/`--collect-all` territory (Slice 1 / a future Slice 3), **not** the
    hidden-import token extractor. **Confirmed correct against a real production-like case, not
-   just reasoning, via CLAUDE.md Item 28's root-cause investigation**: `pygrib` 2.1.8's own
+   just reasoning, via `docs/agent-closed-backlog.md`'s Item 28 root-cause investigation**:
+   `pygrib` 2.1.8's own
    compiled `_pygrib.pyx` does `from packaging import version` at its own line 14 (confirmed
    directly against pygrib's real published source) -- a genuine missing-SUBMODULE gap
    (`packaging.version`, not covered by an earlier `--hidden-import=packaging` since that only

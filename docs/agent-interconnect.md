@@ -129,7 +129,8 @@ by PyInstaller" signal) -- any subroutine that can produce `dist\<env>.exe` via 
 than PyInstaller should set an analogous marker and extend this guard to check it.
 
 **`:hidden_import_recover` now pairs `--collect-submodules=X` with every `--hidden-import=X` it
-adds (CLAUDE.md Item 28, implemented 2026-08-08).** A `--hidden-import=X` target alone only
+adds (`docs/agent-closed-backlog.md`'s Item 28, closed 2026-08-08 -- confirmed via real CI evidence
+the same day, see that entry for the trace).** A `--hidden-import=X` target alone only
 guarantees PyInstaller follows whatever `X`'s own `__init__.py` statically imports -- it does not
 guarantee every real submodule under `X/` is bundled. A compiled C extension ELSEWHERE in the app
 (invisible to PyInstaller's static scan the same way the original missing import was) can still
@@ -487,7 +488,9 @@ an array with no command-line re-tokenizing step for the simulation to catch a r
 real CI run is what actually confirmed it. **Also confirmed the mech3 prediction was directionally
 right but not the whole story**: the EXE does get further now, but hits a NEW, deeper gap first
 (`pygrib`'s own extension needs `numpy`/`packaging` as hidden imports before colorama's own gap is
-ever reached) -- see CLAUDE.md's Item 28 for the full trace of this separately-scoped finding.
+ever reached) -- see `docs/agent-closed-backlog.md`'s Item 28 entry for the full trace of this
+separately-scoped finding (closed 2026-08-08; its own fix uncovered a further, deeper gap now
+tracked as CLAUDE.md's Item 29).
 
 ---
 

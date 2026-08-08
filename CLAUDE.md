@@ -530,117 +530,61 @@ Once an item is fully resolved it is removed from here entirely and archived (ke
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
 start at 1 and has gaps.
 
-- **Item 28: `pygrib`'s compiled extension needs `numpy` and `packaging` as hidden imports before
-  the app can run at all, and `self.layered_e2e.chain`'s `mech3Pass` check (specifically
-  `--hidden-import=colorama`) never gets a chance to fire because of it.** Found via the first
-  real CI confirmation of Item 24's own fix (commit `45ec269`, `cache`-lane run `31208498606`,
-  `~layered_e2e_bootstrap.log`) -- now that `eccodes.dll` bundling genuinely works (Item 24
-  closed), the frozen EXE gets further than ever before and hits a NEW, earlier failure:
-  `ModuleNotFoundError: No module named 'numpy'` on the first post-DLL-bundle smoke run.
-  `:hidden_import_recover` correctly identifies and fixes this (`--hidden-import=numpy`, iter
-  1/3), but the NEXT smoke run then fails on `packaging` (`--hidden-import=packaging`, iter 2/3)
-  -- both are genuine, correctly-diagnosed hidden-import gaps (`pygrib`'s Cython-generated
-  extension apparently imports both at the C level, invisible to PyInstaller's static AST scan,
-  the same general blind spot `--hidden-import` auto-recovery exists to patch one module at a
-  time). After the `packaging` fix, the run still fails (`Entry smoke exit=1`), but the loop does
-  NOT attempt a 3rd rebuild -- the final failure's own signature apparently isn't a plain
-  `ModuleNotFoundError` for an installed module (only a generic `[HINT][RUNTIME_MISMATCH]` fires,
-  not a `[HINT][HIDDEN_IMPORT]` one), so `:hidden_import_recover`'s strict gate correctly declines
-  rather than guessing.
-  **Root-caused 2026-08-08** by pulling the actual per-attempt artifacts from the same CI run
-  (`diag-selftest-cache-31208498606-1`'s `~selftest_layered_e2e/dist/~layered_e2e_exe.log`,
-  the exact rebuild's own captured stderr, not visible in the concatenated bootstrap log the
-  original investigation used) and cross-referencing pygrib's own real published source
-  (`jswhit/pygrib` tag `v2.1.8rel`, matching the exact version this run installed, confirmed via
-  `~warnfile.txt`'s `pygrib==2.1.8`). The 3rd, unfixed failure is:
-
-  ```
-  File "src/pygrib/_pygrib.pyx", line 14, in init pygrib._pygrib
-  ImportError: cannot import name version
-  ```
-
-  `_pygrib.pyx` line 14 is genuinely `from packaging import version` -- confirmed directly against
-  the real source file. This is a **submodule** gap, not an attribute gap: `--hidden-import=packaging`
-  (iter 2's fix) only guarantees PyInstaller's modulegraph follows whatever `packaging/__init__.py`
-  itself statically imports; it does not guarantee every real submodule under `packaging/` gets
-  bundled, and the ONLY thing that references `packaging.version` here is pygrib's own COMPILED
-  Cython extension -- invisible to PyInstaller's source-level scan the same way `eccodes.dll`
-  (Item 24) and `numpy`/`packaging` themselves were invisible, just one level deeper (a missing
-  submodule of an already-hidden-imported package, rather than a missing top-level package).
-  **Confirms `:hidden_import_recover`'s strict gate is declining CORRECTLY, not missing an easy
-  win.** The observed message, `ImportError: cannot import name version` -- no quotes around
-  `version`, no `from 'packaging'` clause -- is NOT the pattern `~hidden_import_scan.py`'s own
-  docstring already discusses and excludes (CPython's `ImportError: cannot import name 'Y' from
-  'Z'`, added in 3.7+). It is Cython's own hand-rolled `__Pyx_ImportFrom` error format, which
-  carries neither the source package name nor quoting -- genuinely NOT parseable into a
-  `--hidden-import` target from the runtime signal alone; the only reason `packaging.version` is
-  known here at all is external evidence (reading pygrib's real, versioned source), not anything
-  derivable from the frozen EXE's own stderr at runtime. Broadening the strict gate to guess "the
-  previous iteration's hidden-imported package, plus the failing name, might be a real submodule"
-  was considered and explicitly rejected: nothing in the runtime signal actually ties the failing
-  name to that specific package (a coincidental `find_spec` hit on an unrelated but real submodule
-  would silently burn an iteration on the wrong fix), and this repo's own hard-won rule for this
-  exact subsystem (see `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay
-  STRICT") is to keep this loop narrowly proven-correct rather than cleverer-but-riskier.
-  **Practical effect on `self.layered_e2e.chain`**: `chainPass` stays `false`, but for a reason
-  entirely OUTSIDE Item 24's own scope -- `mech3Pass` requires the literal log text
-  `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama`, and colorama's own gap (deliberately
-  built into the test's own `app.py` via `importlib.import_module`, specifically to exercise
-  hidden-import recovery) is never reached because `pygrib`'s own numpy/packaging/packaging.version
-  chain intervenes first and doesn't resolve within the current mechanism's scope.
-  **The correct general mechanism for this failure class is `--collect-submodules`, not
-  `--hidden-import`, but the existing `HP_COLLECT_SUBMODULES` double-gate doesn't reach it either**
-  -- it requires the package be imported by the USER'S OWN project source (AST-scanned), and
-  `packaging` here is a transitive dependency of `pygrib`, never referenced by the test app's own
-  `app.py`. A real fix needs one of: (a) add `packaging` to `HP_COLLECT_SUBMODULES`'s curated set
-  gated on "installed AND already `--hidden-import`ed this run" instead of "imported by user
-  source" (a new gate condition, not just a new curated entry); or (b) extend `:hidden_import_recover`
-  itself so that once ANY package is added via `--hidden-import=X`, the SAME rebuild also passes
-  `--collect-submodules=X` for that package -- broader than strictly necessary (collects every
-  submodule of `X`, not just the one actually needed) but structurally safe (no name-guessing, no
-  cross-package inference) and directly addresses the mechanism gap this investigation found.
-  **Implemented 2026-08-08, option (b).** `:hidden_import_recover` now builds a second flag
-  accumulator, `HP_PYI_HID_COLLECT`, alongside the existing `HP_PYI_HIDDEN_IMPORTS` -- each loop
-  iteration appends both `--hidden-import=%HP_NEXT_HIDDEN%` AND
-  `--collect-submodules=%HP_NEXT_HIDDEN%` for the SAME `%HP_NEXT_HIDDEN%`, and both flag lists are
-  passed to the SAME PyInstaller rebuild call. This is additive to the existing strict detection
-  gate, not a relaxation of it: `~hidden_import_scan.py` still only ever returns a target from a
-  genuine `ModuleNotFoundError` for an installed module (see
-  `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay STRICT" entry, which
-  this change does not touch) -- the new flag only changes what happens for a target the strict
-  gate ALREADY decided to act on, ensuring that package's own submodules are collected in the same
-  pass rather than needing a separate, undiagnosable failure to surface later. `[REPAIR][HIDDEN_IMPORT]
-  Adding --hidden-import=X` log lines now read `Adding --hidden-import=X --collect-submodules=X`;
-  every existing test/doc assertion matching that log line as a PREFIX substring (not full-line)
-  continues to match unchanged (`self.exe.hidden_import`, `self.exe.hidden_import.exhaust`'s
-  3-occurrence count, `self.layered_e2e.chain`'s `mech3Pass` check, `batch.pyi.hidden_import.recover`'s
-  static wiring guard) -- verified by tracing each one's own match pattern, not just by running the
-  cross-platform test subset (the real proof needs Windows CI). `tests/selfapps_hidden_import.ps1`
-  extended with `collectLogged`/`collectPaired` assertions (the one new test this loop adds) --
-  both read the SAME `:log` line, so they prove the intended flag text was composed and logged
-  together, not that the real PyInstaller argv actually received it (no runtime artifact captures
-  the literal invoked command line; cmd.exe echo is off and PyInstaller does not print its own
-  argv). `tests/harness.ps1`'s own new `$hiCollectInject` check is the independent SOURCE-LEVEL
-  proof instead -- it confirms `%HP_PYI_HID_COLLECT%` genuinely sits in `run_setup.bat`'s own
-  PyInstaller command-line text right after `%HP_PYI_HIDDEN_IMPORTS%`, a static text match, not an
-  observation of cmd.exe's own runtime expansion or the actual invoked argv (no artifact in this
-  repo captures that; confirming it would need a real Windows run). Two CodeRabbit review findings
-  on this fix's own PR caught successive overclaims here: first, that the two
-  `selfapps_hidden_import.ps1` checks alone were independent proof of the real invocation
-  (corrected to route that claim through `$hiCollectInject` instead); second, that
-  `$hiCollectInject` itself proves the flag "reaches the real command line" rather than merely
-  being present in the source text -- the actual runtime argv is confirmed only by a real Windows
-  CI run, not by any check in this repo today.
-  **NOT YET CONFIRMED in real CI** -- same status this repo requires before treating a fix like
-  this as settled (see the Item 24 precedent: implemented, then confirmed via a real
-  `cache`-lane run before being considered closed). The next `self.layered_e2e.chain` run should
-  show iteration 2's `packaging` rebuild also collecting `packaging.version`, letting the EXE get
-  past pygrib's own import chain far enough to finally reach colorama's own hidden-import gap
-  (`mech3Pass`) and, if that also succeeds, flip `chainPass` to `true` for the first time. If it
-  doesn't, capture the SAME kind of raw per-attempt artifact this investigation used
-  (`dist/~layered_e2e_exe.log`, not the concatenated bootstrap log) before guessing further.
-  Low urgency: this only affects the `cache`-lane, non-gating `self.layered_e2e.chain` test; it
-  does not block any lane that gates PR merges.
+- **Item 29: `:dll_bundle_recover` never re-scans for native-DLL warnings surfaced by a LATER
+  `:hidden_import_recover` rebuild -- only the very first build, before any hidden-import
+  iteration, is ever checked.** Found via the first real CI confirmation of Item 28's own fix
+  (merge commit `bd5d4df3`, `cache`-lane run `31256064576`,
+  `~selftest_layered_e2e/~layered_e2e_bootstrap.log` and `~setup.log`). Item 28's fix is confirmed
+  working exactly as designed: this run's hidden-import loop correctly added
+  `--hidden-import=numpy --collect-submodules=numpy` (iter 1/3), then, after the next smoke run
+  failed with a genuine `ModuleNotFoundError: No module named 'pyproj'`, correctly added
+  `--hidden-import=pyproj --collect-submodules=pyproj` (iter 2/3) -- the paired-flag mechanism
+  fired for real, for a target (`pyproj`) never previously observed in this chain, which is
+  stronger evidence for the fix's general correctness than reproducing the original
+  `packaging.version` case verbatim (which this run did not hit at all -- plausibly because a
+  package-version difference in the conda solve changed pygrib's own import order; not
+  independently confirmed, and not important to the fix's own correctness either way).
+  **The NEW blocker this run hits**: the iteration-2 rebuild's own PyInstaller build log shows 9
+  fresh `WARNING: Library not found: could not resolve 'proj_9.dll'` lines, one for each of
+  `pyproj`'s compiled extensions (`list`, `database`, `_version`, `_transformer`, `_sync`,
+  `_network`, `_geod`, `_crs`, `_context`) -- these `.pyd` files were never part of the bundle
+  before this run's `--collect-submodules=pyproj` (Item 28's own fix) pulled them in for the first
+  time, so this native-DLL gap could not have been detected any earlier than this exact rebuild.
+  The final EXE's own captured stderr confirms the runtime consequence:
+  `ImportError: DLL load failed while importing _context: The specified module could not be
+  found.` -- `mech3Pass` (`hiddenAdding`/`hiddenRecovered`, scoped specifically to `colorama`'s own
+  hidden-import gap) stays `false` because the chain never reaches colorama at all; `chainPass`
+  stays `false` for the same reason. `mech4Pass` (the `eccodes.dll` bundling Item 24 fixed) is
+  unaffected and still passes -- confirming this is a genuinely NEW, one-level-deeper gap, not a
+  regression of anything already fixed.
+  **Root cause**: `:dll_bundle_recover` is called exactly once, from `:run_entry_smoke` right
+  before the FIRST `:run_exe_smokerun` call (see `docs/agent-interconnect.md`'s "Conda native-DLL
+  bundling repair loop" section) -- a deliberate design choice at the time (react to a build-time
+  warning instead of waiting for a runtime failure, see that section's "Detects at BUILD time, not
+  runtime" note), but it did not anticipate a LATER rebuild -- one triggered by
+  `:hidden_import_recover`'s own loop, itself reacting to a runtime `ModuleNotFoundError` -- ever
+  introducing a NEW native-DLL warning of its own. `proj_9.dll` was never checked because the
+  single `:dll_bundle_recover` call already ran and exited (having found and bundled `eccodes.dll`)
+  long before `pyproj` was ever added to the build.
+  **Not yet confirmed whether `proj_9.dll` is actually locatable** the way `eccodes.dll` was
+  (`locate_dll()`'s double-gate requires the DLL to genuinely exist under the conda env's
+  `Library\bin`, searched recursively) -- very likely yes, following the same conda-forge Windows
+  packaging convention `eccodes.dll` already confirmed (a conda-forge `proj` package missing its
+  own runtime DLL would mean `pyproj` is broken for every user, not just under PyInstaller), but
+  the CI artifact captured for this run only covers the test's own app directory, not the shared
+  Miniconda installation tree, so this is inference from convention, not direct confirmation.
+  **Fix direction (not yet implemented, deliberately deferred to its own loop)**: either (a) call
+  `:dll_bundle_recover`'s own detection step again after `:hidden_import_recover`'s loop finishes
+  (a second pass, catching any DLL warning a hidden-import rebuild introduced), or (b) interleave
+  the two loops so each `:hidden_import_recover` rebuild is itself followed by a DLL-warning
+  re-scan before the next smoke run. Either needs the same care already documented for this
+  subsystem's other cross-loop interactions: `HP_PYI_DLLBIND` must keep reaching EVERY later
+  rebuild command (already true today, re-verify it stays true), the 3-iteration caps on each loop
+  need to interact sensibly (a DLL fix consuming a hidden-import iteration budget, or vice versa,
+  would need a considered design rather than an accidental one), and any new call site needs the
+  same tried-list/re-entry-safety guarantees `:dll_bundle_recover` and `:hidden_import_recover`
+  each already have on their own. Low urgency: only affects the `cache`-lane, non-gating
+  `self.layered_e2e.chain` test; does not block any lane that gates PR merges.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
