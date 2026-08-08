@@ -509,10 +509,11 @@ substitute for a hazard that is Windows-only by construction. **Confirmed via re
 `45ec269`, `cache`-lane run `31208498606`): the fresh bootstrap log shows `eccodes.dll` genuinely
 located and bundled for the first time (`[REPAIR][DLL_BUNDLE] Bundling native DLL dependency:
 eccodes.dll (found at ...\Library\bin\eccodes.dll)...` -> `Native-DLL bundling complete`),
-closing CLAUDE.md's Item 24. `chainPass` itself is still `false` on that same run, but for a
+closing CLAUDE.md's Item 24. `chainPass` itself was still `false` on that same run, but for a
 separately-scoped reason now that this fix let the EXE get further -- see
 `docs/agent-closed-backlog.md`'s Item 28 entry (closed 2026-08-08, its own fix in turn uncovered
-CLAUDE.md's Item 29).
+Item 29, also closed 2026-08-08 -- `chainPass` was finally confirmed `true` for the first time
+once Item 29's own fix merged; see that entry for the full trace).
 
 ---
 

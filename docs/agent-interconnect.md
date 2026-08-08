@@ -489,10 +489,11 @@ real CI run is what actually confirmed it. **Also confirmed the mech3 prediction
 right but not the whole story**: the EXE does get further now, but hits a NEW, deeper gap first
 (`pygrib`'s own extension needs `numpy`/`packaging` as hidden imports before colorama's own gap is
 ever reached) -- see `docs/agent-closed-backlog.md`'s Item 28 entry for the full trace of this
-separately-scoped finding (closed 2026-08-08; its own fix uncovered a further, deeper gap now
-tracked as CLAUDE.md's Item 29).
+separately-scoped finding (closed 2026-08-08; its own fix uncovered a further, deeper gap tracked
+as `docs/agent-closed-backlog.md`'s Item 29, also closed 2026-08-08).
 
-**CLAUDE.md Item 29 (implemented 2026-08-08, not yet CI-confirmed): `:dll_bundle_recover` now
+**CLAUDE.md Item 29 (implemented 2026-08-08, CONFIRMED via real CI the same day -- see
+`docs/agent-closed-backlog.md`): `:dll_bundle_recover` now
 runs a SECOND time per fresh build attempt, after `:hidden_import_recover`'s own loop finishes --
 `:run_exe_smokerun`'s flow calls it again right there, and, if that second call actually bundles
 something, gives `:hidden_import_recover` one more bounded pass too.** Root cause: a
@@ -629,11 +630,15 @@ matching only within it, immediately preceding its `PyInstaller` rebuild line --
 (via a simulated removal of the new line) that the scoped check correctly flips from `true` to
 `false` when the line is missing, confirming it is no longer vacuous.
 
-**NOT YET CONFIRMED in real CI** -- needs a fresh `cache`-lane `self.layered_e2e.chain` run
-showing the second `:dll_bundle_recover` pass locate and bundle `proj_9.dll`, then a second
-`:hidden_import_recover` pass reach and fix colorama's own gap, before `chainPass` can be
-considered proven `true` for the first time (see CLAUDE.md's Item 29 entry for the current
-status).
+**CONFIRMED via real CI (PR #421 merge commit `dcfce1d`, `cache`-lane run `31264219121`,
+`~selftest_layered_e2e/~layered_e2e_bootstrap.log`), closing CLAUDE.md's Item 29 (now in
+`docs/agent-closed-backlog.md`).** The fresh `self.layered_e2e.chain` run showed the exact
+designed sequence: the first `:hidden_import_recover` call added `numpy` then `pyproj` as hidden
+imports; the second `:dll_bundle_recover` pass located and bundled `proj_9.dll`
+(`found at ...\Library\bin\proj_9.dll`); with `HP_DLL_REPAIRED` set, the second
+`:hidden_import_recover` pass reached and fixed colorama's own gap; the EXE verified clean and
+exited 0. `chainPass` read `true` for the first time (`mech1Pass`/`mech2Pass`/`mech3Pass`/
+`mech4Pass` all `true`).
 
 ---
 
@@ -1003,13 +1008,16 @@ together:
 
 The two-variable split (`HP_PYSPEC_WRITEBACK` set once at write-back time; `HP_CONDA_PYSPEC_USE`/
 `HP_CONDA_PYSPEC_SKIP` computed once at `:try_conda_create` entry, reused by both the initial
-attempt and the REQ-022 transient retry) avoids re-deriving the same decision twice. **NOT YET
-CONFIRMED in real CI** -- same status as the base `HP_PYSPEC_WRITEBACK` fix; needs a fresh
-`cache`-lane `self.layered_e2e.chain` run to confirm `chainPass:true` before this can be considered
-settled (that test's own fixture uses a Tier 3/no-constraint pyproject, so it does not by itself
-exercise the `HP_PYSPEC_ORIGINAL` range-preservation path -- only the base drop-to-unconstrained
-behavior; the range-preservation and quoting fix are verified by reasoning and local tooling only
-so far, not a real-CI-observed range-constrained cascade).
+attempt and the REQ-022 transient retry) avoids re-deriving the same decision twice. **The base
+`HP_PYSPEC_WRITEBACK` drop-to-unconstrained behavior is now CONFIRMED via real CI** (PR #421
+merge commit `dcfce1d`, `cache`-lane run `31264219121`): that run's `self.layered_e2e.chain` row
+shows `pinDropped:true` and `condaSelected:true` alongside `chainPass:true`, confirming the
+uv-to-conda cascade re-entry genuinely dropped the write-back-derived exact pin rather than
+forwarding it unconstrained to `conda create`. **The `HP_PYSPEC_ORIGINAL` range-preservation path
+remains unconfirmed**, since that test's own fixture uses a Tier 3/no-constraint pyproject, so it
+does not exercise a genuine user-authored range surviving the cascade -- the range-preservation
+and quoting fix are still verified by reasoning and local tooling only, not a real-CI-observed
+range-constrained cascade.
 
 **Why this doesn't (yet) need the same fix for the embed tier's own PYSPEC-driven version
 lookup**: `tools/embed_pyver_check.py` also reads `PYSPEC` to pick which pinned table entry to
