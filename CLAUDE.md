@@ -573,18 +573,55 @@ start at 1 and has gaps.
   own runtime DLL would mean `pyproj` is broken for every user, not just under PyInstaller), but
   the CI artifact captured for this run only covers the test's own app directory, not the shared
   Miniconda installation tree, so this is inference from convention, not direct confirmation.
-  **Fix direction (not yet implemented, deliberately deferred to its own loop)**: either (a) call
-  `:dll_bundle_recover`'s own detection step again after `:hidden_import_recover`'s loop finishes
-  (a second pass, catching any DLL warning a hidden-import rebuild introduced), or (b) interleave
-  the two loops so each `:hidden_import_recover` rebuild is itself followed by a DLL-warning
-  re-scan before the next smoke run. Either needs the same care already documented for this
-  subsystem's other cross-loop interactions: `HP_PYI_DLLBIND` must keep reaching EVERY later
-  rebuild command (already true today, re-verify it stays true), the 3-iteration caps on each loop
-  need to interact sensibly (a DLL fix consuming a hidden-import iteration budget, or vice versa,
-  would need a considered design rather than an accidental one), and any new call site needs the
-  same tried-list/re-entry-safety guarantees `:dll_bundle_recover` and `:hidden_import_recover`
-  each already have on their own. Low urgency: only affects the `cache`-lane, non-gating
-  `self.layered_e2e.chain` test; does not block any lane that gates PR merges.
+  **Implemented 2026-08-08, option (a)**: `:run_exe_smokerun`'s flow now calls
+  `:dll_bundle_recover` a SECOND time immediately after `:hidden_import_recover`'s first call
+  returns, and, if that second call actually bundled something (a new `HP_DLL_REPAIRED` flag,
+  reset at `:dll_bundle_recover`'s own entry and set only in its genuine "repaired" branch --
+  `HP_DLL_ITER` alone was considered and rejected as the signal, since an early "nothing
+  detected" return never resets it, so a stale value from an EARLIER call could look like fresh
+  repair activity), gives `:hidden_import_recover` one more bounded pass too -- needed because a
+  DLL fix can unblock a package whose OWN hidden-import gap was previously unreachable (exactly
+  `self.layered_e2e.chain`'s own shape: colorama's gap is only reached once `pyproj`'s DLL is
+  fixed). Deliberately not chained further than this one extra round each: a third pass risks an
+  unbounded repair cascade for a pathological dependency tree, and a case ever found needing more
+  is its own future backlog item, not solved speculatively here.
+  **Two real, cross-call state-leak bugs found and fixed while implementing this** -- both are the
+  same class of bug this subsystem has hit before (a fix silently dropped by a LATER rebuild that
+  doesn't carry it forward), just now occurring ACROSS two calls to the SAME subroutine rather
+  than between two DIFFERENT ones:
+  1. `:dll_bundle_recover` unconditionally reset `HP_PYI_DLLBIND=` at the top of its own
+     per-call bundling section -- harmless for a single call, but a second call would silently
+     wipe the FIRST call's own accumulated `--add-binary` flags (e.g. `eccodes.dll`'s binding,
+     from Item 24) before the second call's rebuild ever runs. Fixed by moving this reset out to
+     `:run_entry_smoke`'s own fresh-build-attempt initialization (alongside the pre-existing
+     `HP_NUITKA_FALLBACK_USED`/`HP_DEP_MAYBE_INCOMPLETE` resets there) -- once per fresh build
+     attempt, not once per call.
+  2. `:hidden_import_recover` had the IDENTICAL bug for `HP_PYI_HIDDEN_IMPORTS`/
+     `HP_PYI_HID_COLLECT`, at BOTH its entry AND its own exit trailer -- a second call (post-DLL-
+     fix) would reset these to empty before its own rebuild for the NEXT hidden-import target
+     (e.g. colorama), silently regressing the FIRST call's own numpy/pyproj fixes back to
+     `ModuleNotFoundError`. Fixed the same way -- moved to the same once-per-fresh-build-attempt
+     reset point.
+  Also threaded `%HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT%` into `:dll_bundle_recover`'s OWN
+  rebuild command (previously only `%HP_PYI_DLLBIND%` reached `:hidden_import_recover`'s rebuild,
+  never the reverse) -- the mirror-image of the fix Item 28 already applied in the other
+  direction. Static regression guard added: `tests/harness.ps1`'s new
+  `batch.dll_bundle.second_pass` check asserts both new call sites exist, the flag-threading is
+  present, and -- specifically to catch a REINTRODUCED per-call reset -- the bare
+  `set "HP_PYI_DLLBIND="` line appears in the file EXACTLY twice (the fresh-build-attempt reset
+  plus `:run_entry_smoke`'s own pre-existing end-of-pass trailer) and the `HP_PYI_HIDDEN_IMPORTS`/
+  `HP_PYI_HID_COLLECT` bare resets appear EXACTLY once each.
+  **NOT YET CONFIRMED in real CI** -- same status this repo requires before treating a fix like
+  this as settled (see the Item 24/28 precedent: implemented, then confirmed via a real
+  `cache`-lane run before being considered closed). The next `self.layered_e2e.chain` run should
+  show the second `:dll_bundle_recover` pass locating and bundling `proj_9.dll`, then a second
+  `:hidden_import_recover` pass reaching and fixing colorama's own gap, finally flipping
+  `chainPass` to `true` for the first time. If it doesn't, capture the same kind of raw
+  per-attempt artifact this and Item 28's own investigations used
+  (`dist/~layered_e2e_exe.log` plus `~setup.log`'s own `WARNING: Library not found` lines) before
+  guessing further -- there is no guarantee a 4th layer doesn't exist beneath this one. Low
+  urgency either way: only affects the `cache`-lane, non-gating `self.layered_e2e.chain` test;
+  does not block any lane that gates PR merges.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
