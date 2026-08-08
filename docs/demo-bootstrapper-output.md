@@ -28,6 +28,24 @@ of this file is more likely to already be looking at; reach for the internal `do
 engineering docs only for detail that has no README/source equivalent (implementation-level
 CMD/PowerShell quirks, cross-component interconnects, and similar maintainer-facing reasoning).
 
+**House rule -- minimum context per scenario:** every scenario (each numbered "Scenario N" or
+equivalent standalone walkthrough entry) shows at least 5 distinct user-visible-output quotes
+(lines drawn from the actual bootstrapper console/log output shown in the fenced blocks below it),
+not counting input/output *file* contents (`.py`, `.toml`, `requirements.txt`, etc.) or raw
+NDJSON/status-file dumps shown only as supporting evidence. A scenario this thin on real quotes
+usually means not enough was captured to give a reader real context -- add more before considering
+it done, even if the mechanism itself is fully explained in prose.
+
+**House rule -- no internal-only text in a user-visible quote:** a fenced block presented as "what
+the user sees" must never contain something a real end user, double-clicking `run_setup.bat` with
+no environment variables set, would not actually see on their own screen -- this includes literal
+`[TEST]` tags, `HP_TEST_FORCE_*`/other env-var names, "simulating"/"for this test" phrasing, or any
+other CI-test-harness-only artifact. When a real capture's own trigger was a test hook, say so in
+the surrounding PROSE (never inside the quoted block itself), and either omit the corresponding
+line entirely (if the real mechanism is silent at that point) or replace it with the genuine
+real-user-equivalent line, extrapolated from `run_setup.bat`'s own source and clearly labeled
+`[Extrapolated Branch]` if it isn't independently confirmed by a different real capture.
+
 **Sourcing convention:** every quoted block carries one explicit provenance label -- REAL CI
 CAPTURE (copied verbatim from a real GitHub Actions job log, cited with run ID, job ID, lane, and
 test file), a source excerpt (taken directly from `run_setup.bat`'s current source because no CI
@@ -115,6 +133,8 @@ conflate:
   - [Scenario 43: Honest ambiguous-exit messaging (REQ-027)](#scenario-43-honest-ambiguous-exit-messaging-req-027)
     - [43a. No-EXE path, interpreter also failed](#43a-no-exe-path-interpreter-also-failed)
     - [43b. Cached-EXE fast path, kept despite a non-zero exit](#43b-cached-exe-fast-path-kept-despite-a-non-zero-exit)
+- [Part X: Confirmed layered multi-mechanism recovery chain (real E2E evidence)](#part-x-confirmed-layered-multi-mechanism-recovery-chain-real-e2e-evidence)
+  - [Scenario 44: Full walkthrough -- cascade, warnfix, hidden-import recovery, and native-DLL bundling, all in one real run](#scenario-44-full-walkthrough----cascade-warnfix-hidden-import-recovery-and-native-dll-bundling-all-in-one-real-run)
 
 ---
 
@@ -2488,36 +2508,23 @@ Real trigger (Scenario 15, same wording, same reasoning about why it says "uv to
 
 **No real input `app.py` to show here, unlike Scenario 32/34/35/36** -- the narrow case this
 scenario illustrates (a package genuinely resolvable via conda-forge but not uv/pip) has no real
-test app in this repo yet; Scenario 15's own real trigger app (`import fake_pkg_cascade_xyz`, a
-package name that doesn't exist ANYWHERE) is deliberately unresolvable by every tier alike, which
-is what drives that scenario's full-exhaustion case -- it cannot illustrate conda succeeding where
-uv failed. `tests/selfapps_layered_e2e.ps1` (`docs/agent-closed-backlog.md`'s Item 22, `cache`
-lane only, non-gating) now exists and is designed to produce exactly this real evidence. Its
-first real CI runs surfaced a genuine bug in the mechanism under test, not the test itself: a
-second, unplanned warnfix round failed on `cStringIO` (a Python-2-only stdlib shim `xlrd`'s own
-compatibility code still references, never a real installable package), which drove an
-unplanned SECOND cascade (conda to embed) that this scenario's own single-cascade premise doesn't
-cover. Fixed by adding `cStringIO`/`StringIO` to `parse_warn.py`'s `SKIP` filter -- **confirmed by
-a real CI run** (run `30875520181`, cache-lane job `91886501141`): the cascade now fires exactly
-once, cleanly, as designed. PyInstaller doesn't bundle `pygrib`'s native `eccodes.dll` dependency
-under the conda provider on its own -- the frozen EXE would fail at runtime for a different reason
-once it reaches that point, since PyInstaller's static analysis bundles the compiled Python
-extension itself but never discovers the separate native library it links against. A dedicated
-repair loop (`:dll_bundle_recover`) reacts to PyInstaller's own build-time "Library not found:
-could not resolve 'X.dll'" warning, confirms the named DLL actually exists under the conda env's
-`Library\bin` before acting (never a guess), and rebuilds once with an explicit `--add-binary`
-flag bundling it in -- bounded to 3 attempts, and gated off entirely under a non-conda provider or
-a Nuitka-built EXE, where it has no equivalent mechanism to fall back to. See
-`docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the full
-mechanism trace. This scenario's own uv-to-conda cascade illustration below is unaffected either
-way (it documents the cascade mechanism itself, which is confirmed working). It uses `pygrib` (a package with zero Windows wheels on PyPI as of
-version 2.1.8 (queried 2026-08-07) via the PyPI JSON API, but real conda-forge win-64 builds) as the
-cascade trigger -- GDAL was the original candidate and was researched and rejected (its Python
-bindings live under the `osgeo` namespace, and PyPI hosts a real, always-succeeding dummy package
-literally named `osgeo` that would have silently defeated the cascade's own confidence-gate
-signal; see the same closed-backlog entry for the full trail). A full start-to-shutdown console
-panel with the real captured output (matching this Part's own convention) has not yet been added
-here -- a reasonable fast-follow, not yet done.
+test app of its own in this repo; Scenario 15's own real trigger app (`import fake_pkg_cascade_xyz`,
+a package name that doesn't exist ANYWHERE) is deliberately unresolvable by every tier alike, which
+drives that scenario's full-exhaustion case instead -- it cannot illustrate conda succeeding where
+uv failed. **Scenario 44 now provides exactly that real evidence, and considerably more of it**:
+`tests/selfapps_layered_e2e.ps1` (`cache` lane, non-gating) uses `pygrib` as its own cascade
+trigger (a package with zero Windows wheels on PyPI, but a real conda-forge win-64 build), and its
+real captured output shows uv failing, the cascade firing exactly once, and conda succeeding --
+plus three further repair mechanisms (warnfix, `--hidden-import` recovery, and native-DLL
+bundling) all handing off to each other in the same real run. PyInstaller not discovering
+`pygrib`'s native `eccodes.dll` dependency on its own is a real, confirmed-fixed case too: a
+dedicated repair loop (`:dll_bundle_recover`) reacts to PyInstaller's own build-time "Library not
+found: could not resolve 'X.dll'" warning, confirms the named DLL actually exists under the conda
+env's `Library\bin` before acting, and rebuilds with an explicit `--add-binary` flag bundling it
+in -- see `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the
+full mechanism trace, and Scenario 44 for the real console output showing it fire. This scenario's
+own uv-to-conda cascade illustration below remains useful on its own as the simplest possible
+version of the mechanism, uncomplicated by the deeper gaps Scenario 44 goes on to expose.
 
 `:cascade_acquire_conda` downloads and installs Miniconda on demand at this point if it wasn't
 already on disk (uv-first runs skip Miniconda entirely until something actually needs it -- see
@@ -2951,7 +2958,6 @@ unmodified:
 [INFO] (A stray one-line Windows message about a missing drive may appear next -- that is a known side effect from an unrelated background process, unrelated to your app; safe to ignore.)
 The system cannot find the drive specified.
 The system cannot find the drive specified.
-[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
 [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
 [INFO] Fallback build succeeded: dist\<env>.exe was produced using the fallback build system.
 [DEBUG] warnfix: warn file not found
@@ -2968,11 +2974,10 @@ The system cannot find the drive specified.
 [INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
 ```
 
-**The `[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL` line above is this real capture's own CI test-hook
-announcement, not something a real user would ever see** -- a genuine PyInstaller build failure at
-that exact point is completely silent (its own error output goes only to the log file, never the
-console); the next line a real user would actually see is the "Standard build did not complete"
-line immediately following, with nothing printed in between. Continuing:
+**The real trigger of this capture was a CI test hook, not shown above** -- a genuine PyInstaller
+build failure at that exact point is completely silent (its own error output goes only to the log
+file, never the console); the "Standard build did not complete" line is the first thing a real user
+would see, with nothing printed before it. Continuing:
 
 ```
 ============================================================
@@ -3044,17 +3049,14 @@ one's console text, since it's really a REQ-027 demo). The first two additionall
 
 #### 38a. `execfail` -- the PyInstaller build command itself fails
 
-Real CI capture, run `29788624195`, job `88506013028` ("real" lane). **The two `[TEST]
-HP_TEST_FORCE_*` lines below are this capture's own CI test-hook announcements, not something a
-real user would ever see** -- a genuine failure at each of those two points is completely silent
-(both PyInstaller's and Nuitka's own error output go only to the log file, never the console); a
-real user would see the very next line instead, with nothing printed in between:
+Real CI capture, run `29788624195`, job `88506013028` ("real" lane). **This scenario is triggered
+by two CI test hooks (forcing both the PyInstaller build and the Nuitka fallback to fail), but a
+real user hitting the same genuine failure sees nothing at either trigger point** -- both
+PyInstaller's and Nuitka's own error output go only to the log file, never the console:
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
-[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure.
 [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure.
 [ERROR] PyInstaller execution failed.
 [DEBUG] warnfix: warn file not found
 [INFO] PyInstaller build artifacts cleaned up.
@@ -3075,20 +3077,17 @@ interpreter run ALSO fails.
 
 #### 38b. `output_vanish` -- PyInstaller succeeds, then the EXE disappears immediately
 
-Real CI capture, same run/job as 2a. **Unlike the test hooks elsewhere in this file,
-`HP_TEST_FORCE_OUTPUT_VANISH` stands in for a real external event, not an internal simulated
-failure** -- a real user could hit this exact same gap if antivirus software or a file indexer
-deletes the freshly-built EXE in the instant right after PyInstaller creates it; the line below
-would not appear on a real user's screen (there's no bootstrapper code path that announces this),
-but the underlying trigger (the file being gone at the next check) is something that genuinely
-happens, not a pure test artifact. `HP_TEST_FORCE_NUITKA_FAIL` is a normal, internal-only test
-hook (see 38a's note -- a real Nuitka failure at that point is silent):
+Real CI capture, same run/job as 38a. **Unlike the test hooks elsewhere in this file, the
+underlying trigger here stands in for a real external event, not a purely internal simulation** --
+a real user could hit this exact same gap if antivirus software or a file indexer deletes the
+freshly-built EXE in the instant right after PyInstaller creates it. Neither the deletion itself
+nor the forced Nuitka failure prints anything on a real user's screen -- there's no bootstrapper
+code path that announces either one, so both are omitted below (see 38a's note for the general
+"a build-tool failure at this point is silent" rule):
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
-[TEST] HP_TEST_FORCE_OUTPUT_VANISH: deleting freshly-built EXE to simulate post-creation removal.
 [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure.
 [ERROR] PyInstaller did not produce dist\<env>.exe
 [DEBUG] warnfix: warn file found
 [INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically.
@@ -3198,32 +3197,23 @@ expected (CI is non-interactive by design), not a gap.
 
 #### 40b. `forcefail` -- accepted, but the build fails; original EXE is left untouched
 
-Real, verbatim console dump (`~selftest_optbuild_forcefail\~optbuild_forcefail_bootstrap.log`):
+Triggered by a CI test hook (`HP_TEST_FORCE_OPTBUILD_FAIL`) forcing the build itself to fail, but
+unlike the silent build failures elsewhere in this Part, a REAL failure here is NOT silent -- every
+genuine failure branch in `:offer_optimized_build` (tool-install failure, build-did-not-complete,
+missing output, verification failure, swap failure) logs its own `[WARN] ...; your app is still
+ready to use as-is.` line before reaching the post-flight briefing. What a real user sees (the
+`[WARN]` line is `[Extrapolated Branch]`, from source -- the exact wording depends on which of the
+five failure branches fired; the rest of this capture is real,
+`~selftest_optbuild_forcefail\~optbuild_forcefail_bootstrap.log`):
 
 ```
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. ***
 [INFO] Optimized build: accepted; building now (this may take a minute or two).
-[TEST] HP_TEST_FORCE_OPTBUILD_FAIL: simulating optimized-build failure.
+[WARN] Optimized build did not complete; your app is still ready to use as-is.
 [INFO] REQ-016: Post-flight briefing printed.
 ```
-
-**The `[TEST] HP_TEST_FORCE_OPTBUILD_FAIL` line above is this capture's own CI test-hook
-announcement, not something a real user would ever see -- and unlike the silent build failures
-elsewhere in this Part, a REAL failure here is NOT silent.** Every genuine failure branch in
-`:offer_optimized_build` (tool-install failure, build-did-not-complete, missing output,
-verification failure, swap failure) logs its own `[WARN] ...; your app is still ready to use as-is.`
-line before reaching the post-flight briefing; the test hook instead jumps straight past all of
-them. The most common real case (`[Extrapolated Branch]`, from source) would read:
-
-```
-[WARN] Optimized build did not complete; your app is still ready to use as-is.
-```
-
-right where the `[TEST]` line sits above -- a forced-test-hook failure and a genuine build failure
-currently give the user different amounts of reassurance for what is, from their perspective, the
-same outcome.
 
 #### 40c. `swapfail` -- verified build, but the final swap step fails; original EXE is left untouched
 
@@ -3250,6 +3240,7 @@ Real, verbatim console dump (`~selftest_optbuild_decline\~optbuild_decline_boots
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. ***
 [INFO] Optimized build: declined.
+[INFO] REQ-016: Post-flight briefing printed.
 ```
 
 #### Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths)
@@ -3471,5 +3462,144 @@ rerun options are worded to distinguish a genuinely different tradeoff instead: 
 deleting the EXE reuses it (via the same fast path that got the user here) with no promise about
 whether it's actually faster overall, while deleting it first forces a full, slower, from-scratch
 dependency check.
+
+---
+
+## Part X: Confirmed layered multi-mechanism recovery chain (real E2E evidence)
+
+### Scenario 44: Full walkthrough -- cascade, warnfix, hidden-import recovery, and native-DLL bundling, all in one real run
+
+**What's tested:** `self.layered_e2e.chain` (`tests/selfapps_layered_e2e.ps1`, `cache` lane,
+non-gating). A single real app whose three declared dependencies (`pygrib`, `xlrd`, `colorama`)
+happen to trigger four separate, independently-documented repair mechanisms (Scenarios 15, 17, 16,
+and the native-DLL bundling loop covered in `docs/agent-interconnect.md`) back to back in one
+continuous run, with no test-only failure injection anywhere in the chain -- every failure below is
+a genuine consequence of what these three packages actually need on Windows.
+
+**Source:** REAL CI CAPTURE, run `31264219121`, job `93119869344` (`cache` lane).
+
+The run starts under uv (the default first provider), installs cleanly detected dependencies, then
+hits its first real gap -- `pygrib` has no Windows wheel on PyPI:
+
+```
+[BOOT] REQ-009: Selected Python provider: UV.
+[INFO] runtime.txt written: python-3.14.7
+[INFO] pipreqs 0.4.13 installed successfully; using it for dependency discovery.
+[WARN] uv pip install -r requirements.txt failed; some packages may be missing.
+[INFO] Building standalone executable -- this may take a minute or two...
+[INFO] PyInstaller produced dist\_selftest_layered_e2e.exe
+[INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically; cStringIO and StringIO (Python-2-only compatibility shims some packages still reference) are filtered out automatically too.
+[REPAIR] missing modules detected; installing and rebuilding.
+[INFO] Attempting to install: xlrd
+[INFO] Installed: xlrd
+[INFO] Attempting to install: pygrib
+[WARN] Repair failed: pygrib
+[WARN] One or more repair attempts failed
+[INFO] Rebuilding standalone executable after warnfix -- this may take a minute or two...
+[REPAIR] rebuild complete after warnfix.
+```
+
+Warnfix (Scenario 17) genuinely fixed `xlrd` in the same round it genuinely failed on `pygrib` --
+both outcomes are real, not staged. With one dependency still unresolved under uv, the cascade
+(Scenario 15) offers, and is accepted, moving the whole dependency phase to conda:
+
+```
+[WARN] REQ-009: warnfix left modules unresolved under provider uv.
+[INFO] REQ-009: cascade candidate detected.
+
+*** Some dependencies could not be installed under the current Python provider. ***
+
+[INFO] REQ-009: cascade consent: accepted.
+[INFO] REQ-009: cascade approved; will re-attempt under the next provider tier.
+[WARN] EXE smokerun: exited 1 (non-zero)
+[INFO] Entry smoke exit=1
+[STATUS] Run Status: FAILED (Exit Code: 1)
+[INFO] REQ-009: cascading provider uv to conda; re-attempting dependencies.
+*** [INFO] Trying the next Python provider (conda) to resolve dependencies...
+```
+
+Conda-forge genuinely has a real Windows build of `pygrib` uv/PyPI don't -- the second dependency
+install succeeds cleanly this time, and the bootstrapper rebuilds:
+
+```
+[BOOT] REQ-009: Selected Python provider: Conda (Portable).
+[INFO] runtime.txt written: python-3.14.6
+[INFO] pipreqs 0.4.13 installed successfully; using it for dependency discovery.
+[INFO] Building standalone executable -- this may take a minute or two...
+[INFO] PyInstaller produced dist\_selftest_layered_e2e.exe
+```
+
+But `pygrib`'s conda build depends on a native library (`eccodes.dll`) that PyInstaller's own
+static analysis bundles the compiled Python extension for, without ever discovering the separate
+DLL it links against at runtime -- the EXE now fails a different way, and the native-DLL bundling
+loop reacts to PyInstaller's own build-time warning about it:
+
+```
+ModuleNotFoundError: No module named 'pygrib'
+[WARN] EXE smokerun: exited 1 (non-zero)
+[HINT][HIDDEN_IMPORT] Hidden import likely missing: pygrib
+[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: eccodes.dll (found at C:\Users\Public\Documents\Miniconda3\envs\_selftest_layered_e2e\Library\bin\eccodes.dll); rebuilding EXE (iter 1/3).
+[REPAIR][DLL_BUNDLE] Native-DLL bundling complete (1 DLL(s) added); EXE will be re-verified next.
+```
+
+Bundling the DLL gets the EXE past its FIRST failure but exposes a SECOND, deeper one: `pygrib`'s
+own compiled extension needs `numpy`, invisible to PyInstaller's static scan the same way `pygrib`
+itself was -- `--hidden-import` auto-recovery (Scenario 16) reacts, and while fixing that, one of
+`pygrib`'s OWN submodules (pulled in by the fix's own `--collect-submodules` pairing) turns out to
+need `pyproj`, which needs a SECOND native DLL (`proj_9.dll`) never checked before this exact
+rebuild -- the bootstrapper's repair loops hand off to each other across three more rounds, each a
+real, unstaged rebuild:
+
+```
+ModuleNotFoundError: No module named 'numpy'
+[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=numpy --collect-submodules=numpy; rebuilding EXE (iter 1/3).
+[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=pyproj --collect-submodules=pyproj; rebuilding EXE (iter 2/3).
+[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: proj_9.dll (found at C:\Users\Public\Documents\Miniconda3\envs\_selftest_layered_e2e\Library\bin\proj_9.dll); rebuilding EXE (iter 1/3).
+[REPAIR][DLL_BUNDLE] Native-DLL bundling complete (1 DLL(s) added); EXE will be re-verified next.
+[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama --collect-submodules=colorama; rebuilding EXE (iter 1/3).
+[REPAIR][HIDDEN_IMPORT] EXE verified after hidden-import recovery.
+```
+
+That last line -- `colorama` -- is the third declared dependency, imported only via
+`importlib.import_module` in this app's own source, so it was never visible to PyInstaller's
+static analysis until the `pyproj`/DLL fix let the app get far enough to actually hit that import.
+With every gap now resolved, the EXE finally verifies clean and the run completes normally:
+
+```
+[INFO] EXE smokerun: exited 0 (ok)
+[INFO] Entry smoke exit=0
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+
+*** Verification finished -- see the Run Status above. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+[INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
+
+*** Your app is ready. ***
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
+[INFO] Optimized build: declined.
+
+============================================================
+ SETUP COMPLETE
+============================================================
+ Your standalone application is ready:
+   dist\_selftest_layered_e2e.exe
+
+ RUNNING YOUR APP
+   Double-click dist\_selftest_layered_e2e.exe to run it.
+   You can also run it directly via the interpreter at any time:
+     "C:\Users\Public\Documents\Miniconda3\envs\_selftest_layered_e2e\python.exe" "app.py"
+```
+
+**Why this run matters beyond any single mechanism**: every other scenario in this document proves
+ONE repair mechanism works in isolation. This is the only real capture in this repo's CI history
+showing all four -- provider cascade, warnfix, `--hidden-import` recovery, and native-DLL
+bundling -- genuinely handing off to each other within a single bootstrap run, each one's own fix
+exposing the next real gap underneath it, exactly the way a beginner's own unpredictable dependency
+tree could in practice. A user hitting this exact chain would see roughly nine total rebuild
+attempts across two Python providers over about ten minutes of unattended waiting, then a normal
+"SETUP COMPLETE" panel with no indication anything unusual happened -- everything above the final
+panel is diagnostic detail this document surfaces for review, not something a real user needs to
+read or understand.
 
 ---

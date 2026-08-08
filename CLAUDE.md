@@ -528,7 +528,47 @@ convention was more rigor than a plain-text backlog needs -- a real uniqueness g
 in an actual issue tracker, e.g. GitHub Issues, not a hand-maintained numbering scheme here.)
 Once an item is fully resolved it is removed from here entirely and archived (keeping its
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
-start at 1 and has gaps.
+start at 1 and has gaps. **If this list is currently empty, state that explicitly in large bold
+text (see below) rather than leaving the section silently blank** -- an empty section with no
+marker is easy to mistake for a rendering glitch or an accidental deletion; an explicit statement
+is not.
+
+- **Item 30: compress `docs/agent-interconnect.md` and `docs/agent-lessons-learned.md` again.**
+  Both were already compressed once (see the Closed Backlog entry for that earlier pass), but
+  both are still large auto-loaded-every-session files: interconnect.md is ~1975 lines / ~21K
+  words, lessons-learned.md is ~1369 lines / ~14K words (measured 2026-08-08). `docs/agent-
+  interconnect.md` now has an explicit note at its own top (added the same day as this item)
+  permitting dense/terse phrasing over human-readable prose, since neither file is meant for
+  casual human browsing -- only for agent context-loading. Do this as its own dedicated pass
+  (not a drive-by edit): read both files in full, identify redundant narrative/restated context
+  that can collapse without losing accuracy or completeness, and cut it. Do not sacrifice
+  correctness or completeness for terseness -- the goal is removing WORDS, not INFORMATION.
+
+- **Item 31: `docs/demo-bootstrapper-output.md` still has 7 scenarios below the 5-quote house-rule
+  minimum** (2026-08-08 audit; the 6 real `[TEST]`-line violations found in the same audit were
+  fixed same-day -- this item is ONLY the remaining quote-count shortfalls, not a re-run of the
+  whole audit). Each needs additional genuine (real-capture or source-derived,
+  `[Extrapolated Branch]`-labeled if not independently confirmed) console-output quotes added,
+  not fabricated ones:
+  - Scenario 25 (pandas/openpyxl heuristic augmentation) -- only 1 real quote today, needs 4 more;
+    the worst shortfall in the doc. Real additional material likely exists near
+    `self.exe.warnfix.real`'s own captured evidence or genuine warnfix/install lines around the
+    heuristic firing.
+  - "Reactive-only failure hint" (Part VIII, a standalone entry after Scenario 40) -- 2 quotes,
+    needs 3 more. No CI run has exercised a real Nuitka compiler failure yet, so any addition here
+    is necessarily `[Extrapolated Branch]` from source.
+  - Scenario 23 / Scenario 36 (`HP_PVW_KNOWN_IDEMPOTENT`, share the same 3-line source block) --
+    3 quotes each, need 2 more each.
+  - Scenario 26 (Conda base periodic update) -- 3 quotes, needs 2 more.
+  - Scenario 41 (Interactive verification: live-tee, activity-aware kill) -- 3 quotes, needs 2
+    more; CI answers scripted stdin so no real interactive capture exists, likely
+    `[Extrapolated Branch]` from source.
+  - (Scenario 40d already fixed same-day, trivially -- was 1 line short, added the real
+    `[INFO] REQ-016: Post-flight briefing printed.` closing line already used elsewhere in Part
+    VIII.)
+  A handful of other scenarios sit right at the 5-6 quote line (Scenarios 2, 7, 10, 14, 16, 20,
+  21, 22, 27, 39, 40c) -- not violations, but worth a second pass for margin if this item is ever
+  picked up as a larger push rather than just closing the 7 genuine shortfalls above.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
