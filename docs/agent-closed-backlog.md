@@ -1644,7 +1644,7 @@ this belongs to).
   **`chainPass` itself is STILL `false` on this same run, but for a reason entirely OUTSIDE this
   item's own scope**: now that `--collect-submodules=pyproj` bundles `pyproj`'s own compiled
   extensions for the first time, those extensions (`list`, `database`, `_version`,
-  `_transformer`, `_sync`, `_network`, `_geod`, `_crs`, `_context` -- all 8 confirmed via the
+  `_transformer`, `_sync`, `_network`, `_geod`, `_crs`, `_context` -- all 9 confirmed via the
   rebuild's own PyInstaller build-log warnings) surface a NEW native-DLL dependency
   (`proj_9.dll`) that could not have been detected any earlier than this exact rebuild, and the
   existing `:dll_bundle_recover` mechanism (Item 24) only ever runs once, before the very first

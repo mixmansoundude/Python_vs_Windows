@@ -544,7 +544,7 @@ start at 1 and has gaps.
   `packaging.version` case verbatim (which this run did not hit at all -- plausibly because a
   package-version difference in the conda solve changed pygrib's own import order; not
   independently confirmed, and not important to the fix's own correctness either way).
-  **The NEW blocker this run hits**: the iteration-2 rebuild's own PyInstaller build log shows 8
+  **The NEW blocker this run hits**: the iteration-2 rebuild's own PyInstaller build log shows 9
   fresh `WARNING: Library not found: could not resolve 'proj_9.dll'` lines, one for each of
   `pyproj`'s compiled extensions (`list`, `database`, `_version`, `_transformer`, `_sync`,
   `_network`, `_geod`, `_crs`, `_context`) -- these `.pyd` files were never part of the bundle
