@@ -193,6 +193,9 @@ batch.smoke.telemetry,
 batch.smoke.single_verify,
 batch.failfast.probe,
 batch.postexec.checkpoint,
+batch.dll_bundle.ndjson,
+batch.dll_bundle.pct_sanitizer,
+self.dll_bundle.recover,
 self.bootstrap.state, self.empty_repo.msg, self.empty_repo.no_spurious_warn,
 self.harness.started,
 self.stub.fastpath, self.stub.rebuild, self.stub.state_skip,
@@ -223,6 +226,54 @@ before the Miniconda install-if-missing block even runs, so the corruption-check
 (`if defined CONDA_BAT ...`) fires regardless of whether Miniconda was ever installed anywhere
 in the job -- self-contained by construction, no CI-ordering dependency (unlike
 `self.conda.bothfail`, above).
+
+`self.dll_bundle.recover` (inline `run_setup.bat`'s `:emit_dll_bundle_row`, called from all 6
+outcome points inside `:dll_bundle_recover` -- CLAUDE.md Item 24 / `docs/prd-conda-native-dll-
+bundling.md`) is a CodeRabbit review finding on PR #414: the native-DLL bundling repair loop's
+detected/skipped/repaired/unlocatable/failed outcomes previously only reached `:log`'s console
+text, with no machine-readable record. `details.state` is one of `skipped_nuitka` (a Nuitka-built
+EXE, repair not attempted), `skipped_non_conda` (a non-conda provider, repair not attempted),
+`repaired` (rebuild genuinely succeeded), `unlocatable` (detected but the named DLL was never
+found under the conda env's `Library\bin`), `failed_rebuild` (PyInstaller rebuild itself failed),
+or `failed_missing_exe` (rebuild reported success but `dist\<env>.exe` was not produced) --
+`pass` is `false` only for the two `failed_*` states. `details.dll`/`details.provider`/
+`details.iteration` are pulled inside the emitting PowerShell command via
+`[Environment]::GetEnvironmentVariable(...)` rather than `%VAR%` cmd.exe substitution into the
+`-Command` text, for the same reason the sibling `HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`
+display-only sanitization exists (see `docs/agent-interconnect.md`'s DLL-bundling section) --
+a DLL basename can legally contain `&`/`|`, which are metacharacters to cmd.exe's own
+command-line parsing even inside a quoted argument, not just inside `:log`'s unquoted echo.
+
+**Not currently observed in any real CI artifact.** `run_setup.bat`'s own `HP_NDJSON`
+auto-detection (`if not defined HP_NDJSON if exist "%CD%\tests" set "HP_NDJSON=..."`) only fires
+when the bootstrapped app directory has its own `tests\` subfolder -- `tests/selfapps_layered_
+e2e.ps1` (the one test that genuinely triggers the `repaired` state, via `pygrib`/`eccodes.dll`)
+runs its sub-bootstrap from a bare scratch directory with no `tests\` subfolder, and does not
+explicitly set `HP_NDJSON` either, matching this repo's established convention for isolated
+sub-bootstrap tests (see `tests/selfapps_postexec_checkpoint.ps1`, which deliberately `Remove-
+Item Env:HP_NDJSON` around its own sub-bootstrap calls and asserts via log text instead, to avoid
+an isolated scratch run's rows leaking into the shared `~test-results.ndjson` stream). So
+`:emit_dll_bundle_row`'s own `if not defined HP_NDJSON exit /b 0` guard means this row is never
+actually written during that test's run today -- `mech4Pass` continues to rely on the pre-existing
+`[REPAIR][DLL_BUNDLE]` log-text assertions (`docs/agent-interconnect.md`'s DLL-bundling section),
+unaffected by this addition. `batch.dll_bundle.ndjson` (`tests/harness.ps1`, static) is the actual
+coverage for this row: it verifies the `:emit_dll_bundle_row` subroutine exists, the row id string
+is present, and all 6 `call :emit_dll_bundle_row <state>` sites are wired -- the same "static wiring
+guard, not runtime execution" pattern already used for `batch.failfast.probe`/`batch.postexec.
+checkpoint` above. Per-state runtime coverage (deliberately setting `HP_NDJSON` for a sub-bootstrap
+and reading the row back) remains a candidate for a future, dedicated test if ever justified --
+not pursued now, since simulating the other 5 states (Nuitka-used, non-conda provider, a genuine
+PyInstaller rebuild failure, a missing post-rebuild EXE, a detected-but-unlocatable DLL) each needs
+its own scaffolding beyond what `self.layered_e2e.chain`'s real `pygrib` trigger already provides
+for the `repaired` state alone.
+
+`batch.dll_bundle.pct_sanitizer` (`tests/harness.ps1`, gating) is a SEPARATE static check, not a
+sibling of the above -- it live-executes a real cmd.exe + PowerShell fixture proving the `_SAFE`
+sanitization's `%`/`^`-stripping mechanism (and the `call`-based second-expansion-pass security
+property) actually works, rather than statically checking `run_setup.bat`'s own wiring. See
+`docs/agent-interconnect.md`'s DLL-bundling section for the real bug this fixture caught (a first
+implementation attempt used a cmd.exe `%VAR:%%=_%` substitution that CI proved silently produced an
+empty string) and `docs/agent-lessons-learned.md`'s corresponding entry.
 
 ## selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes)
 
@@ -379,8 +430,8 @@ self.cascade.timed
 
 Implements `docs/agent-closed-backlog.md`'s Item 22 (closed 2026-08-03, confirmed by real CI run
 `30779274430`, cache-lane job `91580880846` -- passed on its first real execution, no iteration
-needed): a real, non-simulated end-to-end test proving three
-distinct mechanisms all fire for real in ONE run, replacing Part VII Scenario 33's
+needed): a real, non-simulated end-to-end test originally proving three
+distinct mechanisms fire for real in ONE run, replacing Part VII Scenario 33's
 `[Extrapolated Branch]` splice with genuine evidence -- the uv-to-conda provider cascade
 (REQ-009/REQ-005.10 slice 3), warnfix repair (REQ-007, both a genuine success AND a genuine
 failure in the same repair round), and `--hidden-import` auto-recovery (REQ-016 Slice 2). No
@@ -408,6 +459,17 @@ defeating `:warnfix_cascade_detect`'s Signal B (a REAL recorded install failure,
 top-level import name IS its own correct PyPI/conda-forge package name (no namespace
 indirection, no decoy package), so this same trap cannot occur. See `docs/agent-closed-backlog.md`'s
 Item 22 for the full research trail.
+
+**Extended 2026-08-04 with a 4th mechanism (CLAUDE.md Active Backlog Item 24,
+`docs/prd-conda-native-dll-bundling.md`): the conda native-DLL bundling repair loop
+(`:dll_bundle_recover`).** `pygrib`'s conda-forge build genuinely triggers the exact
+`eccodes.dll`-not-bundled failure this loop exists to repair, so this same test (no new flags,
+no new fixtures) is also this loop's Requirement 4 regression test -- see
+`docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the full
+mechanism trace. `$mech4Pass` (`dllWarningSeen`/`dllBundling`/`dllBundleComplete`) is now required
+for `$chainPass`, alongside the original three mechanisms -- this is the acceptance criterion that
+should finally flip `chainPass` to `True` for the first time. NOT YET CONFIRMED in real CI as of
+this note (see CLAUDE.md's Item 24 entry for current status).
 
 Asserts, mostly against `$combined` (the bootstrap stdout log plus `~setup.log`, concatenated) --
 except the exact cascade COUNT (`$uvToConda`) and the warnfix-round evidence (`$warnfixRoundCount`/

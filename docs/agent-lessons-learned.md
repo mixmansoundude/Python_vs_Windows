@@ -405,6 +405,42 @@ the closing quote is never adjacent to a variable-derived trailing backslash. Di
 from cmd.exe's own parse-time `%VAR%` expansion (that's about WHEN substitution happens; this is
 about HOW the resulting text is re-parsed by the child process).
 
+**Second real, CI-confirmed instance -- `python.exe`'s own argv, not just `findstr.exe`'s (CLAUDE.md
+Item 24, `self.layered_e2e.chain`, cache lane, 2026-08-07).** Confirms this is a genuinely GENERAL
+rule about how any native Windows console app's C-runtime startup re-parses its own command line
+(`CommandLineToArgvW`-equivalent), not something specific to `findstr`. `run_setup.bat`'s
+`:dll_bundle_recover` called `~dll_bundle_scan.py` with `"%HP_PY_DIR%"` (from `%~dpI`, which
+ALWAYS ends in exactly one trailing backslash) as the third argument, immediately followed by
+another quoted argument (the tried-file path) -- the same odd-backslash-before-quote pattern,
+just hitting `python.exe`'s own argv parser instead of `findstr.exe`'s. The single trailing
+backslash escaped the closing quote instead of closing it, silently merging `conda_env_dir` with
+the next argument into one corrupted string containing a literal embedded `"`. `locate_dll()`
+then failed `os.path.isdir()` on that garbage and reported "could not locate a matching file"
+**even though the real DLL was genuinely present** -- confirmed directly by downloading the real
+`eccodes-2.48.0-h3bec8ca_0` conda-forge win-64 package and inspecting its contents: `eccodes.dll`
+sits at exactly `Library\bin\eccodes.dll`, precisely where the (uncorrupted) search would have
+found it. Deterministic, not flaky -- `HP_PY_DIR` always ends in one backslash by construction, so
+this fired on every single conda-provider run, and is the likely reason `self.layered_e2e.chain`'s
+`chainPass` had never been observed `true` in any real CI run despite the mechanism itself being
+otherwise correct. **Also plausibly explains `mech3Pass:false`** in the same test run: the
+frozen EXE never got past the corrupted-DLL pygrib import to reach colorama's own (deliberately
+un-bundled, `importlib`-based) hidden-import gap, so `:hidden_import_recover`'s own strict
+`ModuleNotFoundError`-only gate never had a chance to fire on this run -- an `ImportError: DLL
+load failed` is a structurally different failure signature it correctly declines to act on (see
+"--hidden-import auto-recovery must stay STRICT" above). Fixed the same way: `HP_PY_DIR_ARG`
+(`%HP_PY_DIR%` plus one appended backslash, giving an even count) replaces `HP_PY_DIR` at this one
+call site. Verified via a faithful Python simulation of the documented `CommandLineToArgvW`
+algorithm (`tests/test_dll_bundle_scan.py`'s `HpPyDirArgvQuoting` class) rather than a real
+Windows subprocess repro -- Linux's `execve` passes argv as a real array with no command-line
+re-tokenizing step, so this specific hazard class cannot be reproduced via a real subprocess on
+this sandbox at all; the algorithmic simulation is the closest available live-verification
+substitute for a hazard that is Windows-only by construction. **Confirmed via real CI** (commit
+`45ec269`, `cache`-lane run `31208498606`): the fresh bootstrap log shows `eccodes.dll` genuinely
+located and bundled for the first time (`[REPAIR][DLL_BUNDLE] Bundling native DLL dependency:
+eccodes.dll (found at ...\Library\bin\eccodes.dll)...` -> `Native-DLL bundling complete`),
+closing CLAUDE.md's Item 24. `chainPass` itself is still `false` on that same run, but for a
+separately-scoped reason now that this fix let the EXE get further -- see CLAUDE.md's Item 28.
+
 ---
 
 ## `:log` echoes UNQUOTED -- never route shell metacharacters through it
@@ -442,6 +478,86 @@ maliciously-or-accidentally-crafted filename delivered via a Windows double-clic
 flow (not a common vector), and the only real fix is the global `:log` rework already documented
 as blocked by the three CI static guards above. Noted here so it isn't rediscovered as a "new"
 finding later.
+
+**A second, distinct hazard on top of the above: `call :log "..."` triggers cmd.exe's OWN second
+expansion pass, so `%`/`^` are just as dangerous as `<`/`>`/`|`/`&` -- found and fixed for the
+conda native-DLL bundling loop (CLAUDE.md Item 24), via a CodeRabbit review round.** This is
+independent of the UNQUOTED-echo hazard above (which is about `:log`'s OWN `echo %MSG%` line) --
+this one is about the CALLER's line, `call :log "... %SOME_VAR% ..."`, itself. `call` is
+documented (informally, but extremely well-established in practice) to re-scan its own,
+already-substituted command line a SECOND time before invoking the target. Concretely: if
+`%SOME_VAR%`'s value happens to CONTAIN text shaped like `%OTHER_VAR%` (not a literal `%OTHER_VAR%`
+reference in the source code -- a VALUE that merely looks like one, e.g. captured from external
+text such as a build-tool warning message), the caller's own NORMAL single-pass substitution
+inserts that literal text into the line first; then, because the command is `call`, a SECOND scan
+finds `%OTHER_VAR%` sitting in the now-substituted text and expands IT too -- potentially leaking
+an unrelated environment variable (a CI secret, a token) into whatever the call ultimately does
+with it (in this case, `:log`'s own console/file output). **Rule: any DISPLAY-ONLY sanitization
+built to protect a `call`-based subroutine's own unquoted internals (mirroring the `_SAFE` pattern
+above) must ALSO strip `%` and `^`, not just `<`/`>`/`|`/`&`** -- omitting them defeats the whole
+point of building the sanitization in the first place, since a value from an untrusted/external
+source can just as easily be shaped like `%GITHUB_TOKEN%` as it can contain a raw `&`.
+
+**`set "VAR=%VAR:%%=_%"` (doubling `%` to `%%` in the search text) does NOT reliably strip a
+literal percent sign -- a real bug this repo shipped once and caught only via a live-cmd.exe CI
+test, not via reasoning.** The doubled-percent form looks like a natural extension of the
+well-known FOR-loop `%%i` escaping rule, and was documented here as "the standard, long-established
+cmd.exe idiom" on that basis -- but confirmed FALSE via `tests/harness.ps1`'s
+`batch.dll_bundle.pct_sanitizer` fixture executed for real on Windows CI: the substitution silently
+produced an EMPTY value (`echo` with no argument) instead of the sanitized text. This broke the DLL
+native-bundling loop's own sanitization across essentially every CI lane. **Rule: to strip a
+literal `%` (or `^`) from a batch variable, do NOT use cmd.exe `:search=replace` substitution --
+shell out to PowerShell instead** (`[Environment]::GetEnvironmentVariable('VAR') -replace
+'%','_' -replace '\^','_'`, written to a temp file and read back via a plain, non-`call`
+`for /f "usebackq delims=" %%X in (...) do set`), which has unambiguous .NET string semantics
+instead of cmd.exe's own undocumented parsing quirks. See `docs/agent-interconnect.md`'s "Conda
+native-DLL bundling repair loop" section for the concrete fix (`HP_DLL_DETECTED_SAFE`/
+`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE`) and the CI-confirmed failure signature.
+
+**That PowerShell fix ALSO shipped broken, on the exact same fixture's next real Windows run --
+a third round of the same underlying lesson.** The replacement text itself, `-replace '%','_'`,
+put a lone, unpaired `%` literal into the `-Command` argument -- and that `-Command` argument sat
+on the same cmd.exe logical line as a legitimate `%LOG%`/`%TEMP%` reference. **cmd.exe pairs `%`
+characters with a left-to-right scan of the ENTIRE line, ignoring quote boundaries** -- it does
+not know or care that the lone `%` is "inside a PowerShell string" three quote-levels deep; it
+just counts percent signs. The lone `%` paired with `%LOG%`'s own opening `%`, and everything
+between them -- the whole real replace logic -- was parsed as one bogus, undefined variable name.
+Inside a batch file specifically (not an interactive prompt), an undefined `%VAR%` reference is
+silently deleted and replaced with empty text, not left as literal fallback text -- so the entire
+PowerShell command was gutted before it ever executed, reproducing the identical `"ECHO is off."`
+failure signature as the very bug this fix was meant to close. A sibling block with an EVEN total
+`%` count (two lone `%`'s, one per `-replace` call, plus `%LOG%`'s own pair) shows even parity is
+NOT sufficient proof of safety: the two lone `%`'s paired with EACH OTHER instead of each correctly
+pairing with `%LOG%`, silently deleting an entire intervening `Set-Content` call. **Rule: a
+literal, lone `%` must never appear anywhere in PowerShell text embedded in a `-Command` argument
+if that same cmd.exe logical line ALSO contains any legitimate `%VAR%` reference** (a redirection
+target, `%LOG%`, `%TEMP%`, anything) -- cmd.exe's pairing scan has no concept of "this one is fake,
+skip it." Build the percent character entirely inside PowerShell instead: `$pct = [char]37` (or
+`[char]0x25`), then `-replace $pct,'_'` -- this removes every literal `%` from the cmd.exe-visible
+text, leaving only the genuine, correctly-paired reference. **Verification method that actually
+caught this**: after any such fix, count `%` occurrences on the fully-joined (continuation-`^`-
+resolved) logical line and confirm the total matches exactly the number of INTENDED pairs -- do not
+stop at "the count looks even," trace which characters are meant to pair with which.
+
+**General rule this incident reinforces, for the THIRD time in this exact code path**: when this
+repo's own static reasoning about an undocumented cmd.exe parsing rule cannot be settled by citing
+an authoritative source, build a live-cmd.exe-executed test fixture (mirroring `tests/harness.ps1`'s
+existing pattern) and trust ITS result over another round of reasoning. Static reasoning about
+cmd.exe's own `%`-pairing and substitution semantics has now been WRONG three separate times in
+this one code path, even after the fixture had already caught the first mistake -- the fixture
+itself is what caught the second and third, exactly by design. Do not treat "I fixed the thing the
+test caught" as proof the new code is correct; re-run the actual test.
+
+**Closed out via a fourth change: stop trying to write cmd.exe-safe `%`-handling `-Command` text
+at all.** After three rounds of getting the exact same class of bug wrong, the actual fix was to
+stop fighting cmd.exe's `%`-pairing rules and remove them from the equation entirely -- the
+sanitizer moved into a real emitted file, `tools/dll_pct_sanitize.ps1` (`HP_DLL_PCT_SANITIZE`),
+invoked via `-File "path" arg1 arg2...` instead of `-Command "..."`. A `-File` invocation's own
+script body is never handed to cmd.exe's tokenizer at all -- only the outer invocation line is,
+and that's plain argv (env-var names and output file paths), with no `%`-pairing hazard to get
+wrong a fourth time. See the "PowerShell helpers: prefer an emitted `.ps1` file..." entry further
+below in this file (now covers this as a second, independent trigger condition alongside embedded
+`"` characters) and `docs/agent-interconnect.md`'s DLL-bundling section for the full before/after.
 
 ---
 
@@ -814,6 +930,24 @@ regardless of whether it came from interpolation or plain concatenation. A real 
 the existing `:emit_from_base64` mechanism) has no such exposure. This is why `HP_FAILFAST_PROBE`
 became an emitted file instead of an inline one-liner.
 
+**Second, independent trigger condition for the same rule: a literal `%` anywhere in `-Command`
+text, even with zero `"` characters involved.** The DLL-bundling `%`/`^` sanitizer (CLAUDE.md
+Item 24) went through THREE separate real-CI-confirmed bugs while it stayed inline `-Command`
+text (see `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the
+full trace) -- cmd.exe pairs `%` characters via a left-to-right scan of the ENTIRE logical line,
+with zero awareness of PowerShell's own quoting, so a literal `%` inside `-Command` text sharing a
+cmd.exe line with any real `%VAR%` reference (`%LOG%`, `%TEMP%`, etc.) can silently corrupt that
+reference's pairing -- an entirely separate failure mode from the `"`-breaks-tokenizing rule above,
+with its own history of getting "fixed" wrong twice before landing on the actual fix. Eventually
+converted to `tools/dll_pct_sanitize.ps1`, a real emitted file (env-var names and output paths
+passed as plain argv, never interpolated into `-Command` text) -- this closes the bug class
+structurally, the same way `HP_FAILFAST_PROBE` closed the `"`-tokenizing class above. **Rule of
+thumb going forward: the moment a PowerShell one-liner needs to build or contain a literal `%`
+(not just read an existing `%VAR%` the CALLER already substituted), stop and use `-File` instead
+of reasoning through cmd.exe's pairing behavior again** -- that reasoning has now been wrong three
+times in a row in this exact code path, each only caught by a live-cmd.exe CI test built for the
+purpose, never by review or local `pwsh` testing.
+
 **Prefer raw .NET types over Utility-module cmdlets (`Get-FileHash`, `Expand-Archive`,
 `Get-Content`, `Set-Content`, `Get-Date`) in embedded `.ps1` helpers invoked from a `for /f`
 backtick subshell -- module auto-loading is not guaranteed there on Windows PowerShell 5.1, and
@@ -877,6 +1011,46 @@ via `taskkill /F /T /PID` (process-tree kill; Windows PowerShell 5.1's .NET Fram
 read (`Task.Wait($drainMs)`, 5000ms) as a second safety net. The `taskkill /T` half is NOT
 CI-confirmed (no Windows environment available to construct a genuine repro); the drain-wait
 fallback IS verified (`ProcessTreeAndDrainTimeout` test, a grandchild-inherits-the-pipe scenario).
+
+**First real CI evidence, 2026-08-07 -- THREE occurrences of the same mechanism across three
+separate runner VMs in one real Windows CI run, escalating from "watch for recurrence" to a
+confirmed, fixed bug.** `UnconditionalKill::test_hang_after_output_is_ALSO_killed_unlike_exe_
+smokerun` failed on 3 of 8 lanes on a commit that touched neither this test file nor
+`tools/exe_hint_rerun.ps1` (confirmed via `git log`/`git diff origin/main` showing zero changes to
+either since PR #410) -- the other 5 lanes passed the identical suite on the identical commit:
+- `contract-uv` (non-gating): a hard `subprocess.TimeoutExpired` after the test's own 60s outer
+  budget, waiting on a real `pwsh.EXE ... tools/exe_hint_rerun.ps1` child -- the kill never
+  completed in time.
+- `uv` (non-gating): `AssertionError: 50.641... not less than 45` -- the kill DID eventually
+  complete, just past the test's own 45s inner assertion.
+- `real` (**GATING**): `AssertionError: 48.437... not less than 45` -- the identical failure
+  signature as `uv`, now on a lane that blocks PR merges. This is what escalated the issue from a
+  documentation note to an actual fix: three occurrences across independent runner VMs, all
+  showing the SAME direction of slowness (kill eventually succeeds, just 40-60s late against a
+  500ms test deadline), is a real pattern, not noise -- and once it hit a gating lane it could no
+  longer be deferred.
+- The other gating lane (`conda-full`) and 4 more non-gating lanes passed clean on the same commit.
+
+**Root cause identified and fixed the same day, without a Windows repro environment, by bounding
+every previously-unbounded wait in the kill path.** `~exe_hint_rerun.ps1`'s post-kill sequence had
+TWO calls with no timeout at all: the blocking `& taskkill.exe /F /T /PID $p.Id` invocation itself
+(a synchronous native-command call with no way to bound it via the `&` operator), and the trailing
+`$p.WaitForExit()` (no argument) right after it. Either one stalling under shared-runner
+contention -- CPU/disk contention, or Windows Defender scanning a freshly-terminated process tree,
+neither confirmed since no Windows host was available to instrument directly -- would fully explain
+all three observed signatures (a slow-but-eventually-successful kill, or a kill so slow it blew
+past even a 60s outer budget). Rather than guess which single call was the culprit, BOTH are now
+bounded: `taskkill.exe` is launched via its own `System.Diagnostics.Process` object with a 5000ms
+`WaitForExit`, and the trailing `$p.WaitForExit()` after the kill attempt is now
+`$p.WaitForExit($drainMs)` (also 5000ms) instead of unbounded. `$p` has already been sent `/F /T`
+plus a direct `Kill()` by the time either bound is reached, so a slow confirmation now just means
+"stop waiting," never "the process might still be alive and unaddressed." All 8
+`tests/test_exe_hint_rerun.py` tests (including `PayloadSync`) pass locally post-fix.
+**Confirmed against the real slowness on BOTH gating lanes** (commit `f106f78`, run
+`31196980168`): `real` (job `92928320716`) and `conda-full` (job `92928320698`) both came back
+`conclusion: success`, full pytest suite included -- the same runner-contention class did not
+recur on either lane's re-run. Closed as CLAUDE.md Active Backlog Item 27, moved to
+`docs/agent-closed-backlog.md`.
 
 **Why the default is 10000ms, not 5000ms (widened 2026-07):** the original 5000ms default was
 tuned assuming the probe window only needs to outlast a failing process's own error handling

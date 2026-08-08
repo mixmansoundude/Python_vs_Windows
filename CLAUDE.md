@@ -204,6 +204,13 @@ This is the deliverable. Treat changes carefully.
      so a user typo or `ImportError: cannot import name` causes ZERO rebuilds. Bounded to 3
      rebuilds (helper tried-list + iter cap). Canonical source `tools/hidden_import_scan.py`;
      PayloadSync in `tests/test_hidden_import_scan.py`.
+   - `HP_DLL_PCT_SANITIZE` -- decodes to `~dll_pct_sanitize.ps1`; strips `%`/`^` from one or more
+     env var values (`(envVarName, outFile)` argv pairs), for `:log`'s UNQUOTED-echo safety in the
+     native-DLL bundling loop. Emitted as a real `.ps1` file specifically so cmd.exe's own
+     tokenizer never parses its body -- the predecessor inline `-Command` version of this logic
+     went through three separate real-CI-confirmed bugs from cmd.exe's `%`-pairing behavior before
+     landing here (see `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry). Canonical
+     source `tools/dll_pct_sanitize.ps1`; PayloadSync in `tests/test_dll_pct_sanitize.py`.
 
 2. **Delimiter-check after every edit**:
    ```bash
@@ -523,35 +530,78 @@ Once an item is fully resolved it is removed from here entirely and archived (ke
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
 start at 1 and has gaps.
 
-- **Item 24: PyInstaller does not bundle `pygrib`'s native `eccodes.dll` dependency under the
-  conda provider, so the frozen EXE fails at runtime even though the build itself succeeds.**
-  Found via `self.layered_e2e.chain`'s real CI evidence (run `30875520181`, cache-lane job
-  `91886501141`) once Item 22's cStringIO fix let the test reach this far for the first time --
-  see that item's own closed-backlog entry for the full mechanism trace. `pygrib`'s conda-forge
-  build (`pygrib-2.1.8-py314h7badd63_0`) links its compiled `_pygrib.cp314-win_amd64.pyd`
-  extension against `eccodes.dll`, a separate native C library shipped by its own conda-forge
-  package (`eccodes-2.48.0-h3bec8ca_0`, present in the env) -- PyInstaller's static analysis
-  bundles the Python extension module itself but never discovers or copies that DLL dependency,
-  so the build succeeds (with only a `WARNING: Library not found: could not resolve
-  'eccodes.dll'...` note) and the frozen EXE then fails immediately at runtime with `ImportError:
-  DLL load failed while importing _pygrib: The specified module could not be found.` This is a
-  missing-native-library failure, not a missing-Python-module one -- `--hidden-import`
-  auto-recovery correctly never attempts anything here (see "--hidden-import auto-recovery must
-  stay STRICT" in `docs/agent-lessons-learned.md`), since that mechanism is deliberately scoped to
-  `ModuleNotFoundError` only and this is a different failure class entirely.
-  **Practical impact:** keeps `self.layered_e2e.chain` at `pass:false` (`chainPass=False`) even
-  though the two mechanisms it was originally designed to test (REQ-009 cascade, warnfix
-  success/failure) now both genuinely pass. The test is `cache`-lane-only and non-gating
-  (`continue-on-error`), so this does not block any lane that gates PR merges.
-  **Not investigated further yet** -- a real fix likely needs either a `--collect-binaries=pygrib`
-  (or equivalent PyInstaller binary-collection flag) added to the existing `:compute_collect_flags`
-  machinery (currently only handles `--collect-submodules` for a curated set: sklearn, matplotlib,
-  scipy, plotly -- see `docs/agent-lessons-learned.md`'s "Pre-build --collect-submodules must be
-  DOUBLE-gated" entry for that mechanism's shape), or an explicit post-build DLL-copy step scoped
-  to conda-provided native dependencies. Whether this is a `pygrib`-specific quirk or a broader gap
-  affecting any conda-forge package with a native DLL dependency PyInstaller can't trace is not yet
-  known -- worth checking against another conda-forge package with a similar native-library
-  dependency before assuming a `pygrib`-specific fix is sufficient.
+- **Item 28: `pygrib`'s compiled extension needs `numpy` and `packaging` as hidden imports before
+  the app can run at all, and `self.layered_e2e.chain`'s `mech3Pass` check (specifically
+  `--hidden-import=colorama`) never gets a chance to fire because of it.** Found via the first
+  real CI confirmation of Item 24's own fix (commit `45ec269`, `cache`-lane run `31208498606`,
+  `~layered_e2e_bootstrap.log`) -- now that `eccodes.dll` bundling genuinely works (Item 24
+  closed), the frozen EXE gets further than ever before and hits a NEW, earlier failure:
+  `ModuleNotFoundError: No module named 'numpy'` on the first post-DLL-bundle smoke run.
+  `:hidden_import_recover` correctly identifies and fixes this (`--hidden-import=numpy`, iter
+  1/3), but the NEXT smoke run then fails on `packaging` (`--hidden-import=packaging`, iter 2/3)
+  -- both are genuine, correctly-diagnosed hidden-import gaps (`pygrib`'s Cython-generated
+  extension apparently imports both at the C level, invisible to PyInstaller's static AST scan,
+  the same general blind spot `--hidden-import` auto-recovery exists to patch one module at a
+  time). After the `packaging` fix, the run still fails (`Entry smoke exit=1`), but the loop does
+  NOT attempt a 3rd rebuild -- the final failure's own signature apparently isn't a plain
+  `ModuleNotFoundError` for an installed module (only a generic `[HINT][RUNTIME_MISMATCH]` fires,
+  not a `[HINT][HIDDEN_IMPORT]` one), so `:hidden_import_recover`'s strict gate correctly declines
+  rather than guessing. **Not yet root-caused what the 3rd failure actually is** -- the concatenated
+  bootstrap log this investigation used doesn't include the EXE's own stderr for that specific
+  attempt; a future loop should pull `~run.err.txt`/the hidden-import-recovery loop's own captured
+  stderr for that exact rebuild to see the real traceback before deciding on a fix.
+  **Practical effect on `self.layered_e2e.chain`**: `chainPass` stays `false`, but for a reason
+  entirely OUTSIDE Item 24's own scope -- `mech3Pass` requires the literal log text
+  `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama`, and colorama's own gap (deliberately
+  built into the test's own `app.py` via `importlib.import_module`, specifically to exercise
+  hidden-import recovery) is never reached because `pygrib`'s own numpy/packaging chain intervenes
+  first and doesn't resolve within the 3-iteration cap. Two candidate directions, neither
+  attempted yet: (a) find out what the 3rd, unfixed failure actually is and whether one more
+  `--hidden-import` would close it (possibly needing more than 3 iterations for a dependency chain
+  this deep -- `pygrib` pulls in numpy transitively via conda, and numpy itself has its own
+  layered C-extension import needs); (b) reconsider whether `pygrib`+`--collect-all=pygrib` (or
+  `--copy-metadata=numpy`, since `packaging` needing to be findable often means something is doing
+  a `pkg_resources`/`importlib.metadata` version check) would resolve the whole chain in one shot
+  instead of the current one-module-at-a-time approach. Either direction needs its own focused
+  investigation, not a guess bolted onto an already-large change -- deliberately deferred, same
+  discipline as Item 25's own deferral. Low urgency: this only affects the `cache`-lane,
+  non-gating `self.layered_e2e.chain` test; it does not block any lane that gates PR merges.
+
+- **Item 25: `:dll_bundle_recover` reports `repaired` instead of a distinct `exhausted` outcome
+  when a locatable DLL candidate is found after the 3-iteration cap is already hit.** Found via a
+  CodeRabbit review round on PR #414 (Item 24's own PR), same day as Item 24's real CI diagnosis.
+  `:dll_bundle_loop` finds the next candidate (`HP_NEXT_DLL`) BEFORE checking
+  `if %HP_DLL_ITER% GEQ 3` -- so when a 4th locatable DLL exists, that information is silently
+  discarded (the loop just `goto :dll_bundle_recover_done`), and at `:dll_bundle_recover_done`, the
+  `if %HP_DLL_ITER% GEQ 1` check reads TRUE (3 DLLs were already genuinely bundled), so it emits
+  `[REPAIR][DLL_BUNDLE] Native-DLL bundling complete` and the `repaired` NDJSON state, even though
+  a real candidate was left unbundled. Needs a distinct `exhausted` outcome (mirroring
+  `:hidden_import_recover`'s own `self.exe.hidden_import.exhaust` precedent) that does NOT claim
+  completion, plus a matching `docs/agent-ndjson.md` registration and a `tests/harness.ps1` call-
+  site-count update. Deliberately NOT fixed inside Item 24's already-large PR -- this needs its own
+  focused loop with its own test coverage. Low real-world trigger rate (needs 4+ conda-forge
+  packages under ONE PyInstaller build to each separately need `--add-binary`, not yet observed for
+  any real package in this repo's testing), so not urgent, but a genuine correctness gap.
+
+- **Item 26: `ENVNAME` sanitization collapses `&` (and every other non-word/non-hyphen character)
+  to a bare underscore in the built EXE's filename, losing readability -- owner-suggested
+  refinement, deliberately deferred as a far-term nice-to-have, not a defect.** `ENVNAME` (derived
+  from the project folder name near the top of `run_setup.bat`, right after
+  `:define_helper_payloads`) is already sanitized via a PowerShell regex (`-replace
+  '[^A-Za-z0-9_-]', '_'`) before it becomes both the conda env name and the actual built artifact
+  filename, `dist\%ENVNAME%.exe` -- exactly the kind of file a user might rename and email to
+  someone. No live bug: `&` is not in the allowed character set, so it already collapses to `_`
+  today, never reaching the filename raw. The owner's point (unprompted, general guidance for any
+  future bootstrapper output meant for user consumption, not a report of a broken case): many
+  tools mishandle a raw `&` in a filename (confuses it for URL query-string syntax), and Outlook
+  specifically renders `&`-containing filenames oddly in email -- but the CURRENT blanket
+  `[^A-Za-z0-9_-]` -> `_` substitution already avoids that failure mode categorically, just at the
+  cost of readability (a folder named `Sales & Marketing` becomes `Sales___Marketing.exe`, not
+  `Sales_and_Marketing.exe`). A refinement would special-case `&` -> `and` (or `_and_`) BEFORE the
+  general blanket substitution runs, preserving semantic meaning for that one common case while
+  leaving every other stripped character's behavior unchanged. Low priority, no reported real-world
+  friction yet -- filed here rather than implemented immediately since the underlying safety
+  property is already satisfied.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

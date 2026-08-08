@@ -25,6 +25,25 @@
 #      but the frozen EXE still fails at runtime with ModuleNotFoundError (never bundled).
 #      Because colorama IS installed in the (now conda) build interpreter, the strict
 #      double-gate fires and a --hidden-import=colorama rebuild fixes it for real.
+#   4. Conda native-DLL bundling repair loop (CLAUDE.md Active Backlog Item 24 /
+#      docs/prd-conda-native-dll-bundling.md, :dll_bundle_recover in run_setup.bat): pygrib's
+#      conda-forge build links its compiled _pygrib.cp3xx-win_amd64.pyd extension against
+#      eccodes.dll, a separate native DLL shipped by its own conda-forge package
+#      (python-eccodes / eccodes) under the env's Library\bin -- PyInstaller's static
+#      analysis bundles the .pyd itself but never discovers or copies that DLL dependency,
+#      so the build succeeds with only a "WARNING: Library not found: could not resolve
+#      'eccodes.dll'..." note, and (before this mechanism existed) the frozen EXE crashed
+#      at runtime with ImportError: DLL load failed. This is what previously kept
+#      chainPass at False even once mechanisms 1-3 all genuinely passed. :dll_bundle_recover
+#      reacts to that build-time warning (before the smoke run, no wasted crash-and-detect
+#      cycle), locates eccodes.dll under the conda env's own Library\bin, bundles it via
+#      --add-binary, and rebuilds -- this is the acceptance criterion that finally lets the
+#      final EXE genuinely run pygrib and print its token. Requirement 1's own CI experiment
+#      (PR #415, self.gribapi_hook_probe.hidden_import) first confirmed the cheaper
+#      alternative -- forcing --hidden-import=gribapi to see if pyinstaller-hooks-contrib's
+#      existing hook-gribapi.py would bundle the DLL for free -- does NOT work for a
+#      pygrib-only build (pygrib and gribapi are independent bindings to the same C
+#      library), ruling out that shortcut before this loop was built.
 #
 # GDAL/osgeo was the original candidate researched for mechanism 1, but was rejected after
 # deeper research: GDAL's Python bindings live under the `osgeo` namespace
@@ -188,6 +207,17 @@ $cascadeDetected = $combined -match [regex]::Escape('[INFO] REQ-009: cascade can
 $cascadeApproved = $combined -match [regex]::Escape('[INFO] REQ-009: cascade approved; will re-attempt under the next provider tier.')
 $uvToConda       = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascading provider uv to conda'))).Count
 $condaSelected   = $combined -match [regex]::Escape('REQ-009: Selected Python provider: Conda')
+# derived requirement: real CI evidence (2026-08-07) showed this cascade genuinely failing here --
+# runtime.txt write-back pins the EXACT uv-resolved patch version (e.g. python-3.14.7), and without
+# the HP_PYSPEC_WRITEBACK fix, :try_conda_create forwarded that exact pin to conda create, which
+# conda-forge does not carry (PackagesNotFoundInChannelsError), hard-failing the whole cascade
+# before pygrib was ever built. This app's own stub has no runtime.txt/pyproject.toml of its own,
+# so PYSPEC can ONLY be non-empty here via write-back -- $pinDropped not firing (while $condaSelected
+# is still true) would mean conda happened to already have that exact patch by coincidence, not that
+# the fix's own code path was exercised; not asserted as a hard requirement for that reason, but
+# logged for visibility (see docs/agent-interconnect.md's "runtime.txt write-back... cascade
+# re-entry" section for the full mechanism trace).
+$pinDropped      = $setupText -match [regex]::Escape('[INFO] conda create: dropping the write-back-derived exact Python pin')
 
 # Mechanism 2: warnfix repair, both outcomes in the SAME round -- derived requirement: a plain
 # "does this string appear anywhere in the combined log" check (the original approach) cannot
@@ -228,6 +258,17 @@ $xlrdInstalled    = $warnfixRoundText -match [regex]::Escape('[INFO] Installed: 
 # Mechanism 3: hidden-import auto-recovery for colorama, after the cascade.
 $hiddenAdding     = $combined -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama')
 $hiddenRecovered  = $combined -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] EXE verified after hidden-import recovery')
+
+# Mechanism 4: conda native-DLL bundling repair loop (CLAUDE.md Active Backlog Item 24).
+# $dllWarningSeen proves PyInstaller's own build-time detection signal fired at all (the
+# same signal that, before :dll_bundle_recover existed, was the whole reason chainPass
+# stayed False); $dllBundling proves the loop actually located eccodes.dll under the conda
+# env's Library\bin and attempted a rebuild with it; $dllBundleComplete proves that rebuild
+# succeeded (the loop's own trailer log line only fires after a genuinely successful
+# rebuild -- see :dll_bundle_recover_done in run_setup.bat).
+$dllWarningSeen    = $setupText -match [regex]::Escape("Library not found: could not resolve 'eccodes.dll'")
+$dllBundling       = $combined -match [regex]::Escape('[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: eccodes.dll')
+$dllBundleComplete = $combined -match [regex]::Escape('[REPAIR][DLL_BUNDLE] Native-DLL bundling complete')
 
 $infraError = $combined -match 'Failed to parse|uv error|pip error'
 
@@ -328,16 +369,17 @@ if (Test-Path $statusPath) {
 $mech1Pass = $uvInstallFailed -and $cascadeDetected -and $cascadeApproved -and ($uvToConda -eq 1) -and $condaSelected
 $mech2Pass = $warnInstallFired -and ($warnfixRoundCount -eq 1) -and $warnfixRoundComplete -and $pygribAttempted -and $pygribFailed -and $xlrdAttempted -and $xlrdInstalled
 $mech3Pass = $hiddenAdding -and $hiddenRecovered
+$mech4Pass = $dllWarningSeen -and $dllBundling -and $dllBundleComplete
 $exePass   = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and (-not $infraError)
-$chainPass = $mech1Pass -and $mech2Pass -and $mech3Pass -and $exePass -and ($statusExit -eq 0) -and ($statusState -eq 'ok') -and ($runExit -eq 0)
+$chainPass = $mech1Pass -and $mech2Pass -and $mech3Pass -and $mech4Pass -and $exePass -and ($statusExit -eq 0) -and ($statusState -eq 'ok') -and ($runExit -eq 0)
 
 # Self-diagnosis: run_setup.bat output is redirected to the bootstrap log file, so without
 # this the CI job log shows nothing about what the chain actually did.
 Write-Host "=== self.layered_e2e.chain evidence ==="
-Write-Host ("mech1Pass={0} mech2Pass={1} mech3Pass={2} exePass={3} statusExit={4} statusState={5} runExit={6} chainPass={7}" -f `
-    $mech1Pass, $mech2Pass, $mech3Pass, $exePass, $statusExit, $statusState, $runExit, $chainPass)
-Write-Host "=== REQ-009 / warnfix / hidden-import lines (setup log) ==="
-($setupText -split "`n") | Where-Object { $_ -match 'REQ-009|REPAIR|HIDDEN_IMPORT|Selected Python provider|Attempting to install|Installed:|Repair failed' } | Select-Object -First 100 | ForEach-Object { Write-Host $_ }
+Write-Host ("mech1Pass={0} mech2Pass={1} mech3Pass={2} mech4Pass={3} exePass={4} statusExit={5} statusState={6} runExit={7} chainPass={8}" -f `
+    $mech1Pass, $mech2Pass, $mech3Pass, $mech4Pass, $exePass, $statusExit, $statusState, $runExit, $chainPass)
+Write-Host "=== REQ-009 / warnfix / hidden-import / dll-bundle lines (setup log) ==="
+($setupText -split "`n") | Where-Object { $_ -match 'REQ-009|REPAIR|HIDDEN_IMPORT|DLL_BUNDLE|Selected Python provider|Attempting to install|Installed:|Repair failed|Library not found' } | Select-Object -First 100 | ForEach-Object { Write-Host $_ }
 Write-Host "=== bootstrap stdout log tail (50) ==="
 $logLines | Select-Object -Last 50 | ForEach-Object { Write-Host $_ }
 Write-Host "=== end self.layered_e2e.chain evidence ==="
@@ -346,7 +388,7 @@ Write-NdjsonRow ([ordered]@{
     id      = 'self.layered_e2e.chain'
     req     = 'REQ-009'
     pass    = [bool]$chainPass
-    desc    = 'real, unflagged chain: uv fails on pygrib -> cascades to conda; warnfix fixes xlrd but genuinely fails on pygrib (driving the cascade); hidden-import-recovery fixes colorama after the cascade'
+    desc    = 'real, unflagged chain: uv fails on pygrib -> cascades to conda; warnfix fixes xlrd but genuinely fails on pygrib (driving the cascade); hidden-import-recovery fixes colorama after the cascade; dll-bundle-recovery bundles eccodes.dll so the final EXE genuinely runs pygrib'
     details = [ordered]@{
         mech1Pass        = $mech1Pass
         uvInstallFailed  = $uvInstallFailed
@@ -354,6 +396,7 @@ Write-NdjsonRow ([ordered]@{
         cascadeApproved  = $cascadeApproved
         uvToConda        = $uvToConda
         condaSelected    = $condaSelected
+        pinDropped       = $pinDropped
         mech2Pass        = $mech2Pass
         warnInstallFired = $warnInstallFired
         warnfixRoundCount    = $warnfixRoundCount
@@ -365,6 +408,10 @@ Write-NdjsonRow ([ordered]@{
         mech3Pass        = $mech3Pass
         hiddenAdding     = $hiddenAdding
         hiddenRecovered  = $hiddenRecovered
+        mech4Pass          = $mech4Pass
+        dllWarningSeen     = $dllWarningSeen
+        dllBundling        = $dllBundling
+        dllBundleComplete  = $dllBundleComplete
         exePass          = $exePass
         exeExists        = $exeExists
         exeExit          = $exeExit

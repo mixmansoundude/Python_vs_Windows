@@ -2372,13 +2372,19 @@ compatibility code still references, never a real installable package), which dr
 unplanned SECOND cascade (conda to embed) that this scenario's own single-cascade premise doesn't
 cover. Fixed by adding `cStringIO`/`StringIO` to `parse_warn.py`'s `SKIP` filter -- **confirmed by
 a real CI run** (run `30875520181`, cache-lane job `91886501141`): the cascade now fires exactly
-once, cleanly, as designed. That same run surfaced a SECOND, unrelated, still-open bug (CLAUDE.md
-Active Backlog item 24) -- PyInstaller doesn't bundle `pygrib`'s native `eccodes.dll` dependency
-under the conda provider, so the frozen EXE still fails at runtime for a different reason once it
-reaches that point. This scenario's own uv-to-conda cascade illustration below is unaffected by
-that second bug (it documents the cascade mechanism itself, which is now confirmed working); see
-item 24 for the separate, not-yet-fixed EXE-verification gap. It uses `pygrib` (a package with zero Windows wheels on PyPI as of the
-latest release, per a direct PyPI JSON API query, but real conda-forge win-64 builds) as the
+once, cleanly, as designed. PyInstaller doesn't bundle `pygrib`'s native `eccodes.dll` dependency
+under the conda provider on its own -- the frozen EXE would fail at runtime for a different reason
+once it reaches that point, since PyInstaller's static analysis bundles the compiled Python
+extension itself but never discovers the separate native library it links against. A dedicated
+repair loop (`:dll_bundle_recover`) reacts to PyInstaller's own build-time "Library not found:
+could not resolve 'X.dll'" warning, confirms the named DLL actually exists under the conda env's
+`Library\bin` before acting (never a guess), and rebuilds once with an explicit `--add-binary`
+flag bundling it in -- bounded to 3 attempts, and gated off entirely under a non-conda provider or
+a Nuitka-built EXE, where it has no equivalent mechanism to fall back to. See
+`docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the full
+mechanism trace. This scenario's own uv-to-conda cascade illustration below is unaffected either
+way (it documents the cascade mechanism itself, which is confirmed working). It uses `pygrib` (a package with zero Windows wheels on PyPI as of
+version 2.1.8 (queried 2026-08-07) via the PyPI JSON API, but real conda-forge win-64 builds) as the
 cascade trigger -- GDAL was the original candidate and was researched and rejected (its Python
 bindings live under the `osgeo` namespace, and PyPI hosts a real, always-succeeding dummy package
 literally named `osgeo` that would have silently defeated the cascade's own confidence-gate
@@ -2508,7 +2514,7 @@ behavior (pipreqs enabled, no flags) would normally have pipreqs discover and pr
 real, unflagged trigger case is a package pipreqs's static scan genuinely cannot see (e.g. a
 `pandas.read_excel('legacy.xls')` call, which needs `xlrd` as an invisible runtime engine, never a
 direct import pipreqs's AST scan would catch) -- not yet captured in this file with its own
-dedicated real test; see CLAUDE.md's Active Backlog item 22.
+dedicated real test; see `docs/agent-closed-backlog.md`'s Item 22.
 
 **Two lines below (`[INFO] Attempting to install: openpyxl` / `[INFO] Installed: openpyxl`)
 updated to reflect current source -- `docs/agent-closed-backlog.md`'s Item 21 added them to the
@@ -2802,8 +2808,8 @@ summary -- a mix of real CI capture and lines updated to reflect current source,
 uniform capture. Real CI capture (run `29788624195`, job `88506013149`): the
 "(fallback build system)" verification line and the drive-message reassurance line, exactly as
 captured. Updated to reflect current source (`docs/plan-cli-interactive-verification.md`
-requirement 3's activity-aware kill, REQ-026's argv passthrough, and Active Backlog item 20's
-postflight briefing change, all of which shipped after this specific run): the "Verifying the
+requirement 3's activity-aware kill, REQ-026's argv passthrough, and `docs/agent-closed-backlog.md`'s
+Item 20 postflight briefing change, all of which shipped after this specific run): the "Verifying the
 built standalone EXE" line, the "You can also run it directly via the interpreter" line, and the
 "Does your program need launch arguments" paragraph. Every other line below is real capture,
 unmodified:

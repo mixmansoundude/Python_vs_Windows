@@ -469,6 +469,64 @@ $cpDecline      = $AllText -match [regex]::Escape('post-execution checkpoint (%H
 $cpCallCount    = ([regex]::Matches($AllText, 'call :run_postexec_checkpoint')).Count
 $hasCheckpoint = $cpSub -and $cpTestOverride -and $cpPrompt -and $cpAccept -and $cpDecline -and ($cpCallCount -ge 3)
 Write-Result 'batch.postexec.checkpoint' 'REQ-018 (2b-C): post-execution checkpoint wired (subroutine + CI-safe test override + unconditional prompt echo + accept/decline log lines + call sites at EXE smoke and both no-EXE interpreter branches)' $hasCheckpoint @{ sub=$cpSub; testOverride=$cpTestOverride; prompt=$cpPrompt; accept=$cpAccept; decline=$cpDecline; callSites=$cpCallCount }
+# derived requirement: CLAUDE.md Item 24 -- guard against silent removal of the native-DLL
+# recovery loop's NDJSON emission subroutine and its 6 call sites (one per outcome state:
+# skipped_nuitka, skipped_non_conda, repaired, unlocatable, failed_rebuild,
+# failed_missing_exe). A CodeRabbit review finding on PR #414 required a dedicated
+# machine-readable record for these outcomes (previously :log console text only).
+$dbSub        = $AllText -match '(?m)^:emit_dll_bundle_row'
+$dbRowId      = $AllText -match [regex]::Escape("id='self.dll_bundle.recover'")
+$dbCallCount  = ([regex]::Matches($AllText, 'call :emit_dll_bundle_row')).Count
+$dbStates     = @('skipped_nuitka','skipped_non_conda','repaired','unlocatable','failed_rebuild','failed_missing_exe')
+$dbAllStates  = $true
+foreach ($s in $dbStates) { if ($AllText -notmatch [regex]::Escape("call :emit_dll_bundle_row $s")) { $dbAllStates = $false } }
+$hasDllBundleRow = $dbSub -and $dbRowId -and $dbAllStates -and ($dbCallCount -ge 6)
+Write-Result 'batch.dll_bundle.ndjson' 'CLAUDE.md Item 24: native-DLL bundling recovery loop emits a dedicated NDJSON row (self.dll_bundle.recover) for every outcome state (skipped_nuitka/skipped_non_conda/repaired/unlocatable/failed_rebuild/failed_missing_exe)' $hasDllBundleRow @{ sub=$dbSub; rowId=$dbRowId; allStates=$dbAllStates; callSites=$dbCallCount }
+# derived requirement: CLAUDE.md Item 24 -- an earlier version of HP_DLL_DETECTED_SAFE/
+# HP_NEXT_DLL_SAFE/HP_NEXT_DLL_PATH_SAFE's display-only sanitization stripped a literal
+# percent sign via cmd.exe's own %VAR:%%=_% doubled-percent substitution idiom (confirmed
+# BROKEN live on real Windows CI -- an undocumented cmd.exe parsing quirk), then via inline
+# `-Command` text with a lone, unpaired % (confirmed broken a SECOND time, same live-CI method
+# -- see docs/agent-lessons-learned.md's ":log echoes UNQUOTED" entry for the full trace of
+# both). Root cause both times: literal % text living on a line cmd.exe itself parses. Fixed by
+# moving the sanitizer into a real emitted file, tools/dll_pct_sanitize.ps1 -- its own body is
+# never parsed by cmd.exe's tokenizer, only the outer `-File "path" arg...` invocation is, and
+# that's plain argv with no %-pairing hazard. This fixture now exercises that REAL file (the
+# same canonical source run_setup.bat's embedded HP_DLL_PCT_SANITIZE payload is synced from,
+# per PayloadSync in tests/test_dll_pct_sanitize.py) under a real cmd.exe + PowerShell child
+# process, and additionally proves the actual security property the whole sanitization exists
+# for: a raw value shaped like "%SECRET%" must not leak the real SECRET variable's value
+# through `call`'s own second cmd.exe expansion pass (see docs/agent-lessons-learned.md's
+# "call triggers a second expansion pass" entry) once it has been through this sanitizer.
+$dllPctScript = Join-Path $ProjDir 'tools\dll_pct_sanitize.ps1'
+$pctFixture = Join-Path $env:TEMP 'verify-percent-sanitizer.cmd'
+$pctScript = @'
+@echo off
+setlocal DisableDelayedExpansion
+set "SECRET=must-not-appear"
+set "HP_DLL_DETECTED_SAFE=prefix%%SECRET%%suffix^caretend"
+powershell -NoProfile -ExecutionPolicy Bypass -File "__PCTSCRIPT__" HP_DLL_DETECTED_SAFE "%TEMP%\pct_safe_out.txt" > nul 2>&1
+set "SAFE="
+for /f "usebackq delims=" %%X in ("%TEMP%\pct_safe_out.txt") do set "SAFE=%%X"
+if exist "%TEMP%\pct_safe_out.txt" del "%TEMP%\pct_safe_out.txt" >nul 2>&1
+call :log "%SAFE%"
+exit /b
+:log
+echo %~1
+'@
+$pctScript = $pctScript.Replace('__PCTSCRIPT__', $dllPctScript)
+Set-Content -LiteralPath $pctFixture -Value $pctScript -Encoding Ascii
+$pctOutput = ''
+$pctExit = 1
+try {
+  $pctOutput = (& cmd.exe /d /v:off /c $pctFixture | Out-String).Trim()
+  $pctExit = $LASTEXITCODE
+} catch {
+  $pctOutput = "EXCEPTION: $($_.Exception.Message)"
+}
+Remove-Item -LiteralPath $pctFixture -Force -ErrorAction SilentlyContinue
+$hasPctSanitizer = ($pctExit -eq 0) -and ($pctOutput -eq 'prefix_SECRET_suffix_caretend')
+Write-Result 'batch.dll_bundle.pct_sanitizer' 'CLAUDE.md Item 24: tools/dll_pct_sanitize.ps1 (the emitted-.ps1 replacement for the DLL-bundle loops _SAFE display sanitization) genuinely strips % and ^ under a real cmd.exe + PowerShell child process, and the sanitized value survives a real call-based second expansion pass without leaking the shadowed SECRET variable (live-executed fixture against the real canonical source, not static reasoning -- this repo previously got cmd.exes own %-handling wrong via reasoning alone, twice)' $hasPctSanitizer @{ output=$pctOutput; exitCode=$pctExit }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
