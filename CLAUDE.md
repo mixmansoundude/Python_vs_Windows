@@ -594,8 +594,9 @@ is not.
   failed`, Miniconda AllUsers install `reason=timeout`/`reason=installer_failed`, `pipreqs.install`'s
   NDJSON `reason` field), but the PyInstaller/Nuitka Tier A build-failure call sites
   (`:die "[ERROR] PyInstaller execution failed."` / `"[ERROR] PyInstaller did not produce
-  dist\%ENVNAME%.exe"`, ~line 3437-3468) and `self.exe.smokerun`'s own NDJSON row (~line 4524,
-  `exitCode` only) do not carry an equivalent classification -- a real user hitting a genuine
+  dist\%ENVNAME%.exe"`, inside `:run_entry_after_smoke`) and `self.exe.smokerun`'s own NDJSON row
+  (emitted from `:smokerun_ndjson`, `exitCode` only) do not carry an equivalent classification --
+  a real user hitting a genuine
   PyInstaller crash, an AV lock, disk-full, or a plain compile error all currently produce the
   identical generic message. NOT implemented in PR #423 (docs-only housekeeping PR; this needs a
   design pass over which failure signatures are actually distinguishable and worth a separate
