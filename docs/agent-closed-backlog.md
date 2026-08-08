@@ -1617,6 +1617,43 @@ this belongs to).
      empty-name-guard fallback used later in the file (`:env_state_check_done`'s
      `if "%ENVNAME%"=="" (...) set "ENVNAME=env"`).
 
+### Item 28 (closed 2026-08-08)
+
+- **`:hidden_import_recover` pairing `--collect-submodules=X` with each `--hidden-import=X` it
+  adds (CLAUDE.md's own prior root-cause finding: `pygrib`'s compiled extension needing
+  `packaging.version`, a submodule invisible to a bare `--hidden-import=packaging`).**
+  Implemented in PR #419 (`:hidden_import_recover` builds a second flag accumulator,
+  `HP_PYI_HID_COLLECT`, alongside `HP_PYI_HIDDEN_IMPORTS` -- each loop iteration appends both
+  `--hidden-import=X` and `--collect-submodules=X` for the same target, both reaching the same
+  PyInstaller rebuild call) and merged same day. See PR #419's own description for the full
+  mechanism trace and the log-line-format-change compatibility audit (every existing
+  test/doc consumer of `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=X` matches it as a prefix
+  substring, so none needed code changes).
+  **CONFIRMED via real CI evidence (merge commit `bd5d4df3`, `cache`-lane run `31256064576`,
+  `~selftest_layered_e2e/~layered_e2e_bootstrap.log` and `~setup.log`), closing this item.** The
+  paired-flag mechanism fired for real, twice, in the first post-merge run:
+  `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=numpy --collect-submodules=numpy; rebuilding EXE
+  (iter 1/3).` then, after a genuine `ModuleNotFoundError: No module named 'pyproj'` on the next
+  smoke run, `Adding --hidden-import=pyproj --collect-submodules=pyproj; rebuilding EXE (iter
+  2/3).` -- confirming the fix works for a real target (`pyproj`) never previously observed in
+  this chain, not just the originally-investigated `packaging` case (which this particular run
+  did not hit at all, plausibly due to a package-version difference in the conda solve changing
+  pygrib's own import order -- not independently confirmed, and immaterial to the fix's own
+  correctness: what matters is that the strict gate fired and the paired flags were both applied
+  whenever it did).
+  **`chainPass` itself is STILL `false` on this same run, but for a reason entirely OUTSIDE this
+  item's own scope**: now that `--collect-submodules=pyproj` bundles `pyproj`'s own compiled
+  extensions for the first time, those extensions (`list`, `database`, `_version`,
+  `_transformer`, `_sync`, `_network`, `_geod`, `_crs`, `_context` -- all 8 confirmed via the
+  rebuild's own PyInstaller build-log warnings) surface a NEW native-DLL dependency
+  (`proj_9.dll`) that could not have been detected any earlier than this exact rebuild, and the
+  existing `:dll_bundle_recover` mechanism (Item 24) only ever runs once, before the very first
+  smoke attempt -- it never gets a chance to react to a DLL warning introduced by a LATER
+  `:hidden_import_recover` rebuild. This is a genuinely new, one-level-deeper gap, not a
+  continuation of this item's own scope -- filed as its own Active Backlog item (Item 29) rather
+  than reopening this one, mirroring the exact same "each fix reveals the next layer" pattern
+  that originally produced this item out of Item 24's own closure.
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a
