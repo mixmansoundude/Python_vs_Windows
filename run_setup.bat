@@ -4251,6 +4251,12 @@ rem ImportError / circular-import never triggers a rebuild. Bounded to 3 rebuild
 rem helper's already-tried list plus the iter cap guarantee the loop cannot run forever.
 rem Sets HP_EXE_EXIT to the final EXE exit so the caller re-checks success. goto-based
 rem (not a parenthesized block) so each %VAR% reads its runtime value, not a parse-time one.
+rem CLAUDE.md Item 29 (CodeRabbit review finding on PR #421): reset this call's own "did I
+rem actually rebuild" signal FIRST, before any early-return path -- mirrors HP_DLL_REPAIRED's
+rem identical reasoning in :dll_bundle_recover. Lets the caller (the second :dll_bundle_recover
+rem pass) skip its own scan entirely when this call did nothing, instead of always re-scanning
+rem an unchanged log for no reason.
+set "HP_HIDDEN_REPAIRED="
 if not exist "dist\%ENVNAME%.exe" exit /b 0
 rem AV-Safe Build Path (requirement 4 follow-up): this loop's ONLY repair mechanism is a
 rem PyInstaller rebuild with --hidden-import flags -- a PyInstaller-specific mechanism that
@@ -4309,10 +4315,20 @@ for /f "usebackq delims=" %%M in ("~next_hidden.txt") do set "HP_NEXT_HIDDEN=%%M
 if exist "~next_hidden.txt" del "~next_hidden.txt" >nul 2>&1
 if not defined HP_NEXT_HIDDEN goto :hidden_import_recover_done
 set /a HP_HIDDEN_ITER+=1
+set "HP_HIDDEN_REPAIRED=1"
 set "HP_PYI_HIDDEN_IMPORTS=%HP_PYI_HIDDEN_IMPORTS% --hidden-import=%HP_NEXT_HIDDEN%"
 set "HP_PYI_HID_COLLECT=%HP_PYI_HID_COLLECT% --collect-submodules=%HP_NEXT_HIDDEN%"
 set "HP_HIDDEN_TRIED=%HP_HIDDEN_TRIED% %HP_NEXT_HIDDEN%"
 call :log "[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=%HP_NEXT_HIDDEN% --collect-submodules=%HP_NEXT_HIDDEN%; rebuilding EXE (iter %HP_HIDDEN_ITER%/3)."
+rem CLAUDE.md Item 29 (CodeRabbit review finding on PR #421): advance HP_LOG_SIZE_BEFORE to
+rem right before THIS rebuild, mirroring :dll_bundle_loop's own identical pattern for its own
+rem rebuilds. Narrows the SECOND :dll_bundle_recover pass's own scan window to just the LAST
+rem hidden-import rebuild's output (rather than everything since the first DLL-bundle pass,
+rem which included earlier, already-resolved rebuilds too) -- tighter and more precise, even
+rem though the wider window was not observed to cause a false re-detection in practice (an
+rem already-bundled DLL's own warning does not reappear in a later rebuild that still includes
+rem its --add-binary flag).
+for %%Z in ("%LOG%") do set "HP_LOG_SIZE_BEFORE=%%~zZ"
 "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% %HP_PYI_DLLBIND% %HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
 if errorlevel 1 (
   call :log "[REPAIR][HIDDEN_IMPORT] PyInstaller rebuild failed; stopping recovery."
@@ -4448,8 +4464,11 @@ rem :dll_bundle_recover call inside :run_entry_smoke only ever saw the ORIGINAL 
 rem warnings, before any hidden-import rebuild ran. Re-run its detection step now so a DLL
 rem gap surfaced only by one of those rebuilds is not missed (confirmed via a real pyproj/
 rem proj_9.dll failure -- see docs/agent-interconnect.md's "Conda native-DLL bundling repair
-rem loop" section).
-if not "%HP_EXE_EXIT%"=="-1" call :dll_bundle_recover
+rem loop" section). Gated on HP_HIDDEN_REPAIRED (CodeRabbit review finding on PR #421): if the
+rem call above did NOT actually rebuild anything, the log has not grown since the FIRST
+rem :dll_bundle_recover call already scanned it, so there is nothing new to find -- skip the
+rem pointless re-scan in the common case instead of always paying for one.
+if not "%HP_EXE_EXIT%"=="-1" if defined HP_HIDDEN_REPAIRED call :dll_bundle_recover
 rem Only worth a fresh verification pass if this call actually bundled something -- the
 rem common case (nothing new detected) must not pay for an extra EXE launch/wait.
 if defined HP_DLL_REPAIRED (

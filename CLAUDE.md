@@ -611,6 +611,25 @@ start at 1 and has gaps.
   `set "HP_PYI_DLLBIND="` line appears in the file EXACTLY twice (the fresh-build-attempt reset
   plus `:run_entry_smoke`'s own pre-existing end-of-pass trailer) and the `HP_PYI_HIDDEN_IMPORTS`/
   `HP_PYI_HID_COLLECT` bare resets appear EXACTLY once each.
+  **Refined same day per a CodeRabbit review round on PR #421 (both findings addressed, both
+  genuinely improved the design even though the described failure mode did not reproduce in the
+  traced real scenario):** (1) the second `:dll_bundle_recover` call is now gated on a new
+  `HP_HIDDEN_REPAIRED` flag (same reset-at-entry/set-only-on-genuine-rebuild shape as
+  `HP_DLL_REPAIRED`) -- if `:hidden_import_recover`'s first call did NOT actually rebuild
+  anything, the build log has not grown since the FIRST `:dll_bundle_recover` call already
+  scanned it, so the second call is skipped entirely instead of always paying for a pointless
+  re-scan. (2) `:hidden_import_recover`'s own loop now advances `HP_LOG_SIZE_BEFORE` to right
+  before EACH of its own rebuilds, mirroring `:dll_bundle_loop`'s identical pattern -- narrows
+  the second pass's own scan window to just the LAST hidden-import rebuild's output, rather than
+  everything since the first DLL-bundle pass (which also covered earlier, already-resolved
+  rebuilds). Traced whether the ORIGINAL wider window could actually cause the failure CodeRabbit
+  described (re-detecting and re-bundling an already-fixed DLL, spuriously setting
+  `HP_DLL_REPAIRED`): confirmed it could not, in the observed real scenario -- an already-bundled
+  DLL's own warning does not reappear in a later rebuild that still carries its `--add-binary`
+  flag, and `HP_DLL_REPAIRED` is scoped strictly to a genuine "found on disk and rebuilt
+  successfully" branch, never to a mere re-detection. Implemented both refinements anyway since
+  they are still objectively more precise and defensive, and directly close a "Major" review
+  finding cleanly.
   **NOT YET CONFIRMED in real CI** -- same status this repo requires before treating a fix like
   this as settled (see the Item 24/28 precedent: implemented, then confirmed via a real
   `cache`-lane run before being considered closed). The next `self.layered_e2e.chain` run should

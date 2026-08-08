@@ -420,8 +420,21 @@ $dllbindResetCount   = ([regex]::Matches($AllText, [regex]::Escape('set "HP_PYI_
 $hiddenImportsResetCount = ([regex]::Matches($AllText, [regex]::Escape('set "HP_PYI_HIDDEN_IMPORTS="'))).Count
 $hidCollectResetCount    = ([regex]::Matches($AllText, [regex]::Escape('set "HP_PYI_HID_COLLECT="'))).Count
 $noPerCallResetLeak = ($dllbindResetCount -eq 2) -and ($hiddenImportsResetCount -eq 1) -and ($hidCollectResetCount -eq 1)
-$hasDllBundleSecondPass = $dllSecondCall -and $hiSecondCall -and $dllRebuildHasHid -and $dllRepairedSet -and $dllRepairedCheck -and $noPerCallResetLeak
-Write-Result 'batch.dll_bundle.second_pass' 'CLAUDE.md Item 29: a second :dll_bundle_recover pass runs after :hidden_import_recover, threading its own accumulated hidden-import flags through the DLL rebuild, then giving :hidden_import_recover one more bounded pass if a DLL was actually bundled -- with a regression guard on the exact-once-per-fresh-build-attempt reset counts for the three cross-call accumulator variables' $hasDllBundleSecondPass @{ dllSecondCall=$dllSecondCall; hiSecondCall=$hiSecondCall; dllRebuildHasHid=$dllRebuildHasHid; dllRepairedSet=$dllRepairedSet; dllRepairedCheck=$dllRepairedCheck; dllbindResetCount=$dllbindResetCount; hiddenImportsResetCount=$hiddenImportsResetCount; hidCollectResetCount=$hidCollectResetCount }
+# derived requirement (CodeRabbit review finding on PR #421): the second :dll_bundle_recover
+# call must be gated on :hidden_import_recover having actually rebuilt something -- otherwise
+# it re-scans a log window that hasn't grown since the FIRST :dll_bundle_recover call already
+# covered it, for no purpose. HP_HIDDEN_REPAIRED (reset at :hidden_import_recover's own entry,
+# before any early-return path, set only where a rebuild is genuinely attempted) is the
+# reliable per-call signal for this, mirroring HP_DLL_REPAIRED's identical shape. Also guards
+# that HP_LOG_SIZE_BEFORE advances to right before EACH hidden-import rebuild (mirroring
+# :dll_bundle_loop's own identical pattern), tightening the second pass's own scan window to
+# just the LAST hidden-import rebuild's output.
+$hiRepairedSet     = $AllText -match [regex]::Escape('set "HP_HIDDEN_REPAIRED=1"')
+$hiRepairedReset    = $AllText -match [regex]::Escape('set "HP_HIDDEN_REPAIRED="')
+$hiLogSizeAdvance  = $AllText -match [regex]::Escape('for %%Z in ("%LOG%") do set "HP_LOG_SIZE_BEFORE=%%~zZ"')
+$dllSecondCallGated = $AllText -match [regex]::Escape('if not "%HP_EXE_EXIT%"=="-1" if defined HP_HIDDEN_REPAIRED call :dll_bundle_recover')
+$hasDllBundleSecondPass = $dllSecondCall -and $hiSecondCall -and $dllRebuildHasHid -and $dllRepairedSet -and $dllRepairedCheck -and $noPerCallResetLeak -and $hiRepairedSet -and $hiRepairedReset -and $hiLogSizeAdvance -and $dllSecondCallGated
+Write-Result 'batch.dll_bundle.second_pass' 'CLAUDE.md Item 29: a second :dll_bundle_recover pass runs after :hidden_import_recover (gated on HP_HIDDEN_REPAIRED, so it only fires when a rebuild actually happened), threading its own accumulated hidden-import flags through the DLL rebuild, then giving :hidden_import_recover one more bounded pass if a DLL was actually bundled -- with a regression guard on the exact-once-per-fresh-build-attempt reset counts for the three cross-call accumulator variables' $hasDllBundleSecondPass @{ dllSecondCall=$dllSecondCall; hiSecondCall=$hiSecondCall; dllRebuildHasHid=$dllRebuildHasHid; dllRepairedSet=$dllRepairedSet; dllRepairedCheck=$dllRepairedCheck; dllbindResetCount=$dllbindResetCount; hiddenImportsResetCount=$hiddenImportsResetCount; hidCollectResetCount=$hidCollectResetCount; hiRepairedSet=$hiRepairedSet; hiRepairedReset=$hiRepairedReset; hiLogSizeAdvance=$hiLogSizeAdvance; dllSecondCallGated=$dllSecondCallGated }
 # derived requirement: tightly-scoped 30s-kill warning must precede launches that force-stop
 # user code (EXE smoke + hidden-import recovery), so users do not lose work in a verification run.
 $warnSubCount = ([regex]::Matches($AllText, ':warn_user_code_launch')).Count

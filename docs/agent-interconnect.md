@@ -570,11 +570,42 @@ both new call sites exist, the flag-threading text is present, `HP_DLL_REPAIRED`
 checked, and -- specifically to catch either state-leak bug above being reintroduced -- the bare
 `set "HP_PYI_DLLBIND="` line appears in `run_setup.bat` EXACTLY twice (the fresh-build-attempt
 reset plus `:run_entry_smoke`'s own pre-existing end-of-pass trailer reset) and the bare
-`HP_PYI_HIDDEN_IMPORTS`/`HP_PYI_HID_COLLECT` resets appear EXACTLY once each. **NOT YET CONFIRMED
-in real CI** -- needs a fresh `cache`-lane `self.layered_e2e.chain` run showing the second
-`:dll_bundle_recover` pass locate and bundle `proj_9.dll`, then a second `:hidden_import_recover`
-pass reach and fix colorama's own gap, before `chainPass` can be considered proven `true` for the
-first time (see CLAUDE.md's Item 29 entry for the current status).
+`HP_PYI_HIDDEN_IMPORTS`/`HP_PYI_HID_COLLECT` resets appear EXACTLY once each.
+
+**Refined via a CodeRabbit review round on PR #421: `:hidden_import_recover`'s own rebuild also
+now advances `HP_LOG_SIZE_BEFORE`, and the second `:dll_bundle_recover` call is gated on a new
+`HP_HIDDEN_REPAIRED` flag.** `:hidden_import_recover`'s own loop previously never touched
+`HP_LOG_SIZE_BEFORE` at all, so the second `:dll_bundle_recover` pass's scan window stayed
+anchored wherever the FIRST `:dll_bundle_recover` call had last left it -- correct (never missed
+a genuinely new warning) but wider than necessary (also re-covering the first DLL-bundle pass's
+own already-resolved rebuild, and every earlier hidden-import rebuild, not just the LAST one).
+Fixed by adding the identical `for %%Z in ("%LOG%") do set "HP_LOG_SIZE_BEFORE=%%~zZ"` line
+`:dll_bundle_loop` already uses, right before `:hidden_import_recover`'s own rebuild too --
+narrows the window to just the freshest rebuild's own output. Separately, a new `HP_HIDDEN_
+REPAIRED` flag (identical shape to `HP_DLL_REPAIRED`: reset at `:hidden_import_recover`'s own
+entry, before any early-return path; set only where a rebuild is genuinely attempted, alongside
+`HP_HIDDEN_ITER`'s own increment) now gates the second `:dll_bundle_recover` call -- if the first
+`:hidden_import_recover` call did nothing (e.g. the failure wasn't a fixable `ModuleNotFoundError`
+at all), there is nothing new in the log for a second DLL scan to find, so it's skipped entirely
+rather than always paying for a pointless re-scan.
+
+**Traced whether the ORIGINAL wider scan window could actually cause the failure CodeRabbit's
+review described** (re-detecting an already-bundled DLL's own warning, re-adding it, and
+spuriously setting `HP_DLL_REPAIRED` to trigger an unnecessary extra hidden-import pass) --
+confirmed it could not, for the real observed scenario: once a DLL is bundled via `--add-binary`
+(threaded into every later rebuild via `HP_PYI_DLLBIND`), PyInstaller's own build-time analysis
+genuinely stops re-emitting that specific "Library not found" warning in subsequent builds (the
+dependency really is satisfied), and `HP_DLL_REPAIRED` is scoped strictly to the genuine
+"located on disk and rebuild succeeded" branch inside `:dll_bundle_recover_done` -- never to mere
+detection. Both refinements were implemented anyway, since narrowing the scan window and skipping
+a provably pointless re-scan are still objectively more precise and defensive regardless of
+whether the wider window was ever empirically observed to misfire.
+
+**NOT YET CONFIRMED in real CI** -- needs a fresh `cache`-lane `self.layered_e2e.chain` run
+showing the second `:dll_bundle_recover` pass locate and bundle `proj_9.dll`, then a second
+`:hidden_import_recover` pass reach and fix colorama's own gap, before `chainPass` can be
+considered proven `true` for the first time (see CLAUDE.md's Item 29 entry for the current
+status).
 
 ---
 
