@@ -21,6 +21,43 @@ leaving stale guidance.**
 
 ---
 
+## Quote a variable before piping it into `findstr`, or `&` in its value splits the command line
+
+**Found via a CodeRabbit review finding on PR #417 (an "outside diff range" catch -- pre-existing
+code, unrelated to that PR's own change, surfaced incidentally while reviewing nearby lines).**
+The system-directory guard (near the top of `run_setup.bat`, right after the UNC-path check) did
+`echo %HP_SCRIPT_ROOT%| findstr /I /C:"%WINDIR%\\" >nul` -- `HP_SCRIPT_ROOT` echoed UNQUOTED into
+a pipe. cmd.exe's own command-line parser has no notion of "this `&` came from a variable, not
+literal text" -- it decides whether `&` is a command separator purely from the CURRENT quote
+state as it scans the line left to right, and that scan runs the SAME expansion pass that
+substitutes `%HP_SCRIPT_ROOT%`. So a script dropped under a path like
+`C:\Users\Sales & Marketing\run_setup.bat` would have this single line silently split into two
+commands at the `&` -- `findstr` receives only the truncated prefix, and the guard can miss a
+real match (or worse, run a bogus command named after whatever follows the `&`). This is a
+DIFFERENT hazard from `:log`'s own "echoes UNQUOTED" entry below (that one is about `:log`'s
+`echo %MSG%` misinterpreting `<`/`>`/`|`, here it's `&` splitting the command line the pipe itself
+sits on) but the same family: an unquoted `%VAR%` reaching a live cmd.exe operator context.
+
+**Fix: wrap the variable in quotes** -- `echo "%HP_SCRIPT_ROOT%"| findstr ...`. This works because
+cmd.exe tracks quote state THROUGH the expansion, not around it: the literal `"` characters in the
+source line toggle quote state before `%HP_SCRIPT_ROOT%` is substituted, so any `&` landing inside
+the expanded value is scanned while the parser considers itself "inside quotes" and is never
+treated as an operator. The one wrinkle: `echo` is one of the few cmd.exe builtins that does NOT
+strip the quote characters from what it prints (unlike normal argument-parsing commands) -- so the
+piped text becomes `"C:\Windows\Temp\MyApp\"` (literal quotes at both ends) instead of the bare
+path. This is harmless here because `findstr /C:"..."` does a plain substring search, not an
+exact-line match -- the real target text still appears in the middle of the quoted output
+regardless of the extra leading/trailing `"` characters. Applied to all three system-directory
+checks (`WINDIR`/`ProgramFiles`/`HP_PF86`); the existing `self.warn.sysdir` test (a plain,
+non-`&` path) continues to prove the base guard still fires correctly post-fix, but does not by
+itself exercise the `&`-specific scenario this fix targets -- a dedicated adversarial test
+(a folder literally named with `&` under `%WINDIR%\Temp`) is a reasonable future addition, not
+built here (small, defensive quoting fix outside this PR's own scope, same "fix now, note as a
+candidate for future dedicated coverage" precedent already used elsewhere in this file for
+review-caught correctness fixes that reuse an already-tested code shape).
+
+---
+
 ## A multi-scenario PowerShell test's NDJSON `id` must stay a literal string at each `Write-NdjsonRow` call site, never a shared variable
 
 **Found via a real CI failure while adding `tests/selfapps_envname.ps1`'s second scenario

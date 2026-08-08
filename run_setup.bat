@@ -129,16 +129,27 @@ rem that an ODD number of backslashes right before a closing quote escapes the q
 rem of closing the string, silently corrupting the whole /C: argument (and swallowing the
 rem trailing ">nul" into the search pattern) so the match can never succeed. An EVEN count
 rem (here, two) collapses to a single literal backslash and the quote closes normally.
+rem derived requirement: a CodeRabbit review finding (PR #417) -- HP_SCRIPT_ROOT is echoed
+rem UNQUOTED into a pipe here; if it contains '&', cmd.exe's own parser (which does not
+rem distinguish "this & came from a variable" from "this & was typed") treats it as a command
+rem separator, splitting this single line into two commands and feeding findstr only a
+rem truncated prefix -- silently defeating the guard for a script dropped under a path like
+rem "C:\Users\Sales & Marketing\run_setup.bat". Quoting protects it: cmd.exe tracks quote state
+rem left-to-right as it scans (including through %VAR% expansion), so a '&' landing inside the
+rem quoted region is never treated as an operator. The literal quote characters `echo` leaves in
+rem its own output (echo does not strip them, unlike most commands) don't affect the match --
+rem findstr's /C: pattern is a substring search, so it still finds "%WINDIR%\\" etc. regardless
+rem of the extra leading/trailing quote characters surrounding it.
 if defined WINDIR (
-  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%WINDIR%\\" >nul
+  echo "%HP_SCRIPT_ROOT%"| findstr /I /C:"%WINDIR%\\" >nul
   if not errorlevel 1 set "HP_SYSDIR_HIT=1"
 )
 if defined ProgramFiles (
-  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%ProgramFiles%\\" >nul
+  echo "%HP_SCRIPT_ROOT%"| findstr /I /C:"%ProgramFiles%\\" >nul
   if not errorlevel 1 set "HP_SYSDIR_HIT=1"
 )
 if defined HP_PF86 (
-  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%HP_PF86%\\" >nul
+  echo "%HP_SCRIPT_ROOT%"| findstr /I /C:"%HP_PF86%\\" >nul
   if not errorlevel 1 set "HP_SYSDIR_HIT=1"
 )
 set "HP_PF86="
