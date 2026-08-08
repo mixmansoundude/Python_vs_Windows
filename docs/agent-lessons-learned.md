@@ -855,7 +855,22 @@ It is deliberately gated on TWO conditions and it is a mistake to relax either:
    the same error. The genuine packaging case behind some ImportErrors (a dynamic
    `except ImportError: from ._fallback import ...` where the fallback was not collected) is
    `--collect-submodules`/`--collect-all` territory (Slice 1 / a future Slice 3), **not** the
-   hidden-import token extractor.
+   hidden-import token extractor. **Confirmed correct against a real production-like case, not
+   just reasoning, via CLAUDE.md Item 28's root-cause investigation**: `pygrib` 2.1.8's own
+   compiled `_pygrib.pyx` does `from packaging import version` at its own line 14 (confirmed
+   directly against pygrib's real published source) -- a genuine missing-SUBMODULE gap
+   (`packaging.version`, not covered by an earlier `--hidden-import=packaging` since that only
+   guarantees `packaging/__init__.py`'s own statically-discovered imports get bundled, not every
+   real submodule under `packaging/`). The frozen EXE's own captured stderr for this failure was
+   `ImportError: cannot import name version` -- no quotes, no `from 'packaging'` clause, because
+   Cython's own hand-rolled `__Pyx_ImportFrom` error format (unlike CPython's own 3.7+-style
+   `ImportError: cannot import name 'Y' from 'Z'`) carries neither. The gate declined correctly:
+   nothing in that runtime signal identifies `packaging` as the source package at all -- the only
+   reason it's known here is external evidence (reading pygrib's own versioned source), not
+   anything derivable from the EXE's stderr. Do not "improve" this gate with a heuristic like
+   "check whether `<last-hidden-imported-package>.<failing-name>` happens to be a real submodule"
+   -- a coincidental `find_spec` hit on an unrelated real submodule would silently burn an
+   iteration on the wrong fix with no way to tell it apart from a correct one.
 2. **X must be installed in the build interpreter (`find_spec`).** This is what makes a user typo
    `import nonexistant` cost **ZERO rebuilds** -- the typo'd module is not installed, so the helper
    emits nothing and the failure routes straight to the post-flight hints. It also excludes a
