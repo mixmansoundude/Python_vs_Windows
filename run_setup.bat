@@ -4457,17 +4457,21 @@ rem Slice 2 (REQ-016): attempt strict --hidden-import auto-recovery before givin
 rem Skip when HP_EXE_EXIT is -1 (a timeout/hang) -- re-running a hung EXE in the recovery
 rem loop would hang too; only a real fast non-zero exit (e.g. ModuleNotFoundError) is fixable.
 if not "%HP_EXE_EXIT%"=="-1" call :hidden_import_recover
-if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok
-rem CLAUDE.md Item 29: a hidden-import rebuild above (--collect-submodules=X) can pull in a
-rem package whose OWN compiled extension needs a native DLL that was never checked -- the
-rem :dll_bundle_recover call inside :run_entry_smoke only ever saw the ORIGINAL build's own
-rem warnings, before any hidden-import rebuild ran. Re-run its detection step now so a DLL
-rem gap surfaced only by one of those rebuilds is not missed (confirmed via a real pyproj/
-rem proj_9.dll failure -- see docs/agent-interconnect.md's "Conda native-DLL bundling repair
-rem loop" section). Gated on HP_HIDDEN_REPAIRED (CodeRabbit review finding on PR #421): if the
-rem call above did NOT actually rebuild anything, the log has not grown since the FIRST
-rem :dll_bundle_recover call already scanned it, so there is nothing new to find -- skip the
-rem pointless re-scan in the common case instead of always paying for one.
+rem CLAUDE.md Item 29 (CodeRabbit review finding on PR #421): deliberately no early
+rem "if HP_EXE_EXIT==0 goto :smokerun_ok" here, unlike the check at line ~4454 above. A
+rem hidden-import rebuild above (--collect-submodules=X) can pull in a package whose OWN
+rem compiled extension needs a native DLL that was never checked -- the :dll_bundle_recover
+rem call inside :run_entry_smoke only ever saw the ORIGINAL build's own warnings, before any
+rem hidden-import rebuild ran. The rebuilt EXE can exit 0 on THIS smoke run's own code path
+rem while the build log still shows a fresh, unactioned "Library not found" warning for a DLL a
+rem DIFFERENT code path would need -- exactly the class of gap build-time detection exists to
+rem catch before it becomes a guaranteed runtime failure (confirmed via a real pyproj/proj_9.dll
+rem failure -- see docs/agent-interconnect.md's "Conda native-DLL bundling repair loop" section,
+rem "Detects at BUILD time, not runtime"). So the block below must run regardless of whether this
+rem rebuild already made the smoke run pass; it is gated on HP_HIDDEN_REPAIRED (below), not on
+rem HP_EXE_EXIT -- if the call above did NOT actually rebuild anything, the log has not grown
+rem since the FIRST :dll_bundle_recover call already scanned it, so there is nothing new to find,
+rem and the gate skips the pointless re-scan in the common case instead of always paying for one.
 if not "%HP_EXE_EXIT%"=="-1" if defined HP_HIDDEN_REPAIRED call :dll_bundle_recover
 rem Only worth a fresh verification pass if this call actually bundled something -- the
 rem common case (nothing new detected) must not pay for an extra EXE launch/wait.

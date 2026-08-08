@@ -630,6 +630,30 @@ start at 1 and has gaps.
   successfully" branch, never to a mere re-detection. Implemented both refinements anyway since
   they are still objectively more precise and defensive, and directly close a "Major" review
   finding cleanly.
+  **A THIRD CodeRabbit finding on the same PR #421 review round, this one a genuine functional
+  bug (not a defense-in-depth refinement like the two above): the second `:dll_bundle_recover`
+  pass could never actually run when the first `:hidden_import_recover` call happened to fix the
+  smoke run.** The caller had `if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok` immediately after the
+  first `call :hidden_import_recover` -- so whenever that call's own rebuild made the EXE exit 0,
+  execution jumped straight to `:smokerun_ok`, skipping the entire Item 29 block (the second
+  `:dll_bundle_recover` call and its own conditional second `:hidden_import_recover` pass) before
+  it ever ran. This defeats the whole premise of build-time DLL detection for exactly the
+  scenario Item 29 exists to catch: a hidden-import rebuild's own `--collect-submodules=X` can
+  surface a NEW native-DLL warning in the build log even when the CURRENT smoke run's own code
+  path happens not to load the DLL-needing part of `X` -- the smoke run passing does not mean the
+  build log has nothing left to flag, and a real user hitting a different code path later could
+  still crash with a `DLL load failed` error the build already warned about. Fixed by removing
+  that early goto entirely -- the block is already correctly self-gating (skipped when
+  `HP_HIDDEN_REPAIRED` is undefined, i.e. the first call did no rebuild at all) and the genuine
+  final success check already exists right after the whole block (`if "%HP_EXE_EXIT%"=="0" goto
+  :smokerun_ok`, unchanged) -- so no other logic needed to change. A companion Minor finding on
+  the same review caught that `tests/harness.ps1`'s own `$hiLogSizeAdvance` check (added for the
+  second refinement above) was a whole-file `-match`, which stayed true even if the new
+  `HP_LOG_SIZE_BEFORE` line inside `:hidden_import_recover` were deleted entirely, since the
+  identical text already exists in `:run_entry_smoke`'s initial snapshot and in
+  `:dll_bundle_loop` -- fixed by scoping the check to a regex-extracted `:hidden_import_recover`
+  body (bounded by the next label, `:warn_user_code_launch`), verified locally to flip from
+  true to false when the new line is removed (confirming the check is no longer vacuous).
   **NOT YET CONFIRMED in real CI** -- same status this repo requires before treating a fix like
   this as settled (see the Item 24/28 precedent: implemented, then confirmed via a real
   `cache`-lane run before being considered closed). The next `self.layered_e2e.chain` run should

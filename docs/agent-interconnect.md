@@ -601,6 +601,34 @@ detection. Both refinements were implemented anyway, since narrowing the scan wi
 a provably pointless re-scan are still objectively more precise and defensive regardless of
 whether the wider window was ever empirically observed to misfire.
 
+**A third finding on the same PR #421 review round was a genuine functional bug, not a
+defense-in-depth refinement: the caller had an early `if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok`
+immediately after the FIRST `call :hidden_import_recover`, which could skip this entire second-pass
+block outright.** Whenever that first call's own rebuild happened to make the smoke run exit 0,
+execution jumped straight to `:smokerun_ok` before the second `:dll_bundle_recover` call (and its
+own conditional second `:hidden_import_recover` pass) ever ran. This defeated the whole point of
+build-time DLL detection for exactly the case this feature exists to catch: a hidden-import
+rebuild's own `--collect-submodules=X` can surface a NEW native-DLL warning in the build log even
+when the CURRENT smoke run's own code path does not happen to load the DLL-needing part of `X` --
+a passing smoke run does not mean the build log has nothing left to flag, and a real user later
+hitting a different code path could still hit a `DLL load failed` error the build already warned
+about but the bootstrapper silently declined to act on. Fixed by removing that early goto
+entirely -- the block below it is already correctly self-gating on `HP_HIDDEN_REPAIRED` (skipped
+when the first call did no rebuild at all), and the genuine final success check
+(`if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok`) already exists unchanged right after the whole
+block, so removing the early one needed no other logic change.
+
+**Companion Minor finding: `tests/harness.ps1`'s own `$hiLogSizeAdvance` check (added for the
+`HP_LOG_SIZE_BEFORE` refinement above) was a whole-file `-match`, so it stayed `true` even if the
+new line inside `:hidden_import_recover` were deleted** -- the identical
+`for %%Z in ("%LOG%") do set "HP_LOG_SIZE_BEFORE=%%~zZ"` text already exists in
+`:run_entry_smoke`'s own pre-build snapshot and in `:dll_bundle_loop`, so an unscoped whole-file
+match could never actually prove the NEW occurrence exists. Fixed by regex-extracting
+`:hidden_import_recover`'s own body (bounded by the next label, `:warn_user_code_launch`) and
+matching only within it, immediately preceding its `PyInstaller` rebuild line -- verified locally
+(via a simulated removal of the new line) that the scoped check correctly flips from `true` to
+`false` when the line is missing, confirming it is no longer vacuous.
+
 **NOT YET CONFIRMED in real CI** -- needs a fresh `cache`-lane `self.layered_e2e.chain` run
 showing the second `:dll_bundle_recover` pass locate and bundle `proj_9.dll`, then a second
 `:hidden_import_recover` pass reach and fix colorama's own gap, before `chainPass` can be

@@ -428,10 +428,20 @@ $noPerCallResetLeak = ($dllbindResetCount -eq 2) -and ($hiddenImportsResetCount 
 # reliable per-call signal for this, mirroring HP_DLL_REPAIRED's identical shape. Also guards
 # that HP_LOG_SIZE_BEFORE advances to right before EACH hidden-import rebuild (mirroring
 # :dll_bundle_loop's own identical pattern), tightening the second pass's own scan window to
-# just the LAST hidden-import rebuild's output.
+# just the LAST hidden-import rebuild's output. The advance check is scoped to
+# :hidden_import_recover's own body (not a whole-file -match) -- CodeRabbit review finding on
+# PR #421: the same "for %%Z in (...) do set HP_LOG_SIZE_BEFORE" text already exists in the
+# initial build and in :dll_bundle_loop, so an unscoped -match would stay true even if the new
+# occurrence inside :hidden_import_loop were deleted, silently defeating the regression guard.
 $hiRepairedSet     = $AllText -match [regex]::Escape('set "HP_HIDDEN_REPAIRED=1"')
 $hiRepairedReset    = $AllText -match [regex]::Escape('set "HP_HIDDEN_REPAIRED="')
-$hiLogSizeAdvance  = $AllText -match [regex]::Escape('for %%Z in ("%LOG%") do set "HP_LOG_SIZE_BEFORE=%%~zZ"')
+$hiddenRecoverMatch = [regex]::Match($AllText, '(?ms)^:hidden_import_recover\r?\n(?<body>.*?)(?=^:warn_user_code_launch)')
+$hiLogSizeAdvance  = $hiddenRecoverMatch.Success -and (
+  $hiddenRecoverMatch.Groups['body'].Value -match (
+    [regex]::Escape('for %%Z in ("%LOG%") do set "HP_LOG_SIZE_BEFORE=%%~zZ"') +
+    '\s*\r?\n\s*"%HP_PY%" -m PyInstaller'
+  )
+)
 $dllSecondCallGated = $AllText -match [regex]::Escape('if not "%HP_EXE_EXIT%"=="-1" if defined HP_HIDDEN_REPAIRED call :dll_bundle_recover')
 $hasDllBundleSecondPass = $dllSecondCall -and $hiSecondCall -and $dllRebuildHasHid -and $dllRepairedSet -and $dllRepairedCheck -and $noPerCallResetLeak -and $hiRepairedSet -and $hiRepairedReset -and $hiLogSizeAdvance -and $dllSecondCallGated
 Write-Result 'batch.dll_bundle.second_pass' 'CLAUDE.md Item 29: a second :dll_bundle_recover pass runs after :hidden_import_recover (gated on HP_HIDDEN_REPAIRED, so it only fires when a rebuild actually happened), threading its own accumulated hidden-import flags through the DLL rebuild, then giving :hidden_import_recover one more bounded pass if a DLL was actually bundled -- with a regression guard on the exact-once-per-fresh-build-attempt reset counts for the three cross-call accumulator variables' $hasDllBundleSecondPass @{ dllSecondCall=$dllSecondCall; hiSecondCall=$hiSecondCall; dllRebuildHasHid=$dllRebuildHasHid; dllRepairedSet=$dllRepairedSet; dllRepairedCheck=$dllRepairedCheck; dllbindResetCount=$dllbindResetCount; hiddenImportsResetCount=$hiddenImportsResetCount; hidCollectResetCount=$hidCollectResetCount; hiRepairedSet=$hiRepairedSet; hiRepairedReset=$hiRepairedReset; hiLogSizeAdvance=$hiLogSizeAdvance; dllSecondCallGated=$dllSecondCallGated }
