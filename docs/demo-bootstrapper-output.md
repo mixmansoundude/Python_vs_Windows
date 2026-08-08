@@ -1885,8 +1885,9 @@ openpyxl conda-forge/win-64::openpyxl-3.1.5-py314hccc76fc_3
 xlsxwriter conda-forge/noarch::xlsxwriter-3.2.9-pyhd8ed1ab_0
 ```
 
-Both packages installed into
-`~pandas_excel`'s own `requirements.txt`/`~reqs_conda.txt`/`~reqs_pip.txt`. The claim that
+Both package names are recorded in `~pandas_excel`'s own `requirements.txt`/`~reqs_conda.txt`/
+`~reqs_pip.txt` (dependency-source files, not installation targets); conda is what actually
+installs them into the selected environment, per the solver output quoted above. The claim that
 `openpyxl` ends up genuinely bundled and importable in a frozen EXE is confirmed by the SIBLING
 `self.exe.warnfix.real` test's OWN independent scratch directory (`tests/~selftest_warnfix_real/`,
 a different app that also exercises the pandas heuristic, per its own NDJSON `desc` text quoted
