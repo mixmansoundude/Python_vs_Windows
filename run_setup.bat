@@ -129,16 +129,27 @@ rem that an ODD number of backslashes right before a closing quote escapes the q
 rem of closing the string, silently corrupting the whole /C: argument (and swallowing the
 rem trailing ">nul" into the search pattern) so the match can never succeed. An EVEN count
 rem (here, two) collapses to a single literal backslash and the quote closes normally.
+rem derived requirement: a CodeRabbit review finding (PR #417) -- HP_SCRIPT_ROOT is echoed
+rem UNQUOTED into a pipe here; if it contains '&', cmd.exe's own parser (which does not
+rem distinguish "this & came from a variable" from "this & was typed") treats it as a command
+rem separator, splitting this single line into two commands and feeding findstr only a
+rem truncated prefix -- silently defeating the guard for a script dropped under a path like
+rem "C:\Users\Sales & Marketing\run_setup.bat". Quoting protects it: cmd.exe tracks quote state
+rem left-to-right as it scans (including through %VAR% expansion), so a '&' landing inside the
+rem quoted region is never treated as an operator. The literal quote characters `echo` leaves in
+rem its own output (echo does not strip them, unlike most commands) don't affect the match --
+rem findstr's /C: pattern is a substring search, so it still finds "%WINDIR%\\" etc. regardless
+rem of the extra leading/trailing quote characters surrounding it.
 if defined WINDIR (
-  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%WINDIR%\\" >nul
+  echo "%HP_SCRIPT_ROOT%"| findstr /I /C:"%WINDIR%\\" >nul
   if not errorlevel 1 set "HP_SYSDIR_HIT=1"
 )
 if defined ProgramFiles (
-  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%ProgramFiles%\\" >nul
+  echo "%HP_SCRIPT_ROOT%"| findstr /I /C:"%ProgramFiles%\\" >nul
   if not errorlevel 1 set "HP_SYSDIR_HIT=1"
 )
 if defined HP_PF86 (
-  echo %HP_SCRIPT_ROOT%| findstr /I /C:"%HP_PF86%\\" >nul
+  echo "%HP_SCRIPT_ROOT%"| findstr /I /C:"%HP_PF86%\\" >nul
   if not errorlevel 1 set "HP_SYSDIR_HIT=1"
 )
 set "HP_PF86="
@@ -391,10 +402,34 @@ call :define_helper_payloads
 for %%I in ("%CD%") do set "ENVNAME=%%~nI"
 rem derived requirement: conda env names reject characters like '~'; self env smoke
 rem scenarios run from tests\~envsmoke so normalize to ASCII word chars/_/-.
+rem CLAUDE.md Item 26: '&' is special-cased to the bare word 'and' BEFORE the blanket
+rem substitution below -- the blanket rule alone already avoids the real hazard (a raw '&'
+rem confuses URL query-string parsing and renders oddly in Outlook), but collapses it to '_'
+rem like any other stripped character, losing readability ("Sales & Marketing" -> a folder a
+rem user might rename and email becoming "Sales___Marketing.exe" instead of the more legible
+rem "Sales_and_Marketing.exe"). Deliberately a bare word (no surrounding underscores): the
+rem existing spaces on either side of '&' are still converted to '_' by the blanket rule right
+rem after, so "Sales & Marketing" -> "Sales and Marketing" -> "Sales_and_Marketing" without
+rem this substitution needing to supply its own separators.
+rem derived requirement: a CodeRabbit review finding on this same PR -- '&' -> 'and' is a 1-to-3
+rem character expansion, so a folder name unusually heavy in '&' could make the sanitized name
+rem LONGER than the original (every other stripped character before this change was a 1-to-1
+rem substitution, never lengthening the result). Bounded to 64 chars post-substitution -- ample
+rem for a real project folder name, well clear of Windows/conda env-name length limits for
+rem everything this value later becomes (ENV_PATH, dist\<name>.exe).
 set "ENVNAME_ORIG=%ENVNAME%"
 set "ENVNAME_SANITIZED="
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = $env:ENVNAME; if (-not $name) { $name = 'env'; } $san = ($name -replace '[^A-Za-z0-9_-]', '_'); $san = ($san -replace '^-+', '_'); if ([string]::IsNullOrWhiteSpace($san) -or ($san.Trim('_').Length -eq 0)) { $san = 'env'; } [Console]::Write($san)"` ) do set "ENVNAME_SANITIZED=%%I"
-if defined ENVNAME_SANITIZED set "ENVNAME=%ENVNAME_SANITIZED%"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = $env:ENVNAME; if (-not $name) { $name = 'env'; } $name = ($name -replace '&', 'and'); $san = ($name -replace '[^A-Za-z0-9_-]', '_'); $san = ($san -replace '^-+', '_'); if ($san.Length -gt 64) { $san = $san.Substring(0, 64).TrimEnd('_', '-') }; if ([string]::IsNullOrWhiteSpace($san) -or ($san.Trim('_', '-').Length -eq 0)) { $san = 'env'; } [Console]::Write($san)"` ) do set "ENVNAME_SANITIZED=%%I"
+rem derived requirement: fail CLOSED, not open -- if the PowerShell sanitization command itself
+rem errored or emitted nothing (missing powershell.exe, execution-policy lockdown, etc.), silently
+rem falling through to the raw, UNSANITIZED folder name would defeat this whole guard (a leading
+rem hyphen or an embedded '&' would flow straight to `conda create -n` / the exported filename).
+if defined ENVNAME_SANITIZED (
+  set "ENVNAME=%ENVNAME_SANITIZED%"
+) else (
+  call :log "[WARN] REQ-004: env-name sanitization command produced no output; falling back to 'env' for safety."
+  set "ENVNAME=env"
+)
 set "ENVNAME_SANITIZED="
 rem derived requirement: a leading hyphen is replaced above because `conda create -n -foo`
 rem parses the name as a command-line flag (malformed); internal hyphens (my-app) are kept.

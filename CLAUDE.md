@@ -567,26 +567,6 @@ start at 1 and has gaps.
   discipline as Item 25's own deferral. Low urgency: this only affects the `cache`-lane,
   non-gating `self.layered_e2e.chain` test; it does not block any lane that gates PR merges.
 
-- **Item 26: `ENVNAME` sanitization collapses `&` (and every other non-word/non-hyphen character)
-  to a bare underscore in the built EXE's filename, losing readability -- owner-suggested
-  refinement, deliberately deferred as a far-term nice-to-have, not a defect.** `ENVNAME` (derived
-  from the project folder name near the top of `run_setup.bat`, right after
-  `:define_helper_payloads`) is already sanitized via a PowerShell regex (`-replace
-  '[^A-Za-z0-9_-]', '_'`) before it becomes both the conda env name and the actual built artifact
-  filename, `dist\%ENVNAME%.exe` -- exactly the kind of file a user might rename and email to
-  someone. No live bug: `&` is not in the allowed character set, so it already collapses to `_`
-  today, never reaching the filename raw. The owner's point (unprompted, general guidance for any
-  future bootstrapper output meant for user consumption, not a report of a broken case): many
-  tools mishandle a raw `&` in a filename (confuses it for URL query-string syntax), and Outlook
-  specifically renders `&`-containing filenames oddly in email -- but the CURRENT blanket
-  `[^A-Za-z0-9_-]` -> `_` substitution already avoids that failure mode categorically, just at the
-  cost of readability (a folder named `Sales & Marketing` becomes `Sales___Marketing.exe`, not
-  `Sales_and_Marketing.exe`). A refinement would special-case `&` -> `and` (or `_and_`) BEFORE the
-  general blanket substitution runs, preserving semantic meaning for that one common case while
-  leaving every other stripped character's behavior unchanged. Low priority, no reported real-world
-  friction yet -- filed here rather than implemented immediately since the underlying safety
-  property is already satisfied.
-
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context

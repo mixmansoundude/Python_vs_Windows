@@ -30,7 +30,7 @@ self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, sel
 self.entry.picker.overflow,
 self.entry.req011.crossdir, self.entry.req011.sameDir, self.isolation.req010.pythonpath,
 entry.single.direct, entry.expected, helper.invoke,
-self.envname.hyphen, self.size.tripwire,
+self.envname.hyphen, self.envname.ampersand, self.envname.longname, self.size.tripwire,
 reqspec.translate.{gte,eq,compat,gt,neq,lte}, reqspec.conda.dryrun,
 reqspec.conda.channelpin, reqspec.conda.dryrun.failcase,
 reqspec.conda.channelpin.req006, reqspec.conda.dryrun.req006,
