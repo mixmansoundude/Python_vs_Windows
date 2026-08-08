@@ -3134,8 +3134,8 @@ regex-verified confirmation that these exact lines were present/absent in the re
 ```
 
 Without this guard, `run_setup.bat` would instead print
-`[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=nuitka --collect-submodules=nuitka; rebuilding EXE
-(iter 1/3).` here and attempt a PyInstaller rebuild against a Nuitka-built EXE.
+`[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=nuitka --collect-submodules=nuitka; rebuilding EXE (iter 1/3).`
+here and attempt a PyInstaller rebuild against a Nuitka-built EXE.
 
 ---
 

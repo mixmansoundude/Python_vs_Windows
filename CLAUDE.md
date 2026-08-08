@@ -620,13 +620,17 @@ start at 1 and has gaps.
   both read the SAME `:log` line, so they prove the intended flag text was composed and logged
   together, not that the real PyInstaller argv actually received it (no runtime artifact captures
   the literal invoked command line; cmd.exe echo is off and PyInstaller does not print its own
-  argv). The independent proof that the flag reaches the REAL command line is
-  `tests/harness.ps1`'s own new `$hiCollectInject` static check instead, confirming
-  `%HP_PYI_HID_COLLECT%` genuinely sits in the SOURCE's PyInstaller command line right after
-  `%HP_PYI_HIDDEN_IMPORTS%` -- a CodeRabbit review finding on this fix's own PR caught an earlier
-  draft's overclaim that the two `selfapps_hidden_import.ps1` checks alone were independent proof
-  of the real invocation; corrected to route that specific claim through the actual independent
-  check instead.
+  argv). `tests/harness.ps1`'s own new `$hiCollectInject` check is the independent SOURCE-LEVEL
+  proof instead -- it confirms `%HP_PYI_HID_COLLECT%` genuinely sits in `run_setup.bat`'s own
+  PyInstaller command-line text right after `%HP_PYI_HIDDEN_IMPORTS%`, a static text match, not an
+  observation of cmd.exe's own runtime expansion or the actual invoked argv (no artifact in this
+  repo captures that; confirming it would need a real Windows run). Two CodeRabbit review findings
+  on this fix's own PR caught successive overclaims here: first, that the two
+  `selfapps_hidden_import.ps1` checks alone were independent proof of the real invocation
+  (corrected to route that claim through `$hiCollectInject` instead); second, that
+  `$hiCollectInject` itself proves the flag "reaches the real command line" rather than merely
+  being present in the source text -- the actual runtime argv is confirmed only by a real Windows
+  CI run, not by any check in this repo today.
   **NOT YET CONFIRMED in real CI** -- same status this repo requires before treating a fix like
   this as settled (see the Item 24 precedent: implemented, then confirmed via a real
   `cache`-lane run before being considered closed). The next `self.layered_e2e.chain` run should
