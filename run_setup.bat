@@ -4233,6 +4233,18 @@ if defined HP_NUITKA_FALLBACK_USED (
   exit /b 0
 )
 set "HP_PYI_HIDDEN_IMPORTS="
+rem CLAUDE.md Item 28: pair --collect-submodules=X with each --hidden-import=X this loop adds.
+rem A --hidden-import target only guarantees PyInstaller follows X's own statically-discovered
+rem imports; it does NOT guarantee every real submodule under X/ is bundled. A compiled C
+rem extension elsewhere in the app (invisible to PyInstaller's source scan the same way the
+rem original missing import was) can still need a submodule of X that X's own __init__.py never
+rem references -- confirmed via pygrib 2.1.8's real source (`from packaging import version` inside
+rem a Cython extension, needing packaging.version even after --hidden-import=packaging alone).
+rem Broader than strictly necessary (collects every submodule of X, not just the one actually
+rem needed) but structurally safe: X is already find_spec-confirmed installed by
+rem ~hidden_import_scan.py's own gate, so this never targets an unresolvable package name, and it
+rem never guesses AT a package name the way inferring one from the failure text would.
+set "HP_PYI_HID_COLLECT="
 set "HP_HIDDEN_ITER=0"
 set "HP_HIDDEN_TRIED="
 rem preserve a user pre-existing spec across recovery rebuilds (the main-build spec-preexist
@@ -4260,9 +4272,10 @@ if exist "~next_hidden.txt" del "~next_hidden.txt" >nul 2>&1
 if not defined HP_NEXT_HIDDEN goto :hidden_import_recover_done
 set /a HP_HIDDEN_ITER+=1
 set "HP_PYI_HIDDEN_IMPORTS=%HP_PYI_HIDDEN_IMPORTS% --hidden-import=%HP_NEXT_HIDDEN%"
+set "HP_PYI_HID_COLLECT=%HP_PYI_HID_COLLECT% --collect-submodules=%HP_NEXT_HIDDEN%"
 set "HP_HIDDEN_TRIED=%HP_HIDDEN_TRIED% %HP_NEXT_HIDDEN%"
-call :log "[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=%HP_NEXT_HIDDEN%; rebuilding EXE (iter %HP_HIDDEN_ITER%/3)."
-"%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% %HP_PYI_DLLBIND% %HP_PYI_HIDDEN_IMPORTS% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+call :log "[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=%HP_NEXT_HIDDEN% --collect-submodules=%HP_NEXT_HIDDEN%; rebuilding EXE (iter %HP_HIDDEN_ITER%/3)."
+"%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% %HP_PYI_DLLBIND% %HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
 if errorlevel 1 (
   call :log "[REPAIR][HIDDEN_IMPORT] PyInstaller rebuild failed; stopping recovery."
   set "HP_EXE_EXIT=1"
@@ -4286,6 +4299,7 @@ set "HP_HIDDEN_TRIED="
 set "HP_NEXT_HIDDEN="
 set "HP_HID_SPEC_PRE="
 set "HP_PYI_HIDDEN_IMPORTS="
+set "HP_PYI_HID_COLLECT="
 exit /b 0
 :warn_user_code_launch
 rem REQ-016: tightly-scoped heads-up before a launch that can be force-stopped at ~30s, so the

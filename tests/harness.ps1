@@ -390,8 +390,14 @@ $hiPayload = $AllText -match 'set "HP_HIDDEN_IMPORT_SCAN='
 $hiEmit    = $AllText -match 'emit_from_base64 "~hidden_import_scan.py" HP_HIDDEN_IMPORT_SCAN'
 $hiCap     = $AllText -match [regex]::Escape('if %HP_HIDDEN_ITER% GEQ 3')
 $hiRepair  = $AllText -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=')
-$hasHiddenRecover = $hiCall -and $hiLabel -and $hiPayload -and $hiEmit -and $hiCap -and $hiRepair
-Write-Result 'batch.pyi.hidden_import.recover' 'REQ-016: strict --hidden-import auto-recovery wired (recover subroutine called + payload + emit + 3-iter cap + repair log)' $hasHiddenRecover @{ call=$hiCall; label=$hiLabel; payload=$hiPayload; emit=$hiEmit; cap=$hiCap; repair=$hiRepair }
+# derived requirement (CLAUDE.md Item 28): --collect-submodules=X must be composed and injected
+# on the same rebuild as --hidden-import=X -- static guard against silent deletion; runtime proof
+# is self.exe.hidden_import's own collectLogged/collectInvoked assertions.
+$hiCollectVar    = $AllText -match 'set "HP_PYI_HID_COLLECT='
+$hiCollectAppend = $AllText -match [regex]::Escape('set "HP_PYI_HID_COLLECT=%HP_PYI_HID_COLLECT% --collect-submodules=%HP_NEXT_HIDDEN%"')
+$hiCollectInject = $AllText -match [regex]::Escape('%HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT% --name')
+$hasHiddenRecover = $hiCall -and $hiLabel -and $hiPayload -and $hiEmit -and $hiCap -and $hiRepair -and $hiCollectVar -and $hiCollectAppend -and $hiCollectInject
+Write-Result 'batch.pyi.hidden_import.recover' 'REQ-016: strict --hidden-import auto-recovery wired (recover subroutine called + payload + emit + 3-iter cap + repair log + collect-submodules pairing)' $hasHiddenRecover @{ call=$hiCall; label=$hiLabel; payload=$hiPayload; emit=$hiEmit; cap=$hiCap; repair=$hiRepair; collectVar=$hiCollectVar; collectAppend=$hiCollectAppend; collectInject=$hiCollectInject }
 # derived requirement: tightly-scoped 30s-kill warning must precede launches that force-stop
 # user code (EXE smoke + hidden-import recovery), so users do not lose work in a verification run.
 $warnSubCount = ([regex]::Matches($AllText, ':warn_user_code_launch')).Count

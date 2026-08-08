@@ -13,6 +13,11 @@
 # rejection, 3-iter cap) is unit-tested in tests/test_hidden_import_scan.py;
 # this is the runtime branch-fired proof.
 #
+# CLAUDE.md Item 28: --collect-submodules=colorama must be paired with --hidden-import=colorama
+# on the same rebuild (a --hidden-import target alone only guarantees PyInstaller follows the
+# package's own statically-discovered imports, not every real submodule under it -- confirmed via
+# a real pygrib failure needing packaging.version even after --hidden-import=packaging alone).
+#
 # Emits: self.exe.hidden_import
 # Lane: real and conda-full (uv + conda provider coverage).
 param()
@@ -92,6 +97,15 @@ $setupText = if (Test-Path $setupLog) { Get-Content -LiteralPath $setupLog -Raw 
 $combined  = ($logLines -join "`n") + "`n" + $setupText
 
 $addingFired    = $combined -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama')
+# derived requirement (CLAUDE.md Item 28): --collect-submodules=X must be paired with each
+# --hidden-import=X this loop adds, on the SAME rebuild -- a --hidden-import target alone only
+# guarantees PyInstaller follows X's own statically-discovered imports, not every real submodule
+# under X/ (confirmed via a real pygrib failure needing packaging.version even after
+# --hidden-import=packaging alone). Asserts the flag is both logged AND actually passed on the
+# PyInstaller rebuild command line (the log line and the command are two independent statements
+# in run_setup.bat, so this catches a drift between them).
+$collectLogged  = $combined -match [regex]::Escape('--collect-submodules=colorama')
+$collectInvoked = $combined -match [regex]::Escape('--hidden-import=colorama --collect-submodules=colorama')
 $recoveredFired = $combined -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] EXE verified after hidden-import recovery')
 $infraError     = $combined -match 'Failed to parse|uv error|pip error'
 
@@ -120,18 +134,20 @@ if ($exeExists) {
     }
 }
 
-$hiddenPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and $addingFired -and $recoveredFired -and (-not $infraError)
+$hiddenPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and $addingFired -and $collectLogged -and $collectInvoked -and $recoveredFired -and (-not $infraError)
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.hidden_import'
     req     = 'REQ-016'
     pass    = $hiddenPass
-    desc    = 'EXE failed on a dynamically-imported installed module; strict --hidden-import recovery rebuilt and verified it'
+    desc    = 'EXE failed on a dynamically-imported installed module; strict --hidden-import recovery rebuilt and verified it (paired with --collect-submodules, CLAUDE.md Item 28)'
     details = [ordered]@{
         exitCode       = $run1Exit
         exeExists      = $exeExists
         exeExit        = $exeExit
         tokenFound     = $tokenFound
         addingFired    = $addingFired
+        collectLogged  = $collectLogged
+        collectInvoked = $collectInvoked
         recoveredFired = $recoveredFired
         infraError     = $infraError
         exePath        = $exePath

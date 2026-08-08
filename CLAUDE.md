@@ -599,11 +599,35 @@ start at 1 and has gaps.
   `--collect-submodules=X` for that package -- broader than strictly necessary (collects every
   submodule of `X`, not just the one actually needed) but structurally safe (no name-guessing, no
   cross-package inference) and directly addresses the mechanism gap this investigation found.
-  Option (b) is the more promising direction on the evidence gathered so far, but still needs its
-  own dedicated design-and-test loop (new `tests/test_hidden_import_scan.py` coverage, a real CI
-  scenario proving it fires, and care that it doesn't change behavior for the numpy/packaging
-  cases that already work) -- deliberately not attempted in this same investigation pass, same
-  "don't bolt a guess onto an already-large change" discipline already applied to this item once.
+  **Implemented 2026-08-08, option (b).** `:hidden_import_recover` now builds a second flag
+  accumulator, `HP_PYI_HID_COLLECT`, alongside the existing `HP_PYI_HIDDEN_IMPORTS` -- each loop
+  iteration appends both `--hidden-import=%HP_NEXT_HIDDEN%` AND
+  `--collect-submodules=%HP_NEXT_HIDDEN%` for the SAME `%HP_NEXT_HIDDEN%`, and both flag lists are
+  passed to the SAME PyInstaller rebuild call. This is additive to the existing strict detection
+  gate, not a relaxation of it: `~hidden_import_scan.py` still only ever returns a target from a
+  genuine `ModuleNotFoundError` for an installed module (see
+  `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay STRICT" entry, which
+  this change does not touch) -- the new flag only changes what happens for a target the strict
+  gate ALREADY decided to act on, ensuring that package's own submodules are collected in the same
+  pass rather than needing a separate, undiagnosable failure to surface later. `[REPAIR][HIDDEN_IMPORT]
+  Adding --hidden-import=X` log lines now read `Adding --hidden-import=X --collect-submodules=X`;
+  every existing test/doc assertion matching that log line as a PREFIX substring (not full-line)
+  continues to match unchanged (`self.exe.hidden_import`, `self.exe.hidden_import.exhaust`'s
+  3-occurrence count, `self.layered_e2e.chain`'s `mech3Pass` check, `batch.pyi.hidden_import.recover`'s
+  static wiring guard) -- verified by tracing each one's own match pattern, not just by running the
+  cross-platform test subset (the real proof needs Windows CI). `tests/selfapps_hidden_import.ps1`
+  extended with `collectLogged`/`collectInvoked` assertions (the one new test this loop adds, per
+  the log line AND the actual PyInstaller command line, since they are two independent statements
+  in `run_setup.bat` that could drift from each other). `tests/harness.ps1` extended with a static
+  wiring guard for the new accumulator/append/inject sites.
+  **NOT YET CONFIRMED in real CI** -- same status this repo requires before treating a fix like
+  this as settled (see the Item 24 precedent: implemented, then confirmed via a real
+  `cache`-lane run before being considered closed). The next `self.layered_e2e.chain` run should
+  show iteration 2's `packaging` rebuild also collecting `packaging.version`, letting the EXE get
+  past pygrib's own import chain far enough to finally reach colorama's own hidden-import gap
+  (`mech3Pass`) and, if that also succeeds, flip `chainPass` to `true` for the first time. If it
+  doesn't, capture the SAME kind of raw per-attempt artifact this investigation used
+  (`dist/~layered_e2e_exe.log`, not the concatenated bootstrap log) before guessing further.
   Low urgency: this only affects the `cache`-lane, non-gating `self.layered_e2e.chain` test; it
   does not block any lane that gates PR merges.
 
