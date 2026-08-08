@@ -544,10 +544,11 @@ is not.
   that can collapse without losing accuracy or completeness, and cut it. Do not sacrifice
   correctness or completeness for terseness -- the goal is removing WORDS, not INFORMATION.
 
-- **Item 31: `docs/demo-bootstrapper-output.md` still has 7 scenarios below the 5-quote house-rule
+- **Item 31: `docs/demo-bootstrapper-output.md` still has 6 scenarios below the 5-quote house-rule
   minimum** (2026-08-08 audit; the 6 real `[TEST]`-line violations found in the same audit were
-  fixed same-day -- this item is ONLY the remaining quote-count shortfalls, not a re-run of the
-  whole audit). Each needs additional genuine (real-capture or source-derived,
+  fixed same-day, and Scenario 40d's own shortfall was fixed same-day too -- this item is ONLY the
+  remaining quote-count shortfalls below, not a re-run of the whole audit). Each needs additional
+  genuine (real-capture or source-derived,
   `[Extrapolated Branch]`-labeled if not independently confirmed) console-output quotes added,
   not fabricated ones:
   - Scenario 25 (pandas/openpyxl heuristic augmentation) -- only 1 real quote today, needs 4 more;
@@ -569,6 +570,21 @@ is not.
   A handful of other scenarios sit right at the 5-6 quote line (Scenarios 2, 7, 10, 14, 16, 20,
   21, 22, 27, 39, 40c) -- not violations, but worth a second pass for margin if this item is ever
   picked up as a larger push rather than just closing the 7 genuine shortfalls above.
+
+- **Item 32: hint when zero `.py` files are found but a `.py.txt` (hidden-extension) file
+  exists.** Moved here from Cold Storage 2026-08-08 (a CodeRabbit review finding correctly caught
+  that the Cold Storage entry's own "Trigger to thaw" text admitted no real trigger was blocking
+  it -- that's this list's scope, not Cold Storage's, which requires a specific named
+  precondition). From the 2026-08-08 third-party-analysis pass: Windows hides known file
+  extensions by default, so a beginner who saves `script.py` from a text editor or downloads one
+  from an email attachment can end up with `script.py.txt` without realizing it -- the
+  bootstrapper's own REQ-002 zero-file path currently prints only the generic `Python file count:
+  0` / `No Python files detected; skipping environment bootstrap.` with no hint toward this
+  specific, extremely common cause. Proposal: when the zero-`.py`-files check fires, do a cheap
+  secondary directory scan for `*.py.txt` (or any file whose name minus a trailing `.txt` ends in
+  `.py`) and, if found, add one extra line to the existing message pointing at Windows' "File name
+  extensions" checkbox in File Explorer's View tab. Small, low-risk, purely additive diagnostic
+  hint -- never changes the exit code or any existing behavior.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

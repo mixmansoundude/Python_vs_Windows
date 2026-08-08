@@ -159,21 +159,6 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   before touching every user-code launch site in the file) and confirming it doesn't change
   behavior for a script that already explicitly manages its own encoding.
 
-- **Hint when zero `.py` files are found but a `.py.txt` (hidden-extension) file exists.**
-  Same 2026-08-08 third-party-analysis pass: Windows hides known file extensions by default, so a
-  beginner who saves `script.py` from a text editor or downloads one from an email attachment can
-  end up with `script.py.txt` without realizing it -- the bootstrapper's own REQ-002 zero-file
-  path currently prints only the generic `Python file count: 0` / `No Python files detected;
-  skipping environment bootstrap.` with no hint toward this specific, extremely common cause.
-  Proposal: when the zero-`.py`-files check fires, do a cheap secondary directory scan for
-  `*.py.txt` (or any file whose name minus a trailing `.txt` ends in `.py`) and, if found, add one
-  extra line to the existing message pointing at Windows' "File name extensions" checkbox in File
-  Explorer's View tab. **Trigger to thaw**: none really blocking this one beyond bandwidth --
-  it's a small, low-risk, purely additive diagnostic hint (never changes the exit code or any
-  existing behavior) that could reasonably be picked up as a normal Active Backlog item instead;
-  filed here only because it came out of this same research pass alongside the other two, which
-  are genuinely still-open questions.
-
 - **Corporate-proxy / SSL-MITM diagnostic messaging.** Same 2026-08-08 pass: confirmed via grep
   that `run_setup.bat` has no `HTTP_PROXY`/`HTTPS_PROXY` detection or messaging anywhere (the
   underlying tools -- curl, PowerShell, pip, conda, uv -- already pick up system/env proxy

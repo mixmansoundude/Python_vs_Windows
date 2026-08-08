@@ -3501,7 +3501,9 @@ hits its first real gap -- `pygrib` has no Windows wheel on PyPI:
 
 Warnfix (Scenario 17) genuinely fixed `xlrd` in the same round it genuinely failed on `pygrib` --
 both outcomes are real, not staged. With one dependency still unresolved under uv, the cascade
-(Scenario 15) offers, and is accepted, moving the whole dependency phase to conda:
+(Scenario 15) offers, and is accepted -- but the CURRENT (still uv-built) EXE is verified once more
+before the cascade actually switches providers, and it fails exactly as expected on the package
+warnfix never resolved:
 
 ```
 [WARN] REQ-009: warnfix left modules unresolved under provider uv.
@@ -3511,15 +3513,29 @@ both outcomes are real, not staged. With one dependency still unresolved under u
 
 [INFO] REQ-009: cascade consent: accepted.
 [INFO] REQ-009: cascade approved; will re-attempt under the next provider tier.
+[INFO] EXE smokerun: testing dist\_selftest_layered_e2e.exe
+ModuleNotFoundError: No module named 'pygrib'
 [WARN] EXE smokerun: exited 1 (non-zero)
+[HINT][HIDDEN_IMPORT] Hidden import likely missing: pygrib
 [INFO] Entry smoke exit=1
 [STATUS] Run Status: FAILED (Exit Code: 1)
 [INFO] REQ-009: cascading provider uv to conda; re-attempting dependencies.
 *** [INFO] Trying the next Python provider (conda) to resolve dependencies...
 ```
 
+That `[HINT][HIDDEN_IMPORT]` line is the always-on diagnostic hint (`:exe_smokerun_hints`), not the
+strict `--hidden-import` auto-recovery loop (Scenario 16) actually firing -- `pygrib` was never
+successfully installed under uv (the warnfix repair attempt for it genuinely failed, above), and
+that loop's own gate requires the target module to be genuinely installed in the build interpreter
+before it will act (see "--hidden-import auto-recovery must stay STRICT" in
+`docs/agent-lessons-learned.md`). It correctly declines here and lets the cascade handle it instead.
+
 Conda-forge genuinely has a real Windows build of `pygrib` uv/PyPI don't -- the second dependency
-install succeeds cleanly this time, and the bootstrapper rebuilds:
+install succeeds cleanly this time, and the bootstrapper rebuilds. But `pygrib`'s conda build
+depends on a native library (`eccodes.dll`) that PyInstaller's own static analysis bundles the
+compiled Python extension for, without ever discovering the separate DLL it links against -- the
+native-DLL bundling loop reacts to PyInstaller's own build-time warning about this, catching it
+BEFORE the rebuilt EXE is ever run for the first time under conda:
 
 ```
 [BOOT] REQ-009: Selected Python provider: Conda (Portable).
@@ -3527,31 +3543,23 @@ install succeeds cleanly this time, and the bootstrapper rebuilds:
 [INFO] pipreqs 0.4.13 installed successfully; using it for dependency discovery.
 [INFO] Building standalone executable -- this may take a minute or two...
 [INFO] PyInstaller produced dist\_selftest_layered_e2e.exe
-```
-
-But `pygrib`'s conda build depends on a native library (`eccodes.dll`) that PyInstaller's own
-static analysis bundles the compiled Python extension for, without ever discovering the separate
-DLL it links against at runtime -- the EXE now fails a different way, and the native-DLL bundling
-loop reacts to PyInstaller's own build-time warning about it:
-
-```
-ModuleNotFoundError: No module named 'pygrib'
-[WARN] EXE smokerun: exited 1 (non-zero)
-[HINT][HIDDEN_IMPORT] Hidden import likely missing: pygrib
+[INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically; cStringIO and StringIO (Python-2-only compatibility shims some packages still reference) are filtered out automatically too.
 [REPAIR][DLL_BUNDLE] Bundling native DLL dependency: eccodes.dll (found at C:\Users\Public\Documents\Miniconda3\envs\_selftest_layered_e2e\Library\bin\eccodes.dll); rebuilding EXE (iter 1/3).
 [REPAIR][DLL_BUNDLE] Native-DLL bundling complete (1 DLL(s) added); EXE will be re-verified next.
 ```
 
-Bundling the DLL gets the EXE past its FIRST failure but exposes a SECOND, deeper one: `pygrib`'s
-own compiled extension needs `numpy`, invisible to PyInstaller's static scan the same way `pygrib`
-itself was -- `--hidden-import` auto-recovery (Scenario 16) reacts, and while fixing that, one of
-`pygrib`'s OWN submodules (pulled in by the fix's own `--collect-submodules` pairing) turns out to
-need `pyproj`, which needs a SECOND native DLL (`proj_9.dll`) never checked before this exact
-rebuild -- the bootstrapper's repair loops hand off to each other across three more rounds, each a
-real, unstaged rebuild:
+Bundling the DLL fixes `pygrib`'s own loading problem, but the FIRST time this rebuilt EXE actually
+runs under conda, it exposes a SECOND, deeper gap: `pygrib`'s own compiled extension needs `numpy`,
+invisible to PyInstaller's static scan the same way `pygrib` itself was under uv -- `--hidden-import`
+auto-recovery (Scenario 16) reacts, and while fixing that, one of `pygrib`'s OWN submodules (pulled
+in by the fix's own `--collect-submodules` pairing) turns out to need `pyproj`, which needs a SECOND
+native DLL (`proj_9.dll`) never checked before this exact rebuild -- the bootstrapper's repair loops
+hand off to each other across three more rounds, each a real, unstaged rebuild:
 
 ```
+[INFO] EXE smokerun: testing dist\_selftest_layered_e2e.exe
 ModuleNotFoundError: No module named 'numpy'
+[WARN] EXE smokerun: exited 1 (non-zero)
 [REPAIR][HIDDEN_IMPORT] Adding --hidden-import=numpy --collect-submodules=numpy; rebuilding EXE (iter 1/3).
 [REPAIR][HIDDEN_IMPORT] Adding --hidden-import=pyproj --collect-submodules=pyproj; rebuilding EXE (iter 2/3).
 [REPAIR][DLL_BUNDLE] Bundling native DLL dependency: proj_9.dll (found at C:\Users\Public\Documents\Miniconda3\envs\_selftest_layered_e2e\Library\bin\proj_9.dll); rebuilding EXE (iter 1/3).
