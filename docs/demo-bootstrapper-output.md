@@ -186,13 +186,28 @@ every byte of console output via `cmd /c .\run_setup.bat > '~envsmoke_bootstrap.
 
 ```
 Tue 07/28/2026  4:29:43.96 [INFO] REQ-015: Appending standard ignores to .gitignore.
+Tue 07/28/2026  4:29:43.97 [INFO] REQ-015: Appending standard attributes to .gitattributes.
 ```
 
-Before that line, nothing prints -- `HP_APP_ARGS` capture (REQ-026, pure variable assignment), the
-workspace-path-exists check, `cd /d`, `HP_SCRIPT_ROOT` construction, and the top-of-file UNC-path
-check (`if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints a much louder `*** WARNING:
-UNC/network paths detected...` banner when it genuinely fires) are all silent on an ordinary,
-non-UNC path.
+Before that first line, nothing prints -- `HP_APP_ARGS` capture (REQ-026, pure variable
+assignment), the workspace-path-exists check, `cd /d`, `HP_SCRIPT_ROOT` construction, and the
+top-of-file UNC-path check (`if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints a much louder
+`*** WARNING: UNC/network paths detected...` banner when it genuinely fires) are all silent on an
+ordinary, non-UNC path. Both `.gitignore`/`.gitattributes` lines come from the same
+`:merge_git_config` call (`run_setup.bat` line 82, the very first thing the script does after
+setting up its own log file) -- on a fresh scratch directory neither file yet has the bootstrapper's
+signature comment, so both append branches fire back to back.
+
+Immediately after that, the same real capture shows the environment-name and host-diagnostics
+lines every run prints (same run, same underlying artifact -- also quoted in Scenario 6 below,
+where the exact values are unchanged since they describe the same CI host, not anything specific
+to a fresh vs. repeat run):
+
+```
+[INFO] Environment name: _envsmoke
+[INFO] Host OS: Microsoft Windows [Version 10.0.26100.32995]
+[INFO] Host PowerShell: 5.1.26100.32995
+```
 
 **The four REQ-025-family pre-flight guards (path-length, OneDrive, system-directory, disk-space --
 also part of that unlabeled prologue) are completely silent unless they fire.** Confirmed by both
@@ -975,7 +990,20 @@ positively (not just "dragging works," but that override genuinely beats auto-de
 win plain auto-detection by name-priority) and `zzz_override.py`, with `zzz_override.py` passed as
 the override -- the real run confirms the drag message names the override file, the entry-selected
 log line names `zzz_override.py` (not `main.py`), and the override file's own distinguishing output
-is what actually ran.
+is what actually ran. The exact console sequence that test asserts against (`tests/
+selfapps_ux_hardening.ps1` lines 1161-1164 -- a scratch directory staged with both `main.py`
+containing `print("from-main")` and `zzz_override.py` containing `print("from-override")`,
+launched as `run_setup.bat .\zzz_override.py`):
+
+```
+*** Using drag-and-drop file: .\zzz_override.py
+[BOOT] REQ-002: Entry selected: zzz_override.py
+from-override
+```
+
+The third line is the override script's own stdout, captured in `~run.out.txt` -- the test asserts
+it contains `from-override` and specifically does NOT contain `from-main`, confirming the override
+genuinely ran instead of the higher-name-priority file sitting right next to it.
 
 ---
 
@@ -1334,6 +1362,19 @@ the build interpreter, the bootstrapper rebuilds with `--hidden-import=<module>`
 plain `ImportError` (not a missing module at all) never triggers a rebuild, since the fix is not
 mechanically derivable.
 
+**Success, one rebuild** (`self.exe.hidden_import`'s own fixture: a dynamic `importlib.import_module`
+call on `colorama`, invisible to PyInstaller's static analysis, so the frozen EXE genuinely fails
+its first run) -- exact sequence assembled from the log lines `tests/selfapps_hidden_import.ps1`
+itself matches against (`run_setup.bat`'s own `:log` calls at the smokerun/recovery call sites):
+
+```
+[WARN] EXE smokerun: exited 1 (non-zero)
+[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama; rebuilding EXE (iter 1/3).
+[REPAIR][HIDDEN_IMPORT] EXE verified after hidden-import recovery.
+[INFO] EXE smokerun: exited 0 (ok)
+[INFO] Entry smoke exit=0
+```
+
 **Exhaustion** (three DIFFERENT modules missing across three rebuilds, still never fully
 resolving -- REAL CI CAPTURE):
 
@@ -1500,6 +1541,23 @@ no-op rather than a duplicate append:
 [INFO] REQ-015: Appending standard attributes to .gitattributes.
 ```
 
+This is the very first thing `run_setup.bat` prints (`:merge_git_config` is called at line 82,
+before the environment-name/host-diagnostics block Scenario 2 covers) -- the same real capture
+continues immediately with:
+
+```
+[INFO] Environment name: _envsmoke
+[INFO] Host OS: Microsoft Windows [Version 10.0.26100.32995]
+[INFO] Host PowerShell: 5.1.26100.32995
+```
+
+On the idempotent second run, BOTH `.gitignore`/`.gitattributes` lines above are absent entirely --
+`findstr`'s signature check short-circuits straight past each `call :log` line
+(`if not errorlevel 1 goto :mgc_gi_done` / `:mgc_ga_done`) before it can fire, so this step
+contributes zero console output on a repeat run. `self.ux.gitignore.idem` confirms this by
+counting the signature's occurrences in the file (`sigCount:1`, not by scanning for an absent log
+line), which is why the idempotent case has no console excerpt of its own here.
+
 The appended `.gitignore` block (verbatim from source):
 
 ```
@@ -1651,9 +1709,15 @@ print('hi')
 After a genuinely fresh, fully-successful `HP_ENV_MODE=uv` dependency install (see Part I,
 Scenario 3), `:pep723_writeback` promotes the resolved dependency set into the entry file's own
 PEP 723 header via `uv add --script`, so the pin travels with the user's source file rather than
-staying only in `requirements.txt`/the lock file:
+staying only in `requirements.txt`/the lock file. The three lines immediately before it are the
+same real capture already shown in Scenario 3 (dependency install completing, the pip-freeze
+snapshot, the environment-lock snapshot) -- `:pep723_writeback fresh` is called right at
+`:lock_done`, immediately after the last of those three:
 
 ```
+[INFO] UV_USED=1
+[INFO] DEP_INSTALLED_CAPTURED=1
+[INFO] Environment snapshot written: ~environment.lock.txt
 [INFO] REQ-005.11: PEP 723 header write-back succeeded via uv add --script.
 ```
 
@@ -1701,16 +1765,24 @@ real and passing).
 This is an opt-in super-user flag (not part of the default happy path -- Part I never sets it):
 when defined, `run_setup.bat` skips straight to actually RUNNING the entry file live via
 `uvx autopep723 <entry>` for dependency discovery, before pipreqs or any static analysis even
-starts. Real capture:
+starts. `:pvw_known_idempotent_run` is called right after entry selection returns (`run_setup.bat`
+line 1136, immediately after the `if defined HP_PVW_KNOWN_IDEMPOTENT ...` gate), so the very next
+thing on screen after the entry is chosen (the same "Chosen entry: ..." moment Scenario 2 covers)
+is this discovery run. Real capture, `self.pvw_idempotent.discovery`, including the entry script's
+own live stdout passed straight through mid-run (real NDJSON detail confirms
+`stdoutPassthroughFound:true, appRan:true` -- not captured or suppressed, the exact design point
+`tools/pvw_known_idempotent.py` exists to preserve):
 
 ```
 [INFO] REQ-005.13: HP_PVW_KNOWN_IDEMPOTENT set; running entry via uvx autopep723 for execute-mode discovery.
+t2-idempotent-ok
 [INFO] REQ-005.13: execute-mode discovery run succeeded (RAN:persisted).
 ```
 
-The entry script's own stdout is inherited/passed through live during this discovery run (not
-captured or suppressed) -- real NDJSON detail confirms `stdoutPassthroughFound:true, appRan:true`
--- and whatever dependency it needed (`requests`, in this real capture: `reqsHasRequests:true`) is
+(`t2-idempotent-ok` is this specific stub's own `print()` output -- see Scenario 36 for the exact
+`app.py` source that produces it, and for the file-content side of this same real test.)
+
+Whatever dependency the run needed (`requests`, in this real capture: `reqsHasRequests:true`) is
 persisted back into the PEP 723 header via `uv add --script`, then re-extracted into
 `requirements.txt` so the rest of the pipeline (pipreqs, Tier 1 autopep723 merge, the actual
 install) sees it too. Deliberately ADDITIVE, not a replacement for pipreqs -- pipreqs and Tier 1's
@@ -1795,11 +1867,19 @@ from `tests/~pandas_excel/`'s own scratch directory:
 [HEURISTIC] pandas->xlsxwriter
 ```
 
-(the console line is a compact tag; the two package names themselves are appended to the conda
-install spec list, confirmed by the real conda solve plan later in the same `~pandas_excel` log:
-`openpyxl conda-forge/win-64::openpyxl-3.1.5-py314hccc76fc_3` and `xlsxwriter
-conda-forge/noarch::xlsxwriter-3.2.9-pyhd8ed1ab_0`, and both packages installed into
-`~pandas_excel`'s own `requirements.txt`/`~reqs_conda.txt`/`~reqs_pip.txt`). The claim that
+The console line is deliberately a compact tag -- the two package names themselves are appended to
+the conda install spec list, then genuinely resolved by conda's own solver a few lines later in the
+same run. That solve output reaches `~setup.log` only, never the console (the `conda install` call
+this heuristic feeds is redirected via `>> "%LOG%"`, matching this doc's "Console vs. `~setup.log`"
+convention noted at the top):
+
+```
+openpyxl conda-forge/win-64::openpyxl-3.1.5-py314hccc76fc_3
+xlsxwriter conda-forge/noarch::xlsxwriter-3.2.9-pyhd8ed1ab_0
+```
+
+Both packages installed into
+`~pandas_excel`'s own `requirements.txt`/`~reqs_conda.txt`/`~reqs_pip.txt`. The claim that
 `openpyxl` ends up genuinely bundled and importable in a frozen EXE is confirmed by the SIBLING
 `self.exe.warnfix.real` test's OWN independent scratch directory (`tests/~selftest_warnfix_real/`,
 a different app that also exercises the pandas heuristic, per its own NDJSON `desc` text quoted
@@ -1834,16 +1914,26 @@ correctly skips rather than updating a base that was just installed moments ago:
 ```
 
 **`[Extrapolated Branch]`** -- the actual 30-day-elapsed UPDATE-firing branch (`:cbu_run`,
-`run_setup.bat`) is not exercised by any current CI run (the only flag that could force it is
-deliberately disabled, per the note above). Traced from source: once the timestamp in
-`~conda.lastupdate` is more than 30 days old, the subroutine runs `conda update -n base -y` and
-would log something in the shape of `[INFO] Conda base update: running (last updated N days
-ago)...` followed by conda's own real update-solve output, then rewrites `~conda.lastupdate` to the
-current time on completion. This branch realistically only fires for a long-lived, repeatedly-reused
-project folder -- not the fresh-checkout scenarios this document otherwise captures -- and is
-correctly out of scope for a dedicated CI test: a forced-update test previously broke conda's own
-solver in shared CI runners, an accepted, documented tradeoff (`docs/agent-ndjson.md`'s
-"conda-full lane rows" section).
+`run_setup.bat` lines 5053-5063) is not exercised by any current CI run (the only flag that could
+force it is deliberately disabled, per the note above). Once the timestamp in `~conda.lastupdate`
+is more than 30 days old, the subroutine's two `:log` calls are these exact, deterministic literal
+strings -- not an approximation, the source text itself:
+
+```
+[INFO] Conda base update: running (>=30 days since last update or no record).
+[INFO] Conda base update complete.
+```
+
+Between those two lines, `conda update -n base --all --override-channels -c conda-forge -y` runs
+with its output redirected straight to `~setup.log` (`>> "%LOG%" 2>&1`) -- conda's own real
+update-solve output (package list, versions, download progress) never reaches the console, matching
+this doc's "Console vs. `~setup.log`" convention. If the update itself fails (a nonzero exit from
+that command), the second line is `[WARN] Conda base update failed; continuing.` instead -- the
+bootstrap is never blocked by a failed base update either way. This branch realistically only fires
+for a long-lived, repeatedly-reused project folder -- not the fresh-checkout scenarios this document
+otherwise captures -- and is correctly out of scope for a dedicated CI test: a forced-update test
+previously broke conda's own solver in shared CI runners, an accepted, documented tradeoff
+(`docs/agent-ndjson.md`'s "conda-full lane rows" section).
 
 ---
 
@@ -1856,10 +1946,20 @@ the terminal step of a full provider-cascade exhaustion); this scenario complete
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
 
 When every other REQ-009 provider tier has failed or been declined, the system-Python tier is
-still reached by any default, no-flag run -- it is gated solely by the REQ-014 consent prompt
-(Scenario 5 in Part I already documents the prompt's own framing text in full), never by an
-env-var the user would need to set. On ACCEPT, the bootstrapper proceeds to use whatever Python is
-already on the machine, unmanaged and unisolated:
+still reached by any default, no-flag run -- it is gated solely by the REQ-014 consent prompt,
+never by an env-var the user would need to set. The prompt text itself (`:system_python_consent_gate`,
+`run_setup.bat`) is echoed unconditionally, even on CI's auto-decline path, so it is exact, literal
+source text, not a reconstruction:
+
+```
+*** WARNING: System Python Execution ***
+*** Using global system Python may pollute shared packages. ***
+
+Proceed with System Python? (Global pollution risk) [y/n]: y to accept, n to decline.
+```
+
+On ACCEPT, the bootstrapper proceeds to use whatever Python is already on the machine, unmanaged
+and unisolated:
 
 ```
 [INFO] REQ-014: System Python consent: user accepted.
@@ -2003,8 +2103,15 @@ Interpreter:
 [WARN] Interpreter smoke test failed (continuing).
 ```
 
-(pipreqs, dependency install, and the pyvisa check all run to completion afterward, effectively as
-no-ops against the broken interpreter, before the entry is finally selected and preflight runs)
+Between those lines and the misleading block below, `run_setup.bat` genuinely keeps executing --
+pipreqs's own install attempt, the dependency-install step, and the pyvisa detection check are none
+of them gated on `HP_NO_INTERPRETER` (confirmed by reading each call site directly; that flag was
+only ever checked by the fix's own new `:preflight_compile` guard), so each one genuinely runs
+against the empty `HP_PY` before the entry is finally selected and preflight fires. Their own exact
+console text from this specific historical run was not separately preserved alongside the two
+blocks quoted here (only the excerpts a maintainer captured while diagnosing the bug at the time
+survived) -- each would have produced its own `cmd.exe`-level "not recognized" error or install
+failure, the same general shape as the two blocks already shown, rather than silently vanishing.
 
 ```
 *** [ERROR] REQ-021: Your Python program has a syntax error and cannot run. ***
@@ -2403,6 +2510,10 @@ text, though every individual line reused below is independently real elsewhere 
 [BOOT] REQ-009: Selected Python provider: Conda (Portable).
 Creating Python environment '<env>' -- this may take several minutes...
 [INFO] runtime.txt written: python-3.14.6
+[INFO] pipreqs 0.4.13 installed successfully; using it for dependency discovery.
+[INFO] pipreqs (direct) command: pipreqs . --force --mode compat --savepath "...\requirements.auto.txt" --ignore ".git,.github,.venv,venv,env,.uv_env,build,dist,__pycache__,tests"
+[INFO] DEP_INSTALLED_CAPTURED=1
+[INFO] Environment snapshot written: ~environment.lock.txt
 [INFO] Building standalone executable -- this may take a minute or two...
 [INFO] PyInstaller produced dist\<env>.exe
 [INFO] EXE smokerun: testing dist\<env>.exe
@@ -3103,7 +3214,8 @@ since this scenario has passed on every run so far):
 
 ```
 *** Your app is ready. ***
-*** Want to build an optimized version too? ... ***
+*** Want to build an optimized version too? It takes a bit longer to build right now, ***
+*** but it starts up more reliably on Windows and runs faster once it is built. ***
 [INFO] Optimized build: accepted; building now (this may take a minute or two).
 [WARN] Optimized build verified successfully but could not be swapped into place; your app is still ready to use as-is.
 ```
@@ -3182,7 +3294,18 @@ The `hidden_import` recovery loop's own separate, narrower verification check (s
 "Verifying a fresh build is activity-aware and announced" bullet, which calls this exact exception
 out directly) deliberately keeps the OLDER, unconditional 30-second wording -- it's a bounded
 repair-verification check on an already-built EXE, not the user's primary run, so it never got the
-interactive-friendly rewrite.
+interactive-friendly rewrite. Same subroutine (`:warn_user_code_launch`), same PyInstaller-vs-Nuitka
+variant split, but a genuinely different, still-unconditional message (`run_setup.bat` lines
+4283-4285, literal source text):
+
+```
+[WARN] Verifying the built standalone EXE (fallback build system) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost.
+[WARN] Verifying the built standalone EXE (PyInstaller) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost.
+```
+
+Note what's missing compared to the main-run wording above: no mention of output extending the
+wait, no guidance toward the program's own quit/exit option -- a real interactive program hitting
+this check during hidden-import recovery is still force-stopped at 30 seconds flat, output or not.
 
 ### Scenario 42: Argv passthrough (REQ-026) -- launch arguments through the bootstrapper
 
