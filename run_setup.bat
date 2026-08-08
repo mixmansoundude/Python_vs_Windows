@@ -408,8 +408,17 @@ rem for a real project folder name, well clear of Windows/conda env-name length 
 rem everything this value later becomes (ENV_PATH, dist\<name>.exe).
 set "ENVNAME_ORIG=%ENVNAME%"
 set "ENVNAME_SANITIZED="
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = $env:ENVNAME; if (-not $name) { $name = 'env'; } $name = ($name -replace '&', 'and'); $san = ($name -replace '[^A-Za-z0-9_-]', '_'); $san = ($san -replace '^-+', '_'); if ($san.Length -gt 64) { $san = $san.Substring(0, 64).TrimEnd('_', '-') }; if ([string]::IsNullOrWhiteSpace($san) -or ($san.Trim('_').Length -eq 0)) { $san = 'env'; } [Console]::Write($san)"` ) do set "ENVNAME_SANITIZED=%%I"
-if defined ENVNAME_SANITIZED set "ENVNAME=%ENVNAME_SANITIZED%"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = $env:ENVNAME; if (-not $name) { $name = 'env'; } $name = ($name -replace '&', 'and'); $san = ($name -replace '[^A-Za-z0-9_-]', '_'); $san = ($san -replace '^-+', '_'); if ($san.Length -gt 64) { $san = $san.Substring(0, 64).TrimEnd('_', '-') }; if ([string]::IsNullOrWhiteSpace($san) -or ($san.Trim('_', '-').Length -eq 0)) { $san = 'env'; } [Console]::Write($san)"` ) do set "ENVNAME_SANITIZED=%%I"
+rem derived requirement: fail CLOSED, not open -- if the PowerShell sanitization command itself
+rem errored or emitted nothing (missing powershell.exe, execution-policy lockdown, etc.), silently
+rem falling through to the raw, UNSANITIZED folder name would defeat this whole guard (a leading
+rem hyphen or an embedded '&' would flow straight to `conda create -n` / the exported filename).
+if defined ENVNAME_SANITIZED (
+  set "ENVNAME=%ENVNAME_SANITIZED%"
+) else (
+  call :log "[WARN] REQ-004: env-name sanitization command produced no output; falling back to 'env' for safety."
+  set "ENVNAME=env"
+)
 set "ENVNAME_SANITIZED="
 rem derived requirement: a leading hyphen is replaced above because `conda create -n -foo`
 rem parses the name as a command-line flag (malformed); internal hyphens (my-app) are kept.

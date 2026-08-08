@@ -1592,6 +1592,30 @@ this belongs to).
   second CI step in `batch-check.yml` immediately after the existing hyphen step, same
   `!cancelled()` gating (any lane, cheap, skip-env). `docs/agent-ndjson.md` updated with the new
   row id.
+  **CodeRabbit review round on PR #417 caught 3 real follow-on gaps in this fix, all closed in the
+  same PR before merge:**
+  1. `&`->`and` is the sanitizer's first 1-to-3-char expansion (every other substitution is
+     1-to-1), so an ampersand-heavy folder name could make the sanitized result LONGER than the
+     original -- fixed with a 64-char post-substitution truncation
+     (`$san.Substring(0, 64).TrimEnd('_', '-')`), ample for a real project folder and well clear
+     of Windows/conda length limits for what this value later becomes (`ENV_PATH`,
+     `dist\<name>.exe`). Third scenario added (`ENVNAME_SCENARIO=longname`,
+     `self.envname.longname`) with an ampersand-heavy folder name that expands past 64 chars
+     pre-truncation, asserting both the exact truncated value AND (decoupled from the exact-match
+     assertion) the logged name's length is `<=64` -- proving the truncation branch actually ran,
+     not just that some 64-char value happened to match by chance.
+  2. The empty-after-truncation fallback check, `$san.Trim('_').Length -eq 0`, only trimmed
+     underscores -- a separator-only result like `_-` would pass the check (non-zero length after
+     trimming just underscores) and reach `conda create -n _-`, a name conda would likely also
+     reject. Fixed: `$san.Trim('_', '-').Length -eq 0`.
+  3. If the PowerShell sanitization command itself failed to run (missing `powershell.exe`,
+     execution-policy lockdown) or emitted no output, `ENVNAME_SANITIZED` stayed undefined and the
+     caller silently fell through to the RAW, unsanitized folder name -- defeating the whole guard
+     for exactly the failure mode most likely to coincide with a hostile/malformed name in the
+     first place. Fixed: fail closed -- `if defined ENVNAME_SANITIZED (...) else (call :log
+     "[WARN] ...falling back to 'env'..." & set "ENVNAME=env")`, mirroring the existing
+     empty-name-guard fallback used later in the file (`:env_state_check_done`'s
+     `if "%ENVNAME%"=="" (...) set "ENVNAME=env"`).
 
 ## Closed Backlog
 

@@ -376,6 +376,14 @@ jobs:
         run: |
           & tests\selfapps_envname.ps1
 
+      - name: "Self-test: env-name sanitization (64-char truncation bound, CodeRabbit PR #417)"
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
+        env:
+          ENVNAME_SCENARIO: 'longname'
+        shell: pwsh
+        run: |
+          & tests\selfapps_envname.ps1
+
       - name: "Self-test: bootstrapper size tripwire (REQ-017)"
         # derived requirement (item 7 scoping pass): this step never executes run_setup.bat
         # (a static byte-size check only), so !cancelled() carries zero duration-inflation risk --

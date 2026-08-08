@@ -194,9 +194,9 @@ assignment), the workspace-path-exists check, `cd /d`, `HP_SCRIPT_ROOT` construc
 top-of-file UNC-path check (`if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\"`, which prints a much louder
 `*** WARNING: UNC/network paths detected...` banner when it genuinely fires) are all silent on an
 ordinary, non-UNC path. Both `.gitignore`/`.gitattributes` lines come from the same
-`:merge_git_config` call (called right after `run_setup.bat` sets up its own log file, the very
-first thing the script does) -- on a fresh scratch directory neither file yet has the
-bootstrapper's signature comment, so both append branches fire back to back.
+`:merge_git_config` call (the first output-producing call after `run_setup.bat` sets up its own
+log file) -- on a fresh scratch directory neither file yet has the bootstrapper's signature
+comment, so both append branches fire back to back.
 
 Immediately after that, the same real capture shows the environment-name and host-diagnostics
 lines every run prints (same run, same underlying artifact -- also quoted in Scenario 6 below,
@@ -1547,9 +1547,10 @@ no-op rather than a duplicate append:
 [INFO] REQ-015: Appending standard attributes to .gitattributes.
 ```
 
-This is the very first thing `run_setup.bat` prints (`:merge_git_config` is called before the
-environment-name/host-diagnostics block Scenario 2 covers) -- the same real capture continues
-immediately with:
+This is the first thing `run_setup.bat` prints to the console (`:merge_git_config` runs before the
+environment-name/host-diagnostics block Scenario 2 covers, though several earlier steps -- the
+UNC-path check among them -- are silent on an ordinary path; see Scenario 2 for the full list) --
+the same real capture continues immediately with:
 
 ```
 [INFO] Environment name: _envsmoke
