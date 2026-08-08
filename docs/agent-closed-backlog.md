@@ -1654,6 +1654,97 @@ this belongs to).
   than reopening this one, mirroring the exact same "each fix reveals the next layer" pattern
   that originally produced this item out of Item 24's own closure.
 
+### Item 29 (closed 2026-08-08)
+
+- **`:dll_bundle_recover` never re-scanned for native-DLL warnings surfaced by a LATER
+  `:hidden_import_recover` rebuild -- only the very first build, before any hidden-import
+  iteration, was ever checked.** Found via the first real CI confirmation of Item 28's own fix
+  (merge commit `bd5d4df3`, `cache`-lane run `31256064576`,
+  `~selftest_layered_e2e/~layered_e2e_bootstrap.log` and `~setup.log`). Item 28's fix was confirmed
+  working exactly as designed: that run's hidden-import loop correctly added
+  `--hidden-import=numpy --collect-submodules=numpy` (iter 1/3), then, after the next smoke run
+  failed with a genuine `ModuleNotFoundError: No module named 'pyproj'`, correctly added
+  `--hidden-import=pyproj --collect-submodules=pyproj` (iter 2/3) -- the paired-flag mechanism
+  fired for real, for a target (`pyproj`) never previously observed in this chain.
+  **The NEW blocker that run hit**: the iteration-2 rebuild's own PyInstaller build log showed 9
+  fresh `WARNING: Library not found: could not resolve 'proj_9.dll'` lines, one for each of
+  `pyproj`'s compiled extensions (`list`, `database`, `_version`, `_transformer`, `_sync`,
+  `_network`, `_geod`, `_crs`, `_context`) -- these `.pyd` files were never part of the bundle
+  before `--collect-submodules=pyproj` (Item 28's own fix) pulled them in for the first time, so
+  this native-DLL gap could not have been detected any earlier than that exact rebuild. The final
+  EXE's own captured stderr confirmed the runtime consequence:
+  `ImportError: DLL load failed while importing _context: The specified module could not be
+  found.` -- `mech3Pass` (`hiddenAdding`/`hiddenRecovered`, scoped specifically to `colorama`'s own
+  hidden-import gap) stayed `false` because the chain never reached colorama at all; `chainPass`
+  stayed `false` for the same reason. `mech4Pass` (the `eccodes.dll` bundling Item 24 fixed) was
+  unaffected and still passed -- confirming this was a genuinely NEW, one-level-deeper gap, not a
+  regression of anything already fixed.
+  **Root cause**: `:dll_bundle_recover` was called exactly once, from `:run_entry_smoke` right
+  before the FIRST `:run_exe_smokerun` call (see `docs/agent-interconnect.md`'s "Conda native-DLL
+  bundling repair loop" section) -- a deliberate design choice at the time (react to a build-time
+  warning instead of waiting for a runtime failure, see that section's "Detects at BUILD time, not
+  runtime" note), but it did not anticipate a LATER rebuild -- one triggered by
+  `:hidden_import_recover`'s own loop, itself reacting to a runtime `ModuleNotFoundError` -- ever
+  introducing a NEW native-DLL warning of its own. `proj_9.dll` was never checked because the
+  single `:dll_bundle_recover` call had already run and exited (having found and bundled
+  `eccodes.dll`) long before `pyproj` was ever added to the build.
+  **Implemented 2026-08-08, option (a)**: `:run_exe_smokerun`'s flow now calls
+  `:dll_bundle_recover` a SECOND time immediately after `:hidden_import_recover`'s first call
+  returns, and, if that second call actually bundled something (a new `HP_DLL_REPAIRED` flag,
+  reset at `:dll_bundle_recover`'s own entry and set only in its genuine "repaired" branch),
+  gives `:hidden_import_recover` one more bounded pass too -- needed because a DLL fix can unblock
+  a package whose OWN hidden-import gap was previously unreachable (exactly
+  `self.layered_e2e.chain`'s own shape: colorama's gap is only reached once `pyproj`'s DLL is
+  fixed). Deliberately not chained further than this one extra round each: a third pass risks an
+  unbounded repair cascade for a pathological dependency tree, and a case ever found needing more
+  is its own future backlog item, not solved speculatively here.
+  **Two real, cross-call state-leak bugs were found and fixed while implementing this** -- both
+  are the same class of bug this subsystem has hit before (a fix silently dropped by a LATER
+  rebuild that doesn't carry it forward), just now occurring ACROSS two calls to the SAME
+  subroutine rather than between two DIFFERENT ones: (1) `:dll_bundle_recover` unconditionally
+  reset `HP_PYI_DLLBIND=` at the top of its own per-call bundling section, which would have
+  silently wiped an EARLIER call's own accumulated `--add-binary` flags before a second call's
+  rebuild ever ran; fixed by moving the reset to `:run_entry_smoke`'s own once-per-fresh-build-
+  attempt initialization. (2) `:hidden_import_recover` had the IDENTICAL bug for
+  `HP_PYI_HIDDEN_IMPORTS`/`HP_PYI_HID_COLLECT`, at both its entry and its own exit trailer; fixed
+  the same way. Also threaded `%HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT%` into
+  `:dll_bundle_recover`'s OWN rebuild command (the mirror-image of the fix Item 28 already applied
+  in the other direction). Static regression guard added: `tests/harness.ps1`'s
+  `batch.dll_bundle.second_pass` check.
+  **Refined the same day per a CodeRabbit review round on PR #421** (three findings, all
+  addressed): (1) the second `:dll_bundle_recover` call is gated on a new `HP_HIDDEN_REPAIRED`
+  flag (same reset-at-entry/set-only-on-genuine-rebuild shape as `HP_DLL_REPAIRED`), skipping a
+  pointless re-scan when the first `:hidden_import_recover` call did no rebuild at all; (2)
+  `:hidden_import_recover`'s own loop now advances `HP_LOG_SIZE_BEFORE` right before EACH of its
+  own rebuilds, mirroring `:dll_bundle_loop`'s identical pattern, narrowing the second pass's scan
+  window to just the LAST hidden-import rebuild's output; (3) a genuine functional bug -- the
+  caller had `if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok` immediately after the first
+  `call :hidden_import_recover`, which skipped the entire second-pass block whenever that call's
+  own rebuild happened to make the EXE exit 0, defeating the whole premise of build-time DLL
+  detection for exactly the scenario this item exists to catch. Fixed by removing that early
+  goto entirely (the block below is already correctly self-gated on `HP_HIDDEN_REPAIRED`, and the
+  genuine final success check is unchanged right after the whole block). A companion Minor
+  finding fixed `tests/harness.ps1`'s own `$hiLogSizeAdvance` check, which was a whole-file
+  `-match` that stayed `true` even if the new line inside `:hidden_import_recover` were deleted
+  (the identical text already exists elsewhere in the file) -- scoped to a regex-extracted
+  `:hidden_import_recover` body instead.
+  **CONFIRMED via real CI evidence (PR #421 merge commit `dcfce1d`, `cache`-lane run
+  `31264219121`, `~selftest_layered_e2e/~layered_e2e_bootstrap.log`), closing this item.** The
+  exact designed sequence fired for real, in order, all in the same run: the first
+  `:hidden_import_recover` call added `--hidden-import=numpy --collect-submodules=numpy`
+  (iter 1/3) then `--hidden-import=pyproj --collect-submodules=pyproj` (iter 2/3); the SECOND
+  `:dll_bundle_recover` pass (this item's own new call site) then located and bundled
+  `proj_9.dll` (`Bundling native DLL dependency: proj_9.dll (found at ...\Library\bin\proj_9.dll)`);
+  with `HP_DLL_REPAIRED` set, the SECOND `:hidden_import_recover` pass then reached and fixed
+  colorama's own hidden-import gap (`Adding --hidden-import=colorama --collect-submodules=colorama`);
+  the EXE finally verified clean (`EXE verified after hidden-import recovery`, `EXE smokerun:
+  exited 0 (ok)`, `[STATUS] Run Status: SUCCESS (Exit Code: 0)`). `self.layered_e2e.chain`'s
+  `chainPass` read `true` for the first time (`mech1Pass`/`mech2Pass`/`mech3Pass`/`mech4Pass` all
+  `true`), closing the acceptance criterion this item was filed against -- the full uv-to-conda
+  cascade, warnfix repair, hidden-import recovery, and native-DLL bundling chain all fired for
+  real in one run, each mechanism handing off to the next exactly as designed across three
+  successive items (24, 28, 29).
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a
