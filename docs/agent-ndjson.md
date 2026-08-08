@@ -305,7 +305,9 @@ close -- the bare `set "HP_PYI_DLLBIND="` line appears EXACTLY twice in the file
 fresh-build-attempt reset plus `:run_entry_smoke`'s own pre-existing end-of-pass trailer) and the
 bare `HP_PYI_HIDDEN_IMPORTS`/`HP_PYI_HID_COLLECT` resets appear EXACTLY once each. Static wiring
 guard only, same as `batch.dll_bundle.ndjson` -- runtime proof is `self.layered_e2e.chain`'s own
-`chainPass` (`cache` lane, non-gating), not yet confirmed `true` in real CI as of this writing.
+`chainPass` (`cache` lane, non-gating), CONFIRMED `true` for the first time via real CI (PR #421
+merge commit `dcfce1d`, `cache`-lane run `31264219121`) -- see `docs/agent-closed-backlog.md`'s
+Item 29 entry for the full trace.
 
 ## selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes)
 
@@ -498,10 +500,13 @@ Item 22 for the full research trail.
 `eccodes.dll`-not-bundled failure this loop exists to repair, so this same test (no new flags,
 no new fixtures) is also this loop's Requirement 4 regression test -- see
 `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the full
-mechanism trace. `$mech4Pass` (`dllWarningSeen`/`dllBundling`/`dllBundleComplete`) is now required
-for `$chainPass`, alongside the original three mechanisms -- this is the acceptance criterion that
-should finally flip `chainPass` to `True` for the first time. NOT YET CONFIRMED in real CI as of
-this note (see CLAUDE.md's Item 24 entry for current status).
+mechanism trace. `$mech4Pass` (`dllWarningSeen`/`dllBundling`/`dllBundleComplete`) is required for
+`$chainPass`, alongside the original three mechanisms. Item 24 (this mechanism's own first
+confirmation, `eccodes.dll`) and its two successors, Item 28 (`--collect-submodules` pairing) and
+Item 29 (a second `:dll_bundle_recover`/`:hidden_import_recover` pass for a DLL gap a hidden-import
+rebuild surfaces later), are all closed in `docs/agent-closed-backlog.md` -- `chainPass` was
+finally confirmed `True` for the first time via PR #421's merge (`cache`-lane run `31264219121`),
+closing the last of the three.
 
 Asserts, mostly against `$combined` (the bootstrap stdout log plus `~setup.log`, concatenated) --
 except the exact cascade COUNT (`$uvToConda`) and the warnfix-round evidence (`$warnfixRoundCount`/
