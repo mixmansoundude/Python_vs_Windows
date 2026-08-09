@@ -3303,10 +3303,11 @@ Real, verbatim console dump (`~selftest_optbuild_decline\~optbuild_decline_boots
 
 #### Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths)
 
-Fires only on a GENUINE Nuitka compiler failure (not the `forcefail`/`HP_TEST_FORCE_NUITKA_FAIL`
-test hooks, which bypass it entirely). No CI run to date has exercised a real Nuitka compiler
-failure, so this is sourced from `run_setup.bat` rather than a console capture -- both call sites
-below are this exact deterministic literal text, not an approximation.
+Fires on either of two genuine failure conditions -- a real Nuitka compiler failure, or Nuitka
+reporting success while never actually producing `dist\<env>.exe` -- and never on the
+`forcefail`/`HP_TEST_FORCE_NUITKA_FAIL` test hooks, which bypass it entirely. No CI run to date has
+exercised either genuine failure, so this is sourced from `run_setup.bat` rather than a console
+capture -- both call sites below are this exact deterministic literal text, not an approximation.
 
 **Tier A (`:try_nuitka_tier_a`)** -- the AV-Safe Build Path fallback that runs when the ORIGINAL
 PyInstaller build has already failed. A genuine Nuitka failure here means every build tool tried
