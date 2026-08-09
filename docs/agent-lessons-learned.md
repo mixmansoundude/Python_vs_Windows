@@ -536,7 +536,15 @@ at 4 call sites: the raw `echo` alphabetical-fallback hint and the
 `:verify_no_exe_probe`. A filename containing `<`/`>`/`&`/`|` would in principle mis-parse as a
 redirection/pipe operator here, per the rule above -- requires a maliciously-or-accidentally-
 crafted filename via drag-and-drop (not a common vector); the only real fix is the global `:log`
-rework blocked by the three CI static guards above. Noted here so it isn't rediscovered later.
+rework blocked by the three CI static guards above. **Three of the four sites are ALSO exposed to
+the `call`-triggered second-expansion-pass hazard documented below (`%`/`^`, not just
+`<`/`>`/`&`/`|`)** -- the `[INFO] REQ-002: Picker entry selected:`, `[ERROR] REQ-021:`, and
+`[INFO] Launching your program now...` sites are all genuine `call :log "..."` invocations, so a
+filename shaped like `%SOME_VAR%` could in principle leak that variable's value the same way the
+DLL-bundling loop's own `%`/`^` bug did; the raw `echo` alphabetical-fallback hint is a PLAIN
+`echo`, not a `call`, so it is NOT subject to the second-pass hazard, only the `<`/`>`/`&`/`|` one
+above. All of this remains accepted risk for the same reason (blocked on the same global `:log`
+rework) -- noted here so it isn't rediscovered later.
 
 **A second, distinct hazard on top of the above: `call :log "..."` triggers cmd.exe's OWN second
 expansion pass, so `%`/`^` are just as dangerous as `<`/`>`/`|`/`&` -- found and fixed for the
@@ -1230,12 +1238,21 @@ each plan doc points back here instead of re-deriving these facts.
   custom TOML key outside `dependencies`/`requires-python` survives untouched. This lets both
   features skip a hand-rolled TOML differ/merger: feed the full current dependency list to `uv add
   --script` every time and let `uv`'s own merge logic do the rest.
-- **Exit code `2` reliably and exclusively means "the header itself is unparseable TOML."**
-  Confirmed across every malformed-header test in both features' testing; a missing/misnamed file
-  does NOT also produce exit 2 (it's exit 1, "script does not exist"), so the signal isn't
-  accidentally shared with an unrelated failure class. Both features' malformed-header-repair logic
-  branches on exit code 2 specifically, not "any nonzero exit," before deciding whether stripping
-  the header is safe.
+- **Exit code `2` means "the header itself is unparseable TOML" ONLY after a caller has already
+  ruled out uv's OTHER two exit-2 triggers -- it is not exclusively a malformed-header signal on
+  its own.** `uv add --script`'s clap-based CLI argument parser also exits 2 for non-UTF-8 input
+  and for a pip-style package directive (`-e`, `-r`, `--hash`, ...) passed as a plain spec --
+  confirmed directly in `tools/pep723_writeback.py`'s own source: `read_packages()` filters any
+  line starting with `-` specifically because it "exit[s] 2 from uv's clap parser same as malformed
+  TOML," and `main()` runs its own UTF-8 read-and-catch BEFORE ever invoking `uv add --script`,
+  printing `SKIP:non_utf8` and returning without reaching the exit-2 branch at all. So within both
+  features' OWN guarded call sites (UTF-8 pre-checked, package specs pre-filtered), exit 2 IS a
+  reliable malformed-header signal -- but that reliability comes from the guards, not from exit 2
+  being unambiguous on `uv`'s own side. A missing/misnamed file does NOT also produce exit 2
+  (it's exit 1, "script does not exist"). Both features' malformed-header-repair logic branches on
+  exit code 2 specifically, not "any nonzero exit," before deciding whether stripping the header is
+  safe -- but a future caller invoking `uv add --script` WITHOUT the same UTF-8/package-directive
+  guards must not assume exit 2 there means malformed TOML.
 - **A closing `# ///` fence with trailing whitespace fails to parse, exit 2 -- astral-sh/uv#10918.**
   Looks fine to a human, invalid to `uv`'s strict parser. Any header-repair logic must be tolerant
   of this on the STRIP side (match `# ///` followed by optional trailing whitespace, not requiring

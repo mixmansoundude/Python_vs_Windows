@@ -736,10 +736,14 @@ initial fallback chain, reordered venv/system/embed -> embed/venv/system) and `:
 `:try_embed_fallback`; new `:cascade_from_embed` + `HP_CASCADE_TRIED_EMBED` guard targets
 `:try_venv_fallback`; `:cascade_from_venv` unchanged; `:cascade_from_system`/
 `HP_CASCADE_TRIED_SYSTEM` deleted, since system has no cascade target now). No downstream
-`HP_ENV_MODE`/`HP_ENV_READY` consumer needed to change (pure exact-string-equality / tier-agnostic
-boolean) -- only the two dispatch chains moved. Tier numbering ("Tier 4"=system, "Tier 5"=embed) was
-deliberately kept as a historical label, not renumbered to match execution order (load-bearing
-NDJSON ids are not tier-numbered).
+`HP_ENV_MODE`/`HP_ENV_READY` consumer needed to change FOR THIS REORDER SPECIFICALLY (most were
+already tier-agnostic exact-string-equality/boolean checks by the time embed first shipped) --
+only the two dispatch chains moved. This is distinct from embed's original introduction as a
+provider, which DID require one consumer change (`:after_env_mode_selection`'s dependency-install
+branch, see item 4 below) -- do not read this sentence as claiming embed's whole feature was
+consumer-change-free. Tier numbering ("Tier 4"=system, "Tier 5"=embed) was deliberately kept as a
+historical label, not renumbered to match execution order (load-bearing NDJSON ids are not
+tier-numbered).
 
 **Bug found+fixed in the reorder pass: the version-swap mechanism (stage 2 below) was dead code.**
 The version-check-and-swap sequence was wrapped in one parenthesized `if not errorlevel 1 ( ... )`
@@ -772,9 +776,13 @@ real CI run; the fix is static reasoning about documented Windows `move`/`rd` se
 Windows repro. A dedicated test (pin a non-latest version through a real embed download) would be
 the natural next step if this tier's trigger rate ever justifies it.
 
-**Two-stage PowerShell/Python split (not a single script).** This tier runs precisely when NO
-Python interpreter exists anywhere, so per-request version-table logic cannot live in Python until
-*some* interpreter is on disk:
+**Two-stage PowerShell/Python split (not a single script).** This tier runs when the bootstrapper
+has not yet secured any interpreter OF ITS OWN (uv and conda both failed) -- an ambient system or
+venv-capable interpreter may still exist on the machine, since embed is deliberately tried before
+those tiers (see the reorder above), but this tier's whole design is to acquire a FRESH,
+checksum-verified interpreter rather than probe for or trust an ambient one, so it never looks for
+one. That means per-request version-table logic genuinely cannot live in Python until *some*
+interpreter is on disk -- specifically the one THIS tier just extracted, not any ambient one:
 1. **PowerShell stage** (`tools/embed_extract.ps1`, `HP_EMBED_EXTRACT`) -- batch has already
    downloaded ONE hardcoded "latest" version's zip (`HP_EMBED_LATEST_PATCH`/
    `HP_EMBED_LATEST_SHA256` near the top of `run_setup.bat`). Does ONLY checksum verification
