@@ -93,8 +93,14 @@ $pytxtStatusPath = Join-Path $pytxtDir '~bootstrap.status.json'
 $pytxtStatus = if (Test-Path $pytxtStatusPath) { Get-Content -LiteralPath $pytxtStatusPath -Encoding ASCII -Raw | ConvertFrom-Json } else { $null }
 $pytxtLogPath = Join-Path $pytxtDir '~pytxt_bootstrap.log'
 $pytxtLog = if (Test-Path $pytxtLogPath) { Get-Content -LiteralPath $pytxtLogPath -Raw } else { '' }
+# :check_hidden_ext_hint writes to BOTH the console (captured above) and run_setup.bat's own
+# internal %LOG% stream (~setup.log) -- check both, so a leak into either stream is caught.
+$pytxtSetupLogPath = Join-Path $pytxtDir '~setup.log'
+$pytxtSetupLog = if (Test-Path $pytxtSetupLogPath) { Get-Content -LiteralPath $pytxtSetupLogPath -Raw } else { '' }
 $pytxtHintFound = $pytxtLog -match [regex]::Escape('Hint: found a file ending in .py.txt')
-$pytxtNameLeaked = $pytxtLog -match [regex]::Escape($pytxtCandidateName)
+$pytxtNameLeakedConsole = $pytxtLog -match [regex]::Escape($pytxtCandidateName)
+$pytxtNameLeakedSetupLog = $pytxtSetupLog -match [regex]::Escape($pytxtCandidateName)
+$pytxtNameLeaked = $pytxtNameLeakedConsole -or $pytxtNameLeakedSetupLog
 $pytxtStatusExitOk = $pytxtStatus -and ($pytxtStatus.exitCode -eq 0)
 $pytxtPass = ($pytxtExit -eq 0) -and $pytxtStatus -and ($pytxtStatus.state -eq 'no_python_files') -and ($pytxtStatus.pyFiles -eq 0) -and $pytxtStatusExitOk -and $pytxtHintFound -and (-not $pytxtNameLeaked)
 Write-NdjsonRow ([ordered]@{
@@ -107,11 +113,12 @@ Write-NdjsonRow ([ordered]@{
     state = $(if ($pytxtStatus) { $pytxtStatus.state } else { $null })
     pyFiles = $(if ($pytxtStatus) { $pytxtStatus.pyFiles } else { $null })
     hintFound = $pytxtHintFound
-    nameLeaked = $pytxtNameLeaked
+    nameLeakedConsole = $pytxtNameLeakedConsole
+    nameLeakedSetupLog = $pytxtNameLeakedSetupLog
   }
 })
 if (-not $pytxtPass) {
-  throw "py.txt hidden-extension hint scenario failed (exit=$pytxtExit statusExit=$($pytxtStatus.exitCode) state=$($pytxtStatus.state) hintFound=$pytxtHintFound nameLeaked=$pytxtNameLeaked)"
+  throw "py.txt hidden-extension hint scenario failed (exit=$pytxtExit statusExit=$($pytxtStatus.exitCode) state=$($pytxtStatus.state) hintFound=$pytxtHintFound nameLeakedConsole=$pytxtNameLeakedConsole nameLeakedSetupLog=$pytxtNameLeakedSetupLog)"
 }
 $summary.Add('py.txt hidden-extension hint: PASS')
 
