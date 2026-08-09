@@ -1875,9 +1875,9 @@ detected, per REQ-019's suppression-only convention.
 **What's tested:** `pandas_excel.translate`/`.conda.install`/`.conda.install.req006`/`.runtime`,
 `self.pandas.openpyxl.install`/`.import` (`tests/selfapps_pandas_excel.ps1`, `conda-full` lane, all
 real and passing) -- plus a genuinely SEPARATE test that happens to exercise the same heuristic in
-a different scratch directory, `self.exe.warnfix.real` (`tests/selftest.ps1`'s `real` scenario,
-`conda-full` lane, also real and passing, `desc: "Heuristic pre-installed openpyxl via pandas
-heuristic; EXE succeeded"`).
+a different scratch directory, `self.exe.warnfix.real` (`tests/selfapps_warnfix.ps1`'s `real`
+scenario, `conda-full` lane, also real and passing, `desc: "Heuristic pre-installed openpyxl via
+pandas heuristic; EXE succeeded"`).
 
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708094` (`conda-full` lane).
 
@@ -1929,6 +1929,31 @@ module named PIL - imported by openpyxl.drawing.image (optional)`, not a real ga
 "selfapps_pandas_excel.ps1" note) -- the SAME heuristic logic also runs for uv/venv/embed/system
 providers via `requirements.txt` write-back (CLAUDE.md's own "Deep research pass" Closed Backlog
 entry on this exact fix), just not captured here since this test is conda-only by design.
+
+That claim is directly confirmed by `self.exe.warnfix.real`'s own real bootstrap console capture from
+the SAME CI run (`tests/~selftest_warnfix_real/~warnfix_real_bootstrap.log`) -- a full `run_setup.bat`
+run whose `requirements.txt` declares only `pandas` (triggering the identical heuristic rule shown
+above), while the app's own source imports `openpyxl` directly and writes `out.xlsx` via
+`openpyxl.Workbook()` rather than through pandas -- deliberately isolating the heuristic-provisioned
+package as the only thing under test. This run reaches an actual build and EXE smoke test:
+
+```
+[INFO] Building standalone executable -- this may take a minute or two...
+[INFO] PyInstaller produced dist\_selftest_warnfix_real.exe
+[INFO] EXE smokerun: testing dist\_selftest_warnfix_real.exe
+wrote out.xlsx
+[INFO] EXE smokerun: exited 0 (ok)
+[STATUS] Run Status: SUCCESS (Exit Code: 0)
+```
+
+`wrote out.xlsx` is the app's own `print()` output, reached only after `openpyxl.Workbook().save()`
+succeeds inside the frozen EXE -- direct, unambiguous proof the heuristic-installed `openpyxl` was
+genuinely bundled and usable at runtime, not just resolved by conda's solver. This same real run
+separately hit unrelated warnfix repair failures (`multiprocessing`, `pyimod02_importers`, `vms_lib`,
+`java`, `win32pdh` -- none are real installable packages, a PyInstaller warn-scan false-positive class
+distinct from this heuristic) and a declined REQ-009 cascade prompt; neither affected the pandas/
+openpyxl outcome, since `openpyxl` was already correctly provisioned by the heuristic before the
+build ever started.
 
 ---
 
