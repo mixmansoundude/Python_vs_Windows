@@ -542,24 +542,25 @@ is not.
   fix was wrong, third fix confirmed via CI run N") wearing reference-doc clothes, not restated
   prose. Scoped as three separate loops (see `docs/agent-closed-backlog.md`'s Item 23/30 entries
   for the prior compression history this builds on):
-  1. Add a house-rule line to the top of all three auto-loaded docs codifying "distill to the
-     load-bearing rule; move the narrative/provenance to `docs/agent-closed-backlog.md`" as the
-     ongoing editing principle. Then dedupe the two confirmed cross-file duplications: the cmd.exe
-     `%`-pairing sanitizer saga told at length in both `agent-interconnect.md`'s DLL-bundling
-     section and `agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry; and the
-     `self.dll_bundle.recover` NDJSON row's mechanism explained at length in both
-     `agent-interconnect.md` and `agent-ndjson.md`. Pick one canonical home per fact, leave a
-     one-line pointer everywhere else -- zero information loss, since the fact still lives
-     somewhere.
-  2. Move CLAUDE.md's own "Known Findings" section to `docs/agent-closed-backlog.md` -- it is
-     explicitly "diagnosed, no action warranted," which is verbatim that file's own stated scope
-     ("read on demand... when investigating something that feels like it was already done"), so it
-     doesn't belong in the always-loaded file at all.
-  3. Distill CLAUDE.md's dependency-strategy essay (pipreqs pin rationale, pipreqs invocation
-     rationale, the warnfix `SKIP`-set walkthrough, the 6 Bootstrap Architecture Principles) down
-     to the load-bearing rule per topic, moving the multi-paragraph justification to a reference
-     doc. Table-ify the per-payload paragraph descriptions in "run_setup.bat Rules" (payload name /
-     decodes to / purpose / canonical source, one line each) instead of a paragraph per payload.
+  - **Loop 1 (DONE, PR #429):** added the house-rule line to the top of all three auto-loaded
+    docs codifying "distill to the load-bearing rule; move the narrative/provenance to
+    `docs/agent-closed-backlog.md`" as the ongoing editing principle, and deduped the two confirmed
+    cross-file duplications: the cmd.exe `%`-pairing sanitizer saga told at length in both
+    `agent-interconnect.md`'s DLL-bundling section and `agent-lessons-learned.md`'s ":log echoes
+    UNQUOTED" entry (canonical home: lessons-learned.md); and the `self.dll_bundle.recover` NDJSON
+    row's mechanism explained at length in both `agent-interconnect.md` and `agent-ndjson.md`
+    (canonical home: agent-ndjson.md). Zero information loss -- each fact still lives at its one
+    canonical home, with a one-line pointer left everywhere else.
+  - **Loop 2 (open):** move CLAUDE.md's own "Known Findings" section to
+    `docs/agent-closed-backlog.md` -- it is explicitly "diagnosed, no action warranted," which is
+    verbatim that file's own stated scope ("read on demand... when investigating something that
+    feels like it was already done"), so it doesn't belong in the always-loaded file at all.
+  - **Loop 3 (open):** distill CLAUDE.md's dependency-strategy essay (pipreqs pin rationale,
+    pipreqs invocation rationale, the warnfix `SKIP`-set walkthrough, the 6 Bootstrap Architecture
+    Principles) down to the load-bearing rule per topic, moving the multi-paragraph justification
+    to a reference doc. Table-ify the per-payload paragraph descriptions in "run_setup.bat Rules"
+    (payload name / decodes to / purpose / canonical source, one line each) instead of a paragraph
+    per payload.
   **Deliberately keeping "Periodic Maintenance Checks" in CLAUDE.md, NOT moved out** -- owner
   decision: the quarterly Claude Code Remote trigger's own reliability isn't confirmed yet, so this
   section staying always-loaded is an intentional fallback until that trigger has enough of a track

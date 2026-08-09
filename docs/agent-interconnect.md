@@ -298,42 +298,26 @@ line explicitly includes `%HP_PYI_DLLBIND%` alongside `%HP_PYI_EXPAT% %HP_PYI_CO
 own accumulated flags through EVERY later rebuild command the same way, or an earlier loop's fix
 gets silently discarded by a later one's rebuild.
 
-**A fifth real bug found via review: `HP_DLL_DETECTED`/`HP_NEXT_DLL`/`HP_NEXT_DLL_PATH` reached
-`:log`'s UNQUOTED echo AND the `call`-triggered second-expansion-pass hazard, both already
-documented in `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry -- see that entry for
-the full mechanism (why `<`/`>`/`&`/`|` corrupt an unquoted `:log` echo, why `call` additionally
-makes `%`/`^` dangerous) and the three-rounds-of-getting-the-fix-wrong saga (a doubled-`%%`
-cmd.exe substitution silently produced empty output; the PowerShell replacement text then itself
-had an unpaired `%` corrupting an adjacent `%LOG%` reference) that ends with the current fix
-below.** All three values are derived from PyInstaller's own build-log warning text (`_PATTERN`'s
-regex extracts whatever sits between quotes in `Library not found: could not resolve 'X.dll'`),
-which can legally contain any of `&`/`|`/`<`/`>`/`%`/`^`.
-
-**Current fix: `HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` are computed by
-`tools/dll_pct_sanitize.ps1` (`HP_DLL_PCT_SANITIZE`), an emitted `.ps1` file invoked via `-File
-"path" arg1 arg2...` rather than inline `-Command` text -- this is what finally eliminated the bug
-class structurally (a `-File` invocation's script body is never handed to cmd.exe's tokenizer at
-all, so there's no `%`-pairing hazard left to get wrong a fourth time).** Used ONLY in `:log`
-calls -- every functional use of the raw value (the tried-file byte-copy via `type`, the quoted
+**`HP_DLL_DETECTED`/`HP_NEXT_DLL`/`HP_NEXT_DLL_PATH` reach `:log`'s UNQUOTED echo AND the
+`call`-triggered second-expansion-pass hazard -- see `docs/agent-lessons-learned.md`'s ":log
+echoes UNQUOTED" entry for the full mechanism and fix history.** All three values are derived from
+PyInstaller's own build-log warning text (`_PATTERN`'s regex extracts whatever sits between quotes
+in `Library not found: could not resolve 'X.dll'`), which can legally contain any of
+`&`/`|`/`<`/`>`/`%`/`^`. Sanitized copies (`HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/
+`HP_NEXT_DLL_PATH_SAFE`, computed by `tools/dll_pct_sanitize.ps1`) are used ONLY in `:log` calls --
+every functional use of the raw value (the tried-file byte-copy via `type`, the quoted
 `--add-binary` PyInstaller argument) is untouched, so this cannot desync the tried-list dedup
 matching (`next_dll_target()` re-extracts the RAW name from the log text on every loop iteration;
 sanitizing only the tried-file's stored copy would break equality comparison for any DLL name
 containing a hazardous character). `HP_NEXT_DLL_PATH_SAFE` needs the same treatment even though its
 raw value is a real, `os.walk()`-confirmed path, not warning text -- Windows filenames may legally
-contain `%`/`^`/`&` (NTFS's forbidden set is only `< > : " / \ | ? *` plus control characters), so a
-real conda-forge package path could carry any of these; `&` in particular is filesystem-legal but
-still a genuine CMD transport hazard once that path reaches an unquoted `:log` echo. See
-`docs/agent-lessons-learned.md`'s "PowerShell helpers: prefer an emitted `.ps1` file..." entry for
-why `-File` beats `-Command` here as a general rule, not just for this one call site.
+contain `%`/`^`/`&`, so a real conda-forge package path could carry any of these.
 
-**A companion CodeRabbit finding on the same review round: the loop's detected/skipped/repaired/
-unlocatable/failed outcomes previously reached only `:log`'s console text, with no
-machine-readable record.** Fixed with a new shared subroutine, `:emit_dll_bundle_row`, called from
-all 7 outcome points, emitting NDJSON id `self.dll_bundle.recover` -- see `docs/agent-ndjson.md`
-for the full state list, the `[Environment]::GetEnvironmentVariable` cmd.exe-argument-safety
-rationale, and the `HP_NDJSON`-scoping caveat (this row is not currently observed in
-`self.layered_e2e.chain`'s own artifact). Any future repair loop's outcome points need the same
-treatment: a `call`ed emitter subroutine plus a registered NDJSON row, not just a `:log` line.
+Every outcome of this loop (`skipped_nuitka`/`skipped_non_conda`/`repaired`/`unlocatable`/
+`exhausted`/`failed_rebuild`/`failed_missing_exe`) is emitted as NDJSON id `self.dll_bundle.recover`
+via `:emit_dll_bundle_row` -- see `docs/agent-ndjson.md` for the full state list and field schema.
+Any future repair loop's outcome points need the same treatment: a `call`ed emitter subroutine plus
+a registered NDJSON row, not just a `:log` line.
 
 **A NINTH real bug found via a CodeRabbit review round on PR #414 itself (CLAUDE.md Item 25,
 fixed in a dedicated follow-up loop): `:dll_bundle_loop` found the next candidate (`HP_NEXT_DLL`)
