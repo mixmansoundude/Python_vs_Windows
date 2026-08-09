@@ -544,27 +544,6 @@ is not.
   that can collapse without losing accuracy or completeness, and cut it. Do not sacrifice
   correctness or completeness for terseness -- the goal is removing WORDS, not INFORMATION.
 
-- **Item 33: classify PyInstaller/Nuitka build-tool failures with a `reason=`-style token, not
-  just a plain `[ERROR]` message.** CodeRabbit review finding on PR #423 (`docs/demo-
-  bootstrapper-output.md` lines 2977-2980, citing AGENTS.md's "external/environmental failures ...
-  make them legible in logs/NDJSON ... emit a `reason=` token" guideline). Verified: `run_setup.bat`
-  already uses `reason=` tokens for several failure classes (`UV_FALLBACK reason=dep_install_
-  failed`, Miniconda AllUsers install `reason=timeout`/`reason=installer_failed`, `pipreqs.install`'s
-  NDJSON `reason` field), but the PyInstaller/Nuitka Tier A build-failure call sites
-  (`:die "[ERROR] PyInstaller execution failed."` / `"[ERROR] PyInstaller did not produce
-  dist\%ENVNAME%.exe"`, inside `:run_entry_after_smoke`) and `self.exe.smokerun`'s own NDJSON row
-  (emitted from `:smokerun_ndjson`, `exitCode` only) do not carry an equivalent classification --
-  a real user hitting a genuine
-  PyInstaller crash, an AV lock, disk-full, or a plain compile error all currently produce the
-  identical generic message. NOT implemented in PR #423 (docs-only housekeeping PR; this needs a
-  design pass over which failure signatures are actually distinguishable and worth a separate
-  `reason=` value, plus updating `docs/agent-ndjson.md`'s row registry and probably
-  `tests/harness.ps1`'s static guards -- a real feature slice, not a docs fix). Note the AGENTS.md
-  guideline this cites is scoped to CI-lane self-test legibility (avoiding a flaky external
-  download being mistaken for a repo/test regression); whether the same treatment is warranted for
-  `run_setup.bat`'s own real-user-facing build-failure messages is part of what this item needs to
-  resolve, not something to assume.
-
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
