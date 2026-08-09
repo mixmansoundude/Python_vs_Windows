@@ -20,11 +20,15 @@ likely be reorganized again as it grows. Treat a Part/Scenario citation here as 
 look," not a precise current coordinate; this file is an append-only historical record, so its own
 entries are not retroactively renumbered to track that doc's current structure.
 
-**Two sections below.** "Closed Active Backlog Items" holds items that were promoted out of
+**Three sections below.** "Closed Active Backlog Items" holds items that were promoted out of
 `CLAUDE.md`'s own "Active Backlog" section once fully resolved (each keeps its original item
-number for cross-reference stability -- other docs cite these by number). "Closed Backlog" is
-`CLAUDE.md`'s own pre-existing changelog-style record of completed feature/fix work, moved here
-verbatim.
+number for cross-reference stability -- other docs cite these by number). "Known Findings"
+(moved here verbatim from `CLAUDE.md`, 2026-08-09, Active Backlog Item 34 Loop 2) holds
+diagnosed-no-action-warranted investigations -- a question was raised, researched, and answered
+with "no code change needed" or "considered and rejected, with reasoning" -- distinct from a
+Closed Active Backlog item (resolved with a real change) or an open Active Backlog item (still
+pending). "Closed Backlog" is `CLAUDE.md`'s own pre-existing changelog-style record of completed
+feature/fix work, moved here verbatim.
 
 ---
 
@@ -1891,6 +1895,157 @@ this belongs to).
     same pattern to `run_setup.bat`'s real-user-facing build-failure messages too, since the two
     genuinely differ in actionability (`missing_output` suggests an AV/indexer conflict a user
     could investigate; `build_error`/`test_forced_fail` do not) and the token costs nothing to add.
+
+## Known Findings (diagnosed, no action warranted)
+
+- **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
+  A prior pass found that Active Backlog items 9 and 11 (filed 2026-07-29) each collided with an
+  older, already-closed item of the same number, and -- following a convention this file used to
+  document -- renumbered them to 17 and 16 when archiving (see this file's own Item 16/17 entries
+  above; left as-is, not worth unwinding already-completed, harmless work). That same
+  pass flagged the remaining active items (8, 10, 12, 13, 14, 15) as likely sharing the same
+  collision, filed as its own Active Backlog item to renumber them individually in a future pass.
+  **Owner call: this is unnecessary maintenance overhead for a plain-text backlog** -- there is no
+  practical way to keep hand-tracking collision-free numbers against a growing closed-history
+  archive without an extra bookkeeping system, and a real uniqueness guarantee belongs in an
+  actual issue tracker (e.g. GitHub Issues) if it's ever genuinely needed, not a markdown
+  convention here. Decision: item numbers are now informal, non-unique labels (see `CLAUDE.md`'s
+  Active Backlog section's own intro text); items 8, 10, 12, 13, 14, 15 keep their current
+  numbers permanently, coincidental collisions with closed-item numbers are not a defect, and the
+  item that tracked renumbering them is closed with no further action.
+
+- **Cascade consent gate design (timed prompt, decline-by-default) kept exactly as shipped,
+  2026-07-26 owner decision -- closes the former cascade-consent question in
+  `docs/open-questions.md`.** Following the
+  cascade-vs-postexec fix (see Closed Backlog below), a deeper investigation into the reliability
+  of the `HP_CASCADE_CANDIDATE` signal was requested and completed -- a full truth table over its
+  two constituent build-time static signals, with estimated odds the `.exe` still runs fine and
+  odds each next provider tier would actually help, now preserved in
+  `docs/agent-interconnect.md`'s "Cascade signal reliability" subsection (under "Post-execution
+  checkpoint") rather than in the open-questions file, per that file's own convention of folding
+  resolved questions into wherever they actually belong. Headline finding: the signal is real but
+  imperfect (an estimated 60-75% chance of a genuine problem when it fires, not a certainty), and
+  the uv->conda hop specifically has real, mechanism-level justification (a genuinely different
+  package index) that later hops (conda->embed->venv->system, all pip/PyPI-based once bootstrapped)
+  largely lack.
+  - **Considered, not adopted**: flipping the timed prompt's default from decline (N) to accept
+    (Y), specifically for the uv->conda hop, on the strength of that hop's own justification.
+  - **Decision: keep `:cascade_consent_gate` exactly as shipped** -- the timed `choice /T` prompt,
+    defaulting to decline (N) on timeout, unchanged for every hop including uv->conda. No code
+    change resulted from this investigation.
+  - Also considered and left out of the same pass, for a different reason (flagged as possibly
+    too risky to be wrong and too complex to be robust, and the analysis didn't fully resolve
+    that concern): telling the user their specific odds that the NEXT tier would help. Still not
+    implemented.
+
+- **The official `irm https://astral.sh/uv/install.ps1 | iex` installer script was researched as
+  a possible replacement for the current uv acquisition method -- rejected, current approach is
+  correct.** (Note: the exact official URL is `https://astral.sh/uv/install.ps1`, not the bare
+  `https://astral.sh` domain -- verified directly against astral.sh's own installation docs.) The
+  bootstrapper currently downloads uv's release zip directly from GitHub
+  (`HP_UV_URL`/`HP_UV_FALLBACK_URL`, run_setup.bat) and extracts `uv.exe` into a private
+  `~uv_bin\` directory that is prepended to `PATH` for the current process only (REQ-010 session
+  isolation). The official installer script does something architecturally different and worse
+  for this bootstrapper's needs: it installs uv to a persistent, shared, user-global location and
+  writes a PATH update to the user's shell profile/registry -- a footprint the installer script's
+  own documentation and general Windows tooling behavior both confirm requires a **fresh terminal
+  window** to take effect, since PATH updates never propagate into an already-running process.
+  That is fundamentally incompatible with `run_setup.bat`'s zero-terminal-restart promise (the
+  same class of restart/PATH-propagation hazard flagged independently in
+  `docs/prd-av-safe-build-path.md`'s Finding 6) -- the bootstrapper needs to use uv immediately,
+  within the same running batch process, with no user interaction. It also conflicts with two of
+  `CLAUDE.md`'s own stated Bootstrap Architecture Principles: "Never depend on
+  console scripts during bootstrap" and preferring a private, disposable footprint over a shared,
+  persistent one -- the same reasoning that separately ruled out winget/Microsoft Store Python as
+  a REQ-009 tier. Decision: keep the current direct-zip-to-private-directory approach; the
+  installer script is the right choice for a normal interactive user setting up their own
+  machine, not for a script that needs the tool usable in the same process that downloaded it.
+
+- **Embed zip download has no genuine second-host fallback available, unlike Miniconda/uv/get-pip
+  -- researched, no action planned.** A background code-review pass flagged that the embed tier's
+  download (`:try_embed_fallback`, run_setup.bat) retries the *same* `HP_EMBED_URL`
+  (`www.python.org/ftp/python/...`) on failure, unlike Miniconda (has a `repo.continuum.io` legacy
+  alias), uv (has a pinned-release GitHub URL distinct from its "latest" CDN redirect), and get-pip
+  (has the get-pip project's own GitHub source as a second host). Researched whether an equivalent
+  second host exists for python.org's embeddable zip distribution: it does not, in the same sense.
+  `www.python.org/ftp` is itself the canonical, Fastly-CDN-backed distribution point for CPython
+  releases -- there is no alternate *official* domain serving the identical embeddable-zip artifact.
+  python.org does list community mirrors, but none are guaranteed to carry the embeddable-zip
+  variant specifically, or to match this repo's pinned SHA256 the way the primary source does by
+  construction (the checksum was computed directly from a `python.org/ftp` download at pin time) --
+  pointing at one would be a real trust/availability decision, not a mechanical copy of the
+  Miniconda/uv/get-pip pattern. Decision: no forced fallback host. The existing 2-attempt
+  same-URL retry (curl, then PowerShell `Invoke-WebRequest`) already covers the common transient
+  failure case; a genuine second-host fallback remains possible future work if a specific mirror is
+  ever vetted, but is not a quick win and is not planned. **One specific candidate WAS identified
+  and considered, then rejected**: the CPython core team publishes an embeddable-equivalent build
+  to NuGet (`nuget.org/packages/python`) as part of their official release process -- a real,
+  independently-hosted, officially-maintained artifact on a different CDN (Azure-backed vs.
+  Fastly), reachable without the NuGet client via `nuget.org/api/v2/package/python/<version>`.
+  Rejected because it is not the same artifact the pinned `EMBED_PYTHON_TABLE` checksums were
+  computed against -- using it would mean maintaining a second SHA256 column per pinned version
+  going forward, doubling the table's maintenance burden for a download that's already covered by
+  the existing 2-attempt retry against a CDN that's rarely actually down. Revisit only if the
+  same-host retry proves insufficient in practice.
+
+- **winget / Microsoft Store Python evaluated as a possible additional REQ-009 tier -- rejected,
+  no action planned.** Considered whether `winget install Python.Python.3` (or the Microsoft Store
+  Python package) could serve as another fresh-acquisition fallback alongside or instead of the
+  embedded-Python tier. Researched winget's actual install behavior: without an explicit
+  `--scope machine` flag (which needs elevation), it installs **per-user** to
+  `%LOCALAPPDATA%\Programs\Python\Python3XX` -- but "per-user" is not the same axis as "isolated"
+  in the sense the embed tier cares about. Unlike embed's private, checksummed, disposable
+  `~embed_python\` directory (never registered anywhere, verified before use, gone if the app
+  stops using it), a winget/Store install is **shared and persistent**: it registers itself on
+  PATH, in Add/Remove Programs, and in the App Execution Alias registry, is discoverable by other
+  applications and future bootstrap runs of *other* projects, and its integrity is delegated
+  entirely to winget's own signature verification rather than this repo's own embedded SHA256.
+  Architecturally this makes it closer to the **system** tier (shared, uncontrolled, arguably
+  needing the same REQ-014-style consent) than to the **embed** tier (private, disposable,
+  pre-verified) -- adding it would mostly duplicate embed's job (fresh acquisition) with weaker
+  isolation, for the same underlying failure causes embed already fails for (no network, or -- for
+  winget itself -- winget/App Installer not being present on an older Windows 10 build, which is
+  its own new dependency this bootstrapper doesn't otherwise have). Decision: not worth adding as
+  a 6th tier.
+
+- **User-code exit-code semantics are already correctly isolated from bootstrapper status --
+  verified, no action needed.** Traced the full flow: `HP_SMOKE_RC` is captured directly from
+  `%ERRORLEVEL%` immediately after launching the user's program at every verification call site
+  (`:run_exe_smokerun`'s EXE smoke, `:verify_no_exe_interpreter`'s interpreter run,
+  `:run_failfast_probe`'s interactive probe), via goto-based dispatch (not nested in a
+  parenthesized if/else) with no bootstrapper logic interleaved between launch and capture --
+  confirms it is purely the user program's own exit code. Separately confirmed the
+  bootstrapper's own reported status is entirely decoupled: the terminating `exit /b 0` at the
+  end of the `:success` label (the actual `run_setup.bat` process exit code on a real
+  double-click) and every `call :write_status ok 0 ...` site pass a hardcoded literal `0`,
+  never `%HP_SMOKE_RC%` -- so a crashing/non-zero-exiting user program is never reported as a
+  bootstrapper failure. `~bootstrap.status.json`'s `exitCode` field means "did the
+  bootstrapper's own env/build lifecycle succeed," not "what did the user's program return";
+  the true user-program outcome is surfaced separately via the console
+  `[STATUS] Run Status: SUCCESS/FAILED (Exit Code: N)` line. Also confirmed such a case does
+  not get misrouted into repair logic: the `--hidden-import` auto-recovery loop only engages
+  for a narrow signature (`ModuleNotFoundError` of a module that IS installed in the build
+  interpreter -- see "--hidden-import auto-recovery must stay STRICT" in
+  `docs/agent-lessons-learned.md`); any other user-program failure (a logic bug, an unrelated
+  unhandled exception, etc.) takes no recovery action and is left exactly as observed, correctly
+  not conflated with a packaging/bootstrapper problem. No code change needed; existing behavior
+  already satisfies the intent.
+
+- **NI-VISA real install fails fast in CI (`installer_rc=-125083`) -- environmental, NOT a repo/test/CI-code
+  bug.** Diagnosed via the REQ-008 `[VISA]` diagnostic logging (download method / file size / PE check /
+  installer exit code, surfaced in the `pyvisa.nivisa.reason` NDJSON details). On the conda-full lane the
+  installer downloads cleanly via curl (~6.77 MB, `PE_OK` -- a genuine NI-VISA 21.5 online bootstrapper),
+  then runs and exits `-125083` in ~10s. Because the install uses `start /wait`, the post-check budget never
+  kills it; the failure is the online bootstrapper being unable to complete an unattended install on the
+  runner (network policy to NI's package feed and/or no interactive/elevation path). Consequences:
+  `[VISA] install_success` is **unreachable in CI by design**; the validated behavior is
+  detect -> attempt -> log rc -> continue gracefully; **no dedicated real-install lane is warranted** (there
+  is no slow-but-succeeding install to wait out). `HP_NIVISA_WAIT_SECS` remains a useful knob only for the
+  narrow detached-child registry-propagation case.
+  - **NOT YET CONFIRMED on a real machine.** This conclusion rests solely on CI evidence. It still needs a
+    real user run (normal internet, interactive/admin session) to confirm the same valid installer succeeds
+    off-CI (expected ~30-45 min per the maintainer's prior experience). Until then, treat the
+    "environmental" classification as strongly-supported-but-provisional.
 
 ## Closed Backlog
 

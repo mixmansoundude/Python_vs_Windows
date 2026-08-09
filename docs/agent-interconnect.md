@@ -1850,7 +1850,8 @@ timed.ps1` (conda-full lane) proves the timed-choice mechanism and the dirty-fla
 
 Investigated in response to a maintainer question about how confident this signal actually is, and
 whether the cascade consent gate's design (timed prompt, defaults to decline) should change as a
-result. **Outcome: kept exactly as shipped -- see CLAUDE.md's Known Findings entry.** This
+result. **Outcome: kept exactly as shipped -- see `docs/agent-closed-backlog.md`'s Known Findings
+entry.** This
 subsection preserves the supporting mechanism-level analysis for anyone touching the signal again.
 
 `HP_CASCADE_CANDIDATE` requires BOTH of two build-time, static signals (`:warnfix_cascade_detect`):
@@ -1898,5 +1899,5 @@ This supports, with a real mechanism behind it rather than just intuition, the i
 specifically to conda has real, justified value while later hops add comparatively little. The
 maintainer considered flipping the timed prompt's default from decline (N) to accept (Y)
 specifically for the uv->conda hop on this basis, but decided to keep `:cascade_consent_gate`
-exactly as shipped (see CLAUDE.md's Known Findings entry for the full reasoning) -- no code
-change resulted from this investigation.
+exactly as shipped (see `docs/agent-closed-backlog.md`'s Known Findings entry for the full
+reasoning) -- no code change resulted from this investigation.
