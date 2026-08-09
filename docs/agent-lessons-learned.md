@@ -19,6 +19,15 @@ shell gotchas; record those here. Record cross-component effects in the intercon
 a lesson is later disproven or fixed at the source, edit the entry to say so rather than
 leaving stale guidance.**
 
+**House rule: distill to the load-bearing rule; move the narrative to
+`docs/agent-closed-backlog.md`.** This file is auto-loaded every session (like
+`docs/agent-interconnect.md`), never read by a person browsing the repo casually -- prefer terse,
+dense phrasing over narrative flow, same as that file. When an entry accumulates multiple rounds
+of "this fix was also wrong" (several already have), keep only the CURRENT-STATE rule plus a
+one-line summary of why the obvious alternative doesn't work; move the full blow-by-blow of which
+attempt failed and how it was caught to `docs/agent-closed-backlog.md`, with a pointer left here.
+See CLAUDE.md's Active Backlog Item 34 for the restructuring pass this principle is driving.
+
 ---
 
 ## Quote a variable before piping it into `findstr`, or `&` in its value splits the command line

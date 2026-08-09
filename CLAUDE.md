@@ -533,7 +533,38 @@ text (see below) rather than leaving the section silently blank** -- an empty se
 marker is easy to mistake for a rendering glitch or an accidental deletion; an explicit statement
 is not.
 
-**Nothing here.** All items above have been resolved and moved to `docs/agent-closed-backlog.md`.
+- **Item 34: restructure the three auto-loaded knowledge docs (`docs/agent-interconnect.md`,
+  `docs/agent-lessons-learned.md`, `docs/agent-ndjson.md`) around a "distill to the load-bearing
+  rule" house rule, moving narrative/provenance out to `docs/agent-closed-backlog.md`.** Follow-up
+  to the Item 30 compression pass (PR #428), which found that further sentence-level trimming was
+  a saturated lever on `agent-interconnect.md` specifically (~0.2% word reduction) -- the file's
+  bulk is chronological incident-log narrative ("bug found via review, first fix was wrong, second
+  fix was wrong, third fix confirmed via CI run N") wearing reference-doc clothes, not restated
+  prose. Scoped as three separate loops (see `docs/agent-closed-backlog.md`'s Item 23/30 entries
+  for the prior compression history this builds on):
+  - **Loop 1 (DONE, PR #429):** added the house-rule line to the top of all three auto-loaded
+    docs codifying "distill to the load-bearing rule; move the narrative/provenance to
+    `docs/agent-closed-backlog.md`" as the ongoing editing principle, and deduped the two confirmed
+    cross-file duplications: the cmd.exe `%`-pairing sanitizer saga told at length in both
+    `agent-interconnect.md`'s DLL-bundling section and `agent-lessons-learned.md`'s ":log echoes
+    UNQUOTED" entry (canonical home: lessons-learned.md); and the `self.dll_bundle.recover` NDJSON
+    row's mechanism explained at length in both `agent-interconnect.md` and `agent-ndjson.md`
+    (canonical home: agent-ndjson.md). Zero information loss -- each fact still lives at its one
+    canonical home, with a one-line pointer left everywhere else.
+  - **Loop 2 (open):** move CLAUDE.md's own "Known Findings" section to
+    `docs/agent-closed-backlog.md` -- it is explicitly "diagnosed, no action warranted," which is
+    verbatim that file's own stated scope ("read on demand... when investigating something that
+    feels like it was already done"), so it doesn't belong in the always-loaded file at all.
+  - **Loop 3 (open):** distill CLAUDE.md's dependency-strategy essay (pipreqs pin rationale,
+    pipreqs invocation rationale, the warnfix `SKIP`-set walkthrough, the 6 Bootstrap Architecture
+    Principles) down to the load-bearing rule per topic, moving the multi-paragraph justification
+    to a reference doc. Table-ify the per-payload paragraph descriptions in "run_setup.bat Rules"
+    (payload name / decodes to / purpose / canonical source, one line each) instead of a paragraph
+    per payload.
+  **Deliberately keeping "Periodic Maintenance Checks" in CLAUDE.md, NOT moved out** -- owner
+  decision: the quarterly Claude Code Remote trigger's own reliability isn't confirmed yet, so this
+  section staying always-loaded is an intentional fallback until that trigger has enough of a track
+  record to be trusted as the sole delivery mechanism.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

@@ -23,8 +23,21 @@ Prefer terse, dense phrasing over narrative flow when editing or compressing ent
 transitional sentences, collapse restated context, prefer fragments and bullet lists over full
 paragraphs where the meaning survives. Accuracy and completeness matter far more than readability
 here -- do not sacrifice either for terseness, but don't spend words on prose polish an agent gets
-no benefit from either. See CLAUDE.md's Active Backlog for the standing "compress this file again"
-item this note exists to unblock.
+no benefit from either.
+
+**House rule: distill to the load-bearing rule; move the narrative to
+`docs/agent-closed-backlog.md`.** A sentence-level trim pass on this file (2026-08-09) only
+recovered ~0.2% of its word count -- the file's actual bulk is chronological incident-log
+narrative ("bug found via review, first fix was wrong, second fix was wrong, third fix confirmed
+via CI run N") wearing reference-doc clothes, not restated prose. When adding or editing an entry,
+write the CURRENT-STATE fact an agent needs before touching that code (the rule, the gotcha, the
+variable/subroutine relationship) as tightly as possible, and put the "how we found this out" blow-
+by-blow -- which review round caught it, which fix attempt was wrong and why, the exact commit/run
+IDs -- in `docs/agent-closed-backlog.md` instead, with a one-line pointer left here. That file is
+read on demand (not auto-loaded), which is exactly where debugging provenance belongs: valuable
+when someone is specifically re-investigating this area, not worth paying for every session
+regardless of task. See CLAUDE.md's Active Backlog Item 34 for the restructuring pass this
+principle is driving.
 
 ---
 
@@ -285,126 +298,26 @@ line explicitly includes `%HP_PYI_DLLBIND%` alongside `%HP_PYI_EXPAT% %HP_PYI_CO
 own accumulated flags through EVERY later rebuild command the same way, or an earlier loop's fix
 gets silently discarded by a later one's rebuild.
 
-**A fifth real bug found via review: `HP_DLL_DETECTED`/`HP_NEXT_DLL`/`HP_NEXT_DLL_PATH` reached
-`:log`'s UNQUOTED echo, an already-documented hazard class in this repo (see
-`docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry) this loop had not yet been checked
-against.** All three values are derived from PyInstaller's own build-log warning text (`_PATTERN`'s
-regex extracts whatever sits between quotes in `Library not found: could not resolve 'X.dll'`),
-which can legally contain `&`/`|`/`<`/`>` on Windows -- exactly the metacharacter set that entry
-already documents as corrupting an unquoted `:log` echo. Fixed with the same DISPLAY-ONLY
-sanitization pattern the `%HP_ENTRY%` case documents as the correct fix wherever the source is
-tractable (unlike `%HP_ENTRY%` itself, which remains an accepted risk since its only real fix -- a
-global `:log` rework -- is blocked by three CI static guards): `HP_DLL_DETECTED_SAFE`/
-`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` are computed via chained `set "VAR_SAFE=%VAR_SAFE:&=_%"`
-substitution (repeated for `|`, `<`, `>`) immediately after each raw value is captured, and used
-ONLY in `:log` calls -- every functional use of the raw value (the tried-file byte-copy via `type`,
-the quoted `--add-binary` PyInstaller argument) is untouched, so this cannot desync the tried-list
-dedup matching (`next_dll_target()` re-extracts the RAW name from the log text on every loop
-iteration; sanitizing only the tried-file's stored copy would break equality comparison for any DLL
-name containing a hazardous character).
+**`HP_DLL_DETECTED`/`HP_NEXT_DLL`/`HP_NEXT_DLL_PATH` reach `:log`'s UNQUOTED echo AND the
+`call`-triggered second-expansion-pass hazard -- see `docs/agent-lessons-learned.md`'s ":log
+echoes UNQUOTED" entry for the full mechanism and fix history.** `HP_DLL_DETECTED`/`HP_NEXT_DLL`
+are derived from PyInstaller's own build-log warning text (`_PATTERN`'s regex extracts whatever
+sits between quotes in `Library not found: could not resolve 'X.dll'`), which can legally contain
+any of `&`/`|`/`<`/`>`/`%`/`^`. Sanitized copies (`HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/
+`HP_NEXT_DLL_PATH_SAFE`, computed by `tools/dll_pct_sanitize.ps1`) are used ONLY in `:log` calls --
+every functional use of the raw value (the tried-file byte-copy via `type`, the quoted
+`--add-binary` PyInstaller argument) is untouched, so this cannot desync the tried-list dedup
+matching (`next_dll_target()` re-extracts the RAW name from the log text on every loop iteration;
+sanitizing only the tried-file's stored copy would break equality comparison for any DLL name
+containing a hazardous character). `HP_NEXT_DLL_PATH_SAFE` needs the same treatment even though its
+raw value is a real, `os.walk()`-confirmed path, not warning text -- Windows filenames may legally
+contain `%`/`^`/`&`, so a real conda-forge package path could carry any of these.
 
-**A sixth real bug found via a SECOND review pass on the fifth bug's own fix: the `_SAFE`
-sanitization above stripped `&`/`|`/`<`/`>` but left `%` and `^` untouched, missing that `call`
-performs its OWN, SECOND cmd.exe expansion pass on the command line it is calling** -- a
-well-established (if not officially documented by Microsoft) cmd.exe behavior: `call :log "...
-%HP_NEXT_DLL_SAFE% ..."` is itself an ordinary command line, so `%HP_NEXT_DLL_SAFE%` is substituted
-once during the NORMAL parse (as with any `%VAR%` reference) -- but because the command is `call`,
-cmd.exe then re-scans the ALREADY-SUBSTITUTED text a second time before actually invoking `:log`.
-If that substituted text happened to contain something shaped like `%SOME_VAR%` (a crafted "library
-not found" name from an adversarial native extension, since `_PATTERN`'s regex only excludes quote
-characters, not `%`/`^`), that second pass would expand `SOME_VAR`'s real value into what `:log`
-receives as `%~1` -- potentially leaking an unrelated environment variable (e.g. a CI secret).
-
-**First fix attempt was itself wrong, and only caught because a live-cmd.exe CI test was built to
-verify it.** The initial fix extended all three `_SAFE` chains with `set "VAR_SAFE=%VAR_SAFE:%%=_%"`
-on the theory that doubling `%` to `%%` is "the standard, long-established cmd.exe idiom" for
-matching a literal percent sign as the search token in a `:search=replace` substitution. This is
-**not actually how cmd.exe behaves** -- confirmed via `tests/harness.ps1`'s
-`batch.dll_bundle.pct_sanitizer` fixture (built specifically to settle a Blinter E021 "malformed
-string operation" flag on this construct empirically rather than trust static reasoning a fourth
-time) executed for real on Windows CI: the substitution silently produced an **empty** value
-(`echo` with no argument, `"ECHO is off."`) instead of the expected sanitized text -- an
-undocumented cmd.exe parsing quirk, not a Blinter false positive as first assumed. This broke
-`HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` across essentially every CI lane
-(the gating `batch.dll_bundle.pct_sanitizer` NDJSON row failed the run).
-
-**Actual fix: strip `%` and `^` in PowerShell instead of cmd.exe substitution.** Each `_SAFE`
-variable's `%`/`^` stripping now happens via a `powershell -NoProfile -ExecutionPolicy Bypass
--Command` call, read back via a plain, non-`call` `for /f "usebackq delims=" %%X in
-("~dll_pct_safe*.txt") do set "VAR_SAFE=%%X"`. Reading the value via
-`[Environment]::GetEnvironmentVariable` (never substituting it into the `-Command` text itself)
-means this cannot reintroduce the same `call`-triggered second-pass hazard one layer up. `HP_NEXT_
-DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` are sanitized in ONE PowerShell invocation writing TWO separate
-output files (`~dll_pct_safe_a.txt`/`~dll_pct_safe_b.txt`), not one combined multi-line file --
-this repo bans delayed expansion (`!VAR!`) repo-wide, which parsing multiple lines out of one file
-back into two batch variables would otherwise need. `&`/`|`/`<`/`>` stripping is unchanged (still
-plain cmd.exe `:search=replace` substitution -- that part was never wrong, only the `%%` escape
-attempt was).
-
-**A THIRD real bug, caught by this fixture's own first real Windows CI run (the fixture proved
-itself trustworthy again, not the fix): a lone, unpaired `%` inside the literal PowerShell text
-`-replace '%','_'` sits on the SAME cmd.exe logical line as `%LOG%` (or, in the fixture itself,
-`%TEMP%`).** cmd.exe pairs `%` characters via a left-to-right scan of the WHOLE line, completely
-ignoring quote boundaries -- the lone `%` paired with `%LOG%`'s own opening `%`, and cmd.exe
-treated everything between them (the entire real replace logic, dozens of characters) as one
-bogus, undefined variable name. Inside a batch file, an undefined `%VAR%` reference is silently
-removed and replaced with empty text (not left literal, the classic batch-only gotcha) -- so the
-whole PowerShell command was gutted before it ever ran, producing an empty output file and the
-identical `"ECHO is off."` failure signature as the first bug, on every single lane again. The
-`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` block had a variant of the same bug with an EVEN total
-`%` count (two lone `%`'s from two `-replace` calls, plus `%LOG%`'s own pair) -- even parity is
-not enough to prove correct pairing: the two lone `%`'s paired with EACH OTHER instead of each
-pairing with `%LOG%`, silently deleting the entire first `Set-Content` call as one bogus variable
-name. **Fixed by removing every literal `%` from the `-Command` text entirely**: `$pct = [char]37`
-builds the percent character inside PowerShell itself, so the only `%` remaining on any of these
-cmd.exe lines is the single, legitimate, correctly-paired `%LOG%`/`%TEMP%` reference -- verified by
-literally counting `%` occurrences per logical (continuation-joined) line after the fix (exactly 2
-in every case, the one intended pair). `tests/harness.ps1`'s `batch.dll_bundle.pct_sanitizer`
-fixture was updated with the same `[char]37` technique -- it validates the REPLACEMENT mechanism
-(still a real cmd.exe + PowerShell child-process execution, not static pattern matching) and
-additionally proves the actual security property end-to-end: a raw value shaped like `%SECRET%`,
-once sanitized, survives a real `call`-based second expansion pass without leaking the shadowed
-`SECRET` variable's true value. Order among all six substitutions
-(`&`/`|`/`<`/`>`/`%`/`^`) is commutative -- none of them can match the replacement character (`_`),
-so chaining them in any order produces the same result. `HP_NEXT_DLL_PATH_SAFE` needs the same `%`/
-`^` stripping even though its raw value is a real, `os.walk()`-confirmed path (unlike
-`HP_DLL_DETECTED`/`HP_NEXT_DLL`, which are regex-extracted from arbitrary warning text) -- Windows
-filenames may legally contain `%`, `^`, and `&` (NTFS's own forbidden set is only
-`< > : " / \ | ? *` plus control characters), so a real conda-forge package path could carry any of
-these. `&` is a valid filename character but still a genuine CMD *transport* hazard once that path
-reaches an unquoted `:log` echo -- legality on disk and safety on a cmd.exe command line are
-unrelated axes, which is why it still needs the same sanitization as `|`/`<`/`>` (those three ARE
-also filesystem-illegal, so a real path containing them would be a defect elsewhere; `&` is the one
-character in this set that's both filesystem-legal and CMD-hazardous).
-
-**Eventually converted to a real emitted `.ps1` file (`tools/dll_pct_sanitize.ps1`,
-`HP_DLL_PCT_SANITIZE`), which eliminates this entire bug class structurally rather than patching
-around it a fourth time.** All three bugs above share one root cause: literal `%` text sitting
-somewhere on a line cmd.exe itself parses. A `-File "path" arg1 arg2...` invocation has no such
-line -- cmd.exe only tokenizes the outer invocation (plain argv, no `%`-pairing hazard); the
-script's own body is read and executed entirely by PowerShell, which never sees cmd.exe's parser
-at all. Both call sites (`HP_DLL_DETECTED_SAFE`; `HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE`) now
-call this one shared helper (`(envVarName, outFile)` pairs as plain argv) instead of building
-inline `-Command` text per call site. See `docs/agent-lessons-learned.md`'s "PowerShell helpers:
-prefer an emitted `.ps1` file..." entry, extended with this as a second, independent trigger
-condition (alongside embedded `"` characters) for preferring `-File` over `-Command`.
-
-**A companion CodeRabbit finding on the same review round: the loop's detected/skipped/repaired/
-unlocatable/failed outcomes previously reached only `:log`'s console text, with no
-machine-readable record.** Fixed with a new shared subroutine, `:emit_dll_bundle_row`, called from
-all 7 outcome points (`skipped_nuitka`/`skipped_non_conda`/`repaired`/`unlocatable`/`exhausted`/
-`failed_rebuild`/`failed_missing_exe`) and emitting NDJSON id `self.dll_bundle.recover` -- see
-`docs/agent-ndjson.md` for the full field list and the `HP_NDJSON`-scoping caveat (this row is
-not currently observed in `self.layered_e2e.chain`'s own artifact, since that test's isolated
-sub-bootstrap leaves `HP_NDJSON` unset by the same established convention `selfapps_postexec_
-checkpoint.ps1` already uses; `tests/harness.ps1`'s new `batch.dll_bundle.ndjson` static check is
-the actual coverage for this row's wiring). The state name is passed as a `call` argument (safe --
-always one of the 7 literal tokens above, written directly in `run_setup.bat`, never derived from
-external content), but the DLL name/provider/iteration are pulled INSIDE the emitting PowerShell
-command via `[Environment]::GetEnvironmentVariable(...)` rather than `%VAR%` cmd.exe substitution
-into the `-Command` text -- protecting cmd.exe's OWN command-line parsing (`&`/`|` are
-metacharacters even inside a quoted `call` argument) the same way the `_SAFE` display variables
-protect `:log`'s unquoted echo, just at a different vulnerable site.
+Every outcome of this loop (`skipped_nuitka`/`skipped_non_conda`/`repaired`/`unlocatable`/
+`exhausted`/`failed_rebuild`/`failed_missing_exe`) is emitted as NDJSON id `self.dll_bundle.recover`
+via `:emit_dll_bundle_row` -- see `docs/agent-ndjson.md` for the full state list and field schema.
+Any future repair loop's outcome points need the same treatment: a `call`ed emitter subroutine plus
+a registered NDJSON row, not just a `:log` line.
 
 **A NINTH real bug found via a CodeRabbit review round on PR #414 itself (CLAUDE.md Item 25,
 fixed in a dedicated follow-up loop): `:dll_bundle_loop` found the next candidate (`HP_NEXT_DLL`)
