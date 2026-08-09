@@ -1986,11 +1986,18 @@ correctly skips rather than updating a base that was just installed moments ago:
 [INFO] Conda base update: skipped (first install).
 ```
 
-**`[Extrapolated Branch]`** -- the actual 30-day-elapsed UPDATE-firing branch (`:cbu_run`) is not
-exercised by any current CI run (the only flag that could force it is deliberately disabled, per
-the note above). Once the timestamp in `~conda.lastupdate`
-is more than 30 days old, the subroutine's two `:log` calls are these exact, deterministic literal
-strings -- not an approximation, the source text itself:
+**`[Extrapolated Branch]`** -- the two other real-world branches are not exercised by any current
+CI run (the only flag that could force the update path is deliberately disabled, per the note
+above), but each is an exact, deterministic literal string straight from source, not an
+approximation. The far more common case for a REPEAT run within the 30-day window -- most real
+projects, re-bootstrapped many times during ordinary development -- is a second kind of skip, one
+that genuinely checks `~conda.lastupdate`'s timestamp rather than assuming a fresh install:
+
+```
+[INFO] Conda base update: skipped (last update < 30 days ago).
+```
+
+Once that timestamp finally IS more than 30 days old, `:cbu_run` fires for real:
 
 ```
 [INFO] Conda base update: running (>=30 days since last update or no record).
@@ -2001,11 +2008,17 @@ Between those two lines, `conda update -n base --all --override-channels -c cond
 with its output redirected straight to `~setup.log` (`>> "%LOG%" 2>&1`) -- conda's own real
 update-solve output (package list, versions, download progress) never reaches the console, matching
 this doc's "Console vs. `~setup.log`" convention. If the update itself fails (a nonzero exit from
-that command), the second line is `[WARN] Conda base update failed; continuing.` instead -- the
-bootstrap is never blocked by a failed base update either way. This branch realistically only fires
-for a long-lived, repeatedly-reused project folder -- not the fresh-checkout scenarios this document
-otherwise captures -- and is correctly out of scope for a dedicated CI test: a forced-update test
-previously broke conda's own solver in shared CI runners, an accepted, documented tradeoff
+that command), the second line is this instead -- the bootstrap is never blocked by a failed base
+update either way:
+
+```
+[WARN] Conda base update failed; continuing.
+```
+
+The update-firing branch realistically only fires for a long-lived, repeatedly-reused project
+folder well past its 30-day mark -- not the fresh-checkout scenarios this document otherwise
+captures -- and is correctly out of scope for a dedicated CI test: a forced-update test previously
+broke conda's own solver in shared CI runners, an accepted, documented tradeoff
 (`docs/agent-ndjson.md`'s "conda-full lane rows" section).
 
 ---
@@ -3290,9 +3303,30 @@ Real, verbatim console dump (`~selftest_optbuild_decline\~optbuild_decline_boots
 
 #### Reactive-only failure hint (both Tier A and requirement 9's real-build-failure paths)
 
-Fires only on a GENUINE Nuitka compiler failure (not the `forcefail` test hook, which bypasses it
-entirely). No CI run to date has exercised a real Nuitka compiler failure, so this is sourced from
-`run_setup.bat` rather than a console capture:
+Fires only on a GENUINE Nuitka compiler failure (not the `forcefail`/`HP_TEST_FORCE_NUITKA_FAIL`
+test hooks, which bypass it entirely). No CI run to date has exercised a real Nuitka compiler
+failure, so this is sourced from `run_setup.bat` rather than a console capture -- both call sites
+below are this exact deterministic literal text, not an approximation.
+
+**Tier A (`:try_nuitka_tier_a`)** -- the AV-Safe Build Path fallback that runs when the ORIGINAL
+PyInstaller build has already failed. A genuine Nuitka failure here means every build tool tried
+has now failed:
+
+```
+[WARN] Fallback build did not complete successfully.
+[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this fallback should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help this fallback succeed.
+```
+
+A second, distinct trigger inside the same subroutine -- Nuitka reports success but never actually
+produces `dist\<env>.exe` -- gets the identical hint after a different first line:
+
+```
+[WARN] Fallback build finished but did not produce dist\<env>.exe.
+```
+
+**Requirement 9 (`:offer_optimized_build`)** -- a much lower-stakes case: PyInstaller already
+succeeded and the user's app is already working; this only fires if the user explicitly opted into
+building an OPTIONAL, faster/more-reliable Nuitka version on top of an already-working build:
 
 ```
 [WARN] Optimized build did not complete; your app is still ready to use as-is.
@@ -3346,6 +3380,22 @@ Three things this one line is doing:
    of Scenario 43's ambiguous-exit panels.
 3. **Still warns it's a throwaway pass, not the user's real, saveable session** -- this verification
    EXE is never reused; only the file it's already tested is kept for later double-clicks.
+
+**Two more real lines belong to the SAME live-tee mechanism** and are already confirmed as genuine,
+working console output (not just source text) in an earlier real capture -- run `30328748330`, job
+`90179708091` ("real" lane), `tests/~selftest_stub/~stub_bootstrap.log`:
+
+```
+[INFO] Process ID 6076. If it seems stuck: Task Manager > Details tab > find this PID > End Task (this window stays open).
+hello-from-stub
+```
+
+The PID line is `tools/exe_smokerun.ps1`'s own stuck-program recovery aid (see
+`docs/agent-interconnect.md`'s "Process-ID display for stuck-program recovery" section), printed
+right after the verification process starts. `hello-from-stub` is that real run's own stub
+program's live stdout, teed through the SAME chunk-based `ReadAsync` reader landing exactly between
+the PID line and the eventual `EXE smokerun: exited 0 (ok)` line -- precisely where a real user's
+own program output appears, live, as it happens, not buffered until the process exits.
 
 The `hidden_import` recovery loop's own separate, narrower verification check (see README.md's
 "Verifying a fresh build is activity-aware and announced" bullet, which calls this exact exception
