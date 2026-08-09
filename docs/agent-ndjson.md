@@ -10,6 +10,14 @@ https://mixmansoundude.github.io/Python_vs_Windows/
 update this file in the same commit. Row IDs listed here act as a registry to catch
 accidental removal or unexpected additions.**
 
+**House rule: distill to the load-bearing rule; move the narrative to
+`docs/agent-closed-backlog.md`.** This file's job is the registry itself (row id -> emitting
+test/lane/mechanism) -- keep annotations to what a row means and how it's gated, not a retelling
+of the bug that motivated adding it. If a row's own mechanism is already documented at length in
+`docs/agent-interconnect.md` or `docs/agent-lessons-learned.md`, point there instead of
+re-explaining it here. See CLAUDE.md's Active Backlog Item 34 for the restructuring pass this
+principle is driving.
+
 ---
 
 ## CI-artifacts NDJSON (selfapps tests, conda-full lane)
