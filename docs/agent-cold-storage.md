@@ -141,3 +141,34 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   to thaw**: someone builds that settings file, confirms a full sweep against the current codebase
   comes back clean. Not worth doing speculatively ahead of that audit.
 
+- **Force UTF-8 console encoding for the user's own launched process (`PYTHONUTF8=1` /
+  `PYTHONIOENCODING=utf-8`).** Found via a 2026-08-08 third-party-analysis pass (a generic
+  50-scenario "getting Python running on Windows" guide, cross-checked against this repo's own
+  coverage): confirmed via grep that `run_setup.bat` sets neither `PYTHONUTF8` nor
+  `PYTHONIOENCODING` anywhere, so a script printing non-ASCII text (accented characters, emoji, a
+  degree symbol) can still hit `UnicodeEncodeError` or print garbled text under Windows' legacy
+  console code page, exactly as it would for a fully manual setup -- one of the few genuinely
+  common beginner gotchas this bootstrapper does nothing for today, despite otherwise
+  systematically removing PATH/interpreter/dependency friction. Proposal: set
+  `PYTHONUTF8=1` (Python 3.7+, forces UTF-8 mode process-wide) on every launch of the user's own
+  code (build verification, EXE smoke run, direct interpreter run) -- a single environment
+  variable at each launch site, no `run_setup.bat` architecture change. **Trigger to thaw**: a
+  dedicated investigation confirming this has no unwanted side effect on any existing test's
+  output-matching assertions (several tests grep captured stdout/stderr for exact strings; UTF-8
+  mode is very unlikely to change ASCII-only output but this needs verifying, not assuming,
+  before touching every user-code launch site in the file) and confirming it doesn't change
+  behavior for a script that already explicitly manages its own encoding.
+
+- **Corporate-proxy / SSL-MITM diagnostic messaging.** Same 2026-08-08 pass: confirmed via grep
+  that `run_setup.bat` has no `HTTP_PROXY`/`HTTPS_PROXY` detection or messaging anywhere (the
+  underlying tools -- curl, PowerShell, pip, conda, uv -- already pick up system/env proxy
+  settings the same way a manual setup would, so this is about diagnostic messaging on failure,
+  not new proxy-traversal capability this bootstrapper doesn't have). REQ-013's connectivity
+  check already distinguishes "genuinely offline" from other failure modes; a corporate MITM
+  proxy with a self-signed root CA would currently surface as a generic SSL/connection failure
+  with no hint toward the actual cause. **Trigger to thaw**: lower confidence than the two items
+  above that a reliable, low-false-positive detection signal exists (a corporate proxy failure
+  and a genuine network outage can look identical from a single failed request) -- needs a
+  dedicated investigation into what signal (if any) reliably distinguishes the two before
+  proposing a specific fix, not implemented speculatively ahead of that.
+

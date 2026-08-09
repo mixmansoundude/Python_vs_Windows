@@ -17,6 +17,15 @@ standalone discovered fact, hazard, budget, or procedure belongs in
 this file immediately in the SAME commit (edit existing entries, do not only append). Keep
 `docs/agent-lessons-learned.md` current too. The map must stay accurate.**
 
+**This file does not need to be human-readable prose -- it is loaded automatically into every
+agent session via CLAUDE.md's `@` import, never read by a person browsing the repo casually.**
+Prefer terse, dense phrasing over narrative flow when editing or compressing entries: drop
+transitional sentences, collapse restated context, prefer fragments and bullet lists over full
+paragraphs where the meaning survives. Accuracy and completeness matter far more than readability
+here -- do not sacrifice either for terseness, but don't spend words on prose polish an agent gets
+no benefit from either. See CLAUDE.md's Active Backlog for the standing "compress this file again"
+item this note exists to unblock.
+
 ---
 
 ## Concurrent-instance lock (REQ-024) touches every exit path -- call-graph tracing method

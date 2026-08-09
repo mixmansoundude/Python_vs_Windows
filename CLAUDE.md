@@ -528,7 +528,84 @@ convention was more rigor than a plain-text backlog needs -- a real uniqueness g
 in an actual issue tracker, e.g. GitHub Issues, not a hand-maintained numbering scheme here.)
 Once an item is fully resolved it is removed from here entirely and archived (keeping its
 original number) in `docs/agent-closed-backlog.md`, which is why the numbering below does not
-start at 1 and has gaps.
+start at 1 and has gaps. **If this list is currently empty, state that explicitly in large bold
+text (see below) rather than leaving the section silently blank** -- an empty section with no
+marker is easy to mistake for a rendering glitch or an accidental deletion; an explicit statement
+is not.
+
+- **Item 30: compress `docs/agent-interconnect.md` and `docs/agent-lessons-learned.md` again.**
+  Both were already compressed once (see the Closed Backlog entry for that earlier pass), but
+  both are still large auto-loaded-every-session files: interconnect.md is ~1975 lines / ~21K
+  words, lessons-learned.md is ~1369 lines / ~14K words (measured 2026-08-08). `docs/agent-
+  interconnect.md` now has an explicit note at its own top (added the same day as this item)
+  permitting dense/terse phrasing over human-readable prose, since neither file is meant for
+  casual human browsing -- only for agent context-loading. Do this as its own dedicated pass
+  (not a drive-by edit): read both files in full, identify redundant narrative/restated context
+  that can collapse without losing accuracy or completeness, and cut it. Do not sacrifice
+  correctness or completeness for terseness -- the goal is removing WORDS, not INFORMATION.
+
+- **Item 31: `docs/demo-bootstrapper-output.md` still has 6 scenarios below the 5-quote house-rule
+  minimum** (2026-08-08 audit; the 6 real `[TEST]`-line violations found in the same audit were
+  fixed same-day, and Scenario 40d's own shortfall was fixed same-day too -- this item is ONLY the
+  remaining quote-count shortfalls below, not a re-run of the whole audit). Each needs additional
+  genuine (real-capture or source-derived,
+  `[Extrapolated Branch]`-labeled if not independently confirmed) console-output quotes added,
+  not fabricated ones:
+  - Scenario 25 (pandas/openpyxl heuristic augmentation) -- only 1 real quote today, needs 4 more;
+    the worst shortfall in the doc. Real additional material likely exists near
+    `self.exe.warnfix.real`'s own captured evidence or genuine warnfix/install lines around the
+    heuristic firing.
+  - "Reactive-only failure hint" (Part VIII, a standalone entry after Scenario 40) -- 2 quotes,
+    needs 3 more. No CI run has exercised a real Nuitka compiler failure yet, so any addition here
+    is necessarily `[Extrapolated Branch]` from source.
+  - Scenario 23 / Scenario 36 (`HP_PVW_KNOWN_IDEMPOTENT`, share the same 3-line source block) --
+    3 quotes each, need 2 more each.
+  - Scenario 26 (Conda base periodic update) -- 3 quotes, needs 2 more.
+  - Scenario 41 (Interactive verification: live-tee, activity-aware kill) -- 3 quotes, needs 2
+    more; CI answers scripted stdin so no real interactive capture exists, likely
+    `[Extrapolated Branch]` from source.
+  - (Scenario 40d already fixed same-day, trivially -- was 1 line short, added the real
+    `[INFO] REQ-016: Post-flight briefing printed.` closing line already used elsewhere in Part
+    VIII.)
+  A handful of other scenarios sit right at the 5-6 quote line (Scenarios 2, 7, 10, 14, 16, 20,
+  21, 22, 27, 39, 40c) -- not violations, but worth a second pass for margin if this item is ever
+  picked up as a larger push rather than just closing the 6 genuine shortfalls above.
+
+- **Item 32: hint when zero `.py` files are found but a `.py.txt` (hidden-extension) file
+  exists.** Moved here from Cold Storage 2026-08-08 (a CodeRabbit review finding correctly caught
+  that the Cold Storage entry's own "Trigger to thaw" text admitted no real trigger was blocking
+  it -- that's this list's scope, not Cold Storage's, which requires a specific named
+  precondition). From the 2026-08-08 third-party-analysis pass: Windows hides known file
+  extensions by default, so a beginner who saves `script.py` from a text editor or downloads one
+  from an email attachment can end up with `script.py.txt` without realizing it -- the
+  bootstrapper's own REQ-002 zero-file path currently prints only the generic `Python file count:
+  0` / `No Python files detected; skipping environment bootstrap.` with no hint toward this
+  specific, extremely common cause. Proposal: when the zero-`.py`-files check fires, do a cheap
+  secondary directory scan for `*.py.txt` (or any file whose name minus a trailing `.txt` ends in
+  `.py`) and, if found, add one extra line to the existing message pointing at Windows' "File name
+  extensions" checkbox in File Explorer's View tab. Small, low-risk, purely additive diagnostic
+  hint -- never changes the exit code or any existing behavior.
+
+- **Item 33: classify PyInstaller/Nuitka build-tool failures with a `reason=`-style token, not
+  just a plain `[ERROR]` message.** CodeRabbit review finding on PR #423 (`docs/demo-
+  bootstrapper-output.md` lines 2977-2980, citing AGENTS.md's "external/environmental failures ...
+  make them legible in logs/NDJSON ... emit a `reason=` token" guideline). Verified: `run_setup.bat`
+  already uses `reason=` tokens for several failure classes (`UV_FALLBACK reason=dep_install_
+  failed`, Miniconda AllUsers install `reason=timeout`/`reason=installer_failed`, `pipreqs.install`'s
+  NDJSON `reason` field), but the PyInstaller/Nuitka Tier A build-failure call sites
+  (`:die "[ERROR] PyInstaller execution failed."` / `"[ERROR] PyInstaller did not produce
+  dist\%ENVNAME%.exe"`, inside `:run_entry_after_smoke`) and `self.exe.smokerun`'s own NDJSON row
+  (emitted from `:smokerun_ndjson`, `exitCode` only) do not carry an equivalent classification --
+  a real user hitting a genuine
+  PyInstaller crash, an AV lock, disk-full, or a plain compile error all currently produce the
+  identical generic message. NOT implemented in PR #423 (docs-only housekeeping PR; this needs a
+  design pass over which failure signatures are actually distinguishable and worth a separate
+  `reason=` value, plus updating `docs/agent-ndjson.md`'s row registry and probably
+  `tests/harness.ps1`'s static guards -- a real feature slice, not a docs fix). Note the AGENTS.md
+  guideline this cites is scoped to CI-lane self-test legibility (avoiding a flaky external
+  download being mistaken for a repo/test regression); whether the same treatment is warranted for
+  `run_setup.bat`'s own real-user-facing build-failure messages is part of what this item needs to
+  resolve, not something to assume.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
