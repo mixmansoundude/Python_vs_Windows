@@ -3457,7 +3457,7 @@ if not defined HP_BUILD_OK (
       call :log "[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure."
       call :try_nuitka_tier_a
       if errorlevel 1 (
-        call :die "[ERROR] PyInstaller execution failed."
+        call :die "[ERROR] PyInstaller execution failed. reason=test_forced_fail"
         set "HP_BOOTSTRAP_STATE=error"
       ) else (
         set "HP_NUITKA_FALLBACK_USED=1"
@@ -3467,7 +3467,11 @@ if not defined HP_BUILD_OK (
       if errorlevel 1 (
         call :try_nuitka_tier_a
         if errorlevel 1 (
-          call :die "[ERROR] PyInstaller execution failed."
+          rem CLAUDE.md Item 33: reason=build_error means PyInstaller's own process exited
+          rem nonzero -- distinct from reason=missing_output below (exit 0 but no EXE) and
+          rem reason=test_forced_fail above (no real build ever ran). Mirrors the existing
+          rem UV_FALLBACK reason= token convention; see docs/agent-lessons-learned.md.
+          call :die "[ERROR] PyInstaller execution failed. reason=build_error"
           set "HP_BOOTSTRAP_STATE=error"
         ) else (
           set "HP_NUITKA_FALLBACK_USED=1"
@@ -3480,7 +3484,7 @@ if not defined HP_BUILD_OK (
         if not exist "dist\%ENVNAME%.exe" (
           call :try_nuitka_tier_a
           if errorlevel 1 (
-            call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe"
+            call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe reason=missing_output"
             set "HP_BOOTSTRAP_STATE=error"
           ) else (
             set "HP_NUITKA_FALLBACK_USED=1"

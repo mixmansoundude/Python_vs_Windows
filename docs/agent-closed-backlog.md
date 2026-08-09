@@ -1815,6 +1815,45 @@ this belongs to).
     no_python_files`, `pyFiles == 0`, `exitCode == 0` (identical to the plain empty-folder case)
     AND the hint text appears in the bootstrap log. Registered in `docs/agent-ndjson.md`.
 
+### Item 33 (closed 2026-08-09)
+
+- **`reason=` tokens for the PyInstaller/Nuitka Tier A build-exhaustion `:die` call sites**
+  (`:run_entry_after_smoke`), a CodeRabbit finding on PR #423 not implemented there since it
+  needed its own design pass. Design finding: the three call sites correspond to three genuinely
+  distinguishable, non-overlapping trigger conditions (no probing of PyInstaller's own stderr
+  needed -- distinguishable purely from which code branch reached `:die`), so each got its own
+  token, mirroring the existing `UV_FALLBACK reason=<token>` convention exactly (which already
+  has a `reason=test_forced_fail` precedent for the identical "this is a CI test hook, not a real
+  failure" distinction):
+  - `reason=test_forced_fail` -- `HP_TEST_FORCE_PYINSTALLER_FAIL` simulated the failure; no real
+    PyInstaller invocation ever ran.
+  - `reason=build_error` -- a genuine PyInstaller invocation returned a nonzero exit code. Real
+    code, but not exercised by any deterministic CI hook (same "extrapolated, not tested" status
+    as a real Nuitka compiler failure elsewhere in this repo -- see the "Reactive-only failure
+    hint" section, Part VIII).
+  - `reason=missing_output` -- the build reported success (exit 0) but `dist\<env>.exe` never
+    appeared (`HP_TEST_FORCE_OUTPUT_VANISH` in CI; a real AV/indexer deletion in production --
+    same underlying condition either way, so the same token covers both).
+  - `self.exe.smokerun`'s own NDJSON row turned out not to need a matching change: `:run_exe_
+    smokerun` exits immediately (`exit /b 0`, no row emitted) whenever `dist\<env>.exe` is
+    missing, so that row is never emitted at all for a total build failure -- there was no row to
+    add a `reason` field to. The two `:die` messages' own `reason=` tokens (now in `%LOG%`) are
+    the actual legibility improvement.
+  - No `tests/harness.ps1` static guard referenced either message string (confirmed via grep), so
+    no harness change was needed, contrary to Item 33's own speculation.
+  - Updated `tests/selfapps_pyinstaller_fail.ps1`'s `self.exe.build.xfail` scenario to assert the
+    expected `reason=` token per sub-scenario (`execfail`/`execfail_runtimefail` ->
+    `test_forced_fail`, `output_vanish` -> `missing_output`) in addition to its existing message
+    check.
+  - Updated `docs/demo-bootstrapper-output.md`'s Scenario 38a/38b real-CI-capture quotes to
+    include the new token (spliced from current `run_setup.bat` source, labeled honestly as a
+    post-capture splice rather than a fresh capture) so they stay accurate to current source.
+  - AGENTS.md's own `reason=` guideline is scoped to CI-lane self-test legibility (avoiding a
+    flaky external failure being mistaken for a repo/test regression) -- this change extends the
+    same pattern to `run_setup.bat`'s real-user-facing build-failure messages too, since the two
+    genuinely differ in actionability (`missing_output` suggests an AV/indexer conflict a user
+    could investigate; `build_error`/`test_forced_fail` do not) and the token costs nothing to add.
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a

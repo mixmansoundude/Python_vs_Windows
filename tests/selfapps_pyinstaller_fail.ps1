@@ -138,6 +138,17 @@ try {
     $expectedMsg = if ($scenario -eq 'execfail' -or $scenario -eq 'execfail_runtimefail') { 'PyInstaller execution failed' } else { 'PyInstaller did not produce dist' }
     $expectedMsgFound = $combined -match [regex]::Escape($expectedMsg)
     $testHookFired = $combined -match [regex]::Escape('HP_TEST_FORCE')
+    # CLAUDE.md Item 33: both scenarios here reach the :die call via HP_TEST_FORCE_PYINSTALLER_FAIL
+    # or HP_TEST_FORCE_OUTPUT_VANISH, never a genuine nonzero PyInstaller exit (reason=build_error
+    # is real code but not exercised by any deterministic CI hook -- same "extrapolated, not tested"
+    # status as a real Nuitka compiler failure elsewhere in this repo).
+    $expectedReason = if ($scenario -eq 'execfail' -or $scenario -eq 'execfail_runtimefail') { 'reason=test_forced_fail' } else { 'reason=missing_output' }
+    # derived requirement: match the reason token on the SAME log line as $expectedMsg, not
+    # anywhere in the combined log -- this scenario also forces the Nuitka fallback to fail, so a
+    # whole-log match could in principle be satisfied by an unrelated line rather than genuinely
+    # proving the PyInstaller [ERROR] line itself carries the right token.
+    $expectedFailureLines = @($logLines | Where-Object { $_ -match [regex]::Escape($expectedMsg) })
+    $expectedReasonFound = [bool]($expectedFailureLines | Where-Object { $_ -match [regex]::Escape($expectedReason) } | Select-Object -First 1)
     # docs/open-questions.md item 1: when packaging fails outright but the interpreter fallback
     # still runs cleanly, :print_no_exe_briefing (run_setup.bat) prints a dedicated panel instead
     # of leaving the bare "[STATUS] Run Status: SUCCESS" line as the only thing the user sees.
@@ -165,17 +176,18 @@ try {
     # "graceful stop" contract for this class of failure -- see selfapps_preflight.ps1's own
     # $pass condition, the sibling test for the pre-existing HP_BOOTSTRAP_STATE=error precedent,
     # which likewise never checks the process exit code).
-    $xfailPass = $testHookFired -and $expectedMsgFound -and ($statusState -eq 'error') -and $noExeBriefingFound
+    $xfailPass = $testHookFired -and $expectedMsgFound -and $expectedReasonFound -and ($statusState -eq 'error') -and $noExeBriefingFound
 
     Write-PyiFailRow -Pass $xfailPass -Desc "PyInstaller build XFAIL ($scenario): build failure correctly reported, not masked as success" -Details ([ordered]@{
-        scenario           = $scenario
-        bootstrapExit      = $runExit
-        testHookFired      = [bool]$testHookFired
-        expectedMsgFound   = [bool]$expectedMsgFound
-        statusState        = $statusState
-        noExeBriefingFound = [bool]$noExeBriefingFound
-        xfailPass          = $xfailPass
-        log                = $bootstrapLog
+        scenario             = $scenario
+        bootstrapExit        = $runExit
+        testHookFired        = [bool]$testHookFired
+        expectedMsgFound     = [bool]$expectedMsgFound
+        expectedReasonFound  = [bool]$expectedReasonFound
+        statusState          = $statusState
+        noExeBriefingFound   = [bool]$noExeBriefingFound
+        xfailPass            = $xfailPass
+        log                  = $bootstrapLog
     })
 } finally {
     if ($null -eq $prevSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }

@@ -3107,15 +3107,18 @@ one's console text, since it's really a REQ-027 demo). The first two additionall
 
 #### 38a. `execfail` -- the PyInstaller build command itself fails
 
-Real CI capture, run `29788624195`, job `88506013028` ("real" lane). **This scenario is triggered
-by two CI test hooks (forcing both the PyInstaller build and the Nuitka fallback to fail), but a
-real user hitting the same genuine failure sees nothing at either trigger point** -- both
-PyInstaller's and Nuitka's own error output go only to the log file, never the console:
+Real CI capture, run `29788624195`, job `88506013028` ("real" lane), with the `reason=`
+token (CLAUDE.md Item 33, added after that capture) spliced in verbatim from `run_setup.bat`'s
+current literal source -- the rest of the block is unmodified real console output. **This
+scenario is triggered by two CI test hooks (forcing both the PyInstaller build and the Nuitka
+fallback to fail), but a real user hitting the same genuine failure sees nothing at either
+trigger point** -- both PyInstaller's and Nuitka's own error output go only to the log file,
+never the console:
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
 [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-[ERROR] PyInstaller execution failed.
+[ERROR] PyInstaller execution failed. reason=test_forced_fail
 [DEBUG] warnfix: warn file not found
 [INFO] PyInstaller build artifacts cleaned up.
 [WARN] EXE smokerun: dist\<env>.exe not found; skipping
@@ -3126,6 +3129,13 @@ PyInstaller's and Nuitka's own error output go only to the log file, never the c
 [INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
 ```
 
+The `reason=test_forced_fail` token (CLAUDE.md Item 33) reflects the actual trigger here -- this
+scenario reaches `:die` via the `HP_TEST_FORCE_PYINSTALLER_FAIL` test hook, never a genuine
+PyInstaller error. A real, unforced build failure would instead read `reason=build_error` --
+`[Extrapolated Branch]`, since no deterministic CI hook forces a genuine nonzero PyInstaller exit
+(the same "real trigger, no CI hook" situation as Tier A's own Nuitka compiler-failure hint, Part
+VIII above).
+
 When BOTH the PyInstaller build and the Nuitka fallback fail outright but the interpreter
 fallback's own run exits 0 (this trivial stub script does), the final line is
 `[STATUS] Run Status: SUCCESS (Exit Code: 0)` and the postflight panel is the plain
@@ -3135,7 +3145,8 @@ interpreter run ALSO fails.
 
 #### 38b. `output_vanish` -- PyInstaller succeeds, then the EXE disappears immediately
 
-Real CI capture, same run/job as 38a. **Unlike the test hooks elsewhere in this file, the
+Real CI capture, same run/job as 38a, with the same post-capture `reason=` splice described
+there. **Unlike the test hooks elsewhere in this file, the
 underlying trigger here stands in for a real external event, not a purely internal simulation** --
 a real user could hit this exact same gap if antivirus software or a file indexer deletes the
 freshly-built EXE in the instant right after PyInstaller creates it. Neither the deletion itself
@@ -3146,7 +3157,7 @@ code path that announces either one, so both are omitted below (see 38a's note f
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
 [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-[ERROR] PyInstaller did not produce dist\<env>.exe
+[ERROR] PyInstaller did not produce dist\<env>.exe reason=missing_output
 [DEBUG] warnfix: warn file found
 [INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically.
 [INFO] PyInstaller build artifacts cleaned up.
