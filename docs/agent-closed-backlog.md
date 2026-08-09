@@ -20,15 +20,18 @@ likely be reorganized again as it grows. Treat a Part/Scenario citation here as 
 look," not a precise current coordinate; this file is an append-only historical record, so its own
 entries are not retroactively renumbered to track that doc's current structure.
 
-**Three sections below.** "Closed Active Backlog Items" holds items that were promoted out of
+**Four sections below.** "Closed Active Backlog Items" holds items that were promoted out of
 `CLAUDE.md`'s own "Active Backlog" section once fully resolved (each keeps its original item
 number for cross-reference stability -- other docs cite these by number). "Known Findings"
 (moved here verbatim from `CLAUDE.md`, 2026-08-09, Active Backlog Item 34 Loop 2) holds
 diagnosed-no-action-warranted investigations -- a question was raised, researched, and answered
 with "no code change needed" or "considered and rejected, with reasoning" -- distinct from a
 Closed Active Backlog item (resolved with a real change) or an open Active Backlog item (still
-pending). "Closed Backlog" is `CLAUDE.md`'s own pre-existing changelog-style record of completed
-feature/fix work, moved here verbatim.
+pending). "Dependency Strategy Rationale" (moved here 2026-08-09, Active Backlog Item 34 Loop 3)
+holds the full multi-paragraph justification behind standing CLAUDE.md rules (the pipreqs version
+pin, its invocation strategy, the warnfix `SKIP`-set) -- CLAUDE.md keeps only the load-bearing
+rule plus a pointer here. "Closed Backlog" is `CLAUDE.md`'s own pre-existing changelog-style
+record of completed feature/fix work, moved here verbatim.
 
 ---
 
@@ -1896,6 +1899,53 @@ this belongs to).
     genuinely differ in actionability (`missing_output` suggests an AV/indexer conflict a user
     could investigate; `build_error`/`test_forced_fail` do not) and the token costs nothing to add.
 
+### Item 34 (closed 2026-08-09)
+
+- **Restructure the three auto-loaded knowledge docs (`docs/agent-interconnect.md`,
+  `docs/agent-lessons-learned.md`, `docs/agent-ndjson.md`) around a "distill to the load-bearing
+  rule" house rule, moving narrative/provenance out to this file.** Follow-up to the Item 30
+  compression pass, which found that further sentence-level trimming was a saturated lever on
+  `agent-interconnect.md` specifically (~0.2% word reduction) -- the file's bulk was chronological
+  incident-log narrative ("bug found via review, first fix was wrong, second fix was wrong, third
+  fix confirmed via CI run N") wearing reference-doc clothes, not restated prose. Shipped as three
+  separate loops:
+  - **Loop 1 (PR #429):** added the house-rule line to the top of all three auto-loaded docs
+    codifying "distill to the load-bearing rule; move the narrative/provenance to this file" as
+    the ongoing editing principle, and deduped the two confirmed cross-file duplications: the
+    cmd.exe `%`-pairing sanitizer saga told at length in both `agent-interconnect.md`'s
+    DLL-bundling section and `agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry (canonical
+    home: lessons-learned.md); and the `self.dll_bundle.recover` NDJSON row's mechanism explained
+    at length in both `agent-interconnect.md` and `agent-ndjson.md` (canonical home:
+    agent-ndjson.md). Zero information loss -- each fact still lives at its one canonical home,
+    with a one-line pointer left everywhere else. Net: `agent-interconnect.md` 1981 -> 1918 lines
+    (20991 -> 20224 words, ~3.7% reduction).
+  - **Loop 2 (PR #430):** moved CLAUDE.md's own "Known Findings" section here verbatim (this
+    file's "Known Findings" section, below) -- it was explicitly "diagnosed, no action warranted,"
+    verbatim this file's own stated scope, so it didn't belong in the always-loaded file. Also
+    fixed every stale "CLAUDE.md's Known Findings" cross-reference across the repo
+    (`docs/agent-interconnect.md` x2, `docs/plan-pvw-quickstart.md`, `docs/prd-av-safe-build-path.md`
+    x2), plus two genuinely pre-existing stale pointers caught by the same sweep (CLAUDE.md's own
+    "Next-pin probe" note wrongly cited "Known Findings" for REQ-AV Tier B's rationale, which
+    actually lives in `docs/agent-cold-storage.md`; `tests/selfapps_ux_hardening.ps1`'s `:die`
+    comment wrongly cited "Known Findings" for a fact that has always lived in
+    `docs/agent-lessons-learned.md`'s ":die" entry). Net: CLAUDE.md 916 -> 775 lines (8186 -> 6496
+    words, ~20.6% reduction) -- the largest single cut in the series, since this section was pure
+    historical record with zero forward-looking action attached to any entry.
+  - **Loop 3 (this pass):** distilled CLAUDE.md's dependency-strategy essay (pipreqs pin
+    rationale, pipreqs invocation rationale, the warnfix `SKIP`-set walkthrough) down to the
+    load-bearing rule per topic, moving the full multi-paragraph justification to this file's
+    "Dependency Strategy Rationale" section (below) -- zero information loss, same pointer
+    pattern as Loops 1-2. Trimmed the 6 Bootstrap Architecture Principles in place (no separate
+    narrative to move; the compression there was wording-only, cutting redundant clauses while
+    keeping all 6 principles and their concrete examples). Table-ified the "run_setup.bat Rules"
+    section's 7-payload paragraph list into a 4-column table (payload / decodes-to / purpose /
+    canonical source).
+  **Deliberately kept "Periodic Maintenance Checks" in CLAUDE.md, NOT moved out** -- owner
+  decision: the quarterly Claude Code Remote trigger's own reliability wasn't confirmed at the
+  time, so that section staying always-loaded was an intentional fallback until the trigger has
+  enough of a track record to be trusted as the sole delivery mechanism. Revisit whether it can
+  move out once that track record exists.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
@@ -2046,6 +2096,84 @@ this belongs to).
     real user run (normal internet, interactive/admin session) to confirm the same valid installer succeeds
     off-CI (expected ~30-45 min per the maintainer's prior experience). Until then, treat the
     "environmental" classification as strongly-supported-but-provisional.
+
+## Dependency Strategy Rationale (reference)
+
+Full multi-paragraph justification behind the load-bearing rules CLAUDE.md states in its
+"Dependency Discovery" sections -- moved here 2026-08-09 (Active Backlog Item 34 Loop 3) since
+this is background evidence an agent needs only when questioning or extending one of those
+rules, not on every session.
+
+### pipreqs pin rationale (as of 2026-06-18): why 0.4.13, not 0.5.0
+
+- pipreqs 0.5.0 (the latest release) added Jupyter notebook scanning, which hard-pins
+  `ipython==8.12.3` (the last ipython supporting Python 3.8). ipython 8.12.3 does not support
+  Python 3.13+, so 0.5.0's metadata declares `Requires-Python >=3.8.1,<3.13`.
+- The bootstrapper always targets the latest conda-forge Python (currently 3.14+). On that
+  Python, pip refuses to install 0.5.0 (version cap), so pipreqs would be lost entirely and
+  every run would fall back to warnfix.
+- pipreqs 0.4.13 has `Requires-Python >=3.7` (no upper cap), deps only `docopt`+`yarg`, supports
+  the same `--mode compat` / `--force` / `--savepath` flags, uses only stable stdlib (ast-based
+  scan), and runs on Python 3.14. It restores pipreqs as the primary discovery tool.
+- **Do NOT "upgrade" the pin back to 0.5.0** -- it reintroduces the `<3.13` cap and silently
+  disables pipreqs on modern Python. The only feature lost by 0.4.13 is `.ipynb` scanning, which
+  was already non-functional on latest Python (0.5.0 cannot run there).
+
+### pipreqs invocation rationale: why `python -m pipreqs.pipreqs`, not the console script
+
+This is an intentional bootstrap execution strategy, not a workaround for pipreqs limitations.
+
+**Constraints driving this choice:**
+- Windows batch bootstrap never depends on shell state (PATH, activation, environment variables)
+- Bootstrap runs immediately after environment creation in the same shell session
+- Console scripts require PATH correctness and activation to persist -- neither is guaranteed
+- Bootstrap reliability > API purity in this system class
+
+**Why internal module invocation is safe here:**
+- pipreqs is pinned to 0.4.13 permanently (no automatic upgrades)
+- Version freeze makes internal module structure (`pipreqs/pipreqs.py`) stable by contract
+- Internal coupling is a low-risk controlled assumption due to the pinned dependency version
+
+**Comparison of approaches:**
+
+| Approach | Reliability in Bootstrap | Architecture | Scope |
+|----------|--------------------------|--------------|-------|
+| `pipreqs` (console script) | Fragile (PATH dependent) | Official API | General use |
+| `python -m pipreqs.pipreqs` | Deterministic (no PATH) | Internal mechanism | Bootstrap only |
+
+See `run_setup.bat`'s own invocation comment (search `python -m pipreqs.pipreqs`) for the
+in-code pointer. This is a **deterministic execution pattern required for bootstrap
+reliability**, not a sign of fragility or a temporary workaround.
+
+### warnfix `SKIP`-set walkthrough: why each group exists
+
+`parse_warn.py` uses two distinct mechanisms, not one -- keep them separate when describing or
+extending this filter:
+- A generic, `SKIP`-independent rule (`if mod.startswith("_"): continue`) drops any
+  leading-underscore internal module by name pattern alone -- this is what actually filters
+  `_scproxy`, `_posixsubprocess`, and `_frozen_importlib_external`; none of the three is a
+  `SKIP` entry.
+- The `SKIP` frozenset covers everything else warnfix must not treat as an application
+  dependency, across a few distinct groups: packaging/import-machinery internals
+  (`pkg_resources`, `distutils`, `setuptools`, `importlib` and its submodules) -- these ARE
+  real, installable PyPI packages, but PyInstaller's own bundling of the interpreter's import
+  machinery can surface them as "missing" even though the app never actually needs a separate
+  install; `collections` (also covers `collections.abc`, since dotted names truncate to their
+  top-level package before the `SKIP` lookup) -- this one is the stdlib's own submodules
+  surfacing as "missing," not a platform gap; Unix-only platform modules absent on Windows
+  (`grp`, `pwd`, `posix`, `resource`, `fcntl`, `readline`, `termios`, `tty`, `pty`, `crypt`,
+  `spwd`, `nis`, `syslog`, `ossaudiodev`); and Python-2-only stdlib shims removed entirely in
+  Python 3 (`cStringIO`, `StringIO`) that still surface via real packages' own Python 2/3
+  compatibility code -- e.g. `xlrd`'s `xlrd/timemachine.py` does `try: from cStringIO import
+  StringIO except ImportError: from io import StringIO`, a dead code path under Python 3 that
+  PyInstaller's static analysis still flags. Confirmed via a real, unflagged CI run of the
+  layered-dependency E2E test (`self.layered_e2e.chain`) -- warnfix was genuinely attempting and
+  failing to `conda install cStringIO`, which can never succeed, forcing an unnecessary extra
+  provider cascade. Every entry in `SKIP` is covered by
+  `tests/test_parse_warn.py::ParseWarnFileEdgeCasesTest::test_every_skip_entry_filtered_in_realistic_warn_line`,
+  which iterates the current set and proves each one filters in the
+  `(conditional)`/`(delayed)`/`(top-level)` PyInstaller 6.x forms -- any future `SKIP` addition
+  is covered automatically, no separate test needed per entry.
 
 ## Closed Backlog
 

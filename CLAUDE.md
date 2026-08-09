@@ -180,37 +180,21 @@ This is the deliverable. Treat changes carefully.
    hand-roll the encode/splice/write sequence (see docs/agent-lessons-learned.md's "Embedded
    Helper Update Workflow" and the near-miss that motivated automating it).
 
-   Current embedded payloads (in addition to legacy HP_FAST_CHECK):
-   - `HP_DEP_CHECK` -- decodes to `~dep_check.py`; compares pipreqs output against
-     `~environment.lock.txt` and exits 0 (skip) or 1 (install needed).
-   - `HP_ENV_STATE` -- decodes to `~env_state.py`; reads/writes `~env.state.json` to
-     cache conda env validity across runs.
-   - `HP_PYPROJ_DEPS` -- decodes to `~pyproj_deps.py`; parses pyproject.toml
-     `[project].dependencies` and writes one dep per line; exit 0 on success, 1 on
-     not-found/error, 2 on malformed TOML. Used by the layered dep resolution block.
-   - `HP_PREP_REQUIREMENTS` -- decodes to `~prep_requirements.py`; applies heuristic
-     dep-augmentation rules (REQ-005.8); strips pip extras (`[excel]`) before name lookup.
-   - `HP_COLLECT_SUBMODULES` -- decodes to `~collect_submodules.py`; emits pre-build
-     `--collect-submodules=PKG` flags for curated packages (sklearn, matplotlib, scipy,
-     plotly) that load submodules dynamically (the warn file is silent about them).
-     Double-gated: a flag is emitted only when the package is BOTH imported by the user's
-     project source AND importable in the build interpreter, so a fat global env never
-     bloats a lean app's EXE. Canonical source `tools/collect_submodules.py`; PayloadSync
-     in `tests/test_collect_submodules.py` asserts byte-equality of the embedded base64.
-   - `HP_HIDDEN_IMPORT_SCAN` -- decodes to `~hidden_import_scan.py`; for the Slice 2
-     `--hidden-import` auto-recovery loop (`:hidden_import_recover` in run_setup.bat). Reads a
-     frozen EXE's stderr and emits the next hidden-import target ONLY when stderr shows
-     `ModuleNotFoundError: No module named 'X'` AND X is installed in the build interpreter --
-     so a user typo or `ImportError: cannot import name` causes ZERO rebuilds. Bounded to 3
-     rebuilds (helper tried-list + iter cap). Canonical source `tools/hidden_import_scan.py`;
-     PayloadSync in `tests/test_hidden_import_scan.py`.
-   - `HP_DLL_PCT_SANITIZE` -- decodes to `~dll_pct_sanitize.ps1`; strips `%`/`^` from one or more
-     env var values (`(envVarName, outFile)` argv pairs), for `:log`'s UNQUOTED-echo safety in the
-     native-DLL bundling loop. Emitted as a real `.ps1` file specifically so cmd.exe's own
-     tokenizer never parses its body -- the predecessor inline `-Command` version of this logic
-     went through three separate real-CI-confirmed bugs from cmd.exe's `%`-pairing behavior before
-     landing here (see `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry). Canonical
-     source `tools/dll_pct_sanitize.ps1`; PayloadSync in `tests/test_dll_pct_sanitize.py`.
+   Current embedded payloads (in addition to legacy `HP_FAST_CHECK`):
+
+   | Payload | Decodes to | Purpose | Canonical source |
+   |---------|-----------|---------|-------------------|
+   | `HP_DEP_CHECK` | `~dep_check.py` | Compares pipreqs output against `~environment.lock.txt`; exits 0 (skip) or 1 (install needed) | `tools/dep_check.py` |
+   | `HP_ENV_STATE` | `~env_state.py` | Reads/writes `~env.state.json` to cache conda env validity across runs | `tools/env_state.py` |
+   | `HP_PYPROJ_DEPS` | `~pyproj_deps.py` | Parses `pyproject.toml` `[project].dependencies`, one dep/line; exit 0/1/2 = ok/not-found/malformed TOML; feeds the layered dep resolution block | `tools/pyproj_deps.py` |
+   | `HP_PREP_REQUIREMENTS` | `~prep_requirements.py` | Applies REQ-005.8 heuristic dep-augmentation rules; strips pip extras (`[excel]`) before name lookup | `tools/prep_requirements.py` |
+   | `HP_COLLECT_SUBMODULES` | `~collect_submodules.py` | Pre-build `--collect-submodules=PKG` flags for curated dynamic-import packages (sklearn/matplotlib/scipy/plotly), double-gated on used-by-source AND installed-in-interpreter so a fat global env never bloats a lean app's EXE | `tools/collect_submodules.py` |
+   | `HP_HIDDEN_IMPORT_SCAN` | `~hidden_import_scan.py` | Slice 2 `--hidden-import` auto-recovery target selection for `:hidden_import_recover`; strict `ModuleNotFoundError` + installed-in-build-interpreter gate (a typo or `ImportError: cannot import name` costs zero rebuilds); capped at 3 rebuilds | `tools/hidden_import_scan.py` |
+   | `HP_DLL_PCT_SANITIZE` | `~dll_pct_sanitize.ps1` | Strips `%`/`^` from env var values for `:log`'s UNQUOTED-echo safety in the native-DLL bundling loop; emitted as a real `.ps1` (invoked via `-File`) so cmd.exe's own tokenizer never parses its body -- see `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry for why the earlier inline `-Command` version needed three separate fixes | `tools/dll_pct_sanitize.ps1` |
+
+   Each payload's canonical `tools/` source has a `PayloadSync` unit test asserting
+   byte-equality between the embedded base64 and the source file (see the Testing section
+   below for which test file covers which payload).
 
 2. **Delimiter-check after every edit**:
    ```bash
@@ -379,47 +363,26 @@ and cv2/opencv mapping limitation.
 
 ## Dependency Discovery: pipreqs pin rationale (as of 2026-06-18)
 
-**pipreqs is pinned to 0.4.13, NOT 0.5.0.** This is deliberate and load-bearing:
-
-- pipreqs 0.5.0 (the latest release) added Jupyter notebook scanning, which hard-pins `ipython==8.12.3`
-  (the last ipython supporting Python 3.8). ipython 8.12.3 does not support Python 3.13+, so 0.5.0's
-  metadata declares `Requires-Python >=3.8.1,<3.13`.
-- The bootstrapper always targets the latest conda-forge Python (currently 3.14+). On that Python, pip
-  refuses to install 0.5.0 (version cap), so pipreqs would be lost entirely and every run would fall back
-  to warnfix.
-- pipreqs 0.4.13 has `Requires-Python >=3.7` (no upper cap), deps only `docopt`+`yarg`, supports the same
-  `--mode compat` / `--force` / `--savepath` flags, uses only stable stdlib (ast-based scan), and runs on
-  Python 3.14. It restores pipreqs as the primary discovery tool.
-- **Do NOT "upgrade" the pin back to 0.5.0** -- it reintroduces the `<3.13` cap and silently disables
-  pipreqs on modern Python. The only feature lost by 0.4.13 is `.ipynb` scanning, which was already
-  non-functional on latest Python (0.5.0 cannot run there).
-
-The `pipreqs.flags` CI gate validates the invocation flags, not the version, so the pin is free to change.
-The setup log line `[INFO] pipreqs <ver> installed successfully` confirms pipreqs is active on a given run.
+**pipreqs is pinned to 0.4.13, NOT 0.5.0 -- do not "upgrade" this pin.** 0.5.0 hard-caps
+`Requires-Python <3.13` (via its Jupyter-scanning `ipython==8.12.3` dependency), which would
+silently disable pipreqs entirely on this bootstrapper's always-latest-conda-forge-Python target
+and fall every run back to warnfix; 0.4.13 has no upper Python cap and runs fine on 3.14. The
+only feature lost by staying on 0.4.13 is `.ipynb` scanning, already non-functional on latest
+Python since 0.5.0 can't run there anyway. Full version-comparison rationale in
+`docs/agent-closed-backlog.md`'s "Dependency Strategy Rationale" reference section. The
+`pipreqs.flags` CI gate validates invocation flags, not the version, so the pin is free to change;
+the setup log line `[INFO] pipreqs <ver> installed successfully` confirms pipreqs is active on a
+given run.
 
 ## Dependency Discovery: pipreqs invocation (bootstrap determinism)
 
-**pipreqs is invoked via `python -m pipreqs.pipreqs`, NOT the console script (`pipreqs` command).**
-This is an intentional bootstrap execution strategy, not a workaround for pipreqs limitations.
-
-**Constraints driving this choice:**
-- Windows batch bootstrap never depends on shell state (PATH, activation, environment variables)
-- Bootstrap runs immediately after environment creation in the same shell session
-- Console scripts require PATH correctness and activation to persist--neither is guaranteed
-- Bootstrap reliability > API purity in this system class
-
-**Why internal module invocation is safe here:**
-- pipreqs is pinned to 0.4.13 permanently (no automatic upgrades)
-- Version freeze makes internal module structure (`pipreqs/pipreqs.py`) stable by contract
-- Internal coupling is a low-risk controlled assumption due to the pinned dependency version
-
-**Comparison of approaches:**
-| Approach | Reliability in Bootstrap | Architecture | Scope |
-|----------|--------------------------|--------------|-------|
-| `pipreqs` (console script) | WARN Fragile (PATH dependent) | OK Official API | General use |
-| `python -m pipreqs.pipreqs` | OK Deterministic (no PATH) | WARN Internal mechanism | Bootstrap only |
-
-See `run_setup.bat` lines ~813-820 for the invocation comment and rationale. This is a **deterministic execution pattern required for bootstrap reliability**, not a sign of fragility or a temporary workaround.
+**pipreqs is invoked via `python -m pipreqs.pipreqs`, NOT the console script.** Deterministic
+(no PATH/activation dependency) and safe only because pipreqs is permanently version-pinned
+(0.4.13), making its internal module structure stable by contract -- the exact tradeoff this
+repo's Bootstrap Architecture Principles (below) codify generally. See `run_setup.bat`'s own
+invocation comment (search `python -m pipreqs.pipreqs`) for the in-code pointer, and
+`docs/agent-closed-backlog.md`'s "Dependency Strategy Rationale" reference section for the full
+constraints/comparison writeup.
 
 ## Dependency Discovery Fallback: warnfix (secondary safety net)
 
@@ -428,38 +391,17 @@ cannot build), the bootstrapper still falls back to `warnfix`:
 1. PyInstaller builds the EXE (static analysis finds many imports)
 2. Read the `warn` file (list of modules PyInstaller couldn't find)
 3. Parse warn file via `parse_warn.py`: extract top-level, delayed, and conditional imports
-4. Filter out modules warnfix must never try to install as an application dependency (either
-   because the name isn't a real installable package at all, or because the interpreter/its own
-   import machinery already provides it and re-installing would be pointless noise).
-   `parse_warn.py` uses two distinct mechanisms, not one -- keep them separate when describing or
-   extending this filter:
-   - A generic, SKIP-independent rule (`if mod.startswith("_"): continue`) drops any
-     leading-underscore internal module by name pattern alone -- this is what actually filters
-     `_scproxy`, `_posixsubprocess`, and `_frozen_importlib_external`; none of the three is a
-     `SKIP` entry.
-   - The `SKIP` frozenset covers everything else warnfix must not treat as an application
-     dependency, across a few distinct groups: packaging/import-machinery internals
-     (`pkg_resources`, `distutils`, `setuptools`, `importlib` and its submodules) -- these ARE
-     real, installable PyPI packages, but PyInstaller's own bundling of the interpreter's import
-     machinery can surface them as "missing" even though the app never actually needs a separate
-     install; `collections`
-     (also covers `collections.abc`, since dotted names truncate to their top-level package
-     before the `SKIP` lookup) -- this one is the stdlib's own submodules surfacing as "missing,"
-     not a platform gap; Unix-only platform modules absent on Windows (`grp`, `pwd`, `posix`,
-     `resource`, `fcntl`, `readline`, `termios`, `tty`, `pty`, `crypt`, `spwd`, `nis`, `syslog`,
-     `ossaudiodev`); and Python-2-only stdlib shims removed entirely in Python 3 (`cStringIO`,
-     `StringIO`) that still surface via real packages' own Python 2/3 compatibility code -- e.g.
-     `xlrd`'s `xlrd/timemachine.py` does `try: from cStringIO import StringIO except ImportError:
-     from io import StringIO`, a dead code path under Python 3 that PyInstaller's static
-     analysis still flags. Confirmed via a real, unflagged CI run of the layered-dependency
-     E2E test (`self.layered_e2e.chain`) -- warnfix was genuinely attempting and failing to
-     `conda install cStringIO`, which can never succeed, forcing an unnecessary extra
-     provider cascade. Every entry in `SKIP` is covered by
-     `tests/test_parse_warn.py::ParseWarnFileEdgeCasesTest::
-     test_every_skip_entry_filtered_in_realistic_warn_line`, which iterates the current set
-     and proves each one filters in the `(conditional)`/`(delayed)`/`(top-level)` PyInstaller
-     6.x forms -- any future `SKIP` addition is covered automatically, no separate test
-     needed per entry.
+4. Filter modules warnfix must never install as an application dependency: a generic
+   `if mod.startswith("_"): continue` rule drops leading-underscore internals by name pattern
+   alone; the `SKIP` frozenset additionally covers packaging/import-machinery internals
+   (`pkg_resources`, `distutils`, `setuptools`, `importlib`+submodules), `collections` (+`.abc`),
+   Unix-only platform modules absent on Windows, and Python-2-only stdlib shims (`cStringIO`,
+   `StringIO`) that still surface via real packages' own Python 2/3 compat code. Every `SKIP`
+   entry is covered automatically by
+   `tests/test_parse_warn.py::ParseWarnFileEdgeCasesTest::test_every_skip_entry_filtered_in_realistic_warn_line`
+   -- no separate test needed per addition. Full per-group rationale and the real CI evidence
+   (`self.layered_e2e.chain`) that motivated the Unix-platform and Python-2-shim groups in
+   `docs/agent-closed-backlog.md`'s "Dependency Strategy Rationale" reference section.
 5. Install detected missing packages via conda or pip
 6. Rebuild EXE
 7. Retry interpreter smoke test
@@ -482,21 +424,22 @@ See README.md section Dependency strategy for full details.
 
 ## Bootstrap Architecture Principles
 
-This system prioritizes **deterministic execution during bootstrap** over packaging purity. These principles guide decisions about tool invocation, dependency handling, and error handling in `run_setup.bat`:
+This system prioritizes **deterministic execution during bootstrap** over packaging purity --
+these six principles govern tool invocation, dependency handling, and error handling in
+`run_setup.bat` (the pipreqs invocation strategy above is the canonical worked example):
 
-1. **Bootstrap reliability > API correctness.** If a feature depends on "maybe PATH is set" or "activation might work," it is invalid for bootstrap paths. Determinism is non-negotiable.
-
-2. **Never depend on console scripts during bootstrap.** Console scripts (`pipreqs`, `pytest`, etc.) are forbidden in bootstrap logic because they require: Scripts/ on PATH, activation state correctness, OS-level shim resolution. Instead: use explicit interpreter paths or direct Python APIs.
-
-3. **All execution must be interpreter-anchored.** Every tool invocation roots in an explicit Python executable path (`%HP_PY%` or `%CONDA_PREFIX%\python.exe`), never relying on PATH or activation to supply the correct interpreter.
-
-4. **Pinned dependencies are assumed stable.** For version-frozen tools (pipreqs 0.4.13), internal behavior and module structure may be relied upon as stable by contract. Internal coupling is acceptable when version is locked.
-
-5. **Bootstrap must fail fast and explicitly.** If bootstrap cannot guarantee interpreter, environment, or dependency availability, it fails loudly and early. No silent fallbacks unless explicitly logged.
-
-6. **Non-obvious decisions must be self-documenting.** If bootstrap does something like `python -m pipreqs.pipreqs` instead of `pipreqs`, it must include a comment explaining why PATH/CLI/activation was not used. Future maintainers must not be tempted to "fix" it incorrectly.
-
-**Application:** These principles validate the pipreqs invocation strategy, justify the dep-check cache optimization, and guide all future bootstrap-critical decisions. See pipreqs invocation section above for a concrete example.
+1. **Bootstrap reliability > API correctness.** A feature depending on "maybe PATH is set" or
+   "activation might work" is invalid for bootstrap paths -- determinism is non-negotiable.
+2. **Never depend on console scripts during bootstrap** (`pipreqs`, `pytest`, etc. all require
+   `Scripts/` on PATH and activation state neither is guaranteed) -- use explicit interpreter
+   paths or direct Python APIs instead.
+3. **All execution must be interpreter-anchored**: every tool invocation roots in an explicit
+   Python executable path (`%HP_PY%` or `%CONDA_PREFIX%\python.exe`), never PATH/activation.
+4. **Pinned dependencies are assumed stable** -- for a version-frozen tool (pipreqs 0.4.13),
+   relying on its internal module structure as stable by contract is an acceptable coupling.
+5. **Bootstrap must fail fast and explicitly** -- no silent fallbacks unless explicitly logged.
+6. **Non-obvious decisions must be self-documenting** (e.g. `python -m pipreqs.pipreqs` instead
+   of `pipreqs`) so a future maintainer isn't tempted to "fix" it incorrectly.
 
 ---
 
@@ -534,38 +477,7 @@ text (see below) rather than leaving the section silently blank** -- an empty se
 marker is easy to mistake for a rendering glitch or an accidental deletion; an explicit statement
 is not.
 
-- **Item 34: restructure the three auto-loaded knowledge docs (`docs/agent-interconnect.md`,
-  `docs/agent-lessons-learned.md`, `docs/agent-ndjson.md`) around a "distill to the load-bearing
-  rule" house rule, moving narrative/provenance out to `docs/agent-closed-backlog.md`.** Follow-up
-  to the Item 30 compression pass (PR #428), which found that further sentence-level trimming was
-  a saturated lever on `agent-interconnect.md` specifically (~0.2% word reduction) -- the file's
-  bulk is chronological incident-log narrative ("bug found via review, first fix was wrong, second
-  fix was wrong, third fix confirmed via CI run N") wearing reference-doc clothes, not restated
-  prose. Scoped as three separate loops (see `docs/agent-closed-backlog.md`'s Item 23/30 entries
-  for the prior compression history this builds on):
-  - **Loop 1 (DONE, PR #429):** added the house-rule line to the top of all three auto-loaded
-    docs codifying "distill to the load-bearing rule; move the narrative/provenance to
-    `docs/agent-closed-backlog.md`" as the ongoing editing principle, and deduped the two confirmed
-    cross-file duplications: the cmd.exe `%`-pairing sanitizer saga told at length in both
-    `agent-interconnect.md`'s DLL-bundling section and `agent-lessons-learned.md`'s ":log echoes
-    UNQUOTED" entry (canonical home: lessons-learned.md); and the `self.dll_bundle.recover` NDJSON
-    row's mechanism explained at length in both `agent-interconnect.md` and `agent-ndjson.md`
-    (canonical home: agent-ndjson.md). Zero information loss -- each fact still lives at its one
-    canonical home, with a one-line pointer left everywhere else.
-  - **Loop 2 (DONE, PR #430):** moved CLAUDE.md's own "Known Findings" section to
-    `docs/agent-closed-backlog.md` -- it is explicitly "diagnosed, no action warranted," which is
-    verbatim that file's own stated scope ("read on demand... when investigating something that
-    feels like it was already done"), so it doesn't belong in the always-loaded file at all.
-  - **Loop 3 (open):** distill CLAUDE.md's dependency-strategy essay (pipreqs pin rationale,
-    pipreqs invocation rationale, the warnfix `SKIP`-set walkthrough, the 6 Bootstrap Architecture
-    Principles) down to the load-bearing rule per topic, moving the multi-paragraph justification
-    to a reference doc. Table-ify the per-payload paragraph descriptions in "run_setup.bat Rules"
-    (payload name / decodes to / purpose / canonical source, one line each) instead of a paragraph
-    per payload.
-  **Deliberately keeping "Periodic Maintenance Checks" in CLAUDE.md, NOT moved out** -- owner
-  decision: the quarterly Claude Code Remote trigger's own reliability isn't confirmed yet, so this
-  section staying always-loaded is an intentional fallback until that trigger has enough of a track
-  record to be trusted as the sole delivery mechanism.
+**Nothing here.** All items above have been resolved and moved to `docs/agent-closed-backlog.md`.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
