@@ -533,16 +533,7 @@ text (see below) rather than leaving the section silently blank** -- an empty se
 marker is easy to mistake for a rendering glitch or an accidental deletion; an explicit statement
 is not.
 
-- **Item 30: compress `docs/agent-interconnect.md` and `docs/agent-lessons-learned.md` again.**
-  Both were already compressed once (see the Closed Backlog entry for that earlier pass), but
-  both are still large auto-loaded-every-session files: interconnect.md is ~1975 lines / ~21K
-  words, lessons-learned.md is ~1369 lines / ~14K words (measured 2026-08-08). `docs/agent-
-  interconnect.md` now has an explicit note at its own top (added the same day as this item)
-  permitting dense/terse phrasing over human-readable prose, since neither file is meant for
-  casual human browsing -- only for agent context-loading. Do this as its own dedicated pass
-  (not a drive-by edit): read both files in full, identify redundant narrative/restated context
-  that can collapse without losing accuracy or completeness, and cut it. Do not sacrifice
-  correctness or completeness for terseness -- the goal is removing WORDS, not INFORMATION.
+**Nothing here.** All items above have been resolved and moved to `docs/agent-closed-backlog.md`.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

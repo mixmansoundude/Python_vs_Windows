@@ -38,16 +38,16 @@ a `goto`-only continuation of the main line, must consider whether that site als
 
 **Why release is hooked at `:die`/`:success` only, not all ~100 `exit /b` sites** (`run_setup.bat`
 has 129 `:label`s, 55 top-level `exit /b` sites, 100 total including indented/parenthesized ones):
-whether a given `exit /b` terminates the whole process or just returns from a subroutine depends
-on the RUNTIME call stack, not on whether its label was ever `call`ed -- `exit /b` returns to the
+whether a given `exit /b` terminates the whole process or just returns from a subroutine depends on
+the RUNTIME call stack, not on whether its label was ever `call`ed -- `exit /b` returns to the
 nearest active `call` frame, and a label reached purely via `goto` from inside an active call frame
 (e.g. `:venv_canary_fail`, reached from within `:try_venv_fallback`'s frame) still returns to that
 caller, not the whole process. A static line-based CFG walk (BFS over goto/call/fall-through edges)
 proves depth for pure goto/call/fall-through code but breaks on parenthesized
-`if (...) ( ... ) else ( ... )` blocks -- it has no notion of "skip to after the matching
-close-paren" for the false branch without a full paren-balance parser, so it wrongly treats any
-`exit /b` lexically inside such a block as always-reached. A true paren-aware CFG parser was
-assessed as disproportionate effort.
+`if (...) ( ... ) else ( ... )` blocks -- no notion of "skip to after the matching close-paren" for
+the false branch without a full paren-balance parser, so it wrongly treats any `exit /b` lexically
+inside such a block as always-reached. A true paren-aware CFG parser was assessed as
+disproportionate effort.
 
 **`tools/audit_batch_exit_paths.py`** (not wired into CI, run by hand) captures the label/call/exit
 inventory instead: every label, every `call :label` site, every `exit /b` site with its containing
@@ -94,9 +94,9 @@ the EXE, scan for a fixable `ModuleNotFoundError`, and rebuild via `PyInstaller 
 Tier A only runs when the ORIGINAL PyInstaller build already failed, this rebuild had a real chance
 of reproducing the exact failure Tier A exists to route around (e.g. AV quarantine), or at minimum
 burning the loop's 3-attempt budget on the wrong tool. `HP_NUITKA_FALLBACK_USED` is process-global
-and safely readable at `:hidden_import_recover`'s entry (only one `setlocal` exists in the whole
-file, at the top, disabling delayed expansion -- no scoping boundary between the build block that
-sets it and this subroutine).
+and safely readable at `:hidden_import_recover`'s entry (only one `setlocal` exists in the file, at
+the top, disabling delayed expansion -- no scoping boundary between the build block that sets it
+and this subroutine).
 
 **Fix**: `:hidden_import_recover` now checks `if defined HP_NUITKA_FALLBACK_USED` right after its
 existing `if not exist "dist\%ENVNAME%.exe" exit /b 0` early-return, and exits `/b 0` immediately
@@ -180,9 +180,9 @@ the warnfix per-module rebuild), must understand how they chain.** `:dll_bundle_
 `:hidden_import_recover`: a conda-installed native extension's own compiled `.pyd` depends on a
 shared DLL under the env's `Library\bin` (conda's convention, e.g. `eccodes.dll` for `pygrib`) that
 PyInstaller's static analysis bundles the `.pyd` for but never discovers the DLL dependency of --
-this is a MISSING-NATIVE-LIBRARY failure, not a missing-Python-module one, so
-`:hidden_import_recover`'s own strict `ModuleNotFoundError`-only gate correctly never fires for it
-(see "--hidden-import auto-recovery must stay STRICT" in `docs/agent-lessons-learned.md`).
+a MISSING-NATIVE-LIBRARY failure, not a missing-Python-module one, so `:hidden_import_recover`'s
+strict `ModuleNotFoundError`-only gate correctly never fires for it (see "--hidden-import
+auto-recovery must stay STRICT" in `docs/agent-lessons-learned.md`).
 
 **Detects at BUILD time, not runtime -- the one structural difference from `:hidden_import_recover`
 (Requirement 2's own design choice, `docs/prd-conda-native-dll-bundling.md` Finding 5).**
@@ -191,16 +191,16 @@ static analysis cannot tell whether an installed module will actually be importe
 it must re-run the EXE to detect anything. This failure class announces itself immediately after
 the build, in the build log itself (`WARNING: Library not found: could not resolve 'X.dll',
 dependency of '...'.`) -- reacting to that build-time line (`:dll_bundle_recover` is called from
-`:run_entry_smoke` right before `:run_exe_smokerun`, i.e. BEFORE the smoke run rather than after)
-skips one guaranteed-failing verification cycle a runtime-detection design would otherwise waste.
-The `HP_LOG_SIZE_BEFORE` byte-offset snapshot (taken right before the fresh-build attempt begins)
-is what makes this safe against `%LOG%`'s own persistence across runs in the same app directory --
-without it, a stale DLL warning from an EARLIER run could be re-detected and re-"fixed" for no
-reason. `tools/dll_bundle_scan.py` (`HP_DLL_BUNDLE_SCAN` payload) is the scanning helper, mirroring
+`:run_entry_smoke` right before `:run_exe_smokerun`, BEFORE the smoke run rather than after) skips
+one guaranteed-failing verification cycle a runtime-detection design would otherwise waste. The
+`HP_LOG_SIZE_BEFORE` byte-offset snapshot (taken right before the fresh-build attempt begins) makes
+this safe against `%LOG%`'s own persistence across runs in the same app directory -- without it, a
+stale DLL warning from an EARLIER run could be re-detected and re-"fixed" for no reason.
+`tools/dll_bundle_scan.py` (`HP_DLL_BUNDLE_SCAN` payload) is the scanning helper, mirroring
 `~hidden_import_scan.py`'s shape (`read_tail`/`next_dll_target`/`locate_dll`/`main`, unit-tested in
 `tests/test_dll_bundle_scan.py`) but reading a byte-offset log slice instead of a captured EXE
-stderr file, and with two extra pieces the sibling doesn't need: a `--detect` CLI mode (see below)
-and `read_tried_file()` (see the tried-list paragraph below).
+stderr file, with two extra pieces the sibling doesn't need: a `--detect` CLI mode (see below) and
+`read_tried_file()` (see the tried-list paragraph below).
 
 **Bug found and fixed via review (real, not hypothetical): the original implementation gated
 DETECTION itself on `HP_ENV_MODE=conda`, silently defeating the "provider-agnostic detection"
@@ -287,35 +287,33 @@ gets silently discarded by a later one's rebuild.
 
 **A fifth real bug found via review: `HP_DLL_DETECTED`/`HP_NEXT_DLL`/`HP_NEXT_DLL_PATH` reached
 `:log`'s UNQUOTED echo, an already-documented hazard class in this repo (see
-`docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry) this loop had not yet been
-checked against.** All three values are ultimately derived from PyInstaller's own build-log
-warning text (`_PATTERN`'s regex extracts whatever sits between quotes in `Library not found:
-could not resolve 'X.dll'`), which can legally contain `&`/`|`/`<`/`>` on Windows -- cmd.exe would
-reinterpret any of those as a live redirection/pipe operator once substituted into `:log`'s
-unquoted `echo %date% %time% %MSG%` line, corrupting the log line and/or creating a stray file.
-Fixed with the same DISPLAY-ONLY sanitization pattern the `%HP_ENTRY%` case documents as the
-correct fix wherever the source is tractable (unlike `%HP_ENTRY%` itself, which remains an
-accepted risk because its only real fix -- a global `:log` rework -- is blocked by three CI static
-guards): `HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` are computed via
-chained `set "VAR_SAFE=%VAR_SAFE:&=_%"` substitution (repeated for `|`, `<`, `>`) immediately after
-each raw value is captured, and used ONLY in `:log` calls -- every functional use of the raw value
-(the tried-file byte-copy via `type`, the quoted `--add-binary` PyInstaller argument) is
-untouched, so this cannot desync the tried-list dedup matching (`next_dll_target()` re-extracts
-the RAW name from the log text on every loop iteration; sanitizing only the tried-file's stored
-copy would break equality comparison for any DLL name containing a hazardous character).
+`docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry) this loop had not yet been checked
+against.** All three values are derived from PyInstaller's own build-log warning text (`_PATTERN`'s
+regex extracts whatever sits between quotes in `Library not found: could not resolve 'X.dll'`),
+which can legally contain `&`/`|`/`<`/`>` on Windows -- exactly the metacharacter set that entry
+already documents as corrupting an unquoted `:log` echo. Fixed with the same DISPLAY-ONLY
+sanitization pattern the `%HP_ENTRY%` case documents as the correct fix wherever the source is
+tractable (unlike `%HP_ENTRY%` itself, which remains an accepted risk since its only real fix -- a
+global `:log` rework -- is blocked by three CI static guards): `HP_DLL_DETECTED_SAFE`/
+`HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE` are computed via chained `set "VAR_SAFE=%VAR_SAFE:&=_%"`
+substitution (repeated for `|`, `<`, `>`) immediately after each raw value is captured, and used
+ONLY in `:log` calls -- every functional use of the raw value (the tried-file byte-copy via `type`,
+the quoted `--add-binary` PyInstaller argument) is untouched, so this cannot desync the tried-list
+dedup matching (`next_dll_target()` re-extracts the RAW name from the log text on every loop
+iteration; sanitizing only the tried-file's stored copy would break equality comparison for any DLL
+name containing a hazardous character).
 
 **A sixth real bug found via a SECOND review pass on the fifth bug's own fix: the `_SAFE`
 sanitization above stripped `&`/`|`/`<`/`>` but left `%` and `^` untouched, missing that `call`
 performs its OWN, SECOND cmd.exe expansion pass on the command line it is calling** -- a
 well-established (if not officially documented by Microsoft) cmd.exe behavior: `call :log "...
 %HP_NEXT_DLL_SAFE% ..."` is itself an ordinary command line, so `%HP_NEXT_DLL_SAFE%` is substituted
-once during the NORMAL parse of that line (as with any `%VAR%` reference) -- but because the
-command being executed is `call`, cmd.exe then re-scans the ALREADY-SUBSTITUTED text a second time
-before actually invoking `:log`. If the substituted text happened to contain something shaped like
-`%SOME_VAR%` (a crafted "library not found" name from an adversarial native extension, since
-`_PATTERN`'s regex only excludes quote characters, not `%`/`^`), that second pass would expand
-`SOME_VAR`'s real value into what `:log` receives as `%~1` -- potentially leaking an unrelated
-environment variable (e.g. a CI secret) into the log.
+once during the NORMAL parse (as with any `%VAR%` reference) -- but because the command is `call`,
+cmd.exe then re-scans the ALREADY-SUBSTITUTED text a second time before actually invoking `:log`.
+If that substituted text happened to contain something shaped like `%SOME_VAR%` (a crafted "library
+not found" name from an adversarial native extension, since `_PATTERN`'s regex only excludes quote
+characters, not `%`/`^`), that second pass would expand `SOME_VAR`'s real value into what `:log`
+receives as `%~1` -- potentially leaking an unrelated environment variable (e.g. a CI secret).
 
 **First fix attempt was itself wrong, and only caught because a live-cmd.exe CI test was built to
 verify it.** The initial fix extended all three `_SAFE` chains with `set "VAR_SAFE=%VAR_SAFE:%%=_%"`
@@ -720,38 +718,41 @@ static `[WARN]` after Nuitka's OWN build already failed), never a proactive nag.
 ## provider-chain reorder below, SHIPPED)
 
 **Status: implemented 2026-07.** `:try_embed_fallback` is wired into both fallback ladders, a new
-`HP_ENV_MODE=embed` value flows through every call site identified during the original design
-audit (34 `HP_ENV_MODE` reference sites; re-verify line numbers before relying on them), and CI
-coverage lives in `tests/selfapps_ux_hardening.ps1` (`self.embed.fallback.decline`,
-`self.embed.fallback.real` -- see `docs/agent-ndjson.md`). This section maps the `HP_ENV_MODE`
-blast radius this tier touches.
+`HP_ENV_MODE=embed` value flows through every call site identified during the original design audit
+(34 `HP_ENV_MODE` reference sites; re-verify line numbers before relying on them), and CI coverage
+lives in `tests/selfapps_ux_hardening.ps1` (`self.embed.fallback.decline`, `self.embed.fallback.real`
+-- see `docs/agent-ndjson.md`). This section maps the `HP_ENV_MODE` blast radius this tier touches.
 
 **Provider-chain reorder: `uv -> conda -> embed -> venv -> system`, embed moved from last-resort
 to right after conda.** Originally embed was the final rung. Reordered so a user who pinned a
 specific Python version via `runtime.txt`/`pyproject.toml` still gets it via a fresh checksummed
 python.org download when uv/conda are unreachable, instead of silently falling back to whatever's
 ambient (venv/system just wrap the ambient interpreter, they cannot acquire a different one) --
-conda and embed both front-load acquisition of a FRESH/pinned interpreter; venv/system stay the
-true last resort. System stays absolute final regardless (only tier gated by the REQ-014 consent
-prompt). Both dispatch mechanisms encoding provider order moved together: `:handle_conda_failure`
-(linear initial fallback chain, reordered venv/system/embed -> embed/venv/system) and
-`:provider_cascade` (goto-based re-entrant post-warnfix cascade -- `:cascade_from_conda` now
-targets `:try_embed_fallback`; new `:cascade_from_embed` + `HP_CASCADE_TRIED_EMBED` guard targets
+conda and embed both front-load acquisition of a FRESH/pinned interpreter; venv/system stay the true
+last resort. System stays absolute final regardless (only tier gated by the REQ-014 consent prompt).
+Both dispatch mechanisms encoding provider order moved together: `:handle_conda_failure` (linear
+initial fallback chain, reordered venv/system/embed -> embed/venv/system) and `:provider_cascade`
+(goto-based re-entrant post-warnfix cascade -- `:cascade_from_conda` now targets
+`:try_embed_fallback`; new `:cascade_from_embed` + `HP_CASCADE_TRIED_EMBED` guard targets
 `:try_venv_fallback`; `:cascade_from_venv` unchanged; `:cascade_from_system`/
 `HP_CASCADE_TRIED_SYSTEM` deleted, since system has no cascade target now). No downstream
-`HP_ENV_MODE`/`HP_ENV_READY` consumer needed to change (pure exact-string-equality / tier-agnostic
-boolean) -- only the two dispatch chains moved. Tier numbering ("Tier 4"=system, "Tier 5"=embed)
-was deliberately kept as a historical label, not renumbered to match execution order (the
-load-bearing NDJSON ids are not tier-numbered).
+`HP_ENV_MODE`/`HP_ENV_READY` consumer needed to change FOR THIS REORDER SPECIFICALLY (most were
+already tier-agnostic exact-string-equality/boolean checks by the time embed first shipped) --
+only the two dispatch chains moved. This is distinct from embed's original introduction as a
+provider, which DID require one consumer change (`:after_env_mode_selection`'s dependency-install
+branch, see item 4 below) -- do not read this sentence as claiming embed's whole feature was
+consumer-change-free. Tier numbering ("Tier 4"=system, "Tier 5"=embed) was deliberately kept as a
+historical label, not renumbered to match execution order (load-bearing NDJSON ids are not
+tier-numbered).
 
 **Bug found+fixed in the reorder pass: the version-swap mechanism (stage 2 below) was dead code.**
 The version-check-and-swap sequence was wrapped in one parenthesized `if not errorlevel 1 ( ... )`
 block; a `for /f` loop inside set `HP_EMBED_SWAP_DIR`/`_TAG`/`_MINOR`, and code later in the SAME
-block read `%HP_EMBED_SWAP_DIR%` -- but CMD's parse-time `%VAR%` expansion substitutes every
-`%VAR%` using the value from BEFORE the block began (the bug class in
-`docs/agent-lessons-learned.md`'s "Provider-cascade dispatch is goto-based on purpose"), so the
-read was always empty and the swap body never ran. No test caught it (`self.embed.fallback.real`
-never requests a non-default version). Fixed via goto-based dispatch.
+block read `%HP_EMBED_SWAP_DIR%` -- but CMD's parse-time `%VAR%` expansion substitutes every `%VAR%`
+using the value from BEFORE the block began (see `docs/agent-lessons-learned.md`'s "Provider-cascade
+dispatch is goto-based on purpose"), so the read was always empty and the swap body never ran. No
+test caught it (`self.embed.fallback.real` never requests a non-default version). Fixed via
+goto-based dispatch.
 
 **Second bug (later deep-dive): a DIRECTORY move, not a FILE move -- requirement 9's swap-fix
 shape does NOT transfer.** `:embed_swap_retry` checked `if exist "%HP_EMBED_DIR%\python.exe"`
@@ -775,9 +776,13 @@ real CI run; the fix is static reasoning about documented Windows `move`/`rd` se
 Windows repro. A dedicated test (pin a non-latest version through a real embed download) would be
 the natural next step if this tier's trigger rate ever justifies it.
 
-**Two-stage PowerShell/Python split (not a single script), a refinement found during
-implementation.** This tier runs precisely when NO Python interpreter exists anywhere, so
-per-request version-table logic cannot live in Python until *some* interpreter is on disk:
+**Two-stage PowerShell/Python split (not a single script).** This tier runs when the bootstrapper
+has not yet secured any interpreter OF ITS OWN (uv and conda both failed) -- an ambient system or
+venv-capable interpreter may still exist on the machine, since embed is deliberately tried before
+those tiers (see the reorder above), but this tier's whole design is to acquire a FRESH,
+checksum-verified interpreter rather than probe for or trust an ambient one, so it never looks for
+one. That means per-request version-table logic genuinely cannot live in Python until *some*
+interpreter is on disk -- specifically the one THIS tier just extracted, not any ambient one:
 1. **PowerShell stage** (`tools/embed_extract.ps1`, `HP_EMBED_EXTRACT`) -- batch has already
    downloaded ONE hardcoded "latest" version's zip (`HP_EMBED_LATEST_PATCH`/
    `HP_EMBED_LATEST_SHA256` near the top of `run_setup.bat`). Does ONLY checksum verification
@@ -824,25 +829,25 @@ reliability > API correctness" principle.
 
 **Design decisions agreed with the user:**
 - No REQ-014-style consent gate -- the embeddable zip is a private, checksummed,
-  bootstrapper-controlled extraction under `~embed_python\`, more REQ-010-isolated than system,
-  not less. Progress logging (REQ-016-style), not a prompt.
-- Version selection: a small pinned per-minor table, NOT a single hardcoded fallback and NOT a
-  live python.org "latest" scrape (violates "deterministic execution > dynamic resolution," same
+  bootstrapper-controlled extraction under `~embed_python\`, more REQ-010-isolated than system, not
+  less. Progress logging (REQ-016-style), not a prompt.
+- Version selection: a small pinned per-minor table, NOT a single hardcoded fallback and NOT a live
+  python.org "latest" scrape (violates "deterministic execution > dynamic resolution," same
   reasoning as the pipreqs 0.4.13 pin). Table scope: python.org's currently-supported (non-EOL)
-  minors (~5-6 entries), refreshed on the same quarterly cadence as the pipreqs pin. A request
-  older than the table's floor falls back to the oldest entry with a WARN. No-request default uses
-  the table's *newest* entry, mirroring uv's `UV_PYTHON_PREFERENCE=only-managed`.
+  minors (~5-6 entries), refreshed on the same quarterly cadence as the pipreqs pin. A request older
+  than the table's floor falls back to the oldest entry with a WARN; no-request default uses the
+  table's *newest* entry, mirroring uv's `UV_PYTHON_PREFERENCE=only-managed`.
 - Integrity: embed the expected SHA256 per pinned version directly (computed at pin-time), never
   fetched from a checksum file over the same network path as the download.
 - Two implementation gotchas: (1) the embeddable zip ships with `site` imports disabled via
   `pythonXY._pth` -- must uncomment before pip/any installed package is importable, or the tier
-  looks like it succeeded while silently broken. (2) the embeddable zip has no pip -- reuse
+  looks like it succeeded while silently broken; (2) the embeddable zip has no pip -- reuse
   `:download_get_pip` (built for REQ-023b), don't write a second copy.
 
-**Mental model: embed behaves like `venv`, not `system`.** venv and embed are both "fully
-isolated, bootstrapper-installable" (safe to `pip install` into freely); system is "shared,
-minimally-invasive" (installs avoided/consent-gated). Wherever code branches system out to a
-restricted/no-op path, embed should NOT be excluded the same way.
+**Mental model: embed behaves like `venv`, not `system`.** venv and embed are both "fully isolated,
+bootstrapper-installable" (safe to `pip install` into freely); system is "shared, minimally-
+invasive" (installs avoided/consent-gated). Wherever code branches system out to a restricted/no-op
+path, embed should NOT be excluded the same way.
 
 **Call sites wired to a new `embed` case (current, post-reorder state -- matches "Provider cascade
 execution re-enters env-create" below, which documents the same two dispatch chains in full):**
@@ -891,7 +896,7 @@ wasn't touched) -- embed inherits the identical gap. Worth a dedicated future fi
 ## uv-First Provider Architecture
 
 The "uv-first" feature (skip Miniconda download when uv can provide Python) has a larger blast
-radius than it appears -- this section documents how it touches test infrastructure.
+radius than it appears -- this section documents how it touches test infra.
 
 ### Provider selection flow (run_setup.bat)
 
@@ -1503,7 +1508,7 @@ interactive double-click user (`HP_INTERACTIVE_RUN` set -- see `:compute_interac
 `:pick_entry_interactive`'s non-interactivity signals, plus `HP_TEST_FORCE_INTERACTIVE_PROBE=1` to
 force the branch under `HP_CI_LANE` for CI coverage), both call the shared `:run_failfast_probe`
 instead, which launches via `~failfast_probe.ps1` (`HP_FAILFAST_PROBE`, an emitted `.ps1` file, not
-inline `-Command` -- the two-stage wait needs interpolated strings, which sidesteps every cmd.exe
+inline `-Command` -- the two-stage wait needs interpolated strings, sidestepping every cmd.exe
 quote-nesting hazard an inline command would hit). The helper does
 `WaitForExit(HP_FAILFAST_PROBE_MS)` (default 10000ms -- distinct from the unrelated ~30s hard-kill
 cap used by `:run_exe_smokerun`/`:hidden_import_recover`, which force-kills the fresh-build
@@ -1721,10 +1726,10 @@ Manager"/"End Task," and never contaminates the captured output file.
 
 **Status: SHIPPED 2026-07-24**, plan P1 requirement 4. `HP_APP_ARGS` is captured ONCE, at the very
 top of `run_setup.bat` (right after `set "DEP_SOURCE=unknown"`), from `%2`-`%9` directly --
-deliberately NOT via `shift`, since `%~1` (entry file) is read directly by several later call
-sites (top-of-file UNC check, both `:determine_entry` sites), and shifting would silently change
-what those later `"%~1"` reads see. Caps the feature at 8 extra arguments (matches the plan's
-non-goal of not chasing generic detection).
+deliberately NOT via `shift`, since `%~1` (entry file) is read directly by several later call sites
+(top-of-file UNC check, both `:determine_entry` sites), and shifting would silently change what
+those later `"%~1"` reads see. Caps the feature at 8 extra arguments (matches the plan's non-goal of
+not chasing generic detection).
 
 **Touch either shared `.ps1` helper's `Arguments` handling, must understand the OTHER's -- this
 shipped as a CONTRACT CHANGE to `HP_PROBE_ARGS`, not just a new optional variable.** Before this,
@@ -1800,8 +1805,8 @@ command-line text never needs to contain the quote-laden content.
 **Status: SHIPPED 2026-07-24**, plan P2 requirement 5. Deliberately scoped narrower than the plan
 originally sketched -- "offer a deeper dependency-resolution pass" was dropped (that offer already
 exists and fires earlier, at `:warnfix_cascade_detect`; re-offering it post-hoc would need much
-more plumbing for uncertain benefit). What shipped is messaging-only, touching two genuinely
-gapped panels found by tracing the ACTUAL control flow after P0/P1 shipped.
+more plumbing for uncertain benefit). What shipped is messaging-only, found by tracing the ACTUAL
+control flow after P0/P1 shipped.
 
 **Gap 1, a real pre-existing bug: `:print_no_exe_briefing`'s header unconditionally claimed "your
 code ran successfully."** This panel fires whenever `HP_BUILD_OK` is defined and no EXE exists
@@ -1843,14 +1848,14 @@ largely-duplicate scenario.
 
 ## Post-execution checkpoint (Slice 2b-C, second half): the elective second run
 
-`:run_postexec_checkpoint` is the other half of 2b-C (the fail-fast probe above shipped first, in
-a separate PR). It is a **consent gate**, not a probe mechanism -- follows the SAME 3-branch
-template as `:system_build_consent_gate`/`:cascade_consent_gate`/`:system_python_consent_gate`
-(echo the prompt UNCONDITIONALLY, then `HP_TEST_CHECKPOINT_ANSWER` override, then `HP_CI_LANE`
-auto-decline, then interactive `set /p`) -- **not** the `HP_INTERACTIVE_RUN` convention the
-fail-fast probe uses. Do not conflate: `HP_INTERACTIVE_RUN` silently SKIPS a branch under CI (no
-prompt text at all); the consent-gate pattern always ECHOES the prompt even when auto-declining,
-so a `self.checkpoint.*` test can assert the prompt text regardless of lane.
+`:run_postexec_checkpoint` is the other half of 2b-C (the fail-fast probe above shipped first, in a
+separate PR). It is a **consent gate**, not a probe mechanism -- follows the SAME 3-branch template
+as `:system_build_consent_gate`/`:cascade_consent_gate`/`:system_python_consent_gate` (echo the
+prompt UNCONDITIONALLY, then `HP_TEST_CHECKPOINT_ANSWER` override, then `HP_CI_LANE` auto-decline,
+then interactive `set /p`) -- **not** the `HP_INTERACTIVE_RUN` convention the fail-fast probe uses.
+Do not conflate: `HP_INTERACTIVE_RUN` silently SKIPS a branch under CI (no prompt text at all); the
+consent-gate pattern always ECHOES the prompt even when auto-declining, so a `self.checkpoint.*`
+test can assert the prompt text regardless of lane.
 
 **What it does and why it's safe to call unconditionally:** `:run_postexec_checkpoint <site>` is
 called at the end of every place that already printed `[STATUS] Run Status: ...` for a FRESH

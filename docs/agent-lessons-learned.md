@@ -23,71 +23,64 @@ leaving stale guidance.**
 
 ## Quote a variable before piping it into `findstr`, or `&` in its value splits the command line
 
-**Found via a CodeRabbit review finding on PR #417 (an "outside diff range" catch -- pre-existing
-code, unrelated to that PR's own change, surfaced incidentally while reviewing nearby lines).**
-The system-directory guard (near the top of `run_setup.bat`, right after the UNC-path check) did
+**Found via a CodeRabbit review finding on PR #417** (an "outside diff range" catch -- pre-existing
+code, unrelated to that PR's own change). The system-directory guard (near the top of
+`run_setup.bat`, right after the UNC-path check) did
 `echo %HP_SCRIPT_ROOT%| findstr /I /C:"%WINDIR%\\" >nul` -- `HP_SCRIPT_ROOT` echoed UNQUOTED into
-a pipe. cmd.exe's own command-line parser has no notion of "this `&` came from a variable, not
-literal text" -- it decides whether `&` is a command separator purely from the CURRENT quote
-state as it scans the line left to right, and that scan runs the SAME expansion pass that
-substitutes `%HP_SCRIPT_ROOT%`. So a script dropped under a path like
-`C:\Users\Sales & Marketing\run_setup.bat` would have this single line silently split into two
-commands at the `&` -- `findstr` receives only the truncated prefix, and the guard can miss a
-real match (or worse, run a bogus command named after whatever follows the `&`). This is a
-DIFFERENT hazard from `:log`'s own "echoes UNQUOTED" entry below (that one is about `:log`'s
-`echo %MSG%` misinterpreting `<`/`>`/`|`, here it's `&` splitting the command line the pipe itself
-sits on) but the same family: an unquoted `%VAR%` reaching a live cmd.exe operator context.
+a pipe. cmd.exe decides whether `&` is a command separator purely from the CURRENT quote state as
+it scans the line left to right, in the SAME pass that substitutes `%HP_SCRIPT_ROOT%` -- it has no
+notion of "this `&` came from a variable." So a script dropped under a path like
+`C:\Users\Sales & Marketing\run_setup.bat` would have this line silently split into two commands
+at the `&`: `findstr` receives only the truncated prefix, and the guard can miss a real match (or
+run a bogus command named after whatever follows the `&`). Different hazard from `:log`'s own
+"echoes UNQUOTED" entry below (that one is `<`/`>`/`|` misinterpreted inside `:log`'s own `echo`;
+here it's `&` splitting the pipe's own command line) but the same family: an unquoted `%VAR%`
+reaching a live cmd.exe operator context.
 
-**Fix: wrap the variable in quotes** -- `echo "%HP_SCRIPT_ROOT%"| findstr ...`. This works because
-cmd.exe tracks quote state THROUGH the expansion, not around it: the literal `"` characters in the
-source line toggle quote state before `%HP_SCRIPT_ROOT%` is substituted, so any `&` landing inside
-the expanded value is scanned while the parser considers itself "inside quotes" and is never
-treated as an operator. The one wrinkle: `echo` is one of the few cmd.exe builtins that does NOT
-strip the quote characters from what it prints (unlike normal argument-parsing commands) -- so the
-piped text becomes `"C:\Windows\Temp\MyApp\"` (literal quotes at both ends) instead of the bare
-path. This is harmless here because `findstr /C:"..."` does a plain substring search, not an
-exact-line match -- the real target text still appears in the middle of the quoted output
-regardless of the extra leading/trailing `"` characters. Applied to all three system-directory
-checks (`WINDIR`/`ProgramFiles`/`HP_PF86`); the existing `self.warn.sysdir` test (a plain,
-non-`&` path) continues to prove the base guard still fires correctly post-fix, but does not by
-itself exercise the `&`-specific scenario this fix targets -- a dedicated adversarial test
-(a folder literally named with `&` under `%WINDIR%\Temp`) is a reasonable future addition, not
-built here (small, defensive quoting fix outside this PR's own scope, same "fix now, note as a
-candidate for future dedicated coverage" precedent already used elsewhere in this file for
-review-caught correctness fixes that reuse an already-tested code shape).
+**Fix: wrap the variable in quotes** -- `echo "%HP_SCRIPT_ROOT%"| findstr ...`. cmd.exe tracks
+quote state THROUGH the expansion, not around it: the literal `"` characters toggle quote state
+before `%HP_SCRIPT_ROOT%` is substituted, so any `&` inside the expanded value is scanned while the
+parser considers itself "inside quotes." One wrinkle: `echo` does NOT strip quote characters from
+what it prints (unlike normal argument-parsing commands), so the piped text becomes
+`"C:\Windows\Temp\MyApp\"` (literal quotes at both ends) -- harmless here since `findstr
+/C:"..."` does a plain substring search, and the target text still appears in the middle of the
+quoted output. Applied to all three system-directory checks (`WINDIR`/`ProgramFiles`/`HP_PF86`);
+the existing `self.warn.sysdir` test (a plain, non-`&` path) proves the base guard still fires
+post-fix but does not exercise the `&`-specific scenario -- a dedicated adversarial test (a folder
+literally named with `&` under `%WINDIR%\Temp`) is a reasonable future addition, not built here.
 
 ---
 
 ## A multi-scenario PowerShell test's NDJSON `id` must stay a literal string at each `Write-NdjsonRow` call site, never a shared variable
 
 **Found via a real CI failure while adding `tests/selfapps_envname.ps1`'s second scenario
-(CLAUDE.md Item 26).** `tools/check_ndjson_registry.py`'s static scan of `tests/*.ps1` matches
-one of four fixed textual patterns to discover which NDJSON `id`s a test file emits --
+(CLAUDE.md Item 26).** `tools/check_ndjson_registry.py`'s static scan of `tests/*.ps1` matches one
+of four fixed textual patterns to discover which NDJSON `id`s a test file emits --
 `CODE_HASHTABLE_ID_RE = re.compile(r"\bid\s*=\s*['\"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['\"]")` is the
-one this class of test uses. It is a plain regex over the file's TEXT, not a PowerShell parser --
-it has no notion of variable assignment or control flow, so it can only ever match an `id` key
-followed immediately by a quoted literal.
+one this class of test uses. It's a plain regex over the file's TEXT, not a PowerShell parser --
+no notion of variable assignment or control flow, so it only ever matches an `id` key followed
+immediately by a quoted literal.
 
 Refactoring a single-scenario test file into a multi-scenario one (env-var-selected, matching this
-repo's own established `PYI_FAIL_SCENARIO`-style convention) naturally tempts consolidating the
-per-scenario `id` into one shared variable (`$rowId = 'self.foo.bar'` in a `switch`, then
-`Write-NdjsonRow ([ordered]@{ id=$rowId; ... })` at the single call site) -- this is correct,
-idiomatic PowerShell and preserves the exact same runtime NDJSON output, but it silently breaks
-the regex: `id=$rowId` never matches `\bid\s*=\s*['"]`, so the checker reports the id as
-"registered in docs but no matching code emission site found" -- indistinguishable from a genuinely
-stale/removed row. Confirmed doubly damaging in practice: not just the NEW scenario's id went
-undetected, but the PRE-EXISTING scenario's id did too, even though its own emitted NDJSON content
-was completely unchanged -- the regression was in the STATIC TEXT shape, not the runtime behavior.
+repo's `PYI_FAIL_SCENARIO`-style convention) naturally tempts consolidating the per-scenario `id`
+into one shared variable (`$rowId = 'self.foo.bar'` in a `switch`, then `Write-NdjsonRow
+([ordered]@{ id=$rowId; ... })` at the single call site) -- correct, idiomatic PowerShell,
+identical runtime NDJSON output, but it silently breaks the regex: `id=$rowId` never matches
+`\bid\s*=\s*['"]`, so the checker reports the id as "registered in docs but no matching code
+emission site found" -- indistinguishable from a genuinely stale/removed row. Confirmed doubly
+damaging: not just the NEW scenario's id went undetected, but the PRE-EXISTING scenario's did too,
+even though its own emitted NDJSON was unchanged -- the regression was in the STATIC TEXT shape,
+not runtime behavior.
 
-**Fix: keep `id='literal.id.here'` as a literal at EVERY `Write-NdjsonRow` call site**, even if that
-means branching on the scenario variable a second time right at the call site (`if ($scenario -eq
-'x') { Write-NdjsonRow ([ordered]@{ id='self.foo.x'; ... }) } else { Write-NdjsonRow ([ordered]@{
-id='self.foo.y'; ... }) }`) instead of consolidating into one call fed by a shared `$rowId`
-variable. This is a small amount of duplication in exchange for staying legible to a scanner that
-cannot execute the script. This check is advisory (`continue-on-error: true`, non-gating) so it
-never blocks a merge on its own, but the finding is real and worth fixing on sight -- do not treat
-it as noise. Verify any new multi-scenario test file against the same regex directly before
-pushing: `python3 -c "import re; print(re.findall(r'\bid\s*=\s*[\'\"]([A-Za-z0-9][A-Za-z0-9_.-]*)[\'\"]', open('tests/the_file.ps1').read()))"`
+**Fix: keep `id='literal.id.here'` as a literal at EVERY `Write-NdjsonRow` call site**, even if
+that means branching on the scenario variable a second time right at the call site (`if
+($scenario -eq 'x') { Write-NdjsonRow ([ordered]@{ id='self.foo.x'; ... }) } else {
+Write-NdjsonRow ([ordered]@{ id='self.foo.y'; ... }) }`) instead of one call fed by a shared
+`$rowId`. Small duplication in exchange for staying legible to a scanner that cannot execute the
+script. This check is advisory (`continue-on-error: true`, non-gating) so it never blocks a merge,
+but the finding is real -- fix on sight. Verify any new multi-scenario test file against the same
+regex before pushing:
+`python3 -c "import re; print(re.findall(r'\bid\s*=\s*[\'\"]([A-Za-z0-9][A-Za-z0-9_.-]*)[\'\"]', open('tests/the_file.ps1').read()))"`
 and confirm every scenario's id appears.
 
 ---
@@ -99,9 +92,8 @@ script meant to preview a payload-line swap opened `run_setup.bat` with `open(..
 intending to fill in the write logic later (`... pass`). Python's `'w'` mode truncates a file to
 zero bytes THE MOMENT `open()` succeeds, regardless of whether anything is ever written -- this
 left `run_setup.bat` (~4715 lines, the repo's entire deliverable) at 0 bytes. Caught immediately
-via `wc -l`/`git status` (cheap, worth running reflexively after any script touching a tracked
-file) and restored losslessly via `git checkout --` since there were no uncommitted changes at the
-time -- if there had been, those would have been lost too.
+via `wc -l`/`git status` and restored losslessly via `git checkout --` since there were no
+uncommitted changes at the time -- if there had been, those would have been lost too.
 
 **Rule: a script that INSPECTS or PREVIEWS a change to an existing tracked file must never open it
 in a write/truncate mode (`'w'`, `'wb'`), even speculatively.** Safe pattern: read as bytes, build
@@ -150,18 +142,17 @@ non-whitespace character is flagged, part of the standard sweep.
 
 **Superseded 2026-07-24 by the `ReadLineAsync()`/chunk-read entries below -- kept only for the
 methodology lesson.** Microsoft's own docs for `Process.WaitForExit(Int32)` say calling the
-no-arg `WaitForExit()` overload after a timed one returns `true` ensures async output handling
-has completed. Empirically FALSE for `Register-ObjectEvent` on `OutputDataReceived`: a direct
-`pwsh` repro (5/5 deterministic) showed the final event -- carrying a line flushed only at
-process exit -- firing AFTER both `WaitForExit()` calls returned, silently truncating the
-captured buffer with no error. Reproduced only when the `pwsh`-launching chain was itself
-launched via Python's `subprocess.run(..., capture_output=True)`, not from an interactive shell
-(same "differs by invocation shape" class as this repo's `Get-FileHash` module-autoload gap).
-**Rule: never trust a documented "async handling has completed" guarantee without empirical
-verification** -- this specific mechanism (`Register-ObjectEvent` + explicit EOF-flag polling) is
-gone from the codebase, replaced entirely by `StreamReader` async reads (see entries below), which
-have no equivalent drain race (a completed read task with a `$null`/`0` result IS the stream's own
-EOF signal).
+no-arg `WaitForExit()` overload after a timed one returns `true` ensures async output handling has
+completed. Empirically FALSE for `Register-ObjectEvent` on `OutputDataReceived`: a direct `pwsh`
+repro (5/5 deterministic) showed the final event -- a line flushed only at process exit -- firing
+AFTER both `WaitForExit()` calls returned, silently truncating the captured buffer with no error.
+Reproduced only when the `pwsh`-launching chain was itself launched via Python's
+`subprocess.run(..., capture_output=True)`, not from an interactive shell (same "differs by
+invocation shape" class as this repo's `Get-FileHash` module-autoload gap). **Rule: never trust a
+documented "async handling has completed" guarantee without empirical verification** --
+`Register-ObjectEvent` + explicit EOF-flag polling is gone from the codebase, replaced entirely by
+`StreamReader` async reads (below), which have no equivalent drain race (a completed read task
+with a `$null`/`0` result IS the stream's own EOF signal).
 
 **Companion fact, still load-bearing (referenced by later entries):** Python's `input(prompt)`
 DOES flush stdout before blocking on stdin, even when stdout is redirected/non-tty (confirmed via
@@ -179,11 +170,11 @@ changed (line-based to chunk-based).**
 
 Found via `tests/test_failfast_probe.py`'s `InteractiveRoundTrip` test (a scripted `input()`/
 `print()` conversation): 2/5 local runs showed a LATER round's output appearing BEFORE an EARLIER
-round's in the captured/teed text -- a silent in-place transposition, worse than a dropped/late
-line. **Root cause: `Register-ObjectEvent` dispatches each event via
-`ThreadPool.QueueUserWorkItem`, which gives no ordering guarantee between queued work items** --
-two lines from the same stream arriving close together can have their `-Action` callbacks run on
-different pool threads in either order. Confirmed upstream, not sandbox-specific:
+round's -- a silent in-place transposition, worse than a dropped/late line. **Root cause:
+`Register-ObjectEvent` dispatches each event via `ThreadPool.QueueUserWorkItem`, with no ordering
+guarantee between queued work items** -- two lines from the same stream arriving close together
+can have their `-Action` callbacks run on different pool threads in either order. Confirmed
+upstream, not sandbox-specific:
 [PowerShell/PowerShell#11937](https://github.com/PowerShell/PowerShell/issues/11937).
 
 **Fix: stop using `Register-ObjectEvent`. Poll a single in-flight async read per stream instead**
@@ -206,14 +197,13 @@ hitting the same class of bug (progress dots delayed in a frozen EXE, fixed via 
 `.flush()`).
 
 **The problem**: Python's `input(prompt)` writes the prompt to stdout and flushes immediately
-(see the companion fact two entries up) but WITHOUT a trailing newline, by design -- the cursor
-stays on the same line. `ReadLineAsync()` does not return anything for a stream until a full
-newline-terminated line arrives, or EOF -- so the flushed prompt bytes sit in the OS pipe,
-invisible to the reader. Confirmed directly: a child writing `"Enter your name: "` then blocking
-on stdin produced ZERO completed `ReadLineAsync()` reads for 2+ seconds even though the bytes
-were provably there (`CanRead` confirmed). The text only surfaces once a later write adds a
-newline (concatenating the prompt with whatever comes after into one misleadingly-timed chunk) or
-the process exits.
+(see the companion fact two entries up) but WITHOUT a trailing newline -- the cursor stays on the
+same line. `ReadLineAsync()` returns nothing for a stream until a full newline-terminated line
+arrives, or EOF, so the flushed prompt bytes sit in the OS pipe, invisible to the reader.
+Confirmed directly: a child writing `"Enter your name: "` then blocking on stdin produced ZERO
+completed `ReadLineAsync()` reads for 2+ seconds even though the bytes were provably there
+(`CanRead` confirmed). The text only surfaces once a later write adds a newline (concatenating the
+prompt with whatever comes after into one misleadingly-timed chunk) or the process exits.
 
 **Why this stayed hidden through two prior rounds of round-trip testing**: both the local test
 and `selfapps_interactive_stdin.ps1` feed the ENTIRE scripted answer sequence through stdin
@@ -241,14 +231,12 @@ genuinely FAIL pre-fix and PASS post-fix.
 real Windows CI.** `select.select([fileobj], [], [], timeout)` against a `subprocess.Popen` pipe
 passed every local Linux run but failed on 4 separate Windows CI lanes on its first real run:
 `OSError: [WinError 10038] An operation was attempted on something that is not a socket`. CPython
-`select.select()` on Windows only supports socket objects -- it cannot poll an arbitrary file/pipe
-handle the way POSIX can. **Fixed with a background `threading.Thread` doing blocking `os.read()`
-into a `queue.Queue`, with the main thread calling `q.get(timeout=N)` instead of `select()`** --
-portable, and preserves the same live-timing sensitivity. **Rule: never use `select.select()` on
-a `subprocess.Popen` pipe in code that must run on Windows** -- use a reader-thread-plus-queue
-instead. A local-sandbox-only pass of a test using `select()` on a pipe is NOT sufficient proof it
-will pass on Windows CI (this exact bug passed 8 local runs before shipping and only surfaced on
-the first real Windows CI run).
+`select.select()` on Windows only supports socket objects, not an arbitrary file/pipe handle.
+**Fixed with a background `threading.Thread` doing blocking `os.read()` into a `queue.Queue`, main
+thread calling `q.get(timeout=N)` instead of `select()`** -- portable, same live-timing
+sensitivity. **Rule: never use `select.select()` on a `subprocess.Popen` pipe in code that must
+run on Windows.** A local-sandbox-only pass is NOT sufficient proof (this bug passed 8 local runs
+before shipping and only surfaced on the first real Windows CI run).
 
 **Rule of thumb for any future async-output consumer in this repo**: prefer chunk/byte-based
 reads over line-based reads whenever the producer might write meaningful, already-flushed content
@@ -260,15 +248,15 @@ only safe when every producer write is guaranteed to end in a newline.
 ## Ambient Python path leakage in uv sub-bootstrap venvs (fixed via `UV_PYTHON_PREFERENCE=only-managed`)
 
 **Isolation-boundary leak in our bootstrapper, NOT a uv defect** -- uv correctly used whatever
-ambient interpreter was on the host (PATH/registry/toolchain cache), because nothing told it to
+ambient interpreter was on the host (PATH/registry/toolchain cache) because nothing told it to
 stay inside its own managed toolchain.
 
-**Observed symptom:** in uv-first lanes (`real`, `uv`, `contract-uv`, `contract-uv-fail`),
-`uv venv` created `.uv_env` from the GitHub runner's `C:\hostedtoolcache\windows\Python\...`
-interpreter (3.12.10 as of 2026-06; historically 3.9.25) instead of the latest managed
-CPython. The orchestration layer and its embedded helpers then ran on an older,
-ambient Python than intended. Earlier this also surfaced as `self.pyproject.malformed`
-failing because a helper assumed `tomllib` (3.11+ stdlib) on an ambient 3.9.x.
+**Observed symptom:** in uv-first lanes (`real`, `uv`, `contract-uv`, `contract-uv-fail`), `uv
+venv` created `.uv_env` from the GitHub runner's `C:\hostedtoolcache\windows\Python\...`
+interpreter (3.12.10 as of 2026-06; historically 3.9.25) instead of the latest managed CPython --
+the orchestration layer and its embedded helpers then ran on an older, ambient Python than
+intended. Earlier this also surfaced as `self.pyproject.malformed` failing because a helper
+assumed `tomllib` (3.11+ stdlib) on an ambient 3.9.x.
 
 **Fix (orchestration layer):** at the very start of the uv acquisition block in
 `run_setup.bat` (before the `PVW_UV_EXE` branch and before the first uv invocation):
@@ -379,8 +367,8 @@ list; the recurring traps that have actually bitten us:
   -- no concept of "this paren is just prose." A stray `(` on one `echo` line and its matching `)`
   on the NEXT `echo` line reads as a real block-closing paren the instant the parser reaches it --
   the block ends there, and whatever token follows the `)` gets parsed as a new top-level command
-  (`failed was unexpected at this time.` when the next word was "failed"). Broke multiple CI lanes
-  simultaneously. `check_delimiters.py` did NOT catch it at the time: a stray `(...)` pair inside
+  (`failed was unexpected at this time.` when the next word was "failed"), breaking multiple CI
+  lanes at once. `check_delimiters.py` did NOT catch it at the time: a stray `(...)` pair inside
   echo text is individually balanced, so a whole-file LIFO paren-count scan sees nothing wrong --
   the hazard is a cross-line split inside an ALREADY-open block, not a raw count mismatch. **Rule:
   never let a `(`/`)` pair land on different lines inside a parenthesized `.bat` block, even in
@@ -409,10 +397,9 @@ list; the recurring traps that have actually bitten us:
   (e.g. using a now-broken `HP_PY`) all the way to `:after_cascade_decision`/`:after_env_skip`
   (which unconditionally rewrite the status file from whatever `HP_BOOTSTRAP_STATE` currently
   holds), silently reporting `state=ok` for a genuine failure. Centralizing the set in `:die`
-  itself covers every existing AND future call site with one line, rather than requiring each one
-  to remember an easy-to-forget companion `set`. Regression coverage:
-  `tests/selfapps_pyinstaller_fail.ps1`, `self.embed.fallback.decline`/
-  `self.ux.system.gate.real`-style tests asserting `state=='error'`.
+  covers every existing AND future call site with one line, rather than an easy-to-forget
+  companion `set` per site. Regression coverage: `tests/selfapps_pyinstaller_fail.ps1`,
+  `self.embed.fallback.decline`/`self.ux.system.gate.real`-style tests asserting `state=='error'`.
 
 **PowerShell adjacent traps:** `-or`/`-and` outside a conditional are parsed as parameter
 names ("parameter name 'or'"); `tools/check_delimiters.py` flags these. Multi-line `run:`
@@ -426,16 +413,16 @@ workflows.
 Requirement 9's swap-verification fix (`:offer_optimized_build`, own section below) established a
 correct pattern: for a same-volume FILE `move /y` onto an existing destination, the operation is
 atomic (fully replaces, source consumed) or fully fails (both untouched) -- so checking whether
-the SOURCE is now gone reliably tells you whether the move succeeded, when the destination itself
-existed before the move regardless of outcome.
+the SOURCE is now gone reliably tells you the move succeeded, when the destination existed before
+the move regardless of outcome.
 
 **That reasoning does NOT carry over to a DIRECTORY move** -- caught when an initial fix mirrored
 the file-move pattern onto `:embed_swap_retry`'s directory swap without re-verifying OS semantics
 first. A `move` of a directory onto an existing destination silently NESTS the source inside it
 (`move srcdir destdir` where `destdir` exists produces `destdir\srcdir\...`, not `destdir`
-becoming `srcdir`'s contents) -- neither "check destination" nor "check source gone" detects this
-correctly: if a preceding `rd /s /q` fails to fully clear the destination (a lock), the subsequent
-`move` nests rather than erroring, so BOTH checks read false-success for different reasons.
+becoming `srcdir`'s contents) -- neither "check destination" nor "check source gone" detects this:
+if a preceding `rd /s /q` fails to fully clear the destination (a lock), the subsequent `move`
+nests rather than erroring, so BOTH checks read false-success for different reasons.
 
 **The only reliable fix for a directory swap: verify the PRECONDITION (destination actually
 cleared) before attempting the move, not the move's own outcome afterward.** Gate `move` itself on
@@ -457,13 +444,13 @@ third swap site is ever added, classify it as file-vs-directory first before pic
 `%WINDIR%\Temp\...`, despite `HP_SCRIPT_ROOT` being provably correct.
 
 **Root cause: NOT the cmd.exe `%VAR%`-expansion trap -- it's the separate, standard Windows
-C-runtime argv-parsing rule** `findstr.exe` (like nearly every native Windows console app)
-applies to its own command line after cmd.exe hands it off: N backslashes immediately followed by
-`"` collapse to `N/2` literal backslashes, and if N is ODD, the trailing backslash escapes the
-quote instead of closing it. `%WINDIR%\"` expands to `C:\Windows\"` -- one (odd) backslash before
-the quote, so it doesn't close, and the rest of the line (including `>nul`) gets silently absorbed
-into a corrupted, never-matching search pattern. No error, no crash -- the check just quietly
-never works.
+C-runtime argv-parsing rule** `findstr.exe` (like nearly every native Windows console app) applies
+to its own command line after cmd.exe hands it off: N backslashes immediately followed by `"`
+collapse to `N/2` literal backslashes, and if N is ODD, the trailing backslash escapes the quote
+instead of closing it. `%WINDIR%\"` expands to `C:\Windows\"` -- one (odd) backslash before the
+quote, so it doesn't close, and the rest of the line (including `>nul`) gets silently absorbed
+into a corrupted, never-matching search pattern. No error, no crash -- it just quietly never
+works.
 
 **Fix: double the trailing backslash** (`%WINDIR%\\"`) -- an EVEN count collapses to one literal
 backslash and the quote closes normally, giving the intended search text with the trailing-slash
@@ -541,97 +528,98 @@ exist because process-wide delayed expansion previously caused `!`-collision deb
 If a global `:log` fix is ever pursued, it is its own isolated task that must also revisit
 those checks -- not a drive-by change.
 
-**Concrete unresolved instance, accepted risk, no action planned: `%HP_ENTRY%`.** `%HP_ENTRY%`
-is echoed unquoted at 4 call sites: the raw `echo` alphabetical-fallback hint and the
-`[INFO] REQ-002: Picker entry selected:` `:log` call, both inside `:pick_entry_interactive`;
-the `[ERROR] REQ-021: entry failed py_compile` `:log` call inside `:preflight_compile`; and the
+**Concrete unresolved instance, accepted risk, no action planned: `%HP_ENTRY%`.** Echoed unquoted
+at 4 call sites: the raw `echo` alphabetical-fallback hint and the
+`[INFO] REQ-002: Picker entry selected:` `:log` call, both inside `:pick_entry_interactive`; the
+`[ERROR] REQ-021: entry failed py_compile` `:log` call inside `:preflight_compile`; and the
 `[INFO] Launching your program now via the ... interpreter:` `:log` call inside
 `:verify_no_exe_probe`. A filename containing `<`/`>`/`&`/`|` would in principle mis-parse as a
-redirection/pipe operator here, exactly per the rule above. This requires a
-maliciously-or-accidentally-crafted filename delivered via a Windows double-click/drag-and-drop
-flow (not a common vector), and the only real fix is the global `:log` rework already documented
-as blocked by the three CI static guards above. Noted here so it isn't rediscovered as a "new"
-finding later.
+redirection/pipe operator here, per the rule above -- requires a maliciously-or-accidentally-
+crafted filename via drag-and-drop (not a common vector); the only real fix is the global `:log`
+rework blocked by the three CI static guards above. **Three of the four sites are ALSO exposed to
+the `call`-triggered second-expansion-pass hazard documented below (`%`/`^`, not just
+`<`/`>`/`&`/`|`)** -- the `[INFO] REQ-002: Picker entry selected:`, `[ERROR] REQ-021:`, and
+`[INFO] Launching your program now...` sites are all genuine `call :log "..."` invocations, so a
+filename shaped like `%SOME_VAR%` could in principle leak that variable's value the same way the
+DLL-bundling loop's own `%`/`^` bug did; the raw `echo` alphabetical-fallback hint is a PLAIN
+`echo`, not a `call`, so it is NOT subject to the second-pass hazard, only the `<`/`>`/`&`/`|` one
+above. All of this remains accepted risk for the same reason (blocked on the same global `:log`
+rework) -- noted here so it isn't rediscovered later.
 
 **A second, distinct hazard on top of the above: `call :log "..."` triggers cmd.exe's OWN second
 expansion pass, so `%`/`^` are just as dangerous as `<`/`>`/`|`/`&` -- found and fixed for the
-conda native-DLL bundling loop (CLAUDE.md Item 24), via a CodeRabbit review round.** This is
-independent of the UNQUOTED-echo hazard above (which is about `:log`'s OWN `echo %MSG%` line) --
-this one is about the CALLER's line, `call :log "... %SOME_VAR% ..."`, itself. `call` is
-documented (informally, but extremely well-established in practice) to re-scan its own,
-already-substituted command line a SECOND time before invoking the target. Concretely: if
-`%SOME_VAR%`'s value happens to CONTAIN text shaped like `%OTHER_VAR%` (not a literal `%OTHER_VAR%`
-reference in the source code -- a VALUE that merely looks like one, e.g. captured from external
-text such as a build-tool warning message), the caller's own NORMAL single-pass substitution
-inserts that literal text into the line first; then, because the command is `call`, a SECOND scan
-finds `%OTHER_VAR%` sitting in the now-substituted text and expands IT too -- potentially leaking
-an unrelated environment variable (a CI secret, a token) into whatever the call ultimately does
-with it (in this case, `:log`'s own console/file output). **Rule: any DISPLAY-ONLY sanitization
-built to protect a `call`-based subroutine's own unquoted internals (mirroring the `_SAFE` pattern
-above) must ALSO strip `%` and `^`, not just `<`/`>`/`|`/`&`** -- omitting them defeats the whole
-point of building the sanitization in the first place, since a value from an untrusted/external
-source can just as easily be shaped like `%GITHUB_TOKEN%` as it can contain a raw `&`.
+conda native-DLL bundling loop (CLAUDE.md Item 24), via a CodeRabbit review round.** Independent of
+the UNQUOTED-echo hazard above (that one is `:log`'s OWN `echo %MSG%` line) -- this one is about
+the CALLER's line, `call :log "... %SOME_VAR% ..."`, itself. `call` re-scans its own,
+already-substituted command line a SECOND time before invoking the target (informal but
+extremely well-established behavior). Concretely: if `%SOME_VAR%`'s VALUE happens to CONTAIN text
+shaped like `%OTHER_VAR%` (not a literal reference in source -- captured external text, e.g. a
+build-tool warning message), the caller's normal single-pass substitution inserts that literal
+text first; then, because the command is `call`, a SECOND scan finds `%OTHER_VAR%` in the
+now-substituted text and expands IT too -- potentially leaking an unrelated env var (a CI secret,
+a token) into `:log`'s own console/file output. **Rule: any DISPLAY-ONLY sanitization protecting a
+`call`-based subroutine's unquoted internals (the `_SAFE` pattern above) must ALSO strip `%` and
+`^`, not just `<`/`>`/`|`/`&`** -- a value from an untrusted/external source can be shaped like
+`%GITHUB_TOKEN%` just as easily as it can contain a raw `&`.
 
 **`set "VAR=%VAR:%%=_%"` (doubling `%` to `%%` in the search text) does NOT reliably strip a
 literal percent sign -- a real bug this repo shipped once and caught only via a live-cmd.exe CI
 test, not via reasoning.** The doubled-percent form looks like a natural extension of the
-well-known FOR-loop `%%i` escaping rule, and was documented here as "the standard, long-established
-cmd.exe idiom" on that basis -- but confirmed FALSE via `tests/harness.ps1`'s
+well-known FOR-loop `%%i` escaping rule -- but confirmed FALSE via `tests/harness.ps1`'s
 `batch.dll_bundle.pct_sanitizer` fixture executed for real on Windows CI: the substitution silently
-produced an EMPTY value (`echo` with no argument) instead of the sanitized text. This broke the DLL
+produced an EMPTY value (`echo` with no argument) instead of the sanitized text, breaking the DLL
 native-bundling loop's own sanitization across essentially every CI lane. **Rule: to strip a
 literal `%` (or `^`) from a batch variable, do NOT use cmd.exe `:search=replace` substitution --
 shell out to PowerShell instead** (`[Environment]::GetEnvironmentVariable('VAR') -replace
 '%','_' -replace '\^','_'`, written to a temp file and read back via a plain, non-`call`
 `for /f "usebackq delims=" %%X in (...) do set`), which has unambiguous .NET string semantics
-instead of cmd.exe's own undocumented parsing quirks. See `docs/agent-interconnect.md`'s "Conda
+instead of cmd.exe's undocumented parsing quirks. See `docs/agent-interconnect.md`'s "Conda
 native-DLL bundling repair loop" section for the concrete fix (`HP_DLL_DETECTED_SAFE`/
 `HP_NEXT_DLL_SAFE`/`HP_NEXT_DLL_PATH_SAFE`) and the CI-confirmed failure signature.
 
-**That PowerShell fix ALSO shipped broken, on the exact same fixture's next real Windows run --
-a third round of the same underlying lesson.** The replacement text itself, `-replace '%','_'`,
-put a lone, unpaired `%` literal into the `-Command` argument -- and that `-Command` argument sat
-on the same cmd.exe logical line as a legitimate `%LOG%`/`%TEMP%` reference. **cmd.exe pairs `%`
-characters with a left-to-right scan of the ENTIRE line, ignoring quote boundaries** -- it does
-not know or care that the lone `%` is "inside a PowerShell string" three quote-levels deep; it
-just counts percent signs. The lone `%` paired with `%LOG%`'s own opening `%`, and everything
-between them -- the whole real replace logic -- was parsed as one bogus, undefined variable name.
-Inside a batch file specifically (not an interactive prompt), an undefined `%VAR%` reference is
-silently deleted and replaced with empty text, not left as literal fallback text -- so the entire
-PowerShell command was gutted before it ever executed, reproducing the identical `"ECHO is off."`
-failure signature as the very bug this fix was meant to close. A sibling block with an EVEN total
-`%` count (two lone `%`'s, one per `-replace` call, plus `%LOG%`'s own pair) shows even parity is
-NOT sufficient proof of safety: the two lone `%`'s paired with EACH OTHER instead of each correctly
-pairing with `%LOG%`, silently deleting an entire intervening `Set-Content` call. **Rule: a
-literal, lone `%` must never appear anywhere in PowerShell text embedded in a `-Command` argument
-if that same cmd.exe logical line ALSO contains any legitimate `%VAR%` reference** (a redirection
-target, `%LOG%`, `%TEMP%`, anything) -- cmd.exe's pairing scan has no concept of "this one is fake,
-skip it." Build the percent character entirely inside PowerShell instead: `$pct = [char]37` (or
-`[char]0x25`), then `-replace $pct,'_'` -- this removes every literal `%` from the cmd.exe-visible
-text, leaving only the genuine, correctly-paired reference. **Verification method that actually
-caught this**: after any such fix, count `%` occurrences on the fully-joined (continuation-`^`-
-resolved) logical line and confirm the total matches exactly the number of INTENDED pairs -- do not
-stop at "the count looks even," trace which characters are meant to pair with which.
+**That PowerShell fix ALSO shipped broken, on the exact same fixture's next real Windows run -- a
+third round of the same underlying lesson.** The replacement text itself, `-replace '%','_'`, put
+a lone, unpaired `%` literal into the `-Command` argument, sitting on the same cmd.exe logical
+line as a legitimate `%LOG%`/`%TEMP%` reference. **cmd.exe pairs `%` characters with a
+left-to-right scan of the ENTIRE line, ignoring quote boundaries** -- it does not know the lone `%`
+is "inside a PowerShell string" three quote-levels deep; it just counts percent signs. The lone
+`%` paired with `%LOG%`'s own opening `%`, and everything between them -- the whole real replace
+logic -- was parsed as one bogus, undefined variable name. Inside a batch file, an undefined
+`%VAR%` reference is silently deleted and replaced with empty text (not left literal), so the
+entire PowerShell command was gutted before it ever executed, reproducing the identical
+`"ECHO is off."` failure signature as the bug this fix was meant to close. A sibling block with an
+EVEN total `%` count (two lone `%`'s, one per `-replace` call, plus `%LOG%`'s own pair) shows even
+parity is NOT sufficient proof of safety: the two lone `%`'s paired with EACH OTHER instead of
+each correctly pairing with `%LOG%`, silently deleting an entire intervening `Set-Content` call.
+**Rule: a literal, lone `%` must never appear anywhere in PowerShell text embedded in a
+`-Command` argument if that same cmd.exe logical line ALSO contains any legitimate `%VAR%`
+reference** -- cmd.exe's pairing scan has no concept of "this one is fake, skip it." Build the
+percent character entirely inside PowerShell instead: `$pct = [char]37` (or `[char]0x25`), then
+`-replace $pct,'_'` -- removes every literal `%` from the cmd.exe-visible text, leaving only the
+genuine, correctly-paired reference. **Verification method that actually caught this**: after any
+such fix, count `%` occurrences on the fully-joined (continuation-`^`-resolved) logical line and
+confirm the total matches exactly the number of INTENDED pairs -- do not stop at "the count looks
+even," trace which characters are meant to pair with which.
 
-**General rule this incident reinforces, for the THIRD time in this exact code path**: when this
-repo's own static reasoning about an undocumented cmd.exe parsing rule cannot be settled by citing
-an authoritative source, build a live-cmd.exe-executed test fixture (mirroring `tests/harness.ps1`'s
-existing pattern) and trust ITS result over another round of reasoning. Static reasoning about
-cmd.exe's own `%`-pairing and substitution semantics has now been WRONG three separate times in
-this one code path, even after the fixture had already caught the first mistake -- the fixture
-itself is what caught the second and third, exactly by design. Do not treat "I fixed the thing the
-test caught" as proof the new code is correct; re-run the actual test.
+**General rule this incident reinforces, for the THIRD time in this exact code path**: when static
+reasoning about an undocumented cmd.exe parsing rule cannot be settled by citing an authoritative
+source, build a live-cmd.exe-executed test fixture (mirroring `tests/harness.ps1`'s existing
+pattern) and trust ITS result over another round of reasoning. Static reasoning about cmd.exe's
+`%`-pairing and substitution semantics has now been WRONG three separate times in this one code
+path, even after the fixture had already caught the first mistake -- the fixture is what caught
+the second and third, by design. Do not treat "I fixed the thing the test caught" as proof the new
+code is correct; re-run the actual test.
 
 **Closed out via a fourth change: stop trying to write cmd.exe-safe `%`-handling `-Command` text
-at all.** After three rounds of getting the exact same class of bug wrong, the actual fix was to
-stop fighting cmd.exe's `%`-pairing rules and remove them from the equation entirely -- the
-sanitizer moved into a real emitted file, `tools/dll_pct_sanitize.ps1` (`HP_DLL_PCT_SANITIZE`),
-invoked via `-File "path" arg1 arg2...` instead of `-Command "..."`. A `-File` invocation's own
-script body is never handed to cmd.exe's tokenizer at all -- only the outer invocation line is,
-and that's plain argv (env-var names and output file paths), with no `%`-pairing hazard to get
-wrong a fourth time. See the "PowerShell helpers: prefer an emitted `.ps1` file..." entry further
-below in this file (now covers this as a second, independent trigger condition alongside embedded
-`"` characters) and `docs/agent-interconnect.md`'s DLL-bundling section for the full before/after.
+at all.** After three rounds of getting the exact same class of bug wrong, the fix was to stop
+fighting cmd.exe's `%`-pairing rules and remove them from the equation entirely -- the sanitizer
+moved into a real emitted file, `tools/dll_pct_sanitize.ps1` (`HP_DLL_PCT_SANITIZE`), invoked via
+`-File "path" arg1 arg2...` instead of `-Command "..."`. A `-File` invocation's script body is
+never handed to cmd.exe's tokenizer -- only the outer invocation line is, and that's plain argv
+(env-var names and output file paths), with no `%`-pairing hazard left to get wrong a fourth time.
+See "PowerShell helpers: prefer an emitted `.ps1` file..." further below (now a second, independent
+trigger condition alongside embedded `"` characters) and `docs/agent-interconnect.md`'s
+DLL-bundling section for the full before/after.
 
 ---
 
@@ -639,14 +627,14 @@ below in this file (now covers this as a second, independent trigger condition a
 
 `:provider_cascade` (REQ-009/REQ-005.10 slice 3) routes by `HP_ENV_MODE` to one of
 `:cascade_from_uv` / `:cascade_from_conda` / `:cascade_from_venv` using **one-line `if /i ...
-goto`** statements, not a big parenthesized `if (...)` block. This is deliberate: inside the
-`uv -> conda` path we `set "HP_ENV_MODE=conda"` and then `set "ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%"`
-and immediately `goto :try_conda_create`. If those were inside a single parenthesized block,
-CMD's parse-time `%VAR%` expansion would read the OLD values of any variable set earlier in
-the same block (the classic drag-and-drop empty-filename bug). Splitting into goto-reached
-labels means each `set`/read happens on a freshly parsed line. **If you refactor the cascade
-into nested `( ... )` blocks, re-verify every `%VAR%` you read was not `set` earlier in the
-same block** -- prefer keeping the goto-dispatch shape.
+goto`** statements, not a big parenthesized `if (...)` block. Deliberate: inside the `uv -> conda`
+path we `set "HP_ENV_MODE=conda"` then `set "ENV_PATH=%MINICONDA_ROOT%\envs\%ENVNAME%"` and
+immediately `goto :try_conda_create`. Inside a single parenthesized block, CMD's parse-time
+`%VAR%` expansion would read the OLD values of any variable set earlier in that same block (the
+classic drag-and-drop empty-filename bug). Splitting into goto-reached labels means each
+`set`/read happens on a freshly parsed line. **If you refactor the cascade into nested `( ... )`
+blocks, re-verify every `%VAR%` you read was not `set` earlier in the same block** -- prefer
+keeping the goto-dispatch shape.
 
 **Second confirmed instance (Slice 2b-C, `:try_fast_exe` / `:verify_no_exe_interpreter`):** the
 same bug class, `%ERRORLEVEL%` as the frozen variable instead of `%MAIN_FILE%` -- an earlier
@@ -683,10 +671,9 @@ on EITHER failure exit after that point (missing interpreter, or consent decline
 `:after_env_mode_selection`'s `if not defined HP_PY (call :die ...)` guard -- the bootstrap then
 built and ran using the STALE interpreter path from the declined/failed attempt, silently
 reporting `state=ok` SUCCESS out of a scenario where every real provider tier had failed or been
-declined. This directly blocked the embed tier from ever being reached when system consent was
-declined -- confirmed via `self.embed.fallback.real`'s failure signature: `appRan: true` but every
-embed-specific log flag `false`, meaning the app ran via the leaked system Python without embed
-ever being attempted.
+declined. Blocked the embed tier from ever being reached when system consent was declined --
+confirmed via `self.embed.fallback.real`'s failure signature: `appRan: true` but every
+embed-specific log flag `false` (the app ran via the leaked system Python, embed never attempted).
 
 **Fix**: `:try_system_fallback` now sets `HP_PY=` on both failure exits, immediately before
 `exit /b 1`. **Rule for any fallback-tier subroutine that sets `HP_PY` (or any "selected provider"
@@ -714,12 +701,12 @@ the gate for a behavior the Prime Directive needs**.
 This bit us with system Python (REQ-009 Tier 4): it was hard-gated behind
 `HP_ALLOW_SYSTEM_FALLBACK==1`, a flag the bootstrapper never sets and a double-click user never
 sets, so the last-resort tier was unreachable by default and the REQ-014 consent prompt was dead
-code for real users -- a silent violation of REQ-009/REQ-014/Prime Directive. Fix: system Python
-is now reached in any run, gated solely by the REQ-014 consent prompt;
-`HP_ALLOW_SYSTEM_FALLBACK` is deprecated/ignored (mirroring the earlier `HP_ALLOW_VENV_FALLBACK`
-deprecation). `HP_FORCE_CONDA_ONLY` (CI conda-diagnostic lane) is a legitimate *suppression* flag
-and stays. **When auditing, treat any `if "%HP_...%"=="1"` that ENABLES a Prime-Directive
-behavior as a bug; flags should only suppress, divert for tests, or add super-user overrides.**
+code -- a silent violation of REQ-009/REQ-014/Prime Directive. Fix: system Python is now reached
+in any run, gated solely by the REQ-014 consent prompt; `HP_ALLOW_SYSTEM_FALLBACK` is
+deprecated/ignored (mirroring the earlier `HP_ALLOW_VENV_FALLBACK` deprecation).
+`HP_FORCE_CONDA_ONLY` (CI conda-diagnostic lane) is a legitimate *suppression* flag and stays.
+**When auditing, treat any `if "%HP_...%"=="1"` that ENABLES a Prime-Directive behavior as a bug;
+flags should only suppress, divert for tests, or add super-user overrides.**
 
 **Standing directive: re-run this audit whenever a new `HP_*`/`PVW_*` flag is added.** The
 system-Python sweep above was the first pass; it also confirmed two other flag families are
@@ -935,9 +922,9 @@ The crash is silent and hard to diagnose: `bootstrap.log` will contain only 1-3 
 | HP_ENV_STATE | 18 | 8173 | 3280 | 4892 |
 | HP_PYPROJ_DEPS | 20 | 8171 | 2868 | 5302 |
 
-**HP_PREP_REQUIREMENTS is the tightest** because it encodes the largest helper
-(HP_COLLECT_SUBMODULES is the second-tightest at 459).
-The 192-char safety margin is narrow. Before expanding the payload, verify b64 length:
+**HP_PREP_REQUIREMENTS is the tightest** (encodes the largest helper; HP_COLLECT_SUBMODULES is
+second-tightest at 459 margin). The 192-char safety margin is narrow. Before expanding the
+payload, verify b64 length:
 ```python
 import base64
 b64 = base64.b64encode(open('helper.py', 'rb').read()).decode('ascii')
@@ -962,12 +949,11 @@ pushed the line to 8215 chars. Fixed in `d8f313c` by removing the redundant func
 ## Embedded Helper Update Workflow
 
 **Preferred method (has a canonical `tools/` source, the common case -- 12 of 16 payloads
-as of 2026-07): edit the source file, then run `tools/sync_payload.py`.** This is now the
-required method for any payload with a canonical source -- do not hand-roll the
-read/re-encode/splice/write sequence below for these; `tools/sync_payload.py` was written
-specifically to eliminate the risk class described in "Never open a real source file in
-Python 'w' mode as part of a 'dry run'" above (a careless one-off script truncated
-`run_setup.bat` to zero bytes doing this by hand).
+as of 2026-07): edit the source file, then run `tools/sync_payload.py`.** Required for any
+payload with a canonical source -- do not hand-roll the read/re-encode/splice/write sequence
+below for these; `tools/sync_payload.py` exists specifically to eliminate the risk class
+described in "Never open a real source file in Python 'w' mode as part of a 'dry run'" above
+(a careless one-off script truncated `run_setup.bat` to zero bytes doing this by hand).
 ```bash
 # 1. Edit the canonical source (e.g. tools/pyproj_deps.py) directly.
 # 2. Re-sync the embedded payload -- reads run_setup.bat as bytes, verifies EXACTLY the
@@ -999,13 +985,13 @@ python tools/check_delimiters.py run_setup.bat
 
 **PayloadSync tests for a `.ps1` (or any `eol=crlf`-attributed) canonical source must normalize
 CRLF/LF before comparing bytes, or the test passes locally and fails only on real Windows CI.**
-`.py`/`.sh` sources are `eol=lf` (no checkout-time translation, safe to `read_bytes()` and compare
-raw). `.ps1`/`.bat`/`.cmd`/`.psm1`/`.psd1` are `eol=crlf` -- `actions/checkout@v5` on Windows CI
+`.py`/`.sh` sources are `eol=lf` (no checkout-time translation, safe to `read_bytes()` raw).
+`.ps1`/`.bat`/`.cmd`/`.psm1`/`.psd1` are `eol=crlf` -- `actions/checkout@v5` on Windows CI
 materializes CRLF regardless of what the payload was encoded from (e.g. LF on a Linux dev
-sandbox), so a raw byte comparison mismatches even though the content is logically identical (the
-base64 string itself is immune -- no `\r`/`\n` inside it -- and the runtime-extracted script
-parses fine either way; this is a test-assertion bug only). Fix: `.replace(b"\r\n", b"\n")` on
-both sides before `assertEqual`.
+sandbox), so a raw byte comparison mismatches even though content is logically identical (the
+base64 string itself is immune -- no `\r`/`\n` inside it, and the runtime-extracted script parses
+fine either way; test-assertion bug only). Fix: `.replace(b"\r\n", b"\n")` on both sides before
+`assertEqual`.
 
 **Python baseline reminder:** see "Embedded-helper Python baseline" above (target modern CPython,
 guard modern stdlib features with `try/except`, keep syntax parse-compatible with older
@@ -1045,18 +1031,17 @@ this cannot be caught by local `pwsh` testing.** `tools/embed_extract.ps1` used 
 tested fine under `pwsh` (PowerShell 7, Linux), then failed on every real Windows CI run:
 `'Get-FileHash' is not recognized as the name of a cmdlet...` -- `Microsoft.PowerShell.Utility`
 genuinely did not auto-load in that specific `for /f "..." in (\`powershell ... -File ...\`)`
-invocation shape. `Microsoft.PowerShell.Management` cmdlets (`Test-Path`/`Get-Item`) worked fine
-in the same run, so this is scoped to `Utility` specifically. `pwsh` never reproduces it (different
+invocation shape (`Microsoft.PowerShell.Management` cmdlets like `Test-Path`/`Get-Item` worked
+fine in the same run, so this is scoped to `Utility`). `pwsh` never reproduces it (different
 module discovery behavior) -- **only real Windows PowerShell 5.1 CI catches this class of bug**.
 Fix: `[System.Security.Cryptography.SHA256]::Create()`/`OpenRead()` instead of `Get-FileHash`,
 `[System.IO.Compression.ZipFile]::ExtractToDirectory()` instead of `Expand-Archive`,
 `[System.IO.File]::ReadAllText()`/`WriteAllText()` instead of `Get-Content`/`Set-Content`,
-`[datetime]::Now` instead of `Get-Date` (easy to overlook -- same module as the others, so a
-partial fix that missed it would still fail identically). Applied defensively to a second,
-pre-existing `for /f`-backtick-subshell site with the same topology (`:conda_base_update`'s
-timestamp check) even though it was never confirmed broken in CI (masked by a `try/catch`) --
-any future embedded `.ps1` helper reached via this pattern should default to .NET types from the
-start.
+`[datetime]::Now` instead of `Get-Date` (easy to overlook -- same module, so a partial fix that
+missed it would still fail identically). Applied defensively to a second, pre-existing
+`for /f`-backtick-subshell site with the same topology (`:conda_base_update`'s timestamp check)
+even though never confirmed broken in CI (masked by a `try/catch`) -- any future embedded `.ps1`
+helper reached via this pattern should default to .NET types from the start.
 
 **A second, independent bug hid behind the first, found only after diagnostics were added:** once
 `Get-FileHash` was replaced, extraction succeeded but the embeddable zip's `._pth` site-imports
@@ -1106,8 +1091,8 @@ fallback IS verified (`ProcessTreeAndDrainTimeout` test, a grandchild-inherits-t
 separate runner VMs in one real Windows CI run, escalating from "watch for recurrence" to a
 confirmed, fixed bug.** `UnconditionalKill::test_hang_after_output_is_ALSO_killed_unlike_exe_
 smokerun` failed on 3 of 8 lanes on a commit that touched neither this test file nor
-`tools/exe_hint_rerun.ps1` (confirmed via `git log`/`git diff origin/main` showing zero changes to
-either since PR #410) -- the other 5 lanes passed the identical suite on the identical commit:
+`tools/exe_hint_rerun.ps1` (confirmed via `git diff origin/main` showing zero changes to either
+since PR #410) -- the other 5 lanes passed the identical suite on the identical commit:
 - `contract-uv` (non-gating): a hard `subprocess.TimeoutExpired` after the test's own 60s outer
   budget, waiting on a real `pwsh.EXE ... tools/exe_hint_rerun.ps1` child -- the kill never
   completed in time.
@@ -1124,68 +1109,65 @@ either since PR #410) -- the other 5 lanes passed the identical suite on the ide
 **Root cause identified and fixed the same day, without a Windows repro environment, by bounding
 every previously-unbounded wait in the kill path.** `~exe_hint_rerun.ps1`'s post-kill sequence had
 TWO calls with no timeout at all: the blocking `& taskkill.exe /F /T /PID $p.Id` invocation itself
-(a synchronous native-command call with no way to bound it via the `&` operator), and the trailing
+(a synchronous native-command call, no way to bound it via the `&` operator), and the trailing
 `$p.WaitForExit()` (no argument) right after it. Either one stalling under shared-runner
 contention -- CPU/disk contention, or Windows Defender scanning a freshly-terminated process tree,
-neither confirmed since no Windows host was available to instrument directly -- would fully explain
-all three observed signatures (a slow-but-eventually-successful kill, or a kill so slow it blew
-past even a 60s outer budget). Rather than guess which single call was the culprit, BOTH are now
+neither confirmed since no Windows host was available to instrument directly -- fully explains all
+three observed signatures. Rather than guess which single call was the culprit, BOTH are now
 bounded: `taskkill.exe` is launched via its own `System.Diagnostics.Process` object with a 5000ms
-`WaitForExit`, and the trailing `$p.WaitForExit()` after the kill attempt is now
-`$p.WaitForExit($drainMs)` (also 5000ms) instead of unbounded. `$p` has already been sent `/F /T`
-plus a direct `Kill()` by the time either bound is reached, so a slow confirmation now just means
-"stop waiting," never "the process might still be alive and unaddressed." All 8
-`tests/test_exe_hint_rerun.py` tests (including `PayloadSync`) pass locally post-fix.
-**Confirmed against the real slowness on BOTH gating lanes** (commit `f106f78`, run
-`31196980168`): `real` (job `92928320716`) and `conda-full` (job `92928320698`) both came back
-`conclusion: success`, full pytest suite included -- the same runner-contention class did not
-recur on either lane's re-run. Closed as CLAUDE.md Active Backlog Item 27, moved to
-`docs/agent-closed-backlog.md`.
+`WaitForExit`, and the trailing `$p.WaitForExit()` is now `$p.WaitForExit($drainMs)` (also 5000ms)
+instead of unbounded. `$p` has already been sent `/F /T` plus a direct `Kill()` by the time either
+bound is reached, so a slow confirmation now just means "stop waiting," never "the process might
+still be alive and unaddressed." All 8 `tests/test_exe_hint_rerun.py` tests (including
+`PayloadSync`) pass locally post-fix. **Confirmed against the real slowness on BOTH gating lanes**
+(commit `f106f78`, run `31196980168`): `real` (job `92928320716`) and `conda-full` (job
+`92928320698`) both came back `conclusion: success`, full pytest suite included -- the same
+runner-contention class did not recur on either lane's re-run. Closed as CLAUDE.md Active Backlog
+Item 27, moved to `docs/agent-closed-backlog.md`.
 
-**Why the default is 10000ms, not 5000ms (widened 2026-07):** the original 5000ms default was
-tuned assuming the probe window only needs to outlast a failing process's own error handling
-(instant -- an unhandled exception unwinds in microseconds). It does not: a PyInstaller *onefile*
-EXE must first extract its bundled runtime to a temp directory and boot an embedded interpreter
-before ANY user code (or its failure) can run at all, and that cold-start step alone is commonly
-1-3+ seconds even on an idle machine. Confirmed as the real cause via a CI flake in
-`self.failfast.probe.fastfail` (a test whose whole design is a reliably-fast-failing frozen EXE):
-identical code produced `discardedAndRebuilt: true` on one CI run and `discardedAndRebuilt: false`
-on the very next run of the same commit, with no code change between them -- a pure timing race
-between cold-start-plus-failure and the classification window, worsened by a shared CI runner's
-CPU/disk contention or a Defender on-access scan of the freshly-extracted EXE/DLLs. Widening the
-window is unconditionally safe to do liberally: it is a classification-only value (see above --
-never a kill point), so the only cost of widening it is a few extra seconds before a genuinely
-broken cached EXE is recognized and rebuilt.
+**Why the default is 10000ms, not 5000ms (widened 2026-07):** the original 5000ms default assumed
+the probe window only needs to outlast a failing process's own error handling (instant -- an
+unhandled exception unwinds in microseconds). It does not: a PyInstaller *onefile* EXE must first
+extract its bundled runtime to a temp directory and boot an embedded interpreter before ANY user
+code (or its failure) can run, and that cold-start step alone is commonly 1-3+ seconds even on an
+idle machine. Confirmed as the real cause via a CI flake in `self.failfast.probe.fastfail` (a test
+whose whole design is a reliably-fast-failing frozen EXE): identical code produced
+`discardedAndRebuilt: true` on one CI run and `discardedAndRebuilt: false` on the very next run of
+the same commit, no code change between them -- a pure timing race between cold-start-plus-failure
+and the classification window, worsened by shared-runner CPU/disk contention or a Defender
+on-access scan of the freshly-extracted EXE/DLLs. Widening the window is unconditionally safe: a
+classification-only value (never a kill point), so the only cost is a few extra seconds before a
+genuinely broken cached EXE is recognized and rebuilt.
 
 **Accepted gap: most `selfapps_*.ps1` files do not locally pin `HP_CI_LANE`/`HP_NONINTERACTIVE`
 around their `run_setup.bat` invocations, so a LOCAL (non-CI) run of one that reaches the fast-path
 reuse or no-EXE interpreter dispatch point would take the new interactive fail-fast-probe branch
-instead of the plain/legacy branch.** This is a deliberate, low-priority trade-off, not an oversight:
-real CI always sets `HP_CI_LANE` at the GitHub Actions job level (`batch-check.yml`,
-`HP_CI_LANE: ${{ matrix.mode }}`), and every subprocess (including a PS test script's own
-`cmd /c run_setup.bat` child) inherits it automatically -- so CI determinism for `self.fastpath` /
+instead of the plain/legacy branch.** Deliberate, low-priority trade-off, not an oversight: real CI
+always sets `HP_CI_LANE` at the GitHub Actions job level (`batch-check.yml`, `HP_CI_LANE: ${{
+matrix.mode }}`), and every subprocess (including a PS test script's own `cmd /c run_setup.bat`
+child) inherits it automatically -- so CI determinism for `self.fastpath` /
 `self.exe.fastpath.graceful` / envsmoke's fast-path assertions is unaffected regardless of what any
 individual test file does. Only `tests/selfapps_sysbuild.ps1`, `tests/selfapps_ux_hardening.ps1`,
-and the new `tests/selfapps_failfast_probe.ps1` explicitly set `$env:HP_CI_LANE` locally (needed
-because those specifically drive consent gates / force the new branch on purpose). If a future
-agent wants full local-dev parity with CI for the remaining files, add the same
-save/set/restore-`HP_CI_LANE` pattern to whichever ones are found to actually reach the dispatch
-point (most single-build-run tests never reach it at all, since `:try_fast_exe` returns immediately
-when no cached EXE exists yet) -- but this is optional polish, not a correctness requirement.
+and `tests/selfapps_failfast_probe.ps1` explicitly set `$env:HP_CI_LANE` locally (needed because
+those specifically drive consent gates / force the new branch on purpose). A future agent wanting
+full local-dev parity could add the same save/set/restore-`HP_CI_LANE` pattern to whichever
+remaining files are found to actually reach the dispatch point (most single-build-run tests never
+reach it, since `:try_fast_exe` returns immediately when no cached EXE exists yet) -- optional
+polish, not a correctness requirement.
 
 ---
 
 ## `cache` lane Miniconda-corruption handling lives only in `batch-check.yml` YAML comments
 
 The `cache` CI lane restores a Miniconda install from a GitHub Actions cache to skip the ~99 MB
-download/install on every run. This mechanism has its own self-healing logic that is easy to miss
-because it's documented nowhere except inline YAML comments in `.github/workflows/batch-check.yml`
--- a future agent debugging "why did the cache lane skip everything" should read this instead of
-re-deriving it from the workflow file. **Item 19 (`docs/agent-closed-backlog.md`) closed the
-former self-perpetuating-corruption trap here**: a `restore-keys` PREFIX match that's corrupted
-now gets the stale `Miniconda3` directory deleted (falling through to a genuine fresh install)
-instead of the old unconditional skip-this-run behavior; an EXACT primary-key hit that's corrupted
-still skips (that narrower case needs an explicit cache-deletion API call, not yet implemented).
+download/install on every run. This mechanism's self-healing logic is easy to miss because it's
+documented nowhere except inline YAML comments in `.github/workflows/batch-check.yml` -- a future
+agent debugging "why did the cache lane skip everything" should read this instead of re-deriving
+it from the workflow file. **Item 19 (`docs/agent-closed-backlog.md`) closed the former
+self-perpetuating-corruption trap here**: a `restore-keys` PREFIX match that's corrupted now gets
+the stale `Miniconda3` directory deleted (falling through to a genuine fresh install) instead of
+the old unconditional skip-this-run behavior; an EXACT primary-key hit that's corrupted still
+skips (that narrower case needs an explicit cache-deletion API call, not yet implemented).
 
 **Cache key includes the pipreqs version, not just a source hash** (`batch-check.yml:85-87`):
 ```yaml
@@ -1253,15 +1235,24 @@ each plan doc points back here instead of re-deriving these facts.
   survived a bare `flask` re-add byte-for-byte). Adding a mix of already-pinned and genuinely new
   packages in one call preserves every existing pin and adds only the new ones (as bare names, or
   on newer `uv`, an auto-resolved lower bound -- see the version-drift note below). A hand-added
-  custom TOML key outside `dependencies`/`requires-python` survives untouched. This is what lets
-  both features skip building a hand-rolled TOML differ/merger: feed the full current dependency
-  list to `uv add --script` every time and let `uv`'s own merge logic do the rest.
-- **Exit code `2` reliably and exclusively means "the header itself is unparseable TOML."**
-  Confirmed across every malformed-header test in both features' testing, and confirmed a missing/
-  misnamed file does NOT also produce exit 2 (it's exit 1, "script does not exist"), so the signal
-  isn't accidentally shared with an unrelated failure class. Both features' malformed-header-repair
-  logic is built on this: branch on exit code 2 specifically, not "any nonzero exit," before
-  deciding whether stripping the header is safe.
+  custom TOML key outside `dependencies`/`requires-python` survives untouched. This lets both
+  features skip a hand-rolled TOML differ/merger: feed the full current dependency list to `uv add
+  --script` every time and let `uv`'s own merge logic do the rest.
+- **Exit code `2` means "the header itself is unparseable TOML" ONLY after a caller has already
+  ruled out uv's OTHER two exit-2 triggers -- it is not exclusively a malformed-header signal on
+  its own.** `uv add --script`'s clap-based CLI argument parser also exits 2 for non-UTF-8 input
+  and for a pip-style package directive (`-e`, `-r`, `--hash`, ...) passed as a plain spec --
+  confirmed directly in `tools/pep723_writeback.py`'s own source: `read_packages()` filters any
+  line starting with `-` specifically because it "exit[s] 2 from uv's clap parser same as malformed
+  TOML," and `main()` runs its own UTF-8 read-and-catch BEFORE ever invoking `uv add --script`,
+  printing `SKIP:non_utf8` and returning without reaching the exit-2 branch at all. So within both
+  features' OWN guarded call sites (UTF-8 pre-checked, package specs pre-filtered), exit 2 IS a
+  reliable malformed-header signal -- but that reliability comes from the guards, not from exit 2
+  being unambiguous on `uv`'s own side. A missing/misnamed file does NOT also produce exit 2
+  (it's exit 1, "script does not exist"). Both features' malformed-header-repair logic branches on
+  exit code 2 specifically, not "any nonzero exit," before deciding whether stripping the header is
+  safe -- but a future caller invoking `uv add --script` WITHOUT the same UTF-8/package-directive
+  guards must not assume exit 2 there means malformed TOML.
 - **A closing `# ///` fence with trailing whitespace fails to parse, exit 2 -- astral-sh/uv#10918.**
   Looks fine to a human, invalid to `uv`'s strict parser. Any header-repair logic must be tolerant
   of this on the STRIP side (match `# ///` followed by optional trailing whitespace, not requiring
@@ -1288,11 +1279,11 @@ each plan doc points back here instead of re-deriving these facts.
   real, shipped call site**: `tools/pvw_known_idempotent.py`'s (`HP_PVW_KNOWN_IDEMPOTENT`,
   REQ-005.13) retry paths -- `uvx autopep723 <entry>` shells out to `uv run` itself, and
   `main()`'s "other nonzero"/post-strip-repair branches both call `persist()` (writes a NEW
-  header) then immediately re-run the SAME entry file, exactly this bug's trigger. Fixed via a
-  `force_fresh` parameter on `run_script()` setting `UV_NO_CACHE=1`, used ONLY on the two
-  post-persist retry calls (never the first attempt, so the common single-pass case keeps normal
-  caching speed). `tests/test_pvw_known_idempotent.py`'s `RunScript`/`MainDispatch` tests assert
-  the env split directly, so dropping `force_fresh` from either retry site is caught in CI.
+  header) then immediately re-run the SAME entry file. Fixed via a `force_fresh` parameter on
+  `run_script()` setting `UV_NO_CACHE=1`, used ONLY on the two post-persist retry calls (never the
+  first attempt, so the common single-pass case keeps normal caching speed).
+  `tests/test_pvw_known_idempotent.py`'s `RunScript`/`MainDispatch` tests assert the env split
+  directly, so dropping `force_fresh` from either retry site is caught in CI.
 - **`Get-Content -Raw`'s default text handling silently replaces any invalid-UTF-8 byte with the
   Unicode replacement character (`U+FFFD` / `EF BF BD`) on read** -- confirmed at the raw byte
   level. For a legacy-encoded script this corrupts an in-memory "original" backup before any risky
@@ -1321,9 +1312,9 @@ imports regardless of what's already installed. **False as a blanket statement, 
 reading `autopep723`'s actual source (pulled from the local `uv` cache) and direct reproduction --
 the truth is narrower and still usable.**
 
-`autopep723`'s `get_builtin_modules()` (the function every one of its commands -- `check`, `add`,
-and the default run mode -- calls before filtering "third-party" from "already accounted for")
-does `set(sys.builtin_module_names) | {m.name for m in pkgutil.iter_modules()}`.
+`autopep723`'s `get_builtin_modules()` (called by every one of its commands -- `check`, `add`, and
+the default run mode -- before filtering "third-party" from "already accounted for") does
+`set(sys.builtin_module_names) | {m.name for m in pkgutil.iter_modules()}`.
 `pkgutil.iter_modules()` walks `sys.path` of **whichever Python process is currently running
 `autopep723` itself** -- so any package already installed in that process's own environment gets
 silently treated as "not third-party" and dropped from the output, even though it's a real
@@ -1352,18 +1343,18 @@ real, silent under-report, not a hypothetical.
 shared interpreter, and only in a context where `PYTHONPATH` is already known-clear. This repo's
 existing `set "PYTHONPATH="` / `set "PYTHONHOME="` near the top of `run_setup.bat` (REQ-010
 isolation, runs long before any discovery-phase code) already satisfies the second condition for
-any `run_setup.bat`-integrated use of `autopep723`. A design that instead proposes invoking it
-directly through a lane's own interpreter (e.g. `conda run python -m autopep723 check` for a
-future conda-lane integration) is **not** safe as written and must be revised to keep using `uvx`
-even there -- see `docs/plan-autopep723-two-tier.md` for where this correction was applied.
+any `run_setup.bat`-integrated use. A design that instead proposes invoking it directly through a
+lane's own interpreter (e.g. `conda run python -m autopep723 check` for a future conda-lane
+integration) is **not** safe as written and must be revised to keep using `uvx` even there -- see
+`docs/plan-autopep723-two-tier.md` for where this correction was applied.
 
-**Also confirmed, load-bearing**: `autopep723` has zero
-runtime dependencies of its own (`Requires-Dist` is empty in its distribution metadata), and is
-strictly single-file -- its argument parser (`cli.py`) has no directory, glob, or multi-file mode
-at all. Passing a directory (e.g. `.`) to any subcommand hits `Path.read_text()`'s
-`IsADirectoryError`, which `get_third_party_imports()` catches and turns into an empty result with
-**exit code 0** (not a nonzero failure) -- confirmed directly: `uvx autopep723 check .` prints an
-error to stderr but still emits a valid, empty `# /// script ... # ///` block and exits clean. Any
-design invoking `autopep723` against `run_setup.bat`'s app directory as a whole (rather than the
-specific resolved entry file, e.g. `%HP_ENTRY%`) will silently produce zero discovered
-dependencies on every run, with no error signal a caller could branch on.
+**Also confirmed, load-bearing**: `autopep723` has zero runtime dependencies of its own
+(`Requires-Dist` is empty in its distribution metadata), and is strictly single-file -- its
+argument parser (`cli.py`) has no directory, glob, or multi-file mode. Passing a directory (e.g.
+`.`) to any subcommand hits `Path.read_text()`'s `IsADirectoryError`, which
+`get_third_party_imports()` catches and turns into an empty result with **exit code 0** (not a
+nonzero failure) -- confirmed directly: `uvx autopep723 check .` prints an error to stderr but
+still emits a valid, empty `# /// script ... # ///` block and exits clean. Any design invoking
+`autopep723` against `run_setup.bat`'s app directory as a whole (rather than the specific resolved
+entry file, e.g. `%HP_ENTRY%`) will silently produce zero discovered dependencies on every run,
+with no error signal a caller could branch on.
