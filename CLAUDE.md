@@ -566,7 +566,7 @@ is not.
     dependency-install phase, that's the one that actually echoes "Chosen entry: ..."); the real
     captured log confirms discovery fires right after `[BOOT] REQ-009: Selected Python provider:
     UV.`, well before any entry announcement. Both scenarios now quote the provider-selection line
-    before and the real "Chosen entry"/"Entry selected" pair after -- 6 and 5 quotes respectively,
+    before and the real "Chosen entry"/"Entry selected" pair after -- 6 and 6 quotes respectively,
     both past the minimum, and both now factually correct about the ordering.)
   - Scenario 26 (Conda base periodic update) -- 3 quotes, needs 2 more.
   - Scenario 41 (Interactive verification: live-tee, activity-aware kill) -- 3 quotes, needs 2
