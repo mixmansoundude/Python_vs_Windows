@@ -300,10 +300,10 @@ gets silently discarded by a later one's rebuild.
 
 **`HP_DLL_DETECTED`/`HP_NEXT_DLL`/`HP_NEXT_DLL_PATH` reach `:log`'s UNQUOTED echo AND the
 `call`-triggered second-expansion-pass hazard -- see `docs/agent-lessons-learned.md`'s ":log
-echoes UNQUOTED" entry for the full mechanism and fix history.** All three values are derived from
-PyInstaller's own build-log warning text (`_PATTERN`'s regex extracts whatever sits between quotes
-in `Library not found: could not resolve 'X.dll'`), which can legally contain any of
-`&`/`|`/`<`/`>`/`%`/`^`. Sanitized copies (`HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/
+echoes UNQUOTED" entry for the full mechanism and fix history.** `HP_DLL_DETECTED`/`HP_NEXT_DLL`
+are derived from PyInstaller's own build-log warning text (`_PATTERN`'s regex extracts whatever
+sits between quotes in `Library not found: could not resolve 'X.dll'`), which can legally contain
+any of `&`/`|`/`<`/`>`/`%`/`^`. Sanitized copies (`HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`/
 `HP_NEXT_DLL_PATH_SAFE`, computed by `tools/dll_pct_sanitize.ps1`) are used ONLY in `:log` calls --
 every functional use of the raw value (the tried-file byte-copy via `type`, the quoted
 `--add-binary` PyInstaller argument) is untouched, so this cannot desync the tried-list dedup
