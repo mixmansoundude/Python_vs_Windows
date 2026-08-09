@@ -544,7 +544,7 @@ is not.
   that can collapse without losing accuracy or completeness, and cut it. Do not sacrifice
   correctness or completeness for terseness -- the goal is removing WORDS, not INFORMATION.
 
-- **Item 31: `docs/demo-bootstrapper-output.md` still has 5 scenarios below the 5-quote house-rule
+- **Item 31: `docs/demo-bootstrapper-output.md` still has 3 scenarios below the 5-quote house-rule
   minimum** (2026-08-08 audit; the 6 real `[TEST]`-line violations found in the same audit were
   fixed same-day, and Scenario 40d's own shortfall was fixed same-day too -- this item is ONLY the
   remaining quote-count shortfalls below, not a re-run of the whole audit). Each needs additional
@@ -558,8 +558,16 @@ is not.
   - "Reactive-only failure hint" (Part VIII, a standalone entry after Scenario 40) -- 2 quotes,
     needs 3 more. No CI run has exercised a real Nuitka compiler failure yet, so any addition here
     is necessarily `[Extrapolated Branch]` from source.
-  - Scenario 23 / Scenario 36 (`HP_PVW_KNOWN_IDEMPOTENT`, share the same 3-line source block) --
-    3 quotes each, need 2 more each.
+  - (Scenario 23 / Scenario 36, `HP_PVW_KNOWN_IDEMPOTENT`, already fixed 2026-08-09 -- while sourcing
+    more real quotes from the same job log, found and fixed a genuine ordering bug in both: the
+    prose claimed the discovery run fires "right after entry selection returns," but `run_setup.bat`
+    actually calls `:determine_entry` TWICE (an early, silent pass right after provider selection
+    that `:pvw_known_idempotent_run`'s own gate depends on, and a later one, after the entire
+    dependency-install phase, that's the one that actually echoes "Chosen entry: ..."); the real
+    captured log confirms discovery fires right after `[BOOT] REQ-009: Selected Python provider:
+    UV.`, well before any entry announcement. Both scenarios now quote the provider-selection line
+    before and the real "Chosen entry"/"Entry selected" pair after -- 6 and 5 quotes respectively,
+    both past the minimum, and both now factually correct about the ordering.)
   - Scenario 26 (Conda base periodic update) -- 3 quotes, needs 2 more.
   - Scenario 41 (Interactive verification: live-tee, activity-aware kill) -- 3 quotes, needs 2
     more; CI answers scripted stdin so no real interactive capture exists, likely
@@ -569,7 +577,7 @@ is not.
     VIII.)
   A handful of other scenarios sit right at the 5-6 quote line (Scenarios 2, 7, 10, 14, 16, 20,
   21, 22, 27, 39, 40c) -- not violations, but worth a second pass for margin if this item is ever
-  picked up as a larger push rather than just closing the 5 genuine shortfalls above.
+  picked up as a larger push rather than just closing the 3 genuine shortfalls above.
 
 - **Item 32: hint when zero `.py` files are found but a `.py.txt` (hidden-extension) file
   exists.** Moved here from Cold Storage 2026-08-08 (a CodeRabbit review finding correctly caught

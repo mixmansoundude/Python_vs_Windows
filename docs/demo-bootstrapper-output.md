@@ -1802,15 +1802,19 @@ real and passing).
 This is an opt-in super-user flag (not part of the default happy path -- Part I never sets it):
 when defined, `run_setup.bat` skips straight to actually RUNNING the entry file live via
 `uvx autopep723 <entry>` for dependency discovery, before pipreqs or any static analysis even
-starts. `:pvw_known_idempotent_run` is called right after entry selection returns (immediately
-after the `if defined HP_PVW_KNOWN_IDEMPOTENT ...` gate), so the very next thing on screen after
-the entry is chosen (the same "Chosen entry: ..." moment Scenario 2 covers) is this discovery run.
-Real capture, `self.pvw_idempotent.discovery`, including the entry script's
+starts. `:pvw_known_idempotent_run` is gated on an EARLY, silent entry-determination pass that
+runs right after the Python provider is selected -- `run_setup.bat` determines the entry file
+TWICE: once here, quietly, just to populate `HP_ENTRY` for this and a couple of other early-stage
+checks, and once again much later, after the entire dependency-install phase, which is the pass
+that actually announces itself on screen (the "Chosen entry: ..." moment Scenario 2 covers). So
+this discovery run fires right after the provider line below, well BEFORE the entry is ever
+announced on screen. Real capture, `self.pvw_idempotent.discovery`, including the entry script's
 own live stdout passed straight through mid-run (real NDJSON detail confirms
 `stdoutPassthroughFound:true, appRan:true` -- not captured or suppressed, the exact design point
 `tools/pvw_known_idempotent.py` exists to preserve):
 
 ```
+[BOOT] REQ-009: Selected Python provider: UV.
 [INFO] REQ-005.13: HP_PVW_KNOWN_IDEMPOTENT set; running entry via uvx autopep723 for execute-mode discovery.
 t2-idempotent-ok
 [INFO] REQ-005.13: execute-mode discovery run succeeded (RAN:persisted).
@@ -1824,7 +1828,13 @@ persisted back into the PEP 723 header via `uv add --script`, then re-extracted 
 `requirements.txt` so the rest of the pipeline (pipreqs, Tier 1 autopep723 merge, the actual
 install) sees it too. Deliberately ADDITIVE, not a replacement for pipreqs -- pipreqs and Tier 1's
 own `autopep723 check` merge still run normally afterward to catch anything a single execution
-path didn't happen to exercise.
+path didn't happen to exercise. Only once that entire dependency-install phase finishes does the
+bootstrapper reach the LATER, canonical entry announcement:
+
+```
+Chosen entry: app.py
+[BOOT] REQ-002: Entry selected: app.py
+```
 
 ---
 
@@ -2916,6 +2926,7 @@ real user).
 Scenario 23 -- repeated here only for continuity with the file changes below):
 
 ```
+[BOOT] REQ-009: Selected Python provider: UV.
 [INFO] REQ-005.13: HP_PVW_KNOWN_IDEMPOTENT set; running entry via uvx autopep723 for execute-mode discovery.
 t2-idempotent-ok
 [INFO] REQ-005.13: execute-mode discovery run succeeded (RAN:persisted).
@@ -2923,7 +2934,16 @@ t2-idempotent-ok
 
 (`t2-idempotent-ok` is the app's own live stdout, inherited straight through the discovery run --
 real NDJSON detail confirms `stdoutPassthroughFound:true`, the exact design point
-`tools/pvw_known_idempotent.py` exists to preserve; see `docs/agent-interconnect.md`.)
+`tools/pvw_known_idempotent.py` exists to preserve; see `docs/agent-interconnect.md`.) See
+Scenario 23 for why this discovery run fires right after provider selection, well before the
+entry file is ever announced on screen -- not right after, despite the file changes shown below
+happening in the same early pass. That later announcement, from the SAME real capture, comes only
+after the entire dependency-install phase finishes:
+
+```
+Chosen entry: app.py
+[BOOT] REQ-002: Entry selected: app.py
+```
 
 **Output, `app.py` (same file, now carrying a PEP 723 header `uv add --script` wrote in place):**
 this is the STANDARD shape `uv add --script` is documented to produce (see
