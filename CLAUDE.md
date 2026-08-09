@@ -544,33 +544,6 @@ is not.
   that can collapse without losing accuracy or completeness, and cut it. Do not sacrifice
   correctness or completeness for terseness -- the goal is removing WORDS, not INFORMATION.
 
-- **Item 31: `docs/demo-bootstrapper-output.md` still has 5 scenarios below the 5-quote house-rule
-  minimum** (2026-08-08 audit; the 6 real `[TEST]`-line violations found in the same audit were
-  fixed same-day, and Scenario 40d's own shortfall was fixed same-day too -- this item is ONLY the
-  remaining quote-count shortfalls below, not a re-run of the whole audit). Each needs additional
-  genuine (real-capture or source-derived,
-  `[Extrapolated Branch]`-labeled if not independently confirmed) console-output quotes added,
-  not fabricated ones:
-  - (Scenario 25, pandas/openpyxl heuristic augmentation, already fixed 2026-08-09 -- added a real
-    bootstrap-console capture from `self.exe.warnfix.real`'s own scratch directory in the SAME CI
-    run/job, showing the heuristic-installed `openpyxl` genuinely bundled and usable in a frozen
-    EXE, `wrote out.xlsx` and all -- 6 new real quotes, well past the 5-quote minimum.)
-  - "Reactive-only failure hint" (Part VIII, a standalone entry after Scenario 40) -- 2 quotes,
-    needs 3 more. No CI run has exercised a real Nuitka compiler failure yet, so any addition here
-    is necessarily `[Extrapolated Branch]` from source.
-  - Scenario 23 / Scenario 36 (`HP_PVW_KNOWN_IDEMPOTENT`, share the same 3-line source block) --
-    3 quotes each, need 2 more each.
-  - Scenario 26 (Conda base periodic update) -- 3 quotes, needs 2 more.
-  - Scenario 41 (Interactive verification: live-tee, activity-aware kill) -- 3 quotes, needs 2
-    more; CI answers scripted stdin so no real interactive capture exists, likely
-    `[Extrapolated Branch]` from source.
-  - (Scenario 40d already fixed same-day, trivially -- was 1 line short, added the real
-    `[INFO] REQ-016: Post-flight briefing printed.` closing line already used elsewhere in Part
-    VIII.)
-  A handful of other scenarios sit right at the 5-6 quote line (Scenarios 2, 7, 10, 14, 16, 20,
-  21, 22, 27, 39, 40c) -- not violations, but worth a second pass for margin if this item is ever
-  picked up as a larger push rather than just closing the 5 genuine shortfalls above.
-
 - **Item 32: hint when zero `.py` files are found but a `.py.txt` (hidden-extension) file
   exists.** Moved here from Cold Storage 2026-08-08 (a CodeRabbit review finding correctly caught
   that the Cold Storage entry's own "Trigger to thaw" text admitted no real trigger was blocking

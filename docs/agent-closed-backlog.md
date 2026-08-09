@@ -1745,6 +1745,55 @@ this belongs to).
   real in one run, each mechanism handing off to the next exactly as designed across three
   successive items (24, 28, 29).
 
+### Item 31 (closed 2026-08-09)
+
+- **`docs/demo-bootstrapper-output.md` had 7 scenarios below the doc's own 5-quote house-rule
+  minimum** (2026-08-08 audit, filed the same day the house rule itself was added -- PR #423).
+  Closed across three follow-up PRs, each adding genuine (real-capture or source-derived,
+  `[Extrapolated Branch]`-labeled where not independently confirmed) console-output quotes, never
+  fabricated ones:
+  - **Scenario 40d** (fixed same-day as the audit, in PR #423 itself) -- was 1 line short; added
+    the real `[INFO] REQ-016: Post-flight briefing printed.` closing line already used elsewhere
+    in Part VIII.
+  - **Scenario 25** (pandas/openpyxl heuristic augmentation, PR #424, the worst shortfall at only
+    1 real quote) -- added a real bootstrap-console capture from `self.exe.warnfix.real`'s own
+    scratch directory in the SAME CI run/job as the scenario's existing evidence, showing the
+    heuristic-installed `openpyxl` genuinely bundled and usable in a frozen EXE (`wrote out.xlsx`
+    and all) -- 6 new real quotes. Also fixed a pre-existing factual error found while sourcing
+    this: `self.exe.warnfix.real` is emitted by `tests/selfapps_warnfix.ps1`, not
+    `tests/selftest.ps1` as the doc previously said.
+  - **Scenario 23 / Scenario 36** (`HP_PVW_KNOWN_IDEMPOTENT` execute-mode discovery, PR #425) --
+    while sourcing more real quotes from the same job log, found and fixed a genuine ordering bug
+    in both: the prose claimed the discovery run fires "right after entry selection returns," but
+    `run_setup.bat` actually calls `:determine_entry` TWICE (an early, silent pass right after
+    provider selection that `:pvw_known_idempotent_run`'s own gate depends on, and a later one,
+    after the entire dependency-install phase, that's the one that actually echoes "Chosen
+    entry: ..."); the real captured log confirmed discovery fires right after `[BOOT] REQ-009:
+    Selected Python provider: UV.`, well before any entry announcement. Both scenarios now quote
+    the provider-selection line before and the real "Chosen entry"/"Entry selected" pair after --
+    6 quotes each, both now factually correct about the ordering.
+  - **"Reactive-only failure hint"** (Part VIII, PR #425) -- its own section title promised
+    coverage of "both Tier A and requirement 9's real-build-failure paths" but only ever quoted
+    ONE of the two (`:offer_optimized_build`'s failure message). Added the genuinely distinct
+    Tier A (`:try_nuitka_tier_a`) failure messages from source (`[Extrapolated Branch]`, since no
+    CI run has exercised a real Nuitka compiler failure) -- both call sites' exact literal text,
+    including the second, rarer trigger (Nuitka reports success but never produces the EXE) --
+    bringing the section to 5 quotes and making it actually cover what its own title claimed.
+  - **Scenario 26** (Conda base periodic update, PR #425) -- added the genuinely common "last
+    update < 30 days ago" skip branch (a real, deterministic literal string from source, not
+    previously documented at all -- more common in practice than the "first install" skip already
+    shown, since it's what fires on every ordinary repeat bootstrap within the 30-day window) and
+    the update-failure branch's own line (previously only described in prose, not quoted) --
+    5 quotes total.
+  - **Scenario 41** (Interactive verification: live-tee, activity-aware kill, PR #425) -- added
+    the PID-display line and the live-teed program's own real stdout (`hello-from-stub`),
+    cross-cited from an EARLIER real capture in the same doc (run `30328748330`, job
+    `90179708091`) that already confirmed both as genuine, working console output belonging to
+    this exact mechanism -- 5 quotes total.
+  A handful of scenarios sitting right at the 5-6 quote line (Scenarios 2, 7, 10, 14, 16, 20, 21,
+  22, 27, 39, 40c) were flagged as worth a second pass for margin but were never violations and
+  were not part of this item's own closure criteria.
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a
