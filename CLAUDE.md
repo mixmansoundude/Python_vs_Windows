@@ -370,9 +370,9 @@ and fall every run back to warnfix; 0.4.13 has no upper Python cap and runs fine
 only feature lost by staying on 0.4.13 is `.ipynb` scanning, already non-functional on latest
 Python since 0.5.0 can't run there anyway. Full version-comparison rationale in
 `docs/agent-closed-backlog.md`'s "Dependency Strategy Rationale" reference section. The
-`pipreqs.flags` CI gate validates invocation flags, not the version, so the pin is free to change;
-the setup log line `[INFO] pipreqs <ver> installed successfully` confirms pipreqs is active on a
-given run.
+`pipreqs.flags` CI gate validates invocation flags only, not the pinned version -- it does not
+authorize changing 0.4.13; the setup log line `[INFO] pipreqs <ver> installed successfully`
+confirms pipreqs is active on a given run.
 
 ## Dependency Discovery: pipreqs invocation (bootstrap determinism)
 
