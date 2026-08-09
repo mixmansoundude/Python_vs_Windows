@@ -41,11 +41,13 @@ $summary.Add('=== Bootstrap Self-tests ===')
 function Invoke-Setup {
   param(
     [string]$WorkDir,
-    [string]$LogName
+    [string]$LogName,
+    [scriptblock]$Prepare
   )
   if (Test-Path $WorkDir) { Remove-Item -Recurse -Force $WorkDir }
   New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
   Copy-Item -Path $BatchPath -Destination $WorkDir -Force
+  if ($Prepare) { & $Prepare }
   Push-Location $WorkDir
   try {
     cmd /c "call run_setup.bat > $LogName 2>&1"
@@ -76,32 +78,40 @@ $summary.Add('empty-folder bootstrap: PASS')
 
 # CLAUDE.md Item 32: zero real .py files but a .py.txt (hidden-extension) candidate present --
 # the hint should fire, and behavior (state/exit code) must stay identical to the plain
-# empty-folder case above.
+# empty-folder case above. The candidate's name itself contains '&' -- a live cmd.exe operator
+# once substituted into an unquoted echo/:log line -- specifically to prove the hint's own log
+# lines never echo the matched filename (see :check_hidden_ext_hint's own header comment in
+# run_setup.bat). Seeded via Invoke-Setup's -Prepare hook, which runs AFTER the function's own
+# workspace wipe/recreate/batch-copy -- seeding it before calling Invoke-Setup would have the
+# file deleted by that same wipe before run_setup.bat ever saw it.
 $pytxtDir = Join-Path $TestsDir '~selftest_pytxt_hint'
-if (Test-Path $pytxtDir) { Remove-Item -Recurse -Force $pytxtDir }
-New-Item -ItemType Directory -Force -Path $pytxtDir | Out-Null
-Copy-Item -Path $BatchPath -Destination $pytxtDir -Force
-Set-Content -Path (Join-Path $pytxtDir 'hidden_ext.py.txt') -Value 'print("hello")' -Encoding ASCII
-$pytxtExit = Invoke-Setup -WorkDir $pytxtDir -LogName '~pytxt_bootstrap.log'
+$pytxtCandidateName = 'AT&T report.py.txt'
+$pytxtExit = Invoke-Setup -WorkDir $pytxtDir -LogName '~pytxt_bootstrap.log' -Prepare {
+  Set-Content -LiteralPath (Join-Path $pytxtDir $pytxtCandidateName) -Value 'print("hello")' -Encoding ASCII
+}
 $pytxtStatusPath = Join-Path $pytxtDir '~bootstrap.status.json'
 $pytxtStatus = if (Test-Path $pytxtStatusPath) { Get-Content -LiteralPath $pytxtStatusPath -Encoding ASCII -Raw | ConvertFrom-Json } else { $null }
 $pytxtLogPath = Join-Path $pytxtDir '~pytxt_bootstrap.log'
 $pytxtLog = if (Test-Path $pytxtLogPath) { Get-Content -LiteralPath $pytxtLogPath -Raw } else { '' }
 $pytxtHintFound = $pytxtLog -match [regex]::Escape('Hint: found a file ending in .py.txt')
-$pytxtPass = ($pytxtExit -eq 0) -and $pytxtStatus -and ($pytxtStatus.state -eq 'no_python_files') -and ($pytxtStatus.pyFiles -eq 0) -and $pytxtHintFound
+$pytxtNameLeaked = $pytxtLog -match [regex]::Escape($pytxtCandidateName)
+$pytxtStatusExitOk = $pytxtStatus -and ($pytxtStatus.exitCode -eq 0)
+$pytxtPass = ($pytxtExit -eq 0) -and $pytxtStatus -and ($pytxtStatus.state -eq 'no_python_files') -and ($pytxtStatus.pyFiles -eq 0) -and $pytxtStatusExitOk -and $pytxtHintFound -and (-not $pytxtNameLeaked)
 Write-NdjsonRow ([ordered]@{
   id = 'self.empty_repo.pytxt_hint'
   pass = $pytxtPass
-  desc = 'Item 32: zero .py files but a .py.txt candidate present -- hint fires, state/exit unchanged'
+  desc = 'Item 32: zero .py files but a .py.txt candidate present -- hint fires, state/exit unchanged, filename never echoed'
   details = [ordered]@{
     exitCode = $pytxtExit
+    statusExitCode = $(if ($pytxtStatus) { $pytxtStatus.exitCode } else { $null })
     state = $(if ($pytxtStatus) { $pytxtStatus.state } else { $null })
     pyFiles = $(if ($pytxtStatus) { $pytxtStatus.pyFiles } else { $null })
     hintFound = $pytxtHintFound
+    nameLeaked = $pytxtNameLeaked
   }
 })
 if (-not $pytxtPass) {
-  throw "py.txt hidden-extension hint scenario failed (exit=$pytxtExit state=$($pytxtStatus.state) hintFound=$pytxtHintFound)"
+  throw "py.txt hidden-extension hint scenario failed (exit=$pytxtExit statusExit=$($pytxtStatus.exitCode) state=$($pytxtStatus.state) hintFound=$pytxtHintFound nameLeaked=$pytxtNameLeaked)"
 }
 $summary.Add('py.txt hidden-extension hint: PASS')
 
