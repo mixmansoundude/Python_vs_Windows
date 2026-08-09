@@ -187,8 +187,9 @@ matching what's now shipped as README commands:
 
 - **Default (run, and additively remember what it needed):** install uv via the official installer
   (`irm https://astral.sh/uv/install.ps1 | iex`, already this repo's own documented recommendation
-  for an *interactive terminal* context -- see `CLAUDE.md`'s "Known Findings" entry explaining why
-  that same installer is deliberately **not** used inside `run_setup.bat` itself; a live terminal
+  for an *interactive terminal* context -- see `docs/agent-closed-backlog.md`'s "Known Findings"
+  entry explaining why that same installer is deliberately **not** used inside `run_setup.bat`
+  itself; a live terminal
   session has none of the PATH-propagation/restart problems a background batch process does, so
   there is no conflict between the two decisions, just two different execution contexts), read the
   target file with the ISO-8859-1 round-trip technique (`agent-lessons-learned.md`) so a crash or

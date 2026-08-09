@@ -895,8 +895,8 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
         } catch { }
     }
     # derived requirement: run_setup.bat's own :die uses "exit /b" (a subroutine return, not a
-    # process exit) -- per CLAUDE.md's "Known Findings", the batch process can still exit 0 even
-    # after a logical failure, so ~bootstrap.status.json's state (not the raw process exit code)
+    # process exit) -- per agent-lessons-learned.md's ":die" entry, the batch process can still
+    # exit 0 even after a logical failure, so ~bootstrap.status.json's state (not the raw exit code)
     # is this codebase's own documented source of truth for "did it actually fail". processExit is
     # captured in details for diagnostics only, not asserted.
     $embedDeclineDied = ($embedDeclineState -eq 'error')
