@@ -1794,6 +1794,27 @@ this belongs to).
   22, 27, 39, 40c) were flagged as worth a second pass for margin but were never violations and
   were not part of this item's own closure criteria.
 
+### Item 32 (closed 2026-08-09)
+
+- **Zero-`.py`-files hint for a `.py.txt` (hidden-extension) candidate, REQ-002's empty-repo
+  path.** Windows hides known file extensions by default, so a beginner who saves `script.py`
+  from a text editor or downloads one from an email attachment can end up with `script.py.txt`
+  without realizing it -- the bootstrapper's REQ-002 zero-file path previously printed only the
+  generic `Python file count: 0` / `No Python files detected; skipping environment bootstrap.`
+  with no hint toward this specific, common cause. Fixed with a new `:check_hidden_ext_hint`
+  subroutine, called right after that existing message fires (`PYCOUNT=="0"` branch): a cheap
+  `dir /b /a-d *.py.txt >nul 2>&1` existence probe (errorlevel only, no capture) gates two extra
+  console/log lines pointing at File Explorer's View tab "File name extensions" setting. Purely
+  additive -- never changes `~bootstrap.status.json`'s `state`/`exitCode`.
+  - **Deliberately does not echo the matched filename.** A legal Windows filename can contain
+    `&`, a live cmd.exe operator once substituted into an unquoted `echo`/`:log` line (see
+    `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry) -- an errorlevel-only
+    existence check sidesteps the whole hazard class instead of sanitizing a captured name.
+  - Regression test: `tests/selftest.ps1`'s new `self.empty_repo.pytxt_hint` scenario -- a fresh
+    scratch dir with only a `hidden_ext.py.txt` file (no real `.py` file), asserting `state ==
+    no_python_files`, `pyFiles == 0`, `exitCode == 0` (identical to the plain empty-folder case)
+    AND the hint text appears in the bootstrap log. Registered in `docs/agent-ndjson.md`.
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a
