@@ -143,7 +143,12 @@ try {
     # is real code but not exercised by any deterministic CI hook -- same "extrapolated, not tested"
     # status as a real Nuitka compiler failure elsewhere in this repo).
     $expectedReason = if ($scenario -eq 'execfail' -or $scenario -eq 'execfail_runtimefail') { 'reason=test_forced_fail' } else { 'reason=missing_output' }
-    $expectedReasonFound = $combined -match [regex]::Escape($expectedReason)
+    # Match the reason token on the SAME log line as $expectedMsg, not anywhere in the combined
+    # log -- this scenario also forces the Nuitka fallback to fail, so a whole-log match could in
+    # principle be satisfied by an unrelated line rather than genuinely proving the PyInstaller
+    # [ERROR] line itself carries the right token.
+    $expectedFailureLines = @($logLines | Where-Object { $_ -match [regex]::Escape($expectedMsg) })
+    $expectedReasonFound = [bool]($expectedFailureLines | Where-Object { $_ -match [regex]::Escape($expectedReason) } | Select-Object -First 1)
     # docs/open-questions.md item 1: when packaging fails outright but the interpreter fallback
     # still runs cleanly, :print_no_exe_briefing (run_setup.bat) prints a dedicated panel instead
     # of leaving the bare "[STATUS] Run Status: SUCCESS" line as the only thing the user sees.
