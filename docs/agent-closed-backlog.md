@@ -1745,6 +1745,44 @@ this belongs to).
   real in one run, each mechanism handing off to the next exactly as designed across three
   successive items (24, 28, 29).
 
+### Item 30 (closed 2026-08-09)
+
+- **Second dedicated compression pass on `docs/agent-interconnect.md` and
+  `docs/agent-lessons-learned.md`** (both auto-loaded every session via CLAUDE.md's `@import`
+  lines; both already compressed once before, per an earlier pass this item's own filing
+  referenced). Read both files in full, then edited paragraph-by-paragraph to tighten verbose
+  transitional phrasing, collapse restated setup context, and remove redundant clauses --
+  without cutting any fact, code snippet, name, number, or citation. Measured before/after via
+  `wc -l -w`:
+  - `docs/agent-lessons-learned.md`: 1369 -> 1343 lines, 14261 -> 13804 words (~3.2% word
+    reduction). This file had the more compressible content -- several multi-entry "sagas"
+    (the async-output-capture rewrite history, the DLL-bundling `%`-sanitizer saga, the
+    `exe_hint_rerun.ps1` unbounded-wait investigation) carried real, cuttable scene-setting and
+    restated context between entries.
+  - `docs/agent-interconnect.md`: 1984 -> 1981 lines, 21039 -> 20991 words (~0.2% word
+    reduction). Read in full and edited at the same paragraph-by-paragraph granularity, but
+    yielded far less removable text than expected going in: this file is almost entirely a
+    dense, one-fact-per-sentence incident/postmortem log (each sentence documents a distinct
+    bug, root cause, fix, or CI confirmation), already following its own top-of-file directive
+    to "prefer terse, dense phrasing... fragments... where the meaning survives" from the prior
+    compression pass. Cutting further would mean removing genuine facts (a specific bug number,
+    a commit hash, a test name, a root-cause explanation), which CLAUDE.md's own instruction for
+    this item explicitly forbids ("the goal is removing WORDS, not INFORMATION").
+  - **Finding worth recording for the next pass**: if `docs/agent-interconnect.md` needs to
+    shrink further in the future, word-level tightening (what this pass did) is close to
+    exhausted -- the next lever would be structural (e.g. collapsing the DLL-bundling repair
+    loop's 9-numbered-bugs narrative into a table of {bug #, symptom, root cause, fix}, or
+    splitting the file by feature area so a single session only loads the sections relevant to
+    what it's touching), not further sentence-level trimming. Not attempted in this pass --
+    flagged here rather than done speculatively, since a structural change to a file this
+    heavily cross-referenced (by `docs/agent-ndjson.md`, by inline code comments citing specific
+    section names) needs its own dedicated verification that no cross-reference breaks.
+  - Verified with the full `tools/run_sanity_sweep.sh` sweep (compileall, pyflakes,
+    delimiters, yamllint, actionlint, ASCII sweep extended to cover both edited files, PS parse
+    sweep, pytest) before committing -- both files are prose-only edits with no code/test
+    changes, so the sweep's role here is confirming no accidental non-doc diff and no stray
+    non-ASCII character introduced by an edit.
+
 ### Item 31 (closed 2026-08-09)
 
 - **`docs/demo-bootstrapper-output.md` had 7 scenarios below the doc's own 5-quote house-rule
