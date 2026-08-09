@@ -73,6 +73,38 @@ if ($emptyStatus.exitCode -ne 0) {
   throw "Expected exitCode 0 for empty-folder bootstrap"
 }
 $summary.Add('empty-folder bootstrap: PASS')
+
+# CLAUDE.md Item 32: zero real .py files but a .py.txt (hidden-extension) candidate present --
+# the hint should fire, and behavior (state/exit code) must stay identical to the plain
+# empty-folder case above.
+$pytxtDir = Join-Path $TestsDir '~selftest_pytxt_hint'
+if (Test-Path $pytxtDir) { Remove-Item -Recurse -Force $pytxtDir }
+New-Item -ItemType Directory -Force -Path $pytxtDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $pytxtDir -Force
+Set-Content -Path (Join-Path $pytxtDir 'hidden_ext.py.txt') -Value 'print("hello")' -Encoding ASCII
+$pytxtExit = Invoke-Setup -WorkDir $pytxtDir -LogName '~pytxt_bootstrap.log'
+$pytxtStatusPath = Join-Path $pytxtDir '~bootstrap.status.json'
+$pytxtStatus = if (Test-Path $pytxtStatusPath) { Get-Content -LiteralPath $pytxtStatusPath -Encoding ASCII -Raw | ConvertFrom-Json } else { $null }
+$pytxtLogPath = Join-Path $pytxtDir '~pytxt_bootstrap.log'
+$pytxtLog = if (Test-Path $pytxtLogPath) { Get-Content -LiteralPath $pytxtLogPath -Raw } else { '' }
+$pytxtHintFound = $pytxtLog -match [regex]::Escape('Hint: found a file ending in .py.txt')
+$pytxtPass = ($pytxtExit -eq 0) -and $pytxtStatus -and ($pytxtStatus.state -eq 'no_python_files') -and ($pytxtStatus.pyFiles -eq 0) -and $pytxtHintFound
+Write-NdjsonRow ([ordered]@{
+  id = 'self.empty_repo.pytxt_hint'
+  pass = $pytxtPass
+  desc = 'Item 32: zero .py files but a .py.txt candidate present -- hint fires, state/exit unchanged'
+  details = [ordered]@{
+    exitCode = $pytxtExit
+    state = $(if ($pytxtStatus) { $pytxtStatus.state } else { $null })
+    pyFiles = $(if ($pytxtStatus) { $pytxtStatus.pyFiles } else { $null })
+    hintFound = $pytxtHintFound
+  }
+})
+if (-not $pytxtPass) {
+  throw "py.txt hidden-extension hint scenario failed (exit=$pytxtExit state=$($pytxtStatus.state) hintFound=$pytxtHintFound)"
+}
+$summary.Add('py.txt hidden-extension hint: PASS')
+
 if (Test-Path $stubDir) { Remove-Item -Recurse -Force $stubDir }
 New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
 Copy-Item -Path $BatchPath -Destination $stubDir -Force

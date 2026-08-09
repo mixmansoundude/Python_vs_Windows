@@ -520,6 +520,7 @@ if "%PYCOUNT%"=="0" (
   echo No Python files detected; skipping environment bootstrap.
   >> "%LOG%" echo No Python files detected; skipping environment bootstrap.
   call :log "[INFO] No Python files detected; skipping environment bootstrap."
+  call :check_hidden_ext_hint
   call :write_status no_python_files 0 %PYCOUNT%
   goto :success
 )
@@ -2078,6 +2079,24 @@ set "NAME=%~1"
 if "%NAME%"=="" exit /b 0
 if "%NAME:~0,1%"=="~" exit /b 0
 set /a PYCOUNT+=1 >nul
+exit /b 0
+
+:check_hidden_ext_hint
+rem CLAUDE.md Item 32: Windows hides known file extensions by default, so a beginner
+rem who saves script.py from a text editor (or downloads it as an email attachment)
+rem can end up with script.py.txt without realizing it. Purely additive diagnostic
+rem hint -- never changes the exit code or any other behavior. Deliberately does not
+rem echo the matched filename: a legal Windows filename can contain "&", a live
+rem cmd.exe operator once substituted into an unquoted echo/:log line (see
+rem docs/agent-lessons-learned.md's ":log echoes UNQUOTED" entry) -- a plain
+rem existence check via errorlevel sidesteps that hazard entirely.
+dir /b /a-d *.py.txt >nul 2>&1
+if errorlevel 1 exit /b 0
+echo Hint: found a file ending in .py.txt -- Windows may be hiding known file extensions.
+>> "%LOG%" echo Hint: found a file ending in .py.txt -- Windows may be hiding known file extensions.
+echo In File Explorer's View tab, turn on File name extensions, then rename the file so it ends in .py instead of .py.txt.
+>> "%LOG%" echo In File Explorer's View tab, turn on File name extensions, then rename the file so it ends in .py instead of .py.txt.
+call :log "[INFO] REQ-002: found a *.py.txt file -- Windows may be hiding known file extensions."
 exit /b 0
 
 :select_conda_bat
