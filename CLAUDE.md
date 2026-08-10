@@ -660,8 +660,11 @@ but several represent real gaps worth closing before calling the path fully rele
   `:exe_smokerun_hints` fires `[HINT][DATA_FILE] Consider adding: --add-data config.json;.`, panel
   reads "SETUP COMPLETE -- WITH A CAVEAT". Run 2: same binary, CWD = app root, file IS found, exit
   0, panel reads clean "SETUP COMPLETE". The user's natural conclusion -- "it fixed itself" -- is
-  wrong: double-clicking the EXE directly from Explorer uses the SAME CWD as run 1 (`dist\`), so
-  the program is still broken for that real launch path. The hint compounds the problem:
+  wrong: a double-clicked EXE launched from Explorer uses its own containing folder as CWD (per
+  standard, documented Windows shell launch behavior -- not something this repo's own CI verifies,
+  since no CI lane launches via an actual double-click), which for `dist\<env>.exe` is `dist\`,
+  the SAME CWD as run 1 -- so the program is still broken for that real launch path. The hint
+  compounds the problem:
   `--add-data` places the file inside `_MEIPASS` (the onefile extraction dir), which does not
   satisfy a CWD-relative `open()` at all -- the one actionable instruction the tool gives doesn't
   fix the actual problem.
@@ -770,8 +773,9 @@ but several represent real gaps worth closing before calling the path fully rele
   like `[DEBUG] pipreqs (direct) rc=0 size=9` and `[TRACE] dep source selected: pipreqs` alongside
   genuinely actionable `[WARN]`/`[ERROR]` text, all visually equal weight.
 
-  **Mechanism, part 2**: every successful FRESH build (not the repeat-run fast path, which is
-  correctly prompt-free) asks two Y/N questions before the final panel: the post-execution
+  **Mechanism, part 2**: every successful interactive FRESH build (not the repeat-run fast path,
+  which is correctly prompt-free, and not a CI/non-interactive run, which auto-declines both
+  without ever truly waiting on input) asks two Y/N questions before the final panel: the post-execution
   checkpoint ("Run again via the interpreter now?") and the optimized-build upsell ("Want to
   build an optimized version too?"). For someone told to double-click one file, "build an
   optimized version" has no discoverable right answer, and accepting starts a multi-minute Nuitka
@@ -809,9 +813,13 @@ but several represent real gaps worth closing before calling the path fully rele
   this cause at all.
 
   **High-level fix**: add a companion check (mirroring `:check_hidden_ext_hint`'s existing
-  pattern) that does a cheap one-level-deep scan (e.g. `dir /s /b *.py` bounded to depth 1, or an
-  explicit single-subfolder probe) when the top-level count is zero, and if `.py` files ARE found
-  one level down, print a specific hint: "we only look in this exact folder -- move
+  pattern) that does a genuinely depth-1-only probe when the top-level count is zero -- NOT `dir
+  /s /b *.py` (that flag is fully recursive across every descendant directory, not bounded to one
+  level; using it would need extra filtering to enforce depth 1, or would falsely match a `.py`
+  file buried many folders down). A `for /d %%D in (*) do` loop checking each immediate
+  subdirectory for `.py` files directly inside it (`dir /b "%%D\*.py"`, no `/s`) is a real,
+  correctly-bounded one-level-deep scan. If `.py` files ARE found one level down, print a specific
+  hint: "we only look in this exact folder -- move
   `run_setup.bat` next to your scripts, or move your scripts up into this folder" instead of (or
   alongside) the generic zero-files message.
 
