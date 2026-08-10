@@ -560,9 +560,17 @@ but several represent real gaps worth closing before calling the path fully rele
   "Upload iterate gate verdict" step at ~line 1295 has no `matrix.mode` restriction) and
   aggregates them into one `has_failures` output -- `true` if ANY lane's own "Verdict from
   NDJSON" step (~line 1206) found a `pass:false` row, a `status:failed` row, or a
-  `bootstrap.state`/`self.bootstrap.state` outside the allowed-states list, OR if a lane's
-  verdict artifact is missing entirely and that lane's own job result wasn't `success`. This is a
-  real, already-built, all-8-lanes aggregation mechanism, not something that needs inventing.
+  `bootstrap.state`/`self.bootstrap.state` outside the allowed-states list. This is a real,
+  already-built, all-8-lanes aggregation mechanism, not something that needs inventing --
+  **but its missing-artifact fallback is coarser than that sentence implies: re-verified directly
+  against the "Aggregate verdicts" step's own source, it only sets `has_failures=true` for a
+  missing-artifact reason when the downloaded set is EMPTY ACROSS ALL LANES (`-not $files`) AND
+  the overall matrix job's own result wasn't `success` -- there is no PER-LANE check.** If 7 of 8
+  lanes' `lane_verdict.json` files land fine and exactly one lane's upload silently fails while
+  that lane's own job conclusion still happens to read `success`, the aggregation loop only ever
+  sees the 7 present files and never notices the missing 8th -- `has_failures` can read `false`
+  with zero evidence from that lane. See the fail-closed caveat below; this gap must be fixed
+  before this mechanism is trustworthy as a required check, not just before it's convenient.
 
   **The gap: `selftest-gate`'s own job never fails when `has_failures=true`.** Today that output
   is consumed ONLY by `model-quick-fix`'s auto-patch trigger steps (the
@@ -607,6 +615,20 @@ but several represent real gaps worth closing before calling the path fully rele
      "should be fine by reading the YAML" has been wrong before in this repo.
   4. Same one-slice-at-a-time, full-matrix-to-completion discipline as every other candidate in
      this item -- do not treat "the mechanism is simple" as license to skip the soak period.
+  5. **Precondition, not optional polish: fix `selftest-gate`'s missing-artifact fallback to fail
+     CLOSED per lane before adding the `exit 1` step above, or the new step inherits an existing
+     blind spot.** Per the corrected mechanism description above, today's aggregation only treats
+     a TOTAL absence of verdict files (zero lanes reporting) as a failure signal -- a single
+     lane's `lane_verdict.json` silently missing (upload glitch, artifact-service hiccup, a step
+     skipped for a reason that doesn't also flip that lane's own job conclusion to failure) is
+     invisible as long as at least one other lane's artifact is present. Fix: compare the count of
+     downloaded verdict files against the expected lane count (the matrix's own `mode` list, or a
+     hardcoded 8 with a comment pointing at the matrix definition) and treat any shortfall as
+     `has_failures=true`, regardless of what `needs.selftest.result` reports for the run as a
+     whole. Add a test scenario for this specific shape (a successful-looking matrix run with one
+     lane's artifact missing) before trusting the fix -- this is exactly the kind of gap Item 35
+     exists to close, and shipping the aggregate-gate promotion without closing it first would
+     just relocate a false-green risk instead of removing one.
 
   **Process discipline -- read this before touching anything:**
   1. **One lane or row per slice.** Do not attempt a blanket "flip everything to gating" change.
@@ -726,11 +748,15 @@ but several represent real gaps worth closing before calling the path fully rele
   `:exe_smokerun_hints` fires `[HINT][DATA_FILE] Consider adding: --add-data config.json;.`, panel
   reads "SETUP COMPLETE -- WITH A CAVEAT". Run 2: same binary, CWD = app root, file IS found, exit
   0, panel reads clean "SETUP COMPLETE". The user's natural conclusion -- "it fixed itself" -- is
-  wrong: a double-clicked EXE launched from Explorer uses its own containing folder as CWD (per
-  standard, documented Windows shell launch behavior -- not something this repo's own CI verifies,
-  since no CI lane launches via an actual double-click), which for `dist\<env>.exe` is `dist\`,
-  the SAME CWD as run 1 -- so the program is still broken for that real launch path. The hint
-  compounds the problem:
+  suspect: per Microsoft's own `ShellExecute`/`CreateProcess` documentation, a launch with no
+  explicit working directory supplied defaults to the target EXE's own containing folder as CWD
+  -- which for `dist\<env>.exe` is `dist\`, the SAME CWD as run 1, so the program would still be
+  broken for that default launch path. This is NOT a universal fact, though: Explorer CAN be
+  handed an explicit working directory (e.g. a shortcut's own "Start in" field), which would
+  override the default -- and no CI lane launches via an actual double-click or shortcut either
+  way, so the real-launch consequence described here is reasoned from documented Windows
+  behavior, not confirmed against a genuine double-click. The hint compounds the problem for the
+  common (no-override) case regardless:
   `--add-data` places the file inside `_MEIPASS` (the onefile extraction dir), which does not
   satisfy a CWD-relative `open()` at all -- the one actionable instruction the tool gives doesn't
   fix the actual problem.
@@ -874,8 +900,9 @@ but several represent real gaps worth closing before calling the path fully rele
   executable` before the PyInstaller call), so both stay visible under lever 1's proposed
   INFO/BOOT/WARN/ERROR tier and tiering would not reintroduce a "looks stuck" gap for either.
   **But the actual dependency-install calls do NOT have an equivalent `[INFO]`-tier progress
-  line**: `conda install`/`pip install -r requirements.txt`/`uv pip install` (`run_setup.bat`
-  ~lines 1544-1600) are preceded only by `[TRACE] dep install phase: start` and
+  line**: `conda install`/`pip install -r requirements.txt`/`uv pip install` (`run_setup.bat`'s
+  dependency-install dispatch, the straight-line block immediately after `:dep_check_done`) are
+  preceded only by `[TRACE] dep install phase: start` and
   `[INSTALL]`-tagged lines (`[INSTALL] conda bulk from ~reqs_conda.txt`, etc.) -- `[INSTALL]` is a
   real, distinct tag lever 1's own "INFO/BOOT/WARN/ERROR" wording never accounts for, and
   `[STATUS]`/`[REPAIR]`/`[HINT]` are unaddressed by that wording too. **Goal before implementing
