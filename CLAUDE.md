@@ -542,6 +542,72 @@ but several represent real gaps worth closing before calling the path fully rele
   this item exists to close, just inverted (diagnostics visibility breaking instead of a real
   regression going unblocked).
 
+  **Reducing the required-checks maintenance burden -- a genuine aggregation point already
+  exists, unused (verified against `.github/workflows/batch-check.yml` source 2026-08-10).** The
+  owner's actual root-cause observation: most lanes drifted non-gating not by deliberate policy
+  but because they were added AFTER the original required-status-checks list was set on branch
+  protection and never retrofitted in -- so promoting lanes one at a time (this item's own
+  process) still leaves a standing maintenance task ("did we remember to add lane N's check name
+  to branch protection") for every future lane too. The owner asked whether ONE step could be set
+  as the sole required check so this stops recurring. `ndjson-registry-check` is NOT the right
+  candidate: it's a doc/code/log SYNC checker (does `docs/agent-ndjson.md`'s row registry match
+  what the code emits and what a real log shows), not a test-pass/fail aggregator -- even at a
+  clean, stable PASS it answers "is the documentation accurate," not "did any test fail."
+
+  The right existing piece is the `selftest-gate` job (display name "Aggregate self-test
+  verdicts", `needs: [selftest]`, `if: always()`, `batch-check.yml` ~line 3312). It ALREADY
+  downloads a `lane_verdict.json` from EVERY one of the 8 matrix lanes unconditionally (the
+  "Upload iterate gate verdict" step at ~line 1295 has no `matrix.mode` restriction) and
+  aggregates them into one `has_failures` output -- `true` if ANY lane's own "Verdict from
+  NDJSON" step (~line 1206) found a `pass:false` row, a `status:failed` row, or a
+  `bootstrap.state`/`self.bootstrap.state` outside the allowed-states list, OR if a lane's
+  verdict artifact is missing entirely and that lane's own job result wasn't `success`. This is a
+  real, already-built, all-8-lanes aggregation mechanism, not something that needs inventing.
+
+  **The gap: `selftest-gate`'s own job never fails when `has_failures=true`.** Today that output
+  is consumed ONLY by `model-quick-fix`'s auto-patch trigger steps (the
+  `needs['selftest-gate'].outputs.has_failures == 'true'` conditions at ~lines
+  3538/3544/3554/3560/3592/3690/3764) -- never by anything that would make `selftest-gate`'s own
+  check conclusion "failure." Contrast with the two currently-required lanes (`real`/
+  `conda-full`): each already has its own per-lane hard gate, the "Enforce NDJSON failures for
+  gated lanes" step (~line 1256, `exit 1` when THAT lane's own `has_failures=='true'`), which is
+  what actually makes those two matrix-job instances report failure today -- the same underlying
+  "Verdict from NDJSON" data `selftest-gate` already aggregates, just enforced separately
+  per-lane instead of once in aggregate.
+
+  **Concrete fix, sized as its own Item 35 slice**: add a step to `selftest-gate` mirroring the
+  exact 3-line pattern already proven at line 1256-1261 (`if has_failures=='true': echo "...";
+  exit 1`), reading `steps.aggregate.outputs.has_failures` instead of a single lane's own output.
+  Once that step exists and has soaked (full-matrix runs, several consecutive, per process rule 1
+  below), "Aggregate self-test verdicts" becomes a job whose OWN conclusion is failure whenever
+  ANY lane -- gated or not -- reports a real test failure, and adding just that one check name to
+  branch protection's required-status-checks list would transitively cover every present AND
+  future lane without a further branch-protection edit per lane added. A genuine answer to the
+  maintenance-treadmill problem, not just a rephrasing of "add more required checks."
+
+  **Caveats before flipping this on -- still governed by the process discipline below, do not
+  skip them just because the mechanism itself is simple:**
+  1. Recommend ADDING "Aggregate self-test verdicts" as a required check ALONGSIDE the current
+     per-lane `real`/`conda-full` required checks at first, not replacing them -- collapsing to
+     one aggregate check loses today's per-lane visibility in the PR checks UI (one red X instead
+     of "real failed, conda-full passed"), and keeping both means a bug in `selftest-gate` itself
+     (e.g. its artifact-download step failing) doesn't remove your only signal. Consolidate down
+     to just the aggregate check later, once ITS OWN reliability is separately proven.
+  2. `contract-uv`/`contract-uv-fail`/`uv-dl-fallback` simulate FAILURE/download-fallback
+     scenarios on purpose (already flagged above as needing re-verification before excluding from
+     gating) -- before this aggregate check goes live, explicitly re-confirm each of those lanes'
+     own selfapps tests reports `pass:true` for a correctly-handled SIMULATED failure (the row
+     asserts "did the fallback recover," not "did the simulated failure not happen") -- otherwise
+     this aggregate check would make those three intentionally-adversarial lanes into permanent,
+     incorrect PR blockers the moment their simulated condition fires, which is every run.
+  3. Re-verify the `publish_diag` `needs: [selftest, selftest-gate, model-quick-fix]` /
+     `if: always()` guard (see above) is unaffected the first time `selftest-gate` actually goes
+     red in practice, not just by reading the YAML -- `if: always()` should make this a non-issue
+     structurally, but confirm it empirically once, since this item exists precisely because
+     "should be fine by reading the YAML" has been wrong before in this repo.
+  4. Same one-slice-at-a-time, full-matrix-to-completion discipline as every other candidate in
+     this item -- do not treat "the mechanism is simple" as license to skip the soak period.
+
   **Process discipline -- read this before touching anything:**
   1. **One lane or row per slice.** Do not attempt a blanket "flip everything to gating" change.
      Each slice: (a) confirm the underlying mechanism is genuinely real and demonstrably
@@ -795,6 +861,30 @@ but several represent real gaps worth closing before calling the path fully rele
 
   Needs its own design pass -- this item deliberately does not pre-decide the exact
   wording/mechanism, only names the problem and the two levers.
+
+  **Mitigation step for lever 1, specifically -- audit tag coverage before suppressing anything
+  (partially done already, verified via source 2026-08-10; the rest is this item's own
+  precondition, not yet done).** `run_setup.bat` uses 10 distinct `:log`/`echo` tags, not the 4
+  lever 1's own wording names: `[INFO]` (208 uses), `[WARN]` (142), `[ERROR]` (55), `[STATUS]`
+  (16), `[DEBUG]` (9), `[TRACE]` (8), `[REPAIR]` (8), `[BOOT]` (7), `[HINT]` (5), `[INSTALL]` (4)
+  -- counted directly from source. Only two long-running phases currently have a harness assertion
+  proving a progress line precedes the slow operation (`batch.progress.conda_create`,
+  `batch.progress.pyi_build`, `tests/harness.ps1`) -- both confirmed `[INFO]`-tier
+  (`[INFO] Creating Python environment` before `conda ... create`; `[INFO] Building standalone
+  executable` before the PyInstaller call), so both stay visible under lever 1's proposed
+  INFO/BOOT/WARN/ERROR tier and tiering would not reintroduce a "looks stuck" gap for either.
+  **But the actual dependency-install calls do NOT have an equivalent `[INFO]`-tier progress
+  line**: `conda install`/`pip install -r requirements.txt`/`uv pip install` (`run_setup.bat`
+  ~lines 1544-1600) are preceded only by `[TRACE] dep install phase: start` and
+  `[INSTALL]`-tagged lines (`[INSTALL] conda bulk from ~reqs_conda.txt`, etc.) -- `[INSTALL]` is a
+  real, distinct tag lever 1's own "INFO/BOOT/WARN/ERROR" wording never accounts for, and
+  `[STATUS]`/`[REPAIR]`/`[HINT]` are unaddressed by that wording too. **Goal before implementing
+  lever 1**: explicitly classify every one of the 10 tags above as visible-by-default or
+  suppressed-by-default (don't leave `[INSTALL]`/`[STATUS]`/`[REPAIR]`/`[HINT]` to an implicit
+  default), and specifically confirm the dependency-install phase -- the one long-running step
+  with no `batch.progress.*`-style harness assertion today -- keeps a visible progress line under
+  whatever tiering ships, so suppressing TRACE doesn't silently remove the only "something is
+  happening" signal for what is plausibly the single longest silent stretch in a fresh build.
 
 - **Item 43: "No Python files detected" fires (accurately, per the documented top-level-only
   contract) for a subfolder-only project layout, but the message asserts something the user can
