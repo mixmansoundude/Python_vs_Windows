@@ -477,7 +477,343 @@ text (see below) rather than leaving the section silently blank** -- an empty se
 marker is easy to mistake for a rendering glitch or an accidental deletion; an explicit statement
 is not.
 
-**Nothing here.** All items above have been resolved and moved to `docs/agent-closed-backlog.md`.
+All items below stem from a 2026-08-09 Opus 5 release-readiness deep dive of `run_setup.bat`'s
+default (zero-flag, double-click) Prime Directive path, scoped to the most common real user runs
+-- first run and every repeat run -- with findings cross-checked against real CI evidence and this
+repo's own docs before filing (see chat history for the full report). Overall verdict from that
+review: **yes, with caveats** -- the golden path is confirmed working end-to-end on current `main`,
+none of the findings below are recent regressions (all pre-date the last several weeks of merges),
+but several represent real gaps worth closing before calling the path fully release-ready.
+
+- **Item 35: systematically promote non-gating CI lanes/checks and inert NDJSON rows to real
+  gating status -- EXTREME CAUTION, one lane/row per slice, diagnostics-site publish must never
+  be blocked.** Prompted by the same review, which found several genuinely "false green"
+  situations: a lane reporting no failures because it's non-gating (so a real regression there
+  cannot block a PR), or an NDJSON row that is REGISTERED but structurally never fires in any real
+  CI configuration (indistinguishable from "always passes" when it has in fact never run at all).
+  Goal: audit every candidate, and for each one that is genuinely real (not a placeholder) and
+  demonstrably non-flaky, make it capable of turning CI red for real -- so "CI is green" stops
+  being a partial truth for any lane or row this repo currently ships.
+
+  **Known inventory to work through (starting point, not exhaustive -- re-derive against current
+  state at slice time):**
+  - Non-gating lanes (currently `continue-on-error` at the job level, per CLAUDE.md's CI Overview
+    and Periodic Maintenance Checks' "CI lane gating maturity" section): `cache`, `justme-test`,
+    `uv`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback`.
+  - `contract-uv`/`contract-uv-fail`/`uv-dl-fallback` are documented as "explicitly load-bearing,
+    not provisional" for staying non-gating -- **re-verify this reasoning still holds
+    structurally (they simulate failure/contract scenarios that intentionally diverge from a
+    normal run) before excluding them; do not just carry the existing text forward without
+    re-checking it.**
+  - `ndjson-registry-check`: a separate advisory job (not a matrix lane), `continue-on-error:
+    true`, "needs several more real-CI runs at clean PASS before even considering gating" per the
+    same section.
+  - Inert/never-fired NDJSON rows (structurally never observed in any real CI artifact, confirmed
+    via `docs/agent-ndjson.md`'s own notes and the review's independent check against a real run's
+    cache/conda-full snapshots): `self.dll_bundle.recover` (6 of 7 outcome states have zero
+    runtime coverage; see Item 37 below for the dedicated item), `self.failfast.probe` (bare row,
+    distinct from its `.fastfail`/`.alive` siblings), `self.exe.smokerun`. Audit for others --
+    these three are the ones already confirmed, not necessarily the complete set.
+  - The `set /p` prompt lines (real interactive prompts a genuine double-click user reads) never
+    execute in any CI configuration at all -- `docs/demo-bootstrapper-output.md` Scenario 5
+    already labels this `[Extrapolated Branch]` honestly. Not a "lane" to promote, but the same
+    underlying problem: no CI signal exists for this text today. Consider whether a scripted-stdin
+    test (mirroring `tests/selfapps_interactive_stdin.ps1`'s existing pattern for the EXE's own
+    live-tee output) could exercise the prompt WORDING itself, even if "did a human read this and
+    understand it" stays out of scope.
+  - The double-click trigger's own interactivity signals (`HP_INTERACTIVE_RUN`) are never in their
+    natural, un-forced state in any gating-lane run -- every gating lane sets `HP_CI_LANE`, which
+    clears `HP_INTERACTIVE_RUN` via `:compute_interactive_run`. The interactive branches ARE
+    covered, but only via `HP_TEST_FORCE_INTERACTIVE_PROBE`/`HP_TEST_CHECKPOINT_ANSWER`-style
+    forcing, never the ambient real-user condition. Lower priority (already mitigated, not
+    unmitigated) but worth a line in whatever audit doc this work produces.
+  - `pause` at `:success` (`if not defined HP_CI_LANE`) -- the terminal-retention behavior every
+    real double-click user experiences -- is never exercised in CI either. Same category as above.
+
+  **Non-negotiable constraint: the diagnostics-site-publish job must never be blocked or skipped
+  by this work.** The `publish_diag` job (`.github/workflows/batch-check.yml`, "Publish
+  diagnostics to Pages") already guards against this deliberately: `if: ${{ always() }}` at the
+  job level, with `needs: [selftest, selftest-gate, model-quick-fix]` -- the `always()` override
+  means it runs regardless of those jobs' pass/fail conclusion, not just on success (confirmed by
+  reading the job directly). **Any change to the job graph as part of this item (new required
+  jobs, restructured lanes, a lane split into its own job) must re-verify `publish_diag`'s
+  `needs:` list still covers the right jobs and that `if: always()` still applies** -- a change
+  that silently narrows this guard would be the exact "false green masks a real gap" failure mode
+  this item exists to close, just inverted (diagnostics visibility breaking instead of a real
+  regression going unblocked).
+
+  **Process discipline -- read this before touching anything:**
+  1. **One lane or row per slice.** Do not attempt a blanket "flip everything to gating" change.
+     Each slice: (a) confirm the underlying mechanism is genuinely real and demonstrably
+     non-flaky (a stable-history check, not a hopeful one), (b) let the full 8-lane matrix run to
+     completion in full at least several consecutive times with the change in place before
+     treating it as proven, (c) only then take the actual gating step.
+  2. **"Gating" is a GitHub branch-protection setting, not a YAML edit.** This repo's actual merge
+     gate is GitHub's native "required status checks" on the default branch's protection rule
+     (confirmed by reading `.github/workflows/pr-automerge.yml`: it only calls
+     `enablePullRequestAutoMerge`/checks `pr.mergeable`, both of which delegate entirely to
+     GitHub's own branch-protection evaluation -- no custom required-check logic lives in this
+     repo's own workflow code). Removing a job's `continue-on-error: true` in `batch-check.yml` is
+     a NECESSARY prerequisite (so the job's own conclusion actually reports failure instead of
+     always succeeding) but is NOT SUFFICIENT on its own -- someone with repo admin access must
+     also add the check's exact name to the branch protection rule's required-status-checks list
+     for it to actually block a merge. Each slice's real deliverable is: prove readiness, then
+     flag explicitly for the owner to make that branch-protection change (or make it directly if
+     the acting agent has that access) -- do not report a slice "done" after only the YAML edit.
+  3. **No shortcuts on the "let CI run to completion" requirement.** Do not merge, promote, or
+     declare a slice validated based on a partial run, a cancelled run, or "the lanes that matter
+     looked fine so far." Wait for the full matrix.
+  4. Cross-references: `docs/agent-ndjson.md`'s own notes on
+     `self.dll_bundle.recover`/`self.failfast.probe`/`self.exe.smokerun` already diagnose WHY each
+     is inert -- read those before assuming a fix; the mechanism is documented even though the fix
+     and the gating decision are not. `docs/agent-closed-backlog.md`'s Item 19 entry (cache-lane
+     self-healing) is relevant prior art specifically for the `cache` lane's own non-gating
+     history.
+
+- **Item 36: warnfix repair install is a silent no-op under venv/embed/system, and reports false
+  success.** Confirmed via direct source read and matches an already-flagged-but-never-filed gap
+  in `docs/agent-interconnect.md` ("Standalone Python-download tier" section): *"the warnfix
+  REPAIR-install branch only has two cases -- `if "%HP_ENV_MODE%"=="uv"` and `else if defined
+  CONDA_BAT` -- with NO plain-pip fallback for any other mode... Worth a dedicated future fix...
+  its own backlog item."* That backlog item was never actually created until now -- a real defect
+  sat fully diagnosed and un-tracked for weeks.
+
+  **Mechanism**: the warnfix repair-install dispatch inside `:run_entry_smoke`'s
+  `HP_WARNFIX_NEEDED` block has exactly two branches and no catch-all. Under venv, embed, or
+  system mode, `HP_ENV_MODE` isn't `uv` and `CONDA_BAT` is undefined, so neither branch matches --
+  yet the loop still logs `[REPAIR] missing modules detected; installing and rebuilding.`,
+  installs nothing, rebuilds an unchanged EXE, and logs `[REPAIR] rebuild complete after
+  warnfix.` as if it worked. Worse: since no module install was even attempted,
+  `~warnfix_repair_failed.flag` is never created, so `:warnfix_cascade_detect`'s own recovery gate
+  (`if exist flag AND unresolved`) never fires either -- the ONE mechanism designed to recover
+  from exactly this situation (cascading to the next provider tier) is silently defeated by the
+  same gap.
+
+  **Realistic scenario**: a locked-down corporate machine reaches the embed tier (uv venv fails,
+  conda download fails, cascades to embed). The user's script needs `openpyxl` via
+  `pandas.read_excel` -- precisely the runtime-only import pipreqs can't see and warnfix exists to
+  catch. Warnfix "installs" nothing, claims success, the EXE builds, the smoke run fails with
+  `ModuleNotFoundError: openpyxl`, and the user sees "SETUP COMPLETE -- WITH A CAVEAT" with no hint
+  that a repair step silently did nothing.
+
+  **High-level fix**: add a plain-pip catch-all branch (`else ("%HP_PY%" -m pip install %%M)`) to
+  the repair-install dispatch, mirroring the SAME three-mode pip pathway (`venv`/`embed`/`system`
+  all already use `"%HP_PY%" -m pip install -r requirements.txt` in the main, non-repair
+  dependency-install dispatch a few hundred lines earlier) -- both venv and embed have a working
+  pip already; this is not a new capability, just wiring an existing one into a second call site
+  that was missed. Also verify `~warnfix_repair_failed.flag` is set correctly on a genuine failure
+  in this new branch, so the cascade-recovery gate becomes reachable for this failure class too.
+
+  **Coverage gap to close in the same slice**: all five `selfapps_warnfix.ps1` scenarios run on
+  `real`/`conda-full`, both of which land in the `uv` or `CONDA_BAT` branch -- the broken branch is
+  unreachable from every existing warnfix test. Add a scenario that forces venv or embed mode with
+  a warnfix-triggering missing import, asserting the module actually gets installed (not just that
+  the EXE eventually builds).
+
+- **Item 37: `:dll_bundle_recover`'s own regression coverage is entirely non-gating, on the
+  newest code on the golden path.** Confirmed against `.github/workflows/batch-check.yml`,
+  `tests/harness.ps1`, and `docs/agent-ndjson.md`. This is a specific, concrete instance of Item
+  35's own scope -- filed separately since it names an exact fix, but implement it as one of Item
+  35's slices, not independently.
+
+  The DLL-bundling repair loop (CLAUDE.md's former Items 24/28/29,
+  `docs/prd-conda-native-dll-bundling.md`) shipped 2026-08-07/08 -- the youngest subroutine on the
+  default fresh-build path, called unconditionally from `:run_entry_smoke` on every build plus a
+  second pass from `:run_exe_smokerun`. Its coverage:
+  - `self.dll_bundle.recover` (7 outcome states) is emitted behind `if not defined HP_NDJSON exit
+    /b 0`. `docs/agent-ndjson.md` already documents that the one test exercising it
+    (`tests/selfapps_layered_e2e.ps1`) runs its sub-bootstrap from a bare scratch directory with
+    `HP_NDJSON` unset -- so the row is NEVER actually written in any real CI run. Confirmed
+    independently against a real run's NDJSON snapshot: no `dll`-prefixed id present.
+  - `batch.dll_bundle.ndjson`/`batch.dll_bundle.second_pass` (`tests/harness.ps1`) are static
+    source-text regex checks -- they prove the label and all 7 call sites exist, not that the
+    behavior is correct at runtime.
+  - The only genuine runtime exercise, `self.layered_e2e.chain`, covers exactly 1 of the 7 states
+    (`repaired`, via a real `pygrib`/`eccodes.dll` trigger) and runs on the `cache` lane only --
+    non-gating twice over (the lane itself is `continue-on-error` at the job level, AND the step
+    itself carries its own `continue-on-error: true`).
+
+  **Consequence**: a regression in the newest, most recently-landed golden-path subroutine cannot
+  block a PR today -- it would have to be caught by a human reading a non-gating lane's log. Fix
+  (cheapest first): set `HP_NDJSON` for `selfapps_layered_e2e.ps1`'s own sub-bootstrap so
+  `self.dll_bundle.recover`'s `repaired` row actually fires and becomes queryable; then, once
+  proven stable, promote that one step (or the whole `cache` lane, depending on what Item 35's own
+  audit concludes) via Item 35's process.
+
+- **Item 38: the same EXE is verified from two different working directories across run 1 vs.
+  every later run, so a CWD-relative-path app can flip its verdict between two consecutive
+  double-clicks.** Confirmed reasoned-from-source; the CWD split itself is already documented as
+  deliberate in `docs/agent-interconnect.md`: *"CWD is preserved per call site: both
+  `:try_fast_exe` and `:verify_no_exe_interpreter` run from the app root (no `pushd dist`), unlike
+  `:run_exe_smokerun`'s `pushd dist`... re-verify that test if these CWDs are ever unified."* The
+  MECHANISM was known; this specific consequence (a verdict flip a beginner would misread as "it
+  fixed itself") was not previously spelled out.
+
+  **Mechanism**: `:run_exe_smokerun` (the first-run build verification) runs `pushd dist` first,
+  so CWD = `dist\` during that verification. `:try_fast_exe`/`:try_fast_exe_probe` (every later
+  run's fast path) runs with CWD = the app root. For a program that opens a data file by relative
+  path -- a beginner-common pattern -- run 1 and run 2 can disagree about whether the program even
+  works, with zero code change in between.
+
+  **Realistic scenario**: `report.py` does `open("config.json")`, with `config.json` sitting next
+  to the script. Run 1: CWD = `dist\`, the file isn't there, EXE exits non-zero,
+  `:exe_smokerun_hints` fires `[HINT][DATA_FILE] Consider adding: --add-data config.json;.`, panel
+  reads "SETUP COMPLETE -- WITH A CAVEAT". Run 2: same binary, CWD = app root, file IS found, exit
+  0, panel reads clean "SETUP COMPLETE". The user's natural conclusion -- "it fixed itself" -- is
+  wrong: double-clicking the EXE directly from Explorer uses the SAME CWD as run 1 (`dist\`), so
+  the program is still broken for that real launch path. The hint compounds the problem:
+  `--add-data` places the file inside `_MEIPASS` (the onefile extraction dir), which does not
+  satisfy a CWD-relative `open()` at all -- the one actionable instruction the tool gives doesn't
+  fix the actual problem.
+
+  **Fix options to weigh in this item's own loop** (not pre-decided): (a) unify both verification
+  points to the same CWD (which one is "more correct" needs its own thought -- `dist\` matches a
+  real double-clicked EXE's default CWD, so verifying from the app root may be the actually-wrong
+  choice, not `dist\`); (b) if unification isn't safe (re-verify `selfapps_exedata_fail.ps1`'s own
+  xfail check, which is explicitly load-bearing on the current `pushd dist` behavior per the
+  interconnect doc's own note), at minimum fix `:exe_smokerun_hints`' `--add-data` suggestion to
+  be honest about onefile CWD semantics instead of recommending something that won't work.
+
+  **Coverage gap to close in the same slice**: no test asserts what run 2 reports for a
+  CWD-sensitive app. `selfapps_exedata_fail.ps1` invokes `run_setup.bat` exactly once. Add a
+  second-run assertion for the same app.
+
+- **Item 39: the EXE fast path's freshness check is mtime-only, so timestamp-preserving delivery
+  (a ZIP, an xcopy) can silently run stale code with no signal to the user.** Confirmed
+  reasoned-from-source.
+
+  **Mechanism**: `:try_fast_exe`'s freshness test (`HP_FAST_CHECK` payload, `~fast_check.ps1`) is
+  `if ($exeTime -ge $latest) { 'fresh' }` over `*.py` mtimes only. A `fresh` verdict short-circuits
+  the ENTIRE run straight to `:success` -- no dependency resolution, no rebuild, no
+  re-verification. Two exposures: (a) ZIP extraction, `xcopy`, and `robocopy` all commonly
+  preserve the archive's original mtime, so an updated script whose authored timestamp predates
+  the last build is classified `fresh` and the OLD EXE runs; (b) non-`.py` inputs aren't consulted
+  at all -- `requirements.txt`, `pyproject.toml`, `runtime.txt` are outside the scan, so a
+  dependency or Python-version change with no `.py` edit is invisible to the freshness check.
+
+  **Realistic scenario**: a colleague emails a fixed `analysis.py` inside a ZIP built last
+  Tuesday. The user extracts it over the existing folder (mtime = last Tuesday), double-clicks,
+  sees "Fast path: skipping PyInstaller rebuild", and the program runs with the OLD logic --
+  nothing in the console indicates a stale artifact was preferred over their new file. README
+  documents the mechanism accurately but not this failure mode; the "delete `dist\<env>.exe`"
+  escape hatch only appears in the ambiguous-note panel, not the normal success panel.
+
+  **High-level fix to weigh**: add a cheap content-hash (not just mtime) check for at minimum the
+  entry file, and/or fold `requirements.txt`/`pyproject.toml`/`runtime.txt` into the freshness
+  scan the same way `.py` files already are. Needs its own design pass on cost (a hash read is
+  cheap; is it cheap enough to keep the fast path meaningfully fast) before implementing.
+
+  **Coverage gap to close in the same slice**: no scenario backdates a source file's mtime below
+  the EXE's to test this. Add one.
+
+- **Item 40: dead comparison in the `HP_SCRIPT_ROOT` trailing-backslash guard always evaluates
+  true, so every derived path carries a doubled separator.** CONFIRMED directly against source and
+  against a real CI log line.
+
+  **Mechanism**: the guard, immediately after `set "HP_SCRIPT_ROOT=%~dp0"`, reads `if not
+  "%HP_SCRIPT_ROOT:~-1%"=="\\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"`. The left side is a
+  ONE-character substring (`:~-1`); the right side, `"\\"`, is a TWO-character literal (cmd.exe's
+  `if` does no backslash-escaping, so `\\` really is two backslashes, not an escaped one). A
+  one-character string can never equal a two-character string, so the condition is always true,
+  and the backslash is always appended -- including when `%~dp0` already ends in one (which it
+  always does, by Windows convention). A sibling guard elsewhere in the file uses the correct
+  one-character `"\"` form, which is strong evidence this is a typo, not intent.
+
+  **Confirmed reaching console output** in a real CI log (run 31323118721, real lane):
+  `Interpreter: D:\a\...\tests\~envsmoke\\.uv_env\Scripts\python.exe` -- note the doubled
+  backslash before `.uv_env`.
+
+  **Severity: low/cosmetic** -- Windows collapses repeated separators in most path-consuming
+  APIs, and the same CI run confirms `HP_UV_BIN`/`HP_UV_ENV_PATH`/`HP_LOCK_DIR`/`HP_EMBED_DIR` all
+  still resolve correctly despite this. But it is dead code with no test catching it, and it does
+  visibly surface as `\\` in console output a beginner reads.
+
+  **Fix**: change the right-hand literal from `"\\"` to `"\"`, matching the sibling guard's
+  already-correct form. Trivial, one-character fix; add a static test (or extend
+  `check_delimiters.py`/a dedicated unit test) asserting `HP_SCRIPT_ROOT` never contains `\\`.
+
+- **Item 41: a working GUI app is force-killed at the 30s build-verification deadline and
+  reported with a caveat, with no messaging calibrated for that specific, correctly-behaving
+  case.** Confirmed reasoned-from-source, with the kill-on-silence RULE confirmed by real CI
+  capture of `:warn_user_code_launch`'s own message text.
+
+  **Mechanism**: the activity-aware kill (`~exe_smokerun.ps1`, `$sawOutput` gate -- see
+  `docs/agent-interconnect.md`'s "Activity-aware EXE-smoke kill" section for the full, deliberate
+  design history) only kills a process that has produced ZERO bytes of stdout/stderr within 30
+  seconds -- exactly the intended behavior for a genuinely hung process. A tkinter/PyQt app with a
+  `mainloop()` and no console output is, however, ALSO exactly that shape while behaving perfectly
+  correctly. It gets killed, `HP_EXE_EXIT=-1`, `[STATUS] Run Status: TIMED OUT`, and the postflight
+  panel reads "SETUP COMPLETE -- WITH A CAVEAT."
+
+  **Realistic scenario**: a student is handed a tkinter grade calculator. Setup runs, a window
+  appears, they start typing into it -- 30 seconds later Windows kills it mid-entry. The caveat
+  panel then says "we couldn't fully verify it runs as a standalone program," with nothing
+  anywhere explaining "GUI apps produce no console output, so we can't auto-verify them -- this is
+  normal and does not mean something is wrong." `:warn_user_code_launch` DOES warn beforehand that
+  a silent process will be force-stopped after ~30s, so this is disclosed, not hidden -- but the
+  disclosure and the caveat panel are both worded for a console-program mental model, and GUI-first
+  beginners are a real slice of the target audience.
+
+  **High-level fix**: detect (or simply always emit, cheaply) a GUI-app-aware variant of the
+  caveat message specifically for the `TIMED OUT` + zero-stdout-observed case -- something like
+  "your program may be a GUI app with its own window; that's expected to produce no console
+  output, and this caveat does not necessarily mean anything is wrong" -- distinguishing this case
+  from a genuine crash/hang in the panel text itself, not just in the pre-launch warning.
+
+- **Item 42: console output is verbose across all log levels, and every fresh build ends with two
+  unexplained Y/N prompts -- both plausibly overwhelming for the actual target audience
+  (beginners with no setup experience).** Confirmed reasoned-from-source and CI capture. New; not
+  found in Cold Storage or elsewhere during verification.
+
+  **Mechanism, part 1**: `:log` echoes every line to console unconditionally -- `[INFO]`,
+  `[DEBUG]`, `[TRACE]`, `[BOOT]`, each timestamped -- with no tiering. A first run shows lines
+  like `[DEBUG] pipreqs (direct) rc=0 size=9` and `[TRACE] dep source selected: pipreqs` alongside
+  genuinely actionable `[WARN]`/`[ERROR]` text, all visually equal weight.
+
+  **Mechanism, part 2**: every successful FRESH build (not the repeat-run fast path, which is
+  correctly prompt-free) asks two Y/N questions before the final panel: the post-execution
+  checkpoint ("Run again via the interpreter now?") and the optimized-build upsell ("Want to
+  build an optimized version too?"). For someone told to double-click one file, "build an
+  optimized version" has no discoverable right answer, and accepting starts a multi-minute Nuitka
+  build whose own failure hint references Visual Studio Build Tools -- a term with zero meaning to
+  the target audience.
+
+  **High-level fix to weigh** (two independent, separately-implementable levers -- do not conflate
+  them into one change):
+  1. Tier the console view: keep full detail in `~setup.log` (already happens), but only echo
+     INFO/BOOT/WARN/ERROR-class lines to the LIVE console by default, suppressing DEBUG/TRACE from
+     the interactive view (a verbose opt-in flag could restore them for diagnosis). No loss of
+     diagnostic capability, since the full log is unaffected.
+  2. Reduce/reword the two fresh-build prompts: consider combining them into a single, clearly-
+     optional ask, and/or defaulting to plain, jargon-free language that makes "this is optional,
+     skip if unsure" the obvious reading rather than requiring domain knowledge to answer
+     confidently.
+
+  Needs its own design pass -- this item deliberately does not pre-decide the exact
+  wording/mechanism, only names the problem and the two levers.
+
+- **Item 43: "No Python files detected" fires (accurately, per the documented top-level-only
+  contract) for a subfolder-only project layout, but the message asserts something the user can
+  plainly see is false, with no actionable next step.** Confirmed reasoned-from-source; distinct
+  from the already-shipped Item 32 fix (`.py.txt` hidden-extension hint), which solves a
+  DIFFERENT cause of the same message.
+
+  **Mechanism**: both the Python-file COUNT (`:count_python`, `dir /b /a-d *.py`) and the entry
+  SELECTOR (`find_entry.py`, `os.listdir(".")`) are top-level-only by design -- this matches the
+  documented "drop `run_setup.bat` alongside your `.py` files" contract, so it is not itself a
+  contract violation. But a user who unzips a project laid out as `src/main.py` + `README` and
+  drops `run_setup.bat` at the root gets `Python file count: 0` -> `"No Python files detected;
+  skipping environment bootstrap"` -> `state=no_python_files` -> pause -> exit 0. The message
+  reads as "there are no Python files here," which the user can visually disprove by looking one
+  folder down -- the only follow-up hint offered (the `.py.txt` tip from Item 32) doesn't apply to
+  this cause at all.
+
+  **High-level fix**: add a companion check (mirroring `:check_hidden_ext_hint`'s existing
+  pattern) that does a cheap one-level-deep scan (e.g. `dir /s /b *.py` bounded to depth 1, or an
+  explicit single-subfolder probe) when the top-level count is zero, and if `.py` files ARE found
+  one level down, print a specific hint: "we only look in this exact folder -- move
+  `run_setup.bat` next to your scripts, or move your scripts up into this folder" instead of (or
+  alongside) the generic zero-files message.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
