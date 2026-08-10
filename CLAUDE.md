@@ -621,14 +621,21 @@ but several represent real gaps worth closing before calling the path fully rele
      a TOTAL absence of verdict files (zero lanes reporting) as a failure signal -- a single
      lane's `lane_verdict.json` silently missing (upload glitch, artifact-service hiccup, a step
      skipped for a reason that doesn't also flip that lane's own job conclusion to failure) is
-     invisible as long as at least one other lane's artifact is present. Fix: compare the count of
-     downloaded verdict files against the expected lane count (the matrix's own `mode` list, or a
-     hardcoded 8 with a comment pointing at the matrix definition) and treat any shortfall as
-     `has_failures=true`, regardless of what `needs.selftest.result` reports for the run as a
-     whole. Add a test scenario for this specific shape (a successful-looking matrix run with one
-     lane's artifact missing) before trusting the fix -- this is exactly the kind of gap Item 35
-     exists to close, and shipping the aggregate-gate promotion without closing it first would
-     just relocate a false-green risk instead of removing one.
+     invisible as long as at least one other lane's artifact is present. **A raw file-count
+     comparison is not sufficient either** -- each artifact's name already encodes its lane
+     (`selftest-verdict-${{ matrix.mode }}` at the upload site; the aggregation step's own
+     `lane_verdict.json` also stamps `lane = '${{ matrix.mode }}'` at write time), so an
+     unexpected or duplicate artifact landing alongside a genuinely missing lane could still make
+     the total COUNT match the expected lane count while one real lane's evidence is absent. Fix:
+     compare the SET of expected lane IDs (the matrix's own `mode` list) against the SET of
+     observed lane IDs (read from each downloaded `lane_verdict.json`'s own `lane` field, or the
+     artifact/subdirectory name) and treat any expected ID that's missing -- or any
+     unexpected/duplicate ID present -- as `has_failures=true`, regardless of what
+     `needs.selftest.result` reports for the run as a whole. Add test coverage for all three
+     shapes (a missing lane, an unexpected extra lane, a duplicate lane) before trusting the fix
+     -- this is exactly the kind of gap Item 35 exists to close, and shipping the aggregate-gate
+     promotion without closing it first would just relocate a false-green risk instead of
+     removing one.
 
   **Process discipline -- read this before touching anything:**
   1. **One lane or row per slice.** Do not attempt a blanket "flip everything to gating" change.
