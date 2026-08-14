@@ -54,6 +54,7 @@ self.exe.warnfix.real_warnfix_delayed,
 self.collect.submodules,
 self.exe.hidden_import, self.exe.hidden_import.exhaust,
 self.preflight.syntax,
+self.preflight.no_powershell, self.preflight.ps_check_fail, self.preflight.lf_only,
 self.cascade.detect, self.cascade.consent, self.cascade.timed,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
 self.cascade.conda_create_fail (uv lane only -- selfapps_cascade_conda_create_fail.ps1; non-gating),
@@ -898,6 +899,36 @@ restore-keys prefix match, and records whether that real self-heal attempt actua
 (`details.healed`). Always `pass:true` (informational, matching `self.cache.corrupted`'s own
 convention) -- its purpose is to make an organic occurrence queryable on the diagnostics site
 over time instead of requiring a raw-log dig to notice it happened at all, not to gate.
+
+---
+
+## selfapps-lineending-check NDJSON rows (selfapps_lineending_check.ps1, real/conda-full lanes, GATING)
+
+CLAUDE.md Active Backlog Item 44's own "Known gap": the line-ending self-check at the top of
+`run_setup.bat` (before any goto/call in the file -- see the file's own header comment) had zero
+CI coverage of its three failure branches, since a normal `actions/checkout` always normalizes to
+CRLF, so CI could exercise only the happy path on real cmd.exe, never the failure branches. Three
+new `HP_TEST_FORCE_*` hooks close this: `HP_TEST_FORCE_NO_POWERSHELL` forces a synthetic nonzero
+errorlevel right after the real `where powershell` call (no PATH tampering); `HP_TEST_FORCE_LF_
+ONLY` and `HP_TEST_FORCE_PS_CHECK_FAIL` both redirect `HP_SELF_PATH` at something other than the
+running copy of `run_setup.bat` (a synthetic pure-LF sentinel file, or a path that does not exist)
+rather than corrupting the file actually executing -- the running copy must stay healthy CRLF to
+reliably reach and execute the hook logic at all. Pointing at a nonexistent path makes the real,
+unmodified PowerShell command genuinely throw (`FileNotFoundException`) and hit its own
+`catch{exit 2}` branch, exercising the real failure path rather than a simulated one. All three
+hooks and the underlying PowerShell command's exact behavior for each case (nonexistent path ->
+exit 2; pure-LF file -> exit 1; genuine CRLF file -> exit 0) were verified directly against a real
+PowerShell 7 binary before being wired into `run_setup.bat`, not just reasoned about.
+
+Lane: `real` and `conda-full` only, gating from first landing -- matches `self.preflight.syntax`'s
+own precedent for a cheap, provider-agnostic, pure-batch preflight check (no environment or
+dependency work is ever reached in any of these three scenarios, unlike the Nuitka/MSVC-dependent
+tests elsewhere in this registry that start non-gating specifically because they could not be
+verified locally).
+
+```
+self.preflight.no_powershell, self.preflight.ps_check_fail, self.preflight.lf_only
+```
 
 ---
 

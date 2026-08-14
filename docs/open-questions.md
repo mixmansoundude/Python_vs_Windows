@@ -50,17 +50,17 @@ or leave the caveat panel purely generic indefinitely and close this question as
 
 ## 2. Should the distribution channel itself be fixed so a raw download of `run_setup.bat` gets correct (CRLF) line endings, and if so, how?
 
-**Status: OPEN, raised 2026-08-14.** Background and full mechanism in CLAUDE.md's former Active
-Backlog Item 44 (now closed/mitigated -- see `docs/agent-closed-backlog.md` once archived): a raw
-download (GitHub's "Raw" button, or a `raw.githubusercontent.com` link) serves `run_setup.bat`
+**Status: OPEN, raised 2026-08-14.** Background and full mechanism in `docs/agent-closed-backlog.md`'s
+Item 44 (closed 2026-08-14, including CI coverage for the self-check's own three failure branches):
+a raw download (GitHub's "Raw" button, or a `raw.githubusercontent.com` link) serves `run_setup.bat`
 with Unix (LF-only) line endings instead of the Windows (CRLF) endings a real `git clone` checkout
 produces, because `.gitattributes`'s `* text=auto eol=lf` normalizes the STORED blob to LF and the
 `*.bat text eol=crlf` override only affects checkout-time conversion, never what GitHub serves raw.
 cmd.exe's goto/call label-seeking silently misbehaves on the LF-only copy, producing a confusing,
-partial, undiagnosable run. A same-session mitigation now makes `run_setup.bat` self-detect this
-and fail with a clear message (see the top of the file) -- but the distribution channel itself is
-unchanged: a user can still land on a raw link and get the broken file, they just now get told
-clearly instead of being left confused.
+partial, undiagnosable run. A mitigation now makes `run_setup.bat` self-detect this and fail with a
+clear message (see the top of the file), with CI coverage of its own for all three failure branches
+-- but the distribution channel itself is unchanged: a user can still land on a raw link and get the
+broken file, they just now get told clearly instead of being left confused.
 
 **The maintainer explicitly wants**: diffs to stay clean (no line-ending noise from
 cross-platform edits), and ideally for a raw download to just work. These two preferences are in
