@@ -2014,11 +2014,16 @@ this belongs to).
   **A raw-download-from-the-PR's-own-branch test (fetching the real corrupted bytes via
   `raw.githubusercontent.com` instead of synthesizing them locally) was considered and rejected**
   for the CI-gating test specifically: it would add a real network dependency and fork-branch-
-  resolution complexity for no additional coverage, since the corruption mechanism was already
-  triangulated at the byte level above -- a locally-synthesized pure-LF file exercises the exact
-  same detection logic and the exact same cmd.exe byte-offset-drift hazard as a genuine raw
-  download, because what matters to the detection algorithm is the byte content, not the transport
-  that produced it. This also keeps the new test deterministic and gating-lane-appropriate,
+  resolution complexity for no additional coverage on the axis this test actually covers -- the
+  DETECTION logic (does the check's own PowerShell command correctly classify pure-LF content as
+  invalid), which a locally-synthesized pure-LF file exercises identically to a genuine raw
+  download, since what matters to that algorithm is the byte content, not the transport that
+  produced it. **This test does not itself execute an LF-only copy of `run_setup.bat` or observe
+  real cmd.exe goto/call byte-offset-drift misbehavior** -- the running copy stays healthy CRLF
+  throughout every scenario, only `HP_SELF_PATH` (what the check reads) is redirected; that
+  separate hazard was established independently, via the original sandbox debugging session's own
+  symptom triad (see above), not by this test. This also keeps the new test deterministic and
+  gating-lane-appropriate,
   matching this repo's general preference (`self.dl.uv.fallback`/`self.dl.conda.fallback` are the
   only tests in this repo that deliberately hit real external download endpoints, and both are
   non-gating specifically because of that). A periodic, informational, non-gating confirmation

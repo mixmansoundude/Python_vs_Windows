@@ -2113,6 +2113,18 @@ jobs:
             tests/~test-summary.txt
             tests/~test-results.ndjson
             tests\~test-results.ndjson
+            tests/~selftest_lineending_no_ps/~lineending_bootstrap.log
+            tests\~selftest_lineending_no_ps\~lineending_bootstrap.log
+            tests/~selftest_lineending_no_ps/~bootstrap.status.json
+            tests\~selftest_lineending_no_ps\~bootstrap.status.json
+            tests/~selftest_lineending_ps_fail/~lineending_bootstrap.log
+            tests\~selftest_lineending_ps_fail\~lineending_bootstrap.log
+            tests/~selftest_lineending_ps_fail/~bootstrap.status.json
+            tests\~selftest_lineending_ps_fail\~bootstrap.status.json
+            tests/~selftest_lineending_lf_only/~lineending_bootstrap.log
+            tests\~selftest_lineending_lf_only\~lineending_bootstrap.log
+            tests/~selftest_lineending_lf_only/~bootstrap.status.json
+            tests\~selftest_lineending_lf_only\~bootstrap.status.json
             tests/extracted/**
           if-no-files-found: ignore
           include-hidden-files: true

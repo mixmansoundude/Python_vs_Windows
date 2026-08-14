@@ -99,7 +99,12 @@ function Test-PreflightScenario {
 
     Push-Location $workDir
     try {
-        cmd /c "call run_setup.bat > $bootstrapLog 2>&1"
+        # derived requirement: redirect stdin from nul -- all three scenarios reach a
+        # preflight-failure branch that calls `pause` when HP_CI_LANE is not defined; in CI
+        # that branch is always skipped (HP_CI_LANE is set at the job level), but a local run
+        # of this script without it set would otherwise hang on a real keypress despite
+        # stdout/stderr already being redirected.
+        cmd /c "call run_setup.bat > $bootstrapLog 2>&1 < nul"
         $runExit = $LASTEXITCODE
     } finally {
         if ($null -eq $prev) {

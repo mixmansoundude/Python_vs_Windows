@@ -947,7 +947,7 @@ but several represent real gaps worth closing before calling the path fully rele
   `run_setup.bat` next to your scripts, or move your scripts up into this folder" instead of (or
   alongside) the generic zero-files message.
 
-Items 44-52 below stem from a 2026-08-14 real Windows Sandbox debugging session (two independent
+Items 45-52 below stem from a 2026-08-14 real Windows Sandbox debugging session (two independent
 external AI reviews plus direct verification against current source by the acting agent) chasing a
 garbled first run (repeated pauses, a PyInstaller build loop with no environment behind it, some
 files written and others not). The root cause (Item 44) turned out to be file corruption from the
