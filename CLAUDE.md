@@ -947,6 +947,207 @@ but several represent real gaps worth closing before calling the path fully rele
   `run_setup.bat` next to your scripts, or move your scripts up into this folder" instead of (or
   alongside) the generic zero-files message.
 
+Items 44-52 below stem from a 2026-08-14 real Windows Sandbox debugging session (two independent
+external AI reviews plus direct verification against current source by the acting agent) chasing a
+garbled first run (repeated pauses, a PyInstaller build loop with no environment behind it, some
+files written and others not). The root cause (Item 44) turned out to be file corruption from the
+download method, not the runtime environment; the other items were either incidentally surfaced
+while tracing the false leads before that root cause was confirmed, or corroborated an
+already-tracked item (Item 40's dead trailing-backslash comparison -- independently re-derived by
+the same session, no new information, not re-filed). Each item below was checked against current
+source directly, not taken on the reviews' word alone; where a claim could not be confirmed this
+way (no live Windows execution available here), that is noted explicitly rather than stated as fact.
+
+- **Item 44: the Prime-Directive download path serves `run_setup.bat` with broken (LF-only) line
+  endings, and cmd.exe's goto/call silently misbehaves on the result.** Confirmed directly: a raw
+  download (GitHub's "Raw" button, or a `raw.githubusercontent.com` link) is 447,375 bytes with
+  zero CRLF pairs; the same file via a real `git clone` checkout is 452,917 bytes with 5,542 CRLF
+  pairs -- a delta of exactly one byte per line, matching `.gitattributes`'s own model exactly:
+  `* text=auto eol=lf` normalizes the STORED blob to LF regardless of the `*.bat text eol=crlf`
+  override, and that override only affects checkout-time conversion, never the blob GitHub serves
+  raw. Every natural "just get me the file" path a beginner would take (the Raw button, a
+  raw.githubusercontent.com link found via search) hands them a corrupted copy; only `git clone`
+  (or any path that performs a real checkout) gets it right today.
+
+  **Consequence, confirmed against the real symptom triad from the sandbox session**: cmd.exe
+  resolves `goto`/`call` by relocating to a byte offset associated with the target label; an
+  LF-only copy of a ~4700-line file with 129 labels drifts that offset by one byte per line
+  crossed, compounding with each jump. This produces exactly what was observed: a `goto`/`call`
+  landing on the wrong spot ("the system cannot find the batch label specified" for a label that
+  genuinely exists), a `%HP_PY%`-dependent line executing before `HP_PY` was ever assigned because
+  an earlier gating block was skipped by the drift (`'""' is not recognized as an internal or
+  external command`), and a run that partially completes -- early, purely-sequential code runs
+  fine, everything past the first mis-resolved jump does not. No CI lane can catch this: every CI
+  checkout goes through `actions/checkout`, which always applies `.gitattributes`'s `eol=crlf`
+  conversion, so the broken artifact only ever exists in what a real user downloads, never in what
+  CI tests.
+
+  **Mitigated this session, not fully fixed**: `run_setup.bat` now self-checks its own line endings
+  as literally the first thing it does (before any other `goto`/`call` in the file, so the check
+  itself stays reliable even on a corrupted copy -- see the new block right after `setlocal` at the
+  top of the file), and fails fast with a clear, actionable message instead of a silent, partial,
+  undiagnosable run. This does not fix the distribution channel itself -- a user can still land on
+  a raw link and get the broken file; the check only turns that into a loud, fixable failure instead
+  of the multi-hour debugging session that surfaced this item. See `docs/open-questions.md` for the
+  maintainer decision on whether/how to fix distribution itself (pro/con on the `.gitattributes`
+  options), and README.md's new TL;DR bullet recommending `git clone` in the meantime.
+
+- **Item 45: gate the build/warnfix/repair block on `HP_PY` actually existing, so a failed
+  env-create cannot cascade into a doomed PyInstaller build plus multiple repair-loop attempts with
+  no interpreter behind any of them.** Deliberately scoped narrow -- this is the small, isolated
+  first bite; Item 46 below is the larger, NOT-small structural issue this is a partial mitigation
+  for, and the two should not be conflated into one change.
+
+  **Mechanism**: `:die` returns via `exit /b` rather than halting the process (see
+  `docs/agent-lessons-learned.md`'s `:die` entry), so a genuine env-create failure can fall through
+  into `:run_entry_smoke` and attempt a full PyInstaller build, warnfix repair round, DLL-bundle
+  recovery, and hidden-import recovery (each with their own iteration budgets) against an `HP_PY`
+  that points at a python.exe that does not exist. Every one of those steps is guaranteed to fail
+  or no-op uselessly in this state; none of it does the user any good, and each failure inside the
+  loop is itself a `call :die` site that may pause again.
+
+  **Fix**: a single `if not exist "%HP_PY%" (...)` guard at the top of the build/warnfix/repair
+  block, skipping straight to whatever the existing no-interpreter failure path already is (or a
+  new one, if none currently exists cleanly for this exact state) instead of attempting any of it.
+  Small, isolated, and directly kills the "PyInstaller loops while no env/dep work happened"
+  symptom without touching `:die`'s own 24+ call sites.
+
+- **Item 46: `:die`'s `exit /b` lets most of its ~31 call sites continue executing afterward,
+  producing repeated `pause` prompts and further doomed work instead of a single clear stop. NOT a
+  small slice -- needs its own careful, dedicated scoping pass before touching it.** Matches this
+  repo's own already-documented mechanism (`docs/agent-lessons-learned.md`'s `:die` entry: "a
+  caller with no halt/goto after `call :die` simply continues... `HP_BOOTSTRAP_STATE=error` [was
+  already fixed at the source so the status file stays honest], but nothing stops execution").
+
+  **Consequence, confirmed against the real sandbox session**: a chain like
+  `:conda_create_failed -> call :die (pause #1) -> falls through to :conda_create_done -> HP_PY set
+  to a python.exe that does not exist -> if not exist (call :die, pause #2) -> falls through ->
+  more code using the broken HP_PY -> call :die (pause #3) -> ...` produces exactly the "hit pause
+  several times" symptom reported, each pause looking like a fresh, unrelated failure rather than
+  one root cause cascading.
+
+  **Candidate fix shapes, not yet chosen between**: (a) a global `HP_FATAL` flag set by `:die`,
+  checked via `if defined HP_FATAL goto :fatal_exit` after every one of the ~24 continuing call
+  sites; (b) change what `:die` itself does on exit (e.g. a real process-halting `exit`, not
+  `exit /b`) for the cases where it is known to be called from the top-level call stack rather than
+  a nested subroutine -- riskier, since the top-level-vs-nested distinction is not always obvious
+  from a given call site, and a bare `exit` closes the console window immediately for a
+  double-click user with no chance to read the message first (see the existing `pause`-before-exit
+  convention this file already relies on); (c) do nothing beyond Item 45's narrower mitigation for
+  now, since it already kills the specific worst compounding case (repeated build/repair attempts)
+  even without touching `:die` itself. Given the number of call sites and `:die`'s central,
+  load-bearing role throughout the file, treat this as EXTREME CAUTION on the same order as the
+  DLL-bundling/hidden-import repair loops elsewhere in this backlog -- one incremental slice at a
+  time, not a single sweeping change across all 31 sites.
+
+- **Item 47: no PowerShell capability preflight beyond bare presence.** The new line-ending
+  self-check (Item 44's mitigation) added a `where powershell` presence guard as its own
+  precondition, but that only proves PowerShell exists on PATH, not that it can actually do the
+  things this bootstrapper needs -- `:emit_from_base64` (used to write every embedded `~*.py`/
+  `~*.ps1` helper to disk) needs `[Convert]::FromBase64String` + `[IO.File]::WriteAllBytes`, and
+  `~failfast_probe.ps1`/`~exe_smokerun.ps1` need `New-Object System.Diagnostics.ProcessStartInfo`
+  -- all of which a locked-down corporate image (AppLocker/WDAC/Constrained Language Mode) can
+  block even with PowerShell itself present and on PATH. This was the leading hypothesis in the
+  sandbox debugging session before the real root cause (Item 44) was confirmed; ruled out for THAT
+  specific sandbox (confirmed `FullLanguage`, `EMIT OK`, `PSI OK` via direct probing) but not a
+  dead concern in general -- a genuinely CLM-restricted machine would still hit this today with no
+  clear diagnostic, just the same opaque "Could not write ~x" pattern the sandbox session initially
+  (incorrectly, for that session) suspected.
+
+  **Fix**: run the FromBase64String + WriteAllBytes + `New-Object ProcessStartInfo` triple once,
+  early (after Item 44's line-ending check, before `:define_helper_payloads`), and fail with a
+  plain-language message naming Constrained Language Mode specifically if it fails, rather than
+  letting the failure surface piecemeal as five-plus separate "Could not write ~x" messages later.
+
+- **Item 48: no writable-CWD preflight; `:merge_git_config` writes `.gitignore`/`.gitattributes`
+  into the app folder before any guard checks the folder is actually writable.** Small, isolated.
+  `:merge_git_config` (called at line ~82, before `:acquire_lock`) is the first thing in the file
+  that writes to the app directory itself, and its own write failures are not checked. Fix: a
+  cheap `type nul > "~wtest.tmp"` + errorlevel check, with a named message pointing at the folder,
+  placed before `:merge_git_config`'s own call site (right after Item 44's line-ending check is a
+  natural spot, since both are "can this even run here at all" preconditions).
+
+- **Item 49: `:lock_is_stale`'s indeterminate PowerShell result is silently treated as "fresh"
+  (lock held by a live instance), producing a false "another instance of this setup appears to be
+  running" message instead of a graceful continue.** CONFIRMED directly against current source
+  (`run_setup.bat` ~lines 5021-5028). The subroutine's own contract comment is explicit:
+  `exit/b 0 = stale (caller should evict); exit/b 1 = fresh (still held by a live instance)` -- but
+  the only branch that explicitly sets `HP_LOCK_STALE_RESULT` to a recognized value is the
+  `'stale'` case; an empty/unexpected PowerShell result (e.g. a transient PowerShell hiccup, not
+  necessarily anything wrong with the lock itself) falls through to whatever the default trailing
+  statement is, which -- per the subroutine's own documented two-value contract and no visible
+  third branch -- reads as "fresh," sending a real user to the "another instance is running,
+  delete ~bootstrap.lock" message for a condition that has nothing to do with a concurrent run.
+
+  **Fix**: distinguish "explicitly fresh" from "indeterminate" (anything not exactly `'stale'` or
+  `'fresh'`), and treat indeterminate the same as the already-graceful "could not acquire lock
+  after evicting" path a few lines below (`[WARN] ... continuing without it.`) rather than as a
+  hard block.
+
+- **Item 50: `:cndf_prompt_loop` (the REQ-013 connectivity-check retry prompt) lacks the CI-safe
+  auto-decline pattern every sibling consent gate in this file already uses.** CONFIRMED directly
+  against current source (`run_setup.bat` ~lines 5462-5501). Every other consent gate in this file
+  follows the documented 3-4 branch template (`docs/agent-lessons-learned.md`'s "CI-safe
+  interactive gates" entry: echo the prompt unconditionally, then an `HP_TEST_*_ANSWER` override,
+  then an `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE` auto-decline, then a real interactive
+  `set /p`) -- `:cndf_prompt_loop` is a bare `set /p HP_CONN_CHOICE=...` with no such branch at
+  all. `set /p` against a genuinely closed/EOF stdin (a fully detached CI job) returns empty and
+  the existing empty-input handling already defaults to offline gracefully -- but against a real,
+  open, interactive console with nobody present to answer (an unattended real machine where a
+  human started the bootstrapper, network drops mid-run, and they are not watching), it blocks
+  waiting for Y/N indefinitely, unlike every sibling gate.
+
+  **Fix**: add the same `HP_TEST_*_ANSWER` / `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE` branches
+  this file's other consent gates already use, defaulting to whichever of retry/offline is safer
+  unattended (offline, matching the existing empty-input default two lines below).
+
+- **Item 51: `HP_PIPREQS_RC`'s errorlevel capture, in the direct (non-staging) pipreqs path, has
+  an intervening `set` command between the pipreqs invocation and the `%errorlevel%` read --
+  PLAUSIBLE, NOT CONFIRMED, needs a live-cmd.exe check before acting.** Current source
+  (`run_setup.bat` ~lines 1323-1326):
+  ```
+  "%HP_PY%" -m pipreqs.pipreqs ... > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+  :pipreqs_direct_done
+  set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
+  set "HP_PIPREQS_RC=%errorlevel%"
+  ```
+  If a plain successful `set` resets `%errorlevel%` to 0 (contested even in general cmd.exe
+  folklore, and this repo's own `docs/agent-lessons-learned.md` explicitly warns against trusting
+  static reasoning about cmd.exe semantics without a live test -- three separate past incidents in
+  this exact file were each "fixed" wrong before a live-cmd.exe fixture caught the real behavior),
+  `HP_PIPREQS_RC` would always read "0" regardless of pipreqs's real exit code, silently
+  misclassifying a genuine pipreqs crash. Notably, the SIBLING staging-path capture 80 lines later
+  (~line 1402) captures `%errorlevel%` on the very next line with no intervening command --
+  suggesting this might already be a known-avoided hazard elsewhere in the same file, making the
+  direct-path instance look like an inconsistency worth resolving even before the exact mechanism
+  is confirmed.
+
+  **Fix, low-risk regardless of the exact mechanism**: move the `HP_PIPREQS_RC` capture to
+  immediately follow the pipreqs invocation (before the `HP_PIPREQS_LAST_LOG` set), matching the
+  already-used safe pattern at the staging call site. Costs nothing even if the hazard turns out
+  not to be real. **Verification needed before or alongside the fix**: a small live-Windows-CI
+  fixture confirming whether `set "VAR=literal"` does or does not reset `%errorlevel%`, following
+  this repo's own established "trust the live test over reasoning" methodology.
+
+- **Item 52: `tools/pyproj_deps.py`'s exit code 1 is overloaded between its intentional
+  "no `[project].dependencies` found" contract and a catch-all for any genuinely unexpected
+  exception, making a real bug in that script indistinguishable from the normal case.** CONFIRMED
+  directly against `tools/pyproj_deps.py` source and `run_setup.bat`'s own consumption of it
+  (~lines 1168-1182). The documented contract (exit 0/1/2 = ok/not-found/malformed-TOML) is
+  correct and intentional -- `run_setup.bat`'s silent no-op on exit 1 is CORRECT for the
+  "not-found" case, not a bug (an earlier external review of this same code mischaracterized this
+  as "swallowing a standard exception," which is not accurate -- exit 1 for "not found" is by
+  design). The real, narrower gap: `pyproj_deps.py`'s own top-level `except Exception:
+  sys.exit(1)` catch-all means a genuinely unexpected exception ALSO exits 1, so
+  `run_setup.bat`'s `if errorlevel 1 ( if errorlevel 2 (...) )` structure -- which only logs a
+  WARN for errorlevel >= 2 -- silently treats a real crash exactly like the benign "nothing to do
+  here" case. Low severity (the script is small and stable; this would only bite if a future
+  Python version or TOML edge case triggers an unhandled exception somewhere not already caught by
+  the script's own narrower `except` blocks) and low priority given that. Fix, if picked up:
+  either a distinct exit code for the top-level catch-all (e.g. 3), or an unconditional low-tier
+  log line (not a WARN) on any errorlevel 1 so the fact is at least visible in `~setup.log` for a
+  future debugging session, without changing user-facing behavior.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context

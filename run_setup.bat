@@ -30,6 +30,48 @@
 :: ============================================================
 @echo off
 setlocal DisableDelayedExpansion
+rem ============================================================
+rem LINE-ENDING SELF-CHECK -- keep this first, before any goto/call in
+rem this file. A raw/blob download ^(GitHub's "Raw" button, or a
+rem raw.githubusercontent.com link^) serves this file with Unix ^(LF^)
+rem line endings instead of the Windows ^(CRLF^) endings a real git
+rem checkout produces ^(see .gitattributes^). cmd.exe's goto/call label
+rem lookup can silently misbehave on an LF-only copy of a file this
+rem size -- wrong-label errors, skipped blocks, corrupted commands --
+rem producing a confusing partial run instead of a clear failure. This
+rem check must therefore be self-reliant ^(no goto/call anywhere in
+rem this file, since that is exactly what an LF-only copy breaks^) and
+rem must run before anything else.
+rem ============================================================
+where powershell >nul 2>&1
+if errorlevel 1 (
+  echo ***
+  echo *** [ERROR] PowerShell was not found on this machine.
+  echo *** This script requires PowerShell to run at all; please
+  echo *** repair or reinstall it, then run this script again.
+  echo ***
+  pause
+  exit /b 1
+)
+powershell -NoProfile -Command "$c=[System.IO.File]::ReadAllText($args[0]);if($c -match [string]@([char]13,[char]10)){exit 0}else{exit 1}" "%~f0" >nul 2>&1
+if errorlevel 1 (
+  echo ***
+  echo *** [ERROR] This copy of run_setup.bat has Unix-style line endings
+  echo *** ^(LF^) instead of the Windows-style ^(CRLF^) it needs to run, and
+  echo *** will fail with confusing, partial, hard-to-diagnose errors.
+  echo *** This usually happens when downloading via the GitHub "Raw" button
+  echo *** or a raw.githubusercontent.com link, neither of which preserves
+  echo *** Windows line endings.
+  echo ***
+  echo ***   Easiest fix: re-download using "git clone", not the Raw button.
+  echo ***
+  echo ***   Or open this file in an editor that shows line endings
+  echo ***   ^(e.g. Notepad++, VS Code^) and convert it to Windows ^(CRLF^)
+  echo ***   line endings, then save and run this script again.
+  echo ***
+  pause
+  exit /b 1
+)
 set "DEP_SOURCE=unknown"
 rem [REQ-026] Argv passthrough escape hatch (docs/plan-cli-interactive-verification.md P1):
 rem capture trailing arguments (%2-%9) here, before anything else touches %1-%9, and forward
