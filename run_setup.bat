@@ -43,6 +43,14 @@ rem check must therefore be self-reliant ^(no goto/call anywhere in
 rem this file, since that is exactly what an LF-only copy breaks^) and
 rem must run before anything else.
 rem ============================================================
+rem HP_PREFLIGHT_STATUS is script-rooted via %~dp0 (not CWD-relative, and not the
+rem later %STATUS_FILE%/:write_status machinery -- neither exists yet at this point
+rem in the file, and :write_status itself is call-based, unsafe to invoke before the
+rem line-ending check above has passed). Written directly, only on a preflight
+rem failure below, so a stale "ok" status from an earlier successful run in this
+rem same folder can never be misread as this run's result if this run's copy of
+rem the file cannot even get past its own preflight.
+set "HP_PREFLIGHT_STATUS=%~dp0~bootstrap.status.json"
 where powershell >nul 2>&1
 if errorlevel 1 (
   echo ***
@@ -50,6 +58,7 @@ if errorlevel 1 (
   echo *** This script requires PowerShell to run at all; please
   echo *** repair or reinstall it, then run this script again.
   echo ***
+  echo {"state":"error","exitCode":1,"pyFiles":0}> "%HP_PREFLIGHT_STATUS%"
   if not defined HP_CI_LANE ( pause )
   exit /b 1
 )
@@ -62,14 +71,16 @@ if errorlevel 2 (
   echo *** example, by a Constrained Language Mode policy -- please repair
   echo *** or unblock PowerShell, then run this script again.
   echo ***
+  echo {"state":"error","exitCode":2,"pyFiles":0}> "%HP_PREFLIGHT_STATUS%"
   if not defined HP_CI_LANE ( pause )
-  exit /b 1
+  exit /b 2
 )
 if errorlevel 1 (
   echo ***
-  echo *** [ERROR] This copy of run_setup.bat has Unix-style line endings
-  echo *** ^(LF^) instead of the Windows-style ^(CRLF^) it needs to run, and
-  echo *** will fail with confusing, partial, hard-to-diagnose errors.
+  echo *** [ERROR] This copy of run_setup.bat has invalid line endings.
+  echo *** Every line ending in this file must be Windows-style ^(CRLF^); at
+  echo *** least one is not, and the file will fail with confusing, partial,
+  echo *** hard-to-diagnose errors if run as-is.
   echo *** This usually happens when downloading via the GitHub "Raw" button
   echo *** or a raw.githubusercontent.com link, neither of which preserves
   echo *** Windows line endings.
@@ -80,6 +91,7 @@ if errorlevel 1 (
   echo ***   ^(e.g. Notepad++, VS Code^) and convert it to Windows ^(CRLF^)
   echo ***   line endings, then save and run this script again.
   echo ***
+  echo {"state":"error","exitCode":1,"pyFiles":0}> "%HP_PREFLIGHT_STATUS%"
   if not defined HP_CI_LANE ( pause )
   exit /b 1
 )
