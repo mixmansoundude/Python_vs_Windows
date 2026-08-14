@@ -1972,8 +1972,8 @@ this belongs to).
   `eol=crlf` conversion, so the broken artifact only ever existed in what a real user downloaded,
   never in what CI tested -- exactly the gap the fix below (and its own regression test) closes.
 
-  **Fix: `run_setup.bat` self-checks its own line endings as literally the first thing it does**
-  (before any other `goto`/`call` in the file, so the check itself stays reliable even on a
+  **Fix: `run_setup.bat` runs its "LINE-ENDING SELF-CHECK" block before any `goto`/`call`**
+  (so the check itself stays reliable even on a
   corrupted copy -- see the file's own "LINE-ENDING SELF-CHECK" header banner; this block
   deliberately predates every `:label` in the file, so no subroutine name exists to cite instead),
   and fails fast
