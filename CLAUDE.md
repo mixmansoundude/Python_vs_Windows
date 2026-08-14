@@ -1070,7 +1070,7 @@ way (no live Windows execution available here), that is noted explicitly rather 
 - **Item 49: `:lock_is_stale`'s indeterminate PowerShell result is silently treated as "fresh"
   (lock held by a live instance), producing a false "another instance of this setup appears to be
   running" message instead of a graceful continue.** CONFIRMED directly against current source
-  (`run_setup.bat` ~lines 5021-5028). The subroutine's own contract comment is explicit:
+  (`run_setup.bat`'s `:lock_is_stale` subroutine). The subroutine's own contract comment is explicit:
   `exit/b 0 = stale (caller should evict); exit/b 1 = fresh (still held by a live instance)` -- but
   the only branch that explicitly sets `HP_LOCK_STALE_RESULT` to a recognized value is the
   `'stale'` case; an empty/unexpected PowerShell result (e.g. a transient PowerShell hiccup, not
@@ -1086,7 +1086,7 @@ way (no live Windows execution available here), that is noted explicitly rather 
 
 - **Item 50: `:cndf_prompt_loop` (the REQ-013 connectivity-check retry prompt) lacks the CI-safe
   auto-decline pattern every sibling consent gate in this file already uses.** CONFIRMED directly
-  against current source (`run_setup.bat` ~lines 5462-5501). Every other consent gate in this file
+  against current source (`run_setup.bat`'s `:cndf_prompt_loop` label). Every other consent gate in this file
   follows the documented 3-4 branch template (`docs/agent-lessons-learned.md`'s "CI-safe
   interactive gates" entry: echo the prompt unconditionally, then an `HP_TEST_*_ANSWER` override,
   then an `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE` auto-decline, then a real interactive
@@ -1103,21 +1103,24 @@ way (no live Windows execution available here), that is noted explicitly rather 
 
 - **Item 51: `HP_PIPREQS_RC`'s errorlevel capture, in the direct (non-staging) pipreqs path, has
   an intervening `set` command between the pipreqs invocation and the `%errorlevel%` read --
-  PLAUSIBLE, NOT CONFIRMED, needs a live-cmd.exe check before acting.** Current source
-  (`run_setup.bat` ~lines 1323-1326):
+  PLAUSIBLE, NOT CONFIRMED, needs a live-cmd.exe check before acting.** Current source, right after
+  the direct pipreqs invocation, at the `:pipreqs_direct_done` label:
+
   ```
   "%HP_PY%" -m pipreqs.pipreqs ... > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
   :pipreqs_direct_done
   set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
   set "HP_PIPREQS_RC=%errorlevel%"
   ```
+
   If a plain successful `set` resets `%errorlevel%` to 0 (contested even in general cmd.exe
   folklore, and this repo's own `docs/agent-lessons-learned.md` explicitly warns against trusting
   static reasoning about cmd.exe semantics without a live test -- three separate past incidents in
   this exact file were each "fixed" wrong before a live-cmd.exe fixture caught the real behavior),
   `HP_PIPREQS_RC` would always read "0" regardless of pipreqs's real exit code, silently
-  misclassifying a genuine pipreqs crash. Notably, the SIBLING staging-path capture 80 lines later
-  (~line 1402) captures `%errorlevel%` on the very next line with no intervening command --
+  misclassifying a genuine pipreqs crash. Notably, the SIBLING staging-path capture, a little
+  further down in the same block right after the staging pipreqs invocation, captures
+  `%errorlevel%` on the very next line with no intervening command --
   suggesting this might already be a known-avoided hazard elsewhere in the same file, making the
   direct-path instance look like an inconsistency worth resolving even before the exact mechanism
   is confirmed.
@@ -1132,8 +1135,10 @@ way (no live Windows execution available here), that is noted explicitly rather 
 - **Item 52: `tools/pyproj_deps.py`'s exit code 1 is overloaded between its intentional
   "no `[project].dependencies` found" contract and a catch-all for any genuinely unexpected
   exception, making a real bug in that script indistinguishable from the normal case.** CONFIRMED
-  directly against `tools/pyproj_deps.py` source and `run_setup.bat`'s own consumption of it
-  (~lines 1168-1182). The documented contract (exit 0/1/2 = ok/not-found/malformed-TOML) is
+  directly against `tools/pyproj_deps.py` source and `run_setup.bat`'s own consumption of it, in
+  the pyproject.toml dependency-extraction block (`if exist "pyproject.toml" (...)`, the block that
+  calls `:emit_from_base64 "~pyproj_deps.py" HP_PYPROJ_DEPS`). The documented contract (exit
+  0/1/2 = ok/not-found/malformed-TOML) is
   correct and intentional -- `run_setup.bat`'s silent no-op on exit 1 is CORRECT for the
   "not-found" case, not a bug (an earlier external review of this same code mischaracterized this
   as "swallowing a standard exception," which is not accurate -- exit 1 for "not found" is by

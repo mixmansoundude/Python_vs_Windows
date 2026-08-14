@@ -50,10 +50,21 @@ if errorlevel 1 (
   echo *** This script requires PowerShell to run at all; please
   echo *** repair or reinstall it, then run this script again.
   echo ***
-  pause
+  if not defined HP_CI_LANE ( pause )
   exit /b 1
 )
-powershell -NoProfile -Command "$c=[System.IO.File]::ReadAllText($args[0]);if($c -match [string]@([char]13,[char]10)){exit 0}else{exit 1}" "%~f0" >nul 2>&1
+set "HP_SELF_PATH=%~f0"
+powershell -NoProfile -Command "try{$c=[System.IO.File]::ReadAllText($env:HP_SELF_PATH);if($c -match '\r\n' -and $c -notmatch '(?<!\r)\n' -and $c -notmatch '\r(?!\n)'){exit 0}else{exit 1}}catch{exit 2}" >nul 2>&1
+if errorlevel 2 (
+  echo ***
+  echo *** [ERROR] PowerShell could not check the line endings of this file.
+  echo *** This may mean PowerShell is restricted on this machine -- for
+  echo *** example, by a Constrained Language Mode policy -- please repair
+  echo *** or unblock PowerShell, then run this script again.
+  echo ***
+  if not defined HP_CI_LANE ( pause )
+  exit /b 1
+)
 if errorlevel 1 (
   echo ***
   echo *** [ERROR] This copy of run_setup.bat has Unix-style line endings
@@ -69,7 +80,7 @@ if errorlevel 1 (
   echo ***   ^(e.g. Notepad++, VS Code^) and convert it to Windows ^(CRLF^)
   echo ***   line endings, then save and run this script again.
   echo ***
-  pause
+  if not defined HP_CI_LANE ( pause )
   exit /b 1
 )
 set "DEP_SOURCE=unknown"
