@@ -48,6 +48,7 @@ This repository serves as a proof of concept of this new approach.
 ## TL;DR (Quickstart)
 
 - **Windows 10 (1809+)** or newer.
+- **Getting `run_setup.bat`:** Use `git clone https://github.com/mixmansoundude/Python_vs_Windows` (or clone your own fork) and copy the file from there -- this preserves the Windows line endings the script needs. Downloading it via GitHub's "Raw" button or a `raw.githubusercontent.com` link can silently corrupt those line endings instead; if that happens, the script now detects it on startup and tells you how to fix it.
 - **One Folder per Program:** Create a unique folder for your project (e.g., `universal_paperclip_optimizer` or `solve_world_hunger_v2`).
 - **Avoid Conflicts:** To ensure environment integrity, do not mix independent programs in the same folder. Each program should have its own dedicated folder and its own copy of `run_setup.bat`.
 - **First run on Windows:** Windows may show "Windows protected your PC" -- click **More info** -> **Run anyway**. If "Run anyway" is absent: right-click the batch -> **Properties** -> check **Unblock** -> **OK** -> run again.

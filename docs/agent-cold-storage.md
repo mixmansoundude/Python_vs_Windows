@@ -26,6 +26,28 @@ or more SPECIFIC, checkable triggers -- not "eventually," not "never," but "only
 they stay visible without implying either imminent work or a closed door, and thaw one only when
 its own named trigger genuinely fires -- do not speculatively build any of these ahead of that.
 
+- **Total build-attempt budget cap across nested repair loops** (hidden-import recovery x
+  DLL-bundle recovery x REQ-009 provider-cascade tiers, each with its own iteration cap that
+  compounds with the others -- see CLAUDE.md's former Active Backlog Item 45/46 discussion for the
+  no-`HP_PY` case this overlaps with). Raised during a 2026-08-14 real Windows Sandbox debugging
+  session as a theoretical concern (many PyInstaller invocations possible in the worst case with no
+  single circuit breaker), not a confirmed problem -- the individual loops are each already capped
+  and this repo's own history with them (CLAUDE.md's DLL-bundling/hidden-import interconnect
+  entries) shows real, hard-won caution about touching them without strong justification. **Trigger
+  to thaw**: a real CI run or user report showing the repair-loop product actually causing a
+  meaningfully long hang or wasted build time, not just the theoretical worst case being
+  mathematically possible.
+
+- **Binary presence guards beyond PowerShell** (curl, findstr, robocopy, fc, reg, timeout, ping,
+  more, sort, expand, tar). Only `choice.exe` and, as of the 2026-08-14 line-ending self-check
+  (CLAUDE.md's former Active Backlog Item 44), `powershell` are checked for presence before use;
+  every other external binary this bootstrapper depends on fails as an opaque errorlevel if absent.
+  Not pursued now: all of these are core Windows components present by default on any Windows 10+
+  install this bootstrapper already targets, so the realistic trigger rate is low relative to the
+  PowerShell case (which has a real, known restriction mechanism -- Constrained Language Mode --
+  that these do not). **Trigger to thaw**: a real user report of a missing-binary failure on one of
+  these specific tools, not a speculative preemptive sweep.
+
 - **PYSPEC-aware venv-vs-embed decision function.** `:try_venv_fallback` currently uses whatever
   ambient Python is on the machine unconditionally, with no check of whether it actually
   satisfies `PYSPEC` (the same value `~detect_python.py` already computes for uv/conda/embed).

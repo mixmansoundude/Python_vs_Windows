@@ -30,6 +30,71 @@
 :: ============================================================
 @echo off
 setlocal DisableDelayedExpansion
+rem ============================================================
+rem LINE-ENDING SELF-CHECK -- keep this first, before any goto/call in
+rem this file. A raw/blob download ^(GitHub's "Raw" button, or a
+rem raw.githubusercontent.com link^) serves this file with Unix ^(LF^)
+rem line endings instead of the Windows ^(CRLF^) endings a real git
+rem checkout produces ^(see .gitattributes^). cmd.exe's goto/call label
+rem lookup can silently misbehave on an LF-only copy of a file this
+rem size -- wrong-label errors, skipped blocks, corrupted commands --
+rem producing a confusing partial run instead of a clear failure. This
+rem check must therefore be self-reliant ^(no goto/call anywhere in
+rem this file, since that is exactly what an LF-only copy breaks^) and
+rem must run before anything else.
+rem ============================================================
+rem HP_PREFLIGHT_STATUS is script-rooted via %~dp0 (not CWD-relative, and not the
+rem later %STATUS_FILE%/:write_status machinery -- neither exists yet at this point
+rem in the file, and :write_status itself is call-based, unsafe to invoke before the
+rem line-ending check above has passed). Written directly, only on a preflight
+rem failure below, so a stale "ok" status from an earlier successful run in this
+rem same folder can never be misread as this run's result if this run's copy of
+rem the file cannot even get past its own preflight.
+set "HP_PREFLIGHT_STATUS=%~dp0~bootstrap.status.json"
+where powershell >nul 2>&1
+if errorlevel 1 (
+  echo ***
+  echo *** [ERROR] PowerShell was not found on this machine.
+  echo *** This script requires PowerShell to run at all; please
+  echo *** repair or reinstall it, then run this script again.
+  echo ***
+  echo {"state":"error","exitCode":1,"pyFiles":0}> "%HP_PREFLIGHT_STATUS%"
+  if not defined HP_CI_LANE ( pause )
+  exit /b 1
+)
+set "HP_SELF_PATH=%~f0"
+powershell -NoProfile -Command "try{$c=[System.IO.File]::ReadAllText($env:HP_SELF_PATH);$crlf=-join @([char]13,[char]10);$lf=[string][char]10;$cr=[string][char]13;$norm=$c.Replace($crlf,'');if($c.Contains($crlf) -and -not $norm.Contains($lf) -and -not $norm.Contains($cr)){exit 0}else{exit 1}}catch{exit 2}" >nul 2>&1
+if errorlevel 2 (
+  echo ***
+  echo *** [ERROR] PowerShell could not check the line endings of this file.
+  echo *** This may mean PowerShell is restricted on this machine -- for
+  echo *** example, by a Constrained Language Mode policy -- please repair
+  echo *** or unblock PowerShell, then run this script again.
+  echo ***
+  echo {"state":"error","exitCode":2,"pyFiles":0}> "%HP_PREFLIGHT_STATUS%"
+  if not defined HP_CI_LANE ( pause )
+  exit /b 2
+)
+if errorlevel 1 (
+  echo ***
+  echo *** [ERROR] This copy of run_setup.bat has invalid line endings.
+  echo *** Every line ending in this file must be Windows-style ^(CRLF^); at
+  echo *** least one is not, and the file will fail with confusing, partial,
+  echo *** hard-to-diagnose errors if run as-is.
+  echo *** This usually happens when downloading via the GitHub "Raw" button
+  echo *** or a raw.githubusercontent.com link, neither of which preserves
+  echo *** Windows line endings.
+  echo ***
+  echo ***   Easiest fix: re-download using "git clone", not the Raw button.
+  echo ***
+  echo ***   Or open this file in an editor that shows line endings
+  echo ***   ^(e.g. Notepad++, VS Code^) and convert it to Windows ^(CRLF^)
+  echo ***   line endings, then save and run this script again.
+  echo ***
+  echo {"state":"error","exitCode":1,"pyFiles":0}> "%HP_PREFLIGHT_STATUS%"
+  if not defined HP_CI_LANE ( pause )
+  exit /b 1
+)
 set "DEP_SOURCE=unknown"
 rem [REQ-026] Argv passthrough escape hatch (docs/plan-cli-interactive-verification.md P1):
 rem capture trailing arguments (%2-%9) here, before anything else touches %1-%9, and forward
