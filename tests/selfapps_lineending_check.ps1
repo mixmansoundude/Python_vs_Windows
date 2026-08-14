@@ -40,8 +40,11 @@ function Write-NdjsonRow {
 $rowIds = @('self.preflight.no_powershell', 'self.preflight.ps_check_fail', 'self.preflight.lf_only')
 
 # Non-Windows skip
-if (-not $IsWindows) {
-    $platform = [System.Environment]::OSVersion.Platform.ToString()
+# derived requirement: $IsWindows is undefined (reads as $null, so "-not $IsWindows" is
+# always true) under Windows PowerShell 5.1 -- it was only introduced in PowerShell 6+.
+# [System.Environment]::OSVersion.Platform works identically on 5.1 and 7+.
+$platform = [System.Environment]::OSVersion.Platform.ToString()
+if ($platform -ne 'Win32NT') {
     foreach ($id in $rowIds) {
         Write-NdjsonRow ([ordered]@{
             id      = $id

@@ -1974,7 +1974,9 @@ this belongs to).
 
   **Fix: `run_setup.bat` self-checks its own line endings as literally the first thing it does**
   (before any other `goto`/`call` in the file, so the check itself stays reliable even on a
-  corrupted copy -- see the block right after `setlocal` at the top of the file), and fails fast
+  corrupted copy -- see the file's own "LINE-ENDING SELF-CHECK" header banner; this block
+  deliberately predates every `:label` in the file, so no subroutine name exists to cite instead),
+  and fails fast
   with a clear, actionable message instead of a silent, partial, undiagnosable run. This does not
   fix the distribution channel itself -- a user can still land on a raw link and get the broken
   file, they just now get told clearly instead of hitting the multi-hour debugging session that
