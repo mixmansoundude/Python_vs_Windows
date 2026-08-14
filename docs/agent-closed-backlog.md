@@ -1946,6 +1946,87 @@ this belongs to).
   enough of a track record to be trusted as the sole delivery mechanism. Revisit whether it can
   move out once that track record exists.
 
+### Item 44 (closed 2026-08-14)
+
+- **The Prime-Directive download path serves `run_setup.bat` with broken (LF-only) line endings,
+  and cmd.exe's goto/call silently misbehaves on the result.** Confirmed directly: a raw download
+  (GitHub's "Raw" button, or a `raw.githubusercontent.com` link) is 447,375 bytes with zero CRLF
+  pairs; the same file via a real `git clone` checkout is 452,917 bytes with 5,542 CRLF pairs --
+  a delta of exactly one byte per line, matching `.gitattributes`'s own model exactly: `* text=auto
+  eol=lf` normalizes the STORED blob to LF regardless of the `*.bat text eol=crlf` override, and
+  that override only affects checkout-time conversion, never the blob GitHub serves raw. Every
+  natural "just get me the file" path a beginner would take (the Raw button, a
+  raw.githubusercontent.com link found via search) hands them a corrupted copy; only `git clone`
+  (or any path that performs a real checkout) gets it right.
+
+  **Consequence, confirmed against a real symptom triad from a Windows Sandbox debugging
+  session**: cmd.exe resolves `goto`/`call` by relocating to a byte offset associated with the
+  target label; an LF-only copy of a ~4700-line file with 129 labels drifts that offset by one
+  byte per line crossed, compounding with each jump. This produced exactly what was observed: a
+  `goto`/`call` landing on the wrong spot ("the system cannot find the batch label specified" for
+  a label that genuinely exists), a `%HP_PY%`-dependent line executing before `HP_PY` was ever
+  assigned because an earlier gating block was skipped by the drift (`'""' is not recognized as an
+  internal or external command`), and a run that partially completes -- early, purely-sequential
+  code runs fine, everything past the first mis-resolved jump does not. No CI lane could catch
+  this: every CI checkout goes through `actions/checkout`, which always applies `.gitattributes`'s
+  `eol=crlf` conversion, so the broken artifact only ever existed in what a real user downloaded,
+  never in what CI tested -- exactly the gap the fix below (and its own regression test) closes.
+
+  **Fix: `run_setup.bat` self-checks its own line endings as literally the first thing it does**
+  (before any other `goto`/`call` in the file, so the check itself stays reliable even on a
+  corrupted copy -- see the block right after `setlocal` at the top of the file), and fails fast
+  with a clear, actionable message instead of a silent, partial, undiagnosable run. This does not
+  fix the distribution channel itself -- a user can still land on a raw link and get the broken
+  file, they just now get told clearly instead of hitting the multi-hour debugging session that
+  surfaced this item. See `docs/open-questions.md`'s open item 2 for the maintainer decision on
+  whether/how to fix distribution itself (pro/con on the `.gitattributes` options -- a genuinely
+  separate, still-open question, not a precondition for this item's own closure), and README.md's
+  TL;DR bullet recommending `git clone` in the meantime.
+
+  **CI coverage for the self-check's own three failure branches, closed in the same overall item
+  (a second loop, after the mitigation above had already shipped and soaked one review round).**
+  Flagged by external review (Codex, citing AGENTS.md's rule that every branch added to
+  `run_setup.bat` must have a CI test) as a real gap: a normal Actions checkout only ever exercises
+  the CRLF happy path, so a future quoting/errorlevel regression in any of the check's three
+  branches -- PowerShell absent from PATH entirely, PowerShell present but the check's own
+  invocation fails (`errorlevel 2`), or a genuine LF-only copy of the file -- could have silently
+  broken or removed the check with nothing in CI to notice. Closed via three new `HP_TEST_FORCE_*`
+  hooks plus `tests/selfapps_lineending_check.ps1` (wired gating into `real`/`conda-full`,
+  matching `self.preflight.syntax`'s own precedent for a cheap, provider-agnostic, pure-batch
+  preflight test -- see `docs/agent-ndjson.md`'s own section for the row ids and mechanism).
+  `HP_TEST_FORCE_NO_POWERSHELL` forces a synthetic nonzero errorlevel right after the real `where
+  powershell` call, with no PATH tampering (spawning and hiding a real `powershell.exe` from PATH
+  on a shared CI runner was considered and rejected as needlessly risky for zero extra coverage
+  value). `HP_TEST_FORCE_LF_ONLY` and `HP_TEST_FORCE_PS_CHECK_FAIL` both redirect `HP_SELF_PATH`
+  at something other than the running copy of `run_setup.bat` itself (a synthetic pure-LF sentinel
+  file, or a path that does not exist) rather than corrupting the file actually executing -- the
+  running copy must stay healthy CRLF to reliably reach and execute the hook logic at all. Pointing
+  at a nonexistent path makes the real, unmodified PowerShell command genuinely throw
+  (`FileNotFoundException`) and hit its own `catch{exit 2}` branch, exercising the real failure
+  path rather than a simulated one. All three hooks and the underlying PowerShell command's exact
+  behavior for each case were verified directly against a real PowerShell 7 binary before being
+  wired in, not just reasoned about -- this also caught a genuine bug in the test script itself
+  before it ever reached CI: an initial draft used PowerShell's `-like "*...*"` for substring
+  assertions, which silently mis-evaluates any expected string containing `[`/`]` (its wildcard
+  syntax treats brackets as a character class, not literal text) -- exactly the shape of the
+  `[ERROR]`-prefixed messages this check emits. Fixed to a plain `.Contains()` before landing.
+
+  **A raw-download-from-the-PR's-own-branch test (fetching the real corrupted bytes via
+  `raw.githubusercontent.com` instead of synthesizing them locally) was considered and rejected**
+  for the CI-gating test specifically: it would add a real network dependency and fork-branch-
+  resolution complexity for no additional coverage, since the corruption mechanism was already
+  triangulated at the byte level above -- a locally-synthesized pure-LF file exercises the exact
+  same detection logic and the exact same cmd.exe byte-offset-drift hazard as a genuine raw
+  download, because what matters to the detection algorithm is the byte content, not the transport
+  that produced it. This also keeps the new test deterministic and gating-lane-appropriate,
+  matching this repo's general preference (`self.dl.uv.fallback`/`self.dl.conda.fallback` are the
+  only tests in this repo that deliberately hit real external download endpoints, and both are
+  non-gating specifically because of that). A periodic, informational, non-gating confirmation
+  that `raw.githubusercontent.com` still serves LF-only content (i.e., the general premise behind
+  this whole item still holds) would be a legitimate "next-pin probe"-style addition to CLAUDE.md's
+  Periodic Maintenance Checks section if ever wanted -- not built here, since nothing about it is
+  urgent or was explicitly requested.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

@@ -52,6 +52,12 @@ rem same folder can never be misread as this run's result if this run's copy of
 rem the file cannot even get past its own preflight.
 set "HP_PREFLIGHT_STATUS=%~dp0~bootstrap.status.json"
 where powershell >nul 2>&1
+if defined HP_TEST_FORCE_NO_POWERSHELL (
+  rem derived requirement: force a nonzero errorlevel here without touching PATH,
+  rem so CI can deterministically exercise the branch below on a shared runner
+  rem with no risk of actually breaking PowerShell resolution for it.
+  cmd /c "exit /b 1"
+)
 if errorlevel 1 (
   echo ***
   echo *** [ERROR] PowerShell was not found on this machine.
@@ -62,7 +68,20 @@ if errorlevel 1 (
   if not defined HP_CI_LANE ( pause )
   exit /b 1
 )
-set "HP_SELF_PATH=%~f0"
+if defined HP_TEST_FORCE_LF_ONLY (
+  rem derived requirement: point the check at a synthetic LF-only file instead
+  rem of this running copy, so CI can exercise the invalid-line-endings branch
+  rem below without corrupting the file that is actually executing right now.
+  set "HP_SELF_PATH=%~dp0~test_lf_only.bat"
+) else if defined HP_TEST_FORCE_PS_CHECK_FAIL (
+  rem derived requirement: point at a path that does not exist, so the real
+  rem PowerShell command below genuinely throws and hits its own catch branch
+  rem -- exercises the real failure path instead of faking an exit code
+  rem externally.
+  set "HP_SELF_PATH=%~dp0~test_missing_for_ps_check.bat"
+) else (
+  set "HP_SELF_PATH=%~f0"
+)
 powershell -NoProfile -Command "try{$c=[System.IO.File]::ReadAllText($env:HP_SELF_PATH);$crlf=-join @([char]13,[char]10);$lf=[string][char]10;$cr=[string][char]13;$norm=$c.Replace($crlf,'');if($c.Contains($crlf) -and -not $norm.Contains($lf) -and -not $norm.Contains($cr)){exit 0}else{exit 1}}catch{exit 2}" >nul 2>&1
 if errorlevel 2 (
   echo ***

@@ -958,55 +958,6 @@ the same session, no new information, not re-filed). Each item below was checked
 source directly, not taken on the reviews' word alone; where a claim could not be confirmed this
 way (no live Windows execution available here), that is noted explicitly rather than stated as fact.
 
-- **Item 44: the Prime-Directive download path serves `run_setup.bat` with broken (LF-only) line
-  endings, and cmd.exe's goto/call silently misbehaves on the result.** Confirmed directly: a raw
-  download (GitHub's "Raw" button, or a `raw.githubusercontent.com` link) is 447,375 bytes with
-  zero CRLF pairs; the same file via a real `git clone` checkout is 452,917 bytes with 5,542 CRLF
-  pairs -- a delta of exactly one byte per line, matching `.gitattributes`'s own model exactly:
-  `* text=auto eol=lf` normalizes the STORED blob to LF regardless of the `*.bat text eol=crlf`
-  override, and that override only affects checkout-time conversion, never the blob GitHub serves
-  raw. Every natural "just get me the file" path a beginner would take (the Raw button, a
-  raw.githubusercontent.com link found via search) hands them a corrupted copy; only `git clone`
-  (or any path that performs a real checkout) gets it right today.
-
-  **Consequence, confirmed against the real symptom triad from the sandbox session**: cmd.exe
-  resolves `goto`/`call` by relocating to a byte offset associated with the target label; an
-  LF-only copy of a ~4700-line file with 129 labels drifts that offset by one byte per line
-  crossed, compounding with each jump. This produces exactly what was observed: a `goto`/`call`
-  landing on the wrong spot ("the system cannot find the batch label specified" for a label that
-  genuinely exists), a `%HP_PY%`-dependent line executing before `HP_PY` was ever assigned because
-  an earlier gating block was skipped by the drift (`'""' is not recognized as an internal or
-  external command`), and a run that partially completes -- early, purely-sequential code runs
-  fine, everything past the first mis-resolved jump does not. No CI lane can catch this: every CI
-  checkout goes through `actions/checkout`, which always applies `.gitattributes`'s `eol=crlf`
-  conversion, so the broken artifact only ever exists in what a real user downloads, never in what
-  CI tests.
-
-  **Mitigated this session, not fully fixed**: `run_setup.bat` now self-checks its own line endings
-  as literally the first thing it does (before any other `goto`/`call` in the file, so the check
-  itself stays reliable even on a corrupted copy -- see the new block right after `setlocal` at the
-  top of the file), and fails fast with a clear, actionable message instead of a silent, partial,
-  undiagnosable run. This does not fix the distribution channel itself -- a user can still land on
-  a raw link and get the broken file; the check only turns that into a loud, fixable failure instead
-  of the multi-hour debugging session that surfaced this item. See `docs/open-questions.md` for the
-  maintainer decision on whether/how to fix distribution itself (pro/con on the `.gitattributes`
-  options), and README.md's new TL;DR bullet recommending `git clone` in the meantime.
-
-  **Known gap, deliberately not closed in the same slice: the new self-check has no CI coverage of
-  its own, in explicit tension with AGENTS.md's stated rule that every branch added to
-  `run_setup.bat` must have a CI test.** Flagged by both external reviews on the PR that shipped
-  this item (Codex, citing AGENTS.md directly) -- a normal Actions checkout only ever exercises the
-  CRLF happy path (`actions/checkout` always applies `.gitattributes`'s `eol=crlf` conversion, same
-  reason no CI lane could catch the original bug), so a future quoting/errorlevel regression in any
-  of its three branches -- PowerShell absent from PATH entirely, PowerShell present but the check's
-  own invocation fails (`errorlevel 2`), or a genuine LF-only copy of the file -- could silently
-  break or remove the check with nothing in CI to notice. Needs a dedicated `HP_TEST_*` hook
-  (matching this repo's established pattern, e.g. `HP_TEST_FORCE_UV_FAIL`) that deterministically
-  forces each of the three, plus an NDJSON row asserting the emitted message and exit code for each.
-  Deliberately
-  deferred rather than built inline: real test-authoring scope (a new selfapps scenario, workflow
-  wiring, NDJSON registry update), not a small slice on top of the fix that was already in flight.
-
 - **Item 45: gate the build/warnfix/repair block on `HP_PY` actually existing, so a failed
   env-create cannot cascade into a doomed PyInstaller build plus multiple repair-loop attempts with
   no interpreter behind any of them.** Deliberately scoped narrow -- this is the small, isolated
