@@ -1076,7 +1076,7 @@ way (no live Windows execution available here), that is noted explicitly rather 
 
 - **Item 48: no writable-CWD preflight; `:merge_git_config` writes `.gitignore`/`.gitattributes`
   into the app folder before any guard checks the folder is actually writable.** Small, isolated.
-  `:merge_git_config` (called at line ~82, before `:acquire_lock`) is the first thing in the file
+  `:merge_git_config` (called near the top of the file, before `:acquire_lock`) is the first thing in the file
   that writes to the app directory itself, and its own write failures are not checked. Fix: a
   cheap `type nul > "~wtest.tmp"` + errorlevel check, with a named message pointing at the folder,
   placed before `:merge_git_config`'s own call site (right after Item 44's line-ending check is a
