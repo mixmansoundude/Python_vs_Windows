@@ -997,12 +997,13 @@ way (no live Windows execution available here), that is noted explicitly rather 
   `run_setup.bat` must have a CI test.** Flagged by both external reviews on the PR that shipped
   this item (Codex, citing AGENTS.md directly) -- a normal Actions checkout only ever exercises the
   CRLF happy path (`actions/checkout` always applies `.gitattributes`'s `eol=crlf` conversion, same
-  reason no CI lane could catch the original bug), so a future quoting/errorlevel regression in
-  either the LF-only branch or the PowerShell-execution-failure branch (`errorlevel 2`) could
-  silently break or remove the check with nothing in CI to notice. Needs a dedicated `HP_TEST_*`
-  hook (matching this repo's established pattern, e.g. `HP_TEST_FORCE_UV_FAIL`) that deterministically
-  forces each branch -- an LF-only copy of the running script, and a simulated PowerShell-invocation
-  failure -- plus an NDJSON row asserting the emitted message and exit code for each. Deliberately
+  reason no CI lane could catch the original bug), so a future quoting/errorlevel regression in any
+  of its three branches -- PowerShell absent from PATH entirely, PowerShell present but the check's
+  own invocation fails (`errorlevel 2`), or a genuine LF-only copy of the file -- could silently
+  break or remove the check with nothing in CI to notice. Needs a dedicated `HP_TEST_*` hook
+  (matching this repo's established pattern, e.g. `HP_TEST_FORCE_UV_FAIL`) that deterministically
+  forces each of the three, plus an NDJSON row asserting the emitted message and exit code for each.
+  Deliberately
   deferred rather than built inline: real test-authoring scope (a new selfapps scenario, workflow
   wiring, NDJSON registry update), not a small slice on top of the fix that was already in flight.
 
