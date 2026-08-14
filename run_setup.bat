@@ -54,7 +54,7 @@ if errorlevel 1 (
   exit /b 1
 )
 set "HP_SELF_PATH=%~f0"
-powershell -NoProfile -Command "try{$c=[System.IO.File]::ReadAllText($env:HP_SELF_PATH);if($c -match '\r\n' -and $c -notmatch '(?<!\r)\n' -and $c -notmatch '\r(?!\n)'){exit 0}else{exit 1}}catch{exit 2}" >nul 2>&1
+powershell -NoProfile -Command "try{$c=[System.IO.File]::ReadAllText($env:HP_SELF_PATH);$crlf=-join @([char]13,[char]10);$lf=[string][char]10;$cr=[string][char]13;$norm=$c.Replace($crlf,'');if($c.Contains($crlf) -and -not $norm.Contains($lf) -and -not $norm.Contains($cr)){exit 0}else{exit 1}}catch{exit 2}" >nul 2>&1
 if errorlevel 2 (
   echo ***
   echo *** [ERROR] PowerShell could not check the line endings of this file.
