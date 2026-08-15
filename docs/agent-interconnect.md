@@ -560,6 +560,31 @@ imports; the second `:dll_bundle_recover` pass located and bundled `proj_9.dll`
 exited 0. `chainPass` read `true` for the first time (`mech1Pass`/`mech2Pass`/`mech3Pass`/
 `mech4Pass` all `true`).
 
+**`docs/open-questions.md`'s former item 1 (answered yes, implemented): the post-flight caveat
+panel now surfaces a DLL-specific hint, via a new `HP_DLL_HINT_STATE` variable that any future
+touch to `:dll_bundle_recover`, `:emit_dll_bundle_row`, or `:print_postflight_briefing` must
+understand.** `:emit_dll_bundle_row` sets `HP_DLL_HINT_STATE=%~1` (the same state token already
+passed for the NDJSON row) BEFORE its own `if not defined HP_NDJSON exit /b 0` early-return, so
+the caveat hint works even with NDJSON emission disabled -- do not move that `set` below the
+guard. Unlike `HP_DLL_FAILED`/`HP_DLL_EXHAUSTED` (cleared at `:dll_bundle_recover_exit`),
+`HP_DLL_HINT_STATE` is deliberately left alone there, so it survives the subroutine returning and
+is still readable much later when `:print_postflight_briefing` runs from the main line. It IS
+reset once per fresh build attempt (alongside `HP_PYI_HID_COLLECT` in `:run_entry_smoke`'s own
+init block), for the identical cross-tier-leak reason `HP_DEP_MAYBE_INCOMPLETE`/`HP_PYI_DLLBIND`
+already are -- a provider tier whose own `:dll_bundle_recover` call never fires this run (not
+conda, or no DLL warning at all) must not inherit a stale hint from an earlier, cascaded-away
+provider. `:pfb_caveat` calls a new `:pfb_dll_hint` subroutine (`if defined HP_DLL_HINT_STATE call
+:pfb_dll_hint`), which goto-dispatches into 3 wording buckets, not 1 -- a review pass on PR #414
+already established detection and repair are NOT the same event (see above): `skipped_nuitka`/
+`skipped_non_conda`/`unlocatable` never attempted a repair; `failed_rebuild`/`failed_missing_exe`/
+`exhausted` attempted one that did not fully resolve; `repaired` means the DLL itself was fixed --
+this caveat firing anyway in that case means something ELSE is still wrong, a real but rare edge
+case (a DLL repair can trigger one bounded extra `:hidden_import_recover` pass that still leaves
+`HP_EXE_EXIT` non-zero for an unrelated reason), not dead code to prune. `HP_DLL_DETECTED_SAFE`
+(already sanitized for `:log`'s own unquoted echo -- ampersand/pipe/angle-bracket/percent/caret
+all stripped) is reused as-is on this panel's own plain `echo`, since it is the identical hazard
+class. Static regression guard: `tests/harness.ps1`'s `batch.dll_bundle.caveat_hint`.
+
 ---
 
 ## AV-Safe Build Path requirement 9 (`:offer_optimized_build`) -- a strictly safer sibling of Tier A

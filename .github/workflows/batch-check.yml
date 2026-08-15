@@ -3462,6 +3462,29 @@ jobs:
             '- No gate summary generated.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
 
+  crlf-check:
+    name: CRLF line-ending check (.bat/.cmd)
+    # derived requirement: enforces docs/agent-lessons-learned.md's ".bat files: -text, not
+    # eol=crlf" contract -- .gitattributes disables git's own line-ending normalization for
+    # *.bat/*.cmd (so raw.githubusercontent.com serves exactly what is committed), which means
+    # CRLF byte-uniformity must now be enforced by tooling instead of by git itself. Independent
+    # of the selftest matrix on purpose (a pure static check on the checked-out tree, no
+    # environment dependency) -- no "needs:", so it runs immediately and fails fast instead of
+    # waiting on the ~90-minute matrix, and does not touch publish_diag's own needs/if:always()
+    # graph (CLAUDE.md Active Backlog Item 35's own caution: a new job must never silently
+    # narrow that guard). Deliberately not continue-on-error -- a violation here is real and
+    # deterministic (not flaky), so this job's own conclusion should report it as a failure;
+    # whether that actually BLOCKS a PR merge is a separate branch-protection required-status-
+    # checks decision (Item 35's own "gating is a GitHub setting, not a YAML edit" rule), not
+    # something this job's YAML alone can enforce.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Check CRLF line endings on tracked .bat/.cmd files
+        run: python3 tools/check_crlf.py
+
   ndjson-registry-check:
     name: NDJSON registry cross-check (doc vs code vs log)
     # derived requirement: advisory only -- cross-checks docs/agent-ndjson.md's row registry
@@ -3861,6 +3884,26 @@ jobs:
           echo "DIAG=$Diag" >> $env:GITHUB_OUTPUT
           echo "ARTIFACTS=$Artifacts" >> $env:GITHUB_OUTPUT
           echo "SHORTSHA=$short" >> $env:GITHUB_OUTPUT
+
+      - name: Publish run_setup.bat to Pages (guaranteed-CRLF fallback for raw downloads)
+        # derived requirement: docs/open-questions.md item 2 (Option C) -- a second, independent
+        # distribution point for the Prime Directive's own bootstrapper, decoupled entirely from
+        # git blob/raw-URL semantics (unlike raw.githubusercontent.com, a GitHub Pages asset is
+        # not governed by .gitattributes at all -- it is just bytes this job copies). Verifies
+        # CRLF explicitly before publishing rather than trusting checkout alone, so a future
+        # .gitattributes regression (e.g. someone reverting "-text" back to normalization) would
+        # be caught here too, not just by the gating crlf-check job. See README.md's top-of-file
+        # Prime Directive pointer, which documents this URL as the fallback if the raw link ever
+        # misbehaves. continue-on-error: a hiccup publishing this one file must never block the
+        # rest of the diagnostics site from deploying.
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_crlf.py run_setup.bat
+          cp run_setup.bat "${{ steps.prep.outputs.SITE }}/run_setup.bat"
+          echo "Published run_setup.bat to Pages site root."
 
       - name: Download iterate logs artifact (if present)
         if: ${{ always() }}

@@ -205,6 +205,7 @@ batch.postexec.checkpoint,
 batch.dll_bundle.ndjson,
 batch.dll_bundle.pct_sanitizer,
 batch.dll_bundle.second_pass,
+batch.dll_bundle.caveat_hint,
 self.dll_bundle.recover,
 self.bootstrap.state, self.empty_repo.msg, self.empty_repo.no_spurious_warn,
 self.empty_repo.pytxt_hint,
@@ -318,6 +319,16 @@ guard only, same as `batch.dll_bundle.ndjson` -- runtime proof is `self.layered_
 `chainPass` (`cache` lane, non-gating), CONFIRMED `true` for the first time via real CI (PR #421
 merge commit `dcfce1d`, `cache`-lane run `31264219121`) -- see `docs/agent-closed-backlog.md`'s
 Item 29 entry for the full trace.
+
+`batch.dll_bundle.caveat_hint` (`tests/harness.ps1`, static, docs/open-questions.md's former item
+1, answered yes) is a FOURTH, separate static check in the same family -- guards the post-flight
+caveat panel's DLL-specific hint (`HP_DLL_HINT_STATE`/`:pfb_dll_hint`, see
+`docs/agent-interconnect.md`'s DLL-bundling section for the full mechanism): the reset once per
+fresh build attempt, the capture happening before `:emit_dll_bundle_row`'s own `HP_NDJSON`
+early-return, the caveat panel's conditional call site, and all 3 wording buckets
+(skipped/failed/repaired) existing. Static wiring guard only, same as its three siblings --
+verified directly against the real `run_setup.bat` content via a standalone `pwsh` run of the
+same regex logic before landing (not just reasoned about).
 
 ## selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes)
 

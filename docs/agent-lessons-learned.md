@@ -30,6 +30,74 @@ See CLAUDE.md's Active Backlog Item 34 for the restructuring pass this principle
 
 ---
 
+## `.bat`/`.cmd` files: `-text`, not `eol=crlf` -- git's own normalization cannot make a raw download correct
+
+**The problem, confirmed live (docs/agent-closed-backlog.md's Item 44, `docs/open-questions.md`'s
+former item 2): a raw download of `run_setup.bat` (GitHub's "Raw" button, or a
+`raw.githubusercontent.com` link -- the only realistic path for the Prime Directive's own target
+user, a clean Windows machine with no git) served pure LF, not CRLF, even though
+`.gitattributes` had `*.bat text eol=crlf`.** Confirmed directly against the git blob before the
+fix: 0 CRLF pairs, 5,626 bare LF, in a 452,917-byte working-tree copy that reads as 5,542 CRLF
+pairs after a real `git clone`. Root cause: git's `text=auto`/`text` attribute normalizes the
+STORED BLOB to LF on every commit, unconditionally, regardless of any `eol=` override -- `eol=`
+only controls what a real `git checkout` writes back to a working tree, a step raw/blob serving
+(GitHub's raw file server, `git archive`/zipball downloads) never performs. Any repo relying on
+`eol=crlf` alone for a file that must also be byte-correct when served raw has this exact gap,
+whether or not it happens to be exercised yet.
+
+**Fix: disable git's line-ending handling entirely for `.bat`/`.cmd` (`-text` in
+`.gitattributes`), not "keep normalizing but override the checkout eol."** With `-text`, git
+performs NO conversion in either direction -- the committed blob, the working-tree bytes on any
+OS, and what a raw URL serves are always byte-identical. This trades away git's own automatic
+"diffs stay clean regardless of what edited the file" guarantee (the reason `text=auto` was
+adopted in the first place) for "raw download is always correct" -- the two are NOT
+simultaneously achievable through git's own normalization alone, so byte-uniformity must be
+enforced by tooling instead:
+- **`tools/check_crlf.py`** (check + `--fix` modes) is the enforcement mechanism, run against
+  every git-tracked `*.bat`/`*.cmd` file. Wired into `tools/run_sanity_sweep.sh` (agent-facing,
+  advisory) AND a dedicated, independent CI job (`crlf-check` in `batch-check.yml`, no
+  `continue-on-error`, no `needs:` -- pure static check, runs immediately, fails fast). Its own
+  fix-mode follows this repo's established safe-write pattern (build the fixed bytes fully in
+  memory, verify via a fresh read-back, atomic replace) -- see the "never open a real source file
+  in Python 'w' mode as part of a dry run" entry below for why that pattern is load-bearing here,
+  not optional polish.
+- **CI enforcement is a real job conclusion, not automatically a merge gate.** Per this repo's own
+  "gating is a GitHub branch-protection setting, not a YAML edit" rule (CLAUDE.md Active Backlog
+  Item 35), the `crlf-check` job reporting failure is necessary but not sufficient for it to
+  actually block a PR -- someone with repo admin access still has to add its exact check name to
+  branch protection's required-status-checks list.
+- **No CI auto-fix-and-commit.** CLAUDE.md's own CI Overview is explicit: only
+  `tools/inline_model_fix.py` (the "Model quick-fix (inline)" job) may commit auto-fixes; no other
+  job may. `--fix` is therefore local/on-demand only, never invoked from CI.
+- **A contributor-facing warning banner** (top of `run_setup.bat`, `run_tests.bat`,
+  `tests/dynamic_tests.bat`) tells a human "do not edit via the GitHub web editor or a Mac/Linux
+  tool" directly -- a parallel, independent line of defense to the runtime self-check `run_setup.
+  bat` already has (Item 44's own mitigation: the file detects a corrupted LF-only copy of ITSELF
+  at startup and fails with a clear message). The banner protects against introducing the
+  corruption in the first place; the runtime check protects an end user who already has a
+  corrupted copy from a confusing partial run.
+- **A second, independent distribution point** (GitHub Pages, `batch-check.yml`'s `publish_diag`
+  job) republishes `run_setup.bat` from `main` on every push, decoupled entirely from git blob/raw
+  URL semantics -- a Pages asset is just bytes a CI step copies, never subject to `.gitattributes`
+  at all. Defense in depth: even a future accidental revert of the `-text` attribute would not
+  silently break this second URL, since its own step independently re-verifies CRLF via
+  `tools/check_crlf.py` before publishing.
+
+**One-time cost, accepted deliberately**: renormalizing already-tracked files under a NEW
+attribute (`git add --renormalize <path>`) changes every line's stored representation at once --
+a full-file diff with no real content change, unavoidable exactly once when adopting `-text` for a
+file that was previously LF-normalized in storage. Confirmed the working-tree bytes were already
+genuine CRLF before this fix (git's OLD `eol=crlf` checkout-time conversion had already been
+writing CRLF to disk on every checkout all along) -- only the STORED blob was wrong, so
+`--renormalize` just makes git stop re-deriving LF from working-tree CRLF on every future commit.
+
+**Why `.ps1`/`.psm1`/`.psd1` keep normal `text eol=crlf` (unchanged)**: not raw-fetched by end
+users at all (embedded as base64 payloads inside `run_setup.bat`'s own `HP_*` helpers, or
+contributor/CI-only test/tool scripts) -- no benefit to taking on `-text`'s "byte-uniformity must
+now be enforced by tooling" cost for files the Prime Directive flow never touches directly.
+
+---
+
 ## Quote a variable before piping it into `findstr`, or `&` in its value splits the command line
 
 **Found via a CodeRabbit review finding on PR #417** (an "outside diff range" catch -- pre-existing

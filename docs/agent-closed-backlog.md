@@ -2028,11 +2028,70 @@ this belongs to).
   gating-lane-appropriate,
   matching this repo's general preference (`self.dl.uv.fallback`/`self.dl.conda.fallback` are the
   only tests in this repo that deliberately hit real external download endpoints, and both are
-  non-gating specifically because of that). A periodic, informational, non-gating confirmation
-  that `raw.githubusercontent.com` still serves LF-only content (i.e., the general premise behind
-  this whole item still holds) would be a legitimate "next-pin probe"-style addition to CLAUDE.md's
-  Periodic Maintenance Checks section if ever wanted -- not built here, since nothing about it is
-  urgent or was explicitly requested.
+  non-gating specifically because of that). **Superseded by the distribution-channel fix below**:
+  the underlying premise ("`raw.githubusercontent.com` serves LF-only content") was the actual bug,
+  not an accepted permanent fact -- see the "Raw-download CRLF distribution fix" entry immediately
+  below, which closes `docs/open-questions.md`'s former item 2 and makes this premise false going
+  forward. This self-check remains valuable as defense-in-depth regardless (an old cached download,
+  a re-saved copy from a non-CRLF-preserving editor, or a future regression could still produce a
+  corrupted copy), just no longer the ONLY protection against the distribution channel itself.
+
+### Raw-download CRLF distribution fix (`docs/open-questions.md` former item 2, shipped 2026-08-15)
+
+Closes the maintainer decision Item 44 (above) deliberately left open: `raw.githubusercontent.com`
+served `run_setup.bat` with LF-only line endings because `.gitattributes`' `text=auto` normalizes
+the STORED BLOB to LF regardless of any `eol=` override -- `eol=crlf` only affects what a real
+`git checkout` writes to a working tree, a step raw/blob serving never performs. Confirmed live
+before the fix: the git blob had 0 CRLF pairs, 5,626 bare LF.
+
+**Fix, combining former options B and C from the open question's own table (not either alone) --
+the maintainer's explicit call, given a real enforcement plan closes option B's stated risk
+("shifts ongoing burden onto every future commit... reopens noisy diffs"):**
+1. `.gitattributes`: `*.bat`/`*.cmd` changed to `-text` (no git line-ending conversion at all, in
+   either direction) -- see `docs/agent-lessons-learned.md`'s new ".bat files: -text, not
+   eol=crlf" entry for the full mechanism and the byte-uniformity-enforced-by-tooling tradeoff.
+2. `tools/check_crlf.py` (check + `--fix`) is the new enforcement mechanism that replaces git's
+   own normalization for these files -- wired into `tools/run_sanity_sweep.sh` and a dedicated,
+   independent, immediate (`needs: []`) gating CI job (`crlf-check` in `batch-check.yml`).
+3. A contributor-facing warning banner added to the top of all three tracked `.bat` files
+   (`run_setup.bat`, `run_tests.bat`, `tests/dynamic_tests.bat`): do not edit via the GitHub web
+   editor or a Mac/Linux tool, since that silently strips the CR half of the required CRLF ending.
+4. A second, independent distribution point: `batch-check.yml`'s `publish_diag` job now also
+   copies (and independently re-verifies via `tools/check_crlf.py`) `run_setup.bat` to the GitHub
+   Pages site root on every push to `main`, giving
+   `https://mixmansoundude.github.io/Python_vs_Windows/run_setup.bat` as a raw-URL-independent
+   fallback -- option C from the open question's table, implemented as defense-in-depth alongside
+   option B rather than instead of it.
+5. README.md's top-of-file "Just want the file?" callout (new) and its TL;DR bullet (revised) now
+   point at the raw link as the primary, expected-to-work path, with the Pages mirror documented
+   as the fallback.
+
+**One-time renormalization cost, accepted deliberately**: `git add --renormalize` on the three
+affected files changed every line's STORED representation at once (a mechanical, full-file diff,
+zero real content change) -- unavoidable exactly once when moving a file that was previously
+LF-normalized in storage to `-text`. The actual working-tree bytes were already genuine CRLF the
+whole time (the OLD `eol=crlf` checkout-time conversion had already been writing CRLF to disk on
+every checkout) -- only the stored blob itself was wrong, confirmed directly before committing:
+`git show HEAD:run_setup.bat` (0 CRLF, 5,626 bare LF) versus the working-tree file on disk (5,626
+CRLF, 0 bare LF) were already divergent before this fix, for the identical reason Item 44 itself
+diagnosed.
+
+**Not pursued**: a GitHub Release with a zip asset (the third option raised alongside B and C) --
+explicitly declined per the maintainer's own stated preference for a single-file, non-zip
+distribution path; Pages (option C) already gives the same "not subject to `.gitattributes`"
+robustness without introducing a zip.
+
+### DLL-specific postflight caveat hint (`docs/open-questions.md` former item 1, shipped 2026-08-15)
+
+Closes the maintainer decision `docs/open-questions.md`'s item 1 left open once
+`self.layered_e2e.chain` (`chainPass:true`, PR #421) confirmed the DLL-bundling repair loop for
+real: the post-flight caveat panel (`:pfb_caveat`) now surfaces a DLL-specific hint instead of
+staying purely generic, using a real, already-computed fact from `:dll_bundle_recover` (CLAUDE.md
+Item 24/25/28/29) rather than a guess. See `docs/agent-interconnect.md`'s DLL-bundling section for
+the full mechanism (`HP_DLL_HINT_STATE`'s reset/capture contract, the `:pfb_dll_hint` subroutine's
+3-bucket dispatch). Regression coverage: `tests/harness.ps1`'s new `batch.dll_bundle.caveat_hint`
+static check (verified locally against the real `run_setup.bat` content via a standalone `pwsh`
+run of the same regex logic before landing, not just reasoned about).
 
 ## Known Findings (diagnosed, no action warranted)
 
