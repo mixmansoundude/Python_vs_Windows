@@ -1,9 +1,22 @@
 # Normalize all text to LF in the repository
 *               text=auto eol=lf
 
-# Windows scripts: check out as CRLF
-*.bat           text eol=crlf
-*.cmd           text eol=crlf
+# Windows batch scripts: NO line-ending conversion at all (not "text eol=crlf").
+# These are the files a clean-Windows Prime Directive user fetches directly via a raw
+# link (no git, no clone) -- git's checkout-time CRLF injection from "eol=crlf" does NOT
+# affect what GitHub's raw/blob server returns, only what a real "git checkout" writes to
+# a working tree. With normalization enabled, the STORED blob (and therefore the raw URL)
+# is always LF, regardless of this override -- confirmed as the live, current state of this
+# repo before this fix (docs/agent-closed-backlog.md's Item 44). "-text" instead makes the
+# stored blob, the working-tree bytes, and the raw-served bytes always IDENTICAL, so CRLF
+# committed here is CRLF everywhere -- byte-uniformity across every future commit is then
+# enforced by tools/check_crlf.py (mandatory sanity sweep + gating CI), not by git itself.
+# See docs/agent-lessons-learned.md's ".bat files: -text, not eol=crlf" entry.
+*.bat           -text
+*.cmd           -text
+
+# Other Windows scripts: not raw-fetched by end users (embedded as base64 payloads inside
+# run_setup.bat, or contributor/CI-only) -- normal normalize-and-checkout-as-CRLF is safe.
 *.ps1           text eol=crlf
 *.psm1          text eol=crlf
 *.psd1          text eol=crlf

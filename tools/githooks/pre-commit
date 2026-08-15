@@ -1,0 +1,24 @@
+#!/bin/sh
+# Optional pre-commit hook: blocks a commit that would introduce non-CRLF line endings into a
+# tracked .bat/.cmd file. Opt-in only -- git does not auto-install hooks from a repo. Enable with:
+#   git config core.hooksPath tools/githooks
+#
+# CI's own gating "CRLF line-ending check" job (batch-check.yml) is the real, non-optional
+# enforcement -- this hook only catches the mistake locally, before a push, saving a CI
+# round-trip. See docs/agent-lessons-learned.md's ".bat files: -text, not eol=crlf" entry for
+# why this check exists at all.
+staged_bat=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(bat|cmd)$')
+if [ -z "$staged_bat" ]; then
+  exit 0
+fi
+
+# shellcheck disable=SC2086
+python3 tools/check_crlf.py $staged_bat
+status=$?
+if [ "$status" -ne 0 ]; then
+  echo ""
+  echo "pre-commit: non-CRLF line endings found in a staged .bat/.cmd file (see above)."
+  echo "Fix with: python3 tools/check_crlf.py --fix $staged_bat"
+  exit 1
+fi
+exit 0

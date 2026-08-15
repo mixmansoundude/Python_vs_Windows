@@ -67,6 +67,7 @@ tools/
   apply_patch.py               Unified/legacy diff parser and applier (used by inline_model_fix)
   find_entry.py                REQ-002 entry-point selector (canonical source for HP_FIND_ENTRY)
   check_delimiters.py          Bracket/quote balance validator (.bat/.ps1/.py/.yml/.json)
+  check_crlf.py                 CRLF byte-uniformity checker/fixer for .bat/.cmd files (--fix mode)
   check_workflows_yaml.py      YAML syntax validation via PyYAML
   inline_model_fix.py          AI quick-fix orchestrator (OpenAI Responses API -- CI use only)
   sanitize_iterate_payload.py  NDJSON redaction, deduplication, truncation
@@ -118,6 +119,7 @@ checks but still run the sweep as a baseline (it also catches an accidental non-
 python -m compileall -q . && echo "COMPILEALL OK"
 python -m pyflakes . 2>&1 | head -20
 python tools/check_delimiters.py run_setup.bat && echo "DELIM OK"
+python tools/check_crlf.py && echo "CRLF OK"
 python -m yamllint .github/workflows/ && echo "YAMLLINT OK"
 export PATH="$PATH:/root/go/bin"
 actionlint -oneline .github/workflows/*.yml && echo "ACTIONLINT OK"
@@ -160,7 +162,7 @@ Full rules in **AGENTS.md**. The most critical:
 | Rule | Why it matters |
 |------|---------------|
 | ASCII only -- no emojis, curly quotes, em-dashes | Batch/cmd parsing breaks on non-ASCII |
-| `.bat/.ps1` use CRLF; everything else LF | Controlled by `.gitattributes` -- do NOT edit manually |
+| `.bat/.cmd` use CRLF (byte-uniform, `-text`); `.ps1` uses CRLF (normalized `eol=crlf`); everything else LF | Controlled by `.gitattributes` -- do NOT edit manually. `.bat/.cmd` are enforced by `tools/check_crlf.py` (sanity sweep + gating CI), not by git normalization -- see `docs/agent-lessons-learned.md`'s ".bat files: -text, not eol=crlf" entry |
 | `--override-channels -c conda-forge` on all installs | Prevents defaults channel contamination |
 | Tilde-prefix temp files (`~setup.log`, etc.) | Easy to gitignore; survive crashes |
 | Avoid `EnableDelayedExpansion`; if needed, wrap tightly | Parent shells with `/V:ON` cause collisions |
@@ -282,6 +284,7 @@ Test files and what they cover:
 | `test_poll_public_diag_logging.py` | Diagnostics polling and logging |
 | `test_ps_colon_scan.py` | PowerShell scoped variable detection ($var:) |
 | `test_check_delimiters_import.py` | Delimiter checker import guard |
+| `test_check_crlf.py` | CRLF byte-uniformity checker/fixer (detection, safe-write --fix, CLI check/fix modes) |
 | `test_fast_check_pattern.py` | HP_FAST_CHECK infra-dir exclusion regex ($infraPattern) |
 | `test_heuristics.py` | Heuristic dep-augmentation rules (REQ-005: all 6 rules, extras syntax, capitalization, kill-switch, idempotency) |
 | `test_parse_warn.py` | PyInstaller warn-file translation table (REQ-007: 5.x and 6.x formats, all TRANSLATIONS entries) |

@@ -445,6 +445,36 @@ $hiLogSizeAdvance  = $hiddenRecoverMatch.Success -and (
 $dllSecondCallGated = $AllText -match [regex]::Escape('if not "%HP_EXE_EXIT%"=="-1" if defined HP_HIDDEN_REPAIRED call :dll_bundle_recover')
 $hasDllBundleSecondPass = $dllSecondCall -and $hiSecondCall -and $dllRebuildHasHid -and $dllRepairedSet -and $dllRepairedCheck -and $noPerCallResetLeak -and $hiRepairedSet -and $hiRepairedReset -and $hiLogSizeAdvance -and $dllSecondCallGated
 Write-Result 'batch.dll_bundle.second_pass' 'CLAUDE.md Item 29: a second :dll_bundle_recover pass runs after :hidden_import_recover (gated on HP_HIDDEN_REPAIRED, so it only fires when a rebuild actually happened), threading its own accumulated hidden-import flags through the DLL rebuild, then giving :hidden_import_recover one more bounded pass if a DLL was actually bundled -- with a regression guard on the exact-once-per-fresh-build-attempt reset counts for the three cross-call accumulator variables' $hasDllBundleSecondPass @{ dllSecondCall=$dllSecondCall; hiSecondCall=$hiSecondCall; dllRebuildHasHid=$dllRebuildHasHid; dllRepairedSet=$dllRepairedSet; dllRepairedCheck=$dllRepairedCheck; dllbindResetCount=$dllbindResetCount; hiddenImportsResetCount=$hiddenImportsResetCount; hidCollectResetCount=$hidCollectResetCount; hiRepairedSet=$hiRepairedSet; hiRepairedReset=$hiRepairedReset; hiLogSizeAdvance=$hiLogSizeAdvance; dllSecondCallGated=$dllSecondCallGated }
+# derived requirement: docs/open-questions.md item 1 (answered yes) -- the post-flight caveat
+# panel surfaces a DLL-specific hint using a real, already-computed fact from :dll_bundle_recover
+# (CLAUDE.md Item 24/25/28/29) instead of staying purely generic. A review pass on PR #414 (see
+# docs/agent-interconnect.md's DLL-bundling section) required modeling 3 distinct wording states,
+# not 1 -- "skipped" (no repair attempted), "failed"/"exhausted" (attempted, did not fully
+# resolve), and "repaired" (fixed; this caveat firing anyway means something else is wrong) --
+# so guard all three buckets exist, not just that some hint text exists. HP_DLL_HINT_STATE must
+# be captured BEFORE :emit_dll_bundle_row's own HP_NDJSON early-return (so the hint still works
+# with NDJSON disabled) and reset once per fresh build attempt (alongside the pre-existing
+# HP_PYI_HID_COLLECT reset), matching the same cross-call state-leak precedent CLAUDE.md Item 29
+# already established for HP_PYI_DLLBIND/HP_PYI_HIDDEN_IMPORTS.
+$dllHintResetInInit = $AllText -match (
+  [regex]::Escape('set "HP_PYI_HID_COLLECT="') + '(?:.|\r?\n)*?' + [regex]::Escape('set "HP_DLL_HINT_STATE="')
+)
+$emitRowMatch = [regex]::Match($AllText, '(?ms)^:emit_dll_bundle_row\r?\n(?<body>.*?)(?=^:hidden_import_recover)')
+$dllHintSetBeforeNdjsonGate = $false
+if ($emitRowMatch.Success) {
+  $emitRowBody = $emitRowMatch.Groups['body'].Value
+  $dllHintSetIdx = $emitRowBody.IndexOf('set "HP_DLL_HINT_STATE=%~1"')
+  $ndjsonGateIdx = $emitRowBody.IndexOf('if not defined HP_NDJSON exit /b 0')
+  $dllHintSetBeforeNdjsonGate = ($dllHintSetIdx -ge 0) -and ($ndjsonGateIdx -ge 0) -and ($dllHintSetIdx -lt $ndjsonGateIdx)
+}
+$pfbCallsDllHint = $AllText -match [regex]::Escape('if defined HP_DLL_HINT_STATE call :pfb_dll_hint')
+$dllHintSub = $AllText -match '(?m)^:pfb_dll_hint\r?\n'
+$dllHintStates = @('repaired', 'failed_rebuild', 'failed_missing_exe', 'exhausted')
+$dllHintStateChecks = $dllHintStates | ForEach-Object { $AllText -match [regex]::Escape('if "%HP_DLL_HINT_STATE%"=="' + $_ + '"') }
+$dllHintAllStatesDispatched = ($dllHintStateChecks | Where-Object { -not $_ }).Count -eq 0
+$dllHintThreeBuckets = ($AllText -match '(?m)^:pfb_dll_hint_skipped\r?\n') -and ($AllText -match '(?m)^:pfb_dll_hint_failed\r?\n') -and ($AllText -match '(?m)^:pfb_dll_hint_repaired\r?\n')
+$hasDllHint = $dllHintResetInInit -and $dllHintSetBeforeNdjsonGate -and $pfbCallsDllHint -and $dllHintSub -and $dllHintAllStatesDispatched -and $dllHintThreeBuckets
+Write-Result 'batch.dll_bundle.caveat_hint' 'docs/open-questions.md item 1 (answered yes): post-flight caveat panel surfaces a DLL-specific hint derived from the DLL-bundling repair loop outcome (reset once per fresh build attempt, captured before the HP_NDJSON gate so it still works with NDJSON disabled, dispatched into 3 distinct wording buckets: skipped/failed/repaired)' $hasDllHint @{ resetInInit=$dllHintResetInInit; setBeforeGate=$dllHintSetBeforeNdjsonGate; caveatCalls=$pfbCallsDllHint; subExists=$dllHintSub; allStatesDispatched=$dllHintAllStatesDispatched; threeBuckets=$dllHintThreeBuckets }
 # derived requirement: tightly-scoped 30s-kill warning must precede launches that force-stop
 # user code (EXE smoke + hidden-import recovery), so users do not lose work in a verification run.
 $warnSubCount = ([regex]::Matches($AllText, ':warn_user_code_launch')).Count

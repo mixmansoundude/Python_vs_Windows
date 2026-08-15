@@ -4,6 +4,15 @@
 [![Batch syntax/run check](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/batch-check.yml)
 [![CodeQL](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/mixmansoundude/Python_vs_Windows/actions/workflows/codeql.yml)
 
+**Just want the file?** This repo's root has a lot in it -- the one file you actually need is
+`run_setup.bat`. Right-click the link below and "Save link as..." (or open it and press Ctrl+S):
+
+**-> [https://raw.githubusercontent.com/mixmansoundude/Python_vs_Windows/main/run_setup.bat](https://raw.githubusercontent.com/mixmansoundude/Python_vs_Windows/main/run_setup.bat) <-**
+
+No git, no terminal, no zip file -- just that one `.bat` file. If that link ever behaves oddly
+(some browsers try to "helpfully" convert or preview it), this mirror is republished from `main`
+on every push and works the same way: https://mixmansoundude.github.io/Python_vs_Windows/run_setup.bat
+
 **Live diagnostics bundle:** https://mixmansoundude.github.io/Python_vs_Windows/
 
 Prime Directive: With only one or more Python files on a clean Windows 10+ machine with internet, get at least one to run, with all imports installed.
@@ -48,7 +57,7 @@ This repository serves as a proof of concept of this new approach.
 ## TL;DR (Quickstart)
 
 - **Windows 10 (1809+)** or newer.
-- **Getting `run_setup.bat`:** Use `git clone https://github.com/mixmansoundude/Python_vs_Windows` (or clone your own fork) and copy the file from there -- this preserves the Windows line endings the script needs. Downloading it via GitHub's "Raw" button or a `raw.githubusercontent.com` link can silently corrupt those line endings instead; if that happens, the script now detects it on startup and tells you how to fix it.
+- **Getting `run_setup.bat`:** Right-click GitHub's "Raw" button (or [this direct link](https://raw.githubusercontent.com/mixmansoundude/Python_vs_Windows/main/run_setup.bat)) and "Save link as...", or use `git clone https://github.com/mixmansoundude/Python_vs_Windows` and copy the file from there -- both now give you the Windows (CRLF) line endings the script needs (this repo enforces that in CI on every change). If you ever land on a copy with the wrong line endings anyway (an old cached download, an editor that "helpfully" re-saved it), the script detects it on startup and tells you exactly how to fix it, rather than failing silently.
 - **One Folder per Program:** Create a unique folder for your project (e.g., `universal_paperclip_optimizer` or `solve_world_hunger_v2`).
 - **Avoid Conflicts:** To ensure environment integrity, do not mix independent programs in the same folder. Each program should have its own dedicated folder and its own copy of `run_setup.bat`.
 - **First run on Windows:** Windows may show "Windows protected your PC" -- click **More info** -> **Run anyway**. If "Run anyway" is absent: right-click the batch -> **Properties** -> check **Unblock** -> **OK** -> run again.

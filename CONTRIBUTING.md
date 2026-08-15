@@ -2,6 +2,10 @@
 - Fork, branch (`feature/<topic>`), and open a PR.
 - Keep CI green: `Batch syntax/run check` must pass.
 - No secrets in commits; keep MIT license headers intact.
+- `.bat`/`.cmd` files must use Windows (CRLF) line endings only -- enforced by a gating CI check
+  (`python tools/check_crlf.py`; add `--fix` to correct a file locally). Do NOT edit these files
+  via the GitHub web editor or a Mac/Linux tool that does not preserve CRLF. Optional local
+  pre-commit hook: `git config core.hooksPath tools/githooks`.
 
 ## Iteration Priorities (per loop)
 

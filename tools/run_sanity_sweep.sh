@@ -70,6 +70,10 @@ check_delimiters() {
   python tools/check_delimiters.py run_setup.bat
 }
 
+check_crlf() {
+  python tools/check_crlf.py
+}
+
 check_yamllint() {
   if ! python -m yamllint --version >/dev/null 2>&1; then
     echo "yamllint not installed -- see AGENTS.md 'Style and robustness' for install steps."
@@ -164,6 +168,7 @@ check_pytest() {
 step "COMPILEALL" check_compileall
 step "PYFLAKES" check_pyflakes
 step "DELIMITER CHECK" check_delimiters
+step "CRLF CHECK (.bat/.cmd)" check_crlf
 step "MARKDOWNLINT (advisory, MD029 only)" check_markdownlint
 step "YAMLLINT" check_yamllint
 step "ACTIONLINT" check_actionlint
