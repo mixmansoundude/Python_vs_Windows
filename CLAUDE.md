@@ -999,19 +999,48 @@ way (no live Windows execution available here), that is noted explicitly rather 
   these (nothing useful follows a totally-exhausted provider chain with no valid interpreter at
   all), so they remain candidates for Bucket A's `HP_FATAL` mechanism instead, not this pattern.
 
-  **Bucket A (not yet started): a global `HP_FATAL` flag for the remaining, genuinely-doomed `:die`
-  sites** -- candidate fix shapes, not yet chosen between: (a) a global `HP_FATAL` flag set by
-  `:die`, checked via `if defined HP_FATAL goto :fatal_exit` after every remaining continuing call
-  site; (b) change what `:die` itself does on exit (e.g. a real process-halting `exit`, not
-  `exit /b`) for the cases where it is known to be called from the top-level call stack rather than
-  a nested subroutine -- riskier, since the top-level-vs-nested distinction is not always obvious
-  from a given call site, and a bare `exit` closes the console window immediately for a
-  double-click user with no chance to read the message first (see the existing `pause`-before-exit
-  convention this file already relies on). Given the number of remaining call sites and `:die`'s
-  central, load-bearing role throughout the file, treat this as EXTREME CAUTION on the same order
-  as the DLL-bundling/hidden-import repair loops elsewhere in this backlog -- one incremental slice
-  at a time (Bucket B above is the first proof this works), not a single sweeping change across
-  every remaining site.
+  **Bucket A slice 1 (closed 2026-08-17): `:conda_create_failed`'s own `call :die` now `goto`s
+  straight to `:after_env_mode_selection` instead of falling through into `:conda_create_done`'s
+  body.** Targeted, not a general `HP_FATAL` mechanism -- reuses a pattern the file already
+  shipped and already tests (`:hp_test_conda_fail`, the `HP_TEST_FORCE_CONDA_FAIL` bypass sibling
+  a few thousand lines below `:conda_create_failed`, has carried the identical `goto` since before
+  this fix). **The actual bug this closes is more concrete than "an extra pause": without the
+  `goto`, falling through into `:conda_create_done` unconditionally sets `HP_PY` to a path that
+  provably does not exist, and that block's own `if not exist` guard then calls
+  `:handle_conda_failure` A SECOND TIME -- not just wasted CPU, but a real user re-watching the
+  embed/venv fallback attempts and being asked the REQ-014 system-Python consent prompt again
+  right after already answering it once.** Regression test: `self.entrysmoke.no_interpreter_guard`
+  (`tests/selfapps_entrysmoke_no_interpreter.ps1`, already-gating from Item 45) extended to assert
+  the old, now-dead `:conda_create_done`-specific message ("python.exe missing from conda
+  environment") is genuinely absent, proving that block is skipped entirely.
+
+  **Important finding from implementing this slice, corrects an earlier assumption in this same
+  entry: this does NOT by itself reduce the "Consequence" chain above to a single pause.**
+  `:after_env_mode_selection`'s own `if not defined HP_PY` check (a few dozen lines below that
+  label) has the IDENTICAL non-halting `:die` shape, and is exactly what the new `goto` now
+  reaches (since `HP_PY` was never set this run) -- so a real interactive user hitting total
+  first-attempt tier exhaustion still sees two pauses today, just at a different second call site
+  than before (`:after_env_mode_selection`'s check, not `:conda_create_done`'s). That check is a
+  separate, not-yet-addressed follow-up slice -- finding a safe `goto` target for it needs its own
+  careful trace (a large block of dependency-resolution/pipreqs/heuristics code sits between it
+  and `:run_entry_smoke`, none of it needed when there's no interpreter, but not yet verified safe
+  to skip wholesale).
+
+  **Bucket A remaining scope: candidate fix shapes for a general mechanism, not yet chosen
+  between** -- (a) a global `HP_FATAL` flag set by `:die`, checked via `if defined HP_FATAL goto
+  :fatal_exit` after every remaining continuing call site; (b) change what `:die` itself does on
+  exit (e.g. a real process-halting `exit`, not `exit /b`) for the cases where it is known to be
+  called from the top-level call stack rather than a nested subroutine -- riskier, since the
+  top-level-vs-nested distinction is not always obvious from a given call site, and a bare `exit`
+  closes the console window immediately for a double-click user with no chance to read the
+  message first (see the existing `pause`-before-exit convention this file already relies on);
+  (c) continue the slice-1 approach -- individually targeted `goto`s at specific, well-understood
+  call sites, reusing already-proven patterns where one exists, rather than a single general
+  mechanism. Given the number of remaining call sites and `:die`'s central, load-bearing role
+  throughout the file, treat this as EXTREME CAUTION on the same order as the
+  DLL-bundling/hidden-import repair loops elsewhere in this backlog -- one incremental slice at a
+  time (slice 1 above is the second proof this works, after Bucket B), not a single sweeping
+  change across every remaining site.
 
 - **Item 47: no PowerShell capability preflight beyond bare presence.** The new line-ending
   self-check (Item 44's mitigation) added a `where powershell` presence guard as its own
