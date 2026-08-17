@@ -46,8 +46,13 @@ function Invoke-WithEnvOverrides {
 }
 
 # Non-Windows skip
-if (-not $IsWindows) {
-    $platform = [System.Environment]::OSVersion.Platform.ToString()
+# derived requirement: $IsWindows is undefined (reads as $null, so "-not $IsWindows" is always
+# true) under Windows PowerShell 5.1 -- it was only introduced in PowerShell 6+. Already fixed
+# once for this exact reason in tests/selfapps_lineending_check.ps1 (CLAUDE.md Item 44's own CI
+# coverage, PR #434); this sibling file had not been updated to match until a CodeRabbit review
+# on PR #436 caught it. [System.Environment]::OSVersion.Platform works identically on 5.1 and 7+.
+$platform = [System.Environment]::OSVersion.Platform.ToString()
+if ($platform -ne 'Win32NT') {
     $skipDetails = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
     foreach ($id in @(
         'self.ux.gitignore.merge',
@@ -1181,6 +1186,6 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatCrlf) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $sysAcceptPass -and $venvFbPass -and $venvCanaryPass -and $venvNoPipPass -and $embedDeclinePass -and $embedRealPass -and $entryOvPass
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatText) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $sysAcceptPass -and $venvFbPass -and $venvCanaryPass -and $venvNoPipPass -and $embedDeclinePass -and $embedRealPass -and $entryOvPass
 if (-not $allPass) { exit 1 }
 exit 0
