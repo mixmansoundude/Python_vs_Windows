@@ -171,19 +171,22 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ sigCount = $sigCount1 }
 })
 
-# Test 4: .gitattributes created with signature and *.bat eol=crlf
+# Test 4: .gitattributes created with signature and *.bat -text (not eol=crlf -- see
+# docs/agent-lessons-learned.md's ".bat files: -text, not eol=crlf" entry; eol=crlf only
+# affects checkout, never what a raw download serves, so this bootstrapper must not teach a
+# user's own project the exact pattern it just proved insufficient for itself).
 $gaText = ''
 if (Test-Path -LiteralPath $gaPath) {
     $gaText = Get-Content -LiteralPath $gaPath -Raw -Encoding Ascii
 }
 $gaMerged   = $gaText -match [regex]::Escape($sigGa)
-$gaBatCrlf  = $gaText -match [regex]::Escape('*.bat eol=crlf')
+$gaBatText  = $gaText -match [regex]::Escape('*.bat -text')
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.gitattributes.merge'
     req     = 'REQ-015'
-    pass    = ($gaMerged -and $gaBatCrlf)
+    pass    = ($gaMerged -and $gaBatText)
     desc    = 'Standard attributes signature appended to .gitattributes'
-    details = [ordered]@{ sigFound = $gaMerged; batCrlfFound = $gaBatCrlf }
+    details = [ordered]@{ sigFound = $gaMerged; batTextFound = $gaBatText }
 })
 
 # Test 5: .gitattributes idempotent (signature once after two runs)

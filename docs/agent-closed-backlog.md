@@ -2093,6 +2093,22 @@ the full mechanism (`HP_DLL_HINT_STATE`'s reset/capture contract, the `:pfb_dll_
 static check (verified locally against the real `run_setup.bat` content via a standalone `pwsh`
 run of the same regex logic before landing, not just reasoned about).
 
+### Item 51 (closed 2026-08-15)
+
+- **`HP_PIPREQS_RC`'s errorlevel capture in the direct (non-staging) pipreqs path had an
+  intervening `set` command between the pipreqs invocation and the `%errorlevel%` read, unlike
+  the sibling staging-path capture a few dozen lines below (no intervening command there).**
+  Filed as "PLAUSIBLE, NOT CONFIRMED, needs a live-cmd.exe check" -- a high-confidence external
+  review settled the underlying cmd.exe semantics question without needing a live Windows
+  fixture: a successful plain `set "VAR=literal"` does NOT itself modify `%errorlevel%` in real
+  cmd.exe (only a FAILED `set`/`set /a`/`set /p` does), so `HP_PIPREQS_RC` almost certainly was
+  already capturing pipreqs's real exit code correctly -- this was very likely never a live bug.
+  **Fixed anyway, exactly as the item's own "low-risk regardless of the exact mechanism" note
+  recommended**: reordered the two `set` lines at `:pipreqs_direct_done` so `HP_PIPREQS_RC` is
+  captured immediately after the pipreqs invocation, before `HP_PIPREQS_LAST_LOG`, matching the
+  staging path's own pattern. Zero-risk, closes the cross-call-site inconsistency that made this
+  worth filing in the first place, regardless of which side of the semantics question is right.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

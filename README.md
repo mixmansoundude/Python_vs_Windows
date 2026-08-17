@@ -533,7 +533,7 @@ blip or a temporary outage.
 - At bootstrap time, the bootstrapper appends standard `.gitignore` and `.gitattributes` entries to the working directory.
 - Uses a sentinel comment line to detect existing entries; never duplicates content already present.
 - `.gitignore` additions: tilde-prefix work files (`~*`), env directories (`.venv/`, `.uv/`, `.*_env/`, `.cache/`, `.conda/`), build artifacts (`dist/`, `build/`).
-- `.gitattributes` additions: `*.bat eol=crlf`, `*.cmd eol=crlf`, `*.exe binary`.
+- `.gitattributes` additions: `*.bat -text`, `*.cmd -text`, `*.exe binary`. (`-text`, not `eol=crlf`: `eol=crlf` only affects `git checkout`, never what a raw/GitHub-served download returns -- see this repo's own CRLF distribution fix.)
 - Silent if no changes needed; logs when appending.
 - Log contract:
   - `[INFO] REQ-015: Appending standard ignores to .gitignore.`

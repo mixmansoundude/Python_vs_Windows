@@ -1070,37 +1070,6 @@ way (no live Windows execution available here), that is noted explicitly rather 
   this file's other consent gates already use, defaulting to whichever of retry/offline is safer
   unattended (offline, matching the existing empty-input default two lines below).
 
-- **Item 51: `HP_PIPREQS_RC`'s errorlevel capture, in the direct (non-staging) pipreqs path, has
-  an intervening `set` command between the pipreqs invocation and the `%errorlevel%` read --
-  PLAUSIBLE, NOT CONFIRMED, needs a live-cmd.exe check before acting.** Current source, right after
-  the direct pipreqs invocation, at the `:pipreqs_direct_done` label:
-
-  ```
-  "%HP_PY%" -m pipreqs.pipreqs ... > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
-  :pipreqs_direct_done
-  set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
-  set "HP_PIPREQS_RC=%errorlevel%"
-  ```
-
-  If a plain successful `set` resets `%errorlevel%` to 0 (contested even in general cmd.exe
-  folklore, and this repo's own `docs/agent-lessons-learned.md` explicitly warns against trusting
-  static reasoning about cmd.exe semantics without a live test -- three separate past incidents in
-  this exact file were each "fixed" wrong before a live-cmd.exe fixture caught the real behavior),
-  `HP_PIPREQS_RC` would always read "0" regardless of pipreqs's real exit code, silently
-  misclassifying a genuine pipreqs crash. Notably, the SIBLING staging-path capture, a little
-  further down in the same block right after the staging pipreqs invocation, captures
-  `%errorlevel%` on the very next line with no intervening command --
-  suggesting this might already be a known-avoided hazard elsewhere in the same file, making the
-  direct-path instance look like an inconsistency worth resolving even before the exact mechanism
-  is confirmed.
-
-  **Fix, low-risk regardless of the exact mechanism**: move the `HP_PIPREQS_RC` capture to
-  immediately follow the pipreqs invocation (before the `HP_PIPREQS_LAST_LOG` set), matching the
-  already-used safe pattern at the staging call site. Costs nothing even if the hazard turns out
-  not to be real. **Verification needed before or alongside the fix**: a small live-Windows-CI
-  fixture confirming whether `set "VAR=literal"` does or does not reset `%errorlevel%`, following
-  this repo's own established "trust the live test over reasoning" methodology.
-
 - **Item 52: `tools/pyproj_deps.py`'s exit code 1 is overloaded between its intentional
   "no `[project].dependencies` found" contract and a catch-all for any genuinely unexpected
   exception, making a real bug in that script indistinguishable from the normal case.** CONFIRMED
@@ -1121,6 +1090,38 @@ way (no live Windows execution available here), that is noted explicitly rather 
   either a distinct exit code for the top-level catch-all (e.g. 3), or an unconditional low-tier
   log line (not a WARN) on any errorlevel 1 so the fact is at least visible in `~setup.log` for a
   future debugging session, without changing user-facing behavior.
+
+- **Item 59: CodeRabbit's automated review did not run on PR #435, and should be manually
+  triggered on every future PR -- owner-requested standing process fix, not a code change.**
+  This repo (fewer than 10 stars, Organization UI config) requires a manual trigger for
+  CodeRabbit review; it posts a "Review available on request" gate comment instead of reviewing
+  automatically, and that comment was left untouched on PR #435. The owner explicitly wants
+  CodeRabbit's review going forward -- it likely would have caught at least one of the two
+  stale-message findings below (a high-confidence external review caught them instead, working
+  from the repo alone with no CI-log visibility).
+
+  **Standing directive for every future PR this agent opens**: when CodeRabbit posts its
+  "Review available on request" gate comment, reply with `@coderabbitai review` (or `@coderabbitai
+  full review` for a deeper pass) to actually trigger it, rather than leaving the gate comment
+  unanswered. Apply this on PR open, not just when reminded.
+
+  **Two concrete findings this pass caught, both fixed same-day (2026-08-15), that motivated
+  filing this item**: (1) `run_setup.bat`'s own line-ending self-check panel (`docs/agent-
+  closed-backlog.md`'s Item 44) still told a user to "re-download using git clone, not the Raw
+  button" -- true before the CRLF distribution fix (Item 44's own "Raw-download CRLF
+  distribution fix" entry above), false and actively bad advice after it (steers a confused,
+  git-less Prime Directive user toward a tool they do not have, instead of just re-downloading
+  via the now-fixed Raw link). Fixed: the panel and its header comment now describe the check as
+  defense-in-depth against a stale/re-saved copy, not as a workaround for a still-broken
+  distribution channel; `tests/selfapps_lineending_check.ps1`'s matching assertion updated in
+  lockstep. (2) `:merge_git_config` (REQ-015) was still writing `*.bat eol=crlf`/`*.cmd eol=crlf`
+  into every bootstrapped user's OWN `.gitattributes` -- the exact pattern this repo just spent
+  the whole CRLF distribution fix proving insufficient for itself, propagated into every user's
+  project that happens to contain `.bat` files and gets published to GitHub. Fixed to `*.bat
+  -text`/`*.cmd -text`, matching this repo's own `.gitattributes`; `tests/selfapps_ux_hardening.
+  ps1`'s `self.ux.gitattributes.merge` assertion, and the REQ-015 spec in README.md, updated in
+  lockstep. Both fixes verified via the full sanity sweep (delimiters, CRLF, ASCII, PS parse,
+  pytest) before landing.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

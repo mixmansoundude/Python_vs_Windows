@@ -42,16 +42,19 @@
 setlocal DisableDelayedExpansion
 rem ============================================================
 rem LINE-ENDING SELF-CHECK -- keep this first, before any goto/call in
-rem this file. A raw/blob download ^(GitHub's "Raw" button, or a
-rem raw.githubusercontent.com link^) serves this file with Unix ^(LF^)
-rem line endings instead of the Windows ^(CRLF^) endings a real git
-rem checkout produces ^(see .gitattributes^). cmd.exe's goto/call label
-rem lookup can silently misbehave on an LF-only copy of a file this
-rem size -- wrong-label errors, skipped blocks, corrupted commands --
-rem producing a confusing partial run instead of a clear failure. This
-rem check must therefore be self-reliant ^(no goto/call anywhere in
-rem this file, since that is exactly what an LF-only copy breaks^) and
-rem must run before anything else.
+rem this file. Defense-in-depth, not a fix for a known-broken distribution
+rem channel: this file's line endings are Windows ^(CRLF^) by construction
+rem and enforced in CI ^(.gitattributes' "-text" for *.bat/*.cmd plus
+rem tools/check_crlf.py -- a raw/blob download via GitHub's "Raw" button or
+rem a raw.githubusercontent.com link is expected to serve genuine CRLF^),
+rem but an old cached download from before that fix, or a copy re-saved by
+rem an editor that does not preserve CRLF, can still corrupt a user's copy.
+rem cmd.exe's goto/call label lookup can silently misbehave on an LF-only
+rem copy of a file this size -- wrong-label errors, skipped blocks,
+rem corrupted commands -- producing a confusing partial run instead of a
+rem clear failure. This check must therefore be self-reliant ^(no goto/call
+rem anywhere in this file, since that is exactly what an LF-only copy
+rem breaks^) and must run before anything else.
 rem ============================================================
 rem HP_PREFLIGHT_STATUS is script-rooted via %~dp0 (not CWD-relative, and not the
 rem later %STATUS_FILE%/:write_status machinery -- neither exists yet at this point
@@ -110,11 +113,11 @@ if errorlevel 1 (
   echo *** Every line ending in this file must be Windows-style ^(CRLF^); at
   echo *** least one is not, and the file will fail with confusing, partial,
   echo *** hard-to-diagnose errors if run as-is.
-  echo *** This usually happens when downloading via the GitHub "Raw" button
-  echo *** or a raw.githubusercontent.com link, neither of which preserves
-  echo *** Windows line endings.
   echo ***
-  echo ***   Easiest fix: re-download using "git clone", not the Raw button.
+  echo ***   Easiest fix: delete this copy and download run_setup.bat again --
+  echo ***   the GitHub "Raw" link and the download page are both fine now.
+  echo ***   This is usually an old cached copy, or one re-saved by an editor
+  echo ***   that does not preserve Windows line endings.
   echo ***
   echo ***   Or open this file in an editor that shows line endings
   echo ***   ^(e.g. Notepad++, VS Code^) and convert it to Windows ^(CRLF^)
@@ -1416,8 +1419,15 @@ rem pipreqs flags are locked by CI (pipreqs.flags gate).
 rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
 "%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
 :pipreqs_direct_done
-set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
+rem CLAUDE.md Item 51: capture %errorlevel% on the line immediately after the pipreqs
+rem invocation, before any intervening "set", matching the staging path's own already-safe
+rem pattern a few dozen lines below (which never had an intervening command). A successful
+rem plain "set VAR=literal" does not itself modify ERRORLEVEL in real cmd.exe, so this was
+rem very likely never a live bug -- but the two call sites disagreeing on ordering, for no
+rem reason, is what made this worth a live-cmd.exe check in the first place. Zero-risk either
+rem way; closes the inconsistency for good.
 set "HP_PIPREQS_RC=%errorlevel%"
+set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
 if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_TARGET_WORK%" (
   rem Zero imports are valid: pipreqs exits 0 and may intentionally leave requirements.auto.txt empty.
   set "HP_PIPREQS_PHASE_RESULT=ok"
@@ -5344,10 +5354,15 @@ call :log "[INFO] REQ-015: Appending standard ignores to .gitignore."
 findstr /C:"%HP_GA_SIG%" ".gitattributes" >nul 2>&1
 if not errorlevel 1 goto :mgc_ga_done
 call :log "[INFO] REQ-015: Appending standard attributes to .gitattributes."
+rem derived requirement: "-text" (not "eol=crlf") for *.bat/*.cmd -- eol=crlf only affects
+rem checkout, never the blob a raw/GitHub-served download returns, so a user's own .bat files
+rem would still be corrupted for anyone downloading them raw from THEIR repo. This repo's own
+rem docs/agent-lessons-learned.md ".bat files: -text, not eol=crlf" entry is the full writeup
+rem of why; propagate the fix this bootstrapper itself needed, not the pattern proven insufficient.
 >> ".gitattributes" echo.
 >> ".gitattributes" echo %HP_GA_SIG%
->> ".gitattributes" echo *.bat eol=crlf
->> ".gitattributes" echo *.cmd eol=crlf
+>> ".gitattributes" echo *.bat -text
+>> ".gitattributes" echo *.cmd -text
 >> ".gitattributes" echo *.exe binary
 :mgc_ga_done
 set "HP_GI_SIG="

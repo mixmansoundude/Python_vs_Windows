@@ -182,7 +182,7 @@ $results += Test-PreflightScenario -Id 'self.preflight.lf_only' `
     -WorkDirName '~selftest_lineending_lf_only' `
     -EnvFlagName 'HP_TEST_FORCE_LF_ONLY' `
     -ExpectedExit 1 `
-    -ExpectedSubstrings @('[ERROR] This copy of run_setup.bat has invalid line endings.', 'Easiest fix: re-download using') `
+    -ExpectedSubstrings @('[ERROR] This copy of run_setup.bat has invalid line endings.', 'Easiest fix: delete this copy and download run_setup.bat again') `
     -WriteLfOnlySentinel
 
 if ($results -contains $false) { exit 1 }
