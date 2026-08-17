@@ -973,21 +973,45 @@ way (no live Windows execution available here), that is noted explicitly rather 
   to a python.exe that does not exist -> if not exist (call :die, pause #2) -> falls through ->
   more code using the broken HP_PY -> call :die (pause #3) -> ...` produces exactly the "hit pause
   several times" symptom reported, each pause looking like a fresh, unrelated failure rather than
-  one root cause cascading.
+  one root cause cascading. **Item 45 (closed) already prevents this specific chain from reaching a
+  third pause** -- the `if not exist "%HP_PY%"` guard it added to `:run_entry_smoke` means a broken
+  `HP_PY` surviving past `:conda_create_done`'s own second `:die` call can no longer also trigger
+  the doomed PyInstaller build/warnfix/repair block's own `:die` sites afterward. The first two
+  pauses in that chain (both inside the conda-create-failure handling itself, before
+  `:after_env_mode_selection` is ever reached) are UNCHANGED by Item 45 and remain open scope here.
 
-  **Candidate fix shapes, not yet chosen between**: (a) a global `HP_FATAL` flag set by `:die`,
-  checked via `if defined HP_FATAL goto :fatal_exit` after every one of the ~24 continuing call
-  sites; (b) change what `:die` itself does on exit (e.g. a real process-halting `exit`, not
+  **Bucket B (closed 2026-08-17): the 3 PyInstaller-build-failure `:die` sites
+  (`reason=test_forced_fail`/`build_error`/`missing_output`) migrated to a new, non-pausing sibling
+  subroutine, `:warn_build_incomplete`.** These are a genuinely different, NOT-doomed case from the
+  chain above: by the time any of them is reached, both PyInstaller and the Nuitka fallback have
+  already failed, but the environment/dependencies are still valid and the interpreter-fallback
+  verification a few hundred lines below still genuinely runs and still genuinely decides
+  success/failure -- pausing here (before that verification even happens) misleadingly looks like
+  the terminal state when real work is still ahead. `:warn_build_incomplete` (defined right after
+  `:die` in `run_setup.bat`) still sets `HP_BOOTSTRAP_STATE=error` (so the eventual final report
+  stays honest, matching `selfapps_pyinstaller_fail.ps1`'s unchanged `state=='error'` assertions),
+  but skips `:die`'s pause, premature `:release_lock`, and premature `:write_status` -- see
+  `docs/agent-lessons-learned.md`'s `:die` entry for the full mechanism. The vestigial, now-doubly-
+  redundant `set "HP_BOOTSTRAP_STATE=error"` lines that used to follow each `call :die` at these 3
+  sites were removed in the same change (the subroutine itself sets it). Not every `:die` site
+  qualifies for this treatment -- only ones where genuinely useful, outcome-determining work still
+  follows; the two conda-create-failure pauses in the "Consequence" chain above are NOT one of
+  these (nothing useful follows a totally-exhausted provider chain with no valid interpreter at
+  all), so they remain candidates for Bucket A's `HP_FATAL` mechanism instead, not this pattern.
+
+  **Bucket A (not yet started): a global `HP_FATAL` flag for the remaining, genuinely-doomed `:die`
+  sites** -- candidate fix shapes, not yet chosen between: (a) a global `HP_FATAL` flag set by
+  `:die`, checked via `if defined HP_FATAL goto :fatal_exit` after every remaining continuing call
+  site; (b) change what `:die` itself does on exit (e.g. a real process-halting `exit`, not
   `exit /b`) for the cases where it is known to be called from the top-level call stack rather than
   a nested subroutine -- riskier, since the top-level-vs-nested distinction is not always obvious
   from a given call site, and a bare `exit` closes the console window immediately for a
   double-click user with no chance to read the message first (see the existing `pause`-before-exit
-  convention this file already relies on); (c) do nothing beyond Item 45's narrower mitigation for
-  now, since it already kills the specific worst compounding case (repeated build/repair attempts)
-  even without touching `:die` itself. Given the number of call sites and `:die`'s central,
-  load-bearing role throughout the file, treat this as EXTREME CAUTION on the same order as the
-  DLL-bundling/hidden-import repair loops elsewhere in this backlog -- one incremental slice at a
-  time, not a single sweeping change across all 31 sites.
+  convention this file already relies on). Given the number of remaining call sites and `:die`'s
+  central, load-bearing role throughout the file, treat this as EXTREME CAUTION on the same order
+  as the DLL-bundling/hidden-import repair loops elsewhere in this backlog -- one incremental slice
+  at a time (Bucket B above is the first proof this works), not a single sweeping change across
+  every remaining site.
 
 - **Item 47: no PowerShell capability preflight beyond bare presence.** The new line-ending
   self-check (Item 44's mitigation) added a `where powershell` presence guard as its own

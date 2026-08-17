@@ -3107,18 +3107,20 @@ one's console text, since it's really a REQ-027 demo). The first two additionall
 
 #### 38a. `execfail` -- the PyInstaller build command itself fails
 
-Real CI capture, run `29788624195`, job `88506013028` ("real" lane), with the `reason=`
-token (CLAUDE.md Item 33, added after that capture) spliced in verbatim from `run_setup.bat`'s
-current literal source -- the rest of the block is unmodified real console output. **This
-scenario is triggered by two CI test hooks (forcing both the PyInstaller build and the Nuitka
-fallback to fail), but a real user hitting the same genuine failure sees nothing at either
-trigger point** -- both PyInstaller's and Nuitka's own error output go only to the log file,
-never the console:
+Real CI capture, run `29788624195`, job `88506013028` ("real" lane), with the `[WARN]`-prefixed
+message line (CLAUDE.md Active Backlog Item 46, Bucket B -- this call site now routes through
+:warn_build_incomplete instead of :die, since every build tool has already failed but the run
+itself is not doomed, real verification work still follows) spliced in verbatim from
+`run_setup.bat`'s current literal source -- the rest of the block is unmodified real console
+output. **This scenario is triggered by two CI test hooks (forcing both the PyInstaller build
+and the Nuitka fallback to fail), but a real user hitting the same genuine failure sees nothing
+at either trigger point** -- both PyInstaller's and Nuitka's own error output go only to the log
+file, never the console:
 
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
 [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-[ERROR] PyInstaller execution failed. reason=test_forced_fail
+[WARN] PyInstaller execution failed; will verify your code directly via Python instead. reason=test_forced_fail
 [DEBUG] warnfix: warn file not found
 [INFO] PyInstaller build artifacts cleaned up.
 [WARN] EXE smokerun: dist\<env>.exe not found; skipping
@@ -3130,8 +3132,9 @@ never the console:
 ```
 
 The `reason=test_forced_fail` token (CLAUDE.md Item 33) reflects the actual trigger here -- this
-scenario reaches `:die` via the `HP_TEST_FORCE_PYINSTALLER_FAIL` test hook, never a genuine
-PyInstaller error. A real, unforced build failure would instead read `reason=build_error` --
+scenario reaches `:warn_build_incomplete` via the `HP_TEST_FORCE_PYINSTALLER_FAIL` test hook,
+never a genuine PyInstaller error. A real, unforced build failure would instead read
+`reason=build_error` --
 `[Extrapolated Branch]`, since no deterministic CI hook forces a genuine nonzero PyInstaller exit
 (the same "real trigger, no CI hook" situation as Tier A's own Nuitka compiler-failure hint, Part
 VIII above).
@@ -3157,7 +3160,7 @@ code path that announces either one, so both are omitted below (see 38a's note f
 ```
 [INFO] Building standalone executable -- this may take a minute or two...
 [INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two).
-[ERROR] PyInstaller did not produce dist\<env>.exe reason=missing_output
+[WARN] PyInstaller did not produce dist\<env>.exe; will verify your code directly via Python instead. reason=missing_output
 [DEBUG] warnfix: warn file found
 [INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically.
 [INFO] PyInstaller build artifacts cleaned up.

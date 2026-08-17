@@ -12,6 +12,16 @@
 # consented to (HP_BUILD_OK). Fixed by setting HP_BOOTSTRAP_STATE=error at the PyInstaller
 # build call site, mirroring the existing preflight-failure precedent in :run_entry_smoke.
 #
+# CLAUDE.md Active Backlog Item 46 (Bucket B, closed): all three call sites now route through
+# :warn_build_incomplete instead of :die -- by the time any of them is reached, every build tool
+# (PyInstaller AND the Nuitka fallback) has already failed, but the run is not doomed (the
+# interpreter-fallback verification below still genuinely runs and still genuinely decides
+# success/failure), so :die's mid-run pause and premature lock release were both wrong here.
+# :warn_build_incomplete still sets HP_BOOTSTRAP_STATE=error, so every assertion below is
+# unchanged -- only the message's [WARN]/[ERROR] prefix and the pause/lock-release timing
+# changed, neither of which this test's own assertions inspect (CI never pauses at :die either
+# way, since HP_CI_LANE is always set).
+#
 # Three scenarios via PYI_FAIL_SCENARIO env var (research Finding 2,
 # docs/prd-av-safe-build-path.md): "execfail" forces the build command itself to fail
 # (HP_TEST_FORCE_PYINSTALLER_FAIL=1); "output_vanish" lets a real build succeed, then deletes
@@ -22,8 +32,10 @@
 # failure the other two scenarios' clean-exiting stub app never reaches.
 #
 # Asserts (all scenarios): the final ~bootstrap.status.json reads state=error (not silently
-# overwritten back to ok), the correct [ERROR] message appears in the log, and (docs/
-# open-questions.md item 1) the dedicated :print_no_exe_briefing panel is shown. For "execfail"/
+# overwritten back to ok), the correct failure message (now [WARN]-prefixed, see the Bucket B
+# note above -- the assertion itself matches the message substring and reason= token only, not
+# the prefix) appears in the log, and (docs/open-questions.md item 1) the dedicated
+# :print_no_exe_briefing panel is shown. For "execfail"/
 # "output_vanish", the stub app runs cleanly via the interpreter fallback despite total packaging
 # failure, so the final console [STATUS] line alone would otherwise read identically to a real
 # success -- the plain (non-caveat) panel text is asserted. For "execfail_runtimefail", the
