@@ -1123,6 +1123,34 @@ way (no live Windows execution available here), that is noted explicitly rather 
   lockstep. Both fixes verified via the full sanity sweep (delimiters, CRLF, ASCII, PS parse,
   pytest) before landing.
 
+- **Item 60: `:merge_git_config` (REQ-015) does not migrate an EXISTING `.gitattributes` that
+  already has the old `*.bat eol=crlf`/`*.cmd eol=crlf` rules to `-text`.** Found by CodeRabbit's
+  first manually-triggered review on this repo (PR #436, rated "Major, Heavy lift" -- item 59's
+  own motivating request), the same day item 59 fixed the FORWARD-facing half of this same gap
+  (what a fresh run writes). The idempotency guard (`findstr /C:"%HP_GA_SIG%" ".gitattributes"`,
+  gating on the SIGNATURE comment line, unchanged by item 59's fix) means a user who already ran
+  an OLDER `run_setup.bat` has that signature present, so re-running a NEWER copy skips the whole
+  append block and never upgrades their file -- their `.gitattributes` stays on the disproven
+  `eol=crlf` rule indefinitely, with no path to the fix. Narrow real-world exposure (only affects
+  OTHER users' own unrelated projects that already ran an old copy, have `.bat`/`.cmd` files, and
+  publish to GitHub), but real and permanent without a fix -- there is currently no self-healing
+  mechanism.
+
+  **Deliberately not attempted as a quick fix**: a correct migration needs a genuine
+  read-modify-write against a user's own, arbitrary `.gitattributes` content (not just an append),
+  which raises real design questions this item does not pre-answer: detect the OLD lines
+  specifically (not just the presence of the shared signature) and REPLACE them in place, versus
+  appending new superseding lines below the old ones and relying on git's own last-match-wins
+  attribute resolution (messier file, no cleanup, but avoids ever rewriting content that might not
+  be exactly what this bootstrapper wrote -- e.g. a user who hand-edited that section). Whichever
+  shape is chosen, prefer the established `.NET` file-IO safe-write pattern this repo already uses
+  elsewhere (see `docs/agent-lessons-learned.md`'s "never open a real source file in Python 'w'
+  mode" entry for the general principle, and the PowerShell-side equivalent already used for the
+  DLL-bundling sanitizers) over a naive in-place text substitution, and add a new regression
+  scenario in `tests/selfapps_ux_hardening.ps1` that pre-seeds a scratch `.gitattributes` with the
+  OLD rules before running the bootstrapper, asserting the file ends up with `-text` and no
+  leftover `eol=crlf` line for `*.bat`/`*.cmd`.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
