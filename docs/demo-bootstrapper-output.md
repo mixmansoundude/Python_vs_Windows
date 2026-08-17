@@ -1614,8 +1614,8 @@ and `.gitattributes`:
 
 ```
 # Automated Python Bootstrapper Attributes
-*.bat eol=crlf
-*.cmd eol=crlf
+*.bat -text
+*.cmd -text
 *.exe binary
 ```
 
