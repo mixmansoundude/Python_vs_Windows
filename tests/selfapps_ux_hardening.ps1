@@ -176,22 +176,23 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ sigCount = $sigCount1 }
 })
 
-# Test 4: .gitattributes created with signature and *.bat -text (not eol=crlf -- see
-# docs/agent-lessons-learned.md's ".bat files: -text, not eol=crlf" entry; eol=crlf only
-# affects checkout, never what a raw download serves, so this bootstrapper must not teach a
-# user's own project the exact pattern it just proved insufficient for itself).
+# Test 4: .gitattributes created with signature and *.bat/*.cmd -text (not eol=crlf).
+# derived requirement: docs/agent-lessons-learned.md's ".bat files: -text, not eol=crlf" entry
+# -- eol=crlf only affects checkout, never what a raw download serves, so this bootstrapper
+# must not teach a user's own project the exact pattern it just proved insufficient for itself.
 $gaText = ''
 if (Test-Path -LiteralPath $gaPath) {
     $gaText = Get-Content -LiteralPath $gaPath -Raw -Encoding Ascii
 }
 $gaMerged   = $gaText -match [regex]::Escape($sigGa)
 $gaBatText  = $gaText -match [regex]::Escape('*.bat -text')
+$gaCmdText  = $gaText -match [regex]::Escape('*.cmd -text')
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.gitattributes.merge'
     req     = 'REQ-015'
-    pass    = ($gaMerged -and $gaBatText)
+    pass    = ($gaMerged -and $gaBatText -and $gaCmdText)
     desc    = 'Standard attributes signature appended to .gitattributes'
-    details = [ordered]@{ sigFound = $gaMerged; batTextFound = $gaBatText }
+    details = [ordered]@{ sigFound = $gaMerged; batTextFound = $gaBatText; cmdTextFound = $gaCmdText }
 })
 
 # Test 5: .gitattributes idempotent (signature once after two runs)
@@ -1186,6 +1187,6 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatText) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $sysAcceptPass -and $venvFbPass -and $venvCanaryPass -and $venvNoPipPass -and $embedDeclinePass -and $embedRealPass -and $entryOvPass
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatText -and $gaCmdText) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $sysAcceptPass -and $venvFbPass -and $venvCanaryPass -and $venvNoPipPass -and $embedDeclinePass -and $embedRealPass -and $entryOvPass
 if (-not $allPass) { exit 1 }
 exit 0
