@@ -477,6 +477,19 @@ list; the recurring traps that have actually bitten us:
   covers every existing AND future call site with one line, rather than an easy-to-forget
   companion `set` per site. Regression coverage: `tests/selfapps_pyinstaller_fail.ps1`,
   `self.embed.fallback.decline`/`self.ux.system.gate.real`-style tests asserting `state=='error'`.
+  **`:warn_build_incomplete` (CLAUDE.md Active Backlog Item 46, Bucket B, closed) is a
+  non-pausing sibling of `:die`, added right after it.** Same shape (`set "MSG=%~1"`, sets
+  `HP_BOOTSTRAP_STATE=error`), but deliberately skips `:die`'s three doomed-run-only actions --
+  no `pause` (the run isn't over: real verification work still follows), no `:release_lock`
+  (a concurrent second instance must not start while that verification is still ahead), no
+  `:write_status` (the eventual `:success`/`:print_no_exe_briefing` dispatch writes the real
+  final status once `HP_BOOTSTRAP_STATE` is settled). Used at the 3 PyInstaller-build-failure
+  call sites (`reason=test_forced_fail`/`build_error`/`missing_output`) -- reached only after
+  the Nuitka fallback has ALSO failed, but the interpreter-fallback verification a few hundred
+  lines below still genuinely runs and still genuinely decides success/failure, so these are not
+  doomed the way most `:die` call sites are. **Not every `:die` site qualifies for this
+  treatment** -- see CLAUDE.md's own former Item 46 entry (now in `docs/agent-closed-backlog.md`)
+  for the doomed-vs-not-doomed classification method before converting any other site.
 
 **PowerShell adjacent traps:** `-or`/`-and` outside a conditional are parsed as parameter
 names ("parameter name 'or'"); `tools/check_delimiters.py` flags these. Multi-line `run:`

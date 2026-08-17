@@ -3581,8 +3581,16 @@ if not defined HP_BUILD_OK (
       call :log "[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure."
       call :try_nuitka_tier_a
       if errorlevel 1 (
-        call :die "[ERROR] PyInstaller execution failed. reason=test_forced_fail"
-        set "HP_BOOTSTRAP_STATE=error"
+        rem CLAUDE.md Active Backlog Item 46 (Bucket B): every build tool (PyInstaller AND the
+        rem Nuitka fallback) has already failed by this point, but the environment/dependencies
+        rem are still valid and the interpreter-fallback verification a few hundred lines below
+        rem still genuinely runs and still genuinely decides success/failure -- this is not a
+        rem doomed state, so :die's own mid-run pause (which would stop the user here, before
+        rem that verification even happens) and premature lock release are both wrong. Warn and
+        rem keep going instead; :warn_build_incomplete still sets HP_BOOTSTRAP_STATE=error so the
+        rem final ~bootstrap.status.json/postflight panel report this honestly once the run
+        rem actually finishes.
+        call :warn_build_incomplete "[WARN] PyInstaller execution failed; will verify your code directly via Python instead. reason=test_forced_fail"
       ) else (
         set "HP_NUITKA_FALLBACK_USED=1"
       )
@@ -3595,8 +3603,9 @@ if not defined HP_BUILD_OK (
           rem nonzero -- distinct from reason=missing_output below (exit 0 but no EXE) and
           rem reason=test_forced_fail above (no real build ever ran). Mirrors the existing
           rem UV_FALLBACK reason= token convention; see docs/agent-lessons-learned.md.
-          call :die "[ERROR] PyInstaller execution failed. reason=build_error"
-          set "HP_BOOTSTRAP_STATE=error"
+          rem CLAUDE.md Active Backlog Item 46 (Bucket B): see the test_forced_fail branch above
+          rem for why this is a warn-and-continue site, not a :die site.
+          call :warn_build_incomplete "[WARN] PyInstaller execution failed; will verify your code directly via Python instead. reason=build_error"
         ) else (
           set "HP_NUITKA_FALLBACK_USED=1"
         )
@@ -3608,8 +3617,9 @@ if not defined HP_BUILD_OK (
         if not exist "dist\%ENVNAME%.exe" (
           call :try_nuitka_tier_a
           if errorlevel 1 (
-            call :die "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe reason=missing_output"
-            set "HP_BOOTSTRAP_STATE=error"
+            rem CLAUDE.md Active Backlog Item 46 (Bucket B): see the test_forced_fail branch
+            rem above for why this is a warn-and-continue site, not a :die site.
+            call :warn_build_incomplete "[WARN] PyInstaller did not produce dist\%ENVNAME%.exe; will verify your code directly via Python instead. reason=missing_output"
           ) else (
             set "HP_NUITKA_FALLBACK_USED=1"
           )
@@ -5106,6 +5116,22 @@ if not defined HP_CI_LANE (
   pause
 )
 exit /b %RC%
+
+rem CLAUDE.md Active Backlog Item 46 (Bucket B): a non-pausing sibling of :die for a call site
+rem that has failed at ONE task (e.g. every build tool tried) but the run itself is NOT doomed --
+rem real, useful work still follows (e.g. the interpreter-fallback verification) that will itself
+rem determine the honest final outcome. Deliberately does NOT pause (the run isn't over yet, so
+rem stopping here would misleadingly look like the terminal state), does NOT call :release_lock
+rem (a concurrent second instance must not be able to start while this run still has real
+rem verification work ahead of it), and does NOT call :write_status (the eventual :success/
+rem :print_no_exe_briefing dispatch writes the real final status once HP_BOOTSTRAP_STATE is
+rem settled). Still sets HP_BOOTSTRAP_STATE=error, same as :die, so the final report is honest.
+:warn_build_incomplete
+set "MSG=%~1"
+call :log "%MSG%"
+set "HP_BOOTSTRAP_STATE=error"
+exit /b 0
+
 :rotate_log
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 "if (Test-Path '%LOG%') { if ((Get-Item '%LOG%').Length -gt 10485760) { Move-Item -Force '%LOG%' '%LOGPREV%' } }"
