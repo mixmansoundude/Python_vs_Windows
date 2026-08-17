@@ -296,7 +296,7 @@ Write-Result "batch.req012.skiphooks" "REQ-012: HP_SKIP_ENTRY_SMOKE and HP_SKIP_
 # whole-file match) to the text between the :run_entry_smoke label and its first
 # "call :preflight_compile" -- both the guard's presence AND its ordering before the call are
 # proven together, since a guard placed anywhere after the call would fall outside this window.
-$item45Scope = [regex]::Match($AllText, '(?s):run_entry_smoke\r?\n.*?call :preflight_compile')
+$item45Scope = [regex]::Match($AllText, '(?ms)^:run_entry_smoke\r?\n.*?call :preflight_compile')
 $hasItem45Guard = $item45Scope.Success -and ($item45Scope.Value -match [regex]::Escape('if not exist "%HP_PY%" set "HP_NO_INTERPRETER=1"'))
 Write-Result "batch.entrysmoke.no_interpreter_guard" "CLAUDE.md Item 45: :run_entry_smoke gates HP_PY existence before :preflight_compile is called" $hasItem45Guard @{}
 $req009Patterns = @('\[BOOT\] REQ-009.*Selected.*UV', '\[BOOT\] REQ-009.*Selected.*Conda', '\[BOOT\] REQ-009.*Selected.*Embedded Python', '\[BOOT\] REQ-009.*Selected.*Local venv', '\[BOOT\] REQ-009.*Selected.*System Python')
