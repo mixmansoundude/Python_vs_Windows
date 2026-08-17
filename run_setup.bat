@@ -3397,6 +3397,18 @@ if not "%HP_SMOKE_RC%"=="0" if not defined HP_PROBE_EXCEEDED (
 exit /b 0
 :run_entry_smoke
 call :record_chosen_entry "%HP_ENTRY%"
+rem CLAUDE.md Active Backlog Item 45: a failed env-create can fall through :die (exit /b
+rem returns from the call frame, it does not halt the process -- see docs/agent-lessons-
+rem learned.md's ":die uses exit /b" entry) with HP_PY left pointing at a python.exe that
+rem was never produced. :after_env_mode_selection's own interpreter smoke test already sets
+rem HP_NO_INTERPRETER for this case today, but that protection is 800+ lines upstream and
+rem indirect; this is a direct, explicit backstop at the actual point of use, so the
+rem build/warnfix/repair block below can never be reached against a nonexistent HP_PY even
+rem if some future change removes or bypasses the upstream smoke test. Setting
+rem HP_NO_INTERPRETER here (instead of a bespoke message) also fixes a latent message-framing
+rem bug: without it, a broken HP_PY would instead fail :preflight_compile's own py_compile
+rem call and get misreported as a syntax error in the user's code, not a missing interpreter.
+if not exist "%HP_PY%" set "HP_NO_INTERPRETER=1"
 rem REQ-021: static pre-flight syntax check of the entry (no user code executed). A SyntaxError
 rem makes the program unrunnable under the interpreter AND unbuildable by PyInstaller, so report it
 rem clearly and stop here instead of failing later inside the doomed PyInstaller build.

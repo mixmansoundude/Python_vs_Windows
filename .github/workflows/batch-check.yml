@@ -998,6 +998,18 @@ jobs:
         run: |
           & tests\selfapps_cascade_timed.ps1
 
+      # CLAUDE.md Active Backlog Item 45: a genuine first-attempt conda-create failure (all
+      # fallback tiers exhausted via the test's own HP_FORCE_CONDA_ONLY=1) must never reach the
+      # PyInstaller build/warnfix/repair block against a nonexistent HP_PY. Self-contained
+      # (own HP_FORCE_CONDA_ONLY=1 override, matching selfapps_pipgap.ps1's pattern) and
+      # deterministic (HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL=1, no real network dependency for
+      # the failure itself) -- gating from first landing.
+      - name: "Self-test: entry-smoke no-interpreter guard (conda-full only)"
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_entrysmoke_no_interpreter.ps1
+
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
         if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh

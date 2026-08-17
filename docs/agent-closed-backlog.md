@@ -2109,6 +2109,60 @@ run of the same regex logic before landing, not just reasoned about).
   staging path's own pattern. Zero-risk, closes the cross-call-site inconsistency that made this
   worth filing in the first place, regardless of which side of the semantics question is right.
 
+### Item 45 (closed 2026-08-17)
+
+- **Gate the build/warnfix/repair block on `HP_PY` actually existing, so a failed env-create
+  cannot cascade into a doomed PyInstaller build against no real interpreter.** Filed as a real,
+  reasoned-from-source concern: `:die` returns via `exit /b`, not a process halt, so a genuine
+  env-create failure can fall through into `:run_entry_smoke` with `HP_PY` pointing at a
+  python.exe that was never produced.
+
+  **Deep tracing before implementing found the concern was already substantially mitigated by
+  prior work, not a live open hole.** `:after_env_mode_selection`'s own interpreter smoke test
+  (`"%HP_PY%" -c "print('py_ok')" ... || set "HP_NO_INTERPRETER=1"`, added for CLAUDE.md's former
+  Active Backlog item 14) already catches every traced instance of a broken/nonexistent `HP_PY`
+  reaching that point -- both the "HP_PY completely undefined" case AND the "HP_PY defined but
+  the file does not exist" case (a plain, nonexistent-executable invocation fails with a nonzero
+  errorlevel either way) -- and `:preflight_compile` already bails out on `HP_NO_INTERPRETER`
+  before `:run_entry_smoke` ever reaches the PyInstaller build call. Traced every reachable path
+  into `:run_entry_smoke` (the sole call site, reached only via `:after_env_bootstrap`, itself
+  reached only via natural fall-through after `:after_env_mode_selection` for every real,
+  non-`HP_CI_SKIP_ENV` user run) and confirmed none of them bypass this smoke test.
+
+  **Genuine gap found: no direct, self-contained regression test existed for the specific call
+  path that reaches `:conda_create_done` with a nonexistent `HP_PY`.** `:conda_create_failed`
+  can fall through `:die` into `:conda_create_done`, which unconditionally sets
+  `HP_PY=%CONDA_PREFIX%\python.exe` even though conda create just failed -- the exact "points at
+  a python.exe that does not exist" scenario the item describes. Item 14's own regression test
+  (`self.embed.fallback.decline`) uses the `HP_TEST_FORCE_CONDA_FAIL` bypass, which routes
+  straight to `:handle_conda_failure` and never touches `:conda_create_done`'s `HP_PY`-setting
+  line at all; `self.cascade.conda_create_fail`'s two scenarios are both REQ-009 cascade
+  RE-ENTRIES (`HP_CASCADE_SAVED_PY` defined), which route through `:cascade_conda_create_failed`
+  instead, also never reaching that line. No existing test reached it via a genuine, first-attempt
+  (non-cascade), non-bypassed conda-create failure.
+
+  **Fix shipped**: a direct, explicit guard at the very top of `:run_entry_smoke`
+  (`if not exist "%HP_PY%" set "HP_NO_INTERPRETER=1"`, before `:preflight_compile` is even
+  called) -- a backstop at the actual point of use, not a fix for a previously-unmitigated hole.
+  Value beyond pure redundancy: it also fixes a latent message-framing bug -- without it, a
+  broken `HP_PY` that somehow bypassed the upstream smoke test would instead fail
+  `:preflight_compile`'s own `py_compile` call and get misreported as a syntax error in the
+  user's own code, rather than the honest "no Python interpreter is available" message.
+
+  **New regression test**: `tests/selfapps_entrysmoke_no_interpreter.ps1` (`conda-full` lane,
+  gated on `steps.conda_avail.outputs.available == 'true'`, GATING from first landing --
+  deterministic and self-contained via `HP_FORCE_CONDA_ONLY=1` + `HP_TEST_FORCE_CONDA_CREATE_
+  BOTH_FAIL=1`, no real network dependency for the failure itself, matching
+  `selfapps_pipgap.ps1`'s own established self-contained-conda-only pattern). Exercises the exact
+  previously-untested path: reaches `:conda_create_done` with a nonexistent `HP_PY`, asserts no
+  PyInstaller build is ever attempted, the honest no-interpreter message appears, the old
+  fabricated syntax-error message does not, and `~bootstrap.status.json` reads `state=error` with
+  a graceful `exit 0`. New static check `batch.entrysmoke.no_interpreter_guard`
+  (`tests/harness.ps1`) confirms the guard line exists between the `:run_entry_smoke` label and
+  its first `call :preflight_compile`, verified via a standalone `pwsh` probe (including a
+  negative control) before landing. See `docs/agent-ndjson.md`'s own entry for the full row
+  schema and reasoning.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

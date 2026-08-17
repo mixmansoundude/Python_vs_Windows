@@ -961,26 +961,6 @@ the same session, no new information, not re-filed). Each item below was checked
 source directly, not taken on the reviews' word alone; where a claim could not be confirmed this
 way (no live Windows execution available here), that is noted explicitly rather than stated as fact.
 
-- **Item 45: gate the build/warnfix/repair block on `HP_PY` actually existing, so a failed
-  env-create cannot cascade into a doomed PyInstaller build plus multiple repair-loop attempts with
-  no interpreter behind any of them.** Deliberately scoped narrow -- this is the small, isolated
-  first bite; Item 46 below is the larger, NOT-small structural issue this is a partial mitigation
-  for, and the two should not be conflated into one change.
-
-  **Mechanism**: `:die` returns via `exit /b` rather than halting the process (see
-  `docs/agent-lessons-learned.md`'s `:die` entry), so a genuine env-create failure can fall through
-  into `:run_entry_smoke` and attempt a full PyInstaller build, warnfix repair round, DLL-bundle
-  recovery, and hidden-import recovery (each with their own iteration budgets) against an `HP_PY`
-  that points at a python.exe that does not exist. Every one of those steps is guaranteed to fail
-  or no-op uselessly in this state; none of it does the user any good, and each failure inside the
-  loop is itself a `call :die` site that may pause again.
-
-  **Fix**: a single `if not exist "%HP_PY%" (...)` guard at the top of the build/warnfix/repair
-  block, skipping straight to whatever the existing no-interpreter failure path already is (or a
-  new one, if none currently exists cleanly for this exact state) instead of attempting any of it.
-  Small, isolated, and directly kills the "PyInstaller loops while no env/dep work happened"
-  symptom without touching `:die`'s own 24+ call sites.
-
 - **Item 46: `:die`'s `exit /b` lets most of its ~31 call sites continue executing afterward,
   producing repeated `pause` prompts and further doomed work instead of a single clear stop. NOT a
   small slice -- needs its own careful, dedicated scoping pass before touching it.** Matches this
