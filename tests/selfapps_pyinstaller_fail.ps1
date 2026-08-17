@@ -32,8 +32,10 @@
 # failure the other two scenarios' clean-exiting stub app never reaches.
 #
 # Asserts (all scenarios): the final ~bootstrap.status.json reads state=error (not silently
-# overwritten back to ok), the correct [ERROR] message appears in the log, and (docs/
-# open-questions.md item 1) the dedicated :print_no_exe_briefing panel is shown. For "execfail"/
+# overwritten back to ok), the correct failure message (now [WARN]-prefixed, see the Bucket B
+# note above -- the assertion itself matches the message substring and reason= token only, not
+# the prefix) appears in the log, and (docs/open-questions.md item 1) the dedicated
+# :print_no_exe_briefing panel is shown. For "execfail"/
 # "output_vanish", the stub app runs cleanly via the interpreter fallback despite total packaging
 # failure, so the final console [STATUS] line alone would otherwise read identically to a real
 # success -- the plain (non-caveat) panel text is asserted. For "execfail_runtimefail", the

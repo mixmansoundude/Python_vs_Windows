@@ -482,9 +482,10 @@ list; the recurring traps that have actually bitten us:
   `HP_BOOTSTRAP_STATE=error`), but deliberately skips `:die`'s three doomed-run-only actions --
   no `pause` (the run isn't over: real verification work still follows), no `:release_lock`
   (a concurrent second instance must not start while that verification is still ahead), no
-  `:write_status` (the eventual `:success`/`:print_no_exe_briefing` dispatch writes the real
-  final status once `HP_BOOTSTRAP_STATE` is settled). Used at the 3 PyInstaller-build-failure
-  call sites (`reason=test_forced_fail`/`build_error`/`missing_output`) -- reached only after
+  `:write_status` (`:after_cascade_decision` calls `:write_status` with whatever
+  `HP_BOOTSTRAP_STATE` holds by then, before `goto :success` dispatches to
+  `:print_no_exe_briefing` -- the briefing itself only prints, it writes nothing). Used at the 3
+  PyInstaller-build-failure call sites (`reason=test_forced_fail`/`build_error`/`missing_output`) -- reached only after
   the Nuitka fallback has ALSO failed, but the interpreter-fallback verification a few hundred
   lines below still genuinely runs and still genuinely decides success/failure, so these are not
   doomed the way most `:die` call sites are. **Not every `:die` site qualifies for this
