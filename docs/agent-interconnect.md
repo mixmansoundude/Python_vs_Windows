@@ -981,6 +981,44 @@ failure) -- unlike conda's solver, which fails outright on an unresolvable exact
 a real CI run ever shows this actually misbehaving for the embed tier specifically; not assumed
 from the conda case alone.
 
+### Genuine (non-cascade) conda-create exhaustion also falls through :conda_create_done -- a sibling gap to the cascade re-entry above (CLAUDE.md Item 46 Bucket A slice 1)
+
+**Distinct from "Provider cascade execution re-enters env-create" above -- that section covers a
+CASCADE re-entry (`HP_CASCADE_SAVED_PY` defined); this covers a GENUINE FIRST ATTEMPT where every
+tier (`:handle_conda_failure`'s embed/venv/system chain, called from `:conda_create_failed`) has
+already been tried and none worked.** Touch `:conda_create_failed`, must understand
+`:conda_create_done` AND `:after_env_mode_selection`'s own interpreter-missing guard -- all three
+share the same `:die`-does-not-halt hazard (see `docs/agent-lessons-learned.md`'s `:die` entry).
+
+Before this fix, `:conda_create_failed` fell through its own `call :die "[ERROR] conda env create
+failed."` straight into `:conda_create_done`, which unconditionally sets `HP_PY` to the conda
+env's expected (but never-created) `python.exe` path, immediately re-detects that via its own
+`if not exist` guard, and calls `:handle_conda_failure` A SECOND TIME -- replaying the just-failed
+embed download and venv creation attempts, and asking the REQ-014 system-Python consent prompt
+TWICE. Fixed by adding `goto :after_env_mode_selection` right after that `call :die` line (mirroring
+the already-shipped `:hp_test_conda_fail` test-bypass sibling a few thousand lines below, which has
+carried the identical goto since before this fix).
+
+**Does NOT reduce total pause count to one -- a real, more limited scope than it first appears.**
+`:after_env_mode_selection` has its OWN `if not defined HP_PY (set HP_NO_INTERPRETER=1 & call :die
+"[ERROR] Active Python interpreter not resolved.")` check a few dozen lines below its label. Since
+`HP_PY` is genuinely undefined at this point post-fix (never set, since `:conda_create_done` is now
+skipped entirely), this check fires and pauses a second time -- it did NOT fire pre-fix, because
+`:conda_create_done` used to leave `HP_PY` DEFINED (just pointing at a nonexistent file), which
+this specific check does not catch. So the fix relocates pause #2 to an already-precedented site
+(exercised by `self.embed.fallback.decline` in `tests/selfapps_ux_hardening.ps1`, via the
+`:hp_test_conda_fail` path) rather than eliminating it -- the genuine win is skipping the SECOND
+`:handle_conda_failure` call (and its embed/venv-attempt and system-consent-prompt replay), not
+cutting pause count. A further Bucket A slice targeting `:after_env_mode_selection`'s own check is
+the natural next candidate if reducing to a single pause is ever pursued.
+
+Regression test: `tests/selfapps_entrysmoke_no_interpreter.ps1` (`self.entrysmoke.no_interpreter_
+guard`, `conda-full` lane) -- asserts `[ERROR] python.exe missing from conda environment.` is
+ABSENT (proving the second `:handle_conda_failure` call is skipped) and the new
+`[ERROR] Active Python interpreter not resolved.` line IS present (proving the fall-through lands
+at `:after_env_mode_selection`'s own guard, not silently swallowed). See `docs/agent-ndjson.md`
+for the full assertion list.
+
 ### uv uses managed-only CPython (UV_PYTHON_PREFERENCE)
 
 `run_setup.bat` sets `UV_PYTHON_PREFERENCE=only-managed` at the top of the uv acquisition

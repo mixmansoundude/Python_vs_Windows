@@ -1122,7 +1122,25 @@ rem Item 23 for the full trace of why this was previously missing. On a genuine 
 rem (no earlier build to fall back to), HP_CASCADE_SAVED_PY is never defined, so this check is a
 rem no-op and the existing hard-failure behavior below is unchanged.
 if defined HP_CASCADE_SAVED_PY goto :cascade_conda_create_failed
+rem CLAUDE.md Active Backlog Item 46 (Bucket A, slice 1): :die returns via exit /b, not a
+rem process halt (see docs/agent-lessons-learned.md's ":die" entry), so without this goto,
+rem falling through here means EVERY tier (uv already failed earlier, conda create just
+rem failed, embed/venv/system all exhausted by :handle_conda_failure above) has been tried
+rem and none worked -- yet execution would still fall into :conda_create_done, which
+rem unconditionally sets HP_PY to a path that provably does not exist, immediately re-detects
+rem that via its own "if not exist" guard, and calls :handle_conda_failure A SECOND TIME.
+rem This is not just wasted CPU: :handle_conda_failure re-attempts embed download, venv
+rem creation, AND the REQ-014 system-Python consent prompt -- for a real user, this means
+rem watching the same failing embed/venv attempts a second time and being asked the same
+rem system-Python "keep going?" question again right after already answering it once. Skipping
+rem straight to :after_env_mode_selection (the same target the already-shipped :hp_test_conda_
+rem fail sibling a few thousand lines below has used since before this fix) avoids that replay
+rem -- note this does not, by itself, reduce the total pause count to one: :after_env_mode_
+rem selection's own "if not defined HP_PY" check (a few dozen lines below this label) has the
+rem identical non-halting :die shape and is reached here since HP_PY was never set this run;
+rem that is a separate, not-yet-addressed call site, tracked as a follow-up Bucket A slice.
 call :die "[ERROR] conda env create failed."
+goto :after_env_mode_selection
 :conda_create_done
 
 set "CONDA_PREFIX=%ENV_PATH%"

@@ -981,12 +981,25 @@ established convention that the `HP_TEST_FORCE_CONDA_FAIL` bypass alone is not s
 evidence for this class of gap.
 
 Asserts: both the simulated initial-attempt and retry-attempt failure signatures fired, the
-`:conda_create_done` "python.exe missing from conda environment" branch was genuinely reached,
-the honest "No Python interpreter is available" message appears, the old fabricated "syntax
+honest "No Python interpreter is available" message appears, the old fabricated "syntax
 error" message (CLAUDE.md's former Active Backlog item 14) does not, no PyInstaller build is
 ever attempted ("Building standalone executable" absent -- the key Item 45 assertion),
 `~bootstrap.status.json` reads `state=error`, and the process still exits 0 (this repo's
 established "graceful stop" contract -- see `self.conda.bothfail`'s sibling reasoning).
+
+**Updated for CLAUDE.md Active Backlog Item 46 (Bucket A slice 1, closed):**
+`:conda_create_failed`'s own `call :die` now `goto`s straight to `:after_env_mode_selection`
+instead of falling through into `:conda_create_done`'s body -- before this fix, that fall-through
+unconditionally set `HP_PY` to a nonexistent path, then its own "if not exist" guard called
+`:handle_conda_failure` a SECOND time (not just wasted CPU: a real user would have watched the
+embed/venv attempts and the REQ-014 system-Python consent prompt replay a second time right
+after already answering them once). The test now asserts the OLD "`:conda_create_done`'s
+'python.exe missing from conda environment'" message is genuinely ABSENT (proving that block is
+skipped entirely), and that the NEW site's message, "Active Python interpreter not resolved."
+(`:after_env_mode_selection`'s own "if not defined HP_PY" check, reached here since `HP_PY` was
+never set this run), appears instead. This slice does NOT reduce the bootstrap to a single pause
+for a real interactive user -- that check has the identical non-halting `:die` shape and is a
+separate, not-yet-addressed follow-up (see CLAUDE.md's Item 46 entry).
 
 Lane: `conda-full` only, gated on `steps.conda_avail.outputs.available == 'true'` (same gate 28+
 other conda-full-only self-tests already use) -- guarantees real Miniconda is already present,

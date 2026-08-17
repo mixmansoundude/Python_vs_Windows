@@ -7,12 +7,22 @@
 # :die uses "exit /b" (a subroutine return, not a process halt -- see docs/agent-lessons-
 # learned.md's ":die" entry), so a caller with no goto/halt after "call :die" simply continues.
 # A genuine (not HP_TEST_FORCE_CONDA_FAIL-bypassed) FIRST-ATTEMPT conda-create failure exercises
-# a path that was never directly tested before this item: :conda_create_failed falls through
-# :die into :conda_create_done, which unconditionally sets HP_PY to the conda env's expected
-# python.exe path -- even though conda create just failed and that file was never produced.
-# The very next "if not exist %HP_PY%" guard catches this and calls :handle_conda_failure a
-# SECOND time (redundant, since HP_FORCE_CONDA_ONLY already made the first call a no-op), then
-# falls through :die again before finally reaching :after_env_mode_selection.
+# a path that was never directly tested before this item.
+#
+# CLAUDE.md Active Backlog Item 46 (Bucket A, slice 1, closed): :conda_create_failed used to
+# fall through :die into :conda_create_done, which unconditionally set HP_PY to the conda env's
+# expected (but never-produced) python.exe path, then its own "if not exist %HP_PY%" guard
+# called :handle_conda_failure A SECOND TIME -- not just wasted CPU, a real user would have seen
+# the embed/venv attempts and the REQ-014 system-Python consent prompt replay a second time
+# right after already answering them once. Fixed with a goto straight to
+# :after_env_mode_selection (matching the already-shipped :hp_test_conda_fail sibling), so
+# :conda_create_done's body is skipped entirely on this path -- the old, redundant
+# "[ERROR] python.exe missing from conda environment." message this test used to assert is now
+# provably absent (see secondHandleCallAvoided below). This does NOT reduce the bootstrap to a
+# single pause for a real interactive user -- :after_env_mode_selection's own "if not defined
+# HP_PY" check has the identical non-halting shape and is what now reports the terminal failure
+# (see the honest-message assertions below), tracked as a separate, not-yet-addressed follow-up
+# slice in CLAUDE.md's Item 46 entry.
 #
 # This is a genuinely different call path than either of selfapps_cascade_conda_create_fail.
 # ps1's two scenarios (both are REQ-009 cascade RE-ENTRIES, where HP_CASCADE_SAVED_PY is
@@ -128,7 +138,15 @@ $combined  = $logText + "`n" + $setupText
 
 $initialAttemptFailed = $combined -match [regex]::Escape('CondaHTTPError: HTTP 000 CONNECTION FAILED (simulated)')
 $retryAlsoFailed      = $combined -match [regex]::Escape('conda create: retry after transient failure also failed')
-$missingPyReached     = $combined -match [regex]::Escape('[ERROR] python.exe missing from conda environment.')
+
+# Item 46 Bucket A slice 1: the old, redundant ":conda_create_done"-specific message must no
+# longer appear at all -- proving the new goto skipped that whole block, instead of merely
+# reaching it a second time. "Active Python interpreter not resolved." (from
+# :after_env_mode_selection's own "if not defined HP_PY" check) is the new site that reports the
+# terminal failure instead -- see this file's own header comment for why that site is a
+# still-open follow-up, not itself fixed by this slice.
+$secondHandleCallAvoided = -not ($combined -match [regex]::Escape('[ERROR] python.exe missing from conda environment.'))
+$reachedNewSite          = $combined -match [regex]::Escape('[ERROR] Active Python interpreter not resolved.')
 
 # The actual Item 45 guard: the honest no-interpreter message fires, the old fabricated
 # syntax-error message never fires, and -- the key assertion -- no PyInstaller build is ever
@@ -148,28 +166,29 @@ if (Test-Path -LiteralPath $statusPath) {
     } catch { }
 }
 
-$pass = $initialAttemptFailed -and $retryAlsoFailed -and $missingPyReached -and
+$pass = $initialAttemptFailed -and $retryAlsoFailed -and $secondHandleCallAvoided -and $reachedNewSite -and
         $honestNoInterpreterMsg -and $noFakeSyntaxErr -and $noBuildAttempt -and
         ($statusState -eq 'error') -and ($runExit -eq 0)
 
 Write-Host "=== self.entrysmoke.no_interpreter_guard evidence ==="
-Write-Host ("initialAttemptFailed={0} retryAlsoFailed={1} missingPyReached={2} honestNoInterpreterMsg={3} noFakeSyntaxErr={4} noBuildAttempt={5} statusState={6} statusExit={7} runExit={8} pass={9}" -f `
-    $initialAttemptFailed, $retryAlsoFailed, $missingPyReached, $honestNoInterpreterMsg, $noFakeSyntaxErr, $noBuildAttempt, $statusState, $statusExit, $runExit, $pass)
+Write-Host ("initialAttemptFailed={0} retryAlsoFailed={1} secondHandleCallAvoided={2} reachedNewSite={3} honestNoInterpreterMsg={4} noFakeSyntaxErr={5} noBuildAttempt={6} statusState={7} statusExit={8} runExit={9} pass={10}" -f `
+    $initialAttemptFailed, $retryAlsoFailed, $secondHandleCallAvoided, $reachedNewSite, $honestNoInterpreterMsg, $noFakeSyntaxErr, $noBuildAttempt, $statusState, $statusExit, $runExit, $pass)
 Write-Host "=== end self.entrysmoke.no_interpreter_guard evidence ==="
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.entrysmoke.no_interpreter_guard'
     req     = 'CLAUDE.md-Item-45'
     pass    = [bool]$pass
-    desc    = 'a genuine first-attempt conda-create failure (all fallback tiers exhausted via HP_FORCE_CONDA_ONLY) never reaches the PyInstaller build/warnfix/repair block, and reports the honest no-interpreter cause'
+    desc    = 'a genuine first-attempt conda-create failure (all fallback tiers exhausted via HP_FORCE_CONDA_ONLY) never reaches the PyInstaller build/warnfix/repair block, never redundantly retries the exhausted fallback chain a second time (Item 46 Bucket A slice 1), and reports the honest no-interpreter cause'
     details = [ordered]@{
-        initialAttemptFailed    = [bool]$initialAttemptFailed
-        retryAlsoFailed         = [bool]$retryAlsoFailed
-        missingPyReached        = [bool]$missingPyReached
-        honestNoInterpreterMsg  = [bool]$honestNoInterpreterMsg
-        noFakeSyntaxErr         = [bool]$noFakeSyntaxErr
-        noBuildAttempt          = [bool]$noBuildAttempt
-        statusState             = $statusState
+        initialAttemptFailed     = [bool]$initialAttemptFailed
+        retryAlsoFailed          = [bool]$retryAlsoFailed
+        secondHandleCallAvoided  = [bool]$secondHandleCallAvoided
+        reachedNewSite           = [bool]$reachedNewSite
+        honestNoInterpreterMsg   = [bool]$honestNoInterpreterMsg
+        noFakeSyntaxErr          = [bool]$noFakeSyntaxErr
+        noBuildAttempt           = [bool]$noBuildAttempt
+        statusState              = $statusState
         statusExit              = $statusExit
         runExit                 = $runExit
         log                     = $bootstrapLog
