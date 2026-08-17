@@ -55,6 +55,7 @@ self.collect.submodules,
 self.exe.hidden_import, self.exe.hidden_import.exhaust,
 self.preflight.syntax,
 self.preflight.no_powershell, self.preflight.ps_check_fail, self.preflight.lf_only,
+self.entrysmoke.no_interpreter_guard,
 self.cascade.detect, self.cascade.consent, self.cascade.timed,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
 self.cascade.conda_create_fail (uv lane only -- selfapps_cascade_conda_create_fail.ps1; non-gating),
@@ -182,6 +183,7 @@ version.metadata,
 host.env.os, host.env.ps, host.env.python,
 batch.req009.venv_unconditional, batch.req009.provider_logs, batch.req009.cascade_detect, batch.req009.cascade_consent, batch.req009.cascade_exec,
 batch.req010.isolation, batch.req011.dircheck, batch.req012.skiphooks,
+batch.entrysmoke.no_interpreter_guard,
 batch.req002.findentry_cli, batch.req002.findentry_run, batch.req002.entry_log, batch.req002.findentry_payload,
 batch.req002.picker,
 batch.ux.pause.gated,
@@ -939,6 +941,61 @@ verified locally).
 
 ```
 self.preflight.no_powershell, self.preflight.ps_check_fail, self.preflight.lf_only
+```
+
+---
+
+## selfapps-entrysmoke-no-interpreter NDJSON rows (selfapps_entrysmoke_no_interpreter.ps1, conda-full lane only, GATING)
+
+CLAUDE.md Active Backlog Item 45: `:die` uses `exit /b` (a subroutine return, not a process halt),
+so a genuine first-attempt conda-create failure can fall through into `:conda_create_done`, which
+unconditionally sets `HP_PY` to the conda env's expected `python.exe` path even though conda
+create just failed and that file was never produced. Deep tracing while implementing this item
+found the build/warnfix/repair block was already structurally protected in every reachable
+scenario -- `:after_env_mode_selection`'s own interpreter smoke test (added for CLAUDE.md's
+former Active Backlog item 14, closed) already sets `HP_NO_INTERPRETER` whenever `HP_PY` fails to
+execute, and `:preflight_compile` already bails out on that flag before `:run_entry_smoke` ever
+reaches the PyInstaller build call -- but this exact call path (a genuine, non-cascade,
+non-`HP_TEST_FORCE_CONDA_FAIL`-bypassed first-attempt exhaustion reaching `:conda_create_done`
+with a nonexistent `HP_PY`) had no direct regression test of its own; item 14's own regression
+test (`self.embed.fallback.decline`, `selfapps_ux_hardening.ps1`) uses the `HP_TEST_FORCE_
+CONDA_FAIL` bypass, which never reaches `:conda_create_done`'s `HP_PY`-setting line at all, and
+`self.cascade.conda_create_fail`'s two scenarios are both REQ-009 cascade RE-ENTRIES (`HP_CASCADE_
+SAVED_PY` defined), which route through `:cascade_conda_create_failed` instead, also never
+touching this line. The fix itself is a direct, explicit guard at the top of `:run_entry_smoke`
+(`if not exist "%HP_PY%" set "HP_NO_INTERPRETER=1"`, before `:preflight_compile` is even called)
+-- a backstop at the actual point of use, not a fix for a previously-unmitigated hole, so the
+build/warnfix/repair block cannot be reached against a nonexistent `HP_PY` even if some future
+change removes or bypasses the upstream smoke test; it also fixes a latent message-framing bug
+(without it, a broken `HP_PY` bypassing the upstream smoke test would instead fail
+`:preflight_compile`'s own `py_compile` call and get misreported as a syntax error in the user's
+code, not a missing interpreter).
+
+`HP_FORCE_CONDA_ONLY=1` (self-contained, matching `selfapps_pipgap.ps1`'s own established
+pattern) makes both `:handle_conda_failure` calls in this path a no-op (embed/venv/system
+fallback attempts are skipped by design for this lane), so total tier exhaustion is reached
+deterministically without needing embed/venv/system-specific forced-failure hooks.
+`HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL=1` forces the REAL conda create/retry code path to fail
+both attempts deterministically, matching CLAUDE.md's former Active Backlog item 23's own
+established convention that the `HP_TEST_FORCE_CONDA_FAIL` bypass alone is not sufficient
+evidence for this class of gap.
+
+Asserts: both the simulated initial-attempt and retry-attempt failure signatures fired, the
+`:conda_create_done` "python.exe missing from conda environment" branch was genuinely reached,
+the honest "No Python interpreter is available" message appears, the old fabricated "syntax
+error" message (CLAUDE.md's former Active Backlog item 14) does not, no PyInstaller build is
+ever attempted ("Building standalone executable" absent -- the key Item 45 assertion),
+`~bootstrap.status.json` reads `state=error`, and the process still exits 0 (this repo's
+established "graceful stop" contract -- see `self.conda.bothfail`'s sibling reasoning).
+
+Lane: `conda-full` only, gated on `steps.conda_avail.outputs.available == 'true'` (same gate 28+
+other conda-full-only self-tests already use) -- guarantees real Miniconda is already present,
+since `HP_FORCE_CONDA_ONLY=1` makes this test's own conda-create attempt the first thing reached
+rather than triggering a fresh Miniconda download itself. Deterministic and self-contained, so
+gating from first landing (same reasoning as `self.preflight.lf_only`'s own precedent).
+
+```
+self.entrysmoke.no_interpreter_guard
 ```
 
 ---

@@ -28,10 +28,11 @@ its own named trigger genuinely fires -- do not speculatively build any of these
 
 - **Total build-attempt budget cap across nested repair loops** (hidden-import recovery x
   DLL-bundle recovery x REQ-009 provider-cascade tiers, each with its own iteration cap that
-  compounds with the others -- see CLAUDE.md's former Active Backlog Item 45/46 discussion for the
-  no-`HP_PY` case this overlaps with). Raised during a 2026-08-14 real Windows Sandbox debugging
-  session as a theoretical concern (many PyInstaller invocations possible in the worst case with no
-  single circuit breaker), not a confirmed problem -- the individual loops are each already capped
+  compounds with the others -- see CLAUDE.md's closed Active Backlog Item 45 and still-open Item 46
+  discussion for the no-`HP_PY` case this overlaps with). Raised during a 2026-08-14 real Windows
+  Sandbox debugging session as a theoretical concern (many PyInstaller invocations possible in the
+  worst case with no single circuit breaker), not a confirmed problem -- the individual loops are
+  each already capped
   and this repo's own history with them (CLAUDE.md's DLL-bundling/hidden-import interconnect
   entries) shows real, hard-won caution about touching them without strong justification. **Trigger
   to thaw**: a real CI run or user report showing the repair-loop product actually causing a
