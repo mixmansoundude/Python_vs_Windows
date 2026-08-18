@@ -2443,6 +2443,23 @@ run of the same regex logic before landing, not just reasoned about).
   new scratch dirs' paths, mirroring the pattern the CWD-not-writable scenario (Item 48) already
   established.
 
+  **A second CodeRabbit review round on the same fix (PR #444) caught a genuinely new hazard the
+  fix itself introduced: passing the candidate directory name through `call`'s own argument
+  line.** `call :subfolder_hint_check_one "%%D"` is subject to `call`'s own documented second
+  `%`-expansion pass (see `docs/agent-lessons-learned.md`'s "call triggers cmd.exe's own second
+  expansion pass" entry -- the identical hazard class already found and fixed once before for the
+  conda native-DLL bundling loop, CLAUDE.md Item 24). A subfolder literally named with a
+  `%`-shaped substring (e.g. containing `%PATH%`, a real, always-defined Windows environment
+  variable) would have that text re-expanded into PATH's real value during `call`'s dispatch,
+  corrupting the scan target. Fixed by staging the name into `HP_SFC` via a plain `set` BEFORE the
+  `call` (never as a `call` argument) and calling `:subfolder_hint_check_one` bare, with the
+  subroutine reading `%HP_SFC%` directly -- the bare call line itself has zero `%` characters, so
+  nothing for the second pass to misinterpret. New regression test
+  `self.empty_repo.subfolder_hint_pct` (a subfolder literally named `has%PATH%in-name`,
+  containing a real `.py` file) proves the fix: if the corruption regressed, the scan would target
+  the expanded (wrong) path instead of the real subfolder and the hint would never fire.
+  `docs/agent-ndjson.md` and `batch-check.yml`'s "Upload test logs" step updated to match.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

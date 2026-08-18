@@ -2281,14 +2281,23 @@ rem hint firing when it should not have (dist/build/tilde/dot exclusions in one
 rem 4-deep chained-if line inside the for-loop body), and this repo's own
 rem established pattern is call/goto-based dispatch over deep if-chaining for
 rem exactly this reliability reason (see docs/agent-lessons-learned.md's
-rem "Provider-cascade dispatch is goto-based on purpose").
+rem "Provider-cascade dispatch is goto-based on purpose"). The subdirectory name
+rem is staged into HP_SFC via a plain `set` BEFORE the `call`, never as a `call`
+rem argument -- `call` re-scans its OWN line a second time before dispatching
+rem (see docs/agent-lessons-learned.md's ":log echoes UNQUOTED" entry, "call
+rem triggers cmd.exe's own second expansion pass"), so a subfolder literally
+rem named e.g. "has%PATH%in-it" passed as a `call` argument would have that
+rem text re-expanded into the REAL PATH variable's value during dispatch,
+rem corrupting the scan target -- the same hazard class already found and
+rem fixed once before for the conda native-DLL bundling loop (CodeRabbit
+rem review, CLAUDE.md Item 24).
 for /d %%D in (*) do (
-  call :subfolder_hint_check_one "%%D"
+  set "HP_SFC=%%D"
+  call :subfolder_hint_check_one
   if not errorlevel 1 goto :subfolder_hint_found
 )
 exit /b 0
 :subfolder_hint_check_one
-set "HP_SFC=%~1"
 if /i "%HP_SFC%"=="dist" exit /b 1
 if /i "%HP_SFC%"=="build" exit /b 1
 if "%HP_SFC:~0,1%"=="~" exit /b 1

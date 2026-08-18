@@ -211,6 +211,47 @@ if (-not $subfolderNegPass) {
 }
 $summary.Add('subfolder Python-file hint negative coverage: PASS')
 
+# CLAUDE.md Item 43 (CodeRabbit PR #444 review round 2): :check_subfolder_hint stages the
+# candidate subfolder name into HP_SFC via a plain `set` BEFORE calling
+# :subfolder_hint_check_one, never as a `call` argument -- `call` re-scans its own line a
+# SECOND time before dispatching (see docs/agent-lessons-learned.md's "call triggers cmd.exe's
+# own second expansion pass"), so a subfolder literally named with a %-shaped substring (e.g.
+# containing "%PATH%") passed as a call argument would have that text re-expanded into the
+# REAL PATH variable's value, corrupting the scan target. This subfolder's name is chosen to
+# contain a real, always-defined environment variable reference shape to prove the fix
+# actually prevents that corruption -- if it regressed, the scan would target a nonexistent
+# path (the expanded PATH value) instead of the real subfolder, and the hint would never fire.
+$subfolderPctDir = Join-Path $TestsDir '~selftest_subfolder_hint_pct'
+$subfolderPctCandidateName = 'has%PATH%in-name'
+$subfolderPctExit = Invoke-Setup -WorkDir $subfolderPctDir -LogName '~subfolder_pct_bootstrap.log' -Prepare {
+  $candidatePath = Join-Path $subfolderPctDir $subfolderPctCandidateName
+  New-Item -ItemType Directory -Force -Path $candidatePath | Out-Null
+  Set-Content -LiteralPath (Join-Path $candidatePath 'main.py') -Value 'print("hello")' -Encoding ASCII
+}
+$subfolderPctStatusPath = Join-Path $subfolderPctDir '~bootstrap.status.json'
+$subfolderPctStatus = if (Test-Path $subfolderPctStatusPath) { Get-Content -LiteralPath $subfolderPctStatusPath -Encoding ASCII -Raw | ConvertFrom-Json } else { $null }
+$subfolderPctLogPath = Join-Path $subfolderPctDir '~subfolder_pct_bootstrap.log'
+$subfolderPctLog = if (Test-Path $subfolderPctLogPath) { Get-Content -LiteralPath $subfolderPctLogPath -Raw } else { '' }
+$subfolderPctHintFound = $subfolderPctLog -match [regex]::Escape('Hint: found .py file(s) in a subfolder')
+$subfolderPctStatusExitOk = $subfolderPctStatus -and ($subfolderPctStatus.exitCode -eq 0)
+$subfolderPctPass = ($subfolderPctExit -eq 0) -and $subfolderPctStatus -and ($subfolderPctStatus.state -eq 'no_python_files') -and ($subfolderPctStatus.pyFiles -eq 0) -and $subfolderPctStatusExitOk -and $subfolderPctHintFound
+Write-NdjsonRow ([ordered]@{
+  id = 'self.empty_repo.subfolder_hint_pct'
+  pass = $subfolderPctPass
+  desc = 'Item 43 (CodeRabbit PR #444 round 2): a percent-shaped subfolder name (e.g. containing %PATH%) is not corrupted by call''s second expansion pass -- hint still fires correctly'
+  details = [ordered]@{
+    exitCode = $subfolderPctExit
+    statusExitCode = $(if ($subfolderPctStatus) { $subfolderPctStatus.exitCode } else { $null })
+    state = $(if ($subfolderPctStatus) { $subfolderPctStatus.state } else { $null })
+    pyFiles = $(if ($subfolderPctStatus) { $subfolderPctStatus.pyFiles } else { $null })
+    hintFound = $subfolderPctHintFound
+  }
+})
+if (-not $subfolderPctPass) {
+  throw "subfolder-hint percent-name scenario failed (exit=$subfolderPctExit statusExit=$($subfolderPctStatus.exitCode) state=$($subfolderPctStatus.state) hintFound=$subfolderPctHintFound)"
+}
+$summary.Add('subfolder Python-file hint percent-name safety: PASS')
+
 if (Test-Path $stubDir) { Remove-Item -Recurse -Force $stubDir }
 New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
 Copy-Item -Path $BatchPath -Destination $stubDir -Force
