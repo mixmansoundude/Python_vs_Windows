@@ -203,6 +203,41 @@ if not exist "~wtest.tmp" (
   exit /b 1
 )
 del /f /q "~wtest.tmp" >nul 2>&1
+rem derived requirement: PowerShell capability preflight (CLAUDE.md Item 47) -- placed after
+rem the CWD-writable check above so a real folder-permission failure is diagnosed by that
+rem check first, not misattributed to this one. Bare PowerShell presence, checked earlier in
+rem the line-ending self-check, only proves powershell.exe exists on PATH, not that it can do
+rem what this bootstrapper actually needs: :emit_from_base64, used to write every embedded
+rem ~*.py/~*.ps1 helper, needs Convert.FromBase64String plus IO.File.WriteAllBytes, and the
+rem failfast-probe/exe-smokerun helpers need System.Diagnostics.ProcessStartInfo -- all of
+rem which a locked-down corporate image, such as AppLocker, WDAC, or Constrained Language
+rem Mode, can block even with PowerShell itself present. Probing all three together here turns
+rem five-plus later opaque "Could not write ~x" failures into one clear, named diagnostic.
+set "HP_PS_PROBE_FILE=%~dp0~ps_capability_probe.tmp"
+if defined HP_TEST_FORCE_PS_CAPABILITY_FAIL (
+  rem derived requirement: point the probe at a nonexistent directory so the real
+  rem WriteAllBytes call genuinely throws and hits its own catch branch -- exercises the
+  rem real failure path instead of faking an exit code externally, matching
+  rem HP_TEST_FORCE_PS_CHECK_FAIL's established technique above.
+  set "HP_PS_PROBE_FILE=%~dp0~nonexistent_dir_xyz\~ps_capability_probe.tmp"
+)
+del /f /q "%HP_PS_PROBE_FILE%" >nul 2>&1
+powershell -NoProfile -Command "try{$b=[Convert]::FromBase64String('cHZ3');[IO.File]::WriteAllBytes($env:HP_PS_PROBE_FILE,$b);if(-not (Test-Path $env:HP_PS_PROBE_FILE)){exit 1};Remove-Item $env:HP_PS_PROBE_FILE -Force;$psi=New-Object System.Diagnostics.ProcessStartInfo;exit 0}catch{exit 1}" >nul 2>&1
+if errorlevel 1 (
+  echo ***
+  echo *** [ERROR] PowerShell on this machine cannot perform an operation this
+  echo *** script needs -- decoding embedded data, writing files, or preparing
+  echo *** to launch a process. This is usually caused by a restrictive policy
+  echo *** such as Constrained Language Mode, AppLocker, or WDAC on a managed
+  echo *** or corporate machine. Ask an administrator to allow PowerShell Full
+  echo *** Language Mode for this script, or run it on an unrestricted machine.
+  echo ***
+  echo {"state":"error","exitCode":1,"pyFiles":0}> "%HP_PREFLIGHT_STATUS%"
+  del /f /q "%HP_PS_PROBE_FILE%" >nul 2>&1
+  if not defined HP_CI_LANE ( pause )
+  exit /b 1
+)
+del /f /q "%HP_PS_PROBE_FILE%" >nul 2>&1
 set "HP_SCRIPT_ROOT=%~dp0"
 for %%R in ("%HP_SCRIPT_ROOT%") do set "HP_SCRIPT_ROOT=%%~fR"
 if not "%HP_SCRIPT_ROOT:~-1%"=="\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"

@@ -1006,25 +1006,6 @@ way (no live Windows execution available here), that is noted explicitly rather 
   elsewhere in this backlog -- one incremental slice at a time (slice 1 above is the second proof
   this works, after Bucket B), not a single sweeping change across every remaining site.
 
-- **Item 47: no PowerShell capability preflight beyond bare presence.** The new line-ending
-  self-check (Item 44's mitigation) added a `where powershell` presence guard as its own
-  precondition, but that only proves PowerShell exists on PATH, not that it can actually do the
-  things this bootstrapper needs -- `:emit_from_base64` (used to write every embedded `~*.py`/
-  `~*.ps1` helper to disk) needs `[Convert]::FromBase64String` + `[IO.File]::WriteAllBytes`, and
-  `~failfast_probe.ps1`/`~exe_smokerun.ps1` need `New-Object System.Diagnostics.ProcessStartInfo`
-  -- all of which a locked-down corporate image (AppLocker/WDAC/Constrained Language Mode) can
-  block even with PowerShell itself present and on PATH. This was the leading hypothesis in the
-  sandbox debugging session before the real root cause (Item 44) was confirmed; ruled out for THAT
-  specific sandbox (confirmed `FullLanguage`, `EMIT OK`, `PSI OK` via direct probing) but not a
-  dead concern in general -- a genuinely CLM-restricted machine would still hit this today with no
-  clear diagnostic, just the same opaque "Could not write ~x" pattern the sandbox session initially
-  (incorrectly, for that session) suspected.
-
-  **Fix**: run the FromBase64String + WriteAllBytes + `New-Object ProcessStartInfo` triple once,
-  early (after Item 44's line-ending check, before `:define_helper_payloads`), and fail with a
-  plain-language message naming Constrained Language Mode specifically if it fails, rather than
-  letting the failure surface piecemeal as five-plus separate "Could not write ~x" messages later.
-
 - **Item 59: CodeRabbit's automated review did not run on PR #435, and should be manually
   triggered on every future PR -- owner-requested standing process fix, not a code change.**
   This repo (fewer than 10 stars, Organization UI config) requires a manual trigger for
