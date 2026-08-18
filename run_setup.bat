@@ -3742,6 +3742,11 @@ if not defined HP_BUILD_OK (
     rem :dll_bundle_recover never even calls (e.g. this attempt is not conda, or no DLL warning
     rem appears at all) must not inherit a stale hint left by an earlier, cascaded-away provider.
     set "HP_DLL_HINT_STATE="
+    rem CLAUDE.md Active Backlog Item 41: the post-flight caveat panel's GUI-app-aware hint reads
+    rem HP_EXE_TIMEDOUT_SILENT, set below where HP_EXE_VERIFY_FAILED is set. Reset here for the
+    rem identical reason as HP_DLL_HINT_STATE above -- a cascaded-away provider's own timed-out
+    rem verification must not leak a stale hint into a later provider tier's own caveat panel.
+    set "HP_EXE_TIMEDOUT_SILENT="
     if defined HP_TEST_FORCE_PYINSTALLER_FAIL (
       call :log "[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure."
       call :try_nuitka_tier_a
@@ -4823,6 +4828,12 @@ set "HP_EXE_VERIFY_FAILED=1"
 rem a -1 is a timeout/hang: no parseable error to hint on, and re-running the EXE in
 rem :exe_smokerun_hints would hang too -- skip straight to the post-flight caveat.
 if not "%HP_EXE_EXIT%"=="-1" call :exe_smokerun_hints
+rem CLAUDE.md Active Backlog Item 41: ~exe_smokerun.ps1's own kill only fires when ZERO
+rem stdout/stderr bytes were observed before the 30s deadline (its $sawOutput gate) -- exactly
+rem the shape of a correctly-behaving GUI app (tkinter/PyQt, a mainloop with no console output),
+rem not just a genuinely hung program. HP_EXE_EXIT=="-1" already implies this at this point in
+rem the file, so no new runtime signal is needed -- just record it for the caveat panel below.
+if "%HP_EXE_EXIT%"=="-1" set "HP_EXE_TIMEDOUT_SILENT=1"
 goto :smokerun_ndjson
 :smokerun_ok
 call :log "[INFO] EXE smokerun: exited 0 (ok)"
@@ -5606,6 +5617,7 @@ echo ============================================================
 echo  We packaged your app, but couldn't fully verify it runs as a
 echo  standalone program. Your Python environment was set up and the
 echo  packaging step completed without a fatal error.
+if defined HP_EXE_TIMEDOUT_SILENT call :pfb_gui_hint
 if defined HP_DLL_HINT_STATE call :pfb_dll_hint
 :pfb_runapp
 echo.
@@ -5704,6 +5716,22 @@ echo  NOTE: a missing native library (%HP_DLL_DETECTED_SAFE%) was detected while
 echo  packaging your app and was automatically repaired; it is likely not the
 echo  cause of the caveat above.
 :pfb_dll_hint_done
+exit /b 0
+
+:pfb_gui_hint
+rem CLAUDE.md Active Backlog Item 41: the ~30s verification kill only fires when ZERO
+rem stdout/stderr bytes were observed before the deadline (~exe_smokerun.ps1's own $sawOutput
+rem gate, see docs/agent-interconnect.md "Activity-aware EXE-smoke kill") -- exactly the shape
+rem of a correctly-behaving GUI app (tkinter, PyQt) with a mainloop and no console output, not
+rem just a genuinely hung program. Distinguish the two in the panel text itself, not just the
+rem pre-launch warning (:warn_user_code_launch already discloses the kill beforehand, but that
+rem disclosure and this panel are both worded for a console-program mental model otherwise).
+echo.
+echo  NOTE: this can happen for a GUI app, e.g. tkinter or PyQt, that opens its
+echo  own window and prints nothing to the console -- that produces the exact
+echo  same silence as a genuinely hung program, so we cannot tell them apart
+echo  automatically. If a window appeared and worked normally, this caveat
+echo  does not necessarily mean anything is wrong.
 exit /b 0
 
 :print_no_exe_briefing

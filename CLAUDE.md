@@ -811,34 +811,6 @@ but several represent real gaps worth closing before calling the path fully rele
   **Coverage gap to close in the same slice**: no scenario backdates a source file's mtime below
   the EXE's to test this. Add one.
 
-- **Item 41: a working GUI app is force-killed at the 30s build-verification deadline and
-  reported with a caveat, with no messaging calibrated for that specific, correctly-behaving
-  case.** Confirmed reasoned-from-source, with the kill-on-silence RULE confirmed by real CI
-  capture of `:warn_user_code_launch`'s own message text.
-
-  **Mechanism**: the activity-aware kill (`~exe_smokerun.ps1`, `$sawOutput` gate -- see
-  `docs/agent-interconnect.md`'s "Activity-aware EXE-smoke kill" section for the full, deliberate
-  design history) only kills a process that has produced ZERO bytes of stdout/stderr within 30
-  seconds -- exactly the intended behavior for a genuinely hung process. A tkinter/PyQt app with a
-  `mainloop()` and no console output is, however, ALSO exactly that shape while behaving perfectly
-  correctly. It gets killed, `HP_EXE_EXIT=-1`, `[STATUS] Run Status: TIMED OUT`, and the postflight
-  panel reads "SETUP COMPLETE -- WITH A CAVEAT."
-
-  **Realistic scenario**: a student is handed a tkinter grade calculator. Setup runs, a window
-  appears, they start typing into it -- 30 seconds later Windows kills it mid-entry. The caveat
-  panel then says "we couldn't fully verify it runs as a standalone program," with nothing
-  anywhere explaining "GUI apps produce no console output, so we can't auto-verify them -- this is
-  normal and does not mean something is wrong." `:warn_user_code_launch` DOES warn beforehand that
-  a silent process will be force-stopped after ~30s, so this is disclosed, not hidden -- but the
-  disclosure and the caveat panel are both worded for a console-program mental model, and GUI-first
-  beginners are a real slice of the target audience.
-
-  **High-level fix**: detect (or simply always emit, cheaply) a GUI-app-aware variant of the
-  caveat message specifically for the `TIMED OUT` + zero-stdout-observed case -- something like
-  "your program may be a GUI app with its own window; that's expected to produce no console
-  output, and this caveat does not necessarily mean anything is wrong" -- distinguishing this case
-  from a genuine crash/hang in the panel text itself, not just in the pre-launch warning.
-
 - **Item 42: console output is verbose across all log levels, and every fresh build ends with two
   unexplained Y/N prompts -- both plausibly overwhelming for the actual target audience
   (beginners with no setup experience).** Confirmed reasoned-from-source and CI capture. New; not
