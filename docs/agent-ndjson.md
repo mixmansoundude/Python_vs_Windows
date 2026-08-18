@@ -890,6 +890,45 @@ substitute for a human's own interactive session).
 self.interactive.stdin.roundtrip
 ```
 
+## selfapps-gui-timeout-hint NDJSON rows (selfapps_gui_timeout_hint.ps1, uv lane only, non-gating)
+
+CLAUDE.md Active Backlog Item 41: `:run_exe_smokerun`'s activity-aware kill (`~exe_smokerun.ps1`,
+its own `$sawOutput` gate -- see `docs/agent-interconnect.md`'s "Activity-aware EXE-smoke kill"
+section) only force-stops a verification run that has produced ZERO stdout/stderr bytes by the
+~30s deadline -- exactly the shape a correctly-behaving GUI app (tkinter/PyQt, a `mainloop()`
+with no console output) also produces, indistinguishable at that point from a genuinely hung
+program. `run_setup.bat` now records `HP_EXE_TIMEDOUT_SILENT` at the same point
+`HP_EXE_VERIFY_FAILED` is set (`HP_EXE_EXIT=="-1"` already implies `$sawOutput` was false, since
+the kill is gated on it -- no new runtime signal needed), and `:print_postflight_briefing`'s
+`:pfb_caveat` branch calls a new `:pfb_gui_hint` subroutine when it is defined, printing a note
+that distinguishes this case from a genuine crash/hang instead of leaving the generic caveat text
+to imply something is broken.
+
+This test does not launch a real GUI (no display on a headless Windows CI runner) -- it
+reproduces the exact SIGNAL the mechanism reacts to instead: a real, PyInstaller-built EXE
+(`import time; time.sleep(600)`, zero output of any kind) verified with `HP_SMOKERUN_KILL_MS`
+shortened to 12000ms (a pre-existing test-only override `~exe_smokerun.ps1` already reads from
+its own inherited process environment -- see `tests/test_exe_smokerun.py` for the identical
+technique at the Python-unit-test level; no `run_setup.bat` code change was needed to support
+this). 12000ms was chosen with margin above typical PyInstaller onefile cold-start extraction
+time (documented as commonly 1-3+ seconds even on an idle machine, see
+`docs/agent-lessons-learned.md`'s "widened to 10000ms" entry for the sibling fail-fast-probe
+window) so a slow-but-genuinely-silent extraction cannot be misclassified, while staying far
+below the real 30000ms production default to keep the test fast.
+
+Asserts: `[STATUS] Run Status: TIMED OUT` appears in the log, the caveat panel's header
+(`SETUP COMPLETE -- WITH A CAVEAT`) appears, the new GUI-hint text appears, and `dist\` genuinely
+exists (proving the EXE was really built -- otherwise this would exercise the unrelated
+`:print_no_exe_briefing` path instead of `:pfb_caveat`). Non-gating for its first landing --
+first time `HP_SMOKERUN_KILL_MS` is exercised from a full-bootstrap selfapps test against a real
+PyInstaller-frozen EXE's own cold-start behavior, so it could not be verified against real
+Windows locally -- matches this repo's established graduation pattern (see CLAUDE.md's "CI lane
+gating maturity" periodic check).
+
+```
+self.exe.timeout_gui_hint
+```
+
 ## selfapps-cache-selfheal NDJSON rows (test_ci_cache_selfheal.ps1, `real` lane only, GATING)
 
 Item 19 follow-on (docs/agent-closed-backlog.md): the cache-lane self-heal logic

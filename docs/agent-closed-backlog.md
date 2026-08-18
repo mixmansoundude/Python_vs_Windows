@@ -2639,6 +2639,51 @@ run of the same regex logic before landing, not just reasoned about).
   new per-process uniqueness makes a genuine collision with an earlier run's leftover file
   extremely unlikely on its own.
 
+### Item 41 (closed 2026-08-18)
+
+- **A working GUI app is force-killed at the 30s build-verification deadline and reported with a
+  caveat, with no messaging calibrated for that specific, correctly-behaving case.** The
+  activity-aware kill (`~exe_smokerun.ps1`, its own `$sawOutput` gate -- see
+  `docs/agent-interconnect.md`'s "Activity-aware EXE-smoke kill" section for the full design
+  history) only force-stops a process that has produced ZERO bytes of stdout/stderr within ~30
+  seconds -- exactly the intended behavior for a genuinely hung process, but ALSO exactly the
+  shape a correctly-behaving tkinter/PyQt app with a `mainloop()` and no console output produces.
+  It gets killed, `HP_EXE_EXIT=-1`, `[STATUS] Run Status: TIMED OUT`, and the postflight panel
+  reads "SETUP COMPLETE -- WITH A CAVEAT" with nothing anywhere explaining that this specific
+  shape is expected and does not mean something is broken.
+
+  **Fix shipped**: no new runtime signal was needed -- `~exe_smokerun.ps1`'s own `$killed` only
+  ever becomes true when `$sawOutput` was still false at the kill decision, so
+  `HP_EXE_EXIT=="-1"` at the point `run_setup.bat` already checks it ALREADY implies zero output
+  was observed before the kill. A new `HP_EXE_TIMEDOUT_SILENT` flag is set at that exact point
+  (right alongside the existing `HP_EXE_VERIFY_FAILED=1`), reset once per fresh build attempt
+  (alongside `HP_DLL_HINT_STATE`'s own reset, for the identical cascaded-away-provider-must-not-
+  leak-a-stale-hint reason) so a REQ-009 cascade re-entry to a different provider tier does not
+  inherit a stale hint from an earlier tier's own timed-out verification. `:print_postflight_
+  briefing`'s `:pfb_caveat` branch now calls a new `:pfb_gui_hint` subroutine when the flag is
+  defined, mirroring `:pfb_dll_hint`'s existing dispatch shape -- prints a note distinguishing
+  "this can happen for a GUI app that opens its own window and prints nothing to the console" from
+  a genuine crash/hang, right in the caveat panel text itself, not just the pre-launch warning
+  `:warn_user_code_launch` already gives (which discloses the ~30s kill beforehand but is worded
+  for a console-program mental model, same as the caveat panel was before this fix).
+
+  **Regression coverage**: `tests/selfapps_gui_timeout_hint.ps1` (new file, `uv` lane,
+  non-gating) does not launch a real GUI (no display on a headless Windows CI runner) -- it
+  reproduces the exact SIGNAL the mechanism reacts to instead: a real PyInstaller-built EXE
+  (`import time; time.sleep(600)`, zero output of any kind) verified with `HP_SMOKERUN_KILL_MS`
+  shortened to 12000ms. This is a PRE-EXISTING test-only override -- `~exe_smokerun.ps1` already
+  reads `$env:HP_SMOKERUN_KILL_MS` directly from its own inherited process environment (see
+  `tests/test_exe_smokerun.py` for the identical technique at the Python-unit-test level) -- so no
+  `run_setup.bat` code change was needed to support overriding it from a full-bootstrap selfapps
+  test for the first time. 12000ms was chosen with margin above typical PyInstaller onefile
+  cold-start extraction time (documented as commonly 1-3+ seconds even on an idle machine, see
+  `docs/agent-lessons-learned.md`'s "widened to 10000ms" entry for the sibling fail-fast-probe
+  window) so a slow-but-genuinely-silent extraction cannot be misclassified, while staying far
+  below the real 30000ms production default to keep the test fast. Non-gating for its first
+  landing, matching this repo's established graduation pattern -- this exercises
+  `HP_SMOKERUN_KILL_MS` against a real PyInstaller-frozen EXE's own cold-start behavior for the
+  first time, which could not be verified against real Windows locally.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

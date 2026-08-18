@@ -908,6 +908,18 @@ jobs:
         run: |
           & tests\selfapps_interactive_stdin.ps1
 
+      # CLAUDE.md Active Backlog Item 41: a real, silent, force-killed EXE gets the new
+      # GUI-app-aware caveat hint instead of the generic caveat text alone. Non-gating for its
+      # first landing -- first time HP_SMOKERUN_KILL_MS is exercised from a full-bootstrap
+      # selfapps test against a real PyInstaller-frozen EXE's own cold-start behavior, so it
+      # could not be verified against real Windows locally.
+      - name: "Self-test: GUI-timeout caveat hint (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_gui_timeout_hint.ps1
+
       - name: "Self-test: EXE smokerun XFAIL bad import (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
