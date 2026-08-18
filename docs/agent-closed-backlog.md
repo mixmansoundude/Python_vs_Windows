@@ -2404,6 +2404,19 @@ run of the same regex logic before landing, not just reasoned about).
   into either the console log or `~setup.log`. `docs/agent-ndjson.md` updated to register the new
   row alongside its `pytxt_hint` sibling.
 
+  **Refined via CodeRabbit's review on PR #444, two real findings fixed same-day.** (1) Major: the
+  inner scan (`dir /b "%%D\*.py"`) lacked `/a-d`, so it matched a SUBDIRECTORY whose name happens
+  to end in `.py` (e.g. a package folder literally named `helpers.py`) as if it were a real Python
+  file -- the exact distinction `:count_python`'s own top-level scan already makes correctly via
+  its own `dir /b /a-d *.py`. Fixed by adding `/a-d` to the inner scan too. (2) The review also
+  asked for negative regression coverage the original test never exercised: a new
+  `self.empty_repo.subfolder_hint_neg` scenario (one bootstrap run covering five cases at once)
+  seeds `dist`/`build`/`~scratch`/`.hidden` subfolders each holding a genuine `.py` file (all
+  excluded by name/prefix, never reached by the scan) plus a `pkg` subfolder containing only a
+  DIRECTORY named `nested.py` with no real `.py` file anywhere inside it -- proving the `/a-d` fix
+  actually works, not just that the exclusion list does. `docs/agent-ndjson.md` updated to
+  register the new row.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

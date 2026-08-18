@@ -2271,10 +2271,13 @@ rem folders (dist, build, and any ~/.-prefixed dir such as .uv_env, .git, ~uv_bi
 rem ~embed_python) so a leftover build/venv artifact from an earlier run can never
 rem produce a false positive. Deliberately does not echo the matched subfolder name,
 rem for the same "&" cmd.exe operator hazard :check_hidden_ext_hint's own header
-rem comment documents.
+rem comment documents. `/a-d` on the inner scan excludes directories -- a plain
+rem `dir /b "X\*.py"` also matches a SUBDIRECTORY literally named *.py (e.g. a
+rem package folder named "helpers.py"), the same distinction :count_python's own
+rem top-level scan already makes via its own `dir /b /a-d *.py`.
 for /d %%D in (*) do (
   if /i not "%%D"=="dist" if /i not "%%D"=="build" if not "%%D:~0,1%"=="~" if not "%%D:~0,1%"=="." (
-    dir /b "%%D\*.py" >nul 2>&1
+    dir /b /a-d "%%D\*.py" >nul 2>&1
     if not errorlevel 1 goto :subfolder_hint_found
   )
 )

@@ -168,6 +168,49 @@ if (-not $subfolderPass) {
 }
 $summary.Add('subfolder Python-file hint: PASS')
 
+# CLAUDE.md Item 43 negative coverage (CodeRabbit PR #444 review): :check_subfolder_hint must
+# NOT fire for any of its own exclusions, and must not be fooled by a directory whose NAME ends
+# in .py (a real bug caught by review -- the inner scan originally lacked /a-d, so a directory
+# literally named "helpers.py" was misread as a Python FILE). One bootstrap run covers all five
+# negative shapes at once: dist/build/tilde/dot-prefixed subfolders each holding a genuine .py
+# file (all excluded by name/prefix, never reached), plus a subfolder holding only a DIRECTORY
+# named nested.py with no real .py file inside it anywhere (proves /a-d works).
+$subfolderNegDir = Join-Path $TestsDir '~selftest_subfolder_hint_neg'
+$subfolderNegExit = Invoke-Setup -WorkDir $subfolderNegDir -LogName '~subfolder_neg_bootstrap.log' -Prepare {
+  New-Item -ItemType Directory -Force -Path (Join-Path $subfolderNegDir 'dist') | Out-Null
+  Set-Content -LiteralPath (Join-Path $subfolderNegDir 'dist\decoy.py') -Value 'print("hello")' -Encoding ASCII
+  New-Item -ItemType Directory -Force -Path (Join-Path $subfolderNegDir 'build') | Out-Null
+  Set-Content -LiteralPath (Join-Path $subfolderNegDir 'build\decoy.py') -Value 'print("hello")' -Encoding ASCII
+  New-Item -ItemType Directory -Force -Path (Join-Path $subfolderNegDir '~scratch') | Out-Null
+  Set-Content -LiteralPath (Join-Path $subfolderNegDir '~scratch\decoy.py') -Value 'print("hello")' -Encoding ASCII
+  New-Item -ItemType Directory -Force -Path (Join-Path $subfolderNegDir '.hidden') | Out-Null
+  Set-Content -LiteralPath (Join-Path $subfolderNegDir '.hidden\decoy.py') -Value 'print("hello")' -Encoding ASCII
+  New-Item -ItemType Directory -Force -Path (Join-Path $subfolderNegDir 'pkg\nested.py') | Out-Null
+}
+$subfolderNegStatusPath = Join-Path $subfolderNegDir '~bootstrap.status.json'
+$subfolderNegStatus = if (Test-Path $subfolderNegStatusPath) { Get-Content -LiteralPath $subfolderNegStatusPath -Encoding ASCII -Raw | ConvertFrom-Json } else { $null }
+$subfolderNegLogPath = Join-Path $subfolderNegDir '~subfolder_neg_bootstrap.log'
+$subfolderNegLog = if (Test-Path $subfolderNegLogPath) { Get-Content -LiteralPath $subfolderNegLogPath -Raw } else { '' }
+$subfolderNegHintAbsent = -not ($subfolderNegLog -match [regex]::Escape('Hint: found .py file(s) in a subfolder'))
+$subfolderNegStatusExitOk = $subfolderNegStatus -and ($subfolderNegStatus.exitCode -eq 0)
+$subfolderNegPass = ($subfolderNegExit -eq 0) -and $subfolderNegStatus -and ($subfolderNegStatus.state -eq 'no_python_files') -and ($subfolderNegStatus.pyFiles -eq 0) -and $subfolderNegStatusExitOk -and $subfolderNegHintAbsent
+Write-NdjsonRow ([ordered]@{
+  id = 'self.empty_repo.subfolder_hint_neg'
+  pass = $subfolderNegPass
+  desc = 'Item 43: dist/build/tilde/dot-prefixed subfolders and a *.py-named directory (no real .py file) never trigger the subfolder hint'
+  details = [ordered]@{
+    exitCode = $subfolderNegExit
+    statusExitCode = $(if ($subfolderNegStatus) { $subfolderNegStatus.exitCode } else { $null })
+    state = $(if ($subfolderNegStatus) { $subfolderNegStatus.state } else { $null })
+    pyFiles = $(if ($subfolderNegStatus) { $subfolderNegStatus.pyFiles } else { $null })
+    hintAbsent = $subfolderNegHintAbsent
+  }
+})
+if (-not $subfolderNegPass) {
+  throw "subfolder-hint negative-coverage scenario failed (exit=$subfolderNegExit statusExit=$($subfolderNegStatus.exitCode) state=$($subfolderNegStatus.state) hintAbsent=$subfolderNegHintAbsent)"
+}
+$summary.Add('subfolder Python-file hint negative coverage: PASS')
+
 if (Test-Path $stubDir) { Remove-Item -Recurse -Force $stubDir }
 New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
 Copy-Item -Path $BatchPath -Destination $stubDir -Force
