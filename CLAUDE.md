@@ -1025,27 +1025,6 @@ way (no live Windows execution available here), that is noted explicitly rather 
   plain-language message naming Constrained Language Mode specifically if it fails, rather than
   letting the failure surface piecemeal as five-plus separate "Could not write ~x" messages later.
 
-- **Item 52: `tools/pyproj_deps.py`'s exit code 1 is overloaded between its intentional
-  "no `[project].dependencies` found" contract and a catch-all for any genuinely unexpected
-  exception, making a real bug in that script indistinguishable from the normal case.** CONFIRMED
-  directly against `tools/pyproj_deps.py` source and `run_setup.bat`'s own consumption of it, in
-  the pyproject.toml dependency-extraction block (`if exist "pyproject.toml" (...)`, the block that
-  calls `:emit_from_base64 "~pyproj_deps.py" HP_PYPROJ_DEPS`). The documented contract (exit
-  0/1/2 = ok/not-found/malformed-TOML) is
-  correct and intentional -- `run_setup.bat`'s silent no-op on exit 1 is CORRECT for the
-  "not-found" case, not a bug (an earlier external review of this same code mischaracterized this
-  as "swallowing a standard exception," which is not accurate -- exit 1 for "not found" is by
-  design). The real, narrower gap: `pyproj_deps.py`'s own top-level `except Exception:
-  sys.exit(1)` catch-all means a genuinely unexpected exception ALSO exits 1, so
-  `run_setup.bat`'s `if errorlevel 1 ( if errorlevel 2 (...) )` structure -- which only logs a
-  WARN for errorlevel >= 2 -- silently treats a real crash exactly like the benign "nothing to do
-  here" case. Low severity (the script is small and stable; this would only bite if a future
-  Python version or TOML edge case triggers an unhandled exception somewhere not already caught by
-  the script's own narrower `except` blocks) and low priority given that. Fix, if picked up:
-  either a distinct exit code for the top-level catch-all (e.g. 3), or an unconditional low-tier
-  log line (not a WARN) on any errorlevel 1 so the fact is at least visible in `~setup.log` for a
-  future debugging session, without changing user-facing behavior.
-
 - **Item 59: CodeRabbit's automated review did not run on PR #435, and should be manually
   triggered on every future PR -- owner-requested standing process fix, not a code change.**
   This repo (fewer than 10 stars, Organization UI config) requires a manual trigger for

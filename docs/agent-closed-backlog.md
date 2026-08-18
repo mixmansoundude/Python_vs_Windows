@@ -2460,6 +2460,49 @@ run of the same regex logic before landing, not just reasoned about).
   the expanded (wrong) path instead of the real subfolder and the hint would never fire.
   `docs/agent-ndjson.md` and `batch-check.yml`'s "Upload test logs" step updated to match.
 
+### Item 52 (closed 2026-08-18)
+
+- **`tools/pyproj_deps.py`'s exit code 1 was overloaded between its intentional "no
+  `[project].dependencies` found" contract and a catch-all for any genuinely unexpected
+  exception, making a real bug in that script indistinguishable from the normal case.** The
+  documented contract (exit 0/1/2 = ok/not-found/malformed-TOML) was correct and intentional --
+  `run_setup.bat`'s silent no-op on exit 1 was already correct for the "not-found" case. The real
+  gap: the script's own top-level `except Exception: sys.exit(1)` catch-all meant a genuinely
+  unexpected exception (a bug, an unusual I/O failure) also exited 1, so `run_setup.bat`'s `if
+  errorlevel 1 ( if errorlevel 2 (...) )` structure -- which only logs a WARN for errorlevel >= 2
+  -- silently treated a real crash exactly like the benign "nothing to do here" case.
+
+  **Fix shipped**: the catch-all now exits 3 instead of 1, and `run_setup.bat`'s consuming block
+  (the pyproject.toml dependency-extraction block right after `:emit_from_base64 "~pyproj_deps.py"
+  HP_PYPROJ_DEPS`) gained a new `if errorlevel 3` branch, checked BEFORE `if errorlevel 2` (since
+  `if errorlevel N` is a `>=N` test, checking the higher threshold first is required or errorlevel
+  3 would also satisfy the errorlevel-2 check and get mislabeled as a TOML parse error) -- logs an
+  unconditional, log-file-only line (`>> "%LOG%" echo ...`, not `call :log`, so it does not also
+  echo to console -- per the item's own "without changing user-facing behavior" scope) so the fact
+  is at least visible in `~setup.log` for a future debugging session.
+
+  **A real bug found and fixed while implementing this, caught by the existing test suite, not
+  found in review.** The first version of the fix broke `test_no_pyproject_toml_exits_1` --
+  a MISSING `pyproject.toml` (the common, documented "not found" case, and also the case any
+  bare invocation of this script outside `run_setup.bat`'s own `if exist "pyproject.toml"` guard
+  would hit) raises `FileNotFoundError` at the same `read_text()` call site as the genuinely
+  unexpected cases (a directory named `pyproject.toml`, a permission failure) -- both fell into
+  the SAME outer `except Exception:` block, so simply changing that block's exit code broke the
+  documented exit-1 contract for the primary, most common case. Fixed by checking
+  `pathlib.Path('pyproject.toml').exists()` explicitly BEFORE attempting `read_text()`, exiting 1
+  immediately if the file is genuinely absent -- a directory or a permission-denied file both
+  still pass the `exists()` check (a directory exists on disk) and fall through to `read_text()`,
+  which then raises and is caught by the now-exit-3 outer handler, correctly distinguishing "not
+  there at all" (1) from "there, but something is genuinely wrong" (3).
+
+  **Regression coverage**: `tests/test_pyproj_deps.py::TomllibPath::test_unexpected_exception_exits_3_not_1`
+  creates `pyproject.toml` as a DIRECTORY (not a file) -- cross-platform (raises
+  `IsADirectoryError` on POSIX, `PermissionError` on Windows; either way uncaught until the outer
+  except) -- and asserts exit code 3, not 1. The pre-existing `test_no_pyproject_toml_exits_1`
+  (genuinely missing file) continues to assert exit code 1, now exercising the new explicit
+  `exists()` check instead of incidentally sharing the same catch-all as the directory case.
+  `HP_PYPROJ_DEPS` payload re-synced via `tools/sync_payload.py`.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

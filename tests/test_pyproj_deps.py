@@ -111,6 +111,19 @@ class TomllibPath(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertTrue((Path(d) / "~requirements.pyproject.txt").exists())
 
+    def test_unexpected_exception_exits_3_not_1(self):
+        # CLAUDE.md Active Backlog item 52: a genuine unexpected exception (here,
+        # "pyproject.toml" existing as a directory instead of a file -- read_text()
+        # raises before the tomllib try/except ever runs) must not exit 1, or it is
+        # indistinguishable from the deliberate "nothing to do here" case. Directory-
+        # not-file is cross-platform: raises IsADirectoryError on POSIX and
+        # PermissionError on Windows, either way uncaught until the outer except.
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "pyproject.toml").mkdir()
+            rc, _, _ = _run(d, ["out.txt"])
+            self.assertEqual(rc, 3)
+            self.assertFalse((Path(d) / "out.txt").exists())
+
 
 class RegexFallbackPath(unittest.TestCase):
     """tomllib shadowed to be unavailable -- exercises the char-by-char
