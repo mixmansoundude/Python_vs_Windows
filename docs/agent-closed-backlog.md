@@ -2417,6 +2417,32 @@ run of the same regex logic before landing, not just reasoned about).
   actually works, not just that the exclusion list does. `docs/agent-ndjson.md` updated to
   register the new row.
 
+  **A real CI regression found immediately after landing (all 8 lanes' shared "Gate on NDJSON
+  results" step, a universal per-lane check independent of the two gating lanes' own enforcement),
+  root-caused and fixed same-day.** `self.empty_repo.subfolder_hint_neg` genuinely failed on real
+  Windows CI: the hint fired even though all five seeded subfolders should have been excluded.
+  Confirmed via a downloaded diagnostics-bundle artifact that the hint text genuinely appeared in
+  the real bootstrap log (not a test-script assertion bug), and confirmed via a local PowerShell
+  run that the test's own `-Prepare` block correctly creates all five fixtures (`dist`, `build`,
+  `~scratch`, `.hidden`, `pkg\nested.py`) -- ruling out the test fixture itself. Root cause
+  narrowed to `:check_subfolder_hint`'s own exclusion logic: a single line chaining FOUR `if`
+  conditions (`if /i not "%%D"=="dist" if /i not "%%D"=="build" if not "%%D:~0,1%"=="~" if not
+  "%%D:~0,1%"=="." ( ... )`) inside the `for /d` loop body -- untested depth in this codebase
+  (only a 2-deep chain precedent existed elsewhere, at `:preflight_compile`'s REQ-011 check).
+  Exact mechanism unconfirmed (no Windows environment available to isolate which specific
+  condition misbehaved), but fixed regardless by replacing the chain with this repo's own
+  established, more robust pattern: a `call`ed subroutine (`:subfolder_hint_check_one`) using
+  single-condition `if` statements and `errorlevel`-based dispatch back to the caller, matching
+  `docs/agent-lessons-learned.md`'s "Provider-cascade dispatch is goto-based on purpose" -- this
+  repo's own documented preference for call/goto dispatch over deep if-chaining for exactly this
+  reliability reason. Also closed a debugging gap hit while investigating: neither
+  `~selftest_subfolder_hint` nor `~selftest_subfolder_hint_neg` (nor the pre-existing
+  `~selftest_pytxt_hint`, a prior, still-open gap left untouched as out of this fix's scope) had
+  their bootstrap logs wired into `batch-check.yml`'s "Upload test logs" step, so a real CI
+  failure for either produced no artifact showing the actual log content -- fixed by adding both
+  new scratch dirs' paths, mirroring the pattern the CWD-not-writable scenario (Item 48) already
+  established.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

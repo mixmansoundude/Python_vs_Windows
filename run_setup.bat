@@ -2274,14 +2274,27 @@ rem for the same "&" cmd.exe operator hazard :check_hidden_ext_hint's own header
 rem comment documents. `/a-d` on the inner scan excludes directories -- a plain
 rem `dir /b "X\*.py"` also matches a SUBDIRECTORY literally named *.py (e.g. a
 rem package folder named "helpers.py"), the same distinction :count_python's own
-rem top-level scan already makes via its own `dir /b /a-d *.py`.
+rem top-level scan already makes via its own `dir /b /a-d *.py`. Per-candidate
+rem exclusion logic is a `call`ed subroutine with single-condition `if` statements,
+rem NOT a chained `if X if Y if Z (...)` line -- a real CI failure confirmed the
+rem hint firing when it should not have (dist/build/tilde/dot exclusions in one
+rem 4-deep chained-if line inside the for-loop body), and this repo's own
+rem established pattern is call/goto-based dispatch over deep if-chaining for
+rem exactly this reliability reason (see docs/agent-lessons-learned.md's
+rem "Provider-cascade dispatch is goto-based on purpose").
 for /d %%D in (*) do (
-  if /i not "%%D"=="dist" if /i not "%%D"=="build" if not "%%D:~0,1%"=="~" if not "%%D:~0,1%"=="." (
-    dir /b /a-d "%%D\*.py" >nul 2>&1
-    if not errorlevel 1 goto :subfolder_hint_found
-  )
+  call :subfolder_hint_check_one "%%D"
+  if not errorlevel 1 goto :subfolder_hint_found
 )
 exit /b 0
+:subfolder_hint_check_one
+set "HP_SFC=%~1"
+if /i "%HP_SFC%"=="dist" exit /b 1
+if /i "%HP_SFC%"=="build" exit /b 1
+if "%HP_SFC:~0,1%"=="~" exit /b 1
+if "%HP_SFC:~0,1%"=="." exit /b 1
+dir /b /a-d "%HP_SFC%\*.py" >nul 2>&1
+exit /b %errorlevel%
 :subfolder_hint_found
 echo Hint: found .py file(s) in a subfolder, but this script only looks in the exact folder it is in.
 >> "%LOG%" echo Hint: found .py file(s) in a subfolder, but this script only looks in the exact folder it is in.
