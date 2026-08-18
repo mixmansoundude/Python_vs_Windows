@@ -367,7 +367,7 @@ $hasScriptRootFixedForm = $AllText.Contains($scriptRootFixedForm)
 $scriptRootBuggyForm = '"%HP_SCRIPT_ROOT:~-1%"=="\\"'
 $hasScriptRootBuggyForm = $AllText.Contains($scriptRootBuggyForm)
 $scriptRootGuardOk = $hasScriptRootFixedForm -and (-not $hasScriptRootBuggyForm)
-Write-Result 'batch.script_root.trailing_backslash' 'HP_SCRIPT_ROOT trailing-backslash guard uses the correct one-character comparison, not the always-true two-backslash form' $scriptRootGuardOk @{
+Write-Result -Id 'batch.script_root.trailing_backslash' -Desc 'HP_SCRIPT_ROOT trailing-backslash guard uses the correct one-character comparison, not the always-true two-backslash form' -Pass $scriptRootGuardOk -Details @{
     hasScriptRootFixedForm = $hasScriptRootFixedForm
     hasScriptRootBuggyForm = $hasScriptRootBuggyForm
 }
