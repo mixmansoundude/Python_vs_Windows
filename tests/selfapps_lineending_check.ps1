@@ -14,9 +14,17 @@
 # unmodified PowerShell command genuinely throw (FileNotFoundException) and hit its own
 # catch{exit 2} branch, exercising the real failure path rather than a simulated one.
 #
+# Extended for CLAUDE.md Active Backlog Item 48: the writable-CWD preflight (right after
+# these three checks, before :merge_git_config's own first write to the app folder) is the
+# same class of "can this even run here at all" precondition, so its own regression coverage
+# lives here too rather than in a new file -- same Test-PreflightScenario helper, same
+# real/conda-full lanes, same status.json/exit-code assertion shape. Its own hook,
+# HP_TEST_FORCE_CWD_NOT_WRITABLE, skips the real `type nul > ~wtest.tmp` write attempt
+# entirely rather than revoking filesystem permissions on a shared CI runner.
+#
 # Lane: real and conda-full only (matches self.preflight.syntax's own precedent for a cheap,
 # provider-agnostic, pure-batch preflight check -- no environment/dependency work is ever
-# reached in any of these three scenarios, so there is no "could not verify locally" risk
+# reached in any of these four scenarios, so there is no "could not verify locally" risk
 # comparable to a real Nuitka/MSVC build; the command logic itself was verified directly
 # against a real PowerShell 7 binary before this file was written).
 param()
@@ -37,7 +45,7 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-$rowIds = @('self.preflight.no_powershell', 'self.preflight.ps_check_fail', 'self.preflight.lf_only')
+$rowIds = @('self.preflight.no_powershell', 'self.preflight.ps_check_fail', 'self.preflight.lf_only', 'self.preflight.cwd_not_writable')
 
 # Non-Windows skip
 # derived requirement: $IsWindows is undefined (reads as $null, so "-not $IsWindows" is
@@ -78,7 +86,8 @@ function Test-PreflightScenario {
         [string]$EnvFlagName,
         [int]$ExpectedExit,
         [string[]]$ExpectedSubstrings,
-        [switch]$WriteLfOnlySentinel
+        [switch]$WriteLfOnlySentinel,
+        [string]$Req = 'CLAUDE.md-Item-44'
     )
 
     $workDir = Join-Path $here $WorkDirName
@@ -146,9 +155,9 @@ function Test-PreflightScenario {
 
     Write-NdjsonRow ([ordered]@{
         id      = $Id
-        req     = 'CLAUDE.md-Item-44'
+        req     = $Req
         pass    = $pass
-        desc    = "Line-ending self-check preflight branch: $EnvFlagName"
+        desc    = "Preflight self-check branch: $EnvFlagName"
         details = [ordered]@{
             bootstrapExit       = $runExit
             expectedExit        = $ExpectedExit
@@ -184,6 +193,13 @@ $results += Test-PreflightScenario -Id 'self.preflight.lf_only' `
     -ExpectedExit 1 `
     -ExpectedSubstrings @('[ERROR] This copy of run_setup.bat has invalid line endings.', 'Easiest fix: delete this copy and download run_setup.bat again') `
     -WriteLfOnlySentinel
+
+$results += Test-PreflightScenario -Id 'self.preflight.cwd_not_writable' `
+    -WorkDirName '~selftest_lineending_cwd_not_writable' `
+    -EnvFlagName 'HP_TEST_FORCE_CWD_NOT_WRITABLE' `
+    -ExpectedExit 1 `
+    -ExpectedSubstrings @('[ERROR] This folder does not appear to be writable:', 'Move this script and your .py files to') `
+    -Req 'CLAUDE.md-Item-48'
 
 if ($results -contains $false) { exit 1 }
 exit 0

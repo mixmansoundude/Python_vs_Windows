@@ -2231,6 +2231,35 @@ run of the same regex logic before landing, not just reasoned about).
   `HP_TEST_SYSCON_ANSWER` is likewise only tested via its deterministic override, not by separately
   proving the `HP_CI_LANE` branch resolves without hanging).
 
+### Item 48 (closed 2026-08-18)
+
+- **No writable-CWD preflight; `:merge_git_config` and other early writes could fail silently
+  before any guard confirmed the app folder was actually writable.** CONFIRMED directly against
+  source: `type nul > "%HP_CI_MARKER%" 2>nul` and `if not exist "%LOG%" (type nul > "%LOG%")`
+  both wrote to the app folder with no errorlevel check, ahead of `:merge_git_config`'s own first
+  write -- none of them would have surfaced a clear message for a genuinely unwritable folder
+  (a read-only network share, a permissions-locked directory), just a cascade of confusing
+  downstream failures.
+
+  **Fix shipped**: a new writable-CWD preflight right after the `cd /d "%~dp0"` block (before
+  `HP_SCRIPT_ROOT` is even set, ahead of every other write in the file) attempts `type nul >
+  "~wtest.tmp" 2>nul` and checks `if not exist` -- on failure, a named `[ERROR]` message points at
+  `%CD%` and tells the user to move the script to a writable folder, writes
+  `HP_PREFLIGHT_STATUS` (the same early-preflight status file the line-ending checks already use,
+  since `:write_status`'s own machinery does not exist yet at this point), pauses for a real
+  interactive user, and exits 1. On success the probe file is deleted immediately.
+  `HP_TEST_FORCE_CWD_NOT_WRITABLE` forces the branch deterministically in CI by skipping the real
+  write attempt entirely (so `~wtest.tmp` is never created) rather than revoking filesystem
+  permissions on a shared runner -- same forcing technique as `HP_TEST_FORCE_NO_POWERSHELL`.
+
+  **Regression coverage folded into the existing line-ending preflight test file** rather than a
+  new one: `tests/selfapps_lineending_check.ps1`'s `Test-PreflightScenario` helper already covers
+  the identical shape (env-flag-forced branch, exit code, status.json state/exitCode, expected
+  log substrings), so a fourth scenario (`self.preflight.cwd_not_writable`) reuses it directly,
+  with a new `-Req` parameter so its NDJSON row correctly cites `CLAUDE.md-Item-48` instead of the
+  file's original `CLAUDE.md-Item-44`. The CI step name and file header comment were both updated
+  to describe the file as covering "early preflight branches" generally, not line-endings alone.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
