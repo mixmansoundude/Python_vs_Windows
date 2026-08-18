@@ -5249,7 +5249,7 @@ rem without needing to actually simulate a PowerShell hiccup.
 if defined HP_TEST_FORCE_LOCK_STALE exit /b 0
 if defined HP_TEST_FORCE_LOCK_INDETERMINATE exit /b 2
 set "HP_LOCK_STALE_RESULT="
-for /f "usebackq delims=" %%R in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%HP_LOCK_DIR%') { try { $d = (Get-Item '%HP_LOCK_DIR%').LastWriteTime; if (((Get-Date)-$d).TotalHours -ge 2) { 'stale' } else { 'fresh' } } catch { 'stale' } } else { 'stale' }" 2^>nul`) do set "HP_LOCK_STALE_RESULT=%%R"
+for /f "usebackq delims=" %%R in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%HP_LOCK_DIR%') { try { $d = (Get-Item '%HP_LOCK_DIR%').LastWriteTime; if (((Get-Date)-$d).TotalHours -ge 2) { 'stale' } else { 'fresh' } } catch { 'indeterminate' } } else { 'stale' }" 2^>nul`) do set "HP_LOCK_STALE_RESULT=%%R"
 if "%HP_LOCK_STALE_RESULT%"=="stale" exit /b 0
 if "%HP_LOCK_STALE_RESULT%"=="fresh" exit /b 1
 exit /b 2

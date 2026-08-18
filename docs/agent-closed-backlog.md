@@ -2348,6 +2348,25 @@ run of the same regex logic before landing, not just reasoned about).
   the pre-existing lock directory is still present afterward (not evicted). `docs/agent-ndjson.md`
   updated to register the new row alongside its three siblings.
 
+  **Refined via CodeRabbit's review on PR #443, two real findings fixed same-day.** (1) Major: the
+  PowerShell probe's own `catch { 'stale' }` (inside `:lock_is_stale`'s `Get-Item`/`LastWriteTime`
+  check, pre-existing text this PR's diff hunk happened to include unchanged) mapped a genuine
+  probe EXCEPTION -- not "the directory doesn't exist," which the surrounding `else { 'stale' }`
+  already handles correctly and separately -- to the same `'stale'` string a successfully-aged
+  lock produces, so `:acquire_lock` would still evict a lock it was never actually able to check,
+  defeating half the point of this item's own fix (a transient `Get-Item` failure, e.g. a
+  permissions hiccup or a race against the OTHER instance's own release, could delete a lock
+  potentially still held by a live instance). Fixed by changing that one catch branch's literal
+  to `'indeterminate'` -- the existing batch-side dispatch (`if "..."=="stale" exit /b 0`, `if
+  "..."=="fresh" exit /b 1`, `exit /b 2` catch-all) already routes any non-`stale`/non-`fresh`
+  string, including this new one, to the indeterminate path with no further change needed. (2)
+  Minor: the new test's own pass condition did not include the real process exit code
+  (`$lockIndeterminateExit -eq 0`) alongside the `~bootstrap.status.json`-derived
+  `$lockIndeterminateBootstrapOk` check -- added defensively (Part C's sibling test has the
+  identical omission, unflagged and left as-is here since fixing it is out of this PR's own
+  scope, but the two-independent-signals distinction this doc's own "Two independently-tracked
+  exit code concepts" entry describes makes checking both cheap and strictly safer).
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

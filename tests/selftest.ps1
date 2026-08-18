@@ -644,7 +644,7 @@ if (Test-Path $lockIndeterminateStatusPath) {
   } catch { }
 }
 $lockIndeterminatePreserved = Test-Path $lockIndeterminatePreexisting
-$lockIndeterminateAllPass = ($lockIndeterminateWarnFound -and $lockIndeterminateBootstrapOk -and $lockIndeterminatePreserved)
+$lockIndeterminateAllPass = ($lockIndeterminateExit -eq 0 -and $lockIndeterminateWarnFound -and $lockIndeterminateBootstrapOk -and $lockIndeterminatePreserved)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_indeterminate'
   pass = $lockIndeterminateAllPass
