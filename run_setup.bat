@@ -5203,6 +5203,7 @@ mkdir "%HP_LOCK_DIR%" 2>nul
 if not errorlevel 1 goto :lock_acquired
 call :lock_is_stale
 if not errorlevel 1 goto :lock_stale_evict
+if errorlevel 2 goto :lock_indeterminate
 echo ***
 echo *** Another instance of this setup appears to be running in this folder already.
 echo *** If you are sure that is NOT the case ^(for example, a previous run crashed^),
@@ -5212,6 +5213,17 @@ if exist "%HP_LOCK_DIR%\owner.txt" type "%HP_LOCK_DIR%\owner.txt"
 call :log "[WARN] REQ-024: setup already running (lock held, not stale); this instance is exiting."
 if not defined HP_CI_LANE pause
 exit /b 1
+:lock_indeterminate
+rem derived requirement: CLAUDE.md Item 49 -- an indeterminate staleness result (neither
+rem 'stale' nor 'fresh' came back from the PowerShell probe, e.g. a transient hiccup) must not
+rem be treated as "fresh" the way it silently was before this fix, since that produced a false
+rem "another instance is running" hard block for a condition that has nothing to do with a
+rem concurrent run. Also must not be treated as "stale" (silently evicting a lock that might
+rem genuinely still be held by a live instance would be equally wrong) -- so this is a THIRD,
+rem distinct outcome: continue without the lock, same graceful shape as the already-existing
+rem "could not acquire lock after evicting" path below.
+call :log "[WARN] REQ-024: could not determine whether the existing lock is stale (indeterminate result); continuing without it."
+exit /b 0
 :lock_stale_evict
 call :log "[INFO] REQ-024: stale lock evicted (older than the staleness threshold); proceeding."
 rd /s /q "%HP_LOCK_DIR%" 2>nul
@@ -5228,14 +5240,19 @@ for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass
 >>"%HP_LOCK_DIR%\owner.txt" echo started=%date% %time%
 exit /b 0
 :lock_is_stale
-rem exit/b 0 = stale (caller should evict); exit/b 1 = fresh (still held by a live instance).
-rem derived requirement: HP_TEST_FORCE_LOCK_STALE gives CI a deterministic way to exercise the
-rem eviction path without waiting out the real ~2 hour threshold.
+rem exit/b 0 = stale (caller should evict); exit/b 1 = fresh (still held by a live instance);
+rem exit/b 2 = indeterminate (CLAUDE.md Item 49 -- neither recognized value came back from the
+rem probe below). derived requirement: HP_TEST_FORCE_LOCK_STALE gives CI a deterministic way to
+rem exercise the eviction path without waiting out the real ~2 hour threshold;
+rem HP_TEST_FORCE_LOCK_INDETERMINATE similarly exercises the indeterminate path deterministically,
+rem without needing to actually simulate a PowerShell hiccup.
 if defined HP_TEST_FORCE_LOCK_STALE exit /b 0
+if defined HP_TEST_FORCE_LOCK_INDETERMINATE exit /b 2
 set "HP_LOCK_STALE_RESULT="
-for /f "usebackq delims=" %%R in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%HP_LOCK_DIR%') { try { $d = (Get-Item '%HP_LOCK_DIR%').LastWriteTime; if (((Get-Date)-$d).TotalHours -ge 2) { 'stale' } else { 'fresh' } } catch { 'stale' } } else { 'stale' }" 2^>nul`) do set "HP_LOCK_STALE_RESULT=%%R"
+for /f "usebackq delims=" %%R in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%HP_LOCK_DIR%') { try { $d = (Get-Item '%HP_LOCK_DIR%').LastWriteTime; if (((Get-Date)-$d).TotalHours -ge 2) { 'stale' } else { 'fresh' } } catch { 'indeterminate' } } else { 'stale' }" 2^>nul`) do set "HP_LOCK_STALE_RESULT=%%R"
 if "%HP_LOCK_STALE_RESULT%"=="stale" exit /b 0
-exit /b 1
+if "%HP_LOCK_STALE_RESULT%"=="fresh" exit /b 1
+exit /b 2
 :release_lock
 if defined HP_LOCK_OWNED (
   rd /s /q "%HP_LOCK_DIR%" 2>nul

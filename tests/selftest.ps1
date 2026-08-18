@@ -599,6 +599,65 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($lockStaleAllPass) { $summary.Add('lock stale eviction: PASS') } else { $summary.Add('lock stale eviction: FAIL') }
 
+# Part D (CLAUDE.md Item 49): HP_TEST_FORCE_LOCK_INDETERMINATE=1 forces :lock_is_stale's
+# PowerShell probe to report neither 'stale' nor 'fresh' (exit /b 2), deterministically
+# simulating a transient probe hiccup. Unlike Part B (fresh -> hard decline) and Part C (stale
+# -> evict-and-proceed), an indeterminate result must fall through gracefully WITHOUT deleting
+# the pre-existing lock directory -- it might genuinely still be held by a live instance, so
+# eviction would be as wrong as a hard block would be for a condition unrelated to a real
+# concurrent run.
+$lockIndeterminateDir = Join-Path $TestsDir '~selftest_lock_indeterminate'
+if (Test-Path $lockIndeterminateDir) { Remove-Item -Recurse -Force $lockIndeterminateDir }
+New-Item -ItemType Directory -Force -Path $lockIndeterminateDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $lockIndeterminateDir -Force
+Set-Content -Path (Join-Path $lockIndeterminateDir 'hello_stub.py') -Value 'print("hello-from-stub")' -Encoding ASCII
+$lockIndeterminatePreexisting = Join-Path $lockIndeterminateDir '~bootstrap.lock'
+New-Item -ItemType Directory -Force -Path $lockIndeterminatePreexisting | Out-Null
+Set-Content -Path (Join-Path $lockIndeterminatePreexisting 'owner.txt') -Value "pid=999997`nstarted=simulated-indeterminate" -Encoding ASCII
+$lockIndeterminateLogName = '~lock_indeterminate_bootstrap.log'
+$prevForceLockIndeterminate = $env:HP_TEST_FORCE_LOCK_INDETERMINATE
+$env:HP_TEST_FORCE_LOCK_INDETERMINATE = '1'
+# derived requirement: same HP_CI_LANE pinning as the pipreqs-fail/lock-stale blocks above -- a
+# successful run reaches the REQ-018 post-execution checkpoint prompt, which only auto-declines
+# under HP_CI_LANE (see docs/agent-lessons-learned.md "Accepted gap").
+$prevCILaneLockIndeterminate = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $lockIndeterminateDir
+try {
+  cmd /c "call run_setup.bat > $lockIndeterminateLogName 2>&1"
+  $lockIndeterminateExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_FORCE_LOCK_INDETERMINATE = $prevForceLockIndeterminate
+  $env:HP_CI_LANE = $prevCILaneLockIndeterminate
+}
+$lockIndeterminateLogPath = Join-Path $lockIndeterminateDir $lockIndeterminateLogName
+$lockIndeterminateLines = @()
+if (Test-Path $lockIndeterminateLogPath) { $lockIndeterminateLines = Get-Content -LiteralPath $lockIndeterminateLogPath -Encoding ASCII }
+$lockIndeterminateWarnFound = ($lockIndeterminateLines | Where-Object { $_ -like '*could not determine whether the existing lock is stale*' }).Count -gt 0
+$lockIndeterminateStatusPath = Join-Path $lockIndeterminateDir '~bootstrap.status.json'
+$lockIndeterminateBootstrapOk = $false
+if (Test-Path $lockIndeterminateStatusPath) {
+  try {
+    $lockIndeterminateStatus = Get-Content -LiteralPath $lockIndeterminateStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $lockIndeterminateBootstrapOk = ($lockIndeterminateStatus.state -eq 'ok' -and $lockIndeterminateStatus.exitCode -eq 0)
+  } catch { }
+}
+$lockIndeterminatePreserved = Test-Path $lockIndeterminatePreexisting
+$lockIndeterminateAllPass = ($lockIndeterminateExit -eq 0 -and $lockIndeterminateWarnFound -and $lockIndeterminateBootstrapOk -and $lockIndeterminatePreserved)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.lock_indeterminate'
+  pass = $lockIndeterminateAllPass
+  desc = 'REQ-024 (CLAUDE.md Item 49): an indeterminate lock-staleness result continues without the lock, without evicting the pre-existing lock directory'
+  details = [ordered]@{
+    warnFound = $lockIndeterminateWarnFound
+    bootstrapOk = $lockIndeterminateBootstrapOk
+    lockPreserved = $lockIndeterminatePreserved
+    exitCode = $lockIndeterminateExit
+  }
+})
+if ($lockIndeterminateAllPass) { $summary.Add('lock indeterminate continue: PASS') } else { $summary.Add('lock indeterminate continue: FAIL') }
+
 # --- Free-disk-space guard (REQ-025) test ---
 # Arrange: HP_TEST_FORCE_LOW_DISK=1 deterministically forces the "low disk space" branch instead
 # of depending on the real free space of the CI runner's drive (which is never actually low).
