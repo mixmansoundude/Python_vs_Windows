@@ -122,6 +122,52 @@ if (-not $pytxtPass) {
 }
 $summary.Add('py.txt hidden-extension hint: PASS')
 
+# CLAUDE.md Item 43: zero top-level .py files, but a .py file sits one folder down (a
+# src/-style layout unzipped with run_setup.bat dropped at the root). The hint should fire,
+# and behavior (state/exit code) must stay identical to the plain empty-folder case above.
+# The subfolder's name itself contains '&' -- a live cmd.exe operator once substituted into
+# an unquoted echo/:log line -- specifically to prove the hint's own log lines never echo the
+# matched subfolder name (see :check_subfolder_hint's own header comment in run_setup.bat).
+$subfolderDir = Join-Path $TestsDir '~selftest_subfolder_hint'
+$subfolderCandidateName = 'AT&T src'
+$subfolderExit = Invoke-Setup -WorkDir $subfolderDir -LogName '~subfolder_bootstrap.log' -Prepare {
+  $candidatePath = Join-Path $subfolderDir $subfolderCandidateName
+  New-Item -ItemType Directory -Force -Path $candidatePath | Out-Null
+  Set-Content -LiteralPath (Join-Path $candidatePath 'main.py') -Value 'print("hello")' -Encoding ASCII
+}
+$subfolderStatusPath = Join-Path $subfolderDir '~bootstrap.status.json'
+$subfolderStatus = if (Test-Path $subfolderStatusPath) { Get-Content -LiteralPath $subfolderStatusPath -Encoding ASCII -Raw | ConvertFrom-Json } else { $null }
+$subfolderLogPath = Join-Path $subfolderDir '~subfolder_bootstrap.log'
+$subfolderLog = if (Test-Path $subfolderLogPath) { Get-Content -LiteralPath $subfolderLogPath -Raw } else { '' }
+# :check_subfolder_hint writes to BOTH the console (captured above) and run_setup.bat's own
+# internal %LOG% stream (~setup.log) -- check both, so a leak into either stream is caught.
+$subfolderSetupLogPath = Join-Path $subfolderDir '~setup.log'
+$subfolderSetupLog = if (Test-Path $subfolderSetupLogPath) { Get-Content -LiteralPath $subfolderSetupLogPath -Raw } else { '' }
+$subfolderHintFound = $subfolderLog -match [regex]::Escape('Hint: found .py file(s) in a subfolder')
+$subfolderNameLeakedConsole = $subfolderLog -match [regex]::Escape($subfolderCandidateName)
+$subfolderNameLeakedSetupLog = $subfolderSetupLog -match [regex]::Escape($subfolderCandidateName)
+$subfolderNameLeaked = $subfolderNameLeakedConsole -or $subfolderNameLeakedSetupLog
+$subfolderStatusExitOk = $subfolderStatus -and ($subfolderStatus.exitCode -eq 0)
+$subfolderPass = ($subfolderExit -eq 0) -and $subfolderStatus -and ($subfolderStatus.state -eq 'no_python_files') -and ($subfolderStatus.pyFiles -eq 0) -and $subfolderStatusExitOk -and $subfolderHintFound -and (-not $subfolderNameLeaked)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.empty_repo.subfolder_hint'
+  pass = $subfolderPass
+  desc = 'Item 43: zero top-level .py files but a subfolder holds one -- hint fires, state/exit unchanged, subfolder name never echoed'
+  details = [ordered]@{
+    exitCode = $subfolderExit
+    statusExitCode = $(if ($subfolderStatus) { $subfolderStatus.exitCode } else { $null })
+    state = $(if ($subfolderStatus) { $subfolderStatus.state } else { $null })
+    pyFiles = $(if ($subfolderStatus) { $subfolderStatus.pyFiles } else { $null })
+    hintFound = $subfolderHintFound
+    nameLeakedConsole = $subfolderNameLeakedConsole
+    nameLeakedSetupLog = $subfolderNameLeakedSetupLog
+  }
+})
+if (-not $subfolderPass) {
+  throw "subfolder-hint scenario failed (exit=$subfolderExit statusExit=$($subfolderStatus.exitCode) state=$($subfolderStatus.state) hintFound=$subfolderHintFound nameLeakedConsole=$subfolderNameLeakedConsole nameLeakedSetupLog=$subfolderNameLeakedSetupLog)"
+}
+$summary.Add('subfolder Python-file hint: PASS')
+
 if (Test-Path $stubDir) { Remove-Item -Recurse -Force $stubDir }
 New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
 Copy-Item -Path $BatchPath -Destination $stubDir -Force

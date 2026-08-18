@@ -2367,6 +2367,43 @@ run of the same regex logic before landing, not just reasoned about).
   scope, but the two-independent-signals distinction this doc's own "Two independently-tracked
   exit code concepts" entry describes makes checking both cheap and strictly safer).
 
+### Item 43 (closed 2026-08-18)
+
+- **"No Python files detected" fired (accurately, per the documented top-level-only contract) for
+  a subfolder-only project layout, with no actionable next step -- the message reads as "there are
+  no Python files here," which a user can visually disprove by looking one folder down.** Distinct
+  from the already-shipped Item 32 fix (`.py.txt` hidden-extension hint), which solves a DIFFERENT
+  cause of the same message. Both the Python-file COUNT (`:count_python`, `dir /b /a-d *.py`) and
+  the entry SELECTOR (`find_entry.py`, `os.listdir(".")`) are top-level-only by design -- matches
+  the documented "drop `run_setup.bat` alongside your `.py` files" contract, so this was never a
+  contract violation, just a missing diagnostic for one specific, common cause of it (a user
+  unzipping a `src/main.py`-style project layout with `run_setup.bat` dropped at the root).
+
+  **Fix shipped**: a new `:check_subfolder_hint` subroutine, mirroring `:check_hidden_ext_hint`'s
+  existing shape exactly (called right alongside it, from the same `PYCOUNT==0` branch, purely
+  additive -- never changes exit code or `state`). Does a genuinely depth-1-only scan: a `for /d
+  %%D in (*) do` loop over immediate subdirectories checking each one for `.py` files directly
+  inside it (`dir /b "%%D\*.py"`, no `/s` -- `dir /s` is fully recursive across every descendant
+  directory, which would falsely match a `.py` file buried many folders down and needed explicit
+  exclusion). Skips bootstrapper-owned folders (`dist`, `build`, and any `~`/`.`-prefixed
+  directory such as `.uv_env`, `.git`, `~uv_bin`, `~embed_python`) so a leftover build/venv
+  artifact from an earlier run in the same folder can never produce a false positive -- a real,
+  if narrow, correctness concern given this hint only fires when the top-level count is zero,
+  which a repeat run after deleting the top-level `.py` file (with `dist\`/`.uv_env\` still on
+  disk from an earlier successful run) could otherwise trigger. Deliberately does NOT echo the
+  matched subfolder name in either the hint text or the log line, for the identical `&`-as-live-
+  cmd.exe-operator hazard `:check_hidden_ext_hint`'s own header comment documents (see
+  `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry) -- a plain existence check via
+  `errorlevel` sidesteps it entirely, matching the sibling hint's own established pattern.
+
+  **Regression coverage**: a new scenario in `tests/selftest.ps1` (`self.empty_repo.subfolder_hint`),
+  mirroring the existing `self.empty_repo.pytxt_hint` test's structure exactly -- a subfolder named
+  `AT&T src` (the same live-operator-character stress case the sibling test uses for its own
+  candidate filename) containing one `.py` file, asserting the hint fires, `state`/`exitCode`/
+  `pyFiles` stay identical to the plain empty-folder case, and the subfolder name is never leaked
+  into either the console log or `~setup.log`. `docs/agent-ndjson.md` updated to register the new
+  row alongside its `pytxt_hint` sibling.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

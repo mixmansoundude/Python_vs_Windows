@@ -897,33 +897,6 @@ but several represent real gaps worth closing before calling the path fully rele
   whatever tiering ships, so suppressing TRACE doesn't silently remove the only "something is
   happening" signal for what is plausibly the single longest silent stretch in a fresh build.
 
-- **Item 43: "No Python files detected" fires (accurately, per the documented top-level-only
-  contract) for a subfolder-only project layout, but the message asserts something the user can
-  plainly see is false, with no actionable next step.** Confirmed reasoned-from-source; distinct
-  from the already-shipped Item 32 fix (`.py.txt` hidden-extension hint), which solves a
-  DIFFERENT cause of the same message.
-
-  **Mechanism**: both the Python-file COUNT (`:count_python`, `dir /b /a-d *.py`) and the entry
-  SELECTOR (`find_entry.py`, `os.listdir(".")`) are top-level-only by design -- this matches the
-  documented "drop `run_setup.bat` alongside your `.py` files" contract, so it is not itself a
-  contract violation. But a user who unzips a project laid out as `src/main.py` + `README` and
-  drops `run_setup.bat` at the root gets `Python file count: 0` -> `"No Python files detected;
-  skipping environment bootstrap"` -> `state=no_python_files` -> pause -> exit 0. The message
-  reads as "there are no Python files here," which the user can visually disprove by looking one
-  folder down -- the only follow-up hint offered (the `.py.txt` tip from Item 32) doesn't apply to
-  this cause at all.
-
-  **High-level fix**: add a companion check (mirroring `:check_hidden_ext_hint`'s existing
-  pattern) that does a genuinely depth-1-only probe when the top-level count is zero -- NOT `dir
-  /s /b *.py` (that flag is fully recursive across every descendant directory, not bounded to one
-  level; using it would need extra filtering to enforce depth 1, or would falsely match a `.py`
-  file buried many folders down). A `for /d %%D in (*) do` loop checking each immediate
-  subdirectory for `.py` files directly inside it (`dir /b "%%D\*.py"`, no `/s`) is a real,
-  correctly-bounded one-level-deep scan. If `.py` files ARE found one level down, print a specific
-  hint: "we only look in this exact folder -- move
-  `run_setup.bat` next to your scripts, or move your scripts up into this folder" instead of (or
-  alongside) the generic zero-files message.
-
 Items 45-52 below stem from a 2026-08-14 real Windows Sandbox debugging session (two independent
 external AI reviews plus direct verification against current source by the acting agent) chasing a
 garbled first run (repeated pauses, a PyInstaller build loop with no environment behind it, some
