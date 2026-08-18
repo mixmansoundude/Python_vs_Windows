@@ -213,16 +213,29 @@ rem failfast-probe/exe-smokerun helpers need System.Diagnostics.ProcessStartInfo
 rem which a locked-down corporate image, such as AppLocker, WDAC, or Constrained Language
 rem Mode, can block even with PowerShell itself present. Probing all three together here turns
 rem five-plus later opaque "Could not write ~x" failures into one clear, named diagnostic.
-set "HP_PS_PROBE_FILE=%~dp0~ps_capability_probe.tmp"
+rem derived requirement: %RANDOM% suffix (two draws) makes the probe path unique per process --
+rem this preflight runs before :acquire_lock below, so two genuinely concurrent instances in the
+rem same folder must not be able to race on (delete/overwrite) each other's probe file and
+rem misreport a capability failure that isn't real. Not a full mutex, just enough entropy that a
+rem same-folder collision within one preflight's brief lifetime is negligible.
+set "HP_PS_PROBE_NAME=~ps_capability_probe.%RANDOM%%RANDOM%.tmp"
+set "HP_PS_PROBE_FILE=%~dp0%HP_PS_PROBE_NAME%"
 if defined HP_TEST_FORCE_PS_CAPABILITY_FAIL (
   rem derived requirement: point the probe at a nonexistent directory so the real
   rem WriteAllBytes call genuinely throws and hits its own catch branch -- exercises the
   rem real failure path instead of faking an exit code externally, matching
   rem HP_TEST_FORCE_PS_CHECK_FAIL's established technique above.
-  set "HP_PS_PROBE_FILE=%~dp0~nonexistent_dir_xyz\~ps_capability_probe.tmp"
+  set "HP_PS_PROBE_FILE=%~dp0~nonexistent_dir_xyz\%HP_PS_PROBE_NAME%"
 )
 del /f /q "%HP_PS_PROBE_FILE%" >nul 2>&1
-powershell -NoProfile -Command "try{$b=[Convert]::FromBase64String('cHZ3');[IO.File]::WriteAllBytes($env:HP_PS_PROBE_FILE,$b);if(-not (Test-Path $env:HP_PS_PROBE_FILE)){exit 1};Remove-Item $env:HP_PS_PROBE_FILE -Force;$psi=New-Object System.Diagnostics.ProcessStartInfo;exit 0}catch{exit 1}" >nul 2>&1
+if exist "%HP_PS_PROBE_FILE%" rd /s /q "%HP_PS_PROBE_FILE%" >nul 2>&1
+rem derived requirement: [IO.File]::Exists/Delete, not Test-Path/Remove-Item -- the latter two
+rem PowerShell cmdlets treat "[" and "]" in a path as wildcard syntax by default, so a folder
+rem name containing literal brackets could make Test-Path report a genuinely-written file as
+rem missing, misreporting a capability failure that isn't real. The .NET IO.File methods used
+rem here never glob-expand, so the app folder's own path can contain any legal Windows filename
+rem character without affecting this probe's outcome.
+powershell -NoProfile -Command "try{$b=[Convert]::FromBase64String('cHZ3');[IO.File]::WriteAllBytes($env:HP_PS_PROBE_FILE,$b);if(-not [IO.File]::Exists($env:HP_PS_PROBE_FILE)){exit 1};[IO.File]::Delete($env:HP_PS_PROBE_FILE);$psi=New-Object System.Diagnostics.ProcessStartInfo;exit 0}catch{exit 1}" >nul 2>&1
 if errorlevel 1 (
   echo ***
   echo *** [ERROR] PowerShell on this machine cannot perform an operation this
@@ -234,10 +247,12 @@ if errorlevel 1 (
   echo ***
   echo {"state":"error","exitCode":1,"pyFiles":0}> "%HP_PREFLIGHT_STATUS%"
   del /f /q "%HP_PS_PROBE_FILE%" >nul 2>&1
+  if exist "%HP_PS_PROBE_FILE%" rd /s /q "%HP_PS_PROBE_FILE%" >nul 2>&1
   if not defined HP_CI_LANE ( pause )
   exit /b 1
 )
 del /f /q "%HP_PS_PROBE_FILE%" >nul 2>&1
+if exist "%HP_PS_PROBE_FILE%" rd /s /q "%HP_PS_PROBE_FILE%" >nul 2>&1
 set "HP_SCRIPT_ROOT=%~dp0"
 for %%R in ("%HP_SCRIPT_ROOT%") do set "HP_SCRIPT_ROOT=%%~fR"
 if not "%HP_SCRIPT_ROOT:~-1%"=="\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"

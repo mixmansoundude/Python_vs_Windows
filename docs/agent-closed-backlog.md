@@ -2611,6 +2611,34 @@ run of the same regex logic before landing, not just reasoned about).
   the Nuitka/MSVC-dependent tests elsewhere in this registry that start non-gating because they
   could not be verified locally).
 
+  **Two real bugs found via CodeRabbit's review on PR #446, both fixed in the same PR, both
+  reproduced directly (not just reasoned about) before and after the fix.** (1) The probe's
+  fixed filename (`~ps_capability_probe.tmp`) had no protection against two genuinely concurrent
+  `run_setup.bat` instances in the same folder -- this preflight runs BEFORE `:acquire_lock`
+  (REQ-024's own concurrent-instance lock, acquired much later in the file), so a second process
+  could delete or overwrite the first's probe file mid-check and produce a false capability
+  failure. Fixed by suffixing the filename with two `%RANDOM%` draws
+  (`~ps_capability_probe.%RANDOM%%RANDOM%.tmp`, computed once into `HP_PS_PROBE_NAME` before the
+  `HP_TEST_FORCE_PS_CAPABILITY_FAIL` override, so both the real and forced-failure paths share the
+  same unique suffix) -- not a full mutex, just enough entropy that a same-folder collision within
+  one preflight's brief lifetime is negligible. (2) The original PowerShell command used
+  `Test-Path`/`Remove-Item` against the probe path -- both cmdlets treat `[`/`]` as wildcard
+  syntax by default, so an app folder whose path happens to contain literal brackets (e.g. a
+  folder named `Test[1]`) made `Test-Path` report a genuinely-written file as NOT FOUND,
+  misclassifying a perfectly capable PowerShell as CLM-restricted. Reproduced directly via a real
+  `pwsh` run against a `Test[1]` directory before fixing: `[IO.File]::WriteAllBytes` wrote the
+  file successfully, but `Test-Path` on the same literal path returned `$false` while
+  `Test-Path -LiteralPath` correctly returned `$true`. Fixed by switching the whole probe to
+  `[IO.File]::Exists`/`[IO.File]::Delete` instead of `Test-Path`/`Remove-Item -LiteralPath` --
+  these two .NET methods never glob-expand at all (not even an opt-in wildcard mode to avoid),
+  consistent with the probe's existing `[IO.File]::WriteAllBytes` call, so the app folder's own
+  path can contain any legal Windows filename character without affecting the probe's outcome.
+  Also added the same file-or-directory stale-artifact pre-clear `~wtest.tmp` already uses
+  (`del /f /q` then `if exist ( rd /s /q )`) at all three cleanup sites (pre-probe, on-failure,
+  on-success), defense-in-depth against a leftover directory at the probe's path even though the
+  new per-process uniqueness makes a genuine collision with an earlier run's leftover file
+  extremely unlikely on its own.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
