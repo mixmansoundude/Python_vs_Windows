@@ -1127,6 +1127,37 @@ way (no live Windows execution available here), that is noted explicitly rather 
   `if`/`for` block) proving the extended checker catches it, plus a negative case (a top-level
   `rem` header block with no enclosing bracket) proving it doesn't false-positive.
 
+  **Scope WIDENED, same PR (#445), via a second real CI incident on the SAME code block: a
+  SAME-LINE, self-contained, balanced `(`/`)` pair -- not just cross-line pairs -- can ALSO corrupt
+  parsing when nested deep enough inside real `if (...)` blocks, contradicting this checker's own
+  (and this repo's own documented) assumption that same-line pairs are unconditionally safe.**
+  After the rem-comment fix above was pushed, CI still failed identically; root-caused via a
+  downloaded diagnostics artifact's real `~envsmoke_bootstrap.log` showing the exact same
+  corruption signature as the original PR #408 incident (`falling was unexpected at this time.`),
+  traced to a NEW `>> "%LOG%" echo ... (exit 3); falling back ...` line whose `(exit 3)` pair opens
+  and closes on the SAME line -- yet still corrupted parsing, nested FOUR levels deep. This is a
+  DIFFERENT shape from `:print_fastpath_ambiguous_note`'s own precedent (a plain top-level `echo`
+  with no enclosing block, confirmed safe) -- whether the redirection prefix (`>>` before `echo`)
+  or the nesting depth (4, one deeper than any previously-confirmed case) is the actual
+  distinguishing condition was NOT isolated; the fix (remove the parens) resolved it regardless.
+  See `docs/agent-lessons-learned.md`'s corresponding entry and `docs/agent-closed-backlog.md`'s
+  Item 52 entry for the full trace, and `tests/test_check_delimiters_import.py`'s
+  `test_paren_pair_on_redirected_echo_line_deeply_nested_is_a_known_false_negative` for a
+  regression fixture documenting the checker's current false-negative on this exact shape.
+
+  **Revised item scope**: the high-level fix above (extend `is_echo_open`-style tracking to `rem`
+  lines) is necessary but NOT sufficient on its own -- it still only catches CROSS-line pairs.
+  Whoever picks up this item should ALSO investigate whether extending the same-line-pair
+  "always safe" assumption is correct at all once genuinely nested (vs. top-level), and if not,
+  design a check for that case too (e.g. flag ANY `(`/`)` pair -- same-line or cross-line -- found
+  inside `echo`/`rem` text that is already nested inside a real open bracket, not just cross-line
+  ones) -- balanced against the real risk of false-positiving on the MANY existing, presumably-safe
+  same-line nested echo statements already in `run_setup.bat` (not audited; needs its own careful
+  pass, likely requiring live-cmd.exe verification per this repo's own established practice for
+  this hazard class, not static reasoning alone -- static reasoning about this exact hazard class
+  has now been wrong multiple times in this repo's history, per `docs/agent-lessons-learned.md`'s
+  "`:log` echoes UNQUOTED" entry's own general warning).
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
