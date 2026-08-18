@@ -2540,6 +2540,28 @@ run of the same regex logic before landing, not just reasoned about).
   Active Backlog Item 61** -- not implemented as part of this fix, which only needed to unblock the
   one broken instance, not audit or re-armor every pre-existing `rem` block already in the file.
 
+  **A FOURTH real bug, in the SAME commit as the third: the rem-comment fix alone did not resolve
+  the regression -- CI still failed identically after it was pushed, confirmed via a second round
+  of live CI evidence.** The new `>> "%LOG%" echo ... (exit 3); falling back to requirements.txt or
+  pipreqs.` line (added alongside the rem comment, in the SAME original commit) has its own literal
+  `(`/`)` pair -- `(exit 3)` -- that opens AND closes on the SAME line, inside echo text. Per the
+  established rule and `check_delimiters.py`'s own code, a same-line self-contained pair is
+  supposed to be harmless (the checker deliberately never flags one) -- but a downloaded diagnostics
+  artifact's real `~envsmoke_bootstrap.log` showed the IDENTICAL corruption signature as the
+  original PR #408 incident: `falling was unexpected at this time.`, with "falling" being the exact
+  next word after `(exit 3)` in this line. This same-line pair sits nested FOUR levels deep inside
+  real `if (...)` blocks -- one level deeper than any previously-confirmed safe case -- and is a
+  `>> file echo ...` REDIRECTED form, not a plain top-level `echo` statement; which factor (depth,
+  or the redirection prefix) actually matters was not isolated, since the live evidence made the
+  fix (remove the parens) unambiguous without needing to. Fixed by rewording `(exit 3)` to `, exit
+  3` -- no literal parens at all. **Revises the established rule**: "same-line, self-contained,
+  balanced" is not a blanket safe-harbor for text nested inside a real open block -- it is only
+  confirmed-safe for a genuinely top-level statement with no enclosing bracket (the
+  `:print_fastpath_ambiguous_note` precedent). See `docs/agent-lessons-learned.md`'s corresponding
+  entry for the full trace. Both this bug and the rem-comment bug shipped in the same original
+  commit and had to be found and fixed in two SEPARATE rounds, each confirmed only by live Windows
+  CI evidence pulled from a downloaded diagnostics artifact -- local tooling caught neither one.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

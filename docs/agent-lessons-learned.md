@@ -483,6 +483,34 @@ list; the recurring traps that have actually bitten us:
   to unblock the one broken instance, not audit or re-armor every pre-existing `rem` block in the
   file -- a large, separate undertaking on a ~5300-line file with many other cross-line `rem`
   parens whose actual nesting-safety was not individually re-verified here).
+
+  **The rem-comment fix above did NOT fully resolve the regression -- a SECOND, independent paren
+  hazard in the SAME code block was found only via a second round of live CI evidence, after the
+  first fix was pushed and CI still failed identically.** The new `>> "%LOG%" echo ... (exit 3);
+  falling back to requirements.txt or pipreqs.` line (added in the same change as the rem comment)
+  has a literal `(`/`)` pair -- `(exit 3)` -- that opens AND closes on the SAME line, inside echo
+  text. Per this entry's own established rule and `check_delimiters.py`'s own code (`last.char ==
+  "(" and last.is_echo_open and line != last.line`), a same-line, self-contained pair is supposed
+  to be harmless -- the checker deliberately does NOT flag it, and the precedent case
+  (`:print_fastpath_ambiguous_note`) confirmed a same-line pair is fine when the echo statement is
+  TOP-LEVEL (no enclosing block). **This assumption does not hold here**: confirmed via a
+  downloaded diagnostics artifact's real bootstrap log (`~envsmoke_bootstrap.log`) showing the
+  EXACT corruption signature from the original PR #408 incident -- `falling was unexpected at this
+  time.` -- with "falling" being the very next word after `(exit 3)` in this line's own text. This
+  same-line pair sits nested FOUR levels deep inside real `if (...)` blocks, one level deeper than
+  any previously-confirmed case, and is a `>> file echo ...` REDIRECTED form, not a plain top-level
+  `echo` statement -- either factor (nesting depth, or the redirection prefix interacting with
+  cmd.exe's paren-parsing differently than a bare `echo`) could be the actual distinguishing
+  condition; which one was NOT isolated, since the live CI evidence made further speculation
+  unnecessary once the fix (remove the parens) was confirmed to work. **Revised rule, stronger than
+  the original**: do not treat "same-line, self-contained, balanced" as a blanket safe-harbor for
+  ANY echo/rem text nested inside a real open block -- it is only KNOWN-safe for a genuinely
+  top-level statement with no enclosing bracket. When in doubt inside a nested block, remove
+  literal parens from wrapped text entirely (` -- ` or `,`) rather than relying on same-line
+  balance alone. Fixed by rewording `(exit 3)` to `, exit 3` (no parens at all). Both bugs (the
+  rem-comment cross-line pair, and this echo same-line pair) shipped in the SAME original commit
+  and had to be found and fixed in two separate rounds, each confirmed only by live Windows CI
+  evidence -- local tooling (`check_delimiters.py`, the full sanity sweep) caught NEITHER one.
 - **Avoid `EnableDelayedExpansion`; if unavoidable, wrap it tightly.** `!` becomes special
   under delayed expansion, and a parent shell launched with `/V:ON` causes `!`-collisions.
   `tests/harness.ps1` `batch.bang.scan` enforces "no `!` in live batch code lines."

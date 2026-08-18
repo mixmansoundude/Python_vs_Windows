@@ -1327,7 +1327,7 @@ if exist "pyproject.toml" (
       rem distinct from its deliberate exit 1 "nothing to do here" -- would also satisfy
       rem "if errorlevel 2" and get mislabeled as a TOML parse error if checked second.
       if errorlevel 3 (
-        >> "%LOG%" echo pyproj_deps.py: unexpected internal error (exit 3); falling back to requirements.txt or pipreqs.
+        >> "%LOG%" echo pyproj_deps.py: unexpected internal error, exit 3; falling back to requirements.txt or pipreqs.
       ) else if errorlevel 2 (
         echo *** [WARN] pyproject.toml could not be parsed as valid TOML; falling back to requirements.txt or pipreqs.
         call :log "[WARN] pyproject.toml TOML parse error; falling back."
