@@ -1019,6 +1019,45 @@ ABSENT (proving the second `:handle_conda_failure` call is skipped) and the new
 at `:after_env_mode_selection`'s own guard, not silently swallowed). See `docs/agent-ndjson.md`
 for the full assertion list.
 
+### A future `:die`-halts-the-process change (Item 46 Bucket A candidate (c)) must understand `tests/selfapps_entrysmoke_no_interpreter.ps1`'s own contract, not just `:die` itself
+
+**Touch `:die`'s own exit behavior, must understand this one test's pass condition specifically --
+found via a direct hand-trace across every `tests/*.ps1` file (2026-08-18), not assumed.** This
+repo tracks two INDEPENDENT "exit code" signals for `run_setup.bat`: the real OS-level process
+exit code the whole batch returns to its caller, and the self-reported `exitCode` JSON field
+inside `~bootstrap.status.json` (written by `:write_status` from whatever `%RC%` `:die` was
+called with, entirely separate from the first). Today, most `:die` sites fall through to
+`:success`'s own unconditional `exit /b 0`, so the real process exit code is currently always `0`
+regardless of `state` -- a deliberate "did the bootstrapper run to completion" vs. "did the
+product succeed" split, this repo's own established "graceful stop" contract (see
+`docs/agent-ndjson.md`'s references to it).
+
+Candidate (c) for Item 46's Bucket A (converting `:die`'s own `exit /b` to a genuine
+process-halting `exit`, see CLAUDE.md's Item 46 entry and `docs/plan-die-fatal-remediation.md`)
+would make the real process exit code start reflecting `%RC%` (nonzero) at every site it touches
+-- breaking that split for the first time. A full sweep of every `-eq 0`-on-an-exit-code assertion
+across `tests/*.ps1` found this is NOT a vague, unquantified risk: exactly ONE currently-gating
+test hard-asserts the OLD behavior as part of its own pass condition --
+`tests/selfapps_entrysmoke_no_interpreter.ps1:171`, `($statusState -eq 'error') -and ($runExit -eq
+0)`. Every other similarly-shaped assertion found in the same sweep (`tests/selftest.ps1`,
+`tests/selfapps_ux_hardening.ps1`, `tests/selfapps_cascade_conda_create_fail.ps1`, and others) is
+paired with a SUCCESS/recovery scenario (`state -eq 'ok'`) where `:die` is never reached at all,
+so those are structurally unaffected; a few files (`selfapps_pyinstaller_fail.ps1`,
+`selfapps_conda_bothfail.ps1`) capture the real exit code into a details object for diagnostics
+without asserting it.
+
+**Anyone implementing candidate (c) must therefore either update this one test's own encoded
+contract deliberately (the correct fix, since the test is asserting exactly the behavior about to
+change on purpose) or reconsider whether this specific test's own scenario should be exempted --
+not discover the breakage via a surprised, red CI run.** Also worth an explicit note in whatever
+PR implements (c): search fresh for any NEW `-eq 0`-shaped exit-code assertion added to the test
+suite between this doc's write date and that PR's own start, since this repo's test suite grows
+continuously and this specific sweep is only current as of 2026-08-18. See
+`docs/agent-lessons-learned.md`'s `:die` entry for the full mechanism trace (including the
+corrected finding that `:die` already `pause`s before its existing `exit /b`, so the ORIGINALLY
+suspected risk -- "closes the console before a double-click user reads the message" -- does not
+actually apply to this candidate at all).
+
 ### uv uses managed-only CPython (UV_PYTHON_PREFERENCE)
 
 `run_setup.bat` sets `UV_PYTHON_PREFERENCE=only-managed` at the top of the uv acquisition

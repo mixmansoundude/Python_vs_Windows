@@ -355,6 +355,22 @@ Write-Result 'batch.req014.consent' 'REQ-014: system Python consent gate log lin
 # (tests/selfapps_envsmoke.ps1). See docs/agent-lessons-learned.md.
 $hasUvPref = ($AllText -match 'set\s+"UV_PYTHON_PREFERENCE=only-managed"')
 Write-Result 'uv.python.preference.configured' 'config: run_setup.bat sets UV_PYTHON_PREFERENCE=only-managed (managed-only orchestration; no ambient Python)' $hasUvPref @{}
+# CLAUDE.md Active Backlog Item 40: the HP_SCRIPT_ROOT trailing-backslash guard used to compare a
+# one-character substring against a two-character literal ("\\", not an escaped backslash --
+# cmd.exe's IF does no backslash-escaping), which is always false, so the backslash was always
+# appended even when %~dp0 already ended in one -- producing a doubled separator (confirmed
+# reaching real console output). Fixed to the one-character form the sibling HP_CRUMB_FILE guard
+# already uses correctly. Assert the fixed form is present and the buggy two-backslash comparison
+# is gone, so a future edit cannot silently reintroduce the always-true condition.
+$scriptRootFixedForm = 'if not "%HP_SCRIPT_ROOT:~-1%"=="\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"'
+$hasScriptRootFixedForm = $AllText.Contains($scriptRootFixedForm)
+$scriptRootBuggyForm = '"%HP_SCRIPT_ROOT:~-1%"=="\\"'
+$hasScriptRootBuggyForm = $AllText.Contains($scriptRootBuggyForm)
+$scriptRootGuardOk = $hasScriptRootFixedForm -and (-not $hasScriptRootBuggyForm)
+Write-Result -Id 'batch.script_root.trailing_backslash' -Desc 'HP_SCRIPT_ROOT trailing-backslash guard uses the correct one-character comparison, not the always-true two-backslash form' -Pass $scriptRootGuardOk -Details @{
+    hasScriptRootFixedForm = $hasScriptRootFixedForm
+    hasScriptRootBuggyForm = $hasScriptRootBuggyForm
+}
 $warnGatePatterns = @('if not defined DEP_SOURCE (', 'Dependencies were auto-detected (pipreqs)', 'pipreqs augmenting')
 $hasWarnGate = ($warnGatePatterns | Where-Object { -not ($AllText -match [regex]::Escape($_)) }).Count -eq 0
 Write-Result 'batch.req005.warn_gate' 'REQ-005: pipreqs auto-detect WARN gated on DEP_SOURCE unset (suppressed when requirements.txt/pyproject present)' $hasWarnGate @{}

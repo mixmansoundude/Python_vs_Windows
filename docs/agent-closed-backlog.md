@@ -2163,6 +2163,38 @@ run of the same regex logic before landing, not just reasoned about).
   negative control) before landing. See `docs/agent-ndjson.md`'s own entry for the full row
   schema and reasoning.
 
+### Item 40 (closed 2026-08-18)
+
+- **Dead comparison in the `HP_SCRIPT_ROOT` trailing-backslash guard always evaluated true, so
+  every derived path carried a doubled separator.** CONFIRMED directly against source and against
+  a real CI log line before fixing.
+
+  **Mechanism**: the guard, immediately after `set "HP_SCRIPT_ROOT=%~dp0"`, read `if not
+  "%HP_SCRIPT_ROOT:~-1%"=="\\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"`. The left side is a
+  ONE-character substring (`:~-1`); the right side, `"\\"`, is a TWO-character literal (cmd.exe's
+  `if` does no backslash-escaping, so `\\` really is two backslashes, not an escaped one). A
+  one-character string can never equal a two-character string, so the condition was always true,
+  and the backslash was always appended -- including when `%~dp0` already ended in one (which it
+  always does, by Windows convention). The sibling `HP_CRUMB_FILE` guard elsewhere in the file
+  already used the correct one-character `"\"` form, strong evidence this was a typo, not intent.
+
+  **Confirmed reaching console output** in a real CI log (run 31323118721, real lane):
+  `Interpreter: D:\a\...\tests\~envsmoke\\.uv_env\Scripts\python.exe` -- note the doubled
+  backslash before `.uv_env`.
+
+  **Severity: low/cosmetic** -- Windows collapses repeated separators in most path-consuming
+  APIs, and the same CI run confirmed `HP_UV_BIN`/`HP_UV_ENV_PATH`/`HP_LOCK_DIR`/`HP_EMBED_DIR` all
+  still resolved correctly despite this. But it was dead code with no test catching it, and it did
+  visibly surface as `\\` in console output a beginner reads.
+
+  **Fix shipped**: changed the right-hand literal from `"\\"` to `"\"`, matching the sibling
+  guard's already-correct form -- a one-character diff. New static check
+  `batch.script_root.trailing_backslash` (`tests/harness.ps1`) asserts the fixed one-backslash
+  comparison text is present AND the buggy two-backslash comparison text is absent, so a future
+  edit cannot silently reintroduce the always-true condition; verified via a standalone `pwsh`
+  probe (both the fixed-text and buggy-text cases) before landing, matching this repo's own
+  established verification discipline for new static harness checks.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

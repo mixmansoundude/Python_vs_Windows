@@ -811,32 +811,6 @@ but several represent real gaps worth closing before calling the path fully rele
   **Coverage gap to close in the same slice**: no scenario backdates a source file's mtime below
   the EXE's to test this. Add one.
 
-- **Item 40: dead comparison in the `HP_SCRIPT_ROOT` trailing-backslash guard always evaluates
-  true, so every derived path carries a doubled separator.** CONFIRMED directly against source and
-  against a real CI log line.
-
-  **Mechanism**: the guard, immediately after `set "HP_SCRIPT_ROOT=%~dp0"`, reads `if not
-  "%HP_SCRIPT_ROOT:~-1%"=="\\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"`. The left side is a
-  ONE-character substring (`:~-1`); the right side, `"\\"`, is a TWO-character literal (cmd.exe's
-  `if` does no backslash-escaping, so `\\` really is two backslashes, not an escaped one). A
-  one-character string can never equal a two-character string, so the condition is always true,
-  and the backslash is always appended -- including when `%~dp0` already ends in one (which it
-  always does, by Windows convention). A sibling guard elsewhere in the file uses the correct
-  one-character `"\"` form, which is strong evidence this is a typo, not intent.
-
-  **Confirmed reaching console output** in a real CI log (run 31323118721, real lane):
-  `Interpreter: D:\a\...\tests\~envsmoke\\.uv_env\Scripts\python.exe` -- note the doubled
-  backslash before `.uv_env`.
-
-  **Severity: low/cosmetic** -- Windows collapses repeated separators in most path-consuming
-  APIs, and the same CI run confirms `HP_UV_BIN`/`HP_UV_ENV_PATH`/`HP_LOCK_DIR`/`HP_EMBED_DIR` all
-  still resolve correctly despite this. But it is dead code with no test catching it, and it does
-  visibly surface as `\\` in console output a beginner reads.
-
-  **Fix**: change the right-hand literal from `"\\"` to `"\"`, matching the sibling guard's
-  already-correct form. Trivial, one-character fix; add a static test (or extend
-  `check_delimiters.py`/a dedicated unit test) asserting `HP_SCRIPT_ROOT` never contains `\\`.
-
 - **Item 41: a working GUI app is force-killed at the 30s build-verification deadline and
   reported with a caveat, with no messaging calibrated for that specific, correctly-behaving
   case.** Confirmed reasoned-from-source, with the kill-on-silence RULE confirmed by real CI
@@ -1027,20 +1001,37 @@ way (no live Windows execution available here), that is noted explicitly rather 
   to skip wholesale).
 
   **Bucket A remaining scope: candidate fix shapes for a general mechanism, not yet chosen
-  between** -- (a) a global `HP_FATAL` flag set by `:die`, checked via `if defined HP_FATAL goto
-  :fatal_exit` after every remaining continuing call site; (b) change what `:die` itself does on
-  exit (e.g. a real process-halting `exit`, not `exit /b`) for the cases where it is known to be
-  called from the top-level call stack rather than a nested subroutine -- riskier, since the
-  top-level-vs-nested distinction is not always obvious from a given call site, and a bare `exit`
-  closes the console window immediately for a double-click user with no chance to read the
-  message first (see the existing `pause`-before-exit convention this file already relies on);
-  (c) continue the slice-1 approach -- individually targeted `goto`s at specific, well-understood
-  call sites, reusing already-proven patterns where one exists, rather than a single general
-  mechanism. Given the number of remaining call sites and `:die`'s central, load-bearing role
-  throughout the file, treat this as EXTREME CAUTION on the same order as the
-  DLL-bundling/hidden-import repair loops elsewhere in this backlog -- one incremental slice at a
-  time (slice 1 above is the second proof this works, after Bucket B), not a single sweeping
-  change across every remaining site.
+  between -- full pros/cons/value-add/risk writeup now in `docs/plan-die-fatal-remediation.md`
+  (2026-08-18, corrected same day via a direct hand-trace -- see below), grounded against the
+  current, actual 27-site inventory (not the ~31 estimate this entry used to cite before Items
+  45/Bucket B/slice 1 landed), with the choice itself registered as an open question for the
+  maintainer in `docs/open-questions.md`.** Three candidates: (a) targeted `goto`s per site,
+  continuing the slice-1 pattern; (b) a global `HP_FATAL` flag set by `:die`, checked via `if
+  defined HP_FATAL goto :fatal_exit` at chosen resumption points; (c) change `:die` itself to halt
+  the process directly (a real `exit`, not `exit /b`). **Corrected 2026-08-18**: this entry
+  previously claimed (c)'s main risk was "a bare `exit` closes the console window immediately for
+  a double-click user with no chance to read the message first" -- traced directly against `:die`'s
+  actual current body and found this does NOT hold: `:die` already `pause`s BEFORE its existing
+  `exit /b`, so a real interactive user has already read the message by the time a converted
+  `exit` would run. The real, verified risk is narrower and different: this repo tracks the OS
+  process exit code and the self-reported `~bootstrap.status.json` `exitCode` field as two
+  INDEPENDENT signals (most `:die` sites today fall through to `:success`'s unconditional `exit /b
+  0`, so the real process exit code is currently always `0` regardless of `state` -- a deliberate
+  "graceful stop" design), and a hand-sweep of every `tests/*.ps1` file found exactly ONE currently
+  -gating test (`tests/selfapps_entrysmoke_no_interpreter.ps1:171`) hard-asserts that old behavior
+  as part of its own pass condition. See `docs/agent-lessons-learned.md`'s `:die` entry and the
+  plan doc's own corrected candidate-(c) section for the full trace -- (c) is genuinely more
+  viable than this entry previously suggested, though still the widest-blast-radius option of the
+  three. The plan doc's own recommendation: continue (a) for the immediate next slice regardless
+  (the only one of the three that fits this item's own "EXTREME CAUTION, one slice at a time"
+  constraint without modification); if the durable close-the-whole-class outcome is wanted later,
+  the choice between (b) and (c) is now a closer call than previously stated and should be scoped
+  as its own dedicated effort with a small proof-of-concept and CI soak time, not folded into the
+  ongoing slice work. Given the number of remaining call sites and `:die`'s central, load-bearing
+  role throughout the file, treat this as EXTREME CAUTION on the same order as the
+  DLL-bundling/hidden-import repair loops
+  elsewhere in this backlog -- one incremental slice at a time (slice 1 above is the second proof
+  this works, after Bucket B), not a single sweeping change across every remaining site.
 
 - **Item 47: no PowerShell capability preflight beyond bare presence.** The new line-ending
   self-check (Item 44's mitigation) added a `where powershell` presence guard as its own
