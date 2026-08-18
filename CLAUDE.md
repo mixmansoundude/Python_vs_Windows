@@ -1001,20 +1001,25 @@ way (no live Windows execution available here), that is noted explicitly rather 
   to skip wholesale).
 
   **Bucket A remaining scope: candidate fix shapes for a general mechanism, not yet chosen
-  between** -- (a) a global `HP_FATAL` flag set by `:die`, checked via `if defined HP_FATAL goto
-  :fatal_exit` after every remaining continuing call site; (b) change what `:die` itself does on
-  exit (e.g. a real process-halting `exit`, not `exit /b`) for the cases where it is known to be
-  called from the top-level call stack rather than a nested subroutine -- riskier, since the
-  top-level-vs-nested distinction is not always obvious from a given call site, and a bare `exit`
-  closes the console window immediately for a double-click user with no chance to read the
-  message first (see the existing `pause`-before-exit convention this file already relies on);
-  (c) continue the slice-1 approach -- individually targeted `goto`s at specific, well-understood
-  call sites, reusing already-proven patterns where one exists, rather than a single general
-  mechanism. Given the number of remaining call sites and `:die`'s central, load-bearing role
-  throughout the file, treat this as EXTREME CAUTION on the same order as the
-  DLL-bundling/hidden-import repair loops elsewhere in this backlog -- one incremental slice at a
-  time (slice 1 above is the second proof this works, after Bucket B), not a single sweeping
-  change across every remaining site.
+  between -- full pros/cons/value-add/risk writeup now in `docs/plan-die-fatal-remediation.md`
+  (2026-08-18), grounded against the current, actual 27-site inventory (not the ~31 estimate this
+  entry used to cite before Items 45/Bucket B/slice 1 landed), with the choice itself registered
+  as an open question for the maintainer in `docs/open-questions.md`.** Three candidates: (a)
+  targeted `goto`s per site, continuing the slice-1 pattern; (b) a global `HP_FATAL` flag set by
+  `:die`, checked via `if defined HP_FATAL goto :fatal_exit` at chosen resumption points; (c)
+  change `:die` itself to halt the process directly (a real `exit`, not `exit /b`) -- riskier,
+  since the top-level-vs-nested distinction is not always obvious from a given call site, and a
+  bare `exit` closes the console window immediately for a double-click user with no chance to
+  read the message first (see the existing `pause`-before-exit convention this file already
+  relies on). The plan doc's own recommendation: continue (a) for the immediate next slice (the
+  only one of the three that fits this item's own "EXTREME CAUTION, one slice at a time"
+  constraint without modification); if the durable close-the-whole-class outcome is wanted later,
+  (b) is the more conservative of the other two and should be scoped as its own dedicated effort
+  with a small proof-of-concept and CI soak time, not folded into the ongoing slice work. Given
+  the number of remaining call sites and `:die`'s central, load-bearing role throughout the file,
+  treat this as EXTREME CAUTION on the same order as the DLL-bundling/hidden-import repair loops
+  elsewhere in this backlog -- one incremental slice at a time (slice 1 above is the second proof
+  this works, after Bucket B), not a single sweeping change across every remaining site.
 
 - **Item 47: no PowerShell capability preflight beyond bare presence.** The new line-ending
   self-check (Item 44's mitigation) added a `where powershell` presence guard as its own

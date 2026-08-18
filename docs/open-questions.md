@@ -7,6 +7,37 @@ here and fold the outcome into wherever it actually belongs (CLAUDE.md's Active/
 answered questions accumulate here as history; that's what the other docs' own Closed Backlog /
 changelog-style sections are for.
 
-**No open questions right now.** Both items previously listed here were answered by the maintainer
-(2026-08-15) and implemented in the same loop -- see `docs/agent-closed-backlog.md`'s "Raw-download
-CRLF distribution fix" and "DLL-specific postflight caveat hint" entries for the outcomes.
+## 1. CLAUDE.md Active Backlog Item 46 (Bucket A): which remediation shape for the remaining `:die` non-halting fall-through sites?
+
+Full research, pros/cons/value-add/risk writeup: `docs/plan-die-fatal-remediation.md` (2026-08-18).
+Three candidates, none pre-decided:
+
+- **(a) Targeted `goto` per site** -- continue the slice-by-slice pattern already shipped twice
+  (Bucket B's `:warn_build_incomplete`, Bucket A slice 1's `goto`). Lowest risk, slowest, no
+  durable protection against a future un-gotoed `call :die` site.
+- **(b) A global `HP_FATAL` flag** -- one mechanism, checked at chosen resumption points, protects
+  current AND future sites. Higher value if done right; real risk the checkpoint placement itself
+  is incomplete or wrong, invisibly.
+- **(c) Make `:die` itself halt the process** -- most complete, but named as the riskiest option in
+  CLAUDE.md's own existing Item 46 text (breaks the pause-before-exit convention for a real
+  double-click user unless every call shape is individually audited first).
+
+The plan doc's own recommendation: continue (a) for the immediate next slice (only option that
+fits Item 46's "EXTREME CAUTION, one slice at a time" constraint as-is); if the durable
+close-the-whole-class outcome is wanted, (b) is the more conservative of the other two (additive,
+doesn't touch `:die`'s own already-correct behavior) and should be scoped as its own dedicated
+effort with a small proof-of-concept and CI soak time, not folded into the ongoing slice work.
+
+**Needs the maintainer's call, not something an agent should pick unilaterally** -- this is
+exactly the kind of decision Item 46's own process notes flag as requiring EXTREME CAUTION, and
+the three options have genuinely different risk/durability tradeoffs rather than one obviously
+dominating.
+
+## 2. If (a) is chosen for Item 46: is there a target completion bar for Bucket A?
+
+All ~20 remaining sites (see the plan doc's Finding 1-3 for the current count and severity
+breakdown)? Only the ones demonstrated to risk a redundant fallback-chain/consent-prompt replay
+(the plan doc's Finding 3 already identifies the `conda.bat not found after bootstrap` site as
+structurally identical to the one slice 1 already fixed)? Or opportunistic, one slice per loop
+indefinitely, with no fixed end state? Secondary to question 1 -- only needs an answer once (a) is
+confirmed as the path forward.
