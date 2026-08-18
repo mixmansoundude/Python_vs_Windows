@@ -2260,6 +2260,37 @@ run of the same regex logic before landing, not just reasoned about).
   file's original `CLAUDE.md-Item-44`. The CI step name and file header comment were both updated
   to describe the file as covering "early preflight branches" generally, not line-endings alone.
 
+  **Refined via CodeRabbit's review on PR #442, three real findings fixed same-day.** (1) The
+  probe never cleared a pre-existing `~wtest.tmp` before attempting the write -- a crash between
+  an earlier successful probe and its own cleanup (or any other leftover at that exact path)
+  would make a genuinely unwritable folder read as writable, since `if not exist` after a no-op
+  forced branch would find the STALE file still present. Fixed by unconditionally `del /f /q
+  "~wtest.tmp" >nul 2>&1` immediately before the probe attempt, so the existence check afterward
+  is always meaningful regardless of prior-run leftovers. (2) `%CD%` was echoed unquoted in the
+  `[ERROR]` message -- the same `:log`-echoes-UNQUOTED hazard class documented in
+  `docs/agent-lessons-learned.md` (a folder path containing `&`/`|`/`<`/`>`, all legal in a
+  Windows folder name, would have been misparsed as a shell metacharacter instead of literal
+  text). Fixed by wrapping it in quotes at the echo site (`"%CD%"`), the same fix pattern already
+  established for the `findstr`-piped `HP_SCRIPT_ROOT` case. (3) The NDJSON `req`/`desc` fields on
+  the non-Windows-skip and missing-`run_setup.bat` early-exit branches still hardcoded
+  `CLAUDE.md-Item-44`/"Line-ending self-check..." for ALL FOUR row ids, including the new
+  `cwd_not_writable` row (Item 48) -- those two branches predate the fourth scenario and never
+  got updated when it was added. Fixed by replacing the flat `$rowIds` array with an ordered
+  `$rowIdReqs` map (id -> its own correct `req`), consumed by both branches so every row cites
+  its real backlog item even on paths that never reach `Test-PreflightScenario`'s own `-Req`
+  parameter. Also added the scenario's own work-directory name to `ExpectedSubstrings`, so a
+  regression that drops or corrupts `%CD%` from the error message is actually caught (previously
+  only the fixed prefix/remediation text was asserted). Deliberately NOT implemented: CodeRabbit's
+  suggestion to treat the FINAL cleanup `del`'s own failure as a hard error -- disproportionate
+  for a gitignored scratch probe file with no established precedent elsewhere in this file (every
+  other tilde-prefixed scratch file in `run_setup.bat` uses the same best-effort `>nul 2>&1`
+  cleanup convention); a `~wtest.tmp` a delete could conceivably strand is harmless clutter, not a
+  reason to fail the whole bootstrap. Also deliberately NOT adding a `%RANDOM%`/timestamp suffix
+  to the probe filename (a Blinter SEC017 finding, not a CodeRabbit one): the race/hijack threat
+  model that rule targets is a SHARED multi-user temp directory (e.g. `/tmp`), not a folder the
+  calling user already fully owns, which is what `~wtest.tmp` always is here -- matches every
+  other bare tilde-prefixed scratch filename already used throughout this file.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

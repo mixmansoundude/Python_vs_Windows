@@ -2137,6 +2137,10 @@ jobs:
             tests\~selftest_lineending_lf_only\~lineending_bootstrap.log
             tests/~selftest_lineending_lf_only/~bootstrap.status.json
             tests\~selftest_lineending_lf_only\~bootstrap.status.json
+            tests/~selftest_lineending_cwd_not_writable/~lineending_bootstrap.log
+            tests\~selftest_lineending_cwd_not_writable\~lineending_bootstrap.log
+            tests/~selftest_lineending_cwd_not_writable/~bootstrap.status.json
+            tests\~selftest_lineending_cwd_not_writable\~bootstrap.status.json
             tests/~selftest_entrysmoke_no_interpreter/~entrysmoke_no_interpreter_bootstrap.log
             tests\~selftest_entrysmoke_no_interpreter\~entrysmoke_no_interpreter_bootstrap.log
             tests/~selftest_entrysmoke_no_interpreter/~setup.log

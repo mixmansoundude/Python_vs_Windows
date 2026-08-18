@@ -173,6 +173,11 @@ rem folder itself, via the cd /d above), and it runs before every other write in
 rem (the CI marker, ~setup.log, and :merge_git_config's own .gitignore/.gitattributes
 rem writes) so an unwritable folder fails with one clear, named message instead of a
 rem confusing cascade of silently-swallowed write failures later.
+rem derived requirement: clear any pre-existing ~wtest.tmp before probing -- a crash between
+rem a past successful probe and its own cleanup (or, unlikely given the tilde convention, a
+rem coincidentally-named leftover) must not let a stale file at this exact path masquerade as
+rem this run's own successful write.
+del /f /q "~wtest.tmp" >nul 2>&1
 if defined HP_TEST_FORCE_CWD_NOT_WRITABLE (
   rem derived requirement: force the not-writable branch deterministically for CI, without
   rem actually revoking filesystem permissions on a shared runner -- skip the real write
@@ -184,7 +189,7 @@ if defined HP_TEST_FORCE_CWD_NOT_WRITABLE (
 )
 if not exist "~wtest.tmp" (
   echo ***
-  echo *** [ERROR] This folder does not appear to be writable: %CD%
+  echo *** [ERROR] This folder does not appear to be writable: "%CD%"
   echo *** This script needs to create files here -- logs, a dependency cache, and
   echo *** eventually a standalone program. Move this script and your .py files to
   echo *** a folder you have write access to, then run it again.

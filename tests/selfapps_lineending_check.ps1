@@ -45,7 +45,16 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-$rowIds = @('self.preflight.no_powershell', 'self.preflight.ps_check_fail', 'self.preflight.lf_only', 'self.preflight.cwd_not_writable')
+# derived requirement: a map, not a flat array, so the non-Windows/missing-run_setup.bat
+# branches below can still cite each row's OWN correct backlog item -- the cwd_not_writable
+# row belongs to Item 48, not the three line-ending rows' Item 44, even on these early-exit
+# paths where Test-PreflightScenario itself (which takes -Req per call) never runs.
+$rowIdReqs = [ordered]@{
+    'self.preflight.no_powershell'   = 'CLAUDE.md-Item-44'
+    'self.preflight.ps_check_fail'   = 'CLAUDE.md-Item-44'
+    'self.preflight.lf_only'         = 'CLAUDE.md-Item-44'
+    'self.preflight.cwd_not_writable' = 'CLAUDE.md-Item-48'
+}
 
 # Non-Windows skip
 # derived requirement: $IsWindows is undefined (reads as $null, so "-not $IsWindows" is
@@ -53,12 +62,12 @@ $rowIds = @('self.preflight.no_powershell', 'self.preflight.ps_check_fail', 'sel
 # [System.Environment]::OSVersion.Platform works identically on 5.1 and 7+.
 $platform = [System.Environment]::OSVersion.Platform.ToString()
 if ($platform -ne 'Win32NT') {
-    foreach ($id in $rowIds) {
+    foreach ($id in $rowIdReqs.Keys) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
-            req     = 'CLAUDE.md-Item-44'
+            req     = $rowIdReqs[$id]
             pass    = $true
-            desc    = 'Line-ending self-check preflight branch (skipped on non-Windows)'
+            desc    = 'Preflight self-check branch (skipped on non-Windows)'
             details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
         })
     }
@@ -67,12 +76,12 @@ if ($platform -ne 'Win32NT') {
 
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
-    foreach ($id in $rowIds) {
+    foreach ($id in $rowIdReqs.Keys) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
-            req     = 'CLAUDE.md-Item-44'
+            req     = $rowIdReqs[$id]
             pass    = $false
-            desc    = 'Line-ending self-check preflight branch: run_setup.bat not found'
+            desc    = 'Preflight self-check branch: run_setup.bat not found'
             details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
         })
     }
@@ -198,7 +207,7 @@ $results += Test-PreflightScenario -Id 'self.preflight.cwd_not_writable' `
     -WorkDirName '~selftest_lineending_cwd_not_writable' `
     -EnvFlagName 'HP_TEST_FORCE_CWD_NOT_WRITABLE' `
     -ExpectedExit 1 `
-    -ExpectedSubstrings @('[ERROR] This folder does not appear to be writable:', 'Move this script and your .py files to') `
+    -ExpectedSubstrings @('[ERROR] This folder does not appear to be writable:', '~selftest_lineending_cwd_not_writable', 'Move this script and your .py files to') `
     -Req 'CLAUDE.md-Item-48'
 
 if ($results -contains $false) { exit 1 }
