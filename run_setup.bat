@@ -175,9 +175,13 @@ rem writes) so an unwritable folder fails with one clear, named message instead 
 rem confusing cascade of silently-swallowed write failures later.
 rem derived requirement: clear any pre-existing ~wtest.tmp before probing -- a crash between
 rem a past successful probe and its own cleanup (or, unlikely given the tilde convention, a
-rem coincidentally-named leftover) must not let a stale file at this exact path masquerade as
-rem this run's own successful write.
+rem coincidentally-named leftover) must not let a stale entry at this exact path masquerade as
+rem this run's own successful write. del only removes a FILE at this path; if a directory of
+rem the same name exists instead (however unlikely), del is a silent no-op against it, so rd
+rem /s /q runs too whenever the entry is still present afterward -- between the two, either
+rem shape of stale leftover is cleared before the real probe below ever runs.
 del /f /q "~wtest.tmp" >nul 2>&1
+if exist "~wtest.tmp" rd /s /q "~wtest.tmp" >nul 2>&1
 if defined HP_TEST_FORCE_CWD_NOT_WRITABLE (
   rem derived requirement: force the not-writable branch deterministically for CI, without
   rem actually revoking filesystem permissions on a shared runner -- skip the real write

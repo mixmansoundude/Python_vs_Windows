@@ -2291,6 +2291,26 @@ run of the same regex logic before landing, not just reasoned about).
   calling user already fully owns, which is what `~wtest.tmp` always is here -- matches every
   other bare tilde-prefixed scratch filename already used throughout this file.
 
+  **A fourth finding on the same thread, caught by CodeRabbit re-inspecting the fix itself
+  (not the original review pass): `del /f /q` only removes a FILE, never a directory.** If
+  `~wtest.tmp` happened to already exist as a DIRECTORY (not a file) at the exact probe path,
+  the pre-probe `del` would be a silent no-op against it, the real `type nul > "~wtest.tmp"`
+  write attempt would then fail (can't create a file where a directory of the same name already
+  exists), but `if not exist "~wtest.tmp"` would still find the surviving directory and read the
+  preflight as SUCCESSFUL -- the exact false-writable outcome the stale-file fix above was meant
+  to close, just for the other filesystem-entry type. Fixed by adding `if exist "~wtest.tmp" rd
+  /s /q "~wtest.tmp" >nul 2>&1` right after the existing `del`, so whichever of the two survives
+  the first attempt is cleared by the second -- `rd` is a no-op against a plain file (by design,
+  it only removes directories), so ordering `del` then a conditional `rd` handles both shapes of
+  stale leftover without needing to first detect which one is present. Deliberately NOT adding a
+  dedicated regression scenario for this exact case: reproducing it needs a directory literally
+  named `~wtest.tmp` to already exist in a completely fresh app folder before that folder's very
+  first bootstrap run ever executes -- and proving it would require extending
+  `Test-PreflightScenario`'s own shape to a new "pre-seed an anomaly, then expect the OVERALL run
+  to still succeed" mode, distinct from every existing scenario in that file (all four assert a
+  forced FAILURE), for a real-world trigger rate low enough that the underlying source fix (cheap,
+  two extra lines) was judged sufficient on its own.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
