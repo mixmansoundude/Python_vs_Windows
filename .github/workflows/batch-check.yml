@@ -2141,6 +2141,18 @@ jobs:
             tests\~selftest_lineending_cwd_not_writable\~lineending_bootstrap.log
             tests/~selftest_lineending_cwd_not_writable/~bootstrap.status.json
             tests\~selftest_lineending_cwd_not_writable\~bootstrap.status.json
+            tests/~selftest_subfolder_hint/~subfolder_bootstrap.log
+            tests\~selftest_subfolder_hint\~subfolder_bootstrap.log
+            tests/~selftest_subfolder_hint/~bootstrap.status.json
+            tests\~selftest_subfolder_hint\~bootstrap.status.json
+            tests/~selftest_subfolder_hint_neg/~subfolder_neg_bootstrap.log
+            tests\~selftest_subfolder_hint_neg\~subfolder_neg_bootstrap.log
+            tests/~selftest_subfolder_hint_neg/~bootstrap.status.json
+            tests\~selftest_subfolder_hint_neg\~bootstrap.status.json
+            tests/~selftest_subfolder_hint_pct/~subfolder_pct_bootstrap.log
+            tests\~selftest_subfolder_hint_pct\~subfolder_pct_bootstrap.log
+            tests/~selftest_subfolder_hint_pct/~bootstrap.status.json
+            tests\~selftest_subfolder_hint_pct\~bootstrap.status.json
             tests/~selftest_entrysmoke_no_interpreter/~entrysmoke_no_interpreter_bootstrap.log
             tests\~selftest_entrysmoke_no_interpreter\~entrysmoke_no_interpreter_bootstrap.log
             tests/~selftest_entrysmoke_no_interpreter/~setup.log

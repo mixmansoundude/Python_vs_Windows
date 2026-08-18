@@ -122,6 +122,136 @@ if (-not $pytxtPass) {
 }
 $summary.Add('py.txt hidden-extension hint: PASS')
 
+# CLAUDE.md Item 43: zero top-level .py files, but a .py file sits one folder down (a
+# src/-style layout unzipped with run_setup.bat dropped at the root). The hint should fire,
+# and behavior (state/exit code) must stay identical to the plain empty-folder case above.
+# The subfolder's name itself contains '&' -- a live cmd.exe operator once substituted into
+# an unquoted echo/:log line -- specifically to prove the hint's own log lines never echo the
+# matched subfolder name (see :check_subfolder_hint's own header comment in run_setup.bat).
+$subfolderDir = Join-Path $TestsDir '~selftest_subfolder_hint'
+$subfolderCandidateName = 'AT&T src'
+$subfolderExit = Invoke-Setup -WorkDir $subfolderDir -LogName '~subfolder_bootstrap.log' -Prepare {
+  $candidatePath = Join-Path $subfolderDir $subfolderCandidateName
+  New-Item -ItemType Directory -Force -Path $candidatePath | Out-Null
+  Set-Content -LiteralPath (Join-Path $candidatePath 'main.py') -Value 'print("hello")' -Encoding ASCII
+}
+$subfolderStatusPath = Join-Path $subfolderDir '~bootstrap.status.json'
+$subfolderStatus = if (Test-Path $subfolderStatusPath) { Get-Content -LiteralPath $subfolderStatusPath -Encoding ASCII -Raw | ConvertFrom-Json } else { $null }
+$subfolderLogPath = Join-Path $subfolderDir '~subfolder_bootstrap.log'
+$subfolderLog = if (Test-Path $subfolderLogPath) { Get-Content -LiteralPath $subfolderLogPath -Raw } else { '' }
+# :check_subfolder_hint writes to BOTH the console (captured above) and run_setup.bat's own
+# internal %LOG% stream (~setup.log) -- check both, so a leak into either stream is caught.
+$subfolderSetupLogPath = Join-Path $subfolderDir '~setup.log'
+$subfolderSetupLog = if (Test-Path $subfolderSetupLogPath) { Get-Content -LiteralPath $subfolderSetupLogPath -Raw } else { '' }
+$subfolderHintFound = $subfolderLog -match [regex]::Escape('Hint: found .py file(s) in a subfolder')
+$subfolderNameLeakedConsole = $subfolderLog -match [regex]::Escape($subfolderCandidateName)
+$subfolderNameLeakedSetupLog = $subfolderSetupLog -match [regex]::Escape($subfolderCandidateName)
+$subfolderNameLeaked = $subfolderNameLeakedConsole -or $subfolderNameLeakedSetupLog
+$subfolderStatusExitOk = $subfolderStatus -and ($subfolderStatus.exitCode -eq 0)
+$subfolderPass = ($subfolderExit -eq 0) -and $subfolderStatus -and ($subfolderStatus.state -eq 'no_python_files') -and ($subfolderStatus.pyFiles -eq 0) -and $subfolderStatusExitOk -and $subfolderHintFound -and (-not $subfolderNameLeaked)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.empty_repo.subfolder_hint'
+  pass = $subfolderPass
+  desc = 'Item 43: zero top-level .py files but a subfolder holds one -- hint fires, state/exit unchanged, subfolder name never echoed'
+  details = [ordered]@{
+    exitCode = $subfolderExit
+    statusExitCode = $(if ($subfolderStatus) { $subfolderStatus.exitCode } else { $null })
+    state = $(if ($subfolderStatus) { $subfolderStatus.state } else { $null })
+    pyFiles = $(if ($subfolderStatus) { $subfolderStatus.pyFiles } else { $null })
+    hintFound = $subfolderHintFound
+    nameLeakedConsole = $subfolderNameLeakedConsole
+    nameLeakedSetupLog = $subfolderNameLeakedSetupLog
+  }
+})
+if (-not $subfolderPass) {
+  throw "subfolder-hint scenario failed (exit=$subfolderExit statusExit=$($subfolderStatus.exitCode) state=$($subfolderStatus.state) hintFound=$subfolderHintFound nameLeakedConsole=$subfolderNameLeakedConsole nameLeakedSetupLog=$subfolderNameLeakedSetupLog)"
+}
+$summary.Add('subfolder Python-file hint: PASS')
+
+# CLAUDE.md Item 43 negative coverage (CodeRabbit PR #444 review): :check_subfolder_hint must
+# NOT fire for any of its own exclusions, and must not be fooled by a directory whose NAME ends
+# in .py (a real bug caught by review -- the inner scan originally lacked /a-d, so a directory
+# literally named "helpers.py" was misread as a Python FILE). One bootstrap run covers all five
+# negative shapes at once: dist/build/tilde/dot-prefixed subfolders each holding a genuine .py
+# file (all excluded by name/prefix, never reached), plus a subfolder holding only a DIRECTORY
+# named nested.py with no real .py file inside it anywhere (proves /a-d works).
+$subfolderNegDir = Join-Path $TestsDir '~selftest_subfolder_hint_neg'
+$subfolderNegExit = Invoke-Setup -WorkDir $subfolderNegDir -LogName '~subfolder_neg_bootstrap.log' -Prepare {
+  New-Item -ItemType Directory -Force -Path (Join-Path $subfolderNegDir 'dist') | Out-Null
+  Set-Content -LiteralPath (Join-Path $subfolderNegDir 'dist\decoy.py') -Value 'print("hello")' -Encoding ASCII
+  New-Item -ItemType Directory -Force -Path (Join-Path $subfolderNegDir 'build') | Out-Null
+  Set-Content -LiteralPath (Join-Path $subfolderNegDir 'build\decoy.py') -Value 'print("hello")' -Encoding ASCII
+  New-Item -ItemType Directory -Force -Path (Join-Path $subfolderNegDir '~scratch') | Out-Null
+  Set-Content -LiteralPath (Join-Path $subfolderNegDir '~scratch\decoy.py') -Value 'print("hello")' -Encoding ASCII
+  New-Item -ItemType Directory -Force -Path (Join-Path $subfolderNegDir '.hidden') | Out-Null
+  Set-Content -LiteralPath (Join-Path $subfolderNegDir '.hidden\decoy.py') -Value 'print("hello")' -Encoding ASCII
+  New-Item -ItemType Directory -Force -Path (Join-Path $subfolderNegDir 'pkg\nested.py') | Out-Null
+}
+$subfolderNegStatusPath = Join-Path $subfolderNegDir '~bootstrap.status.json'
+$subfolderNegStatus = if (Test-Path $subfolderNegStatusPath) { Get-Content -LiteralPath $subfolderNegStatusPath -Encoding ASCII -Raw | ConvertFrom-Json } else { $null }
+$subfolderNegLogPath = Join-Path $subfolderNegDir '~subfolder_neg_bootstrap.log'
+$subfolderNegLog = if (Test-Path $subfolderNegLogPath) { Get-Content -LiteralPath $subfolderNegLogPath -Raw } else { '' }
+$subfolderNegHintAbsent = -not ($subfolderNegLog -match [regex]::Escape('Hint: found .py file(s) in a subfolder'))
+$subfolderNegStatusExitOk = $subfolderNegStatus -and ($subfolderNegStatus.exitCode -eq 0)
+$subfolderNegPass = ($subfolderNegExit -eq 0) -and $subfolderNegStatus -and ($subfolderNegStatus.state -eq 'no_python_files') -and ($subfolderNegStatus.pyFiles -eq 0) -and $subfolderNegStatusExitOk -and $subfolderNegHintAbsent
+Write-NdjsonRow ([ordered]@{
+  id = 'self.empty_repo.subfolder_hint_neg'
+  pass = $subfolderNegPass
+  desc = 'Item 43: dist/build/tilde/dot-prefixed subfolders and a *.py-named directory (no real .py file) never trigger the subfolder hint'
+  details = [ordered]@{
+    exitCode = $subfolderNegExit
+    statusExitCode = $(if ($subfolderNegStatus) { $subfolderNegStatus.exitCode } else { $null })
+    state = $(if ($subfolderNegStatus) { $subfolderNegStatus.state } else { $null })
+    pyFiles = $(if ($subfolderNegStatus) { $subfolderNegStatus.pyFiles } else { $null })
+    hintAbsent = $subfolderNegHintAbsent
+  }
+})
+if (-not $subfolderNegPass) {
+  throw "subfolder-hint negative-coverage scenario failed (exit=$subfolderNegExit statusExit=$($subfolderNegStatus.exitCode) state=$($subfolderNegStatus.state) hintAbsent=$subfolderNegHintAbsent)"
+}
+$summary.Add('subfolder Python-file hint negative coverage: PASS')
+
+# CLAUDE.md Item 43 (CodeRabbit PR #444 review round 2): :check_subfolder_hint stages the
+# candidate subfolder name into HP_SFC via a plain `set` BEFORE calling
+# :subfolder_hint_check_one, never as a `call` argument -- `call` re-scans its own line a
+# SECOND time before dispatching (see docs/agent-lessons-learned.md's "call triggers cmd.exe's
+# own second expansion pass"), so a subfolder literally named with a %-shaped substring (e.g.
+# containing "%PATH%") passed as a call argument would have that text re-expanded into the
+# REAL PATH variable's value, corrupting the scan target. This subfolder's name is chosen to
+# contain a real, always-defined environment variable reference shape to prove the fix
+# actually prevents that corruption -- if it regressed, the scan would target a nonexistent
+# path (the expanded PATH value) instead of the real subfolder, and the hint would never fire.
+$subfolderPctDir = Join-Path $TestsDir '~selftest_subfolder_hint_pct'
+$subfolderPctCandidateName = 'has%PATH%in-name'
+$subfolderPctExit = Invoke-Setup -WorkDir $subfolderPctDir -LogName '~subfolder_pct_bootstrap.log' -Prepare {
+  $candidatePath = Join-Path $subfolderPctDir $subfolderPctCandidateName
+  New-Item -ItemType Directory -Force -Path $candidatePath | Out-Null
+  Set-Content -LiteralPath (Join-Path $candidatePath 'main.py') -Value 'print("hello")' -Encoding ASCII
+}
+$subfolderPctStatusPath = Join-Path $subfolderPctDir '~bootstrap.status.json'
+$subfolderPctStatus = if (Test-Path $subfolderPctStatusPath) { Get-Content -LiteralPath $subfolderPctStatusPath -Encoding ASCII -Raw | ConvertFrom-Json } else { $null }
+$subfolderPctLogPath = Join-Path $subfolderPctDir '~subfolder_pct_bootstrap.log'
+$subfolderPctLog = if (Test-Path $subfolderPctLogPath) { Get-Content -LiteralPath $subfolderPctLogPath -Raw } else { '' }
+$subfolderPctHintFound = $subfolderPctLog -match [regex]::Escape('Hint: found .py file(s) in a subfolder')
+$subfolderPctStatusExitOk = $subfolderPctStatus -and ($subfolderPctStatus.exitCode -eq 0)
+$subfolderPctPass = ($subfolderPctExit -eq 0) -and $subfolderPctStatus -and ($subfolderPctStatus.state -eq 'no_python_files') -and ($subfolderPctStatus.pyFiles -eq 0) -and $subfolderPctStatusExitOk -and $subfolderPctHintFound
+Write-NdjsonRow ([ordered]@{
+  id = 'self.empty_repo.subfolder_hint_pct'
+  pass = $subfolderPctPass
+  desc = 'Item 43 (CodeRabbit PR #444 round 2): a percent-shaped subfolder name (e.g. containing %PATH%) is not corrupted by call''s second expansion pass -- hint still fires correctly'
+  details = [ordered]@{
+    exitCode = $subfolderPctExit
+    statusExitCode = $(if ($subfolderPctStatus) { $subfolderPctStatus.exitCode } else { $null })
+    state = $(if ($subfolderPctStatus) { $subfolderPctStatus.state } else { $null })
+    pyFiles = $(if ($subfolderPctStatus) { $subfolderPctStatus.pyFiles } else { $null })
+    hintFound = $subfolderPctHintFound
+  }
+})
+if (-not $subfolderPctPass) {
+  throw "subfolder-hint percent-name scenario failed (exit=$subfolderPctExit statusExit=$($subfolderPctStatus.exitCode) state=$($subfolderPctStatus.state) hintFound=$subfolderPctHintFound)"
+}
+$summary.Add('subfolder Python-file hint percent-name safety: PASS')
+
 if (Test-Path $stubDir) { Remove-Item -Recurse -Force $stubDir }
 New-Item -ItemType Directory -Force -Path $stubDir | Out-Null
 Copy-Item -Path $BatchPath -Destination $stubDir -Force

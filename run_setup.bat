@@ -654,6 +654,7 @@ if "%PYCOUNT%"=="0" (
   >> "%LOG%" echo No Python files detected; skipping environment bootstrap.
   call :log "[INFO] No Python files detected; skipping environment bootstrap."
   call :check_hidden_ext_hint
+  call :check_subfolder_hint
   call :write_status no_python_files 0 %PYCOUNT%
   goto :success
 )
@@ -2255,6 +2256,60 @@ echo Hint: found a file ending in .py.txt -- Windows may be hiding known file ex
 echo In File Explorer's View tab, turn on File name extensions, then rename the file so it ends in .py instead of .py.txt.
 >> "%LOG%" echo In File Explorer's View tab, turn on File name extensions, then rename the file so it ends in .py instead of .py.txt.
 call :log "[INFO] REQ-002: found a *.py.txt file -- Windows may be hiding known file extensions."
+exit /b 0
+
+:check_subfolder_hint
+rem CLAUDE.md Item 43: entry detection and the top-level Python-file count are both
+rem depth-1-only by design (matches the documented "drop run_setup.bat alongside your
+rem .py files" contract), but a user who unzips a src/-style project layout and drops
+rem run_setup.bat at the root sees "No Python files detected," which reads as false
+rem when .py files are visibly one folder down. Purely additive diagnostic hint --
+rem never changes the exit code or any other behavior. Genuinely depth-1-only: a
+rem `for /d` loop over immediate subdirectories, NOT `dir /s` (unbounded-depth, would
+rem falsely match a .py file buried many folders down). Skips bootstrapper-owned
+rem folders (dist, build, and any ~/.-prefixed dir such as .uv_env, .git, ~uv_bin,
+rem ~embed_python) so a leftover build/venv artifact from an earlier run can never
+rem produce a false positive. Deliberately does not echo the matched subfolder name,
+rem for the same "&" cmd.exe operator hazard :check_hidden_ext_hint's own header
+rem comment documents. `/a-d` on the inner scan excludes directories -- a plain
+rem `dir /b "X\*.py"` also matches a SUBDIRECTORY literally named *.py (e.g. a
+rem package folder named "helpers.py"), the same distinction :count_python's own
+rem top-level scan already makes via its own `dir /b /a-d *.py`. Per-candidate
+rem exclusion logic is a `call`ed subroutine with single-condition `if` statements,
+rem NOT a chained `if X if Y if Z (...)` line -- a real CI failure confirmed the
+rem hint firing when it should not have (dist/build/tilde/dot exclusions in one
+rem 4-deep chained-if line inside the for-loop body), and this repo's own
+rem established pattern is call/goto-based dispatch over deep if-chaining for
+rem exactly this reliability reason (see docs/agent-lessons-learned.md's
+rem "Provider-cascade dispatch is goto-based on purpose"). The subdirectory name
+rem is staged into HP_SFC via a plain `set` BEFORE the `call`, never as a `call`
+rem argument -- `call` re-scans its OWN line a second time before dispatching
+rem (see docs/agent-lessons-learned.md's ":log echoes UNQUOTED" entry, "call
+rem triggers cmd.exe's own second expansion pass"), so a subfolder literally
+rem named e.g. "has%PATH%in-it" passed as a `call` argument would have that
+rem text re-expanded into the REAL PATH variable's value during dispatch,
+rem corrupting the scan target -- the same hazard class already found and
+rem fixed once before for the conda native-DLL bundling loop (CodeRabbit
+rem review, CLAUDE.md Item 24).
+for /d %%D in (*) do (
+  set "HP_SFC=%%D"
+  call :subfolder_hint_check_one
+  if not errorlevel 1 goto :subfolder_hint_found
+)
+exit /b 0
+:subfolder_hint_check_one
+if /i "%HP_SFC%"=="dist" exit /b 1
+if /i "%HP_SFC%"=="build" exit /b 1
+if "%HP_SFC:~0,1%"=="~" exit /b 1
+if "%HP_SFC:~0,1%"=="." exit /b 1
+dir /b /a-d "%HP_SFC%\*.py" >nul 2>&1
+exit /b %errorlevel%
+:subfolder_hint_found
+echo Hint: found .py file(s) in a subfolder, but this script only looks in the exact folder it is in.
+>> "%LOG%" echo Hint: found .py file(s) in a subfolder, but this script only looks in the exact folder it is in.
+echo Move run_setup.bat next to your scripts, or move your scripts up into this folder, then run it again.
+>> "%LOG%" echo Move run_setup.bat next to your scripts, or move your scripts up into this folder, then run it again.
+call :log "[INFO] REQ-002: found .py file(s) in an immediate subfolder; this script only scans its own folder."
 exit /b 0
 
 :select_conda_bat

@@ -2367,6 +2367,99 @@ run of the same regex logic before landing, not just reasoned about).
   scope, but the two-independent-signals distinction this doc's own "Two independently-tracked
   exit code concepts" entry describes makes checking both cheap and strictly safer).
 
+### Item 43 (closed 2026-08-18)
+
+- **"No Python files detected" fired (accurately, per the documented top-level-only contract) for
+  a subfolder-only project layout, with no actionable next step -- the message reads as "there are
+  no Python files here," which a user can visually disprove by looking one folder down.** Distinct
+  from the already-shipped Item 32 fix (`.py.txt` hidden-extension hint), which solves a DIFFERENT
+  cause of the same message. Both the Python-file COUNT (`:count_python`, `dir /b /a-d *.py`) and
+  the entry SELECTOR (`find_entry.py`, `os.listdir(".")`) are top-level-only by design -- matches
+  the documented "drop `run_setup.bat` alongside your `.py` files" contract, so this was never a
+  contract violation, just a missing diagnostic for one specific, common cause of it (a user
+  unzipping a `src/main.py`-style project layout with `run_setup.bat` dropped at the root).
+
+  **Fix shipped**: a new `:check_subfolder_hint` subroutine, mirroring `:check_hidden_ext_hint`'s
+  existing shape exactly (called right alongside it, from the same `PYCOUNT==0` branch, purely
+  additive -- never changes exit code or `state`). Does a genuinely depth-1-only scan: a `for /d
+  %%D in (*) do` loop over immediate subdirectories checking each one for `.py` files directly
+  inside it (`dir /b "%%D\*.py"`, no `/s` -- `dir /s` is fully recursive across every descendant
+  directory, which would falsely match a `.py` file buried many folders down and needed explicit
+  exclusion). Skips bootstrapper-owned folders (`dist`, `build`, and any `~`/`.`-prefixed
+  directory such as `.uv_env`, `.git`, `~uv_bin`, `~embed_python`) so a leftover build/venv
+  artifact from an earlier run in the same folder can never produce a false positive -- a real,
+  if narrow, correctness concern given this hint only fires when the top-level count is zero,
+  which a repeat run after deleting the top-level `.py` file (with `dist\`/`.uv_env\` still on
+  disk from an earlier successful run) could otherwise trigger. Deliberately does NOT echo the
+  matched subfolder name in either the hint text or the log line, for the identical `&`-as-live-
+  cmd.exe-operator hazard `:check_hidden_ext_hint`'s own header comment documents (see
+  `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry) -- a plain existence check via
+  `errorlevel` sidesteps it entirely, matching the sibling hint's own established pattern.
+
+  **Regression coverage**: a new scenario in `tests/selftest.ps1` (`self.empty_repo.subfolder_hint`),
+  mirroring the existing `self.empty_repo.pytxt_hint` test's structure exactly -- a subfolder named
+  `AT&T src` (the same live-operator-character stress case the sibling test uses for its own
+  candidate filename) containing one `.py` file, asserting the hint fires, `state`/`exitCode`/
+  `pyFiles` stay identical to the plain empty-folder case, and the subfolder name is never leaked
+  into either the console log or `~setup.log`. `docs/agent-ndjson.md` updated to register the new
+  row alongside its `pytxt_hint` sibling.
+
+  **Refined via CodeRabbit's review on PR #444, two real findings fixed same-day.** (1) Major: the
+  inner scan (`dir /b "%%D\*.py"`) lacked `/a-d`, so it matched a SUBDIRECTORY whose name happens
+  to end in `.py` (e.g. a package folder literally named `helpers.py`) as if it were a real Python
+  file -- the exact distinction `:count_python`'s own top-level scan already makes correctly via
+  its own `dir /b /a-d *.py`. Fixed by adding `/a-d` to the inner scan too. (2) The review also
+  asked for negative regression coverage the original test never exercised: a new
+  `self.empty_repo.subfolder_hint_neg` scenario (one bootstrap run covering five cases at once)
+  seeds `dist`/`build`/`~scratch`/`.hidden` subfolders each holding a genuine `.py` file (all
+  excluded by name/prefix, never reached by the scan) plus a `pkg` subfolder containing only a
+  DIRECTORY named `nested.py` with no real `.py` file anywhere inside it -- proving the `/a-d` fix
+  actually works, not just that the exclusion list does. `docs/agent-ndjson.md` updated to
+  register the new row.
+
+  **A real CI regression found immediately after landing (all 8 lanes' shared "Gate on NDJSON
+  results" step, a universal per-lane check independent of the two gating lanes' own enforcement),
+  root-caused and fixed same-day.** `self.empty_repo.subfolder_hint_neg` genuinely failed on real
+  Windows CI: the hint fired even though all five seeded subfolders should have been excluded.
+  Confirmed via a downloaded diagnostics-bundle artifact that the hint text genuinely appeared in
+  the real bootstrap log (not a test-script assertion bug), and confirmed via a local PowerShell
+  run that the test's own `-Prepare` block correctly creates all five fixtures (`dist`, `build`,
+  `~scratch`, `.hidden`, `pkg\nested.py`) -- ruling out the test fixture itself. Root cause
+  narrowed to `:check_subfolder_hint`'s own exclusion logic: a single line chaining FOUR `if`
+  conditions (`if /i not "%%D"=="dist" if /i not "%%D"=="build" if not "%%D:~0,1%"=="~" if not
+  "%%D:~0,1%"=="." ( ... )`) inside the `for /d` loop body -- untested depth in this codebase
+  (only a 2-deep chain precedent existed elsewhere, at `:preflight_compile`'s REQ-011 check).
+  Exact mechanism unconfirmed (no Windows environment available to isolate which specific
+  condition misbehaved), but fixed regardless by replacing the chain with this repo's own
+  established, more robust pattern: a `call`ed subroutine (`:subfolder_hint_check_one`) using
+  single-condition `if` statements and `errorlevel`-based dispatch back to the caller, matching
+  `docs/agent-lessons-learned.md`'s "Provider-cascade dispatch is goto-based on purpose" -- this
+  repo's own documented preference for call/goto dispatch over deep if-chaining for exactly this
+  reliability reason. Also closed a debugging gap hit while investigating: neither
+  `~selftest_subfolder_hint` nor `~selftest_subfolder_hint_neg` (nor the pre-existing
+  `~selftest_pytxt_hint`, a prior, still-open gap left untouched as out of this fix's scope) had
+  their bootstrap logs wired into `batch-check.yml`'s "Upload test logs" step, so a real CI
+  failure for either produced no artifact showing the actual log content -- fixed by adding both
+  new scratch dirs' paths, mirroring the pattern the CWD-not-writable scenario (Item 48) already
+  established.
+
+  **A second CodeRabbit review round on the same fix (PR #444) caught a genuinely new hazard the
+  fix itself introduced: passing the candidate directory name through `call`'s own argument
+  line.** `call :subfolder_hint_check_one "%%D"` is subject to `call`'s own documented second
+  `%`-expansion pass (see `docs/agent-lessons-learned.md`'s "call triggers cmd.exe's own second
+  expansion pass" entry -- the identical hazard class already found and fixed once before for the
+  conda native-DLL bundling loop, CLAUDE.md Item 24). A subfolder literally named with a
+  `%`-shaped substring (e.g. containing `%PATH%`, a real, always-defined Windows environment
+  variable) would have that text re-expanded into PATH's real value during `call`'s dispatch,
+  corrupting the scan target. Fixed by staging the name into `HP_SFC` via a plain `set` BEFORE the
+  `call` (never as a `call` argument) and calling `:subfolder_hint_check_one` bare, with the
+  subroutine reading `%HP_SFC%` directly -- the bare call line itself has zero `%` characters, so
+  nothing for the second pass to misinterpret. New regression test
+  `self.empty_repo.subfolder_hint_pct` (a subfolder literally named `has%PATH%in-name`,
+  containing a real `.py` file) proves the fix: if the corruption regressed, the scan would target
+  the expanded (wrong) path instead of the real subfolder and the hint would never fire.
+  `docs/agent-ndjson.md` and `batch-check.yml`'s "Upload test logs" step updated to match.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
