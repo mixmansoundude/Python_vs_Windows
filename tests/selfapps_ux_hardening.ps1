@@ -480,10 +480,11 @@ if (Test-Path -LiteralPath $connOverrideLog) {
 $connOverridePromptFound = $connOverrideText -match [regex]::Escape($connPromptStr)
 $connOverrideDeclineLog  = $connOverrideText -match [regex]::Escape('REQ-013: Connectivity prompt: user chose offline (N).')
 $connOverrideEmptyLog    = $connOverrideText -match [regex]::Escape('REQ-013: Connectivity prompt: empty input; defaulting offline.')
+$connOverridePass        = ($connOverridePromptFound -and $connOverrideDeclineLog -and (-not $connOverrideEmptyLog))
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.connectivity.override'
     req     = 'REQ-013'
-    pass    = ($connOverridePromptFound -and $connOverrideDeclineLog -and (-not $connOverrideEmptyLog))
+    pass    = $connOverridePass
     desc    = 'Connectivity guard: HP_TEST_CNDF_ANSWER=N resolves via the explicit-decline path, not the empty-input fallback'
     details = [ordered]@{
         promptFound    = $connOverridePromptFound
@@ -1237,6 +1238,6 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     })
 }
 
-$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatText -and $gaCmdText) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $sysAcceptPass -and $venvFbPass -and $venvCanaryPass -and $venvNoPipPass -and $embedDeclinePass -and $embedRealPass -and $entryOvPass
+$allPass = $giMerged -and $giPreserved -and $giIdem -and ($gaMerged -and $gaBatText -and $gaCmdText) -and $gaIdem -and $pfFound -and ($connPromptFound -and $connOfflineLog) -and $connPromptFound -and $uvOfflinePass -and $condaOfflinePass -and $connReachableFound -and $connRetryFound -and $connOverridePass -and ($sysPromptFound -and $sysDeclineLog) -and $sysPromptFound -and $sysRealPass -and $sysAcceptPass -and $venvFbPass -and $venvCanaryPass -and $venvNoPipPass -and $embedDeclinePass -and $embedRealPass -and $entryOvPass
 if (-not $allPass) { exit 1 }
 exit 0
