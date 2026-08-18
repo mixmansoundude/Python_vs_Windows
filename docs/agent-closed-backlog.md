@@ -2488,20 +2488,57 @@ run of the same regex logic before landing, not just reasoned about).
   would hit) raises `FileNotFoundError` at the same `read_text()` call site as the genuinely
   unexpected cases (a directory named `pyproject.toml`, a permission failure) -- both fell into
   the SAME outer `except Exception:` block, so simply changing that block's exit code broke the
-  documented exit-1 contract for the primary, most common case. Fixed by checking
-  `pathlib.Path('pyproject.toml').exists()` explicitly BEFORE attempting `read_text()`, exiting 1
-  immediately if the file is genuinely absent -- a directory or a permission-denied file both
-  still pass the `exists()` check (a directory exists on disk) and fall through to `read_text()`,
-  which then raises and is caught by the now-exit-3 outer handler, correctly distinguishing "not
-  there at all" (1) from "there, but something is genuinely wrong" (3).
+  documented exit-1 contract for the primary, most common case.
+
+  **A second real bug found via CodeRabbit's review on PR #445, in the FIRST fix for the bug
+  above.** That fix checked `pathlib.Path('pyproject.toml').exists()` explicitly before
+  `read_text()`, exiting 1 immediately if absent. CodeRabbit (backed by a real web search against
+  CPython's own pathlib changelog, not just static reasoning) found that Python 3.14+ changed
+  `Path.exists()` (and `is_dir`/`is_file`/etc.) to swallow ANY `OSError` -- including
+  `PermissionError` -- and return `False` instead of raising, specifically to make these query
+  methods consistent with `os.path.exists()`. Since this bootstrapper's own embedded-helper
+  Python baseline explicitly targets always-latest conda-forge Python (3.14 is already the
+  current stable, already in the REQ-009 Tier 5 embed version table's own `LATEST_MINOR`), a
+  genuinely permission-denied `pyproject.toml` on 3.14+ would make `exists()` return `False` --
+  silently misclassified as "not found" (1) instead of the intended "real error" (3), the exact
+  ambiguity this whole fix exists to close. Fixed by removing the `exists()` check entirely and
+  instead catching `FileNotFoundError` specifically around the `read_text()` call itself -- any
+  OTHER exception (a directory, a permission failure, or anything else) is not caught by this
+  narrower handler and falls through to the outer `except Exception:` (exit 3), while a genuinely
+  missing file still exits 1 via the specific `FileNotFoundError` catch.
 
   **Regression coverage**: `tests/test_pyproj_deps.py::TomllibPath::test_unexpected_exception_exits_3_not_1`
   creates `pyproject.toml` as a DIRECTORY (not a file) -- cross-platform (raises
-  `IsADirectoryError` on POSIX, `PermissionError` on Windows; either way uncaught until the outer
-  except) -- and asserts exit code 3, not 1. The pre-existing `test_no_pyproject_toml_exits_1`
-  (genuinely missing file) continues to assert exit code 1, now exercising the new explicit
-  `exists()` check instead of incidentally sharing the same catch-all as the directory case.
-  `HP_PYPROJ_DEPS` payload re-synced via `tools/sync_payload.py`.
+  `IsADirectoryError` on POSIX, `PermissionError` on Windows; either way uncaught by the narrower
+  `FileNotFoundError` handler) -- and asserts exit code 3, not 1. The pre-existing
+  `test_no_pyproject_toml_exits_1` (genuinely missing file) continues to assert exit code 1, now
+  exercising the new `FileNotFoundError`-specific catch instead of incidentally sharing the same
+  catch-all as the directory case. `HP_PYPROJ_DEPS` payload re-synced via `tools/sync_payload.py`
+  after each fix.
+
+  **A third real bug found the same day, this one a genuine CI-breaking regression across ALL 8
+  lanes (`real`, `uv`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback`, `justme-test`, `cache`
+  all failed identically) -- confirmed via real CI logs, not caught locally by any tool in this
+  repo's own sanity sweep.** The `run_setup.bat` consuming block's own `rem` comment (explaining
+  "check the highest threshold first" for the new `if errorlevel 3`/`if errorlevel 2` dispatch)
+  split a parenthetical remark's `(`/`)` across THREE separate `rem` lines, nested three levels
+  deep inside real `if (...)` blocks. This is the identical hazard class already documented and
+  fixed once before for `echo` text (`docs/agent-lessons-learned.md`'s "A literal `(`/`)` inside
+  `echo` text..." entry, PR #408) -- cmd.exe's block-closing parser counts `(`/`)` characters in
+  `rem` comment text exactly the same way it does in `echo` text, with no concept of "this is just
+  a comment." `check_delimiters.py` did NOT catch it: unlike its `echo`-line handling (which scans
+  characters and tracks cross-line-opened parens), its `.bat`/`.cmd` path treats `rem` lines as
+  fully opaque and skips them from paren-scanning entirely -- a genuine, previously-undiscovered
+  blind spot in the checker itself, not just a one-off authoring mistake. Every CI lane doing a
+  real bootstrap failed with zero console output a few seconds in, since cmd.exe must determine
+  where the corrupted block's raw text ends BEFORE it can decide whether to execute or skip it --
+  the corruption happens at parse time, independent of whether `pyproject.toml` itself exists on
+  disk for any given test fixture. Fixed by rewording the comment to avoid the literal `(`/`)`
+  characters entirely (` -- ` in place of the parenthetical), per the identical rule the `echo`
+  case already established. **The general checker gap (extending `check_delimiters.py`'s existing
+  `echo`-line cross-line-paren tracking to also cover `rem` lines) is filed separately as CLAUDE.md
+  Active Backlog Item 61** -- not implemented as part of this fix, which only needed to unblock the
+  one broken instance, not audit or re-armor every pre-existing `rem` block already in the file.
 
 ## Known Findings (diagnosed, no action warranted)
 

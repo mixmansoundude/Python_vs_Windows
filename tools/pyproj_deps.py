@@ -41,18 +41,22 @@ except ImportError:
 out = sys.argv[1] if len(sys.argv) > 1 else '~requirements.pyproject.txt'
 try:
     src = pathlib.Path('pyproject.toml')
-    if not src.exists():
+    try:
         # derived requirement: a missing pyproject.toml is the deliberate,
         # documented exit-1 "not found" case (in practice run_setup.bat only
         # ever invokes this script when the file exists, but this script's
-        # own contract predates and does not assume that caller). Checked
-        # explicitly so it can never fall into the genuine-error exit 3 path
-        # below -- a plain read_text() on a nonexistent path also raises
-        # FileNotFoundError, which is otherwise indistinguishable from a real
-        # bug (e.g. pyproject.toml existing as a directory, or a permission
-        # failure) once caught by the outer except.
+        # own contract predates and does not assume that caller). Caught
+        # specifically here, around the read itself, rather than via a
+        # preceding Path.exists() check -- Python 3.14+ made exists() swallow
+        # ANY OSError (including PermissionError) and return False instead of
+        # raising, which would silently misclassify a genuine permission
+        # failure as "not found" (1) instead of the real-error case (3)
+        # below. Any OTHER exception here (a directory, permission denied,
+        # etc.) is a genuine bug/failure and falls through to the outer
+        # except, uncaught by this narrower one.
+        txt = src.read_text(encoding='utf-8', errors='replace')
+    except FileNotFoundError:
         sys.exit(1)
-    txt = src.read_text(encoding='utf-8', errors='replace')
     deps = None
     if tomllib:
         try:

@@ -455,6 +455,34 @@ list; the recurring traps that have actually bitten us:
   `)` closes on a different line -- scoped to "already nested" so a harmless top-level echo (no
   enclosing block, confirmed against `:print_fastpath_ambiguous_note`) doesn't false-positive.
   Tests: `tests/test_check_delimiters_import.py`'s three `test_paren_*` cases.
+
+  **The identical hazard applies to `rem` comment text too, and `check_delimiters.py` does NOT
+  catch it -- confirmed as a second real shipped regression, PR #445 (Item 52), all 8 CI lanes
+  broken simultaneously.** A `rem` comment explaining "check the highest threshold first" split a
+  parenthetical remark's `(`/`)` across three separate `rem` lines, nested three levels deep
+  inside real `if (...)` blocks (`if exist ( if not errorlevel 1 ( if errorlevel 1 ( ... rem
+  lines here ... )`). Symptom matched the echo-hazard bug exactly: every CI lane that runs a real
+  bootstrap (`real`, `uv`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback`, `justme-test`,
+  `cache` -- effectively everything except the empty-repo/`HP_CI_SKIP_ENV` fast paths) failed with
+  zero console output a few seconds into the run, since parsing corrupts REGARDLESS of whether the
+  block's own runtime condition (`if exist "pyproject.toml"`) ever evaluates true -- cmd.exe must
+  determine where a parenthesized block's raw text ENDS before it can decide whether to execute or
+  skip it. **Root cause of the checker's blind spot**: `check_delimiters.py`'s own `.bat`/`.cmd`
+  handling (`check()`, the `if upper.startswith("REM ") or ... : continue` line) treats a `rem`
+  line as fully opaque and skips it from paren-scanning ENTIRELY -- unlike the `echo`-line handling
+  above, which DOES scan the line's characters and specifically tracks whether an opened `(` closes
+  on a different line. This means `check_delimiters.py` currently under-protects `rem` comments
+  relative to `echo` text: it will report a clean file even when a `rem` block contains exactly
+  this hazard. **Fix applied to the specific instance**: reworded the comment to avoid the literal
+  `(`/`)` characters entirely (` -- ` in place of the parenthetical), per the same rule as the echo
+  case. **The general gap in `check_delimiters.py` itself is NOT yet closed** -- extending its
+  existing `is_echo_open`-style tracking to also cover `rem` lines (dropping the current
+  `continue`-and-skip shortcut, replacing it with the same character-scan-plus-cross-line-check the
+  echo path already has) would close this class of bug the same way the echo fix did in 2026-07 --
+  flagged as a candidate follow-up item, not implemented as part of this fix (this fix only needed
+  to unblock the one broken instance, not audit or re-armor every pre-existing `rem` block in the
+  file -- a large, separate undertaking on a ~5300-line file with many other cross-line `rem`
+  parens whose actual nesting-safety was not individually re-verified here).
 - **Avoid `EnableDelayedExpansion`; if unavoidable, wrap it tightly.** `!` becomes special
   under delayed expansion, and a parent shell launched with `/V:ON` causes `!`-collisions.
   `tests/harness.ps1` `batch.bang.scan` enforces "no `!` in live batch code lines."

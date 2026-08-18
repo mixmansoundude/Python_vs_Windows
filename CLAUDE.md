@@ -1085,6 +1085,48 @@ way (no live Windows execution available here), that is noted explicitly rather 
   OLD rules before running the bootstrapper, asserting the file ends up with `-text` and no
   leftover `eol=crlf` line for `*.bat`/`*.cmd`.
 
+- **Item 61: `check_delimiters.py` does not catch a cross-line `(`/`)` pair inside `rem` comment
+  text, even though cmd.exe's own parser is just as vulnerable to it as it is for `echo` text --
+  a real gap that caused a genuine CI-breaking regression across all 8 lanes (PR #445, Item 52's
+  own fix).** `docs/agent-lessons-learned.md`'s "A literal `(`/`)` inside `echo` text..." entry
+  documents both the original 2026-07 echo-text incident AND this newly-confirmed `rem`-text
+  sibling -- read that entry for the full mechanism and incident trace before starting this item.
+
+  **Root cause, already diagnosed**: `check_delimiters.py`'s `.bat`/`.cmd` handling treats a `rem`
+  line as fully opaque (`if upper.startswith("REM ") or ...: continue`, skipping it from
+  paren-scanning entirely) instead of scanning its characters the way the `echo`-line path does
+  (`is_bat_echo_line`, tracked via `is_echo_open` on the bracket stack, flagging a `(` that opens
+  on an echo line already nested inside a real block and closes on a LATER line). Real cmd.exe
+  does not distinguish `rem` from `echo` for this purpose -- its block-closing search is a raw
+  character scan across the whole block's text regardless of which command a given line belongs
+  to -- so `rem` comments are exactly as exposed to this hazard as `echo` text, but the checker
+  only defends the `echo` case today.
+
+  **High-level fix**: extend the existing `is_echo_open`/bracket-stack machinery to also apply to
+  `rem` lines -- drop the current `continue`-and-skip shortcut for REM lines, route them through
+  the same character scan `echo` lines already get, and reuse the identical "already nested inside
+  an open bracket, closes on a different line" flagging logic (scoped the same way, so a harmless
+  top-level `rem` header block with no enclosing `if`/`for` doesn't false-positive -- this repo's
+  own file header, `run_setup.bat` lines 1-40ish, has several legitimately-balanced-per-line or
+  intentionally `^`-escaped parens that must stay clean).
+
+  **Scope note, NOT yet done as part of the Item 52 fix that surfaced this**: a full audit of
+  every PRE-EXISTING cross-line `rem`-comment paren pair already in `run_setup.bat` (there are
+  many, scattered throughout the file's ~5300 lines) was explicitly NOT performed -- Item 52's own
+  fix only reworded the ONE `rem` block it had just introduced and broken. Whether any of the
+  pre-existing ones are ALSO genuinely hazardous (nested inside a real open block, not just a
+  top-level header) is unknown and unverified; the checker fix above would surface them
+  automatically once implemented -- do not assume the file is currently clean of other latent
+  instances of this same bug just because CI has been green so far (an existing hazard only
+  manifests when the SPECIFIC surrounding code happens to also be reached/reparsed in a way that
+  exposes it, exactly as this one sat undetected until Item 52 added new code near it).
+
+  **Coverage gap to close in the same slice**: `tests/test_check_delimiters_import.py`'s existing
+  `test_paren_*` cases cover the `echo`-line hazard; add an analogous `rem`-line case (a `rem`
+  block whose `(` opens on one line and matching `)` closes on a later line, nested inside a real
+  `if`/`for` block) proving the extended checker catches it, plus a negative case (a top-level
+  `rem` header block with no enclosing bracket) proving it doesn't false-positive.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
