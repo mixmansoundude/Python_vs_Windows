@@ -2460,6 +2460,108 @@ run of the same regex logic before landing, not just reasoned about).
   the expanded (wrong) path instead of the real subfolder and the hint would never fire.
   `docs/agent-ndjson.md` and `batch-check.yml`'s "Upload test logs" step updated to match.
 
+### Item 52 (closed 2026-08-18)
+
+- **`tools/pyproj_deps.py`'s exit code 1 was overloaded between its intentional "no
+  `[project].dependencies` found" contract and a catch-all for any genuinely unexpected
+  exception, making a real bug in that script indistinguishable from the normal case.** The
+  documented contract (exit 0/1/2 = ok/not-found/malformed-TOML) was correct and intentional --
+  `run_setup.bat`'s silent no-op on exit 1 was already correct for the "not-found" case. The real
+  gap: the script's own top-level `except Exception: sys.exit(1)` catch-all meant a genuinely
+  unexpected exception (a bug, an unusual I/O failure) also exited 1, so `run_setup.bat`'s `if
+  errorlevel 1 ( if errorlevel 2 (...) )` structure -- which only logs a WARN for errorlevel >= 2
+  -- silently treated a real crash exactly like the benign "nothing to do here" case.
+
+  **Fix shipped**: the catch-all now exits 3 instead of 1, and `run_setup.bat`'s consuming block
+  (the pyproject.toml dependency-extraction block right after `:emit_from_base64 "~pyproj_deps.py"
+  HP_PYPROJ_DEPS`) gained a new `if errorlevel 3` branch, checked BEFORE `if errorlevel 2` (since
+  `if errorlevel N` is a `>=N` test, checking the higher threshold first is required or errorlevel
+  3 would also satisfy the errorlevel-2 check and get mislabeled as a TOML parse error) -- logs an
+  unconditional, log-file-only line (`>> "%LOG%" echo ...`, not `call :log`, so it does not also
+  echo to console -- per the item's own "without changing user-facing behavior" scope) so the fact
+  is at least visible in `~setup.log` for a future debugging session.
+
+  **A real bug found and fixed while implementing this, caught by the existing test suite, not
+  found in review.** The first version of the fix broke `test_no_pyproject_toml_exits_1` --
+  a MISSING `pyproject.toml` (the common, documented "not found" case, and also the case any
+  bare invocation of this script outside `run_setup.bat`'s own `if exist "pyproject.toml"` guard
+  would hit) raises `FileNotFoundError` at the same `read_text()` call site as the genuinely
+  unexpected cases (a directory named `pyproject.toml`, a permission failure) -- both fell into
+  the SAME outer `except Exception:` block, so simply changing that block's exit code broke the
+  documented exit-1 contract for the primary, most common case.
+
+  **A second real bug found via CodeRabbit's review on PR #445, in the FIRST fix for the bug
+  above.** That fix checked `pathlib.Path('pyproject.toml').exists()` explicitly before
+  `read_text()`, exiting 1 immediately if absent. CodeRabbit (backed by a real web search against
+  CPython's own pathlib changelog, not just static reasoning) found that Python 3.14+ changed
+  `Path.exists()` (and `is_dir`/`is_file`/etc.) to swallow ANY `OSError` -- including
+  `PermissionError` -- and return `False` instead of raising, specifically to make these query
+  methods consistent with `os.path.exists()`. Since this bootstrapper's own embedded-helper
+  Python baseline explicitly targets always-latest conda-forge Python (3.14 is already the
+  current stable, already in the REQ-009 Tier 5 embed version table's own `LATEST_MINOR`), a
+  genuinely permission-denied `pyproject.toml` on 3.14+ would make `exists()` return `False` --
+  silently misclassified as "not found" (1) instead of the intended "real error" (3), the exact
+  ambiguity this whole fix exists to close. Fixed by removing the `exists()` check entirely and
+  instead catching `FileNotFoundError` specifically around the `read_text()` call itself -- any
+  OTHER exception (a directory, a permission failure, or anything else) is not caught by this
+  narrower handler and falls through to the outer `except Exception:` (exit 3), while a genuinely
+  missing file still exits 1 via the specific `FileNotFoundError` catch.
+
+  **Regression coverage**: `tests/test_pyproj_deps.py::TomllibPath::test_unexpected_exception_exits_3_not_1`
+  creates `pyproject.toml` as a DIRECTORY (not a file) -- cross-platform (raises
+  `IsADirectoryError` on POSIX, `PermissionError` on Windows; either way uncaught by the narrower
+  `FileNotFoundError` handler) -- and asserts exit code 3, not 1. The pre-existing
+  `test_no_pyproject_toml_exits_1` (genuinely missing file) continues to assert exit code 1, now
+  exercising the new `FileNotFoundError`-specific catch instead of incidentally sharing the same
+  catch-all as the directory case. `HP_PYPROJ_DEPS` payload re-synced via `tools/sync_payload.py`
+  after each fix.
+
+  **A third real bug found the same day, this one a genuine CI-breaking regression across ALL 8
+  lanes (`real`, `uv`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback`, `justme-test`, `cache`
+  all failed identically) -- confirmed via real CI logs, not caught locally by any tool in this
+  repo's own sanity sweep.** The `run_setup.bat` consuming block's own `rem` comment (explaining
+  "check the highest threshold first" for the new `if errorlevel 3`/`if errorlevel 2` dispatch)
+  split a parenthetical remark's `(`/`)` across THREE separate `rem` lines, nested three levels
+  deep inside real `if (...)` blocks. This is the identical hazard class already documented and
+  fixed once before for `echo` text (`docs/agent-lessons-learned.md`'s "A literal `(`/`)` inside
+  `echo` text..." entry, PR #408) -- cmd.exe's block-closing parser counts `(`/`)` characters in
+  `rem` comment text exactly the same way it does in `echo` text, with no concept of "this is just
+  a comment." `check_delimiters.py` did NOT catch it: unlike its `echo`-line handling (which scans
+  characters and tracks cross-line-opened parens), its `.bat`/`.cmd` path treats `rem` lines as
+  fully opaque and skips them from paren-scanning entirely -- a genuine, previously-undiscovered
+  blind spot in the checker itself, not just a one-off authoring mistake. Every CI lane doing a
+  real bootstrap failed with zero console output a few seconds in, since cmd.exe must determine
+  where the corrupted block's raw text ends BEFORE it can decide whether to execute or skip it --
+  the corruption happens at parse time, independent of whether `pyproject.toml` itself exists on
+  disk for any given test fixture. Fixed by rewording the comment to avoid the literal `(`/`)`
+  characters entirely (` -- ` in place of the parenthetical), per the identical rule the `echo`
+  case already established. **The general checker gap (extending `check_delimiters.py`'s existing
+  `echo`-line cross-line-paren tracking to also cover `rem` lines) is filed separately as CLAUDE.md
+  Active Backlog Item 61** -- not implemented as part of this fix, which only needed to unblock the
+  one broken instance, not audit or re-armor every pre-existing `rem` block already in the file.
+
+  **A FOURTH real bug, in the SAME commit as the third: the rem-comment fix alone did not resolve
+  the regression -- CI still failed identically after it was pushed, confirmed via a second round
+  of live CI evidence.** The new `>> "%LOG%" echo ... (exit 3); falling back to requirements.txt or
+  pipreqs.` line (added alongside the rem comment, in the SAME original commit) has its own literal
+  `(`/`)` pair -- `(exit 3)` -- that opens AND closes on the SAME line, inside echo text. Per the
+  established rule and `check_delimiters.py`'s own code, a same-line self-contained pair is
+  supposed to be harmless (the checker deliberately never flags one) -- but a downloaded diagnostics
+  artifact's real `~envsmoke_bootstrap.log` showed the IDENTICAL corruption signature as the
+  original PR #408 incident: `falling was unexpected at this time.`, with "falling" being the exact
+  next word after `(exit 3)` in this line. This same-line pair sits nested FOUR levels deep inside
+  real `if (...)` blocks -- one level deeper than any previously-confirmed safe case -- and is a
+  `>> file echo ...` REDIRECTED form, not a plain top-level `echo` statement; which factor (depth,
+  or the redirection prefix) actually matters was not isolated, since the live evidence made the
+  fix (remove the parens) unambiguous without needing to. Fixed by rewording `(exit 3)` to `, exit
+  3` -- no literal parens at all. **Revises the established rule**: "same-line, self-contained,
+  balanced" is not a blanket safe-harbor for text nested inside a real open block -- it is only
+  confirmed-safe for a genuinely top-level statement with no enclosing bracket (the
+  `:print_fastpath_ambiguous_note` precedent). See `docs/agent-lessons-learned.md`'s corresponding
+  entry for the full trace. Both this bug and the rem-comment bug shipped in the same original
+  commit and had to be found and fixed in two SEPARATE rounds, each confirmed only by live Windows
+  CI evidence pulled from a downloaded diagnostics artifact -- local tooling caught neither one.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

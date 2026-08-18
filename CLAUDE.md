@@ -1025,27 +1025,6 @@ way (no live Windows execution available here), that is noted explicitly rather 
   plain-language message naming Constrained Language Mode specifically if it fails, rather than
   letting the failure surface piecemeal as five-plus separate "Could not write ~x" messages later.
 
-- **Item 52: `tools/pyproj_deps.py`'s exit code 1 is overloaded between its intentional
-  "no `[project].dependencies` found" contract and a catch-all for any genuinely unexpected
-  exception, making a real bug in that script indistinguishable from the normal case.** CONFIRMED
-  directly against `tools/pyproj_deps.py` source and `run_setup.bat`'s own consumption of it, in
-  the pyproject.toml dependency-extraction block (`if exist "pyproject.toml" (...)`, the block that
-  calls `:emit_from_base64 "~pyproj_deps.py" HP_PYPROJ_DEPS`). The documented contract (exit
-  0/1/2 = ok/not-found/malformed-TOML) is
-  correct and intentional -- `run_setup.bat`'s silent no-op on exit 1 is CORRECT for the
-  "not-found" case, not a bug (an earlier external review of this same code mischaracterized this
-  as "swallowing a standard exception," which is not accurate -- exit 1 for "not found" is by
-  design). The real, narrower gap: `pyproj_deps.py`'s own top-level `except Exception:
-  sys.exit(1)` catch-all means a genuinely unexpected exception ALSO exits 1, so
-  `run_setup.bat`'s `if errorlevel 1 ( if errorlevel 2 (...) )` structure -- which only logs a
-  WARN for errorlevel >= 2 -- silently treats a real crash exactly like the benign "nothing to do
-  here" case. Low severity (the script is small and stable; this would only bite if a future
-  Python version or TOML edge case triggers an unhandled exception somewhere not already caught by
-  the script's own narrower `except` blocks) and low priority given that. Fix, if picked up:
-  either a distinct exit code for the top-level catch-all (e.g. 3), or an unconditional low-tier
-  log line (not a WARN) on any errorlevel 1 so the fact is at least visible in `~setup.log` for a
-  future debugging session, without changing user-facing behavior.
-
 - **Item 59: CodeRabbit's automated review did not run on PR #435, and should be manually
   triggered on every future PR -- owner-requested standing process fix, not a code change.**
   This repo (fewer than 10 stars, Organization UI config) requires a manual trigger for
@@ -1105,6 +1084,79 @@ way (no live Windows execution available here), that is noted explicitly rather 
   scenario in `tests/selfapps_ux_hardening.ps1` that pre-seeds a scratch `.gitattributes` with the
   OLD rules before running the bootstrapper, asserting the file ends up with `-text` and no
   leftover `eol=crlf` line for `*.bat`/`*.cmd`.
+
+- **Item 61: `check_delimiters.py` does not catch a cross-line `(`/`)` pair inside `rem` comment
+  text, even though cmd.exe's own parser is just as vulnerable to it as it is for `echo` text --
+  a real gap that caused a genuine CI-breaking regression across all 8 lanes (PR #445, Item 52's
+  own fix).** `docs/agent-lessons-learned.md`'s "A literal `(`/`)` inside `echo` text..." entry
+  documents both the original 2026-07 echo-text incident AND this newly-confirmed `rem`-text
+  sibling -- read that entry for the full mechanism and incident trace before starting this item.
+
+  **Root cause, already diagnosed**: `check_delimiters.py`'s `.bat`/`.cmd` handling treats a `rem`
+  line as fully opaque (`if upper.startswith("REM ") or ...: continue`, skipping it from
+  paren-scanning entirely) instead of scanning its characters the way the `echo`-line path does
+  (`is_bat_echo_line`, tracked via `is_echo_open` on the bracket stack, flagging a `(` that opens
+  on an echo line already nested inside a real block and closes on a LATER line). Real cmd.exe
+  does not distinguish `rem` from `echo` for this purpose -- its block-closing search is a raw
+  character scan across the whole block's text regardless of which command a given line belongs
+  to -- so `rem` comments are exactly as exposed to this hazard as `echo` text, but the checker
+  only defends the `echo` case today.
+
+  **High-level fix**: extend the existing `is_echo_open`/bracket-stack machinery to also apply to
+  `rem` lines -- drop the current `continue`-and-skip shortcut for REM lines, route them through
+  the same character scan `echo` lines already get, and reuse the identical "already nested inside
+  an open bracket, closes on a different line" flagging logic (scoped the same way, so a harmless
+  top-level `rem` header block with no enclosing `if`/`for` doesn't false-positive -- this repo's
+  own file header, `run_setup.bat` lines 1-40ish, has several legitimately-balanced-per-line or
+  intentionally `^`-escaped parens that must stay clean).
+
+  **Scope note, NOT yet done as part of the Item 52 fix that surfaced this**: a full audit of
+  every PRE-EXISTING cross-line `rem`-comment paren pair already in `run_setup.bat` (there are
+  many, scattered throughout the file's ~5300 lines) was explicitly NOT performed -- Item 52's own
+  fix only reworded the ONE `rem` block it had just introduced and broken. Whether any of the
+  pre-existing ones are ALSO genuinely hazardous (nested inside a real open block, not just a
+  top-level header) is unknown and unverified; the checker fix above would surface them
+  automatically once implemented -- do not assume the file is currently clean of other latent
+  instances of this same bug just because CI has been green so far (an existing hazard only
+  manifests when the SPECIFIC surrounding code happens to also be reached/reparsed in a way that
+  exposes it, exactly as this one sat undetected until Item 52 added new code near it).
+
+  **Coverage gap to close in the same slice**: `tests/test_check_delimiters_import.py`'s existing
+  `test_paren_*` cases cover the `echo`-line hazard; add an analogous `rem`-line case (a `rem`
+  block whose `(` opens on one line and matching `)` closes on a later line, nested inside a real
+  `if`/`for` block) proving the extended checker catches it, plus a negative case (a top-level
+  `rem` header block with no enclosing bracket) proving it doesn't false-positive.
+
+  **Scope WIDENED, same PR (#445), via a second real CI incident on the SAME code block: a
+  SAME-LINE, self-contained, balanced `(`/`)` pair -- not just cross-line pairs -- can ALSO corrupt
+  parsing when nested deep enough inside real `if (...)` blocks, contradicting this checker's own
+  (and this repo's own documented) assumption that same-line pairs are unconditionally safe.**
+  After the rem-comment fix above was pushed, CI still failed identically; root-caused via a
+  downloaded diagnostics artifact's real `~envsmoke_bootstrap.log` showing the exact same
+  corruption signature as the original PR #408 incident (`falling was unexpected at this time.`),
+  traced to a NEW `>> "%LOG%" echo ... (exit 3); falling back ...` line whose `(exit 3)` pair opens
+  and closes on the SAME line -- yet still corrupted parsing, nested FOUR levels deep. This is a
+  DIFFERENT shape from `:print_fastpath_ambiguous_note`'s own precedent (a plain top-level `echo`
+  with no enclosing block, confirmed safe) -- whether the redirection prefix (`>>` before `echo`)
+  or the nesting depth (4, one deeper than any previously-confirmed case) is the actual
+  distinguishing condition was NOT isolated; the fix (remove the parens) resolved it regardless.
+  See `docs/agent-lessons-learned.md`'s corresponding entry and `docs/agent-closed-backlog.md`'s
+  Item 52 entry for the full trace, and `tests/test_check_delimiters_import.py`'s
+  `test_paren_pair_on_redirected_echo_line_deeply_nested_is_a_known_false_negative` for a
+  regression fixture documenting the checker's current false-negative on this exact shape.
+
+  **Revised item scope**: the high-level fix above (extend `is_echo_open`-style tracking to `rem`
+  lines) is necessary but NOT sufficient on its own -- it still only catches CROSS-line pairs.
+  Whoever picks up this item should ALSO investigate whether extending the same-line-pair
+  "always safe" assumption is correct at all once genuinely nested (vs. top-level), and if not,
+  design a check for that case too (e.g. flag ANY `(`/`)` pair -- same-line or cross-line -- found
+  inside `echo`/`rem` text that is already nested inside a real open bracket, not just cross-line
+  ones) -- balanced against the real risk of false-positiving on the MANY existing, presumably-safe
+  same-line nested echo statements already in `run_setup.bat` (not audited; needs its own careful
+  pass, likely requiring live-cmd.exe verification per this repo's own established practice for
+  this hazard class, not static reasoning alone -- static reasoning about this exact hazard class
+  has now been wrong multiple times in this repo's history, per `docs/agent-lessons-learned.md`'s
+  "`:log` echoes UNQUOTED" entry's own general warning).
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

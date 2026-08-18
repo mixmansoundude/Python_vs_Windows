@@ -455,6 +455,62 @@ list; the recurring traps that have actually bitten us:
   `)` closes on a different line -- scoped to "already nested" so a harmless top-level echo (no
   enclosing block, confirmed against `:print_fastpath_ambiguous_note`) doesn't false-positive.
   Tests: `tests/test_check_delimiters_import.py`'s three `test_paren_*` cases.
+
+  **The identical hazard applies to `rem` comment text too, and `check_delimiters.py` does NOT
+  catch it -- confirmed as a second real shipped regression, PR #445 (Item 52), all 8 CI lanes
+  broken simultaneously.** A `rem` comment explaining "check the highest threshold first" split a
+  parenthetical remark's `(`/`)` across three separate `rem` lines, nested three levels deep
+  inside real `if (...)` blocks (`if exist ( if not errorlevel 1 ( if errorlevel 1 ( ... rem
+  lines here ... )`). Symptom matched the echo-hazard bug exactly: every CI lane that runs a real
+  bootstrap (`real`, `uv`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback`, `justme-test`,
+  `cache` -- effectively everything except the empty-repo/`HP_CI_SKIP_ENV` fast paths) failed with
+  zero console output a few seconds into the run, since parsing corrupts REGARDLESS of whether the
+  block's own runtime condition (`if exist "pyproject.toml"`) ever evaluates true -- cmd.exe must
+  determine where a parenthesized block's raw text ENDS before it can decide whether to execute or
+  skip it. **Root cause of the checker's blind spot**: `check_delimiters.py`'s own `.bat`/`.cmd`
+  handling (`check()`, the `if upper.startswith("REM ") or ... : continue` line) treats a `rem`
+  line as fully opaque and skips it from paren-scanning ENTIRELY -- unlike the `echo`-line handling
+  above, which DOES scan the line's characters and specifically tracks whether an opened `(` closes
+  on a different line. This means `check_delimiters.py` currently under-protects `rem` comments
+  relative to `echo` text: it will report a clean file even when a `rem` block contains exactly
+  this hazard. **Fix applied to the specific instance**: reworded the comment to avoid the literal
+  `(`/`)` characters entirely (` -- ` in place of the parenthetical), per the same rule as the echo
+  case. **The general gap in `check_delimiters.py` itself is NOT yet closed** -- extending its
+  existing `is_echo_open`-style tracking to also cover `rem` lines (dropping the current
+  `continue`-and-skip shortcut, replacing it with the same character-scan-plus-cross-line-check the
+  echo path already has) would close this class of bug the same way the echo fix did in 2026-07 --
+  flagged as a candidate follow-up item, not implemented as part of this fix (this fix only needed
+  to unblock the one broken instance, not audit or re-armor every pre-existing `rem` block in the
+  file -- a large, separate undertaking on a ~5300-line file with many other cross-line `rem`
+  parens whose actual nesting-safety was not individually re-verified here).
+
+  **The rem-comment fix above did NOT fully resolve the regression -- a SECOND, independent paren
+  hazard in the SAME code block was found only via a second round of live CI evidence, after the
+  first fix was pushed and CI still failed identically.** The new `>> "%LOG%" echo ... (exit 3);
+  falling back to requirements.txt or pipreqs.` line (added in the same change as the rem comment)
+  has a literal `(`/`)` pair -- `(exit 3)` -- that opens AND closes on the SAME line, inside echo
+  text. Per this entry's own established rule and `check_delimiters.py`'s own code (`last.char ==
+  "(" and last.is_echo_open and line != last.line`), a same-line, self-contained pair is supposed
+  to be harmless -- the checker deliberately does NOT flag it, and the precedent case
+  (`:print_fastpath_ambiguous_note`) confirmed a same-line pair is fine when the echo statement is
+  TOP-LEVEL (no enclosing block). **This assumption does not hold here**: confirmed via a
+  downloaded diagnostics artifact's real bootstrap log (`~envsmoke_bootstrap.log`) showing the
+  EXACT corruption signature from the original PR #408 incident -- `falling was unexpected at this
+  time.` -- with "falling" being the very next word after `(exit 3)` in this line's own text. This
+  same-line pair sits nested FOUR levels deep inside real `if (...)` blocks, one level deeper than
+  any previously-confirmed case, and is a `>> file echo ...` REDIRECTED form, not a plain top-level
+  `echo` statement -- either factor (nesting depth, or the redirection prefix interacting with
+  cmd.exe's paren-parsing differently than a bare `echo`) could be the actual distinguishing
+  condition; which one was NOT isolated, since the live CI evidence made further speculation
+  unnecessary once the fix (remove the parens) was confirmed to work. **Revised rule, stronger than
+  the original**: do not treat "same-line, self-contained, balanced" as a blanket safe-harbor for
+  ANY echo/rem text nested inside a real open block -- it is only KNOWN-safe for a genuinely
+  top-level statement with no enclosing bracket. When in doubt inside a nested block, remove
+  literal parens from wrapped text entirely (` -- ` or `,`) rather than relying on same-line
+  balance alone. Fixed by rewording `(exit 3)` to `, exit 3` (no parens at all). Both bugs (the
+  rem-comment cross-line pair, and this echo same-line pair) shipped in the SAME original commit
+  and had to be found and fixed in two separate rounds, each confirmed only by live Windows CI
+  evidence -- local tooling (`check_delimiters.py`, the full sanity sweep) caught NEITHER one.
 - **Avoid `EnableDelayedExpansion`; if unavoidable, wrap it tightly.** `!` becomes special
   under delayed expansion, and a parent shell launched with `/V:ON` causes `!`-collisions.
   `tests/harness.ps1` `batch.bang.scan` enforces "no `!` in live batch code lines."

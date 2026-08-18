@@ -10,6 +10,10 @@ Exit codes:
       or an empty dependencies list)
   2 - malformed TOML (tomllib raised, or -- when tomllib is unavailable --
       the regex fallback found an unclosed "[project" header)
+  3 - unexpected internal error (e.g. pyproject.toml exists but cannot be
+      read as a file -- a directory, a permission failure, etc.). Distinct
+      from 1 so a genuine bug or unusual I/O failure never masquerades as
+      the benign "nothing to do here" case -- see the outer except below.
 
 Prefers stdlib tomllib (3.11+) when available. Falls back to a regex-based
 extractor when tomllib is missing OR the [project] table has no
@@ -36,7 +40,23 @@ except ImportError:
 
 out = sys.argv[1] if len(sys.argv) > 1 else '~requirements.pyproject.txt'
 try:
-    txt = pathlib.Path('pyproject.toml').read_text(encoding='utf-8', errors='replace')
+    src = pathlib.Path('pyproject.toml')
+    try:
+        # derived requirement: a missing pyproject.toml is the deliberate,
+        # documented exit-1 "not found" case (in practice run_setup.bat only
+        # ever invokes this script when the file exists, but this script's
+        # own contract predates and does not assume that caller). Caught
+        # specifically here, around the read itself, rather than via a
+        # preceding Path.exists() check -- Python 3.14+ made exists() swallow
+        # ANY OSError (including PermissionError) and return False instead of
+        # raising, which would silently misclassify a genuine permission
+        # failure as "not found" (1) instead of the real-error case (3)
+        # below. Any OTHER exception here (a directory, permission denied,
+        # etc.) is a genuine bug/failure and falls through to the outer
+        # except, uncaught by this narrower one.
+        txt = src.read_text(encoding='utf-8', errors='replace')
+    except FileNotFoundError:
+        sys.exit(1)
     deps = None
     if tomllib:
         try:
@@ -100,4 +120,9 @@ try:
     pathlib.Path(out).write_text('\n'.join(deps) + '\n', encoding='ascii', errors='replace')
     sys.exit(0)
 except Exception:
-    sys.exit(1)
+    # derived requirement: a genuinely unexpected exception (not one of the
+    # deliberate sys.exit(1)/sys.exit(2) calls above -- those raise
+    # SystemExit, which this Exception-only handler does not catch) must not
+    # exit 1, or run_setup.bat's caller cannot tell a real bug apart from the
+    # intentional "no dependencies found" case. See exit code 3 above.
+    sys.exit(3)
