@@ -492,6 +492,59 @@ list; the recurring traps that have actually bitten us:
   treatment** -- see CLAUDE.md's own former Item 46 entry (now in `docs/agent-closed-backlog.md`)
   for the doomed-vs-not-doomed classification method before converting any other site.
 
+  **`:die`'s own body already does `pause` BEFORE its final `exit /b %RC%`** (confirmed by
+  reading the current subroutine directly, not from memory/summary -- `run_setup.bat`'s `:die`
+  label: `pause` under `if not defined HP_CI_LANE`, THEN `exit /b %RC%` on the next line). This
+  matters for reasoning about a hypothetical Bucket A candidate that converts `:die` itself into a
+  genuine process-halting `exit` (drop `/b`): the oft-cited risk that "a bare `exit` closes the
+  console before a real double-click user can read the message" does NOT actually apply to that
+  specific line, because the pause already runs first, every time, on the real-interactive-user
+  path -- by the time execution would reach a converted `exit %RC%`, the user has already read the
+  message and pressed a key. **The real, verified risk with converting `:die` to a genuine halt is
+  a different one, found by tracing this exact question rather than reasoning about it in the
+  abstract**: see the next entry.
+
+- **Two independently-tracked "exit code" concepts exist for this bootstrapper, and confusing them
+  produces wrong conclusions about what a `:die` behavior change would actually break.**
+  1. The **real OS-level process exit code** -- what `run_setup.bat` (the whole cmd.exe process)
+     actually returns to whatever launched it (`$LASTEXITCODE` in a PowerShell test harness,
+     `%ERRORLEVEL%` in a `.bat` caller, ignored entirely by Explorer on a real double-click).
+  2. The **self-reported `exitCode` JSON field** inside `~bootstrap.status.json`, written by
+     `:write_status` from the `%RC%` argument `:die`/`:write_status` were called with (default
+     `1`, or `2`/`3`/`4` for the conda-corruption-handler sites) -- entirely independent of (1),
+     written to disk BEFORE `:die`'s own `pause`/`exit /b` lines even run.
+  Today, MOST `:die` sites fall through (the whole point of this Item 46 backlog entry) and
+  eventually reach `:success`'s own unconditional `exit /b 0` -- so for those sites, (1) is
+  genuinely always `0` regardless of `HP_BOOTSTRAP_STATE`, while (2) faithfully reports the real
+  `state`/`RC`. This is a DELIBERATE, if accidental-in-origin, signal-separation design: "the
+  bootstrapper itself ran to completion" (process exit code) vs. "did the product succeed"
+  (`state` field) are tracked separately on purpose, per this repo's own established convention
+  (`docs/agent-ndjson.md`'s "graceful stop" contract, referenced by
+  `selfapps_pyinstaller_fail.ps1`/`self.conda.bothfail`/`self.entrysmoke.no_interpreter_guard`'s
+  own header comments). **Confirmed via a genuine hand-trace across all `tests/*.ps1` files
+  (2026-08-18, prompted by a user question about why `:die` couldn't just pause-then-fully-exit):
+  exactly ONE currently-gating test hard-asserts the OLD (process-exit-always-0) behavior as part
+  of its own pass condition** --
+  `tests/selfapps_entrysmoke_no_interpreter.ps1:171`, `($statusState -eq 'error') -and ($runExit
+  -eq 0)`. Every other `-eq 0`-on-an-exit-code assertion found in the same sweep (`tests/selftest.
+  ps1`, `tests/selfapps_ux_hardening.ps1`, `tests/selfapps_cascade_conda_create_fail.ps1`, etc.)
+  turned out to be paired with a SUCCESS/recovery scenario (`state -eq 'ok'`) where `:die` is never
+  reached at all, so those would be unaffected by a `:die` behavior change; a handful of other
+  files (`selfapps_pyinstaller_fail.ps1`, `selfapps_conda_bothfail.ps1`) capture the real exit code
+  into a details object for diagnostics but do not assert it, matching their own header comments'
+  claim of "does NOT assert exit code." **This means a Bucket A candidate that makes `:die` halt
+  the real process (dropping `/b`) is NOT blocked by "the user won't read the message" (see the
+  entry above) -- it IS a genuine, but narrow and already-identified, breaking change to exactly
+  one existing test's own encoded contract**, not the vague "top-level vs nested, not always
+  obvious" risk this file's own docs previously described. Cmd.exe's own documented `EXIT`
+  behavior (Microsoft's own help text: `/B` exits the current batch script; without it, `EXIT`
+  quits CMD.EXE entirely, from any call depth) means a bare `exit` genuinely halts the whole
+  process regardless of how deeply nested the call site is -- this is standard, well-documented
+  behavior, not an undocumented cmd.exe quirk of the kind this file is otherwise full of, though it
+  has NOT been empirically re-verified against a live Windows cmd.exe in this pass (no Windows host
+  available in this sandbox) -- treat it as high-confidence-from-documentation, not
+  CI-confirmed, consistent with this file's own standard for distinguishing the two.
+
 **PowerShell adjacent traps:** `-or`/`-and` outside a conditional are parsed as parameter
 names ("parameter name 'or'"); `tools/check_delimiters.py` flags these. Multi-line `run:`
 PowerShell in YAML interacts badly with quote nesting -- run `actionlint` on changed

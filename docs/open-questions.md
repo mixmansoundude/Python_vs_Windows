@@ -18,15 +18,21 @@ Three candidates, none pre-decided:
 - **(b) A global `HP_FATAL` flag** -- one mechanism, checked at chosen resumption points, protects
   current AND future sites. Higher value if done right; real risk the checkpoint placement itself
   is incomplete or wrong, invisibly.
-- **(c) Make `:die` itself halt the process** -- most complete, but named as the riskiest option in
-  CLAUDE.md's own existing Item 46 text (breaks the pause-before-exit convention for a real
-  double-click user unless every call shape is individually audited first).
+- **(c) Make `:die` itself halt the process** -- most complete. **Corrected 2026-08-18** (via a
+  direct hand-trace, prompted by a maintainer question): the originally-suspected "breaks the
+  pause-before-exit convention" risk does NOT apply -- `:die` already pauses before its existing
+  exit line. The real, precisely-bounded risk instead: this repo tracks the OS process exit code
+  separately from `~bootstrap.status.json`'s own `exitCode` field, and exactly one currently
+  -gating test (`tests/selfapps_entrysmoke_no_interpreter.ps1`) hard-depends on the OLD
+  always-exit-0-on-failure behavior. Genuinely more viable than first assessed, though still the
+  widest-blast-radius option of the three.
 
-The plan doc's own recommendation: continue (a) for the immediate next slice (only option that
-fits Item 46's "EXTREME CAUTION, one slice at a time" constraint as-is); if the durable
-close-the-whole-class outcome is wanted, (b) is the more conservative of the other two (additive,
-doesn't touch `:die`'s own already-correct behavior) and should be scoped as its own dedicated
-effort with a small proof-of-concept and CI soak time, not folded into the ongoing slice work.
+The plan doc's own recommendation: continue (a) for the immediate next slice regardless (only
+option that fits Item 46's "EXTREME CAUTION, one slice at a time" constraint as-is); if the
+durable close-the-whole-class outcome is wanted, the choice between (b) and (c) is now closer than
+first assessed (see the plan doc's corrected candidate-(c) section) and should be scoped as its
+own dedicated effort with a small proof-of-concept and CI soak time, not folded into the ongoing
+slice work.
 
 **Needs the maintainer's call, not something an agent should pick unilaterally** -- this is
 exactly the kind of decision Item 46's own process notes flag as requiring EXTREME CAUTION, and

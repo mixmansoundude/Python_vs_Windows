@@ -1002,22 +1002,34 @@ way (no live Windows execution available here), that is noted explicitly rather 
 
   **Bucket A remaining scope: candidate fix shapes for a general mechanism, not yet chosen
   between -- full pros/cons/value-add/risk writeup now in `docs/plan-die-fatal-remediation.md`
-  (2026-08-18), grounded against the current, actual 27-site inventory (not the ~31 estimate this
-  entry used to cite before Items 45/Bucket B/slice 1 landed), with the choice itself registered
-  as an open question for the maintainer in `docs/open-questions.md`.** Three candidates: (a)
-  targeted `goto`s per site, continuing the slice-1 pattern; (b) a global `HP_FATAL` flag set by
-  `:die`, checked via `if defined HP_FATAL goto :fatal_exit` at chosen resumption points; (c)
-  change `:die` itself to halt the process directly (a real `exit`, not `exit /b`) -- riskier,
-  since the top-level-vs-nested distinction is not always obvious from a given call site, and a
-  bare `exit` closes the console window immediately for a double-click user with no chance to
-  read the message first (see the existing `pause`-before-exit convention this file already
-  relies on). The plan doc's own recommendation: continue (a) for the immediate next slice (the
-  only one of the three that fits this item's own "EXTREME CAUTION, one slice at a time"
+  (2026-08-18, corrected same day via a direct hand-trace -- see below), grounded against the
+  current, actual 27-site inventory (not the ~31 estimate this entry used to cite before Items
+  45/Bucket B/slice 1 landed), with the choice itself registered as an open question for the
+  maintainer in `docs/open-questions.md`.** Three candidates: (a) targeted `goto`s per site,
+  continuing the slice-1 pattern; (b) a global `HP_FATAL` flag set by `:die`, checked via `if
+  defined HP_FATAL goto :fatal_exit` at chosen resumption points; (c) change `:die` itself to halt
+  the process directly (a real `exit`, not `exit /b`). **Corrected 2026-08-18**: this entry
+  previously claimed (c)'s main risk was "a bare `exit` closes the console window immediately for
+  a double-click user with no chance to read the message first" -- traced directly against `:die`'s
+  actual current body and found this does NOT hold: `:die` already `pause`s BEFORE its existing
+  `exit /b`, so a real interactive user has already read the message by the time a converted
+  `exit` would run. The real, verified risk is narrower and different: this repo tracks the OS
+  process exit code and the self-reported `~bootstrap.status.json` `exitCode` field as two
+  INDEPENDENT signals (most `:die` sites today fall through to `:success`'s unconditional `exit /b
+  0`, so the real process exit code is currently always `0` regardless of `state` -- a deliberate
+  "graceful stop" design), and a hand-sweep of every `tests/*.ps1` file found exactly ONE currently
+  -gating test (`tests/selfapps_entrysmoke_no_interpreter.ps1:171`) hard-asserts that old behavior
+  as part of its own pass condition. See `docs/agent-lessons-learned.md`'s `:die` entry and the
+  plan doc's own corrected candidate-(c) section for the full trace -- (c) is genuinely more
+  viable than this entry previously suggested, though still the widest-blast-radius option of the
+  three. The plan doc's own recommendation: continue (a) for the immediate next slice regardless
+  (the only one of the three that fits this item's own "EXTREME CAUTION, one slice at a time"
   constraint without modification); if the durable close-the-whole-class outcome is wanted later,
-  (b) is the more conservative of the other two and should be scoped as its own dedicated effort
-  with a small proof-of-concept and CI soak time, not folded into the ongoing slice work. Given
-  the number of remaining call sites and `:die`'s central, load-bearing role throughout the file,
-  treat this as EXTREME CAUTION on the same order as the DLL-bundling/hidden-import repair loops
+  the choice between (b) and (c) is now a closer call than previously stated and should be scoped
+  as its own dedicated effort with a small proof-of-concept and CI soak time, not folded into the
+  ongoing slice work. Given the number of remaining call sites and `:die`'s central, load-bearing
+  role throughout the file, treat this as EXTREME CAUTION on the same order as the
+  DLL-bundling/hidden-import repair loops
   elsewhere in this backlog -- one incremental slice at a time (slice 1 above is the second proof
   this works, after Bucket B), not a single sweeping change across every remaining site.
 

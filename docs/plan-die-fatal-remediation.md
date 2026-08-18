@@ -128,11 +128,20 @@ cross-cutting mechanism is chosen instead.
 `:die` currently, unconditionally, in order: sets `HP_BOOTSTRAP_STATE=error`, logs the message,
 writes `~bootstrap.status.json`, releases the concurrent-instance lock, pauses (unless
 `HP_CI_LANE` is set) so a real double-click user can read the failure before the window might
-close, then returns via `exit /b`. Every candidate below must not regress any piece of this for
-any call shape -- this is the load-bearing behavior Bucket B's own `:warn_build_incomplete` design
-already had to reason about carefully (it deliberately skips 3 of these 4 actions, for a
-specifically non-doomed case) -- see `docs/agent-lessons-learned.md`'s `:die` entry for the full
-mechanism this finding depends on.
+close, THEN returns via `exit /b %RC%` -- the pause already precedes the exit, not the other way
+around. Every candidate below must not regress any piece of this for any call shape -- this is the
+load-bearing behavior Bucket B's own `:warn_build_incomplete` design already had to reason about
+carefully (it deliberately skips 3 of these 4 actions, for a specifically non-doomed case).
+
+**This exact ordering was re-verified directly against the current source during this pass
+(2026-08-18), prompted by a direct question about why `:die` couldn't simply pause then fully
+exit -- it turns out it already does exactly that shape for everything except the final `exit
+/b` vs. `exit` choice.** That re-trace also surfaced a real, previously-uncaptured consequence of
+candidate (c) specifically (the OS process exit code vs. the self-reported `~bootstrap.status.
+json` `exitCode` field are two independent signals, and exactly one currently-gating test hard-
+depends on the OLD process-exit-code behavior) -- see `docs/agent-lessons-learned.md`'s `:die`
+entry for the full mechanism and verification trail, and candidate (c)'s own section below for
+the corrected risk analysis this finding now feeds into.
 
 ---
 
@@ -210,28 +219,58 @@ control flow has been wrong before, caught only by real Windows CI, not by revie
 
 ### (c) Make `:die` itself halt the process
 
-Change `:die`'s own final `exit /b` to a genuine process-terminating `exit` (or add a distinct
-"fatal" variant it calls into for the doomed cases), so it stops the whole run directly instead of
-returning control to whatever called it.
+Change `:die`'s own final `exit /b %RC%` to a genuine process-terminating `exit %RC%` (drop `/b`),
+so it stops the whole run directly instead of returning control to whatever called it.
+
+**Corrected 2026-08-18, via a hand-trace prompted by a direct question ("why can't `:die` just
+pause then fully exit?") -- the risk framing below supersedes an earlier, less-verified version of
+this section that (and CLAUDE.md's own prior text, which this doc had faithfully but uncritically
+carried forward) cited "closes the console before the user can read the message" as the main
+concern.** Read `:die`'s actual current body directly: it already does `pause` (when
+`HP_CI_LANE` is unset) BEFORE its existing `exit /b %RC%` line. So on the real, interactive,
+double-click-user path, the message-reading opportunity is already guaranteed regardless of what
+the final exit line does -- swapping `exit /b %RC%` for `exit %RC%` at that exact point loses
+nothing there. See `docs/agent-lessons-learned.md`'s `:die` entry for the full corrected
+mechanism and the verification trail.
 
 **Pros**
 - Structurally the most complete of the three -- one change protects every current and future
   call site with no per-site or per-checkpoint work anywhere else.
 - Matches what a reader unfamiliar with this file would likely assume `:die` already does --
   reduces future surprise for the next person who touches this code.
+- The originally-cited "closes the window before they read it" risk does not actually apply, per
+  the correction above -- the pause already happens first, unconditionally, on the path where it
+  matters.
+- Cmd.exe's own documented `EXIT` behavior (Microsoft's own help text: `/B` exits the current
+  batch script; without it, `EXIT` quits CMD.EXE entirely, regardless of call depth) means a bare
+  `exit` genuinely halts the whole process from ANY nesting depth -- the "top-level vs nested, not
+  always obvious" framing this doc and CLAUDE.md previously used overstated the ambiguity; halting
+  is not actually depth-dependent. (High-confidence from Microsoft's own documentation, not
+  independently re-verified against a live Windows cmd.exe in this sandbox pass.)
 
 **Cons**
-- CLAUDE.md's own Item 46 entry already flags the sharpest risk directly, not as a new concern
-  introduced here: "a bare `exit` closes the console window immediately for a double-click user
-  with no chance to read the message first" -- this file's whole pause-before-exit convention
-  (documented throughout `docs/agent-lessons-learned.md`) exists specifically to prevent that for
-  a real, unattended double-click user.
-- The top-level-vs-nested distinction matters more here than for (a)/(b): `:die` is invoked from
-  both genuinely top-level code (no active call frame -- Finding 2's 5 corruption-handler sites
-  are exactly this shape) AND from deep inside nested subroutines
-  (`:handle_conda_failure -> :try_venv_fallback -> ...`). Every caller across the whole file would
-  need auditing for whether it ever relies on `:die` returning control on purpose (as opposed to
-  accidentally, which is the bug) before this change could be trusted.
+- **The real, verified risk, found by tracing every `tests/*.ps1` file rather than reasoning about
+  it in the abstract**: this repo tracks two independent "exit code" signals -- the real OS-level
+  process exit code, and a self-reported `exitCode` JSON field inside `~bootstrap.status.json`
+  (written by `:write_status`, unaffected by this change either way). Most `:die` sites today fall
+  through to `:success`'s own unconditional `exit /b 0`, so the REAL process exit code is
+  currently always `0` regardless of `state`, by design -- a deliberate "did the bootstrapper run
+  to completion" vs. "did the product succeed" signal split this repo's own docs call the
+  "graceful stop" contract. Converting `:die` to a genuine halt breaks that split for every
+  affected call site. Verified exactly how many currently-gating tests actually depend on the OLD
+  behavior (not just could theoretically be affected): **one** --
+  `tests/selfapps_entrysmoke_no_interpreter.ps1:171` (`($statusState -eq 'error') -and ($runExit
+  -eq 0)`) explicitly asserts this as part of its own pass condition. Every other `-eq 0` exit-code
+  assertion found in the same sweep across `tests/selftest.ps1`,
+  `tests/selfapps_ux_hardening.ps1`, `tests/selfapps_cascade_conda_create_fail.ps1`, and others
+  turned out to be paired with a SUCCESS/recovery scenario where `:die` is never reached, so those
+  are unaffected; a few other files capture the real exit code for diagnostics without asserting
+  it. This is a narrow, precisely-identified breaking change (update one test's own encoded
+  contract, a deliberate decision if this candidate is chosen), not a vague, unquantified risk.
+- Whether ANYTHING outside this repo's own test suite depends on the current
+  always-exit-0-on-failure behavior is genuinely unknown and unauditable from inside this repo
+  (a real user's own external automation wrapping `run_setup.bat`, if any exists, is invisible
+  here) -- this is a real, unresolved unknown for (c) specifically, not a solved one.
 - Widest blast radius of the three -- touches the single subroutine every failure path in the
   entire file funnels through, so a mistake here has the largest possible reach of any of the
   three candidates.
@@ -240,11 +279,15 @@ returning control to whatever called it.
   behavior changes, since every caller is affected simultaneously.
 
 **Value-add**: potentially the HIGHEST of the three (closes the class AND simplifies the mental
-model for every future reader), contingent entirely on the pause/lock-release/status-write
+model for every future reader), contingent on (i) the pause/lock-release/status-write
 choreography (Finding 4) surviving correctly for every one of the ~67 `call`ed labels and every
-top-level `goto` chain in the file.
-**Risk**: HIGH -- named as the riskiest option in CLAUDE.md's own existing Item 46 text, not a
-new judgment introduced by this doc.
+top-level `goto` chain in the file, and (ii) a deliberate decision to update
+`selfapps_entrysmoke_no_interpreter.ps1`'s own contract (now precisely scoped, not a mystery).
+**Risk**: MEDIUM -- lower than this doc's own prior draft claimed, now that the sharpest
+originally-cited risk is confirmed not to apply and the real remaining risk is precisely bounded
+to one known test plus one genuinely-unknown (external-consumer) unknown. Still the riskiest of
+the three by blast radius and by that one unresolved unknown, just not for the reason originally
+stated.
 
 ---
 
@@ -258,10 +301,19 @@ recommendation is about the NEXT slice specifically, not a claim that (a) is the
 correct end state.
 
 If the maintainer wants the more durable, closes-the-whole-class outcome that (b) or (c) offer,
-**(b) is the more conservative of the two** -- it is additive (does not change `:die`'s own
-already-correct, already-tested behavior for any existing caller) where (c) is a direct
-modification to the one subroutine everything funnels through. Either would need to be scoped as
-its OWN dedicated effort, not folded into the ongoing slice-by-slice work, with:
+**the choice between them is closer than this doc's own earlier draft suggested.** (b) remains
+additive (never changes `:die`'s own already-correct, already-tested behavior for any existing
+caller) where (c) is a direct modification to the one subroutine everything funnels through --
+that structural difference still stands, and blast radius still favors (b). But candidate (c)'s
+own risk section above was corrected during this pass: its sharpest originally-cited concern
+("closes the console before the user reads the message") does not actually apply, given `:die`
+already pauses before its existing exit line, and its remaining cost is now precisely bounded (one
+test's contract to update, plus one honestly-unresolved external-consumer unknown) rather than the
+vague "top-level vs nested, not always obvious" risk previously stated. (c) is genuinely more
+viable than this doc first described -- the maintainer's call between (b) and (c) should weigh (b)'s
+lower blast radius against (c)'s structural simplicity and now-bounded cost, not treat (c) as
+automatically the riskier choice. Either would need to be scoped as its OWN dedicated effort, not
+folded into the ongoing slice-by-slice work, with:
 - a proof-of-concept on 2-3 already-understood sites (e.g. the ones Finding 3 above already
   traced) before any file-wide rollout,
 - explicit multi-run CI soak time before being trusted, matching this item's own established
