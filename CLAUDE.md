@@ -1077,23 +1077,6 @@ way (no live Windows execution available here), that is noted explicitly rather 
   after evicting" path a few lines below (`[WARN] ... continuing without it.`) rather than as a
   hard block.
 
-- **Item 50: `:cndf_prompt_loop` (the REQ-013 connectivity-check retry prompt) lacks the CI-safe
-  auto-decline pattern every sibling consent gate in this file already uses.** CONFIRMED directly
-  against current source (`run_setup.bat`'s `:cndf_prompt_loop` label). Every other consent gate in this file
-  follows the documented 3-4 branch template (`docs/agent-lessons-learned.md`'s "CI-safe
-  interactive gates" entry: echo the prompt unconditionally, then an `HP_TEST_*_ANSWER` override,
-  then an `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE` auto-decline, then a real interactive
-  `set /p`) -- `:cndf_prompt_loop` is a bare `set /p HP_CONN_CHOICE=...` with no such branch at
-  all. `set /p` against a genuinely closed/EOF stdin (a fully detached CI job) returns empty and
-  the existing empty-input handling already defaults to offline gracefully -- but against a real,
-  open, interactive console with nobody present to answer (an unattended real machine where a
-  human started the bootstrapper, network drops mid-run, and they are not watching), it blocks
-  waiting for Y/N indefinitely, unlike every sibling gate.
-
-  **Fix**: add the same `HP_TEST_*_ANSWER` / `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE` branches
-  this file's other consent gates already use, defaulting to whichever of retry/offline is safer
-  unattended (offline, matching the existing empty-input default two lines below).
-
 - **Item 52: `tools/pyproj_deps.py`'s exit code 1 is overloaded between its intentional
   "no `[project].dependencies` found" contract and a catch-all for any genuinely unexpected
   exception, making a real bug in that script indistinguishable from the normal case.** CONFIRMED

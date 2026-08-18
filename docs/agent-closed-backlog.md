@@ -2195,6 +2195,42 @@ run of the same regex logic before landing, not just reasoned about).
   probe (both the fixed-text and buggy-text cases) before landing, matching this repo's own
   established verification discipline for new static harness checks.
 
+### Item 50 (closed 2026-08-18)
+
+- **`:cndf_prompt_loop` (the REQ-013 connectivity-check retry prompt) lacked the CI-safe
+  auto-decline pattern every sibling consent gate in this file already uses.** CONFIRMED directly
+  against source: a bare `set /p HP_CONN_CHOICE=...` with no test override and no auto-decline
+  branch at all, unlike every other consent gate. A genuinely closed/EOF stdin (a fully detached
+  CI job) already defaulted to offline gracefully via the pre-existing empty-input handling, but a
+  real, open, interactive console with nobody present to answer would have blocked on `set /p`
+  indefinitely.
+
+  **Fix shipped, deviating from the literal template on one point, verified necessary before
+  implementing.** Added `HP_TEST_CNDF_ANSWER` (deterministic override) and `NOINPUT`/
+  `HP_NONINTERACTIVE` auto-decline (both defaulting to offline, matching the existing empty-input
+  default two lines below) -- but deliberately did NOT add the bare `HP_CI_LANE` auto-decline the
+  standard template calls for. Found before implementing: three existing regression tests in
+  `tests/selfapps_ux_hardening.ps1` (`self.ux.connectivity.offline.n`/`.prompt.shown`/`.retry`)
+  already run this exact gate under `HP_CI_LANE=test` while piping real Y/N answers via stdin,
+  specifically to exercise the interactive Y-then-N retry loop -- a bare `HP_CI_LANE` auto-decline
+  would have silently bypassed `set /p` before it ever read the piped input, breaking all three.
+  `NOINPUT`/`HP_NONINTERACTIVE` were confirmed safe to add (neither test sets those two vars for
+  this gate). See `docs/agent-lessons-learned.md`'s "CI-safe interactive gates" entry for the full
+  mechanism and reasoning.
+
+  **New regression test**: `self.ux.connectivity.override` proves the new override resolves via
+  the explicit-decline log line specifically, not the pre-existing empty-input fallback (both lead
+  to the same final offline outcome, so asserting the decline line alone would not distinguish "the
+  override worked" from "it was silently ignored") -- run with closed stdin (`< nul`) so a broken
+  override is still forced down a real, observable code path rather than the test itself hanging.
+  A harder-to-test scenario (deterministically proving the Y-retry loop via the new override, the
+  way `self.ux.connectivity.retry` already proves it via piped stdin) was considered and not
+  pursued: a single static env var cannot answer "Y" once then "N" on a second pass through the
+  same prompt subroutine without either infinite-looping or needing real, non-deterministic network
+  conditions -- matches this repo's own established test-depth precedent for comparable gates (e.g.
+  `HP_TEST_SYSCON_ANSWER` is likewise only tested via its deterministic override, not by separately
+  proving the `HP_CI_LANE` branch resolves without hanging).
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
