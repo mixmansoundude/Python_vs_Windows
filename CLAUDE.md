@@ -811,32 +811,6 @@ but several represent real gaps worth closing before calling the path fully rele
   **Coverage gap to close in the same slice**: no scenario backdates a source file's mtime below
   the EXE's to test this. Add one.
 
-- **Item 40: dead comparison in the `HP_SCRIPT_ROOT` trailing-backslash guard always evaluates
-  true, so every derived path carries a doubled separator.** CONFIRMED directly against source and
-  against a real CI log line.
-
-  **Mechanism**: the guard, immediately after `set "HP_SCRIPT_ROOT=%~dp0"`, reads `if not
-  "%HP_SCRIPT_ROOT:~-1%"=="\\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"`. The left side is a
-  ONE-character substring (`:~-1`); the right side, `"\\"`, is a TWO-character literal (cmd.exe's
-  `if` does no backslash-escaping, so `\\` really is two backslashes, not an escaped one). A
-  one-character string can never equal a two-character string, so the condition is always true,
-  and the backslash is always appended -- including when `%~dp0` already ends in one (which it
-  always does, by Windows convention). A sibling guard elsewhere in the file uses the correct
-  one-character `"\"` form, which is strong evidence this is a typo, not intent.
-
-  **Confirmed reaching console output** in a real CI log (run 31323118721, real lane):
-  `Interpreter: D:\a\...\tests\~envsmoke\\.uv_env\Scripts\python.exe` -- note the doubled
-  backslash before `.uv_env`.
-
-  **Severity: low/cosmetic** -- Windows collapses repeated separators in most path-consuming
-  APIs, and the same CI run confirms `HP_UV_BIN`/`HP_UV_ENV_PATH`/`HP_LOCK_DIR`/`HP_EMBED_DIR` all
-  still resolve correctly despite this. But it is dead code with no test catching it, and it does
-  visibly surface as `\\` in console output a beginner reads.
-
-  **Fix**: change the right-hand literal from `"\\"` to `"\"`, matching the sibling guard's
-  already-correct form. Trivial, one-character fix; add a static test (or extend
-  `check_delimiters.py`/a dedicated unit test) asserting `HP_SCRIPT_ROOT` never contains `\\`.
-
 - **Item 41: a working GUI app is force-killed at the 30s build-verification deadline and
   reported with a caveat, with no messaging calibrated for that specific, correctly-behaving
   case.** Confirmed reasoned-from-source, with the kill-on-silence RULE confirmed by real CI

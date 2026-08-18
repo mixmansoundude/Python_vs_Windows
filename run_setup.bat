@@ -169,7 +169,7 @@ if errorlevel 1 (
 )
 set "HP_SCRIPT_ROOT=%~dp0"
 for %%R in ("%HP_SCRIPT_ROOT%") do set "HP_SCRIPT_ROOT=%%~fR"
-if not "%HP_SCRIPT_ROOT:~-1%"=="\\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"
+if not "%HP_SCRIPT_ROOT:~-1%"=="\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"
 set "HP_CI_MARKER=.ci_bootstrap_marker"
 type nul > "%HP_CI_MARKER%" 2>nul
 set "LOG=~setup.log"
