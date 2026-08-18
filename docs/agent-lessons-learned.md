@@ -877,6 +877,29 @@ CI-safe or it hangs (or relies on a fragile stdin EOF). The established pattern 
    them. For the system gate: `HP_TEST_SYSCON_ANSWER`, with `batch.req014.consent` asserting the
    flag name is present in `run_setup.bat`.
 
+**`:cndf_prompt_loop` (the REQ-013 connectivity-retry prompt, CLAUDE.md's former Active Backlog
+item 50, closed) is a DELIBERATE EXCEPTION to step 2's `HP_CI_LANE` auto-decline branch --
+verify this before "fixing" it the same way as every other gate.** It uses `HP_TEST_CNDF_ANSWER`
+(deterministic override) plus `NOINPUT`/`HP_NONINTERACTIVE` auto-decline, but intentionally does
+NOT auto-decline on bare `HP_CI_LANE`. Reason, found while implementing the fix: three existing
+regression tests in `tests/selfapps_ux_hardening.ps1`
+(`self.ux.connectivity.offline.n`/`.prompt.shown`/`.retry`) already run this exact gate under
+`HP_CI_LANE=test` while piping real Y/N answers via stdin, specifically to exercise the
+interactive Y-then-N retry loop (`:cndf_prompt_loop -> Y -> :cndf_ping_failed -> :cndf_prompt_loop
+-> N -> offline`) -- a mechanism a static `HP_TEST_CNDF_ANSWER` override CANNOT replicate anyway,
+since the same env var would answer identically on both passes through the loop (infinite-looping
+on `Y`, never reaching the `N` branch). Adding a bare `HP_CI_LANE` auto-decline (the literal
+template from step 2 above) would have silently broken all three tests by bypassing `set /p`
+before it ever reads the piped stdin. `NOINPUT`/`HP_NONINTERACTIVE` were safe to add since
+neither test sets those two vars for this gate; a genuinely detached CI job (closed/EOF stdin)
+was already safe regardless of `HP_CI_LANE`, via the pre-existing empty-input-defaults-offline
+branch a few lines below the prompt. New test `self.ux.connectivity.override` proves the new
+override resolves via the explicit-decline log line, not the empty-input fallback (both lead to
+the same final offline outcome, so asserting the decline line alone would not distinguish "the
+override worked" from "it was silently ignored and fell through to empty stdin") -- run with
+closed stdin (`< nul`) specifically so a broken override is still forced down a real code path
+rather than hanging the test itself.
+
 ## INVENTORY_B64 E2BIG pattern (publish_index.py)
 
 Passing large data through step env vars (`INVENTORY_B64` was ~168 KB base64) overflows

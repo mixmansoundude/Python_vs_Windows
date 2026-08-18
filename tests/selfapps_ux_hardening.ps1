@@ -76,7 +76,7 @@ if ($platform -ne 'Win32NT') {
         desc    = 'Post-flight briefing test skipped on non-Windows host'
         details = $skipDetails
     })
-    foreach ($id in @('self.ux.connectivity.offline.n', 'self.ux.connectivity.prompt.shown', 'self.ux.connectivity.offline.uv.skip', 'self.ux.connectivity.offline.conda.skip', 'self.ux.connectivity.online', 'self.ux.connectivity.retry')) {
+    foreach ($id in @('self.ux.connectivity.offline.n', 'self.ux.connectivity.prompt.shown', 'self.ux.connectivity.offline.uv.skip', 'self.ux.connectivity.offline.conda.skip', 'self.ux.connectivity.online', 'self.ux.connectivity.retry', 'self.ux.connectivity.override')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
             req     = 'REQ-013'
@@ -295,7 +295,11 @@ $connText = ''
 if (Test-Path -LiteralPath $connLog) {
     $connText = Get-Content -LiteralPath $connLog -Raw -Encoding Ascii
 }
-$connPromptStr = 'WARNING: No internet connection detected. Remote providers may fail. Retry? (Fix connection then press Y) or proceed offline (N): '
+# derived requirement: CLAUDE.md Item 50 changed this prompt from a set /p prompt string (which
+# carried a trailing ": ") to an unconditional echo line (no trailing space) so the prompt text
+# is visible even on the new NOINPUT/HP_NONINTERACTIVE auto-decline paths -- match without the
+# trailing space accordingly.
+$connPromptStr = 'WARNING: No internet connection detected. Remote providers may fail. Retry? (Fix connection then press Y) or proceed offline (N):'
 $connPromptFound = $connText -match [regex]::Escape($connPromptStr)
 $connOfflineLog = $connText -match [regex]::Escape('[INFO] REQ-013: Connectivity prompt: user chose offline (N).')
 
@@ -440,6 +444,52 @@ Write-NdjsonRow ([ordered]@{
     pass    = $connRetryFound
     desc    = 'Connectivity guard: Y answer re-prompts while still offline, then N exits offline'
     details = [ordered]@{ retryBranchFired = $connRetryFired; declineAfterRetry = $connRetryDecline }
+})
+
+# ===== REQ-013: Connectivity guard HP_TEST_CNDF_ANSWER override (CLAUDE.md Item 50) =====
+# Proves the new deterministic test override (mirroring HP_TEST_SYSCON_ANSWER/HP_TEST_
+# CHECKPOINT_ANSWER's established shape) actually drives the prompt's own choice, distinct
+# from falling through to set /p and merely defaulting via the pre-existing empty-input path
+# (both would independently resolve to offline, so asserting the DECLINE log line alone would
+# not distinguish "override worked" from "override silently ignored" -- stdin is closed via
+# `< nul` specifically so a broken override would still resolve via empty-input, and the
+# assertion below requires the empty-input line to be ABSENT to catch that case).
+$connOverrideDir = Join-Path $here '~selftest_connectivity_override'
+New-Item -ItemType Directory -Force -Path $connOverrideDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $connOverrideDir -Force
+
+$connOverrideLog = Join-Path $connOverrideDir '~conn_override_test.log'
+Invoke-WithEnvOverrides -Overrides @{
+    HP_CI_LANE                       = 'test'
+    HP_TEST_OFFLINE                  = '1'
+    HP_TEST_FORCE_CONNECTIVITY_CHECK = '1'
+    HP_TEST_CNDF_ANSWER              = 'N'
+} -Body {
+    Push-Location -LiteralPath $connOverrideDir
+    try {
+        cmd /c "run_setup.bat < nul > ~conn_override_test.log 2>&1"
+    } finally {
+        Pop-Location
+    }
+} | Out-Null
+
+$connOverrideText = ''
+if (Test-Path -LiteralPath $connOverrideLog) {
+    $connOverrideText = Get-Content -LiteralPath $connOverrideLog -Raw -Encoding Ascii
+}
+$connOverridePromptFound = $connOverrideText -match [regex]::Escape($connPromptStr)
+$connOverrideDeclineLog  = $connOverrideText -match [regex]::Escape('REQ-013: Connectivity prompt: user chose offline (N).')
+$connOverrideEmptyLog    = $connOverrideText -match [regex]::Escape('REQ-013: Connectivity prompt: empty input; defaulting offline.')
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.connectivity.override'
+    req     = 'REQ-013'
+    pass    = ($connOverridePromptFound -and $connOverrideDeclineLog -and (-not $connOverrideEmptyLog))
+    desc    = 'Connectivity guard: HP_TEST_CNDF_ANSWER=N resolves via the explicit-decline path, not the empty-input fallback'
+    details = [ordered]@{
+        promptFound    = $connOverridePromptFound
+        declineLogFound = $connOverrideDeclineLog
+        emptyLogFound   = $connOverrideEmptyLog
+    }
 })
 
 # ===== REQ-014: System Python Consent Gate =====

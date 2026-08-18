@@ -5681,8 +5681,34 @@ if %HP_CONN_CURL_ATTEMPT% LSS 2 goto :cndf_curl_retry
 :cndf_ping_failed
 call :log "[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed)."
 :cndf_prompt_loop
+rem CLAUDE.md Active Backlog Item 50: this prompt previously had no CI-safe auto-decline at
+rem all, unlike every sibling consent gate -- against a genuinely open, interactive console
+rem with nobody present to answer, it would block on set /p indefinitely. Fixed with
+rem HP_TEST_CNDF_ANSWER (deterministic test override) and NOINPUT/HP_NONINTERACTIVE
+rem auto-decline (the same authoritative "no human will answer" signals :run_postexec_
+rem checkpoint already treats this way -- see docs/agent-interconnect.md).
+rem
+rem Deliberately does NOT auto-decline on bare HP_CI_LANE, unlike most sibling gates: two
+rem existing regression tests (self.ux.connectivity.offline.n/.prompt.shown/.retry in
+rem selfapps_ux_hardening.ps1) already run this exact gate under HP_CI_LANE=test while
+rem piping real Y/N answers via stdin, specifically to exercise the interactive Y-retry
+rem loop -- a static HP_CI_LANE auto-decline would silently bypass set /p and break that
+rem coverage. A genuinely detached CI job (closed/EOF stdin) already resolves safely via the
+rem pre-existing empty-input default below regardless of HP_CI_LANE; NOINPUT/HP_NONINTERACTIVE
+rem are the correct signal for "deliberately unattended," matching this repo's own convention
+rem that those two flags -- not HP_CI_LANE -- represent an explicit non-interactivity
+rem declaration (see docs/agent-lessons-learned.md's "Env-var flags are scaffolding" entry).
+echo WARNING: No internet connection detected. Remote providers may fail. Retry? (Fix connection then press Y) or proceed offline (N):
 set "HP_CONN_CHOICE="
-set /p HP_CONN_CHOICE="WARNING: No internet connection detected. Remote providers may fail. Retry? (Fix connection then press Y) or proceed offline (N): "
+if defined HP_TEST_CNDF_ANSWER (
+  set "HP_CONN_CHOICE=%HP_TEST_CNDF_ANSWER%"
+) else if defined NOINPUT (
+  set "HP_CONN_CHOICE=n"
+) else if defined HP_NONINTERACTIVE (
+  set "HP_CONN_CHOICE=n"
+) else (
+  set /p "HP_CONN_CHOICE=Your choice [y/n]: "
+)
 if "%HP_CONN_CHOICE:~0,1%"=="" (
   call :log "[INFO] REQ-013: Connectivity prompt: empty input; defaulting offline."
   set "HP_OFFLINE_MODE=1"
