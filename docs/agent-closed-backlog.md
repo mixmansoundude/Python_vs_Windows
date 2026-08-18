@@ -2311,6 +2311,43 @@ run of the same regex logic before landing, not just reasoned about).
   forced FAILURE), for a real-world trigger rate low enough that the underlying source fix (cheap,
   two extra lines) was judged sufficient on its own.
 
+### Item 49 (closed 2026-08-18)
+
+- **`:lock_is_stale`'s indeterminate PowerShell result was silently treated as "fresh" (lock held
+  by a live instance), producing a false "another instance of this setup appears to be running"
+  block instead of a graceful continue.** CONFIRMED directly against source before the fix: the
+  subroutine's own contract comment documented only two outcomes (`exit/b 0 = stale`, `exit/b 1 =
+  fresh`), but the only branch that explicitly set `HP_LOCK_STALE_RESULT` to a recognized value
+  was the `'stale'` case -- an empty/unexpected PowerShell result (a transient hiccup, unrelated
+  to the lock itself) fell through to the same catch-all as a genuine `'fresh'` match, sending a
+  real user to the hard "delete ~bootstrap.lock and run again" message for a condition that had
+  nothing to do with a concurrent run.
+
+  **Fix shipped**: `:lock_is_stale` now returns THREE distinct outcomes instead of two --
+  `exit /b 0` (stale, evict), `exit /b 1` (genuinely fresh, matched via an explicit `"fresh"`
+  string comparison, not a catch-all), `exit /b 2` (indeterminate -- neither string matched).
+  `:acquire_lock`'s dispatch gained a new `if errorlevel 2 goto :lock_indeterminate` branch
+  (checked before the existing hard-block path, via `errorlevel`-based dispatch so the check is
+  safe inside the surrounding goto-based flow -- see `docs/agent-lessons-learned.md`'s
+  "Provider-cascade dispatch is goto-based on purpose" for why this repo prefers `goto`/`errorlevel`
+  dispatch over a parenthesized if/else here). The new `:lock_indeterminate` label logs
+  `[WARN] REQ-024: could not determine whether the existing lock is stale (indeterminate result);
+  continuing without it.` and `exit /b 0`s WITHOUT setting `HP_LOCK_OWNED` and WITHOUT touching the
+  pre-existing lock directory -- deliberately distinct from BOTH siblings: unlike the stale case,
+  it must not evict a lock that might genuinely still be held by a live instance; unlike the fresh
+  case, it must not hard-block for a condition that has nothing to do with a real concurrent run.
+  A new `HP_TEST_FORCE_LOCK_INDETERMINATE` hook (checked alongside the existing
+  `HP_TEST_FORCE_LOCK_STALE`, same pattern) forces this branch deterministically in CI.
+
+  **Regression coverage**: a new Part D in `tests/selftest.ps1`'s existing REQ-024 lock-test block
+  (`self.stub.lock_indeterminate`), mirroring Part C's (`self.stub.lock_stale_evict`) structure --
+  same pre-seeded lock directory with a fake `owner.txt`, same `HP_CI_LANE` pinning so the
+  post-execution checkpoint auto-declines. Asserts three things together: the new WARN log line
+  fires, the bootstrap completes successfully (`state=ok`, `exitCode=0`, proving no hard block
+  occurred), and -- the assertion that actually distinguishes this from Part C's eviction case --
+  the pre-existing lock directory is still present afterward (not evicted). `docs/agent-ndjson.md`
+  updated to register the new row alongside its three siblings.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

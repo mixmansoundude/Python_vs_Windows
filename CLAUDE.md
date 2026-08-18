@@ -1052,23 +1052,6 @@ way (no live Windows execution available here), that is noted explicitly rather 
   plain-language message naming Constrained Language Mode specifically if it fails, rather than
   letting the failure surface piecemeal as five-plus separate "Could not write ~x" messages later.
 
-- **Item 49: `:lock_is_stale`'s indeterminate PowerShell result is silently treated as "fresh"
-  (lock held by a live instance), producing a false "another instance of this setup appears to be
-  running" message instead of a graceful continue.** CONFIRMED directly against current source
-  (`run_setup.bat`'s `:lock_is_stale` subroutine). The subroutine's own contract comment is explicit:
-  `exit/b 0 = stale (caller should evict); exit/b 1 = fresh (still held by a live instance)` -- but
-  the only branch that explicitly sets `HP_LOCK_STALE_RESULT` to a recognized value is the
-  `'stale'` case; an empty/unexpected PowerShell result (e.g. a transient PowerShell hiccup, not
-  necessarily anything wrong with the lock itself) falls through to whatever the default trailing
-  statement is, which -- per the subroutine's own documented two-value contract and no visible
-  third branch -- reads as "fresh," sending a real user to the "another instance is running,
-  delete ~bootstrap.lock" message for a condition that has nothing to do with a concurrent run.
-
-  **Fix**: distinguish "explicitly fresh" from "indeterminate" (anything not exactly `'stale'` or
-  `'fresh'`), and treat indeterminate the same as the already-graceful "could not acquire lock
-  after evicting" path a few lines below (`[WARN] ... continuing without it.`) rather than as a
-  hard block.
-
 - **Item 52: `tools/pyproj_deps.py`'s exit code 1 is overloaded between its intentional
   "no `[project].dependencies` found" contract and a catch-all for any genuinely unexpected
   exception, making a real bug in that script indistinguishable from the normal case.** CONFIRMED
