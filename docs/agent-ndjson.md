@@ -55,7 +55,7 @@ self.collect.submodules,
 self.exe.hidden_import, self.exe.hidden_import.exhaust,
 self.preflight.syntax,
 self.preflight.no_powershell, self.preflight.ps_check_fail, self.preflight.lf_only,
-self.preflight.cwd_not_writable,
+self.preflight.cwd_not_writable, self.preflight.ps_capability_fail,
 self.entrysmoke.no_interpreter_guard,
 self.cascade.detect, self.cascade.consent, self.cascade.timed,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
@@ -952,9 +952,26 @@ same `Test-PreflightScenario` helper. Its hook, `HP_TEST_FORCE_CWD_NOT_WRITABLE`
 `type nul > ~wtest.tmp` write attempt entirely (rather than revoking filesystem permissions on a
 shared CI runner), producing the same "not found" signal a genuine write failure would.
 
+**Extended again for CLAUDE.md Active Backlog Item 47 (`self.preflight.ps_capability_fail`).**
+Bare PowerShell presence (checked by `self.preflight.no_powershell` above) only proves
+`powershell.exe` exists on PATH, not that it can perform the operations this bootstrapper
+actually needs -- `Convert.FromBase64String` plus `IO.File.WriteAllBytes` (used by
+`:emit_from_base64` to write every embedded helper) and `System.Diagnostics.ProcessStartInfo`
+(used by the failfast-probe/exe-smokerun helpers), any of which a locked-down corporate image
+(AppLocker, WDAC, Constrained Language Mode) can block even with PowerShell itself present. The
+new preflight, sitting right after the CWD-writable check so a real folder-permission failure is
+diagnosed by that check first rather than misattributed to this one, probes all three
+capabilities together in one PowerShell command and fails with one clear, named diagnostic
+instead of five-plus later opaque "Could not write ~x" failures. Its hook,
+`HP_TEST_FORCE_PS_CAPABILITY_FAIL`, redirects the probe's write target at a nonexistent directory
+so the real `WriteAllBytes` call genuinely throws and hits its own `catch{exit 1}` branch --
+matching `HP_TEST_FORCE_PS_CHECK_FAIL`'s established real-failure technique rather than faking an
+exit code externally. Verified directly against a real PowerShell binary before being wired into
+`run_setup.bat`, not just reasoned about.
+
 ```
 self.preflight.no_powershell, self.preflight.ps_check_fail, self.preflight.lf_only,
-self.preflight.cwd_not_writable
+self.preflight.cwd_not_writable, self.preflight.ps_capability_fail
 ```
 
 ---

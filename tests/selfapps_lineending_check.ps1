@@ -22,9 +22,18 @@
 # HP_TEST_FORCE_CWD_NOT_WRITABLE, skips the real `type nul > ~wtest.tmp` write attempt
 # entirely rather than revoking filesystem permissions on a shared CI runner.
 #
+# Extended again for CLAUDE.md Active Backlog Item 47: the PowerShell capability preflight
+# (right after the CWD-writable check above) proves PowerShell can actually decode embedded
+# data, write files, and prepare to launch a process -- not just that powershell.exe exists on
+# PATH (already covered by self.preflight.no_powershell above). Its own hook,
+# HP_TEST_FORCE_PS_CAPABILITY_FAIL, redirects the probe's write target at a nonexistent
+# directory so the real WriteAllBytes call genuinely throws, matching
+# HP_TEST_FORCE_PS_CHECK_FAIL's established real-failure technique rather than faking an exit
+# code externally.
+#
 # Lane: real and conda-full only (matches self.preflight.syntax's own precedent for a cheap,
 # provider-agnostic, pure-batch preflight check -- no environment/dependency work is ever
-# reached in any of these four scenarios, so there is no "could not verify locally" risk
+# reached in any of these five scenarios, so there is no "could not verify locally" risk
 # comparable to a real Nuitka/MSVC build; the command logic itself was verified directly
 # against a real PowerShell 7 binary before this file was written).
 param()
@@ -54,6 +63,7 @@ $rowIdReqs = [ordered]@{
     'self.preflight.ps_check_fail'   = 'CLAUDE.md-Item-44'
     'self.preflight.lf_only'         = 'CLAUDE.md-Item-44'
     'self.preflight.cwd_not_writable' = 'CLAUDE.md-Item-48'
+    'self.preflight.ps_capability_fail' = 'CLAUDE.md-Item-47'
 }
 
 # Non-Windows skip
@@ -209,6 +219,13 @@ $results += Test-PreflightScenario -Id 'self.preflight.cwd_not_writable' `
     -ExpectedExit 1 `
     -ExpectedSubstrings @('[ERROR] This folder does not appear to be writable:', '~selftest_lineending_cwd_not_writable', 'Move this script and your .py files to') `
     -Req 'CLAUDE.md-Item-48'
+
+$results += Test-PreflightScenario -Id 'self.preflight.ps_capability_fail' `
+    -WorkDirName '~selftest_lineending_ps_capability_fail' `
+    -EnvFlagName 'HP_TEST_FORCE_PS_CAPABILITY_FAIL' `
+    -ExpectedExit 1 `
+    -ExpectedSubstrings @('[ERROR] PowerShell on this machine cannot perform an operation this', 'Constrained Language Mode') `
+    -Req 'CLAUDE.md-Item-47'
 
 if ($results -contains $false) { exit 1 }
 exit 0

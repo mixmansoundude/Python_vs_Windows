@@ -2562,6 +2562,83 @@ run of the same regex logic before landing, not just reasoned about).
   commit and had to be found and fixed in two SEPARATE rounds, each confirmed only by live Windows
   CI evidence pulled from a downloaded diagnostics artifact -- local tooling caught neither one.
 
+### Item 47 (closed 2026-08-18)
+
+- **No PowerShell capability preflight beyond bare presence.** The line-ending self-check (Item
+  44's mitigation) added a `where powershell` presence guard as its own precondition, but that
+  only proves PowerShell exists on PATH, not that it can actually do what this bootstrapper
+  needs -- `:emit_from_base64` (used to write every embedded `~*.py`/`~*.ps1` helper to disk)
+  needs `[Convert]::FromBase64String` + `[IO.File]::WriteAllBytes`, and
+  `~failfast_probe.ps1`/`~exe_smokerun.ps1` need `New-Object System.Diagnostics.ProcessStartInfo`
+  -- all of which a locked-down corporate image (AppLocker/WDAC/Constrained Language Mode) can
+  block even with PowerShell itself present and on PATH. This was the leading hypothesis in the
+  original Item 44 sandbox debugging session before the real root cause was confirmed there
+  (ruled out for that specific sandbox via direct probing) but was flagged as not a dead concern
+  in general, since a genuinely CLM-restricted machine would still hit it with no clear
+  diagnostic today.
+
+  **Fix shipped**: a new preflight block in `run_setup.bat`, placed right after the CWD-writable
+  check (Item 48) -- deliberately AFTER it, not before, so a real folder-permission failure is
+  diagnosed by that check first rather than misattributed to this one -- probes all three
+  capabilities in one PowerShell command: decode a small base64 literal via
+  `[Convert]::FromBase64String`, write the decoded bytes to a probe file via
+  `[IO.File]::WriteAllBytes`, verify the file exists, delete it, then construct (not launch) a
+  `System.Diagnostics.ProcessStartInfo`. Any exception anywhere in that sequence is caught and
+  exits 1; the caller's `if errorlevel 1` branch then fails with one clear, named diagnostic
+  naming Constrained Language Mode/AppLocker/WDAC specifically, instead of letting the failure
+  surface piecemeal as five-plus separate opaque "Could not write ~x" messages later in the run.
+  Mirrors the line-ending check's own established `$env:VARNAME` indirection (never `%VAR%`
+  substituted directly into the PowerShell `-Command` text) to avoid the whole class of
+  cmd.exe/-Command interaction hazard documented in `docs/agent-lessons-learned.md`'s `:log`
+  entry -- the probe's target file path is passed via `set "HP_PS_PROBE_FILE=..."` (a plain
+  cmd.exe environment variable, inherited by the spawned `powershell.exe` child) and read inside
+  the PowerShell command as `$env:HP_PS_PROBE_FILE`, never interpolated as literal text.
+
+  **Test hook**: `HP_TEST_FORCE_PS_CAPABILITY_FAIL` redirects the probe's write target at a
+  nonexistent directory (`~nonexistent_dir_xyz\`) so the real `WriteAllBytes` call genuinely
+  throws and hits its own `catch{exit 1}` branch -- the same "exercise the real failure path
+  instead of faking an exit code externally" technique `HP_TEST_FORCE_PS_CHECK_FAIL` already
+  established for the line-ending check's own PowerShell-throws branch, rather than a purely
+  synthetic bypass. Both the success and forced-failure paths were verified directly against a
+  real PowerShell binary before being wired into `run_setup.bat`, not just reasoned about.
+
+  **Regression coverage**: `tests/selfapps_lineending_check.ps1` gained a fifth
+  `Test-PreflightScenario` call, `self.preflight.ps_capability_fail`, reusing the same
+  scratch-copy-of-run_setup.bat/env-flag/exit-code/status-json/log-substring assertion shape as
+  the file's other four scenarios. `real`/`conda-full` lanes, gating from first landing -- same
+  reasoning as `self.preflight.cwd_not_writable`'s own precedent (a cheap, provider-agnostic,
+  pure-batch preflight check with no environment/dependency work reached in any scenario, unlike
+  the Nuitka/MSVC-dependent tests elsewhere in this registry that start non-gating because they
+  could not be verified locally).
+
+  **Two real bugs found via CodeRabbit's review on PR #446, both fixed in the same PR, both
+  reproduced directly (not just reasoned about) before and after the fix.** (1) The probe's
+  fixed filename (`~ps_capability_probe.tmp`) had no protection against two genuinely concurrent
+  `run_setup.bat` instances in the same folder -- this preflight runs BEFORE `:acquire_lock`
+  (REQ-024's own concurrent-instance lock, acquired much later in the file), so a second process
+  could delete or overwrite the first's probe file mid-check and produce a false capability
+  failure. Fixed by suffixing the filename with two `%RANDOM%` draws
+  (`~ps_capability_probe.%RANDOM%%RANDOM%.tmp`, computed once into `HP_PS_PROBE_NAME` before the
+  `HP_TEST_FORCE_PS_CAPABILITY_FAIL` override, so both the real and forced-failure paths share the
+  same unique suffix) -- not a full mutex, just enough entropy that a same-folder collision within
+  one preflight's brief lifetime is negligible. (2) The original PowerShell command used
+  `Test-Path`/`Remove-Item` against the probe path -- both cmdlets treat `[`/`]` as wildcard
+  syntax by default, so an app folder whose path happens to contain literal brackets (e.g. a
+  folder named `Test[1]`) made `Test-Path` report a genuinely-written file as NOT FOUND,
+  misclassifying a perfectly capable PowerShell as CLM-restricted. Reproduced directly via a real
+  `pwsh` run against a `Test[1]` directory before fixing: `[IO.File]::WriteAllBytes` wrote the
+  file successfully, but `Test-Path` on the same literal path returned `$false` while
+  `Test-Path -LiteralPath` correctly returned `$true`. Fixed by switching the whole probe to
+  `[IO.File]::Exists`/`[IO.File]::Delete` instead of `Test-Path`/`Remove-Item -LiteralPath` --
+  these two .NET methods never glob-expand at all (not even an opt-in wildcard mode to avoid),
+  consistent with the probe's existing `[IO.File]::WriteAllBytes` call, so the app folder's own
+  path can contain any legal Windows filename character without affecting the probe's outcome.
+  Also added the same file-or-directory stale-artifact pre-clear `~wtest.tmp` already uses
+  (`del /f /q` then `if exist ( rd /s /q )`) at all three cleanup sites (pre-probe, on-failure,
+  on-success), defense-in-depth against a leftover directory at the probe's path even though the
+  new per-process uniqueness makes a genuine collision with an earlier run's leftover file
+  extremely unlikely on its own.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
