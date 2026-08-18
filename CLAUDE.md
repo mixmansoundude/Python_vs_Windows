@@ -1052,14 +1052,6 @@ way (no live Windows execution available here), that is noted explicitly rather 
   plain-language message naming Constrained Language Mode specifically if it fails, rather than
   letting the failure surface piecemeal as five-plus separate "Could not write ~x" messages later.
 
-- **Item 48: no writable-CWD preflight; `:merge_git_config` writes `.gitignore`/`.gitattributes`
-  into the app folder before any guard checks the folder is actually writable.** Small, isolated.
-  `:merge_git_config` (called near the top of the file, before `:acquire_lock`) is the first thing in the file
-  that writes to the app directory itself, and its own write failures are not checked. Fix: a
-  cheap `type nul > "~wtest.tmp"` + errorlevel check, with a named message pointing at the folder,
-  placed before `:merge_git_config`'s own call site (right after Item 44's line-ending check is a
-  natural spot, since both are "can this even run here at all" preconditions).
-
 - **Item 49: `:lock_is_stale`'s indeterminate PowerShell result is silently treated as "fresh"
   (lock held by a live instance), producing a false "another instance of this setup appears to be
   running" message instead of a graceful continue.** CONFIRMED directly against current source

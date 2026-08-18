@@ -944,7 +944,7 @@ jobs:
         run: |
           & tests\selfapps_preflight.ps1
 
-      - name: "Self-test: line-ending self-check preflight branches (real/conda-full only)"
+      - name: "Self-test: early preflight branches -- line-ending + writable-CWD (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
@@ -2137,6 +2137,10 @@ jobs:
             tests\~selftest_lineending_lf_only\~lineending_bootstrap.log
             tests/~selftest_lineending_lf_only/~bootstrap.status.json
             tests\~selftest_lineending_lf_only\~bootstrap.status.json
+            tests/~selftest_lineending_cwd_not_writable/~lineending_bootstrap.log
+            tests\~selftest_lineending_cwd_not_writable\~lineending_bootstrap.log
+            tests/~selftest_lineending_cwd_not_writable/~bootstrap.status.json
+            tests\~selftest_lineending_cwd_not_writable\~bootstrap.status.json
             tests/~selftest_entrysmoke_no_interpreter/~entrysmoke_no_interpreter_bootstrap.log
             tests\~selftest_entrysmoke_no_interpreter\~entrysmoke_no_interpreter_bootstrap.log
             tests/~selftest_entrysmoke_no_interpreter/~setup.log

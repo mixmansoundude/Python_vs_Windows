@@ -55,6 +55,7 @@ self.collect.submodules,
 self.exe.hidden_import, self.exe.hidden_import.exhaust,
 self.preflight.syntax,
 self.preflight.no_powershell, self.preflight.ps_check_fail, self.preflight.lf_only,
+self.preflight.cwd_not_writable,
 self.entrysmoke.no_interpreter_guard,
 self.cascade.detect, self.cascade.consent, self.cascade.timed,
 self.cascade.exec (uv lane only -- selfapps_cascade.ps1; non-gating),
@@ -936,12 +937,21 @@ PowerShell 7 binary before being wired into `run_setup.bat`, not just reasoned a
 
 Lane: `real` and `conda-full` only, gating from first landing -- matches `self.preflight.syntax`'s
 own precedent for a cheap, provider-agnostic, pure-batch preflight check (no environment or
-dependency work is ever reached in any of these three scenarios, unlike the Nuitka/MSVC-dependent
+dependency work is ever reached in any of these scenarios, unlike the Nuitka/MSVC-dependent
 tests elsewhere in this registry that start non-gating specifically because they could not be
 verified locally).
 
+**Extended for CLAUDE.md Active Backlog Item 48 (`self.preflight.cwd_not_writable`).** The
+writable-CWD preflight sits right after these three checks in `run_setup.bat` (before
+`:merge_git_config`'s own first write to the app folder) and is the same class of "can this even
+run here at all" precondition, so its regression coverage lives in this same file, reusing the
+same `Test-PreflightScenario` helper. Its hook, `HP_TEST_FORCE_CWD_NOT_WRITABLE`, skips the real
+`type nul > ~wtest.tmp` write attempt entirely (rather than revoking filesystem permissions on a
+shared CI runner), producing the same "not found" signal a genuine write failure would.
+
 ```
-self.preflight.no_powershell, self.preflight.ps_check_fail, self.preflight.lf_only
+self.preflight.no_powershell, self.preflight.ps_check_fail, self.preflight.lf_only,
+self.preflight.cwd_not_writable
 ```
 
 ---

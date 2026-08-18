@@ -2231,6 +2231,86 @@ run of the same regex logic before landing, not just reasoned about).
   `HP_TEST_SYSCON_ANSWER` is likewise only tested via its deterministic override, not by separately
   proving the `HP_CI_LANE` branch resolves without hanging).
 
+### Item 48 (closed 2026-08-18)
+
+- **No writable-CWD preflight; `:merge_git_config` and other early writes could fail silently
+  before any guard confirmed the app folder was actually writable.** CONFIRMED directly against
+  source: `type nul > "%HP_CI_MARKER%" 2>nul` and `if not exist "%LOG%" (type nul > "%LOG%")`
+  both wrote to the app folder with no errorlevel check, ahead of `:merge_git_config`'s own first
+  write -- none of them would have surfaced a clear message for a genuinely unwritable folder
+  (a read-only network share, a permissions-locked directory), just a cascade of confusing
+  downstream failures.
+
+  **Fix shipped**: a new writable-CWD preflight right after the `cd /d "%~dp0"` block (before
+  `HP_SCRIPT_ROOT` is even set, ahead of every other write in the file) attempts `type nul >
+  "~wtest.tmp" 2>nul` and checks `if not exist` -- on failure, a named `[ERROR]` message points at
+  `%CD%` and tells the user to move the script to a writable folder, writes
+  `HP_PREFLIGHT_STATUS` (the same early-preflight status file the line-ending checks already use,
+  since `:write_status`'s own machinery does not exist yet at this point), pauses for a real
+  interactive user, and exits 1. On success the probe file is deleted immediately.
+  `HP_TEST_FORCE_CWD_NOT_WRITABLE` forces the branch deterministically in CI by skipping the real
+  write attempt entirely (so `~wtest.tmp` is never created) rather than revoking filesystem
+  permissions on a shared runner -- same forcing technique as `HP_TEST_FORCE_NO_POWERSHELL`.
+
+  **Regression coverage folded into the existing line-ending preflight test file** rather than a
+  new one: `tests/selfapps_lineending_check.ps1`'s `Test-PreflightScenario` helper already covers
+  the identical shape (env-flag-forced branch, exit code, status.json state/exitCode, expected
+  log substrings), so a fourth scenario (`self.preflight.cwd_not_writable`) reuses it directly,
+  with a new `-Req` parameter so its NDJSON row correctly cites `CLAUDE.md-Item-48` instead of the
+  file's original `CLAUDE.md-Item-44`. The CI step name and file header comment were both updated
+  to describe the file as covering "early preflight branches" generally, not line-endings alone.
+
+  **Refined via CodeRabbit's review on PR #442, three real findings fixed same-day.** (1) The
+  probe never cleared a pre-existing `~wtest.tmp` before attempting the write -- a crash between
+  an earlier successful probe and its own cleanup (or any other leftover at that exact path)
+  would make a genuinely unwritable folder read as writable, since `if not exist` after a no-op
+  forced branch would find the STALE file still present. Fixed by unconditionally `del /f /q
+  "~wtest.tmp" >nul 2>&1` immediately before the probe attempt, so the existence check afterward
+  is always meaningful regardless of prior-run leftovers. (2) `%CD%` was echoed unquoted in the
+  `[ERROR]` message -- the same `:log`-echoes-UNQUOTED hazard class documented in
+  `docs/agent-lessons-learned.md` (a folder path containing `&`/`|`/`<`/`>`, all legal in a
+  Windows folder name, would have been misparsed as a shell metacharacter instead of literal
+  text). Fixed by wrapping it in quotes at the echo site (`"%CD%"`), the same fix pattern already
+  established for the `findstr`-piped `HP_SCRIPT_ROOT` case. (3) The NDJSON `req`/`desc` fields on
+  the non-Windows-skip and missing-`run_setup.bat` early-exit branches still hardcoded
+  `CLAUDE.md-Item-44`/"Line-ending self-check..." for ALL FOUR row ids, including the new
+  `cwd_not_writable` row (Item 48) -- those two branches predate the fourth scenario and never
+  got updated when it was added. Fixed by replacing the flat `$rowIds` array with an ordered
+  `$rowIdReqs` map (id -> its own correct `req`), consumed by both branches so every row cites
+  its real backlog item even on paths that never reach `Test-PreflightScenario`'s own `-Req`
+  parameter. Also added the scenario's own work-directory name to `ExpectedSubstrings`, so a
+  regression that drops or corrupts `%CD%` from the error message is actually caught (previously
+  only the fixed prefix/remediation text was asserted). Deliberately NOT implemented: CodeRabbit's
+  suggestion to treat the FINAL cleanup `del`'s own failure as a hard error -- disproportionate
+  for a gitignored scratch probe file with no established precedent elsewhere in this file (every
+  other tilde-prefixed scratch file in `run_setup.bat` uses the same best-effort `>nul 2>&1`
+  cleanup convention); a `~wtest.tmp` a delete could conceivably strand is harmless clutter, not a
+  reason to fail the whole bootstrap. Also deliberately NOT adding a `%RANDOM%`/timestamp suffix
+  to the probe filename (a Blinter SEC017 finding, not a CodeRabbit one): the race/hijack threat
+  model that rule targets is a SHARED multi-user temp directory (e.g. `/tmp`), not a folder the
+  calling user already fully owns, which is what `~wtest.tmp` always is here -- matches every
+  other bare tilde-prefixed scratch filename already used throughout this file.
+
+  **A fourth finding on the same thread, caught by CodeRabbit re-inspecting the fix itself
+  (not the original review pass): `del /f /q` only removes a FILE, never a directory.** If
+  `~wtest.tmp` happened to already exist as a DIRECTORY (not a file) at the exact probe path,
+  the pre-probe `del` would be a silent no-op against it, the real `type nul > "~wtest.tmp"`
+  write attempt would then fail (can't create a file where a directory of the same name already
+  exists), but `if not exist "~wtest.tmp"` would still find the surviving directory and read the
+  preflight as SUCCESSFUL -- the exact false-writable outcome the stale-file fix above was meant
+  to close, just for the other filesystem-entry type. Fixed by adding `if exist "~wtest.tmp" rd
+  /s /q "~wtest.tmp" >nul 2>&1` right after the existing `del`, so whichever of the two survives
+  the first attempt is cleared by the second -- `rd` is a no-op against a plain file (by design,
+  it only removes directories), so ordering `del` then a conditional `rd` handles both shapes of
+  stale leftover without needing to first detect which one is present. Deliberately NOT adding a
+  dedicated regression scenario for this exact case: reproducing it needs a directory literally
+  named `~wtest.tmp` to already exist in a completely fresh app folder before that folder's very
+  first bootstrap run ever executes -- and proving it would require extending
+  `Test-PreflightScenario`'s own shape to a new "pre-seed an anomaly, then expect the OVERALL run
+  to still succeed" mode, distinct from every existing scenario in that file (all four assert a
+  forced FAILURE), for a real-world trigger rate low enough that the underlying source fix (cheap,
+  two extra lines) was judged sufficient on its own.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
