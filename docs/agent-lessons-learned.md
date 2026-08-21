@@ -456,9 +456,10 @@ list; the recurring traps that have actually bitten us:
   enclosing block, confirmed against `:print_fastpath_ambiguous_note`) doesn't false-positive.
   Tests: `tests/test_check_delimiters_import.py`'s three `test_paren_*` cases.
 
-  **The identical hazard applies to `rem` comment text too, and `check_delimiters.py` does NOT
-  catch it -- confirmed as a second real shipped regression, PR #445 (Item 52), all 8 CI lanes
-  broken simultaneously.** A `rem` comment explaining "check the highest threshold first" split a
+  **The identical hazard applies to `rem` comment text too, and `check_delimiters.py` did NOT
+  catch it at the time (before CLAUDE.md Item 61, see below) -- confirmed as a second real shipped
+  regression, PR #445 (Item 52), all 8 CI lanes broken simultaneously.** A `rem` comment explaining
+  "check the highest threshold first" split a
   parenthetical remark's `(`/`)` across three separate `rem` lines, nested three levels deep
   inside real `if (...)` blocks (`if exist ( if not errorlevel 1 ( if errorlevel 1 ( ... rem
   lines here ... )`). Symptom matched the echo-hazard bug exactly: every CI lane that runs a real

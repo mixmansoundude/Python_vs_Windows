@@ -1060,7 +1060,8 @@ way (no live Windows execution available here), that is noted explicitly rather 
   bogus findings on first attempt, cascading from a handful of root causes) rather than useful:**
   1. **cmd.exe's own `^` escape character was not recognized at all.** `^(` / `^)` is this file's
      own established, already-documented convention for defusing this exact hazard (see the error
-     message's own suggested fix) -- `run_setup.bat`'s file-header rem block (lines ~43-58) uses it
+     message's own suggested fix) -- `run_setup.bat`'s file-header rem block (the `LINE-ENDING
+     SELF-CHECK` block) uses it
      extensively ("Windows ^(CRLF^)", etc.). Without recognizing it, the checker flagged the very
      construct that fixes the hazard, and every mistracked bracket corrupted the stack for
      everything scanned afterward. Fixed: a bracket character on any `.bat`/`.cmd` line preceded by
@@ -1094,10 +1095,13 @@ way (no live Windows execution available here), that is noted explicitly rather 
   `run_setup.bat` itself** (run `python tools/check_delimiters.py run_setup.bat` for the current,
   authoritative list -- do not copy the list here, since any future edit to the file shifts every
   line number). Each is a real cross-line `(`/`)` pair inside `rem` prose, nested inside a real
-  `if`/`for` block, that predates this fix and was invisible to the checker until now (an existing
-  hazard only manifests when the specific surrounding code happens to also be reached/reparsed in a
-  way that exposes it -- do not assume `run_setup.bat` was clean of this bug just because CI has
-  been green; `check_delimiters.py` is advisory-only, not wired into any `.github/workflows/*.yml`
+  `if`/`for` block, that predates this fix and was invisible to the checker until now (cmd.exe
+  parses an enclosing `if`/`for` block's full raw text to find its closing paren BEFORE it ever
+  evaluates the block's own condition, so the hazard can surface purely from cmd.exe reaching and
+  parsing that block -- whenever the file is invoked and control flow reaches that point -- even
+  if the condition itself would have evaluated false and the body never executed; do not assume
+  `run_setup.bat` was clean of this bug just because CI has been green; `check_delimiters.py` is
+  advisory-only, not wired into any `.github/workflows/*.yml`
   gate, so this has not broken CI, only the local/agent-facing sanity-sweep discipline). **Whoever
   picks this up next**: audit each one individually (most are very likely simple, low-risk prose
   rewording -- see the single `(^, &, or |)` reordering this same PR applied to the ONE genuine

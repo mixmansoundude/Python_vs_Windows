@@ -276,17 +276,59 @@ def test_apostrophe_and_standalone_quote_in_rem_text_do_not_corrupt_paren_tracki
     # that swallows later, unrelated characters (including real parens) until some
     # later, unrelated quote happens to "close" it. Confirmed directly against real
     # run_setup.bat prose ("cmd.exe's", "GitHub's", '...a literal " would close...').
-    # A balanced same-line pair on its OWN line must still be harmless either way.
+    #
+    # derived requirement (CodeRabbit review, PR #449): the original version of this
+    # fixture had no '(' or ')' anywhere AFTER the apostrophe/standalone-quote lines,
+    # so a REGRESSED implementation that still corrupts string-state tracking (and
+    # therefore never resumes normal scanning at all) could pass this test purely by
+    # having nothing left to scan. Nested inside a real enclosing block, with a real
+    # cross-line rem paren pair immediately afterward that MUST still be flagged --
+    # proving the fix genuinely resumes correct paren tracking, not just that it
+    # avoids an immediate crash/false-positive on the quote characters themselves.
     bat = tmp_path / "sample.bat"
     bat.write_text(
         "@echo off\r\n"
-        "rem cmd.exe's own quoting rules mean a literal \" would close the quote.\r\n"
-        "rem This is just an ordinary sentence that doesn't need any escaping here.\r\n"
-        "echo done\r\n",
+        "if defined HP_NO_INTERPRETER (\r\n"
+        "  rem cmd.exe's own quoting rules mean a literal \" would close the quote.\r\n"
+        "  rem This is just an ordinary sentence that doesn't need any escaping here.\r\n"
+        "  rem method (uv, conda, a fresh download, a\r\n"
+        "  rem local virtual environment) failed -- usually\r\n"
+        "  exit /b 0\r\n"
+        ")\r\n",
         encoding="ascii",
     )
     result = check_delimiters.main([str(bat)])
     captured = capsys.readouterr()
 
-    assert result == 0
-    assert "No delimiter issues found." in captured.out
+    assert result == 1
+    assert "does not close until line" in captured.out
+    assert "counts parens in rem text too" in captured.out
+
+
+def test_tab_delimited_rem_line_inside_block_is_flagged(tmp_path, capsys):
+    # derived requirement (CodeRabbit review, PR #449, Major): cmd.exe treats a TAB
+    # exactly like a space as the word separator after "rem" -- "rem\tsomething" is
+    # just as much a real comment as "rem something". The original REM_LINE_RE-less
+    # classifier (a literal "REM " startswith check) missed this: a tab-delimited rem
+    # line matched neither the rem branch nor the echo branch, so its parens were
+    # scanned WITHOUT prose_kind tagging and a cross-line pair on such a line was
+    # silently never flagged. Same fixture shape as
+    # test_paren_split_across_rem_lines_inside_block_is_flagged above, but with a tab
+    # after "rem" instead of a space, proving both rem-detection call sites recognize
+    # it identically.
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "if defined HP_NO_INTERPRETER (\r\n"
+        "  rem\tmethod (uv, conda, a fresh download, a\r\n"
+        "  rem\tlocal virtual environment) failed -- usually\r\n"
+        "  exit /b 0\r\n"
+        ")\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "does not close until line" in captured.out
+    assert "counts parens in rem text too" in captured.out

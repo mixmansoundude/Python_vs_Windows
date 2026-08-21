@@ -20,6 +20,14 @@ TARGET_SUFFIXES = {
     ".json",
 }
 
+# derived requirement (CodeRabbit review, PR #449): cmd.exe treats a TAB exactly like a
+# space as the word separator after "rem" -- `rem\tsomething` is just as much a real
+# comment as `rem something`. A literal `"REM "` (space only) prefix check misses it,
+# silently leaving such a line's parens untracked by the cross-line-paren hazard check.
+# Shared by BOTH .bat/.cmd rem-detection call sites in this file so they cannot drift
+# apart -- do not inline a second, differently-spelled check.
+REM_LINE_RE = re.compile(r"rem(?:[ \t]|$)", re.IGNORECASE)
+
 
 @dataclass
 class Issue:
@@ -249,10 +257,9 @@ class DelimiterChecker:
             is_bat_echo_line = False
             is_bat_rem_line = False
             if lower_suffix in {".bat", ".cmd"}:
-                upper = stripped.upper()
                 if stripped.startswith("::"):
                     continue
-                if upper.startswith("REM ") or upper == "REM":
+                if REM_LINE_RE.match(stripped):
                     # derived requirement (CLAUDE.md Item 61, PR #445 Item 52 incident): a
                     # "rem" line is NOT opaque to cmd.exe's own parenthesized-block parser --
                     # it counts '(' / ')' characters inside rem comment text exactly the same
@@ -457,8 +464,7 @@ class DelimiterChecker:
             for line_no, raw_line in enumerate(lines, start=1):
                 line = raw_line.rstrip("\n\r")
                 stripped = line.lstrip()
-                upper = stripped.upper()
-                if upper.startswith("REM ") or upper == "REM" or stripped.startswith("::"):
+                if REM_LINE_RE.match(stripped) or stripped.startswith("::"):
                     continue
                 scan_from = None
                 if not self._bat_in_backtick:
