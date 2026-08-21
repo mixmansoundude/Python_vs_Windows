@@ -112,9 +112,16 @@ jobs:
               // check had even started, because an admin-capable AUTOMERGE_TOKEN made
               // viewerCanEnableAutoMerge read false immediately (nothing to queue -- the actor can
               // already bypass). Do not reintroduce a direct-merge fallback of any kind here.
+              //
+              // derived requirement (CodeRabbit review on PR #448): attempt the enable call
+              // regardless of viewerCanEnableAutoMerge rather than skipping outright -- that
+              // field is a client-side hint, not authoritative, and can read false for a
+              // genuinely still-pending PR too (e.g. before an admin-capable token is rescoped).
+              // The GraphQL mutation itself is the real source of truth: if it succeeds, the PR
+              // is genuinely queued; if it fails, the catch block below just logs it -- never a
+              // license to merge directly.
               if (!pr.viewerCanEnableAutoMerge) {
-                core.info(`#${number}: viewerCanEnable=false (permissions, already armed, or repo auto-merge disabled); skipping -- this workflow never merges directly, only queues.`);
-                continue;
+                core.info(`#${number}: viewerCanEnable=false; attempting enable anyway (queue-only, never merges directly)`);
               }
 
               try {
