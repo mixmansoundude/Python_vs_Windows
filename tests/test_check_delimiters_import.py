@@ -189,3 +189,104 @@ def test_paren_pair_on_redirected_echo_line_deeply_nested_is_a_known_false_negat
     # instead of loosening it.
     assert result == 0
     assert "No delimiter issues found." in captured.out
+
+
+# derived requirement: these tests close the cross-line half of CLAUDE.md Item 61 --
+# a "rem" comment was previously fully opaque to check_delimiters.py (skipped from
+# paren-scanning entirely, unlike "echo" lines), so it never caught the identical
+# PR #408 hazard class when it hit a "rem" block instead of an "echo" one, as it
+# genuinely did in PR #445 (see docs/agent-lessons-learned.md's "rem needs a space
+# after it" entry's sibling incident). The fix routes rem lines through the same
+# character scan + is_echo_open-style stack tracking echo lines already get.
+def test_paren_split_across_rem_lines_inside_block_is_flagged(tmp_path, capsys):
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "if defined HP_NO_INTERPRETER (\r\n"
+        "  rem method (uv, conda, a fresh download, a\r\n"
+        "  rem local virtual environment) failed -- usually\r\n"
+        "  exit /b 0\r\n"
+        ")\r\n"
+        "echo done\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "does not close until line" in captured.out
+    assert "counts parens in rem text too" in captured.out
+
+
+def test_paren_split_across_rem_lines_at_top_level_is_not_flagged(tmp_path, capsys):
+    # Same textual pattern as above, but with no enclosing if/for block -- a real
+    # instance of this shape exists in run_setup.bat's own file header (a top-level
+    # "rem" block, no enclosing bracket) and must not false-positive, mirroring the
+    # existing top-level-echo negative case above.
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "rem  and it exited with an error just now (see the status line\r\n"
+        "rem  above) -- so we cannot tell what happened.\r\n"
+        "exit /b 0\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+# derived requirement: two real, necessary correctness bugs found while implementing
+# the fix above, both discovered only by running the extended checker against the
+# real run_setup.bat (not by reasoning about the fixtures alone) -- each one alone
+# was enough to make the rem-line extension actively counterproductive (flagging or
+# corrupting far more than it fixed), since real "rem" prose in this heavily-
+# documented codebase routinely contains both patterns.
+def test_caret_escaped_paren_on_rem_line_is_not_flagged(tmp_path, capsys):
+    # cmd.exe's own escape character ('^') in front of a bracket makes it a literal
+    # character there, not a real block delimiter -- and '^(' / '^)' is this repo's
+    # own established convention for defusing exactly this hazard (see the error
+    # message's own suggested fix, and run_setup.bat's real file-header rem block,
+    # which uses this pattern extensively). Without this check, the very construct
+    # that FIXES the hazard was itself flagged as if it were the hazard.
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "if defined HP_NO_INTERPRETER (\r\n"
+        "  rem this file's line endings are Windows ^(CRLF^) by construction\r\n"
+        "  rem and enforced elsewhere ^(see the docs^), but a stale copy can differ\r\n"
+        "  exit /b 0\r\n"
+        ")\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+def test_apostrophe_and_standalone_quote_in_rem_text_do_not_corrupt_paren_tracking(tmp_path, capsys):
+    # cmd.exe has no concept of a single-quote string delimiter at all, and rem/echo
+    # PROSE text (unlike real code) has no "quoted argument" concept either -- so an
+    # ordinary contraction/possessive ("doesn't", "user's") or a standalone '"'
+    # describing the quote character itself must never open a persistent "string"
+    # that swallows later, unrelated characters (including real parens) until some
+    # later, unrelated quote happens to "close" it. Confirmed directly against real
+    # run_setup.bat prose ("cmd.exe's", "GitHub's", '...a literal " would close...').
+    # A balanced same-line pair on its OWN line must still be harmless either way.
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "rem cmd.exe's own quoting rules mean a literal \" would close the quote.\r\n"
+        "rem This is just an ordinary sentence that doesn't need any escaping here.\r\n"
+        "echo done\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out

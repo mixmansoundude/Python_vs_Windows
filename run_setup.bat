@@ -4455,7 +4455,7 @@ if %HP_DLL_ITER% GEQ 3 (
   goto :dll_bundle_recover_done
 )
 rem Append via file content (type), never via %VAR% expansion on an echo/set line --
-rem a DLL basename can legally contain a space or a cmd.exe metacharacter (&, |, ^),
+rem a DLL basename can legally contain a space or a cmd.exe metacharacter (^, &, or |),
 rem which would corrupt or split the command line if routed through argv/echo text.
 type "~next_dll.txt">>"~dll_bundle_tried.txt"
 echo.>>"~dll_bundle_tried.txt"

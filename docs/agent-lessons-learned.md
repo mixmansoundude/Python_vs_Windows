@@ -475,14 +475,22 @@ list; the recurring traps that have actually bitten us:
   relative to `echo` text: it will report a clean file even when a `rem` block contains exactly
   this hazard. **Fix applied to the specific instance**: reworded the comment to avoid the literal
   `(`/`)` characters entirely (` -- ` in place of the parenthetical), per the same rule as the echo
-  case. **The general gap in `check_delimiters.py` itself is NOT yet closed** -- extending its
-  existing `is_echo_open`-style tracking to also cover `rem` lines (dropping the current
-  `continue`-and-skip shortcut, replacing it with the same character-scan-plus-cross-line-check the
-  echo path already has) would close this class of bug the same way the echo fix did in 2026-07 --
-  flagged as a candidate follow-up item, not implemented as part of this fix (this fix only needed
-  to unblock the one broken instance, not audit or re-armor every pre-existing `rem` block in the
-  file -- a large, separate undertaking on a ~5300-line file with many other cross-line `rem`
-  parens whose actual nesting-safety was not individually re-verified here).
+  case. **The general gap in `check_delimiters.py` itself is now closed (CLAUDE.md Item 61)** --
+  `StackItem`'s bool `is_echo_open` field was generalized to `Optional[str] prose_kind`, and `rem`
+  lines now route through the same character scan/cross-line-close check `echo` lines already had
+  (the `REM `/`::` `continue`-and-skip shortcut now only applies to `::`). Reusing that mechanism
+  for `rem` prose required two ADDITIONAL, general (not `rem`-specific) fixes, found only by running
+  the extended checker against the real `run_setup.bat`: (1) a bracket preceded by an odd count of
+  `^` (this file's own established escape convention for defusing this exact hazard, e.g. `^(CRLF^)`
+  in its own header) is now treated as literal, not a real delimiter; (2) a bare `'` is now always
+  inert on `.bat`/`.cmd` lines (cmd.exe has no single-quote-string concept at all), and `"` is inert
+  specifically on rem/echo PROSE lines (an ordinary contraction/possessive, or a standalone `"`
+  describing the quote character itself, was previously opening a persistent, incorrectly
+  cross-line "string" that swallowed later real parens as fake string content). See CLAUDE.md's
+  Item 61 entry for the full fix trace, the 4 new regression tests, and the still-open follow-up:
+  running the fixed checker against `run_setup.bat` surfaced 26 genuine, previously-invisible
+  cross-line `rem` pairs already in the file that need their own audit (not attempted in this same
+  slice, per this repo's own one-slice-at-a-time discipline for anything touching `run_setup.bat`).
 
   **The rem-comment fix above did NOT fully resolve the regression -- a SECOND, independent paren
   hazard in the SAME code block was found only via a second round of live CI evidence, after the
