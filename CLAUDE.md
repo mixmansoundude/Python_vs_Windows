@@ -1087,38 +1087,45 @@ way (no live Windows execution available here), that is noted explicitly rather 
   and `:run_entry_smoke`, none of it needed when there's no interpreter, but not yet verified safe
   to skip wholesale).
 
-  **Bucket A remaining scope: candidate fix shapes for a general mechanism, not yet chosen
-  between -- full pros/cons/value-add/risk writeup now in `docs/plan-die-fatal-remediation.md`
-  (2026-08-18, corrected same day via a direct hand-trace -- see below), grounded against the
-  current, actual 27-site inventory (not the ~31 estimate this entry used to cite before Items
-  45/Bucket B/slice 1 landed), with the choice itself registered as an open question for the
-  maintainer in `docs/open-questions.md`.** Three candidates: (a) targeted `goto`s per site,
-  continuing the slice-1 pattern; (b) a global `HP_FATAL` flag set by `:die`, checked via `if
-  defined HP_FATAL goto :fatal_exit` at chosen resumption points; (c) change `:die` itself to halt
-  the process directly (a real `exit`, not `exit /b`). **Corrected 2026-08-18**: this entry
-  previously claimed (c)'s main risk was "a bare `exit` closes the console window immediately for
-  a double-click user with no chance to read the message first" -- traced directly against `:die`'s
-  actual current body and found this does NOT hold: `:die` already `pause`s BEFORE its existing
-  `exit /b`, so a real interactive user has already read the message by the time a converted
-  `exit` would run. The real, verified risk is narrower and different: this repo tracks the OS
-  process exit code and the self-reported `~bootstrap.status.json` `exitCode` field as two
-  INDEPENDENT signals (most `:die` sites today fall through to `:success`'s unconditional `exit /b
-  0`, so the real process exit code is currently always `0` regardless of `state` -- a deliberate
-  "graceful stop" design), and a hand-sweep of every `tests/*.ps1` file found exactly ONE currently
-  -gating test (`tests/selfapps_entrysmoke_no_interpreter.ps1:171`) hard-asserts that old behavior
-  as part of its own pass condition. See `docs/agent-lessons-learned.md`'s `:die` entry and the
-  plan doc's own corrected candidate-(c) section for the full trace -- (c) is genuinely more
-  viable than this entry previously suggested, though still the widest-blast-radius option of the
-  three. The plan doc's own recommendation: continue (a) for the immediate next slice regardless
-  (the only one of the three that fits this item's own "EXTREME CAUTION, one slice at a time"
-  constraint without modification); if the durable close-the-whole-class outcome is wanted later,
-  the choice between (b) and (c) is now a closer call than previously stated and should be scoped
-  as its own dedicated effort with a small proof-of-concept and CI soak time, not folded into the
-  ongoing slice work. Given the number of remaining call sites and `:die`'s central, load-bearing
-  role throughout the file, treat this as EXTREME CAUTION on the same order as the
-  DLL-bundling/hidden-import repair loops
-  elsewhere in this backlog -- one incremental slice at a time (slice 1 above is the second proof
-  this works, after Bucket B), not a single sweeping change across every remaining site.
+  **Bucket A decision (made 2026-08-21, maintainer call -- see `docs/plan-die-fatal-remediation.md`'s
+  "Batch Roadmap" section for the full reasoning and `docs/agent-lessons-learned.md`'s `:die` entry
+  for the choreography this decision preserves): continue (a) as a deliberate STOPGAP, batched by
+  proven shape rather than one site per PR; (c) (change `:die` itself to halt the process, `exit`
+  not `exit /b`) is the likely eventual target for a SEPARATE, later, dedicated effort once the
+  batches below shrink the remaining inventory -- not folded into the ongoing batch work. (b) (a
+  global `HP_FATAL` flag) remains a candidate for that later effort too but is not preferred over
+  (c) per the plan doc's own blast-radius-vs-structural-simplicity tradeoff writeup.** All 20
+  remaining sites (27 total minus the 7 already safe -- 2 with slice 1's own `goto`, 5 inside
+  `:conda_binary_corrupt`'s self-contained `exit /b` chain) are now individually traced and grouped
+  into 6 batches by shape and risk (`docs/plan-die-fatal-remediation.md`'s Finding 3), landing in
+  this order:
+  - **Batch 1 (next up): the conda-acquisition-probe chain, 5 sites** (`conda.bat not found after
+    bootstrap`, `'conda'`/`'python'`/`'python -V'` not-found-on-PATH, `Conda not found at:`) --
+    same proven shape as slice 1, can currently stack 4-5 redundant `[ERROR]`/pause pairs for one
+    root cause before reaching the real sink; existing test `tests/selfapps_conda_bothfail.ps1`
+    already reaches this exact chain via its `:try_conda_install`-failure setup, so no new test
+    hook is needed, only new assertions.
+  - **Batch 2**: `:conda_create_done`'s "python.exe missing" check (1 site) -- fixes a genuinely
+    misleading "[BOOT] ... Selected Python provider: Conda (Portable)." success-sounding message
+    that currently prints right after an `[ERROR]` was already reported.
+  - **Batch 4/5**: 7 embedded-helper-write-failure sites plus 2 CI-only-exposure sites -- low risk,
+    low urgency, mechanical once each is individually traced.
+  - **Batch 3**: the `:determine_entry` double-call (1353) -- `:determine_entry` runs TWICE per
+    normal bootstrap; falling through here wastes the entire dependency-install/pipreqs/warnfix
+    block (far more intervening work than Batch 1) before reproducing the same failure at the
+    second call site. MEDIUM risk (a real behavior change, not just a redundant-pause removal) --
+    lands on its own, later.
+  - **Batch 6**: `:try_conda_install`'s own two failure sites (5520/5522) -- MEDIUM risk, needs a
+    new caller-side coordination flag (not a drop-in goto, since these sites already sit inside a
+    `call`ed subroutine with their own `goto :eof`); deliberately deferred until after Batch 1
+    lands, since Batch 1's own fix already shrinks this site's fall-through blast radius as a side
+    effect.
+  - **1334** (the "Active Python interpreter not resolved" sink every other batch's `goto` routes
+    toward) stays deferred indefinitely -- already Item-45-backstopped for the one dangerous
+    consequence, a fix here would only trim harmless wasted work.
+  Same EXTREME CAUTION discipline as every other high-risk change in this file: one batch lands at
+  a time, full 8-lane matrix CI proof to completion before the next batch starts, no blanket sweep
+  across every remaining site in one PR.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

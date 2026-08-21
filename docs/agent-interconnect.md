@@ -1063,6 +1063,39 @@ this specific check does not catch. So the fix relocates pause #2 to an already-
 cutting pause count. A further Bucket A slice targeting `:after_env_mode_selection`'s own check is
 the natural next candidate if reducing to a single pause is ever pursued.
 
+### Batch 1 (CLAUDE.md Item 46 Bucket A): the conda-acquisition-probe chain now also collapses, same limitation as above
+
+**Sibling fix to slice 1 above, applied one step EARLIER in the same overall provider-acquisition
+flow -- touch any of these 5 sites, must understand the other 4, since they form one linear
+fall-through chain, not 5 independent bugs.** `docs/plan-die-fatal-remediation.md`'s Finding 3
+traced this chain in full: `:after_conda_bat_validation`'s own `if not defined CONDA_BAT (...)`
+block (`conda.bat not found after bootstrap.`), then (once `CONDA_BAT` update reaches PATH) `where
+conda` / `where python` / `python -V`'s own `||` failure blocks, then the REQ-... channel-policy
+check (`Conda not found at: %CONDA_BAT%`) -- all 5 share the identical root cause (conda was never
+successfully acquired) and, before this fix, could stack up to 4-5 back-to-back `[ERROR]`/pause
+pairs before finally reaching `:try_conda_create` with a broken `CONDA_BAT`, dying again there
+(already `goto`-fixed by slice 1), and ultimately landing on the same `:after_env_mode_selection`
+"Active Python interpreter not resolved" sink slice 1's own fix routes toward. Fixed by adding
+`goto :after_env_mode_selection` right after each of the 5 `call :die` lines, same pattern as
+slice 1.
+
+**Same "does not reduce to one pause" limitation slice 1 already taught -- do not expect this fix
+to eliminate the sink pause.** Whichever of the 5 sites fires first still pauses once (its own
+message is the most specific, most actionable one), and execution still reaches the SAME
+`:after_env_mode_selection`-guard sink pause described above for slice 1 -- this fix only prevents
+the OTHER 4 sites in the chain from ALSO firing for the identical root cause. Worst case goes from
+5-6 stacked pauses down to 2, not 1.
+
+**`:try_conda_install`'s own two failure sites (`:tci_both_failed`, CLAUDE.md's Batch 6, not yet
+fixed) fall through INTO this exact chain as their caller resumes** -- see that subroutine's own
+`call`-frame return via `goto :eof` back to its caller at the Miniconda-install call site, which
+then runs `:select_conda_bat` and falls straight into this chain's own top (`conda.bat not found`)
+when the install genuinely failed. This means Batch 1's fix already shrinks Batch 6's own
+fall-through blast radius as a side effect, even before Batch 6 itself is touched -- confirmed via
+`tests/selfapps_conda_bothfail.ps1`, which drives a genuine `:tci_both_failed` failure and (post
+this fix) now asserts the resulting cascade collapses to exactly this chain's first site plus the
+sink, not the full 5-6-pause worst case.
+
 Regression test: `tests/selfapps_entrysmoke_no_interpreter.ps1` (`self.entrysmoke.no_interpreter_
 guard`, `conda-full` lane) -- asserts `[ERROR] python.exe missing from conda environment.` is
 ABSENT (proving the second `:handle_conda_failure` call is skipped) and the new
