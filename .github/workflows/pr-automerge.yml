@@ -23,6 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      # derived requirement (user rollout, 2026-08-21): AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS is a
+      # fine-grained PAT scoped to "Pull requests: Read and write" only -- unlike AUTOMERGE_TOKEN
+      # (an older, admin-capable token; see the PR #447 incident documented on the step below),
+      # it should NOT be able to bypass required-status-check branch protection even if this
+      # workflow's own logic ever regressed back toward a direct-merge fallback. Tried first;
+      # AUTOMERGE_TOKEN stays wired as a fallback until the new token is confirmed working across
+      # several real PRs, then AUTOMERGE_TOKEN's own step should be removed.
+      AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS: ${{ secrets.AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS }}
       AUTOMERGE_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
     steps:
       - name: Wait for automated reviews (PR opened only)
@@ -62,16 +70,23 @@ jobs:
             const nums = await numbersFromEvent();
             core.setOutput('numbers', JSON.stringify(nums));
 
-      - name: Enable Auto-merge via PAT
-        if: ${{ steps.prs.outputs.numbers != '[]' && env.AUTOMERGE_TOKEN }}
+      - name: Enable Auto-merge via AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS (preferred)
+        if: ${{ steps.prs.outputs.numbers != '[]' && env.AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS }}
+        # derived requirement: this step must never block the AUTOMERGE_TOKEN legacy-fallback
+        # step below, even if the new token turns out to be malformed enough that the
+        # actions/github-script action itself fails before the script body ever runs (e.g. at
+        # Octokit client construction). continue-on-error keeps the job's overall status healthy
+        # for the fallback step's own (unconditioned-on-this-step) `if:` to still evaluate and
+        # run, while this step's own outcome/log still faithfully shows failure for troubleshooting.
+        continue-on-error: true
         uses: actions/github-script@v8
         with:
-          github-token: ${{ secrets.AUTOMERGE_TOKEN }}
+          github-token: ${{ secrets.AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS }}
           script: |
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
             const nums = JSON.parse(process.env.numbers || '[]');
-            core.info('Auth path: PAT (AUTOMERGE_TOKEN)');
+            core.info('Auth path: PAT (AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS, preferred non-admin token)');
 
             const ql = `
               query($owner:String!,$repo:String!,$num:Int!){
@@ -90,6 +105,94 @@ jobs:
               }
             `;
 
+            // derived requirement: NEVER merge directly from this workflow -- only ever queue
+            // via enablePullRequestAutoMerge, which GitHub itself will not complete until
+            // required checks/reviews genuinely pass. A prior version of this script fell back
+            // to github.rest.pulls.merge() here whenever viewerCanEnableAutoMerge read false,
+            // gated only on pr.mergeable === 'MERGEABLE' -- which means "no git conflicts with
+            // base," NOT "required checks passed." That fallback merged a real PR (#447) within
+            // ~20 seconds of it opening, before any CI check had even started, because an
+            // admin-capable AUTOMERGE_TOKEN made viewerCanEnableAutoMerge read false immediately
+            // (nothing to queue -- the actor can already bypass). Do not reintroduce a
+            // direct-merge fallback of any kind here, in this step or any of its siblings.
+            //
+            // derived requirement (CodeRabbit review on PR #448): attempt the enable call
+            // regardless of viewerCanEnableAutoMerge rather than skipping outright -- that
+            // field is a client-side hint, not authoritative, and can read false for a
+            // genuinely still-pending PR too. The GraphQL mutation itself is the real source of
+            // truth: if it succeeds, the PR is genuinely queued; if it fails, it's just logged --
+            // never a license to merge directly.
+            for (const number of nums) {
+              try {
+                const { data: prRest } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                const labels = (prRest.labels || []).map(l => (l.name||'').toLowerCase());
+                const isSameRepo = prRest.head?.repo?.full_name === prRest.base?.repo?.full_name;
+
+                if (prRest.state !== 'open' || prRest.draft) { core.info(`#${number}: skip (closed/draft)`); continue; }
+                if (!isSameRepo) { core.info(`#${number}: skip (fork PR)`); continue; }
+                if (labels.includes('no-automerge')) { core.info(`#${number}: skip (has 'no-automerge')`); continue; }
+                if (prRest.auto_merge) { core.info(`#${number}: already armed (REST)`); continue; }
+
+                const pre = await github.graphql(ql, { owner, repo, num: number });
+                const pr = pre.repository.pullRequest;
+                if (!pr.viewerCanEnableAutoMerge) {
+                  core.info(`#${number}: viewerCanEnable=false; attempting enable anyway (queue-only, never merges directly)`);
+                }
+
+                await github.graphql(enable, { id: pr.id });
+                const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                if (after.auto_merge) {
+                  core.info(`#${number}: Auto-merge enabled (Squash) via AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS [OK]`);
+                } else {
+                  core.info(`#${number}: enable via AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS reported success, but REST auto_merge is null (will rely on diagnostics/legacy fallback).`);
+                }
+              } catch (e) {
+                // core.warning (not core.info) so an outright failure of the new token --
+                // including an auth/permission failure on the very first REST call, not just the
+                // enable mutation -- is visually distinct in the Actions log and shows up as its
+                // own check-run annotation, making it easy to confirm from the logs whether
+                // AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS's scopes are sufficient.
+                const msg = e?.errors ? JSON.stringify(e.errors[0]) : String(e.message||e);
+                core.warning(`#${number}: AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS FAILED (${msg}) -- falling back to AUTOMERGE_TOKEN (legacy) below.`);
+              }
+            }
+        env:
+          numbers: ${{ steps.prs.outputs.numbers }}
+
+      - name: Enable Auto-merge via AUTOMERGE_TOKEN (legacy, admin-capable -- remove once AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS is confirmed working)
+        if: ${{ steps.prs.outputs.numbers != '[]' && env.AUTOMERGE_TOKEN }}
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.AUTOMERGE_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const nums = JSON.parse(process.env.numbers || '[]');
+            core.info('Auth path: PAT (AUTOMERGE_TOKEN, legacy admin-capable fallback)');
+
+            const ql = `
+              query($owner:String!,$repo:String!,$num:Int!){
+                repository(owner:$owner,name:$repo){
+                  pullRequest(number:$num){
+                    id number isDraft mergeable reviewDecision viewerCanEnableAutoMerge
+                    autoMergeRequest { enabledAt }
+                    headRepository { nameWithOwner } baseRepository { nameWithOwner }
+                  }
+                }
+              }
+            `;
+            const enable = `
+              mutation($id:ID!){
+                enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:SQUASH}){ clientMutationId }
+              }
+            `;
+
+            // derived requirement: no direct-merge fallback here either -- see the matching
+            // comment in the AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS step above for the PR #447
+            // incident this protects against, and for why the enable call is always attempted
+            // regardless of viewerCanEnableAutoMerge. This step is a fallback for any PR the
+            // preferred token's step above could not arm (its own `already armed (REST)` check
+            // just above makes it a safe no-op for anything already armed by that step).
             for (const number of nums) {
               const { data: prRest } = await github.rest.pulls.get({ owner, repo, pull_number: number });
               const labels = (prRest.labels || []).map(l => (l.name||'').toLowerCase());
@@ -103,46 +206,27 @@ jobs:
               const pre = await github.graphql(ql, { owner, repo, num: number });
               const pr = pre.repository.pullRequest;
               if (!pr.viewerCanEnableAutoMerge) {
-                core.info(`#${number}: viewerCanEnable=false (PR likely immediately mergeable); trying direct merge`);
-                if (pr.mergeable === 'MERGEABLE') {
-                  try {
-                    await github.rest.pulls.merge({ owner, repo, pull_number: number, merge_method: 'squash' });
-                    core.info(`#${number}: Merged directly (viewerCanEnable=false path) [OK]`);
-                  } catch (mergeErr) {
-                    core.info(`#${number}: Direct merge failed: ${mergeErr.message || String(mergeErr)}`);
-                  }
-                }
-                continue;
+                core.info(`#${number}: viewerCanEnable=false; attempting enable anyway (queue-only, never merges directly)`);
               }
 
               try {
                 await github.graphql(enable, { id: pr.id });
                 const { data: after } = await github.rest.pulls.get({ owner, repo, pull_number: number });
                 if (after.auto_merge) {
-                  core.info(`#${number}: Auto-merge enabled (Squash) via PAT [OK]`);
+                  core.info(`#${number}: Auto-merge enabled (Squash) via AUTOMERGE_TOKEN (legacy) [OK]`);
                 } else {
-                  core.info(`#${number}: enable via PAT reported success, but REST auto_merge is null (will rely on diagnostics).`);
+                  core.info(`#${number}: enable via AUTOMERGE_TOKEN (legacy) reported success, but REST auto_merge is null (will rely on diagnostics).`);
                 }
               } catch (e) {
                 const msg = e?.errors ? JSON.stringify(e.errors[0]) : String(e.message||e);
-                core.info(`#${number}: enable failed via PAT (GraphQL): ${msg}; checking for immediate merge`);
-                // Direct merge fallback: enablePullRequestAutoMerge fails when all required checks
-                // have already passed (PR immediately mergeable). Fall back to REST merge in that case.
-                if (pr.mergeable === 'MERGEABLE') {
-                  try {
-                    await github.rest.pulls.merge({ owner, repo, pull_number: number, merge_method: 'squash' });
-                    core.info(`#${number}: Merged directly (PR was immediately mergeable) [OK]`);
-                  } catch (mergeErr) {
-                    core.info(`#${number}: Direct merge failed: ${mergeErr.message || String(mergeErr)}`);
-                  }
-                }
+                core.info(`#${number}: enable failed via AUTOMERGE_TOKEN (legacy) (GraphQL): ${msg}`);
               }
             }
         env:
           numbers: ${{ steps.prs.outputs.numbers }}
 
       - name: Enable Auto-merge via GITHUB_TOKEN
-        if: ${{ steps.prs.outputs.numbers != '[]' && !env.AUTOMERGE_TOKEN }}
+        if: ${{ steps.prs.outputs.numbers != '[]' && !env.AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS && !env.AUTOMERGE_TOKEN }}
         uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
@@ -177,18 +261,10 @@ jobs:
                   core.info(`#${number}: enable via GITHUB_TOKEN reported success, but REST auto_merge is null (permissions likely).`);
                 }
               } catch (e) {
+                // derived requirement: no direct-merge fallback here either -- see the matching
+                // comment in the AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS step above for why (PR #447).
                 const msg = e?.errors ? JSON.stringify(e.errors[0]) : String(e.message||e);
-                core.info(`#${number}: enable failed via GITHUB_TOKEN (GraphQL): ${msg}; checking for immediate merge`);
-                // Direct merge fallback: enablePullRequestAutoMerge fails when all required checks
-                // have already passed (PR immediately mergeable). Fall back to REST merge in that case.
-                if (prRest.mergeable === true) {
-                  try {
-                    await github.rest.pulls.merge({ owner, repo, pull_number: number, merge_method: 'squash' });
-                    core.info(`#${number}: Merged directly (PR was immediately mergeable) [OK]`);
-                  } catch (mergeErr) {
-                    core.info(`#${number}: Direct merge failed: ${mergeErr.message || String(mergeErr)}`);
-                  }
-                }
+                core.info(`#${number}: enable failed via GITHUB_TOKEN (GraphQL): ${msg}`);
               }
             }
         env:
