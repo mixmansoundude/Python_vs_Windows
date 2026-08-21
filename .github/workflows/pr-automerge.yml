@@ -102,16 +102,18 @@ jobs:
 
               const pre = await github.graphql(ql, { owner, repo, num: number });
               const pr = pre.repository.pullRequest;
+              // derived requirement: NEVER merge directly from this workflow -- only ever queue
+              // via enablePullRequestAutoMerge, which GitHub itself will not complete until
+              // required checks/reviews genuinely pass. A prior version of this script fell back
+              // to github.rest.pulls.merge() here (and in the catch block below) whenever
+              // viewerCanEnableAutoMerge read false, gated only on pr.mergeable === 'MERGEABLE' --
+              // which means "no git conflicts with base," NOT "required checks passed." That
+              // fallback merged a real PR (#447) within ~20 seconds of it opening, before any CI
+              // check had even started, because an admin-capable AUTOMERGE_TOKEN made
+              // viewerCanEnableAutoMerge read false immediately (nothing to queue -- the actor can
+              // already bypass). Do not reintroduce a direct-merge fallback of any kind here.
               if (!pr.viewerCanEnableAutoMerge) {
-                core.info(`#${number}: viewerCanEnable=false (PR likely immediately mergeable); trying direct merge`);
-                if (pr.mergeable === 'MERGEABLE') {
-                  try {
-                    await github.rest.pulls.merge({ owner, repo, pull_number: number, merge_method: 'squash' });
-                    core.info(`#${number}: Merged directly (viewerCanEnable=false path) [OK]`);
-                  } catch (mergeErr) {
-                    core.info(`#${number}: Direct merge failed: ${mergeErr.message || String(mergeErr)}`);
-                  }
-                }
+                core.info(`#${number}: viewerCanEnable=false (permissions, already armed, or repo auto-merge disabled); skipping -- this workflow never merges directly, only queues.`);
                 continue;
               }
 
@@ -125,17 +127,7 @@ jobs:
                 }
               } catch (e) {
                 const msg = e?.errors ? JSON.stringify(e.errors[0]) : String(e.message||e);
-                core.info(`#${number}: enable failed via PAT (GraphQL): ${msg}; checking for immediate merge`);
-                // Direct merge fallback: enablePullRequestAutoMerge fails when all required checks
-                // have already passed (PR immediately mergeable). Fall back to REST merge in that case.
-                if (pr.mergeable === 'MERGEABLE') {
-                  try {
-                    await github.rest.pulls.merge({ owner, repo, pull_number: number, merge_method: 'squash' });
-                    core.info(`#${number}: Merged directly (PR was immediately mergeable) [OK]`);
-                  } catch (mergeErr) {
-                    core.info(`#${number}: Direct merge failed: ${mergeErr.message || String(mergeErr)}`);
-                  }
-                }
+                core.info(`#${number}: enable failed via PAT (GraphQL): ${msg}`);
               }
             }
         env:
@@ -177,18 +169,10 @@ jobs:
                   core.info(`#${number}: enable via GITHUB_TOKEN reported success, but REST auto_merge is null (permissions likely).`);
                 }
               } catch (e) {
+                // derived requirement: no direct-merge fallback here either -- see the matching
+                // comment in the "Enable Auto-merge via PAT" step above for why (PR #447).
                 const msg = e?.errors ? JSON.stringify(e.errors[0]) : String(e.message||e);
-                core.info(`#${number}: enable failed via GITHUB_TOKEN (GraphQL): ${msg}; checking for immediate merge`);
-                // Direct merge fallback: enablePullRequestAutoMerge fails when all required checks
-                // have already passed (PR immediately mergeable). Fall back to REST merge in that case.
-                if (prRest.mergeable === true) {
-                  try {
-                    await github.rest.pulls.merge({ owner, repo, pull_number: number, merge_method: 'squash' });
-                    core.info(`#${number}: Merged directly (PR was immediately mergeable) [OK]`);
-                  } catch (mergeErr) {
-                    core.info(`#${number}: Direct merge failed: ${mergeErr.message || String(mergeErr)}`);
-                  }
-                }
+                core.info(`#${number}: enable failed via GITHUB_TOKEN (GraphQL): ${msg}`);
               }
             }
         env:
