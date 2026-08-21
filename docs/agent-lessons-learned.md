@@ -488,7 +488,7 @@ list; the recurring traps that have actually bitten us:
   specifically on rem/echo PROSE lines (an ordinary contraction/possessive, or a standalone `"`
   describing the quote character itself, was previously opening a persistent, incorrectly
   cross-line "string" that swallowed later real parens as fake string content). See CLAUDE.md's
-  Item 61 entry for the full fix trace, the 4 new regression tests, and the still-open follow-up:
+  Item 61 entry for the full fix trace, the 5 new regression tests, and the still-open follow-up:
   running the fixed checker against `run_setup.bat` surfaced 26 genuine, previously-invisible
   cross-line `rem` pairs already in the file that need their own audit (not attempted in this same
   slice, per this repo's own one-slice-at-a-time discipline for anything touching `run_setup.bat`).

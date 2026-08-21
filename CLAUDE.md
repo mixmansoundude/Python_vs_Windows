@@ -1083,12 +1083,15 @@ way (no live Windows execution available here), that is noted explicitly rather 
   echo output text is comparatively sparse and formal (rarely uses contractions or `^`-escaping)
   compared to the much higher volume of informal, dev-facing `rem` prose.
 
-  **Coverage added**: `tests/test_check_delimiters_import.py` gained 4 new tests -- the positive
+  **Coverage added**: `tests/test_check_delimiters_import.py` gained 5 new tests -- the positive
   (`rem` cross-line pair nested inside a real block, flagged) and negative (top-level `rem` header,
-  not flagged) cases originally scoped for this item, plus two regression tests for the two
-  correctness fixes above (a `^`-escaped rem-line pair is not flagged; an apostrophe/standalone-quote
-  rem line does not corrupt paren tracking). All 13 tests in that file, and the full pytest suite,
-  pass.
+  not flagged) cases originally scoped for this item, two regression tests for the two correctness
+  fixes above (a `^`-escaped rem-line pair is not flagged; an apostrophe/standalone-quote rem line,
+  nested inside a real block with a genuine cross-line pair immediately after, still gets the pair
+  flagged -- proving normal scanning resumes, not just that the quote characters themselves don't
+  crash it), plus one more from a CodeRabbit review round on this same PR (a tab-delimited `rem`
+  line is recognized identically to a space-delimited one). All 14 tests in that file, and the
+  full pytest suite, pass.
 
   **Remaining scope, concretely bounded (NOT closed by this fix -- this is the actual follow-up
   work, not a hypothetical): 26 genuine, previously-invisible findings are now surfaced in
