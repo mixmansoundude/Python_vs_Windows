@@ -1018,6 +1018,43 @@ step without doing this check first.
 
 ---
 
+## A `pwsh` `run:` block's own final `$LASTEXITCODE` becomes the step's exit code, even after later PowerShell-only lines
+
+**Found via CodeRabbit's review of PR #454 (`selftest-gate`'s "Aggregate verdicts" step),
+confirmed with a real local `pwsh` repro before trusting the finding.** GitHub Actions appends
+its own `exit $LASTEXITCODE` to the very end of every `pwsh`-shell `run:` block (documented
+runner behavior, not undocumented cmd.exe-style folklore this repo usually has to reverse
+-engineer). If the block invokes an external script via the call operator (`& .\foo.ps1 ...`)
+that exits non-zero, `$LASTEXITCODE` is set to that value and **stays there** through any number
+of later PURE-PowerShell lines (`Out-File`, string interpolation, `ConvertTo-Json`, etc. never
+touch it) -- so the step (and therefore the job's own conclusion) silently fails on the
+script's exit code even when the block's author only meant to capture and act on that exit code
+programmatically, not propagate it as the step's own result.
+
+Bit `selftest-gate`'s "Aggregate verdicts" step exactly this way: `tools/aggregate_selftest_
+verdicts.ps1` (CLAUDE.md Active Backlog Item 35's own "Precondition" fix) correctly `exit 1`s on
+`has_failures=true` by design (the caller reads `$LASTEXITCODE` to set `steps.aggregate.outputs.
+has_failures`), but with nothing to reset it afterward, the step itself started failing on real
+`has_failures=true` evidence immediately -- even though that PR's own stated scope explicitly
+deferred making `selftest-gate`'s conclusion fail for real to a separate, not-yet-taken future
+step. This is exactly why the "Aggregate self-test verdicts" job appeared to fail on a real PR
+commit before that gating step was ever intentionally added.
+
+**Fix: end the `run:` block with an explicit `exit 0`** (or reset `$LASTEXITCODE` to 0) whenever
+a step captures and acts on an external script's/command's exit code without wanting THAT to
+become the step's own result. Verified locally (not just reasoned about): a script that `exit
+1`s, captured into a variable, followed by unrelated `Out-File` work, followed by an explicit
+`exit 0`, reliably makes the outer process see exit code 0.
+
+**Rule of thumb for any future `run:` block using `pwsh`/`powershell`**: the moment you invoke an
+external script/exe via `&` (or any native command) and capture `$LASTEXITCODE` to branch on
+programmatically -- rather than letting that failure genuinely fail the step -- explicitly
+control the step's own final exit status at the end of the block. Do not assume "the script's
+result is just a variable I read" is enough; GitHub Actions' own runner script generation reads
+`$LASTEXITCODE` at the very end regardless of what happened in between.
+
+---
+
 ## Heuristic dep-augmentation (HP_PREP_REQUIREMENTS): pandas[excel] extras syntax
 
 The `names_lower` list is built from `pip_specs` by splitting at version specifier chars
