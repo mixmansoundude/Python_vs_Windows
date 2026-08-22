@@ -26,42 +26,58 @@ if (-not (Test-Path -LiteralPath $Path)) {
     exit 0
 }
 
-# derived requirement: preserve the file's own encoding exactly too, not just line endings.
-# StreamReader with detectEncodingFromByteOrderMarks=true auto-detects a real BOM (UTF8/
-# UTF16LE/UTF16BE/UTF32) and reports it via CurrentEncoding; when no BOM is present it falls
-# back to the supplied default -- UTF8 WITHOUT a BOM (matching what this bootstrapper's own
-# plain-ASCII `>> echo` writes produce), not [System.Text.Encoding]::UTF8's own static
-# instance, which has BOM emission enabled and would have added a BOM that was never there.
-$noBomUtf8 = New-Object System.Text.UTF8Encoding($false)
-$reader = New-Object System.IO.StreamReader($Path, $noBomUtf8, $true)
+# derived requirement (real CI failure on PR #455's first run, on genuine Windows PowerShell
+# 5.1 -- root cause not identified, since only Linux pwsh 7 is available for local
+# verification): the whole body below is now wrapped in try/catch, emitting a single-line
+# "ERROR:<type>: <message>" marker instead of letting a raw, possibly multi-line terminating
+# error reach the caller unexplained. run_setup.bat's own :merge_git_config caller already
+# treats any non-MIGRATED/NOOP result as a non-fatal WARN (this feature never gates the lane,
+# see CLAUDE.md's Item 60 entry) and now types this script's raw stdout/stderr to both console
+# and %LOG% on that branch -- collapsing embedded newlines here keeps that dump to one line.
 try {
-    $text = $reader.ReadToEnd()
-    $encoding = $reader.CurrentEncoding
-} finally {
-    $reader.Close()
-}
+    # derived requirement: preserve the file's own encoding exactly too, not just line
+    # endings. StreamReader with detectEncodingFromByteOrderMarks=true auto-detects a real
+    # BOM (UTF8/UTF16LE/UTF16BE/UTF32) and reports it via CurrentEncoding; when no BOM is
+    # present it falls back to the supplied default -- UTF8 WITHOUT a BOM (matching what this
+    # bootstrapper's own plain-ASCII `>> echo` writes produce), not
+    # [System.Text.Encoding]::UTF8's own static instance, which has BOM emission enabled and
+    # would have added a BOM that was never there.
+    $noBomUtf8 = New-Object System.Text.UTF8Encoding($false)
+    $reader = New-Object System.IO.StreamReader($Path, $noBomUtf8, $true)
+    try {
+        $text = $reader.ReadToEnd()
+        $encoding = $reader.CurrentEncoding
+    } finally {
+        $reader.Close()
+    }
 
-$changed = $false
+    $changed = $false
 
-# (?<=\A|\r\n|\n|\uFEFF) / (?=\r\n|\n|\z): the stale text must be a genuine whole line --
-# preceded by the start of the file, a line terminator, or a BOM, and followed by a line
-# terminator or the end of the file -- without the match itself consuming any terminator, so
-# whatever mix of CRLF/LF/no-trailing-newline the file already has is left completely alone.
-# A partial match (the stale text with something else appended on the same line) never
-# satisfies the lookahead, so it is correctly never touched -- the safety property protecting
-# a user's own hand-edited content. The \uFEFF alternative is defensive: StreamReader's own
-# BOM-stripping-on-read means $text should never actually start with U+FEFF here, but costs
-# nothing to allow for explicitly in case that assumption is ever wrong on some runtime.
-$new = [regex]::Replace($text, '(?<=\A|\r\n|\n|\uFEFF)\*\.bat eol=crlf(?=\r\n|\n|\z)', '*.bat -text')
-if ($new -ne $text) { $changed = $true; $text = $new }
-$new = [regex]::Replace($text, '(?<=\A|\r\n|\n|\uFEFF)\*\.cmd eol=crlf(?=\r\n|\n|\z)', '*.cmd -text')
-if ($new -ne $text) { $changed = $true; $text = $new }
+    # (?<=\A|\r\n|\n|\uFEFF) / (?=\r\n|\n|\z): the stale text must be a genuine whole line --
+    # preceded by the start of the file, a line terminator, or a BOM, and followed by a line
+    # terminator or the end of the file -- without the match itself consuming any terminator,
+    # so whatever mix of CRLF/LF/no-trailing-newline the file already has is left completely
+    # alone. A partial match (the stale text with something else appended on the same line)
+    # never satisfies the lookahead, so it is correctly never touched -- the safety property
+    # protecting a user's own hand-edited content. The \uFEFF alternative is defensive:
+    # StreamReader's own BOM-stripping-on-read means $text should never actually start with
+    # U+FEFF here, but costs nothing to allow for explicitly in case that assumption is ever
+    # wrong on some runtime.
+    $new = [regex]::Replace($text, '(?<=\A|\r\n|\n|\uFEFF)\*\.bat eol=crlf(?=\r\n|\n|\z)', '*.bat -text')
+    if ($new -ne $text) { $changed = $true; $text = $new }
+    $new = [regex]::Replace($text, '(?<=\A|\r\n|\n|\uFEFF)\*\.cmd eol=crlf(?=\r\n|\n|\z)', '*.cmd -text')
+    if ($new -ne $text) { $changed = $true; $text = $new }
 
-if (-not $changed) {
-    Write-Output 'NOOP:no-stale-lines'
+    if (-not $changed) {
+        Write-Output 'NOOP:no-stale-lines'
+        exit 0
+    }
+
+    [System.IO.File]::WriteAllText($Path, $text, $encoding)
+    Write-Output 'MIGRATED'
+    exit 0
+} catch {
+    $msg = "$($_.Exception.GetType().FullName): $($_.Exception.Message)" -replace '[\r\n]+', ' '
+    Write-Output "ERROR:$msg"
     exit 0
 }
-
-[System.IO.File]::WriteAllText($Path, $text, $encoding)
-Write-Output 'MIGRATED'
-exit 0

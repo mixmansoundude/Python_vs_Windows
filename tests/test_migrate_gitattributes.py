@@ -103,6 +103,24 @@ class BasicMigration(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertEqual(proc.stdout.strip(), "NOOP:missing")
 
+    def test_directory_instead_of_file_produces_error_marker_not_crash(self):
+        # derived requirement: a real CI failure on PR #455's first run (genuine Windows
+        # PowerShell 5.1, never reproducible on the Linux pwsh 7 available for local testing)
+        # produced an unrecognized result with no diagnostic text captured anywhere -- the
+        # whole script body is now wrapped in try/catch so ANY unanticipated failure emits a
+        # single-line "ERROR:<type>: <message>" marker instead of a raw, possibly multi-line
+        # terminating-error dump. This is the one failure shape reproducible cross-platform:
+        # StreamReader opened against a directory path throws on both Windows and Linux.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".gitattributes"
+            path.mkdir()
+            proc = _run_migrate(path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            stdout = proc.stdout.strip()
+            self.assertTrue(stdout.startswith("ERROR:"), stdout)
+            self.assertNotIn("\n", stdout)
+            self.assertNotIn("\r", stdout)
+
     def test_partial_line_match_not_touched(self):
         # A line that CONTAINS the stale text but isn't an EXACT match (extra trailing text,
         # different whitespace) must not be rewritten -- exact-match-only is the safety

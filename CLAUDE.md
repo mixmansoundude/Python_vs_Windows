@@ -1082,6 +1082,33 @@ way (no live Windows execution available here), that is noted explicitly rather 
   terminator (first line in the file), a UTF8 BOM is preserved, and no BOM is added where none
   existed. Still open: confirm this passes on a real CI run before considering the item closed.
 
+  **First real CI run (PR #455, `real` lane) confirmed the migration genuinely fails on real
+  Windows PowerShell 5.1, with no diagnosable cause -- root cause still not identified as of
+  this writing.** `self.ux.gitattributes.migrate` failed with `batStaleFound:true` (the file was
+  never rewritten) and the bootstrap log showed only the generic
+  `[WARN] REQ-015: .gitattributes migration check produced an unexpected result` line -- the
+  actual PowerShell output/error text that produced that verdict was written only to
+  `~ga_migrate_result.txt`, which the caller deleted before anything captured its content
+  anywhere. Two compounding gaps, both fixed defensively (neither is a confirmed root cause,
+  since the underlying failure could not be reproduced locally -- only Linux `pwsh` 7 is
+  available for local verification, and the failure is specific to real Windows PowerShell 5.1,
+  a runtime this sandbox cannot run): (1) `:merge_git_config`'s own result-capture loop
+  (`for /f ... do set "HP_GA_MIGRATE_RESULT=%%X"`) kept only the LAST line of the result file,
+  the wrong end for a multi-line failure dump -- fixed to keep the FIRST non-blank line via an
+  `if not defined` guard; (2) the script's entire body is now wrapped in `try`/`catch`, emitting
+  a single-line `ERROR:<exception type>: <message>` marker (embedded newlines collapsed to
+  spaces) instead of letting a raw, possibly multi-line terminating error reach the caller
+  unexplained. The caller now also `type`s the raw result file to both console and `%LOG%` on
+  the WARN branch -- a plain byte copy, never through `%VAR%` substitution, since an
+  unanticipated failure message could legally contain shell metacharacters (see
+  `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry). New regression test
+  `test_directory_instead_of_file_produces_error_marker_not_crash` (opens a directory where a
+  file is expected -- the one failure shape reproducible on both Windows and Linux) proves the
+  `try`/`catch` engages and the script still exits 0 with a single-line `ERROR:` marker. Still
+  open: this hardening makes the NEXT real CI run diagnosable (the actual exception text will
+  now surface in the log), but does not itself fix whatever the underlying Windows-PS5.1-specific
+  failure is -- that requires seeing the real error text from a subsequent run.
+
 - **Item 61 (checker fix landed; the 26-finding audit is now closed; a separate same-line-pair
   question remains open, see "Revised item scope" below): `check_delimiters.py` now catches a
   cross-line `(`/`)` pair inside `rem` comment text, not just `echo` text -- turning that on
