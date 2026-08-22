@@ -283,6 +283,18 @@ jobs:
         run: |
           & tests\test_ci_cache_selfheal.ps1
 
+      # derived requirement: wired into `real` specifically (a GATING lane) for the same reason
+      # as the cache-selfheal self-test immediately above -- so a regression in
+      # tools/aggregate_selftest_verdicts.ps1 (the selftest-gate "Aggregate verdicts" logic,
+      # CLAUDE.md Active Backlog Item 35's "Precondition" caveat) actually fails CI on every run,
+      # independent of whether a real artifact ever goes missing/duplicated/unexpected in this
+      # particular run.
+      - name: "Self-test: selftest-gate verdict aggregation logic (real lane only, GATING)"
+        if: ${{ matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\test_aggregate_selftest_verdicts.ps1
+
       - name: "Pre-bootstrap: ensure Python file exists"
         shell: pwsh
         run: |
@@ -3423,99 +3435,26 @@ jobs:
       - name: Aggregate verdicts
         id: aggregate
         shell: pwsh
+        # derived requirement: the actual aggregation logic now lives in
+        # tools/aggregate_selftest_verdicts.ps1 so tests/test_aggregate_selftest_verdicts.ps1 can
+        # exercise it deterministically against fixture directories on every CI run -- mirrors
+        # tools/ci_cache_selfheal.ps1's own extraction (CLAUDE.md Active Backlog Item 35's
+        # "Precondition" caveat: fix the missing-artifact fallback to fail CLOSED per lane before
+        # this step's own conclusion is ever wired into branch protection). -ExpectedLanes must be
+        # kept in sync with this file's own matrix.include list above (8 modes: cache, real,
+        # conda-full, justme-test, uv, contract-uv, contract-uv-fail, uv-dl-fallback) -- already a
+        # third duplication of that list alongside the matrix include: block and the
+        # continue-on-error: condition, not a new pattern.
         run: |
-          $fallback = '${{ needs.selftest.result }}'
-          $dir = Join-Path $env:RUNNER_TEMP 'selftest-verdicts'
-          $files = @()
-          if (Test-Path $dir) {
-            $files = Get-ChildItem -Path $dir -Filter '*.json' -File -Recurse -ErrorAction SilentlyContinue
-          }
-
-          $has = $false
-          $lanes = @()
-
-          function Convert-ToBooleanOrNull {
-            param(
-              [Parameter(Mandatory = $false)]
-              $Value
-            )
-
-            if ($null -eq $Value) { return $null }
-            if ($Value -is [bool]) { return $Value }
-            if ($Value -is [string]) {
-              $text = $Value.Trim().ToLowerInvariant()
-              switch ($text) {
-                'true' { return $true }
-                't' { return $true }
-                'yes' { return $true }
-                'y' { return $true }
-                '1' { return $true }
-                'false' { return $false }
-                'f' { return $false }
-                'no' { return $false }
-                'n' { return $false }
-                '0' { return $false }
-              }
-              return $null
-            }
-            if ($Value -is [int] -or $Value -is [long]) {
-              if ($Value -eq 0) { return $false }
-              if ($Value -eq 1) { return $true }
-            }
-            return $null
-          }
-
-          foreach ($file in $files) {
-            try {
-              $content = Get-Content -Raw -LiteralPath $file.FullName
-              if ([string]::IsNullOrWhiteSpace($content)) { continue }
-              $data = $content | ConvertFrom-Json -Depth 16
-              if ($null -eq $data) { continue }
-
-              $records = if ($data -is [array]) { $data } else { @($data) }
-              foreach ($record in $records) {
-                if ($null -eq $record) { continue }
-
-                $value = $null
-                if ($record.PSObject.Properties.Name -contains 'has_failures') {
-                  $value = Convert-ToBooleanOrNull -Value $record.has_failures
-                }
-
-                if ($record.PSObject.Properties.Name -notcontains 'source_file') {
-                  $record | Add-Member -NotePropertyName source_file -NotePropertyValue $file.FullName -Force
-                }
-
-                if ($null -eq $value) {
-                  $record | Add-Member -NotePropertyName parse_warning -NotePropertyValue 'has_failures missing or unparseable' -Force
-                } elseif ($value) {
-                  $has = $true
-                }
-
-                $lanes += $record
-              }
-            } catch {
-              $lanes += [ordered]@{
-                lane = $file.BaseName
-                error = $_.Exception.Message
-                source_file = $file.FullName
-              }
-            }
-          }
-
-          if (-not $files -and $fallback -and $fallback -ne 'success') {
-            $has = $true
-          }
-
-          $value = if ($has) { 'true' } else { 'false' }
+          $reportPath = Join-Path $env:RUNNER_TEMP 'selftest-gate.json'
+          & .\tools\aggregate_selftest_verdicts.ps1 `
+            -VerdictsDir (Join-Path $env:RUNNER_TEMP 'selftest-verdicts') `
+            -FallbackResult '${{ needs.selftest.result }}' `
+            -ExpectedLanes @('cache', 'real', 'conda-full', 'justme-test', 'uv', 'contract-uv', 'contract-uv-fail', 'uv-dl-fallback') `
+            -ReportPath $reportPath
+          $rc = $LASTEXITCODE
+          $value = if ($rc -eq 1) { 'true' } else { 'false' }
           "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
-
-          $report = [ordered]@{
-            fallback_result = $fallback
-            has_failures = $has
-            lanes = @($lanes)
-            verdict_files = if ($files) { $files.FullName } else { @() }
-          }
-          $report | ConvertTo-Json -Depth 6 | Out-File -FilePath (Join-Path $env:RUNNER_TEMP 'selftest-gate.json') -Encoding utf8
 
       - name: Append gate summary
         if: ${{ always() }}

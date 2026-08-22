@@ -1010,6 +1010,44 @@ over time instead of requiring a raw-log dig to notice it happened at all, not t
 
 ---
 
+## selfapps-aggregate-selftest-verdicts NDJSON rows (test_aggregate_selftest_verdicts.ps1, `real` lane only, GATING)
+
+CLAUDE.md Active Backlog Item 35's own "Precondition" caveat: the `selftest-gate` job's
+"Aggregate verdicts" step previously only treated a TOTAL absence of `lane_verdict.json` files
+(zero lanes reporting) as a failure signal -- a single lane's own verdict artifact silently
+missing (upload glitch, artifact-service hiccup) while the other 7 lanes' artifacts landed fine
+was invisible, and an unexpected or duplicate lane landing alongside a genuinely missing one could
+make a raw file-COUNT check pass even with one real lane's evidence absent. The aggregation logic
+was extracted to `tools/aggregate_selftest_verdicts.ps1` (mirroring `tools/ci_cache_selfheal.ps1`'s
+own extraction, see the section directly above) so this test can exercise it deterministically
+against fixture directories built to mimic exactly what `actions/download-artifact@v6` produces
+(each artifact under its own `<VerdictsDir>/selftest-verdict-<lane>/lane_verdict.json`
+subdirectory), with no dependency on a real 8-lane matrix run. Wired into `real` -- a GATING lane
+-- so a regression in the aggregation logic itself fails CI on every run, not just when a real
+artifact happens to go missing/duplicated/unexpected that day.
+
+Six scenarios: `healthy` (all 8 expected lanes present once, none failing -> pass), `lane_failed`
+(a genuine per-lane `has_failures:true` is still detected -- regression guard for the
+pre-existing, unchanged union behavior), `missing_lane` (7 of 8 lanes present -- the actual gap
+this item closes, since the ORIGINAL inline logic had no way to detect a partial miss at all),
+`unexpected_lane` (an extra lane not in the matrix's own mode list), `duplicate_lane` (one lane's
+verdict uploaded twice under two differently-named artifact directories, both claiming the same
+`lane` field inside their JSON), and `empty_fallback` (zero verdict files with
+`FallbackResult='success'` -- proves the new lane-set check fires independent of the fallback
+result, unlike the OLD behavior which only fired here when the fallback result was NOT
+`'success'`). Deliberately NOT gated on `$IsWindows` (unlike `test_ci_cache_selfheal.ps1`'s own
+Windows-only skip) -- the script under test is pure PowerShell (JSON parsing and file I/O only,
+no `cmd.exe`/Windows-specific calls), so it runs identically under `pwsh` on Linux or Windows and
+was directly verified locally before ever reaching real CI.
+
+```
+self.ci.aggregate_selftest_verdicts.healthy, self.ci.aggregate_selftest_verdicts.lane_failed,
+self.ci.aggregate_selftest_verdicts.missing_lane, self.ci.aggregate_selftest_verdicts.unexpected_lane,
+self.ci.aggregate_selftest_verdicts.duplicate_lane, self.ci.aggregate_selftest_verdicts.empty_fallback
+```
+
+---
+
 ## selfapps-lineending-check NDJSON rows (selfapps_lineending_check.ps1, real/conda-full lanes, GATING)
 
 CLAUDE.md Active Backlog Item 44's own "Known gap": the line-ending self-check at the top of
