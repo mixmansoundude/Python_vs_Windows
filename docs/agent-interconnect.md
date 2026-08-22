@@ -829,8 +829,12 @@ logging as if the repair succeeded. Now has explicit `venv` and `embed` branches
 `"%HP_PY%" -m pip install %%M` per missing module, mirroring the three-mode pip pathway the MAIN,
 non-repair dependency-install dispatch already used) plus a `system`-mode catch-all that stays a
 no-op (system is a shared, uncontrolled interpreter; REQ-009 avoids installing into it) but now
-logs `[WARN] System fallback: skipping warnfix repair installation.` instead of the old, silently
-misleading "installing and rebuilding... rebuild complete" pair. `~warnfix_repair_failed.flag` is
+ALSO logs `[WARN] System fallback: skipping warnfix repair installation.` -- IN ADDITION TO, not
+instead of, the surrounding `[REPAIR] missing modules detected; installing and rebuilding.` /
+`[REPAIR] rebuild complete after warnfix.` markers, which still fire unconditionally regardless of
+mode (the rebuild always runs after the install dispatch, whether or not anything was actually
+installed) -- the new line clarifies that nothing was actually attempted under system mode, it
+does not suppress or replace those surrounding markers. `~warnfix_repair_failed.flag` is
 set correctly on a genuine failure in both new branches, so `:warnfix_cascade_detect`'s own
 recovery gate is reachable for this failure class too. Regression coverage:
 `tests/selfapps_warnfix_venv_repair.ps1` (new file, `uv` lane, non-gating) forces venv mode via

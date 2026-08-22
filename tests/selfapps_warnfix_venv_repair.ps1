@@ -46,8 +46,14 @@ function Write-NdjsonRow {
 $rowId = 'self.exe.warnfix.venv_repair'
 
 # Non-Windows skip
-if (-not $IsWindows) {
-    $platform = [System.Environment]::OSVersion.Platform.ToString()
+# derived requirement: $IsWindows is undefined (reads as $null, so "-not $IsWindows" is always
+# true) under Windows PowerShell 5.1 -- it was only introduced in PowerShell 6+. Already fixed
+# for this exact reason in tests/selfapps_lineending_check.ps1 and tests/selfapps_ux_hardening.ps1
+# (CLAUDE.md Item 44 / PR #434, PR #436) -- applying the same fix here from the start rather than
+# waiting for a future review round to catch it again. [System.Environment]::OSVersion.Platform
+# works identically on 5.1 and 7+.
+$platform = [System.Environment]::OSVersion.Platform.ToString()
+if ($platform -ne 'Win32NT') {
     Write-NdjsonRow ([ordered]@{
         id      = $rowId
         req     = 'REQ-007'

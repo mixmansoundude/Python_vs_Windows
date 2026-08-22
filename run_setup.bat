@@ -3841,7 +3841,14 @@ if not defined HP_BUILD_OK (
             call :log "[INFO] Installed: %%M"
           )
         )
-      ) else if defined CONDA_BAT (
+      ) else if "%HP_ENV_MODE%"=="conda" if defined CONDA_BAT (
+        rem derived requirement (CodeRabbit finding on Item 36's own PR): :select_conda_bat
+        rem sets CONDA_BAT purely from Miniconda binary presence on disk, never clears it once
+        rem set -- so a genuine venv/embed fallback (conda env CREATE failed, cascaded past conda)
+        rem can still leave CONDA_BAT defined if Miniconda itself was already on disk.
+        rem Gating on HP_ENV_MODE=="conda" too (not just "defined CONDA_BAT") stops that stale
+        rem definedness from routing a real venv/embed repair into a conda-install command
+        rem targeting an environment that was never created.
         for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
           call :log "[INFO] Attempting to install: %%M"
           call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%M >> "%LOG%" 2>&1

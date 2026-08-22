@@ -1817,6 +1817,14 @@ jobs:
             tests\~selftest_warnfix_real_warnfix_delayed\dist\~warnfix_exe.log
             tests/~selftest_warnfix_real_warnfix_delayed/~warnfile.txt
             tests\~selftest_warnfix_real_warnfix_delayed\~warnfile.txt
+            tests/~selftest_warnfix_venv_repair/~warnfix_venv_repair_bootstrap.log
+            tests\~selftest_warnfix_venv_repair\~warnfix_venv_repair_bootstrap.log
+            tests/~selftest_warnfix_venv_repair/~setup.log
+            tests\~selftest_warnfix_venv_repair\~setup.log
+            tests/~selftest_warnfix_venv_repair/dist/~warnfix_venv_repair_exe.log
+            tests\~selftest_warnfix_venv_repair\dist\~warnfix_venv_repair_exe.log
+            tests/~selftest_warnfix_venv_repair/dist/~warnfix_venv_token.txt
+            tests\~selftest_warnfix_venv_repair\dist\~warnfix_venv_token.txt
             tests/~selftest_collect/~collect_bootstrap.log
             tests\~selftest_collect\~collect_bootstrap.log
             tests/~selftest_collect/~setup.log

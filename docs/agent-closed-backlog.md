@@ -2716,9 +2716,13 @@ run of the same regex logic before landing, not just reasoned about).
   `"%HP_PY%" -m pip install %%M` per missing module, mirroring the SAME three-mode pip pathway
   `venv`/`embed`/`system` already use in the main, non-repair dependency-install dispatch a few
   hundred lines earlier) plus a final `system`-mode catch-all that deliberately stays a no-op
-  (system is a shared, uncontrolled interpreter; REQ-009 avoids installing into it) but now logs
-  `[WARN] System fallback: skipping warnfix repair installation.` instead of silently claiming
-  success. Both new branches set `~warnfix_repair_failed.flag` on a genuine per-module install
+  (system is a shared, uncontrolled interpreter; REQ-009 avoids installing into it) but now ALSO
+  logs `[WARN] System fallback: skipping warnfix repair installation.` -- in addition to, not
+  instead of, the surrounding `[REPAIR] missing modules detected; installing and rebuilding.` /
+  `[REPAIR] rebuild complete after warnfix.` markers, which still fire unconditionally regardless
+  of mode (the rebuild always runs after the install dispatch, whether or not anything was
+  actually installed); the new line stops the install step itself from being silent about doing
+  nothing. Both new branches set `~warnfix_repair_failed.flag` on a genuine per-module install
   failure, identical to the pre-existing uv/conda branches, so the cascade-recovery gate is
   reachable for this failure class too. Verified via `tools/check_delimiters.py run_setup.bat`
   (count unchanged at the pre-existing 26-finding baseline -- see CLAUDE.md Item 61's own follow-up
