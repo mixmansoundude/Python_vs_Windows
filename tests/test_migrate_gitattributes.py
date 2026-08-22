@@ -196,6 +196,19 @@ class LineEndingAndEncodingPreservation(unittest.TestCase):
             self.assertTrue(result.startswith(b"\xef\xbb\xbf"), "BOM was stripped")
             self.assertEqual(result, b"\xef\xbb\xbf# user\n*.bat -text\n*.cmd -text\n")
 
+    def test_bom_immediately_precedes_stale_rule_as_first_line(self):
+        # derived requirement (CodeRabbit review, PR #455): a stale rule as the file's
+        # genuine FIRST line, with a BOM immediately preceding it (no comment/other line in
+        # between) -- the exact shape a plain \A-only left boundary could in principle miss if
+        # StreamReader's own well-established BOM-stripping-on-read behavior ever didn't hold.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".gitattributes"
+            path.write_bytes(b"\xef\xbb\xbf*.bat eol=crlf\n*.cmd eol=crlf\n")
+            proc = _run_migrate(path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "MIGRATED")
+            self.assertEqual(path.read_bytes(), b"\xef\xbb\xbf*.bat -text\n*.cmd -text\n")
+
     def test_no_bom_originally_no_bom_added(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / ".gitattributes"

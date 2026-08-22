@@ -43,16 +43,18 @@ try {
 
 $changed = $false
 
-# (?<=\A|\r\n|\n) / (?=\r\n|\n|\z): the stale text must be a genuine whole line -- preceded
-# by the start of the file or a line terminator, and followed by a line terminator or the end
-# of the file -- without the match itself consuming any terminator, so whatever mix of CRLF/
-# LF/no-trailing-newline the file already has is left completely alone. A partial match (the
-# stale text with something else appended on the same line) never satisfies the lookahead, so
-# it is correctly never touched -- the safety property protecting a user's own hand-edited
-# content.
-$new = [regex]::Replace($text, '(?<=\A|\r\n|\n)\*\.bat eol=crlf(?=\r\n|\n|\z)', '*.bat -text')
+# (?<=\A|\r\n|\n|\uFEFF) / (?=\r\n|\n|\z): the stale text must be a genuine whole line --
+# preceded by the start of the file, a line terminator, or a BOM, and followed by a line
+# terminator or the end of the file -- without the match itself consuming any terminator, so
+# whatever mix of CRLF/LF/no-trailing-newline the file already has is left completely alone.
+# A partial match (the stale text with something else appended on the same line) never
+# satisfies the lookahead, so it is correctly never touched -- the safety property protecting
+# a user's own hand-edited content. The \uFEFF alternative is defensive: StreamReader's own
+# BOM-stripping-on-read means $text should never actually start with U+FEFF here, but costs
+# nothing to allow for explicitly in case that assumption is ever wrong on some runtime.
+$new = [regex]::Replace($text, '(?<=\A|\r\n|\n|\uFEFF)\*\.bat eol=crlf(?=\r\n|\n|\z)', '*.bat -text')
 if ($new -ne $text) { $changed = $true; $text = $new }
-$new = [regex]::Replace($text, '(?<=\A|\r\n|\n)\*\.cmd eol=crlf(?=\r\n|\n|\z)', '*.cmd -text')
+$new = [regex]::Replace($text, '(?<=\A|\r\n|\n|\uFEFF)\*\.cmd eol=crlf(?=\r\n|\n|\z)', '*.cmd -text')
 if ($new -ne $text) { $changed = $true; $text = $new }
 
 if (-not $changed) {
