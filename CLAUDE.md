@@ -1038,47 +1038,82 @@ way (no live Windows execution available here), that is noted explicitly rather 
   OLD rules before running the bootstrapper, asserting the file ends up with `-text` and no
   leftover `eol=crlf` line for `*.bat`/`*.cmd`.
 
-- **Item 61: `check_delimiters.py` does not catch a cross-line `(`/`)` pair inside `rem` comment
-  text, even though cmd.exe's own parser is just as vulnerable to it as it is for `echo` text --
-  a real gap that caused a genuine CI-breaking regression across all 8 lanes (PR #445, Item 52's
-  own fix).** `docs/agent-lessons-learned.md`'s "A literal `(`/`)` inside `echo` text..." entry
-  documents both the original 2026-07 echo-text incident AND this newly-confirmed `rem`-text
-  sibling -- read that entry for the full mechanism and incident trace before starting this item.
+- **Item 61 (checker fix landed; audit of newly-surfaced findings remains open): `check_delimiters.py`
+  now catches a cross-line `(`/`)` pair inside `rem` comment text, not just `echo` text -- but
+  turning that on surfaced 26 genuine, previously-invisible findings already in `run_setup.bat`
+  that still need their own audit before `check_delimiters.py run_setup.bat` reports clean again.**
+  `docs/agent-lessons-learned.md`'s "A literal `(`/`)` inside `echo` text..." entry documents the
+  original 2026-07 echo-text incident and its `rem`-text sibling (PR #445, Item 52) that motivated
+  this fix -- read that entry for the full mechanism and incident trace.
 
-  **Root cause, already diagnosed**: `check_delimiters.py`'s `.bat`/`.cmd` handling treats a `rem`
-  line as fully opaque (`if upper.startswith("REM ") or ...: continue`, skipping it from
-  paren-scanning entirely) instead of scanning its characters the way the `echo`-line path does
-  (`is_bat_echo_line`, tracked via `is_echo_open` on the bracket stack, flagging a `(` that opens
-  on an echo line already nested inside a real block and closes on a LATER line). Real cmd.exe
-  does not distinguish `rem` from `echo` for this purpose -- its block-closing search is a raw
-  character scan across the whole block's text regardless of which command a given line belongs
-  to -- so `rem` comments are exactly as exposed to this hazard as `echo` text, but the checker
-  only defends the `echo` case today.
+  **Fix shipped**: `check_delimiters.py`'s `.bat`/`.cmd` handling no longer treats a `rem` line as
+  fully opaque -- it now routes through the same character scan and `prose_kind`-tracked bracket
+  stack `echo` lines already used (the field was generalized from a bool `is_echo_open` to a
+  `Optional[str] prose_kind`, so the same cross-line-close check flags either kind and the error
+  message names which one). Scoped identically to the echo case: a paren opened on a rem/echo line
+  is only flagged if it was ALREADY nested inside a real open bracket when pushed, so a harmless
+  top-level rem header block with no enclosing `if`/`for` does not false-positive.
 
-  **High-level fix**: extend the existing `is_echo_open`/bracket-stack machinery to also apply to
-  `rem` lines -- drop the current `continue`-and-skip shortcut for REM lines, route them through
-  the same character scan `echo` lines already get, and reuse the identical "already nested inside
-  an open bracket, closes on a different line" flagging logic (scoped the same way, so a harmless
-  top-level `rem` header block with no enclosing `if`/`for` doesn't false-positive -- this repo's
-  own file header, `run_setup.bat` lines 1-40ish, has several legitimately-balanced-per-line or
-  intentionally `^`-escaped parens that must stay clean).
+  **Two additional, necessary correctness fixes found only by running the extended checker against
+  the real `run_setup.bat` -- neither was anticipated by the original fix description above, and
+  either one alone made the rem-line extension actively counterproductive (68+ and later 82 mostly-
+  bogus findings on first attempt, cascading from a handful of root causes) rather than useful:**
+  1. **cmd.exe's own `^` escape character was not recognized at all.** `^(` / `^)` is this file's
+     own established, already-documented convention for defusing this exact hazard (see the error
+     message's own suggested fix) -- `run_setup.bat`'s file-header rem block (the `LINE-ENDING
+     SELF-CHECK` block) uses it
+     extensively ("Windows ^(CRLF^)", etc.). Without recognizing it, the checker flagged the very
+     construct that fixes the hazard, and every mistracked bracket corrupted the stack for
+     everything scanned afterward. Fixed: a bracket character on any `.bat`/`.cmd` line preceded by
+     an ODD count of `^` (via the pre-existing `count_preceding` helper, mirroring how string-escape
+     already used it) is now treated as a literal, non-special character.
+  2. **A bare apostrophe (`'`) was treated as a string-quote delimiter on `.bat`/`.cmd` lines, and a
+     standalone `"` in rem/echo PROSE could open a persistent, incorrectly cross-line "string."**
+     cmd.exe has no single-quote-string concept at all, and rem/echo text (unlike real code) has no
+     "quoted argument" concept either -- an ordinary contraction/possessive ("doesn't", "user's",
+     "cmd.exe's") or a standalone `"` describing the quote character itself (`'...a literal " would
+     close the quote.'`, a real line in `run_setup.bat`) would silently swallow every later
+     character -- including real parens on subsequent lines -- as fake "string content" until some
+     unrelated, later quote happened to "close" it. Fixed: `'` is now always inert on `.bat`/`.cmd`
+     lines; `"` is inert specifically on rem/echo prose lines (still fully meaningful on a real,
+     non-prose `.bat`/`.cmd` code line, e.g. `set "VAR=..."`).
 
-  **Scope note, NOT yet done as part of the Item 52 fix that surfaced this**: a full audit of
-  every PRE-EXISTING cross-line `rem`-comment paren pair already in `run_setup.bat` (there are
-  many, scattered throughout the file's ~5300 lines) was explicitly NOT performed -- Item 52's own
-  fix only reworded the ONE `rem` block it had just introduced and broken. Whether any of the
-  pre-existing ones are ALSO genuinely hazardous (nested inside a real open block, not just a
-  top-level header) is unknown and unverified; the checker fix above would surface them
-  automatically once implemented -- do not assume the file is currently clean of other latent
-  instances of this same bug just because CI has been green so far (an existing hazard only
-  manifests when the SPECIFIC surrounding code happens to also be reached/reparsed in a way that
-  exposes it, exactly as this one sat undetected until Item 52 added new code near it).
+  Both fixes are general (not `rem`-specific) and apply equally to `echo` lines, closing the
+  identical latent gap there too -- it just never manifested for `echo` because this codebase's own
+  echo output text is comparatively sparse and formal (rarely uses contractions or `^`-escaping)
+  compared to the much higher volume of informal, dev-facing `rem` prose.
 
-  **Coverage gap to close in the same slice**: `tests/test_check_delimiters_import.py`'s existing
-  `test_paren_*` cases cover the `echo`-line hazard; add an analogous `rem`-line case (a `rem`
-  block whose `(` opens on one line and matching `)` closes on a later line, nested inside a real
-  `if`/`for` block) proving the extended checker catches it, plus a negative case (a top-level
-  `rem` header block with no enclosing bracket) proving it doesn't false-positive.
+  **Coverage added**: `tests/test_check_delimiters_import.py` gained 5 new tests -- the positive
+  (`rem` cross-line pair nested inside a real block, flagged) and negative (top-level `rem` header,
+  not flagged) cases originally scoped for this item, two regression tests for the two correctness
+  fixes above (a `^`-escaped rem-line pair is not flagged; an apostrophe/standalone-quote rem line,
+  nested inside a real block with a genuine cross-line pair immediately after, still gets the pair
+  flagged -- proving normal scanning resumes, not just that the quote characters themselves don't
+  crash it), plus one more from a CodeRabbit review round on this same PR (a tab-delimited `rem`
+  line is recognized identically to a space-delimited one). All 14 tests in that file, and the
+  full pytest suite, pass.
+
+  **Remaining scope, concretely bounded (NOT closed by this fix -- this is the actual follow-up
+  work, not a hypothetical): 26 genuine, previously-invisible findings are now surfaced in
+  `run_setup.bat` itself** (run `python tools/check_delimiters.py run_setup.bat` for the current,
+  authoritative list -- do not copy the list here, since any future edit to the file shifts every
+  line number). Each is a real cross-line `(`/`)` pair inside `rem` prose, nested inside a real
+  `if`/`for` block, that predates this fix and was invisible to the checker until now (cmd.exe
+  parses an enclosing `if`/`for` block's full raw text to find its closing paren BEFORE it ever
+  evaluates the block's own condition, so the hazard can surface purely from cmd.exe reaching and
+  parsing that block -- whenever the file is invoked and control flow reaches that point -- even
+  if the condition itself would have evaluated false and the body never executed; do not assume
+  `run_setup.bat` was clean of this bug just because CI has been green; `check_delimiters.py` is
+  advisory-only, not wired into any `.github/workflows/*.yml`
+  gate, so this has not broken CI, only the local/agent-facing sanity-sweep discipline). **Whoever
+  picks this up next**: audit each one individually (most are very likely simple, low-risk prose
+  rewording -- see the single `(^, &, or |)` reordering this same PR applied to the ONE genuine
+  false-positive the caret-escape heuristic itself produced, at the original `(&, |, ^)` listing --
+  as the template fix shape), a few at a time rather than all 26 in one sweep, per this repo's own
+  "EXTREME CAUTION, one slice at a time" convention for anything touching `run_setup.bat`. Live-
+  cmd.exe verification of a representative sample (not necessarily all 26) would raise confidence
+  that "nested cross-line rem pair" is a real hazard class here and not merely theoretical, per this
+  repo's own standing distrust of pure static reasoning for this hazard class (see below).
 
   **Scope WIDENED, same PR (#445), via a second real CI incident on the SAME code block: a
   SAME-LINE, self-contained, balanced `(`/`)` pair -- not just cross-line pairs -- can ALSO corrupt
@@ -1098,9 +1133,9 @@ way (no live Windows execution available here), that is noted explicitly rather 
   `test_paren_pair_on_redirected_echo_line_deeply_nested_is_a_known_false_negative` for a
   regression fixture documenting the checker's current false-negative on this exact shape.
 
-  **Revised item scope**: the high-level fix above (extend `is_echo_open`-style tracking to `rem`
-  lines) is necessary but NOT sufficient on its own -- it still only catches CROSS-line pairs.
-  Whoever picks up this item should ALSO investigate whether extending the same-line-pair
+  **Revised item scope, still open**: the cross-line fix above was necessary but is NOT sufficient
+  on its own -- it still only catches CROSS-line pairs. Whoever picks up this item next should ALSO
+  investigate whether extending the same-line-pair
   "always safe" assumption is correct at all once genuinely nested (vs. top-level), and if not,
   design a check for that case too (e.g. flag ANY `(`/`)` pair -- same-line or cross-line -- found
   inside `echo`/`rem` text that is already nested inside a real open bracket, not just cross-line

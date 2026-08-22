@@ -20,6 +20,14 @@ TARGET_SUFFIXES = {
     ".json",
 }
 
+# derived requirement (CodeRabbit review, PR #449): cmd.exe treats a TAB exactly like a
+# space as the word separator after "rem" -- `rem\tsomething` is just as much a real
+# comment as `rem something`. A literal `"REM "` (space only) prefix check misses it,
+# silently leaving such a line's parens untracked by the cross-line-paren hazard check.
+# Shared by BOTH .bat/.cmd rem-detection call sites in this file so they cannot drift
+# apart -- do not inline a second, differently-spelled check.
+REM_LINE_RE = re.compile(r"rem(?:[ \t]|$)", re.IGNORECASE)
+
 
 @dataclass
 class Issue:
@@ -37,7 +45,9 @@ class StackItem:
     char: str
     line: int
     column: int
-    is_echo_open: bool = False
+    # None = not opened on an echo/rem prose line; "echo" / "rem" = which command's
+    # text it was opened on (see the cross-line-close check in pop() below).
+    prose_kind: Optional[str] = None
 
 
 class LineCursor:
@@ -142,8 +152,8 @@ class DelimiterChecker:
     def add_issue(self, line: int, column: int, message: str) -> None:
         self.issues.append(Issue(self.path, line, column, message))
 
-    def push(self, char: str, line: int, column: int, is_echo_open: bool = False) -> None:
-        self.stack.append(StackItem(char, line, column, is_echo_open))
+    def push(self, char: str, line: int, column: int, prose_kind: Optional[str] = None) -> None:
+        self.stack.append(StackItem(char, line, column, prose_kind))
 
     def pop(self, expected: str, line: int, column: int, actual: str) -> None:
         if not self.stack:
@@ -157,7 +167,7 @@ class DelimiterChecker:
                 f"Mismatched '{actual}' (expected to close '{last.char}' from line {last.line}, column {last.column})",
             )
             return
-        if last.char == "(" and last.is_echo_open and line != last.line:
+        if last.char == "(" and last.prose_kind and line != last.line:
             # derived requirement: cmd.exe's parenthesized-block parser counts '(' / ')'
             # characters inside plain "echo" text too -- it has no concept of "this paren
             # is just prose." A '(' opened on one echo line and closed on a LATER echo line
@@ -167,16 +177,19 @@ class DelimiterChecker:
             # if(...)/for(...) block, the stray pair can still corrupt cmd.exe's own block-
             # closing search. See docs/agent-lessons-learned.md's "A literal (/) inside echo
             # text is NOT invisible..." entry for the real regression this closes (PR #408,
-            # commit fd52a3f: "failed was unexpected at this time.", 6 CI lanes broken).
+            # commit fd52a3f: "failed was unexpected at this time.", 6 CI lanes broken) and
+            # its "rem" comment sibling (PR #445, Item 52 -- rem lines were fully skipped by
+            # this checker and hit the identical hazard undetected until real Windows CI).
             self.add_issue(
                 last.line,
                 last.column,
-                f"Batch: '(' opened on this 'echo' line does not close until line {line}; "
-                "cmd.exe's parenthesized-block parser counts parens in echo text too, so a "
-                "cross-line split can corrupt an enclosing if/for block's structure even "
-                "though the pair is individually balanced. Keep the pair on one line, avoid "
-                "literal parens in wrapped prose (prefer ' -- ' or ','), or escape both as "
-                "'^(' / '^)' if they are structurally necessary.",
+                f"Batch: '(' opened on this '{last.prose_kind}' line does not close until "
+                f"line {line}; cmd.exe's parenthesized-block parser counts parens in "
+                f"{last.prose_kind} text too, so a cross-line split can corrupt an enclosing "
+                "if/for block's structure even though the pair is individually balanced. "
+                "Keep the pair on one line, avoid literal parens in wrapped prose (prefer "
+                "' -- ' or ','), or escape both as '^(' / '^)' if they are structurally "
+                "necessary.",
             )
 
     def check(self) -> List[Issue]:
@@ -242,13 +255,26 @@ class DelimiterChecker:
 
             stripped = line.lstrip()
             is_bat_echo_line = False
+            is_bat_rem_line = False
             if lower_suffix in {".bat", ".cmd"}:
-                upper = stripped.upper()
-                if upper.startswith("REM ") or upper == "REM" or stripped.startswith("::"):
+                if stripped.startswith("::"):
                     continue
-                # derived requirement: matches "echo", "echo.", "echo(", "echo message" --
-                # anything cmd.exe itself treats as the echo command -- but not "echofoo".
-                is_bat_echo_line = re.match(r"echo\b", stripped, re.IGNORECASE) is not None
+                if REM_LINE_RE.match(stripped):
+                    # derived requirement (CLAUDE.md Item 61, PR #445 Item 52 incident): a
+                    # "rem" line is NOT opaque to cmd.exe's own parenthesized-block parser --
+                    # it counts '(' / ')' characters inside rem comment text exactly the same
+                    # way it does inside echo text (see the cross-line-close check in pop()
+                    # above). Route rem lines through the same character scan echo lines
+                    # already get instead of skipping them outright, so a cross-line paren
+                    # pair inside rem prose, nested inside a real enclosing if/for block, is
+                    # caught the same way an echo-text one already is. "::" stays fully
+                    # skipped -- a real label token, not prose text, and out of this item's
+                    # scope.
+                    is_bat_rem_line = True
+                else:
+                    # derived requirement: matches "echo", "echo.", "echo(", "echo message" --
+                    # anything cmd.exe itself treats as the echo command -- but not "echofoo".
+                    is_bat_echo_line = re.match(r"echo\b", stripped, re.IGNORECASE) is not None
 
             while True:
                 ch = cursor.current()
@@ -328,15 +354,43 @@ class DelimiterChecker:
                         self.here_string = "'@"
                         break
 
+                if (
+                    lower_suffix in {".bat", ".cmd"}
+                    and ch in "(){}[]"
+                    and count_preceding(line, cursor.index, "^") % 2 == 1
+                ):
+                    # derived requirement (found while extending the rem-line cross-line-paren
+                    # check, CLAUDE.md Item 61): cmd.exe's own escape character ('^') in front
+                    # of a bracket makes it a literal character there, not a real block
+                    # delimiter -- and this repo's own established convention for defusing the
+                    # cross-line-paren hazard is exactly to write it as '^(' / '^)' (see
+                    # docs/agent-lessons-learned.md). Failing to recognize the escape here would
+                    # make the checker flag the very construct that fixes the hazard -- confirmed
+                    # directly: run_setup.bat's own file-header rem block (lines ~43-58) uses
+                    # "CRLF ^)" / "^(no goto/call...breaks^)" style escaping extensively, and
+                    # without this check every one of those was mis-tracked as a real,
+                    # structurally significant bracket, corrupting the stack for the rest of the
+                    # file. Applies to all four bracket characters (not just parens) and to every
+                    # .bat/.cmd line (not only echo/rem text), since '^' escaping is general
+                    # cmd.exe syntax, not a prose-specific convention.
+                    cursor.advance()
+                    continue
+
                 if ch in "({[":
                     # derived requirement: only the case where this paren is ALREADY nested
                     # inside another open bracket (a real enclosing if/for block) is actually
-                    # hazardous -- a top-level echo statement with a self-contained paren pair
-                    # split across two otherwise-independent echo COMMANDS (no enclosing block
-                    # for cmd.exe to misparse) is harmless, confirmed against a real instance in
-                    # this file (:print_fastpath_ambiguous_note) that would otherwise false-flag.
-                    echo_open = ch == "(" and is_bat_echo_line and bool(self.stack)
-                    self.push(ch, line_no, cursor.column(), is_echo_open=echo_open)
+                    # hazardous -- a top-level echo/rem line with a self-contained paren pair
+                    # split across two otherwise-independent lines (no enclosing block for
+                    # cmd.exe to misparse) is harmless, confirmed against real instances in
+                    # this file (:print_fastpath_ambiguous_note for echo; a top-level rem
+                    # header block for rem) that would otherwise false-flag.
+                    prose_kind: Optional[str] = None
+                    if ch == "(" and bool(self.stack):
+                        if is_bat_echo_line:
+                            prose_kind = "echo"
+                        elif is_bat_rem_line:
+                            prose_kind = "rem"
+                    self.push(ch, line_no, cursor.column(), prose_kind=prose_kind)
                     cursor.advance()
                     continue
 
@@ -345,6 +399,40 @@ class DelimiterChecker:
                     self.pop(matching, line_no, cursor.column(), ch)
                     cursor.advance()
                     continue
+
+                if lower_suffix in {".bat", ".cmd"} and ch in "'\"":
+                    if ch == "'":
+                        # derived requirement (found while extending the rem-line
+                        # cross-line-paren check, CLAUDE.md Item 61): cmd.exe has no concept
+                        # of a single-quote string delimiter at all -- only '"' is meaningful
+                        # to it, in real code. The generic quote-tracking below previously
+                        # treated a bare apostrophe in .bat/.cmd text as opening a string,
+                        # which was harmless for the small amount of real .bat CODE this
+                        # scanner used to see (code rarely contains a stray apostrophe) but
+                        # corrupts everything once rem/echo PROSE routes through here too --
+                        # an ordinary contraction like "doesn't" or a possessive like
+                        # "user's" would silently swallow every character (including real
+                        # parens) up to the NEXT apostrophe as fake "string content".
+                        # Confirmed directly: run_setup.bat's own file-header rem block hits
+                        # this via "gitattributes'", "GitHub's", "user's", "cmd.exe's", etc.
+                        # Always inert, on every .bat/.cmd line -- matches real cmd.exe
+                        # semantics, where a bare "'" is never special anywhere in the file.
+                        cursor.advance()
+                        continue
+                    if is_bat_echo_line or is_bat_rem_line:
+                        # derived requirement: unlike a real command line (where '"' groups
+                        # an argument), an echo/rem line's text has no "quoted argument"
+                        # concept at all to cmd.exe -- the whole remainder of the line is
+                        # just text. Prose can legitimately contain an ODD count of '"'
+                        # (documentation describing the quote character itself), which would
+                        # otherwise open a persistent "string" that incorrectly swallows
+                        # every following character -- including real parens on LATER lines
+                        # -- until some unrelated, later '"' happens to "close" it. Confirmed
+                        # directly: run_setup.bat's own rem text (line ~1036: "...(a literal
+                        # \" would close the cmd-level quote)."). '"' stays fully meaningful
+                        # on a real (non-prose) .bat/.cmd code line, e.g. `set "VAR=..."`.
+                        cursor.advance()
+                        continue
 
                 if ch in "'\"":
                     triple = False
@@ -376,8 +464,7 @@ class DelimiterChecker:
             for line_no, raw_line in enumerate(lines, start=1):
                 line = raw_line.rstrip("\n\r")
                 stripped = line.lstrip()
-                upper = stripped.upper()
-                if upper.startswith("REM ") or upper == "REM" or stripped.startswith("::"):
+                if REM_LINE_RE.match(stripped) or stripped.startswith("::"):
                     continue
                 scan_from = None
                 if not self._bat_in_backtick:
