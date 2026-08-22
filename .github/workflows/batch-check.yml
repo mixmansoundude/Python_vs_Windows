@@ -3454,16 +3454,39 @@ jobs:
         # conda-full, justme-test, uv, contract-uv, contract-uv-fail, uv-dl-fallback) -- already a
         # third duplication of that list alongside the matrix include: block and the
         # continue-on-error: condition, not a new pattern.
+        # derived requirement (CodeRabbit review, PR #454, zizmor template-injection warning):
+        # needs.selftest.result is read via env: below instead of interpolated directly into this
+        # run: block -- the value itself is always one of a small fixed GitHub-defined enum
+        # ('success'/'failure'/'cancelled'/'skipped'), never attacker-controlled free text, but
+        # routing it through env: avoids the generic pattern zizmor flags entirely rather than
+        # arguing the specific case is safe.
+        env:
+          HP_SELFTEST_RESULT: ${{ needs.selftest.result }}
         run: |
           $reportPath = Join-Path $env:RUNNER_TEMP 'selftest-gate.json'
           & .\tools\aggregate_selftest_verdicts.ps1 `
             -VerdictsDir (Join-Path $env:RUNNER_TEMP 'selftest-verdicts') `
-            -FallbackResult '${{ needs.selftest.result }}' `
+            -FallbackResult $env:HP_SELFTEST_RESULT `
             -ExpectedLanes @('cache', 'real', 'conda-full', 'justme-test', 'uv', 'contract-uv', 'contract-uv-fail', 'uv-dl-fallback') `
             -ReportPath $reportPath
           $rc = $LASTEXITCODE
           $value = if ($rc -eq 1) { 'true' } else { 'false' }
           "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
+          # derived requirement (CodeRabbit review, PR #454): the gate's own verdict was
+          # previously observable only via the job summary/raw report, with no NDJSON row --
+          # this repo's own coding guideline requires "New observable logs, files, artifacts, or
+          # behavior require an NDJSON row." Named to match the ci_test_results-* wildcard
+          # publish_diag's own "Download CI NDJSON artifacts" step already uses (see
+          # ndjson-registry-check's own precedent immediately below in this file), so it lands on
+          # the diagnostics site with zero new download-step wiring.
+          $gateRow = [ordered]@{
+            id      = 'diag.selftest_gate.verdict'
+            pass    = ($rc -ne 1)
+            desc    = 'selftest-gate: aggregate self-test verdict across all matrix lanes'
+            details = [ordered]@{ has_failures = ($rc -eq 1); exit_code = $rc; fallback_result = $env:HP_SELFTEST_RESULT }
+          } | ConvertTo-Json -Compress -Depth 8
+          $gateRow | Out-File -FilePath 'ci_test_results.ndjson' -Encoding ascii -Append
 
       - name: Append gate summary
         if: ${{ always() }}
@@ -3490,6 +3513,21 @@ jobs:
         with:
           name: selftest-gate-report-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/selftest-gate.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      # derived requirement (CodeRabbit review, PR #454): uploads the diag.selftest_gate.verdict
+      # NDJSON row (emitted above) as its own artifact -- named to match the ci_test_results-*
+      # wildcard pattern publish_diag's "Download CI NDJSON artifacts" step already uses, so it
+      # lands in _artifacts/batch-check/_ci_artifacts/ alongside the per-lane NDJSON files with
+      # zero new download-step wiring, mirroring ndjson-registry-check's own identical precedent
+      # a few jobs below in this same file.
+      - name: Upload gate NDJSON row
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ci_test_results-selftest-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci_test_results.ndjson
           if-no-files-found: warn
           retention-days: 7
 

@@ -82,18 +82,19 @@ function Add-VerdictRecord {
     # download-artifact@v6 creates); $RecordLane is the "lane" field written INSIDE the JSON --
     # kept as separate parameters (usually equal) so the duplicate_lane scenario can construct
     # two differently-NAMED folders that both claim the SAME record lane, exactly like a real
-    # double-upload would look once downloaded.
-    param([string]$Dir, [string]$ArtifactLane, [string]$RecordLane, [bool]$HasFailures)
+    # double-upload would look once downloaded. -OmitLane (CodeRabbit review, PR #454) drops the
+    # "lane" property from the JSON entirely, so aggregation must fall back to the artifact
+    # directory name alone -- a real gap in coverage the original 8 scenarios never exercised.
+    param([string]$Dir, [string]$ArtifactLane, [string]$RecordLane, [bool]$HasFailures, [switch]$OmitLane)
     $artifactDir = Join-Path $Dir "selftest-verdict-$ArtifactLane"
     New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
-    $record = [ordered]@{
-        lane = $RecordLane
-        has_failures = $HasFailures
-        raw = $HasFailures.ToString().ToLowerInvariant()
-        run_id = '999999'
-        run_attempt = '1'
-        sources = @('tests~test-results.ndjson', 'ci_test_results.ndjson')
-    }
+    $record = [ordered]@{}
+    if (-not $OmitLane) { $record.lane = $RecordLane }
+    $record.has_failures = $HasFailures
+    $record.raw = $HasFailures.ToString().ToLowerInvariant()
+    $record.run_id = '999999'
+    $record.run_attempt = '1'
+    $record.sources = @('tests~test-results.ndjson', 'ci_test_results.ndjson')
     $record | ConvertTo-Json -Compress -Depth 8 | Out-File -FilePath (Join-Path $artifactDir 'lane_verdict.json') -Encoding ascii
 }
 
@@ -113,12 +114,26 @@ $allPass = $true
 $dir1 = Join-Path $scratchRoot 'healthy'
 $report1 = Join-Path $scratchRoot 'healthy_report.json'
 New-VerdictFixture -Dir $dir1
-foreach ($lane in $expectedLanes) { Add-VerdictRecord -Dir $dir1 -ArtifactLane $lane -RecordLane $lane -HasFailures $false }
+foreach ($lane in $expectedLanes) {
+    if ($lane -eq 'uv-dl-fallback') {
+        # derived requirement (CodeRabbit review, PR #454): one lane's record deliberately omits
+        # the "lane" property entirely, so aggregation must fall back to the artifact directory
+        # name (selftest-verdict-uv-dl-fallback) alone -- a real fallback path the original 8
+        # scenarios never exercised, since every prior fixture always included "lane" explicitly.
+        Add-VerdictRecord -Dir $dir1 -ArtifactLane $lane -RecordLane $lane -HasFailures $false -OmitLane
+    } else {
+        Add-VerdictRecord -Dir $dir1 -ArtifactLane $lane -RecordLane $lane -HasFailures $false
+    }
+}
 $rc1 = Invoke-Aggregate -VerdictsDir $dir1 -FallbackResult 'success' -ReportPath $report1
-$pass1 = ($rc1 -eq 0) -and (Test-Path -LiteralPath $report1)
+$pass1 = $false
+if ($rc1 -eq 0 -and (Test-Path -LiteralPath $report1)) {
+    $reportData1 = Get-Content -Raw -LiteralPath $report1 | ConvertFrom-Json
+    $pass1 = ($reportData1.lane_check.missing_lanes.Count -eq 0) -and ($reportData1.lane_check.observed_lanes.'uv-dl-fallback' -eq 1)
+}
 Write-NdjsonRow ([ordered]@{
     id='self.ci.aggregate_selftest_verdicts.healthy'; pass=$pass1
-    desc='aggregate_selftest_verdicts.ps1: all 8 expected lanes present exactly once, none failing -> has_failures false'
+    desc='aggregate_selftest_verdicts.ps1: all 8 expected lanes present exactly once (one via artifact-directory-name fallback, no lane field in its own JSON), none failing -> has_failures false'
     details=[ordered]@{ exitCode=$rc1 }
 })
 if (-not $pass1) { $allPass = $false }
