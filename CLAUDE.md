@@ -640,6 +640,29 @@ but several represent real gaps worth closing before calling the path fully rele
      promotion without closing it first would just relocate a false-green risk instead of
      removing one.
 
+     **Implemented, NOT YET CONFIRMED via a real CI run.** The aggregation logic was extracted
+     from `selftest-gate`'s inline "Aggregate verdicts" step into `tools/aggregate_selftest_
+     verdicts.ps1` (mirroring `tools/ci_cache_selfheal.ps1`'s own extraction, Item 19), which now
+     compares the SET of expected lane IDs (hardcoded to match the matrix's own 8-mode `include:`
+     list, alongside its two pre-existing duplications there) against the SET of observed lane
+     IDs (each verdict record's own `lane` field, falling back to the containing artifact
+     directory's name when absent) and flags any missing, unexpected, or duplicate lane as
+     `has_failures=true` -- independent of `needs.selftest.result`, closing the exact blind spot
+     described above. A new regression test, `tests/test_aggregate_selftest_verdicts.ps1`
+     (wired into `real`, a GATING lane, mirroring `test_ci_cache_selfheal.ps1`'s own precedent),
+     exercises all three required shapes plus three more (a genuine per-lane failure still
+     detected, the original healthy case, and the "zero files with a `success` fallback" case
+     that proves the new check no longer depends on the fallback result at all) against fixture
+     directories built to mimic `actions/download-artifact@v6`'s own output layout -- verified
+     directly with a local `pwsh` run before ever reaching real CI (this script has no Windows-
+     specific dependency, unlike its `ci_cache_selfheal.ps1` sibling, so local verification on a
+     non-Windows sandbox was actually possible here). Still open: confirm the new gating test
+     passes on the real `real`-lane run, and re-verify `selftest-gate`'s own "Append gate summary"
+     step still renders correctly with the report's new `lane_check` section. The actual
+     `exit 1`-on-`has_failures` step for `selftest-gate` itself (the change that makes this job's
+     own conclusion fail for real) is a SEPARATE, not-yet-taken next step -- this slice is scoped
+     to the precondition only, per the item's own "one lane or row per slice" discipline.
+
   **Process discipline -- read this before touching anything:**
   1. **One lane or row per slice.** Do not attempt a blanket "flip everything to gating" change.
      Each slice: (a) confirm the underlying mechanism is genuinely real and demonstrably

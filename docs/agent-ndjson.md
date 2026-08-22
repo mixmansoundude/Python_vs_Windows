@@ -1010,6 +1010,67 @@ over time instead of requiring a raw-log dig to notice it happened at all, not t
 
 ---
 
+## selfapps-aggregate-selftest-verdicts NDJSON rows (test_aggregate_selftest_verdicts.ps1, `real` lane only, GATING)
+
+CLAUDE.md Active Backlog Item 35's own "Precondition" caveat: the `selftest-gate` job's
+"Aggregate verdicts" step previously only treated a TOTAL absence of `lane_verdict.json` files
+(zero lanes reporting) as a failure signal -- a single lane's own verdict artifact silently
+missing (upload glitch, artifact-service hiccup) while the other 7 lanes' artifacts landed fine
+was invisible, and an unexpected or duplicate lane landing alongside a genuinely missing one could
+make a raw file-COUNT check pass even with one real lane's evidence absent. The aggregation logic
+was extracted to `tools/aggregate_selftest_verdicts.ps1` (mirroring `tools/ci_cache_selfheal.ps1`'s
+own extraction, see the section directly above) so this test can exercise it deterministically
+against fixture directories built to mimic exactly what `actions/download-artifact@v6` produces
+(each artifact under its own `<VerdictsDir>/selftest-verdict-<lane>/lane_verdict.json`
+subdirectory), with no dependency on a real 8-lane matrix run. Wired into `real` -- a GATING lane
+-- so a regression in the aggregation logic itself fails CI on every run, not just when a real
+artifact happens to go missing/duplicated/unexpected that day.
+
+Eight scenarios: `healthy` (all 8 expected lanes present once, none failing -> pass; one lane's
+own record deliberately omits the `lane` field entirely, proving the artifact-directory-name
+fallback path -- added after a CodeRabbit review round on PR #454 pointed out the original 6
+scenarios never exercised that fallback), `lane_failed` (a genuine per-lane `has_failures:true`
+is still detected -- regression guard for the pre-existing, unchanged union behavior),
+`missing_lane` (7 of 8 lanes present -- the actual gap this item closes, since the ORIGINAL
+inline logic had no way to detect a partial miss at all), `unexpected_lane` (an extra lane not in
+the matrix's own mode list), `duplicate_lane` (one lane's verdict uploaded twice under two
+differently-named artifact directories, both claiming the same `lane` field inside their JSON),
+`empty_fallback` (zero verdict files with `FallbackResult='success'` -- proves the new lane-set
+check fires independent of the fallback result, unlike the OLD behavior which only fired here
+when the fallback result was NOT `'success'`), `malformed_json` (one lane's `lane_verdict.json`
+is not valid JSON at all), and `missing_field` (one lane's record is valid JSON but has no
+`has_failures` field). The last two (also added via the same PR #454 review round) close a
+second real gap: a parse failure or a missing `has_failures` value previously only added a
+`parse_warning` annotation without ever setting `has_failures=true` -- silently treated as
+passing evidence instead of "we don't have confirmed-good evidence for this lane." Deliberately
+NOT gated on `$IsWindows` (unlike `test_ci_cache_selfheal.ps1`'s own Windows-only skip) -- the
+script under test is pure PowerShell (JSON parsing and file I/O only, no `cmd.exe`/
+Windows-specific calls), so it runs identically under `pwsh` on Linux or Windows and was directly
+verified locally before ever reaching real CI.
+
+```
+self.ci.aggregate_selftest_verdicts.healthy, self.ci.aggregate_selftest_verdicts.lane_failed,
+self.ci.aggregate_selftest_verdicts.missing_lane, self.ci.aggregate_selftest_verdicts.unexpected_lane,
+self.ci.aggregate_selftest_verdicts.duplicate_lane, self.ci.aggregate_selftest_verdicts.empty_fallback,
+self.ci.aggregate_selftest_verdicts.malformed_json, self.ci.aggregate_selftest_verdicts.missing_field,
+diag.selftest_gate.verdict
+```
+
+`diag.selftest_gate.verdict` (inline `batch-check.yml`, the `selftest-gate` job's own "Aggregate
+verdicts" step) is the companion VISIBILITY row for the AMBIENT gate's own real outcome each run
+-- unlike the deterministic fixture-based test above, this fires exactly once per real CI run and
+records whether `tools/aggregate_selftest_verdicts.ps1` found `has_failures=true` against that
+run's own genuine 8-lane artifacts (`details.has_failures`/`details.exit_code`/
+`details.fallback_result`). Uploaded as its own artifact
+(`ci_test_results-selftest-gate-<run>-<attempt>`), named to match the `ci_test_results-*`
+wildcard `publish_diag`'s "Download CI NDJSON artifacts" step already uses (see
+`ndjson-registry-check`'s own identical precedent), so it reaches the diagnostics site with no
+new download-step wiring. Added the same PR #454 review round, closing this repo's own coding
+guideline ("New observable logs, files, artifacts, or behavior require an NDJSON row") for the
+gate's own verdict, which previously was observable only via the ephemeral job-summary page.
+
+---
+
 ## selfapps-lineending-check NDJSON rows (selfapps_lineending_check.ps1, real/conda-full lanes, GATING)
 
 CLAUDE.md Active Backlog Item 44's own "Known gap": the line-ending self-check at the top of

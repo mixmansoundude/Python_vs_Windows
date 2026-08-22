@@ -283,6 +283,18 @@ jobs:
         run: |
           & tests\test_ci_cache_selfheal.ps1
 
+      # derived requirement: wired into `real` specifically (a GATING lane) for the same reason
+      # as the cache-selfheal self-test immediately above -- so a regression in
+      # tools/aggregate_selftest_verdicts.ps1 (the selftest-gate "Aggregate verdicts" logic,
+      # CLAUDE.md Active Backlog Item 35's "Precondition" caveat) actually fails CI on every run,
+      # independent of whether a real artifact ever goes missing/duplicated/unexpected in this
+      # particular run.
+      - name: "Self-test: selftest-gate verdict aggregation logic (real lane only, GATING)"
+        if: ${{ matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\test_aggregate_selftest_verdicts.ps1
+
       - name: "Pre-bootstrap: ensure Python file exists"
         shell: pwsh
         run: |
@@ -3404,6 +3416,15 @@ jobs:
     outputs:
       has_failures: ${{ steps.aggregate.outputs.has_failures }}
     steps:
+      # derived requirement (CodeRabbit review, PR #454): this job previously never checked out
+      # the repository at all -- its original "Aggregate verdicts" step was fully self-contained
+      # inline PowerShell with no dependency on any repo file. Extracting that logic to
+      # tools/aggregate_selftest_verdicts.ps1 introduced a genuine new dependency on the repo
+      # being present on this runner that the job never had before; without this step, the
+      # "Aggregate verdicts" step below would fail to find the script on every single run.
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
       - name: Download lane verdicts
         uses: actions/download-artifact@v6
         continue-on-error: true
@@ -3423,99 +3444,76 @@ jobs:
       - name: Aggregate verdicts
         id: aggregate
         shell: pwsh
+        # derived requirement: the actual aggregation logic now lives in
+        # tools/aggregate_selftest_verdicts.ps1 so tests/test_aggregate_selftest_verdicts.ps1 can
+        # exercise it deterministically against fixture directories on every CI run -- mirrors
+        # tools/ci_cache_selfheal.ps1's own extraction (CLAUDE.md Active Backlog Item 35's
+        # "Precondition" caveat: fix the missing-artifact fallback to fail CLOSED per lane before
+        # this step's own conclusion is ever wired into branch protection). -ExpectedLanes must be
+        # kept in sync with this file's own matrix.include list above (8 modes: cache, real,
+        # conda-full, justme-test, uv, contract-uv, contract-uv-fail, uv-dl-fallback) -- already a
+        # third duplication of that list alongside the matrix include: block and the
+        # continue-on-error: condition, not a new pattern.
+        # derived requirement (CodeRabbit review, PR #454, zizmor template-injection warning):
+        # needs.selftest.result is read via env: below instead of interpolated directly into this
+        # run: block -- the value itself is always one of a small fixed GitHub-defined enum
+        # ('success'/'failure'/'cancelled'/'skipped'), never attacker-controlled free text, but
+        # routing it through env: avoids the generic pattern zizmor flags entirely rather than
+        # arguing the specific case is safe.
+        env:
+          HP_SELFTEST_RESULT: ${{ needs.selftest.result }}
         run: |
-          $fallback = '${{ needs.selftest.result }}'
-          $dir = Join-Path $env:RUNNER_TEMP 'selftest-verdicts'
-          $files = @()
-          if (Test-Path $dir) {
-            $files = Get-ChildItem -Path $dir -Filter '*.json' -File -Recurse -ErrorAction SilentlyContinue
-          }
-
-          $has = $false
-          $lanes = @()
-
-          function Convert-ToBooleanOrNull {
-            param(
-              [Parameter(Mandatory = $false)]
-              $Value
-            )
-
-            if ($null -eq $Value) { return $null }
-            if ($Value -is [bool]) { return $Value }
-            if ($Value -is [string]) {
-              $text = $Value.Trim().ToLowerInvariant()
-              switch ($text) {
-                'true' { return $true }
-                't' { return $true }
-                'yes' { return $true }
-                'y' { return $true }
-                '1' { return $true }
-                'false' { return $false }
-                'f' { return $false }
-                'no' { return $false }
-                'n' { return $false }
-                '0' { return $false }
-              }
-              return $null
-            }
-            if ($Value -is [int] -or $Value -is [long]) {
-              if ($Value -eq 0) { return $false }
-              if ($Value -eq 1) { return $true }
-            }
-            return $null
-          }
-
-          foreach ($file in $files) {
-            try {
-              $content = Get-Content -Raw -LiteralPath $file.FullName
-              if ([string]::IsNullOrWhiteSpace($content)) { continue }
-              $data = $content | ConvertFrom-Json -Depth 16
-              if ($null -eq $data) { continue }
-
-              $records = if ($data -is [array]) { $data } else { @($data) }
-              foreach ($record in $records) {
-                if ($null -eq $record) { continue }
-
-                $value = $null
-                if ($record.PSObject.Properties.Name -contains 'has_failures') {
-                  $value = Convert-ToBooleanOrNull -Value $record.has_failures
-                }
-
-                if ($record.PSObject.Properties.Name -notcontains 'source_file') {
-                  $record | Add-Member -NotePropertyName source_file -NotePropertyValue $file.FullName -Force
-                }
-
-                if ($null -eq $value) {
-                  $record | Add-Member -NotePropertyName parse_warning -NotePropertyValue 'has_failures missing or unparseable' -Force
-                } elseif ($value) {
-                  $has = $true
-                }
-
-                $lanes += $record
-              }
-            } catch {
-              $lanes += [ordered]@{
-                lane = $file.BaseName
-                error = $_.Exception.Message
-                source_file = $file.FullName
-              }
-            }
-          }
-
-          if (-not $files -and $fallback -and $fallback -ne 'success') {
-            $has = $true
-          }
-
-          $value = if ($has) { 'true' } else { 'false' }
+          $reportPath = Join-Path $env:RUNNER_TEMP 'selftest-gate.json'
+          & .\tools\aggregate_selftest_verdicts.ps1 `
+            -VerdictsDir (Join-Path $env:RUNNER_TEMP 'selftest-verdicts') `
+            -FallbackResult $env:HP_SELFTEST_RESULT `
+            -ExpectedLanes @('cache', 'real', 'conda-full', 'justme-test', 'uv', 'contract-uv', 'contract-uv-fail', 'uv-dl-fallback') `
+            -ReportPath $reportPath
+          $rc = $LASTEXITCODE
+          # derived requirement (CodeRabbit review, PR #454): treat anything OTHER than a clean
+          # exit 0 as has_failures=true, not just the script's own documented exit 1. Aggregate_
+          # selftest_verdicts.ps1 only ever exits 0 or 1 by its own contract, but the INVOCATION
+          # itself can fail before that contract even applies -- e.g. a bad path/parameter binding
+          # error from the call operator (&) is typically non-terminating under this shell's
+          # default $ErrorActionPreference, so execution would continue past it with $LASTEXITCODE
+          # left at whatever it was BEFORE this line (commonly $null, since this is the step's
+          # first command) -- the old "-eq 1" check silently classified that as has_failures=false
+          # (fail OPEN: the aggregator never ran, but the gate reported clean). "$rc -ne 0" instead
+          # (with $null -ne 0 evaluating true) fails CLOSED on any anomaly, not just the one
+          # documented failure code.
+          $value = if ($rc -eq 0) { 'false' } else { 'true' }
           "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
-          $report = [ordered]@{
-            fallback_result = $fallback
-            has_failures = $has
-            lanes = @($lanes)
-            verdict_files = if ($files) { $files.FullName } else { @() }
-          }
-          $report | ConvertTo-Json -Depth 6 | Out-File -FilePath (Join-Path $env:RUNNER_TEMP 'selftest-gate.json') -Encoding utf8
+          # derived requirement (CodeRabbit review, PR #454): the gate's own verdict was
+          # previously observable only via the job summary/raw report, with no NDJSON row --
+          # this repo's own coding guideline requires "New observable logs, files, artifacts, or
+          # behavior require an NDJSON row." Named to match the ci_test_results-* wildcard
+          # publish_diag's own "Download CI NDJSON artifacts" step already uses (see
+          # ndjson-registry-check's own precedent immediately below in this file), so it lands on
+          # the diagnostics site with zero new download-step wiring.
+          $gateRow = [ordered]@{
+            id      = 'diag.selftest_gate.verdict'
+            pass    = ($rc -eq 0)
+            desc    = 'selftest-gate: aggregate self-test verdict across all matrix lanes'
+            details = [ordered]@{ has_failures = ($rc -ne 0); exit_code = $rc; fallback_result = $env:HP_SELFTEST_RESULT }
+          } | ConvertTo-Json -Compress -Depth 8
+          $gateRow | Out-File -FilePath 'ci_test_results.ndjson' -Encoding ascii -Append
+
+          # derived requirement (CodeRabbit review, PR #454): explicitly reset the step's own
+          # exit status. GitHub Actions appends its own "exit $LASTEXITCODE" to every pwsh run:
+          # block; aggregate_selftest_verdicts.ps1 is invoked via the call operator (&), so a
+          # has_failures=true run leaves $LASTEXITCODE at 1 with nothing after it to clear that --
+          # every later line here (string building, Out-File) is pure PowerShell and never
+          # touches $LASTEXITCODE. Without this, the step (and therefore this job's own
+          # conclusion) would silently start failing on real has_failures=true evidence today,
+          # even though CLAUDE.md Active Backlog Item 35's own process discipline is explicit that
+          # making selftest-gate's conclusion fail for real is a SEPARATE, not-yet-taken next
+          # step (its own future "if has_failures: exit 1" addition, only after this mechanism has
+          # soaked and is added to branch protection) -- not an accidental side effect of this
+          # precondition slice. steps.aggregate.outputs.has_failures (set above via
+          # $env:GITHUB_OUTPUT) already carries the real verdict to model-quick-fix regardless of
+          # this step's own exit code.
+          exit 0
 
       - name: Append gate summary
         if: ${{ always() }}
@@ -3530,6 +3528,35 @@ jobs:
           } else {
             '- No gate summary generated.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
+
+      # derived requirement (CodeRabbit review, PR #454): the report was previously surfaced only
+      # via the job summary above, with no way to download or retain it -- the job summary page
+      # is convenient for a human reading the run live, but is not a durable artifact the way the
+      # per-lane lane_verdict.json files already are. Uploading it here gives future diagnosis
+      # (or a future automated consumer) the same durability the inputs to this step already have.
+      - name: Upload gate report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: selftest-gate-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/selftest-gate.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      # derived requirement (CodeRabbit review, PR #454): uploads the diag.selftest_gate.verdict
+      # NDJSON row (emitted above) as its own artifact -- named to match the ci_test_results-*
+      # wildcard pattern publish_diag's "Download CI NDJSON artifacts" step already uses, so it
+      # lands in _artifacts/batch-check/_ci_artifacts/ alongside the per-lane NDJSON files with
+      # zero new download-step wiring, mirroring ndjson-registry-check's own identical precedent
+      # a few jobs below in this same file.
+      - name: Upload gate NDJSON row
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ci_test_results-selftest-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci_test_results.ndjson
+          if-no-files-found: warn
+          retention-days: 7
 
   crlf-check:
     name: CRLF line-ending check (.bat/.cmd)
