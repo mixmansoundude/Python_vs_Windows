@@ -179,6 +179,25 @@ Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
 $prevCascade = if (Test-Path Env:HP_TEST_CASCADE_ANSWER) { $env:HP_TEST_CASCADE_ANSWER } else { $null }
 $env:HP_TEST_CASCADE_ANSWER = 'Y'
 
+# derived requirement (CLAUDE.md Item 37): point run_setup.bat's own inline HP_NDJSON
+# emission at the SAME shared file this test's own Write-NdjsonRow already writes to ($nd), so
+# self.dll_bundle.recover's "repaired" row -- proven by mech4Pass's log-text checks below to
+# genuinely fire during this exact run, but never previously captured as a queryable NDJSON row
+# anywhere -- lands in the shared stream for the first time. See docs/agent-ndjson.md's
+# "self.dll_bundle.recover... Not currently observed in any real CI artifact" note: the only
+# test reaching the 'repaired' state is THIS one, and it never set HP_NDJSON before now. Unlike
+# selfapps_postexec_checkpoint.ps1 / selfapps_failfast_probe.ps1 / selfapps_exefastpath.ps1
+# (which deliberately UNSET HP_NDJSON around their own sub-bootstraps to keep an isolated
+# scenario's rows OUT of the shared stream), this test's Item 37 goal is the opposite: this
+# sub-bootstrap's inline rows (self.dll_bundle.recover, plus the other already-registered ids
+# it incidentally also emits -- pipreqs.install, env.mode, helper.find_entry.syntax, conda.url,
+# self.warnfix.platform_filter, self.exe.smokerun -- all already-expected occurrences for a
+# real full bootstrap run) belong IN the shared stream.
+$prevNdjson = if (Test-Path Env:HP_NDJSON) { $env:HP_NDJSON } else { $null }
+$env:HP_NDJSON = $nd
+$ndLinesBefore = if (Test-Path -LiteralPath $nd) { @(Get-Content -LiteralPath $nd -Encoding ASCII) } else { @() }
+$ndCountBefore = $ndLinesBefore.Count
+
 $bootstrapLog = '~layered_e2e_bootstrap.log'
 # derived requirement: guard the location push -- under $ErrorActionPreference = 'Continue', a
 # failed Push-Location would otherwise be non-terminating, letting the try block run
@@ -192,6 +211,7 @@ try {
     $runExit = $LASTEXITCODE
 } finally {
     if ($null -eq $prevCascade) { Remove-Item Env:HP_TEST_CASCADE_ANSWER -ErrorAction SilentlyContinue } else { $env:HP_TEST_CASCADE_ANSWER = $prevCascade }
+    if ($null -eq $prevNdjson) { Remove-Item Env:HP_NDJSON -ErrorAction SilentlyContinue } else { $env:HP_NDJSON = $prevNdjson }
     if ($pushedLocation) { Pop-Location }
 }
 
@@ -269,6 +289,35 @@ $hiddenRecovered  = $combined -match [regex]::Escape('[REPAIR][HIDDEN_IMPORT] EX
 $dllWarningSeen    = $setupText -match [regex]::Escape("Library not found: could not resolve 'eccodes.dll'")
 $dllBundling       = $combined -match [regex]::Escape('[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: eccodes.dll')
 $dllBundleComplete = $combined -match [regex]::Escape('[REPAIR][DLL_BUNDLE] Native-DLL bundling complete')
+
+# derived requirement (CLAUDE.md Item 37): informational only, deliberately NOT folded into
+# chainPass/mech4Pass -- mech4Pass above already proves the real repair happened via log text
+# (the same underlying event this NDJSON row records), so a wiring hiccup in the row emission
+# itself must not turn a currently-green, closely-watched test red on its own first real CI
+# run. This is the row's first-ever real-CI observation; once proven stable across several runs
+# it can graduate to a hard assertion via Item 35's own promotion process.
+$ndLinesAfterRun  = if (Test-Path -LiteralPath $nd) { @(Get-Content -LiteralPath $nd -Encoding ASCII) } else { @() }
+$ndNewLines       = if ($ndLinesAfterRun.Count -gt $ndCountBefore) { $ndLinesAfterRun[$ndCountBefore..($ndLinesAfterRun.Count - 1)] } else { @() }
+# derived requirement (CodeRabbit review, PR #452): parse each new NDJSON line as its own
+# object and require the state check to apply to the SAME row that carries the
+# self.dll_bundle.recover id -- a plain substring match across the whole $ndNewCombined text
+# (the original approach) could not tell "this row's own details.state is repaired" apart from
+# "some OTHER unrelated row emitted during this same run also happens to contain the substring
+# "state":"repaired"" (e.g. a coincidentally identically-shaped field on a different id).
+$dllBundleRowSeen     = $false
+$dllBundleRowRepaired = $false
+foreach ($ndLine in $ndNewLines) {
+    if (-not $ndLine.Trim()) { continue }
+    try {
+        $ndRow = $ndLine | ConvertFrom-Json
+    } catch {
+        continue
+    }
+    if ($ndRow.id -eq 'self.dll_bundle.recover') {
+        $dllBundleRowSeen = $true
+        if ($ndRow.details.state -eq 'repaired') { $dllBundleRowRepaired = $true }
+    }
+}
 
 $infraError = $combined -match 'Failed to parse|uv error|pip error'
 
@@ -412,6 +461,8 @@ Write-NdjsonRow ([ordered]@{
         dllWarningSeen     = $dllWarningSeen
         dllBundling        = $dllBundling
         dllBundleComplete  = $dllBundleComplete
+        dllBundleRowSeen     = $dllBundleRowSeen
+        dllBundleRowRepaired = $dllBundleRowRepaired
         exePass          = $exePass
         exeExists        = $exeExists
         exeExit          = $exeExit

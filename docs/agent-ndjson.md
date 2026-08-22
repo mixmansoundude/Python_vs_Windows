@@ -268,30 +268,37 @@ display-only sanitization exists (see `docs/agent-interconnect.md`'s DLL-bundlin
 a DLL basename can legally contain `&`/`|`, which are metacharacters to cmd.exe's own
 command-line parsing even inside a quoted argument, not just inside `:log`'s unquoted echo.
 
-**Not currently observed in any real CI artifact.** `run_setup.bat`'s own `HP_NDJSON`
-auto-detection (`if not defined HP_NDJSON if exist "%CD%\tests" set "HP_NDJSON=..."`) only fires
-when the bootstrapped app directory has its own `tests\` subfolder -- `tests/selfapps_layered_
-e2e.ps1` (the one test that genuinely triggers the `repaired` state, via `pygrib`/`eccodes.dll`)
-runs its sub-bootstrap from a bare scratch directory with no `tests\` subfolder, and does not
-explicitly set `HP_NDJSON` either, matching this repo's established convention for isolated
-sub-bootstrap tests (see `tests/selfapps_postexec_checkpoint.ps1`, which deliberately `Remove-
-Item Env:HP_NDJSON` around its own sub-bootstrap calls and asserts via log text instead, to avoid
-an isolated scratch run's rows leaking into the shared `~test-results.ndjson` stream). So
-`:emit_dll_bundle_row`'s own `if not defined HP_NDJSON exit /b 0` guard means this row is never
-actually written during that test's run today -- `mech4Pass` continues to rely on the pre-existing
-`[REPAIR][DLL_BUNDLE]` log-text assertions (`docs/agent-interconnect.md`'s DLL-bundling section),
-unaffected by this addition. `batch.dll_bundle.ndjson` (`tests/harness.ps1`, static) is the actual
-coverage for this row: it verifies the `:emit_dll_bundle_row` subroutine exists, the row id string
-is present, and all 7 `call :emit_dll_bundle_row <state>` sites are wired (including the
-`exhausted` state added for CLAUDE.md Item 25) -- the same "static wiring
-guard, not runtime execution" pattern already used for `batch.failfast.probe`/`batch.postexec.
-checkpoint` above. Per-state runtime coverage (deliberately setting `HP_NDJSON` for a sub-bootstrap
-and reading the row back) remains a candidate for a future, dedicated test if ever justified --
-not pursued now, since simulating the other 6 states (Nuitka-used, non-conda provider, a genuine
-PyInstaller rebuild failure, a missing post-rebuild EXE, a detected-but-unlocatable DLL, the
-3-iteration cap hit with a candidate still pending) each needs
-its own scaffolding beyond what `self.layered_e2e.chain`'s real `pygrib` trigger already provides
-for the `repaired` state alone.
+**Now wired for real observation (CLAUDE.md Item 37, not yet confirmed via a real CI run as of
+this edit).** Previously never observed in any real CI artifact: `run_setup.bat`'s own
+`HP_NDJSON` auto-detection (`if not defined HP_NDJSON if exist "%CD%\tests" set "HP_NDJSON=..."`)
+only fires when the bootstrapped app directory has its own `tests\` subfolder, and
+`tests/selfapps_layered_e2e.ps1` (the one test that genuinely triggers the `repaired` state, via
+`pygrib`/`eccodes.dll`) runs its sub-bootstrap from a bare scratch directory with no `tests\`
+subfolder -- so `:emit_dll_bundle_row`'s own `if not defined HP_NDJSON exit /b 0` guard meant
+this row was never actually written. Fixed by having that test explicitly set `HP_NDJSON` to the
+SAME shared file its own `Write-NdjsonRow` already writes to, right before the sub-bootstrap
+call, restored in its `finally` block -- the opposite of `tests/selfapps_postexec_checkpoint.ps1`
+/ `selfapps_failfast_probe.ps1` / `selfapps_exefastpath.ps1`'s established convention of
+deliberately `Remove-Item Env:HP_NDJSON` around an isolated sub-bootstrap to keep its rows OUT of
+the shared stream -- this test's whole Item 37 goal is getting this specific row IN. The test
+also now diffs `~test-results.ndjson` before/after its own sub-bootstrap call and records whether
+a `self.dll_bundle.recover` row with `state:"repaired"` appeared, as informational `details`
+fields (`dllBundleRowSeen`/`dllBundleRowRepaired`) on its own `self.layered_e2e.chain` row --
+deliberately NOT folded into `chainPass`/`mech4Pass` itself, since `mech4Pass`'s existing
+log-text assertions already prove the underlying repair happened; a wiring hiccup in the NDJSON
+emission specifically should not turn this already-proven, closely-watched test red on its first
+real run under the new wiring. Check the diagnostics site's next `cache`-lane run for this row
+before treating it as confirmed. `batch.dll_bundle.ndjson` (`tests/harness.ps1`, static) remains
+the SEPARATE, always-on coverage for this row regardless of the above: it verifies the
+`:emit_dll_bundle_row` subroutine exists, the row id string is present, and all 7
+`call :emit_dll_bundle_row <state>` sites are wired (including the `exhausted` state added for
+CLAUDE.md Item 25) -- the same "static wiring guard, not runtime execution" pattern already used
+for `batch.failfast.probe`/`batch.postexec.checkpoint` above. Runtime coverage for the other 6
+states (Nuitka-used, non-conda provider, a genuine PyInstaller rebuild failure, a missing
+post-rebuild EXE, a detected-but-unlocatable DLL, the 3-iteration cap hit with a candidate still
+pending) each needs its own scaffolding beyond what `self.layered_e2e.chain`'s real `pygrib`
+trigger provides for the `repaired` state alone -- still a candidate for future, dedicated tests,
+not pursued now.
 
 `batch.dll_bundle.pct_sanitizer` (`tests/harness.ps1`, gating) is a SEPARATE static check, not a
 sibling of the above -- it live-executes a real cmd.exe + PowerShell fixture proving the `_SAFE`
