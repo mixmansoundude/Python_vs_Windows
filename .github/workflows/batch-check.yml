@@ -3470,7 +3470,18 @@ jobs:
             -ExpectedLanes @('cache', 'real', 'conda-full', 'justme-test', 'uv', 'contract-uv', 'contract-uv-fail', 'uv-dl-fallback') `
             -ReportPath $reportPath
           $rc = $LASTEXITCODE
-          $value = if ($rc -eq 1) { 'true' } else { 'false' }
+          # derived requirement (CodeRabbit review, PR #454): treat anything OTHER than a clean
+          # exit 0 as has_failures=true, not just the script's own documented exit 1. Aggregate_
+          # selftest_verdicts.ps1 only ever exits 0 or 1 by its own contract, but the INVOCATION
+          # itself can fail before that contract even applies -- e.g. a bad path/parameter binding
+          # error from the call operator (&) is typically non-terminating under this shell's
+          # default $ErrorActionPreference, so execution would continue past it with $LASTEXITCODE
+          # left at whatever it was BEFORE this line (commonly $null, since this is the step's
+          # first command) -- the old "-eq 1" check silently classified that as has_failures=false
+          # (fail OPEN: the aggregator never ran, but the gate reported clean). "$rc -ne 0" instead
+          # (with $null -ne 0 evaluating true) fails CLOSED on any anomaly, not just the one
+          # documented failure code.
+          $value = if ($rc -eq 0) { 'false' } else { 'true' }
           "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
           # derived requirement (CodeRabbit review, PR #454): the gate's own verdict was
@@ -3482,9 +3493,9 @@ jobs:
           # the diagnostics site with zero new download-step wiring.
           $gateRow = [ordered]@{
             id      = 'diag.selftest_gate.verdict'
-            pass    = ($rc -ne 1)
+            pass    = ($rc -eq 0)
             desc    = 'selftest-gate: aggregate self-test verdict across all matrix lanes'
-            details = [ordered]@{ has_failures = ($rc -eq 1); exit_code = $rc; fallback_result = $env:HP_SELFTEST_RESULT }
+            details = [ordered]@{ has_failures = ($rc -ne 0); exit_code = $rc; fallback_result = $env:HP_SELFTEST_RESULT }
           } | ConvertTo-Json -Compress -Depth 8
           $gateRow | Out-File -FilePath 'ci_test_results.ndjson' -Encoding ascii -Append
 
