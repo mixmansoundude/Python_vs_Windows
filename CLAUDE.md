@@ -193,6 +193,7 @@ This is the deliverable. Treat changes carefully.
    | `HP_COLLECT_SUBMODULES` | `~collect_submodules.py` | Pre-build `--collect-submodules=PKG` flags for curated dynamic-import packages (sklearn/matplotlib/scipy/plotly), double-gated on used-by-source AND installed-in-interpreter so a fat global env never bloats a lean app's EXE | `tools/collect_submodules.py` |
    | `HP_HIDDEN_IMPORT_SCAN` | `~hidden_import_scan.py` | Slice 2 `--hidden-import` auto-recovery target selection for `:hidden_import_recover`; strict `ModuleNotFoundError` + installed-in-build-interpreter gate (a typo or `ImportError: cannot import name` costs zero rebuilds); capped at 3 rebuilds | `tools/hidden_import_scan.py` |
    | `HP_DLL_PCT_SANITIZE` | `~dll_pct_sanitize.ps1` | Strips `%`/`^` from env var values for `:log`'s UNQUOTED-echo safety in the native-DLL bundling loop; emitted as a real `.ps1` (invoked via `-File`) so cmd.exe's own tokenizer never parses its body -- see `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry for why the earlier inline `-Command` version needed three separate fixes | `tools/dll_pct_sanitize.ps1` |
+   | `HP_MIGRATE_GITATTRIBUTES` | `~migrate_gitattributes.ps1` | Item 60: replaces a pre-existing `.gitattributes`' stale `*.bat eol=crlf`/`*.cmd eol=crlf` lines with `-text`, in place, EXACT-line-match only so unrelated/user-hand-edited content is never touched; called unconditionally from `:merge_git_config` regardless of whether the append block ran or was skipped | `tools/migrate_gitattributes.ps1` |
 
    Each payload's canonical `tools/` source has a `PayloadSync` unit test asserting
    byte-equality between the embedded base64 and the source file (see the Testing section
@@ -293,6 +294,7 @@ Test files and what they cover:
 | `test_collect_submodules.py` | `--collect-submodules` double-gate (used AND installed), adversarial import-scan cases, AST-failure regex fallback, HP_COLLECT_SUBMODULES payload sync |
 | `test_hidden_import_scan.py` | `--hidden-import` auto-recovery strictness (ModuleNotFoundError + installed only), typo/ImportError/circular-import non-triggers, tried-list loop guard, HP_HIDDEN_IMPORT_SCAN payload sync |
 | `test_check_ndjson_registry.py` | NDJSON registry cross-check: brace expansion, all four code emission patterns, log-file parsing, pass/fail end-to-end paths |
+| `test_migrate_gitattributes.py` | Item 60: exact-match-only `.gitattributes` migration (fresh, idempotent, missing-file, asymmetric, already-fixed, near-miss-partial-text cases), HP_MIGRATE_GITATTRIBUTES payload sync |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -1026,20 +1028,39 @@ way (no live Windows execution available here), that is noted explicitly rather 
   publish to GitHub), but real and permanent without a fix -- there is currently no self-healing
   mechanism.
 
-  **Deliberately not attempted as a quick fix**: a correct migration needs a genuine
+  **Deliberately not attempted as a quick fix at first**: a correct migration needs a genuine
   read-modify-write against a user's own, arbitrary `.gitattributes` content (not just an append),
-  which raises real design questions this item does not pre-answer: detect the OLD lines
-  specifically (not just the presence of the shared signature) and REPLACE them in place, versus
-  appending new superseding lines below the old ones and relying on git's own last-match-wins
-  attribute resolution (messier file, no cleanup, but avoids ever rewriting content that might not
-  be exactly what this bootstrapper wrote -- e.g. a user who hand-edited that section). Whichever
-  shape is chosen, prefer the established `.NET` file-IO safe-write pattern this repo already uses
-  elsewhere (see `docs/agent-lessons-learned.md`'s "never open a real source file in Python 'w'
-  mode" entry for the general principle, and the PowerShell-side equivalent already used for the
-  DLL-bundling sanitizers) over a naive in-place text substitution, and add a new regression
-  scenario in `tests/selfapps_ux_hardening.ps1` that pre-seeds a scratch `.gitattributes` with the
-  OLD rules before running the bootstrapper, asserting the file ends up with `-text` and no
-  leftover `eol=crlf` line for `*.bat`/`*.cmd`.
+  which raised real design questions: detect the OLD lines specifically (not just the presence of
+  the shared signature) and REPLACE them in place, versus appending new superseding lines below
+  the old ones and relying on git's own last-match-wins attribute resolution (messier file, no
+  cleanup). Resolved in favor of REPLACE, but scoped narrowly enough to keep the "avoid rewriting
+  content this bootstrapper didn't write" concern satisfied: only a line that EXACTLY matches
+  `*.bat eol=crlf` or `*.cmd eol=crlf` (byte-for-byte, no partial/fuzzy match) is ever touched --
+  every other line, including any user hand-edit elsewhere in the file, or a line that merely
+  CONTAINS that text with something else appended, passes through byte-identical. An exact-match
+  line either was written by an older copy of this bootstrapper, or is functionally identical
+  user-authored content the same corrected rule applies to either way -- there is no case where
+  touching it is wrong.
+
+  **Implemented, NOT YET CONFIRMED via a real CI run.** New payload `HP_MIGRATE_GITATTRIBUTES`
+  (`tools/migrate_gitattributes.ps1`, see the embedded-payload table above) reads
+  `.gitattributes` via `[System.IO.File]::ReadAllLines`/`WriteAllLines` (the established `.NET`
+  file-IO pattern, not `Get-Content`/`Set-Content` or a naive text substitution), replaces only
+  the two exact stale lines when present, and is a no-op (no write at all) otherwise -- verified
+  locally via `pwsh` for all 6 shapes (fresh migration, idempotent re-run, missing file,
+  asymmetric only-one-line-stale, already-fixed, and a near-miss partial-text line that must NOT
+  be touched) before ever reaching CI. `tests/test_migrate_gitattributes.py` codifies all 6 as a
+  real `pwsh`-subprocess test suite plus a `PayloadSync` byte-equality check. Called
+  unconditionally from `:merge_git_config`'s `:mgc_ga_done` label -- reached both when the
+  signature was already found (skip branch) AND right after a fresh append, so `.gitattributes`
+  always exists at that point regardless of which branch was taken; this is what closes item 59's
+  own original gap (the signature-gated skip previously bypassed migration entirely). New
+  end-to-end regression scenario `self.ux.gitattributes.migrate`
+  (`tests/selfapps_ux_hardening.ps1`, its own separate scratch dir pre-seeded with the OLD
+  signature-plus-stale-rule content an older bootstrapper would have written) asserts both
+  `-text` lines are now present, both `eol=crlf` lines are gone, and unrelated pre-existing
+  content survives untouched. Still open: confirm this passes on a real CI run before considering
+  the item closed.
 
 - **Item 61 (checker fix landed; the 26-finding audit is now closed; a separate same-line-pair
   question remains open, see "Revised item scope" below): `check_delimiters.py` now catches a

@@ -59,7 +59,8 @@ if ($platform -ne 'Win32NT') {
         'self.ux.gitignore.preserve',
         'self.ux.gitignore.idem',
         'self.ux.gitattributes.merge',
-        'self.ux.gitattributes.idem'
+        'self.ux.gitattributes.idem',
+        'self.ux.gitattributes.migrate'
     )) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
@@ -204,6 +205,55 @@ Write-NdjsonRow ([ordered]@{
     pass    = $gaIdem
     desc    = 'Attributes signature appears exactly once after two runs'
     details = [ordered]@{ sigCount = $sigCount2 }
+})
+
+# Test 6 (CLAUDE.md Item 60): migrate a PRE-EXISTING .gitattributes already carrying the
+# disproven "*.bat eol=crlf"/"*.cmd eol=crlf" rule -- and the shared HP_GA_SIG signature, so
+# the idempotency guard would otherwise skip the whole append block and never touch it -- to
+# "-text". Separate scratch dir from Tests 4/5 above, since those start with NO .gitattributes
+# at all; this one specifically seeds content matching what an OLDER copy of this bootstrapper
+# would have already written, simulating a user re-running a newer copy.
+$migrateDir = Join-Path $here '~selftest_gitconfig_migrate'
+New-Item -ItemType Directory -Force -Path $migrateDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $migrateDir -Force
+$migrateGaPath = Join-Path $migrateDir '.gitattributes'
+Set-Content -LiteralPath $migrateGaPath -Encoding Ascii -Value @(
+    '# some user content'
+    '*.md text'
+    $sigGa
+    '*.bat eol=crlf'
+    '*.cmd eol=crlf'
+    '*.exe binary'
+)
+
+Push-Location -LiteralPath $migrateDir
+try {
+    cmd /c 'run_setup.bat > ~gitconfig_migrate.log 2>&1'
+} finally {
+    Pop-Location
+}
+
+$migrateGaText = ''
+if (Test-Path -LiteralPath $migrateGaPath) {
+    $migrateGaText = Get-Content -LiteralPath $migrateGaPath -Raw -Encoding Ascii
+}
+$migrateBatText   = $migrateGaText -match [regex]::Escape('*.bat -text')
+$migrateCmdText   = $migrateGaText -match [regex]::Escape('*.cmd -text')
+$migrateBatStale  = $migrateGaText -match [regex]::Escape('*.bat eol=crlf')
+$migrateCmdStale  = $migrateGaText -match [regex]::Escape('*.cmd eol=crlf')
+$migratePreserved = $migrateGaText -match [regex]::Escape('# some user content')
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.gitattributes.migrate'
+    req     = 'REQ-015'
+    pass    = ($migrateBatText -and $migrateCmdText -and -not $migrateBatStale -and -not $migrateCmdStale -and $migratePreserved)
+    desc    = 'Pre-existing eol=crlf rule migrated to -text; other content untouched'
+    details = [ordered]@{
+        batTextFound   = $migrateBatText
+        cmdTextFound   = $migrateCmdText
+        batStaleFound  = $migrateBatStale
+        cmdStaleFound  = $migrateCmdStale
+        otherPreserved = $migratePreserved
+    }
 })
 
 # ===== REQ-016: Post-flight briefing =====
