@@ -488,10 +488,12 @@ list; the recurring traps that have actually bitten us:
   specifically on rem/echo PROSE lines (an ordinary contraction/possessive, or a standalone `"`
   describing the quote character itself, was previously opening a persistent, incorrectly
   cross-line "string" that swallowed later real parens as fake string content). See CLAUDE.md's
-  Item 61 entry for the full fix trace, the 5 new regression tests, and the still-open follow-up:
-  running the fixed checker against `run_setup.bat` surfaced 26 genuine, previously-invisible
-  cross-line `rem` pairs already in the file that need their own audit (not attempted in this same
-  slice, per this repo's own one-slice-at-a-time discipline for anything touching `run_setup.bat`).
+  Item 61 entry for the full fix trace and the 5 new regression tests. Running the fixed checker
+  against `run_setup.bat` surfaced 26 genuine, previously-invisible cross-line `rem` pairs already
+  in the file -- audited and fixed (reworded to remove the parens, ` -- `/`,` in their place)
+  individually in a later slice, closing `check_delimiters.py run_setup.bat` clean; see CLAUDE.md's
+  Item 61 entry for that closure. A separate, still-open question -- whether a SAME-line paren pair
+  nested inside a real block needs the identical treatment -- remains tracked there too.
 
   **The rem-comment fix above did NOT fully resolve the regression -- a SECOND, independent paren
   hazard in the SAME code block was found only via a second round of live CI evidence, after the

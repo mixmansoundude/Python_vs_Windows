@@ -1688,8 +1688,8 @@ if not exist "%REQ%" if exist "requirements.auto.txt" (
 echo (no diff: requirements files not both present) > "~pipreqs.diff.txt"
 if exist "requirements.txt" if exist "requirements.auto.txt" (
   fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1
-  rem derived requirement: use fc.exe's own exit code (0=identical, 1=differ, 2=comparison
-  rem error), not a findstr match on its English "FC: no differences encountered" message --
+  rem derived requirement: use fc.exe's own exit code -- 0=identical, 1=differ, 2=comparison
+  rem error -- not a findstr match on its English "FC: no differences encountered" message --
   rem that text is localized on non-English Windows, so a findstr match would never fire there
   rem and the diff would incorrectly show even for two identical files. Check errorlevel 2
   rem before errorlevel 1 -- "if errorlevel N" matches ERRORLEVEL GEQ N, so the higher value
@@ -2167,11 +2167,12 @@ if not defined HP_FASTPATH_USED (
     call :print_no_exe_briefing
   )
 ) else if defined HP_FASTPATH_RUN_FAILED (
-  rem [REQ-027] P2 honest messaging: the fast path stays zero-friction for its own PROMPTS (no
-  rem consent gate added here), but a print-only informational note costs nothing and closes a
-  rem genuine gap -- before this, a cached EXE kept-despite-a-later-nonzero-exit (classified
-  rem alive/healthy at the fail-fast probe, so never discarded/rebuilt -- see :try_fast_exe) had
-  rem NO postflight signal at all beyond one WARN log line buried among other console output.
+  rem [REQ-027] P2 honest messaging: the fast path stays zero-friction for its own PROMPTS --
+  rem no consent gate added here -- but a print-only informational note costs nothing and
+  rem closes a genuine gap -- before this, a cached EXE kept despite a later nonzero exit,
+  rem classified alive/healthy at the fail-fast probe so never discarded/rebuilt, see
+  rem :try_fast_exe, had NO postflight signal at all beyond one WARN log line buried among
+  rem other console output.
   call :print_fastpath_ambiguous_note
 )
 call :release_lock
@@ -2609,8 +2610,8 @@ call :system_python_consent_gate
 if errorlevel 1 (
   call :log "[INFO] REQ-014: System Python fallback aborted: consent not granted."
   rem derived requirement: HP_PY was set above to prepare for a possible accept, but
-  rem a decline must not leak it forward -- a later gate (:after_env_mode_selection's
-  rem "if not defined HP_PY") would otherwise treat this exhausted tier as if a real
+  rem a decline must not leak it forward -- a later gate, :after_env_mode_selection's
+  rem own "if not defined HP_PY" check, would otherwise treat this exhausted tier as if a real
   rem provider had been selected, silently proceeding with a stale interpreter path
   rem instead of reaching :die. See docs/agent-lessons-learned.md.
   set "HP_PY="
@@ -3216,17 +3217,17 @@ call :emit_from_base64 "%HP_PROBE_PS%" HP_FAILFAST_PROBE
 if errorlevel 1 (
   rem Extremely rare (disk/permission failure writing a work file); mirror :try_fast_exe's own
   rem emit-failure convention of skipping gracefully rather than hand-rolling an unsafe manual
-  rem launch here ([REQ-026]: HP_PROBE_ARGS is now a full, pre-quoted Windows Arguments string
-  rem the CALLER is responsible for quoting correctly -- see this subroutine's own header
-  rem comment; a direct cmd invocation here would still need that same care).
+  rem launch here -- [REQ-026]: HP_PROBE_ARGS is now a full, pre-quoted Windows Arguments string
+  rem the CALLER is responsible for quoting correctly, see this subroutine's own header
+  rem comment; a direct cmd invocation here would still need that same care.
   rem HP_SMOKE_RC stays unset; the safety net below turns that into -1 so callers still see a
   rem defined, non-zero, non-"exceeded" outcome (:try_fast_exe's discard-and-rebuild fires).
   call :log "[WARN] Fail-fast probe: could not emit ~failfast_probe.ps1; treating as a failed run."
 ) else (
   rem Invoked DIRECTLY, no for /f/backtick stdout capture -- the script's own live-teed child
   rem output reaches the console instead of being captured and silently swallowed. The result is
-  rem read afterward from HP_PROBE_RESULT, a static file (safe for /f target, unlike a live
-  rem process's stdout). See docs/plan-cli-interactive-verification.md Finding 6.
+  rem read afterward from HP_PROBE_RESULT, a static file -- safe for /f target, unlike a live
+  rem process's stdout. See docs/plan-cli-interactive-verification.md Finding 6.
   powershell -NoProfile -ExecutionPolicy Bypass -File "%HP_PROBE_PS%"
   if exist "%HP_PROBE_RESULT%" (
     for /f "usebackq tokens=1,2 delims=|" %%A in ("%HP_PROBE_RESULT%") do (
@@ -3672,8 +3673,8 @@ if not defined HP_BUILD_OK (
     for %%Z in ("%LOG%") do set "HP_LOG_SIZE_BEFORE=%%~zZ"
     rem derived requirement: on many machines, a benign one-line Windows message about a
     rem missing drive prints here from an unrelated background process around this same
-    rem window (confirmed harmless and already tolerated by tests/selfapps_envsmoke.ps1's
-    rem unexpectedSystemErrorIgnored allowlist) -- not from this build command itself, whose
+    rem window, confirmed harmless and already tolerated by tests/selfapps_envsmoke.ps1's
+    rem unexpectedSystemErrorIgnored allowlist -- not from this build command itself, whose
     rem own stdout/stderr are fully redirected to %LOG% below. A beginner watching the console
     rem could mistake it for a real error, so name it explicitly -- worded to avoid literally
     rem reproducing the trigger phrase, so this reassurance line itself is never mistaken by
@@ -3690,14 +3691,14 @@ if not defined HP_BUILD_OK (
       "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
     )
     if exist "%ENVNAME%.spec" set "HP_SPEC_PREEXIST=1"
-    rem derived requirement: a real bug (found 2026-07-20 while scoping the AV-Safe Build Path
-    rem PRD's failure-simulation tests, docs/prd-av-safe-build-path.md requirement 1): :die only
-    rem returns from its own `call` frame (see docs/agent-lessons-learned.md's ":die uses exit
-    rem /b" note) -- it does NOT halt the process, and nothing downstream re-checked
+    rem derived requirement: a real bug, found 2026-07-20 while scoping the AV-Safe Build Path
+    rem PRD's failure-simulation tests, docs/prd-av-safe-build-path.md requirement 1: :die only
+    rem returns from its own `call` frame -- see docs/agent-lessons-learned.md's ":die uses exit
+    rem /b" note -- it does NOT halt the process, and nothing downstream re-checked
     rem dist\%ENVNAME%.exe or this call's outcome. Without HP_BOOTSTRAP_STATE=error, a genuine
-    rem PyInstaller build failure fell through to :run_exe_smokerun (silent no-op skip when the
-    rem EXE is missing) and :verify_no_exe_interpreter (runs the raw entry via the interpreter
-    rem instead), then :after_cascade_decision unconditionally overwrote ~bootstrap.status.json
+    rem PyInstaller build failure fell through to :run_exe_smokerun, a silent no-op skip when
+    rem the EXE is missing, and :verify_no_exe_interpreter, which runs the raw entry via the
+    rem interpreter instead, then :after_cascade_decision unconditionally overwrote ~bootstrap.status.json
     rem back to state=ok and the process exited 0 -- silently masking the failed EXE build the
     rem user explicitly consented to (HP_BUILD_OK). Mirrors the existing, already-correct
     rem HP_BOOTSTRAP_STATE=error precedent in :run_entry_smoke's preflight-failure branch.
@@ -3706,13 +3707,16 @@ if not defined HP_BUILD_OK (
     rem under "Provider-cascade dispatch is goto-based on purpose" -- this block instead stays
     rem entirely within ordinary if/else nesting, using only call/if-errorlevel/if-defined/set,
     rem all of which are already-confirmed runtime-safe inside a parenthesized block.
-    rem AV-Safe Build Path requirements 2-4 (Tier A): each of the three failure points below
-    rem (forced-fail test hook, real build errorlevel, missing/vanished output -- requirement 3's
-    rem single trigger category) now attempts :try_nuitka_tier_a before declaring final failure,
+    rem AV-Safe Build Path requirements 2-4 (Tier A): each of the three failure points below --
+    rem forced-fail test hook, real build errorlevel, missing/vanished output, requirement 3's
+    rem single trigger category -- now attempts :try_nuitka_tier_a before declaring final failure,
     rem instead of going straight to :die. On Tier A success, HP_NUITKA_FALLBACK_USED=1 and
     rem dist\%ENVNAME%.exe exists (built by Nuitka); the rest of this block treats it exactly
-    rem like a PyInstaller-produced EXE (parse_warn/warnfix below is a no-op for it: no warn
-    rem file exists, so that block already degrades gracefully per its own "not found" branch).
+    rem like a PyInstaller-produced EXE -- parse_warn/warnfix below is NOT guaranteed to be a
+    rem no-op for it: a stale warn-%ENVNAME%.txt from the earlier, failed PyInstaller attempt
+    rem that triggered this Tier A fallback can survive, since build\%ENVNAME% is not cleared
+    rem before this check -- warnfix can still fire and even rebuild over the Nuitka-built EXE, see
+    rem the HP_NUITKA_FALLBACK_USED clear a few dozen lines below for how that case is handled.
     set "HP_NUITKA_FALLBACK_USED="
     rem REQ-009/REQ-005.10 (cascade-vs-postexec fix): reset the "this provider's dependencies
     rem look incomplete" flag at the start of every fresh build attempt, not just when warnfix
@@ -3736,11 +3740,11 @@ if not defined HP_BUILD_OK (
     set "HP_PYI_HID_COLLECT="
     rem docs/open-questions.md item 1 (answered yes): the post-flight caveat panel's DLL-specific
     rem hint reads HP_DLL_HINT_STATE, set by :emit_dll_bundle_row on every call and otherwise left
-    rem alone (NOT reset at :dll_bundle_recover_exit, unlike HP_DLL_FAILED/HP_DLL_EXHAUSTED, so it
-    rem survives that subroutine returning). Reset it here, once per fresh build attempt, for the
+    rem alone -- NOT reset at :dll_bundle_recover_exit, unlike HP_DLL_FAILED/HP_DLL_EXHAUSTED, so it
+    rem survives that subroutine returning. Reset it here, once per fresh build attempt, for the
     rem same reason as HP_DEP_MAYBE_INCOMPLETE above -- a provider tier this run's own
-    rem :dll_bundle_recover never even calls (e.g. this attempt is not conda, or no DLL warning
-    rem appears at all) must not inherit a stale hint left by an earlier, cascaded-away provider.
+    rem :dll_bundle_recover never even calls, e.g. this attempt is not conda, or no DLL warning
+    rem appears at all, must not inherit a stale hint left by an earlier, cascaded-away provider.
     set "HP_DLL_HINT_STATE="
     rem CLAUDE.md Active Backlog Item 41: the post-flight caveat panel's GUI-app-aware hint reads
     rem HP_EXE_TIMEDOUT_SILENT, set below where HP_EXE_VERIFY_FAILED is set. Reset here for the
@@ -3751,12 +3755,12 @@ if not defined HP_BUILD_OK (
       call :log "[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure."
       call :try_nuitka_tier_a
       if errorlevel 1 (
-        rem CLAUDE.md Active Backlog Item 46 (Bucket B): every build tool (PyInstaller AND the
-        rem Nuitka fallback) has already failed by this point, but the environment/dependencies
+        rem CLAUDE.md Active Backlog Item 46 (Bucket B): every build tool -- PyInstaller AND the
+        rem Nuitka fallback -- has already failed by this point, but the environment/dependencies
         rem are still valid and the interpreter-fallback verification a few hundred lines below
         rem still genuinely runs and still genuinely decides success/failure -- this is not a
-        rem doomed state, so :die's own mid-run pause (which would stop the user here, before
-        rem that verification even happens) and premature lock release are both wrong. Warn and
+        rem doomed state, so :die's own mid-run pause, which would stop the user here before
+        rem that verification even happens, and premature lock release are both wrong. Warn and
         rem keep going instead; :warn_build_incomplete still sets HP_BOOTSTRAP_STATE=error so the
         rem final ~bootstrap.status.json/postflight panel report this honestly once the run
         rem actually finishes.
@@ -3897,11 +3901,11 @@ if not defined HP_BUILD_OK (
       call :log "[INFO] Rebuilding standalone executable after warnfix -- this may take a minute or two..."
       "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
       rem derived requirement (bug-hunt pass): unlike the ORIGINAL build a few dozen lines
-      rem above (which routes every failure through :try_nuitka_tier_a / :die /
-      rem HP_BOOTSTRAP_STATE=error), this warnfix-triggered rebuild previously had NO failure
+      rem above, which routes every failure through :try_nuitka_tier_a / :warn_build_incomplete /
+      rem HP_BOOTSTRAP_STATE=error, this warnfix-triggered rebuild previously had NO failure
       rem handling at all -- the log line below always said "rebuild complete" and nothing
-      rem re-checked dist\%ENVNAME%.exe, so a genuine rebuild failure (e.g. the exact AV-lock
-      rem class the whole AV-Safe Build Path PRD exists to route around) fell through to
+      rem re-checked dist\%ENVNAME%.exe, so a genuine rebuild failure -- e.g. the exact AV-lock
+      rem class the whole AV-Safe Build Path PRD exists to route around -- fell through to
       rem :run_exe_smokerun's silent no-op-when-missing skip, then a clean interpreter-fallback
       rem run, ending in a false ~bootstrap.status.json state=ok. Deliberately NOT retried via
       rem :try_nuitka_tier_a here (unlike the original build) -- this rebuild only exists to
@@ -3920,8 +3924,8 @@ if not defined HP_BUILD_OK (
         rem The warnfix rebuild always uses PyInstaller -- if the EXE it just replaced was
         rem previously Nuitka-built (Tier A), it no longer is; clear the flag so
         rem :hidden_import_recover's Nuitka-skip guard doesn't wrongly skip repair on what is
-        rem now genuinely a PyInstaller-built EXE (see docs/agent-interconnect.md "Tier A and
-        rem hidden-import auto-recovery").
+        rem now genuinely a PyInstaller-built EXE -- see docs/agent-interconnect.md's "Tier A and
+        rem hidden-import auto-recovery" section.
         set "HP_NUITKA_FALLBACK_USED="
       )
       rem REQ-005.11: warnfix-trigger PEP 723 write-back. Must run here, not later --
@@ -3940,17 +3944,17 @@ if not defined HP_BUILD_OK (
     if exist "build\%ENVNAME%" rd /s /q "build\%ENVNAME%" >nul 2>&1
     call :log "[INFO] PyInstaller build artifacts cleaned up."
     rem CLAUDE.md Active Backlog Item 24 / docs/prd-conda-native-dll-bundling.md: build-time
-    rem native-DLL bundling repair (Requirement 2's chosen design -- react to PyInstaller's own
+    rem native-DLL bundling repair -- Requirement 2's chosen design: react to PyInstaller's own
     rem build-log warning here, before the smoke run below, rather than waiting for the
     rem guaranteed runtime DLL-load-failure crash a missing native dependency would otherwise
-    rem produce). Must run before :run_exe_smokerun so a repaired EXE is what actually gets
+    rem produce. Must run before :run_exe_smokerun so a repaired EXE is what actually gets
     rem verified. See docs/agent-interconnect.md's "Conda native-DLL bundling repair loop" for
     rem the full mechanism and its relationship to :hidden_import_recover below.
     call :dll_bundle_recover
     rem REQ-009/REQ-005.10 (cascade-vs-postexec fix): the smoke run itself is NOT skipped here,
     rem even when HP_CASCADE_APPROVED is set -- approval only means the NEXT provider tier will
-    rem be TRIED; :provider_cascade (reached later, from the top-level main line, once this whole
-    rem subroutine returns) can still find every remaining tier unavailable/declined and fall
+    rem be TRIED; :provider_cascade, reached later from the top-level main line once this whole
+    rem subroutine returns, can still find every remaining tier unavailable/declined and fall
     rem back to "keeping current build" -- the build this smoke run is about to verify. Skipping
     rem it here would leave that kept build completely unverified in the exhaustion case. Only
     rem the two ELECTIVE follow-up offers (postexec checkpoint, optimized build) are suppressed,
@@ -4483,8 +4487,8 @@ if not defined HP_NEXT_DLL (
   goto :dll_bundle_recover_done
 )
 if %HP_DLL_ITER% GEQ 3 (
-  rem derived requirement: CLAUDE.md Item 25 -- a real candidate was just found (the
-  rem "if not defined HP_NEXT_DLL" early-return above already ruled out the empty case), but
+  rem derived requirement: CLAUDE.md Item 25 -- a real candidate was just found, the
+  rem "if not defined HP_NEXT_DLL" early-return above already ruled out the empty case, but
   rem the 3-iteration cap discards it here without a trace. HP_DLL_EXHAUSTED distinguishes
   rem this from a clean "repaired" outcome at :dll_bundle_recover_done below -- without it,
   rem HP_DLL_ITER GEQ 1 (true: 3 DLLs were genuinely bundled in earlier iterations) alone
@@ -4849,8 +4853,8 @@ rem Only worth a fresh verification pass if this call actually bundled something
 rem common case (nothing new detected) must not pay for an extra EXE launch/wait.
 if defined HP_DLL_REPAIRED (
   rem A DLL fix can also unblock a package whose OWN hidden-import gap was previously
-  rem unreachable (the DLL failure short-circuited the app before it got that far -- e.g.
-  rem colorama's own gap in self.layered_e2e.chain, only reached once pyproj's DLL is fixed).
+  rem unreachable -- the DLL failure short-circuited the app before it got that far, e.g.
+  rem colorama's own gap in self.layered_e2e.chain, only reached once pyproj's DLL is fixed.
   rem Give :hidden_import_recover one more bounded pass. Deliberately not chained further:
   rem each subroutine call already gets its own fresh, capped 3-iteration budget, and a
   rem THIRD round risks an unbounded repair cascade for a pathological dependency tree -- a
@@ -4915,8 +4919,8 @@ if defined HP_CASCADE_APPROVED (
 ) else (
   call :run_postexec_checkpoint exe
   rem AV-Safe Build Path requirement 9 (P1): offer an elective optimized build right after the
-  rem verification telemetry above, while %HP_EXE_EXIT% still holds this run's real outcome (the
-  rem next line clears it). See :offer_optimized_build's own header comment for the full gating.
+  rem verification telemetry above, while %HP_EXE_EXIT% still holds this run's real outcome --
+  rem the next line clears it. See :offer_optimized_build's own header comment for the full gating.
   call :offer_optimized_build
 )
 set "HP_EXE_EXIT="
@@ -5131,8 +5135,8 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
     rem happened to run first, not a genuine user requirement -- see the identical
     rem comment at :try_conda_create's PYSPEC decision for why this must not be
     rem forced onto a LATER, different provider during a REQ-009 cascade re-entry.
-    rem HP_PYSPEC_ORIGINAL preserves whatever constraint (a genuine pyproject.toml/
-    rem PEP 723 range, or nothing) existed immediately before this overwrite.
+    rem HP_PYSPEC_ORIGINAL preserves whatever constraint -- a genuine pyproject.toml/
+    rem PEP 723 range, or nothing -- existed immediately before this overwrite.
     set "HP_PYSPEC_WRITEBACK=1"
   )
 )
@@ -5276,8 +5280,9 @@ rem its own internal compiler discovery (MSVC first, then MinGW64 auto-download)
 rem 4's own explicit instruction, this subroutine does NOT probe for a compiler itself -- that
 rem kind of fingerprinting is exactly what research Finding 2 already argued against. Tier B
 rem (reprovisioned pinned-3.12 environment for the no-compiler-found case) is NOT implemented
-rem yet -- this is Tier A only; a Tier A failure currently falls through to the caller's existing
-rem :die path, same as before this feature existed.
+rem yet -- this is Tier A only; a Tier A failure currently falls through to the caller's own
+rem :warn_build_incomplete site (CLAUDE.md Item 46 Bucket B migrated these callers off :die;
+rem see that subroutine's own header comment for why it is not a :die call anymore).
 rem Called via `call` (never `goto`) from inside the PyInstaller-build if/else nesting above, so
 rem it is safe regardless of block depth -- see the "Nested if/else (no goto)" comment there.
 call :log "[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two)."
