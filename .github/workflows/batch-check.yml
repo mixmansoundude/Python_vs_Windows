@@ -3416,6 +3416,15 @@ jobs:
     outputs:
       has_failures: ${{ steps.aggregate.outputs.has_failures }}
     steps:
+      # derived requirement (CodeRabbit review, PR #454): this job previously never checked out
+      # the repository at all -- its original "Aggregate verdicts" step was fully self-contained
+      # inline PowerShell with no dependency on any repo file. Extracting that logic to
+      # tools/aggregate_selftest_verdicts.ps1 introduced a genuine new dependency on the repo
+      # being present on this runner that the job never had before; without this step, the
+      # "Aggregate verdicts" step below would fail to find the script on every single run.
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
       - name: Download lane verdicts
         uses: actions/download-artifact@v6
         continue-on-error: true
@@ -3469,6 +3478,20 @@ jobs:
           } else {
             '- No gate summary generated.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
+
+      # derived requirement (CodeRabbit review, PR #454): the report was previously surfaced only
+      # via the job summary above, with no way to download or retain it -- the job summary page
+      # is convenient for a human reading the run live, but is not a durable artifact the way the
+      # per-lane lane_verdict.json files already are. Uploading it here gives future diagnosis
+      # (or a future automated consumer) the same durability the inputs to this step already have.
+      - name: Upload gate report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: selftest-gate-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/selftest-gate.json
+          if-no-files-found: warn
+          retention-days: 7
 
   crlf-check:
     name: CRLF line-ending check (.bat/.cmd)

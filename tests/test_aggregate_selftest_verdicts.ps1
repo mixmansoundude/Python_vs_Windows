@@ -14,7 +14,7 @@
 # precedent for tools/ci_cache_selfheal.ps1 (see that file and docs/agent-closed-backlog.md's
 # Item 19 entry).
 #
-# Six scenarios, all against fake lane_verdict.json fixtures (never real matrix-lane output):
+# Eight scenarios, all against fake lane_verdict.json fixtures (never real matrix-lane output):
 #   healthy          - all 8 expected lanes present exactly once, all has_failures:false ->
 #                       exit 0.
 #   lane_failed       - all 8 expected lanes present, but ONE genuinely reports
@@ -32,6 +32,14 @@
 #                       new lane-set check fires independent of the fallback result (a genuine
 #                       improvement over the OLD behavior, which only fired here when
 #                       FallbackResult was NOT 'success') -> exit 1.
+#   malformed_json    - all 8 expected lanes present, but ONE lane's lane_verdict.json is not
+#                       valid JSON at all (a corrupted/truncated write) -> exit 1 (CodeRabbit
+#                       review, PR #454: a parse failure is itself evidence something went wrong
+#                       for that lane and must not silently pass just because the lane was
+#                       technically "observed" via its artifact directory name).
+#   missing_field     - all 8 expected lanes present, valid JSON, but ONE lane's record has no
+#                       has_failures field at all -> exit 1 (CodeRabbit review, PR #454: missing
+#                       or unparseable evidence is not confirmed-good evidence).
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -219,6 +227,59 @@ Write-NdjsonRow ([ordered]@{
     details=[ordered]@{ exitCode=$rc6 }
 })
 if (-not $pass6) { $allPass = $false }
+
+# --- Scenario 7: a lane's verdict file is not valid JSON at all ---
+$dir7 = Join-Path $scratchRoot 'malformed_json'
+$report7 = Join-Path $scratchRoot 'malformed_json_report.json'
+New-VerdictFixture -Dir $dir7
+foreach ($lane in $expectedLanes) {
+    if ($lane -eq 'uv') { continue }
+    Add-VerdictRecord -Dir $dir7 -ArtifactLane $lane -RecordLane $lane -HasFailures $false
+}
+$uvDir7 = Join-Path $dir7 'selftest-verdict-uv'
+New-Item -ItemType Directory -Force -Path $uvDir7 | Out-Null
+Set-Content -LiteralPath (Join-Path $uvDir7 'lane_verdict.json') -Value '{not valid json' -Encoding Ascii
+$rc7 = Invoke-Aggregate -VerdictsDir $dir7 -FallbackResult 'success' -ReportPath $report7
+$pass7 = $false
+if ($rc7 -eq 1 -and (Test-Path -LiteralPath $report7)) {
+    $reportData7 = Get-Content -Raw -LiteralPath $report7 | ConvertFrom-Json
+    # derived requirement: the malformed file's lane ('uv') must still be attributed via its
+    # artifact directory name (not counted as missing -- it WAS observed), while has_failures
+    # must still read true overall because a parse failure is not confirmed-good evidence.
+    $pass7 = ($reportData7.has_failures -eq $true) -and (-not ($reportData7.lane_check.missing_lanes -contains 'uv'))
+}
+Write-NdjsonRow ([ordered]@{
+    id='self.ci.aggregate_selftest_verdicts.malformed_json'; pass=$pass7
+    desc='aggregate_selftest_verdicts.ps1: a lane whose verdict file is not valid JSON is treated as a failure, not silently skipped'
+    details=[ordered]@{ exitCode=$rc7 }
+})
+if (-not $pass7) { $allPass = $false }
+
+# --- Scenario 8: a lane's verdict record has no has_failures field at all ---
+$dir8 = Join-Path $scratchRoot 'missing_field'
+$report8 = Join-Path $scratchRoot 'missing_field_report.json'
+New-VerdictFixture -Dir $dir8
+foreach ($lane in $expectedLanes) {
+    if ($lane -eq 'justme-test') { continue }
+    Add-VerdictRecord -Dir $dir8 -ArtifactLane $lane -RecordLane $lane -HasFailures $false
+}
+$jtDir8 = Join-Path $dir8 'selftest-verdict-justme-test'
+New-Item -ItemType Directory -Force -Path $jtDir8 | Out-Null
+# derived requirement: a genuinely valid JSON record, just missing the has_failures field
+# entirely -- distinct from Scenario 7's totally-unparseable case.
+'{"lane":"justme-test","run_id":"999999"}' | Out-File -FilePath (Join-Path $jtDir8 'lane_verdict.json') -Encoding ascii
+$rc8 = Invoke-Aggregate -VerdictsDir $dir8 -FallbackResult 'success' -ReportPath $report8
+$pass8 = $false
+if ($rc8 -eq 1 -and (Test-Path -LiteralPath $report8)) {
+    $reportData8 = Get-Content -Raw -LiteralPath $report8 | ConvertFrom-Json
+    $pass8 = ($reportData8.has_failures -eq $true) -and (-not ($reportData8.lane_check.missing_lanes -contains 'justme-test'))
+}
+Write-NdjsonRow ([ordered]@{
+    id='self.ci.aggregate_selftest_verdicts.missing_field'; pass=$pass8
+    desc='aggregate_selftest_verdicts.ps1: a lane whose record has no has_failures field is treated as a failure, not silently skipped'
+    details=[ordered]@{ exitCode=$rc8 }
+})
+if (-not $pass8) { $allPass = $false }
 
 Remove-Item -LiteralPath $scratchRoot -Recurse -Force -ErrorAction SilentlyContinue
 

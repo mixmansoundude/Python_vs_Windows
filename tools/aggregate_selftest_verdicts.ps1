@@ -108,7 +108,12 @@ foreach ($file in $files) {
             }
 
             if ($null -eq $value) {
+                # derived requirement (CodeRabbit review, PR #454): a record with no usable
+                # has_failures value is NOT confirmed-good evidence for that lane -- it must not
+                # silently count as "this lane passed." Treat it the same as a genuine failure
+                # rather than only annotating it for a human to notice later.
                 $record | Add-Member -NotePropertyName parse_warning -NotePropertyValue 'has_failures missing or unparseable' -Force
+                $has = $true
             } elseif ($value) {
                 $has = $true
             }
@@ -131,6 +136,11 @@ foreach ($file in $files) {
             $lanes += $record
         }
     } catch {
+        # derived requirement (CodeRabbit review, PR #454): a lane_verdict.json that fails to
+        # parse at all is itself evidence something went wrong for that lane (a corrupted or
+        # truncated write, for instance) -- it must not silently pass just because a lane was
+        # technically "observed" via its artifact directory name.
+        $has = $true
         $lanes += [ordered]@{
             lane = $file.BaseName
             error = $_.Exception.Message
