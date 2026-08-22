@@ -3488,6 +3488,22 @@ jobs:
           } | ConvertTo-Json -Compress -Depth 8
           $gateRow | Out-File -FilePath 'ci_test_results.ndjson' -Encoding ascii -Append
 
+          # derived requirement (CodeRabbit review, PR #454): explicitly reset the step's own
+          # exit status. GitHub Actions appends its own "exit $LASTEXITCODE" to every pwsh run:
+          # block; aggregate_selftest_verdicts.ps1 is invoked via the call operator (&), so a
+          # has_failures=true run leaves $LASTEXITCODE at 1 with nothing after it to clear that --
+          # every later line here (string building, Out-File) is pure PowerShell and never
+          # touches $LASTEXITCODE. Without this, the step (and therefore this job's own
+          # conclusion) would silently start failing on real has_failures=true evidence today,
+          # even though CLAUDE.md Active Backlog Item 35's own process discipline is explicit that
+          # making selftest-gate's conclusion fail for real is a SEPARATE, not-yet-taken next
+          # step (its own future "if has_failures: exit 1" addition, only after this mechanism has
+          # soaked and is added to branch protection) -- not an accidental side effect of this
+          # precondition slice. steps.aggregate.outputs.has_failures (set above via
+          # $env:GITHUB_OUTPUT) already carries the real verdict to model-quick-fix regardless of
+          # this step's own exit code.
+          exit 0
+
       - name: Append gate summary
         if: ${{ always() }}
         shell: pwsh
