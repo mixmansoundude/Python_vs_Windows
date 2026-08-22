@@ -43,7 +43,13 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-$rowId = 'self.exe.warnfix.venv_repair'
+# derived requirement: docs/agent-lessons-learned.md's "A multi-scenario PowerShell test's
+# NDJSON id must stay a literal string at each Write-NdjsonRow call site, never a shared
+# variable" -- tools/check_ndjson_registry.py's static scan only matches a literal
+# id='...'/id="..." string immediately after the id key, not a variable reference. Every
+# Write-NdjsonRow call below repeats the literal 'self.exe.warnfix.venv_repair' rather than
+# referencing a single shared $rowId, so the registry checker can find this row's own
+# emission site by pure text scan.
 
 # Non-Windows skip
 # derived requirement: $IsWindows is undefined (reads as $null, so "-not $IsWindows" is always
@@ -55,7 +61,7 @@ $rowId = 'self.exe.warnfix.venv_repair'
 $platform = [System.Environment]::OSVersion.Platform.ToString()
 if ($platform -ne 'Win32NT') {
     Write-NdjsonRow ([ordered]@{
-        id      = $rowId
+        id      = 'self.exe.warnfix.venv_repair'
         req     = 'REQ-007'
         pass    = $true
         desc    = 'Warnfix repair-install under venv mode genuinely installs the missing module (skipped on non-Windows)'
@@ -68,7 +74,7 @@ if ($platform -ne 'Win32NT') {
 # unconditionally, so venv mode is unreachable there regardless of what this test forces.
 if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     Write-NdjsonRow ([ordered]@{
-        id      = $rowId
+        id      = 'self.exe.warnfix.venv_repair'
         req     = 'REQ-007'
         pass    = $true
         desc    = 'Warnfix repair-install under venv mode genuinely installs the missing module (skipped: HP_FORCE_CONDA_ONLY blocks venv fallback)'
@@ -80,7 +86,7 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     Write-NdjsonRow ([ordered]@{
-        id      = $rowId
+        id      = 'self.exe.warnfix.venv_repair'
         req     = 'REQ-007'
         pass    = $false
         desc    = 'Warnfix venv-repair: run_setup.bat not found'
@@ -193,7 +199,7 @@ $infraError    = $exeLogContent -match 'Failed to parse|uv error|pip error'
 $pass = $venvProviderLog -and $warnInstallFired -and $warnRebuildFired -and $installedXlrd -and (-not $repairFailed) -and $exeExists -and ($exeExit -eq 0) -and $tokenFound -and (-not $infraError)
 
 Write-NdjsonRow ([ordered]@{
-    id      = $rowId
+    id      = 'self.exe.warnfix.venv_repair'
     req     = 'REQ-007'
     pass    = $pass
     desc    = 'Warnfix repair-install under venv mode genuinely installs the missing module (CLAUDE.md Item 36)'
