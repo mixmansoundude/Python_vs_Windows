@@ -1111,12 +1111,13 @@ fall-through blast radius as a side effect, even before Batch 6 itself is touche
 this fix) now asserts the resulting cascade collapses to exactly this chain's first site plus the
 sink, not the full 5-6-pause worst case.
 
-**Status: implemented 2026-08-21 (local commit, not yet pushed).** A second `:try_conda_install`
-call site was found while tracing Batch 6 (the `:tci_both_failed` failure sites themselves) --
-`:cascade_acquire_conda` (the REQ-009 uv-to-conda cascade's own on-demand Miniconda acquisition,
-~line 2302) calls it independently of the main install-if-missing block (~line 884). Its OWN
-fall-through does NOT re-enter this probe chain at all (that chain is specific to the first-attempt,
-non-cascade path, reached only from the ~884 call site) -- it proceeds fairly directly to a
+**Status: implemented, landed as a follow-on PR stacked on Batch 1 (2026-08-28).** A second
+`:try_conda_install` call site was found while tracing Batch 6 (the `:tci_both_failed` failure
+sites themselves) -- `:cascade_acquire_conda` (the REQ-009 uv-to-conda cascade's own on-demand
+Miniconda acquisition) calls it independently of the main install-if-missing block (inside
+`:uv_first_skip`). Its OWN fall-through does NOT re-enter this probe chain at all (that chain is
+specific to the first-attempt, non-cascade path, reached only from `:uv_first_skip`'s own call
+site) -- it proceeds fairly directly to a
 conda-create attempt that already `goto`s correctly (slice 1, pre-existing). This means Batch 1's
 fix only reduces THIS section's own described blast-radius reduction for the FIRST call site;
 `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section has the full trace for both

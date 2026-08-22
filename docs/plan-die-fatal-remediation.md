@@ -73,6 +73,55 @@ paths.py` independently confirms the file's broader shape (181 labels, 67 ever r
 classification below was done by direct inspection of each site's surrounding code, not the tool
 alone (the tool's own docstring is explicit that `called=False` is "a hint, not proof").
 
+### Complete inventory of all 27 sites (re-verified 2026-08-21 against current source, post-Batches 1/2/3/4/5)
+
+Every site below was individually re-read against the CURRENT `run_setup.bat` (not reasoned about
+from memory or an earlier pass) as part of a full re-verification -- confirms no drift from the
+per-batch reasoning in Finding 2/3 and the "Implementation Status" section below, and catches one
+previously-uncatalogued site (row 20). Sites are identified by the subroutine they sit in plus
+their `call :die` message text, per this repo's own "cite by stable label, not exact line number"
+documentation convention -- a subroutine name is `grep -n '^:label_name'`-findable regardless of
+how much the file's line numbers drift as unrelated work lands.
+
+| # | Subroutine | Site | Fall-through leads to | Status |
+|---|------------|------|------------------------|--------|
+| 1 | `:after_conda_bat_validation` | conda.bat not found after bootstrap | probe chain (rows 2-5), up to 4 more redundant pauses | **Fixed** (Batch 1: `goto`) |
+| 2 | `:after_conda_bat_validation` | 'conda' not found on PATH | next probe in chain | **Fixed** (Batch 1) |
+| 3 | `:after_conda_bat_validation` | 'python' not found on PATH | next probe in chain | **Fixed** (Batch 1) |
+| 4 | `:after_conda_bat_validation` | 'python -V' failed | channel-policy check (row 5) | **Fixed** (Batch 1) |
+| 5 | `:after_conda_probes` | Conda not found at: `%CONDA_BAT%` | `:try_conda_create` with broken `CONDA_BAT` -> row 7 (already safe) | **Fixed** (Batch 1) |
+| 6 | `:after_conda_probes` | Could not write `~detect_python.py` | doomed subprocess call, output redirected to file/log only (never console); `PYSPEC` stays empty, a valid "no constraint" default | No fix -- benign (Batch 4, reclassified) |
+| 7 | `:conda_create_failed` | conda env create failed | -- | Pre-existing safe (`goto`, slice 1) |
+| 8 | `:conda_create_done` | python.exe missing, non-cascade | rest of `:conda_create_done` body: writes `.condarc`, then the misleading `[BOOT] ... Selected Python provider: Conda (Portable).` success line | **Fixed** (Batch 2: `goto`) |
+| 9 | `:conda_create_done` | Could not write `~print_pyver.py` | `runtime.txt` write silently skipped; `HP_PY` still valid, no cascade | No fix -- benign (Batch 4, reclassified) |
+| 10 | `:conda_create_done` | Could not stage `~condarc` | doomed `copy` attempt -> cascades into row 11's own `:die` | **Fixed** (Batch 4: `goto`) |
+| 11 | `:conda_create_done` | Could not write `%ENV_PATH%\.condarc` (reached via its OWN direct trigger, not row 10's cascade) | logs the TRUTHFUL `[BOOT] ... Selected Python provider` line (`HP_PY` genuinely valid here) | No fix -- benign (Batch 4, reclassified) |
+| 12 | `:after_env_mode_selection` | Could not write `~prep_requirements.py` | REQ-005.8 heuristic dep-augmentation silently skipped later (confirmed via its own invocation site downstream, output redirected `>nul`) | No fix -- benign (Batch 4, reclassified) |
+| 13 | `:after_env_mode_selection` | Active Python interpreter not resolved (the sink every other batch's `goto` routes toward) | wasted interpreter-smoke-test attempt + a redundant `:determine_entry` call; Item 45's own `if not exist "%HP_PY%"` guard in `:run_entry_smoke` backstops the one dangerous consequence regardless | No fix -- deferred, lowest priority |
+| 14 | `:after_env_mode_selection` | Could not determine entry point (`:determine_entry`'s 1st of 2 per-run calls) | the ENTIRE dependency-install/pipreqs/warnfix/pyvisa block runs pointlessly (real network/disk work) before the 2nd call reproduces the identical failure | **Fixed** (Batch 3: `goto`) |
+| 15 | `:after_env_mode_selection` | Could not stage PEP 723 requirements | falls through 1 line to an unchecked 2nd `copy`, then `goto :after_pipreqs_run` 6 lines later regardless (already the success path's own target) | No fix -- already converges (Batch 4, reclassified) |
+| 16 | `:lock_done` | Could not write `~detect_visa.py` | `NEED_VISA` stays `"0"`, logs `[INFO] No pyvisa/visa imports detected.` -- inaccurate if the app genuinely needs pyvisa (detection never ran), silently skips the optional NI-VISA install | No fix -- low-severity, flagged for a future pass (Batch 4, reclassified) |
+| 17 | `:ci_skip_entry` | CI skip: entry helper staging failed | doomed helper-verify attempt -> cascades into row 18's own `:die` | **Fixed** (Batch 5: `goto`) |
+| 18 | `:ci_skip_entry` | find_entry helper syntax error (reached via its OWN direct trigger) | "locate a Python"/run attempt fails silently (output to file/log only) -> converges to the graceful "no entry script detected" branch | No fix -- benign (Batch 5, reclassified) |
+| 19 | `:after_env_bootstrap` | Could not determine entry point (`:determine_entry`'s 2nd of 2 per-run calls) | immediately followed by the benign `if "%HP_ENTRY%"=="" (skip packaging)` check, 1 line down | No fix -- already benign |
+| 20 | `:evict_and_rebuild` | (not a `:die` site itself -- a 3rd, previously-uncatalogued call site of `:try_conda_install`, inside `:evict_and_rebuild`'s conda-corruption self-heal flow) | already safely contained by the VERY NEXT check, `if not defined CONDA_BAT` (row 24) | N/A -- already safe, newly documented |
+| 21 | `:heal_prompt` | Corrupt conda env; user declined rebuild | -- | Pre-existing safe (self-contained `exit /b 2`) |
+| 22 | `:corrupt_override_exit` | Corrupt user-managed conda (PVW_CONDA_EXE) | -- | Pre-existing safe (self-contained `exit /b 2`) |
+| 23 | `:corrupt_ci_exit` | Corrupt conda binary in CI | -- | Pre-existing safe (self-contained `exit /b 2`) |
+| 24 | `:evict_and_rebuild` | Could not delete corrupt conda dir | -- | Pre-existing safe (self-contained `exit /b 3`) |
+| 25 | `:evict_and_rebuild` | Fresh Miniconda install failed after self-healing eviction | -- | Pre-existing safe (self-contained `exit /b 4`) |
+| 26 | `:tci_both_failed` | Miniconda install failed (both AllUsers and JustMe) | `goto :eof` -> caller's own chain (row 1's chain, now contained post-Batch-1) | Traced, deferred (Batch 6) |
+| 27 | `:tci_both_failed` | Miniconda install failed (AllUsers skipped) | same as row 26 | Traced, deferred (Batch 6) |
+| 28 | `:hp_test_conda_fail` | conda env create failed | -- | Pre-existing safe (`goto`) |
+
+(27 real `call :die` sites, numbered 1-19 and 21-28 above; row 20 is the newly-found 3rd
+`:try_conda_install` call site, listed for completeness since it surfaced during this same
+re-verification pass, not a `:die` site itself.)
+
+**Tally**: 9 fixed (rows 1-5, 8, 10, 14, 17) + 7 pre-existing-safe (rows 7, 21-25, 28) + 11
+no-fix/deferred (rows 6, 9, 11-13, 15-16, 18-19, 26-27) = 27. Every site accounted for, nothing
+left unclassified.
+
 ### Finding 2 -- 7 of the 27 are already effectively safe, just via an older idiom than slice 1's `goto`
 
 Two (the `:conda_create_failed` site and its `:hp_test_conda_fail` test-bypass sibling) already
