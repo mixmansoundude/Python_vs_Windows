@@ -84,7 +84,7 @@ self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry, self.ux.connectivity.override,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
 self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
-self.ux.gitattributes.merge, self.ux.gitattributes.idem,
+self.ux.gitattributes.merge, self.ux.gitattributes.idem, self.ux.gitattributes.migrate,
 self.ux.postflight,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
 self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
@@ -355,7 +355,7 @@ same regex logic before landing (not just reasoned about).
 
 ```
 self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
-self.ux.gitattributes.merge, self.ux.gitattributes.idem,
+self.ux.gitattributes.merge, self.ux.gitattributes.idem, self.ux.gitattributes.migrate,
 self.ux.postflight,
 self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
@@ -365,6 +365,17 @@ self.sysbuild.decline,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
 self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
 ```
+
+`self.ux.gitattributes.migrate` (CLAUDE.md Item 60) is a SEPARATE scratch-dir scenario from
+`.merge`/`.idem` above -- those two start with NO `.gitattributes` at all; this one pre-seeds a
+`.gitattributes` already carrying the HP_GA_SIG signature AND the disproven `*.bat eol=crlf`/
+`*.cmd eol=crlf` rule (what an OLDER copy of this bootstrapper would have already written),
+simulating a user re-running a newer copy. `:merge_git_config`'s idempotency guard gates on the
+signature alone, so without this fix a stale rule would never be touched again. The new
+`HP_MIGRATE_GITATTRIBUTES` payload (`tools/migrate_gitattributes.ps1`) replaces ONLY lines that
+EXACTLY match one of the two known-stale strings, in place -- every other line (including any
+user hand-edit elsewhere in the file) passes through byte-identical; asserts both `-text` lines
+are now present, both `eol=crlf` lines are gone, and unrelated pre-existing content survives.
 
 ## selfapps-pep723-writeback NDJSON rows (selfapps_pep723_writeback.ps1, uv-first lanes)
 
