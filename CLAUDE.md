@@ -998,10 +998,10 @@ way (no live Windows execution available here), that is noted explicitly rather 
   OLD rules before running the bootstrapper, asserting the file ends up with `-text` and no
   leftover `eol=crlf` line for `*.bat`/`*.cmd`.
 
-- **Item 61 (checker fix landed; audit of newly-surfaced findings remains open): `check_delimiters.py`
-  now catches a cross-line `(`/`)` pair inside `rem` comment text, not just `echo` text -- but
-  turning that on surfaced 26 genuine, previously-invisible findings already in `run_setup.bat`
-  that still need their own audit before `check_delimiters.py run_setup.bat` reports clean again.**
+- **Item 61 (checker fix landed; the 26-finding audit is now closed; a separate same-line-pair
+  question remains open, see "Revised item scope" below): `check_delimiters.py` now catches a
+  cross-line `(`/`)` pair inside `rem` comment text, not just `echo` text -- turning that on
+  originally surfaced 26 genuine, previously-invisible findings in `run_setup.bat`.**
   `docs/agent-lessons-learned.md`'s "A literal `(`/`)` inside `echo` text..." entry documents the
   original 2026-07 echo-text incident and its `rem`-text sibling (PR #445, Item 52) that motivated
   this fix -- read that entry for the full mechanism and incident trace.
@@ -1053,27 +1053,24 @@ way (no live Windows execution available here), that is noted explicitly rather 
   line is recognized identically to a space-delimited one). All 14 tests in that file, and the
   full pytest suite, pass.
 
-  **Remaining scope, concretely bounded (NOT closed by this fix -- this is the actual follow-up
-  work, not a hypothetical): 26 genuine, previously-invisible findings are now surfaced in
-  `run_setup.bat` itself** (run `python tools/check_delimiters.py run_setup.bat` for the current,
-  authoritative list -- do not copy the list here, since any future edit to the file shifts every
-  line number). Each is a real cross-line `(`/`)` pair inside `rem` prose, nested inside a real
-  `if`/`for` block, that predates this fix and was invisible to the checker until now (cmd.exe
-  parses an enclosing `if`/`for` block's full raw text to find its closing paren BEFORE it ever
-  evaluates the block's own condition, so the hazard can surface purely from cmd.exe reaching and
-  parsing that block -- whenever the file is invoked and control flow reaches that point -- even
-  if the condition itself would have evaluated false and the body never executed; do not assume
-  `run_setup.bat` was clean of this bug just because CI has been green; `check_delimiters.py` is
-  advisory-only, not wired into any `.github/workflows/*.yml`
-  gate, so this has not broken CI, only the local/agent-facing sanity-sweep discipline). **Whoever
-  picks this up next**: audit each one individually (most are very likely simple, low-risk prose
-  rewording -- see the single `(^, &, or |)` reordering this same PR applied to the ONE genuine
-  false-positive the caret-escape heuristic itself produced, at the original `(&, |, ^)` listing --
-  as the template fix shape), a few at a time rather than all 26 in one sweep, per this repo's own
-  "EXTREME CAUTION, one slice at a time" convention for anything touching `run_setup.bat`. Live-
-  cmd.exe verification of a representative sample (not necessarily all 26) would raise confidence
-  that "nested cross-line rem pair" is a real hazard class here and not merely theoretical, per this
-  repo's own standing distrust of pure static reasoning for this hazard class (see below).
+  **26-finding audit: CLOSED 2026-08-22.** All 26 cross-line `(`/`)` pairs inside `rem` prose,
+  each nested inside a real `if`/`for` block, were individually read in context and reworded to
+  remove the literal parens entirely (` -- ` or `,` in place of the pair, matching the template
+  fix shape from the `(^, &, or |)` reordering earlier in this same item), never merged onto one
+  line and left as a same-line pair -- per the "Revised item scope" note below, a same-line pair
+  nested inside a real block is not unconditionally trusted either, so removing the parens outright
+  was the conservative choice throughout, not just for the cross-line cases. Done in small batches
+  within one session (not "all 26 in one blind sweep") specifically by reading each finding's
+  surrounding block before rewording it, in keeping with this repo's "EXTREME CAUTION, one slice at
+  a time" convention -- `python tools/check_delimiters.py run_setup.bat` now reports zero findings.
+  `git diff` confirms every changed line across all 26 fixes is a `rem` comment line -- no
+  executable code, log message, or behavior changed. Live-cmd.exe verification of a representative
+  sample was NOT performed for this batch (no Windows host available); the fix pattern itself
+  (remove the parens, verified via the checker's own reasoning about cmd.exe's block-parsing
+  behavior) is the same one already confirmed correct by the `(^, &, or |)` precedent and by every
+  other paren-hazard fix in this repo's history. If a regression ever surfaces from one of these 26
+  specific rewordings, that would be the first real-CI signal this pattern needs live verification
+  after all -- none has, as of this writing.
 
   **Scope WIDENED, same PR (#445), via a second real CI incident on the SAME code block: a
   SAME-LINE, self-contained, balanced `(`/`)` pair -- not just cross-line pairs -- can ALSO corrupt
