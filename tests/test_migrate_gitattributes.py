@@ -117,6 +117,97 @@ class BasicMigration(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="ascii"), original)
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
+class LineEndingAndEncodingPreservation(unittest.TestCase):
+    # derived requirement (CodeRabbit review, PR #455): an earlier version used
+    # ReadAllLines/WriteAllLines, which strips every line's own terminator and reimposes a
+    # single uniform one (Environment.NewLine -- CRLF on real Windows) on write. That would
+    # have silently converted an LF-only .gitattributes' ENTIRE content to CRLF even though
+    # only two lines were ever meant to change -- invisible when tested only under Linux
+    # pwsh, where Environment.NewLine is LF, so these cases specifically exercise the
+    # property a same-platform test alone could never have caught.
+
+    def test_lf_only_file_stays_lf(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".gitattributes"
+            path.write_bytes(b"# user\n*.md text\n*.bat eol=crlf\n*.cmd eol=crlf\n*.exe binary\n")
+            proc = _run_migrate(path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "MIGRATED")
+            self.assertEqual(
+                path.read_bytes(),
+                b"# user\n*.md text\n*.bat -text\n*.cmd -text\n*.exe binary\n",
+            )
+
+    def test_crlf_only_file_stays_crlf(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".gitattributes"
+            path.write_bytes(
+                b"# user\r\n*.md text\r\n*.bat eol=crlf\r\n*.cmd eol=crlf\r\n*.exe binary\r\n"
+            )
+            proc = _run_migrate(path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "MIGRATED")
+            self.assertEqual(
+                path.read_bytes(),
+                b"# user\r\n*.md text\r\n*.bat -text\r\n*.cmd -text\r\n*.exe binary\r\n",
+            )
+
+    def test_mixed_line_endings_each_terminator_preserved_independently(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".gitattributes"
+            path.write_bytes(
+                b"# user\r\n*.md text\n*.bat eol=crlf\r\n*.cmd eol=crlf\n*.exe binary\r\n"
+            )
+            proc = _run_migrate(path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "MIGRATED")
+            self.assertEqual(
+                path.read_bytes(),
+                b"# user\r\n*.md text\n*.bat -text\r\n*.cmd -text\n*.exe binary\r\n",
+            )
+
+    def test_no_trailing_newline_last_line_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".gitattributes"
+            path.write_bytes(b"# user\n*.bat eol=crlf")
+            proc = _run_migrate(path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "MIGRATED")
+            self.assertEqual(path.read_bytes(), b"# user\n*.bat -text")
+
+    def test_stale_line_is_first_line_no_preceding_terminator(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".gitattributes"
+            path.write_bytes(b"*.bat eol=crlf\n*.exe binary\n")
+            proc = _run_migrate(path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "MIGRATED")
+            self.assertEqual(path.read_bytes(), b"*.bat -text\n*.exe binary\n")
+
+    def test_utf8_bom_preserved(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".gitattributes"
+            path.write_bytes(b"\xef\xbb\xbf# user\n*.bat eol=crlf\n*.cmd eol=crlf\n")
+            proc = _run_migrate(path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "MIGRATED")
+            result = path.read_bytes()
+            self.assertTrue(result.startswith(b"\xef\xbb\xbf"), "BOM was stripped")
+            self.assertEqual(result, b"\xef\xbb\xbf# user\n*.bat -text\n*.cmd -text\n")
+
+    def test_no_bom_originally_no_bom_added(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".gitattributes"
+            path.write_bytes(b"*.bat eol=crlf\n")
+            proc = _run_migrate(path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "MIGRATED")
+            result = path.read_bytes()
+            self.assertFalse(result.startswith(b"\xef\xbb\xbf"), "a BOM was added where none existed")
+            self.assertEqual(result, b"*.bat -text\n")
+
+
 class PayloadSync(unittest.TestCase):
     def test_embedded_base64_matches_source(self):
         # See tests/test_exe_hint_rerun.py's own PayloadSync test for why CRLF/LF normalization

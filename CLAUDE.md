@@ -1043,24 +1043,44 @@ way (no live Windows execution available here), that is noted explicitly rather 
   touching it is wrong.
 
   **Implemented, NOT YET CONFIRMED via a real CI run.** New payload `HP_MIGRATE_GITATTRIBUTES`
-  (`tools/migrate_gitattributes.ps1`, see the embedded-payload table above) reads
-  `.gitattributes` via `[System.IO.File]::ReadAllLines`/`WriteAllLines` (the established `.NET`
-  file-IO pattern, not `Get-Content`/`Set-Content` or a naive text substitution), replaces only
-  the two exact stale lines when present, and is a no-op (no write at all) otherwise -- verified
+  (`tools/migrate_gitattributes.ps1`, see the embedded-payload table above) replaces only the
+  two exact stale lines when present, and is a no-op (no write at all) otherwise -- verified
   locally via `pwsh` for all 6 shapes (fresh migration, idempotent re-run, missing file,
   asymmetric only-one-line-stale, already-fixed, and a near-miss partial-text line that must NOT
-  be touched) before ever reaching CI. `tests/test_migrate_gitattributes.py` codifies all 6 as a
-  real `pwsh`-subprocess test suite plus a `PayloadSync` byte-equality check. Called
-  unconditionally from `:merge_git_config`'s `:mgc_ga_done` label -- reached both when the
-  signature was already found (skip branch) AND right after a fresh append, so `.gitattributes`
-  always exists at that point regardless of which branch was taken; this is what closes item 59's
-  own original gap (the signature-gated skip previously bypassed migration entirely). New
-  end-to-end regression scenario `self.ux.gitattributes.migrate`
-  (`tests/selfapps_ux_hardening.ps1`, its own separate scratch dir pre-seeded with the OLD
-  signature-plus-stale-rule content an older bootstrapper would have written) asserts both
-  `-text` lines are now present, both `eol=crlf` lines are gone, and unrelated pre-existing
-  content survives untouched. Still open: confirm this passes on a real CI run before considering
-  the item closed.
+  be touched) before ever reaching CI. Called unconditionally from `:merge_git_config`'s
+  `:mgc_ga_done` label -- reached both when the signature was already found (skip branch) AND
+  right after a fresh append, so `.gitattributes` always exists at that point regardless of which
+  branch was taken; this is what closes item 59's own original gap (the signature-gated skip
+  previously bypassed migration entirely). New end-to-end regression scenario
+  `self.ux.gitattributes.migrate` (`tests/selfapps_ux_hardening.ps1`, its own separate scratch dir
+  pre-seeded with the OLD signature-plus-stale-rule content an older bootstrapper would have
+  written) asserts both `-text` lines are now present, both `eol=crlf` lines are gone, and
+  unrelated pre-existing content survives untouched. A best-effort, non-gating `[WARN]` (mirroring
+  this repo's own "never gates the lane" convention for similarly non-critical helpers, e.g.
+  `autopep_merge.py` -- see `docs/agent-interconnect.md`) fires if the script ever produces
+  something outside its own 3-value contract (`MIGRATED`/`NOOP:no-stale-lines`/`NOOP:missing`),
+  so a genuine anomaly is not entirely silent even though it's never treated as fatal.
+
+  **Real bug found by CodeRabbit's PR-level risk assessment (before any inline finding even
+  landed) and fixed same-day: the first implementation used
+  `[System.IO.File]::ReadAllLines`/`WriteAllLines`, which would have silently converted an
+  LF-only `.gitattributes`' ENTIRE content to CRLF on real Windows.** `ReadAllLines` strips every
+  line's own terminator; `WriteAllLines` reimposes a single uniform one via
+  `Environment.NewLine` -- CRLF on real Windows (where this script actually runs), but LF on the
+  Linux sandbox this repo's own local `pwsh` verification runs on, so the bug was invisible to
+  local testing by construction, not by an oversight in the testing itself. This directly
+  contradicts the item's own core safety property ("avoid ever rewriting content that might not
+  be exactly what this bootstrapper wrote"). Fixed by abandoning the lines-array round-trip
+  entirely: the script now reads the raw text via a `StreamReader` (capturing the file's own
+  detected encoding, including whether a BOM was present, via `detectEncodingFromByteOrderMarks`)
+  and does a scoped `[regex]::Replace` using lookaround (`(?<=\A|\r\n|\n)...(?=\r\n|\n|\z)`) to
+  recognize a genuine whole-line match without ever consuming or normalizing the terminators
+  around it, then writes back via `WriteAllText` using the SAME captured encoding. Verified
+  directly (not just reasoned about) against 7 shapes covering exactly this class of hazard:
+  LF-only stays LF, CRLF-only stays CRLF, mixed CRLF/LF within one file has each terminator
+  preserved independently, a stale line with no trailing newline, a stale line with no preceding
+  terminator (first line in the file), a UTF8 BOM is preserved, and no BOM is added where none
+  existed. Still open: confirm this passes on a real CI run before considering the item closed.
 
 - **Item 61 (checker fix landed; the 26-finding audit is now closed; a separate same-line-pair
   question remains open, see "Revised item scope" below): `check_delimiters.py` now catches a
