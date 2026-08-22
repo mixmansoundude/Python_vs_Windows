@@ -298,9 +298,26 @@ $dllBundleComplete = $combined -match [regex]::Escape('[REPAIR][DLL_BUNDLE] Nati
 # it can graduate to a hard assertion via Item 35's own promotion process.
 $ndLinesAfterRun  = if (Test-Path -LiteralPath $nd) { @(Get-Content -LiteralPath $nd -Encoding ASCII) } else { @() }
 $ndNewLines       = if ($ndLinesAfterRun.Count -gt $ndCountBefore) { $ndLinesAfterRun[$ndCountBefore..($ndLinesAfterRun.Count - 1)] } else { @() }
-$ndNewCombined    = $ndNewLines -join "`n"
-$dllBundleRowSeen     = $ndNewCombined -match [regex]::Escape('"id":"self.dll_bundle.recover"')
-$dllBundleRowRepaired = $ndNewCombined -match [regex]::Escape('"state":"repaired"')
+# derived requirement (CodeRabbit review, PR #452): parse each new NDJSON line as its own
+# object and require the state check to apply to the SAME row that carries the
+# self.dll_bundle.recover id -- a plain substring match across the whole $ndNewCombined text
+# (the original approach) could not tell "this row's own details.state is repaired" apart from
+# "some OTHER unrelated row emitted during this same run also happens to contain the substring
+# "state":"repaired"" (e.g. a coincidentally identically-shaped field on a different id).
+$dllBundleRowSeen     = $false
+$dllBundleRowRepaired = $false
+foreach ($ndLine in $ndNewLines) {
+    if (-not $ndLine.Trim()) { continue }
+    try {
+        $ndRow = $ndLine | ConvertFrom-Json
+    } catch {
+        continue
+    }
+    if ($ndRow.id -eq 'self.dll_bundle.recover') {
+        $dllBundleRowSeen = $true
+        if ($ndRow.details.state -eq 'repaired') { $dllBundleRowRepaired = $true }
+    }
+}
 
 $infraError = $combined -match 'Failed to parse|uv error|pip error'
 
