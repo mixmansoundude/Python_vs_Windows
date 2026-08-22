@@ -41,6 +41,41 @@ principle is driving.
 
 ---
 
+## `:define_helper_payloads` must be `call`ed before ANY subroutine using an `HP_*` payload -- position in the file is irrelevant, only call ORDER matters
+
+**Real bug found via a real Windows CI failure (CLAUDE.md Item 60, PR #455) that local `pwsh`
+testing could never have caught.** Every `HP_*` payload variable (`HP_MIGRATE_GITATTRIBUTES`,
+`HP_DLL_PCT_SANITIZE`, `HP_FAILFAST_PROBE`, etc. -- ~30 as of this writing) is `set` inside
+`:define_helper_payloads`'s own subroutine body (a large block of pure, side-effect-free literal
+`set "HP_X=<base64>"` assignments, no dependency on any other state). `:emit_from_base64`, the
+shared decoder every payload consumer calls, reads the payload via `Get-Item Env:$varName` inside
+its own PowerShell `-Command` -- if the caller's `set` line hasn't executed yet, this returns
+nothing and `:emit_from_base64` silently `exit 1`s WITHOUT writing the target file, so the
+caller's own subsequent `powershell -File "<target>.ps1"` invocation fails with `The argument
+'<target>.ps1' to the -File parameter does not exist.`
+
+`:define_helper_payloads` is `call`ed once, near the top of the main flow (right after `%LOG%` is
+initialized) -- but a subroutine's own `:label` position in the file is IRRELEVANT to whether its
+payload dependency is satisfied; only the RUNTIME ORDER of `call` statements in the main flow
+matters. `:merge_git_config` (REQ-015 git-config hygiene) is called even earlier than
+`:define_helper_payloads` -- historically harmless, since REQ-015 never used a payload before
+Item 60 added `HP_MIGRATE_GITATTRIBUTES` there. That one new payload use, inside that one
+early-called subroutine, was enough to hit the gap: reproduced 100% deterministically on every
+single bootstrap run in the `real` lane, across every test scenario, since it does not depend on
+timing/races at all -- purely on which line number a `call` sits at. Fixed by moving
+`call :define_helper_payloads` to run immediately before `call :merge_git_config`, so it is now
+one of the first two things the main flow does.
+
+**Any future subroutine call added before `:define_helper_payloads`'s own call site, if it (now
+or later) uses ANY `HP_*` payload, reintroduces this exact bug.** Before adding a new early
+`call` to the main flow, or before wiring a new payload into an existing early-called subroutine,
+verify `:define_helper_payloads` is still called before it. No test currently guards this
+ordering directly (`tests/*.PayloadSync` tests only prove the embedded base64 matches its
+canonical source, not that it's reachable in time) -- a future agent touching this area should
+consider whether a dedicated ordering guard is worth adding.
+
+---
+
 ## Concurrent-instance lock (REQ-024) touches every exit path -- call-graph tracing method
 
 The lock (`:acquire_lock`/`:lock_is_stale`/`:release_lock`, called near the top of the file right

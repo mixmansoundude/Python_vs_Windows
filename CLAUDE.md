@@ -1126,6 +1126,33 @@ way (no live Windows execution available here), that is noted explicitly rather 
   decode as a literal embedded U+FEFF character instead) proves the fix: `NOOP:no-stale-lines`,
   file untouched.
 
+  **Root cause of the real Windows PowerShell 5.1 failure finally found via the diagnostic
+  hardening above -- NOT a PowerShell-version quirk at all, a plain execution-order bug that
+  would have failed identically on ANY PowerShell version, including 7.** The new dump surfaced
+  the actual PowerShell error for the first time: `The argument '~migrate_gitattributes.ps1' to
+  the -File parameter does not exist.` -- meaning `:emit_from_base64 "~migrate_gitattributes.ps1"
+  HP_MIGRATE_GITATTRIBUTES` never wrote the file at all. Traced to `:merge_git_config` being
+  `call`ed at the top of the main flow (originally line 265) BEFORE `:define_helper_payloads`
+  (originally line 584) -- every `HP_*` payload variable, including `HP_MIGRATE_GITATTRIBUTES`,
+  is `set` inside `:define_helper_payloads`'s own body, so it genuinely did not exist yet when
+  `:merge_git_config` (called ~300 lines earlier in execution order, regardless of where its own
+  body sits in the file) reached its `:emit_from_base64` call. Confirmed as the sole cause by
+  checking every other `call :emit_from_base64` site in the file (28 others) -- every one of them
+  sits at a line number AFTER `:define_helper_payloads`'s own call site, so none had ever
+  exercised this ordering gap before; `:merge_git_config` was the first (and only) early-called
+  subroutine to ever need a payload. This is why it reproduced 100% deterministically on EVERY
+  bootstrap run in the `real` lane regardless of test scenario, and why no local `pwsh` testing
+  of the script or the payload-sync check could ever have caught it -- both exercise the script's
+  own content/logic, never `run_setup.bat`'s own call-graph ordering. Fixed by moving
+  `call :define_helper_payloads` to run immediately before `call :merge_git_config` (removing the
+  now-redundant original call site) -- `:define_helper_payloads`'s entire body is side-effect-free
+  literal `set "HP_X=<base64>"` assignments with no dependency on anything set between the two
+  original call sites, confirmed by inspecting its full body before moving it, so this is safe
+  with no other behavioral change. **Any future payload used from a subroutine called before the
+  old line ~584 must not reintroduce this gap** -- `:define_helper_payloads` now runs essentially
+  first, right after `%LOG%` is initialized, so this should not recur, but re-verify this ordering
+  explicitly before ever moving `:merge_git_config`'s own call site again.
+
 - **Item 61 (checker fix landed; the 26-finding audit is now closed; a separate same-line-pair
   question remains open, see "Revised item scope" below): `check_delimiters.py` now catches a
   cross-line `(`/`)` pair inside `rem` comment text, not just `echo` text -- turning that on

@@ -262,6 +262,11 @@ set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
 set "STATUS_FILE=~bootstrap.status.json"
 if not exist "%LOG%" (type nul > "%LOG%")
+rem derived requirement (real CI failure, PR #455): :merge_git_config now needs an HP_*
+rem payload (HP_MIGRATE_GITATTRIBUTES, Item 60) at its own :emit_from_base64 call site, so
+rem :define_helper_payloads must run BEFORE this call, not at its old position ~300 lines
+rem later -- see the paired removal below, near the old ":rotate_log"/"CI fast path" site.
+call :define_helper_payloads
 call :merge_git_config
 if "%HP_TEST_FORCE_CONNECTIVITY_CHECK%"=="1" call :check_net_after_dl_fail
 if "%HP_TEST_FORCE_CONSENT_CHECK%"=="1" (
@@ -580,8 +585,8 @@ if defined HP_NDJSON (
 )
 rem --- CI fast path (entry tests only) ---
 call :rotate_log
-rem HP_* variables represent "Helper Payload" assets emitted on demand.
-call :define_helper_payloads
+rem HP_* variables represent "Helper Payload" assets emitted on demand -- now decoded
+rem earlier, right before :merge_git_config, not here; see that call site's own comment.
 for %%I in ("%CD%") do set "ENVNAME=%%~nI"
 rem derived requirement: conda env names reject characters like '~'; self env smoke
 rem scenarios run from tests\~envsmoke so normalize to ASCII word chars/_/-.
