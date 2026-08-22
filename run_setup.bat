@@ -3852,6 +3852,39 @@ if not defined HP_BUILD_OK (
             call :log "[INFO] Installed: %%M"
           )
         )
+      ) else if "%HP_ENV_MODE%"=="venv" (
+        rem derived requirement (CLAUDE.md Item 36): the repair-install dispatch above only had
+        rem uv/conda branches, silently no-opping under venv/embed/system while still logging
+        rem "installing and rebuilding" and "rebuild complete" as if it worked -- both a private,
+        rem bootstrapper-owned interpreter -- venv/embed, same as the MAIN non-repair
+        rem dependency-install dispatch a few hundred lines above -- already have a working pip;
+        rem this just wires that existing capability into the second call site that was missed.
+        for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
+          call :log "[INFO] Attempting to install: %%M"
+          "%HP_PY%" -m pip install %%M >> "%LOG%" 2>&1
+          if errorlevel 1 (
+            call :log "[WARN] Repair failed: %%M"
+            copy nul "~warnfix_repair_failed.flag" >nul 2>&1
+          ) else (
+            call :log "[INFO] Installed: %%M"
+          )
+        )
+      ) else if "%HP_ENV_MODE%"=="embed" (
+        for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
+          call :log "[INFO] Attempting to install: %%M"
+          "%HP_PY%" -m pip install %%M >> "%LOG%" 2>&1
+          if errorlevel 1 (
+            call :log "[WARN] Repair failed: %%M"
+            copy nul "~warnfix_repair_failed.flag" >nul 2>&1
+          ) else (
+            call :log "[INFO] Installed: %%M"
+          )
+        )
+      ) else (
+        rem system mode deliberately stays a no-op here too, matching the MAIN dependency-install
+        rem dispatch's own "System fallback: skipping requirement installation." convention --
+        rem system is a shared, uncontrolled interpreter; REQ-009 avoids installing into it.
+        call :log "[WARN] System fallback: skipping warnfix repair installation."
       )
       if exist "~warnfix_repair_failed.flag" call :log "[WARN] One or more repair attempts failed"
       call :log "[INFO] Rebuilding standalone executable after warnfix -- this may take a minute or two..."

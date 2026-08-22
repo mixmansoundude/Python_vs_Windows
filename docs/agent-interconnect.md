@@ -821,13 +821,25 @@ lines; `:conda_base_update`'s conda-only guard. Dep-check's fast-path gate (`if 
 still excludes embed too, matching venv's scope -- a design choice for MVP parity, not an
 oversight; could extend to embed later if desired.
 
-**Pre-existing gap found during this audit, unrelated to embed, flagged not fixed:** the warnfix
-REPAIR-install branch (~line 2661) only has two cases -- `if "%HP_ENV_MODE%"=="uv"` and
-`else if defined CONDA_BAT` -- with NO plain-pip fallback for any other mode. venv and system
-ALREADY had this blind spot (warnfix-detected missing modules under either mode match neither
-branch, so the repair loop is a no-op). Confirmed unchanged after shipping embed (this branch
-wasn't touched) -- embed inherits the identical gap. Worth a dedicated future fix (a plain
-`%HP_PY% -m pip install` catch-all covering venv/system/embed) -- its own backlog item.
+**Pre-existing gap found during this audit, unrelated to embed -- fixed (CLAUDE.md's former Item
+36, closed; see `docs/agent-closed-backlog.md`).** The warnfix REPAIR-install dispatch used to
+have only two cases -- `if "%HP_ENV_MODE%"=="uv"` and `else if defined CONDA_BAT` -- with NO
+plain-pip fallback for any other mode, so venv/embed/system all silently no-opped while still
+logging as if the repair succeeded. Now has explicit `venv` and `embed` branches (each a plain
+`"%HP_PY%" -m pip install %%M` per missing module, mirroring the three-mode pip pathway the MAIN,
+non-repair dependency-install dispatch already used) plus a `system`-mode catch-all that stays a
+no-op (system is a shared, uncontrolled interpreter; REQ-009 avoids installing into it) but now
+logs `[WARN] System fallback: skipping warnfix repair installation.` instead of the old, silently
+misleading "installing and rebuilding... rebuild complete" pair. `~warnfix_repair_failed.flag` is
+set correctly on a genuine failure in both new branches, so `:warnfix_cascade_detect`'s own
+recovery gate is reachable for this failure class too. Regression coverage:
+`tests/selfapps_warnfix_venv_repair.ps1` (new file, `uv` lane, non-gating) forces venv mode via
+the same `HP_OFFLINE_MODE=1` + `HP_TEST_FORCE_CONDA_FAIL=1` technique as `self.venv.fallback`
+(see "HP_UV_BIN locality" above) with an `xlrd`-importing stub app, and asserts the module is
+GENUINELY installed (`[INFO] Installed: xlrd`), not just that the EXE eventually builds -- the
+exact coverage gap the original finding called out (every existing warnfix scenario runs on
+`real`/`conda-full`, both of which land in the `uv` or `CONDA_BAT` branch, so the broken branch
+was unreachable from any prior test).
 
 ---
 
