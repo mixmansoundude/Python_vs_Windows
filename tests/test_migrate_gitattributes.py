@@ -227,6 +227,28 @@ class LineEndingAndEncodingPreservation(unittest.TestCase):
             self.assertEqual(proc.stdout.strip(), "MIGRATED")
             self.assertEqual(path.read_bytes(), b"\xef\xbb\xbf*.bat -text\n*.cmd -text\n")
 
+    def test_bom_embedded_mid_line_not_treated_as_line_boundary(self):
+        # derived requirement (CodeRabbit review, PR #455): the script's lookbehind used to
+        # also accept a bare U+FEFF as a left boundary, alongside \A and a line terminator --
+        # but that alternative was not itself anchored to the start of the file, so a line
+        # with its OWN prefix text followed by a literal embedded BOM character immediately
+        # before the stale text would have wrongly satisfied the lookbehind and been
+        # rewritten, even though that is not an exact whole-line match at all. Removed --
+        # \A alone already covers the genuine leading-BOM case, since StreamReader strips a
+        # real leading BOM as encoding metadata before $text is ever set (see
+        # test_bom_immediately_precedes_stale_rule_as_first_line above). Here the BOM bytes
+        # sit mid-file (after "user "), so StreamReader does NOT treat them as a real BOM --
+        # they decode as a literal U+FEFF character inside $text, and the line must be left
+        # completely untouched.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".gitattributes"
+            original = b"user \xef\xbb\xbf*.bat eol=crlf\n"
+            path.write_bytes(original)
+            proc = _run_migrate(path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "NOOP:no-stale-lines")
+            self.assertEqual(path.read_bytes(), original)
+
     def test_no_bom_originally_no_bom_added(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / ".gitattributes"

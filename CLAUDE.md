@@ -1109,6 +1109,23 @@ way (no live Windows execution available here), that is noted explicitly rather 
   now surface in the log), but does not itself fix whatever the underlying Windows-PS5.1-specific
   failure is -- that requires seeing the real error text from a subsequent run.
 
+  **Real, valid finding from CodeRabbit's review of the diagnostic-hardening commit: the
+  lookbehind's `\uFEFF` alternative was a genuine false-positive hazard, not just harmless
+  defense in depth as originally described.** `(?<=\A|\r\n|\n|\uFEFF)` is not itself anchored to
+  the start of the file -- a line with its own prefix text followed by a literal embedded BOM
+  character immediately before the stale text (e.g. `user <BOM>*.bat eol=crlf`) would wrongly
+  satisfy the lookbehind and get rewritten, even though that is not an exact whole-line match at
+  all. Removed the alternative entirely: `\A` alone already covers the genuine leading-BOM case,
+  since `StreamReader`'s own BOM-stripping-on-read consumes a real leading BOM as encoding
+  metadata before `$text` is ever set, so `$text` never actually starts with U+FEFF in practice
+  -- confirmed directly, not just reasoned about, by re-running the full local test suite
+  (including `test_bom_immediately_precedes_stale_rule_as_first_line` and
+  `test_utf8_bom_preserved`) after removing the alternative, all still passing. New regression
+  test `test_bom_embedded_mid_line_not_treated_as_line_boundary` (BOM bytes placed mid-file,
+  after some prefix text, so `StreamReader` does not treat them as a real leading BOM and they
+  decode as a literal embedded U+FEFF character instead) proves the fix: `NOOP:no-stale-lines`,
+  file untouched.
+
 - **Item 61 (checker fix landed; the 26-finding audit is now closed; a separate same-line-pair
   question remains open, see "Revised item scope" below): `check_delimiters.py` now catches a
   cross-line `(`/`)` pair inside `rem` comment text, not just `echo` text -- turning that on
