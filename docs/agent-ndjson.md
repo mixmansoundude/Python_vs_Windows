@@ -1052,7 +1052,8 @@ verified locally before ever reaching real CI.
 self.ci.aggregate_selftest_verdicts.healthy, self.ci.aggregate_selftest_verdicts.lane_failed,
 self.ci.aggregate_selftest_verdicts.missing_lane, self.ci.aggregate_selftest_verdicts.unexpected_lane,
 self.ci.aggregate_selftest_verdicts.duplicate_lane, self.ci.aggregate_selftest_verdicts.empty_fallback,
-self.ci.aggregate_selftest_verdicts.malformed_json, self.ci.aggregate_selftest_verdicts.missing_field
+self.ci.aggregate_selftest_verdicts.malformed_json, self.ci.aggregate_selftest_verdicts.missing_field,
+diag.selftest_gate.verdict
 ```
 
 `diag.selftest_gate.verdict` (inline `batch-check.yml`, the `selftest-gate` job's own "Aggregate
