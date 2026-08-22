@@ -698,20 +698,25 @@ but several represent real gaps worth closing before calling the path fully rele
   proven stable, promote that one step (or the whole `cache` lane, depending on what Item 35's own
   audit concludes) via Item 35's process.
 
-  **Cheapest-first fix implemented, NOT YET CONFIRMED via a real CI run.**
-  `selfapps_layered_e2e.ps1` now sets `HP_NDJSON` for its own sub-bootstrap (pointing at the same
-  shared `~test-results.ndjson` its own `Write-NdjsonRow` already writes to, restored in its
-  `finally` block) and diffs that file before/after to record, as informational `details` fields
-  on its own `self.layered_e2e.chain` row, whether a `self.dll_bundle.recover` row with
-  `state:"repaired"` actually appeared -- deliberately NOT folded into `chainPass`/`mech4Pass`
-  itself, so a wiring issue in the NDJSON emission specifically cannot turn this already-proven,
-  closely-watched test red on its own first run under the new wiring. See
-  `docs/agent-ndjson.md`'s corresponding entry for the full mechanism. Still open before this
-  slice can be considered done: confirm via the diagnostics site's next real `cache`-lane run
-  that the row genuinely appears with `state:"repaired"` (check `dllBundleRowSeen`/
-  `dllBundleRowRepaired` on that run's `self.layered_e2e.chain` row) -- only then does the
-  "promote that one step... via Item 35's process" half of this fix become a live next step, per
-  Item 35's own "let CI run to completion, several consecutive times" discipline.
+  **Cheapest-first fix implemented AND CONFIRMED via real CI (PR #452, merge commit `f50ccd6`,
+  `cache`-lane run `32561652643`).** `selfapps_layered_e2e.ps1` now sets `HP_NDJSON` for its own
+  sub-bootstrap (pointing at the same shared `~test-results.ndjson` its own `Write-NdjsonRow`
+  already writes to, restored in its `finally` block) and diffs that file before/after to record,
+  as informational `details` fields on its own `self.layered_e2e.chain` row, whether a
+  `self.dll_bundle.recover` row with `state:"repaired"` actually appeared -- deliberately NOT
+  folded into `chainPass`/`mech4Pass` itself, so a wiring issue in the NDJSON emission
+  specifically cannot turn this already-proven, closely-watched test red on its own first run
+  under the new wiring. See `docs/agent-ndjson.md`'s corresponding entry for the full mechanism.
+  **Confirmed by pulling the real published diagnostics artifact directly** (`tests/
+  ~test-results.ndjson` from the `cache`-lane job of that run): `self.dll_bundle.recover` fired
+  TWICE with `state:"repaired"` in the same run (`eccodes.dll` and `impi.dll`, both `iteration:1`,
+  `provider:"conda"`), and `self.layered_e2e.chain`'s own `details` show
+  `dllBundleRowSeen:true, dllBundleRowRepaired:true` alongside every other mechanism passing
+  (`mech1Pass`-`mech4Pass` all `true`, `exePass:true`, `statusState:"ok"`, `runExit:0`). This is
+  the row's first-ever real-CI observation, confirming it after ONE run -- not yet the "several
+  consecutive runs" Item 35's own process discipline requires before considering promotion (moving
+  this step, or the whole `cache` lane, out of `continue-on-error`). That promotion decision
+  remains a live next step for a FUTURE loop, not taken here.
 
 - **Item 38: the same EXE is verified from two different working directories across run 1 vs.
   every later run, so a CWD-relative-path app can flip its verdict between two consecutive
