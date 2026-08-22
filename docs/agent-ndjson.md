@@ -929,6 +929,43 @@ gating maturity" periodic check).
 self.exe.timeout_gui_hint
 ```
 
+## selfapps-warnfix-venv-repair NDJSON rows (selfapps_warnfix_venv_repair.ps1, uv lane only, non-gating)
+
+CLAUDE.md's former Active Backlog Item 36 (closed, see `docs/agent-closed-backlog.md`): the
+warnfix repair-install dispatch used to have only `uv`/`CONDA_BAT` branches, silently no-opping
+under venv/embed/system while still logging as if the repair succeeded -- see
+`docs/agent-interconnect.md`'s "Standalone Python-download tier" section for the full mechanism
+and fix. This test proves the new `venv`-mode branch genuinely installs the missing module, not
+just that the EXE eventually builds -- the exact coverage gap the original finding called out
+(every existing `self.exe.warnfix.*` scenario runs on `real`/`conda-full`, both of which land in
+the `uv` or `CONDA_BAT` branch, so the broken branch was unreachable from any prior test).
+
+Forces venv mode via `HP_OFFLINE_MODE=1` + `HP_TEST_FORCE_CONDA_FAIL=1` in a fresh scratch
+directory -- the same established technique `self.venv.fallback` (`selfapps_ux_hardening.ps1`)
+already uses (see `docs/agent-interconnect.md`'s "HP_UV_BIN locality" section): a fresh directory
+has no cached `~uv_bin` so uv is unavailable, `HP_OFFLINE_MODE` blocks a fresh uv download, and
+`HP_TEST_FORCE_CONDA_FAIL` forces conda to fail too, so the provider chain falls through
+uv -> conda -> embed -> venv and lands on venv (embed is not forced real, so it's never reachable
+here). Uses the same `xlrd`-importing stub app as `selfapps_warnfix.ps1`'s own `real_warnfix`
+scenario (xlrd is not covered by any heuristic, so warnfix is the only repair path), with the
+same `HP_SKIP_PIPREQS=1` + `HP_SKIP_AUTOPEP_DISCOVERY=1` isolation flags to keep warnfix the sole
+install mechanism.
+
+Asserts: the `[BOOT] REQ-009: Selected Python provider: Local venv (fallback).` line (proving
+venv mode was genuinely selected, not conda/embed unexpectedly succeeding instead), both warnfix
+phase-marker lines (`[REPAIR] missing modules detected; installing and rebuilding.` /
+`[REPAIR] rebuild complete after warnfix.`), and -- the core Item 36 assertion -- `[INFO]
+Installed: xlrd` (the line that was NEVER emitted under venv mode before the fix, even though the
+rebuild-complete line fired unconditionally regardless), plus the absence of `[WARN] Repair
+failed:`, no infra-error signature, and a clean EXE run with its token file written. Skips with
+`skip=true` on non-Windows and in the conda-full lane (`HP_FORCE_CONDA_ONLY=1` blocks all
+non-conda fallbacks unconditionally there, matching `self.venv.fallback`'s own skip reasoning).
+Non-gating for its first landing, matching this repo's established graduation pattern.
+
+```
+self.exe.warnfix.venv_repair
+```
+
 ## selfapps-cache-selfheal NDJSON rows (test_ci_cache_selfheal.ps1, `real` lane only, GATING)
 
 Item 19 follow-on (docs/agent-closed-backlog.md): the cache-lane self-heal logic

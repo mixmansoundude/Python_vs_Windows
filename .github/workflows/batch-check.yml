@@ -600,6 +600,21 @@ jobs:
         run: |
           & tests\selfapps_warnfix.ps1
 
+      # CLAUDE.md Active Backlog Item 36: the warnfix repair-install dispatch previously had
+      # ONLY uv/conda branches, so it silently no-opped under venv/embed/system while still
+      # logging as if the repair succeeded. Now that venv/embed branches exist, this proves
+      # the venv branch genuinely installs the missing module, not just that the EXE builds.
+      # uv lane only (non-gating for first landing, matches this repo's established graduation
+      # pattern for a new PowerShell scenario not yet proven stable across several real runs) --
+      # forces venv mode via HP_OFFLINE_MODE=1 + HP_TEST_FORCE_CONDA_FAIL=1 in a fresh scratch
+      # dir (see selfapps_warnfix_venv_repair.ps1's own header comment for the mechanism).
+      - name: "Self-test: warnfix repair-install under venv mode (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_warnfix_venv_repair.ps1
+
       # REQ-005.11: PEP 723 header write-back (uv add --script). v1-scoped to HP_ENV_MODE=uv,
       # so wired to the dedicated uv lane only (non-gating) for this first CI pass rather than
       # the gating real lane -- lets these brand-new scenarios prove out in real Windows CI
@@ -1802,6 +1817,14 @@ jobs:
             tests\~selftest_warnfix_real_warnfix_delayed\dist\~warnfix_exe.log
             tests/~selftest_warnfix_real_warnfix_delayed/~warnfile.txt
             tests\~selftest_warnfix_real_warnfix_delayed\~warnfile.txt
+            tests/~selftest_warnfix_venv_repair/~warnfix_venv_repair_bootstrap.log
+            tests\~selftest_warnfix_venv_repair\~warnfix_venv_repair_bootstrap.log
+            tests/~selftest_warnfix_venv_repair/~setup.log
+            tests\~selftest_warnfix_venv_repair\~setup.log
+            tests/~selftest_warnfix_venv_repair/dist/~warnfix_venv_repair_exe.log
+            tests\~selftest_warnfix_venv_repair\dist\~warnfix_venv_repair_exe.log
+            tests/~selftest_warnfix_venv_repair/dist/~warnfix_venv_token.txt
+            tests\~selftest_warnfix_venv_repair\dist\~warnfix_venv_token.txt
             tests/~selftest_collect/~collect_bootstrap.log
             tests\~selftest_collect\~collect_bootstrap.log
             tests/~selftest_collect/~setup.log

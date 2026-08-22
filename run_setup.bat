@@ -3841,7 +3841,14 @@ if not defined HP_BUILD_OK (
             call :log "[INFO] Installed: %%M"
           )
         )
-      ) else if defined CONDA_BAT (
+      ) else if "%HP_ENV_MODE%"=="conda" if defined CONDA_BAT (
+        rem derived requirement (CodeRabbit finding on Item 36's own PR): :select_conda_bat
+        rem sets CONDA_BAT purely from Miniconda binary presence on disk, never clears it once
+        rem set -- so a genuine venv/embed fallback (conda env CREATE failed, cascaded past conda)
+        rem can still leave CONDA_BAT defined if Miniconda itself was already on disk.
+        rem Gating on HP_ENV_MODE=="conda" too (not just "defined CONDA_BAT") stops that stale
+        rem definedness from routing a real venv/embed repair into a conda-install command
+        rem targeting an environment that was never created.
         for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
           call :log "[INFO] Attempting to install: %%M"
           call "%CONDA_BAT%" install -y -n "%ENVNAME%" --override-channels -c conda-forge %%M >> "%LOG%" 2>&1
@@ -3852,6 +3859,39 @@ if not defined HP_BUILD_OK (
             call :log "[INFO] Installed: %%M"
           )
         )
+      ) else if "%HP_ENV_MODE%"=="venv" (
+        rem derived requirement (CLAUDE.md Item 36): the repair-install dispatch above only had
+        rem uv/conda branches, silently no-opping under venv/embed/system while still logging
+        rem "installing and rebuilding" and "rebuild complete" as if it worked -- both a private,
+        rem bootstrapper-owned interpreter -- venv/embed, same as the MAIN non-repair
+        rem dependency-install dispatch a few hundred lines above -- already have a working pip;
+        rem this just wires that existing capability into the second call site that was missed.
+        for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
+          call :log "[INFO] Attempting to install: %%M"
+          "%HP_PY%" -m pip install %%M >> "%LOG%" 2>&1
+          if errorlevel 1 (
+            call :log "[WARN] Repair failed: %%M"
+            copy nul "~warnfix_repair_failed.flag" >nul 2>&1
+          ) else (
+            call :log "[INFO] Installed: %%M"
+          )
+        )
+      ) else if "%HP_ENV_MODE%"=="embed" (
+        for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
+          call :log "[INFO] Attempting to install: %%M"
+          "%HP_PY%" -m pip install %%M >> "%LOG%" 2>&1
+          if errorlevel 1 (
+            call :log "[WARN] Repair failed: %%M"
+            copy nul "~warnfix_repair_failed.flag" >nul 2>&1
+          ) else (
+            call :log "[INFO] Installed: %%M"
+          )
+        )
+      ) else (
+        rem system mode deliberately stays a no-op here too, matching the MAIN dependency-install
+        rem dispatch's own "System fallback: skipping requirement installation." convention --
+        rem system is a shared, uncontrolled interpreter; REQ-009 avoids installing into it.
+        call :log "[WARN] System fallback: skipping warnfix repair installation."
       )
       if exist "~warnfix_repair_failed.flag" call :log "[WARN] One or more repair attempts failed"
       call :log "[INFO] Rebuilding standalone executable after warnfix -- this may take a minute or two..."

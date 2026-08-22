@@ -668,46 +668,6 @@ but several represent real gaps worth closing before calling the path fully rele
      self-healing) is relevant prior art specifically for the `cache` lane's own non-gating
      history.
 
-- **Item 36: warnfix repair install is a silent no-op under venv/embed/system, and reports false
-  success.** Confirmed via direct source read and matches an already-flagged-but-never-filed gap
-  in `docs/agent-interconnect.md` ("Standalone Python-download tier" section): *"the warnfix
-  REPAIR-install branch only has two cases -- `if "%HP_ENV_MODE%"=="uv"` and `else if defined
-  CONDA_BAT` -- with NO plain-pip fallback for any other mode... Worth a dedicated future fix...
-  its own backlog item."* That backlog item was never actually created until now -- a real defect
-  sat fully diagnosed and un-tracked for weeks.
-
-  **Mechanism**: the warnfix repair-install dispatch inside `:run_entry_smoke`'s
-  `HP_WARNFIX_NEEDED` block has exactly two branches and no catch-all. Under venv, embed, or
-  system mode, `HP_ENV_MODE` isn't `uv` and `CONDA_BAT` is undefined, so neither branch matches --
-  yet the loop still logs `[REPAIR] missing modules detected; installing and rebuilding.`,
-  installs nothing, rebuilds an unchanged EXE, and logs `[REPAIR] rebuild complete after
-  warnfix.` as if it worked. Worse: since no module install was even attempted,
-  `~warnfix_repair_failed.flag` is never created, so `:warnfix_cascade_detect`'s own recovery gate
-  (`if exist flag AND unresolved`) never fires either -- the ONE mechanism designed to recover
-  from exactly this situation (cascading to the next provider tier) is silently defeated by the
-  same gap.
-
-  **Realistic scenario**: a locked-down corporate machine reaches the embed tier (uv venv fails,
-  conda download fails, cascades to embed). The user's script needs `openpyxl` via
-  `pandas.read_excel` -- precisely the runtime-only import pipreqs can't see and warnfix exists to
-  catch. Warnfix "installs" nothing, claims success, the EXE builds, the smoke run fails with
-  `ModuleNotFoundError: openpyxl`, and the user sees "SETUP COMPLETE -- WITH A CAVEAT" with no hint
-  that a repair step silently did nothing.
-
-  **High-level fix**: add a plain-pip catch-all branch (`else ("%HP_PY%" -m pip install %%M)`) to
-  the repair-install dispatch, mirroring the SAME three-mode pip pathway (`venv`/`embed`/`system`
-  all already use `"%HP_PY%" -m pip install -r requirements.txt` in the main, non-repair
-  dependency-install dispatch a few hundred lines earlier) -- both venv and embed have a working
-  pip already; this is not a new capability, just wiring an existing one into a second call site
-  that was missed. Also verify `~warnfix_repair_failed.flag` is set correctly on a genuine failure
-  in this new branch, so the cascade-recovery gate becomes reachable for this failure class too.
-
-  **Coverage gap to close in the same slice**: all five `selfapps_warnfix.ps1` scenarios run on
-  `real`/`conda-full`, both of which land in the `uv` or `CONDA_BAT` branch -- the broken branch is
-  unreachable from every existing warnfix test. Add a scenario that forces venv or embed mode with
-  a warnfix-triggering missing import, asserting the module actually gets installed (not just that
-  the EXE eventually builds).
-
 - **Item 37: `:dll_bundle_recover`'s own regression coverage is entirely non-gating, on the
   newest code on the golden path.** Confirmed against `.github/workflows/batch-check.yml`,
   `tests/harness.ps1`, and `docs/agent-ndjson.md`. This is a specific, concrete instance of Item

@@ -2684,6 +2684,76 @@ run of the same regex logic before landing, not just reasoned about).
   `HP_SMOKERUN_KILL_MS` against a real PyInstaller-frozen EXE's own cold-start behavior for the
   first time, which could not be verified against real Windows locally.
 
+### Item 36 (closed 2026-08-22)
+
+- **Warnfix repair install was a silent no-op under venv/embed/system, and reported false
+  success.** Confirmed via direct source read and matched an already-flagged-but-never-filed gap
+  in `docs/agent-interconnect.md` ("Standalone Python-download tier" section): *"the warnfix
+  REPAIR-install branch only has two cases -- `if "%HP_ENV_MODE%"=="uv"` and `else if defined
+  CONDA_BAT` -- with NO plain-pip fallback for any other mode... Worth a dedicated future fix...
+  its own backlog item."* That backlog item sat fully diagnosed and un-tracked for weeks before
+  finally being filed and closed in the same pass.
+
+  **Mechanism**: the warnfix repair-install dispatch inside `:run_entry_smoke`'s
+  `HP_WARNFIX_NEEDED` block had exactly two branches and no catch-all. Under venv, embed, or
+  system mode, `HP_ENV_MODE` isn't `uv` and `CONDA_BAT` is undefined, so neither branch matched --
+  yet the loop still logged `[REPAIR] missing modules detected; installing and rebuilding.`,
+  installed nothing, rebuilt an unchanged EXE, and logged `[REPAIR] rebuild complete after
+  warnfix.` as if it worked. Worse: since no module install was even attempted,
+  `~warnfix_repair_failed.flag` was never created, so `:warnfix_cascade_detect`'s own recovery gate
+  (`if exist flag AND unresolved`) never fired either -- the ONE mechanism designed to recover
+  from exactly this situation (cascading to the next provider tier) was silently defeated by the
+  same gap.
+
+  **Realistic scenario this closes**: a locked-down corporate machine reaches the embed tier (uv
+  venv fails, conda download fails, cascades to embed). The user's script needs `openpyxl` via
+  `pandas.read_excel` -- precisely the runtime-only import pipreqs can't see and warnfix exists to
+  catch. Before this fix, warnfix "installed" nothing, claimed success, the EXE built, the smoke
+  run failed with `ModuleNotFoundError: openpyxl`, and the user saw "SETUP COMPLETE -- WITH A
+  CAVEAT" with no hint that a repair step silently did nothing.
+
+  **Fix shipped**: added `venv` and `embed` branches to the repair-install dispatch (each a plain
+  `"%HP_PY%" -m pip install %%M` per missing module, mirroring the SAME three-mode pip pathway
+  `venv`/`embed`/`system` already use in the main, non-repair dependency-install dispatch a few
+  hundred lines earlier) plus a final `system`-mode catch-all that deliberately stays a no-op
+  (system is a shared, uncontrolled interpreter; REQ-009 avoids installing into it) but now ALSO
+  logs `[WARN] System fallback: skipping warnfix repair installation.` -- in addition to, not
+  instead of, the surrounding `[REPAIR] missing modules detected; installing and rebuilding.` /
+  `[REPAIR] rebuild complete after warnfix.` markers, which still fire unconditionally regardless
+  of mode (the rebuild always runs after the install dispatch, whether or not anything was
+  actually installed); the new line stops the install step itself from being silent about doing
+  nothing. Both new branches set `~warnfix_repair_failed.flag` on a genuine per-module install
+  failure, identical to the pre-existing uv/conda branches, so the cascade-recovery gate is
+  reachable for this failure class too. Verified via `tools/check_delimiters.py run_setup.bat`
+  (count unchanged at the pre-existing 26-finding baseline -- see CLAUDE.md Item 61's own follow-up
+  scope for that unrelated, already-tracked number) and `tools/check_crlf.py` (clean).
+
+  **Coverage gap closed in the same slice**: all five `selfapps_warnfix.ps1` scenarios run on
+  `real`/`conda-full`, both of which land in the `uv` or `CONDA_BAT` branch -- the broken branch
+  was unreachable from every existing warnfix test. New file `tests/selfapps_warnfix_venv_repair.ps1`
+  (`uv` lane, non-gating for its first landing, matching this repo's established graduation
+  pattern) forces venv mode via `HP_OFFLINE_MODE=1` + `HP_TEST_FORCE_CONDA_FAIL=1` in a fresh
+  scratch directory -- the same established technique `self.venv.fallback`
+  (`tests/selfapps_ux_hardening.ps1`) already uses, per `docs/agent-interconnect.md`'s "HP_UV_BIN
+  locality" section: a fresh directory has no cached `~uv_bin` so uv is unavailable,
+  `HP_OFFLINE_MODE` blocks a fresh uv download, and `HP_TEST_FORCE_CONDA_FAIL` forces conda to
+  fail too, so the provider chain falls through uv -> conda -> embed -> venv and lands on venv
+  (embed is not forced, so it's never reachable here). Uses the same `xlrd`-importing stub app as
+  `selfapps_warnfix.ps1`'s own `real_warnfix` scenario (xlrd is not covered by any heuristic, so
+  warnfix is the only repair path), with the same `HP_SKIP_PIPREQS=1` +
+  `HP_SKIP_AUTOPEP_DISCOVERY=1` isolation flags to keep warnfix the sole install mechanism.
+  Asserts the `[BOOT] REQ-009: Selected Python provider: Local venv (fallback).` line (proving
+  venv mode was genuinely selected, not conda/embed unexpectedly succeeding instead), both warnfix
+  phase-marker lines, and -- the actual Item 36 assertion -- `[INFO] Installed: xlrd` (the line
+  that was NEVER emitted under venv mode before this fix, even though the "rebuild complete" line
+  fired unconditionally regardless), plus the absence of `[WARN] Repair failed:` and a clean EXE
+  run with its token file written. Wired into `batch-check.yml` immediately after
+  `selfapps_warnfix.ps1`'s 5 existing scenario steps, with its own `continue-on-error: true` (per
+  this repo's own established rule: job-level `continue-on-error` alone does not protect sibling
+  steps in the same job from an earlier step's failure skipping everything after it -- confirmed
+  via a real CI run, see the PEP 723 write-back block's own header comment a few steps below this
+  one in `batch-check.yml`).
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
