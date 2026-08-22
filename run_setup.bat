@@ -3712,8 +3712,11 @@ if not defined HP_BUILD_OK (
     rem single trigger category -- now attempts :try_nuitka_tier_a before declaring final failure,
     rem instead of going straight to :die. On Tier A success, HP_NUITKA_FALLBACK_USED=1 and
     rem dist\%ENVNAME%.exe exists (built by Nuitka); the rest of this block treats it exactly
-    rem like a PyInstaller-produced EXE -- parse_warn/warnfix below is a no-op for it: no warn
-    rem file exists, so that block already degrades gracefully per its own "not found" branch.
+    rem like a PyInstaller-produced EXE -- parse_warn/warnfix below is NOT guaranteed to be a
+    rem no-op for it: a stale warn-%ENVNAME%.txt from the earlier, failed PyInstaller attempt
+    rem that triggered this Tier A fallback can survive, since build\%ENVNAME% is not cleared
+    rem before this check -- warnfix can still fire and even rebuild over the Nuitka-built EXE, see
+    rem the HP_NUITKA_FALLBACK_USED clear a few dozen lines below for how that case is handled.
     set "HP_NUITKA_FALLBACK_USED="
     rem REQ-009/REQ-005.10 (cascade-vs-postexec fix): reset the "this provider's dependencies
     rem look incomplete" flag at the start of every fresh build attempt, not just when warnfix
@@ -3898,7 +3901,7 @@ if not defined HP_BUILD_OK (
       call :log "[INFO] Rebuilding standalone executable after warnfix -- this may take a minute or two..."
       "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
       rem derived requirement (bug-hunt pass): unlike the ORIGINAL build a few dozen lines
-      rem above, which routes every failure through :try_nuitka_tier_a / :die /
+      rem above, which routes every failure through :try_nuitka_tier_a / :warn_build_incomplete /
       rem HP_BOOTSTRAP_STATE=error, this warnfix-triggered rebuild previously had NO failure
       rem handling at all -- the log line below always said "rebuild complete" and nothing
       rem re-checked dist\%ENVNAME%.exe, so a genuine rebuild failure -- e.g. the exact AV-lock
@@ -5277,8 +5280,9 @@ rem its own internal compiler discovery (MSVC first, then MinGW64 auto-download)
 rem 4's own explicit instruction, this subroutine does NOT probe for a compiler itself -- that
 rem kind of fingerprinting is exactly what research Finding 2 already argued against. Tier B
 rem (reprovisioned pinned-3.12 environment for the no-compiler-found case) is NOT implemented
-rem yet -- this is Tier A only; a Tier A failure currently falls through to the caller's existing
-rem :die path, same as before this feature existed.
+rem yet -- this is Tier A only; a Tier A failure currently falls through to the caller's own
+rem :warn_build_incomplete site (CLAUDE.md Item 46 Bucket B migrated these callers off :die;
+rem see that subroutine's own header comment for why it is not a :die call anymore).
 rem Called via `call` (never `goto`) from inside the PyInstaller-build if/else nesting above, so
 rem it is safe regardless of block depth -- see the "Nested if/else (no goto)" comment there.
 call :log "[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two)."
