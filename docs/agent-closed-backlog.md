@@ -2754,6 +2754,145 @@ run of the same regex logic before landing, not just reasoned about).
   via a real CI run, see the PEP 723 write-back block's own header comment a few steps below this
   one in `batch-check.yml`).
 
+### Item 60 (closed 2026-08-22)
+
+- **`:merge_git_config` (REQ-015) does not migrate an EXISTING `.gitattributes` that
+  already has the old `*.bat eol=crlf`/`*.cmd eol=crlf` rules to `-text`.** Found by CodeRabbit's
+  first manually-triggered review on this repo (PR #436, rated "Major, Heavy lift" -- item 59's
+  own motivating request), the same day item 59 fixed the FORWARD-facing half of this same gap
+  (what a fresh run writes). The idempotency guard (`findstr /C:"%HP_GA_SIG%" ".gitattributes"`,
+  gating on the SIGNATURE comment line, unchanged by item 59's fix) means a user who already ran
+  an OLDER `run_setup.bat` has that signature present, so re-running a NEWER copy skips the whole
+  append block and never upgrades their file -- their `.gitattributes` stays on the disproven
+  `eol=crlf` rule indefinitely, with no path to the fix. Narrow real-world exposure (only affects
+  OTHER users' own unrelated projects that already ran an old copy, have `.bat`/`.cmd` files, and
+  publish to GitHub), but real and permanent without a fix -- there is currently no self-healing
+  mechanism.
+
+  **Deliberately not attempted as a quick fix at first**: a correct migration needs a genuine
+  read-modify-write against a user's own, arbitrary `.gitattributes` content (not just an append),
+  which raised real design questions: detect the OLD lines specifically (not just the presence of
+  the shared signature) and REPLACE them in place, versus appending new superseding lines below
+  the old ones and relying on git's own last-match-wins attribute resolution (messier file, no
+  cleanup). Resolved in favor of REPLACE, but scoped narrowly enough to keep the "avoid rewriting
+  content this bootstrapper didn't write" concern satisfied: only a line that EXACTLY matches
+  `*.bat eol=crlf` or `*.cmd eol=crlf` (byte-for-byte, no partial/fuzzy match) is ever touched --
+  every other line, including any user hand-edit elsewhere in the file, or a line that merely
+  CONTAINS that text with something else appended, passes through byte-identical. An exact-match
+  line either was written by an older copy of this bootstrapper, or is functionally identical
+  user-authored content the same corrected rule applies to either way -- there is no case where
+  touching it is wrong.
+
+  New payload `HP_MIGRATE_GITATTRIBUTES` (`tools/migrate_gitattributes.ps1`, see the
+  embedded-payload table in CLAUDE.md) replaces only the two exact stale lines when present, and
+  is a no-op (no write at all) otherwise. Called unconditionally from `:merge_git_config`'s
+  `:mgc_ga_done` label -- reached both when the signature was already found (skip branch) AND
+  right after a fresh append, so `.gitattributes` always exists at that point regardless of which
+  branch was taken; this is what closes item 59's own original gap (the signature-gated skip
+  previously bypassed migration entirely). New end-to-end regression scenario
+  `self.ux.gitattributes.migrate` (`tests/selfapps_ux_hardening.ps1`, its own separate scratch dir
+  pre-seeded with the OLD signature-plus-stale-rule content an older bootstrapper would have
+  written) asserts both `-text` lines are now present, both `eol=crlf` lines are gone, and
+  unrelated pre-existing content survives untouched. A best-effort, non-gating `[WARN]` (mirroring
+  this repo's own "never gates the lane" convention for similarly non-critical helpers, e.g.
+  `autopep_merge.py` -- see `docs/agent-interconnect.md`) fires if the script ever produces
+  something outside its own 3-value contract (`MIGRATED`/`NOOP:no-stale-lines`/`NOOP:missing`),
+  so a genuine anomaly is not entirely silent even though it's never treated as fatal.
+
+  **Real bug found by CodeRabbit's PR-level risk assessment (before any inline finding even
+  landed) and fixed same-day: the first implementation used
+  `[System.IO.File]::ReadAllLines`/`WriteAllLines`, which would have silently converted an
+  LF-only `.gitattributes`' ENTIRE content to CRLF on real Windows.** `ReadAllLines` strips every
+  line's own terminator; `WriteAllLines` reimposes a single uniform one via
+  `Environment.NewLine` -- CRLF on real Windows (where this script actually runs), but LF on the
+  Linux sandbox this repo's own local `pwsh` verification runs on, so the bug was invisible to
+  local testing by construction, not by an oversight in the testing itself. This directly
+  contradicts the item's own core safety property ("avoid ever rewriting content that might not
+  be exactly what this bootstrapper wrote"). Fixed by abandoning the lines-array round-trip
+  entirely: the script now reads the raw text via a `StreamReader` (capturing the file's own
+  detected encoding, including whether a BOM was present, via `detectEncodingFromByteOrderMarks`)
+  and does a scoped `[regex]::Replace` using lookaround (`(?<=\A|\r\n|\n)...(?=\r\n|\n|\z)`) to
+  recognize a genuine whole-line match without ever consuming or normalizing the terminators
+  around it, then writes back via `WriteAllText` using the SAME captured encoding. Verified
+  directly (not just reasoned about) against 7 shapes covering exactly this class of hazard:
+  LF-only stays LF, CRLF-only stays CRLF, mixed CRLF/LF within one file has each terminator
+  preserved independently, a stale line with no trailing newline, a stale line with no preceding
+  terminator (first line in the file), a UTF8 BOM is preserved, and no BOM is added where none
+  existed.
+
+  **First real CI run (PR #455, `real` lane) confirmed the migration genuinely failed on real
+  Windows PowerShell 5.1, with no diagnosable cause at first.** `self.ux.gitattributes.migrate`
+  failed with `batStaleFound:true` (the file was never rewritten) and the bootstrap log showed
+  only the generic `[WARN] REQ-015: .gitattributes migration check produced an unexpected
+  result` line -- the actual PowerShell output/error text that produced that verdict was written
+  only to `~ga_migrate_result.txt`, which the caller deleted before anything captured its content
+  anywhere. Two compounding gaps, both fixed defensively as diagnostic hardening (neither was a
+  confirmed root cause at the time -- only Linux `pwsh` 7 was available for local verification,
+  and the failure was specific to real Windows PowerShell 5.1, a runtime that sandbox could not
+  run): (1) `:merge_git_config`'s own result-capture loop
+  (`for /f ... do set "HP_GA_MIGRATE_RESULT=%%X"`) kept only the LAST line of the result file,
+  the wrong end for a multi-line failure dump -- fixed to keep the FIRST non-blank line via an
+  `if not defined` guard; (2) the script's entire body was wrapped in `try`/`catch`, emitting
+  a single-line `ERROR:<exception type>: <message>` marker (embedded newlines collapsed to
+  spaces) instead of letting a raw, possibly multi-line terminating error reach the caller
+  unexplained. The caller also `type`s the raw result file to both console and `%LOG%` on
+  the WARN branch -- a plain byte copy, never through `%VAR%` substitution, since an
+  unanticipated failure message could legally contain shell metacharacters (see
+  `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry). New regression test
+  `test_directory_instead_of_file_produces_error_marker_not_crash` (opens a directory where a
+  file is expected -- the one failure shape reproducible on both Windows and Linux) proves the
+  `try`/`catch` engages and the script still exits 0 with a single-line `ERROR:` marker.
+
+  **Real, valid finding from CodeRabbit's review of the diagnostic-hardening commit: the
+  lookbehind's `\uFEFF` alternative was a genuine false-positive hazard, not just harmless
+  defense in depth as originally described.** `(?<=\A|\r\n|\n|\uFEFF)` is not itself anchored to
+  the start of the file -- a line with its own prefix text followed by a literal embedded BOM
+  character immediately before the stale text (e.g. `user <BOM>*.bat eol=crlf`) would wrongly
+  satisfy the lookbehind and get rewritten, even though that is not an exact whole-line match at
+  all. Removed the alternative entirely: `\A` alone already covers the genuine leading-BOM case,
+  since `StreamReader`'s own BOM-stripping-on-read consumes a real leading BOM as encoding
+  metadata before `$text` is ever set, so `$text` never actually starts with U+FEFF in practice
+  -- confirmed directly, not just reasoned about, by re-running the full local test suite
+  (including `test_bom_immediately_precedes_stale_rule_as_first_line` and
+  `test_utf8_bom_preserved`) after removing the alternative, all still passing. New regression
+  test `test_bom_embedded_mid_line_not_treated_as_line_boundary` (BOM bytes placed mid-file,
+  after some prefix text, so `StreamReader` does not treat them as a real leading BOM and they
+  decode as a literal embedded U+FEFF character instead) proves the fix: `NOOP:no-stale-lines`,
+  file untouched.
+
+  **Root cause of the real Windows PowerShell 5.1 failure finally found via the diagnostic
+  hardening above -- NOT a PowerShell-version quirk at all, a plain execution-order bug that
+  would have failed identically on ANY PowerShell version, including 7.** The diagnostic dump
+  surfaced the actual PowerShell error for the first time: `The argument
+  '~migrate_gitattributes.ps1' to the -File parameter does not exist.` -- meaning
+  `:emit_from_base64 "~migrate_gitattributes.ps1" HP_MIGRATE_GITATTRIBUTES` never wrote the file
+  at all. Traced to `:merge_git_config` being `call`ed at the top of the main flow (originally
+  line 265) BEFORE `:define_helper_payloads` (originally line 584) -- every `HP_*` payload
+  variable, including `HP_MIGRATE_GITATTRIBUTES`, is `set` inside `:define_helper_payloads`'s own
+  body, so it genuinely did not exist yet when `:merge_git_config` (called ~300 lines earlier in
+  execution order, regardless of where its own body sits in the file) reached its
+  `:emit_from_base64` call. Confirmed as the sole cause by checking every other
+  `call :emit_from_base64` site in the file (28 others) -- every one of them sits at a line
+  number AFTER `:define_helper_payloads`'s own call site, so none had ever exercised this
+  ordering gap before; `:merge_git_config` was the first (and only) early-called subroutine to
+  ever need a payload. This is why it reproduced 100% deterministically on EVERY bootstrap run in
+  the `real` lane regardless of test scenario, and why no local `pwsh` testing of the script or
+  the payload-sync check could ever have caught it -- both exercise the script's own
+  content/logic, never `run_setup.bat`'s own call-graph ordering. Fixed by moving
+  `call :define_helper_payloads` to run immediately before `call :merge_git_config` (removing the
+  now-redundant original call site) -- `:define_helper_payloads`'s entire body is side-effect-free
+  literal `set "HP_X=<base64>"` assignments with no dependency on anything set between the two
+  original call sites, confirmed by inspecting its full body before moving it, so this was safe
+  with no other behavioral change. The general hazard (any future payload used from a subroutine
+  called before `:define_helper_payloads`'s own call site reintroduces this exact bug) is
+  documented in `docs/agent-interconnect.md`'s "`:define_helper_payloads` must be `call`ed
+  before ANY subroutine using an `HP_*` payload" entry.
+
+  **Closed via PR #455** (merge commit `4ab6551`): full 8-lane matrix confirmed green, with
+  `self.ux.gitattributes.migrate` reporting `pass:true` on the `real` lane
+  (`batTextFound:true, cmdTextFound:true, batStaleFound:false, cmdStaleFound:false,
+  otherPreserved:true`) and zero other failures anywhere in that lane's log.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
