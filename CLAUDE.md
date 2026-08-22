@@ -1129,6 +1129,20 @@ way (no live Windows execution available here), that is noted explicitly rather 
   a time, full 8-lane matrix CI proof to completion before the next batch starts, no blanket sweep
   across every remaining site in one PR.
 
+  **Implemented locally 2026-08-21 (Batches 1/2/3/5 and one site of Batch 4), NOT YET PUSHED --
+  held per explicit instruction to avoid disrupting concurrent CI from other active-backlog work.**
+  Batch 4's scope corrected from 7 sites to 1 (1275 only -- the other 6 traced individually and
+  found to fall through into benign, silently-degraded continuations, not a redundant-`:die`
+  cascade; reclassified alongside the 1334 sink, not fixed). Batch 6 traced further (a second
+  `:try_conda_install` call site found inside `:cascade_acquire_conda`) and remains deferred --
+  Batch 1's own fix already shrinks its residual value to "one fewer redundant pause in an already-
+  rare scenario." New shared test hook `HP_TEST_FORCE_EMIT_FAIL=<VARNAME>` added to
+  `:emit_from_base64` itself. New test file `tests/selfapps_die_emit_fallthrough.ps1` (4 scenarios:
+  `missing_python`/`condarc`/`ci_skip_entry`/`determine_entry`) also surfaced a genuine, pre-
+  existing, unfixed quirk: `:after_env_skip` writes `state=ok` unconditionally regardless of an
+  earlier `call :die` in the same run (near-zero exposure, `HP_CI_SKIP_ENV` is test-infrastructure-
+  only). Full detail: `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context

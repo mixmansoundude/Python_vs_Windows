@@ -3,9 +3,12 @@
 **Status:** Research pass complete (2026-08-18); maintainer decision recorded and full 20-site
 trace completed (2026-08-21, see Finding 3 and "Batch Roadmap" below) -- grounded directly against
 current `run_setup.bat` source via `tools/audit_batch_exit_paths.py` and manual tracing, not
-written from memory or inference. Batch 1 (the conda-acquisition-probe chain) is the next slice to
-land. See CLAUDE.md's Item 46 entry for the full incident history (Bucket B, closed; Bucket A
-slice 1, closed) this plan picks up from.
+written from memory or inference. **Batch 1 is merged** (PR #468). Batches 2, 3, 5, and one site of
+Batch 4 (the `Could not stage ~condarc` site) are implemented, with regression tests and CI wiring,
+landing as a follow-on PR stacked on Batch 1. Batch 6 and the "Active Python interpreter not
+resolved" sink remain deferred, per "Batch Roadmap" below. See CLAUDE.md's Item 46 entry for the
+full incident history (Bucket B, closed; Bucket A slice 1, closed) this plan picks up from, and
+"Batch Roadmap" below for exactly what's implemented vs. what remains.
 **Owner:** Supervisor (Python_vs_Windows)
 **Related:** CLAUDE.md Active Backlog Item 46, `docs/agent-lessons-learned.md`'s `:die` entry,
 `docs/agent-interconnect.md`'s "Genuine (non-cascade) conda-create exhaustion" section, PR #437
@@ -267,23 +270,120 @@ note:**
    - **Batch 1** (conda-acquisition-probe chain, 5 sites) lands first -- highest realistic exposure
      (a real, if uncommon, "conda never acquired" production scenario), lowest risk (proven shape,
      existing test already reaches it).
-   - **Batch 2** (`:conda_create_done`'s "python.exe missing" check) lands next -- low risk, fixes
+   - **Batch 2** (`:conda_create_done`'s "python.exe missing" check) landed next -- low risk, fixes
      a genuinely misleading message.
-   - **Batch 4** (7 write-failure sites) and **Batch 5** (2 CI-only sites, both inside
-     `:ci_skip_entry`) land after, in either order -- both low risk, low urgency, mechanical once
-     traced.
+   - **Batch 4/5** landed after -- see "Implementation Status" below: Batch 4 turned out to need a
+     per-site trace of "does skipping intervening code actually cascade into a second `:die`, or is
+     it just benign wasted work" before committing to a fix, not a mechanical goto sweep as
+     originally scoped; only 1 of the original 7 sites (the `~condarc` staging site) qualified.
+     Batch 5 (2 CI-only sites, both inside `:ci_skip_entry`) landed as originally scoped for its own
+     genuinely-cascading site (`CI skip: entry helper staging failed`); its sibling (`find_entry
+     helper syntax error`) was confirmed already benign, no fix needed.
    - **Batch 3** (the entry-determination double-call, the first `Could not determine entry point`
-     site inside `:after_env_mode_selection`) and **Batch 6** (`:tci_both_failed`'s two sites,
-     `:try_conda_install` coordination) land last, each on its own -- both medium risk / more
-     design thought than a drop-in goto, and Batch 6 specifically benefits from waiting until
-     Batch 1's mitigating side-effect is confirmed via real CI before deciding whether it's still
-     worth the extra coordination code.
+     site inside `:after_env_mode_selection`) landed -- confirmed safe via a direct read of
+     `:determine_entry`'s own subroutine body (errorlevel 1 means the entry-detection MECHANISM
+     itself is broken -- helper staging or syntax-verify failed -- not "ambiguous" or "no files
+     found," both of which already return 0 and are handled gracefully elsewhere). This closes the
+     concern a CodeRabbit review round raised on the Batch 1 PR before Batch 3 itself had landed
+     (asking whether the fix "resolves" the second `:determine_entry` call): it does not eliminate
+     that second call, and never claimed to -- it only skips the pointless intervening work; if the
+     same root cause persists, the second call's own `call :die` still fires, one pause, not zero.
+   - **Batch 6** (`:tci_both_failed`'s two sites, `:try_conda_install` coordination) stays deferred
+     -- see "Implementation Status" below for why its remaining value shrank further once traced.
    - **The "Active Python interpreter not resolved" sink** (inside `:after_env_mode_selection`)
      stays deferred indefinitely (lowest priority, already-mitigated, no fix currently planned).
 4. **This pass's full trace (Finding 3 above) is the roadmap** -- no further blanket re-audit is
    needed before starting Batch 1; each batch's own PR should re-verify its own sites' current line
    numbers and surrounding code (this file's own history shows line numbers drift as unrelated work
    lands) but does not need to re-derive the classification from scratch.
+
+### Implementation Status (2026-08-21, same session as the decision above)
+
+All batches below were implemented, tested (where a test was warranted -- see each entry), and
+locally committed on `claude/die-fatal-remediation-srj9jg` in ONE session as a continued research
+pass -- **not pushed**. When this does get pushed, it should land as SEPARATE PRs per batch (one
+commit per batch in the local history, so this is mechanical), preserving the "one batch lands at a
+time, full CI proof before the next" discipline -- implementing several batches' worth of code
+locally in one sitting does not change that landing discipline, it just means the design/trace work
+for several batches is now already done and waiting.
+
+- **Batch 1 (the 5 sites inside `:after_conda_bat_validation`/`:after_conda_probes`)** --
+  implemented exactly as designed. `tests/selfapps_conda_bothfail.ps1` extended with assertions
+  proving the chain collapses (no `'conda'`/`'python'`/`'python -V'`/`Conda not found at:`
+  messages, reaches the `Active Python interpreter not resolved` sink).
+- **Batch 2 (`:conda_create_done`'s "python.exe missing" check)** -- implemented as designed. New
+  `missing_python` scenario in `tests/selfapps_die_emit_fallthrough.ps1` (distinct from
+  `selfapps_cascade_conda_create_fail.ps1`'s own same-named but CASCADE-re-entry scenario, which
+  never reaches this site).
+- **Batch 4 -- SCOPE CORRECTED from the original 7-site estimate to 1 site (the `Could not stage
+  ~condarc` site, inside `:conda_create_done`), after tracing each of the original 7 individually
+  rather than assuming they shared one shape.** The original Finding 3 spot-sample called these
+  "low-probability... would almost certainly also break the very next real operation loudly and
+  quickly" without verifying WHAT that next operation actually does. A full per-site trace found
+  only this ONE genuinely cascades into a SECOND `call :die` (the doomed `copy /y "~condarc" ...`
+  right after it, since the source was never staged) -- the same "redundant pause for one root
+  cause" shape every other batch targets. The other 6 (`Could not write ~detect_python.py`, `Could
+  not write ~print_pyver.py`, `Could not write %ENV_PATH%\.condarc` [reached via ITS OWN direct
+  trigger, not the staging site's cascade], `Could not write ~prep_requirements.py`, `Could not
+  stage PEP 723 requirements.`, `Could not write ~detect_visa.py`) were each traced and found to
+  fall through into either (a) a genuinely benign, silently-degraded continuation (stdout/stderr
+  redirected to a file or the log, never the console -- e.g. the `~detect_python.py` site's own
+  PYSPEC stays empty, a valid "no constraint" default) with no second `:die` and no misleading
+  success claim, or (b) a convergence point the success path already reaches within a few lines
+  regardless (the PEP 723 requirements site's own block already falls through to `goto
+  :after_pipreqs_run` six lines later even without a fix). Reclassified as the SAME low priority as
+  the sink (harmless wasted work, not a redundant-pause bug) -- NOT fixed in this pass; a goto here
+  would trim some harmless waste, not close a remaining risk, and picking the WRONG goto target for
+  one of these would risk silently skipping legitimate future work for negligible benefit. One
+  exception worth a future look, not urgent: the `~detect_visa.py` site's fall-through logs "No
+  pyvisa/visa imports detected" even when detection never actually ran -- a real but low-severity
+  inaccurate-message case (skips an optional NI-VISA install step silently), same category as
+  Batch 2's fix but lower value (optional feature, not a build-blocking path).
+  New shared `HP_TEST_FORCE_EMIT_FAIL=<VARNAME>` hook added to `:emit_from_base64` itself (the
+  subroutine behind all 7 -- and every other embedded-helper write in the file) to make the
+  `~condarc` staging site testable; `condarc` scenario in `tests/selfapps_die_emit_fallthrough.ps1`.
+- **Batch 5 (the 2 sites inside `:ci_skip_entry`)** -- SAME correction pattern as Batch 4, applied
+  to a 2-site batch instead of 7. `CI skip: entry helper staging failed` (`~find_entry.py` staging)
+  genuinely cascades into `find_entry helper syntax error` (`:verify_find_entry_helper` also fails
+  against the never-staged file) -- fixed. The syntax-error site, reached via its OWN direct
+  trigger (staging succeeded, syntax-verify itself found a problem), falls through to a benign "no
+  entry script detected" convergence a few dozen lines later -- confirmed safe, no fix needed.
+  `ci_skip_entry` scenario in `tests/selfapps_die_emit_fallthrough.ps1`; also documents a genuine,
+  pre-existing, NOT-fixed-by-this-change finding: `:after_env_skip` writes `state=ok`
+  unconditionally regardless of an earlier `call :die` in the same run (see
+  `docs/agent-ndjson.md`'s new section for the full mechanism) -- near-zero exposure (`HP_CI_SKIP_
+  ENV` is test-infrastructure-only) so not fixed here, flagged for a future pass if ever prioritized.
+- **Batch 3 (the first of `:determine_entry`'s two per-run `Could not determine entry point`
+  sites, inside `:after_env_mode_selection`)** -- implemented as designed, confirmed safe via
+  reading `:determine_entry`'s own body directly (its `errorlevel 1` return path is ONLY reached
+  when `~find_entry.py` staging fails or `:verify_find_entry_helper` finds a syntax error -- both
+  mean the entry-detection MECHANISM is broken, never "ambiguous multiple entries" or "no .py
+  files," both of which already return 0 and are handled gracefully elsewhere in this same
+  subroutine). `determine_entry` scenario in `tests/selfapps_die_emit_fallthrough.ps1` asserts an
+  exact count of 2 for the (identically-worded) die message at both call sites, plus the absence of
+  a dependency-install-phase marker proving the large intervening block was genuinely skipped. The
+  second call site (inside `:after_env_bootstrap`) is deliberately unchanged and remains reachable
+  -- if the same root cause persists, its own `call :die` still fires once, not zero times; the fix
+  only removes the pointless intervening work between the two calls, it does not eliminate the
+  second call itself.
+- **Batch 6 -- traced further, value confirmed lower than originally scoped, REMAINS DEFERRED.**
+  `:try_conda_install` (home of `:tci_both_failed`'s two sites) has TWO call sites, not one: the
+  main install-if-missing block (near the top of the file) AND a second, independent one inside
+  `:cascade_acquire_conda` (the REQ-009 uv-to-conda cascade's own on-demand Miniconda acquisition
+  -- see `docs/agent-interconnect.md`'s "Provider cascade execution re-enters env-create" section).
+  The second call site's own fall-through (`goto :eof` twice, returning to
+  `:cascade_acquire_conda`'s caller) does NOT re-enter the Batch 1 probe chain at all (that chain is
+  specific to the first-attempt, non-cascade path) -- it proceeds fairly directly to a conda-create
+  attempt that already gotos correctly (Batch 1 slice 1, pre-existing). So the second call site was
+  already reasonably contained even before today's session. For the FIRST call site: Batch 1's own
+  fix (now implemented) already collapses its fall-through from "the full 5-6-pause probe chain"
+  down to "just `:after_conda_bat_validation`'s own first-site single pause" -- confirmed via
+  re-tracing, not just asserted. The remaining value of a full Batch 6 fix (a new caller-side
+  coordination flag, since a subroutine's own `goto` cannot reach past its `call`-frame return) is
+  now down to "save ONE more redundant pause in an already-rare scenario," a smaller win than
+  originally scoped and not worth the added coordination-state complexity right now. Deferred, not
+  abandoned -- revisit if a future session finds this specific residual pause actually confusing
+  real users.
 
 ### Finding 4 -- `:die`'s own existing choreography is exactly what any candidate must preserve
 

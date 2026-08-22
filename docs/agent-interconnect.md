@@ -123,6 +123,21 @@ doesn't leave stale locks for other users of the same folder.
 
 ---
 
+## `:emit_from_base64` (shared by ~10+ call sites) now carries a test-injection hook -- any future call site inherits it automatically
+
+CLAUDE.md Active Backlog Item 46 Bucket A Batches 2/3/4/5 (`docs/plan-die-fatal-remediation.md`)
+added `HP_TEST_FORCE_EMIT_FAIL=<VARNAME>` to `:emit_from_base64` itself (the one subroutine every
+embedded-helper write in the file funnels through -- `~detect_python.py`, `~condarc`,
+`~print_pyver.py`, `~prep_requirements.py`, `~find_entry.py`, `~detect_visa.py`, and any future
+addition). Checked FIRST, before the real PowerShell write: if defined and equal to the CALL's own
+`%VAR%` argument, logs a `[TEST]` line and `exit /b 1` immediately, simulating a genuine disk-write/
+AV-lock failure for that ONE payload without touching any other payload emitted in the same run.
+REQ-019-compliant (absence changes nothing). Any future new embedded helper (a new `HP_*` payload
+variable) automatically gains this same test-injection capability with zero additional wiring --
+worth knowing before adding a bespoke failure-simulation mechanism for a new helper's write step.
+
+---
+
 ## AV-Safe Build Path Tier A (`:try_nuitka_tier_a`) and hidden-import auto-recovery
 
 **Touch either subroutine, must understand the other.** `:try_nuitka_tier_a` (AV-Safe Build Path
@@ -1095,6 +1110,19 @@ fall-through blast radius as a side effect, even before Batch 6 itself is touche
 `tests/selfapps_conda_bothfail.ps1`, which drives a genuine `:tci_both_failed` failure and (post
 this fix) now asserts the resulting cascade collapses to exactly this chain's first site plus the
 sink, not the full 5-6-pause worst case.
+
+**Status: implemented 2026-08-21 (local commit, not yet pushed).** A second `:try_conda_install`
+call site was found while tracing Batch 6 (the `:tci_both_failed` failure sites themselves) --
+`:cascade_acquire_conda` (the REQ-009 uv-to-conda cascade's own on-demand Miniconda acquisition,
+~line 2302) calls it independently of the main install-if-missing block (~line 884). Its OWN
+fall-through does NOT re-enter this probe chain at all (that chain is specific to the first-attempt,
+non-cascade path, reached only from the ~884 call site) -- it proceeds fairly directly to a
+conda-create attempt that already `goto`s correctly (slice 1, pre-existing). This means Batch 1's
+fix only reduces THIS section's own described blast-radius reduction for the FIRST call site;
+`docs/plan-die-fatal-remediation.md`'s "Implementation Status" section has the full trace for both
+call sites and why Batch 6 (a caller-side coordination flag) remains deferred as a result -- its
+now-confirmed remaining value is "one fewer redundant pause in an already-rare scenario," smaller
+than originally scoped.
 
 Regression test: `tests/selfapps_entrysmoke_no_interpreter.ps1` (`self.entrysmoke.no_interpreter_
 guard`, `conda-full` lane) -- asserts `[ERROR] python.exe missing from conda environment.` is
