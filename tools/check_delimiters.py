@@ -35,8 +35,12 @@ REM_LINE_RE = re.compile(r"rem(?:[ \t]|$)", re.IGNORECASE)
 # echo line, meaning its own paren pair was never tracked as prose at all. Matches an
 # optional leading redirection clause (`>`/`>>`, an optional file descriptor digit, a
 # quoted or bare target) before "echo", so a redirected echo statement is detected the
-# same way a plain one already is.
-ECHO_LINE_RE = re.compile(r'(?:\d*>>?\s*(?:"[^"]*"|\S+)\s+)?echo\b', re.IGNORECASE)
+# same way a plain one already is. Also matches an optional leading `@` (CodeRabbit
+# review, PR #464): `@echo` -- command-echo suppressed, cmd.exe's own well-documented
+# convention, used at this file's own top of file -- is still the echo command as far
+# as this hazard is concerned; missing it would leave a nested `@echo` line's own
+# prose parens untracked the same way the redirected-echo gap above did.
+ECHO_LINE_RE = re.compile(r'@?\s*(?:\d*>>?\s*(?:"[^"]*"|\S+)\s+)?echo\b', re.IGNORECASE)
 
 
 @dataclass
@@ -287,8 +291,8 @@ class DelimiterChecker:
                     is_bat_rem_line = True
                 else:
                     # derived requirement: matches "echo", "echo.", "echo(", "echo message",
-                    # and a redirected form like '>> "%LOG%" echo ...' -- anything cmd.exe
-                    # itself treats as the echo command -- but not "echofoo".
+                    # a redirected form like '>> "%LOG%" echo ...', and "@echo" -- anything
+                    # cmd.exe itself treats as the echo command -- but not "echofoo".
                     is_bat_echo_line = ECHO_LINE_RE.match(stripped) is not None
 
             while True:

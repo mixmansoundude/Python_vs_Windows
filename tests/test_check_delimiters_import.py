@@ -149,6 +149,30 @@ def test_paren_pair_on_same_echo_line_nested_is_flagged(tmp_path, capsys):
     assert "counts parens in echo text too" in captured.out
 
 
+def test_paren_pair_on_at_echo_line_nested_is_flagged(tmp_path, capsys):
+    # CodeRabbit review finding on PR #464: ECHO_LINE_RE originally missed "@echo" --
+    # command-echo suppressed, cmd.exe's own well-documented convention and this file's
+    # own top-of-file line -- so a same-line paren pair on an "@echo" line, nested
+    # inside a real block, went untracked the same way the redirected-echo gap did
+    # before it was fixed. Same fixture shape as the plain-echo test above, "@echo"
+    # in place of "echo".
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "if defined FOO (\r\n"
+        "  @echo *** see the docs (specifically the README) for details ***\r\n"
+        "  exit /b 0\r\n"
+        ")\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "on this same line" in captured.out
+    assert "counts parens in echo text too" in captured.out
+
+
 def test_paren_pair_on_same_echo_line_at_top_level_is_not_flagged(tmp_path, capsys):
     # Same textual pattern as the test above, but with no enclosing if/for block --
     # a plain top-level echo statement never needs cmd.exe to search for a block

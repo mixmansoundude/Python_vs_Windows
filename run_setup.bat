@@ -3986,9 +3986,19 @@ if not defined HP_BUILD_OK (
       if errorlevel 1 (
         call :log "[ERROR] PyInstaller execution failed during warnfix rebuild; the previous build may no longer be valid."
         set "HP_BOOTSTRAP_STATE=error"
+        rem CodeRabbit review, PR #464: this branch never cleared HP_FRESH_BUILD_OK, so
+        rem :write_fast_hash would still pair the CURRENT sources with whatever stale,
+        rem warnfix-incomplete EXE is left in dist\ from before this failed rebuild -- the
+        rem next run's fast path would then wrongly trust it as fresh and skip retrying the
+        rem repair. Mirrors the identical PR #460 fix for the ORIGINAL build's own failure
+        rem branches; unlike a DLL-bundle/hidden-import repair loop failure -- bundling-only,
+        rem does not need this per docs/agent-interconnect.md -- a failed warnfix rebuild means
+        rem the current dist\ EXE genuinely lacks a needed dependency.
+        set "HP_FRESH_BUILD_OK="
       ) else if not exist "dist\%ENVNAME%.exe" (
         call :log "[ERROR] PyInstaller did not produce dist\%ENVNAME%.exe during warnfix rebuild."
         set "HP_BOOTSTRAP_STATE=error"
+        set "HP_FRESH_BUILD_OK="
       ) else (
         call :log "[REPAIR] rebuild complete after warnfix."
         rem The warnfix rebuild always uses PyInstaller -- if the EXE it just replaced was
