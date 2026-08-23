@@ -1608,9 +1608,9 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($retryExit -eq 0 -and $retryMsgFound) { $summary.Add('Conda retry: PASS') } else { $summary.Add('Conda retry: FAIL') }
 # REQ-005: pipreqs WARN gate -- reuses the conda_retry log (has requirements.txt=six).
-# The "Dependencies were auto-detected (pipreqs)" WARN must NOT appear when user has requirements.txt.
+# The "Dependencies were auto-detected via pipreqs" WARN must NOT appear when user has requirements.txt.
 # Guard: if the retry log is empty (prior scenario produced no output), fail rather than false-pass.
-$warnFound = ($retryLines | Where-Object { $_ -like '*Dependencies were auto-detected (pipreqs)*' }).Count -gt 0
+$warnFound = ($retryLines | Where-Object { $_ -like '*Dependencies were auto-detected via pipreqs*' }).Count -gt 0
 $warnGatePass = ($retryLines.Count -gt 0) -and (-not $warnFound)
 Write-NdjsonRow ([ordered]@{
   id      = 'self.pipreqs.warn.gated'

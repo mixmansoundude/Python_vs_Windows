@@ -337,7 +337,7 @@ isolate one mechanism from the other):
 ```
 [INFO] pipreqs 0.4.13 installed successfully; using it for dependency discovery.
 [INFO] pipreqs (direct) command: pipreqs . --force --mode compat --savepath "...\requirements.auto.txt" --ignore ".git,.github,.venv,venv,env,.uv_env,build,dist,__pycache__,tests"
-*** [WARN] Dependencies were auto-detected (pipreqs)
+*** [WARN] Dependencies were auto-detected via pipreqs
 *** [WARN] Auto-detection may be incomplete or incorrect
 *** [INFO] Consider adding requirements.txt or PEP 723 metadata for reliability
 [INFO] REQ-005.5: dependency source diff computed -- ~pipreqs.diff.txt
@@ -2423,7 +2423,7 @@ Chosen entry: app.py
 [BOOT] REQ-009: Selected Python provider: UV.
 [INFO] runtime.txt written: python-3.14.6
 [INFO] pipreqs 0.4.13 installed successfully; using it for dependency discovery.
-*** [WARN] Dependencies were auto-detected (pipreqs)
+*** [WARN] Dependencies were auto-detected via pipreqs
 *** [WARN] Auto-detection may be incomplete or incorrect
 *** [INFO] Consider adding requirements.txt or PEP 723 metadata for reliability
 [INFO] REQ-005.5: dependency source diff computed -- ~pipreqs.diff.txt

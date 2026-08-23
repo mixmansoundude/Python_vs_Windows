@@ -371,7 +371,7 @@ Write-Result -Id 'batch.script_root.trailing_backslash' -Desc 'HP_SCRIPT_ROOT tr
     hasScriptRootFixedForm = $hasScriptRootFixedForm
     hasScriptRootBuggyForm = $hasScriptRootBuggyForm
 }
-$warnGatePatterns = @('if not defined DEP_SOURCE (', 'Dependencies were auto-detected (pipreqs)', 'pipreqs augmenting')
+$warnGatePatterns = @('if not defined DEP_SOURCE (', 'Dependencies were auto-detected via pipreqs', 'pipreqs augmenting')
 $hasWarnGate = ($warnGatePatterns | Where-Object { -not ($AllText -match [regex]::Escape($_)) }).Count -eq 0
 Write-Result 'batch.req005.warn_gate' 'REQ-005: pipreqs auto-detect WARN gated on DEP_SOURCE unset (suppressed when requirements.txt/pyproject present)' $hasWarnGate @{}
 # derived requirement: the Miniconda URL probe must be deferred to after uv detection
