@@ -1916,6 +1916,8 @@ jobs:
             tests\~selftest_fastpath_hash\~setup.log
             tests/~selftest_fastpath_hash/~run.out.txt
             tests\~selftest_fastpath_hash\~run.out.txt
+            tests/~selftest_fastpath_hash/~fast_check.hash.txt
+            tests\~selftest_fastpath_hash\~fast_check.hash.txt
             tests/~pandas_excel/~pandas_excel.log
             tests\~pandas_excel\~pandas_excel.log
             tests/~pipgap/~pipgap.log

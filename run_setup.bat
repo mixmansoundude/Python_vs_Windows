@@ -652,6 +652,13 @@ call :compute_interactive_run
 
 rem --- Very top EXE fast path: reuse dist\%ENVNAME%.exe when sources are unchanged ---
 set "HP_FASTPATH_USED="
+rem CLAUDE.md Active Backlog Item 39 (CodeRabbit review, PR #460): defensive reset. Every real
+rem write site for HP_FRESH_BUILD_OK lives inside :run_entry_smoke, whose own per-build-attempt
+rem reset sits past a preflight-failure early-return (HP_PREFLIGHT_FAILED) -- a provider-cascade
+rem re-entry that hits that early return would skip the in-subroutine reset. Clearing it here too,
+rem before the very first :try_fast_exe call of the whole run, closes that gap unconditionally so
+rem :write_fast_hash below can never fire off a value this run never genuinely earned.
+set "HP_FRESH_BUILD_OK="
 rem REQ-016: start clean so an inherited env var can never trigger a false "EXE
 rem unverified" caveat; :run_exe_smokerun sets this only on a real non-zero EXE exit.
 set "HP_EXE_VERIFY_FAILED="
@@ -3601,7 +3608,13 @@ if exist "%HP_FAST_CHECK_PS%" del "%HP_FAST_CHECK_PS%" >nul 2>&1
 call :emit_from_base64 "%HP_FAST_CHECK_PS%" HP_FAST_CHECK
 if errorlevel 1 exit /b 0
 powershell -NoProfile -ExecutionPolicy Bypass -File "%HP_FAST_CHECK_PS%" "dist\%ENVNAME%.exe" write >> "%LOG%" 2>&1
+set "HP_FAST_HASH_RC=%ERRORLEVEL%"
+rem derived requirement (CodeRabbit review, PR #460): a write failure here is not fatal -- the
+rem next run's missing-hash default safely forces exactly one rebuild -- but a silent failure
+rem could repeat unnoticed across many runs. Log it explicitly rather than swallowing it.
+if not "%HP_FAST_HASH_RC%"=="0" call :log "[WARN] Fast-path hash write failed; the next run will rebuild."
 if exist "%HP_FAST_CHECK_PS%" del "%HP_FAST_CHECK_PS%" >nul 2>&1
+set "HP_FAST_HASH_RC="
 exit /b 0
 :run_entry_smoke
 call :record_chosen_entry "%HP_ENTRY%"

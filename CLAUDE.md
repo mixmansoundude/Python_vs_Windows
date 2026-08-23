@@ -926,6 +926,35 @@ but several represent real gaps worth closing before calling the path fully rele
   pass even if the call or the write invocation were removed, as long as matching text happened
   to exist anywhere else in the file). See `docs/agent-ndjson.md` for the full row registry entry.
 
+  **A second CodeRabbit review round on the same PR caught four more findings, all fixed before
+  landing.** (1) A defensive `set "HP_FRESH_BUILD_OK="` was added at the very top of the file
+  (alongside the pre-existing `HP_FASTPATH_USED=` reset, before the first `:try_fast_exe` call of
+  the whole run) -- `:run_entry_smoke`'s own per-build-attempt reset sits past a preflight-failure
+  early-return (`HP_PREFLIGHT_FAILED`), so a provider-cascade re-entry hitting that early return
+  would skip the in-subroutine reset; no concrete exploit was confirmed against the current
+  single-invocation call graph (every write site pairs a genuinely fresh build with unchanged
+  sources even across this path), but the fix is a zero-cost, unconditional close of the whole
+  class of risk regardless. (2) `:write_fast_hash` now captures the PowerShell write call's own
+  exit code and logs `[WARN] Fast-path hash write failed; the next run will rebuild.` on a nonzero
+  result, instead of silently deleting the helper and returning success either way -- matches this
+  repo's own "Bootstrap must fail fast and explicitly -- no silent fallbacks unless explicitly
+  logged" principle; still safe either way (a failed write leaves no stored hash, forcing exactly
+  one more rebuild), just no longer silent. (3) `tests/selfapps_fastpath_hash.ps1`'s
+  `hashWrittenAfterRun1` check was `Test-Path`-only (existence, not content) -- a truncated or
+  malformed write would pass the same way a working one would, since a broken file is just as
+  "not fresh" as a missing one to the read side. Now reads the file and validates it matches
+  `tools/fast_check.ps1`'s own canonical format (a 64-char lowercase hex SHA256 digest, no
+  trailing newline) via `hashContentValid`, folded into `$pass`. (4) The same test never confirmed
+  its own core precondition -- that `entry.py`'s backdated mtime assignment actually took, and is
+  genuinely older than the built EXE's own mtime -- before trusting run 2's outcome as evidence the
+  NEW hash-based path (not the OLD mtime-only path, coincidentally rebuilding for an unrelated
+  reason) did the detecting. Added `mtimePreconditionHolds` (compares `entry.py`'s and the built
+  EXE's `LastWriteTimeUtc`), also folded into `$pass`. `.github/workflows/batch-check.yml`'s
+  "Upload test logs" step gained both path-style variants for `~fast_check.hash.txt` under
+  `tests/~selftest_fastpath_hash/` (a new observable artifact this PR introduced, per this repo's
+  own coding guideline that every new artifact needs both slash-style upload paths) -- previously
+  only the run logs/`~setup.log`/`~run.out.txt` were wired.
+
 - **Item 42: console output is verbose across all log levels, and every fresh build ends with two
   unexplained Y/N prompts -- both plausibly overwhelming for the actual target audience
   (beginners with no setup experience).** Confirmed reasoned-from-source and CI capture. New; not

@@ -100,8 +100,16 @@ try {
     # from a working one -- a MISSING hash file also forces run 2 to rebuild (the safe
     # default), so every assertion below would still pass even if the write side never fired
     # at all. Assert the write side was genuinely exercised, not just coincidentally masked.
+    # derived requirement (CodeRabbit review round 2): Test-Path alone only proves the file
+    # exists -- an empty or malformed write (e.g. a truncated/failed PowerShell -File call)
+    # would still make run 2 rebuild for an unrelated reason (missing-hash safe default), so
+    # a broken write side could hide behind that same safe default. Read the content and
+    # validate it matches tools/fast_check.ps1's own canonical format (a 64-char lowercase
+    # hex SHA256 digest, no trailing newline -- see its WriteAllText call).
     $hashFileAfterRun1 = Join-Path $workDir '~fast_check.hash.txt'
     $hashWrittenAfterRun1 = Test-Path -LiteralPath $hashFileAfterRun1
+    $hashContentAfterRun1 = if ($hashWrittenAfterRun1) { Get-Content -LiteralPath $hashFileAfterRun1 -Raw -Encoding ASCII } else { '' }
+    $hashContentValid = $hashWrittenAfterRun1 -and ($hashContentAfterRun1 -match '^[0-9a-f]{64}$')
 
     # Rewrite entry.py to print V2, then backdate its mtime well before dist\<env>.exe's own
     # mtime -- simulating a ZIP/xcopy/robocopy delivery that preserves the original
@@ -113,6 +121,15 @@ print("FASTPATH_TOKEN_V2")
     $backdated = Get-Date -Year 2001 -Month 9 -Day 9
     (Get-Item -LiteralPath $entryPath).LastWriteTime = $backdated
     (Get-Item -LiteralPath $entryPath).LastWriteTimeUtc = $backdated.ToUniversalTime()
+
+    # derived requirement (CodeRabbit review round 2): if Windows silently rejected or
+    # normalized the backdated timestamp assignment above, the OLD mtime-only check would
+    # still (coincidentally) trigger a rebuild for the wrong reason, and this scenario would
+    # pass without ever having genuinely exercised the new content-hash path. Confirm the
+    # precondition actually holds -- entry.py's mtime is genuinely older than the EXE dist
+    # produced in run 1 -- before trusting run 2's outcome as evidence of hash-based detection.
+    $exeCandidates = @(Get-ChildItem -Path (Join-Path $workDir 'dist') -Filter '*.exe' -ErrorAction SilentlyContinue)
+    $mtimePreconditionHolds = ($exeCandidates.Count -gt 0) -and ((Get-Item -LiteralPath $entryPath).LastWriteTimeUtc -lt $exeCandidates[0].LastWriteTimeUtc)
 
     # Run 2: sources genuinely changed (V2), but entry.py's mtime lies about it.
     $run2Exit = Invoke-Bootstrap '~fastpath_hash_run2.log'
@@ -138,9 +155,10 @@ $tokenV1Seen  = $runOutText -match 'FASTPATH_TOKEN_V1'
 $fastPathReusedRun2 = $run2Combined -match [regex]::Escape('Fast path: reusing')
 
 # Genuine rebuild detected: run 2 shows the NEW token, not the old one, did not take the
-# "reusing" fast path, AND run 1 genuinely exercised the write side (not just coincidentally
-# masked by the missing-hash-file safe default).
-$pass = ($run1Exit -eq 0) -and ($run2Exit -eq 0) -and $hashWrittenAfterRun1 -and $tokenV2Seen -and (-not $tokenV1Seen) -and (-not $fastPathReusedRun2)
+# "reusing" fast path, run 1 genuinely wrote a well-formed hash (not just coincidentally
+# masked by the missing-hash-file safe default), and the backdated-mtime precondition this
+# whole scenario depends on actually held (entry.py genuinely predates the EXE).
+$pass = ($run1Exit -eq 0) -and ($run2Exit -eq 0) -and $hashContentValid -and $mtimePreconditionHolds -and $tokenV2Seen -and (-not $tokenV1Seen) -and (-not $fastPathReusedRun2)
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.fastpath.hash.backdated_mtime'
@@ -148,13 +166,15 @@ Write-NdjsonRow ([ordered]@{
     pass    = $pass
     desc    = 'EXE fast path content-hash freshness detects a genuine change even when the changed file mtime is backdated below the EXE'
     details = [ordered]@{
-        run1Exit            = $run1Exit
-        run2Exit            = $run2Exit
-        hashWrittenAfterRun1 = $hashWrittenAfterRun1
-        tokenV2Seen         = $tokenV2Seen
-        tokenV1Seen         = $tokenV1Seen
-        fastPathReusedRun2  = $fastPathReusedRun2
-        run2Log             = '~fastpath_hash_run2.log'
+        run1Exit              = $run1Exit
+        run2Exit              = $run2Exit
+        hashWrittenAfterRun1  = $hashWrittenAfterRun1
+        hashContentValid      = $hashContentValid
+        mtimePreconditionHolds = $mtimePreconditionHolds
+        tokenV2Seen           = $tokenV2Seen
+        tokenV1Seen           = $tokenV1Seen
+        fastPathReusedRun2    = $fastPathReusedRun2
+        run2Log               = '~fastpath_hash_run2.log'
     }
 })
 
