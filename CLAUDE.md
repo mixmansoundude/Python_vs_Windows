@@ -783,17 +783,31 @@ but several represent real gaps worth closing before calling the path fully rele
   case: `--add-data` places the file inside `_MEIPASS` (the onefile extraction dir), which does
   not satisfy a CWD-relative `open()` at all, yet the hint unconditionally suggested it regardless
   of which kind of missing-file path was detected. Fixed by branching on whether the captured
-  missing-file path itself is already under a `_MEIxxxxxx` folder (PyInstaller's own onefile
-  extraction-dir naming, checked via `findstr /i "_MEI"`, quoted per the established "quote a
-  variable before piping into findstr" rule): when it is, `--add-data` genuinely is the fix and the
-  original advice is unchanged; when it is a bare/CWD-relative path (the `report.py`/`config.json`
-  scenario above), the hint now says `--add-data` will not fix it and suggests placing a copy next
-  to the built `.exe` instead, or reading it via a path relative to the script's own file. This is
+  missing-file path itself is already under a genuine `_MEIxxxxxx` folder (PyInstaller's own
+  onefile extraction-dir naming): when it is, `--add-data` genuinely is the fix and the original
+  advice is unchanged; when it is a bare/CWD-relative path (the `report.py`/`config.json` scenario
+  above), the hint now says `--add-data` will not fix it and suggests placing a copy next to the
+  built `.exe` instead, or reading it via a path relative to the script's own file. This is
   independent of, and does not presuppose an answer to, the (a)-vs-(b) CWD-unification question
-  above -- the advice is honest either way that question is eventually resolved. Regression
-  coverage: `tests/selfapps_exedata_fail.ps1` (`self.exe.smokerun.exedata.xfail`, real/conda-full
-  lanes) extended to assert the honest wording fires and the old unconditional `--add-data
-  config.json` suggestion does not, for its own bare-relative-path stub app.
+  above -- the advice is honest either way that question is eventually resolved.
+
+  **First-shipped version used a plain `findstr /i "_MEI"` substring match -- a real false-positive
+  bug found by CodeRabbit's review of this same PR, fixed before landing.** A coincidental filename
+  containing `_MEI` anywhere (e.g. `config_MEI.json`) or a user-named folder called `_MEI` with no
+  digits (e.g. `C:\work\_MEI\data.txt`) would both wrongly match, misclassifying a genuine
+  CWD-relative failure as a bundled-resource one and giving the (still-wrong, for that case)
+  `--add-data` advice. Fixed by matching via PowerShell instead of `findstr`, anchored to the real
+  `_MEIxxxxxx` path-component shape (a path separator, then `_MEI`, then digits, then a path
+  separator) so a bare substring can never match; the value is read from the environment at
+  PowerShell runtime rather than substituted into the `-Command` text, so there is no cmd.exe
+  metacharacter risk either. Verified directly against both of CodeRabbit's own example strings
+  plus the real captured `_MEI41642` extraction path (`docs/demo-bootstrapper-output.md`'s
+  Scenario 31) via a standalone `pwsh` script before landing -- all five cases classify correctly.
+  Regression coverage: `tests/selfapps_exedata_fail.ps1` (`self.exe.smokerun.exedata.xfail`,
+  real/conda-full lanes) gained a second scenario (`EXEDATA_SCENARIO=mei_substring`, a stub app
+  opening `config_MEI99.json` -- CodeRabbit's own example shape) alongside the original `plain`
+  scenario (`config.json`), both asserting the honest wording fires and the corresponding
+  unconditional `--add-data` suggestion does not.
 
   **Still open, NOT part of this fix**: the CWD-mismatch verdict-flip itself (options a/b above)
   remains undecided, and the coverage gap this item originally named -- no test asserts what run 2

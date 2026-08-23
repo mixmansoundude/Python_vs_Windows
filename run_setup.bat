@@ -4984,7 +4984,14 @@ rem correct advice only when the missing path itself is already under a _MEIxxxx
 rem code reads it via a bundled-resource-style path). For a bare/CWD-relative path, --add-data
 rem would NOT fix the failure at all; give honest advice for that far more common beginner case
 rem instead of a suggestion that cannot work.
-echo "%HP_HINT_FILE_NAME%"| findstr /i "_MEI" >nul 2>&1
+rem derived requirement (CodeRabbit review, PR #458): a plain findstr substring match on "_MEI"
+rem false-positives on a coincidental filename (config_MEI.json) or a user-named folder with no
+rem digits (C:\work\_MEI\data.txt) -- neither is a genuine PyInstaller extraction directory.
+rem Matched via PowerShell instead, anchored to the real _MEIxxxxxx path-component shape
+rem (a path separator, then _MEI, then digits, then a path separator) so a bare substring
+rem never matches; the value is read from the environment at PowerShell runtime, never
+rem substituted into the -Command text, so no cmd.exe metacharacter risk either.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "exit [int](-not ($env:HP_HINT_FILE_NAME -match '(?i)[\\/]_MEI[0-9]+[\\/]'))"
 if errorlevel 1 (
   call :log "[HINT][DATA_FILE] --add-data will not fix this: it bundles into a temp extraction folder, not the current directory. Place a copy of '%HP_HINT_FILE_NAME%' next to the built .exe instead, or read the file via a path relative to your own script file, not the working directory."
 ) else (
