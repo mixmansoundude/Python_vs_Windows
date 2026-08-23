@@ -995,6 +995,22 @@ jobs:
         run: |
           & tests\selfapps_exedata_fail.ps1
 
+      - name: "Self-test: EXE smokerun XFAIL missing data file, name coincidentally contains _MEI+digits (real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          EXEDATA_SCENARIO: mei_substring
+        run: |
+          & tests\selfapps_exedata_fail.ps1
+
+      - name: "Self-test: EXE smokerun XFAIL missing data file under a genuine _MEIxxxxxx extraction path (real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          EXEDATA_SCENARIO: mei_genuine
+        run: |
+          & tests\selfapps_exedata_fail.ps1
+
       - name: "Self-test: EXE smokerun XFAIL dynamic import not bundled (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh

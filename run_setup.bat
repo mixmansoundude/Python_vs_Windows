@@ -4978,7 +4978,33 @@ goto :hint_check_mod
 :hint_data_file
 for /f "usebackq delims=" %%F in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText('%HP_HINT_FILE%');$m=[regex]::Match($t,'No such file or directory: ''([^'']+)''');if($m.Success){$m.Groups[1].Value}else{'<file>'}"`) do set "HP_HINT_FILE_NAME=%%F"
 call :log "[HINT][DATA_FILE] Missing data file detected: %HP_HINT_FILE_NAME%"
-call :log "[HINT][DATA_FILE] Consider adding: --add-data %HP_HINT_FILE_NAME%;."
+rem derived requirement (CLAUDE.md Active Backlog Item 38): --add-data bundles a file into the
+rem onefile extraction folder (_MEIxxxxxx under TEMP), never the current working directory --
+rem correct advice only when the missing path itself is already under a _MEIxxxxxx folder (the
+rem code reads it via a bundled-resource-style path). For a bare/CWD-relative path, --add-data
+rem would NOT fix the failure at all; give honest advice for that far more common beginner case
+rem instead of a suggestion that cannot work.
+rem derived requirement (CodeRabbit review, PR #458): a plain findstr substring match on "_MEI"
+rem false-positives on a coincidental filename (config_MEI.json) or a user-named folder with no
+rem digits (C:\work\_MEI\data.txt) -- neither is a genuine PyInstaller extraction directory.
+rem Matched via PowerShell instead, anchored to the real _MEIxxxxxx path-component shape
+rem (a path separator, then _MEI, then a nonempty suffix, then a path separator) so a bare
+rem substring never matches; the value is read from the environment at PowerShell runtime,
+rem never substituted into the -Command text, so no cmd.exe metacharacter risk either.
+rem derived requirement (real CI failure, PR #458's own mei_genuine test): the suffix is NOT
+rem always decimal digits -- a genuine capture from this same PR's CI run showed
+rem _MEI00001a4c2 (hex characters), not just _MEI41642 (decimal) from the earlier reference
+rem capture. [0-9]+ missed the hex case and wrongly gave the CWD-relative advice for a
+rem genuine extraction path. Widened to [^\\/]+ (any nonempty non-separator run) -- the
+rem structural bounding (a real path separator immediately before AND after) is what
+rem actually distinguishes a genuine extraction-directory component from a coincidental
+rem substring or a no-suffix folder name, not the exact character class of the suffix.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "exit [int](-not ($env:HP_HINT_FILE_NAME -match '(?i)[\\/]_MEI[^\\/]+[\\/]'))"
+if errorlevel 1 (
+  call :log "[HINT][DATA_FILE] --add-data will not fix this: it bundles into a temp extraction folder, not the current directory. Place a copy of '%HP_HINT_FILE_NAME%' next to the built .exe instead, or read the file via a path relative to your own script file, not the working directory."
+) else (
+  call :log "[HINT][DATA_FILE] Consider adding: --add-data %HP_HINT_FILE_NAME%;."
+)
 if defined HINT_JSON powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host ([PSCustomObject]@{hint_type='DATA_FILE';file=$env:HP_HINT_FILE_NAME}|ConvertTo-Json -Compress)"
 :hint_check_mod
 findstr /i /c:"ModuleNotFoundError" /c:"No module named" "%HP_HINT_FILE%" >nul 2>&1

@@ -1,8 +1,28 @@
 # ASCII only
 # selfapps_exedata_fail.ps1 - XFAIL test: EXE smokerun expected to fail when entry.py
-# opens a data file (config.json) not bundled by PyInstaller. Bootstrap completes
-# (exitCode=0) but the built EXE exits non-zero at runtime. Test passes (xfail) when
-# smokerun reports failure. Test fails (xpass) if smokerun unexpectedly reports exit 0.
+# opens a data file not bundled by PyInstaller. Bootstrap completes (exitCode=0) but the
+# built EXE exits non-zero at runtime. Test passes (xfail) when smokerun reports failure.
+# Test fails (xpass) if smokerun unexpectedly reports exit 0.
+#
+# Three scenarios (EXEDATA_SCENARIO env var; unset defaults to 'plain'), covering both
+# branches of :exe_smokerun_hints' CLAUDE.md Item 38 fix (honest advice for a CWD-relative
+# missing file, real --add-data advice only for a genuine _MEIxxxxxx extraction path):
+# - plain: entry.py opens "config.json" -- a bare CWD-relative path, no _MEI anywhere.
+#   Expects the honest CWD-relative advice.
+# - mei_substring (CodeRabbit review, PR #458): entry.py opens "config_MEI99.json" -- a
+#   bare CWD-relative path whose NAME happens to contain "_MEI" followed by digits as a
+#   coincidental substring, with no path separator on either side. Regression test for the
+#   exact false-positive shape CodeRabbit's review flagged in the original plain findstr
+#   substring match (fixed via a path-component-anchored regex instead). Expects the honest
+#   CWD-relative advice, NOT the misleading --add-data one.
+# - mei_genuine (CodeRabbit review, PR #458): entry.py reads a file via a path joined from
+#   sys._MEIPASS -- PyInstaller's own real, randomly-named onefile extraction directory at
+#   runtime -- never bundled via --add-data, so the open() genuinely fails with a path
+#   rooted under a real _MEIxxxxxx folder. The only scenario that exercises the OTHER branch
+#   of the fix: --add-data remains the correct, unchanged advice here. Closes the coverage
+#   gap CodeRabbit's review flagged (both new scenarios above only ever exercise the
+#   CWD-relative branch; nothing previously exercised the genuine-extraction-path branch at
+#   all).
 #
 # Lane: real and conda-full only.
 param()
@@ -23,6 +43,9 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
+$scenario = $env:EXEDATA_SCENARIO
+if ($scenario -notin @('mei_substring', 'mei_genuine')) { $scenario = 'plain' }
+
 # Non-Windows skip
 if (-not $IsWindows) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
@@ -31,7 +54,7 @@ if (-not $IsWindows) {
         req     = 'REQ-003'
         pass    = $true
         desc    = 'EXE smokerun XFAIL: missing data file exits non-zero (skipped on non-Windows)'
-        details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
+        details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host'; scenario = $scenario }
     })
     exit 0
 }
@@ -43,27 +66,49 @@ if (-not (Test-Path $batchPath)) {
         req     = 'REQ-003'
         pass    = $false
         desc    = 'EXE smokerun XFAIL: run_setup.bat not found'
-        details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
+        details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath; scenario = $scenario }
     })
     exit 1
 }
 
-$workDir = Join-Path $here '~selftest_exedata_fail'
+$workDir = Join-Path $here "~selftest_exedata_fail_$scenario"
 if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 Copy-Item -Path $batchPath -Destination $workDir -Force
 
-# derived requirement: entry.py opens config.json via a relative path. PyInstaller does
-# not bundle arbitrary data files unless explicitly spec'd, so the EXE exits non-zero
-# when config.json is absent from the dist\ directory at runtime.
-Set-Content -Path (Join-Path $workDir 'entry.py') -Value @'
+if ($scenario -eq 'mei_substring') {
+    # derived requirement: entry.py opens config_MEI99.json -- a bare, CWD-relative path whose
+    # name coincidentally contains "_MEI" followed by digits, with no path separator on either
+    # side (matching CodeRabbit's own "config_MEI.json" example shape). Must NOT be misread as
+    # a genuine PyInstaller _MEIxxxxxx extraction-directory path.
+    Set-Content -Path (Join-Path $workDir 'entry.py') -Value @'
+with open("config_MEI99.json", "r") as f:
+    print(f.read())
+'@ -Encoding ASCII
+    Set-Content -Path (Join-Path $workDir 'config_MEI99.json') -Value '{"msg": "hello-data"}' -Encoding ASCII
+} elseif ($scenario -eq 'mei_genuine') {
+    # derived requirement: entry.py reads a file joined from sys._MEIPASS, PyInstaller's own
+    # real onefile extraction directory (a genuine, randomly-named _MEIxxxxxx folder at
+    # runtime) -- never bundled via --add-data, so this always fails with a path genuinely
+    # rooted under _MEIxxxxxx. Exercises the branch where --add-data remains correct advice.
+    Set-Content -Path (Join-Path $workDir 'entry.py') -Value @'
+import sys, os
+p = os.path.join(sys._MEIPASS, "bundled_data.json")
+with open(p, "r") as f:
+    print(f.read())
+'@ -Encoding ASCII
+} else {
+    # derived requirement: entry.py opens config.json via a relative path. PyInstaller does
+    # not bundle arbitrary data files unless explicitly spec'd, so the EXE exits non-zero
+    # when config.json is absent from the dist\ directory at runtime.
+    Set-Content -Path (Join-Path $workDir 'entry.py') -Value @'
 with open("config.json", "r") as f:
     print(f.read())
 '@ -Encoding ASCII
+    Set-Content -Path (Join-Path $workDir 'config.json') -Value '{"msg": "hello-data"}' -Encoding ASCII
+}
 
-Set-Content -Path (Join-Path $workDir 'config.json') -Value '{"msg": "hello-data"}' -Encoding ASCII
-
-$bootstrapLog = '~exedata_bootstrap.log'
+$bootstrapLog = "~exedata_bootstrap_$scenario.log"
 
 $prev = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
 $env:HP_SKIP_PIPREQS = '1'
@@ -96,21 +141,77 @@ $smokerunPassPhrase  = 'EXE smokerun: exited 0 (ok)'
 $smokerunFired  = $combined -match [regex]::Escape($smokerunFiredPhrase)
 $smokerunPassed = $combined -match [regex]::Escape($smokerunPassPhrase)
 
-# xfailPass: smokerun fired AND did NOT report exit 0
-$xfailPass = $smokerunFired -and (-not $smokerunPassed)
+# derived requirement (CLAUDE.md Active Backlog Item 38): honest CWD-relative advice for
+# 'plain'/'mei_substring' (neither has a genuine _MEIxxxxxx path component); the original,
+# unchanged --add-data advice for 'mei_genuine' (a real _MEIxxxxxx-rooted path).
+$honestHintFired = $combined -match [regex]::Escape('will not fix this')
+if ($scenario -eq 'mei_genuine') {
+    # A random runtime-generated _MEIxxxxxx name means the exact --add-data line can't be
+    # matched verbatim -- assert the stable parts instead: the advice text, the filename it
+    # names, and a genuine _MEI<digits> path segment actually present in the captured log.
+    $addDataHintFired = ($combined -match [regex]::Escape('Consider adding: --add-data')) -and
+                         ($combined -match [regex]::Escape('bundled_data.json'))
+    $genuineMeiPathSeen = $combined -match '_MEI\d+'
+    $hintCorrect = $addDataHintFired -and $genuineMeiPathSeen -and (-not $honestHintFired)
+} elseif ($scenario -eq 'mei_substring') {
+    $misleadingHintAbsent = -not ($combined -match [regex]::Escape('Consider adding: --add-data config_MEI99.json'))
+    $hintCorrect = $honestHintFired -and $misleadingHintAbsent
+} else {
+    $misleadingHintAbsent = -not ($combined -match [regex]::Escape('Consider adding: --add-data config.json'))
+    $hintCorrect = $honestHintFired -and $misleadingHintAbsent
+}
+
+# xfailPass: smokerun fired AND did NOT report exit 0 AND the hint text is correct for this case
+$xfailPass = $smokerunFired -and (-not $smokerunPassed) -and $hintCorrect
+
+if ($scenario -eq 'mei_genuine') {
+    $desc = 'EXE smokerun XFAIL: missing data file under a genuine _MEIxxxxxx extraction path causes non-zero exit (expected failure); --add-data advice correctly still fires for this case'
+    $details = [ordered]@{
+        scenario            = $scenario
+        bootstrapExit       = $runExit
+        smokerunFired       = $smokerunFired
+        smokerunPassed      = $smokerunPassed
+        addDataHintFired    = $addDataHintFired
+        genuineMeiPathSeen  = $genuineMeiPathSeen
+        honestHintAbsent    = (-not $honestHintFired)
+        hintCorrect         = $hintCorrect
+        xfailPass           = $xfailPass
+        log                 = $bootstrapLog
+    }
+} elseif ($scenario -eq 'mei_substring') {
+    $desc = 'EXE smokerun XFAIL: missing data file (name coincidentally contains _MEI+digits) causes non-zero exit (expected failure); hint text stays honest, not misled by the substring'
+    $details = [ordered]@{
+        scenario              = $scenario
+        bootstrapExit         = $runExit
+        smokerunFired         = $smokerunFired
+        smokerunPassed        = $smokerunPassed
+        honestHintFired       = $honestHintFired
+        misleadingHintAbsent  = $misleadingHintAbsent
+        hintCorrect           = $hintCorrect
+        xfailPass             = $xfailPass
+        log                   = $bootstrapLog
+    }
+} else {
+    $desc = 'EXE smokerun XFAIL: missing data file causes non-zero exit (expected failure); hint text is honest about --add-data not fixing a CWD-relative access'
+    $details = [ordered]@{
+        scenario              = $scenario
+        bootstrapExit         = $runExit
+        smokerunFired         = $smokerunFired
+        smokerunPassed        = $smokerunPassed
+        honestHintFired       = $honestHintFired
+        misleadingHintAbsent  = $misleadingHintAbsent
+        hintCorrect           = $hintCorrect
+        xfailPass             = $xfailPass
+        log                   = $bootstrapLog
+    }
+}
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.smokerun.exedata.xfail'
     req     = 'REQ-003'
     pass    = $xfailPass
-    desc    = 'EXE smokerun XFAIL: missing data file causes non-zero exit (expected failure)'
-    details = [ordered]@{
-        bootstrapExit  = $runExit
-        smokerunFired  = $smokerunFired
-        smokerunPassed = $smokerunPassed
-        xfailPass      = $xfailPass
-        log            = $bootstrapLog
-    }
+    desc    = $desc
+    details = $details
 })
 
 if (-not $xfailPass) { exit 1 }
