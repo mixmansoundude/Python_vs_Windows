@@ -47,3 +47,58 @@ breakdown)? Only the ones demonstrated to risk a redundant fallback-chain/consen
 structurally identical to the one slice 1 already fixed)? Or opportunistic, one slice per loop
 indefinitely, with no fixed end state? Secondary to question 1 -- only needs an answer once (a) is
 confirmed as the path forward.
+
+## 3. CLAUDE.md Active Backlog Item 38: which CWD is "correct" for EXE verification -- unify to `dist\`, or leave the two verification points as-is?
+
+Two verification points use different working directories today: `:run_exe_smokerun` (run 1,
+fresh build) runs from `pushd dist`; `:try_fast_exe`/`:verify_no_exe_interpreter` (every later
+run) run from the app root. A CWD-relative-path app (e.g. `open("config.json")`) can pass on one
+and fail on the other with zero code change in between -- see CLAUDE.md's Item 38 for the full
+trace, including the reasoning (NOT a confirmed universal fact -- see the caveat below) that a
+plain double-click without an explicit "Start in" override commonly lands a launched EXE's CWD at
+its own containing folder (`dist\` here), per documented `ShellExecute`/`CreateProcess` behavior.
+
+**Two fix directions, neither pre-decided:**
+- **(a) Unify both verification points to the same CWD.** Which one is "more correct" needs its
+  own thought -- `dist\` plausibly matches a real double-clicked EXE's default launch CWD (see the
+  caveat below), so verifying from the app root (the CURRENT behavior at 3 of 4 call sites) may be
+  the one that's actually wrong, not `dist\`.
+- **(b) Leave the two CWDs as-is.** `docs/agent-interconnect.md` already flags this as
+  deliberate/load-bearing: `selfapps_exedata_fail.ps1`'s own xfail check depends on
+  `:run_exe_smokerun`'s `pushd dist` specifically -- re-verify that test before changing this CWD.
+
+**Caveat on the "dist\ is the real double-click default" claim, per CodeRabbit review + Microsoft's
+own docs**: `CreateProcess`'s `lpCurrentDirectory`/`ShellExecute`'s `lpDirectory`, when NULL, make
+the new process inherit the CALLING process's current directory, not unconditionally the target
+EXE's own folder -- and a shortcut's own "Start in" field, when set, overrides this entirely. No CI
+lane launches via an actual double-click or shortcut either way. So `dist\` matching a real
+double-click is a plausible, commonly-true default, not a guaranteed universal fact -- factor that
+uncertainty into whichever CWD answer (a) or (b) above.
+
+The hint-honesty half of this item (PR #458, merged) is orthogonal and already closed -- it makes
+the post-failure ADVICE correct regardless of which CWD answer is chosen. This question is only
+about the underlying verification-CWD mismatch itself, still open.
+
+**Needs the maintainer's call** -- picking (a) vs (b) changes real runtime behavior for any
+CWD-relative-path app between a first and second run, not just wording; an agent choosing wrong
+here silently changes what "works" means for a live feature, not just doc content.
+
+## 4. CLAUDE.md Active Backlog Item 35: does the agent have (or can it get) the GitHub repo-admin access needed to actually flip a check to gating?
+
+Item 35's real mechanism (an aggregate `selftest-gate` check that could cover every lane with one
+required-check entry) is implemented and its precondition has landed, but "gating" in this repo is
+a GitHub branch-protection setting, not a YAML edit (confirmed by reading `pr-automerge.yml` -- it
+delegates entirely to GitHub's own branch-protection evaluation). Promoting a lane or the aggregate
+check to actually block merges needs someone with repo-admin access to add its exact check name to
+the required-status-checks list.
+
+Two sub-questions:
+- Does this session's GitHub access include repo-admin/branch-protection scope, or does that need
+  to be granted separately?
+- If not, do you want to make that specific branch-protection edit yourself once a slice is proven
+  ready (the agent would flag "ready to gate: `<check name>`" at that point), or is there another
+  path to get it done?
+
+Without an answer, Item 35's own soak-then-promote slices can get PREPARED (implemented, tested,
+several green runs) but never actually CLOSED -- the last step structurally can't happen without
+this.
