@@ -54,17 +54,26 @@ Two verification points use different working directories today: `:run_exe_smoke
 fresh build) runs from `pushd dist`; `:try_fast_exe`/`:verify_no_exe_interpreter` (every later
 run) run from the app root. A CWD-relative-path app (e.g. `open("config.json")`) can pass on one
 and fail on the other with zero code change in between -- see CLAUDE.md's Item 38 for the full
-trace, including a real double-clicked EXE's own default launch CWD (`dist\`, per documented
-`ShellExecute`/`CreateProcess` behavior).
+trace, including the reasoning (NOT a confirmed universal fact -- see the caveat below) that a
+plain double-click without an explicit "Start in" override commonly lands a launched EXE's CWD at
+its own containing folder (`dist\` here), per documented `ShellExecute`/`CreateProcess` behavior.
 
 **Two fix directions, neither pre-decided:**
 - **(a) Unify both verification points to the same CWD.** Which one is "more correct" needs its
-  own thought -- `dist\` matches a real double-clicked EXE's default launch CWD, so verifying from
-  the app root (the CURRENT behavior at 3 of 4 call sites) may be the one that's actually wrong,
-  not `dist\`.
+  own thought -- `dist\` plausibly matches a real double-clicked EXE's default launch CWD (see the
+  caveat below), so verifying from the app root (the CURRENT behavior at 3 of 4 call sites) may be
+  the one that's actually wrong, not `dist\`.
 - **(b) Leave the two CWDs as-is.** `docs/agent-interconnect.md` already flags this as
   deliberate/load-bearing: `selfapps_exedata_fail.ps1`'s own xfail check depends on
   `:run_exe_smokerun`'s `pushd dist` specifically -- re-verify that test before changing this CWD.
+
+**Caveat on the "dist\ is the real double-click default" claim, per CodeRabbit review + Microsoft's
+own docs**: `CreateProcess`'s `lpCurrentDirectory`/`ShellExecute`'s `lpDirectory`, when NULL, make
+the new process inherit the CALLING process's current directory, not unconditionally the target
+EXE's own folder -- and a shortcut's own "Start in" field, when set, overrides this entirely. No CI
+lane launches via an actual double-click or shortcut either way. So `dist\` matching a real
+double-click is a plausible, commonly-true default, not a guaranteed universal fact -- factor that
+uncertainty into whichever CWD answer (a) or (b) above.
 
 The hint-honesty half of this item (PR #458, merged) is orthogonal and already closed -- it makes
 the post-failure ADVICE correct regardless of which CWD answer is chosen. This question is only
