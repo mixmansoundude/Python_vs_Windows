@@ -1029,11 +1029,67 @@ but several represent real gaps worth closing before calling the path fully rele
   `batch.progress.conda_create`/`batch.progress.pyi_build` precedent exactly. New harness assertion
   `batch.progress.dep_install` (`tests/harness.ps1`) proves the message precedes the first real
   install-phase work, same ordering-check shape as its two siblings.
-  **Still open, NOT part of this fix**: `[INSTALL]` remains a real, distinct tag lever 1's own
-  "INFO/BOOT/WARN/ERROR" wording never accounts for, and `[STATUS]`/`[REPAIR]`/`[HINT]` are still
-  unaddressed by that wording too -- explicitly classifying all 10 tags as visible-by-default or
-  suppressed-by-default (the rest of this precondition) is unchanged and still needed before lever
-  1 itself can be implemented.
+  **Tag classification: CLOSED 2026-08-23.** Lever 1's own wording only ever named 4 of the 10
+  tags (`INFO`/`BOOT`/`WARN`/`ERROR` = visible); `[STATUS]`/`[REPAIR]`/`[HINT]`/`[INSTALL]` were
+  the remaining 4 left unclassified (`[DEBUG]`/`[TRACE]` were already implied suppressed by the
+  "suppressing DEBUG/TRACE" line above). Read every real call site for each (re-counted from
+  source 2026-08-23: `[INFO]` 216, `[WARN]` 151, `[ERROR]` 57, `[STATUS]` 16, `[DEBUG]` 9,
+  `[TRACE]` 9, `[REPAIR]` 8, `[BOOT]` 7, `[HINT]` 6, `[INSTALL]` 5 -- counts drift upward release
+  over release as features land; re-count before trusting these for a future slice) and classified
+  by what each tag is actually FOR, not just its name:
+  - **`[STATUS]`** -- the `Run Status: SUCCESS/FAILED/TIMED OUT` readout (`:smokerun_ndjson` and
+    its two siblings) is arguably the single most important line in the whole run for a beginner
+    user -- did MY code work. **Visible.**
+  - **`[REPAIR]`** -- warnfix/DLL-bundling/hidden-import auto-recovery activity
+    (`[REPAIR] missing modules detected; installing and rebuilding.`,
+    `[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: ...`, etc.) explains why a build is
+    taking longer than expected and that the bootstrapper is actively fixing something, not stuck.
+    **Visible.**
+  - **`[HINT]`** -- the post-failure `:exe_smokerun_hints` guidance (`Missing data file
+    detected: ...`, `Consider adding: --hidden-import=...`) is the most directly actionable text
+    in the entire file for a user staring at a failure. **Visible.**
+  - **`[INSTALL]`** -- terse routing breadcrumbs for WHICH install path was taken (`conda bulk
+    from ~reqs_conda.txt`, `conda per-pkg fallback`, `pip gap fill from requirements.txt`) sit
+    strictly BENEATH the `[INFO] Installing dependencies -- this may take a few minutes...` line
+    the dependency-install-progress-line fix above already made visible -- that INFO line is
+    already the "something is happening" signal for this phase, so `[INSTALL]`'s own mechanism
+    detail is redundant for a live user and reads like `[TRACE]`'s own shape
+    (`run_setup.bat`'s own header comment at the `[INFO] Installing dependencies` call site
+    already anticipated this: "only `[TRACE]`/`[INSTALL]` lines, which a future console-tiering
+    change (lever 1) could suppress by default"). **Suppressed** (same tier as `DEBUG`/`TRACE`).
+
+  Final tier: **visible by default** -- `INFO`, `BOOT`, `WARN`, `ERROR`, `STATUS`, `REPAIR`,
+  `HINT` (7 tags). **Suppressed by default** -- `DEBUG`, `TRACE`, `INSTALL` (3 tags), restorable
+  via an opt-in verbose flag per lever 1's own original design.
+
+  **Real blast-radius finding from this audit, for whoever implements lever 1 next**: grepped
+  every test for a `[DEBUG]`/`[TRACE]`/`[INSTALL]` assertion to check what actually depends on
+  today's unconditional console echo (as opposed to the untouched-by-tiering `~setup.log`, or a
+  STATIC source-text scan like `tests/harness.ps1`'s `batch.progress.dep_install`, neither of
+  which tiering affects). Two real hits, one false alarm:
+  - `tests/selfapps_pipgap.ps1` reads `[INSTALL]` lines from `~setup.log` specifically (its own
+    header comment says so) -- unaffected by suppressing `[INSTALL]` from the LIVE console, since
+    the full log is untouched by design. Not a blocker.
+  - `tests/selfapps_pvw_overrides.ps1`'s `$wsDebugLogFound` (`self.pvw.workspace.valid`) DOES read
+    `[DEBUG] Using super-user override for PVW_WORKSPACE:` from `~ws_bootstrap.log` -- the
+    CONSOLE-redirected capture (`cmd /c "run_setup.bat > ~ws_bootstrap.log 2>&1"`), not
+    `~setup.log`. Suppressing `[DEBUG]` from console echo would silently break this assertion.
+    **Must be updated (read `~setup.log` instead, or in addition) in the same change that
+    implements lever 1's console suppression**, or this test goes red the moment tiering ships.
+  - No other test file references `[DEBUG]`/`[TRACE]`/`[INSTALL]` at all (confirmed via a
+    repo-wide grep across `tests/`) -- so this one test is the ENTIRE known blast radius, not an
+    example of a larger pattern still to be found. Re-grep before implementing, since new tests
+    land between this audit and whenever lever 1 is actually built.
+
+  **Still open, NOT part of this fix**: the actual `:log` tiering MECHANISM itself (how the
+  opt-in verbose flag is spelled, whether tiering applies per-call-site or via a single
+  suppress-list check inside `:log`, and fixing `selfapps_pvw_overrides.ps1` above) is still
+  unbuilt -- this closes only the classification precondition, deliberately kept as its own slice
+  given `:log`'s 425-call-site blast radius (counted via `grep -c 'call :log' run_setup.bat`) and
+  this file's own established "EXTREME CAUTION, one
+  slice at a time" precedent for changes to widely-shared core subroutines (see the DLL-bundling
+  and hidden-import repair loops elsewhere in this backlog for the shape that discipline takes).
+  Lever 2 (the two Y/N prompts) is fully separate and untouched by this slice.
 
 Items 45-52 below stem from a 2026-08-14 real Windows Sandbox debugging session (two independent
 external AI reviews plus direct verification against current source by the acting agent) chasing a
