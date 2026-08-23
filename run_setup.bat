@@ -1763,6 +1763,12 @@ call :log "[INFO] DEP_RESOLVED_FROM=requirements.txt"
 call :log "[INFO] DEP_INSTALL_SOURCE=requirements.txt"
 call :log "[TRACE] dep install phase: start"
 if exist "requirements.txt" (
+  rem derived requirement (CLAUDE.md Item 42 precondition): the dependency-install phase is
+  rem plausibly the single longest silent stretch in a fresh build, but previously had no
+  rem [INFO]-tier progress line -- only [TRACE]/[INSTALL] lines, which a future console-tiering
+  rem change (lever 1) could suppress by default, removing the only "something is happening"
+  rem signal for this step. Mirrors the existing conda-create/PyInstaller-build precedents.
+  call :log "[INFO] Installing dependencies -- this may take a few minutes..."
   if exist "~reqs_conda.txt" del "~reqs_conda.txt"
   call :log "[TRACE] heuristic augmentation: ~prep_requirements.py"
   if "%HP_ENV_MODE%"=="conda" (

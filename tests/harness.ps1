@@ -398,6 +398,13 @@ $warnfixCallPos = $AllText.IndexOf('-m PyInstaller -y --onefile', ($pyiCallPos +
 $warnfixOrdered = ($warnfixMsgPos -ge 0) -and ($warnfixCallPos -ge 0) -and ($warnfixMsgPos -lt $warnfixCallPos)
 $pyiProgress = $pyiOrdered -and $warnfixOrdered
 Write-Result 'batch.progress.pyi_build' "Progress message before PyInstaller build: user sees 'Building standalone executable' before the slow install+build step; warnfix rebuild also has its own progress message" $pyiProgress @{ msgIdx = $pyiMsgPos; opIdx = $pyiCallPos; ordered = $pyiOrdered; warnfixMsgIdx = $warnfixMsgPos; warnfixOpIdx = $warnfixCallPos; warnfixOrdered = $warnfixOrdered }
+# derived requirement (CLAUDE.md Item 42 precondition): the dependency-install phase had no
+# [INFO]-tier progress line before this fix -- only [TRACE]/[INSTALL] lines, which a future
+# console-tiering change could suppress by default with no "something is happening" signal left.
+$depMsgPos  = $AllText.IndexOf('[INFO] Installing dependencies')
+$depCallPos = $AllText.IndexOf('[TRACE] heuristic augmentation: ~prep_requirements.py')
+$depInstallProgress = ($depMsgPos -ge 0) -and ($depCallPos -ge 0) -and ($depMsgPos -lt $depCallPos)
+Write-Result 'batch.progress.dep_install' "Progress message before dependency install phase: user sees 'Installing dependencies' before the slow pip/conda/uv install step" $depInstallProgress @{ msgIdx = $depMsgPos; opIdx = $depCallPos; ordered = $depInstallProgress }
 # derived requirement: pre-build --collect-submodules double-gate (REQ-005.x) must stay wired.
 # Static guard against silent deletion; runtime proof is self.collect.submodules (selfapps_collect.ps1).
 $collectCall    = $AllText -match 'call :compute_collect_flags'

@@ -860,19 +860,24 @@ but several represent real gaps worth closing before calling the path fully rele
   (`[INFO] Creating Python environment` before `conda ... create`; `[INFO] Building standalone
   executable` before the PyInstaller call), so both stay visible under lever 1's proposed
   INFO/BOOT/WARN/ERROR tier and tiering would not reintroduce a "looks stuck" gap for either.
-  **But the actual dependency-install calls do NOT have an equivalent `[INFO]`-tier progress
-  line**: `conda install`/`pip install -r requirements.txt`/`uv pip install` (`run_setup.bat`'s
-  dependency-install dispatch, the straight-line block immediately after `:dep_check_done`) are
-  preceded only by `[TRACE] dep install phase: start` and
-  `[INSTALL]`-tagged lines (`[INSTALL] conda bulk from ~reqs_conda.txt`, etc.) -- `[INSTALL]` is a
-  real, distinct tag lever 1's own "INFO/BOOT/WARN/ERROR" wording never accounts for, and
-  `[STATUS]`/`[REPAIR]`/`[HINT]` are unaddressed by that wording too. **Goal before implementing
-  lever 1**: explicitly classify every one of the 10 tags above as visible-by-default or
-  suppressed-by-default (don't leave `[INSTALL]`/`[STATUS]`/`[REPAIR]`/`[HINT]` to an implicit
-  default), and specifically confirm the dependency-install phase -- the one long-running step
-  with no `batch.progress.*`-style harness assertion today -- keeps a visible progress line under
-  whatever tiering ships, so suppressing TRACE doesn't silently remove the only "something is
-  happening" signal for what is plausibly the single longest silent stretch in a fresh build.
+  **Dependency-install progress line: CLOSED 2026-08-23.** The dependency-install calls (`conda
+  install`/`pip install -r requirements.txt`/`uv pip install`, `run_setup.bat`'s dependency-install
+  dispatch, the straight-line block immediately after `:dep_check_done`) previously had no
+  `[INFO]`-tier progress line at all -- only `[TRACE] dep install phase: start` and `[INSTALL]`-
+  tagged lines (`[INSTALL] conda bulk from ~reqs_conda.txt`, etc.), for what is plausibly the
+  single longest silent stretch in a fresh build. Fixed by adding `[INFO] Installing dependencies
+  -- this may take a few minutes...` as the first statement inside the `if exist "requirements.txt"
+  (...)` block, firing unconditionally whenever real install work follows (including the always-run
+  pip gap-fill safety net, so it fires even on the dep-check fast-skip path where conda/uv's own
+  bulk install is skipped but pip's verify-and-fill call still runs) -- mirrors the existing
+  `batch.progress.conda_create`/`batch.progress.pyi_build` precedent exactly. New harness assertion
+  `batch.progress.dep_install` (`tests/harness.ps1`) proves the message precedes the first real
+  install-phase work, same ordering-check shape as its two siblings.
+  **Still open, NOT part of this fix**: `[INSTALL]` remains a real, distinct tag lever 1's own
+  "INFO/BOOT/WARN/ERROR" wording never accounts for, and `[STATUS]`/`[REPAIR]`/`[HINT]` are still
+  unaddressed by that wording too -- explicitly classifying all 10 tags as visible-by-default or
+  suppressed-by-default (the rest of this precondition) is unchanged and still needed before lever
+  1 itself can be implemented.
 
 Items 45-52 below stem from a 2026-08-14 real Windows Sandbox debugging session (two independent
 external AI reviews plus direct verification against current source by the acting agent) chasing a
