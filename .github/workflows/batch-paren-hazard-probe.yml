@@ -1,0 +1,33 @@
+# yamllint disable rule:line-length rule:truthy
+---
+name: Batch paren-nesting hazard probe
+
+# CLAUDE.md Active Backlog Item 61 / docs/open-questions.md item 5: a workflow_dispatch-only,
+# reusable diagnostic for whether a SAME-LINE (`(`/`)`) pair nested inside a real cmd.exe
+# `if (...)` block corrupts parsing the way a cross-line pair already does -- and if so, whether
+# nesting depth or a `>>` redirection prefix is the actual trigger. Static reasoning about this
+# exact hazard class has been wrong three times already in this repo (see docs/agent-lessons-
+# learned.md's "A literal `(`/`)` inside `echo` text..." entry) -- only a real cmd.exe run counts
+# as evidence. Deliberately NOT wired to push/pull_request: batch-check.yml already answers
+# "does the real bootstrapper still work," this answers a narrow parsing question much more
+# cheaply (a few seconds of real cmd.exe, no conda/PyInstaller/pytest involved) and on demand.
+# See tools/probe_paren_hazard.ps1 for the fixture matrix and pass/fail logic.
+
+on:
+  workflow_dispatch: null
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe same-line paren nesting on real cmd.exe
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run paren-nesting hazard probe
+        shell: pwsh
+        run: .\tools\probe_paren_hazard.ps1
