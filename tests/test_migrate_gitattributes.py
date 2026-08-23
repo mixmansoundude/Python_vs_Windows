@@ -121,6 +121,26 @@ class BasicMigration(unittest.TestCase):
             self.assertNotIn("\n", stdout)
             self.assertNotIn("\r", stdout)
 
+    def test_non_utf8_no_bom_file_produces_error_marker_not_corruption(self):
+        # derived requirement (CodeRabbit review, PR #456): without throwOnInvalidBytes, a
+        # no-BOM file containing genuinely non-UTF8 bytes decodes SILENTLY (U+FFFD replacing
+        # each invalid byte, no exception) and WriteAllText would then re-encode that corrupted
+        # text as UTF8 -- permanently mangling content outside the two target lines, violating
+        # the script's own byte-identical guarantee. throwOnInvalidBytes=$true routes this into
+        # the existing try/catch instead: a safe ERROR: marker, file completely untouched.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".gitattributes"
+            # 0x92 alone is not valid UTF-8 in any position (a lone continuation/invalid byte);
+            # real-world equivalent is a Windows-1252 comment saved with no BOM.
+            original = b"*.bat eol=crlf\n# a comment with a bad byte: \x92\n"
+            path.write_bytes(original)
+            proc = _run_migrate(path)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            stdout = proc.stdout.strip()
+            self.assertTrue(stdout.startswith("ERROR:"), stdout)
+            self.assertNotIn("\n", stdout)
+            self.assertEqual(path.read_bytes(), original)
+
     def test_partial_line_match_not_touched(self):
         # A line that CONTAINS the stale text but isn't an EXACT match (extra trailing text,
         # different whitespace) must not be rewritten -- exact-match-only is the safety

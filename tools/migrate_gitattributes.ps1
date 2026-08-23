@@ -42,7 +42,12 @@ try {
     # bootstrapper's own plain-ASCII `>> echo` writes produce), not
     # [System.Text.Encoding]::UTF8's own static instance, which has BOM emission enabled and
     # would have added a BOM that was never there.
-    $noBomUtf8 = New-Object System.Text.UTF8Encoding($false)
+    #
+    # derived requirement (CodeRabbit, PR #456): throwOnInvalidBytes=$true, not implicit
+    # $false. A no-BOM file with genuinely non-UTF8 bytes would otherwise decode SILENTLY
+    # (U+FFFD per bad byte, confirmed, no exception) and get rewritten as corrupted UTF8 --
+    # throwing routes it into the try/catch below instead, a safe ERROR: marker, untouched file.
+    $noBomUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
     $reader = New-Object System.IO.StreamReader($Path, $noBomUtf8, $true)
     try {
         $text = $reader.ReadToEnd()

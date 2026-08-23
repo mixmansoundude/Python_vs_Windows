@@ -2893,6 +2893,27 @@ run of the same regex logic before landing, not just reasoned about).
   (`batTextFound:true, cmdTextFound:true, batStaleFound:false, cmdStaleFound:false,
   otherPreserved:true`) and zero other failures anywhere in that lane's log.
 
+  **One more real gap found by CodeRabbit's review of this archival PR (#456), fixed in the
+  same PR before the item was actually closed: the byte-identical guarantee had a genuine hole
+  for non-UTF8, no-BOM content.** `New-Object System.Text.UTF8Encoding($false)` -- the encoding
+  `StreamReader` falls back to when no BOM is detected -- does not throw on invalid byte
+  sequences by default; a `.gitattributes` file with a legacy-encoded (e.g. Windows-1252)
+  comment and no BOM would decode SILENTLY, substituting a U+FFFD replacement character for
+  every invalid byte (confirmed directly: no exception, `$text` simply contains replacement
+  characters), and `WriteAllText` would then re-encode that already-corrupted text as valid
+  UTF8 -- permanently mangling content outside the two target lines, the exact thing this
+  script's own header comment promises never to do. Fixed with a two-argument constructor
+  change, `New-Object System.Text.UTF8Encoding($false, $true)` (the second argument is
+  `throwOnInvalidBytes`) -- confirmed directly via a real invalid-byte fixture that this now
+  throws a genuine decoder exception instead of silently substituting, which the script's
+  existing `try`/`catch` (added for the Windows PowerShell 5.1 diagnostic-hardening pass above)
+  already turns into a safe, single-line `ERROR:` marker with the file left completely
+  untouched -- the try/catch was already built for exactly this failure class, it just wasn't
+  reachable for this particular one before this fix. New regression test
+  `test_non_utf8_no_bom_file_produces_error_marker_not_corruption` (a file with a genuinely
+  invalid UTF-8 byte and no BOM) proves the fix: `ERROR:` marker, file byte-identical to the
+  original. All 18 tests in the suite pass, full local sanity sweep clean.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
