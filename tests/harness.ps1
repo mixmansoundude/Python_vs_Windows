@@ -405,6 +405,29 @@ $depMsgPos  = $AllText.IndexOf('[INFO] Installing dependencies')
 $depCallPos = $AllText.IndexOf('[TRACE] heuristic augmentation: ~prep_requirements.py')
 $depInstallProgress = ($depMsgPos -ge 0) -and ($depCallPos -ge 0) -and ($depMsgPos -lt $depCallPos)
 Write-Result 'batch.progress.dep_install' "Progress message before dependency install phase: user sees 'Installing dependencies' before the slow pip/conda/uv install step" $depInstallProgress @{ msgIdx = $depMsgPos; opIdx = $depCallPos; ordered = $depInstallProgress }
+# derived requirement (CLAUDE.md Active Backlog Item 39): the EXE fast path's freshness
+# check switched from mtime-only to a content-hash comparison; the hash must be (re)written
+# after a genuine fresh build (:success, gated on HP_FRESH_BUILD_OK -- set ONLY in
+# :run_entry_smoke's own genuine build-success branches, never on a skipped/failed rebuild
+# or a fast-path reuse -- CodeRabbit review, PR #460, caught the original HP_FASTPATH_USED
+# -only gate wrongly allowing a stale leftover EXE's hash to be overwritten) via a dedicated
+# subroutine (not inlined, to avoid the parenthesized-block set-then-read hazard). Bodies are
+# extracted (bounded by the next label) rather than matched against the whole file, so this
+# check cannot pass on unrelated text elsewhere -- mirrors the :hidden_import_recover /
+# :dll_bundle_recover scoped-extraction precedent above (see $hiLogSizeAdvance). Static
+# wiring guard only -- runtime proof is tests/test_fast_check.py (the embedded script
+# itself, via real pwsh) plus tests/selfapps_fastpath_hash.ps1's end-to-end coverage.
+$successMatch = [regex]::Match($AllText, '(?ms)^:success\r?\n(?<body>.*?)(?=^:provider_cascade)')
+$hasWriteFastHashCall = $successMatch.Success -and (
+  $successMatch.Groups['body'].Value -match [regex]::Escape('if defined HP_FRESH_BUILD_OK call :write_fast_hash')
+)
+$writeFastHashMatch = [regex]::Match($AllText, '(?ms)^:write_fast_hash\r?\n(?<body>.*?)(?=^:run_entry_smoke)')
+$hasWriteFastHashLabel = $writeFastHashMatch.Success
+$hasWriteModeArg = $writeFastHashMatch.Success -and (
+  $writeFastHashMatch.Groups['body'].Value -match '"%HP_FAST_CHECK_PS%"\s+"dist\\%ENVNAME%\.exe"\s+write'
+)
+$hasFastHashWiring = $hasWriteFastHashLabel -and $hasWriteFastHashCall -and $hasWriteModeArg
+Write-Result 'batch.fastpath.hash_write' 'EXE fast path freshness check: :write_fast_hash subroutine exists, is called from :success gated on HP_FRESH_BUILD_OK, and invokes the payload in write mode' $hasFastHashWiring @{ hasLabel = $hasWriteFastHashLabel; hasCall = $hasWriteFastHashCall; hasWriteModeArg = $hasWriteModeArg }
 # derived requirement: pre-build --collect-submodules double-gate (REQ-005.x) must stay wired.
 # Static guard against silent deletion; runtime proof is self.collect.submodules (selfapps_collect.ps1).
 $collectCall    = $AllText -match 'call :compute_collect_flags'

@@ -1184,6 +1184,51 @@ individual test file pins it locally -- see the "Accepted gap" entry in
 path is completely provider-independent. The test correctly validates the EXE fast path, not
 the env-state or uv venv fast path.
 
+**`HP_FAST_CHECK`'s own freshness signal (CLAUDE.md Active Backlog Item 39): content-hash, not
+mtime -- read side and write side are two separate call sites, must stay paired.** `:try_fast_exe`
+(read/`check` mode, unchanged call site) compares a stored `~fast_check.hash.txt` against a
+composite SHA256 over the same non-infra `*.py` files already scanned, extended to
+`requirements.txt`/`pyproject.toml`/`runtime.txt` when present. **The write side is a SEPARATE
+subroutine, `:write_fast_hash`, called from `:success`** (not inlined there -- a set-then-read of
+the same var inside one parenthesized block would hit the classic parse-time-`%VAR%`-expansion
+trap, see `docs/agent-lessons-learned.md`), gated on `if defined HP_FRESH_BUILD_OK`.
+
+**`HP_FRESH_BUILD_OK`, not `HP_FASTPATH_USED`, is the correct gate -- a real bug CodeRabbit's
+review caught before this shipped.** The first-shipped gate was `if not defined HP_FASTPATH_USED`,
+reasoning "skip the redundant re-hash when the fast path already proved nothing changed." But
+`HP_FASTPATH_USED` being unset only proves the fast path was NOT taken -- it does NOT prove a
+build SUCCEEDED. A skipped or genuinely FAILED rebuild also leaves it unset, and if a stale
+`dist\<env>.exe` from an EARLIER successful run was still sitting there untouched, that gate would
+write the CURRENT (changed) sources' hash paired against the OLD binary -- the next run would then
+wrongly trust the stale EXE as "fresh," reintroducing Item 39's own bug one layer down. Fixed with
+`HP_FRESH_BUILD_OK`: reset once per fresh build attempt in `:run_entry_smoke`'s own init block
+(alongside `HP_NUITKA_FALLBACK_USED`), set ONLY in the 4 genuine build-success branches inside that
+subroutine's PyInstaller/Tier-A build block (PyInstaller producing `dist\%ENVNAME%.exe` cleanly, or
+Tier A/Nuitka succeeding after PyInstaller didn't, across all 3 of ITS OWN failure sub-branches) --
+never on any `:warn_build_incomplete` path. Since a build can only be ATTEMPTED after the fast path
+has already declined to fire, `HP_FRESH_BUILD_OK` being set strictly implies `HP_FASTPATH_USED` was
+never set either -- so this is a precision REPLACEMENT for the old gate, not an additional
+condition layered on top of it; `:success` now checks `HP_FRESH_BUILD_OK` alone.
+
+**A later repair-loop rebuild failing does NOT need to unset the flag, by design.**
+`:hidden_import_recover`/`:dll_bundle_recover` can each rebuild `dist\<env>.exe` again AFTER the
+initial build already succeeded and set `HP_FRESH_BUILD_OK=1` -- but these loops repair BUNDLING
+issues (a missing DLL, a missing hidden import), not SOURCE CONTENT, so even if a later repair
+attempt fails, the EXE from the initial successful build in the SAME run still genuinely reflects
+the current source snapshot the hash is computed from. `:write_fast_hash`'s own pre-existing
+`if not exist "dist\%ENVNAME%.exe" exit /b 0` guard remains the correct backstop for the rarer case
+where a repair-loop failure actually removes the file rather than merely leaving it imperfect.
+
+**Any future change to either the scanned file set or the hash algorithm must update BOTH
+`:try_fast_exe`'s check invocation and `:write_fast_hash`'s write invocation identically** -- they
+share the single `tools/fast_check.ps1` script (mode-dispatched via a second positional arg), so a
+change to the shared script's file enumeration or hashing logic automatically stays in sync between
+the two call sites; only a change to the CALL SITES themselves (e.g. adding a new mode, or passing
+different exe/cwd context) risks the two drifting apart. A missing stored hash (first run after
+upgrading to this fix, or an
+EXE built by an older `run_setup.bat` with no hash file at all) is a safe "not fresh" default --
+forces exactly one rebuild, never a false "fresh."
+
 ### ~dependency_installed.txt: pip freeze output and its consumers
 
 `~dependency_installed.txt` is written after install via `pip freeze` (run_setup.bat lines 1122-1134):
