@@ -816,7 +816,7 @@ but several represent real gaps worth closing before calling the path fully rele
   own real, randomly-named onefile extraction directory at runtime), never bundled via
   `--add-data`, so the failure genuinely surfaces a path rooted under a real `_MEIxxxxxx` folder.
   Since the exact directory name is random per run, the test asserts the stable parts instead
-  (the `--add-data` advice text, the filename it names, and a genuine `_MEI<digits>` path segment
+  (the `--add-data` advice text, the filename it names, and a genuine `_MEI<suffix>` path segment
   actually present in the captured log) rather than the full line verbatim.
 
   **Real bug this new scenario caught on its first real CI run, fixed same PR: the extraction
