@@ -2913,6 +2913,43 @@ run of the same regex logic before landing, not just reasoned about).
   invalid UTF-8 byte and no BOM) proves the fix: `ERROR:` marker, file byte-identical to the
   original. All 18 tests in the suite pass, full local sanity sweep clean.
 
+### Item 59 (closed 2026-08-23)
+
+- **CodeRabbit's automated review did not run on PR #435, and needed a manual trigger --
+  owner-requested standing process fix, not a code change.** This repo (fewer than 10 stars,
+  Organization UI config) does not auto-review a PR; it posts a "Review available on request"
+  gate comment instead, and that comment was left unanswered on PR #435. The owner explicitly
+  wanted CodeRabbit's review going forward -- it likely would have caught at least one of the two
+  stale-message findings below (a high-confidence external review caught them instead, working
+  from the repo alone with no CI-log visibility).
+
+  **Two concrete findings this pass caught, both fixed same-day (2026-08-15), that motivated
+  filing this item**: (1) `run_setup.bat`'s own line-ending self-check panel (Item 44 above) still
+  told a user to "re-download using git clone, not the Raw button" -- true before Item 44's own
+  CRLF distribution fix, false and actively bad advice after it (steers a confused, git-less Prime
+  Directive user toward a tool they do not have, instead of just re-downloading via the now-fixed
+  Raw link). Fixed: the panel and its header comment now describe the check as defense-in-depth
+  against a stale/re-saved copy, not a workaround for a still-broken distribution channel;
+  `tests/selfapps_lineending_check.ps1`'s matching assertion updated in lockstep. (2)
+  `:merge_git_config` (REQ-015) was still writing `*.bat eol=crlf`/`*.cmd eol=crlf` into every
+  bootstrapped user's OWN `.gitattributes` -- the exact pattern this repo had just spent the whole
+  CRLF distribution fix proving insufficient for itself, propagated into every user's own project
+  that happens to contain `.bat` files and gets published to GitHub. Fixed to `*.bat -text`/`*.cmd
+  -text`, matching this repo's own `.gitattributes`; `tests/selfapps_ux_hardening.ps1`'s
+  `self.ux.gitattributes.merge` assertion and the REQ-015 spec in README.md updated in lockstep.
+  Both fixes verified via the full sanity sweep before landing. (Item 60 above found and closed
+  the FORWARD-facing gap this item's fix left behind -- an existing user's already-written
+  `.gitattributes` from an older bootstrapper copy was never migrated, only a fresh write was
+  corrected.)
+
+  **Closed, not left open, once the standing procedure it established proved itself out**: the
+  "reply `@coderabbitai review` after every PR open and fix-commit push" procedure has now run
+  cleanly across several PRs in this session (including catching and resolving real findings each
+  time) -- nothing further to implement, so there is no future work left for an Active Backlog
+  entry to track. The procedure itself is documented as a standing rule in
+  `docs/agent-lessons-learned.md`'s "CodeRabbit review requires a manual trigger on every PR"
+  entry, not left implied only by this now-closed item.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

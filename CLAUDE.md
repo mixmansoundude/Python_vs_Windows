@@ -482,6 +482,23 @@ text (see below) rather than leaving the section silently blank** -- an empty se
 marker is easy to mistake for a rendering glitch or an accidental deletion; an explicit statement
 is not.
 
+**House rule: a blocked item needs a registered, traceable question, not just prose.** If an
+item's remaining work is blocked on the maintainer's own decision, access, or input -- not on
+further agent implementation -- it must have a corresponding entry in `docs/open-questions.md`
+naming exactly what decision/access is needed, added in the SAME commit that identifies the item
+as blocked. Describing the blocker only in this file's own prose is not enough: `docs/open-
+questions.md` is the one place designed to be scanned for "what does the agent need from you"
+without reading the whole backlog, and a blocker that exists only here is easy for both the
+maintainer and a future agent to lose track of. Once the maintainer answers, remove the question
+doc entry and fold the outcome into wherever it belongs (this file, the interconnect/lessons-
+learned docs, etc.) -- see `docs/open-questions.md`'s own header for that half of the convention.
+Conversely, an item with genuinely nothing left to implement -- a standing procedure now proven
+working, a decision already made and acted on, a fact confirmed with no action needed -- does not
+belong here at all regardless of whether it once looked open; close it out per the general rule
+two paragraphs up, and if it documents a reusable procedure, give that procedure a permanent home
+(`docs/agent-lessons-learned.md`, an existing process section) rather than leaving it implied only
+by a now-closed backlog entry.
+
 All items below stem from a 2026-08-09 Opus 5 release-readiness deep dive of `run_setup.bat`'s
 default (zero-flag, double-click) Prime Directive path, scoped to the most common real user runs
 -- first run and every repeat run -- with findings cross-checked against real CI evidence and this
@@ -1127,38 +1144,6 @@ way (no live Windows execution available here), that is noted explicitly rather 
   elsewhere in this backlog -- one incremental slice at a time (slice 1 above is the second proof
   this works, after Bucket B), not a single sweeping change across every remaining site.
 
-- **Item 59: CodeRabbit's automated review did not run on PR #435, and should be manually
-  triggered on every future PR -- owner-requested standing process fix, not a code change.**
-  This repo (fewer than 10 stars, Organization UI config) requires a manual trigger for
-  CodeRabbit review; it posts a "Review available on request" gate comment instead of reviewing
-  automatically, and that comment was left untouched on PR #435. The owner explicitly wants
-  CodeRabbit's review going forward -- it likely would have caught at least one of the two
-  stale-message findings below (a high-confidence external review caught them instead, working
-  from the repo alone with no CI-log visibility).
-
-  **Standing directive for every future PR this agent opens**: when CodeRabbit posts its
-  "Review available on request" gate comment, reply with `@coderabbitai review` (or `@coderabbitai
-  full review` for a deeper pass) to actually trigger it, rather than leaving the gate comment
-  unanswered. Apply this on PR open, not just when reminded.
-
-  **Two concrete findings this pass caught, both fixed same-day (2026-08-15), that motivated
-  filing this item**: (1) `run_setup.bat`'s own line-ending self-check panel (`docs/agent-
-  closed-backlog.md`'s Item 44) still told a user to "re-download using git clone, not the Raw
-  button" -- true before the CRLF distribution fix (Item 44's own "Raw-download CRLF
-  distribution fix" entry above), false and actively bad advice after it (steers a confused,
-  git-less Prime Directive user toward a tool they do not have, instead of just re-downloading
-  via the now-fixed Raw link). Fixed: the panel and its header comment now describe the check as
-  defense-in-depth against a stale/re-saved copy, not as a workaround for a still-broken
-  distribution channel; `tests/selfapps_lineending_check.ps1`'s matching assertion updated in
-  lockstep. (2) `:merge_git_config` (REQ-015) was still writing `*.bat eol=crlf`/`*.cmd eol=crlf`
-  into every bootstrapped user's OWN `.gitattributes` -- the exact pattern this repo just spent
-  the whole CRLF distribution fix proving insufficient for itself, propagated into every user's
-  project that happens to contain `.bat` files and gets published to GitHub. Fixed to `*.bat
-  -text`/`*.cmd -text`, matching this repo's own `.gitattributes`; `tests/selfapps_ux_hardening.
-  ps1`'s `self.ux.gitattributes.merge` assertion, and the REQ-015 spec in README.md, updated in
-  lockstep. Both fixes verified via the full sanity sweep (delimiters, CRLF, ASCII, PS parse,
-  pytest) before landing.
-
 - **Item 61 (checker fix landed; the 26-finding audit is now closed; a separate same-line-pair
   question remains open, see "Revised item scope" below): `check_delimiters.py` now catches a
   cross-line `(`/`)` pair inside `rem` comment text, not just `echo` text -- turning that on
@@ -1263,6 +1248,12 @@ way (no live Windows execution available here), that is noted explicitly rather 
   this hazard class, not static reasoning alone -- static reasoning about this exact hazard class
   has now been wrong multiple times in this repo's history, per `docs/agent-lessons-learned.md`'s
   "`:log` echoes UNQUOTED" entry's own general warning).
+
+  **Blocked on how to get that live-cmd.exe verification cheaply -- registered as
+  `docs/open-questions.md` item 5** (this sandbox has no Windows access at all; the only real
+  cmd.exe reachable is a GitHub Actions Windows runner, and the two existing ways to reach one both
+  run the full, expensive 8-lane matrix for what should be a few-seconds narrow parsing question).
+  Not actionable until the maintainer picks a path there.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

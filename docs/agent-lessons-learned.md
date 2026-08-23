@@ -30,6 +30,34 @@ See CLAUDE.md's Active Backlog Item 34 for the restructuring pass this principle
 
 ---
 
+## CodeRabbit review requires a manual trigger on every PR (repo has fewer than 10 stars)
+
+Former CLAUDE.md Active Backlog Item 59 (closed -- see `docs/agent-closed-backlog.md`'s Item 59
+entry for the concrete findings that motivated this and the PR history). Not future work, just a
+standing procedure -- documented here instead of left implied by a closed backlog entry.
+
+This repo's CodeRabbit integration does NOT auto-review a newly opened or updated PR -- it posts
+a "Review available on request" / "This repository does not receive automatic reviews because it
+has fewer than 10 stars" gate comment instead, and a push to an already-open PR resets to that
+same gated state rather than auto-triggering. **Standing procedure: reply with `@coderabbitai
+review` (or `@coderabbitai full review` for a deeper pass) immediately after opening a PR, and
+again after every fix-commit push** -- do not leave the gate comment unanswered and do not assume
+a push alone will get a fresh review.
+
+**Rate limit**: this repo's plan allows roughly 1 included review per hour per developer. A
+`@coderabbitai review` posted while rate-limited replies "Review rate limited... Next review
+available in: N minutes" instead of running -- re-post the same comment once that window has
+passed (or wait for the next scheduled check-in past it). Individual finding threads CodeRabbit
+confirms as "Addressed in commit X" (via an edited inline reply) resolve independently of the
+FULL formal review completing -- both signals are legitimate and can be checked separately; don't
+wait on the rate-limited formal review to read whether individual findings already cleared.
+
+If CodeRabbit is stuck at CHANGES_REQUESTED after every actionable finding is confirmed resolved
+(fixed-and-confirmed, or explained and independently re-verified/withdrawn by CodeRabbit itself),
+posting `@coderabbitai approve` has reliably cleared it.
+
+---
+
 ## `.bat`/`.cmd` files: `-text`, not `eol=crlf` -- git's own normalization cannot make a raw download correct
 
 **The problem, confirmed live (docs/agent-closed-backlog.md's Item 44, `docs/open-questions.md`'s
