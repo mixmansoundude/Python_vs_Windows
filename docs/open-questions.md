@@ -107,7 +107,7 @@ this.
 
 Item 61's own "Revised item scope" note says the remaining question -- whether a SAME-LINE,
 self-contained `(`/`)` pair nested inside a real open `if`/`for` block is safe, the same way a
-top-level one is -- "likely requiring live-cmd.exe verification per this repo's own established
+top-level one is -- "likely requiring live `cmd.exe` verification per this repo's own established
 practice for this hazard class, not static reasoning alone." That practice exists for a reason:
 static reasoning about cmd.exe's own paren/quote parsing has been wrong THREE separate times in
 this exact hazard class already (see `docs/agent-lessons-learned.md`'s "A literal `(`/`)` inside

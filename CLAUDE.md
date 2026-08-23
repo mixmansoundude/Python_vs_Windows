@@ -486,8 +486,8 @@ is not.
 item's remaining work is blocked on the maintainer's own decision, access, or input -- not on
 further agent implementation -- it must have a corresponding entry in `docs/open-questions.md`
 naming exactly what decision/access is needed, added in the SAME commit that identifies the item
-as blocked. Describing the blocker only in this file's own prose is not enough: `docs/open-
-questions.md` is the one place designed to be scanned for "what does the agent need from you"
+as blocked. Describing the blocker only in this file's own prose is not enough: `docs/open-questions.md`
+is the one place designed to be scanned for "what does the agent need from you"
 without reading the whole backlog, and a blocker that exists only here is easy for both the
 maintainer and a future agent to lose track of. Once the maintainer answers, remove the question
 doc entry and fold the outcome into wherever it belongs (this file, the interconnect/lessons-
@@ -1244,12 +1244,12 @@ way (no live Windows execution available here), that is noted explicitly rather 
   inside `echo`/`rem` text that is already nested inside a real open bracket, not just cross-line
   ones) -- balanced against the real risk of false-positiving on the MANY existing, presumably-safe
   same-line nested echo statements already in `run_setup.bat` (not audited; needs its own careful
-  pass, likely requiring live-cmd.exe verification per this repo's own established practice for
+  pass, likely requiring live `cmd.exe` verification per this repo's own established practice for
   this hazard class, not static reasoning alone -- static reasoning about this exact hazard class
   has now been wrong multiple times in this repo's history, per `docs/agent-lessons-learned.md`'s
   "`:log` echoes UNQUOTED" entry's own general warning).
 
-  **Blocked on how to get that live-cmd.exe verification cheaply -- registered as
+  **Blocked on how to get that live `cmd.exe` verification cheaply -- registered as
   `docs/open-questions.md` item 5** (this sandbox has no Windows access at all; the only real
   cmd.exe reachable is a GitHub Actions Windows runner, and the two existing ways to reach one both
   run the full, expensive 8-lane matrix for what should be a few-seconds narrow parsing question).
