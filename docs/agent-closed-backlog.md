@@ -2866,16 +2866,15 @@ run of the same regex logic before landing, not just reasoned about).
   surfaced the actual PowerShell error for the first time: `The argument
   '~migrate_gitattributes.ps1' to the -File parameter does not exist.` -- meaning
   `:emit_from_base64 "~migrate_gitattributes.ps1" HP_MIGRATE_GITATTRIBUTES` never wrote the file
-  at all. Traced to `:merge_git_config` being `call`ed at the top of the main flow (originally
-  line 265) BEFORE `:define_helper_payloads` (originally line 584) -- every `HP_*` payload
-  variable, including `HP_MIGRATE_GITATTRIBUTES`, is `set` inside `:define_helper_payloads`'s own
-  body, so it genuinely did not exist yet when `:merge_git_config` (called ~300 lines earlier in
-  execution order, regardless of where its own body sits in the file) reached its
-  `:emit_from_base64` call. Confirmed as the sole cause by checking every other
-  `call :emit_from_base64` site in the file (28 others) -- every one of them sits at a line
-  number AFTER `:define_helper_payloads`'s own call site, so none had ever exercised this
-  ordering gap before; `:merge_git_config` was the first (and only) early-called subroutine to
-  ever need a payload. This is why it reproduced 100% deterministically on EVERY bootstrap run in
+  at all. Traced to `:merge_git_config` being `call`ed at the top of the main flow, BEFORE
+  `:define_helper_payloads` was ever called -- every `HP_*` payload variable, including
+  `HP_MIGRATE_GITATTRIBUTES`, is `set` inside `:define_helper_payloads`'s own body, so it
+  genuinely did not exist yet when `:merge_git_config` (called earlier in execution order,
+  regardless of where its own body sits in the file) reached its `:emit_from_base64` call.
+  Confirmed as the sole cause by checking every other `call :emit_from_base64` site in the file
+  (28 others) -- every one of them is reached only AFTER `:define_helper_payloads`'s own call
+  site in execution order, so none had ever exercised this ordering gap before;
+  `:merge_git_config` was the first (and only) early-called subroutine to ever need a payload. This is why it reproduced 100% deterministically on EVERY bootstrap run in
   the `real` lane regardless of test scenario, and why no local `pwsh` testing of the script or
   the payload-sync check could ever have caught it -- both exercise the script's own
   content/logic, never `run_setup.bat`'s own call-graph ordering. Fixed by moving
